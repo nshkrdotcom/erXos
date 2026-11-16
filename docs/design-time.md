@@ -46,6 +46,11 @@ Decisions every reader needs:
   the client uses, or anyone on the path to it, controls the wall clock:
   the thresholds filter one bad measurement, they bound nothing over time
   ([Security](#security)).
+* **The operator sets the clock with `date`.** Root's session holds a
+  `clock` grant, and `date [[[[[cc]yy]mm]dd]HH]MM[.SS]` sets the wall
+  offset as FreeBSD's `date` sets the time, without the step rules; the
+  change lasts until the next reboot
+  ([Setting the clock by hand](#setting-the-clock-by-hand)).
 * **`/proc/time/status` is the clock's record.** It shows whether the
   clock was changed this boot, the last sample and the last step, each
   attribute with its source and lifetime, and nothing it does not know
@@ -236,6 +241,9 @@ read for this design.
 * **T-R8.** Only a cold start allows an unrestricted step: no automatic
   restart of the client or the clock service renews it (RFC 8633 section
   5.2).
+* **T-R9.** Root can set the wall clock by hand, with FreeBSD's `date`
+  forms and without a network, and no session without a `clock` grant
+  can.
 
 Not required, and not built: full NTP (selecting and combining several
 servers, frequency discipline, symmetric and broadcast modes, serving
@@ -371,8 +379,9 @@ the clock service reads three bounded integers and an address.
 
 ### The clock facet
 
-`abi/services/clock.txt` declares `service clock` with one operation,
-`sample`, and the limit `clock_distance_max_ns`, 1 s, RFC 5905's
+`abi/services/clock.txt` declares `service clock` with two operations,
+`sample`, ntpd's, and `set`, the operator's
+([Setting the clock by hand](#setting-the-clock-by-hand)), and the limit `clock_distance_max_ns`, 1 s, RFC 5905's
 `MAXDIST`; the generated `erx_abi.hrl` gives it, with the kernel limit
 `time_offset_max`, to the client and the facet alike. The manifest serves
 the service from the system domain:
@@ -403,6 +412,15 @@ reply](#checks-on-a-reply)), and the client sends only samples whose
 distance is below the same limit, so the facet refuses nothing the
 client accepted. The facet forwards `{sample, Grantee, Sample}` and keeps
 nothing.
+
+The operator's request is `{set, W}`, with `W` in the same range, which
+`decode/1` admits by the same rules and forwards as `{set, Grantee, W}`.
+Each facet row grants one of the two operations, by its `operations`
+list ([design-abi.md](design-abi.md), the facet record's operations
+span): ntpd's row `sample` alone and root's `set` alone, so ntpd cannot
+set and root's sessions send no samples, and the facet refuses an
+operation its row does not grant before `decode/1` runs
+([Who may set it](#who-may-set-it)).
 
 The answer is `{ok, Action}`:
 
@@ -486,9 +504,11 @@ and counts it.
     offsets causes no restart in the first place; together the two keep
     RFC 8633 section 5.2's attack from applying.
   * *Explicit operator recovery.* When the clock has been set wrong this
-    boot, the operator reboots the machine, which starts cold again;
-    `service ntpd restart` does not, unlike restarting FreeBSD's ntpd
-    with `-g`. Recovery without a reboot is
+    boot, the operator sets it right with `date`
+    ([Setting the clock by hand](#setting-the-clock-by-hand)), or reboots
+    the machine, which starts cold again; `service ntpd restart` does
+    not, unlike restarting FreeBSD's ntpd with `-g`. Making the next
+    sample unrestricted again without a reboot is
     [open](#open-decisions).
 * **Two samples in a row** stand in for RFC 5905's stepout: one exchange
   whose delay is asymmetric cannot step the clock, and a real offset is
@@ -632,6 +652,7 @@ facet ntpd_clock
   name "clock"
   grantee @session.ntpd
   service @service.clock
+  operations sample
   ...
 start ntpd
   enable NO
@@ -646,8 +667,9 @@ ntpd_flags="0.pool.example ntp.example.net"
 ```
 
 `service ntpd enable` sets the first; `service ntpd restart` restarts
-the session, through the start table alone. The facet row is the only
-way a domain gets `clock`; root's session does not hold it.
+the session, through the start table alone. The facet rows are the only
+way a domain gets `clock`: ntpd's template holds one and root's another
+([Who may set it](#who-may-set-it)), and no other template does.
 
 `ntpd_flags` is the row's start flags, which
 [design-apps.md](design-apps.md#start-flags) bounds and delivers: the
@@ -664,10 +686,11 @@ manifest ships a server, enabling ntpd without naming one does this.
 ## What /proc shows
 
 `abi/inspection.txt` gains a kind `clock`, visible to every scope, at
-path `time`, so `cat /proc/time/status` reads it. Two attributes are
+path `time`, so `cat /proc/time/status` reads it. Three attributes are
 visible only to the whole-machine scope (`visible all`): `server`, the
-address the client samples, and `source`, the id of the domain whose
-facet sent the sample, both facts of another domain, so a scoped caller
+address the client samples, `source`, the id of the domain whose facet
+sent the sample, and `step_source`, the one whose facet sent the last
+step, all facts of another domain, so a scoped caller
 reads the record without them. The inspector reads `state` from the page
 through `erx_clock_nif:read/0`, reported by `kernel`, whose object the
 page is; the clock service reports the rest. Each attribute names its
@@ -685,6 +708,7 @@ restart.
 | `stratum`, `server` | record | its server's stratum and address |
 | `source` | record | the domain whose facet sent it, from the facet, never the request |
 | `step_at`, `step_ns` | record | the last applied step's wall time and size, or `none` |
+| `step_source` | record | the domain whose facet asked for the last applied step, a sample's or a set's, from the facet; or `none` |
 | `step_error` | record | the setter's refusal of the last step it refused, `unsupported`, `limit` or `badarg`, or `none` |
 | `steps`, `refused` | record | steps applied and samples refused, floor and panic, since `record_since` |
 
@@ -695,6 +719,192 @@ service has. The client's own state, its names, addresses, delays and
 kisses, is in its log lines, which the log service escapes; a kiss code
 shown there is one of the known atoms or its four bytes in hex.
 
+## Setting the clock by hand
+
+A board without a real-time clock boots at 1970-01-01, and with network
+time off, as it is by default, nothing sets the wall clock; an HTTPS
+client then refuses every certificate
+([design-crypto.md](design-crypto.md#time)). The operator sets it with
+`date`, as on FreeBSD, and no network is needed for it.
+
+### The command
+
+`date` is an Erlang command of the command shell, `erx_cmd_date`
+([design-shell.md](design-shell.md#text-commands)), and behaves as
+FreeBSD releng/15.1's `date` does for the forms it offers
+(`bin/date/date.c` and `bin/date/date.1`):
+
+```text
+date [-jnu] [[[[[cc]yy]mm]dd]HH]MM[.SS] [+format]
+```
+
+* **Reading.** With no time operand it writes the wall time, the time
+  page's, as `os:system_time(nanosecond)` reads it, through the format
+  and a newline. The default format is `%+`, which FreeBSD's C locale
+  spells `%a %b %e %H:%M:%S %Z %Y` (`lib/libc/stdtime/timelocal.c`,
+  `date_fmt`). erXos has no time zones, so local time is UTC, as on a
+  FreeBSD machine without `/etc/localtime`: `-u` is accepted and changes
+  nothing, `%Z` is `UTC` and `%z` is `+0000`.
+* **The format** is an operand beginning with `+`, before or after the
+  time operand ("allow the operands in any order", `date.c`, `main`).
+  Its conversions are strftime(3)'s as FreeBSD's C locale writes them
+  (`lib/libc/stdtime/strftime.c`): `%a %A %b %B %h %c %C %d %D %e %F %H
+  %G %g %I %j %k %l %m %M %n %p %r %R %s %S %t %T %u %U %V %v %w %W %x
+  %X %y %Y %z %Z %+ %%`; the `E` and `O` modifiers, which the C locale
+  ignores; and the padding flags `-`, `_` and `0` on the conversions
+  `strftime.c` pads through its padding table (`%d %e %H %I %j %k %l %M
+  %m %S %U %V %W %z`), while `%C %y %Y %G %g` keep two digits a part and
+  `%u %w %s` none. `date`'s own pass comes first (`date.c`,
+  `strftime_ns`): `%N` is the nanoseconds in nine digits, `%`*n*`N` in
+  *n*, cut or padded with zeros, and `%-N` in nine, the wall clock's
+  resolution being a nanosecond. Any other conversion character is
+  written as itself without its `%`, and a format that ends inside a
+  conversion as its last character, as `strftime.c` does; a second flag
+  or modifier is written as itself the same way.
+* **Setting.** A time operand that does not begin with `+` is the new
+  time. Its digits are read from the left in pairs: `cc` the century,
+  `yy` the year in it, `mm` the month, `dd` the day, `HH` the hour and
+  `MM` the minute, of which only `MM` is required, and `.SS` the second.
+  A field left out keeps the current UTC date's value, the second
+  defaults to 0 and the nanoseconds are 0 (`date.c`, `setthetime`). A
+  `yy` without `cc` below 69 is in 2000-2068 and otherwise in
+  1969-1999. A month above 12, a day above 31, an hour above 23, a minute
+  above 59, a second above 61, digits that are not an even count of 2
+  to 12, a
+  `.SS` that is not two digits, a second dot or any other character is
+  `date: illegal time format` and the usage line, status 1, and nothing
+  is set. The fields are then normalized as `mktime(3)` does, so a month
+  of `00` is December of the year before, a day of `00` the last day of
+  the month before, month and day `0230` the first or second of March,
+  and a second of 60 or 61 the first or second second of the next
+  minute; in UTC every normalized time exists, so
+  `date`'s `nonexistent time` cannot occur. That FreeBSD's `mktime(3)`
+  normalizes these values so (`lib/libc/stdtime/localtime.c`, not read
+  for this design) is unverified until the FreeBSD oracle runs `date -j`
+  over the same operands.
+* **`-n`** is accepted and ignored, as FreeBSD's is (`date.1`).
+* **`-j`** parses the operand and writes the time it names without
+  setting the clock, as FreeBSD's `-j` does, and needs no authority.
+* **After a set** `date` writes the new time through the format, as
+  FreeBSD's prints the time it set.
+* **Not offered**, each a usage error: `-f` (another input format),
+  `-I` and `-R` (ISO 8601 and RFC 2822 output), `-r` (a file's or
+  a number's time), `-v` (adjustments) and `-z` (an output zone), and
+  FreeBSD's securelevel limit, which erXos does not have.
+
+The decisions are pure: `erx_cmd_date:parse/1` takes the arguments to
+`{read, Format}`, `{set, Operand, Format, Set}` or `{error, usage}`;
+`target/2` takes a parsed operand and the current wall time to the
+named time in nanoseconds; `format/2` takes a format and a wall time to
+bytes. `run/2` does the effects: it reads the clocks, asks the clock
+service, and writes.
+
+### Who may set it
+
+Setting needs the `clock` grant, the one authority over the wall clock
+this document names. Root's session template holds it by a facet row
+beside ntpd's, as it holds `machine`
+([design-system.md](design-system.md#a-sessions-request)); the row
+grants `set` and not `sample`, and ntpd's grants `sample` and not `set`:
+
+```text
+facet root_clock
+  name "clock"
+  grantee @session.system
+  service @service.clock
+  operations set
+  ...
+```
+
+Every session of root therefore holds it, whatever started the session,
+and no other development template does; a release manifest grants it to
+root's template and to any administrator's template its author lists,
+as for `machine` ([design-system.md](design-system.md#a-sessions-request)).
+Root may already enable ntpd against a server of its choosing, and so
+choose the time within the step rules: any time above the floor at a
+cold start, then up to 1000 s every two polls, given a server the machine
+reaches. The grant adds what the step rules refuse: a time below the
+floor and an immediate step of any size, with no network. On erXos's
+kernel the facet row is the authority; on the stopgap it is held, not
+enforced, since any task's call writes the page ([Phase 1](#phase-1)),
+so there a session's `eperm` is how `date` behaves, not a bound on what
+the session's code can do. A session without
+the grant writes `date: clock_settime: ` and the text of `eperm`, status
+1, as FreeBSD's `date` does for a user other than the superuser
+(`date.1`, "Only the superuser may set the date"). Reading and `-j` need
+no grant.
+
+### What it changes
+
+`run/2` reads the monotonic clock `M`, from `os:perf_counter(nanosecond)`,
+and the wall time it fills the left-out fields from, at one moment,
+computes the named time `T`, and sends the clock facet
+
+```erlang
+{set, W}
+%% W :: 0..?ERX_TIME_OFFSET_MAX    T - M, the wall offset that makes the clock read T at M
+```
+
+the same absolute offset a sample carries, so a repeated or delayed
+request cannot apply twice or short ([The
+construction](#the-construction)). The clock service stores `W` through
+`erx_clock_nif:set_offset/1`, unconditionally: a set is the operator's
+word, not a measurement, so the [Steps](#steps) table, the floor and
+both thresholds included, does not apply to it. The answer is `{ok,
+{stepped, StepNs}}` or one of the facet's errors.
+
+* **Every domain sees it at once.** The setter changes the time page,
+  which every domain maps, so `os:system_time/1` in every domain reads
+  the new time from the next call, and `erlang:system_time/1` within
+  about a minute, through ERTS's time supervisor
+  ([What erXos already has](#what-erxos-already-has)).
+* **Monotonic time does not move.** Neither the kernel's counter nor
+  Erlang monotonic time nor any timer changes; a set backward is seen
+  only by readers of wall time.
+* **The boot is no longer cold.** The page's `seq` has moved, so a later
+  sample from ntpd is decided by the thresholds: one 1000 s or more from
+  the operator's time is refused `panic`, and the operator's time stands
+  until a set or a reboot changes it. A `date` with the right time is
+  therefore also the recovery without a reboot that [Open
+  decisions](#open-decisions) asks for.
+* **The record.** The clock service records a set as the last applied
+  step, `step_at`, `step_ns` and `steps` at `/proc/time/status`, with
+  `step_source` the domain whose facet sent it, and logs one line naming
+  the grant's principal, as FreeBSD's `date` logs `date set by` its user
+  (`date.c`, `syslog`) and the machine tree names who ended the machine.
+  The sample attributes, `source` included, are left as they were. A set
+  is a clause of `erx_clock_core` like a sample's rows: it steps to `W`
+  whatever `Cold`, the floor or the distance, sets `excess := none`, so
+  a sample held before it cannot step on one more sample after it, and
+  stores a refusal of the setter as `step_error`, as for a sample.
+* **A board without a writable real-time clock forgets it.** The setter
+  changes the page, which the next boot publishes afresh. Where the
+  wall-clock keeper of [design-header-io.md](design-header-io.md#devrtc)
+  holds a real-time clock it writes a set like any other correction, as
+  FreeBSD's `date` writes the hardware clock (`date.1`). A board without
+  one, the Raspberry Pi 4 without a clock module, boots at 1970-01-01
+  again, and QEMU `virt`, whose PL031 the stopgap's root only reads,
+  boots at the PL031's time ([Phase 1](#phase-1)); there the operator
+  sets the clock after each boot, which the user documentation says.
+
+### Failure paths
+
+Every path ends with a status and, but for success, one diagnostic; the
+parser is total over every argument list, so no argument makes the
+command raise.
+
+| Failure | Result |
+| --- | --- |
+| an operand or flag the command does not take | `date: illegal time format` for a bad time operand, then the usage line; status 1; nothing is sent |
+| the session holds no `clock` grant | `date: clock_settime: ` and `eperm`'s text; status 1 |
+| `W` outside `0..time_offset_max`: a time before 1970-01-01 plus the uptime, or after early 2116 | the facet's `{error, badarg}`, `einval`'s text; status 1; the page is unchanged |
+| no clock service registered | `{error, unavailable}`, `eagain`'s text; status 1; the page is unchanged |
+| the backend cannot set wall time | `{error, unsupported}`, `enotsup`'s text; status 1 |
+| the page's sequence has run out | `{error, limit}`, `eoverflow`'s text; status 1 |
+| the facet is busy | `{error, busy}`, `ebusy`'s text; status 1 |
+| the clock service ended before it answered | `{error, failed}`, `eio`'s text; status 1; the set may or may not have been applied, which a reading `date` or `/proc/time/status` shows |
+| standard output cannot be written | the shell's write failure ends the command with its reason as the status, as for every command |
+
 ## Concurrency and failure
 
 * **One writer.** Only `erx_clock` calls the NIF, one sample at a time
@@ -703,8 +913,11 @@ shown there is one of the known atoms or its four bytes in hex.
   the page, decides and sets within one sample's handling, so no other
   write falls between its read and its step.
 * **Two clients** would interleave samples, each step to its own `W`.
-  The manifest grants `clock` only to the ntpd template and the start
-  table keeps at most one session of a row, so there is one.
+  The manifest grants `clock` for samples only to the ntpd template and
+  the start table keeps at most one session of a row, so there is one.
+  Root's sets interleave with ntpd's samples, and each request is absolute,
+  so the later one decides the page; after a set, the thresholds decide
+  ntpd's samples against the operator's time.
 * **Nothing is in flight that a failure must undo.** A sample's effect
   is the page, which the setter changes in one call or not at all; the
   facet and the client hold no state about it.
@@ -716,7 +929,7 @@ shown there is one of the known atoms or its four bytes in hex.
 | the clock service crashes after the setter ran, before answering | the facet, which answers `{error, failed}` | the page holds `W`; the next sample is about 0 from it and is held. Either way nothing is lost, since the page is the state |
 | the ntpd session crashes | the start table | restarted within the row's intensity; the page, not the session, says whether the boot is cold, so the restart renews no unrestricted step |
 | a server sends offsets of 1000 s or more | the client, which gets `{refused, panic}` | logged and counted; the client polls on and does not end, so the refusal causes no restart |
-| the clock was set wrong this boot | the operator, at `/proc/time` and the log | every later sample from a right server is refused `panic`; the operator reboots ([Steps](#steps)) |
+| the clock was set wrong this boot | the operator, at `/proc/time` and the log | every later sample from a right server is refused `panic`; the operator sets the right time with `date` or reboots ([Steps](#steps)) |
 | DNS fails | the client | retried with backoff; `/proc/time` keeps the last sample |
 | every server is silent or denies | the client | backoff to 1024 s and re-resolution; the clock runs on its counter |
 | the backend cannot set wall time | the clock service | `{error, unsupported}`; `step_error` is `unsupported` until the service restarts, and `state` shows the page as it is |
@@ -727,12 +940,19 @@ shown there is one of the known atoms or its four bytes in hex.
 * **The parser runs in the app.** NTP bytes are decoded only by
   `erx_ntp_wire` in the ntpd session, which holds `net`, `clock` and
   `log`. A fault there ends that session. The system domain decodes a
-  five-element tuple of bounded integers and an address through
+  five-element tuple of bounded integers and an address, or a `set` of
+  one bounded integer, through
   `erx_clock_facet:decode/1`, at the funnel's limits.
 * **No sample leaves the clock's range.** The facet's bound on `W` is the
   setter's, and the setter refuses any other offset, so not even a
   compromised ntpd, nor a bug of the system domain, can publish a wall
   time outside `[0, 2^63)` (T-R7).
+* **Root's `set` is not filtered.** A set skips the floor and both
+  thresholds, as an operator's `date` does on FreeBSD, and only the
+  setter's range bounds it (T-R7). Only rows that grant `set` admit it,
+  and the manifest gives that operation to root's template alone, so a
+  compromised ntpd still sends only samples
+  ([Who may set it](#who-may-set-it)).
 * **Whoever holds `clock` decides the time.** A compromised ntpd can
   fabricate every sample: any time above the floor at a cold start, and
   then up to 1000 s per two samples, forward or backward, without limit
@@ -801,7 +1021,10 @@ that proves it ran.
 | restart | a record emptied as a restarted service's is, with `Cold` false, refuses a sample 2000 s off | deciding cold from an empty record instead of the page steps it |
 | schedule | over generated event sequences, no two polls to an address closer than 64 s, a burst only on an address's first poll, re-resolution not before the TTL, and an error answer leaves the interval unchanged | a floor of 8 s fails the spacing property |
 | flags | `ERX_START_FLAGS` values give their server lists; empty, nine entries, a bad label and a 254-byte name end with their reasons | accepting a ninth entry passes the nine-entry case |
-| facet decode | every bound is refused one past its edge, `W` at `time_offset_max + 1` and `Distance` at `clock_distance_max_ns` included | dropping `W`'s upper bound accepts `time_offset_max + 1` |
+| facet decode | every bound is refused one past its edge, `W` at `time_offset_max + 1` and `Distance` at `clock_distance_max_ns` included, for `sample` and `set` alike | dropping `W`'s upper bound accepts `time_offset_max + 1` |
+| `date` operands | every even count of 2 to 12 digits, with and without `.SS`, gives its named time from a fixed current time; each field at its bound passes and one past it is refused; a non-digit at each position, a second dot, a one- or three-digit `.SS`, an empty operand, every odd count of 1 to 13 digits and 14 digits are refused; `yy` 68 and 69 fall either side of the pivot; month and day `00`, `0229` and `0230` in a leap and a common year, and second 60 and 61 normalize as `mktime(3)` does; `+format` before and after the operand, `-j` and `-u`, and every flag not offered | a pivot of 70 makes `69` 2069; dropping the month bound accepts `13` |
+| `date` format | each conversion of [The command](#the-command) on fixed times (a leap day, a Sunday, midnight and noon, a year before 2000), each padding flag, an unknown conversion and a `%` at the end | `%e` padded with `0` fails the single-digit day |
+| `date` set | a set answers `{ok, {stepped, _}}` and writes the named time; each error answer of [Failure paths](#failure-paths) gives its text and status 1; a context without `clock` refuses a set and still reads and runs `-j` | a run that looks up the grant before it parses refuses `-j` without one |
 
 The setter's range has a test of its own on the stopgap, in the native
 guest's time case (`test/guest/native_space/guest.c`): offsets of 0 and
@@ -832,6 +1055,16 @@ Fuzz targets, run by `make check-fuzz`:
   raises; an accepted list has at most 8 entries, each within the
   server-list rule. *Seeded failure:* dropping the 253-byte bound accepts
   a generated 254-byte name.
+* **`erx_cmd_date_fuzz`** feeds `erx_cmd_date:parse/1` argument lists of
+  up to four arbitrary binaries of up to 32 bytes, biased toward digits,
+  dots, `+` and `-`, and each accepted operand to `target/2` against
+  fixed current times. Properties: nothing raises; an accepted operand
+  has an even count of 2 to 12 digits and at most one `.`, followed by
+  two digits, and each field within its bound; its
+  time, written back as `%Y%m%d%H%M.%S` and parsed again, names the same
+  time; `format/2` of every generated format writes bytes and never
+  raises. *Seeded failure:* dropping the `.SS` length check accepts a
+  generated `1200.5`.
 
 The QEMU `virt` suite runs the client end to end. The harness's network
 plan already joins a raw-frame `dgram` backend to the guest's link
@@ -865,6 +1098,13 @@ kiss code. The guest's test manifest enables ntpd with
   after check 4, with the peer's kiss carrying LI 3, ignores both.
 * **Refusals.** A session without the facet row has no `clock` name;
   `ntpd_flags=""` ends the row with `no servers` and leaves it down.
+* **Set by hand.** With ntpd off, root's session runs `date
+  203001011200`; `date +%Y%m%d%H%M` there and `os:system_time(second)`
+  in another domain read the new time within a second, and
+  `/proc/time/status` is `set`. A session of a template without the
+  `clock` row gets `eperm`'s text and status 1, and the clock does not
+  move. *Seeded failure:* a manifest that grants root's template no
+  `clock` row fails the set.
 
 The network runs against real NTP use the stack's development-host
 peers
@@ -946,6 +1186,37 @@ These were open and are settled as stated here:
    be that command, since an automatic restart takes the same path.
    Recommendation: not now; a reboot is the recovery that already exists,
    and the command can come with the first consumer that cannot reboot.
+   `date` with the right time already recovers the clock without a reboot
+   ([What it changes](#what-it-changes)); what stays open is handing the
+   next correction back to an unrestricted sample.
+2. **The authority `date` sets the clock through.** This document has
+   `date` send `{set, W}` on the `clock` facet, which root's template
+   holds by a second facet row ([Who may set it](#who-may-set-it)), each
+   row granting its own operation. Under B or C the `set` operation, the
+   `root_clock` row and the text that names them go, and `date` writes a
+   `ctl` line instead. The options:
+   * **A. A `set` operation on the `clock` facet, granted per row**
+     (this document). One authority over the wall clock, the clock
+     service; measuring and commanding stay apart by the rows'
+     `operations`; one decode, one setter path and one record; the
+     operator's command is a protocol request, as `host` uses `net`,
+     rather than a file write.
+   * **B. A line of `/machine/ctl`**, `time W`, which the domain service
+     forwards to the clock service. No new grant for root, but the
+     `machine` grant, "the right to end the machine", would also set the
+     clock, and the coordinator's tree would forward to a service it does
+     not own.
+   * **C. A `ctl` file of a tree the clock service serves**, mounted at
+     `/clock` in root's session, as open decision 1 sketches, the home
+     the project's rules give a one-shot command. It reuses `erx_fs` and
+     the grant supervisor as the `machine` tree does, and adds a service
+     of `files`, a mount, a text grammar with its fuzz target and a
+     second route to the clock beside `clock`.
+
+   Recommendation: A, since it adds one decode clause and a manifest row
+   where B mixes two authorities and C adds a tree and a grammar; open decision 1's
+   tree, if it comes, would then take `cold` alone, or be folded into a
+   `clock` operation the same way.
 
 ## References
 
@@ -983,6 +1254,17 @@ These were open and are settled as stated here:
     `d428bf01378a688a6c30b92a90598451538a180f52b99377f806e81bf163ac40`;
   * `sbin/dhclient/clparse.c`, SHA-256
     `115ea86f8a2b9550f03ddfbb8059fc13b2ed81e97fed7e5eb27c3764fa5ccac1`.
+* FreeBSD releng/15.1 at the same commit, from FreeBSD's official
+  mirror `https://github.com/freebsd/freebsd-src` (raw files), for
+  `date`:
+  * `bin/date/date.1`, SHA-256
+    `25e38f29eeeedf3358d79adecb54a877f23a53ef7fb191a7ea3512734733e3b0`;
+  * `bin/date/date.c`, SHA-256
+    `e60ac5347d6ad3a34eef666606907d67fcf7e87b12ef4d707c6f8c8be96a455b`;
+  * `lib/libc/stdtime/strftime.c`, SHA-256
+    `82ee008e3db2d3724921bc0dfd972ea7f98d8d4b5adf85df608330a2c62ba084`;
+  * `lib/libc/stdtime/timelocal.c`, SHA-256
+    `1f7a2182c4257ae5a87566bacdf24e3a64aa7b6278ac8527b255d01aec4955f0`.
 * RFCs from `https://www.rfc-editor.org/rfc/`: RFC 4330 (SNTPv4), SHA-256
   `e0a5344883d62f9ff58a6cf3a44398bda097badd3013236fab47ea7fdc25bc33`;
   RFC 5905 (NTPv4), SHA-256
