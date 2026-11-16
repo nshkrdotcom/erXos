@@ -438,14 +438,26 @@ boot's simple handler unfiltered.
 The system domain takes none: its reports are the trusted base's own,
 and its operator debugs the trusted base from them whole. A process of
 the system domain that holds another domain's bytes, such as a relay,
-therefore keeps them out of its reports itself: out of its behaviour's
-termination report through its `format_status/1`, and out of the
-mailbox and dictionary a crash report quotes through
-`process_flag(sensitive, true)`. What is left open (a
-crash report of such a process, which quotes its mailbox; logger's
-forwarding of an event to its group leader's node before any filter
-runs; the legacy `error_logger` calls that carry no `otp` domain) is a
-security residual in TODO.md.
+therefore keeps them out of its reports itself, by exporting
+`format_status/1` from its module (edit 75 of
+[design-runtime.md](design-runtime.md)). Its behaviour's termination
+report then shows what that callback leaves of the state, the message,
+the log and the reason, and its crash report shows the reason as the
+callback leaves it when handed `#{reason => Reason}`; both show each
+stack frame as module, function and arity alone, and the crash report
+shows an empty mailbox and dictionary, as stock OTP shows those of a
+process that set `process_flag(sensitive, true)`, with the queue's
+length. Such a callback must never crash: a total function over the
+map it is handed, answering every key, `reason` included, with a term
+that holds none of those bytes. When it crashes, `gen_statem`'s report
+shows `gen`'s text for the crash and nothing of what the callback was
+asked to hide, but `gen_server`'s shows the raw reason and last
+message, as stock OTP does and OTP's own suite requires
+(`gen_server_SUITE:crash_in_format_status`). What is left open (the
+supervisor's report of a child's exit, which quotes the raw reason;
+logger's forwarding of an event to its group leader's node before any
+filter runs; the legacy `error_logger` calls that carry no `otp`
+domain) is a security residual in TODO.md.
 
 The filter reaches only reports. An exit reason still reaches the
 monitors and links of the process that exits, and a waiting caller of

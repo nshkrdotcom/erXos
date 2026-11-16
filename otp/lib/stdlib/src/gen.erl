@@ -19,7 +19,9 @@
 %%
 %% Modified by erXos: a call's reply is also taken in the envelope of a message from
 %% another domain, {erx_origin, D, {Tag, Reply}} (edit 58). A call whose callee's
-%% domain ends, {domain_down, D, Info}, exits {nodedown, Node} (edit 64).
+%% domain ends, {domain_down, D, Info}, exits {nodedown, Node} (edit 64). A report of a
+%% process whose module exports format_status/1 shows its stack trace without arguments
+%% (report_stacktrace/2, edit 75).
 %%
 %% %CopyrightEnd%
 %%
@@ -45,7 +47,7 @@
 
 -export([init_it/6, init_it/7]).
 
--export([format_status_header/2, format_status/4]).
+-export([format_status_header/2, format_status/4, report_stacktrace/2]).
 
 -export(['@wait_response_recv_opt'/3]).
 
@@ -840,3 +842,32 @@ format_status(Mod, Opt, Status, Args) ->
         {false, _} ->
             Status
     end.
+
+%% erXos, edit 75: the stack trace a report shows of a process whose module
+%% exports format_status/1, and so hides what the process holds: each frame
+%% keeps its module, function and arity, as {M, F, Arity, []}, and loses its
+%% arguments and its location, either of which may hold any term of the
+%% process. The trace may be any term (erlang:raise/3 takes one from the
+%% caller), so whatever is not a frame is dropped. A module without
+%% format_status/1 keeps its trace whole, as stock OTP reports it. proc_lib's
+%% crash report and the terminate reports of gen_server and gen_statem show
+%% the trace through here (docs/design-log.md, "Reports carry no term").
+-spec report_stacktrace(Mod :: module(), Stacktrace :: term()) -> term().
+report_stacktrace(Mod, Stacktrace) ->
+    case erlang:function_exported(Mod, format_status, 1) of
+        true -> report_frames(Stacktrace);
+        false -> Stacktrace
+    end.
+
+report_frames([{M, F, Arguments, _Location} | Frames]) when is_atom(M), is_atom(F) ->
+    case frame_arity(Arguments, 0) of
+        none -> report_frames(Frames);
+        Arity -> [{M, F, Arity, []} | report_frames(Frames)]
+    end;
+report_frames([_Other | Frames]) -> report_frames(Frames);
+report_frames(_End) -> [].
+
+frame_arity(Arity, 0) when is_integer(Arity), Arity >= 0 -> Arity;
+frame_arity([_ | Arguments], N) -> frame_arity(Arguments, N + 1);
+frame_arity([], N) -> N;
+frame_arity(_Other, _N) -> none.

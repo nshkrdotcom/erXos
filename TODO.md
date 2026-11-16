@@ -7114,16 +7114,21 @@ to the corpus and follow rc
   `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader
   is on another node before any primary filter runs; OTP's legacy `error_logger` calls
   (`application_master.erl:407`, `file_server.erl`, `gen.erl:790`) carry no `otp` domain; so do
-  erXos's own events that print a raw term; and in the system domain, which takes no filter, the
-  crash report of a process that holds another domain's bytes, such as a relay, quotes its
-  mailbox and its stack's arguments. The filter is an entry of the primary filter list, so a
+  erXos's own events that print a raw term; and in the system domain, which takes no filter, a
+  process that holds another domain's bytes keeps them out of its own reports only through its
+  `format_status/1` (edit 75), so the supervisor's `child_terminated` report still quotes the
+  child's raw exit reason (`supervisor.erl:318-324`, `:1426`), and with `error_logger_format_depth`
+  set `proc_lib`'s `receive_messages/1` (`proc_lib.erl:1046`) takes the mailbox of a process that
+  set `process_flag(sensitive, true)` and has no `format_status/1` into its crash report, which
+  stock OTP does too. The filter is an entry of the primary filter list, so a
   filter an application adds later (`ssh_app.erl:114`) runs before it and sees the report
   whole, `logger:reconfigure/0` and `set_primary_config(filters, _)` empty the list for a
   moment or for good, and with `filter_default => stop` an OTP report no other filter logs is
   logged as its summary where stock OTP drops it. Make the rewrite a fixed stage of
   `logger_backend:log_allowed/2` ahead of the list (edit 57), which closes all three, run it
-  before remote forwarding, and keep such bytes out of the system domain's crash reports
-  through the process's own `format_status/1`.
+  before remote forwarding; have the supervisor's report pass the reason through the child's
+  `format_status/1` when the child's module is known, and `receive_messages/1` honour
+  `sensitive`.
 
 * [Medium] session, a window's terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`,
   `handle_info/2`): a relay whose master is in the session's own domain takes every plain message it

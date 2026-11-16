@@ -19,7 +19,8 @@
 %%
 %% Modified by erXos: the driver's suspend (Ctrl-Z) and window-size change
 %% (winch) reach the shell; the group has one ask for input outstanding at
-%% most (ask/1), which the driver answers with {read, Ref, Chars}.
+%% most (ask/1), which the driver answers with {read, Ref, Chars}; format_status/1
+%% hides the shell history from the data (edit 75).
 %%
 %% %CopyrightEnd%
 %%
@@ -168,8 +169,14 @@ init([Drv, Shell, Options]) ->
 
     {ok, init, State, {next_event, internal, [Shell, Options]}}.
 
-format_status(#{state := State}) ->
-    State#state{ line_history = undefined }.
+%% erXos, edit 75: the shell history is in the data, which gen_statem hands
+%% over beside the state name. Stock OTP matches the state name here and
+%% returns a record, which crashes on every call. Any other map, such
+%% as proc_lib's #{reason => Reason}, holds no history.
+format_status(#{data := #state{} = Data} = Status) ->
+    Status#{data := Data#state{ line_history = undefined }};
+format_status(Status) ->
+    Status.
 
 init(internal, [Shell, Options], State = #state{ dumb = Dumb }) ->
 

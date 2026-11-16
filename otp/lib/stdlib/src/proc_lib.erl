@@ -17,6 +17,10 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
+%% Modified by erXos: a process whose initial module exports format_status/1 is
+%% reported without its mailbox, its dictionary or its frames' arguments, and with
+%% its reason through format_status/1 (edit 75).
+%%
 %% %CopyrightEnd%
 %%
 -module(proc_lib).
@@ -960,31 +964,60 @@ crash_report(Class, Reason, StartF, Stacktrace) ->
                  error_logger=>#{tag=>error_report,type=>crash_report}}).
 
 my_info(Class, Reason, [], Stacktrace) ->
-    my_info_1(Class, Reason, Stacktrace);
-my_info(Class, Reason, StartF, Stacktrace) ->
+    my_info_1(Class, Reason, Stacktrace, shown);
+my_info(Class, Reason, {Mod,_,_} = StartF, Stacktrace) ->
     [{initial_call, StartF}|
-     my_info_1(Class, Reason, Stacktrace)].
+     my_info_1(Class, Reason, Stacktrace, held_terms(Mod, Class, Reason, Stacktrace))].
 
-my_info_1(Class, Reason, Stacktrace) ->
+my_info_1(Class, Reason, Stacktrace, Held) ->
     Keys = [registered_name, dictionary, message_queue_len,
             links, trap_exit, status, heap_size, stack_size, reductions],
     PInfo = get_process_info(self(), Keys),
     {dictionary, Dict} = lists:keyfind(dictionary,1,PInfo),
+    {ErrorInfo, Messages, ReportDict} =
+        case Held of
+            shown ->
+                {{Class,Reason,Stacktrace}, get_messages(self()),
+                 {dictionary, cleaned_dict(Dict)}};
+            {hidden, HiddenInfo} ->
+                {HiddenInfo, {messages, []}, {dictionary, []}}
+        end,
     [{pid, self()},
      lists:keyfind(registered_name,1,PInfo),
      {process_label, get_label(self())},
-     {error_info, {Class,Reason,Stacktrace}},
+     {error_info, ErrorInfo},
      {ancestors, get_ancestors()},
      lists:keyfind(message_queue_len,1,PInfo),
-     get_messages(self()),
+     Messages,
      lists:keyfind(links, 1, PInfo),
-     {dictionary, cleaned_dict(Dict)},
+     ReportDict,
      lists:keyfind(trap_exit, 1, PInfo),
      lists:keyfind(status, 1, PInfo),
      lists:keyfind(heap_size, 1, PInfo),
      lists:keyfind(stack_size, 1, PInfo),
      lists:keyfind(reductions, 1, PInfo)
     ].
+
+%% erXos, edit 75: a process whose initial module exports format_status/1
+%% hides the terms it holds from its crash report, as its behaviour's
+%% terminate report does. Its reason passes through format_status/1 as
+%% #{reason => Reason}; when the callback crashes or gives an answer gen
+%% cannot use, gen's text for that failure stands in for the reason. Its
+%% stack trace keeps each frame's module, function and arity alone
+%% (gen:report_stacktrace/2). Its mailbox and dictionary are reported
+%% empty, as stock OTP reports those of a process that set
+%% process_flag(sensitive, true); the queue's length stays. A process
+%% whose initial call is unknown, or whose module has no format_status/1,
+%% is reported whole, as stock OTP reports it.
+held_terms(Mod, Class, Reason, Stacktrace) ->
+    case erlang:function_exported(Mod, format_status, 1) of
+        false ->
+            shown;
+        true ->
+            Status = gen:format_status(Mod, terminate, #{reason => Reason}, undefined),
+            ShownReason = maps:get('EXIT', Status, maps:get(reason, Status)),
+            {hidden, {Class, ShownReason, gen:report_stacktrace(Mod, Stacktrace)}}
+    end.
 
 %% The messages and the dictionary are possibly limited too much if
 %% some error handles output the messages or the dictionary using ~P

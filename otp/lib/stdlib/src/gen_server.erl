@@ -17,6 +17,9 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
+%% Modified by erXos: the terminate report of a module that exports format_status/1
+%% shows its stack trace without arguments (edit 75).
+%%
 %% %CopyrightEnd%
 %%
 -module(gen_server).
@@ -2779,7 +2782,9 @@ error_info(#server_data{name = Name, module = Mod}, State, Msg, From, Reason, ST
                 %% stacktrace is irrelevant.
                 maps:get(reason, Status);
            true ->
-                {maps:get(reason, Status), ST}
+                %% erXos, edit 75: a module that exports format_status/1 hides
+                %% its frames' arguments too (gen:report_stacktrace/2).
+                {maps:get(reason, Status), gen:report_stacktrace(Mod, ST)}
         end,
 
     ?LOG_ERROR(#{label=>{gen_server,terminate},
@@ -2995,12 +3000,16 @@ format_log_multi(#{label:={gen_server,no_handle_info},
                     end,
     {Format,Args}.
 
+%% erXos, edit 75: a frame cut by gen:report_stacktrace/2 carries its arity.
+frame_arity(A) when is_integer(A) -> A;
+frame_arity(A) -> length(A).
+
 fix_reason({undef,[{M,F,A,L}|MFAs]}=Reason) ->
     case code:is_loaded(M) of
         false ->
             {'module could not be loaded',[{M,F,A,L}|MFAs]};
         _ ->
-            case erlang:function_exported(M, F, length(A)) of
+            case erlang:function_exported(M, F, frame_arity(A)) of
                 true ->
                     Reason;
                 false ->
