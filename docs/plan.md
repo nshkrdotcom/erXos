@@ -2322,13 +2322,14 @@ its code, and the item's work waits on it.
   backend's code powers it off
   ([design-fiasco.md](design-fiasco.md#what-the-code-does-today)); 0.1
   takes the end path's reset, in which every end names its cause and
-  only a requested power-off powers off. The root's watchdog thread arms the Pi 4's power-management
+  only a requested power-off halts the board in the firmware. The root's watchdog thread arms the Pi 4's power-management
   watchdog on every boot and reloads it at each step, so a hang of
   Fiasco or of the root resets the board within 4 s
   ([design-fiasco.md](design-fiasco.md#the-watchdog), FD29); its
   registers come from a clean-room facts record of the watchdog, as the
-  RNG200's do. Whether a requested off stops that watchdog is the open
-  decision below. Updates are by reflashing the card, which takes `/data`
+  RNG200's do. Nothing stops it, a requested off included: on the Pi 4 a
+  requested power-off halts the board in the firmware and the watchdog
+  resets it about 4 s later. Updates are by reflashing the card, which takes `/data`
   with it; no update service and no trial boot.
 * **The preview's kernel.** **No design**:
   [design-fiasco.md](design-fiasco.md#the-releases-fiasco-build) has
@@ -2390,7 +2391,8 @@ its code, and the item's work waits on it.
   downloads, its source under `site/`. They carry 0.1's known
   limitations: what it leaves to R1 and later (below); the clock, unset
   at each boot until root sets it; whoever can write the card can make
-  themselves root; and the security residuals a user of 0.1 is exposed
+  themselves root; a requested off on the Pi reboots it, which only
+  cutting the power turns off; and the security residuals a user of 0.1 is exposed
   to, each pointing to its row in the
   [downsides](design-fiasco.md#downsides-against-erxoss-kernel) or its
   `TODO.md` item rather than copying it: a development build, in which
@@ -2410,28 +2412,6 @@ its code, and the item's work waits on it.
   criterion.
 * **The browser demo** runs 0.1's image
   ([site/README.md](../site/README.md)).
-
-**Open decision: the hardware watchdog after a requested off.**
-design-fiasco.md's [watchdog](design-fiasco.md#the-watchdog) has
-`ERX_END_OFF` stop the Pi 4's hardware watchdog before the power-off,
-while design-platforms.md's
-[watchdog](design-platforms.md#the-watchdog) has the platform layer
-never stop it (PL4).
-
-* (a) A requested off stops the watchdog, with the watchdog thread the
-  only writer of the watchdog's window: the end path records that the
-  machine is ending with an off, and the thread, at its next step,
-  stops the watchdog instead of reloading it. The
-  same rule goes into design-platforms.md's
-  [Ending the machine](design-platforms.md#ending-the-machine) for
-  erXos's kernel, and PL4 is reworded to allow that one stop.
-* (b) A requested off leaves the watchdog running, so the board resets
-  4 s after it and boots again; PL4 stays as it is, and the Pi's
-  checklist case after a requested off expects that reset instead.
-
-Recommendation: (a). On a board that cannot cut its own power, a
-requested off that reboots 4 s later is not an off, and keeping one
-writer of the window keeps the stop out of every other path.
 
 **Exit criteria.** Each runs on 0.1's commit.
 
@@ -2482,8 +2462,8 @@ writer of the window keeps the stop out of every other path.
 * By hand on the 4 GB Pi, a development image whose root stops its
   watchdog thread once it has armed the hardware watchdog resets within
   4 s and boots back to the kiosk; seeded: the arming skipped, the board
-  stays hung. After a requested off, the board is still halted 10 s
-  later; seeded: the stop skipped, the board resets within 4 s.
+  stays hung. After a requested off, the board restarts within about
+  5 s.
 * By hand on QEMU, from a clean clone, Doom's getting-started steps
   build Doom's local image, which boots to Doom's title, and a key from
   the virtio keyboard moves its menu. No gate builds Doom

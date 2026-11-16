@@ -2276,14 +2276,13 @@ step and reloads it at every step, through a window of the watchdog's block that
 root maps, as it reaches the mailbox for the trial request. A hang of Fiasco or of the root stops the steps, and the
 hardware resets the board within the timeout: after a trial boot the firmware's one-shot flag is spent, so the committed
 slot boots, and after any other boot the board boots its slot again. In deterministic mode, where the step is off, the
-thread does not arm it. `ERX_END_OFF` stops it before the power-off ([The end path](#the-end-path)), so a board halted
-on request stays halted; every other end leaves it running, so an end that hangs still resets. A board stopped in the
+thread does not arm it. No end stops it ([The end path](#the-end-path)), so a board halted on request, and an end that
+hangs, reset when it fires. A board stopped in the
 kernel debugger, which development builds keep, resets within the timeout. This is a platform item the root stands in
 for, as the trial request is, not a kernel mechanism rebuilt in user mode. It arms the same watchdog as erXos's kernel,
 on every boot only on Fiasco: on erXos's kernel the firmware starts it on an unattended board or the kernel under a
-machine lease, and the platform layer never stops it
-([design-platforms.md](design-platforms.md#the-watchdog), PL4); whether a requested off stops it is open
-([plan.md](plan.md), 0.1). A hang before the root's thread starts, in the
+machine lease. Neither kernel ever stops it
+([design-platforms.md](design-platforms.md#the-watchdog), PL4). A hang before the root's thread starts, in the
 firmware's own stage or in Fiasco's boot, is not covered: U3 of [design-storage.md](design-storage.md#invariants) states
 that on a board whose firmware does not run the watchdog from power-on a trial whose firmware stage hangs needs a power
 cycle, and on Fiasco that stretch runs until the root's watchdog thread starts. The watchdog's registers and their sequence come from
@@ -2316,8 +2315,7 @@ The service answers `erx_machine_end` for the root task alone and refuses it fro
 4. **The end.** A last line through `l4_vcon_write` naming the end taken, `erx: end off`, `reset`, `panic` or `trial`, as erXos's
    kernel's last line names its end ([design-kernel.md](design-kernel.md#console-log-and-panic)), so a test reads which end was taken.
    Then, by `how`:
-   * `ERX_END_OFF`: on a board whose hardware watchdog the root armed, the root stops it through the same window
-     ([The watchdog](#the-watchdog)); then `l4_platform_ctl_system_shutdown(L4_BASE_ICU_CAP, 0)`. `ERX_END_RESET`, a root fault, the root's own stop and
+   * `ERX_END_OFF`: `l4_platform_ctl_system_shutdown(L4_BASE_ICU_CAP, 0)`. `ERX_END_RESET`, a root fault, the root's own stop and
      a missed pet: the same with 1 (`platform_control_object.cpp:82-96`).
    * `ERX_END_PANIC`: the crash record of cause `ERX_CRASH_HALT` at step 3 and a line saying the system domain asked, then the
      reset.
@@ -2613,7 +2611,8 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   `config/fiasco/kernel.defconfig`), which finds the interrupt controller, the timer and PSCI's calling method in the
   device tree. BL31's PSCI starts the other CPUs, and `l4_platform_ctl_system_shutdown` reaches its `SYSTEM_OFF` and
   `SYSTEM_RESET` ([The end path](#the-end-path)). `SYSTEM_OFF` leaves the board halted in the firmware, which cannot
-  turn it off, so an end by `ERX_END_OFF` lasts until its power is cycled by hand; a missed pet and a root fault reset
+  turn it off, and the hardware watchdog the root armed resets it about 4 s later, so an end by `ERX_END_OFF` on the
+  Pi 4 reboots the board and only cutting its power turns it off; a missed pet and a root fault reset
   ([The end path](#the-end-path)).
 * **The hardware watchdog.** The board's power-management watchdog, a unit of the platform record
   (`config/platforms/raspi4b.json`) that the manifest gives the system domain, whose window only the root maps, armed

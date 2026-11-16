@@ -585,12 +585,11 @@ it; git history is the record of completed work.
   `config/platforms/raspi4b.json`): on every boot the root's watchdog thread arms the BCM2711's
   power-management watchdog with a 4 s timeout and reloads it at every step, through a window of a platform
   unit only the root maps, so a hang of Fiasco or of the root resets the board, into the committed slot after a
-  trial boot; `ERX_END_OFF` stops it before the power-off. Needs the clean-room facts record of the watchdog,
+  trial boot; no end stops it, so a requested off on the Pi reboots the
+  board about 4 s later. Needs the clean-room facts record of the watchdog,
   as the RNG200's; its cases are on the board's manual checklist: a development image whose root stops its
   watchdog thread once it armed the watchdog resets within the timeout and boots again; seeded: the arming
-  skipped, so the board stays hung; and after a requested off the board is still halted 10 s later; seeded: the
-  stop skipped, so the board resets. Whether a requested off stops the watchdog at all is an open decision of
-  [plan.md](docs/plan.md) (0.1)
+  skipped, so the board stays hung; and after a requested off the board restarts within about 5 s
   ([design-fiasco.md](docs/design-fiasco.md#the-watchdog)).
 * [High] apps, an app principal's wall on both kernels (`liberx/system/dom_boot.c`, `erx_domain_core.erl`):
   the domain library carves each app principal's budget at boot as an elastic budget with no guarantee, which
