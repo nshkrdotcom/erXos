@@ -2777,20 +2777,20 @@ by side; (f) needs (b) and (c).
   4. **W3, an open network.** The choice and the join machine with
      its transition table; DHCP, ping, UDP echo and a TCP transfer
      over `wlan0`, as (c) runs them over GENET.
-  5. **W4, WPA2-PSK.** The key holder's seam with the development
-     holder behind it; the 4-way and group handshakes on the host,
-     each PTK asked of the holder, each key installed once, a group
-     rekey survived; the network's secret given through `ctl`; the
-     failure memory, with a wrong passphrase shown as
-     `secret_rejected`.
+  5. **W4, WPA2-PSK.** The key holder's two interfaces with the
+     development holder behind them; the 4-way and group handshakes on
+     the host, each PTK asked of the holder, each key installed once,
+     a group rekey survived; the network's secret given with root's
+     `wlankey`, which derives in the session; the failure memory, with
+     a wrong passphrase shown as `secret_failed`.
   6. **W5, WPA3-SAE with PMF.** OTP `crypto`'s three SAE functions
      behind the holder, SAE with hash-to-element through the
      firmware's external authentication, PMF, and the Transition
      Disable mark; it needs the firmware's `sae_ext` capability,
      which W1 reads, and without it WPA3 is reported unsupported.
 
-  The key holder's release form, the vault's purpose, is the vault's
-  work and waits for the decision
+  The key holder's release form, the vault's purpose or a WiFi key
+  domain, waits for the decision
   [design-wifi.md](design-wifi.md#open-decisions) records; W0 to W5
   do not wait for it.
 
@@ -2874,7 +2874,9 @@ by side; (f) needs (b) and (c).
   checklist with its loopback jumpers, run by hand once per package.
 * **WiFi off the board.** QEMU has no WiFi device. (f)'s cores run on the
   host against recordings, published vectors and wpa_supplicant and
-  hostapd 2.12 on the FreeBSD x86-64 test host; a fake chip behind the
+  hostapd 2.12, WPA2's on the FreeBSD x86-64 test host and SAE's on the
+  test access point's host, since hostapd's BSD driver carries no SAE
+  frames; a fake chip behind the
   `sdio` interface runs the WiFi domain in hosted mode and on QEMU
   `virt`, where the network stack's suites run over `wlan0` unchanged
   and the station's scenarios run against a scripted air
@@ -2926,7 +2928,7 @@ by side; (f) needs (b) and (c).
 * (f): on the board, W0's and W1's log lines; no scan before a country
   is configured; a scan listing the test access point; DHCP, ping, UDP echo and a TCP transfer on the open, the
   WPA2 and, given `sae_ext`, the WPA3 network; a wrong passphrase shown
-  as `secret_rejected` at `/proc` and joined once the right one is
+  as `secret_failed` at `/proc` and joined once the right one is
   given; the WiFi domain killed under load joining
   again while `genet0` carries on; a 64 MiB write to `/data` beside a TCP
   transfer over `wlan0`, both completing; (b)'s power-cut checklist
