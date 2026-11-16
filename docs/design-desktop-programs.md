@@ -312,7 +312,9 @@ What follows from this shape:
   the host tests that finds the one node of a given kind, text, role or
   `name`, refusing a query that matches none or several, and turns that
   node's event into the input the widget server would send, such as
-  `{ui, Window, Term, click}` for a button's `on_click`. So a test reads
+  `{ui, Window, Term, click}` for a button's `on_click`; it refuses an
+  event on a node that is disabled, hidden or under a hidden node, where
+  no renderer reports one, and one the server would drop. So a test reads
   "click Back, expect the parent folder's listing" and never indexes a
   tree by position.
 * **A core reloads in place.** In development, `tools/erx load` puts a

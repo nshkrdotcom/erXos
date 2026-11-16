@@ -7486,7 +7486,7 @@ document's "residual risks accepted" paragraph.
   clipboard whole at its close, and the manifest check's refusal of `clipboard` for a configured domain on a `single` display;
   `erx_input`'s "seen before pressed" on every gesture's first down, from `erx_screen`'s `{shown, D}`
   ([design-display.md](docs/design-display.md#the-input-router)); `erx_png` reading the
-  colour-space chunks as sRGB; `erx_ui_query` and `erx_desk:reload/1`
+  colour-space chunks as sRGB; `erx_desk:reload/1`, which needs the window process `erx_desk_window` (plan 8.4)
   ([design-desktop-programs.md](docs/design-desktop-programs.md#the-construction)); the theme's sizes as
   logical pixels at the window's scale. Each is small and lands with the next change to its module.
   Transitions ([Motion](docs/design-desktop-programs.md#motion)) come after the basic desktop runs,

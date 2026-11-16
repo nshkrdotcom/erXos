@@ -509,8 +509,8 @@ view(S) ->
 
 toolbar(#files{dir = Dir} = S) ->
     {row, #{},
-     [button(<<"<">>, back, S#files.back =/= []),
-      button(<<">">>, forward, S#files.forward =/= [])]
+     [button(<<"<">>, back, S#files.back =/= [], #{name => <<"Back">>}),
+      button(<<">">>, forward, S#files.forward =/= [], #{name => <<"Forward">>})]
      ++ path_buttons(components(Dir))
      ++ [{spacer, #{weight => 1}, []},
          {checkbox, #{text => <<"Hidden files">>, checked => S#files.hidden, on_change => hidden}, []},
@@ -526,7 +526,8 @@ path_buttons(Folders) ->
     [button(<<"/">>, {go, <<"/">>}, true) | Elided]
         ++ [button(shown(lists:last(P)), {go, folder_of(P)}, true) || P <- Kept].
 
-button(Text, Event, Enabled) -> {button, #{text => Text, on_click => Event, enabled => Enabled}, []}.
+button(Text, Event, Enabled) -> button(Text, Event, Enabled, #{}).
+button(Text, Event, Enabled, Props) -> {button, Props#{text => Text, on_click => Event, enabled => Enabled}, []}.
 
 label(Text) -> {label, #{text => Text}, []}.
 
@@ -541,7 +542,7 @@ items(#files{listing = #{names := Names, page := Page, infos := Infos}, generati
                    Index -> #{selected => Index}
                end,
     List = Selected#{key => Key, items => [shown(N) || N <- page_names(Names, Page)],
-                     on_change => {select, Key}, weight => 1},
+                     on_change => {select, Key}, on_submit => {open, Key}, weight => 1},
     [{list, List, []}, footer(tuple_size(Names), Page, Infos)].
 
 %% The list node's key: a new node for every listing and page.
