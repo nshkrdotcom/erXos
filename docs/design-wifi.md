@@ -1033,7 +1033,7 @@ lifecycle around them:
 
 | Part | Interface | Decides | Keeps |
 | --- | --- | --- | --- |
-| the choice, `erx_wifi_choose` | `choose(View) -> #{verdicts := [Verdict], pick := Candidate \| none}` | which BSS to join, and for every other BSS seen why not | nothing |
+| the choice, `erx_wifi_choose` | `choose(View) -> #{verdicts := [{Bss, Verdict}], pick := Candidate \| none}` | which BSS to join, and for every other BSS seen why not | nothing |
 | the join machine, `erx_wifi_join` | `step(Join, Event, Ctx) -> {Actions, Join}` | one join, from the request to an open port: SAE, the handshakes, rekeys, the port, and how the join ended | the association's state |
 | the failure memory, `erx_wifi_memory` | `fail/3`, `ok/2`, `held/3` | which BSS and which secret failed lately, and until when each is held | a bounded map |
 | the lifecycle, in `erx_wifi_sta` | the step above | whether the radio is up, when to scan, when to ask the choice, and the `ctl` commands | the configuration, the names, the marks it has learned, the scan table, `want` |
@@ -1149,7 +1149,7 @@ station cannot then tell a network it has no secret for from one whose
 secret it cannot reach, so it says neither.
 
 **The pick** is the candidate of the highest `priority`, then the
-strongest signal. A held BSS is never the pick.
+strongest signal, then the lowest address. A held BSS is never the pick.
 
 **Failure never changes admission.** `admit/4` takes no memory, so what
 is admitted, and with which AKM and PMF, is the same after any history
@@ -1206,7 +1206,7 @@ says where each kind of event applies and which states may follow:
 | `eapol`, a received EAPOL-Key frame | | | | `keys`, `idle` | `open`, `rekey`, `idle` | `rekey`, `idle` |
 | `set_keys_confirm` | | | | `keys`, `open`, `idle` | `open`, `idle` | `rekey`, `open`, `idle` |
 | `disconnected` | | `idle` | `idle` | `idle` | `idle` | `idle` |
-| `deadline` | | `joining`, `idle` | `sae`, `idle` | `keys`, `idle` | | `open` |
+| `deadline` | | `idle` | `sae`, `idle` | `idle` | | `open` |
 
 An empty cell is an event that does not apply: `step/3` drops it,
 counts it as `unexpected_event` and changes nothing. A filled cell names
@@ -1252,7 +1252,12 @@ What the cells do:
   join.
 * **`disconnected`**, the firmware's link down or the access point's
   deauthentication or disassociation, ends the join in every state.
-* **`deadline`** in `rekey` drops the pending PTK and returns to
+* **`deadline`** ends the join in `joining` and `keys`; in `sae` it is
+  the exchange's own, which sends a frame again or ends, and once the
+  exchange is accepted it is the connect's, which ends the join; one that comes
+  before its time is dropped, counted as `early_deadline`, and takes no
+  edge, as a handler takes none for any event it refuses. In `rekey` it
+  drops the pending PTK and returns to
   `open` under the keys still installed: a message 1 has no MIC, so a
   forged one may start a rekey, and must not end the association. A
   genuine rekey that stalls is the access point's to end, which it does
@@ -1313,7 +1318,7 @@ A held BSS, and every BSS of an SSID whose secret is held, is not a
 candidate until the hold ends; the verdict says which and until when.
 Holds are compared with the time at each choice, so the memory has no
 timer of its own, as iwd's blocklist has none (iwd fact 20). It holds at
-most 32 BSS records, dropping the one whose hold ends first, and one
+most 32 BSS records, dropping, of the others, the one whose hold ends first, and one
 record per SSID with a secret. A restart of the domain empties it.
 
 What the memory is for:
@@ -1684,7 +1689,15 @@ counted as `bad_element`, and the exchange goes on to the peer's
 genuine commit.
 
 Its states are wpa_supplicant's: nothing, committed, confirmed, accepted
-(`sae.h:113-115`). How far the three functions are constant-time is a
+(`sae.h:113-115`), with two while the holder works: committing while it
+makes the commit, and keying while it makes the KCK of the peer's
+commit. A commit the checks pass moves committed to keying; the KCK
+moves keying to confirmed, with the confirm sent; and `bad_element`
+returns keying to committed, as it was before that commit. While
+keying, any other commit is dropped, counted as `sae_unexpected`, so
+the station confirms only over the commit whose KCK it asked for,\nwhatever order the events arrive in; a
+refusal still ends the exchange, and nothing is sent again, since the
+peer's commit answered the station's. How far the three functions are constant-time is a
 residual of [Security](#security). A network that offers SAE without
 hash-to-element in its RSNXE (bit 5, `ieee802_11_defs.h:632`) is not an
 SAE candidate: hunting-and-pecking derives its element per exchange, in

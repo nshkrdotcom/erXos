@@ -7873,6 +7873,80 @@ document's "residual risks accepted" paragraph.
   [design-find-act.md](docs/design-find-act.md#decisions), decision 3): `[apps]` is visible only at scope `all`, so a
   release build's palette lists no apps and `service -e` cannot read `declared_enable`; design-apps decides which
   sessions see the row names, and the palette follows it.
+* [Medium] WiFi supplicant cores (`erlang/apps/erx_wifi`, `erx_wpa_kdf`, `erx_wpa_key`;
+  [design-wifi.md](docs/design-wifi.md#the-supplicant)), left by the first slice:
+  - the bytes the MIC covers have no independent oracle: a recorded message 3 from hostapd
+    (a capture, or one built by hostapd's own code on the host) checked through `decode`,
+    `mic_input` and `check_mic`, with a seeded fault; wpa_supplicant 2.12's tarball carries
+    no such frame (its hwsim tests are not in it);
+  - `build/4` takes an untyped `map()`: a caller that leaves out a key gets a `function_clause`
+    whose arguments carry the KCK; a map type per message kind lets Dialyzer catch it;
+  - the MIC input ends at the key data, while wpa_supplicant covers the whole EAPOL body
+    (`wpa.c:4005`); a body longer than its key data fails the MIC (safe, but not
+    wpa_supplicant's behavior);
+  - whether a second RSN element in message 3 is allowed is checked against the standard (the
+    codec refuses it);
+  - the codec reads no Transition Disable KDE (the Wi-Fi Alliance's OUI, `wpa_common.h:155`),
+    so `erx_wifi_join` reports no `{transition_disable, SSID}` ("The 4-way handshake"), and
+    Verification's property and seed for it wait with it;
+  - `erx_wifi_join` takes the station's own RSN element and RSNXE in the `join` request; nothing
+    builds them from the candidate's AKM and PMF yet, which wants the RSN element's layout in
+    `abi/formats/ieee80211.txt`;
+  - SAE's secret half is not built: the key holder (`erx_wpa_holder` over `erx_wpa_arith`),
+    `wlankey`'s hashed values (`erx_wpa_secret`) and `crypto`'s `sae_pt/3`, `sae_commit/5`
+    and `sae_key/5` ("OTP's `crypto`: SAE's arithmetic"). `erx_sae`'s tests stand on
+    `test/erlang/erx_sae_peer.erl`, whose arithmetic on Erlang integers matches Annex J.10's
+    vectors; the holder's cases and seeds of Verification (the element not negated,
+    `sae_key/5`'s `badarg` escaping, a keyseed salted with zeros whatever the list, the
+    entropy seam's scalar of 1) and the recorded hostapd exchange wait for them. The call
+    that performs a request to the holder belongs to the station's process;
+  - `erx_sae` takes a password identifier in `new/1`, but `erx_wifi_join` passes none, since
+    the choice's candidate does not carry the identifier the holder's names report;
+  - SAE's `keying` state: no join-level case drives a holder's `bad_element` through
+    `erx_wifi_join`, whose `sae_step/4` keeps the exchange a drop returns (reverting it to
+    `{drop, Check}` fails no test), and the exploration's check that a counted drop changes
+    nothing but `counts` would fail on that answer; and a drop carries no deadline, so a
+    deadline met in `keying` followed by `bad_element` leaves no resend of the commit before
+    the exchange's end, which the station's ordering of the holder's answers keeps from
+    happening;
+  - the join's state holds SAE's KCK while the exchange runs, so the station's process must
+    keep it out of crash reports, `sys` and `/proc` with the logger filter below;
+  - the join's exploration derives an SAE join's PTK from its fixed PMK, not from the
+    exchange's, which `erx_sae_tests` checks the holder and the access point agree on;
+  - `erx_wifi_join`'s review left: the join is one map with `_ => _` whose association
+    fields exist only after `join`, so Dialyzer cannot catch a missing one (a record or a
+    map type per phase would); message 3's checks are spread over `eapol/4`, `message/5`,
+    `protected_key_data/3` and `message_3/5` rather than one named sequence in the design's
+    order; `{disconnect, Ref, Reason}` carries the machine's own reason, which wants one
+    mapping to 802.11 reason codes ("RSN element different"); group message 2 goes out
+    before the install it answers, as message 4 does, which the design's group paragraph
+    does not state; `step/3` fails on an event kind outside the table, a contract the
+    station's process must keep;
+  - the join's exploration: no property says that once the access point has message 4 and
+    every install is confirmed the port is open without another frame (liveness always
+    starts a new handshake); the end of a rekey is not checked against the chip's
+    confirmed slots as the port's opening is; the seed that removes `eapol`'s `open` cell
+    is caught by liveness, not as an edge never taken, since the edge list is read from
+    the seeded table;
+  - hand-copied facts: `-type akm()` repeats the `ieee80211_akm` enum (the generator could
+    emit a type per enum), and the 64- and 48-bit widths of the RSC, IPN and unwrap
+    semiblock are written beside their layout counts;
+  - ordering: `erx_wifi_report`'s logger filter (design-wifi.md, "Security") must land with
+    the first process that calls these cores, since a `function_clause` in `pmk/2` or
+    `build/4` carries the passphrase or the KCK in its arguments.
+
+* [Low] WiFi station's choice (`erx_wifi_choose`;
+  [design-wifi.md](docs/design-wifi.md#choosing-a-network)), left by its first slice:
+  - the BSS record carries no group management cipher, so a PMF BSS that offers
+    BIP-GMAC-256 rather than BIP-CMAC-128 is admitted and then fails its join; admission
+    could refuse it `cipher_unsupported` once the scan's element parser reads that field;
+  - the blocks a view holds must have every key filled in: `erx_wpa_conf` fills a parsed
+    block over `erx_wifi_choose:default_block/0`, the one statement of the defaults, and
+    a block without `priority` or `ieee80211w` is not refused by the choice itself;
+  - the generated-view property counts none of the cases it reaches (picks, `bss` and
+    `secret_failed` holds, SSIDs marked by the names), so a generator change that stops
+    reaching one goes unnoticed.
+
 * [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for

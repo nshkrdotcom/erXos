@@ -89,7 +89,7 @@ The declaration forms are:
 | `flags NAME TYPE` | indented `bit NAME POSITION` members; every position explicit and distinct |
 | `bytes NAME LENGTH` | a fixed byte count, with an optional `value HEX_BYTES` constraint |
 | `layout NAME STORAGE ALIGN SIZE` | ordered fields; `STORAGE` is `wire_le`, `shared`, `native`, `packed_le` or `packed_be` ([Packed layouts](#packed-layouts)); alignment and fixed prefix size are explicit |
-| `elements NAME STORAGE TAG_ENUM LENGTH_TYPE` | tag, length and body records repeated to the end of their bytes, with indented `element MEMBER REPEAT BODY` members ([Element sequences](#element-sequences)) |
+| `elements NAME STORAGE TAG_ENUM LENGTH_TYPE [end MEMBER]` | tag, length and body records repeated to the end of their bytes or an end marker, with indented `element MEMBER REPEAT BODY` members ([Element sequences](#element-sequences)) |
 | `variant NAME PREFIX TAG_FIELD TAG_ENUM MAX_BYTES` | a fixed prefix containing the tag and indented `case TAG BODY_LAYOUT` members; each body begins after the prefix |
 | `status NAME INTEGER DESCRIPTION` | a signed 32-bit result; zero is success and every error is negative |
 | `signal NAME NUMBER ACTION [alias NAME] "DESCRIPTION"` | a signal of the [signal table](design-programs.md#signal-numbers), in `signals.txt`: its name without `SIG` in lower case, a distinct number 1 through 128, its default action, `terminate`, `ignore`, `stop` or `continue`, or `reserved` for a number the C library keeps, and its description, FreeBSD's `sys_siglist` text, quoted and last, which a reserved one lacks; the generator gives each name and alias the constant `ERX_SIG` and its name in upper case, `erx/abi.h` the lookups `erx_sig_name`, `erx_sig_action`, `erx_sig_valid` and `erx_sig_description`, musl's generated `bits/signum.h` each name and alias as `SIG` and its name in upper case, a reserved one only under `_BSD_SOURCE` or `_GNU_SOURCE`, with `_NSIG` 128, and `erx_abi_signals` the protocol names of the signals a program may name |
@@ -296,7 +296,7 @@ An element sequence is records of a tag, a length and a body of that
 many bytes, repeated to the end of a buffer: IEEE 802.11's information
 elements, and the key data elements of an EAPOL-Key frame
 ([design-wifi.md](design-wifi.md)). `elements NAME STORAGE TAG_ENUM
-LENGTH_TYPE` declares one:
+LENGTH_TYPE [end MEMBER]` declares one:
 
 * `STORAGE` is `packed_le` or `packed_be`, the byte order of the tag and
   the length, and the storage of every layout a body names.
@@ -306,6 +306,14 @@ LENGTH_TYPE` declares one:
   the enumeration's and the spec has one sorted form.
 * `LENGTH_TYPE` is an unsigned base integer, `u8` to `u64`, the length's
   width. The length counts the body's bytes alone.
+* `end MEMBER`, when present, names the end marker: a header of
+  MEMBER's tag with length zero, or MEMBER's tag alone as the last bytes,
+  ends the sequence, and nothing after it is read. It is how a sender
+  pads a sequence to a block size, as the padding of an EAPOL-Key
+  frame's encrypted key data does (0xdd, then zero bytes); the encoder
+  writes no marker, and a sender appends its padding itself. MEMBER's
+  element has a body of at least one byte, which the model checks, so a
+  header of length zero is never also an element.
 
 Each member is `element MEMBER REPEAT LAYOUT` or `element MEMBER REPEAT
 bytes MIN MAX`. `REPEAT` is `once`, for an element that appears at most
@@ -319,7 +327,8 @@ The generated module `erx_abi_packed` gives `decode_elements/2`, a
 sequence's bytes to `{ok, Elements}`, its known elements in order as
 `{Name, Body}`, a body a binary or its layout's map, and
 `encode_elements/2`, such a list back to bytes. The decoder is total
-over any binary. Each step reads one tag and length, refuses
+over any binary. Each step stops at the end marker, if the sequence has
+one, and otherwise reads one tag and length, refuses
 `truncated` when the bytes end inside them and `overrun` when the
 length exceeds the bytes that remain, and only then forms the body; a
 known element's body outside its bounds is `{length, Name}`, and a
