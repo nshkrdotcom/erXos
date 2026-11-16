@@ -21,7 +21,7 @@ another operation or arity, a value outside its range or of another type.
 It creates no atom and never raises.
 
 It is also the clock facet's erx_facet callback, which the domain service
-mints for each grantee of `clock` in front of erx_clock's supervisor.
+mints for each grantee of `clock` in front of erx_clock_sup.
 operation/1 names the operation of what decode/1 admits and nothing else,
 so the facet's check of the grant's operations and admit/3 cannot read one
 request two ways: a grant of `sample` alone refuses a set with

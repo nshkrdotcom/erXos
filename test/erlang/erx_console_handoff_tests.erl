@@ -71,10 +71,10 @@ the_console_writes_the_services_lines(_Recorder) ->
                                        binary:match(W, <<"system: a<U+001B>[2Jb\r\n">>) =/= nomatch])
            end).
 
-%% erx_syslog_sup as kernel_sup starts it in the system domain; start_link/0 ignores a
+%% erx_syslog_sup as kernel_sup starts it in the system domain; start_link/1 ignores a
 %% runtime whose user is not the system console, as this test's is not.
 start_syslog() ->
-    supervisor:start_link({local, erx_syslog_sup}, erx_syslog_sup, []).
+    erx_service_sup:start_link(log, erx_syslog).
 
 start_console() ->
     {ok, Console} = erx_console:start_link(#{role => system, name => erx_console, menu => false,

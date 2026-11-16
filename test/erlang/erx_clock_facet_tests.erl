@@ -10,12 +10,14 @@
 -module(erx_clock_facet_tests).
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
--export([export/3, owner/1, init/1, stand_in/0]).
+-export([export/3, owner/1, start_link/0, init/1]).
 
 -define(GRANTEE, 7).
 -define(MAX, ?ERX_TIME_OFFSET_MAX).
 -define(DISTANCE, ?ERX_CLOCK_DISTANCE_MAX_NS).
 -define(SERVER, {192, 0, 2, 1}).
+%% The wall offset whose set crashes the stand-in for erx_clock.
+-define(CRASH, 13).
 
 %% The facet's exports module: the export reaches the test, and every local caller is
 %% the grantee's.
@@ -104,11 +106,11 @@ no_clock_test() ->
     ?assertEqual({error, badarg}, call(Facet, {set, -1})),
     exit(Facet, kill).
 
-%% The supervisor of a stand-in for erx_clock, which answers each forwarded call
-%% {ok, Forwarded}, as erx_clock's is the server of clock.
-init(stand_in) ->
-    {ok, {#{strategy => one_for_one, intensity => 5, period => 10},
-          [#{id => erx_clock, start => {?MODULE, stand_in, []}}]}}.
+%% A stand-in for erx_clock, which crashes on a set to ?CRASH and answers every other
+%% forwarded call {ok, Forwarded}, and its start under erx_clock_sup
+%% (erx_service_sup:start_link/2).
+start_link() ->
+    stand_in().
 
 stand_in() ->
     Pid = spawn_link(fun answer/0),
@@ -116,26 +118,76 @@ stand_in() ->
     {ok, Pid}.
 
 answer() ->
-    receive {'$gen_call', From, Forwarded} -> gen:reply(From, {ok, Forwarded}) end,
+    receive
+        {'$gen_call', _From, {set, _Source, ?CRASH}} -> exit(crashed);
+        {'$gen_call', From, Forwarded} -> gen:reply(From, {ok, Forwarded})
+    end,
     answer().
 
+%% A stand-in for kernel_safe_sup, one_for_one at its four restarts an hour, with the
+%% one child Spec.
+init({safe, Spec}) ->
+    {ok, {#{strategy => one_for_one, intensity => 4, period => 3600}, [Spec]}}.
+
 %% The design's restart (docs/design-time.md, "Concurrency and failure"): erx_clock
-%% crashes, its supervisor restarts it, and the facet minted before the crash reaches
+%% crashes, erx_clock_sup restarts it, and the facet minted before the crash reaches
 %% the new one; no grant ends.
 restart_test() ->
-    {ok, Sup} = supervisor:start_link(?MODULE, stand_in),
+    {ok, Sup} = erx_service_sup:start_link(clock, ?MODULE),
     unlink(Sup),
     try
-        Facet = facet([set], Sup),
+        ?assertEqual(Sup, server()),
+        Facet = facet([set], server()),
         ?assertEqual({ok, {set, ?GRANTEE, 5}}, call(Facet, {set, 5})),
         Crashed = whereis(erx_clock),
         stop(Crashed),
         restarted(Crashed),
         ?assertEqual({ok, {set, ?GRANTEE, 6}}, call(Facet, {set, 6}))
     after
-        %% The stand-in ends with it, and with it the name erx_clock.
-        stop(Sup)
+        %% An orderly stop ends the stand-in, and with it the name erx_clock, first.
+        gen_server:stop(Sup),
+        persistent_term:erase({erx, serves})
     end.
+
+%% A crash loop (docs/design-time.md, "Concurrency and failure"): a request that
+%% crashes erx_clock every time, sent again at each restart, ends erx_clock_sup once
+%% past its intensity, and with it the facet, so date's next set finds no facet
+%% (noproc, eagain's text: erx_cmd_date_tests). kernel_safe_sup, which holds
+%% erx_clock_sup by erx_service_sup:child_spec(clock), neither restarts that end nor
+%% counts it, so it and the system domain run on.
+crash_loop_test() ->
+    Spec = (erx_service_sup:child_spec(clock))#{start := {erx_service_sup, start_link,
+                                                          [clock, ?MODULE]}},
+    {ok, Safe} = supervisor:start_link(?MODULE, {safe, Spec}),
+    unlink(Safe),
+    try
+        Sup = whereis(erx_clock_sup),
+        SupDown = monitor(process, Sup),
+        ?assertEqual(Sup, server()),
+        Facet = facet([set], server()),
+        FacetDown = monitor(process, Facet),
+        %% Four crashes erx_clock_sup restarts; the fifth passes its intensity.
+        [begin
+             Crashed = whereis(erx_clock),
+             ?assertEqual({error, failed}, call(Facet, {set, ?CRASH})),
+             restarted(Crashed)
+         end || _ <- lists:seq(1, 4)],
+        %% The stand-in's link exit reaches erx_clock_sup, and its monitor the facet,
+        %% before erx_clock_sup's own end does, so the facet answers before it ends.
+        ?assertEqual({error, failed}, call(Facet, {set, ?CRASH})),
+        receive {'DOWN', SupDown, process, Sup, _} -> ok end,
+        receive {'DOWN', FacetDown, process, Facet, _} -> ok end,
+        ?assert(is_process_alive(Safe)),
+        ?assertEqual([], supervisor:which_children(Safe)),
+        ?assertExit({noproc, _}, gen_server:call(Facet, {set, 5}))
+    after
+        stop(Safe),
+        persistent_term:erase({erx, serves})
+    end.
+
+%% The server of clock, as the domain service reads it when it mints.
+server() ->
+    maps:get(clock, persistent_term:get({erx, serves})).
 
 %% Once the supervisor has registered the erx_clock that replaces Crashed.
 restarted(Crashed) ->

@@ -4211,15 +4211,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   in a configured domain and an `erx_fs` grant check none, so such a row would grant
   every operation. The server's release is not checked to supply the service's
   interface.
-* [Medium] time, the clock service (`erlang/apps/erx/src/erx_clock.erl`, `otp/lib/kernel/src/kernel.erl`): the clock
-  facets stand in front of `kernel_safe_sup`, which `erx_clock:start_link/0` names the server of `clock` because a
-  supervisor runs a child's start in its own process, while the log facets stand in front of `erx_syslog_sup`, which
-  serves `log` from its own `init/1`: one property, two mechanisms, and `start_link/0` called from anywhere else would
-  serve its caller. Since the facet now outlives the service's restarts, a request that crashed `erx_clock` could be
-  re-sent at once, and five such crashes an hour end `kernel_safe_sup` and with it the system domain; none is known
-  (`decode/1` is total, `request/3` matches `erx_clock_nif:read/0`'s spec, the C side unchecked). An `erx_clock_sup`
-  mirroring `erx_syslog_sup`, with its own intensity, fixes both, and design-time.md should name what a clock facet
-  ends with.
 * [Low] time, the clock setter's chokepoint (`tools/lib/erx/chokepoint_rules/clock.rb`): it is a text check of five
   spellings, not the call-graph check [design-time.md](docs/design-time.md) names; a variable function name gets past
   it. The QEMU "Set by hand" case sets 2026-11-16 12:30 UTC, close to the host time the PL031 seeds, where the design

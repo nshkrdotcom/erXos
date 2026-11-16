@@ -342,7 +342,7 @@ The special cases this removes:
   sockets, sends, receives and calls the facet. The packet codec,
   `erx_ntp_wire`, is pure and the only reader of NTP bytes.
 * **The clock service**, `erx_clock`, a system service of the system
-  domain under the system release's supervisors, is the setting side. For
+  domain under its own supervisor, `erx_clock_sup`, is the setting side. For
   each sample it reads the page through `erx_clock_nif:read/0`, runs
   `erx_clock_core:decide/4`, a pure function from the request, its
   source domain, the page and its record to an action and the next
@@ -351,6 +351,14 @@ The special cases this removes:
   `/proc/time`. A crash restarts it with an empty record and loses only
   the record's history; no grant ends, and every decision reads the
   clock's state from the page ([What /proc shows](#what-proc-shows)).
+  `erx_clock_sup` is an `erx_service_sup`, as the log service's
+  `erx_syslog_sup` is ([design-log.md](design-log.md#service-lifetime-and-restart)):
+  it is the server of `clock`, so the facets stand in front of it and
+  outlive the service's restarts; it restarts the service at most four
+  times an hour; and it is a `temporary` child of `kernel_safe_sup`,
+  started before the domain service, so its end is neither restarted nor
+  counted there. Past that intensity it ends, and with it every clock
+  facet ([Concurrency and failure](#concurrency-and-failure)).
 * **The `clock` facet**, `erx_clock_facet`, is the `erx_facet` callback
   the domain service mints for each grantee of `clock`, as the log facet
   is minted ([design-log.md](design-log.md)). It decodes the request,
@@ -902,7 +910,7 @@ command raise.
 | Failure | Result |
 | --- | --- |
 | an operand or flag the command does not take | `date: illegal time format` for a bad time operand, then the usage line; status `usage`; nothing is sent |
-| the session holds no `clock` grant | `date: clock_settime: ` and `eperm`'s text; status 1 |
+| the session holds no `clock` grant, or its template grants one but the clock service had ended when the session started, so none was minted | `date: clock_settime: ` and `eperm`'s text; status 1 |
 | `W` outside `0..time_offset_max`: a time before 1970-01-01 plus the uptime, or after early 2116 | the facet's `{error, badarg}`, `einval`'s text; status 1; the page is unchanged |
 | no clock service registered, or the facet has ended | `{error, unavailable}`, or a facet that ended before the call, `eagain`'s text; status 1; the page is unchanged |
 | the backend cannot set wall time | `{error, unsupported}`, `enotsup`'s text; status 1 |
@@ -933,6 +941,7 @@ command raise.
 | the network domain restarts | the client, whose sockets end | the next poll opens a new socket on the new grant |
 | the clock service crashes before the setter ran | the facet, which answers `{error, unavailable}` or `{error, failed}` | the page is unchanged; the client's next sample, one unchanged interval later, is decided afresh, and steps if the boot is still cold |
 | the clock service crashes after the setter ran, before answering | the facet, which answers `{error, failed}` | the page holds `W`; the next sample is about 0 from it and is held. Either way nothing is lost, since the page is the state |
+| the clock service crashes a fifth time within an hour, as a request that crashes it each time and is sent again would make it | `erx_clock_sup`, which ends, and with it every clock facet | the machine runs on without a clock service, as it runs on without a log service: the page keeps its offset and wall time runs on from it with no step until the next boot. A session's `date` that sets answers `eagain`'s text, the facet having ended; a session started later is minted no `clock` facet, the server having ended, and its `date` answers `eperm`'s; `kernel_safe_sup` and the system domain run on |
 | the ntpd session crashes | the start table | restarted within the row's intensity; the page, not the session, says whether the boot is cold, so the restart renews no unrestricted step |
 | a server sends offsets of 1000 s or more | the client, which gets `{refused, panic}` | logged and counted; the client polls on and does not end, so the refusal causes no restart |
 | the clock was set wrong this boot | the operator, at `/proc/time` and the log | every later sample from a right server is refused `panic`; the operator sets the right time with `date` or reboots ([Steps](#steps)) |

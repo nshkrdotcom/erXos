@@ -12,7 +12,7 @@ require_relative '../../tools/fuzz/erx_clock_facet'
 # testing", decide, restart and facet decode): test/erlang/erx_clock_core_tests.erl,
 # the Steps table and the set clause, and test/erlang/erx_clock_facet_tests.erl, the
 # facet's decoder, its operation/1 and the facet admitting only its grant's operations
-# and outliving erx_clock's restart,
+# outliving erx_clock's restart, and a crash loop ending erx_clock_sup and not its parent,
 # compiled from source on stock's emulator (ERX_ERL and ERX_ERLC, which make check
 # supplies). Then each seeded fault is compiled in place of its module, and the cases
 # must fail on it, which shows they exercise what they guard.
@@ -23,6 +23,7 @@ class ErxClockTest < Minitest::Test
   CASES = %w[erx_clock_core_tests erx_clock_facet_tests].freeze
   CORE = 'erlang/apps/erx/src/erx_clock_core.erl'
   FACET = 'erlang/apps/erx/src/erx_clock_facet.erl'
+  SUP = 'erlang/apps/erx/src/erx_service_sup.erl'
 
   # Each fault: the module it is planted in, the text replaced and its replacement, or a
   # list of texts each replaced by its partner in a list of replacements.
@@ -49,7 +50,12 @@ class ErxClockTest < Minitest::Test
               from: 'step_source := Source, steps := Steps + 1}', to: 'steps := Steps + 1}'),
     Fault.new(name: "erx_clock's pid captured at mint", module: FACET,
               from: ['{ok, #{grantee => Grantee}}.', 'whereis(erx_clock)} of'],
-              to: ['{ok, #{grantee => Grantee, clock => whereis(erx_clock)}}.', 'maps:get(clock, State)} of'])
+              to: ['{ok, #{grantee => Grantee, clock => whereis(erx_clock)}}.', 'maps:get(clock, State)} of']),
+    Fault.new(name: 'erx_clock_sup restarted by its parent', module: SUP,
+              from: 'restart => temporary,', to: 'restart => permanent,'),
+    Fault.new(name: 'the parent named the server of clock', module: SUP,
+              from: 'ok = erx_facet:serve(Interface, self()),',
+              to: "ok = erx_facet:serve(Interface, hd(get('$ancestors'))),")
   ].freeze
 
   def test_clock_cases_pass_under_eunit

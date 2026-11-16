@@ -177,7 +177,7 @@ answers(Queue) ->
 %% request, forwards the next write to it. (A held write's `{error, failed}` is
 %% erx_facet's, through its monitor of the service, and erx_facet_tests' to show.)
 restart() ->
-    {ok, _Sup} = supervisor:start_link({local, erx_syslog_sup}, erx_syslog_sup, []),
+    {ok, _Sup} = erx_service_sup:start_link(log, erx_syslog),
     Old = whereis(erx_syslog),
     ?assertMatch([_ | _], batch(console, 1000)),
     exit(Old, kill),
