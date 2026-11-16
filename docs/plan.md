@@ -2289,7 +2289,9 @@ its code, and the item's work waits on it.
   `erx_ssh_dev` running OTP's ssh daemon in root's own session with
   root's own `net` grant, giving `rc` on a tty of that session, on QEMU
   in 1b-G and over the Pi's Ethernet in 1b-I's part (c). Its sessions are
-  interactive ttys only; an `exec` request is refused. The SSH domain,
+  interactive ttys only; an `exec` request is refused. It listens on
+  port 2222, since a privileged port is only a configured domain's;
+  port 22 comes with the SSH domain. The SSH domain,
   the login facet and exec jobs, stages 2 and 3, are 0.2's. The host key
   is made at the first boot in root's `/data/ssh` and kept across reboots
   ([design-ssh.md](design-ssh.md#host-keys)). The published images
@@ -2390,7 +2392,7 @@ its code, and the item's work waits on it.
   [downsides](design-fiasco.md#downsides-against-erxoss-kernel) or its
   `TODO.md` item rather than copying it: a development build, in which
   nothing enforces isolation between domains; a root `rc` reachable
-  over the network by any key in `authorized_keys`; SSH's network-facing code, OTP's transport and authentication included, running in root's own session with root's authority, so a flaw in it reached before login is root's session ([design-ssh.md](design-ssh.md#stages), stage 1); the DMA handover
+  over the network by any key in `authorized_keys`; SSH's network-facing code, OTP's transport and authentication included, running in root's own session with root's authority, so a flaw in it reached before login is root's session ([design-ssh.md](design-ssh.md#stages), stage 1); root's session holding a read-only grant of the card's login keys (`login_keys`) for that daemon, so the keys are readable in a session beside the system domain, until the SSH domain of 0.2 removes the grant ([design-ssh.md](design-ssh.md#invariants), H8); the DMA handover
   evidence not recorded for the boards; and a host key made on a weak
   seed ([design-ssh.md](design-ssh.md#host-keys)) when a boot's seed is
   the counter alone

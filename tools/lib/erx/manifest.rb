@@ -2554,8 +2554,10 @@ module Erx
 
       # The other half of "Who publishes it": a manifest with a record_volume window holds
       # exactly one service named login_keys_service, of the files interface, served by the
-      # window's holder, and one without holds none; and every facet row of it is the system
-      # domain's and read-only, a row that states no rights being rw (abi/services/files.txt).
+      # window's holder, and one without holds none; and every facet row of it is read-only,
+      # a row that states no rights being rw (abi/services/files.txt), and the system
+      # domain's or the system principal's session template's, whose daemon of SSH's stage 1
+      # reads root's keys (docs/design-ssh.md, "Invariants", H8).
       # facet_values holds each facet row's resolved parameters, in the rows' order.
       def check_login_keys_service(tables, facet_values)
         name = @codec.fixed_bytes('login_keys_service')
@@ -2572,11 +2574,15 @@ module Erx
           service.fetch('interface') == fetch_interface('files')
         invalid("the service named #{name} is served by the holder of the record_volume window", 8, 'service.server') unless
           window.fetch('holder') == service.fetch('server')
+        principal = reference(@source.machine, 'system_principal', 'principal')
+        root_template = tables.fetch('sessions').index { |row| row.fetch('principal') == principal }
+        grantees = [[grantee_kind('system'), 0], [grantee_kind('session'), root_template]]
         tables.fetch('facets').zip(facet_values).each do |facet, values|
           next unless facet.fetch('service') == index
 
-          invalid("facet #{facet.fetch('name')} grants #{name} to another grantee than the system domain", 8, 'facet.grantee') unless
-            facet.fetch('grantee_kind') == grantee_kind('system')
+          invalid("facet #{facet.fetch('name')} grants #{name} to another grantee than the system domain or " \
+                  'the system principal\'s session template', 8, 'facet.grantee') unless
+            grantees.include?(facet.values_at('grantee_kind', 'grantee'))
           invalid("facet #{facet.fetch('name')} grants #{name} other than read-only", 8, 'facet.parameter') unless
             values.fetch('rights', 'rw') == 'ro'
         end

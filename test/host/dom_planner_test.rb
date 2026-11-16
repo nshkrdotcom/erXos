@@ -827,10 +827,11 @@ class DomPlannerTest < Minitest::Test
   def development_source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
 
   # The source without the record_volume window, and so without the login_keys service its
-  # holder serves from it and the system domain's facet of that service, which come and go
+  # holder serves from it and the facets of that service, which come and go
   # with it (docs/design-ssh.md, "Who publishes it").
   def without_record_volume(source)
-    [/^window record_volume\n(?:  .*\n)*/, /^service login_keys\n(?:  .*\n)*/, /^facet login_keys\n(?:  .*\n)*/]
+    [/^window record_volume\n(?:  .*\n)*/, /^service login_keys\n(?:  .*\n)*/, /^facet login_keys\n(?:  .*\n)*/,
+     /^facet login_keys_session\n(?:  .*\n)*/]
       .reduce(source) { |text, record| ManifestContextFixture.substitute(text, record, '') }
   end
 

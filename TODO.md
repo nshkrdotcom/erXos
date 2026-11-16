@@ -9517,19 +9517,32 @@ document's "residual risks accepted" paragraph.
   `erx_ssh_dev:start/1`, so the two agree only by the harness's typing
   it. A constant of `abi/erx_abi.txt` that both read would make them one
   fact.
-* [Medium] SSH stage 1, card keys (`tools/lib/erx/manifest.rb`,
-  `check_login_keys_service`; [design-ssh.md](docs/design-ssh.md#invariants)
-  H8): `erx_ssh_dev` reads root's keys from the session's grant of
-  `login_keys`, but the manifest check gives that tree's grants only to
-  the system domain, so no manifest can grant it to root's session and
-  stage 1 admits only the development key. Granting it to root's session
-  widens H8's readers, an open decision; until it is made, the keys a
-  user writes to the card do not log in.
-* [Medium] SSH stage 1, the port ([design-ssh.md](docs/design-ssh.md#stages),
-  `tools/lib/erx/manifest.rb`, `check_net_ports`): the daemon listens on
-  2222, since the check gives a privileged port only to a configured
-  domain and root's session is not one. Whether stage 1 takes port 22 is
-  an open decision.
+* [Medium] SSH stage 2, root's session's grant of `login_keys`
+  (`config/manifest/development.txt`, `facet login_keys_session`;
+  `tools/lib/erx/manifest.rb`, `check_login_keys_service`;
+  [design-ssh.md](docs/design-ssh.md#invariants) H8): stage 1's daemon
+  reads the card's keys through a read-only grant to root's session
+  template, which the check admits beside the system domain's. When the
+  SSH domain lands, remove the grant and narrow the check back to the
+  system domain alone, as 0.1's known limitations say.
+* [Medium] SSH stage 2, port 22 ([design-ssh.md](docs/design-ssh.md#stages),
+  `tools/lib/erx/manifest.rb`, `check_net_ports`): stage 1 listens on
+  2222, since a privileged port is only a configured domain's; the SSH
+  domain takes port 22.
+* [Low] SSH, the browser demo's record volume
+  (`tools/lib/erx/platform.rb`, `site_manifest_source`;
+  [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)):
+  the design says the demo's manifest holds no `record_volume` window,
+  but qemu-virt's site manifest leaves out only web and display, so it
+  keeps the window, `login_keys` and both its grants. Harmless, since
+  the demo's medium holds no `authorized_keys`; the site manifest should
+  drop the window as the design says.
+* [Low] SSH stage 1, one lookup of root's session template
+  (`tools/lib/erx/manifest.rb`, `check_login_keys_service` and
+  `planned_sessions`): both find the system principal's template by
+  the same predicate, and the check resolves the system principal from
+  the source again though the header holds it; one helper would serve
+  both.
 * [Low] SSH stage 1, the channel's refusal
   (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `refuse/2`): it
   decides that a request wants a reply by the tuple's shape (an integer
@@ -9553,15 +9566,17 @@ document's "residual risks accepted" paragraph.
   (`erlang/apps/erx_session/src/erx_ssh_dev.erl`, `medium_file/0`): the
   host tests give the key callback a stand-in for the read of
   `login_keys`; the read through `erx:cap(login_keys)` and
-  `erx_file_remote` runs in no test, and cannot on QEMU until root's
-  session holds the grant (the card keys item above).
+  `erx_file_remote` runs in no test. A QEMU case whose medium holds
+  `authorized_keys` on its record volume, logging in with that key, would
+  run it.
 * [Low] SSH stage 1, signals
   (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `ending/3`): the
   tty's ending maps to SSH's signal names by one clause for `sigint`,
   while `erx_console:shell_ending/1` reports `{signaled, S}` for every
-  signal of the generated `ERX_SSH_LINE_SIGNAL_MEMBERS`, so a shell ended
-  by another of them crashes the channel instead of sending its
-  exit-signal. The name should come from that table.
+  member of the generated `ERX_SSH_LINE_SIGNAL_MEMBERS`. That set
+  (`abi/signals.txt`, `signal_set ssh_line`) holds only `int`, so a
+  signal added to it would crash the channel; the name should come from
+  that table.
 * [Low] SSH stage 1, the release string
   (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `EXEC_REFUSED`):
   the exec refusal names release 0.1 in a literal that must change by

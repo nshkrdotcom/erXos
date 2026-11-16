@@ -925,9 +925,10 @@ class ManifestStopgapTest < Minitest::Test
   # Root's login keys on the medium (docs/design-ssh.md, "Who publishes it"): the
   # record_volume window, the login_keys service its holder serves and the system
   # domain's read-only grant of it, as a board with SSH holds them. The cases add them
-  # to the development manifest taken without its own (WITHOUT_LOGIN_KEYS).
+  # to the development manifest taken without its own, root's session's grant included
+  # (WITHOUT_LOGIN_KEYS).
   WITHOUT_LOGIN_KEYS = [/^window record_volume\n(?:  .*\n)*/, /^service login_keys\n(?:  .*\n)*/,
-                        /^facet login_keys\n(?:  .*\n)*/].freeze
+                        /^facet login_keys\n(?:  .*\n)*/, /^facet login_keys_session\n(?:  .*\n)*/].freeze
 
   def without_login_keys(source)
     WITHOUT_LOGIN_KEYS.reduce(source) { |text, row| ManifestContextFixture.substitute(text, row, '') }
@@ -984,11 +985,33 @@ class ManifestStopgapTest < Minitest::Test
     end
   end
 
-  def test_a_login_keys_grant_to_another_grantee_than_the_system_domain_is_refused
-    %w[@domain.network @session.system].each do |grantee|
-      refused(Erx::Manifest::Invalid, 8, 'facet.grantee', login_keys_source(facet: login_keys_facet(grantee: grantee)),
-              message: /system domain/)
+  # Root's session template, @session.system, may hold a read-only grant beside the
+  # system domain's, for SSH stage 1's daemon (docs/design-ssh.md, "Invariants", H8).
+  def test_a_read_only_login_keys_grant_to_root_s_session_passes
+    facets = login_keys_facet + login_keys_facet(grantee: '@session.system').sub('facet login_keys', 'facet login_keys_session')
+    view = @codec.open('manifest', admit(login_keys_source(facet: facets)).bytes)
+    service = (0...view.count('services')).find { |at| view.string(view.fetch('services', at).fetch('name')) == 'login_keys' }
+    grants = (0...view.count('facets')).map { |at| view.fetch('facets', at) }.select { |row| row.fetch('service') == service }
+    assert_equal [@codec.member('mf_grantee', 'system'), @codec.member('mf_grantee', 'session')].sort,
+                 grants.map { |row| row.fetch('grantee_kind') }.sort
+  end
+
+  def test_a_login_keys_grant_to_root_s_session_that_is_not_read_only_is_refused
+    ["  parameter rights rw\n", ''].each do |rights|
+      facet = login_keys_facet(grantee: '@session.system', rights: rights)
+      refused(Erx::Manifest::Invalid, 8, 'facet.parameter', login_keys_source(facet: facet), message: /read-only/)
     end
+  end
+
+  # Another domain, or the session template of a principal other than the system's.
+  def test_a_login_keys_grant_to_another_grantee_is_refused
+    guest = "#{principal_row('guest', 'users')}principal system\n"
+    session = "session guest\n  limits @limits.session\n  runtime @artifact.emu\n  release @artifact.session\nsession system\n"
+    { '@domain.network' => @source, '@session.guest' => @source.sub("principal system\n", guest).sub("session system\n", session) }
+      .each do |grantee, source|
+        changed = without_login_keys(source) + record_volume + LOGIN_KEYS_SERVICE + login_keys_facet(grantee: grantee)
+        refused(Erx::Manifest::Invalid, 8, 'facet.grantee', changed, message: /session template/)
+      end
   end
 
   def test_a_login_keys_service_without_a_record_volume_window_is_refused
