@@ -2063,6 +2063,13 @@ it; git history is the record of completed work.
   (`platform-arm.h:96`) while QEMU virt's device tree says hvc; bootstrap's own reboot path on
   virt would issue SMC through the wrong conduit. The fix is one call in `init`, with a test.
 
+* [Medium] storage and images, the development boot image is 68 MB (`kernel8.img` on the Pi 4 boot
+  partition, 68,202,496 bytes) and stays in RAM for the whole boot; it also weighs on the Pi 4 secure-boot
+  check item below. Three shrinks are open: 12.2 MB are byte-identical OTP files in both `system/lib` and
+  `domains/erxos/lib`; OpenSSL (3.3 MB) is linked into both the system domain's ERTS and the domains' ERTS;
+  and `public_key`, `ssl`, `ssh` and `inets` hold 8.8 MB. Each is decided by the measurement in
+  [docs/todo-performance.md](docs/todo-performance.md) ("every release in the boot image"). The packer
+  bounds a file by the partition (128 MiB), so this size packs.
 * [Medium] desktop, the glyph step's glyph count (`tools/lib/erx/glyphs.rb`, `erx_draw_core.erl` `?MAX_GLYPHS`):
   `Erx::Glyphs` refuses only at font(7)'s field limits, so it would write a subfont of more than 4096 glyphs, the
   most a font cache holds, which `erx_font:parse/1` then refuses. No spec holds that limit (`abi/formats/draw.txt`

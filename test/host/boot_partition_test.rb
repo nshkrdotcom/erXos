@@ -321,6 +321,43 @@ class BootPartitionTest < Minitest::Test
     end
   end
 
+# A file is bounded by the partition, not by a number of ours: the development kernel is
+# 68 MB, over half of it, and packs.
+def test_packs_a_bootable_file_over_half_the_partition
+  Dir.mktmpdir do |root|
+    output = File.join(root, 'image')
+    Dir.mkdir(output)
+    big = Erx::PiMedium::SLOT_FAT_BYTES / 2 + 1
+    written = write(root, output, plan(root, kernel_bytes: big))
+    assert_equal big, File.size(File.join(output, 'boot/kernel8.img'))
+    assert File.file?(written.path)
+  end
+end
+
+def test_refuses_a_file_larger_than_the_partition
+  Dir.mktmpdir do |root|
+    output = File.join(root, 'image')
+    Dir.mkdir(output)
+    too_big = Erx::PiMedium::SLOT_FAT_BYTES + 1
+    error = assert_raises(Erx::Error) { write(root, output, plan(root, kernel_bytes: too_big)) }
+    assert_match(/not a bounded regular file/, error.message)
+    assert_empty Dir.children(output), 'nothing is left beside the image'
+  end
+end
+
+# Within the read bound but over the volume: the data area starts at BOOT_PLACE, so a file
+# of the partition less that cannot fit, and fsimg, not the read, refuses it.
+def test_refuses_a_file_the_volume_cannot_hold
+  Dir.mktmpdir do |root|
+    output = File.join(root, 'image')
+    Dir.mkdir(output)
+    size = Erx::PiMedium::SLOT_FAT_BYTES - Erx::PiMedium::BOOT_PLACE
+    error = assert_raises(Erx::CommandError) { write(root, output, plan(root, kernel_bytes: size)) }
+    assert_match(/fsimg/, error.message)
+    assert_empty Dir.children(output), 'nothing is left beside the image'
+  end
+end
+
   private
 
   FSIMG = Erx::Fsimg.locate(root: ROOT)
@@ -354,7 +391,8 @@ class BootPartitionTest < Minitest::Test
   def record(**fields) = Erx::Platform.new(name: 'raspi4b', record: PI.record.merge(fields.transform_keys(&:to_s)))
 
   # A plan over stand-in files in root/in.
-  def plan(root)
+  # kernel_bytes makes the bootable file a sparse file of that length.
+  def plan(root, kernel_bytes: nil)
     sources = File.join(root, 'in')
     FileUtils.mkdir_p(sources)
     stand_in = lambda do |name, text = name|
@@ -363,7 +401,9 @@ class BootPartitionTest < Minitest::Test
     tree = Erx::BoardTree::Built.new(board: stand_in.('tree.dtb'), source: stand_in.('tree.dts'), license: stand_in.('gpl-2.0'), model: stand_in.('model.dtb'),
                                      overlays: { 'uart3' => stand_in.('uart3.dtbo') })
     firmware = %w[start4.elf fixup4.dat LICENCE.broadcom].to_h { |name| [name, stand_in.(name)] }
-    Erx::BootPartition.plan(platform: PI, build_kind: 'development', bootable: stand_in.('kernel8', 'kernel'), bl31: stand_in.('bl31'),
+    bootable = stand_in.('kernel8', 'kernel')
+    File.truncate(bootable, kernel_bytes) if kernel_bytes
+    Erx::BootPartition.plan(platform: PI, build_kind: 'development', bootable: bootable, bl31: stand_in.('bl31'),
                             bl31_license: stand_in.('license'),
                             tree: tree, firmware: firmware)
   end
