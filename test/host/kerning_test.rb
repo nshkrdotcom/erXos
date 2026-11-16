@@ -184,7 +184,7 @@ class KerningTest < Minitest::Test
     body = role('body')
     first, second = indices(body, 'AV')
     refute_nil kern(body, first, second), 'AV has no pair'
-    assert_equal 0, body.subfont.glyphs.fetch(indices(body, "­").first).width, 'the soft hyphen is drawn'
+    assert_equal 0, body.subfont.glyphs.fetch(indices(body, "\u00AD").first).width, 'the soft hyphen is drawn'
     source = lvgl_font(body)
     assert_equal subfont_view(body, LVGL_TEXT), lvgl_view(source, LVGL_TEXT)
     seeded = source.sub(".kern_scale = #{Erx::Glyphs::LvglFont::KERN_SCALE},", '.kern_scale = 16,')
