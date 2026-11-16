@@ -8994,7 +8994,12 @@ document's "residual risks accepted" paragraph.
   the glue's GCC objects (`erx_handoff.cpp` already exists, and its imports
   are unchecked until then); and the vector route. Each fails the check as
   soon as a file it awaits lands, except the files it lists as existing
-  ([design-kernel.md](docs/design-kernel.md#chokepoint-checks)).
+  ([design-kernel.md](docs/design-kernel.md#chokepoint-checks)). The
+  object leg's stated reason, that no build produces liberx's target
+  objects, no longer holds (the native roots build them, for example
+  `build/native-watchdog/root/liberx_backend_fiasco_end_how_c.o`), and its
+  exemptions, the groups' `unchecked_objects`, grow with every new liberx
+  source instead of shrinking; landing it deletes those lists.
 * [Medium] chokepoints, gaps of the text rules until the object leg
   closes them (`tools/lib/erx/chokepoints.rb`): rules match names, so they
   do not follow includes (a `kernel/core/cap.h` allowed to include
