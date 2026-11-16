@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
--module(erx_core).
+-module(erx_actions).
 -moduledoc """
 The edge's one loop (docs/style.md, "Functional core"): it performs a core step's actions
 in order, each through the edge's own effect, and ends at a stop, which a core puts last.

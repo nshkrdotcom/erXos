@@ -202,11 +202,11 @@ sae_step(#{sae := Sae0, proof := Proof} = Join, Event, Ctx) ->
 
 %% The exchange's actions, in order, as the join's. Its frames and requests become the
 %% chip's and the key holder's, its deadline the join's, and its end, the last, the
-%% auth result. erx_core's loop walks them, refusing a stop that is not last; an action or
-%% an end outside erx_sae's contract is refused with error/1, whose stack trace names no
-%% argument, since the join holds the exchange's keys.
+%% auth result. erx_actions:perform/3 walks them, refusing a stop that is not last;
+%% an action or an end outside erx_sae's contract is refused with error/1, whose stack
+%% trace names no argument, since the join holds the exchange's keys.
 sae_actions(SaeActions, #{ref := Ref} = Join, #{now := Now} = Ctx) ->
-    case erx_core:perform(SaeActions, fun sae_action/2, {Join, []}) of
+    case erx_actions:perform(SaeActions, fun sae_action/2, {Join, []}) of
         {continue, {Next, Acc}} ->
             {lists:reverse(Acc), Next};
         {stop, accepted, {Next, Acc}} ->

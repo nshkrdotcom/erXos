@@ -263,14 +263,14 @@ variant, so every edge takes a step's result apart the same way:
 effect({write, Bytes}, S) -> ...
 
 settle({Core, Actions}, S) ->
-    case erx_core:perform(Actions, fun effect/2, S#s{core = Core}) of
+    case erx_actions:perform(Actions, fun effect/2, S#s{core = Core}) of
         {continue, Next} -> {noreply, Next};
         {stop, Reason, Next} -> {stop, Reason, Next}
     end.
 ```
 
 Every edge performs a step's actions through the one loop,
-`erx_core:perform/3`, and writes only its effect, never a loop of its
+`erx_actions:perform/3`, and writes only its effect, never a loop of its
 own. A stop with actions after it is the core's bug, and the loop
 refuses it before performing any action after it. It refuses with
 `error(stop_not_last)`, whose stack trace names the loop's arity and not

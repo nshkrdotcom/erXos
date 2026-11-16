@@ -7105,15 +7105,14 @@ to the corpus and follow rc
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
   translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
   turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
-
-## Security residuals
-
 * [Low] Erlang edges (docs/style.md, "Functional core"): `erx_tcp_listen` (`:176`), `erx_gen_tcp`
   (`:443`), `erx_pipe_srv` (`:312`), `erx_prog_handler` (`:264`) and `erx_blk_sd` (`:394`) walk a
-  step's actions with a loop of their own rather than `erx_core:perform/3`; the first two match a
+  step's actions with a loop of their own rather than `erx_actions:perform/3`; the first two match a
   bare `stop` with `[stop | _]`, dropping any action after it where the one loop refuses it. Move
   each to `{stop, Reason}` and the one loop, then add a source check that no module but
-  `erx_core` has a clause on a stop at a list's head.
+  `erx_actions` has a clause on a stop at a list's head.
+
+## Security residuals
 
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): the report filter is
   installed by each domain's application start (`erx_bt_app` alone today), so processes that

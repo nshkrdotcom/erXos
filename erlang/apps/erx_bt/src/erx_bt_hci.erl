@@ -142,14 +142,14 @@ step_noreply(Input, State) ->
         {stop, Reason} -> {stop, Reason, State}
     end.
 
-%% Steps each input in order at the clock, performing its actions through erx_core's loop,
-%% where a stop, always the last, ends the process; then sets the wake-up timer at the
-%% core's deadline.
+%% Steps each input in order at the clock, performing its actions through
+%% erx_actions:perform/3, where a stop, always the last, ends the process; then sets the
+%% wake-up timer at the core's deadline.
 steps([], State) ->
     {ok, wake_up(State)};
 steps([Input | Inputs], #hci{core = Core} = State) ->
     {Next, Actions} = erx_bt_hci_core:step(Input, erlang:monotonic_time(millisecond), Core),
-    case erx_core:perform(Actions, fun perform/2, State#hci{core = Next}) of
+    case erx_actions:perform(Actions, fun perform/2, State#hci{core = Next}) of
         {continue, Performed} -> steps(Inputs, after_input(Input, Performed));
         {stop, Reason, _Performed} -> {stop, Reason}
     end.
