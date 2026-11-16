@@ -267,7 +267,8 @@ class DomPlannerTest < Minitest::Test
   # index"): an app_template naming root's template, a packages_facet naming the system
   # domain's packages row, an app_services row whose facet grants the template
   # another service, a packages_facet naming the template's grant of another service,
-  # a template holding a facet the row does not name and two app_services rows naming
+  # a system_facet naming the template's packages row or absent in a manifest with a
+  # system service, a template holding a facet the row does not name and two app_services rows naming
   # one facet are each refused, and so is a template with no apps row.
   def test_the_view_places_the_app_entries_from_the_rows_the_apps_row_names
     bytes = development_manifest
@@ -289,6 +290,10 @@ class DomPlannerTest < Minitest::Test
                            "the apps row's packages_facet is not the app template's grant of packages_service"],
       'packages-display' => [apps + 16, bytes.byteslice(app_services + 4, 4).unpack1('V'),
                              "the apps row's packages_facet is not the app template's grant of packages_service"],
+      'system-packages' => [apps + 20, packages,
+                            "the apps row's system_facet is not the app template's grant of system_service"],
+      'system-absent' => [apps + 20, @codec.constant('mf_none'),
+                          "the apps row's system_facet is not the app template's grant of system_service"],
       'service-facet' => [app_services + 4, packages,
                           "an app_services row's facet is not the app template's grant of its service"],
       'extra-facet' => [first + (extra_facet(facets, template) * 80) + 8, template,

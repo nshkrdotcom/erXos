@@ -8,7 +8,7 @@ The plan of an app's session, `erx_domain_core:app_session/4`
 a header is admitted (`erx_app_admit:admit/3`) and registered
 (`erx_principal:register/2`) as the package process does, and the plan is
 made from the record the registry holds. The session's rows are the
-`packages` row and the rows its needs name; its principal, from which every
+`packages` and `system` rows and the rows its needs name; its principal, from which every
 facet's scope is computed, is the app's entry; its memory is the declared
 one; and one header admitted as an image package and as an installed one
 gives the same plan (PK10). test/host/erx_app_session_test.rb runs it
@@ -22,10 +22,10 @@ against the core as it is and against seeded faults.
 %% The app entries the library placed: entry i is principal 6 + i.
 -define(APPS, #{template => 2, first => 6, max => 4, memory => 128 * ?MIB}).
 
-%% The apps row as admission reads it: the app template's packages row is 7, and
-%% the services an app may need are granted by rows 8 to 10.
+%% The apps row as admission reads it: the app template's packages row is 7, its
+%% system row 11, and the services an app may need are granted by rows 8 to 10.
 manifest(ImagePackages) ->
-    #{apps => #{memory => 128 * ?MIB, max => 4, packages_row => 7,
+    #{apps => #{memory => 128 * ?MIB, max => 4, packages_row => 7, system_row => 11,
                 services => [#{name => <<"display">>, windows => true, row => 8},
                              #{name => <<"data">>, windows => false, row => 9},
                              #{name => <<"panel">>, windows => true, row => 10}]},
@@ -36,7 +36,7 @@ manifest(ImagePackages) ->
 %% {Service, Server} the caller keeps for it.
 template_rows() ->
     [{7, {packages, storage}}, {8, {display, display}}, {9, {data, storage}},
-     {10, {panel, panel}}].
+     {10, {panel, panel}}, {11, {system, storage}}].
 
 header(Name, Memory, Needs) ->
     #{name => Name, memory => Memory, needs => Needs,
@@ -59,13 +59,13 @@ started(Header, Signer) ->
     {Plan, _} = started(Header, Signer, manifest([]), erx_principal:new(4)),
     Plan.
 
-the_rows_are_packages_and_the_needs_test() ->
+the_rows_are_packages_system_and_the_needs_test() ->
     Dashboard = started(header(<<"dashboard">>, 16 * ?MIB, [<<"display">>]), <<"vendor">>),
-    ?assertEqual([{packages, storage}, {display, display}], maps:get(rows, Dashboard)),
+    ?assertEqual([{packages, storage}, {display, display}, {system, storage}], maps:get(rows, Dashboard)),
     Daemon = started(header(<<"daemon">>, 16 * ?MIB, []), <<"vendor">>),
-    ?assertEqual([{packages, storage}], maps:get(rows, Daemon)),
+    ?assertEqual([{packages, storage}, {system, storage}], maps:get(rows, Daemon)),
     Both = started(header(<<"panels">>, 16 * ?MIB, [<<"panel">>, <<"data">>]), <<"vendor">>),
-    ?assertEqual([{packages, storage}, {data, storage}, {panel, panel}], maps:get(rows, Both)).
+    ?assertEqual([{packages, storage}, {data, storage}, {panel, panel}, {system, storage}], maps:get(rows, Both)).
 
 %% Every facet's parameters are computed from the plan's principal: the app's entry,
 %% never the template's, whatever entry the app takes.
@@ -89,4 +89,5 @@ one_header_admitted_both_ways_gives_one_plan_test() ->
     {Image, _} = started(Header, image, manifest([<<"kiosk">>]), erx_principal:new(4)),
     {Installed, _} = started(Header, <<"vendor">>, manifest([]), erx_principal:new(4)),
     ?assertEqual(Image, Installed),
-    ?assertEqual([{packages, storage}, {display, display}, {data, storage}], maps:get(rows, Image)).
+    ?assertEqual([{packages, storage}, {display, display}, {data, storage}, {system, storage}],
+                 maps:get(rows, Image)).

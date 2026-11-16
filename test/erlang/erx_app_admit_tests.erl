@@ -48,7 +48,7 @@ checked(Header, Signer) ->
 manifest(no_apps) ->
     (manifest(base))#{apps := none};
 manifest(_) ->
-    #{apps => #{memory => 128 * ?MIB, max => 4, packages_row => 7,
+    #{apps => #{memory => 128 * ?MIB, max => 4, packages_row => 7, system_row => none,
                 services => [#{name => <<"display">>, windows => true, row => 8},
                              #{name => <<"data">>, windows => false, row => 9},
                              #{name => <<"panel">>, windows => true, row => 10}]},

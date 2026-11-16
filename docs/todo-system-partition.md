@@ -13,16 +13,11 @@ image holds what the manifest names to run and no package. Index:
 Each item lands with its tests, each passing case beside a seeded fault
 that proves the code under test ran.
 
-* [High] storage, the `system` tree (`erlang/apps/erx_storage`,
-  `tools/lib/erx/manifest.rb` property 19):
+* [High] storage, the `system` tree (`erlang/apps/erx_storage`):
   the packer and fsimg writing
   the partition's hash tree after its image and refusing an image and
   tree larger than the partition, and the update
-  writing the tree and the manifest with the partition; property 19 deriving the
-  `system` rows, the system domain's and the app template's, `ro` and `rx`,
-  and the `apps` row's `system_facet` (a field of `erx_mf_apps`, which
-  `boot_app_grants` in `liberx/system/dom_boot_view.c` and
-  `erx_pkg_manifest` read beside `packages_facet`). Test: a
+  writing the tree and the manifest with the partition. Test: a
   QEMU test that reads a multi-block package file through the grant;
   seeded: a write through the grant, which must answer `erofs` before any
   callback, and a flipped bit in the partition's directory, which must

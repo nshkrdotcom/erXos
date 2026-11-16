@@ -104,7 +104,7 @@ the_record_keeps_the_app_record_with_its_place_test() ->
                                          erx_principal:new(2)),
     {ok, Apps} = register(<<"clock">>, admitted(development, ?MIB), Image),
     {ok, #{app := Kiosk}} = erx_principal:app(<<"kiosk">>, Apps),
-    ?assertEqual(#{place => {system, [<<"apps">>, <<"kiosk.app">>]}, layout => ?LAYOUT, start => ?START},
+    ?assertEqual(#{place => {system, [<<"kiosk.app">>]}, layout => ?LAYOUT, start => ?START},
                  Kiosk),
     {ok, #{app := Clock}} = erx_principal:app(<<"clock">>, Apps),
     ?assertEqual(#{place => {packages, [<<"clock.app">>]}, layout => ?LAYOUT, start => ?START}, Clock),

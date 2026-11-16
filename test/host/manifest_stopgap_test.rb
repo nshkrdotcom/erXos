@@ -835,8 +835,33 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 19, 'service.server', source, message: /holder of the system window/)
   end
 
+  # The build's packages and system rows (docs/design-packaging.md, "The apps row"):
+  # the system domain's packages grant rw and system grant ro, and the app template's
+  # system grant rx, the one an app's session mounts /app through (design-files.md F6),
+  # which the apps row names by index. Seeded: app_facets deriving the template's system
+  # row ro, or packing no system_facet, fails it.
+  def test_the_build_derives_the_packages_and_system_rows
+    view = @codec.open('manifest', admit.bytes)
+    services = view.each('services').map { |row| view.string(row.fetch('name')) }
+    parameters = view.each('facet_parameters').to_a
+    first = view.header.fetch('facet_parameters').fetch('offset')
+    granted = view.each('facets').map do |facet|
+      span = facet.fetch('parameters')
+      [facet.fetch('grantee_kind'), facet.fetch('grantee'), services.fetch(facet.fetch('service')),
+       parameters[(span.fetch('offset') - first) / 32, span.fetch('count')].map { |row| row.fetch('scalar') }]
+    end
+    system, session = %w[system session].map { |kind| @codec.member('mf_grantee', kind) }
+    ro, rw, rx = %w[ro rw rx].map { |name| @codec.member('files_rights', name) }
+    assert_includes granted, [system, 0, 'packages', [rw]]
+    assert_includes granted, [system, 0, 'system', [ro]]
+    template = view.count('sessions') - 1
+    assert_equal [session, template, 'system', [rx]], granted.fetch(view.each('apps').first.fetch('system_facet'))
+  end
+
+  # The row grants root's session template, which holds no derived system row, so
+  # properties 2 and 5 do not refuse it first.
   def test_a_source_facet_row_of_the_system_service_is_refused
-    row = "facet system\n  grantee system\n  service @service.system\n  operations none\n  max_request 131072\n" \
+    row = "facet system_tree\n  grantee @session.system\n  service @service.system\n  operations none\n  max_request 131072\n" \
           "  in_flight 16\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 262144\n"
     refused(Erx::Manifest::Invalid, 19, 'facet.service', @source + row, message: /only the derived system rows/)
   end
