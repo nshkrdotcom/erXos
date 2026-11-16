@@ -8998,7 +8998,6 @@ and its binding document; nothing above the architecture layer changes.
 
 | Component | Purpose | License | Status |
 | --- | --- | --- | --- |
-| Fiasco kernel `50bbe8a9`, with `bootstrap` `a4f4ad18`, `sigma0` and `l4sys` from `l4re-core` `e2e2d5af`, `libfdt` `5756062b` and `mk` `22cc26e5` | the Fiasco kernel behind this interface | MIT (each package's `LICENSE.spdx`), with the GPL and LGPL parts listed above excluded, except the GPL-2.0 `kobject_rpc.h` and `jdb_object.cpp`, which the kernel needs, so no stopgap build is distributed outside the project until R1's release build, which replaces the header and turns the debugger off ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)); capstone in the kernel debugger is BSD-3-Clause-Attribution; the link closure of `bootstrap` and `sigma0` recorded at import | stopgap, replaced by erXos's kernel |
 | libfdt | device-tree parsing in erXos's kernel and the root task's reader | BSD-2-Clause (dual GPL-2.0-or-later) | permanent |
 | BLAKE3's official C implementation | the boot image's index and file hashes, in its portable form in the kernel and `bootstrap` ([The boot image](#the-boot-image)) | CC0-1.0, Apache-2.0 or Apache-2.0 WITH LLVM-exception, used under Apache-2.0 WITH LLVM-exception | permanent |
 | Arm's machine-readable A-profile architecture specification | the source of the AArch64 port's `hw/sysreg/aarch64.json` ([design-arch-aarch64.md](design-arch-aarch64.md#hardware-register-sources)) | BSD-3-Clause | permanent, as a pinned input of `tools/erx sysreg refresh`, which alone reads it |
@@ -9006,7 +9005,8 @@ and its binding document; nothing above the architecture layer changes.
 erXos's kernel carries code derived from Fiasco under Fiasco's MIT notice,
 as [The current implementation](#the-current-implementation-the-modified-fiasco)
 describes. The dependency table of [design.md](design.md#dependencies) is
-the authoritative list.
+the authoritative list, and Fiasco's row, with its license and its
+`release` status, is there alone.
 
 ## L4 lineage
 
