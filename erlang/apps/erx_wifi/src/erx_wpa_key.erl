@@ -82,31 +82,18 @@ mic_input(#{frame := Frame}) ->
 %% Plain key data, as sent or as unwrapped, to the elements the station uses. A KDE of
 %% another type or OUI is skipped; a GTK or IGTK KDE of a length other than CCMP-128's
 %% and BIP-CMAC-128's, or a second one, is an error. The padding of encrypted key
-%% data, 0xdd then zero bytes, ends the elements, as wpa_supplicant's
-%% wpa_parse_kde_ies ends them (wpa_common.c, lines 4096-4102).
+%% data, 0xdd then zero bytes, is the sequence's end marker in
+%% abi/formats/ieee80211.txt, so the walk reads nothing after its start.
 -spec key_data(binary()) -> {ok, key_data()} | {error, error()}.
 key_data(Bytes) when is_binary(Bytes) ->
     try
-        Elements = lists:takewhile(fun(Element) -> Element =/= {vendor, <<>>} end, elements(Bytes)),
+        Elements = case erx_abi_packed:decode_elements(wpa_key_data, Bytes) of
+                       {ok, Known} -> Known;
+                       {error, Rule} -> throw({malformed, Rule})
+                   end,
         {ok, lists:foldl(fun take/2, #{rsn => none, rsnxe => none, gtk => none, igtk => none}, Elements)}
     catch
-        throw:{malformed, Rule} -> {error, Rule}
-    end.
-
-%% The element sequence; when the bytes end one byte into a header and that byte can
-%% only be padding, 0xdd at the start of padding or a zero within it, the elements are
-%% those before it.
-elements(Bytes) ->
-    case erx_abi_packed:decode_elements(wpa_key_data, Bytes) of
-        {ok, Elements} -> Elements;
-        {error, truncated} when byte_size(Bytes) >= 1 ->
-            Last = binary:last(Bytes),
-            require(Last =:= ?ERX_WPA_KEY_DATA_TAG_VENDOR orelse Last =:= 0, truncated),
-            case erx_abi_packed:decode_elements(wpa_key_data, binary:part(Bytes, 0, byte_size(Bytes) - 1)) of
-                {ok, Elements} -> Elements;
-                {error, Rule} -> throw({malformed, Rule})
-            end;
-        {error, Rule} -> throw({malformed, Rule})
+        throw:{malformed, Broken} -> {error, Broken}
     end.
 
 take({rsn, Body}, Data) ->

@@ -7411,10 +7411,6 @@ document's "residual risks accepted" paragraph.
   - the MIC input ends at the key data, while wpa_supplicant covers the whole EAPOL body
     (`wpa.c:4005`); a body longer than its key data fails the MIC (safe, but not
     wpa_supplicant's behavior);
-  - key data is decoded whole before the padding cut, so bytes after the padding's start must
-    parse, and a lone trailing byte other than 0 or 0xdd is refused, where wpa_supplicant
-    ignores both; the clean fix is an end-marker element in the ABI's element sequences
-    (docs/design-abi.md, "Element sequences");
   - a GTK KDE of key id 0 is accepted; the slots are ids 1 to 3, so the bound goes into
     `abi/formats/ieee80211.txt` beside the IGTK's, and whether a second RSN element in message
     3 is allowed is checked against the standard (the codec refuses it);

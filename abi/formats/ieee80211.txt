@@ -108,17 +108,19 @@ limit wpa_key_info_encrypted u16 0x1000
 
 # The key data's elements: the RSN element (ieee802_11_defs.h, line 344), the RSNXE
 # (line 495), and the vendor-specific element (line 488) that carries each KDE under
-# the 00-0f-ac OUI with its data type (wpa_common.h, lines 135-151, 356). A vendor
-# element of length zero, or a 0xdd that is the last byte, starts the padding of
-# encrypted key data, 0xdd and zero bytes (wpa_common.c, lines 4096-4102); a vendor
-# element too short for an OUI and a type carries no KDE and is skipped.
+# the 00-0f-ac OUI with its data type (wpa_common.h, lines 135-151, 356). The padding
+# of encrypted key data, 0xdd and zero bytes, starts at a vendor element of length
+# zero or a 0xdd that is the last byte (wpa_common.c, lines 4096-4102): the end
+# marker, after which nothing is read. A lone last byte other than 0xdd, which
+# wpa_supplicant ignores, is refused as truncated. A vendor element too short for an
+# OUI and a type carries no KDE and is skipped.
 enum wpa_key_data_tag u8
   value rsn 48
   value vendor 221
   value rsnxe 244
-elements wpa_key_data packed_le wpa_key_data_tag u8
+elements wpa_key_data packed_le wpa_key_data_tag u8 end vendor
   element rsn once bytes 2 255
-  element vendor many bytes 0 255
+  element vendor many bytes 1 255
   element rsnxe once bytes 1 255
 limit wpa_kde_oui u32 0x000fac
 enum wpa_kde_type u8

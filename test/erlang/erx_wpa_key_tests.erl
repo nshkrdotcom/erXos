@@ -75,14 +75,17 @@ key_data_reads_the_elements_and_kdes_test() ->
                  erx_wpa_key:key_data(Data)).
 
 %% Encrypted key data padded with 0xdd and zeros to a multiple of 8 bytes, by every
-%% padding length; elements after the padding's start are not taken.
+%% padding length; nothing after the padding's start is read, even bytes that would
+%% not parse, and a lone last byte that is not 0xdd is a cut header.
 key_data_padding_ends_the_elements_test_() ->
     Gtk = gtk_kde(2, <<16#33:128>>),
     [?_assertMatch({ok, #{gtk := #{id := 2}, rsn := none}},
                    erx_wpa_key:key_data(<<Gtk/binary, 221, 0:(Pad * 8)>>))
      || Pad <- lists:seq(0, 7)] ++
     [?_assertMatch({ok, #{igtk := none}},
-                   erx_wpa_key:key_data(<<Gtk/binary, 221, 0, (igtk_kde(4, 1, <<1:128>>))/binary>>))].
+                   erx_wpa_key:key_data(<<Gtk/binary, 221, 0, (igtk_kde(4, 1, <<1:128>>))/binary>>)),
+     ?_assertMatch({ok, #{gtk := #{id := 2}}}, erx_wpa_key:key_data(<<Gtk/binary, 221, 0, 48, 200>>)),
+     ?_assertEqual({error, truncated}, erx_wpa_key:key_data(<<Gtk/binary, 0>>))].
 
 key_data_refuses_malformed_kdes_test_() ->
     Gtk = gtk_kde(1, <<1:128>>),

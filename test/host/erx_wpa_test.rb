@@ -14,6 +14,7 @@ require_relative '../fixtures/erlang_build'
 class ErxWpaTest < Minitest::Test
   KDF = 'erlang/apps/erx_wifi/src/erx_wpa_kdf.erl'
   KEY = 'erlang/apps/erx_wifi/src/erx_wpa_key.erl'
+  PACKED = 'build/gen/erlang/apps/erx/src/generated/erx_abi_packed.erl'
   TESTS = %w[test/erlang/erx_wpa_kdf_tests.erl test/erlang/erx_wpa_key_tests.erl].freeze
   ROOT = File.expand_path('../..', __dir__)
 
@@ -33,9 +34,9 @@ class ErxWpaTest < Minitest::Test
     Seed.new(fault: "the key data length's bound by the body dropped", path: KEY,
              anchor: "    require(?ERX_EAPOL_KEY_SIZE + DataLength =< ?EAPOL_HEADER + BodyLength, data_length),\n",
              replacement: '', failure: /each_malformed_frame_fails_with_its_rule_test_.*failed/m),
-    Seed.new(fault: "key data read past the padding's start", path: KEY,
-             anchor: 'lists:takewhile(fun(Element) -> Element =/= {vendor, <<>>} end, elements(Bytes))',
-             replacement: 'elements(Bytes)', failure: /key_data_padding_ends_the_elements_test_.*failed/m),
+    Seed.new(fault: "key data read past the padding's start", path: PACKED,
+             anchor: "header(wpa_key_data, <<221:8, 0:8, _/binary>>) ->\n    stop;\n",
+             replacement: '', failure: /key_data_padding_ends_the_elements_test_.*failed/m),
     Seed.new(fault: "the IGTK's key id bound dropped", path: KEY,
              anchor: '    require(Id >= ?ERX_WPA_IGTK_KEY_ID_MIN andalso Id =< ?ERX_WPA_IGTK_KEY_ID_MAX, {key_id, igtk}),',
              replacement: '    ok,', failure: /key_data_refuses_malformed_kdes_test_.*failed/m)
@@ -48,6 +49,7 @@ class ErxWpaTest < Minitest::Test
   end
 
   def test_each_seeded_fault_fails_its_case
+    Erx::Generated.ensure(root: ROOT)
     SEEDS.each do |seed|
       text = File.read(File.join(ROOT, seed.path))
       assert_equal 1, text.scan(seed.anchor).size, "the seed no longer applies: #{seed.fault}"

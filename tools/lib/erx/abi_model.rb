@@ -121,9 +121,11 @@ module Erx
     # of a tag and a length, both of storage's byte order, each followed by a
     # body of that many bytes, repeated to the end of the bytes. Every member
     # of tag_type, an enum, is one known element, in tag order; a tag outside
-    # it is skipped.
+    # it is skipped. end_marker, nil or the known element the sequence names
+    # end marker, ends the walk where its header has length zero or its tag
+    # is all that remains of the bytes.
     ElementSequence = Struct.new(:name, :storage, :tag_type, :length_type,
-                                 :elements, :line, keyword_init: true) do
+                                 :elements, :end_marker, :line, keyword_init: true) do
       def byte_order = Model::PACKED_ORDERS.fetch(storage)
     end
     # A known element: its tag's member name and value, whether it may
@@ -798,10 +800,15 @@ module Erx
       # byte order the tag and length take; an enum over an unsigned integer,
       # whose members are exactly the known tags; and an unsigned base integer
       # counting each body's bytes. One `element` line per member, in
-      # ascending tag order, so the spec has one sorted form.
+      # ascending tag order, so the spec has one sorted form. A trailing
+      # `end MEMBER` names the end marker, whose element's body is at least
+      # one byte, so that a header of length zero is never also an element.
       def validate_elements(declaration, types)
-        arity(declaration.line, 5)
-        name, storage, tag_name, length_name = declaration.args
+        name, storage, tag_name, length_name, *marker = declaration.args
+        unless marker.empty? || (marker.size == 2 && marker.first == 'end')
+          declaration.fail!('expected elements NAME STORAGE TAG_ENUM LENGTH_TYPE [end MEMBER]')
+        end
+        arity(declaration.line, 5 + marker.size)
         declaration.fail!('an element sequence has a packed storage') unless PACKED_ORDERS.key?(storage)
         tag_type = types[tag_name]
         unless tag_type.is_a?(EnumType) && !tag_type.flags && !tag_type.base.signed
@@ -817,8 +824,16 @@ module Erx
         declaration.fail!('elements are not in ascending tag order') unless tags == tags.sort
         missing = tag_type.members.keys - elements.map(&:name)
         declaration.fail!("tag #{missing.min} has no element") unless missing.empty?
+        stop = marker.empty? ? nil : end_marker_element(declaration, marker.last, elements, tag_type: tag_type)
         ElementSequence.new(name: name, storage: storage, tag_type: tag_type, length_type: length_type,
-                            elements: elements.freeze, line: declaration.line).freeze
+                            elements: elements.freeze, end_marker: stop, line: declaration.line).freeze
+      end
+
+      def end_marker_element(declaration, member, elements, tag_type:)
+        declaration.fail!("end marker #{member} is not a member of #{tag_type.name}") unless tag_type.members.key?(member)
+        stop = elements.find { |element| element.name == member }
+        declaration.fail!('an end marker\'s element has a body of at least one byte') unless stop.minimum.positive?
+        stop
       end
 
       # `element MEMBER REPEAT LAYOUT` or `element MEMBER REPEAT bytes MIN MAX`:

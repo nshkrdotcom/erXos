@@ -166,8 +166,10 @@ module Erx
       def length_guard(sequence, element)
         return "byte_size(Body) =:= #{element.minimum}" if element.minimum == element.maximum
 
+        # The end marker's element never has an empty body: that header stops the walk.
+        floor = sequence.end_marker.equal?(element) ? 1 : 0
         bounds = []
-        bounds << "byte_size(Body) >= #{element.minimum}" if element.minimum.positive?
+        bounds << "byte_size(Body) >= #{element.minimum}" if element.minimum > floor
         bounds << "byte_size(Body) =< #{element.maximum}" if element.maximum < sequence.length_type.maximum
         bounds.empty? ? nil : bounds.join(', ')
       end
@@ -194,9 +196,18 @@ module Erx
           "    frame(#{atom(sequence.name)}, #{element.tag}, #{body})"
       end
 
-      def header_clause(sequence)
-        "header(#{atom(sequence.name)}, <<#{header_segments(sequence, 'Tag', 'Length').join(', ')}, Rest/binary>>) ->\n" \
-          '    {Tag, Length, Rest}'
+      # A sequence's clauses of header/2: with an end marker, its tag alone at the
+      # end of the bytes and its header with length zero stop the walk, ahead of
+      # the clause that reads any header.
+      def header_clauses(sequence)
+        name = atom(sequence.name)
+        read = "header(#{name}, <<#{header_segments(sequence, 'Tag', 'Length').join(', ')}, Rest/binary>>) ->\n" \
+               '    {Tag, Length, Rest}'
+        return [read] unless sequence.end_marker
+
+        tag, zero = header_segments(sequence, sequence.end_marker.tag, 0)
+        ["header(#{name}, <<#{tag}>>) ->\n    stop",
+         "header(#{name}, <<#{tag}, #{zero}, _/binary>>) ->\n    stop", read]
       end
 
       def frame_clause(sequence)
@@ -214,14 +225,14 @@ module Erx
       end
 
       def sequence_functions(sequences)
-        headers = sequences.map { |sequence| header_clause(sequence) }
+        headers = sequences.flat_map { |sequence| header_clauses(sequence) }
         frames = sequences.map { |sequence| frame_clause(sequence) }
         bodies = element_clauses(sequences) { |sequence, element| body_clauses(sequence, element) }
         repeats = element_clauses(sequences) { |sequence, element| repeats_clause(sequence, element) }
         encoded = element_clauses(sequences) { |sequence, element| encoded_clause(sequence, element) }
         <<~ERLANG
           %% A sequence's element header: its tag, its length and the bytes after
-          %% them, or truncated when the bytes end inside it.
+          %% them; stop at its end marker; or truncated when the bytes end inside it.
           #{(headers + ["header(_Sequence, _Bytes) ->\n    truncated"]).join(";\n")}.
 
           %% A known element from its tag and body, the body's length checked
@@ -253,6 +264,8 @@ module Erx
                     next(Sequence, body(Sequence, Tag, Body), Next, Seen, Elements);
                 {_Tag, _Length, _Rest} ->
                     {error, overrun};
+                stop ->
+                    {ok, lists:reverse(Elements)};
                 truncated ->
                     {error, truncated}
             end.
@@ -350,7 +363,8 @@ module Erx
           -doc """
           The known elements of a sequence's bytes, in order, each {Name, Body},
           with every element of a tag the sequence does not know skipped. A body
-          is a binary, or the map of its packed layout. The error is truncated
+          is a binary, or the map of its packed layout. A sequence with an end
+          marker ends at it, and nothing after it is read. The error is truncated
           when the bytes end inside a tag and length, overrun when a length runs
           past them, {length, Name} when a known element's body has a length its
           declaration refuses, and {duplicate, Name} when an element that appears
