@@ -10,8 +10,9 @@ erx_pkg_io calls it.
 * **Installed packages** lie in `installed/` of the data partition's
   `packages/` directory, which the storage domain serves as the files
   service `packages`; the system domain reaches it through its grant,
-  rooted at `packages/` and mounted at `/packages` (erx_domain_srv), so they
-  lie at `/packages/installed`, where an app's own grant roots, and every
+  rooted at `packages/` and mounted at its system place, `/packages`
+  (erx_ns:system_place/1, which erx_domain_srv mounts), so they lie at
+  `/packages/installed`, where an app's own grant roots, and every
   request goes through the system domain's
   file client, erx_file_remote, in erx_pkg_io's own process. While the
   grant is not in place the path is the root's and the directory absent,
@@ -35,15 +36,13 @@ every failure is the file client's reason.
 
 -include_lib("kernel/include/file.hrl").
 
--define(INSTALLED, <<"/packages/installed">>).
-
 -doc """
 At most `Max` entries of `packages/installed/` and whether it holds more;
 `{error, absent}` while the packages grant is not in place.
 """.
 -spec list(pos_integer()) -> {ok, [binary()], boolean()} | {error, atom()}.
 list(Max) ->
-    case prim_file:list_dir_all(?INSTALLED) of
+    case prim_file:list_dir_all(installed()) of
         {ok, Names} -> {ok, [name(Name) || Name <- lists:sublist(Names, Max)], length(Names) > Max};
         {error, enoent} -> {error, absent};
         {error, _} = Error -> Error
@@ -89,8 +88,13 @@ path(Place, File) when File =/= <<>>, File =/= <<".">>, File =/= <<"..">> ->
 
 %% An installed package's path in the namespace, and an image package's name in
 %% the system tree, whose root is the partition's apps/.
-place(installed, File) -> <<?INSTALLED/binary, $/, File/binary>>;
+place(installed, File) -> <<(installed())/binary, $/, File/binary>>;
 place(system, File) -> File.
+
+%% installed/ of the packages tree, where the system domain mounts it.
+installed() ->
+    {Packages, _Options} = erx_ns:system_place(packages),
+    <<Packages/binary, "/installed">>.
 
 %% The #file_info{} of an installed package at its path, or of an image package
 %% of that name on the system grant.

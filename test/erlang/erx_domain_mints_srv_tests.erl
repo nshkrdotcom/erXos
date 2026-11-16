@@ -423,15 +423,25 @@ system_data_mount_test_() ->
      {"not granted", fun() -> ?assertEqual([#{point => [], provider => release, root => [], rights => ro}],
                                            system_mounts([{0, data, 1, #{}}])) end}].
 
-%% The system domain's mounts once the service has booted from a manifest whose data is
-%% a files service of a (row 1) with Grants, as start_link returns them, with no call
-%% to the service first, as the release's later applications read /data.
+%% The packages tree, which no session mounts, the system domain mounts at its system
+%% place, /packages (erx_ns:system_place/1), where erx_pkg_medium reads the installed
+%% packages, and only when the manifest grants it packages.
+system_packages_mount_test_() ->
+    [{"granted", fun() -> ?assertMatch([_, #{point := [<<"packages">>], provider := {facet, packages, <<"packages">>},
+                                             rights := rw}],
+                                       system_mounts([{system, packages, 1, #{}}, {0, packages, 1, #{}}])) end},
+     {"not granted", fun() -> ?assertEqual([#{point => [], provider => release, root => [], rights => ro}],
+                                           system_mounts([{0, packages, 1, #{}}])) end}].
+
+%% The system domain's mounts once the service has booted from a manifest whose data and
+%% packages are files services of a (row 1) with Grants, as start_link returns them, with
+%% no call to the service first, as the release's later applications read /data.
 system_mounts(Grants) ->
     Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
                                      restarts => 0, restart_period_s => 60, boot_timeout_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)],
-                          services => [{1, data, 5}], grants => Grants}),
+                          services => [{1, data, 5}, {1, packages, 5}], grants => Grants}),
     persistent_term:erase(erx_ns),
     {ok, Ns} = erx_ns:start_link(erx_ns_prim_stub),
     unlink(Ns),
