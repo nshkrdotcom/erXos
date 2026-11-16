@@ -82,7 +82,8 @@ their documentation pages where they have them. None needs a key or an
 account. The terms of use of Kraken, Coinbase and Cboe were not read:
 the pages named for them returned errors to the fetcher or were not
 found, so whether automated access and public display are allowed is
-**unverified** for each. FRED's are below.
+**unverified** for each. FRED's are below. [Terms](#terms-of-the-sources)
+says why that is accepted.
 
 | Source | Request | Price | Change | Freshness | Trust anchor |
 | --- | --- | --- | --- | --- | --- |
@@ -96,7 +97,16 @@ carries S&P Dow Jones Indices' copyright and a restriction on
 reproducing the index without its permission, and FRED's legal page asks
 anyone using a third party's series beyond personal use to obtain the
 owner's permission. So no S&P 500 source is both keyless and clearly
-licensed for public display ([Open decisions](#open-decisions)).
+licensed for public display.
+
+#### Terms of the sources
+
+The kiosk is a demo, not a public service of record, so the sources'
+terms are accepted as they stand and no source is dropped for them. The
+table holds Kraken's and Coinbase's rows for the crypto quotes and both
+S&P 500 rows, Cboe's delayed JSON first and FRED's daily close as its
+fallback, each labelled with its credit and note. A deployment that is a
+public service of record would read each source's terms first.
 
 Three others were looked at and left out: CoinGecko's keyless endpoint
 works, but its terms require a "Powered by CoinGecko" credit and forbid
@@ -266,8 +276,8 @@ domain authenticated ([design-packaging.md](design-packaging.md#an-apps-session)
 ```
 
 `kraken_eth` and `coinbase_eth` are the same rows with `ETHUSD`,
-`XETHZUSD` and `ETH-USD`. Which S&P 500 rows the full kiosk's table holds is
-an [open decision](#open-decisions).
+`XETHZUSD` and `ETH-USD`. The full kiosk's table holds both S&P 500 rows, Cboe first and FRED as
+its fallback ([Terms of the sources](#terms-of-the-sources)).
 
 | Field | Meaning | Bound |
 | --- | --- | --- |
@@ -664,20 +674,7 @@ out shows `certificate rejected`.
 
 ## Open decisions
 
-1. **The S&P 500 source.** No keyless source is clearly licensed for
-   public display. The options: (a) Cboe's delayed JSON, the most
-   current, undocumented and with terms unread; (b) FRED's daily close,
-   documented, with S&P's copyright notice and FRED's ask for permission
-   beyond personal use; (c) both, Cboe first and FRED as its fallback;
-   (d) no S&P 500 row. *Recommendation:* (c) for the development
-   example, each labelled with its credit and note, and before any image,
-   recording or website shows the kiosk in public, read Cboe's and FRED's
-   terms in a browser and drop the row if they forbid it.
-2. **Publishing the crypto quotes.** Kraken's and Coinbase's terms for
-   automated access and display were not readable by the fetcher.
-   *Recommendation:* keep them as the table's sources and read both terms
-   in a browser before a public showing, as for the S&P 500.
-3. **How the full kiosk's package sets `source` and asks for `net`.** The
+1. **How the full kiosk's package sets `source` and asks for `net`.** The
    packaging mechanism for setting an application environment value in a
    package is not yet designed, and the basic kiosk's declaration asks
    for `display` alone. *Recommendation:* a full-kiosk declaration of the
