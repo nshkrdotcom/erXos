@@ -15,7 +15,9 @@ fails the check, since the image's module of that name is the one that
 runs. A callee is stock OTP's when its module loads from below
 code:lib_dir() or is preloaded and exports it, which holds for the host's stock OTP 29.1.2 with the
 SDK's applications on the path beside it, not inside it. A call through a
-variable module or apply/3 is not seen; xref sees only calls it can name.
+variable module or apply/3 is not seen: xref names its callee
+`'$M_EXPR'`, which the check leaves out, since it sees only calls it can
+name.
 xref reads a beam's calls from its debug information, so a beam compiled
 without `debug_info` fails the check instead of passing unread.
 """.
@@ -37,6 +39,7 @@ outside(Ebins, Public) ->
         {ok, Calls} = xref:q(Xref, "E"),
         lists:sort([Call || {{From, _, _}, {Module, _, _} = Callee} = Call <- Calls,
                             Module =/= From,
+                            Module =/= '$M_EXPR',
                             not lists:member(Module, Own),
                             not stock(Callee),
                             not sets:is_element(Callee, Listed)])

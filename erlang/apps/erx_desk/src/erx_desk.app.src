@@ -3,13 +3,20 @@
 
 %% The desktop programs stats, clock, month and files
 %% (docs/design-desktop-programs.md), in the client release beside erx_ui: each
-%% program's pure core, which its window process runs. Its modules:
+%% program's pure core, run by a window process under erx_desk_sup. Its modules:
+%%   erx_desk             open/2 and reload/1, the programs' entry;
+%%   erx_desk_sup         the supervisor of the open windows;
+%%   erx_desk_window      a window: its core's effects and the toolkit's calls;
+%%   erx_desk_cmd_clock   the command clock;
+%%   erx_desk_clock_core  the core of clock, the time and date;
 %%   erx_desk_stats_core  the core of stats, the machine's load;
 %%   erx_desk_files_core  the core of files, the folder browser.
 {application, erx_desk,
  [{description, "erXos desktop programs"},
   {vsn, "1"},
-  {modules, [erx_desk_files_core, erx_desk_stats_core]},
-  {registered, []},
+  {modules, [erx_desk, erx_desk_app, erx_desk_clock_core, erx_desk_cmd_clock, erx_desk_files_core,
+             erx_desk_stats_core, erx_desk_sup, erx_desk_window]},
+  {mod, {erx_desk_app, []}},
+  {registered, [erx_desk_sup]},
   {applications, [kernel, stdlib, erx, erx_ui]},
   {env, []}]}.
