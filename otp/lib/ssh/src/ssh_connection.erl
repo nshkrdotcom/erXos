@@ -19,6 +19,8 @@
 %%
 %% %CopyrightEnd%
 %%
+%% Modified by erXos: exit_signal/3 sends a channel's exit-signal request
+%% (RFC 4254, section 6.10).
 
 %%
 
