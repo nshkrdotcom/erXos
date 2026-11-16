@@ -595,13 +595,15 @@ and its bring-up relies on `HCI_Reset`.
 **Its driver is `erx_pl011`, started fresh.** For the console and the
 host link, `erx_pl011` keeps what the boot left (What the tree does
 today). A line's record carries `init => fresh`, its rate and its flow,
-and `erx_pl011:program/2`, a pure function of the record and the UART's
-clock, returns the register writes the driver performs, in order,
+and `erx_pl011:program/1`, a pure function of the record, which carries
+the UART's clock, returns the register steps the driver performs, in
+order,
 following the programming note of the PL011's manual (DDI 0183G, page
 3-16):
 
 1. `CR` written 0: the UART, the transmitter, the receiver and both flow
-   enables off. The driver then waits one character time at the boot's
+   enables off; then `IMSC` written 0, so the controller's bytes raise
+   nothing on a line another driver shares until the start ends. The driver then waits one character time at the boot's
    divisors, as it does today, for the character in flight, and does not
    wait for `FR`'s `BUSY`: with CTS flow control a controller holding CTS
    off keeps the transmitter busy indefinitely.
@@ -613,15 +615,17 @@ following the programming note of the PL011's manual (DDI 0183G, page
    `LCR_H` written whole: 8 data bits, no parity, one stop bit, FIFOs on,
    no break. The `LCR_H` write comes last because it latches the
    divisors (page 3-14).
-4. `ICR` written with every interrupt bit, then `IMSC` with the receive
-   and receive-timeout interrupts, as the driver does today.
+4. `ICR` written with every interrupt bit.
 5. `CR` written whole: `UARTEN`, `TXE` and `RXE`, and `RTSEN` and
    `CTSEN` when the flow is `rts_cts`, so the PL011 holds RTS off while
    its receive FIFO is full and sends only while CTS is on.
 
-The console's and the host link's start keep their own sequence,
-`init => keep`, which `program/2` also returns, so one function names
-both and the driver's effects are the same loop over its list. The
+Either start ends by attaching the UART's interrupt line and then
+writing `IMSC` whole with the receive and receive-timeout interrupts
+and no other. The console's and the host link's start keep their
+own sequence, `init => keep`, which a record that names no `init` takes
+and `program/1` also returns, so one function names both and the
+driver's effects are the same loop over its list. The
 driver speaks the six console driver messages, unchanged. The line runs
 at 115200 baud throughout; a faster rate is a measured optimization
 ([Performance](#performance)).
@@ -1800,7 +1804,7 @@ Each passing case is paired with the seeded fault it must catch.
 | `erx_bt_link_core`, explored | reassembly at every fragment size; one outstanding request; commands past the queue discarded and counted; a first pairing encrypts with the pairing's key and reaches its level before the store answers, and a reconnection with the bond's key reaches the bond's; a Pairing Request on a resolved link fails; `encrypted` set only by a success report after a Reply; a resolved link sends one Security Request, never during encryption; a bonded configuration write is answered only after the store's `ok` | an Encryption Change accepted after a Negative Reply; encryption accepted only for kept bonds, so the first pairing never reaches its level; the configuration write answered before the store's answer |
 | `erx_smp_core`, explored over every message order | Passkey Entry and Just Works complete; every refusal of [Secure Connections only](#secure-connections-only) fires; a `display` window refuses Just Works; one pairing per window | the key-size check removed; the curve check removed (the `y + 1` point is accepted); the link-key bit kept |
 | `erx_bt_window`, the window and the wait | the wait is 2, 4, ... 64 s after successive failures, a disconnection mid-pairing counting as one, stays at 64, halves after 600 s without one; a Pairing Request during it answers Repeated Attempts and leaves the window open; windows opened back to back do not shorten it | the wait reset when a window opens; a disconnection not counted as a failure |
-| `erx_pl011:program/2` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes `IBRD` and `FBRD` before `LCR_H` and `CR` whole last with the flow enables; `keep` is today's sequence | `LCR_H` written before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
+| `erx_pl011:program/1` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes `IBRD` and `FBRD` before `LCR_H` and `CR` whole last with the flow enables; `keep` is today's sequence | `LCR_H` written before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
 | `erx_smp_crypto` | SMP Appendix D's sample data for `f4`, `f5`, `f6` and `ah` | the AES-CMAC key byte order reversed |
 | `erx_bt_state` | a state round-trips; every other version, a truncation and an oversized count are refused; the largest state, `bt_bonds_max` bonds with the most subscriptions, encodes in at most 4 KiB | the bond count read without its bound |
 | the store's table, against a fake store that answers each call as a test scripts it, and the development file over a fake data tree that fails a chosen step | a start whose `get` answers `unavailable` runs with no bonds, refuses pairing, a configuration write and `forget ADDRESS`, and puts nothing; a start that reads a blob that does not decode does the same and `forget all` then replaces it, after which pairing works; a start reading `none` makes the identity address and the first pairing's `put` keeps it; a `put` whose rename reached the medium but whose answer is `unavailable` fails the pairing, and the next pairing reads first and keeps the bond the failed one added; after every confirmed change and every read the domain's bonds are what the store's `get` returns | `unavailable` at the start read as `none`, which the first case finds as a pairing that overwrites the stored bonds; a domain that keeps its pre-put state after an unconfirmed `put`, which the rename case finds as the failed pairing's bond gone after the next pairing |
@@ -1926,9 +1930,9 @@ list ([todo-performance.md](todo-performance.md)):
   processes as one module both domains use, in place of the input part
   of `erx_usb_places_sup`.
 * **[design-runtime.md](design-runtime.md)**: `erx_pl011` takes
-  `init => fresh` or `keep` from its record and performs the writes
-  `erx_pl011:program/2` returns; the console's and the host link's
-  records say `keep`, which is today's sequence.
+  `init => fresh` or `keep` from its record and performs the steps
+  `erx_pl011:program/1` returns; the console's and the host link's
+  records name no `init` and so keep, which is today's sequence.
 * **[design-files.md](design-files.md)**: waiting requests
   ([Serving](design-files.md#serving-the-erx_fs-behaviour)), which the
   line's `data` and `ctl` and the control tree's `pair` serve their

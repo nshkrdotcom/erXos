@@ -7,10 +7,11 @@ require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
-# Runs test/erlang/erx_pl011_tests.erl, the EUnit cases of the console_uart parse, against
-# erx_pl011 compiled from source with the rest of its application on stock's emulator
+# Runs test/erlang/erx_pl011_tests.erl, the EUnit cases of the console_uart parse and of
+# program/1's register steps, against erx_pl011 compiled from source with the rest of its
+# application on stock's emulator
 # (ERX_ERL and ERX_ERLC, which make check supplies). The module's calls into erx_device are
-# never made by the parse, so it needs no hosted build.
+# never made by either, so it needs no hosted build.
 class ErxPl011Test < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   # The application, compiled whole (ErlangBuild), and the suite.

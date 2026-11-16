@@ -2,11 +2,13 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% EUnit cases of erx_pl011:console_uart/1, the parse of the console's device words from the
-%% boot information, and of erx_pl011:baud_divisors/1. Each malformed form ends in a stated
-%% reason, never in an exception. test/host/erx_pl011_test.rb runs them on stock's emulator.
+%% boot information, of erx_pl011:baud_divisors/1, and of erx_pl011:program/1, the register
+%% steps of a driver's start. Each malformed form ends in a stated reason, never in an
+%% exception. test/host/erx_pl011_test.rb runs them on stock's emulator.
 
 -module(erx_pl011_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_hw_pl011.hrl").
 
 -define(U64_MAX, "18446744073709551615").
 -define(U32_MAX, "4294967295").
@@ -104,3 +106,66 @@ baud_divisors_test() ->
     ?assertMatch({error, {pl011_clock, _}}, erx_pl011:baud_divisors(1828799)),
     ?assertMatch({error, {pl011_clock, _}}, erx_pl011:baud_divisors(0)),
     ?assertEqual({ok, 2330, 11}, erx_pl011:baud_divisors(4294967295)).
+
+%% erx_pl011:program/1, the register steps a driver runs over its UART
+%% (docs/design-bluetooth.md, "A reset", "Its driver is erx_pl011, started fresh"). A line's
+%% record, init fresh, programs the UART from nothing in the manual's order (DDI 0183G
+%% 3-16): disabled with every interrupt masked, FIFOs flushed by clearing FEN and the receive side drained by at most
+%% 33 reads, the record's divisors before the LCR_H write that latches them (3-14), every
+%% interrupt cleared, and CR written whole last, with both flow enables under rts_cts.
+fresh(Flow) ->
+    #{peripheral => pl011, window => {physical, 16#fe201000, 16#200}, lines => [153],
+      clock => 48000000, init => fresh, rate => 115200, flow => Flow}.
+
+enabled() ->
+    ?ERX_HW_PL011_CR_UARTEN_PUT(1) bor ?ERX_HW_PL011_CR_TXE_PUT(1) bor ?ERX_HW_PL011_CR_RXE_PUT(1).
+
+every_interrupt() ->
+    lists:foldl(fun(Mask, Word) -> Word bor Mask end, 0,
+                [?ERX_HW_PL011_ICR_RIMIC_MASK, ?ERX_HW_PL011_ICR_CTSMIC_MASK, ?ERX_HW_PL011_ICR_DCDMIC_MASK,
+                 ?ERX_HW_PL011_ICR_DSRMIC_MASK, ?ERX_HW_PL011_ICR_RXIC_MASK, ?ERX_HW_PL011_ICR_TXIC_MASK,
+                 ?ERX_HW_PL011_ICR_RTIC_MASK, ?ERX_HW_PL011_ICR_FEIC_MASK, ?ERX_HW_PL011_ICR_PEIC_MASK,
+                 ?ERX_HW_PL011_ICR_BEIC_MASK, ?ERX_HW_PL011_ICR_OEIC_MASK]).
+
+fresh_steps(Cr) ->
+    [{write, cr, 0}, {write, imsc, 0}, wait_character,
+     {field, lcr_h, fen, 0}, {drain_receive, 33},
+     {write, ibrd, 26}, {write, fbrd, 3},
+     {write, lcr_h, ?ERX_HW_PL011_LCR_H_WLEN_PUT(3) bor ?ERX_HW_PL011_LCR_H_FEN_PUT(1)},
+     {write, icr, every_interrupt()},
+     {write, cr, Cr}].
+
+fresh_without_flow_test() ->
+    ?assertEqual({ok, fresh_steps(enabled())}, erx_pl011:program(fresh(none))).
+
+fresh_with_rts_cts_test() ->
+    Cr = enabled() bor ?ERX_HW_PL011_CR_RTSEN_PUT(1) bor ?ERX_HW_PL011_CR_CTSEN_PUT(1),
+    ?assertEqual({ok, fresh_steps(Cr)}, erx_pl011:program(fresh(rts_cts))).
+
+%% The console's and the host link's record, with no init or init keep, keeps what the
+%% boot left: the transmitter idle, the UART disabled for one character, its interrupts
+%% masked and cleared, the boot's divisors unless it left none, eight bits, FIFOs on.
+keep_steps() ->
+    [wait_idle, {field, cr, uarten, 0}, wait_character, {write, imsc, 0}, clear_raw,
+     {default_divisors, 26, 3}, {field, lcr_h, wlen, 3}, {field, lcr_h, fen, 1},
+     {field, cr, rxe, 1}, {field, cr, txe, 1}, {field, cr, uarten, 1}].
+
+keep_test() ->
+    Console = spec(16#9000000, 16#1000, 1, 48000000),
+    ?assertEqual({ok, keep_steps()}, erx_pl011:program(Console)),
+    ?assertEqual({ok, keep_steps()}, erx_pl011:program(Console#{init => keep})).
+
+%% A record the driver cannot program is refused with a stated reason before any step: no
+%% clock, a clock with no divisor for the rate, a fresh record without its rate or flow or
+%% with a rate other than 115200, a line's record without its init, a flow of neither word,
+%% and an init of neither word.
+refused_test() ->
+    Fresh = fresh(none),
+    ?assertMatch({error, {no_uart_clock, _}}, erx_pl011:program(maps:remove(clock, Fresh))),
+    ?assertMatch({error, {pl011_clock, _}}, erx_pl011:program(Fresh#{clock => 1000})),
+    ?assertMatch({error, {bad_line_record, _}}, erx_pl011:program(maps:remove(rate, Fresh))),
+    ?assertMatch({error, {bad_line_record, _}}, erx_pl011:program(Fresh#{rate => 9600})),
+    ?assertMatch({error, {bad_line_record, _}}, erx_pl011:program(maps:remove(init, Fresh))),
+    ?assertMatch({error, {bad_line_record, _}}, erx_pl011:program(maps:remove(flow, Fresh))),
+    ?assertMatch({error, {bad_line_record, _}}, erx_pl011:program(Fresh#{flow => xon})),
+    ?assertMatch({error, {bad_line_record, _}}, erx_pl011:program(Fresh#{init => warm})).

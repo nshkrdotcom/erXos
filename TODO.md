@@ -7673,9 +7673,19 @@ document's "residual risks accepted" paragraph.
   line. Missing: the line's start, which serves `erx_line_fs` through `erx_fs_grants` and `erx_facet:serve/2` as
   `erx_machine_fs` does, under `erx_uart_sup` and its line groups; the `line_grant` checker and `device` parameter
   values in `tools/lib/erx/manifest.rb` (`GRANT_CHECKERS`, `parameter_value`); `erx_ns:place(line)` (the
-  facet-name check refuses it until a manifest publishes `line`); `erx_pl011:program/2` with `init => fresh`,
-  which the line's driver start passes; and the power line's steps 2 and 4 of a reset, which `erx_line` does not
-  run, as on a platform with no power line.
+  facet-name check refuses it until a manifest publishes `line`); a line's driver record, which carries `init => fresh`
+  to `erx_pl011:program/1`; and the power line's steps 2 and 4 of a reset, which `erx_line` does not
+  run, as on a platform with no power line. Two questions the designs leave open block the serving: how the
+  `uart` parameter, a `device` reference, reaches the system domain, since the boot view and the packer refuse every
+  reference kind (docs/design-system.md, "A facet row's parameters reach the mint by name"); and how the one
+  process `erx_facet:serve(line, _)` names reaches the tree of each grant, when several grants of `line` name
+  different UARTs.
+* [Medium] bluetooth, `erx_pl011`'s start effects (`run/3`, `discard/2`): `program/1`'s step lists are tested, but no
+  test runs the steps over the device stand-in (`test/erlang/stand_in/erx_device.erl`), so a drain that ignores `RXFE`
+  or its bound, or a step sent to the wrong register, passes; trace `keep` against the sequence it replaced and the
+  drain's two stops. With it, [Low]: between a line driver's end and its fresh start, through a reset's off wait,
+  the UART keeps the old driver's `IMSC`, so a controller's bytes raise a line it shares with the host link with no
+  driver to clear them; the old driver could mask it as it ends.
 * [Medium] bluetooth, the line keeper's shape (`erlang/apps/erx_uart/src/erx_line.erl`): its decisions and effects
   (the driver's sends, `exit/2`, the answers) are made in the same steps, so its tests are hand-picked cases rather
   than an exhaustive exploration of reads, writes, resets, input, flushes and ends; split it into a pure core that
