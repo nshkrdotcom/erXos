@@ -5,7 +5,7 @@
 -moduledoc """
 The terminal relay's decisions (docs/design-shell.md, "The terminal relay's
 protocol") as a pure state machine. erx_session_relay, the gen_server
-registered as erx_tty_owner, hands every request and message to
+registered as the relay's name, hands every request and message to
 request/3 or event/2 and carries out the actions they return, in order,
 after it has answered the request: so the answer goes before anything the
 request sets off, the design's ordering rule.

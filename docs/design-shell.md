@@ -2053,30 +2053,34 @@ which three rules give:
   a command domain's startup message names its terminal stream `write`,
   and `erx_cmd` there ends a command that reads it with status `ebadf`
   ([design-programs.md](design-programs.md#what-a-program-can-start)).
-  The console belongs to no job, so no mark ends it. A build check runs
-  xref over the BEAM files of the image's Erlang applications, with the
-  machinery that computes the modules `/tmp`'s serving processes may
-  call (`tools/lib/erx/serving_set.rb`), and fails on either of two sites.
-  One is a call of `erx_session_relay:open_reader/1` from any module but
-  `erx_cmd` and `erx_console`. The other is the atom `erx_tty_owner`,
-  the relay's registered name, in any module but `erx_session_relay`,
+  The console belongs to no job, so no mark ends it. Two source checks
+  over the runtime's Erlang under `otp/` and `erlang/`, of the form the
+  tree's Erlang chokepoint rules take
+  (`tools/lib/erx/chokepoint_rules/relay.rb`), with comments blanked,
+  fail on either of two sites. One is a call of
+  `erx_session_relay:open_reader/1` from any module but `erx_cmd` and
+  `erx_console`, in any form that names the function outside a string:
+  a remote call, a fun, an `apply/3`, a variable or macro module, an
+  import from `erx_session_relay` or a macro defined as either name.
+  The other is the atom `erx_tty_owner`, the relay's registered name,
+  bare, quoted or in a string, from which `list_to_atom/1` could make
+  it, in any module but `erx_session_relay`,
   whose client functions make every request to the relay, `erx_output`,
   the runtime's writers' one sender of `tty_write` and `tty_drain`,
   which every owner serves, and the two modules that hold the name in
   other domains, `erx_console` in the system domain and `erx_log_h`,
   whose proxy holds it in a domain with no terminal
   ([design-runtime.md](design-runtime.md#the-console-and-standard-io)).
-  A registered name is an argument, not a call, so xref's call graph
-  does not show it; the check reads, in the same run, the atom table of
-  each BEAM file, where any use of the name as a literal appears. So a
-  handler that builds the open request itself and sends it by name is
-  a site, as one that calls `open_reader/1` is
-  ([design.md](design.md#chokepoint-checks)). Test modules are not among
-  those files, so the relay's own cases, which open for reading from the
-  test process, are not sites; the check's test compiles a seeded
-  handler module into the files it reads. It is a guard against a slip,
-  not the boundary: a module that makes the name or the function at run
-  time, through `list_to_atom/1` or a computed `apply/3`, passes it,
+  A registered name is an argument, not a call, so the second check
+  looks for the name wherever it appears. So a handler that
+  builds the open request itself and sends it by name is a site, as
+  one that calls `open_reader/1` is
+  ([design.md](design.md#chokepoint-checks)). Test modules lie outside
+  `otp/` and `erlang/`, so the relay's own cases, which open for
+  reading from the test process, are not sites; the checks' seeds are
+  modules under `erlang/apps`. It is a guard against a slip, not the
+  boundary: a module that builds the name or the function at run time,
+  from pieces or through a computed `apply/3`, passes it,
   and the mode is what keeps a write-only open from reading. A program's terminal reads,
   and through them a command domain's, need a handshake in which each
   handler answers the shell once its program has taken the signal, and
@@ -2676,14 +2680,14 @@ remain independent of catalog generation.
     `tcsetattr` go through; an open of A's made for reading then reads
     `ls\n`. Seeded: a relay that ignores the mode, whose write-only open
     reads `ls\n`.
-  * The readers: the chokepoint check that only `erx_cmd` and
+  * The readers: the chokepoint checks that only `erx_cmd` and
     `erx_console` call `open_reader/1`, and that `erx_tty_owner` appears
     only in `erx_session_relay`, `erx_output`, `erx_console` and
-    `erx_log_h`, passes on the image's BEAM files. Seeded, in
-    `test/host/chokepoints_test.rb` as every rule's seed is, each a
-    program handler module compiled into the BEAM files xref reads: one
-    that calls `open_reader/1`, and one that sends `{open, Job, read}`
-    with `gen_server:call(erx_tty_owner, _, infinity)`, each of which the
+    `erx_log_h`, pass on the tree (`test/host/relay_chokepoints_test.rb`).
+    Seeded, in `test/host/chokepoints_test.rb` as every rule's seed is,
+    each a module under `erlang/apps`: one that calls
+    `open_reader/1`, and one that sends `{open, Job, read}` with
+    `gen_server:call(erx_tty_owner, _, infinity)`, each of which the
     check reports.
   * The runtime's writers: with output stopped by `VSTOP`, a
     `tty_write` is answered once its bytes are held and none reaches the
