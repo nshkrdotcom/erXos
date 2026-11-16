@@ -228,11 +228,21 @@ capability-table page (`obj_space_phys_util.cpp:163,226`), refused as `Insert_er
 (`map_util-objs.cpp:117-127`), and a memory map a new page-table page (`Mem_space::v_insert`,
 `arm/mem_space-arm.cpp:229-233`) and its mapping-database node (`Treemap::insert`, `mapdb.cpp:858`),
 refused as `L4_error::Map_failed` (`map_util.cpp:735-760,774-775`). A factory's create fails the same
-way, from the factory it is made from. A domain reaches any of these refusals at will, by spending
-its factory. So three functions of the root take every such step: its one placement function and its
-one map function, the only code that maps into a task, and its one factory create. Each writes the
+way, from the factory it is made from. So does a task's added kernel-user memory, which
+[vCPU arming](#vcpu-upcalls-on-fiasco) takes: `l4_task_add_ku_mem` charges the area to the task's
+quota (`task.cpp:248`), maps it into the task (`:255`), and when either is refused frees the area
+itself (`:260-261`) and answers `-L4_err::ENomem` (`:250-251`, `:266`); a request of several areas
+keeps those added before the refused one (`task.cpp:880-890`), so the root adds one area per call. A
+domain reaches any of these refusals at will, by spending its factory. So every Fiasco call that
+charges a task's quota, `l4_task_map`, the `l4_factory_create` family and `l4_task_add_ku_mem`, lives
+in one module of the root, `liberx/backend/fiasco/charge.c`, and the `fiasco-charge` chokepoint fails
+the build on such a call anywhere else ([The chokepoint](#the-chokepoint)). The module offers the
+root's one placement function, its one map function, the only code that maps into a task, its one
+factory create and its one kernel-user memory add; the root's own steps at its start use them too,
+and a refusal there fails the boot. Each writes the
 root's record only once Fiasco has accepted the step, and answers a refusal as `ERX_ENOMEM`, the
-domain's own. The call that met it then undoes what that call created, the maps it
+domain's own. A refused add arms nothing and leaves no area, since Fiasco has freed it. The call that
+met a refusal then undoes what that call created, the maps it
 made and the objects it made, and returns `ERX_ENOMEM`; undoing unmaps and deletes, which free and so
 take no kernel memory. The two calls that are sequences of independent items keep the items before
 the refused one, as their rows say: a pass (FD4) and an image load (FD10). A refused unmap or delete
@@ -276,7 +286,7 @@ destroyed, Fiasco removes it from every holder's object space, the slots stay re
 later use answers `ERX_ESTALE`: a direct use gets Fiasco's answer for an empty slot, which the stub
 maps to `ERX_ESTALE`, and a service call finds the record marked dead. A handle used after its own
 holder closed it names whatever the root places in that slot next. That is the holder's own bug, and
-the generation guarantee it loses is FD1. The root takes a task's free slots oldest-freed first, so
+the generation guarantee it loses is FD1. The root takes a task's never-used slots in index order, then its freed slots oldest-freed first, so
 a closed slot is reused as late as the task's table allows, which makes such a bug as unlikely to
 meet a new object as a fixed table can.
 
@@ -491,7 +501,7 @@ callers as it says.
 | `erx_backend_trace_read`, `erx_trace_read` | `erx_trace_ring:read/3`, for `erx:trace` | local, in the root: [The trace ring](#the-trace-ring) | the root's parks, wakes, IRQ deliveries and task starts and ends, reported by `liberx trace`; a cursor past the head, or `max` of 0 or over 512, `ERX_EINVAL`; an exhausted ring `ERX_ELIMIT`; `erx_backend_trace_read` in a task `ERX_ENOTSUP`; `erx_trace_read` `ERX_ENOTSUP` everywhere, so the kernel's row is `unsupported` | FD26 |
 | `erx_watchdog_pet`, the crash record, `erx_machine_end(res, how)` | M3's criteria | pet: a local atomic store in the root, which alone links it (a task's ERTS fails to link, so no task can call it), and hosted `ERX_OK` with no effect. End: the root's alone, a task's call `ERX_ENOTSUP`, as the kernel's `POWER` check leaves it to the system domain ([design-system.md](design-system.md#a-sessions-request)); [The end path](#the-end-path) | `ERX_END_OFF`, `_RESET` and `_PANIC` as erXos's kernel ends them; `ERX_END_TRIAL` `ERX_ENOTSUP`, before anything stops, while the boot value is `unknown`, and otherwise the platform's trial request made by the root and a reset, with no hardware watchdog behind the trial boot; a kernel hang or a stalled watchdog is not caught | FD26, FD29 |
 | a thread's fault | a domain's or a program's fault; a test task's fault | [Faults](#faults-and-the-fault-of-the-root-task) | a fault record at the space's fault gate, thread `unknown`, the faulting thread left waiting; with no fault gate, a crash record and the task's end; the machine's end for the root | FD19, FD20 |
-| `erx_vcpu_control`, `erx_vcpu_resume`; `erx_irq_bind` to a thread | `liberx`'s signals in programs (Track P) | [vCPU upcalls on Fiasco](#vcpu-upcalls-on-fiasco), over Fiasco's vCPU interface with no kernel change | correct for programs whose every kernel call keeps `liberx`'s event rule; no umtx wait ends with `ERX_EINTR`, and a delivery that arrives during a kernel call is taken at the thread's return to its own code | FD23 |
+| `erx_vcpu_control`, `erx_vcpu_resume`; `erx_irq_bind` to a thread | `liberx`'s signals in programs (Track P) | [vCPU upcalls on Fiasco](#vcpu-upcalls-on-fiasco), over Fiasco's vCPU interface with no kernel change | correct for programs whose every kernel call keeps `liberx`'s event rule; no umtx wait ends with `ERX_EINTR`, and a delivery that arrives during a kernel call is taken at the thread's return to its own code; an arming whose kernel-user memory Fiasco refuses `ERX_ENOMEM`, nothing armed | FD23 |
 | messages through gates, rendezvous passing, `erx_mem_child`, `erx_mem_own`, `erx_mem_dirty`, `erx_dma_*`, `erx_resource_carve`, `erx_space_quiesce`, `_clear_caps`, `_copy` | none | none | `ERX_ENOTSUP` | FD3, FD9, FD12, FD13 |
 
 `erx_entropy_read` leaves the generator's bytes in the caller's UTCB, where the next call that writes the
@@ -812,8 +822,12 @@ The service takes only the trace lock, and otherwise waits only on Fiasco's call
 
 ### The chokepoint
 
-Fiasco's headers and capability values appear only under `liberx/backend/fiasco`. A build check
-fails on a new site, and has a seeded violation.
+Fiasco's headers and capability values appear only under `liberx/backend/fiasco`. Within it, the
+Fiasco calls that charge a task's quota, `l4_task_map`, every `l4_factory_create` form and
+`l4_task_add_ku_mem`, appear only in `charge.c` (the `fiasco-charge` rule), so the module that turns
+each refusal into `ERX_ENOMEM` and the undo of its call is the only route to one
+([The construction](#the-construction)). Each is a build check that fails on a new site, and each
+has a seeded violation.
 
 ### Interfaces
 
@@ -2185,7 +2199,9 @@ directory up), and have not been executed; `native_signal` ([Verification](#veri
   (`thread_object.cpp:555-615`, `:603-609`); `vcpu_resume` acts only on the calling thread (`thread_object.cpp:255`).
 * **Arming** runs `vcpu_control` on the thread with a Fiasco state area in a second kernel-user memory area of the task,
   which the backend adds with `l4_task_add_ku_mem` (`task.cpp:860-890`), since the task's UTCB area holds exactly its 128
-  UTCB slots and Fiasco requires the state area to lie in kernel-user memory (`space.cpp:152-170`). Every state bit that
+  UTCB slots and Fiasco requires the state area to lie in kernel-user memory (`space.cpp:152-170`). The add charges the
+  task's factory and can be refused; it goes through the root's one kernel-user memory add, so a refusal answers the arming
+  call `ERX_ENOMEM` and leaves no area and no armed thread ([The construction](#the-construction)). Every state bit that
   diverts faults or selects vCPU user mode is clear, so page faults still reach the pager and exceptions the exception
   handler, the task's gate and from there the fault gate (`thread-vcpu.cpp:79-100`, `thread-ipc.cpp:1017-1052`). The
   ABI's `erx_vcpu` area stays the public one in the thread's record.
@@ -2857,6 +2873,7 @@ gate sets; a crash or hang of Fiasco is a HIGH finding and its input joins the c
 | **Manifest check**: each kept property with a seeded violation, each refusal with a seeded record | [the table](#the-phase-1-manifest-check) is the pairing |
 | **Service decoder**: fuzz target, and a task sending an unknown number, wrong count, bad index and long payload | word-count check removed: the fuzz target reports it |
 | **Chokepoint**: a Fiasco header outside the backend | the seeded violation is the case |
+| **Chokepoint** `fiasco-charge`: an `l4_task_map`, an `l4_factory_create_irq` and an `l4_task_add_ku_mem` each written in `service.c` | the seeded violation is the case: each fails the build |
 | **Production image.** The QEMU gate's `production_image` suite: the platform record's device paths, and each recorded window's base, size and line, against QEMU's device tree, then the image packed through the manifest check boots to its ERTS line with the watchdog's numbers and the exact argument count, a boot with `erx.det=1 erx.arg=WORD` shows the watchdog off and one more argument, a boot with an unknown `erx.` word and a 256 MiB machine each end at the root's refusal, and a boot with a plain `erx.arg` word is answered at the serial console through `erx_pl011`: a sum, a line with a mistake rubbed out, and an output longer than the transmit FIFO, a boot with `erx.group_report=1` reports every executor parked at the shell, and the TCG smoke boot, with one `-serial` and no `erx.hostlink=1`, reaches the command shell with no host link record; `production_image_test.rb` | a wrong device path, compatible or window, in that test, and a recorded base that is not its path's unit address on the host; a console driver that drops input or output: the console transcript stops; a misread `root_memory` or a lost `-append`: the manifest, watchdog and argument lines fail its transcript; a host link record handed without the word: the TCG smoke boot counts eight more arguments, and faults the root task |
 | **The manifest's C reader**: `tools/fuzz/manifest_fuzz.c`, each table of an accepted manifest read back to its count and no further | a row out of a table's range would abort it |
 | `make check-reproducible`: two builds of the production image, each clearing `build/runtime/native` first and packing into a directory of its own name, byte-identical in archive and bootable file. OTP and musl build at one path both times, so a path of theirs reaching an output does not show | a time, or a path under the two directories, reaching an output fails it |
@@ -2907,7 +2924,7 @@ Each test below names the seeded failure that proves it ran:
 | writable or executable | a request for such a mapping into a task fails at Fiasco's map, and the root still boots from `sigma0`'s mapping | the patch's check removed: the mapping is made; the exemption removed: the root does not start |
 | release licenses | the release image's link closure is all permissive | a release build with the debugger on; one with the original `kobject_rpc.h` restored in place |
 | the fuzz campaign | it runs its budget clean, every seed of its corpus reached | a fork build with the bound removed from `L4_snd_item_iter::next` (`if (_buf >= _max)`, `l4_buf_iter.cpp:116-121`), which any domain reaches by a send on its own gate whose words and typed items together pass the 63 message registers (`Utcb::Max_words`, `abi/l4_types.cpp:789`), so the kernel's item transfer writes past the root service's message registers before the root's decoder sees the message (`Thread::transfer_msg_items`, `thread-ipc.cpp:1203-1227`); the seed build counts each pass of the removed bound, the case fails if that count is 0, so it cannot pass without reaching the defect, and it fails if the campaign then reports clean |
-| a map at the factory's end | a domain whose row gives it a page budget larger than its kernel-memory figure can map, so its factory is spent before its page cap or its object and mapping limits, first commits a page and sets it to no access, then commits a page in each fresh 2 MiB region, each taking a page-table page, until one answers `ERX_ENOMEM`; it then asks for a two-page commit across a fresh region's edge, a protect of the no-access page to read and write, and an `erx_irq_create`: each answers `ERX_ENOMEM`, a touch of each refused range faults in the domain alone, the pool's count and the domain's object count are what they were before each call, and a neighbour domain keeps committing | a refused map ending the machine: the machine ends; the commit's undo skipped: the pool's count drops and the first page of the refused commit can be read; the undo returning every page of the plan to the pool: the refused protect raises the pool's count; the create's undo skipped: the domain's object count rises by one with no handle returned |
+| a map at the factory's end | a domain whose row gives it a page budget larger than its kernel-memory figure can map, so its factory is spent before its page cap or its object and mapping limits, has closed no handle, so the root hands it never-used slots in index order before any freed one ([Handles are slots](#handles-are-slots)). Sizes: a capability-table page is one 4 KiB page (`Config::PAGE_SIZE`, `obj_space_phys_util.cpp:221-226`) of `Config::PAGE_SIZE / sizeof(Obj::Entry)` slots (`obj_space_types.cpp:195-197`), 128 if an entry is the 32 bytes its capability word, list link and flags word add up to (`obj_space_types.cpp:45-102`; read, not measured: a wrong count makes the create below succeed and the case fail); an IRQ object charges its slab entry, `s` bytes (`irq.cpp:1201-1206`, `slab_cache.cpp:295-306`); a commit of a page in a 2 MiB region already mapped charges only its mapping-database node (`mapdb.cpp:858`), under a page. While its factory is ample, the domain makes doorbells until the handle it gets is the last slot of a table page, keeping one of them, `D`, so the next slot the root takes is the first of a page Fiasco has not allocated. It then commits a page and sets it to no access, then commits a page in each fresh 2 MiB region, each taking a page-table page, until one answers `ERX_ENOMEM`, and asks for a two-page commit across a fresh region's edge, a protect of the no-access page to read and write, and an `erx_vcpu_control` arming a thread, which needs the task's second kernel-user area. It then commits single pages in regions already mapped until one answers `ERX_ENOMEM`, so its factory holds less than one node's charge, and destroys and closes `D`: the root's delete returns only once Fiasco has freed the object, past an RCU grace period (`kobject.cpp:155-175`, `:224-233`), its `s` bytes back in the factory (`irq.cpp:1220-1225`), and its slot goes behind the never-used ones. The factory now holds at least `s` and less than `s` and a page together, so the next `erx_irq_create`'s factory create succeeds and its placement into the fresh slot, which needs a new table page, is refused. Each of the commit, the protect, the arming and the create answers `ERX_ENOMEM`, a touch of each refused range faults in the domain alone, the arming leaves the thread unarmed, the pool's count and the domain's object count are what they were before each call, and a neighbour domain keeps committing | a refused map ending the machine: the machine ends; the commit's undo skipped: the pool's count drops and the first page of the refused commit can be read; the undo returning every page of the plan to the pool: the refused protect raises the pool's count; the add's refusal ignored, the arming going on to `vcpu_control`: the arming answers other than `ERX_ENOMEM`; the create's undo skipped: the domain's object count rises by one with no handle returned |
 | writable peer side | a domain sends a raw `erx_vm_map` request asking for read and write on its peer's side, which it was passed without `WRITE`: `ERX_ERIGHTS`, and after the domain writes through every mapping it holds, the peer's side is unchanged | the map body's check against the slot record removed: the mapping is made and the peer's side changes |
 | CPU ceiling | a domain whose CPU set is one CPU, not the root service's, starts its threads with no mask, moves one by a raw affinity request naming every CPU, and spins them all, while a lower band's echo runs on the root service's CPU: the echo answers within one quantum, and a raw request naming only CPUs outside the set answers `ERX_EINVAL`; a domain whose set names only a CPU past the online ones is refused at admission with its diagnostic | the narrowing skipped: a spinner lands on the echo's CPU and the echo waits; the admission check removed: the domain is admitted and its first thread's start fails |
 | repeated delivery | a ringer on another CPU fires a holder's doorbell 10,000 times while the holder's executors postpone `erx_group_take_ready`: the holder's next take returns the object once, and its dispatcher's deliveries and wakes are counted and reported with the run, the load FD31 publishes | the listed flag ignored: the take returns the object more than once |

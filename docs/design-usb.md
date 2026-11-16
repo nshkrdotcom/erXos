@@ -2648,7 +2648,12 @@ recorded here as the design's and in `TODO.md` when the code lands:
   its guarantee, its kernel memory a Fiasco factory of its own (FD25), so
   an allocation past it fails with `ERX_ENOMEM` as on erXos's kernel; its
   CPU grant places its threads but bounds no time (FD15), so only the
-  bands protect a neighbour's latency from it. The cases that check a
+  bands protect a neighbour's latency from it, and only from the USB
+  domain's own threads: a request it sends a service runs at that
+  service's band, and a doorbell it rings runs the holder's dispatcher
+  at the holder's band, so it spends a higher band's CPU by asking
+  ([design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel),
+  FD15 and FD31). The cases that check a
   CPU bound, a neighbour's latency within one band, report `unsupported`
   here. R6's bounds are the
   stack's own code and are tested on both phases alike: descriptor and

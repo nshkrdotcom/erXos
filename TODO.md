@@ -519,6 +519,34 @@ it; git history is the record of completed work.
   so any task sets the wall clock. Make it a call on the time page's handle that checks `WRITE` and answers
   `ERX_ERIGHTS` without it, with the release case "the wall clock"
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-cases), [design-time.md](docs/design-time.md#phase-1)).
+* [High] R1 on Fiasco, `liberx/backend/fiasco` (`vm.c:673`, `irq.c:174`, `watchdog_thread.c:81`, `service.c:186-219`, `:690-694`,
+  `service_task.c:291-295`): the Fiasco calls that charge a task's quota are spread over five files, and a map
+  Fiasco refuses under a range call ends the machine. Move every `l4_task_map`, `l4_factory_create` form and
+  `l4_task_add_ku_mem` into `charge.c`, each refusal answered `ERX_ENOMEM` with its call undone, add the
+  `fiasco-charge` chokepoint with its seeded violation, and the release case "a map at the factory's end"
+  ([design-fiasco.md](docs/design-fiasco.md#the-construction)).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco/service.h` (`:90`): paged objects are not offered, so
+  `erx_mem_create_paged`, `erx_mem_supply` and `erx_mem_seal` answer `ERX_ENOTSUP` and no destination is ever
+  sealed. Offer them as the call table's row says ([design-fiasco.md](docs/design-fiasco.md#the-call-table)).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco/service.c` (`service_thread_set_affinity`, `service_sched_param`):
+  `erx_thread_set_affinity` and a thread's start pass the caller's mask to Fiasco unnarrowed, and a thread with no
+  mask stays on the root service's CPU. Narrow every mask to the domain's CPU set and start a thread with no mask
+  on that set, with the release case "CPU ceiling"
+  ([design-fiasco.md](docs/design-fiasco.md#threads-bands-and-stops)).
+* [High] R1 on Fiasco, `liberx/backend/fiasco/entropy.c` (`erx_fiasco_entropy_init`): a boot whose seed is the
+  counter alone goes on in every build, a release's included, and the Raspberry Pi 4 reads its RNG200 only when
+  `/chosen` holds no seed at all. A release's root refuses such a boot with `erx: entropy: refused: a release does
+  not run without a seed` and ends as `ERX_END_OFF` before any domain starts, and the Pi 4 reads its RNG200 as
+  [Entropy sources](docs/design-platforms.md#entropy-sources) says, with the release case "release entropy"
+  ([design-fiasco.md](docs/design-fiasco.md#the-call-table)).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco/end.c`: `erx_machine_end` resets for every `how` but
+  `ERX_END_OFF`, `ERX_END_TRIAL` included, so no trial request is made. Refuse `ERX_END_TRIAL` with
+  `ERX_ENOTSUP` while the boot value is `unknown` and otherwise make the platform's trial request before the
+  reset, with the release case "trial" ([design-fiasco.md](docs/design-fiasco.md#the-end-path)).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco/end.c` (`erx_fiasco_end_watchdog`) and `service.c`
+  (`service_fault`): a missed pet and a root fault power the machine off rather than reset it, so a hung or
+  faulted boot never reaches the committed slot. Reset, as the end path says
+  ([design-fiasco.md](docs/design-fiasco.md#the-end-path)).
 * [High] R1 on Fiasco, `fiasco/kernel`: FD32, hardening Fiasco's AArch64 entry against branch-target and
   branch-history injection, is an open decision; the recommendation is to carry the patch, priced with the
   null-request bench ([design-fiasco.md](docs/design-fiasco.md#open-decisions)).
