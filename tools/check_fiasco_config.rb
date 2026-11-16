@@ -5,16 +5,21 @@
 
 # Checks the stopgap kernel's resolved configuration (globalconfig.out) against
 # the fork's rules (tools/lib/erx/fiasco_config.rb). `tools/erx build fiasco`
-# runs the same check after every configuration step; this script checks a
-# file by hand, the build's own one by default.
+# runs the same check after every configuration step, and `tools/erx build
+# release-kernel` with the release rules; this script checks a file by hand,
+# by default the build's own one of the kernel of the kind --kind names
+# (development unless it says release).
 
 require 'optparse'
 require_relative 'lib/erx/runner'
-require_relative 'lib/erx/fiasco_config'
+require_relative 'lib/erx/build_kind'
+require_relative 'lib/erx/fiasco'
 
 root = File.expand_path('..', __dir__)
+kind = Erx::BuildKind::DEVELOPMENT
 parser = OptionParser.new do |flags|
-  flags.banner = 'Usage: ruby tools/check_fiasco_config.rb [RESOLVED_CONFIG]'
+  flags.banner = 'Usage: ruby tools/check_fiasco_config.rb [--kind development|release] [RESOLVED_CONFIG]'
+  flags.on('--kind KIND', Erx::BuildKind::ALL, 'The build kind of the kernel') { |value| kind = value }
   flags.on('--help') { puts flags; exit 0 }
 end
 begin
@@ -24,10 +29,10 @@ rescue OptionParser::ParseError => error
   Erx::Terminal.puts(error.message)
   exit 2
 end
-path = ARGV.first || File.join(root, 'build/fiasco/kernel/globalconfig.out')
+path = ARGV.first || File.join(Erx::Fiasco.kernel_directory(root: root, kind: kind), 'globalconfig.out')
 begin
-  Erx::FiascoConfig.check(path)
-  Erx::Terminal.puts("#{path}: the stopgap kernel configuration follows the fork's rules")
+  Erx::FiascoConfig.check(path, kind: kind)
+  Erx::Terminal.puts("#{path}: the stopgap #{kind} kernel configuration follows the fork's rules")
 rescue Erx::Error => error
   Erx::Terminal.puts(error.message)
   exit 1

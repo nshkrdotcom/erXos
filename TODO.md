@@ -7927,6 +7927,25 @@ document's "residual risks accepted" paragraph.
   design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
   takes the same shape.
 
+* [Medium] stopgap kernel, release builds (design-stopgap.md, "Boot handoff", the kernel): a
+  release kernel is configured without JDB and the kernel's console input, so a panic reboots
+  instead of waiting on the console (`tools/erx build release-kernel`, `FiascoConfig::RELEASE_UNSET`),
+  but no image packs it: every image is a development build (`ProductionImage::BUILD_KIND`);
+  the release image build must take `Fiasco#build_release_kernel`'s kernel and extend the
+  provenance audit (`fiasco_provenance.rb`, which reads `build/fiasco/kernel`) and the build
+  memo to it. A panic before `Psci::init` and `Dt::init` in `Startup::stage2`, the handoff
+  checks of `erx_handoff.cpp` among them, finds no reset method and loops forever
+  (`reset-arm-gen.cpp`); the fix probes PSCI from the device tree in `platform_reset` when it
+  is not yet initialized. The reboot rests on reading `kernel_panic.cc`, `thread.cpp`,
+  `terminate.cpp` and `reset-arm-gen.cpp` and on the configuration check; no release kernel
+  has panicked under QEMU. The test that settles it boots a release image whose kernel panics
+  after `Psci::init` with `-no-reboot` and expects QEMU to exit after the panic line, and one
+  whose handoff fails, once the early reset is fixed. Still in a release kernel and each a
+  question for the release: `CONFIG_RT_DBG`, which adds object naming and the kernel memory
+  statistics dump to the console (`jdb_kobject`, `CONFIG_JDB_KMEM_STATS`) to the debugger
+  kernel object `jdb_object` that every kernel has; and `CONFIG_PERF_CNT_USER`, user-mode
+  access to the performance counters, which Fiasco's Kconfig marks for debugging only.
+
 ## Planned features
 
 * [Medium] apps, who may read the start table's row names in a release build ([design-apps.md](docs/design-apps.md),
