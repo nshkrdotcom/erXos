@@ -2016,8 +2016,11 @@ that the preview's plan requires written before the command is built.
 The soak defines no interface of its own for it and needs only this of
 it: run as root by `rc -c`, it takes a UTC time to the second, exits 0
 having set the clock to it whatever the clock read before, and exits
-non-zero having changed nothing. A non-zero exit fails the setup, and the
-soak fails before round 1. The driver waits on that section and that
+non-zero having changed nothing. A setup login that fails for a
+reason the machine caused, no answer within the deadline or the command
+exiting non-zero, fails the soak before round 1; one that fails for a
+reason it did not cause, no set-time command on the machine or an error
+of a host tool, leaves the soak incomplete. The driver waits on that section and that
 command (see Building it).
 
 **The quotes' sources.** On the board the kiosk fetches live quotes from
@@ -2041,7 +2044,7 @@ real TLS endpoints and the published card.
 **The growth rule.** A leak is a figure that moves one way and does not
 come back: a domain's count that rises, the pool's free memory that
 falls. The rule's claim: a series whose typical value moves by more than
-one unit of its resolution between the soak's second quarter and its
+one unit of its series between the soak's second quarter and its
 last fails, and a series that only varies around a steady value passes.
 
 The series are the pool's free memory, from `top`'s `Mem` line, and the
@@ -2052,9 +2055,13 @@ rounds, quarter k holds rounds floor((k - 1)N/4) + 1 to floor(kN/4).
 The first quarter is warm-up and is not judged. A series **fails** when
 the median of its last quarter stands beyond the median of its second
 quarter by more than one unit, in the bad direction: above it for a
-count, below it for free memory. The unit is 1 for a count, and for free
-memory the unit `top` prints it in, FreeBSD's `format_k()` units, a
-mebibyte at the pool's sizes (unverified). The third quarter is not
+count, below it for free memory. The median of a quarter of an even
+number of values is the lower of its two middle values, so it is always
+a value that was observed. `top` prints free memory in FreeBSD's
+`format_k()` units, K, M or G by size ([design-live.md](design-live.md)), and the judge
+turns every figure into KiB before comparing; the unit is then 1 for a
+count and 1 KiB for free memory, and the allowance is one unit of the
+normalised series whatever unit `top` printed. The third quarter is not
 compared: it is the distance between the two that are, so a leak has
 half the soak to move them apart.
 
@@ -2073,8 +2080,12 @@ half the soak to move them apart.
   longer soak, never a looser rule. And a stationary series' median is
   steady to within one unit from quarter to quarter, which holds for
   quarters of many rounds: the judge needs at least 30 rounds a quarter,
-  120 in all, and a failure that noise caused is a failure to explain,
-  never a pass.
+  120 in all, and a failure that noise caused is a failure to
+  investigate, never a pass. The first QEMU run doubles as a run-in: it
+  is judged like any other, and its research record states each series'
+  quarter medians and their spread on a machine that works, so a later
+  failure can be told from the spread the machine shows when nothing
+  leaks.
 
 The time each kind of login takes is reported, as its median in each
 quarter, and not judged: its noise is the host's and the network's, so
@@ -2127,7 +2138,10 @@ No list of loss texts is kept: any line the service writes about itself
 after its start takes away the span's claim to be whole, so a loss line
 the service gains later makes the check unknown, never passed. A
 `quotes:` line that does not parse, as a byte lost on the serial link
-would leave it, makes the check unknown as well.
+would leave it, makes the check unknown as well. A loss line that a lost
+byte mangled so that it no longer begins `erx_syslog:` is not seen: that
+is an accepted risk, since bytes lost on the serial link are not
+detected at all (What it does not prove, above).
 
 **Pass and fail.** Every check gives passed, failed or unknown, and the
 judge's answer is one of three:
@@ -2137,7 +2151,8 @@ judge's answer is one of three:
   through the host tool's line escape (`Erx::LineEscape`) and truncated;
 * **incomplete** when no check failed but one is unknown, or the driver
   stopped for a reason that is not the machine's (the operator stopped
-  it, or a host tool failed before its login started); the report names
+  it, a host tool failed before its login started, or the harness timed
+  out or failed with no login failed); the report names
   each unknown check and what it lacked;
 * **passed** when every round and the closing round ran and every check
   passed.
@@ -2148,10 +2163,10 @@ judge's answer is one of three:
 | `ps`, `top` | inspect | `ps` lacks `rc` or `ps`; `top` prints no `Mem` line or more than 18 process rows | |
 | clock | inspect | the time of day on `top`'s first line differs from the host's UTC time of day at the login's end by more than 60 s, counted around midnight; it is UTC because erXos keeps no time zone (unverified: a clock shown in another zone fails this check, never passes it) | |
 | kiosk | inspect | `/proc/apps/dashboard/status` has `state` other than `running` or `ends` above 0 | a round's record is `[unsupported]` or `[error]` |
-| domains | inspect | a name in the `boot_order` of `/proc/apps/status` without exactly one domain of that name in state `running`, or under another id than in round 1: ids are never reused (`erx_domain_srv.erl`), so a configured domain that ended and was restarted shows a new one | a domain's record is `[unsupported]` or `[error]` |
-| reset | inspect | `uptime` in `/proc/status` is below the previous round's: the machine booted between them | |
+| domains | inspect | a name in the `boot_order` of `/proc/apps/status` (unverified: the file's field name) without exactly one domain of that name in state `running`, or under another id than in round 1: ids are never reused (`erx_domain_srv.erl`), so a configured domain that ended and was restarted shows a new one | a domain's record is `[unsupported]` or `[error]` |
+| reset | inspect | `uptime` in `/proc/status` (unverified: the file's field name) is below the previous round's: the machine booted between them | |
 | `/data` | read back | file M's SHA-256 is not payload M's; the report names the first differing offset | |
-| quotes | console, at the end mark | a quote whose last `quotes:` line in the span is not in the state its target expects | the span is not complete, a quote has no `quotes:` line in it, or one does not parse |
+| quotes | console, at the end mark | a quote whose last `quotes:` line in the span is not in the state its target expects | the span is not complete, a quote has no `quotes:` line in it, or one does not parse; a loss line mangled by serial byte loss is not detected, an accepted risk |
 | growth | the rounds | a judged series fails the growth rule | free memory, or a series reported in some rounds, is not judged, or fewer than 120 rounds ran |
 
 **Hangs and resets.** A reset is noticed by the reset check, an `uptime`
@@ -2168,7 +2183,7 @@ which every boot prints, or the log's end:
 | a crash record of a fault, then `erx: end reset` | the root task faulted ([design-stopgap.md](design-stopgap.md#the-end-path)) |
 | `erx: end reset` or `erx: end off` with no crash record | an end someone or something asked for, or the root's own stop; the log lines before it say which |
 | nothing, then a boot line | a reset nobody logged: on a board whose hardware watchdog runs, a hang of Fiasco or of the root, or else a loss of power; the console cannot tell the two apart, and whether the board's reset status tells them apart is unverified |
-| nothing, and no boot line | a hang nothing reset: the board stays silent until its power is cycled; on QEMU, which has no hardware watchdog, the harness's deadline ends the run as timed out |
+| nothing, and no boot line | a hang nothing reset: the board stays silent until its power is cycled; on QEMU, which has no hardware watchdog, the harness's deadline ends the run as timed out, which the driver maps as in Running it on QEMU |
 | an `erx_domain: configured domain` line | a configured domain ended or did not start, with the reason in the line; the domain service restarts it within its row's intensity |
 
 The judge reads each crash record with `Erx::CrashFrame`, which the
@@ -2201,10 +2216,14 @@ file in it likewise, as the QEMU harness makes its run directories
   times in UTC. It does not keep the machine's address;
 * `rounds.jsonl`: one JSON object per round, the closing round and the
   setup included: its number, its start in UTC and any overrun; for each
-  login its name, exit status and duration and its error output in
-  base64; the inspect login's output in base64, so the bytes are kept as
-  the machine sent them and the judge can read them again; and for the
-  read-back, the length and SHA-256 of what came back and, where it
+  login its name, exit status and duration; for a login that failed, its
+  error output decoded as text and escaped through `Erx::LineEscape`; for
+  the inspect login, the parsed values the judge reads (each series'
+  figure with its status or its gap and reason, each configured domain's
+  id and state, the dashboard's `state` and `ends`, `uptime`, `top`'s time
+  of day and its row count, and whether `ps` listed `rc` and `ps`), and,
+  for a round that failed, the login's raw output as escaped text, so a
+  failure is shown as the machine printed it; and for the read-back, the length and SHA-256 of what came back and, where it
   differs from the payload, the first differing offset. The bytes a
   read-back returned are not kept: payload M is made again from its
   number, so its hash judges the file again, and nothing a storage fault
@@ -2216,12 +2235,15 @@ file in it likewise, as the QEMU harness makes its run directories
   evidence, and each series' quarter medians and status;
 * `notes.md`, on the board: the operator's notes (below).
 
-A day's record is about 20 to 30 MiB, mostly the inspect logins' output
-in base64, at about 10 KiB a round (unverified until the first record).
-The record stays on the development host where it was made. A record
-that counts as evidence goes to the separate history repository,
-`~/erxos-history/soak-TARGET-DATE/`, only after a person has read its
-console log, its notes and a sample of its inspect output for anything
+A day's record is a few MiB, mostly the parsed values at about 1 KiB a
+round, and the console log (unverified until the first record). The
+record stays on the development host where it was made. `known_hosts`
+holds the host key under `DevKey`'s alias, not under an address: the
+extended builder keeps `HostKeyAlias` (`dev_key.rb`, `ssh_argv`), so
+the file names no address. A record that counts as evidence goes to the
+separate history repository, `~/erxos-history/soak-TARGET-DATE/`, only
+after a person has read every text it keeps, its console log, its notes
+and the error output and raw output of each failed round, for anything
 private: an address, a name of the operator's network, a key, a command
 typed at the console. A record whose console log holds such a thing goes
 without `console.log`, and its notes say so; judged again, that copy
@@ -2326,19 +2348,30 @@ round run in the `verify` of the checkpoint at which the SSH daemon is
 up, as the network domain's SSH cells run their logins
 (`tools/lib/erx/network_domain.rb`, `checkpoints`). The harness's hard
 deadline is the sum of its checkpoints' times (`Erx::Qemu.run`), and the
-checkpoint after the rounds is given the soak's length plus 300 s: the
-last round starts before the length has passed and the closing round
-after it, and their five logins take at most 60 s each, so the deadline
-ends only a run whose driver itself hung. Under `-no-reboot` any end of
-the machine exits QEMU, the next login fails, and the judge reads the
-serial log the harness kept. After the closing round the harness takes
+checkpoint after the rounds is given the soak's length plus a fixed 600 s.
+The margin covers what runs outside the length: the setup's two logins,
+the last round's three (it starts before the length has passed), the
+closing round's two, the screenshots 61 s apart and the mark. At most
+60 s a login, the seven logins and the screenshots come to 481 s and the
+mark takes a few seconds more, so the margin ends only a run whose
+driver itself hung. A fixed margin reads at a glance and needs no change
+when the slot or the length does. Under
+`-no-reboot` any end of the machine exits QEMU, the next login fails, and
+the judge reads the serial log the harness kept. After the closing round the harness takes
 two screenshots through QMP 61 s apart, so the kiosk's clock has moved
 between them, and keeps them in the record for a person to look at; they
 are not judged. It then types `echo soak: end` on the serial line, as
 its checkpoints type at the console, waits for the line it prints, and
 runs the judge on the serial log. That the cell's console offers the
 `%` prompt is unverified until the first run; without it the mark never
-comes, and the quotes check is unknown.
+comes, the checkpoint raises `TranscriptTimeout` (`qemu.rb`), and the
+quotes check is unknown.
+
+`Erx::Qemu.run` can end with its report timed out or failed, because a
+checkpoint never matched or the guest ended. The driver maps such an end
+to incomplete, or to failed if a login had already failed, and in either
+case still runs the judge on the serial log and the record it kept, so a
+run that ends early is judged on what it holds.
 
 **Cost.**
 
@@ -2359,6 +2392,8 @@ seed.
 | --- | --- | --- |
 | growth: settling | a series that rises through its warm-up quarter and then varies around a steady value passes | judging the warm-up quarter too fails it |
 | growth: a spike hides no rise | a count whose second quarter is steady but for one round ten times higher, and whose last quarter rises steadily from twice the steady value, fails | comparing the quarters' least and greatest values, not their medians, passes it |
+| growth: an even quarter | a last quarter of 30 values whose two middle values are 5 and 9, against a second quarter whose median is 5, passes | taking the upper middle value, or the mean of the two, fails it |
+| growth: units | free memory printed in K in some rounds and in M in others is compared in KiB and passes when steady | comparing the printed numbers without the unit fails it |
 | growth: noise is not growth | two quarters drawn from the same noise, whose medians differ by one unit, pass | comparing the medians with no allowance fails them |
 | growth: a leak in a partial figure | free memory with status `partial`, reporter `root pool`, falling one mebibyte every 40 rounds after warm-up fails, named partial | dropping partial figures as unknown leaves the growth check unknown |
 | growth: a figure that stops | a count numeric in the first and third quarters and printed `-` in the second and last is unknown, and the soak incomplete | treating it as not reported passes the soak |
