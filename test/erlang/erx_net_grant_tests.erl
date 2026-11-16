@@ -114,6 +114,15 @@ not_a_call() ->
 mint_test() ->
     Request = {erx_facet_mint, 3, net, ?GRANTEE, <<"user">>, #{}},
     ?assertEqual({ok, 3, ?GRANTEE, #{}}, erx_net_admit:mint(?SYSTEM, {erx_origin, ?SYSTEM, Request})),
+    %% A manifest's port sets become one-port ranges; the grant takes an element that is not
+    %% a port, and a list that is not proper, as no port; every other limit passes as it is.
+    Sets = #{ports => [22, 2222], listen => [22], sockets => 80},
+    ?assertEqual({ok, 3, ?GRANTEE, #{ports => [{22, 22}, {2222, 2222}], listen => [{22, 22}], sockets => 80}},
+                 erx_net_admit:mint(?SYSTEM, {erx_origin, ?SYSTEM, setelement(6, Request, Sets)})),
+    Malformed = #{ports => [0, x, 65536, 23, {1, 2}], listen => [1 | 2]},
+    {ok, 3, ?GRANTEE, Taken} = erx_net_admit:mint(?SYSTEM, {erx_origin, ?SYSTEM, setelement(6, Request, Malformed)}),
+    ?assertEqual({ok, [{23, 23}]}, erx_net_grant_core:bind_ports(udp, any, Taken)),
+    ?assertEqual({ok, []}, erx_net_grant_core:bind_ports(tcp_listen, any, Taken)),
     ?assertEqual({refused, eperm, 3},
                  erx_net_admit:mint(?SYSTEM, {erx_origin, ?SYSTEM, {erx_facet_mint, 3, net, ?SYSTEM, <<"system">>, #{}}})),
     From = {self(), make_ref()},
@@ -151,6 +160,8 @@ grant_test_() ->
        fun tcp_listen_option_refused/0},
       {"a listen the grant's listen or addresses limit does not allow is refused eacces",
        fun tcp_listen_limits/0},
+      {"a listener binds only a port a manifest's ports and listen both list",
+       fun tcp_listen_ports/0},
       {"at its sockets limit the grant refuses every open emfile, whatever kind it holds, until it ends",
        fun sockets_limit/0},
       {"an 'EXIT' naming no process of this node is left out, and the grant serves on",
@@ -246,6 +257,24 @@ tcp_listen_limits() ->
         ?assertEqual({error, eacces}, gen_server:call(Narrow, {udp_open, inet, any, 0, []}))
     after
         ok = gen_server:stop(Narrow)
+    end.
+
+%% A grant minted from a manifest row's sets, ports 1022 and 2222 and listen 2222
+%% (erx_net_admit:mint/2): a listener binds 2222, but neither its other port, a privileged
+%% one, nor a default port the stated ports replace; a datagram socket binds either port.
+tcp_listen_ports() ->
+    ok = gen_server:stop(erx_net_grant),
+    Sets = #{ports => [1022, 2222], listen => [2222]},
+    {ok, 3, ?GRANTEE, Limits} =
+        erx_net_admit:mint(?SYSTEM, {erx_origin, ?SYSTEM, {erx_facet_mint, 3, net, ?GRANTEE, <<"user">>, Sets}}),
+    {ok, Grant} = erx_net_grant:start_link(local, Limits),
+    try
+        ?assertEqual({error, eacces}, gen_server:call(Grant, {tcp_listen, inet, any, 1022, []})),
+        ?assertEqual({error, eacces}, gen_server:call(Grant, {tcp_listen, inet, any, 5000, []})),
+        ?assertMatch({ok, _}, gen_server:call(Grant, {tcp_listen, inet, any, 2222, []})),
+        ?assertMatch({ok, _}, gen_server:call(Grant, {udp_open, inet, any, 1022, []}))
+    after
+        ok = gen_server:stop(Grant)
     end.
 
 %% A grant whose sockets limit is 1, the limit's boundary, holds one socket of each kind in

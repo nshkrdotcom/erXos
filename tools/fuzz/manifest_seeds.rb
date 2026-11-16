@@ -36,6 +36,11 @@ module Erx
                    "apps\n  memory 1048576\n  max 2\n  services appnet\npackage clock\n  input @artifact.package-clock\n  enable YES\n" \
                    "package quotes\n  input @artifact.package-quotes\nsigner ops\n  key hex:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\n"
     WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter clipboard yes\n"
+    # The net grant's parameters: sockets, ports a full set of 16, stated out of order, and
+    # listen one of them, so its rows are a scalar, two sets, and a set at its most.
+    NET_PORTS = (2000...2016).to_a.freeze
+    NET_PARAMETERS = "  parameter sockets 80\n#{NET_PORTS.reverse.map { |port| "  parameter ports #{port}\n" }.join}" \
+                     "  parameter listen #{NET_PORTS.last}\n".freeze
     # The UART line_grant's grant names.
     LINE_UART = ManifestContextFixture::LINE_UARTS.fetch('line_a').first
 
@@ -67,6 +72,7 @@ module Erx
       PackFuzz.prefix_seeds(development.bytes).merge('empty' => empty.bytes, 'system-args-escape' => escape.bytes,
                                                      'windows-grant' => windows_grant(repository, codec),
                                                      'line-grant' => line_grant(repository, codec),
+                                                     'net-grant' => net_grant(repository, codec),
                                                      'domains' => domains.bytes, 'session-grantee' => session.bytes,
                                                      'start-row' => start.bytes, 'raspi4b' => pi.bytes,
                                                      'packages' => packages(source, codec, platform),
@@ -83,6 +89,18 @@ module Erx
       context = Manifest::Context.new(**arguments, platform: platform_of(repository, 'qemu-virt'))
       planner = ->(view) { %w[domains introductions sessions].to_h { |key| [key, view.fetch(key == 'domains' ? 'order' : key).map { 0 }] } }
       Manifest.admit(source: source, codec: codec, context: context, planner: planner).bytes
+    end
+
+    # The development manifest on QEMU virt with its session template's grant of net
+    # stating NET_PARAMETERS, as the check packs it.
+    def net_grant(repository, codec)
+      grant = "facet net\n  grantee @session.system\n  service @service.net\n"
+      source = Platform.load(root: repository, name: 'qemu-virt').manifest_source(repository)
+      raise Error, 'the development manifest grants no net to its session template' unless source.include?(grant)
+
+      context = Manifest::Context.new(**ManifestContextFixture.arguments(codec), platform: platform_of(repository, 'qemu-virt'))
+      Manifest.admit(source: source.sub(grant) { grant + NET_PARAMETERS }, codec: codec, context: context,
+                     planner: ManifestContextFixture.accepting_planner).bytes
     end
 
     # The configured domains' manifest (ManifestContextFixture.domain_source) on QEMU virt

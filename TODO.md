@@ -7557,10 +7557,14 @@ to the corpus and follow rc
 * [Medium] network, grant limits (`abi/services/net.txt`, `erx_net_grant_core:new/1`): a net facet row's
   `sockets` and `buffers` are each bounded per grant, but nothing sums the grants' buffers, stated or default,
   against the network domain's memory (36 MiB on development.txt beside 16 MiB a grant by default), so grantees
-  that fill their grants can exhaust it and restart the domain for all of them. And the grant reads the limits
-  by atoms written by hand, falling back to the default for a missing key, so a parameter renamed in
-  net.txt alone widens every row that states it to the default. Sum the buffers per serving domain in
-  net_grant, as property 18 sums pixel areas, and generate the consumed key names for Erlang from the ABI.
+  that fill their grants can exhaust it and restart the domain for all of them. And the grant and the mint
+  (`erx_net_admit:mint/2`) read the limits, `ports` and `listen` among them, by atoms written by hand, falling
+  back to the default for a missing key, so a parameter renamed in net.txt alone widens every row that states
+  it to the default; and the least unprivileged port, 1024, is written both in `erx_net_grant_core`'s default
+  and in net.txt's `net_unprivileged_port`, which the manifest check reads (`check_net_ports`). Sum the buffers per serving domain in
+  net_grant, as property 18 sums pixel areas, and generate the key names and the port for Erlang from the
+  ABI; the grant's portable modules include no ABI header, so the erXos runtime (`erx_net_erxos`) would
+  hand them over.
 * [Medium] network, sockets (`erlang/apps/erx_net/src/erx_net_grant.erl`, `erx_net_bind`,
   `erx_net_input:udp/3`): a socket bound to a specific address and a port takes that address's
   datagrams from a socket another domain bound to `any` on the same port, since input tries the

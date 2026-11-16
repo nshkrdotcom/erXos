@@ -563,6 +563,63 @@ class ManifestDomainsTest < Minitest::Test
     end
   end
 
+  # A net facet's ports and listen, sets of at most 16 ports (abi/services/net.txt): each
+  # element a u64 row of its key, in ascending order whatever order the lines give, after
+  # the scalars of lower keys; a port outside 1 to 65535, a 17th port or one stated twice is
+  # refused, and so is a listen port that is not one of the grant's ports, those it lists
+  # or by default 1024 to 65535.
+  def test_a_net_facet_s_ports_and_listen_are_bounded_sets
+    granted = lambda do |lines|
+      with_session(self.class.session) + service('n', '@domain.beta').sub('interface 1', 'interface net') +
+        facet('n', '@session.system', '@service.n') + lines
+    end
+    keys = @codec.schema.services.find { |service| service.fetch(:name) == 'net' }.fetch(:parameters)
+                 .to_h { |name, parameter| [parameter.fetch(:number), name] }
+    packed = lambda do |lines|
+      rows(@codec.open('manifest', admit(granted.call(lines)).bytes), 'facet_parameters')
+        .map { |row| [keys.fetch(row.fetch('key')), row.fetch('scalar')] }
+    end
+    lines = ->(key, ports) { ports.map { |port| "  parameter #{key} #{port}\n" }.join }
+    assert_equal [['sockets', 80], ['ports', 2222], ['ports', 5000], ['ports', 65_535], ['listen', 5000]],
+                 packed.call(lines.call('listen', [5000]) + lines.call('ports', [65_535, 2222, 5000]) +
+                             "  parameter sockets 80\n")
+    sixteen = (2000...2016).to_a
+    assert_equal sixteen.map { |port| ['ports', port] }, packed.call(lines.call('ports', sixteen.reverse))
+    assert_equal [['listen', 1024], ['listen', 65_535]], packed.call(lines.call('listen', [65_535, 1024]))
+    { lines.call('ports', [0]) => /outside 1 to 65535/, lines.call('listen', [65_536]) => /outside 1 to 65535/,
+      lines.call('ports', sixteen + [3000]) => /states over 16 values/,
+      lines.call('ports', [2222, 5000, 2222]) => /states 2222 twice/ }.each do |line, message|
+      refused(Erx::Manifest::Invalid, 2, 'facet.parameter', granted.call(line), message: message)
+    end
+    { lines.call('listen', [1023]) => /listens on 1023, none of its ports/,
+      lines.call('ports', [2222]) + lines.call('listen', [2222, 5000]) => /listens on 5000, none of its ports/ }
+      .each do |line, message|
+      refused(Erx::Manifest::Invalid, 15, 'facet.parameter', granted.call(line), message: message)
+    end
+  end
+
+  # A privileged port, below 1024, which a net grant binds only when it lists it, is listed
+  # by one grant of its network domain alone, to a configured domain: a second grant of
+  # the same network domain listing it, which could bind it first, and a session template's
+  # grant, which every session made from it holds, are refused. A grant of another network
+  # domain, a stack of its own, may list it too.
+  def test_a_privileged_port_is_one_configured_domain_s
+    source = lambda do |second_grantee, second_service, port|
+      with_domains(self.class.domain('alpha'), self.class.domain('beta', flags: 'rescue'), self.class.domain('gamma')) +
+        self.class.session +
+        service('n', '@domain.beta').sub('interface 1', 'interface net') +
+        service('m', '@domain.alpha').sub('interface 1', 'interface net') +
+        facet('a', '@domain.alpha', '@service.n') + "  parameter ports 22\n" +
+        facet('b', second_grantee, second_service) + "  parameter ports #{port}\n"
+    end
+    admit(source.call('@domain.gamma', '@service.n', 23))
+    admit(source.call('@domain.gamma', '@service.m', 22))
+    refused(Erx::Manifest::Invalid, 15, 'facet.parameter', source.call('@domain.gamma', '@service.n', 22),
+            message: /privileged port 22 is listed by facets a, b of one network domain/)
+    refused(Erx::Manifest::Invalid, 15, 'facet.grantee', source.call('@session.system', '@service.m', 22),
+            message: /privileged ports to a session template/)
+  end
+
   # Property 16: a files facet's grantee, the system domain, a configured domain or a
   # session template, and its server each take frames of at least files_max_frame_min
   # under their own runtime limits, and the facet's max_request admits a request that

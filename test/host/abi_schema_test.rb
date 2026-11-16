@@ -549,18 +549,22 @@ class AbiSchemaTest < Minitest::Test
   end
 
   # The table the boot view checks a facet's parameter rows against (erx_service_parameters):
-  # a declaration's row, and the two declarations no facet can carry, a set, and a name a
-  # facet row's limit field takes in the grant's limits.
+  # a declaration's row, its most 1, a set's with its MAX_COUNT, and the declarations no
+  # facet can carry: a name a facet row's limit field takes in the grant's limits, a set of
+  # a kind other than u64, and a set of fewer than two.
   FACET_ROW = "enum mf_parameter_kind u32\n  value u64 1\nlayout erx_mf_facet wire_le 8 8\n  field queue u64 0\n"
 
-  def test_service_parameters_are_tabled_and_a_set_or_a_limit_s_name_is_refused
-    declared = "service shown 3\n  served_as message\n  parameter area 2 u64 one range 1 9 checked_by grant\n"
+  def test_service_parameters_are_tabled_and_a_limit_s_name_or_a_narrow_set_is_refused
+    declared = "service shown 3\n  served_as message\n  parameter area 2 u64 one range 1 9 checked_by grant\n" \
+               "  parameter many 3 u64 set 4 range 1 9 checked_by grant\n"
     header = Erx::ABI::CEmitter.header(schema(FACET_ROW + declared))
-    assert_includes header, '{ ERX_SERVICE_SHOWN, 2, "area", ERX_MF_PARAMETER_U64, true, UINT64_C(1), UINT64_C(9), NULL },'
-    assert_includes header, '#define ERX_SERVICE_PARAMETERS_MAX 1'
-    ['  parameter many 2 u64 set 4 range 1 9 checked_by grant',
-     '  parameter queue 2 u64 optional range 1 9 checked_by grant'].each do |line|
-      assert_raises(Erx::ABI::SchemaError) { Erx::ABI::CEmitter.header(schema("#{FACET_ROW}service shown 3\n  served_as message\n#{line}\n")) }
+    assert_includes header, '{ ERX_SERVICE_SHOWN, 2, "area", ERX_MF_PARAMETER_U64, true, UINT64_C(1), UINT64_C(9), NULL, 1 },'
+    assert_includes header, '{ ERX_SERVICE_SHOWN, 3, "many", ERX_MF_PARAMETER_U64, false, UINT64_C(1), UINT64_C(9), NULL, 4 },'
+    assert_includes header, '#define ERX_SERVICE_PARAMETERS_MAX 2'
+    ['  parameter queue 2 u64 optional range 1 9 checked_by grant',
+     '  parameter many 2 i64 set 4 range 1 9 checked_by grant',
+     '  parameter many 2 u64 set 1 range 1 9 checked_by grant'].each do |line|
+      assert_raises(Erx::ABI::SchemaError, line) { Erx::ABI::CEmitter.header(schema("#{FACET_ROW}service shown 3\n  served_as message\n#{line}\n")) }
     end
   end
 
@@ -576,7 +580,7 @@ class AbiSchemaTest < Minitest::Test
     header = Erx::ABI::CEmitter.header(schema("#{MEMBER_KINDS}enum shown_mode u8\n  value ro 1\n  value rw 2\n#{declared}"))
     assert_includes header, 'static const char *const shown_mode_members[] = { "ro", "rw" };'
     assert_includes header,
-                    '{ ERX_SERVICE_SHOWN, 1, "mode", ERX_MF_PARAMETER_MEMBER, false, UINT64_C(1), UINT64_C(2), shown_mode_members },'
+                    '{ ERX_SERVICE_SHOWN, 1, "mode", ERX_MF_PARAMETER_MEMBER, false, UINT64_C(1), UINT64_C(2), shown_mode_members, 1 },'
     { 'no enum' => '', 'a flag set' => "flags shown_mode u8\n  bit ro 0\n  bit rw 1\n",
       'a gap' => "enum shown_mode u8\n  value ro 1\n  value rw 3\n" }.each do |name, types|
       assert_raises(Erx::ABI::SchemaError, name) { schema(MEMBER_KINDS + types + declared) }
