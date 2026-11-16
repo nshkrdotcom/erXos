@@ -6,8 +6,8 @@ the session can run by typing part of its name, and in which a typed
 value on the screen, a process in stats or a file in files, shows the
 commands that take it, the usual one first. It adds no authority and no
 second command system. Its central construction is one sentence: **an
-act is a line of rc that the session's own shell runs exactly as if the
-person had typed it.** The table of commands is the session's command
+act is a line of rc that the session's own shell runs as if the person
+had typed it at a new shell of the session.** The table of commands is the session's command
 namespace, which already carries each command's argument types; a
 **route** is a rule that turns a typed value into such a line; the
 palette, the context menu on a value, the Services-style "act on this"
@@ -32,9 +32,10 @@ Decisions every reader of this document needs:
   person triggers, a palette entry, a value's offer, a bound key or
   `plumb`, becomes one unit of rc text run in a new evaluator of the
   session's shell, with the session's capabilities and the shell's
-  per-command facet checks (design-shell's SH1). A value enters the
-  line only as an rc variable, `$1`, which rc never splits or globs
-  again, so it is always exactly one argument.
+  per-command facet checks (design-shell's SH1), as a job of its own
+  that ends whole. A value enters the line only as an rc variable,
+  `$1`, which rc never splits or globs again, so it is always exactly
+  one argument.
 * **The table is the session's command namespace.** Commands, their
   help, the facets they need (`-erx_needs`) and the types of their
   arguments (`-erx_args`) come from the catalogs the session already
@@ -43,8 +44,10 @@ Decisions every reader of this document needs:
 * **Routes are data the person keeps.** An ordered list of rules says
   which line a value of a type opens, which types the palette lists by
   name, and which keys run which lines. The person's file,
-  `$home/lib/act`, comes before the defaults the release ships. Their
-  meaning is fixed here; their surface syntax is [open decision
+  `$home/lib/act`, comes before the defaults the release ships. Since
+  its lines run with the session's authority, only the person's own
+  sessions and the programs they give their whole namespace write it.
+  Their meaning is fixed here; their surface syntax is [open decision
   1](#open-decisions).
 * **One window shows every way in.** The palette is a window of the
   person's session. Opened by a key it searches commands; opened on a
@@ -105,7 +108,7 @@ What the systems the survey read teach, as that record reports them
 | System | What erXos takes | What it leaves |
 | --- | --- | --- |
 | Genera and CLIM | a command loop: acquire a command by menu, typed name or a clicked object; acquire its arguments, where visible objects of the right type can be clicked or typed with completion; run it ("Presentations and commands") | the single address space, in which a presentation was the object |
-| Oberon | a command is a procedure `M.P`, not a program ("Presentations and commands") | running any clicked text: here only commands of the session's namespace run |
+| Oberon | a command is a procedure `M.P`, not a program ("Presentations and commands") | running any clicked text: here only a line the person chose runs |
 | NeXT Services | an application indicates only the types of data it uses, and the operations that take that type are offered ("Object and document desktops") | applications installing entries unasked, which clogged the menu |
 | Plan 9's plumber | rules in the person's own `lib/plumbing` decide where a value goes, so the person does not carry data from program to program; `plumb start window acid $0` starts a command in a new window with the value as its argument (Pike, "Plumbing and Other Utilities", as fetched for that record, `plumb.txt`, lines 18, 145 and 219-226) | the message server and its ports, the classification of untyped text by regular expressions, delivery to a running program |
 | Quicksilver, Raycast, VS Code | one keyboard-first search over every action; an object, an action and an argument ("Find and act") | each product's own registry, which knows nothing of the selection's type |
@@ -168,10 +171,32 @@ In the tree:
   (`erlang/apps/erx_shell/src/erx_shell_eval.erl:145`), and runs a whole
   source with `run_source/2` (`:183`). Text that comes from a value is
   `lit` and "never a pattern" (`:68-74`), so a variable's value is
-  neither split nor globbed.
+  neither split nor globbed. `new/3` adds only `ifs` and `status` to
+  the map it is given (`:145`), and the interactive shell starts with
+  `prompt` and `*` alone
+  (`erlang/apps/erx_shell/src/erx_shell.erl:205`): no `home` is set,
+  though design-shell lists `$home` among rc's variables.
 * The runner's state is a working directory, standard streams, the
   command table and a reader of the session's facets, read for each
   command (`erlang/apps/erx_shell/src/erx_shell_runner.erl:99-122`).
+  It runs a subshell and each isolated command under a monitor and a
+  background block unmonitored (`:155-163`, `:279-283`); the job tags
+  by which design-shell ends a job whole, `erx_job:spawn/1` among them
+  ([design-shell.md](design-shell.md#job-control), "Jobs and their
+  tags"), are not in the tree.
+* rc's tokenizer, `erx_shell_lex`, reads bytes into tokens that each
+  carry their byte offset, makes no atom from its input and never
+  raises (`erlang/apps/erx_shell/src/erx_shell_lex.erl:1-55`). The
+  parser bounds a unit to 4,096 bytes and 256 levels of nesting, and
+  `next_bounded/3` parses in a process whose heap is fixed at 8 MiB
+  (`erx_shell_parse.erl:77`, `:96-98`, `:204`). Both have a fuzz target,
+  `test/erlang/erx_shell_parse_fuzz.erl`.
+* Stock OTP's term reader interns before it checks: `erl_scan` makes an
+  atom of every atom and variable name it scans
+  (`otp/lib/stdlib/src/erl_scan.erl:788`), and `erl_parse:parse_term/1`
+  builds a binary's value from its size and unit fields as it normalises
+  the term (`otp/lib/stdlib/src/erl_parse.yrl:1497`, `:1960-1966`), so a
+  few bytes of `<<...>>` ask for an allocation of any size.
 * The command table is built from `-erx_command` attributes
   (`erlang/apps/erx_shell/src/erx_shell_namespace.erl:63`); no module
   declares `-erx_args` yet.
@@ -179,6 +204,15 @@ In the tree:
   window (`erlang/apps/erx_win/src/erx_win.erl:186-189`), decoded by
   `erx_win_core:kbd/1` into `{typed, Char}`, `{down, Keys}` or `{up,
   Keys}` (`erx_win_core.erl:63`, `:107`).
+* A `wctl` read already has rio's `current` or `notcurrent` field
+  (`erlang/apps/erx_display/src/erx_wctl.erl:36-39`, read by
+  `erx_win_core:wctl/1` into `current`, `erx_win_core.erl:58`), but
+  `erx_window` fills it from whether the window is shown, not from the
+  policy's current window (`erlang/apps/erx_display/src/erx_window.erl:101`),
+  and a change of the current window makes no new `wctl` record.
+* `erx_present:type/1` reads a presentation's name from a binary and
+  makes no atom; a widget's `present` property carries the name as an
+  atom (`tools/lib/erx/abi_emit_present.rb:279-287`).
 * `erx_vt:link_at/3` answers the link's type and text under a cell
   (`erlang/apps/erx_win/src/erx_vt.erl:246`). The terminal process
   `erx_term`, the overlapping policy and the Erlang renderer are not in
@@ -195,9 +229,10 @@ In the tree:
   and a file or folder in files, can be acted on: the person sees the
   commands that take it, the default first, and runs one with the value
   as its argument.
-* **FA-R3.** What runs is a line the person could have typed at the
-  session's shell, with the same authority and the same facet checks. No
-  value, rule or gesture adds authority.
+* **FA-R3.** What runs is a line the person could have typed at a new
+  shell of the session, with the same authority and the same facet
+  checks. No value, rule or gesture adds authority, and a program the
+  person narrowed cannot write a rule.
 * **FA-R4.** Nothing runs from a value on the screen without the
   person's choice of a line, shown with the value before it runs.
 * **FA-R5.** Which line a value of a type opens is data the person keeps
@@ -205,7 +240,7 @@ In the tree:
 * **FA-R6.** rc reaches the same routes.
 * **FA-R7.** A key the person binds runs a line in the session's own
   windows, the palette key among them; the display keeps its one
-  reserved chord.
+  reserved chord, and no binding takes a key typed as text.
 * **FA-R8.** No app, kiosk or other domain adds a command to a person's
   palette or reaches the act service.
 * **FA-R9.** Every parser of untrusted input has a fuzz target, every
@@ -244,8 +279,8 @@ considered](#alternatives-considered) explains.
 |   shows offers or matching commands; on the person's choice:       |
 |                                          |                         |
 |                                          v                         |
-| erx_act_run: a new evaluator of the session's shell                |
-|   run_source(Line), $1 the value, $display the display             |
+| erx_act_run: a new evaluator of the session's shell, a job of its  |
+|   own: run_source(Line), $1 the value, $display the display        |
 |                                          |                         |
 |                                          v                         |
 | the command, through the session's command namespace and SH1       |
@@ -259,22 +294,47 @@ An **act** is a unit of rc text and the variables it runs with:
 
 ```erlang
 -type act() :: #{line := binary(),                 % rc text, at most 4,096 bytes
-                 vars := #{binary() => [binary()]}}. % <<"*">> and <<"display">> only
+                 vars := #{binary() => [binary()]}}. % the act's own: <<"*">> and <<"display">>
 ```
 
-`erx_act_run` runs an act in a new process: an evaluator made with
-`erx_shell_eval:new(Vars, Runner, State)`, whose runner state holds the
-command table the session's shell uses, the session's facets read for
-each command, and a working directory and standard streams its caller
-names, and then `run_source(Line, Sh)`. The palette and a bound key
-name the person's home, standard input at its end, and standard output
-and error to one collector, which keeps the first 64 KiB the line
-writes and counts the rest; `plumb` names its own working directory and
-streams. The result is the status, as rc sets it, and what the
-collector kept. `*` holds the value's text when the act has a value, so
-`$1` is that text, and `display` holds the name of the display the act
-was started from, which shadows the session's own `display` variable
-for this line alone.
+`erx_act_run` runs an act as a job of its own. It starts the act's
+evaluator with `erx_job:spawn/1`, so the act has a job tag that every
+process it spawns takes, its pipeline stages and `&` blocks included,
+and every program it starts is a row of the command server under that
+tag ([design-shell.md](design-shell.md#job-control), "Jobs and their
+tags"). The evaluator is made with `erx_shell_eval:new(Vars, Runner,
+State)`, whose runner state holds the command table the session's shell
+uses, the session's facets read for each command, and a working
+directory and standard streams its caller names, and then runs
+`run_source(Line, Sh)`. The palette and a bound key name the person's
+home, standard input at its end, and standard output and error to one
+collector, which keeps the first 64 KiB the line writes and counts the
+rest; `plumb` names its own working directory and streams. The act is
+over when its job is, as design-shell defines it: its evaluator has
+ended and so has every program of its tag ("When a job is over"). The
+result is the status, as rc sets it, and what the collector kept.
+
+**The act's environment** is that of a new shell of the session, with
+the act's own variables over it. `Vars` is the variables a session's
+shell starts with, `$home` among them ([design-shell.md](design-shell.md#the-language),
+"Language"), and then `*`, which holds the value's text when the act
+has a value, so `$1` is that text, and `display`, the name of the
+display the act was started from. An act sees no variable and no
+function that a person set in a running shell, and changes none: it
+belongs to no terminal, and each act's evaluator is new.
+
+**Ending an act** is design-shell's ending of a job ("Ending a job"):
+its tag is marked ending, which ends every Erlang process of the act at
+once, whoever spawned it, and each of its programs takes `SIGINT` from
+its handler. A window an act opens outlives it: `window`, `files` and
+the other desktop commands ask their application's supervisor for the
+window and return once it is open
+([design-desktop-programs.md](design-desktop-programs.md#shipping-and-starting)),
+so the window's processes are the supervisor's children and carry no
+job tag, and `service NAME onestart` hands its app to the start
+service. A line that should outlast its palette opens a window or
+starts a service; an `&` block of the act is the act's and ends with
+it.
 
 Everything find and act runs goes through this one function, and every
 requirement on what runs follows from it:
@@ -283,16 +343,25 @@ requirement on what runs follows from it:
   session's and its runner reads the session's facets for each command;
   a command whose `-erx_needs` the session does not meet fails with
   `no_facet` before it starts, as at the shell (FA-R3).
-* **Only commands of the namespace run**, because rc resolves every
-  name in the session's command namespace; the namespace is the
-  declaration (FA-R3).
+* **Only what the session's shell could run runs**, because rc resolves
+  a name in the session's command namespace and starts a path only
+  through an `rx` grant the session holds
+  ([design-shell.md](design-shell.md#commands)) (FA-R3).
 * **A value is one argument**, because it reaches the line only as a
   variable, whose text is `lit`, never split by `$ifs` and never globbed
-  (`erx_shell_eval.erl:68-74`). A file named `a b; rm -rf $home` is one
-  argument to `vi`, with no quoting step that could be wrong.
+  (`erx_shell_eval.erl:68-74`); a `$1` expands to literal text and one
+  word (`:654-656`). A file named `a b; rm -rf $home` is one argument to
+  `vi`, with no quoting step that could be wrong. The guarantee is that
+  rc never rescans a value on its own; a line that hands `$1` to `eval`,
+  which joins its arguments into source (`:393-394`), or to `rc -c`,
+  parses it again, so a route's line is code the person trusts, as a
+  line typed at the shell is.
 * **What runs is what is shown**: the palette shows the act's line
   verbatim and the value beside it, and the evaluator runs exactly that
   line with exactly that value (FA-R4).
+* **An act ends whole**, because ending it ends its tag, which every
+  process and program of the act carries however it was started
+  (FA10).
 
 The evaluator's stages are admitted within the session's stage
 allowance like a background job's: when the allowance is full the line
@@ -312,9 +381,12 @@ An **object** is a value find and act can act on:
 All objects enter through one funnel, `erx_act:offer(Input, Where)`,
 whose input is one of two forms:
 
-* `{Type, Text}`, a presentation's name and text, from a terminal link,
-  a widget's `present` property or `act TYPE TEXT`. The name is read
-  with `erx_present:type/1`, which makes no atom, and the text with
+* `{Type, Text}`, a presentation's name and text as binaries, from a
+  terminal link, a widget's `present` property or `act TYPE TEXT`. A
+  widget's property names its type as an atom, which the widget server
+  turns into its name with `atom_to_binary/1` before it sends, so every
+  name enters as text and is read one way: with `erx_present:type/1`,
+  which makes no atom, and the text with
   `erx_present:parse/2`, the presentation reader with its fuzz target;
   the object's text is then `erx_present:text(Type, Value)`, the
   canonical form. A text that does not parse makes no object. The text
@@ -331,8 +403,10 @@ whose input is one of two forms:
   reaches a command only as a variable and the screen only through the
   line escape.
 
-`Where` names the display the gesture came from and, for a pointer
-gesture, the point on its screen: `#{display := Name, at => {X, Y}}`.
+`Where` names the display the gesture came from, the window it came
+from when there is one, and, for a pointer gesture, the point on its
+screen: `#{display := Name, window => Id, at => {X, Y}}`. The window is
+the one a keyboard pass starts from ([open decision 2](#open-decisions)).
 
 `file` and `folder` are not presentations: design-display's decision 16
 keeps presentations to inspector paths, and no window shows a file as
@@ -372,24 +446,109 @@ The fields' bounds and checks:
   backtracking;
 * a label is 1 to 64 bytes of UTF-8;
 * a line is 1 to 4,096 bytes that rc's parser accepts whole;
-* a chord is one to four keys, each a member of `abi/formats/input.txt`'s
-  `input_rune`, such as `kmod4`, or one printable character;
+* a chord is one **trigger** with one to three **held keys**. The held
+  keys are `kctl`, `kalt`, `kmod4` and `kshift` of
+  `abi/formats/input.txt`'s `input_rune`, and at least one of them is
+  not `kshift`. The trigger is any other member of `input_rune`, such as
+  `kf1` or `kup`, or one printable character in the unshifted form a
+  `kbd` record carries, but not `kaltgr`, which types characters on
+  layouts that have it, nor a lock key (`kcaps`, `knum`, `kscroll`). So
+  no chord is a key typed as text: a key alone or with Shift, the
+  characters of a password among them, is refused, and a chord with no
+  trigger or two is refused;
 * a file holds at most 256 statements in at most 64 KiB.
 
-The reader, `erx_act_rules:read/1`, is a pure function from bytes to
-rules or to the first error with its line. It fails the whole file at
-its first error, so a file is used whole or not at all.
+**The reader**, `erx_act_rules:read/1`, is a pure function from bytes
+to rules or to the first error with its line. It fails the whole file at
+its first error, so a file is used whole or not at all. The person's
+file is input to the session from whichever of its writers below last
+replaced it, read again at every start of `erx_act` and every `act -r`,
+so whatever the outer syntax, the reader holds to four rules, which its
+fuzz target checks:
+
+* **No atom from input.** Every name is matched as a binary against a
+  closed table: the three statement kinds, the object types through
+  `erx_present:type/1` and the words `file` and `folder`, and the key
+  names through a table generated from `input_rune`. Reading files any
+  number of times, good or bad, leaves the runtime's atom count where it
+  was.
+* **Refusal before construction.** A token outside a statement's shape
+  fails the file where it stands, before any value is built from it, so
+  nothing in the input sizes an allocation but the input's own length.
+* **Bounded depth.** A statement holds at most one list, and that list
+  holds words; a line nests at most rc's 256 levels.
+* **Bounded memory and time.** `erx_act` runs the reader in a worker
+  whose heap is capped at 8 MiB, rc's parse heap, killed when it
+  outgrows it, and given one second. The input is at most 64 KiB and the
+  reader's work is linear in it, but for each line's parse, which rc's
+  own bounds hold.
+
+In the recommended form, (e) of open decision 1, a statement is one
+source line in rc's word syntax: its kind, its fields and, for `route`
+and `bind`, the line, which is the rest of the source line. The reader
+cuts the file at its newlines and reads each source line's tokens with
+`erx_shell_lex`. A source line that holds only blanks or a comment is
+skipped. A field is a word or a quoted word, a keyword being read as its
+word; the name patterns of a `file` route and a chord are each a
+parenthesised list of such words; any other token in a field, `$`, `^`,
+`=`, `;`, `&`, a pipe or a redirection, fails the statement. The line is
+the source's bytes from the offset of the first token after the last
+field to the end of the source line, kept verbatim, and
+`erx_shell_parse:next_bounded/3`, given that text as `final`, must accept
+it as one whole unit, which a quote or a here document that runs past
+the source line never is. So the line the person reads in the file is
+byte for byte the line the palette shows and runs.
 
 The rules in force are the person's file followed by the release's
 defaults: routes and lists in that order, so the person's routes come
 first and the first offer is theirs where they wrote one; a `bind` of
 the person's replaces the defaults' `bind` of the same chord. The
 person's file is `$home/lib/act`, as Plan 9's plumber reads
-`lib/plumbing` in the person's home (`plumb.txt`, line 145). A file that
-is absent is the ordinary case. One that fails to read, is too long or
-fails the reader leaves the defaults alone in force, and its diagnostic,
-`lib/act:LINE: REASON`, heads every palette until `act -r` reads a good
-file.
+`lib/plumbing` in the person's home (`plumb.txt`, line 145); `$home`
+here is the home the session starts with, a fixed path of the session,
+not the variable, which a line may change. A file that is absent is the
+ordinary case. One that fails to read, is too long or fails the reader
+leaves the defaults alone in force, and its diagnostic, `lib/act:LINE:
+REASON`, heads every palette until `act -r` reads a good file.
+
+**Who writes the rules.** A rule's line runs with the session's
+authority, so whoever can replace `$home/lib/act` can make the session
+run any line it can, as whoever may write `/etc/rc.conf` may command the
+start table ([design-apps.md](design-apps.md#the-start-table), "Where
+the file is"). The writers are held to those who already hold the
+session's authority over its files:
+
+* **The person's own sessions.** The data partition's service roots a
+  principal's grant at that principal's directory
+  ([design-storage.md](design-storage.md#interfaces)), and a principal
+  has one session template
+  ([design-system.md](design-system.md#the-manifest), property 14), so
+  every session that can write the file holds the capabilities of the
+  session that runs its lines.
+* **A program started with the session's whole namespace**, the default
+  of [design-files.md](design-files.md#narrowing-for-a-program). It holds
+  the session's files, and with them what the session reaches through
+  files, `/proc` and, where the session mounts it, `/etc/start`. It
+  holds no right beyond files, such as `signal`, unless `within -f`
+  names one ([design-programs.md](design-programs.md#facets)), and a
+  rule it writes runs with those rights: that difference is the residual
+  [Security](#security) records.
+* **Never a program or command the person narrowed.** A narrowed
+  namespace holds no writable root that lies within the session's `lib`
+  directory, `$home/lib`, or contains it: when it derives a narrowed
+  namespace, the session refuses such a root with `EACCES`, judging the
+  path the root has on its grant, not the name the line used, so a bound
+  second name for the same directory does not escape it. A narrowed
+  program therefore cannot write the file, nor rename `lib` or a
+  directory above it, since none lies within its roots, and an Erlang
+  command it starts runs in a command domain that holds only the
+  program's own grants (design-shell's SH1). Handing a program `$home`
+  to write is handing it the whole namespace, or naming the directories
+  under `$home` it needs.
+
+The session's `lib` directory is where the session keeps what it runs
+on its own; `lib/act` is the one such file this design adds, and the
+rule is on the directory, so a later one needs no rule of its own.
 
 The defaults are a file of the `erx_act` application,
 `erlang/apps/erx_act/priv/rules`, checked in. The build reads it with
@@ -397,19 +556,17 @@ the same reader and fails on any error, and on a route or bind whose
 line's first command is not in the catalog of the desktop session's
 release. In the recommended form of open decision 1:
 
-```erlang
-%% A process: the inspector first.
-{route, pid, "Inspect", "i $1"}.
-%% An app: started on this display, in a session of its own principal.
-{route, app, "Start", "service $1 onestart 'display='$display"}.
-{list, app}.
-%% A folder opens in files; text opens in vi, in a terminal of its own.
-{route, folder, "Open", "files $1"}.
-{route, file, ["*.txt", "*.md", "*.log", "*.conf", "*.erl", "*.hrl",
-               "*.c", "*.h", "*.rb", "*.sh", "*.rc"],
- "Edit", "window vi $1"}.
-%% The palette key: the logo key with Space.
-{bind, [kmod4, $\s], "act"}.
+```text
+# A process: the inspector first.
+route pid Inspect i $1
+# An app: started on this display, in a session of its own principal.
+route app Start service $1 onestart 'display='$display
+list app
+# A folder opens in files; text opens in vi, in a terminal of its own.
+route folder Open files $1
+route file (*.txt *.md *.log *.conf *.erl *.hrl *.c *.h *.rb *.sh *.rc) Edit window vi $1
+# The palette key: the logo key with Space.
+bind (kmod4 ' ') act
 ```
 
 The defaults carry no route that changes a file or a service on a
@@ -433,8 +590,9 @@ that lists what an object can be given to:
    name, which is NeXT's Services drawn from the declarations commands
    already make;
 3. keeping only an offer whose line's first command is one the table
-   holds and whose `-erx_needs` the session's facets meet, and dropping
-   an offer whose line an earlier one already has.
+   holds and whose `-erx_needs` the session's facets meet, or is a path,
+   which the table cannot judge, and dropping an offer whose line an
+   earlier one already has.
 
 The first offer is the **default**. The filter in step 3 is a
 convenience, so the palette shows what can run here; the gate is the
@@ -460,8 +618,9 @@ design-desktop-programs builds its programs: a pure core,
 process that performs its effects, and a worker for each request in
 flight ([design-desktop-programs.md](design-desktop-programs.md#the-construction)).
 Its effects are a listing of a type's members through the session's
-inspect facet, `{run, Tag, Act}`, the window's placement, asking for the
-keyboard ([open decision 2](#open-decisions)) and `close`.
+inspect facet, `{run, Tag, Act}`, `{end_act, Tag}`, the window's
+placement, passing the keyboard from the window it was opened from
+([open decision 2](#open-decisions)) and `close`.
 
 It opens in one of two ways, and is the same window either way:
 
@@ -474,9 +633,10 @@ It opens in one of two ways, and is the same window either way:
   cursor, Tab inserts the selected member's text, and Return runs the
   line as typed. Arguments without a declared type complete nothing.
 * **On an object**, from a gesture on a value or `act TYPE TEXT`, at the
-  point `Where` names: the object's text at the top, its offers below,
-  the default selected, and an input that filters the offers by label.
-  Return, or a click, runs the selected offer.
+  point `Where` names, with the object's text, which runs nothing, under
+  the pointer and its offers below it: the default selected, and an
+  input that filters the offers by label. Return, or a click on an
+  offer, runs the selected offer.
 
 Under the list the palette always shows the selected offer's line
 verbatim, so the person sees what will run, `$1` and all, beside the
@@ -484,19 +644,46 @@ value `$1` will be. Every text it shows, labels, lines, object texts,
 output and diagnostics, is a widget text property, which every renderer
 draws through the line escape (design-display's G5).
 
+**When a pick counts.** A pick runs only what the person has seen, so
+the core takes a Return or a click as a pick only when:
+
+* the window's first present has been answered: a Return or a click the
+  palette read before that is dropped, so input queued while the palette
+  was being made picks nothing, while the characters typed then still
+  fill its input, since filtering runs nothing;
+* for a click, the pointer moved onto that offer's row after the row
+  last changed: the pick rule of pointer re-entry that synthesis D3
+  accepted for windows ([research-ui-secure.md](research-ui-secure.md)
+  section 6.1), applied to the palette's own rows, so a row that appears or
+  changes under a resting pointer takes no click until the pointer
+  leaves it and comes back;
+* for a Return, an offer is selected: when the list changes, as a
+  listing answers or the filter narrows it, the selection stays on the
+  same line, and when that line leaves the list nothing is selected and
+  Return runs nothing until the person selects again.
+
 When an act ends with an empty status and no output, the palette
 closes. Otherwise it shows the status and the output, cut to 200 lines
 of at most 4,096 bytes each, as files cuts a preview, with a note of how
-many bytes the collector did not keep, until the person closes it. While
-an act runs, the palette shows that it runs; Escape or closing the
-window ends the palette, and the act with it, since the act's process is
-linked to the palette's.
+many bytes the collector did not keep, until the person closes it.
+
+**An act lives as long as its palette.** `erx_act_run` keeps one small
+owner process for each act it starts, which starts the act's job,
+monitors the palette that asked for it and, when the palette ends for
+any reason, crash included, ends the act as [Acts](#acts) says. So
+Escape, closing the window, a new palette replacing it and the end of
+its display each end the act whole, its stages, `&` blocks and programs
+with it; what the act already opened, a window or an app, stays. While
+an act runs, the palette shows that it runs.
 
 A session has at most one palette on each display: a new one replaces
 the one open there. The palette ends on Escape, after an act that
-needs nothing shown, when its window ends, and when another window
-becomes current, which it learns from its window's `wctl` read once
-design-display reports the current state there (open decision 2).
+needs nothing shown, when its window ends, and, while it runs no act,
+when another window becomes current, which it learns from its window's
+`wctl` read once design-display reports the current window there
+([Changes to other designs](#changes-to-other-designs)). A palette that
+runs an act or shows a result stays until the person ends it, so
+clicking elsewhere while a line runs does not end the line.
 
 A member listing runs in a worker with stock OTP's `max_heap_size` set
 to 4 MiB, as files lists a folder
@@ -511,34 +698,56 @@ place.
 A bound key is taken where every key of an Erlang client passes:
 `erx_win:kbd/1`. After decoding a record, it consults the ETS table
 `erx_act_bindings` of its own runtime, whose one row is the map from
-chord to line. On a `{down, Keys}` whose set equals a bound chord, it
-sends `{bound, Line, Where}` to `erx_act`, with the window's display as
-`Where`, and drops that record and every `{typed, _}` and `{up, _}`
-record that follows until the chord's last non-modifier key is up, so
-the key's character, its repeats and its release reach no caller. A
-pure function, `erx_win_core:bind/3`, decides each record from the
-table's map and whether a bound chord is held. That one fact needs a
-home between reads, and a `typed` record does not carry the keys held,
-so `kbd/1` answers the next handle with each key, `{ok, Key, Window}`,
-as `resized/1` already answers a new handle after a resize
+chord to line. A chord fires on the `{down, Keys}` record whose set
+equals it, which is the trigger's down: the held keys type nothing, so
+their own downs pass to the caller as any key's do and give it nothing
+to read as text. On that record `kbd/1` sends `{bound, Line, Where}` to
+`erx_act`, with the window's display and the window as `Where`, and
+takes the press: it drops that record and every record after it while
+the trigger is held, the trigger's `{typed, _}` and its repeats, and the
+records of any key pressed meanwhile, up to the first record whose set
+lacks the trigger. That record is dropped too when it is an `{up, _}`,
+the trigger's release. When it is a `{down, _}`, the release was lost to
+the queue's bound, and the record is decided afresh: every `k` record
+carries the whole set of keys held, and a key's down comes before the
+character it types
+([design-display.md](design-display.md#the-window-tree)). A caller may
+then see the release of a key whose down it never saw, as after any
+lost record, and the next set it reads is right.
+
+A pure function, `erx_win_core:bind/3`, decides each record from the
+table's map and the trigger held, if any. That one fact needs a home
+between reads, and a `typed` record does not carry the keys held, so
+`kbd/1` answers the next handle with each key, `{ok, Key, Window}`, as
+`resized/1` already answers a new handle after a resize
 (`erlang/apps/erx_win/src/erx_win.erl`), and the handle carries the
-fact and the name of the display it was opened on. The one caller in
-the tree, `erx_ui_lvgl`'s key reader
-(`erlang/apps/erx_ui/src/erx_ui_lvgl.erl:430-435`), threads the handle
-as its pointer reader already does.
+trigger held and the names of the display and the window it was opened
+on. The one caller in the tree, `erx_ui_lvgl`'s key reader
+(`erlang/apps/erx_ui/src/erx_ui_lvgl.erl:432`), threads the handle as
+its pointer reader already does.
 
 What follows by construction:
 
+* **No binding takes a key typed as text.** A chord needs a held key
+  other than Shift ([Rules](#rules)), so typing, a password at a prompt
+  included, never forms one.
+* **A press is taken whole or not at all.** The trigger held lives in
+  the handle, not the table, so a reload or the end of `erx_act` in the
+  middle of a press changes nothing of it: the press already taken is
+  dropped to its release, and the next press is judged against the
+  table as it then is. No two chords overlap, since a set equals at most
+  one of them.
 * **Every Erlang client of the session gets the bindings**, the
   terminal and every renderer of the widget toolkit, with no binding
-  code in either, since both read their keys through `erx_win:kbd/1`. A native
-  program reads its window's `kbd` through fids its handler walked for
-  it, so a program keeps every key of its window, as a full-screen
-  program in a terminal does.
+  code in either, since both read their keys through `erx_win:kbd/1`. A
+  full-screen program in a terminal, such as `vi`, reads its keys
+  through the terminal, and so gets the terminal's bindings. A native
+  program with a window of its own reads that window's `kbd` through
+  fids its handler walked for it, so it keeps every key of its window.
 * **Bindings live exactly as long as the act service.** The table is
   `erx_act`'s, so it dies with the process: while `erx_act` is down a
-  bound key reaches its window as an ordinary key, and nothing is left
-  over to swallow keys for a service that is gone.
+  bound key reaches its window as an ordinary key, and nothing beyond a
+  press already taken is swallowed for a service that is gone.
 * **An app's window gets every key.** An app's session runs no
   `erx_act`, so its runtime has no table and `kbd/1` takes nothing.
   The same holds on a kiosk, whose app's release runs no shell
@@ -549,11 +758,12 @@ What follows by construction:
   ([design-display.md](design-display.md#the-input-router)), so it
   never reaches `kbd/1`.
 
-`erx_act` runs a bound line as an act with `$display` set and no value.
-When the act ends with a non-empty status or with output, `erx_act`
-opens the palette on that display showing the result, the one place
-results are shown. A line that does not end runs until it does, as
-`cmd &` does at a shell.
+`erx_act` runs a bound line as an act with `$display` set and no value,
+its owner a temporary process under `erx_act`'s supervisor, so the act
+ends when it does or when `erx_act` ends. When the act ends with a
+non-empty status or with output, `erx_act` opens the palette on that
+display showing the result, the one place results are shown. A line
+that does not end runs until it does, as `cmd &` does at a shell.
 
 ### Gestures on a value
 
@@ -567,8 +777,9 @@ already names, and each gains one action:
   policy's menu takes the right button only outside every window.
 * **The widget server**: a renderer reports a secondary press on a node
   as `{act, NodeId}`, and the server, when the node carries a `present`
-  property whose status is `ok` or `partial`, sends `{offer, {Type,
-  erx_present:text(Type, Value)}, Where}` to `erx_act`. The report
+  property whose status is `ok` or `partial`, sends `{offer,
+  {atom_to_binary(Type), erx_present:text(Type, Value)}, Where}` to
+  `erx_act`. The report
   reaches no application, so the renderers' parity on application
   events is unchanged. The Erlang renderer reports button 3; the LVGL
   and browser renderers serve kiosks and the web, whose sessions run no
@@ -588,7 +799,10 @@ picks.
 ### The commands
 
 Three Erlang commands of the `erx_act` application, in the desktop
-session's release; none declares a facet:
+session's release; none declares a facet. `window` asks the terminal's
+supervisor for the terminal, as the desktop commands ask theirs, so the
+terminal outlives the act or shell that opened it. `act` started from
+a terminal names that terminal's window in `Where`:
 
 | Command | Does |
 | --- | --- |
@@ -597,8 +811,8 @@ session's release; none declares a facet:
 | `act -r` | reads the rules again and prints the reader's diagnostic, or nothing when the file is good or absent |
 | `plumb PATH`, `plumb TYPE TEXT` | runs the object's default offer as an act, in `plumb`'s own working directory and with its own standard streams, and ends with the act's status |
 | `plumb -l PATH`, `plumb -l TYPE TEXT` | prints each offer, its label, a tab and its line, one a line, and runs nothing |
-| `window` | opens a terminal of the session on `$display`, as Ctrl-Shift-N does |
-| `window CMD [ARG ...]` | opens a terminal whose shell runs the words as one simple command, without parsing them again, and ends when it ends |
+| `window` | opens a terminal of the session on `$display`, as Ctrl-Shift-N does, and returns once it is open |
+| `window CMD [ARG ...]` | opens a terminal whose shell runs the words as one simple command, without parsing them again, and returns once it is open; the terminal ends when the command ends |
 
 `plumb` is rc's way to the routes, as `open` is on macOS and `plumb` is
 on Plan 9. `window` takes its name and its use in a route from rio's,
@@ -619,7 +833,7 @@ session needs no home, and none is added.
 | Mechanism | Consumer | Home | Owner | Untrusted input it reads, and its fuzz target |
 | --- | --- | --- | --- | --- |
 | acts, `erx_act_run` | everything that runs | none: the session's own evaluator | the session; runs with its capabilities | rc text from the person's rules or typing: rc's parser, whose fuzz target exists ([design-shell.md](design-shell.md#verification-and-testing)) |
-| the rules | which line a value opens; keys | bytes the person keeps: an ordinary file in `$home`, and a file of the release | the person; read by `erx_act` | the rules file: **new fuzz target**, `erx_act_rules:read/1` with the matcher |
+| the rules | which line a value opens; keys | bytes the person keeps: a file in the session's `lib` directory, which no narrowed namespace holds writable, and a file of the release | the person, through their sessions and the programs given their whole namespace; read by `erx_act` | the rules file: **new fuzz target**, `erx_act_rules:read/1` with the matcher, reloads and the bounds of [Rules](#rules) |
 | objects | all gestures, `act`, `plumb` | none: an argument of `erx_act:offer/2` | `erx_act` | presentation texts from terminal links: `erx_present:parse/2`, whose fuzz target exists; paths: bounded and passed as data |
 | `erx_act` | holds the rules, the bindings table, one palette per display | none: a local process, registered in its own runtime, serving no facet and no tree | the desktop session's release | messages from its own runtime only |
 | the palette | launching, offers, results | a window through the session's display grant | the session | the person's typing, as rc text; inspector listings, as typed records; command output, as attributed text through the line escape |
@@ -670,28 +884,31 @@ diagnostic from `act -r` or the palette.
 
 `erx_act` is one `gen_server` under the `erx_act` application's
 supervisor. It never waits: the rules are read by a worker with a
-one-second timeout, path information by a worker, offers are a pure
-computation, and palettes and acts are processes of their own. A
-reload builds the new map and replaces the table's one row, so a
-reader sees the old bindings or the new, never a mixture. Palettes are
-linked to `erx_act` and monitored by it to keep the one-per-display
-map; an act is linked to the palette that started it, and a bound
-line's act to a temporary runner under `erx_act`'s supervisor.
+one-second timeout and an 8 MiB heap, path information by a worker,
+offers are a pure computation, and palettes and acts are processes of
+their own. A reload builds the new map and replaces the table's one
+row, so a reader sees the old bindings or the new, never a mixture.
+Palettes are linked to `erx_act` and monitored by it to keep the
+one-per-display map. Each act has an owner process of `erx_act_run`,
+which monitors the palette that asked for the act, or, for a bound
+line, is a temporary child of `erx_act`'s supervisor, and ends the
+act's job when that ends ([The palette](#the-palette)).
 
 | Failure | What the person sees | What recovers it |
 | --- | --- | --- |
-| `erx_act` crashes | open palettes close; bound keys reach windows as ordinary keys | its supervisor restarts it, which reads the rules and fills the table again |
-| the rules file fails to read, times out, is too long or fails the reader | the defaults alone; `lib/act:LINE: REASON` heads every palette | `act -r` after the file is fixed |
+| `erx_act` crashes | open palettes close and their acts end; bound keys reach windows as ordinary keys, but for the rest of a press already taken | its supervisor restarts it, which reads the rules and fills the table again |
+| the rules file fails to read, times out, outgrows the reader's heap, is too long or fails the reader | the defaults alone; `lib/act:LINE: REASON` heads every palette | `act -r` after the file is fixed |
 | a presentation's text does not parse | the palette, opened on the gesture, says that the text is not a value of the type, and offers nothing | none needed |
 | a path names nothing | `act` and `plumb` fail with FreeBSD's `ENOENT` text | none needed |
 | no offer for an object | the palette says no command takes it; `plumb` fails | a route in the person's file |
 | a line fails or crashes | the palette shows the status and output | none needed |
-| a line runs long | the palette shows that it runs | Escape or closing the palette ends it |
+| a line runs long | the palette shows that it runs | Escape or closing the palette ends the act, its stages, `&` blocks and programs |
 | a line writes more than 64 KiB | the first 64 KiB and how many bytes were dropped | none needed |
 | the stage allowance is full | the status `too many stages` at once | none needed |
 | a member listing fails or outgrows its cap | its status in the list's place | typing the value |
 | the palette's display ends | the palette and its act end with it | none needed |
-| the keyboard cannot be handed to the palette in time | the palette opens without it; a click picks it | none needed |
+| a key's release is lost to the queue's bound during a bound press | the next key's down is read as usual | none needed |
+| the keyboard cannot be passed to the palette in time | the palette opens without it; a click picks it | none needed |
 
 A failure ends at most one palette and the act it runs, or `erx_act`
 and every open palette with it; the session, its shell and its other
@@ -707,8 +924,11 @@ windows are untouched.
 | `plumb` on an object with no offer | `plumb: no route for TEXT`, status 1 |
 | `act` with no display, or a display that refuses the window | `act: no display`, status 1, as `erx_ui:open/1` answers `{error, no_display}` |
 | `act -r` on a bad file | the diagnostic on standard error, status 1; the defaults stay in force |
+| a `bind` whose chord holds no key but Shift, or no trigger, or two | the file fails at that line: `lib/act:LINE: a chord needs Ctrl, Alt or the logo key and one other key` |
+| a narrowed namespace with a writable root within the session's `lib` directory or containing it | refused with `EACCES` when the namespace is derived; the program or command does not start |
 | an offer whose command the session cannot run | not shown; typed anyway, the line fails with `no_facet` at the shell's check |
-| more than one palette on a display | the new one replaces the old |
+| a Return or click the palette read before its first present was answered, or a click on a row that changed under the pointer | dropped; nothing runs |
+| more than one palette on a display | the new one replaces the old, ending its act |
 
 ## Security
 
@@ -726,35 +946,48 @@ not engineered against.
   opens a palette, and what runs then is a line the person chose (FA2).
   A program that writes a link labelled `a.txt` whose URI names
   `pid/3.45.0` gets a palette that shows `3.45.0` and the offers of a
-  pid, since the object comes from the link's URI (FA4).
-* **No injection.** A value is a variable, which rc never rescans, so
-  no file name, process name or link text can become a second word or a
-  command (FA3); a file's or folder's text is an absolute path, which
-  begins with `/`, so no command takes it for an option. Labels and lines
-  come from the person's
-  rules; output comes from commands; both are shown only through the
-  line escape.
+  pid, since the object comes from the link's URI (FA4). The canonical
+  object answers a misleading label, not a misleading palette: what
+  keeps a pick to what the person saw is [When a pick
+  counts](#the-palette).
+* **No injection.** A value is a variable, which rc never rescans on its
+  own, so no file name, process name or link text can become a second
+  word or a command (FA3); a file's or folder's text is an absolute
+  path, which begins with `/`, so no command takes it for an option. A
+  line that hands `$1` to `eval` parses it again; lines are the person's
+  code, as at the shell. Labels and lines come from the rules; output
+  comes from commands; both are shown only through the line escape.
+* **The rules are written only by holders of the session's files.**
+  The person's sessions and the programs they give their whole
+  namespace may replace `$home/lib/act`; a narrowed program or command
+  never can, since no narrowed namespace holds the session's `lib`
+  directory writable ([Rules](#rules), "Who writes the rules"; FA8).
+  The residual: a program given the whole namespace holds no right
+  beyond files unless `within -f` names one, yet a rule it writes runs
+  with the session's; closing that needs a home for the rules that no
+  program's namespace holds, and is recorded in `TODO.md`.
+* **No binding reads typing.** A chord needs Ctrl, Alt or the logo key
+  held, so no rule can take the keys of text, a password's among them,
+  and run a line on each (FA9).
 * **The palette is not a trusted surface.** It is a window of the
   person's session, drawn by its renderer. An app may draw a window
   that looks like it, and keys typed into that window are the app's;
   such a window can run nothing in the person's session. Telling the two
   apart is the reserved chord's overlay, the identity design of the
-  synthesis (item 13). This is a residual.
-* **The keyboard pass stays inside one grant.** Under open decision 2's
-  recommendation a client may hand the keyboard only from its own
-  current window to another window of the same grant, within 500 ms of a
-  key or button down the display delivered to the current window, the
-  user-traced act of the accepted clipboard rule (synthesis D3,
-  [research-ui-secure.md](research-ui-secure.md) section 6.2). It
-  cannot take the keyboard from another client, so it moves no key a
-  client could not already read.
-* **The rules file is the person's.** A program of the session that
-  may write `$home/lib/act` can route a type to a line of its choosing,
-  exactly as it could edit the person's rc functions or scripts; it is
-  the same trust as any file in `$home`, recorded as a residual.
-* **Bounds.** The rules file is 64 KiB and 256 statements; a line 4,096
-  bytes; an act's kept output 64 KiB; a listing worker 4 MiB; a session
-  has one palette per display; an act's stages are within the session's
+  synthesis (item 13). A client of the display may also raise a window
+  of its own over the current palette with `wctl` `top`, which leaves
+  the keyboard with the palette, so a person who types into what looks
+  like the raised window types into the palette, and a Return runs its
+  selected offer. Both are residuals, recorded in `TODO.md`.
+* **The keyboard pass is the source window's to give.** Under open
+  decision 2's option (b), the keyboard moves only through the `wctl` of
+  the window that has it, so a program confined to its own window's
+  files can give away the keyboard it already has and can never take it
+  from a sibling window of the same grant.
+* **Bounds.** The rules file is 64 KiB and 256 statements, read with no
+  atom made and in an 8 MiB worker; a line 4,096 bytes and 256 levels;
+  an act's kept output 64 KiB; a listing worker 4 MiB; a session has one
+  palette per display; an act's stages are within the session's
   allowance.
 
 ## Invariants
@@ -764,10 +997,13 @@ not engineered against.
 | **FA1.** An act runs with the session's authority and no more | `erx_act_run` is the only way find and act runs anything, and it runs a line in the session's evaluator, whose runner reads the session's facets for each command; nothing in find and act holds or makes a capability | a palette or binding that calls a command's module directly; a runner state with facets of its own | a session without the inspect facet: the pid offers do not include `i`, and the line `i 3.45.0` typed into the palette fails with `no_facet`; the source check of FA2 |
 | **FA2.** A gesture on a value only opens the palette | `erx_term` and `erx_ui_server` reach find and act only by sending `{offer, ...}` to `erx_act`; `erx_act` runs a line only on the palette's `run` effect, a bound key or `plumb` | a terminal or widget server that runs a default offer; an `erx_act` that runs on an offer | a test that right-clicks a pid and a file with a recording evaluator, which records no run; an xref check that `erx_term`, `erx_ui_server` and their callees reach neither a facet client nor `erx_act_run` |
 | **FA3.** A value reaches a command as exactly one argument | the value is `$1`, a variable, whose text the evaluator holds as `lit` and never splits or globs | a line built by pasting the value's text into rc source | a recording command run by a route on files named with a space, `'`, `;`, `$`, `*`, `[`, a newline and a first `-`, which receives each path as one argument |
-| **FA4.** The palette shows what runs | the object's text is the canonical text of the parsed value, from a link's URI, never from the shown cells; the offer's line is shown verbatim; both through the line escape | an object built from a window's shown text; a line shown after a rewrite | a terminal link whose shown text differs from its URI, after which the palette's object text is the URI's |
+| **FA4.** The palette runs only what it showed | the object's text is the canonical text of the parsed value, from a link's URI, never from the shown cells; the offer's line is shown verbatim; both through the line escape; a pick counts only after the first present, on a row the pointer entered after its last change, or on a selection that stayed on its line | an object built from a window's shown text; a line shown after a rewrite; a pick taken from queued input or a row that changed under the pointer | a terminal link whose shown text differs from its URI, after which the palette's object text is the URI's; the pick tests of [Verification](#verification-and-testing) |
 | **FA5.** Bindings exist only while `erx_act` lives, and only in its own runtime | the table is created and owned by `erx_act`, so it dies with it; `erx_win:kbd/1` reads only its own runtime's table | bindings kept in a persistent term or a table of another owner | kill `erx_act`: the bound chord then reaches the terminal's tty; an app session's window receives the chord as keys |
-| **FA6.** A bound key reaches no caller | `erx_win_core:bind/3` drops the bound down and every typed and up record until the chord's last non-modifier key is up | a funnel that drops only the down | the chord typed in a terminal window: the palette opens and the tty receives none of its bytes, held long enough to repeat |
-| **FA7.** Everything find and act keeps is bounded | the bounds of [Security](#security), each enforced where the data enters: the reader, the collector, the worker's heap flag, the one-per-display map | a reader without its size check; a collector that keeps all output | the bound tests of [Verification](#verification-and-testing) |
+| **FA6.** A bound press reaches no caller | `erx_win_core:bind/3` drops the trigger's down and every record while the trigger is held, and its release; the trigger held lives in the handle | a funnel that drops only the down; the trigger held kept in the table | the chord typed in a terminal window: the palette opens and the tty receives none of its bytes, held long enough to repeat |
+| **FA7.** Everything find and act keeps is bounded | the bounds of [Security](#security), each enforced where the data enters: the reader and its worker's heap flag, the collector, the listing worker's heap flag, the one-per-display map | a reader without its size check; a collector that keeps all output | the bound tests of [Verification](#verification-and-testing) |
+| **FA8.** No narrowed program or command writes the rules | a narrowed namespace never holds a writable root within the session's `lib` directory or containing it, judged on the root's path on its grant; a narrowed program's commands hold only its grants | a narrowing that judges the name instead of the grant's path; a check on `lib/act` alone, which a rename of `lib` escapes | the narrowing tests of [Verification](#verification-and-testing) |
+| **FA9.** No binding takes a key typed as text | the reader refuses a chord with no held key but Shift, and `bind/3` matches only a whole set | a chord check that accepts Shift as a held key | the chords test of [Verification](#verification-and-testing) |
+| **FA10.** An act ends whole | an act is a job whose tag every process it spawns takes, and its owner ends the tag when the palette or `erx_act` ends | an act ended by a link to its evaluator, which `&` blocks and programs outlive | the ending test of [Verification](#verification-and-testing) |
 
 ## Verification and testing
 
@@ -783,25 +1019,35 @@ QEMU test runs the whole path.
 | the shell is the gate, hosted | the line `i 3.45.0` from the palette in that session ends with `no_facet` | a runner state given a facet map of its own |
 | no run on a gesture, hosted | right-click on a pid and "Open with" on a file open a palette and the recording evaluator records no run | an `erx_act` that runs the default offer on `offer` |
 | one argument, hosted | a recording command receives each awkward file name of FA3 as exactly one argument, through a route and through `plumb` | an act built by splicing the path into the line's text |
+| environment, hosted | a route's line `echo $home $display` prints the session's home and the palette's display; a function defined in a terminal's shell is not found by an act | an evaluator made with the act's variables alone, which prints an empty home |
 | link spoof, hosted | a link shown as `a.txt` whose URI is `pid/3.45.0` opens a palette on the pid `3.45.0` | an object taken from the cells' text |
-| unparsable text, host | a link whose text is not a pid this runtime can name makes no object, and the palette says so | a funnel that passes the raw text on |
-| rules reader, host | every example of this document reads; a bad line fails the file with its line number; an empty or absent file leaves the defaults | a reader that keeps the statements before the bad one |
-| rules bounds, host | a file of 64 KiB and one byte, a 257th statement, a 4,097-byte line, a 65-byte label and a five-key chord are each refused | each bound removed in turn |
+| unparsable text, host | links whose text is not a pid's syntax, `3.x.0`, `3.45` and `3.45.0.1`, make no object, and the palette says so; whether a well-formed pid names a live process is the command's and the inspector's to answer | a funnel that passes the raw text on |
+| widget type, host | a widget's `present` of the atom type `pid` reaches the funnel as `<<"pid">>` and makes the object | a server that sends the atom, which `erx_present:type/1` refuses |
+| rules reader, host | every example of this document reads, the line kept byte for byte; a bad line fails the file with its line number; an empty or absent file leaves the defaults; a field holding `$`, `;` or a redirection fails; a line whose quote runs past its end fails | a reader that keeps the statements before the bad one; a reader that rebuilds the line from its tokens |
+| rules reader atoms, host | reading a thousand distinct bad files and a thousand reloads of a good one leaves `erlang:system_info(atom_count)` unchanged | a reader that makes an atom of a type or key name it does not know |
+| rules bounds, host | a file of 64 KiB and one byte, a 257th statement, a 4,097-byte line, a line nested 257 levels, a 65-byte label and a chord of three held keys and two triggers are each refused; under (d), a binary such as `<<0:4294967295/unit:255>>` is refused before any allocation, with the worker's heap within its cap | each bound removed in turn; under (d), a reader built on `erl_parse:parse_term/1` |
+| chords, host | `bind (a) x`, `bind (kshift a) x`, `bind (kctl) x` and `bind (kctl a b) x` are refused; `bind (kmod4 ' ') x` and `bind (kctl kshift n) x` read | a chord check that accepts Shift as a held key |
 | rules order, host | the person's route for `pid` is the default; the person's `bind` of the default chord replaces it | a merge that puts the defaults first |
 | matcher, host | `*` and `?` match as fnmatch(3) without flags on the cases of a table; a pattern of 255 `*` against a 255-byte name ends within a fixed step count | a backtracking matcher fails the step count |
 | defaults check, build | the shipped defaults read, and every line's first command is in the desktop release's catalog | a seeded route to a command no release declares |
-| bindings swallow, hosted | the chord in a terminal window opens the palette and the tty receives no byte of it, held through repeats | a funnel that drops only the down record |
+| narrowing, hosted | a program started with a writable root of `$home`, of `$home/lib`, of `$home/lib/x` and of `$home` under a second bound name is refused with `EACCES`; one with `$home/notes` writable starts and cannot open `$home/lib/act` for writing; the rules stay those `act -r` read before | a narrowing that judges the name the line used; one that checks `lib/act` alone, after which a program with `$home` writable renames `lib`, writes a new `lib/act`, and `act -r` puts its binding in force |
+| bindings swallow, host | `erx_win_core:bind/3` over a record list: the trigger's down, its repeats, a second key pressed meanwhile and the trigger's release are dropped; a list whose release is missing passes the next key's down | a funnel that drops only the down record; one that keeps dropping until an up record |
+| bindings swallow, hosted | the chord in a terminal window opens the palette and the tty receives no byte of it, held through repeats; the same with `vi` full-screen in that terminal | a funnel that drops only the down record |
+| bindings mid-press, hosted | a reload, and a kill of `erx_act`, while the trigger is held: the rest of that press reaches no caller, and the next press of the chord reaches the tty while `erx_act` is down | the trigger held kept in the table, which a kill clears mid-press |
 | bindings die with the service, hosted | after `erx_act` is killed the chord reaches the tty; after its restart it opens the palette again | the table kept in a persistent term |
 | app windows, hosted | in an app session's window the chord arrives as keys | a funnel that reads a table of another runtime |
 | widget gesture, host | a secondary press on a node with an `ok` or `partial` `present` sends an offer; on `unknown`, `timeout` or no `present`, none | a server that forwards every status |
+| picks, host | over the palette core: a Return and a click read before the first present's answer run nothing while typed characters still filter; a click on a row that changed under a resting pointer runs nothing, and after the pointer leaves and re-enters it, runs that row's line; a listing that answers while an offer is selected keeps that line selected, and one that removes it leaves nothing selected | a core that accepts any Return; a core that arms clicks on the window rather than the row; a selection kept by index, under which the late listing moves Return onto another line |
+| ending an act, hosted | Escape while `sleep 100 \| cat`, `{sleep 100} &` and a native program run as one act ends every process of the act's tag and gives the program its `SIGINT`; a `window vi $1` act that has returned leaves its terminal open after the palette closes | an act ended by a link to its evaluator, under which the `&` block and the program survive |
 | output bound, hosted | a line that writes 1 MiB shows its first 64 KiB and the count of the rest, and the palette's heap stays within its bound | a collector without its cap |
 | listing bound, hosted | completing a `pid` argument over a listing that outgrows 4 MiB shows "too many to list" | the worker spawned without its heap flag |
 | never fabricate, host | a member listing answering `scope`, `timeout` and an error shows each as its status | a palette that shows an empty list for a failed listing |
-| one palette per display, hosted | a second `act` on a display ends the first palette | a map that keeps both |
+| one palette per display, hosted | a second `act` on a display ends the first palette and its running act | a map that keeps both |
 | `plumb`, hosted | `plumb notes.txt` runs `window vi` on the file and returns its status; `plumb -l` prints the offers; an unrouted file fails with status 1 | a `plumb` that ignores the person's file |
+| the rules fuzz target | random bytes, mutations of the defaults, files at and over each bound, and repeated reloads read or fail with a diagnostic naming a line in the file, never raise, keep the worker within its heap and leave the atom count unchanged | a reader that makes an atom of each unknown word |
 | the source checks | the FA2 xref check fails on a seeded call from `erx_term` to `erx_act_run` | none further |
 | desktop, QEMU | on the desktop image, the palette key in the first terminal opens the palette; typing `files` and Return opens a files window | the default binding removed |
-| keyboard pass, hosted, if open decision 2 takes (b) | the palette opened by a key is current at once; a `current` write with no recent act, or for another grant's window, fails with `EINVAL` | the rule without its grant check, under which a second session's window takes the keyboard |
+| keyboard pass, hosted, if open decision 2 takes (b) | the palette opened by a key in a terminal is current at once. With two programs started from one session, a native program P with its own window and only that window's files, and a terminal T where the person types: P's `give` written to its own `wctl` while T is current fails with `EINVAL`; P, made current by a click and given a key, cannot give the keyboard to T, made before that click; a `give` more than 500 ms after the last key or button down fails | the rule judged on the grant, "the grant holds the current window", under which P's write takes the keyboard from T; the rule without its age check, under which P hands the person's typing to T's shell |
 
 The palette's core is not a protocol state machine, so it is tested on
 its cases, not exhaustively.
@@ -809,7 +1055,8 @@ its cases, not exhaustively.
 ## Performance
 
 Offers and entries are pure work over at most 256 rules and the
-session's command table, which is microseconds. The key path gains one
+session's command table, done on a gesture and not on the key path;
+their time is not measured. The key path gains one
 ETS lookup for each `{down, _}` record in every Erlang client of a
 session. The rules are read at `erx_act`'s start and at `act -r`, never
 on a gesture. A member listing is one inspector query per argument, in a
@@ -833,16 +1080,30 @@ accepted:
   `erx_ui_server` call no facet" adds "and no evaluator". The terminal's
   button 3 on a link offers it. The renderer behaviour gains the
   `{act, NodeId}` report, which the Erlang renderer makes on button 3,
-  and the widget server forwards. `erx_win:kbd/1` consults the bindings
-  table and answers `{ok, Key, Window}`, its handle carrying whether a
-  bound chord is held and the display's name. Open decision 2's `wctl`
-  change, if taken.
+  and the widget server forwards, naming its type with
+  `atom_to_binary/1`. `erx_win:kbd/1` consults the bindings table and
+  answers `{ok, Key, Window}`, its handle carrying the trigger held and
+  the names of the display and the window. A `wctl` read's existing
+  `current` field reports the policy's current window, and a change of
+  the current window gives each window it touches a new `wctl` record,
+  so a client learns it; `erx_window` today fills the field from the
+  window's shown state (`erx_window.erl:101`). Open decision 2's `give`
+  command, if taken.
 * **The inspection schema.** A segment type `app_name` for `apps
   *app_name`, marked `present app`.
 * **design-shell.** `service` declares `-erx_args([app])`; commands that
   take a pid, a domain or another presentation first declare it, so the
   Services offers find them; the catalog carries each command's help and
-  `-erx_args`, which design-display already says.
+  `-erx_args`, which design-display already says. The variables a
+  session's shell starts with, `$home` among them, are one value both
+  the shell and `erx_act_run` start from. A job whose evaluator a
+  session process other than a terminal's shell starts with
+  `erx_job:spawn/1`, an act, is ended as any job is and listed by no
+  terminal's `jobs`.
+* **design-files.** Narrowing for a program refuses, with `EACCES`, a
+  writable root that lies within the session's `lib` directory or
+  contains it, judged on the root's path on its grant; the same holds
+  for a command domain that `within` narrows.
 * **design-desktop-programs.** files' toolbar gains "Open with".
 * **design.md** lists this document in its map.
 
@@ -863,6 +1124,8 @@ the file protocol.
 | A global palette chord kept by the display, or the palette opened from the reserved chord's overlay | a second reserved chord is what the synthesis asks not to have (section 2.6, "Chords and overlays"); the overlay is the display's trusted surface, and opening the session's palette from it would need a channel from the display to the session that nothing else needs |
 | Running the default offer on a single click, as Plan 9's plumbing does | a link's URI is chosen by whatever program wrote it, so a click could start a command on a value the person never saw; one more gesture in a window that shows the line is the price of FA2 |
 | Building the line by quoting the value into rc text | correct only while the quoting is; a variable cannot be mis-quoted, because rc never rescans it |
+| Ending an act by a link from the palette to its evaluator | the runner's subshells and isolated commands run under monitors and an `&` block unmonitored (`erx_shell_runner.erl:155-163`, `:279-283`), and programs are the command server's rows, so a link ends the evaluator and leaves the rest running; the job tag is the shell's one way to end everything a line started |
+| The person's rules installed only through a command, kept where no program's namespace reaches, as crontab(1) installs a user's table (FreeBSD's not read in this task: unverified) | it would also keep the rules from programs given the whole namespace, the residual of [Security](#security), but needs a tree the session holds and never hands to a program, a kind of mount no design has, while `rc.conf`, the precedent, is writable by such programs too; the narrowing rule closes the case the person chose to restrict |
 | Apps offering commands in a person's palette | a command of one principal run in another's session, or a new cross-domain protocol, for no consumer; the powerbox is the design for handing an app a value |
 | files' kind table as the source of routes | a kind is a guess at a file's content for its icon; a route is the person's choice of command; they need not change together, so they are not one fact |
 | Ranking by use, hiding entries | no consumer yet: few commands declare `-erx_args`, so the Services lists are short; the rule order is the ranking |
@@ -870,12 +1133,17 @@ the file protocol.
 
 ## Open decisions
 
+Each decision gives this design's recommendation and the external
+review's.
+
 **1. How the rules are written.** The rules' meaning is fixed above: a
 type, name patterns for files, a label and an rc line for a route; a
 type for a list; a chord and an rc line for a binding. In every option
 the line is rc, the shell's own grammar, and no option needs a rule
-engine: there is no join, recursion or negation. The choice is the
-outer syntax, which needs approval under the language rule
+engine: there is no join, recursion or negation. Every option's reader
+holds to the four rules of [Rules](#rules): no atom from input, refusal
+before construction, bounded depth, bounded memory and time. The choice
+is the outer syntax, which needs approval under the language rule
 ([design.md](design.md#decisions), "Languages").
 
 | Option | What it costs | What it gives |
@@ -883,34 +1151,62 @@ outer syntax, which needs approval under the language rule
 | (a) Plan 9's plumbing language, the part that applies: `type is`, `plumb start`, with `name matches` for files | a reader of a grammar half of whose verbs (`plumb to`, `plumb client`, `src`, `wdir`, `attr`, the click attribute) mean nothing here, so it would look like Plan 9's without being it | familiarity to Plan 9 users; the best fit if untyped text is ever plumbed, since its regular expressions and winnowing are built for that |
 | (b) awklog | a Datalog engine in AWK for rules with no join; on the target it would run under toybox's `wak` as a program, or the person's file would need a host step | nothing these rules use; awklog's place is a host-side check |
 | (c) Datalog, Soufflé or an engine in Erlang | Soufflé is a host C++ tool; an Erlang engine is a new module for the same nothing | as (b) |
-| (d) Erlang terms, one tuple a statement, read with `erl_scan` and `erl_parse` and checked by one shape reader | no new grammar: every runtime already reads Erlang terms; scanning makes atoms before the shape check, at most about 21,000 from a 64 KiB file, in the session's own table, whose limit is 1,048,576 (`otp/erts/emulator/beam/atom.h:32`); the person writes Erlang's quoting around rc's | the system's own language; the reader is a shape check over terms; the examples above |
-| (e) a line format of erXos's own, rc's word syntax for every field, `route file '*.txt' Edit window vi $1` | a small new grammar and its reader, beside rc's | one quoting rule for the whole line; it reads like the shell |
+| (d) Erlang terms, one tuple a statement | stock OTP's reader cannot be used: `erl_scan` makes an atom of every atom and variable name before any check, and atoms are never collected, so reloads of bad files grow the table without bound; `erl_parse:parse_term/1` builds a binary's value from its size fields, so a few bytes ask for any allocation ([What exists today](#what-exists-today)). (d) therefore needs a scanner and a parser of its own for a subset of Erlang's term syntax, with their own fuzz target, and the person writes Erlang's quoting around rc's | the system's own language for configuration; the term shapes as the format |
+| (e) a line format in rc's word syntax, `route file (*.txt) Edit window vi $1`, as [Rules](#rules) gives it | a field reader over `erx_shell_lex`'s tokens, which already make no atom, carry their offsets, never raise and have a fuzz target; the line is a byte range of the source, parsed by `erx_shell_parse:next_bounded/3` with rc's own depth, size and heap bounds; the new code is the split of a source line into a kind, its fields and the rest | one quoting rule for the whole statement; the line in the file is byte for byte the line that runs; it reads like the shell, as `rc.conf` reads like sh |
 
-Recommendation: **(d)**. It adds no language, and its reader is a check
-of a closed set of term shapes, with its fuzz target. If untyped text
+Recommendation: **(e)**. Once the reader must make no atom and refuse
+before it builds, (d) is no longer "a shape check over terms": it is a
+new scanner and parser with nothing to reuse, while (e) reuses the
+tokenizer and parser the shell already has, bounds and fuzz target
+included, and adds only the split of a line into fields. If untyped text
 plumbing becomes a goal, (a) is the better outer syntax for that day.
+The external review recommends **(e)** too, keeping the binary tokenizer
+and its offsets and the line unchanged; it finds that Plan 9's broader
+grammar and either rule engine give nothing these rules need.
 
-**2. Handing the keyboard to the palette.** A new window is current
+**2. Passing the keyboard to the palette.** A new window is current
 only once the person clicks it, and `wctl` `top` gives no keyboard
 ([design-display.md](design-display.md#windows-and-the-window-system)).
 So a palette opened by a key cannot be typed into, and one opened at
 the pointer takes its first click as a pick, which the policy keeps for
-itself. Options: (a) no change: the person clicks the palette before
-using it; (b) rio's `current` as a `wctl` command, admitted only when
-the window's grant holds the current window and that window received a
-key or button down within the last 500 ms, the user-traced act of the
-accepted clipboard rule (synthesis D3), and refused with `EINVAL`
-otherwise; with it, `wctl`'s read carries whether the window is current,
-so the palette can close when the person picks another window. (c) the
-palette drawn inside the window the gesture came from, rejected under
-[Alternatives considered](#alternatives-considered). Recommendation:
-**(b)**. The keyboard still moves only on the person's act, and only
-between windows of the client that already has it, so no client gains a
-key it could not read before; without it the palette and the context
-menu each cost an extra click on every use. It changes an accepted rule
-of design-display, which is why it is not taken here. The `wctl` read's
-current-state word is rio's form, unverified in this task against a
-rio source.
+itself; under the pointer re-entry rule synthesis D3 accepted, that
+click picks the palette only after the pointer has left it and come
+back. Options:
+
+* (a) No change: the person clicks the palette before using it.
+* (b) A `wctl` command `give N`, written to the `wctl` of the window
+  that has the keyboard, the **source**, naming a window `N` of the same
+  grant, the **target**. The policy admits it only when the source is
+  the current window, the display delivered a key or button down to the
+  source within the last 500 ms, the user-traced act of the accepted
+  clipboard rule (synthesis D3), and the target is shown and was made
+  after the source last became current; it then picks the target, and
+  refuses anything else with `EINVAL`. The authority is the source
+  window's own control file: a program confined to its own window's
+  files ([design-programs.md](design-programs.md#the-handler), "The
+  spec's `window => Display`") can give away only a keyboard it already has, never take
+  it from a sibling window of the same grant, since the display tells
+  clients apart by grantee domain and not by program
+  (`erlang/apps/erx_display/src/erx_winfs.erl:269`). The age condition
+  on the target keeps the keyboard from being handed to an older
+  window, such as the session's shell, so the person's typing cannot be
+  steered into it; it is one window id kept with the pick, since window
+  ids only grow. The palette, opened from window S by a bound key or a
+  gesture, writes `give P` for its own window P to S's `wctl`, which the
+  session's processes reach through the grant.
+* (c) The palette drawn inside the window the gesture came from,
+  rejected under [Alternatives considered](#alternatives-considered).
+
+Recommendation: **(b)**. The keyboard still moves only on the person's
+act and only out of the window that has it, so no writer gains a key it
+did not already have; without it the palette and the context menu each
+cost an extra click on every use, two under the re-entry rule. It
+changes an accepted rule of design-display, which is why it is not taken
+here. The external review recommends **(a)** until a narrowed transfer
+is accepted, and agrees that a transfer, when there is one, is
+authorized by the current source window; it finds that a 500 ms
+interval alone proves recency, not authority or intent, which the
+source window's control file supplies in (b) as given here.
 
 **3. App names in a release build's palette.** The palette lists apps
 from the `[apps]` listing, which only an inspect facet of scope `all`
@@ -922,7 +1218,12 @@ visibility class for the start table's row names, readable by a facet
 whose principal holds the `start` grant, in the inspection schema and
 design-apps. Recommendation: **(a)** until a release build exists, since
 nothing ships before the security closure milestone and (b) changes who
-sees what in the inspector.
+sees what in the inspector. The external review recommends **(a)** for
+this milestone as well, and notes that the gap is wider than the
+palette: `service -e` reads a row's `declared_enable` from `[apps,
+Name]`, which the same scope guards
+([design-apps.md](design-apps.md#interfaces), "Inspection"), so the
+visibility belongs to design-apps, which the palette then follows.
 
 ## References
 
