@@ -210,8 +210,8 @@ class ManifestStopgapTest < Minitest::Test
   def test_admitted_services_reach_the_encoded_manifest
     view = @codec.open('manifest', admit(@source + SERVICE).bytes)
     # The development manifest's own, data, display, inspect, log, machine, net,
-    # network_ctl, packages, start, storage_ctl and web, and this one.
-    assert_equal %w[data display inspect log machine net network_ctl packages probe start storage_ctl web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
+    # network_ctl, packages, start, storage_ctl, system and web, and this one.
+    assert_equal %w[data display inspect log machine net network_ctl packages probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
     assert_equal 0, view.count('liveness')
   end
 
@@ -822,6 +822,24 @@ class ManifestStopgapTest < Minitest::Test
       source = changed(@source.sub(/(window system\n)  holder @domain.storage/, "\\1  holder #{holder}"))
       refused(Erx::Manifest::Invalid, 8, 'window.holder', source)
     end
+  end
+
+  # Property 19's eighth clause: the system tree's service is served by the system
+  # window's holder, and only the derived rows grant it.
+  def test_the_system_service_is_served_by_the_system_window_s_holder
+    source = changed(@source.sub("service system\n  server @domain.storage", "service system\n  server @domain.network"))
+    refused(Erx::Manifest::Invalid, 19, 'service.server', source, message: /holder of the system window/)
+  end
+
+  def test_a_source_facet_row_of_the_system_service_is_refused
+    row = "facet system\n  grantee system\n  service @service.system\n  operations none\n  max_request 131072\n" \
+          "  in_flight 16\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 262144\n"
+    refused(Erx::Manifest::Invalid, 19, 'facet.service', @source + row, message: /only the derived system rows/)
+  end
+
+  def test_a_system_window_without_the_system_service_is_refused
+    source = changed(@source.sub(/^service system\n(?:  .*\n)*/, ''))
+    refused(Erx::Manifest::Invalid, 19, 'service.name', source, message: /holds one service named system/)
   end
 
   def test_a_fat_window_must_name_a_primary_partition

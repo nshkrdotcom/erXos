@@ -21,7 +21,9 @@ domain that serves `system` serves the booted slot's system partition.
   `eio`. A record that is absent or refused, an image the reader refuses,
   and an image whose `apps/` is not a directory leave the tree `none`; the
   reason goes to the log once.
-* **Serving.** Each grant is `erx_fs:start_link(?MODULE, Tree, Rights)` on
+* **Serving.** start_mint/0 mounts the tree once and runs the service's
+  mint, erx_storage_mint, which starts each grant,
+  `erx_fs:start_link(?MODULE, Tree, Rights)` with its facet row's rights, on
   the one tree mount/1 answers, which never changes, so a grant reads the
   image in its own processes and grants share nothing but the window. The
   tree roots at the partition's `apps/`: a node is the list of names below
@@ -42,7 +44,7 @@ open `eio`, so it reaches no file.
 
 -include("generated/erx_abi.hrl").
 
--export([mount/1, mount/3, log/1]).
+-export([start_mint/0, mount/1, mount/3, log/1]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4,
          statfs/1, clunk/2, read_mode/0]).
 -export_type([tree/0]).
@@ -57,6 +59,20 @@ open `eio`, so it reaches no file.
 
 %% A node: the names from the tree's root, apps/, to it.
 -type node_() :: [binary()].
+
+-doc """
+Mounts the tree once on the block service's `system` window and starts the
+mint of `system_service`, `system`, which hands each grantee an erx_fs grant
+of that tree with its facet row's rights (erx_storage_mint), linked to the
+caller, erx_storage_sup. A boot whose block service names no `system` window
+starts no mint.
+""".
+-spec start_mint() -> {ok, pid()} | ignore.
+start_mint() ->
+    case erx_blk_service:window(system) of
+        {ok, Window} -> erx_storage_mint:start_link(system, ?MODULE, mount(Window));
+        {error, _} -> ignore
+    end.
 
 -doc """
 Mounts the image of the `system` window `Window` with the layout of this

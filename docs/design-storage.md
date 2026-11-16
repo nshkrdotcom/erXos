@@ -1352,6 +1352,34 @@ a grant that both carry `rx`
 ([design-files.md](design-files.md#building-binding-and-mounting),
 "Rights beneath an entry").
 
+The tree is served as the data volume's trees are
+([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)):
+`system_service` is a service of the files interface
+(`abi/services/files.txt`) whose server is the storage domain that
+serves `system`, and its server holds the manifest's `system` window,
+which property 19 checks. One child of `erx_storage_sup`,
+`erx_storage_system:start_mint/0`, mounts the tree once with
+`erx_storage_system:mount/1` on the block service's `system` window
+(`erx_blk_service:window(system)`) and then runs as the service's mint,
+`erx_storage_mint`, the one mint of every files service the storage
+domain serves. For each mint request in the system domain's envelope
+it starts one `erx_fs` grant of that mounted tree, with the facet
+row's rights, `ro` for the system domain's row and `rx` for the app
+template's, bound to the grantee's domain id
+([design-files.md](design-files.md#serving-the-erx_fs-behaviour)).
+The mint holds the mounted tree and nothing else, and the tree never
+changes, so a grant reads the image in its own processes and mints
+make no state a later grant depends on. Every grant, whatever the row
+says, refuses each writing operation with `erofs`, since the backend
+has no writing callback (F5); a tree mounted as `none`, from a refused
+record or image, serves grants that answer every walk, getattr and
+open `eio`. A boot whose block service names no `system` window starts
+no mint, so the rows' grants stay idle
+([design-system.md](design-system.md#facets-a-configured-domain-serves),
+"One operation per grant") and the image packages are absent. The
+mint is permanent under `erx_storage_sup`'s intensity of 0: its end
+ends the storage domain, whose restart mounts the tree afresh.
+
 Nothing the directory says is believed past the storage domain. A
 hostile storage domain can list a file under another file's name, list
 one that is not there,

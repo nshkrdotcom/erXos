@@ -6,7 +6,7 @@
 The grants of one file tree that a files service hands to other domains: a
 supervisor of temporary erx_fs grants of the tree a callback module serves, each
 with its facet row's rights and bound to one client domain (erx_fs:start_link/4).
-A files service of a configured domain asks it through its mint (erx_lfs_mint); one the system
+A files service of a configured domain asks it through its mint (erx_storage_mint); one the system
 domain serves names it with erx_facet:serve/2, and the domain service asks it for
 each grantee's grant in the grantee's ready answer (docs/design-system.md,
 "Facets of the system domain's services").

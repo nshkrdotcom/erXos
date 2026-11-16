@@ -11,7 +11,7 @@ require_relative '../../tools/lib/erx/generated'
 require_relative '../fixtures/erlang_build'
 
 # The erx_fs grant, the domain's file version counter and storage's data mint:
-# test/erlang/erx_fs_tests.erl, erx_fs_version_tests.erl and erx_lfs_mint_tests.erl run on
+# test/erlang/erx_fs_tests.erl, erx_fs_version_tests.erl and erx_storage_mint_tests.erl run on
 # stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies) against the sources
 # as they are, and against each seeded fault of docs/design-files.md#verification-and-testing
 # and of the mint, where the named test must fail. A fault in the protocol table reaches
@@ -28,13 +28,13 @@ class ErxFsTest < Minitest::Test
     test/erlang/erx_fs_stale_tree.erl
     test/erlang/erx_fs_tests.erl
     test/erlang/erx_fs_version_tests.erl
-    test/erlang/erx_lfs_mint_tests.erl
+    test/erlang/erx_storage_mint_tests.erl
     test/erlang/stand_in/erx_dist.erl
     test/erlang/stand_in/erx_connections.erl
   ].freeze
   GRANT = 'erlang/apps/erx_files/src/erx_fs_grant.erl'
   SERVER = 'erlang/apps/erx_files/src/erx_fs.erl'
-  MINT = 'erlang/apps/erx_storage/src/erx_lfs_mint.erl'
+  MINT = 'erlang/apps/erx_storage/src/erx_storage_mint.erl'
   VERSION = 'erlang/apps/erx_files/src/erx_fs_version.erl'
   TABLE = 'abi/protocols/9p.txt'
 
@@ -269,7 +269,7 @@ class ErxFsTest < Minitest::Test
       # EUnit's line for its test; the logger stays quiet so each verdict keeps its line.
       Open3.capture2e('gtimeout', '-k', '10', '300', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
                       'logger:set_primary_config(level, none), ' \
-                      'halt(case eunit:test([erx_fs_tests, erx_fs_version_tests, erx_lfs_mint_tests], [verbose]) ' \
+                      'halt(case eunit:test([erx_fs_tests, erx_fs_version_tests, erx_storage_mint_tests], [verbose]) ' \
                       'of ok -> 0; _ -> 1 end)',
                       chdir: work, stdin_data: '')
     end

@@ -39,7 +39,7 @@ module Erx
   #   key read from erx:caps/0), a command's -erx_needs, a
   #   mount of {facet, Name}, a
   #   server's mint (erx_facet:provide/2 and serve/2, erx_driver_ctl's start_mint and
-  #   mint_request) and a mint request {erx_facet_mint, Tag, Name, ...}, each with its
+  #   mint_request, erx_storage_mint:start_link/3) and a mint request {erx_facet_mint, Tag, Name, ...}, each with its
   #   name written out.
   #
   # UNDECLARED lists the facets the code uses that no interface declares, each with
@@ -96,6 +96,7 @@ module Erx
       /(?<![A-Za-z0-9_@])maps\s*:\s*(?:get|find|is_key)\s*\(\s*(?<name>#{NAME})\s*,\s*erx\s*:\s*caps\s*\(/,
       /(?<![A-Za-z0-9_@])erx_facet\s*:\s*(?:provide|serve)\s*\(\s*(?<name>#{NAME})\s*,/,
       /(?<![A-Za-z0-9_@])erx_driver_ctl\s*:\s*start_mint\s*\(\s*(?<name>#{NAME})\s*,/,
+      /(?<![A-Za-z0-9_@])erx_storage_mint\s*:\s*start_link\s*\(\s*(?<name>#{NAME})\s*,/,
       /\{\s*erx_driver_ctl\s*,\s*start_mint\s*,\s*\[\s*(?<name>#{NAME})\s*,/,
       /(?<![A-Za-z0-9_@])erx_driver_ctl\s*:\s*mint_request\s*\(\s*[A-Za-z_][A-Za-z0-9_@]*\s*,\s*(?<name>#{NAME})\s*,/,
       /(?<![A-Za-z0-9_@])erx_ns\s*:\s*mount\s*\(\s*\{\s*facet\s*,\s*(?<name>#{NAME})\s*\}/,

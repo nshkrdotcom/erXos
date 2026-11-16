@@ -29,7 +29,7 @@ class ErxStorageSystemTest < Minitest::Test
   TESTS = %w[otp/erts/preloaded/src/erx_verity.erl otp/erts/preloaded/src/erx_verity_tree.erl
              otp/erts/preloaded/src/erx_erofs.erl test/erlang/host_bytes/erx_bytes.erl
              build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl test/erlang/erx_erofs_tests.erl
-             test/erlang/erx_storage_system_tests.erl].freeze
+             test/erlang/stand_in/erx_dist.erl test/erlang/erx_storage_system_tests.erl].freeze
   INCLUDES = [File.join(ROOT, 'otp/lib/kernel/include')].freeze
   SALT = "\x5a".b * 8
   # The packages' sizes and the seeds of their bytes, as erx_erofs_tests:contents/2 makes

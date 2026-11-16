@@ -9,7 +9,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
 
+-export([export/3]).
+
 -define(NOFID, 16#ffffffff).
+-define(SYSTEM, 4).
 -define(TREE, <<"system">>).
 -define(O_RDONLY, 0).
 -define(O_WRONLY, 1).
@@ -173,3 +176,71 @@ changed_partition_under_the_original_root_answers_eio_test() ->
     {ok, [_]} = call(Own, {walk, 1, 2, [<<"big.app">>]}),
     {ok, _, _} = call(Own, {lopen, 2, ?O_RDONLY}),
     ?assertEqual({ok, erx_erofs_tests:contents(20000, 4)}, read_all(Own, 2, 4096)).
+
+%% The mint ------------------------------------------------------------------
+
+%% The service's mint over the mounted tree names itself the mint of `system`.
+the_mint_names_itself_system_s_mint_test() ->
+    {ok, Mint} = erx_storage_mint:start_link(system, erx_storage_system, open("good")),
+    unlink(Mint),
+    ?assertMatch(#{system := Mint}, persistent_term:get({erx, provides})),
+    exit(Mint, kill).
+
+%% A grant the mint makes for the system domain, as it makes one for each row, with the
+%% row's rights, ro or rx, reads a file of the tree and answers each write erofs before any
+%% callback; over a tree mounted from no record every walk answers eio.
+minted_grants_read_and_refuse_writes_test_() ->
+    Tree = open("good"),
+    [{atom_to_list(Rights), fun() -> minted_reads(Tree, Rights) end} || Rights <- [ro, rx]].
+
+minted_reads(Tree, Rights) ->
+    Small = erx_erofs_tests:contents(100, 1),
+    ?assertMatch([{ok, _, _}, {ok, _}, {ok, [_]}, {error, erofs}, {ok, _, _}, {ok, Small},
+                  {error, erofs}, {error, erofs}],
+                 exchange(minted(Tree, Rights),
+                          [{version, 65560, <<"9P2000.L">>}, {attach, 1, ?NOFID, <<"user">>, ?TREE, 0},
+                           {walk, 1, 2, [<<"small.app">>]}, {lopen, 2, ?O_WRONLY}, {lopen, 2, ?O_RDONLY},
+                           {read, 2, 0, 4096}, {write, 2, 0, <<"x">>},
+                           {lcreate, 1, <<"new.app">>, 0, 8#644, 0}])).
+
+minted_grants_of_no_tree_answer_eio_test() ->
+    {Bytes, _} = partition("good"),
+    Grant = minted(open(Bytes, []), ro),
+    ?assertMatch([<<"no system tree: ", _/binary>>], logged()),
+    ?assertMatch([{ok, _, _}, {ok, _}, {error, eio}, {error, eio}],
+                 exchange(Grant, [{version, 65560, <<"9P2000.L">>}, {attach, 1, ?NOFID, <<"user">>, ?TREE, 0},
+                                  {walk, 1, 2, [<<"small.app">>]}, {lopen, 1, ?O_RDONLY}])).
+
+%% The system domain's grant of Tree with Rights, as the mint makes it: under the mint's
+%% grants supervisor, bound to the system domain, exported through export/3.
+minted(Tree, Rights) ->
+    {ok, Grants} = erx_fs_grants:start_link(erx_storage_system, Tree),
+    unlink(Grants),
+    {ok, Grant} = erx_storage_mint:grant(Grants, ?SYSTEM, ?SYSTEM, #{rights => Rights}, ?MODULE),
+    Grant.
+
+%% The stand-in of the export table, which exports every grant.
+-doc false.
+export(_Name, _Rights, _Peer) -> ok.
+
+%% The answers to Requests, sent in order in the system domain's envelope while the grant
+%% is suspended. The grant monitors the frames' owner, a name of the system domain's
+%% node, which stock is not connected to, so the monitor's 'DOWN' would end the fids:
+%% sent first, the frames reach the grant before it. Each request has an alias of that
+%% node of its own, which stock cannot reach, so its answer, which may come after a later
+%% request's when a file process gives it, is read from a trace of the grant's calls of
+%% erlang:send/2, as erx_storage_mint_tests reads them.
+exchange(Grant, Requests) ->
+    Owner = binary_to_term(<<131, 88, 119, 9, "d@erxos11", 1:32, 0:32, ?SYSTEM:32>>),
+    Aliased = [{binary_to_term(<<131, 90, 3:16, 119, 9, "d@erxos11", ?SYSTEM:32, Id:32, 2:32, 3:32>>), Request}
+               || {Id, Request} <- lists:enumerate(Requests)],
+    _ = erlang:trace_pattern({erlang, send, 2}, true, []),
+    1 = erlang:trace(Grant, true, [call]),
+    true = erlang:suspend_process(Grant),
+    _ = [Grant ! {erx_origin, ?SYSTEM, {erx_9p, Alias, Owner, Request}} || {Alias, Request} <- Aliased],
+    true = erlang:resume_process(Grant),
+    [receive
+         {trace, Grant, call, {erlang, send, [Alias, {erx_9p, Alias, Reply}]}} -> Reply
+     after 5000 ->
+         erlang:error({no_reply, Request})
+     end || {Alias, Request} <- Aliased].

@@ -15,11 +15,7 @@ that proves the code under test ran.
 
 * [High] storage, the `system` tree (`erlang/apps/erx_storage`,
   `tools/lib/erx/erofs_reads.rb`, `tools/lib/erx/manifest.rb` property 19):
-  the storage domain serving the backend `erx_storage_system` as
-  `system_service`: the tree mounted once by `erx_storage_system:mount/1`
-  on `erx_blk_service:window(system)` under `erx_storage_sup`, and its
-  grants, `erx_fs:start_link(erx_storage_system, Tree, Rights)`, handed out
-  by the service's mint; the packer and fsimg writing
+  the packer and fsimg writing
   the partition's hash tree after its image and refusing an image and
   tree larger than the partition, the manifest recording the image's
   length and the tree's offset, length, salt and root hash for the slot
@@ -31,12 +27,11 @@ that proves the code under test ran.
   refusing a `system` window row without the fields, and the update
   writing the tree and the manifest with the partition; `Erx::ErofsReads` rules that the reader reaches
   blocks only through `erx_verity:read/3` and that only `erx_ns` and
-  `erx_storage_system` open an image in it; the
-  `system` service in `abi/services`, named `system_service` in
-  `abi/manifest.txt`, with its facet row naming design-storage.md's
-  section; property 19 deriving the `system` rows, the system domain's and
-  the app template's, `ro` and `rx`, and the `apps` row's `system_facet`, and
-  checking that the service's server holds the `system` window. Test: a
+  `erx_storage_system` open an image in it; property 19 deriving the
+  `system` rows, the system domain's and the app template's, `ro` and `rx`,
+  and the `apps` row's `system_facet` (a field of `erx_mf_apps`, which
+  `boot_app_grants` in `liberx/system/dom_boot_view.c` and
+  `erx_pkg_manifest` read beside `packages_facet`). Test: a
   QEMU test that reads a multi-block package file through the grant;
   seeded: a write through the grant, which must answer `erofs` before any
   callback, and a flipped bit in the partition's directory, which must

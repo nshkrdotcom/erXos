@@ -269,6 +269,15 @@ facet data_session
 service packages
   server @domain.storage
   interface files
+# system: the booted slot's system partition, the `system` tree, which the storage
+# domain mounts once and serves as a files service of its own; its grants reach the
+# partition's apps/ alone and every one refuses writes (docs/design-storage.md, "The
+# `system` tree"). Its name is system_service (abi/manifest.txt), and its server holds
+# the manifest's `system` window (property 19), as on every board this part serves. The
+# mint starts only on a boot whose block service names the window.
+service system
+  server @domain.storage
+  interface files
 service net
   server @domain.network
   interface net

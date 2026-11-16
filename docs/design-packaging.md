@@ -598,7 +598,13 @@ the packages are well formed**, beside the eighteen of
    name;
 7. no facet row of the board's source is granted to the app template,
    carries `tree apps` or `tree installed`, or names the `apps` service: only the rows the
-   build derives do.
+   build derives do;
+8. the manifest holds at most one service named `system_service`, of
+   the files interface, and its server is the holder of the manifest's
+   `system` window ([design-storage.md](design-storage.md#the-system-tree)),
+   so the domain that mints the tree's grants is the one whose block
+   driver serves its partition; no facet row of the board's source names
+   it, since only the derived `system` rows do.
 
 Each clause has a seeded violation: a check that counts the app template
 once in property 18, which admits a row whose apps together pass the
@@ -607,7 +613,8 @@ rows pass 256; `apps` in `services`; `etc` in `services`; a service
 in `services` whose ABI file gives a parameter no default; two enabled packages whose memory
 passes the `apps` budget; a `package` row whose declaration needs a
 service the row lacks; a configured domain's `data` row carrying `tree
-apps`.
+apps`; a `system_service` served by a domain that does not hold the
+`system` window; a source facet row of `system_service`.
 
 ### The declaration
 

@@ -116,13 +116,14 @@ module ManifestContextFixture
 
   # The development manifest's own configured domains, storage, network, web and display,
   # with the profiles and runtime limits only they name, their services (storage's
-  # driver-control, data and packages, network's driver-control and net, web's relay, the display's
+  # driver-control, data, packages and system, network's driver-control and net, web's relay, the display's
   # window tree with its display record) and the system domain's facets of them, and the
   # display unit, which only a display domain holds (docs/design-stopgap.md, "Device
   # records"), so a manifest without one places none.
   DOMAIN_ROWS = [/^runtime_limits storage\n(?:  .*\n)*/, /^limits storage\n(?:  .*\n)*/, /^domain storage\n(?:  .*\n)*/,
                  /^service storage_ctl\n(?:  .*\n)*/, /^facet storage_ctl\n(?:  .*\n)*/,
                  /^service data\n(?:  .*\n)*/, /^facet data\n(?:  .*\n)*/, /^service packages\n(?:  .*\n)*/,
+                 /^service system\n(?:  .*\n)*/,
                  /^runtime_limits network\n(?:  .*\n)*/, /^limits network\n(?:  .*\n)*/, /^domain network\n(?:  .*\n)*/,
                  /^service network_ctl\n(?:  .*\n)*/, /^facet network_ctl\n(?:  .*\n)*/,
                  /^service net\n(?:  .*\n)*/,

@@ -1,9 +1,9 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
--module(erx_lfs_mint_tests).
+-module(erx_storage_mint_tests).
 -moduledoc """
-EUnit for erx_lfs_mint, the mint of storage's `data` files service, on stock's
+EUnit for erx_storage_mint, the mint of storage's `data` files service, on stock's
 emulator: which messages it takes as mint requests, the erx_fs options a facet row's
 limits give a grant, and the grants it starts, each a real erx_fs grant of a test tree
 (erx_fs_test_tree) under the mint's grants supervisor. This module stands in for the
@@ -31,7 +31,7 @@ read them from a trace of the grant's calls of erlang:send/2.
 only_the_system_domains_mint_request_is_granted_test() ->
     Request = {erx_facet_mint, 7, data, ?GRANTEE, <<"user">>, #{in_flight => 16}},
     ?assertEqual({grant, 7, ?GRANTEE, #{in_flight => 16}},
-                 erx_lfs_mint:mint_request(?SYSTEM, data, {erx_origin, ?SYSTEM, Request})),
+                 erx_storage_mint:mint_request(?SYSTEM, data, {erx_origin, ?SYSTEM, Request})),
     Dropped = [Request,
                {erx_origin, ?GRANTEE, Request},
                {erx_origin, ?SYSTEM, {erx_origin, ?SYSTEM, Request}},
@@ -39,7 +39,7 @@ only_the_system_domains_mint_request_is_granted_test() ->
                {erx_origin, ?SYSTEM, setelement(2, Request, 0)},
                {erx_origin, ?SYSTEM, setelement(4, Request, 0)},
                {erx_origin, ?SYSTEM, setelement(5, Request, [])}],
-    [?assertEqual(unknown, erx_lfs_mint:mint_request(?SYSTEM, data, Message)) || Message <- Dropped].
+    [?assertEqual(unknown, erx_storage_mint:mint_request(?SYSTEM, data, Message)) || Message <- Dropped].
 
 %% Grant options -------------------------------------------------------------
 
@@ -144,7 +144,7 @@ the_grant_ends_with_its_connection_test() ->
         dropped(Grants, Grant, ?WAIT),
         Next = ?GRANTEE + 1,
         ok = erx_connections:set(Next, connection()),
-        {ok, NewGrant} = erx_lfs_mint:grant(Grants, ?SYSTEM, Next, #{}, ?MODULE),
+        {ok, NewGrant} = erx_storage_mint:grant(Grants, ?SYSTEM, Next, #{}, ?MODULE),
         Stale = {erx_9p, domain_ref(?GRANTEE), domain_pid(?GRANTEE), {version, 8192, ?VERSION}},
         trace_sends(NewGrant),
         NewGrant ! {erx_origin, ?GRANTEE, Stale},
@@ -158,9 +158,9 @@ the_grant_ends_with_its_connection_test() ->
 %% domain; another grantee with no connection to this domain gets no grant.
 only_the_system_domains_grant_has_no_connection_test() ->
     with_grants(fun(Grants) ->
-        {ok, Grant} = erx_lfs_mint:grant(Grants, ?SYSTEM, ?SYSTEM, #{}, ?MODULE),
+        {ok, Grant} = erx_storage_mint:grant(Grants, ?SYSTEM, ?SYSTEM, #{}, ?MODULE),
         ?assertEqual([Grant], grants(Grants)),
-        ?assertEqual({error, noconnection}, erx_lfs_mint:grant(Grants, ?SYSTEM, ?THIRD, #{}, ?MODULE)),
+        ?assertEqual({error, noconnection}, erx_storage_mint:grant(Grants, ?SYSTEM, ?THIRD, #{}, ?MODULE)),
         ?assertEqual([Grant], grants(Grants))
     end).
 
@@ -184,7 +184,7 @@ with_grants(Fun) ->
 %% The grantee's grant, over Connection, its stand-in's connection to the grantee.
 grant(Grants, Limits, Connection) ->
     ok = erx_connections:set(?GRANTEE, Connection),
-    erx_lfs_mint:grant(Grants, ?SYSTEM, ?GRANTEE, Limits, ?MODULE).
+    erx_storage_mint:grant(Grants, ?SYSTEM, ?GRANTEE, Limits, ?MODULE).
 
 %% The answer to Request, in the grantee's envelope, from the grantee's grant with Limits.
 granted_exchange(Limits, Request) ->

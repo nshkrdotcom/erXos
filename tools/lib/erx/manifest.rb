@@ -1261,6 +1261,7 @@ module Erx
         check_facets_supported
         rows['images'], rows['extents'] = normalize_images(rows.fetch('devices'))
         rows['windows'] = normalize_windows(rows)
+        check_system_service(rows)
         RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
                           root_memory: root_memory, platform: @context.platform)
       end
@@ -1478,11 +1479,13 @@ module Erx
 
       # The services an app may never take, whatever the apps row says, by name
       # (docs/design-packaging.md, "The build's check", property 19's first clause): the
-      # service named packages_service, which every app holds already, and those that
+      # services named packages_service and system_service, which every app holds
+      # already, and those that
       # would let an app command the start table, install packages, rewrite
       # /etc/rc.conf or end the machine.
       def app_services_refused
         { @codec.fixed_bytes('packages_service') => 'every app holds its packages grant already',
+          @codec.fixed_bytes('system_service') => 'only the derived system rows grant it',
           'start'.b => 'it would let an app command the start table',
           'apps'.b => 'it would let an app install packages',
           'etc'.b => 'it would let an app rewrite /etc/rc.conf',
@@ -2337,6 +2340,30 @@ module Erx
           invalid('a system window is held by the configured domain that holds its block device', 8, 'window.holder') unless
             holder != @codec.constant('mf_none') && holder == unit_holder(tables, device)
         end
+      end
+
+      # Property 19's eighth clause (docs/design-packaging.md, "The build's check"): a
+      # manifest with a system window holds exactly one service named system_service,
+      # of the files interface, served by the window's holder, so the domain that mints
+      # the tree's grants is the one whose block driver serves its partition, and one
+      # without a system window holds none; and no source facet row grants it, by
+      # whatever label its record carries.
+      def check_system_service(tables)
+        name = @codec.fixed_bytes('system_service')
+        services = tables.fetch('services').select { |row| row.fetch('name') == name }
+        window = tables.fetch('windows').find { |row| row.fetch('role') == system_role }
+        invalid("a manifest with a system window holds one service named #{name}, and one without holds none", 19,
+                'service.name') unless services.size == (window ? 1 : 0)
+        return if services.empty?
+
+        service = services.first
+        invalid("the service named #{name} is of the files interface", 19, 'service.interface') unless
+          service.fetch('interface') == fetch_interface('files')
+        invalid("the service named #{name} is served by the holder of the system window", 19, 'service.server') unless
+          window.fetch('holder') == service.fetch('server')
+        labels = records('service').select { |record| service_name(record) == name }.map { |record| "@service.#{record.name}" }
+        invalid("no source facet row names the service #{name}: only the derived system rows do", 19, 'facet.service') if
+          records('facet').any? { |record| labels.include?(one(record, 'service').value) }
       end
 
       def window_device(record, devices)

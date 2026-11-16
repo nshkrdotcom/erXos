@@ -1969,7 +1969,7 @@ design handles the cut. A late `complete` loses its swap and does nothing; the t
 once every outstanding request is answered, belongs to the port.
 
 **`/data` for other domains.** The volume is also the files service `data`, which the manifest grants to the system domain and to root's session
-([design-files.md](design-files.md)). Its mint, `erx_lfs_mint`, is the third child of `erx_lfs_sup`, after the owner and the local grant, and names
+([design-files.md](design-files.md)). Its mint, an `erx_storage_mint`, the module of every files service mint of the storage domain, is the third child of `erx_lfs_sup`, after the owner and the local grant, and names
 itself the service's mint before the domain reports ready. It takes only a mint request in the system domain's envelope and drops anything else. For
 each one it starts an `erx_fs` grant of the volume's tree, read-write, whose client is the grantee's domain id, so the grant takes frames only in that
 domain's envelope and with that domain's names. The grant exports itself to the grantee, with `send` alone, before its start returns, so no answer

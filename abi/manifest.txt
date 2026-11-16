@@ -161,6 +161,11 @@ bytes principal_key 9 value 7072696e636970616c
 # (docs/design-packaging.md, "The apps row"): "packages". The app
 # template's row of it is the one every app's session keeps.
 bytes packages_service 8 value 7061636b61676573
+# The name of the service that serves the `system` tree (docs/design-storage.md,
+# "The `system` tree"): "system", an instance of files whose server holds the
+# manifest's `system` window (property 19). The app template's row of it is the one
+# from which an app's session mounts its image package.
+bytes system_service 6 value 73797374656d
 enum mf_image_format u32
   value erofs_verity 1
   value erofs_unchecked 2
