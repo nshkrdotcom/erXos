@@ -186,7 +186,7 @@ session code and the program's own driver.
                 | {make_pipe, [cloexec | nonblock]}
                 | {install_end, hand()}
                 | {forward, tuple()}
-                | {stop, non_neg_integer()}
+                | {end_program, non_neg_integer()}
                 | {open, slot(), binary(), non_neg_integer(), none | non_neg_integer(),
                    erx_path:table(), erx_path:place()}
                 | {read, description(), slot(), pos_integer()}
@@ -563,8 +563,8 @@ step(#core{phase = running, pending = Pending} = C, {file_copied, Slot, Result})
 step(C, _Event) ->
     {C, []}.
 
-%% A stop of the program with Status, asked once.
-stop(#core{stopping = false} = C, Status) -> {C#core{stopping = true}, [{stop, Status}]};
+%% A stop of the program with Status, asked once: the action end_program.
+stop(#core{stopping = false} = C, Status) -> {C#core{stopping = true}, [{end_program, Status}]};
 stop(C, _Status) -> {C, []}.
 
 %% A frame from the program, which the grammar accepted.

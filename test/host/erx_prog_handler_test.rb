@@ -98,7 +98,7 @@ class ErxProgHandlerTest < Minitest::Test
                  replacement: "pump(drop_head(C));\n", caught_by: 'owed_report_waits_for_room'),
     'a stop asked again at every stop event' =>
       Mutant.new(file: CORE, original: 'stop(C, _Status) -> {C, []}.',
-                 replacement: 'stop(C, Status) -> {C, [{stop, Status}]}.', caught_by: 'stop_once_then_exit'),
+                 replacement: 'stop(C, Status) -> {C, [{end_program, Status}]}.', caught_by: 'stop_once_then_exit'),
     'a kill that reaches a process beyond the program' =>
       Mutant.new(file: CORE, original: 'reach(_C, _Target) -> none.', replacement: 'reach(_C, _Target) -> self.',
                  caught_by: 'kill_beyond_reach_is_esrch'),
