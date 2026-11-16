@@ -1,3 +1,4 @@
+/* Modified by erXos: termios follows FreeBSD's layout and modes, from abi/termios.txt. */
 #define _GNU_SOURCE
 #include <termios.h>
 

@@ -1,3 +1,4 @@
+/* Modified by erXos: termios follows FreeBSD's layout and modes, from abi/termios.txt. */
 #ifndef _SYS_TTYDEFAULTS_H
 #define _SYS_TTYDEFAULTS_H
 

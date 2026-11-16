@@ -1,3 +1,4 @@
+/* Modified by erXos: termios follows FreeBSD's layout and modes, from abi/termios.txt. */
 #include <termios.h>
 
 /* FreeBSD's struct termios holds each speed as its rate, in its own member. */
