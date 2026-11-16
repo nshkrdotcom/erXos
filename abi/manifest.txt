@@ -186,7 +186,7 @@ layout erx_share wire_le 8 48
   field ceiling urgency 41
   field flags group_flags 42
   padding 44 4
-layout erx_manifest wire_le 8 440
+layout erx_manifest wire_le 8 448
   field magic u32 0
   field version u16 4
   field flags manifest_flags 6
@@ -240,6 +240,7 @@ layout erx_manifest wire_le 8 440
   field packages erx_mf_span 416
   field signers erx_mf_span 424
   field development_key erx_mf_span 432
+  field system_image erx_mf_span 440
 layout erx_mf_principal wire_le 8 80
   field name erx_mf_str 0
   field memory u64 8
@@ -329,6 +330,20 @@ layout erx_mf_signer wire_le 4 40
 # context, never from a signer row, and at most one, in a development manifest only.
 layout erx_mf_development_key wire_le 1 32
   field key u8 0 count @signer_key_bytes
+# The booted slot's system partition (docs/design-stopgap.md, "The booted slot"): one
+# EROFS image of image_length bytes from the partition's start, and its dm-verity tree,
+# tree_length bytes at tree_offset, under salt (its first salt_length bytes) and
+# root_hash. At most one row, which the domain library writes as `-erx_record
+# system_image` into the arguments of the `system` window's holder alone.
+layout erx_mf_system_image wire_le 8 96
+  field image_length u64 0
+  field tree_offset u64 8
+  field tree_length u64 16
+  field salt_length u32 24
+  field reserved u32 28
+  field salt u8 32 count 32
+  field root_hash u8 64 count 32
+  zero reserved all
 layout erx_mf_limits wire_le 8 160
   field name erx_mf_str 0
   field memory u64 8
@@ -464,14 +479,14 @@ reader manifest erx_manifest @manifest_bytes_max
   extent root.length
   value root.magic @manifest_magic
   value root.version @manifest_version
-  value root.header_size 440
+  value root.header_size 448
   range root.max_domains 0 65536
   range root.max_connections 1 65536
   range root.system_reserve 1 1000
   range domains[].boot_timeout_s 1 @boot_timeout_max_s
-  choice root.flags manifest_mode root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count,root.partial_boot.count
-    case release root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count
-    case development root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count
+  choice root.flags manifest_mode root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count,root.system_image.count,root.partial_boot.count
+    case release root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.system_image.count
+    case development root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count,root.system_image.count
     case partial root.partial_boot.count
   table principals erx_mf_principal root.principals.offset root.principals.count @manifest_records_max 8
   table domains erx_mf_domain root.domains.offset root.domains.count @manifest_records_max 8
@@ -500,8 +515,9 @@ reader manifest erx_manifest @manifest_bytes_max
   table packages erx_mf_package root.packages.offset root.packages.count @apps_max_limit 4
   table signers erx_mf_signer root.signers.offset root.signers.count @manifest_records_max 4
   table development_key erx_mf_development_key root.development_key.offset root.development_key.count 1 1
+  table system_image erx_mf_system_image root.system_image.offset root.system_image.count 1 8
   string_table strings root.strings.offset root.strings.count @manifest_strings_max
-  order principals domains sessions limits runtime_limits lane_classes units devices windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays apps app_services packages signers development_key strings
+  order principals domains sessions limits runtime_limits lane_classes units devices windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays apps app_services packages signers development_key system_image strings
   index root.system_principal principals
   index root.system_runtime_limits runtime_limits
   index root.native_limits limits
@@ -585,6 +601,7 @@ reader manifest erx_manifest @manifest_bytes_max
   partition images[].extents.offset images[].extents.count extents
   range images[].extents.count 1 @manifest_records_max
   range images[].salt_length 0 32
+  range system_image[].salt_length 1 32
   index boot_order[].domain domains
   index liveness[].service services
   index shell_principals[].principal principals
