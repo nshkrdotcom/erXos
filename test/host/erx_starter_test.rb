@@ -31,7 +31,7 @@ class ErxStarterTest < Minitest::Test
   FAULTS = [
     Fault.new(name: 'a keeper that does not link to its session',
               file: "#{APP}/erx_starter_keeper.erl",
-              from: 'try link(erx_domain:pid(Domain))', to: 'try erx_domain:pid(Domain)',
+              from: 'true = link(Pid),', to: 'true = is_pid(Pid),',
               caught_by: 'an_ended_session_is_started_again'),
     Fault.new(name: "a keepers' branch that restarts a row past its intensity",
               file: "#{APP}/erx_starter_sup.erl",
@@ -51,7 +51,8 @@ class ErxStarterTest < Minitest::Test
               caught_by: 'a_stopped_row_stays_stopped_across_a_restart'),
     Fault.new(name: 'a helper that leaves the session of a keeper that ended',
               file: "#{APP}/erx_starter_keeper.erl",
-              from: "{'EXIT', Keeper, _} -> exit(Pid, abandoned)", to: "{'EXIT', Keeper, _} -> ok",
+              from: "exit(Pid, abandoned),\n                    receive {'DOWN', Monitor, process, Pid, _} -> exit(abandoned) end",
+              to: 'exit(abandoned)',
               caught_by: 'a_keeper_stopped_while_its_start_is_pending_ends_the_session'),
     Fault.new(name: 'a table that reconciles with no stopped marks',
               file: "#{APP}/erx_starter.erl",

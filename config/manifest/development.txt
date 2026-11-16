@@ -145,7 +145,7 @@ limits storage
   grant @share.users
   spaces none
   lane 4096
-  connections 2
+  connections 6
   crash 0
   flags none
   runtime_limits @runtime_limits.storage
@@ -157,7 +157,7 @@ limits network
   grant @share.users
   spaces none
   lane 65536
-  connections 2
+  connections 6
   crash 0
   flags none
   runtime_limits @runtime_limits.network
@@ -165,11 +165,11 @@ limits network
   peer_held_total 4096
 limits display
   memory 25165824
-  outer 1048576
+  outer 34619392
   grant @share.display
   spaces none
   lane 4096
-  connections 0
+  connections 4
   crash 0
   flags none
   runtime_limits @runtime_limits.display
@@ -229,12 +229,15 @@ facet storage_ctl
 # words (2 MiB), bounds the grant's process, which holds up to in_flight write requests of
 # 64 KiB with their data. reductions and period_ns bind no erx_fs grant. The storage
 # domain takes two connections, root's session and one more while a session is replaced,
+# and four more, one for each app of QEMU virt's apps row, whose template the build
+# grants packages,
 # and root's session four: data, net, and one more for each while its server is
 # replaced; a domain's system connection counts against no quota (life_connections,
-# liberx/system/dom_life.c). The network domain, like the storage domain, takes two,
-# and the display domain, whose display no facet grants, holds its system connection
-# alone, with a quota of none. Each board's machine record reckons its max_connections
-# from these rows.
+# liberx/system/dom_life.c). The network domain takes two, as the storage domain does for sessions,
+# and four more, one for each app of QEMU virt's apps row, whose template the build
+# grants net; the display domain, whose display no source facet grants, takes four,
+# one for each app, whose template the build grants the display. Each board's machine
+# record reckons its max_connections from these rows.
 service data
   server @domain.storage
   interface files
@@ -259,9 +262,10 @@ facet data_session
   max_heap_size 262144
 # packages: the installed app packages, the data volume's packages/ directory, which the
 # storage domain serves as a files service of its own; each grant reaches that directory
-# alone (docs/design-packaging.md, "Where a package lies"). Its facet rows, the system
-# domain's read-write and the app template's read-only, are among the rows the build
-# derives from the apps row.
+# alone (docs/design-packaging.md, "Where a package lies"). Its name is
+# packages_service (abi/manifest.txt), by which the build finds it: its facet rows, the
+# system domain's read-write and the app template's read-only, are among the rows the
+# build derives from a board's apps row.
 service packages
   server @domain.storage
   interface files

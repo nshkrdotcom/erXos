@@ -16,6 +16,7 @@ require_relative 'crash_frame'
 require_relative 'deterministic_transcript'
 require_relative 'dev_key'
 require_relative 'device_kinds'
+require_relative 'domain_startup'
 require_relative 'dom_planner'
 require_relative 'error'
 require_relative 'fiasco'
@@ -180,7 +181,7 @@ module Erx
     # artifact name a domain row's runtime takes. It sorts after domains/ and before
     # system/, and carries no system mark, since the root task does not run it.
     DOMAIN_RUNTIME_PATH = 'runtimes/emu'
-    DOMAIN_RUNTIME_ARTIFACT = 'emu'
+    DOMAIN_RUNTIME_ARTIFACT = DomainStartup::RUNTIME_ARTIFACT
     # The BeamAsm image beside it, which ordinary domains run by default: the one entry
     # whose manifest carries ERX_IMAGE_JIT (docs/design-runtime.md, "The build").
     JIT_RUNTIME_PATH = 'runtimes/jit'
@@ -1547,10 +1548,12 @@ module Erx
       # (docs/design-system.md, "The domain library").
       # Two CPUs' system share less its reserve holds one grant of users, not two, so the
       # narrow manifest leaves out the network domain (NARROW_DROPPED), whose net unit the
-      # narrow cells, which boot without a network device, do not use. The manifest check
-      # and the library's planner judge the result whole.
+      # narrow cells, which boot without a network device, do not use, and with it the apps
+      # row (Manifest::Edit.without_apps), whose services name the network's net. The
+      # manifest check and the library's planner judge the result whole.
       def self.narrow_manifest(root, platform:)
-        source = Manifest::Edit.without(ProductionImage.sessionless_manifest(root, platform: platform), NARROW_DROPPED)
+        appless = Manifest::Edit.without_apps(ProductionImage.sessionless_manifest(root, platform: platform))
+        source = Manifest::Edit.without(appless, NARROW_DROPPED)
         shares = Manifest::Frontend.read(source).records.fetch('share', [])
         Manifest::Edit.set(source, shares.map { |share| narrow_share(share) }.reduce({}, :merge))
       end

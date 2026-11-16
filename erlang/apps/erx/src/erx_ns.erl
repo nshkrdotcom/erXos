@@ -136,14 +136,17 @@ mount_own(Name, Grant) when is_pid(Grant) ->
     mount(Grant, Point, Options).
 
 %% Where the tree of each service Name mounts, read-write on the tree of its own name:
-%% data, the storage domain's tree, at /data; the system domain's files services: the
-%% start service's tree, start, at /etc/start, and the domain service's machine at /machine
+%% data, the storage domain's tree, at /data, and its packages, the installed app
+%% packages, at /packages (docs/design-packaging.md, "Where a package lies";
+%% erx_pkg_medium); the system domain's files services: the start service's tree,
+%% start, at /etc/start, and the domain service's machine at /machine
 %% (docs/design-apps.md, "Interfaces"; docs/design-system.md, "A session's request").
 %% /data is also an empty directory of every release, so a domain not granted data
 %% lists it as empty (ReleaseFiles::MOUNT_POINTS, tools/lib/erx/release_files.rb); a
-%% domain that holds no start or machine facet has no such path, enoent.
+%% domain that holds no packages, start or machine facet has no such path, enoent.
 -spec place(atom()) -> {binary(), [option()]} | none.
 place(data) -> {<<"/data">>, [{tree, <<"data">>}, rw]};
+place(packages) -> {<<"/packages">>, [{tree, <<"packages">>}, rw]};
 place(start) -> {<<"/etc/start">>, [{tree, <<"start">>}, rw]};
 place(machine) -> {<<"/machine">>, [{tree, <<"machine">>}, rw]};
 place(_Name) -> none.

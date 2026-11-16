@@ -20,8 +20,10 @@ the same name:
 4. `check_entry`: a name the registry holds keeps its entry, for its own
    signer only, and a new name takes the lowest entry the registry does
    not hold;
-5. `check_memory`: the declared memory is at least `ERX_APP_MEMORY_MIN`
-   and at most the `apps` row's budget;
+5. `check_memory`: the declared memory is a whole number of pages, at
+   least `ERX_APP_MEMORY_MIN` and at most the `apps` row's budget, so the
+   domain library's plan of the app's session, which refuses memory that
+   is not page-aligned, never meets one admission let in;
 6. `check_needs`: each need is a service of the `apps` row.
 
 Nothing else is judged: a declaration can only name what the row offers,
@@ -30,7 +32,7 @@ reserves nothing and writes nothing; the package process registers the
 principal when the package is committed.
 """.
 
--export([admit/3]).
+-export([admit/3, entry/4]).
 -export_type([manifest/0, apps/0, service/0,
               registry/0, admitted/0, reason/0]).
 
@@ -72,9 +74,9 @@ What an admitted package holds: its principal's entry, which admission
 reserves nothing in; the indices of the app template's facet rows its
 session keeps, the `packages` row and one row for each need, ascending;
 its start row's display, its one `windows` need if it has exactly one and
-`none` otherwise; its declared memory, which registration records and each
-of its sessions' plans takes; and the signer the file check named, which
-registration records in the registry for `check_entry` to compare.
+`none` otherwise; its declared memory, which its sessions' own budgets
+hold; and the signer the file check named, which registration records in
+the registry for `check_entry` to compare.
 """.
 -type admitted() :: #{entry := non_neg_integer(),
                       rows := [non_neg_integer()],
@@ -155,24 +157,37 @@ is_identifier(Bin) ->
         _ -> true
     end.
 
-%% A name the registry holds keeps its entry, for its own signer only; a new
-%% name takes the lowest entry no name holds.
 check_entry(Name, Signer, Max, Registry) ->
+    case entry(Name, Signer, Max, Registry) of
+        {ok, Entry} -> Entry;
+        {error, Reason} -> refuse(Reason)
+    end.
+
+-doc """
+The entry of `Max` that `Name`, signed by `Signer`, takes in `Registry`: a
+name the registry holds keeps its entry, for its own signer only, and a new
+name takes the lowest entry no name holds. Admission and registration
+(`erx_principal:register/2`) both decide by it.
+""".
+-spec entry(binary(), erx_pkg_header:authenticator(), non_neg_integer(), registry()) ->
+    {ok, non_neg_integer()} | {error, {signer_changed, binary()} | apps_full}.
+entry(Name, Signer, Max, Registry) ->
     case Registry of
         #{Name := #{entry := Entry, signer := Signer}} ->
-            Entry;
+            {ok, Entry};
         #{Name := _} ->
-            refuse({signer_changed, Name});
+            {error, {signer_changed, Name}};
         #{} ->
             Held = [Entry || #{entry := Entry} <- maps:values(Registry)],
             case lists:seq(0, Max - 1) -- Held of
-                [Free | _] -> Free;
-                [] -> refuse(apps_full)
+                [Free | _] -> {ok, Free};
+                [] -> {error, apps_full}
             end
     end.
 
 check_memory(Memory, Budget) ->
-    require(Memory >= ?ERX_APP_MEMORY_MIN andalso Memory =< Budget,
+    require(Memory rem ?ERX_PAGE_SIZE =:= 0 andalso
+                Memory >= ?ERX_APP_MEMORY_MIN andalso Memory =< Budget,
             {memory, Memory}).
 
 %% The service of each need, once each; a need the row lacks is refused.

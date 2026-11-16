@@ -25,7 +25,8 @@
              erx_domain_sup,
              erx_ident,
              erx_machine,
-             erx_machine_fs]},
+             erx_machine_fs,
+             erx_principal]},
   {registered, [erx_domain_sup, erx_domain_srv, erx_machine]},
   {applications, [kernel, stdlib, erx, erx_files]},
   {mod, {erx_domain_app, []}}]}.

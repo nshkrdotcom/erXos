@@ -21,7 +21,7 @@ manifest() ->
                #{principal => <<"logger">>, enable => true, display => none, restarts => 5, period => 600}],
       grants => #{},
       principals => #{<<"clock">> => 1, <<"kiosk">> => 2, <<"logger">> => 3},
-      boot_order => [<<"storage">>, <<"net">>]}.
+      boot_order => [<<"storage">>, <<"net">>], windows => [], packages => none}.
 
 -define(CLOCK, 1).
 -define(KIOSK, 2).
@@ -67,6 +67,12 @@ namespace_test_() ->
     {foreach, fun() -> setup(fun unreadable/1, held) end,
      fun cleanup/1, [fun no_row_starts_before_the_namespace_is_in_place/1]}.
 
+%% A package set (erx_starter:packages/2): the image's package dash, which its
+%% manifest row enables, and the installed package notes, which no row enables.
+packages_test_() ->
+    {foreach, fun() -> setup(fun(_Dir) -> ok end, answer, (manifest())#{packages := #{<<"dash">> => true}}) end,
+     fun cleanup/1, [fun a_published_app_has_a_keeper_row/1]}.
+
 unreadable(Dir) ->
     file:make_dir(filename:join(Dir, "rc.conf")).
 
@@ -88,7 +94,7 @@ display_manifest() ->
                #{principal => <<"painter">>, enable => true, display => <<"screen">>, restarts => 5, period => 600}],
       grants => #{<<"painter">> => [<<"screen">>]},
       principals => #{<<"kiosk">> => 1, <<"painter">> => 2},
-      boot_order => [<<"display">>]}.
+      boot_order => [<<"display">>], windows => [<<"screen">>], packages => none}.
 
 %% AP5 over a packed manifest, which only test/host/erx_starter_test.rb packs
 %% (ERX_STARTER_MANIFEST, from the apps QEMU suite's): clock's template is
@@ -208,23 +214,30 @@ watch() ->
 %% The stub answers start_session with a session, a process that traps exits as
 %% a domain pid does and ends with {domain_down, Id, Info} when it is told to or
 %% when a linked process ends with any reason but normal. It reports each start,
-%% and each end, to the test. It answers the table's wait for the system domain's
+%% and each end, to the test. A start of a principal the test holds is answered
+%% only once the test sends release: the stub reports {held, Principal, Caller}
+%% with the process that waits for the answer, and that session's end waits too,
+%% reporting {ending, Principal, Session, Reason} on an exit signal and ending
+%% only once the test sends it finish. It answers the table's wait for the system domain's
 %% namespace (erx_domain:system_namespace/0) at once, or holds it until the test
 %% sends release_namespace. It holds each wait for a display
 %% (erx_domain:display_settled/1) until the test sends {release_display, Name}.
 stub(#{refuse := Refuse, hold := Hold, held := Held, next := Id} = State) ->
     Stub = self(),
     receive
-        {'$gen_call', From, {start_session, Principal, Start}} ->
+        {'$gen_call', From, {Call, Who, Start}} when Call =:= start_session; Call =:= start_app ->
+            Principal = case Call of start_app -> {app, Who}; start_session -> Who end,
             case lists:member(Principal, Refuse) of
                 true ->
                     gen:reply(From, {error, quota}),
                     stub(State);
                 false ->
-                    Session = spawn(fun() -> process_flag(trap_exit, true), session(Stub, Id, Principal) end),
+                    Holding = lists:member(Principal, Hold),
+                    Session = spawn(fun() -> process_flag(trap_exit, true), session(Stub, Id, Principal, Holding) end),
                     Reply = {ok, {erx_domain, Id, node(), Session}},
-                    Answered = case lists:member(Principal, Hold) of
-                                   true -> State#{held := [{From, Reply} | Held]};
+                    {Caller, _Tag} = From,
+                    Answered = case Holding of
+                                   true -> report({held, Principal, Caller}, State#{held := [{From, Reply} | Held]});
                                    false -> gen:reply(From, Reply), State
                                end,
                     stub(report({started, Principal, Start, Session}, Answered#{next := Id + 1}))
@@ -261,11 +274,12 @@ stub(#{refuse := Refuse, hold := Hold, held := Held, next := Id} = State) ->
 report(Report, #{test := none, kept := Kept} = State) -> State#{kept := [Report | Kept]};
 report(Report, #{test := Test} = State) -> Test ! Report, State.
 
-session(Test, Id, Principal) ->
+session(Test, Id, Principal, Holding) ->
     receive
         {'EXIT', _From, normal} ->
-            session(Test, Id, Principal);
+            session(Test, Id, Principal, Holding);
         {'EXIT', _From, Reason} ->
+            Holding andalso finish(Test, Principal, Reason),
             Test ! {report, {ended, Principal, self(), Reason}},
             exit({domain_down, Id, stopped});
         {end_session, Info} ->
@@ -273,8 +287,36 @@ session(Test, Id, Principal) ->
             exit({domain_down, Id, Info})
     end.
 
+%% A held session's end: reported as ending, and taken once the case sends finish.
+finish(Test, Principal, Reason) ->
+    Test ! {report, {ending, Principal, self(), Reason}},
+    receive finish -> true end.
+
 %% ---------------------------------------------------------------------------
 %% The cases
+
+%% The boot's package set starts dash, the row its manifest enables, as an app's
+%% session, and not notes; a set without dash answers once dash's session has
+%% ended (docs/design-packaging.md, PK7) and drops its row.
+a_published_app_has_a_keeper_row(_) ->
+    fun() ->
+            ok = watch(),
+            _ = started(?KIOSK),
+            _ = started(?LOGGER),
+            ok = erx_starter:packages(self(), [package(<<"dash">>, system), package(<<"notes">>, installed)]),
+            Dash = started({app, <<"dash">>}),
+            ?assertEqual(none, started_within({app, <<"notes">>}, 200)),
+            ?assertEqual(running, run(<<"dash">>)),
+            ?assertEqual(none, run(<<"notes">>)),
+            ok = erx_starter:packages(self(), [package(<<"notes">>, installed)]),
+            ?assertNot(is_process_alive(Dash)),
+            ?assertEqual(unmade, run(<<"dash">>)),
+            ?assertEqual(none, run(<<"notes">>))
+    end.
+
+%% A package of a set erx_pkg publishes, with what the table reads of it.
+package(Name, Place) ->
+    #{name => Name, place => Place, checked => #{header => #{needs => []}}, admitted => #{display => none}}.
 
 an_ended_session_is_started_again(_) ->
     fun() ->
@@ -449,12 +491,28 @@ a_keeper_stopped_while_its_start_is_pending_ends_the_session(_) ->
             Kiosk = started(?KIOSK),
             erx_domain_srv ! {hold, [?KIOSK]},
             Kiosk ! {end_session, crashed},
-            %% The stub has made the session and holds its answer.
+            %% The stub has made the session and holds its answer to the keeper's helper.
             Pending = started(?KIOSK),
-            ?assertEqual(ok, erx_starter:command({stop, <<"kiosk">>, #{}})),
+            Helper = receive {held, ?KIOSK, Caller} -> Caller after ?WAIT_MS -> error(no_held_start) end,
+            Case = self(),
+            _ = spawn(fun() -> Case ! {stopped, erx_starter:command({stop, <<"kiosk">>, #{}})} end),
+            %% The answer is released only once the keeper's stop waits in its helper's
+            %% queue, so the helper finds the keeper ended and abandons the session.
+            ok = wait_until(fun() -> exit_queued(Helper) end),
             erx_domain_srv ! release,
-            receive {ended, ?KIOSK, Pending, abandoned} -> ok after ?WAIT_MS -> error(abandoned_session_kept) end
+            %% The stop answers only once the abandoned session has ended (PK7), and that
+            %% session's end waits for the case.
+            receive {ending, ?KIOSK, Pending, abandoned} -> ok after ?WAIT_MS -> error(abandoned_session_kept) end,
+            receive {stopped, _} -> error(stop_answered_before_the_session_ended) after 200 -> ok end,
+            Pending ! finish,
+            receive {stopped, Answer} -> ?assertEqual(ok, Answer) after ?WAIT_MS -> error(stop_unanswered) end,
+            ?assertNot(is_process_alive(Pending))
     end.
+
+%% Whether an exit signal waits in the queue of Pid, a process that traps exits.
+exit_queued(Pid) ->
+    {messages, Messages} = process_info(Pid, messages),
+    [Exit || {'EXIT', _, _} = Exit <- Messages] =/= [].
 
 a_stopped_row_stays_stopped_when_its_settings_change(Setup) ->
     fun() ->

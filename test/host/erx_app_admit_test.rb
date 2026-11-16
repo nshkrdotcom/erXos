@@ -143,7 +143,10 @@ class ErxAppAdmitTest < Minitest::Test
       error(Tuple.new([:memory, (128 * MIB) + 1]))]]
   end
 
-  def ok(entry, rows, display, memory: 64 * MIB) = Tuple.new([:ok, { entry: entry, rows: rows, display: display, memory: memory }])
+  def ok(entry, rows, display, memory: 64 * MIB)
+    Tuple.new([:ok, { entry: entry, rows: rows, display: display, memory: memory }])
+  end
+
   def error(reason) = Tuple.new([:error, reason])
 
   def term(value)

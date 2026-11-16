@@ -159,6 +159,9 @@ main(int argc, char **argv)
 		print_device(index, &lib.view.devices[index]);
 	for (uint32_t index = 0; index < lib.view.nservices; index++)
 		print_service(index, &lib.view.services[index]);
+	if (lib.view.apps.max != 0)
+		printf("apps template=%" PRIu32 " first=%" PRIu32 " max=%" PRIu32 " memory=%" PRIu64 " principals=%" PRIu32 "\n",
+		    lib.view.apps.template, lib.view.apps.first, lib.view.apps.max, lib.view.apps.memory, lib.view.nprincipals);
 	for (uint32_t index = 0; index < lib.view.nconfigured; index++) {
 		const erx_dom_display_t *display = &lib.view.configured[index].display;
 

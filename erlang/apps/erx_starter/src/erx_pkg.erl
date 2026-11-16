@@ -17,10 +17,21 @@ of the start service's application, and a call taken between two actions,
 recovery's decisions are erx_pkg_plan's; this process carries out each
 action it gives: every request on the packages through erx_pkg_io, named
 by this pid as its lifetime, admission through `erx_app_admit:admit/3`,
-registration through `erx_principal:register_app/2`, and the publication
+registration through `erx_principal:register_app/1`, and the publication
 through `erx_starter:packages/2`. A failed change stops the process, which
 ends the lifetime: erx_pkg_io refuses every later request of it, and the
 next lifetime's recovery starts again.
+
+The listing of `packages/` waits for the domain service's answer that the
+system domain's namespace is in place (`erx_domain:system_namespace/0`), as
+the start table's first read of `rc.conf` does, so the `packages` grant is
+installed before it when the storage domain made it in time. The request
+goes out as the process starts and only the `list` action waits for its
+answer; an error answer, a domain service that ended, lists all the same.
+
+A restarted table asks for the set with `ask_set/0`, a message: once the
+recovery has published, the process publishes its last set again; a
+recovery still running publishes as its last action anyway.
 
 `packages/0` answers the scan and each package's record, which
 `/proc/packages` shows; until the recovery is done the scan is `unknown`
@@ -28,7 +39,7 @@ and no package is listed.
 """.
 -behaviour(gen_server).
 
--export([start_link/1, packages/0, system_config/0]).
+-export([start_link/1, packages/0, ask_set/0, system_config/0, system_config/2]).
 -export_type([config/0]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2]).
 
@@ -53,18 +64,78 @@ packages() ->
     gen_server:call(?MODULE, packages).
 
 -doc """
-The recovery's config from the system manifest, or `none` for a manifest
-with no `apps` row, whose machine takes no packages and runs no package
-process. The packed manifest holds no `apps`, `package` or `signer` record
-(TODO.md, "apps, the manifest check's property 19"), so every system
-manifest is one with no `apps` row.
+The recovery's config from the domain library's app entries and the
+system manifest, `system_config/2` of `erx_domain_lib:apps/0` and
+`erx_build:system_manifest/0`.
 """.
 -spec system_config() -> config() | none.
 system_config() ->
+    system_config(erx_domain_lib:apps(), erx_build:system_manifest()).
+
+-doc """
+The recovery's config from `Apps`, the domain library's app entries, and
+`Manifest`, the system manifest's bytes as read.
+
+The answer is `none`, and the machine takes no packages and runs no
+package process, when there is no library (a domain's runtime and a hosted
+one), when the library places no app entries (its manifest has no `apps`
+row), and when the manifest read here gives no config: it cannot be read,
+is refused, or has no `apps` row. The last is a broken image, which is
+logged; it costs the packages alone, never the start service, whose
+supervisor builds its children from this answer.
+
+Otherwise the images are the manifest's packages, each its file `NAME.app`
+and header hash; the signers are its `signer` rows, then the `development`
+signer when it holds the development key, which only a development
+manifest does; and `max` is the library's, the one source of max
+(docs/design-packaging.md, "An app's principal"), which admission's `apps`
+row takes too.
+""".
+-spec system_config({ok, none | erx_domain_lib:apps()} | erx_domain_lib:error(),
+                    {ok, binary()} | {error, term()}) -> config() | none.
+system_config({ok, #{max := Max}}, {ok, Bytes}) ->
+    case erx_pkg_manifest:system_config(Bytes) of
+        {ok, #{apps := #{} = Apps, packages := Packages, signers := Signers,
+               development := Development} = Read} ->
+            #{images => [{<<Name/binary, ".app">>, Sha256} || #{name := Name, sha256 := Sha256} <- Packages],
+              signers => Signers ++ development_signer(Development),
+              max => Max,
+              manifest => erx_pkg_manifest:admission(Read#{apps := Apps#{max := Max}})};
+        {ok, #{apps := none}} ->
+            broken_image(no_apps);
+        {error, Reason} ->
+            broken_image(Reason)
+    end;
+system_config({ok, #{}}, {error, Reason}) ->
+    broken_image(Reason);
+system_config({ok, none}, _Manifest) ->
+    none;
+system_config({error, _NoLibrary}, _Manifest) ->
     none.
 
+%% The library placed app entries from a manifest that gives no config here.
+broken_image(Reason) ->
+    logger:error("packages: the system manifest gives no package config: ~0tp", [Reason]),
+    none.
+
+development_signer(none) -> [];
+development_signer(Key) -> [{development, Key}].
+
+-doc """
+The start table's ask for the package set, which the package process
+answers by publishing it (docs/design-apps.md, "Concurrency"): sent, not
+waited on, and nothing when no package process runs.
+""".
+-spec ask_set() -> ok.
+ask_set() ->
+    case whereis(?MODULE) of
+        undefined -> ok;
+        Pid -> Pid ! ask_set, ok
+    end.
+
 init(Config) ->
-    {ok, #{config => Config, scan => unknown, packages => #{}}, {continue, recover}}.
+    {ok, #{config => Config, scan => unknown, packages => #{}, namespace => erx_domain:system_namespace()},
+     {continue, recover}}.
 
 handle_continue(recover, #{config := Config} = State) ->
     PlanConfig = maps:with([images, signers, max], Config),
@@ -78,9 +149,47 @@ handle_cast(_Message, State) ->
 
 %% The plan's next action, carried out in a message of its own.
 handle_info(step, #{action := Action, plan := Plan} = State) ->
-    recover(erx_pkg_plan:recover(effect(Action, State), Plan), State);
+    Answer = effect(Action, State),
+    recover(erx_pkg_plan:recover(Answer, Plan), published(Action, Answer, State));
+%% The table's ask (ask_set/0): the set published again once the recovery has
+%% published it, a publication that fails ending the lifetime as any failed
+%% change does; a recovery still running publishes as its last action.
+handle_info(ask_set, #{set := Set} = State) when not is_map_key(action, State) ->
+    case erx_starter:packages(self(), Set) of
+        ok -> {noreply, State};
+        {error, Reason} -> {stop, {publication, Reason}, State}
+    end;
+handle_info(ask_set, State) ->
+    {noreply, State};
+handle_info(Message, #{namespace := Request} = State) when Request =/= settled ->
+    case gen_server:check_response(Message, Request) of
+        no_reply -> {noreply, State};
+        Answer -> namespace_settled(Answer, State#{namespace := settled})
+    end;
 handle_info(_Message, State) ->
     {noreply, State}.
+
+%% The namespace's answer: a `list` action that waits for it is carried out now.
+namespace_settled(Answer, State) ->
+    case Answer of
+        {reply, ok} -> ok;
+        {error, {Why, _Server}} ->
+            logger:warning("packages: no answer to the wait for the system domain's namespace: ~0P", [Why, 8])
+    end,
+    case State of
+        #{action := list} -> self() ! step;
+        #{} -> ok
+    end,
+    {noreply, State}.
+
+%% The set the table took, kept for the table's ask.
+published({publish, Set}, ok, State) -> State#{set => Set};
+published(_Action, _Answer, State) -> State.
+
+%% The listing waits for the namespace (namespace_settled/2); every other
+%% action is carried out in the next message.
+recover({list, Plan}, #{namespace := Request} = State) when Request =/= settled ->
+    {noreply, State#{action => list, plan => Plan}};
 
 recover({{done, #{scan := Scan, packages := Packages}}, _Plan}, State) ->
     {noreply, maps:without([action, plan], State#{scan := Scan, packages := Packages})};
@@ -104,7 +213,7 @@ effect({path_entry, Place, File, Entry}, _State) ->
     erx_pkg_io:request({path_entry, self(), Place, File, Entry});
 effect({admit, Checked}, #{config := #{manifest := Manifest}}) ->
     erx_app_admit:admit(Checked, Manifest, erx_principal:app_registry());
-effect({register, Name, Admitted}, _State) ->
-    erx_principal:register_app(Name, Admitted);
+effect({register, Package}, _State) ->
+    erx_principal:register_app(Package);
 effect({publish, Set}, _State) ->
     erx_starter:packages(self(), Set).

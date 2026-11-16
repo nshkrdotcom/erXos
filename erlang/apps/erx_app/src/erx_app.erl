@@ -26,7 +26,7 @@ handler does not offer; its record ends erx_app with `{not_supported, program}`.
 -behaviour(application).
 
 -export([start/2, stop/1]).
--export([run/2, init/2]).
+-export([run/2, init/1]).
 -export_type([app_record/0, effects/0]).
 
 -doc """
@@ -50,14 +50,21 @@ start ends only the case.
                      type := permanent | temporary}.
 
 start(_Type, _Args) ->
-    proc_lib:start_link(?MODULE, init, [self(), erx:app()]).
+    proc_lib:start_link(?MODULE, init, [self()]).
 
 stop(_State) ->
     ok.
 
 -doc false.
-init(Parent, Record) ->
+init(Parent) ->
     proc_lib:init_ack(Parent, {ok, self()}),
+    %% Registered before the record is read, so a record that comes later is sent here
+    %% (erx_connections:put_app/1): it comes once the session's namespace is in place.
+    true = register(?MODULE, self()),
+    Record = case erx:app() of
+                 undefined -> receive {erx_app, App} -> App end;
+                 App -> App
+             end,
     case run(Record, effects()) of
         ok -> receive after infinity -> ok end;
         {error, Reason} -> exit(Reason)

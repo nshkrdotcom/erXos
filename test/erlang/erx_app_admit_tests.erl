@@ -67,6 +67,21 @@ registry(_) ->
     #{<<"clock">> => #{entry => 0, signer => <<"vendor">>},
       <<"chess">> => #{entry => 2, signer => <<"vendor">>}}.
 
+%% Check 5 refuses a declared memory that is not a whole number of pages,
+%% which the domain library's plan of the app's session would refuse.
+unaligned_memory_test_() ->
+    Header = #{name => <<"pager">>, abi_version => ?ERX_ABI_VERSION,
+               arch => ?ERX_ARCH_MACHINE_ARCH_BYTES, needs => []},
+    Admit = fun(Memory) ->
+                    erx_app_admit:admit(checked(Header#{memory => Memory}, development),
+                                        manifest(base), registry(base))
+            end,
+    [?_assertEqual({error, {memory, 64 * ?MIB + 1}}, Admit(64 * ?MIB + 1)),
+     ?_assertEqual({error, {memory, 64 * ?MIB + ?ERX_PAGE_SIZE div 2}},
+                   Admit(64 * ?MIB + ?ERX_PAGE_SIZE div 2)),
+     ?_assertMatch({ok, #{memory := Memory}} when Memory =:= 64 * ?MIB + ?ERX_PAGE_SIZE,
+                   Admit(64 * ?MIB + ?ERX_PAGE_SIZE))].
+
 %% Names that are no identifier, each refused by check 3 whatever its
 %% length. The package reader refuses them in a file (its name field is an
 %% identifier), so these headers are written here rather than decoded.

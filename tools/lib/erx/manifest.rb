@@ -7,6 +7,7 @@ require_relative 'abi_binary'
 require_relative 'device_kinds'
 require_relative 'generated_abi'
 require_relative 'manifest_frontend'
+require_relative 'domain_startup'
 
 module Erx
   module Manifest
@@ -70,13 +71,16 @@ module Erx
     # never read from configuration text. Its catalog includes the reserved
     # manifest and NOTICES rows before any numeric entry index is assigned. Its
     # device_kinds are the rows of erx/device_kinds.h's two tables, each a hash of role,
-    # compatible, role_word, peripheral and clocked (DeviceKinds.context_rows).
+    # compatible, role_word, peripheral and clocked (DeviceKinds.context_rows). Its
+    # development_key is the public half of the builder's development package key, or
+    # nil: never a manifest row, so no board source can name it, and the check admits it
+    # only in a development build (docs/design-packaging.md, "The SDK").
     class Context
       attr_reader :build_kind, :platform, :catalog, :root_entry, :artifacts,
-                  :provenance, :sizing, :device_kinds, :fingerprint
+                  :provenance, :sizing, :device_kinds, :development_key, :fingerprint
 
       def initialize(build_kind:, platform:, catalog:, root_entry:, artifacts:,
-                     provenance:, device_kinds:, sizing: nil)
+                     provenance:, device_kinds:, sizing: nil, development_key: nil)
         unless %w[development release].include?(build_kind)
           raise Invalid.new('unknown checked build kind', property: 'context', field: 'build_kind')
         end
@@ -84,6 +88,10 @@ module Erx
                provenance.is_a?(Array) && root_entry.is_a?(Integer) && root_entry.between?(0, catalog.size - 1) &&
                device_kinds.is_a?(Array) && !device_kinds.empty? && device_kinds.all? { |kind| device_kind?(kind) }
           raise Invalid.new('incomplete checked context', property: 'context', field: 'input')
+        end
+        unless development_key.nil? || (development_key.is_a?(String) && build_kind == 'development')
+          raise Invalid.new('only a development build trusts a development package key', property: 'context',
+                                                                                          field: 'development_key')
         end
         notices = provenance.map do |record|
           unless record.is_a?(Hash)
@@ -107,11 +115,13 @@ module Erx
         @provenance = Snapshot.copy(notices)
         @sizing = Snapshot.copy(sizing)
         @device_kinds = Snapshot.copy(device_kinds)
+        @development_key = development_key&.b&.freeze
         validate_catalog_shape
         @fingerprint = Snapshot.digest('build_kind' => @build_kind, 'platform' => @platform,
                                         'catalog' => @catalog, 'root_entry' => @root_entry,
                                         'artifacts' => @artifacts, 'provenance' => @provenance,
-                                        'sizing' => @sizing, 'device_kinds' => @device_kinds)
+                                        'sizing' => @sizing, 'device_kinds' => @device_kinds,
+                                        'development_key' => @development_key&.unpack1('H*'))
         freeze
       end
 
@@ -395,7 +405,8 @@ module Erx
     end
 
     # The artifact names the source's domain rows and session templates give as
-    # releases, sorted and once each, read before any check so a build can make what
+    # releases, and the app template's (DomainStartup::APP_TEMPLATE) when the source has
+    # an apps row, from which the check derives it, sorted and once each, read before any check so a build can make what
     # they name. A reference of another form names nothing here; admission refuses it
     # (Stopgap#artifact).
     def self.release_names(source:, codec:)
@@ -404,7 +415,7 @@ module Erx
         tokens = record.properties.fetch('release')
         token = tokens.first if tokens.size == 1
         token.value.delete_prefix('@artifact.') if token && !token.quoted && token.value.start_with?('@artifact.')
-      end.uniq.sort
+      end.then { |names| records.key?('apps') ? [*names, DomainStartup::APP_TEMPLATE.release] : names }.uniq.sort
     end
 
     def self.structural_fixture(source:, codec:, context:)
@@ -437,6 +448,13 @@ module Erx
       # counts the row the same way whether or not the manifest has one.
       AppsRow = Data.define(:memory, :services, :max)
       NO_APPS = AppsRow.new(memory: 0, services: [].freeze, max: 0)
+      # A package row of the image, bound to its package artifact (check_packages): its
+      # app's name, its header's SHA-256 in hexadecimal, whether its row is enabled and
+      # the memory its declaration asks.
+      Package = Data.define(:name, :sha256, :enabled, :memory)
+      # The name the machine gives the build's development package key
+      # (erx_pkg_header:signer/0), which no signer row may take.
+      DEVELOPMENT_SIGNER = 'development'
 
       def initialize(source, codec:, context:, planner:, consumers:)
         @source = source
@@ -1175,9 +1193,7 @@ module Erx
     class Stopgap < SystemDomainCheck
       REFUSED = {
         'partial_boot' => 'child domains of a partial boot arrive at M5',
-        'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings',
-        'package' => 'a package row needs the package file check and admission (docs/design-packaging.md, "Admission"), ' \
-                     'which this check does not run'
+        'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings'
       }.freeze
 
       private
@@ -1192,7 +1208,7 @@ module Erx
         invalid('a partial boot configures no domains', 12, 'domain') unless records('domain').empty?
         invalid('a partial boot makes no sessions', 14, 'session') unless records('session').empty?
         invalid('a partial boot starts no row', 17, 'start') unless records('start').empty?
-        %w[apps signer].each do |kind|
+        %w[apps package signer].each do |kind|
           invalid('a partial boot takes no packages', 19, kind) unless records(kind).empty?
         end
         %w[service facet introduce liveness display].each do |kind|
@@ -1229,12 +1245,16 @@ module Erx
         invalid('two services of one server share a name', 5, 'service.name') unless
           rows['services'].map { |row| row.values_at('server', 'name') }.uniq.size == services.size
         rows['introductions'] = normalize_introductions
-        rows['facets'], rows['facet_parameters'], facet_values = normalize_facets(services.map(&:first), rows)
-        rows['starts'] = normalize_starts(services.map(&:first), rows)
         app_services = check_apps(rows)
+        rows['facets'], rows['facet_parameters'], facet_values = normalize_facets(services.map(&:first), rows, app_services)
+        rows['starts'] = normalize_starts(services.map(&:first), rows)
+        rows['apps'], rows['app_services'] = apps_rows(app_services, rows)
         check_app_start_rows
-        check_signers
-        rows['displays'] = normalize_displays(services.map(&:first), rows, facet_values, app_services)
+        rows['signers'] = signer_rows
+        rows['development_key'] = @development_key = development_key_rows
+        @packages = check_packages
+        rows['packages'] = @packages.map { |package| package_row(package) }
+        rows['displays'] = normalize_displays(services.map(&:first), rows, facet_values)
         edges = boot_edges(rows['facets'], rows['services'])
         rows['boot_order'] = boot_order(rows['domains'], edges)
         check_rescue(rows['domains'], edges)
@@ -1247,7 +1267,10 @@ module Erx
 
       def claims
         { 'mode' => 'stopgap', 'root_startup' => 'declared', 'child_plan_instances' => records('domain').size,
-          'root_image_loadable_bytes' => root_loadable_bytes }.merge(RootStartup.declared(@context.platform))
+          'root_image_loadable_bytes' => root_loadable_bytes,
+          'packages' => @packages.map { |package| package.to_h.except(:memory).transform_keys(&:to_s) },
+          'signers' => records('signer').map(&:name).sort,
+          'development_key' => !@development_key.empty? }.merge(RootStartup.declared(@context.platform))
       end
 
       def check_identity(devices)
@@ -1338,7 +1361,7 @@ module Erx
       # on the request path.
       def normalize_sessions(rows)
         spaces = @codec.member('mf_limits_flags', 'spaces')
-        records('session').map do |record|
+        templates = records('session').map do |record|
           principal = @indices.fetch('principal')[record.name] ||
                       invalid('a session template names no principal', 14, 'session.name')
           limits = reference(record, 'limits', 'limits')
@@ -1358,6 +1381,32 @@ module Erx
             'release' => release.fetch('entry'), 'release_files' => release.fetch('files'),
             'args' => args, 'env' => words(record, 'env') }
         end.sort_by { |row| row.fetch('principal') }
+        @apps == NO_APPS ? templates : [*templates, app_template(rows)]
+      end
+
+      # The app template (docs/design-packaging.md, "The apps row"), derived from the
+      # apps row and DomainStartup::APP_TEMPLATE, never from a source row: it names no
+      # principal, so it sorts last and no source facet's @session.NAME reaches it, and
+      # its limits are the manifest's `limits session` record, a session's defaults,
+      # which must enable SPACES as every template's do.
+      def app_template(rows)
+        recipe = DomainStartup::APP_TEMPLATE
+        limits = @indices.fetch('limits')['session'] ||
+                 invalid('the apps row needs the limits session record its template takes', 19, 'apps')
+        invalid('the limits session record the app template takes does not enable SPACES', 19, 'apps') if
+          (rows.fetch('limits').fetch(limits).fetch('flags') & @codec.member('mf_limits_flags', 'spaces')).zero?
+        runtime = named_artifact(recipe.runtime, 'executable', property: 19, field: 'apps')
+        release = named_artifact(recipe.release, 'release', property: 19, field: 'apps')
+        { 'principal' => @codec.constant('mf_none'), 'limits' => limits, 'runtime' => runtime.fetch('entry'),
+          'release' => release.fetch('entry'), 'release_files' => release.fetch('files'),
+          'args' => boot_page_args(recipe.args.split(' '), recipe.release), 'env' => recipe.env.b }
+      end
+
+      # Whether a facet row is granted to the app template, the session row naming no
+      # principal.
+      def app_template?(facet, tables)
+        facet.fetch('grantee_kind') == grantee_kind('session') &&
+          tables.fetch('sessions').fetch(facet.fetch('grantee')).fetch('principal') == @codec.constant('mf_none')
       end
 
       # A domain row's or session template's arguments as its boot page holds them: its
@@ -1372,7 +1421,12 @@ module Erx
       def boot_args(record, property:, field:)
         args = words(record, 'args').split("\0")
         invalid('the arguments name -boot, which the release sets', property, field) if args.include?('-boot')
-        name = release_name(record, property: property, field: field.sub('args', 'release'))
+        boot_page_args(args, release_name(record, property: property, field: field.sub('args', 'release')))
+      end
+
+      # A word list bound to the boot script of the release named name, as boot_args
+      # describes.
+      def boot_page_args(args, name)
         emulator, init = args.index('--').then { |at| at ? [args[0...at], args[at + 1..]] : [args, []] }
         [*emulator, '--', '-boot', "/bin/#{name}", '--', *init].map { |word| "#{word}\0" }.join.b
       end
@@ -1390,6 +1444,13 @@ module Erx
         named = !token.quoted && token.value.start_with?('@artifact.')
         artifact = named ? @context.artifacts[token.value.delete_prefix('@artifact.')] : nil
         invalid("#{key} names no #{kind} artifact of this pack", property, field) unless artifact.is_a?(Hash) && artifact['kind'] == kind
+        artifact
+      end
+
+      # The artifact of this pack named name, of the kind the packer recorded for it.
+      def named_artifact(name, kind, property:, field:)
+        artifact = @context.artifacts[name]
+        invalid("no #{kind} artifact #{name} in this pack", property, field) unless artifact.is_a?(Hash) && artifact['kind'] == kind
         artifact
       end
 
@@ -1415,32 +1476,36 @@ module Erx
       # An interface a check reasons from, which the ABI must declare.
       def fetch_interface(name) = find_interface(name) || raise(Erx::Error, "abi/services declares no interface #{name}")
 
-      # A start row's restart intensity where its source states none: more than
-      # START_RESTARTS ends within START_RESTART_PERIOD_S seconds leave the row down
-      # (docs/design-apps.md, "The start table").
-      START_RESTARTS = 5
-      START_RESTART_PERIOD_S = 600
-
       # The services an app may never take, whatever the apps row says, by name
-      # (docs/design-packaging.md, "The build's check", property 19's first clause).
-      APP_SERVICES_REFUSED = {
-        'packages' => 'every app holds its packages grant already',
-        'start' => 'it would let an app command the start table',
-        'apps' => 'it would let an app install packages',
-        'etc' => 'it would let an app rewrite /etc/rc.conf'
-      }.freeze
+      # (docs/design-packaging.md, "The build's check", property 19's first clause): the
+      # service named packages_service, which every app holds already, and those that
+      # would let an app command the start table, install packages, rewrite
+      # /etc/rc.conf or end the machine.
+      def app_services_refused
+        { @codec.fixed_bytes('packages_service') => 'every app holds its packages grant already',
+          'start'.b => 'it would let an app command the start table',
+          'apps'.b => 'it would let an app install packages',
+          'etc'.b => 'it would let an app rewrite /etc/rc.conf',
+          'machine'.b => 'it would let an app end the machine' }
+      end
 
-      # Property 19's first clause on the apps row; answers the index of each service of
-      # its services, the services the board's sums count max apps holding. Each name is
-      # the name of exactly one service of the manifest, none of APP_SERVICES_REFUSED,
-      # of an interface an ABI file declares, which gives every parameter a default (an
-      # optional parameter), since an app's row is granted with no parameter stated. A
-      # service of the inspect interface is refused until the scope an app principal
-      # gets is checked to be its own, never all, by interface, whatever its name.
+      # Property 19's first and seventh clauses; answers the index of each service of the
+      # apps row's services, the services the board's sums count max apps holding. No
+      # source facet carries `tree apps`, which only a derived row may. Each name is the
+      # name of exactly one service of the manifest, none of app_services_refused, of an
+      # interface an ABI file declares, which gives every parameter a default (an optional
+      # parameter), since an app's row is granted with no parameter stated, and every
+      # quantity (derived_quantities). A service of the inspect interface is refused until
+      # the scope an app principal gets is checked to be its own, never all, and one of
+      # the files interface until the storage service's `tree apps` roots its grant at
+      # the app's own directory, by interface, whatever its name.
       def check_apps(tables)
+        invalid('a facet of the source carries tree apps, which only the rows the build derives may', 19, 'facet.parameter') if
+          records('facet').any? { |record| record.parameters.any? { |key, value| key.value == 'tree' && value.value == 'apps' } }
         service_rows = tables.fetch('services')
+        refused = app_services_refused
         indices = @apps.services.map do |name|
-          reason = APP_SERVICES_REFUSED[name]
+          reason = refused[name.b]
           invalid("services names #{name}: #{reason}", 19, 'apps.services') if reason
           matching = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == name.b }
           invalid("services names #{name}, which is not the name of one service of the manifest", 19, 'apps.services') unless
@@ -1448,14 +1513,54 @@ module Erx
           interface = service_rows.fetch(matching.first).fetch('interface')
           unsupported("services names #{name}, of the inspect interface, whose scope for an app is not checked", 'apps.services') if
             interface == fetch_interface('inspect')
+          unsupported("services names #{name}, of the files interface, whose grant no tree apps roots yet", 'apps.services') if
+            interface == fetch_interface('files')
           declared = declared_parameters(interface) ||
                      invalid("services names #{name}, whose interface no ABI file declares", 19, 'apps.services')
           required = declared.reject { |_key, parameter| parameter.fetch(:cardinality) == 'optional' }.keys
           invalid("services names #{name}, whose interface gives #{required.join(', ')} no default", 19, 'apps.services') unless
             required.empty?
+          derived_quantities(interface, name)
           matching.first
         end
         indices.freeze
+      end
+
+      # The quantities of a facet row the build derives for a service of interface: those
+      # its ABI file's quantity lines give (docs/design-abi.md, "Services, facets and their
+      # parameter schemas"), every one of them required, and queue, which resolves to
+      # system_queue as a source row's does when it states none.
+      def derived_quantities(interface, name)
+        declared = @codec.schema.services.find { |service| service.fetch(:number) == interface }&.fetch(:quantities) || {}
+        missing = ABI::Contracts::FACET_QUANTITIES.keys - declared.keys
+        invalid("services names #{name}, whose interface declares no #{missing.join(', ')}", 19, 'apps.services') unless
+          missing.empty?
+        declared.merge('queue' => number(@source.machine, 'system_queue'))
+      end
+
+      # The facet rows the build derives from the apps row (docs/design-packaging.md, "The
+      # apps row"), none without one: the system domain's grant of the service named
+      # packages_service, rights rw, the app template's, rights ro, and the template's grant
+      # of each service of app_services, which states no parameter. Each is named as its
+      # service is and takes derived_quantities. Answers each row with its resolved
+      # parameter values, as normalize_facets builds a source row's.
+      def app_facets(tables, app_services)
+        return [] if @apps == NO_APPS
+
+        service_rows = tables.fetch('services')
+        packages_name = @codec.fixed_bytes('packages_service')
+        packages = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == packages_name }
+        invalid("the apps row needs one service named #{packages_name}, of the files interface", 19, 'apps') unless
+          packages.size == 1 && service_rows.fetch(packages.first).fetch('interface') == fetch_interface('files')
+        template = [grantee_kind('session'), tables.fetch('sessions').size - 1]
+        system = [grantee_kind('system'), 0]
+        [[system, packages.first, { 'rights' => 'rw' }], [template, packages.first, { 'rights' => 'ro' }],
+         *app_services.map { |service| [template, service, {}] }].map do |(kind, grantee), service, values|
+          row = service_rows.fetch(service)
+          { 'name' => row.fetch('name'), 'grantee_kind' => kind, 'grantee' => grantee, 'service' => service,
+            'operations' => { 'table' => 'facet_operations', 'first' => 0, 'count' => 0 },
+            **derived_quantities(row.fetch('interface'), row.fetch('name')) }.then { |facet| [facet, values.freeze] }
+        end
       end
 
       # Property 19's third clause: the start rows and every app's row fit the start table.
@@ -1465,15 +1570,89 @@ module Erx
           records('start').size + @apps.max > rows_max
       end
 
-      # Property 19's sixth clause: every signer row holds an Ed25519 public key of
-      # signer_key_bytes, written hex: and its digits, never quoted. The frontend keeps
-      # the rows' names unique.
-      def check_signers
-        size = @codec.constant('signer_key_bytes')
-        records('signer').each do |record|
-          record.line.fail!('key requires hexadecimal bytes, hex:...') if one(record, 'key').quoted
-          invalid("signer #{record.name}'s key is not #{size} bytes", 19, 'signer.key') unless text(record, 'key').bytesize == size
+      # The packed apps row and its app_services rows: none without an apps row, and
+      # otherwise the row, with the indices of the app template, last among the sessions,
+      # and of its packages facet row, and its services, the indices check_apps resolved,
+      # ascending, each with the index of the facet row granted to the template for it.
+      # The rows are the ones app_facets derived, found by grantee and service, which no
+      # source row shares with them: no source row names the template.
+      def apps_rows(service_indices, tables)
+        return [[], []] if @apps == NO_APPS
+
+        template = tables.fetch('sessions').size - 1
+        packages_name = @codec.fixed_bytes('packages_service')
+        facets = tables.fetch('facets')
+        granted = lambda do |service|
+          facets.index do |facet|
+            facet.fetch('grantee_kind') == grantee_kind('session') && facet.fetch('grantee') == template &&
+              facet.fetch('service') == service
+          end
         end
+        packages = tables.fetch('services').index { |row| row.fetch('name') == packages_name }
+        services = service_indices.sort.map { |index| { 'service' => index, 'facet' => granted.call(index) } }
+        [[{ 'memory' => @apps.memory, 'max' => @apps.max, 'app_template' => template,
+            'packages_facet' => granted.call(packages), 'reserved' => 0,
+            'services' => { 'table' => 'app_services', 'first' => 0, 'count' => services.size } }], services]
+      end
+
+      # Property 19's sixth clause, and the signer rows it packs, sorted by name: every
+      # signer row holds an Ed25519 public key of signer_key_bytes, written hex: and its
+      # digits, never quoted, and none is named development, the name the machine gives
+      # the build's development package key (development_key_rows), so no source row
+      # stands in for it. The frontend keeps the rows' names unique.
+      def signer_rows
+        size = @codec.constant('signer_key_bytes')
+        records('signer').sort_by { |record| record.name.b }.map do |record|
+          invalid("signer #{DEVELOPMENT_SIGNER} is the build's development package key, never a row", 19, 'signer.name') if
+            record.name == DEVELOPMENT_SIGNER
+          record.line.fail!('key requires hexadecimal bytes, hex:...') if one(record, 'key').quoted
+          key = text(record, 'key')
+          invalid("signer #{record.name}'s key is not #{size} bytes", 19, 'signer.key') unless key.bytesize == size
+          { 'name' => record.name, 'key' => key.bytes }
+        end
+      end
+
+      # The build's development package key, packed as its own record, which only a
+      # development manifest holds (docs/design-packaging.md, "The SDK"; Context admits
+      # it only in a development build): none when the build context carries none or the
+      # manifest has no apps row, whose machine takes no packages and so trusts no key, and
+      # refused when it is not an Ed25519 public key of signer_key_bytes. A build therefore
+      # hands every development check its key, whatever the manifest's mode.
+      def development_key_rows
+        key = @context.development_key
+        return [] if key.nil? || @apps == NO_APPS
+
+        size = @codec.constant('signer_key_bytes')
+        invalid("the development package key is not #{size} bytes", 19, 'context.development_key') unless key.bytesize == size
+        [{ 'key' => key.bytes }]
+      end
+
+      # A package row as the manifest packs it (erx_mf_package).
+      def package_row(package)
+        { 'name' => package.name, 'flags' => package.enabled ? @codec.member('mf_package_flags', 'enabled') : 0,
+          'sha256' => [package.sha256].pack('H*').bytes }
+      end
+
+      # Property 19's fifth clause on the package rows the image builder adds
+      # (Erx::ImageApps), as far as the host can judge it without admission: each row's
+      # input is a package artifact of this pack, which the build's file check decoded
+      # under the row's own name; the rows number at most the apps row's max, so none
+      # without an apps row; and the declared memory of the enabled ones sums within the
+      # apps budget. Answers each row as a Package, sorted by name.
+      def check_packages
+        packages = records('package').sort_by { |record| record.name.b }
+        invalid("the package rows pass the apps row's max, #{@apps.max}", 19, 'package') if packages.size > @apps.max
+        rows = packages.map do |record|
+          package = artifact(record, 'input', 'package', property: 19, field: 'package.input')
+          invalid("package #{record.name}'s input is the package of #{package['name']}", 19, 'package.input') unless
+            package['name'] == record.name
+          enabled = record.properties.key?('enable') && start_flags(record).positive?
+          Package.new(name: record.name, sha256: package.fetch('sha256'), enabled: enabled, memory: package.fetch('memory'))
+        end
+        memory = rows.select(&:enabled).sum(&:memory)
+        invalid("the enabled packages declare #{memory} bytes, past the apps budget of #{@apps.memory}", 19, 'package.enable') if
+          memory > @apps.memory
+        rows.freeze
       end
 
       # The parameters an ABI file declares for interface, by key, or nil when no ABI
@@ -1483,8 +1662,8 @@ module Erx
       end
 
       # The manifest's start rows, sorted by their principal's index, each with its
-      # defaults applied: enabled, no display and START_RESTARTS ends in
-      # START_RESTART_PERIOD_S seconds. Property 17's structural clauses: a row is keyed
+      # defaults applied: enabled, no display and start_restarts_default ends in
+      # start_period_default_s seconds (abi/manifest.txt). Property 17's structural clauses: a row is keyed
       # by its principal's name, so the frontend gives a principal at most one, and that
       # principal has a session template; no two enabled rows name one display; and a
       # display is a service of the windows interface that a facet row grants the
@@ -1513,8 +1692,8 @@ module Erx
         row = { 'principal' => principal,
                 'flags' => stated.call('enable', @codec.member('mf_start_flags', 'enabled')) { start_flags(record) },
                 'display' => stated.call('display', @codec.constant('mf_none')) { start_display(record, services) },
-                'restarts' => stated.call('restarts', START_RESTARTS) { |key| number(record, key) },
-                'restart_period_s' => stated.call('restart_period_s', START_RESTART_PERIOD_S) { |key| number(record, key) } }
+                'restarts' => stated.call('restarts', @codec.constant('start_restarts_default')) { |key| number(record, key) },
+                'restart_period_s' => stated.call('restart_period_s', @codec.constant('start_period_default_s')) { |key| number(record, key) } }
         invalid('a start row\'s restart period is under a second', 17, 'start.restart_period_s') if row.fetch('restart_period_s').zero?
         check_start_ceiling(row, 'restarts', 'start_restarts_max')
         check_start_ceiling(row, 'restart_period_s', 'start_period_max_s')
@@ -1585,15 +1764,18 @@ module Erx
       # against its service's declarations (facet_parameters). Answers the sorted rows, each
       # with its parameters span, the facet_parameters table and each row's resolved
       # parameter values, by key name, in the rows' order.
-      def normalize_facets(services, tables)
+      def normalize_facets(services, tables, app_services)
         service_rows = tables.fetch('services')
-        rows = records('facet').map do |record|
+        sources = records('facet').map do |record|
           token = one(record, 'service')
           index = services.index { |service| !token.quoted && "@service.#{service.name}" == token.value }
           invalid('facet names a service the manifest does not contain', 2, 'facet.service') unless index
           facet_row(record, index, tables.fetch('sessions'))
         end
-        packed = records('facet').zip(rows).map { |record, row| facet_parameters(record, row, tables) }
+        derived = app_facets(tables, app_services)
+        rows = sources + derived.map(&:first)
+        packed = records('facet').zip(sources).map { |record, row| facet_parameters(record, row, tables) } +
+                 derived.map { |row, values| pack_parameters(values, granted_parameters(row, tables)) }
         grantee = ->(row) { row.values_at('grantee_kind', 'grantee') }
         server = ->(row) { service_rows.fetch(row.fetch('service')).fetch('server') }
         none = @codec.constant('mf_none')
@@ -1624,22 +1806,33 @@ module Erx
       # declarations give in checked_by, each with the keys it consumes (docs/design-abi.md,
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
       # check_display_grants, which reads pixels and session, and range-checks windows and
-      # clipboard as their declarations bound them. A service declaring a parameter that no
-      # checker here consumes is unusable: no facet of it is admitted, since nothing would
-      # check what it grants.
-      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze }.freeze
+      # clipboard as their declarations bound them; files_grant takes a files facet's
+      # rights, whose member kind alone bounds them to ro, rw and rx, and which the grant
+      # applies at run time. A service declaring a parameter that no checker here consumes
+      # is unusable: no facet of it is admitted, since nothing would check what it grants.
+      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze,
+                         'files_grant' => %w[rights].freeze }.freeze
 
       # A facet record's parameters resolved against its service's declarations: every
       # stated key is declared, appears once and has a value of its declared kind within
       # its bound, and every key declared one is stated. Answers the values, by key name,
       # and their packed facet_parameters rows in key order.
       def facet_parameters(record, row, tables)
-        interface = tables.fetch('services').fetch(row.fetch('service')).fetch('interface')
-        declared = declared_parameters(interface) || {}
-        unless declared.all? { |key, parameter| GRANT_CHECKERS.fetch(parameter.fetch(:helper), []).include?(key) }
-          unsupported("facet #{row.fetch('name')}'s service declares a parameter no grant checker consumes", 'facet.parameter')
-        end
-        values = resolve_parameters(record, declared)
+        declared = granted_parameters(row, tables)
+        pack_parameters(resolve_parameters(record, declared), declared)
+      end
+
+      # The parameters a facet row's service declares, by key, each consumed by a grant
+      # checker of GRANT_CHECKERS, or the row is refused as unsupported.
+      def granted_parameters(row, tables)
+        declared = declared_parameters(tables.fetch('services').fetch(row.fetch('service')).fetch('interface')) || {}
+        return declared if declared.all? { |key, parameter| GRANT_CHECKERS.fetch(parameter.fetch(:helper), []).include?(key) }
+
+        unsupported("facet #{row.fetch('name')}'s service declares a parameter no grant checker consumes", 'facet.parameter')
+      end
+
+      # Resolved parameter values, by key, and their packed facet_parameters rows in key order.
+      def pack_parameters(values, declared)
         [values.freeze, values.map { |key, value| parameter_row(declared.fetch(key), value) }.sort_by { |item| item.fetch('key') }]
       end
 
@@ -1659,7 +1852,8 @@ module Erx
       end
 
       # One value of its declared kind: an integer within its range, yes or no for a
-      # boolean, or quoted bytes within their bound. A set and the reference kinds are
+      # boolean, quoted bytes within their bound, or the bare name of one of a member
+      # kind's members, which is the value. A set and the reference kinds are
       # refused while no service declares one, so nothing here guesses their spelling.
       def parameter_value(key, parameter, token, line)
         kind = parameter.fetch(:kind)
@@ -1682,6 +1876,10 @@ module Erx
           invalid("facet parameter #{key} is empty or over #{maximum} bytes", 2, 'facet.parameter') unless
             value.bytesize.between?(kind == 'bytes' ? 0 : 1, maximum)
           value
+        when 'member'
+          members = parameter.fetch(:members)
+          line.fail!("parameter #{key} is one of #{members.join(', ')}") if token.quoted || !members.include?(token.value)
+          token.value
         else
           unsupported("facet parameter #{key} is a #{kind} reference, which no service declares", 'facet.parameter')
         end
@@ -1696,6 +1894,7 @@ module Erx
         when 'u64' then row.merge('scalar' => value)
         when 'i64' then row.merge('scalar' => value & ((1 << 64) - 1))
         when 'boolean' then row.merge('scalar' => value ? 1 : 0)
+        when 'member' then row.merge('scalar' => parameter.fetch(:minimum) + parameter.fetch(:members).index(value))
         else row.merge('bytes' => value)
         end
       end
@@ -1707,7 +1906,7 @@ module Erx
       # every record names one; a display domain serves one display, so no domain pays
       # for two displays' grants out of one outer budget; and each display's grants pass
       # check_display_grants.
-      def normalize_displays(services, tables, facet_values, app_services)
+      def normalize_displays(services, tables, facet_values)
         windows = find_interface('windows')
         rows = records('display').map do |record|
           index = services.index { |service| service.name == record.name } ||
@@ -1723,7 +1922,7 @@ module Erx
         end
         servers = rows.map { |row| tables.fetch('services').fetch(row.fetch('service')).fetch('server') }
         invalid('one domain serves two displays', 18, 'display.name') unless servers.uniq.size == servers.size
-        rows.each { |row| check_display_grants(row, tables, facet_values, app_services) }
+        rows.each { |row| check_display_grants(row, tables, facet_values) }
         rows.sort_by { |row| row.fetch('service') }
       end
 
@@ -1755,7 +1954,7 @@ module Erx
       # each session its principal's domains quota lets live at once, a configured
       # domain's once. When the apps row's services name the display, its apps hold max
       # grants more, each of the parameters' defaults (property 19's second clause).
-      def check_display_grants(display, tables, facet_values, app_services)
+      def check_display_grants(display, tables, facet_values)
         service = tables.fetch('services').fetch(display.fetch('service'))
         server = service.fetch('server')
         invalid("display #{service.fetch('name')} is served by the system domain, not a display domain", 18, 'display.name') if
@@ -1772,8 +1971,7 @@ module Erx
             values.key?('session')
           [grant_instances(facet, tables), values]
         end
-        apps = app_services.include?(display.fetch('service'))
-        counted << [@apps.max, {}] if apps
+        apps = grants.any? { |facet, _values| app_template?(facet, tables) }
         cost = counted.sum do |instances, values|
           pixels = values.fetch('pixels') { @codec.constant('windows_pixels_default') }
           instances * (pages(pixels) + pages(limits.fetch('lane')))
@@ -1784,10 +1982,13 @@ module Erx
                 "past its domain's outer budget of #{limits.fetch('outer')}", 18, apps ? 'apps.max' : 'facet.parameter')
       end
 
-      # How many grants a facet row makes at once: one for a domain, and for a session
-      # template its principal's domains quota, the sessions of it that can live at once.
+      # How many grants a facet row makes at once: one for a domain, for the app template
+      # the apps row's max, each app a principal with a domains quota of one (property
+      # 19's second clause), and for another session template its principal's domains
+      # quota, the sessions of it that can live at once.
       def grant_instances(facet, tables)
         return 1 unless facet.fetch('grantee_kind') == grantee_kind('session')
+        return @apps.max if app_template?(facet, tables)
 
         principal = tables.fetch('sessions').fetch(facet.fetch('grantee')).fetch('principal')
         tables.fetch('principals').fetch(principal).fetch('domains')

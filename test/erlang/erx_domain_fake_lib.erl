@@ -21,7 +21,8 @@
 %% the boot never starts and which makes one session at a time: another is refused
 %% with elimit, as the library refuses a principal's domain past its quota, until
 %% the session is retired. A session's teardown takes a while, as the library's
-%% does: its end comes ?SESSION_TEARDOWN_MS after its stop. A domain named lost has a side that has
+%% does: its end comes ?SESSION_TEARDOWN_MS after its stop. Every end goes to the service
+%% process that made the call, so an end that trails a case never reaches a later case's service. A domain named lost has a side that has
 %% ended by the time open_side answers, so its pid has no port to write a record
 %% into. Retire, as the library's, releases the domain whatever connections to other
 %% domains stand, but refuses with ebusy while its system connection stands, and a configured row has room for one domain until the retire of the
@@ -31,7 +32,7 @@
 %% so the process dictionary keeps each domain's pid and node and each connection.
 -module(erx_domain_fake_lib).
 -export([start_log/0, next_call/0, kill_and_await/1]).
--export([register/0, configured/0, configured/3, templates/0, session/5, create/1, start/1, stop/2, retire/1, crash/1,
+-export([register/0, configured/0, configured/3, templates/0, apps/0, session/5, app_session/6, create/1, start/1, stop/2, retire/1, crash/1,
          connect/6, disconnect/1]).
 -export([open_side/2, close_side/2, export/3]).
 -export([agent/2, reader/1]).
@@ -79,6 +80,9 @@ configured() ->
                     persistent_term:get({?MODULE, boot}, #{}))}.
 %% Principal 1's template, or the templates the persistent term {?MODULE, templates} sets.
 templates() -> {ok, persistent_term:get({?MODULE, templates}, [#{template => 0, principal => 1}])}.
+
+%% No apps row, or the app entries the persistent term {?MODULE, apps} sets.
+apps() -> {ok, persistent_term:get({?MODULE, apps}, none)}.
 session(Id, Template, Name, Display, DomainPid) when is_pid(DomainPid), is_atom(Display) ->
     session_made(get(session), Id, Template, Name, Display, DomainPid).
 
@@ -88,6 +92,11 @@ session_made(undefined, Id, Template, Name, Display, DomainPid) ->
     log({session, Id, Template, Name, Display}), {ok, created(Id, 4)};
 session_made(_Live, _Id, Template, Name, _Display, DomainPid) ->
     log({refused, Template, Name, DomainPid}), {error, elimit}.
+%% A session of an app's entry, as the library plans the app template under it with
+%% the app's declared memory; any number may stand at once.
+app_session(Id, Entry, Memory, Name, Display, DomainPid) when is_pid(DomainPid), is_atom(Display) ->
+    put({domain, Id}, {DomainPid, Name}),
+    log({app_session, Id, Entry, Memory, Name, Display}), {ok, created(Id, 4)}.
 configured(Id, Row, DomainPid) when is_pid(DomainPid) ->
     {ok, #{domains := Rows}} = configured(),
     [Name] = [Name || #{row := R, name := Name} <- Rows, R =:= Row],
@@ -107,7 +116,7 @@ start(Id) ->
     case get({domain, Id}) of
         {_, Quiet} when Quiet =:= <<"silent">>; Quiet =:= <<"late">> -> ok;
         {_, Ends} when Ends =:= <<"overtaken">>; Ends =:= <<"behind">> ->
-            erx_domain_srv ! {domain_ended, Id, {halt, 0}, #{}};
+            self() ! {domain_ended, Id, {halt, 0}, #{}};
         {DomainPid, Name} -> DomainPid ! {erx_origin, Id, {erx_ready, ready_report(Name, Id)}}
     end,
     log({start, Id}).
@@ -117,8 +126,8 @@ stop(Id, _Status) ->
     case {get({domain, Id}), get(session)} of
         {{_, <<"noside">>}, _} -> ok;
         {{_, <<"nostop">>}, _} -> {error, einval};
-        {_, Id} -> _ = erlang:send_after(?SESSION_TEARDOWN_MS, erx_domain_srv, End), ok;
-        _ -> erx_domain_srv ! End, ok
+        {_, Id} -> _ = erlang:send_after(?SESSION_TEARDOWN_MS, self(), End), ok;
+        _ -> self() ! End, ok
     end.
 retire(Id) ->
     case get({system, Id * 10}) of

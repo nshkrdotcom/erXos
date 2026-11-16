@@ -20,55 +20,125 @@ it; git history is the record of completed work.
   design-kernel.md and design-system.md record.
 * [High] apps, the manifest check's property 19
   ([design-packaging.md](docs/design-packaging.md#the-builds-check)), `tools/lib/erx/manifest.rb`: the
-  stopgap check reads the `apps` and `signer` rows, counts `max` apps in property 4's domain and memory sums
-  and in property 18's display costs, checks clauses 1 (refusing an inspect service), 3 and 6, and refuses every
-  `package` row. What remains, each with its seeded violation: the rows derived from `apps` (the app
-  template, booting the domain release's `app` script with
-  `-eval ok=application:start(erx_session,permanent),ok=application:start(erx_app,permanent)`, since
-  `erx_app` depends on `erx_session`,
-  its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which wait for the
-  storage service's `tree` parameter for `tree apps` and its rooting, the `apps` service freed
-  from the start table, and the app session below; clause 4, which needs
-  `app_memory_default` and the derived template for property 12's planner; clause 5, which needs the
-  package file check and the facts `erx_app_admit:admit/3` takes (the `apps` row with its app template's
-  facet-row indices, the manifest's reserved names and the image's package names) read from the packed
-  records, one reader for the machine and the packer, which then owns the types `erx_app_admit` declares
-  for them; clause 7, once the `apps` service and `tree` exist; clause 1's inspect
-  scope; clause 2's counts in the principal table, the session-name atoms and each server's connections, which
-  the stopgap check sums for no principal; and the development manifests' `apps` row, with the site manifest
-  leaving it out.
+  stopgap check reads the `apps`, `package` and `signer` rows, derives the app template
+  (`DomainStartup::APP_TEMPLATE`, of the `limits session` record), the `packages` rows and the template's row
+  of each service of the row, packs the template and its rows as indices that the boot view checks, and
+  checks clauses 1, 3, 6 and 7's `tree apps`. QEMU virt's development manifest carries an `apps` row and the
+  site and narrow manifests leave it out. What remains, each with its seeded violation: the `apps` rows of
+  the `apps` service, and clause 7's refusal of a source facet naming it, which wait for that service;
+  clause 4, which needs `app_memory_default` for property 12's planner; the rest of clause 5: the enabled
+  packages' session outer budgets in the `apps` budget sum, an enabled row meeting property 17's display
+  and planning clauses, and admission on the host (`erx_app_admit:admit/3` on the packed manifest);
+  clause 1's inspect scope; clause 2's counts in the principal table, the session-name atoms and each
+  server's connections, which the stopgap check sums for no principal (QEMU virt's manifest reckons the
+  storage, network and display domains' connection quotas and `max_connections` by hand, in its comments,
+  and `Manifest::Edit.without_apps` repeats that reckoning; the check should sum each grant's instances
+  over distinct grantee and server pairs against each server's quota and `max_connections`); and the
+  Raspberry Pi 4's `apps` row, which the design gives the default `max` 8: the display record in
+  `config/manifest/development.txt` holds QEMU virt's four pixel areas (32 MiB of outer budget the Pi pays
+  without using), so the Pi's row needs its own display limits or a derived outer budget.
+* [Medium] apps, a files service on the `apps` row (`tools/lib/erx/manifest.rb`, `check_apps`): refused as
+  unsupported until the storage service's `tree` parameter roots a grant at the app's own directory
+  (`tree apps`, [design-packaging.md](docs/design-packaging.md#where-an-apps-files-lie)); then `data`
+  joins the development manifests' `services`.
+* [Medium] apps, what the boot view guards of an app's authority (`liberx/system/dom_boot_view.c`,
+  `boot_app_grants`): it requires the template's facet rows to be exactly the rows the `apps` row names,
+  each once, but not what the `apps` row itself grants: a manifest the check did not pack could name
+  `start`, `apps` or `etc` among `app_services` (refused by `app_services_refused` in
+  `tools/lib/erx/manifest.rb`), an inspect or files service, parameters on the derived rows (`tree`, an
+  inspect scope, `rights rw` on packages) or inflated quantities, and every app's session would hold them.
+  Decide whether app authority is the build check's alone (property 19; design-system.md trusts the image
+  once the boot validator checked it), and then say so in design-packaging.md, or the view's too; then
+  the by-construction answer is that the manifest packs no template facet rows and the view derives them
+  from the `apps` row (packages `ro`, each service with its derived quantities), which needs the
+  parameter and quantity derivation the packer does today, and a generated name for the files `rights`
+  parameter (the header names only its members, `ERX_FILES_RIGHTS_RO`).
+* [Medium] apps, the app template is identified five ways: the packed `apps[].app_template`, which only
+  `boot_apps` reads and requires to equal its own rule (the last template, naming no principal),
+  `app_template?` and `sessions.size - 1` in `tools/lib/erx/manifest.rb`, and erx_starter's
+  `=/= ?ERX_MF_NONE`. Either drop the field and keep the rule, or make the index the one source.
+* [Medium] apps, whether an interface may go to apps rests on its `quantity` lines
+  (`abi/services/net.txt`, `derived_quantities` in `tools/lib/erx/manifest.rb`): netadmin is kept off the
+  `apps` row only because it declares no quantity, so adding them would let apps administer the network.
+  Make grantability an explicit fact (a mark on the interface the check reads, or a refusal by interface
+  beside inspect and files) and require quantities only of grantable interfaces.
+* [Medium] ABI, the facet quantity fields are copied by hand: `FACET_QUANTITIES`
+  (`tools/lib/erx/abi_contracts.rb`) repeats `erx_mf_facet`'s field names and widths from
+  `abi/manifest.txt`, and `facet_row` in `tools/lib/erx/manifest.rb` the key list; take both from the
+  codec's layout.
+* [Low] apps, the derivation's readability (`tools/lib/erx/manifest.rb`): `app_template` rebuilds the
+  session row and SPACES check `normalize_sessions` writes (one `session_row` for both); `named_artifact`
+  duplicates `artifact`'s kind check; `app_facets` maps positional triples where a small `Data` value
+  would read better; `apps_rows` searches the sorted facets for rows `normalize_facets` just placed; the
+  `tree apps` refusal in `check_apps` runs with no apps row and is redundant while files declares no
+  `tree`; dom_planner_test's apps case hand-codes header offsets the codec can give.
 * [High] apps, the package process at boot
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
   the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
   every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
   the release's `pkg/NAME.app`, and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
-  erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. What remains:
-  the config, `erx_pkg:system_config/0`, answers `none`, since the packed manifest holds no `apps`, `package`
-  or `signer` record (the property 19 item above), so no boot runs the package process; once those records
-  exist it reads them, the development key among the signers in a development build. The principal
-  service's app registry, `erx_principal:register_app/2` and `app_registry/0`, does not exist (no
-  `erx_principal` module is in the tree), nor the domain library's app entries it registers into (the
-  app's session item below); its record takes admission's answer, which carries the declared memory.
-  `erx_starter:packages/2` and the start table's package rows, with the start table's boot waiting for the
-  boot's package set before it applies `rc.conf` (erx_pkg_sup starts before the table, so a publication can
-  otherwise find no table, and a restart of the table restarts no erx_pkg, so the table takes the
-  last set from erx_pkg as it starts rather than waiting for a publication); a retry of the listing once the `packages` grant is in place, which the
-  recovery leaves `unknown` (the first set then holds the image's packages only, and the installed ones come
-  in a later set, with no record, which `rc.conf` does not enable at that boot: a design question); the
+  erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. `erx_pkg:system_config/0` builds
+  the config from the manifest and the library's app entries. QEMU virt's development manifest has the
+  `apps` row and the check derives the app template, so every development boot runs the package process:
+  a boot of the apps suite's unlisted image (HVF, 1 CPU) showed `erx_domain_lib:apps/0`'s max 4, and
+  erx_pkg, 0.33 s into the system domain and before the storage domain had mounted its volume, ran its
+  recovery to the publication and crashed there on `erx_starter:packages/2`, which does not exist (`undef`),
+  four times, until erx_pkg_sup reached its intensity and stopped; the start service and the rest of the
+  boot carried on, and `erx_pkg:packages/0` answers `noproc`. The publication (`erx_starter:packages/2`: the set's rows after the manifest's, kept by keepers of
+  `{app, Name}`, a dropped app's keepers stopped before the answer, the table's ask on restart) and the
+  listing's wait for the system domain's namespace are built, and the apps suite's unlisted boot checks
+  `{packages,4,#{packages => #{},scan => {ok,0}}}`. What remains: a listing that still fails after the wait
+  leaves the scan `unknown`, and nothing lists the installed packages again before the next lifetime (the later
+  set design-packaging.md names, with no record, which `rc.conf` does not enable until the next boot); the
+  `installed` state and the boot mark of a later set, which wait for the table's records (the `/etc/start/ctl`
+  item below), so until then every make of the table applies `rc.conf` to the set's rows too; the
   `apps` tree serving `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]`
   and `[packages, Name]` in `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute
   included; the system_domain QEMU cell; the log lines for a refused package and an entry of no recognized
   form; the lifetime taken from the caller rather than the request; and whether image header reads wait for
-  the `packages` grant. A failed listing (`eio`, a storage domain's answer included) stops the lifetime as
-  a failed change does, so past erx_pkg_sup's intensity the image's packages are never published; a
-  listing failure should leave the scan `unknown` as an absent grant does. `erx_pkg_medium` reads the whole
+  the `packages` grant. `erx_pkg_medium` reads the whole
   directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
   bounded read at a time (Phase 1: the storage domain is trusted).
+* [Medium] apps, the package set's publication (`erlang/apps/erx_starter/src/erx_starter.erl`,
+  `publish/2` and `apply_text/2`): the decision which keepers a set drops and the filter that keeps a
+  restarted table from stopping an app's held row before the set returns are made in the effect layer,
+  not in `erx_start_table` beside `reconcile/3`, whose "stop a held name Merged does not name" branch is
+  now dead in its one caller; no case restarts the table while an app runs or exercises `erx_pkg:ask_set/0`,
+  and no seeded fault removes the filter. The table keeps `rows`/`grants` beside `manifest_rows`/
+  `manifest_grants` (two copies of the manifest's rows). `packages/2` ignores its `Lifetime`, which the
+  design checks (docs/design-packaging.md, "The package lifetime"). Until the set arrives, rc.conf's lines
+  for apps are logged as `{undeclared, App}` and shown as skipped.
+* [Medium] apps, chokepoints (`tools/lib/erx/chokepoint_rules/apps.rb`): `starter-reach` covers the start
+  table and its keepers, not packaging's `erx_pkg*`, and design-packaging.md's own checks are not built:
+  that `erx_pkg` and `erx_pkg_io` call no `erx_domain:stop/2`, and that only `erx_pkg` calls
+  `erx_starter:packages/2` (docs/design-packaging.md, "Verification and testing"). Add a `pkg-reach` rule
+  allowing `erx_domain:system_namespace/0` and `erx_domain_lib:apps/0`, and a publishers rule.
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
   and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
-  (`erx_domain_srv:grant_facets/4`). What remains: the domain library's `max` app entries in the principal
-  table, an app principal's elastic budget under the `apps` budget, and `erx_dom_plan_session` taking an
-  app principal with the app template and no other template; `erx_principal:register_app/2`; the session plan
+  (`erx_domain_srv:grant_facets/4`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
+  the app template, the session template naming no principal (`mf_none`), sized into the principal and
+  held tables, and `erx_domain_lib:apps/0` answers them; no manifest has the template yet, since the
+  check derives none (the property 19 item), so the view refuses any manifest with an `apps` row
+  today. The session's plan (`erx_domain_core:app_session/4`, from the registry's record, which keeps
+  the admission's rows) and the library's entry (`erx_domain_lib:app_session/6` over
+  `erx_dom_lib_app_session`) exist; no caller uses them yet. What remains: the domain service's
+  start of an app's session from its `erx_principal:app/2` record, which needs the app template's
+  facet rows by index (the library's `grants`, in facet-table order) and a mint core that grants a
+  session a subset of its template's rows, where `erx_domain_mints` grants every session of a
+  template all of them; `machine_principal` and the mints' parameters naming an app principal,
+  which the manifest's names do not hold, and a `tree apps` grant's root `apps/NAME/SIGNER/`, whose
+  signer is the registry record's and outside the plan, so the plan's PK10 comparison does not cover
+  it; the record in the ready answer, whose place, layout and
+  applications the registry does not keep; the app
+  principal's CPU group under an apps group, which the stopgap's flat groups leave out;
+  `erx_ns:mount/3` of an image file through `erx_verity`, which
+  held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps`
+  row, so QEMU virt's development image boots with four app entries (`erx_domain_lib:apps/0`'s max 4 at
+  the system's Erlang shell under HVF), and no app's session is started from them yet. What remains: the library entry and NIF over
+  `erx_dom_plan_app_session` and the domain service's start of an app's session from its
+  `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
+  and the inspect scope; the app principal's CPU group under an apps group, which the stopgap's flat groups
+  leave out; the session plan
   in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
   its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
   `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
@@ -77,6 +147,45 @@ it; git history is the record of completed work.
   does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
   `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
   `{not_supported, program}` until then).
+* [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
+  `erx_domain_mints_srv_tests:app_session/0` is written and not run: in its fixture the start is answered
+  before the kept row is installed, because configured domain `a` ends after its introduction to the
+  session, for a reason not yet found. Also open: the pixel area of an app session's pairs is still the
+  app template's (`erx_domain_mints:pair_area/3` by template), to be decided from the session's rows; the
+  record's `{Ref, app, App}` step and erx_app's registered wait, which design-packaging.md's "An app's
+  session" must name (it still says the ready answer hands the record); `erx_principal:app_record()` and
+* [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`,
+  the `app` script, the boot view's app entries (the check derives the app template from the `apps` row, so
+  QEMU virt's development image boots with four app entries, `erx_domain_lib:apps/0`'s max 4 at the
+  system's Erlang shell under HVF), the session's plan (`erx_domain_core:app_session/4`, with its host test
+  and seeded faults), the library's entry (`erx_domain_lib:app_session/6` over `erx_dom_lib_app_session`)
+  and the domain service's start (`erx_domain:start_app/2`, which sends the app's record as
+  `{Ref, app, App}` once the session's namespace is in place) exist. What remains: the start service's
+  package rows (`erx_starter:packages/2`) and their keepers, the only starters of an app's sessions (PK7);
+  the app principal's CPU group under an apps group, which the stopgap's flat groups leave out; a `tree
+  apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
+  the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
+  which `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's
+  `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
+  (`erx_app` ends with `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app`
+  script, which the runtime does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+* [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
+  `erx_principal:app_record()` and
+  `package()` copy `erx_app:app_record()` and `erx_pkg_plan:published()`, and an image package's place
+  `/pkg/NAME.app` is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
+  `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
+  through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
+  a keeper's stop waits without bound for its session's end.
+* [Low] apps, `erx_starter_keeper`: a session that ends before its keeper takes it ends the keeper with
+  `noproc`, the exit its trapped link brings, so the supervisor reports a crash naming no session where
+  `{shutdown, {ended, Id}}` is meant; `hold/2` can map it, with an `erx_starter_tests` case for the path.
+* [Medium] apps, the domain library (`liberx/system/dom_core.c`, `dom_plan_in`): a request's plan
+  (`erx_dom_plan_request`, `erx_domain_lib:create/1`) under an app entry's principal is not refused, so
+  a domain that is not the app template can take the entry's one domain slot, against "neither entry
+  can pair an app principal with another template" ([design-packaging.md](docs/design-packaging.md#an-apps-session)).
+  Nothing calls `create/1` with one today. Fix by construction in `dom_plan_in`: an app principal
+  exactly when the origin is a session of the app template, with a dom_core test that plans a
+  request under an app principal and expects `ERX_EINVAL`.
 * [Medium] runtime, `docs/design-shared-code.md`: build shared loaded code, one prepared copy of the
   preloaded modules and the applications every domain boots, mapped read-only into every domain that runs
   the interpreter. It is wanted long term. Its trigger, three adopting domains at once, is met: the
@@ -2123,6 +2232,24 @@ it; git history is the record of completed work.
   tree") says it waits for a record.
 * [Medium] `erlang/apps/erx_display/src/erx_window.erl`: held `ctl` writes and `mouse` and `kbd` readers are bounded
   only by `erx_fs`'s one request per open file; give them a cap of their own.
+* [Medium] facet parameters, the `member` kind (`liberx/system/dom_boot_view.c` `boot_parameter`,
+  `otp/erts/emulator/nifs/erxos/erx_domain_terms.c` `parameter_term`): no test drives a packed member row through the
+  C view and the NIF. Extend `test/host/facet_parameters_test.rb` and `test/erlang/erx_facet_parameters_tests.erl`
+  with a files facet stating `rights ro` (its limits carry `rights := ro`) and forged rows refused (scalar 0 and 4,
+  kind u64 under key 1), with seeds for an off-by-one bound and a dropped `- minimum`, and give
+  `tools/fuzz/manifest_seeds.rb` a files facet with `rights` so the fuzz target reaches the member case.
+* [Medium] `abi/services/files.txt`: the default of `rights` when a row states none, `rw`, is said in the file's
+  comment and applied in `erx_fs_grants:grant_options/1`; a `parameter` line has no way to declare a default, so
+  it is not one generated fact. Add `default MEMBER` to member parameters (checked a member, emitted as a macro),
+  and decide whether a security parameter's default should be `rw`, `ro` or none (a required parameter).
+* [Low] `tools/lib/erx/abi_contracts.rb` `services`: the `allowed` parameter kinds copy `mf_parameter_kind`'s
+  members, and the kind switches of `dom_boot_view.c`, `erx_domain_terms.c` and `tools/fuzz/manifest_fuzz.c` end
+  in `default:`, so a new kind is not a build failure where it is unhandled; derive `allowed` from the enum and
+  drop the `default:` cases. `Contracts.member_bound`'s enum may hold negative values, which fail safe at the
+  view but should be refused at the declaration.
+* [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
+  `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
+  needs an `rx` mount); the mount should take the facet's rights.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grants.erl`: the per-grant `Args` (`start_link/2`, `grant/4`) are not named by
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
@@ -2722,10 +2849,20 @@ it; git history is the record of completed work.
   OTP release `SDK.txt` names, so a beam another release compiled fails only when the app starts; erlc's
   environment is cleared by `Oracle::CLEAN_ERLANG_ENV`'s deny-list, which misses `ERLC_EMULATOR` and
   `ERLC_USE_SERVER` (an allow-list spawn in `Erx::Runner` is the fix by construction); and a compile error
-  shows only as the runner's log path. The image build does not yet carry the public half of its builder's
-  development package key as the `development` signer (docs/design-packaging.md, "Adding an app to an
-  image"), so no development image trusts an installed package yet; it lands with `tools/erx pack --app`.
-  Fix: add each with the SDK package.
+  shows only as the runner's log path. Fix: add each with the SDK package.
+* [High] apps, `tools/erx pack --app DIR [--enable NAME]` ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image)):
+  `Erx::ImageApps` plans what an image takes for its packages (the file at the release's `pkg/NAME.app`, the
+  `package` rows bound to artifacts the host file check described) and the manifest check binds and packs
+  the rows, but nothing calls it yet. What
+  remains: the command, which packs DIR with the in-tree packer (`AppPack.pack` with an SDK exported into the
+  build tree, until the SDK's `host/bin` exports `erx-app`) or takes a package file as given; `ProductionImage`
+  taking the plan into `assemble` (the entries in the domain release with a receipt each, the artifacts merged
+  into `ProductionImage.artifacts`, the rows appended to the image's copy of the manifest source); the
+  package's license judged as an archive's (step 4 of "Adding an app to an image"), which needs a receipt kind
+  for a package that is not the tree's; every development build (`Pack`'s `Manifest::Context`) handing the
+  public half of the builder's `Erx::PackageKey` as the context's `development_key`, which the check packs
+  beside an `apps` row, not only those `pack --app` builds; `--signer FILE`; and the development manifests'
+  `apps` row.
 * [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on
@@ -7028,8 +7165,7 @@ to the corpus and follow rc
   installed package at `/data/packages`, past the package process. A changed package fails its header check or,
   from M11, `erx_verity`'s; a removed one is withheld. Closed by rooting each `data` grant at its principal's
   directory, with the test that a session holding `data` finds no `packages/` under its `/data`. The tree has
-  three more gaps: every grant of it is read-write, since no facet row can make an `erx_fs` grant read-only yet,
-  so the app template's derived row needs that before it lands; the owner trusts any path a grant hands it, so
+  two more gaps: the owner trusts any path a grant hands it, so
   the rooting rests on `erx_fs_grant` building nodes only from the callbacks' answers (`erx_lfs` should check
   each path against its grant's root, as `tree apps` will need); and a file at `/packages`, or a directory a
   full volume cannot make, leaves the tree failing its requests without a diagnostic at attach.

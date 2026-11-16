@@ -52,6 +52,16 @@ erx_dom_lib_session(erx_dom_lib_t *lib, uint32_t id, uint32_t template, const ch
 }
 
 erx_status_t
+erx_dom_lib_app_session(erx_dom_lib_t *lib, uint32_t id, uint32_t entry, uint64_t memory, const char *name,
+    uint32_t name_len, const char *display, uint32_t display_len, erx_dom_pid_t domain_pid,
+    erx_dom_created_t *created)
+{
+	(void)lib, (void)id, (void)entry, (void)memory, (void)name, (void)name_len, (void)display;
+	(void)display_len, (void)domain_pid, (void)created;
+	return (ERX_ENOTSUP);
+}
+
+erx_status_t
 erx_dom_lib_start(erx_dom_lib_t *lib, uint32_t id)
 {
 	(void)lib, (void)id;

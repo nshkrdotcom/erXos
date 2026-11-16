@@ -535,7 +535,9 @@ connection's two sides and two bells:
   the domain library creates it in the plan that makes the connection,
   sized by the `pixels` parameter of the manifest's grant of the
   display's window tree to that client, a facet row's for a configured
-  domain or for each session of a session template, and gives each
+  domain, and for a session the row its plan gave it (a template's session
+  holds every row of its template, an app's the rows its admission
+  kept), and gives each
   party its capability, without the right to delete it
   ([design-system.md](design-system.md#the-domain-library)). A pair of
   domains with no grant of a display between them has a connection
@@ -3677,9 +3679,10 @@ on a display edits nothing of the board's:
 * **Facet rows say who may draw there, and how much.** A facet row of
   the display's service grants its tree to a configured domain or to a
   session template, an app's among them, with the grant's quotas,
-  `windows`, `pixels` and `clipboard`, as its parameters. Every session made
-  from a template holds the template's grants, so every session of a
-  template that the display is granted to holds one
+  `windows`, `pixels` and `clipboard`, as its parameters. A session holds
+  the rows its plan gave it: a template's session every row of its
+  template, so every session of a template that the display is granted
+  to holds one, and an app's session the rows its admission kept
   ([design-apps.md](design-apps.md#an-app)). The display pays for each
   grant's pixel area, and the manifest check sums them against its
   budget, a template's as many times as its principal's `domains` quota
@@ -3739,8 +3742,8 @@ what starts, restarts and bounds every session the start table keeps:
   has no restart intensity, since a session a person logged in to is
   never started again, and a template says what a session is, not how
   hard the machine works to keep it up.
-* **Other sessions on the display.** A session whose template holds a
-  grant on the display reaches it whether or not it is the display's
+* **Other sessions on the display.** A session that holds a grant on
+  the display, by a row its plan gave it, reaches it whether or not it is the display's
   session: under the overlapping policy its windows are ordinary
   windows, as an X client's are on any display it may open, and under
   the single policy they stay hidden. A person's login at the UART
@@ -3750,8 +3753,8 @@ what starts, restarts and bounds every session the start table keeps:
   whose `root` template is granted the display holds a grant there,
   opens no terminal on it, since its start names no display, and opens
   a window there when a program asks, which the overlapping policy
-  shows beside the display's session's windows. A session whose
-  template has no such grant answers `erx_ui:open/1` with
+  shows beside the display's session's windows. A session that holds
+  no such grant answers `erx_ui:open/1` with
   `{error, no_display}`.
 * **An app a person starts** runs in a session of its own principal,
   never in the person's: `service APP onestart display=D`, or a

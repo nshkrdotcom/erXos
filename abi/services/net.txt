@@ -8,6 +8,13 @@
 # net_max_frame_min bytes, the protocol's max_frame floor: a piece of 64 KiB and its
 # envelope (docs/design-domains.md, "Floors from a protocol";
 # docs/design-network-stack.md, "Message sizes").
+# A facet row of net the build derives takes the quantities below; netadmin declares
+# none, so no derived row grants it.
 service net 3
+  quantity max_request 64
+  quantity in_flight 16
+  quantity reductions 100000
+  quantity period_ns 1000000000
+  quantity max_heap_size 65536
 service netadmin 4
 limit net_max_frame_min u32 131072

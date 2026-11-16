@@ -402,7 +402,7 @@ granted_answers([], Answers) ->
     Answers;
 granted_answers(Pids, Answers) ->
     receive
-        {trace, Pid, 'receive', {_Ref, facets, _Facets, Granted, none}} ->
+        {trace, Pid, 'receive', {_Ref, facets, _Facets, Granted}} ->
             case lists:member(Pid, Pids) of
                 true -> granted_answers(lists:delete(Pid, Pids), Answers#{Pid => Granted});
                 false -> granted_answers(Pids, Answers)
@@ -453,7 +453,7 @@ answers([], Answers) ->
     Answers;
 answers(Pids, Answers) ->
     receive
-        {trace, Pid, 'receive', {_Ref, facets, Facets, _Granted, none}} ->
+        {trace, Pid, 'receive', {_Ref, facets, Facets, _Granted}} ->
             answers(lists:delete(Pid, Pids), Answers#{Pid => Facets});
         {trace, _, 'receive', _} ->
             answers(Pids, Answers)
@@ -706,6 +706,111 @@ display_timed_out() ->
     Wait = display_waits(),
     erx_domain_srv ! {timeout, make_ref(), {boot_timeout, 5}},
     ?assertEqual({reply, ok}, gen_server:receive_response(Wait, 2000)).
+
+%% An app's session (docs/design-packaging.md, "An app's session"): the boot's app
+%% template, 2, is granted two of a's services, screen (facet row 0), a display of the
+%% windows interface, and clip (row 1), of the files interface, and the app clock's
+%% admission kept only row 1. Its session is planned under the app's entry with the
+%% declared memory, granted clip alone, whose mint carries the app's name as its
+%% principal's, and its ready answer names clip alone; the connection clip's grant makes
+%% between a and the session carries no pixel area, since the session holds no screen
+%% row, though its template does (erx_domain_mints:pair_area/3); its
+%% domain pid receives the app's record the registration kept once clip is installed,
+%% after the ready answer and before the start is answered. A name not registered is
+%% refused.
+app_session_test_() ->
+    {setup, fun app_setup/0, fun app_cleanup/1,
+     fun(_) -> {inorder, [fun no_app/0, {timeout, 20, fun app_session/0}]} end}.
+
+-define(APP_MEMORY, 16777216).
+-define(APP_RECORD, #{place => <<"/packages/clock.app">>, layout => #{}, start => {applications, [<<"clock">>]}}).
+
+app_setup() ->
+    persistent_term:put({erx_domain_fake_lib, apps}, #{template => 2, first => 6, max => 4, memory => 4 * ?APP_MEMORY}),
+    Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
+                                     restarts => 3, restart_period_s => 60, boot_timeout_s => 60} end,
+    persistent_term:put({erx_domain_fake_lib, boot},
+                        #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)],
+                          services => [{1, screen, ?ERX_SERVICE_WINDOWS}, {1, clip, ?ERX_SERVICE_FILES}],
+                          grants => [{{template, 2}, screen, 1, #{max_request => 64}},
+                                     {{template, 2}, clip, 1, #{max_request => 32}}]}),
+    provide_a(fun(Id) -> #{screen => pid('a@erxos', Id, 1), clip => pid('a@erxos', Id, 4)} end),
+    Log = erx_domain_fake_lib:start_log(),
+    {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
+                                                exports => erx_domain_fake_lib, principals => ?PRINCIPALS,
+                                                introduce_timeout => ?DEADLINE,
+                                                mints => #{owner => fun erx_domain_mints_tests:owner/1,
+                                                           deadline => ?DEADLINE}}),
+    unlink(Service),
+    {Log, Service}.
+
+app_cleanup(Started) ->
+    persistent_term:erase({erx_domain_fake_lib, apps}),
+    cleanup(Started).
+
+no_app() ->
+    ?assertEqual({error, no_app}, erx_domain:start_app(<<"clock">>, #{})).
+
+app_session() ->
+    Checked = #{header => #{name => <<"clock">>, layout => #{}, start => {applications, [<<"clock">>]}},
+                signer => image, sha256 => <<0:256>>, extent => 1},
+    ok = erx_principal:register_app(#{name => <<"clock">>, place => installed, checked => Checked,
+                                      admitted => #{entry => 0, signer => image, memory => ?APP_MEMORY,
+                                                    rows => [1]}}),
+    Self = self(),
+    erlang:trace(new_processes, true, ['receive', {tracer, Self}]),
+    Ref = make_ref(),
+    _ = spawn(fun() -> Self ! {Ref, erx_domain:start_app(<<"clock">>, #{})} end),
+    try
+        {Earlier, Call} = app_session_call([]),
+        ?assertMatch({app_session, 7, 0, ?APP_MEMORY, <<"clock_1">>, none}, Call),
+        ?assertEqual([], [Stop || {stop, _} = Stop <- Earlier]),
+        ?assertEqual({connect, 5, 7, erx_domain_fake_lib:reader(5), erx_domain_fake_lib:reader(7)}, next_connect()),
+        [PidA, Pid7] = [domain_pid(Id) || Id <- [5, 7]],
+        erlang:trace(PidA, true, ['receive', {tracer, Self}]),
+        Key = {{session, 7}, clip},
+        #{Key := {introducing, {5, 7}, _}} = Grants = wait(fun(#{Key := {introducing, _, _}}) -> true end),
+        ?assertEqual([Key], [K || {{session, 7}, _} = K <- maps:keys(Grants)]),
+        PidA ! {erx_origin, 5, {erx_connection_mapped, 7}},
+        Pid7 ! {erx_origin, 7, {erx_connection_mapped, 5}},
+        #{Key := {minting, {5, 7}, Tag}} = wait(fun(#{Key := {minting, _, _}}) -> true end),
+        ?assertMatch({erx_facet_mint, Tag, clip, 7, <<"clock">>, #{max_request := 32}},
+                     receive {trace, PidA, 'receive', {_, mint, _, {erx_facet_mint, Tag, _, _, _, _} = R}} -> R
+                     after 2000 -> none end),
+        PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, pid('a@erxos', 5, 7)}}},
+        {Before, {_, install, Tag, clip, _}} = received(Pid7, fun({_, install, _, _, _}) -> true end, []),
+        ?assertEqual([[clip]], [Granted || {_, facets, _, Granted} <- Before]),
+        ?assertEqual(none, answer(Ref, 200)),
+        Pid7 ! {erx_origin, 7, {erx_facets_installed, Tag}},
+        ?assertMatch({ok, {erx_domain, 7, _, Pid7}}, answer(Ref, 2000)),
+        {Between, {_, app, App}} = received(Pid7, fun({_, app, _}) -> true end, []),
+        ?assertEqual(?APP_RECORD, App),
+        ?assertEqual([], [M || {_, facets, _, _} = M <- Between]),
+        ?assertEqual([Key], [K || {{session, 7}, _} = K <- maps:keys(grants())])
+    after
+        erlang:trace(all, false, ['receive'])
+    end.
+
+%% The fake library's app_session call and the calls before it, in order.
+app_session_call(Earlier) ->
+    case erx_domain_fake_lib:next_call() of
+        {app_session, _, _, _, _, _} = Call -> {lists:reverse(Earlier), Call};
+        timeout -> error({no_app_session, lists:reverse(Earlier)});
+        Other -> app_session_call([Other | Earlier])
+    end.
+
+%% The messages Pid received, from the trace of its receives, up to the first that Match
+%% holds for: those before it, in order, and it.
+received(Pid, Match, Before) ->
+    receive
+        {trace, Pid, 'receive', Message} ->
+            case (try Match(Message) catch error:function_clause -> false end) of
+                true -> {lists:reverse(Before), Message};
+                false -> received(Pid, Match, [Message | Before])
+            end
+    after 2000 ->
+            error({not_received, Pid, lists:reverse(Before)})
+    end.
 
 %% A session's start, asked of the service by a process of its own, as the console's
 %% helper asks; answer/2 takes its answer.

@@ -47,14 +47,15 @@
 # The system principal holds root's one session, 36 MiB and outer 1 MiB, and 1 MiB for
 # the outer budget of a domain that has ended while another still holds a connection to
 # it, as QEMU virt's comment explains; the storage domain, 30 MiB and outer 1 MiB; the
-# network domain, 36 MiB and outer 1 MiB; and the display domain, 24 MiB and outer 1 MiB:
-# 131 MiB in all. The system baseline is QEMU virt's 46 MiB. root_memory, 185 MiB, admits
-# the baseline, the principal's 131 MiB, the SD controller's 1 MiB of DMA memory and
+# network domain, 36 MiB and outer 1 MiB; and the display domain, 24 MiB and outer 33 MiB,
+# the common record's, which holds QEMU virt's four apps' pixel areas though this board
+# has no apps row yet (TODO.md): 163 MiB in all. The system baseline is QEMU virt's
+# 46 MiB. root_memory, 217 MiB, admits the baseline, the principal's 163 MiB, the SD controller's 1 MiB of DMA memory and
 # GENET's 1 MiB of device memory with 6 MiB no one is promised, and lies well below what
 # the smallest Pi 4 the record names leaves the root: RAM less fiasco_reserve is 890 MiB
 # there.
 principal system
-  memory 137363456
+  memory 170934272
   grant @share.users
   domains 5
   names 64
@@ -66,7 +67,7 @@ machine
   console "/soc/serial@7e215040"
   hostlink "/soc/serial@7e201600"
   platform "raspi4b"
-  root_memory 193986560
+  root_memory 227557376
   system_baseline 48234496
   system_share @share.system
   users_share @share.users

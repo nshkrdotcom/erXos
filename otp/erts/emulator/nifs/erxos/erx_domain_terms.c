@@ -26,7 +26,9 @@ atom(ErlNifEnv *env, const char *name)
 
 /*
  * A checked parameter's value: an integer kind's as an integer, a
- * boolean as true or false, and text or bytes as a binary.
+ * boolean as true or false, text or bytes as a binary, and a member as
+ * the atom of its name, one the ABI declares, which the view has checked
+ * lies within its members (boot_parameter).
  */
 static bool
 parameter_term(ErlNifEnv *env, const erx_dom_parameter_t *parameter, ERL_NIF_TERM *value)
@@ -42,6 +44,9 @@ parameter_term(ErlNifEnv *env, const erx_dom_parameter_t *parameter, ERL_NIF_TER
 		return (true);
 	case ERX_MF_PARAMETER_BOOLEAN:
 		*value = atom(env, parameter->scalar != 0 ? "true" : "false");
+		return (true);
+	case ERX_MF_PARAMETER_MEMBER:
+		*value = atom(env, parameter->declared->members[parameter->scalar - parameter->declared->minimum]);
 		return (true);
 	case ERX_MF_PARAMETER_IDENTIFIER:
 	case ERX_MF_PARAMETER_NAMESPACE_PATH:

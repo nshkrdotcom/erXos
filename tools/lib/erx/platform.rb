@@ -88,8 +88,10 @@ module Erx
     # does not reach the image.
     def manifest_source(root) = [COMMON_MANIFEST_PATH, manifest_path].map { |path| File.binread(File.join(root, path)) }.join
     # The website's manifest, which only a board the website boots has: the development
-    # manifest without the domains the record's site_leaves_out names, each taken out
-    # with the room it took (Manifest::Edit.without_domain), which `tools/erx boot
+    # manifest without its apps row (Manifest::Edit.without_apps; docs/design-packaging.md,
+    # "The apps row": the site has no room for the row's memory, nor always a display for
+    # its services to name) and without the domains the record's site_leaves_out names,
+    # each taken out with the room it took (Manifest::Edit.without_domain), which `tools/erx boot
     # --without-web` builds the site's image from (InteractiveBoot) and the medium boots
     # start from (MediumBoot). It is made from the development manifest each time it is
     # read, so it never differs from it in anything but those domains. keep names domains
@@ -102,7 +104,7 @@ module Erx
       end
       raise Error, "the site manifest leaves out no #{(keep - leaves_out).join(', ')} to keep" unless (keep - leaves_out).empty?
 
-      (leaves_out - keep).reduce(manifest_source(root)) do |source, domain|
+      (leaves_out - keep).reduce(Manifest::Edit.without_apps(manifest_source(root))) do |source, domain|
         Manifest::Edit.without_domain(source, domain, units: record.fetch('units'))
       end
     end

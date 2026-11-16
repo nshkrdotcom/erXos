@@ -487,7 +487,7 @@ class AbiSchemaTest < Minitest::Test
     assert_equal 96, model.types.fetch('erx_pack_header').size
     assert_equal 64, model.types.fetch('erx_pack_entry').size
     assert_equal 32, model.types.fetch('erx_boot_locator').size
-    assert_equal 400, model.types.fetch('erx_manifest').size
+    assert_equal 440, model.types.fetch('erx_manifest').size
   end
 
   def test_nested_projection_cannot_hide_development_leaf
@@ -534,11 +534,30 @@ class AbiSchemaTest < Minitest::Test
   def test_service_parameters_are_tabled_and_a_set_or_a_limit_s_name_is_refused
     declared = "service shown 3\n  parameter area 2 u64 one range 1 9 checked_by grant\n"
     header = Erx::ABI::CEmitter.header(schema(FACET_ROW + declared))
-    assert_includes header, '{ ERX_SERVICE_SHOWN, 2, "area", ERX_MF_PARAMETER_U64, true, UINT64_C(1), UINT64_C(9) },'
+    assert_includes header, '{ ERX_SERVICE_SHOWN, 2, "area", ERX_MF_PARAMETER_U64, true, UINT64_C(1), UINT64_C(9), NULL },'
     assert_includes header, '#define ERX_SERVICE_PARAMETERS_MAX 1'
     ['  parameter many 2 u64 set 4 range 1 9 checked_by grant',
      '  parameter queue 2 u64 optional range 1 9 checked_by grant'].each do |line|
       assert_raises(Erx::ABI::SchemaError) { Erx::ABI::CEmitter.header(schema("#{FACET_ROW}service shown 3\n#{line}\n")) }
+    end
+  end
+
+  # A member parameter's bound is an enum the ABI declares, with no gap between its
+  # values, so the boot view's range check admits exactly its members, and its table row
+  # names them in value order. Each refused sample breaks only that rule: no such enum,
+  # a flag set, a gap.
+  MEMBER_KINDS = "enum mf_parameter_kind u32\n  value u64 1\n  value member 10\n" \
+                 "layout erx_mf_facet wire_le 8 8\n  field queue u64 0\n"
+
+  def test_a_member_parameter_names_an_enum_without_a_gap
+    declared = "service shown 3\n  parameter mode 1 member optional member shown_mode checked_by grant\n"
+    header = Erx::ABI::CEmitter.header(schema("#{MEMBER_KINDS}enum shown_mode u8\n  value ro 1\n  value rw 2\n#{declared}"))
+    assert_includes header, 'static const char *const shown_mode_members[] = { "ro", "rw" };'
+    assert_includes header,
+                    '{ ERX_SERVICE_SHOWN, 1, "mode", ERX_MF_PARAMETER_MEMBER, false, UINT64_C(1), UINT64_C(2), shown_mode_members },'
+    { 'no enum' => '', 'a flag set' => "flags shown_mode u8\n  bit ro 0\n  bit rw 1\n",
+      'a gap' => "enum shown_mode u8\n  value ro 1\n  value rw 3\n" }.each do |name, types|
+      assert_raises(Erx::ABI::SchemaError, name) { schema(MEMBER_KINDS + types + declared) }
     end
   end
 

@@ -18,7 +18,7 @@
 -define(TABLES, [principals, domains, sessions, limits, runtime_limits, lane_classes, units, devices,
                  windows, services, facets, facet_operations, facet_parameters, introductions,
                  images, extents, boot_order, liveness, shell_principals, partial_boot,
-                 starts, displays]).
+                 starts, displays, apps, app_services, packages, signers, development_key]).
 
 run([Corpus]) ->
     {ok, Bytes} = file:read_file(Corpus),
@@ -36,6 +36,12 @@ verdict(Record) ->
         {ok, View} ->
             {ok, _} = ?M:header(View),
             lists:foreach(fun(Table) -> rows(View, Table) end, ?TABLES),
+            %% The package process's reader answers every manifest the generated reader
+            %% accepts, refusing only an apps row without its app template's rows.
+            case erx_pkg_manifest:system_config(Record) of
+                {ok, #{}} -> ok;
+                {error, {apps, _}} -> ok
+            end,
             <<"ok\n">>;
         {error, #{reason := Reason, field := Field, offset := Offset}}
           when is_atom(Reason), is_binary(Field), is_integer(Offset) ->
