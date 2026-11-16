@@ -1689,7 +1689,15 @@ counted as `bad_element`, and the exchange goes on to the peer's
 genuine commit.
 
 Its states are wpa_supplicant's: nothing, committed, confirmed, accepted
-(`sae.h:113-115`), with committing while the holder makes the commit. How far the three functions are constant-time is a
+(`sae.h:113-115`), with two while the holder works: committing while it
+makes the commit, and keying while it makes the KCK of the peer's
+commit. A commit the checks pass moves committed to keying; the KCK
+moves keying to confirmed, with the confirm sent; and `bad_element`
+returns keying to committed, as it was before that commit. While
+keying, any other commit is dropped, counted as `sae_unexpected`, so
+the station confirms only over the commit whose KCK it asked for,\nwhatever order the events arrive in; a
+refusal still ends the exchange, and nothing is sent again, since the
+peer's commit answered the station's. How far the three functions are constant-time is a
 residual of [Security](#security). A network that offers SAE without
 hash-to-element in its RSNXE (bit 5, `ieee802_11_defs.h:632`) is not an
 SAE candidate: hunting-and-pecking derives its element per exchange, in

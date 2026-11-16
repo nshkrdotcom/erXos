@@ -14,14 +14,17 @@ reference first, then looks up the event's cell for the current state: an empty 
 drops the event, counted `unexpected_event`; a filled cell names the handler and the
 states it may leave the machine in, and a handler that returns any other state is a
 bug that ends the station. A handler that refuses its event returns `{drop, Check}`,
-counted by the check, and changes nothing else.
+counted by the check, and changes nothing else; SAE's drops, below, are counted the
+same way but keep the exchange erx_sae returns.
 
 The supplicant's state lives here: the replay watermark, the pending PTK and the key
 slots ("The key slots"). A set_keys request holds only the keys that differ from
 their slot's, each install has an id, and a confirmation confirms only the slots its
 install last filled, so no frame an attacker can send reinstalls a key (WF9). The
 machine derives no key: each PTK is a request to the key holder through
-erx_wifi_keys, whose answer the next step receives. SAE's exchange is erx_sae's.
+erx_wifi_keys, whose answer the next step receives. SAE's exchange is erx_sae's; its
+drops are counted as a handler's, with the exchange erx_sae returns kept, which is
+unchanged except after the holder's `bad_element`, which returns it to before the commit.
 
 Every frame here came from the air through the chip and is hostile: it is decoded by
 erx_wpa_key and accepted only after the checks of "The 4-way handshake" and "The
@@ -191,8 +194,10 @@ sae_step(#{sae := Sae0, ref := Ref, proof := Proof} = Join, Event, #{now := Now}
     Actions = [sae_action(Ref, Action) || Action <- SaeActions],
     Tested = case erx_sae:tested(Sae) of true -> tested; false -> Proof end,
     case Outcome of
+        %% The exchange a drop returns is kept: unchanged, but after the holder's
+        %% `bad_element`, which returns it to before the commit it dropped.
         {drop, Check} ->
-            {drop, Check};
+            {[], count(Check, Join#{sae := Sae})};
         {running, Deadline} ->
             {Actions, Join#{sae := Sae, proof := Tested, deadline := Deadline}};
         accepted ->

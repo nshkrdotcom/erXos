@@ -111,8 +111,20 @@ off_curve_element_dropped_then_genuine_commit_test() ->
     <<_:8/binary, ApScalar:32/binary, X:32/binary, Y:256>> = erx_sae_peer:ap_commit(Ap),
     {[{keys, Ask}], S1, {running, _}} = step(S, {auth_frame, peer_commit(ApScalar, <<X/binary, (Y bxor 1):256>>)}),
     {{error, bad_element}, H1} = erx_sae_peer:holder(Ask, H),
-    ?assertEqual({[], S1, {drop, bad_element}}, step(S1, {key, {error, bad_element}})),
-    {accepted, _, _, _, _} = run(S1, H1, Ap, [{auth_frame, erx_sae_peer:ap_commit(Ap)}]).
+    ?assertEqual({[], S, {drop, bad_element}}, step(S1, {key, {error, bad_element}})),
+    {accepted, _, _, _, _} = run(S, H1, Ap, [{auth_frame, erx_sae_peer:ap_commit(Ap)}]).
+
+%% While the holder makes the KCK of the peer's commit, a second commit, here a valid
+%% one of another access point, is dropped: the confirm is over the commit asked about.
+second_commit_while_keying_dropped_test() ->
+    {S, H, Ap0, Commit} = committed(#{}),
+    {[ApCommit], Ap} = erx_sae_peer:ap_take(Commit, Ap0),
+    {[{keys, Ask}], K, {running, _}} = step(S, {auth_frame, ApCommit}),
+    Other = erx_sae_peer:ap_new(#{pt => pt(), aa => ?AA, spa => ?SPA, rand => <<43:256>>, mask => <<1000033:256>>}),
+    ?assertEqual({[], K, {drop, sae_unexpected}}, step(K, {auth_frame, erx_sae_peer:ap_commit(Other)})),
+    ?assertMatch({[], _, {running, 5000}}, step(K, deadline, 1000)),
+    {Answer, H1} = erx_sae_peer:holder(Ask, H),
+    {accepted, _, _, _, _} = run(K, H1, Ap, [{key, Answer}]).
 
 scalar_out_of_range_test() ->
     {S, _H, Ap, _Commit} = committed(#{}),

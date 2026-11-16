@@ -7463,6 +7463,13 @@ document's "residual risks accepted" paragraph.
   - `erx_sae` and `erx_wpa_key` parse frames from the air with no fuzz target (WF6, "Untrusted
     input"); `erx_sae_tests` runs truncations and random bodies of its frames, which is not
     a fuzzer;
+  - SAE's `keying` state: no join-level case drives a holder's `bad_element` through
+    `erx_wifi_join`, whose `sae_step/4` keeps the exchange a drop returns (reverting it to
+    `{drop, Check}` fails no test), and the exploration's check that a counted drop changes
+    nothing but `counts` would fail on that answer; and a drop carries no deadline, so a
+    deadline met in `keying` followed by `bad_element` leaves no resend of the commit before
+    the exchange's end, which the station's ordering of the holder's answers keeps from
+    happening;
   - the join's state holds SAE's KCK while the exchange runs, so the station's process must
     keep it out of crash reports, `sys` and `/proc` with the logger filter below;
   - the join's exploration derives an SAE join's PTK from its fixed PMK, not from the

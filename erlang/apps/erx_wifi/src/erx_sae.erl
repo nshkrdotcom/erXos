@@ -23,13 +23,15 @@ number and the status, each a little-endian 16-bit field, then the fields of the
 commit or the confirm. Every frame comes from the air and is parsed once, here.
 
 The states are wpa_supplicant's four (`sae.h:113-115`), `nothing`, `committed` once the
-commit is sent, `confirmed` once the confirm is sent, and `accepted`, with `committing`
-while the holder makes the commit. The station's process hands the holder's answer to
-the join machine before any other event ("Concurrency and ordering"), so a `committed`
-exchange that has asked for the KCK of the peer's commit takes that answer next. The contract a step keeps, which erx_wifi_join's
-table checks: `{auth_tx, _}` never ends the exchange, and `{drop, Check}` comes with
-no action and the exchange unchanged, so the join machine counts it as any refused
-event. An action is `{auth_frame, Frame}`, a frame to send, or `{keys, Request}`,
+commit is sent, `confirmed` once the confirm is sent, and `accepted`, with two while the
+holder works: `committing` while it makes the commit, and `keying` while it makes the
+KCK of the peer's commit. In `keying` every other commit is dropped, so the confirm is
+always over the commit whose KCK it is; the holder's `bad_element` drops the commit
+asked about and returns the exchange to `committed`, as it was before that commit, for
+the peer's genuine one. The contract a step keeps, which erx_wifi_join's table checks:
+`{auth_tx, _}` never ends the exchange, and `{drop, Check}` comes with no action and
+the exchange unchanged, but for `bad_element`'s return to `committed`; the join machine
+keeps the exchange and counts the drop as any refused event. An action is `{auth_frame, Frame}`, a frame to send, or `{keys, Request}`,
 whose answer the next step receives as `{key, Answer}`.
 """.
 
@@ -48,7 +50,7 @@ whose answer the next step receives as `{key, Answer}`.
 -define(HEADER(Transaction, Status),
         ?ERX_IEEE80211_AUTH_ALGORITHM_SAE:16/little, Transaction:16/little, Status:16/little).
 
--type phase() :: nothing | committing | committed | confirmed | accepted.
+-type phase() :: nothing | committing | committed | keying | confirmed | accepted.
 %% A party's commit: its scalar, 32 bytes, and its element, both coordinates, 64.
 -type commit() :: #{scalar := <<_:256>>, element := <<_:512>>}.
 -opaque sae() :: #{ssid := binary(), spa := <<_:48>>, aa := <<_:48>>, identifier := binary() | none,
@@ -98,11 +100,13 @@ event(#{phase := nothing, ssid := Ssid, spa := Spa, aa := Aa} = Sae, start, Now)
 event(#{phase := committing} = Sae, {key, {ok, Scalar, Element}}, Now)
   when byte_size(Scalar) =:= ?SCALAR, byte_size(Element) =:= 2 * ?SCALAR ->
     transmit(Sae#{phase := committed, own := #{scalar => Scalar, element => Element}, resent := 0}, Now);
-event(#{phase := committed, peer := #{}} = Sae, {key, {ok, Kck}}, Now) when byte_size(Kck) =:= ?ERX_SAE_KCK_SIZE ->
+event(#{phase := keying} = Sae, {key, {ok, Kck}}, Now) when byte_size(Kck) =:= ?ERX_SAE_KCK_SIZE ->
     transmit(Sae#{phase := confirmed, kck := Kck, resent := 0}, Now);
-event(#{phase := committed, peer := #{}}, {key, {error, bad_element}}, _Now) ->
-    throw({drop, bad_element});
-event(#{phase := Phase} = Sae, {key, {error, _}}, _Now) when Phase =:= committing; Phase =:= committed ->
+%% The peer's element is off the curve: its commit is dropped as a failed check drops
+%% one, and the exchange is again the one before it, `committed` with no peer commit.
+event(#{phase := keying} = Sae, {key, {error, bad_element}}, _Now) ->
+    {[], Sae#{phase := committed, peer := none}, {drop, bad_element}};
+event(#{phase := Phase} = Sae, {key, {error, _}}, _Now) when Phase =:= committing; Phase =:= keying ->
     {[], Sae, {failed, bss}};
 event(_Sae, {key, _}, _Now) ->
     throw({drop, unasked_answer});
@@ -112,6 +116,8 @@ event(Sae, {auth_frame, Frame}, Now) ->
     frame(Sae, header(Frame), Now);
 event(#{ends := Ends} = Sae, deadline, Now) when Now >= Ends ->
     {[], Sae, {failed, class(Sae)}};
+%% Only a committed or confirmed exchange sends its frame again; a `keying` one waits,
+%% since the peer's commit has answered the station's.
 event(#{phase := Phase, resent := Resent} = Sae, deadline, Now)
   when Resent < ?RESENDS, (Phase =:= committed orelse Phase =:= confirmed) ->
     transmit(Sae#{resent := Resent + 1}, Now);
@@ -156,8 +162,10 @@ confirm(Kck, Sc, #{scalar := S1, element := E1}, #{scalar := S2, element := E2})
 header(<<?HEADER(Transaction, Status), Body/binary>>) -> {Transaction, Status, Body};
 header(_Frame) -> throw({drop, sae_malformed}).
 
-%% A frame before the station has sent its commit answers nothing it sent.
-frame(#{phase := Phase}, _Frame, _Now) when Phase =/= committed, Phase =/= confirmed ->
+%% A frame before the station has sent its commit, or once the exchange is accepted,
+%% answers nothing it sent. While `keying`, a refusal ends the exchange and any other
+%% frame is dropped.
+frame(#{phase := Phase}, _Frame, _Now) when Phase =:= nothing; Phase =:= committing; Phase =:= accepted ->
     throw({drop, sae_unexpected});
 frame(Sae, {?ERX_SAE_TRANSACTION_COMMIT, ?ERX_IEEE80211_STATUS_SAE_HASH_TO_ELEMENT, Body}, _Now) ->
     peer_commit(Sae, Body);
@@ -181,8 +189,9 @@ frame(_Sae, _Frame, _Now) ->
     throw({drop, sae_malformed}).
 
 %% The peer's commit, checked as `sae_parse_commit` checks it, then the holder asked
-%% for the KCK; or the end of the exchange when its Rejected Groups list names group
-%% 19, the station's only group.
+%% for its KCK, the exchange moving to `keying`; or the end of the exchange when its
+%% Rejected Groups list names group 19, the station's only group. A commit while
+%% `keying` or `confirmed` is dropped.
 peer_commit(#{phase := committed, ssid := Ssid, own := Own} = Sae, Body) ->
     {Peer, Elements} = commit_fields(Body),
     not reflects(Peer, Own) orelse throw({drop, sae_reflected}),
@@ -193,7 +202,8 @@ peer_commit(#{phase := committed, ssid := Ssid, own := Own} = Sae, Body) ->
             {[], Sae, {failed, bss}};
         false ->
             #{scalar := Scalar, element := Element} = Peer,
-            {[{keys, erx_wifi_keys:sae_key(Ssid, Scalar, Element, Rejected)}], Sae#{peer := Peer}, running(Sae)}
+            {[{keys, erx_wifi_keys:sae_key(Ssid, Scalar, Element, Rejected)}], Sae#{phase := keying, peer := Peer},
+             running(Sae)}
     end;
 peer_commit(_Sae, _Body) ->
     throw({drop, sae_unexpected}).

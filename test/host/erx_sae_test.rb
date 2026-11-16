@@ -50,7 +50,16 @@ class ErxSaeTest < Minitest::Test
              failure: failed('downgrade_list_naming_group_19_ends_the_exchange')),
     Seed.new(fault: 'a frame sent again without limit',
              anchor: 'when Resent < ?RESENDS,', replacement: 'when Resent >= 0,',
-             failure: failed('retry_limits'))
+             failure: failed('retry_limits')),
+    Seed.new(fault: 'no keying state: a second commit taken while the KCK is made',
+             anchor: 'peer_commit(#{phase := committed, ssid := Ssid, own := Own} = Sae, Body) ->',
+             replacement: 'peer_commit(#{phase := Phase, ssid := Ssid, own := Own} = Sae, Body) ' \
+                          'when Phase =:= committed; Phase =:= keying ->',
+             failure: failed('second_commit_while_keying_dropped')),
+    Seed.new(fault: "the holder's bad_element leaving the exchange keying",
+             anchor: '{[], Sae#{phase := committed, peer := none}, {drop, bad_element}}',
+             replacement: '{[], Sae, {drop, bad_element}}',
+             failure: failed('off_curve_element_dropped_then_genuine_commit'))
   ].freeze
 
   def test_eunit_cases_pass
