@@ -7396,6 +7396,35 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] WiFi supplicant cores (`erlang/apps/erx_wifi`, `erx_wpa_kdf`, `erx_wpa_key`;
+  [design-wifi.md](docs/design-wifi.md#the-supplicant)), left by the first slice:
+  - message 2 carries only the RSN element; wpa_supplicant adds the association's RSNXE
+    (`rsn_supp/wpa.c:1107-1110`) and hostapd deauthenticates when it is missing
+    (`src/ap/wpa_auth.c:4085-4099`), so SAE with hash-to-element needs `build(message_2, ...)`
+    to take the association's elements, and design-wifi.md's "answers message 2 with its RSN
+    element" the same correction;
+  - the HMAC-SHA1-128 MIC and the bytes the MIC covers have no independent oracle: add an
+    RFC 2202 vector cut to 16 bytes and a recorded hostapd message 3 checked through
+    `decode`, `mic_input` and `check_mic`, each with a seeded fault;
+  - the modules' header comments become `-moduledoc` and each export gets a `-doc`
+    (docs/style.md, Erlang);
+  - the MIC input ends at the key data, while wpa_supplicant covers the whole EAPOL body
+    (`wpa.c:4005`); a body longer than its key data fails the MIC (safe, but not
+    wpa_supplicant's behavior);
+  - key data is decoded whole before the padding cut, so bytes after the padding's start must
+    parse, and a lone trailing byte other than 0 or 0xdd is refused, where wpa_supplicant
+    ignores both; the clean fix is an end-marker element in the ABI's element sequences
+    (docs/design-abi.md, "Element sequences");
+  - a GTK KDE of key id 0 is accepted; the slots are ids 1 to 3, so the bound goes into
+    `abi/formats/ieee80211.txt` beside the IGTK's, and whether a second RSN element in message
+    3 is allowed is checked against the standard (the codec refuses it);
+  - hand-copied facts: `-type akm()` repeats the `ieee80211_akm` enum (the generator could
+    emit a type per enum), and the 64- and 48-bit widths of the RSC, IPN and unwrap
+    semiblock are written beside their layout counts;
+  - ordering: `erx_wifi_report`'s logger filter (design-wifi.md, "Security") must land with
+    the first process that calls these cores, since a `function_clause` in `pmk/2` or
+    `build/4` carries the passphrase or the KCK in its arguments.
+
 * [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
