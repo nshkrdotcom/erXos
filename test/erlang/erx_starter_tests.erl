@@ -73,7 +73,8 @@ packages_test_() ->
     {foreach, fun() -> setup(fun(_Dir) -> ok end, answer, (manifest())#{packages := #{<<"dash">> => true}}) end,
      fun cleanup/1, [fun a_published_app_has_a_keeper_row/1,
                      fun a_restarted_table_keeps_the_last_package_set/1,
-                     fun a_restarted_table_stops_a_held_row_its_set_dropped/1]}.
+                     fun a_restarted_table_stops_a_held_row_its_set_dropped/1,
+                     fun a_publication_of_an_ended_lifetime_is_refused/1]}.
 
 unreadable(Dir) ->
     file:make_dir(filename:join(Dir, "rc.conf")).
@@ -347,6 +348,21 @@ a_restarted_table_stops_a_held_row_its_set_dropped(_) ->
             ok = erx_starter_records:record_set([]),
             ok = restart_table(),
             ok = wait_until(fun() -> not is_process_alive(Dash) end),
+            ?assertEqual(unmade, run(<<"dash">>))
+    end.
+
+%% A publication names its lifetime, and the table refuses one whose lifetime has
+%% ended with eio, taking nothing of it (docs/design-packaging.md, "The package
+%% lifetime"): dash gets no row and no session.
+a_publication_of_an_ended_lifetime_is_refused(_) ->
+    fun() ->
+            ok = watch(),
+            _ = started(?KIOSK),
+            _ = started(?LOGGER),
+            {Ended, Ref} = spawn_monitor(fun() -> ok end),
+            receive {'DOWN', Ref, process, Ended, _} -> ok end,
+            ?assertEqual({error, eio}, erx_starter:packages(Ended, [package(<<"dash">>, system)])),
+            ?assertEqual(none, started_within({app, <<"dash">>}, 200)),
             ?assertEqual(unmade, run(<<"dash">>))
     end.
 

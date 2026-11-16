@@ -129,10 +129,13 @@ command(Command) ->
 -doc """
 Takes Set, the package set the package process Lifetime publishes
 (docs/design-packaging.md, "Boot and recovery", step 5), and answers ok
-once every app the set drops has no session; or {error, no_table} while
-no table runs, which ends the publishing lifetime as a failed change does.
+once every app the set drops has no session; {error, eio}, taking nothing
+of the set, when Lifetime has ended by the time the table takes it, as
+every taker of a lifetime's requests refuses them ("The package
+lifetime"); or {error, no_table} while no table runs, which ends the
+publishing lifetime as a failed change does.
 """.
--spec packages(pid(), [erx_pkg_plan:published()]) -> ok | {error, no_table}.
+-spec packages(pid(), [erx_pkg_plan:published()]) -> ok | {error, eio | no_table}.
 packages(Lifetime, Set) ->
     try gen_server:call(?MODULE, {packages, Lifetime, Set}, infinity)
     catch exit:{noproc, _} -> {error, no_table}
@@ -273,8 +276,8 @@ handle_continue(read, State) ->
 
 handle_call({command, Command}, From, State) ->
     {noreply, take(Command, From, State)};
-handle_call({packages, _Lifetime, Set}, From, State) ->
-    {noreply, take({packages, Set}, From, State)};
+handle_call({packages, Lifetime, Set}, From, State) ->
+    {noreply, take({packages, Lifetime, Set}, From, State)};
 handle_call(rows, _From, State) ->
     {reply, table(State), State}.
 
@@ -439,11 +442,19 @@ make(Text, State) ->
 %% undone when the table is made. A command that writes rc.conf before the file
 %% has been read is refused, so it never writes over settings it has not read;
 %% start and stop act on the table as it is. A publication is taken whether or not
-%% the table is made.
-run({packages, Set}, From, State) ->
-    Published = publish(Set, State),
-    gen_server:reply(From, ok),
-    next(Published);
+%% the table is made, unless its lifetime has ended by the time the table takes
+%% it, its caller gone with it, and the next lifetime's recovery publishes in
+%% its place.
+run({packages, Lifetime, Set}, From, State) ->
+    case is_process_alive(Lifetime) of
+        true ->
+            Published = publish(Set, State),
+            gen_server:reply(From, ok),
+            next(Published);
+        false ->
+            gen_server:reply(From, {error, eio}),
+            next(State)
+    end;
 run(_Command, From, #{merged := none} = State) ->
     gen_server:reply(From, {error, rc_conf_unread}),
     next(State);

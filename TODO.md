@@ -101,9 +101,8 @@ it; git history is the record of completed work.
   bounded read at a time (Phase 1: the storage domain is trusted).
 * [Medium] apps, the package set's publication (`erlang/apps/erx_starter/src/erx_starter.erl`,
   `publish/2`): the decision which keepers a set drops is made in the effect layer, not in
-  `erx_start_table` beside `reconcile/3`. `packages/2` ignores its `Lifetime`, which the design checks
-  (docs/design-packaging.md, "The package lifetime"). Until the boot's set arrives, rc.conf's lines for
-  apps are logged as `{undeclared, App}` and shown as skipped.
+  `erx_start_table` beside `reconcile/3`. Until the boot's set arrives, rc.conf's lines for apps are
+  logged as `{undeclared, App}` and shown as skipped.
 * [Medium] apps, chokepoints (`tools/lib/erx/chokepoint_rules/apps.rb`): `starter-reach` covers the start
   table and its keepers, not packaging's `erx_pkg*`, and design-packaging.md's own checks are not built:
   that `erx_pkg` and `erx_pkg_io` call no `erx_domain:stop/2`, and that only `erx_pkg` calls
