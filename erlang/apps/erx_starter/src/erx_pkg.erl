@@ -29,17 +29,13 @@ installed before it when the storage domain made it in time. The request
 goes out as the process starts and only the `list` action waits for its
 answer; an error answer, a domain service that ended, lists all the same.
 
-A restarted table asks for the set with `ask_set/0`, a message: once the
-recovery has published, the process publishes its last set again; a
-recovery still running publishes as its last action anyway.
-
 `packages/0` answers the scan and each package's record, which
 `/proc/packages` shows; until the recovery is done the scan is `unknown`
 and no package is listed.
 """.
 -behaviour(gen_server).
 
--export([start_link/1, packages/0, ask_set/0, system_config/0, system_config/2]).
+-export([start_link/1, packages/0, system_config/0, system_config/2]).
 -export_type([config/0]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2]).
 
@@ -121,18 +117,6 @@ broken_image(Reason) ->
 development_signer(none) -> [];
 development_signer(Key) -> [{development, Key}].
 
--doc """
-The start table's ask for the package set, which the package process
-answers by publishing it (docs/design-apps.md, "Concurrency"): sent, not
-waited on, and nothing when no package process runs.
-""".
--spec ask_set() -> ok.
-ask_set() ->
-    case whereis(?MODULE) of
-        undefined -> ok;
-        Pid -> Pid ! ask_set, ok
-    end.
-
 init(Config) ->
     {ok, #{config => Config, scan => unknown, packages => #{}, namespace => erx_domain:system_namespace()},
      {continue, recover}}.
@@ -150,17 +134,7 @@ handle_cast(_Message, State) ->
 %% The plan's next action, carried out in a message of its own.
 handle_info(step, #{action := Action, plan := Plan} = State) ->
     Answer = effect(Action, State),
-    recover(erx_pkg_plan:recover(Answer, Plan), published(Action, Answer, State));
-%% The table's ask (ask_set/0): the set published again once the recovery has
-%% published it, a publication that fails ending the lifetime as any failed
-%% change does; a recovery still running publishes as its last action.
-handle_info(ask_set, #{set := Set} = State) when not is_map_key(action, State) ->
-    case erx_starter:packages(self(), Set) of
-        ok -> {noreply, State};
-        {error, Reason} -> {stop, {publication, Reason}, State}
-    end;
-handle_info(ask_set, State) ->
-    {noreply, State};
+    recover(erx_pkg_plan:recover(Answer, Plan), State);
 handle_info(Message, #{namespace := Request} = State) when Request =/= settled ->
     case gen_server:check_response(Message, Request) of
         no_reply -> {noreply, State};
@@ -181,10 +155,6 @@ namespace_settled(Answer, State) ->
         #{} -> ok
     end,
     {noreply, State}.
-
-%% The set the table took, kept for the table's ask.
-published({publish, Set}, ok, State) -> State#{set => Set};
-published(_Action, _Answer, State) -> State.
 
 %% The listing waits for the namespace (namespace_settled/2); every other
 %% action is carried out in the next message.

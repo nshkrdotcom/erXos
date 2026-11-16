@@ -183,9 +183,9 @@ state(Lib, Principals, Opts) ->
     %% principal's ending domains to be retired, with the timer of its bound (start/3).
     %% Mints is erx_domain_mints' state, its pending operations' deadlines by tag in
     %% mint_timers, and mint_counts and mint_log what was refused or dropped (note/4).
-    %% Served holds, by configured row and by {template, T}, the facets of services the
-    %% system domain serves that the manifest grants the row or the template's sessions,
-    %% each its service's name, its kind (served_kind/2) and the grant's limits.
+    %% Served holds, by configured row, the facets of services the system domain serves
+    %% that the manifest grants the row, each its service's name, its kind (served_kind/2)
+    %% and the grant's limits; a session's are its own facet rows (served/3).
     %% Apps is the boot's registry of app principals (erx_principal), of the apps row's
     %% max entries, as the library placed them (app_entries/1, the library's apps/0).
     %% Facet_rows holds every facet row of the manifest by its index in the facet table,
@@ -290,9 +290,12 @@ booted(#{lib := Lib} = State) ->
             Windows = [Name || {_Server, Name, ?ERX_SERVICE_WINDOWS} <- maps:get(services, Boot, [])],
             Mints = erx_domain_mints:new((maps:get(mint_config, State))#{services => Services,
                                            grants => Minted, files => Files, windows => Windows}),
-            Served = maps:groups_from_list(fun({Grantee, _, _, _}) -> Grantee end,
+            %% Only configured rows, each its index, read Served: a {template, T}
+            %% grant reaches each session through the session's own facet rows, and
+            %% a grant to the system domain is planned by no ready answer.
+            Served = maps:groups_from_list(fun({Row, _, _, _}) -> Row end,
                                            fun({_, Name, _, Limits}) -> {Name, served_kind(Name, Files), Limits} end,
-                                           System),
+                                           [Grant || {Row, _, _, _} = Grant <- System, is_integer(Row)]),
             %% The system domain's own facets of configured domains: /data only where the
             %% manifest grants the system domain data (docs/design-files.md, "A facet's
             %% mount").
@@ -1036,7 +1039,7 @@ mint_files(Id, DomainPid, Name, Grant, Exports) ->
     end.
 
 %% The facets of services the system domain serves that the manifest grants a configured
-%% domain's row or a session's template, each {Kind, Behind, Limits} by its service's
+%% domain's row or that a session's own rows hold, each {Kind, Behind, Limits} by its service's
 %% name, and none for a domain a request made: Behind is the process the service
 %% named for it with erx_facet:serve/2, which the system domain's services do as they
 %% start. For a message service Limits are the grant's limits that erx_facet applies,

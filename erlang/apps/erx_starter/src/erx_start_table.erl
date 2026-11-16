@@ -473,8 +473,10 @@ row runs again only when nothing stopped it:
 * a row that is down or stopped stays so, whatever its settings: only
   `start`, or `enable`, which starts its row, runs it again.
 
-Stop lists every held name that stops, in Merged's order and then any
-Merged does not name; Start lists names in Merged's order.
+A held name Merged does not name stops, as a row not enabled does: an
+app's row whose drop a table's end cut short (erx_starter). Stop lists
+names in Merged's order and then those; Start lists names in Merged's
+order.
 """.
 -spec reconcile(held(), [name()], [merged()]) -> {Stop :: [name()], Start :: [name()]}.
 reconcile(Held, Stopped, Merged) ->

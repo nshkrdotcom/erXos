@@ -85,7 +85,7 @@ it; git history is the record of completed work.
   recovery to the publication and crashed there on `erx_starter:packages/2`, which does not exist (`undef`),
   four times, until erx_pkg_sup reached its intensity and stopped; the start service and the rest of the
   boot carried on, and `erx_pkg:packages/0` answers `noproc`. The publication (`erx_starter:packages/2`: the set's rows after the manifest's, kept by keepers of
-  `{app, Name}`, a dropped app's keepers stopped before the answer, the table's ask on restart) and the
+  `{app, Name}`, a dropped app's keepers stopped before the answer, the set kept across a restart of the table) and the
   listing's wait for the system domain's namespace are built, and the apps suite's unlisted boot checks
   `{packages,4,#{packages => #{},scan => {ok,0}}}`. What remains: a listing that still fails after the wait
   leaves the scan `unknown`, and nothing lists the installed packages again before the next lifetime (the later
@@ -100,14 +100,9 @@ it; git history is the record of completed work.
   directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
   bounded read at a time (Phase 1: the storage domain is trusted).
 * [Medium] apps, the package set's publication (`erlang/apps/erx_starter/src/erx_starter.erl`,
-  `publish/2` and `apply_text/2`): the decision which keepers a set drops and the filter that keeps a
-  restarted table from stopping an app's held row before the set returns are made in the effect layer,
-  not in `erx_start_table` beside `reconcile/3`, whose "stop a held name Merged does not name" branch is
-  now dead in its one caller; no case restarts the table while an app runs or exercises `erx_pkg:ask_set/0`,
-  and no seeded fault removes the filter. The table keeps `rows`/`grants` beside `manifest_rows`/
-  `manifest_grants` (two copies of the manifest's rows). `packages/2` ignores its `Lifetime`, which the
-  design checks (docs/design-packaging.md, "The package lifetime"). Until the set arrives, rc.conf's lines
-  for apps are logged as `{undeclared, App}` and shown as skipped.
+  `publish/2`): the decision which keepers a set drops is made in the effect layer, not in
+  `erx_start_table` beside `reconcile/3`. Until the boot's set arrives, rc.conf's lines for apps are
+  logged as `{undeclared, App}` and shown as skipped.
 * [Medium] apps, chokepoints (`tools/lib/erx/chokepoint_rules/apps.rb`): `starter-reach` covers the start
   table and its keepers, not packaging's `erx_pkg*`, and design-packaging.md's own checks are not built:
   that `erx_pkg` and `erx_pkg_io` call no `erx_domain:stop/2`, and that only `erx_pkg` calls
