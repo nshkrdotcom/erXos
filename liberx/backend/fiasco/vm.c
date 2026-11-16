@@ -368,9 +368,9 @@ object_fill(uint32_t index, uint64_t size, const erx_backend_vm_effects_t *effec
 }
 
 int
-erx_fiasco_vm_object_create(uint32_t object, uint64_t size)
+erx_fiasco_vm_object_create(uint32_t object, uint64_t size, bool jit)
 {
-	return (object_fill(object, size, &vm_no_effects, ERX_FIASCO_VM_PAGES, 0));
+	return (object_fill(object, size, &vm_no_effects, jit ? ERX_FIASCO_VM_JIT : ERX_FIASCO_VM_PAGES, 0));
 }
 
 int
@@ -381,6 +381,17 @@ erx_fiasco_vm_paged_create(uint32_t object, uint64_t size, bool code)
 	if (status == ERX_OK)
 		vm_object(object)->traits.code = code;
 	return (status);
+}
+
+/* The parent is read by value: object_fill's room may move every record. */
+int
+erx_fiasco_vm_child_create(uint32_t object, uint32_t parent, uint64_t offset, uint64_t size)
+{
+	const erx_fiasco_vm_traits_t traits = vm_object(parent)->traits;
+	const uint64_t parent_size = vm_object(parent)->size;
+	const int status = erx_fiasco_vm_child_rule(traits, parent_size, offset, size);
+
+	return (status != ERX_OK ? status : object_fill(object, size, &vm_no_effects, ERX_FIASCO_VM_CHILD, 0));
 }
 
 /*

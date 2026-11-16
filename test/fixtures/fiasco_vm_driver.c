@@ -894,7 +894,8 @@ check_mappings(void)
  * The object rules (vm_rules.c) over every kind, code and sealed flag and protection,
  * judged by what each must never allow: nothing writes a paged object through a
  * mapping or after its seal, an unsealed one maps nowhere, only pool pages and a
- * sealed code object run, and only the root makes code.
+ * sealed code object run, only the root makes code, a child is made only of an
+ * immutable object's range and never runs, and nothing copies a JIT object.
  */
 static void
 check_object_rules(void)
@@ -902,15 +903,20 @@ check_object_rules(void)
 	static const uint32_t prots[] = { ERX_PROT_NONE, ERX_PROT_R, ERX_PROT_RW, ERX_PROT_RX };
 	const erx_fiasco_vm_traits_t pages = { .kind = ERX_FIASCO_VM_PAGES };
 	const erx_fiasco_vm_traits_t physical = { .kind = ERX_FIASCO_VM_PHYSICAL };
+	const erx_fiasco_vm_traits_t jit = { .kind = ERX_FIASCO_VM_JIT };
+	const erx_fiasco_vm_traits_t sealed = { .kind = ERX_FIASCO_VM_PAGED, .sealed = true };
+	const uint64_t huge = UINT64_MAX - PAGE + 1;
 
 	current_case = "object rules";
-	for (int kind = ERX_FIASCO_VM_PAGES; kind <= ERX_FIASCO_VM_PAGED; kind++)
+	for (int kind = ERX_FIASCO_VM_PAGES; kind <= ERX_FIASCO_VM_JIT; kind++)
 		for (unsigned flags = 0; flags < 4; flags++) {
 			const erx_fiasco_vm_traits_t object = { .kind = (erx_fiasco_vm_kind_t)kind, .code = (flags & 1) != 0,
 			    .sealed = (flags & 2) != 0 };
 			const bool paged = kind == ERX_FIASCO_VM_PAGED;
 			const int copy = erx_fiasco_vm_copy_rule(object, pages);
 			const int supply = erx_fiasco_vm_supply_rule(object, pages);
+			const bool immutable = kind == ERX_FIASCO_VM_SLICE || (paged && object.sealed);
+			const int child = erx_fiasco_vm_child_rule(object, 4 * PAGE, PAGE, 2 * PAGE);
 
 			for (size_t index = 0; index < sizeof(prots) / sizeof(prots[0]); index++) {
 				const uint32_t prot = prots[index];
@@ -926,11 +932,17 @@ check_object_rules(void)
 				if (paged && object.sealed && object.code && (prot == ERX_PROT_R || prot == ERX_PROT_RX) &&
 				    map != ERX_OK)
 					fail("a sealed code object does not map to run", prot);
-				if (prot == ERX_PROT_RX && map == ERX_OK && kind != ERX_FIASCO_VM_PAGES &&
+				if (prot == ERX_PROT_RX && map == ERX_OK && kind != ERX_FIASCO_VM_PAGES && kind != ERX_FIASCO_VM_JIT &&
 				    !(paged && object.code && object.sealed))
 					fail("a map runs what may not run", (uint64_t)kind);
+				if (kind == ERX_FIASCO_VM_CHILD && map != (prot == ERX_PROT_RX ? ERX_ERIGHTS : ERX_OK))
+					fail("a child's map", prot);
 				checks++;
 			}
+			if (immutable && child != ERX_OK)
+				fail("a child of an immutable object refused", (uint64_t)child);
+			if (!immutable && child != ERX_ETYPE)
+				fail("a child of an object that may change accepted", (uint64_t)kind);
 			if (paged && copy != ERX_ERIGHTS)
 				fail("a paged object takes a copy", (uint64_t)copy);
 			if (!paged && supply != ERX_ETYPE)
@@ -963,7 +975,23 @@ check_object_rules(void)
 		fail("code made outside the root", 0);
 	if (erx_fiasco_vm_paged_rule(ERX_MEM_CODE, PAGE, true) != ERX_OK)
 		fail("the root refused code", 0);
-	checks += 2;
+	if (erx_fiasco_vm_child_rule(sealed, 4 * PAGE, 0, 4 * PAGE) != ERX_OK ||
+	    erx_fiasco_vm_child_rule(sealed, 4 * PAGE, 3 * PAGE, PAGE) != ERX_OK)
+		fail("a child of a range inside its parent refused", 0);
+	if (erx_fiasco_vm_child_rule(sealed, 4 * PAGE, 3 * PAGE, 2 * PAGE) != ERX_ERANGE ||
+	    erx_fiasco_vm_child_rule(sealed, 4 * PAGE, 4 * PAGE, PAGE) != ERX_ERANGE)
+		fail("a child past its parent's end", 0);
+	/* An offset and a size whose sum wraps to a page inside the parent. */
+	if (erx_fiasco_vm_child_rule(sealed, huge, 2 * PAGE, huge) != ERX_ERANGE)
+		fail("a child whose range wraps", 0);
+	if (erx_fiasco_vm_child_rule(sealed, 4 * PAGE, 0, 0) != ERX_EINVAL ||
+	    erx_fiasco_vm_child_rule(sealed, 4 * PAGE, 1, PAGE) != ERX_EINVAL ||
+	    erx_fiasco_vm_child_rule(sealed, 4 * PAGE, 0, PAGE + 1) != ERX_EINVAL)
+		fail("a child's bad arguments accepted", 0);
+	if (erx_fiasco_vm_copy_rule(pages, jit) != ERX_ETYPE || erx_fiasco_vm_copy_rule(jit, pages) != ERX_ETYPE ||
+	    erx_fiasco_vm_supply_rule((erx_fiasco_vm_traits_t){ .kind = ERX_FIASCO_VM_PAGED }, jit) != ERX_ETYPE)
+		fail("a JIT object copied", 0);
+	checks += 7;
 }
 
 /* An index always has twice the slots of the pages it might hold, and fills whole pages. */

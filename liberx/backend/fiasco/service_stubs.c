@@ -457,6 +457,30 @@ erx_mem_seal(uint64_t mem)
 	return (erx_fiasco_service_call(ERX_FIASCO_CALL_MEM_SEAL, &request, sizeof(request), &reply));
 }
 
+/*
+ * A child is a private copy here (docs/design-stopgap.md, "The call table"): the
+ * service makes it, its parent and range checked, and erx_mem_copy fills it 64 pages a
+ * request; a failed copy closes it, which leaves nothing of it.
+ */
+int
+erx_mem_child(uint64_t parent, uint64_t budget, uint64_t offset, uint64_t size, uint64_t *child)
+{
+	const erx_fiasco_mem_child_request_t request = { .caller = erx_fiasco_thread_self()->index, .parent = parent,
+	    .budget = budget, .offset = offset, .size = size };
+	erx_fiasco_reply_t reply;
+	int status = erx_fiasco_service_call(ERX_FIASCO_CALL_MEM_CHILD, &request, sizeof(request), &reply);
+
+	if (status != ERX_OK)
+		return (status);
+	status = erx_mem_copy(reply.first, 0, parent, offset, size);
+	if (status != ERX_OK) {
+		(void)erx_cap_close((erx_cap_t){ .raw = reply.first });
+		return (status);
+	}
+	*child = reply.first;
+	return (ERX_OK);
+}
+
 int
 erx_cap_dup(uint64_t cap, uint64_t *copy)
 {
