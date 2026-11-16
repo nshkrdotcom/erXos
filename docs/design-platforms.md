@@ -145,7 +145,7 @@ belong to the driver table of
 | IOMMU | SMMUv3, for PCIe only | none described | none assigned to Ethernet, USB or the SD controllers |
 | PCIe bridge | ECAM (`pci-host-ecam-generic`) | `brcm,bcm2711-pcie`, a closed bus with the VL805 at its one position ([design-pcie.md](design-pcie.md#the-bridge-seam), [design-usb.md](design-usb.md#the-bcm2711-bridge)) | `brcm,bcm2712-pcie` |
 | PCIe configuration space held by | the PCIe domain, alone | the PCIe domain, alone | the PCIe domain, alone |
-| Random generator | none; `/chosen/rng-seed` | RNG200, read when `/chosen` holds no seed | RNG200, read when `/chosen` holds no seed |
+| Random generator | none; `/chosen/rng-seed` | RNG200, read when `/chosen`'s seeds are short ([Entropy sources](#entropy-sources)) | RNG200, read when `/chosen`'s seeds are short ([Entropy sources](#entropy-sources)) |
 | Watchdog | none; the kernel's timer alone | power-management watchdog | power-management watchdog |
 | Crash record | the early console, whose log the harness keeps | the early console, and the crash region in RAM | the early console, and the crash region in RAM |
 | Unconfined DMA devices, each in a domain of its own in a release build | the virtio-mmio devices | the SD controller, Ethernet, the VL805 | the SD controllers, RP1, a function on the external connector |
@@ -977,8 +977,9 @@ allowed only a confined one.
 
 QEMU passes 32 bytes in `/chosen/rng-seed`. Both boards have an RNG200
 random generator, which the platform layer reads, 32 bytes, when the
-firmware wrote neither `rng-seed` nor `kaslr-seed` into `/chosen`, and
-for which the kernel waits at most 100 ms; the bytes seed the kernel's
+firmware's `rng-seed` and `kaslr-seed` in `/chosen` hold fewer than 32
+bytes together, the least a release runs on, and for which the kernel
+waits at most 100 ms; the bytes seed the kernel's
 generator at boot
 ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy),
 [research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1)).

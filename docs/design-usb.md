@@ -2632,20 +2632,25 @@ kernel; [The Phase 1 part](#the-phase-1-part) says what the backend and
 the manifest check add. Phase 1's residuals for USB and PCIe, each
 recorded here as the design's and in `TODO.md` when the code lands:
 
-* **No isolation between tasks.** Fiasco promises none: a task that
-  bypasses `liberx` is stopped by nothing
-  ([design-fiasco.md](design-fiasco.md#what-phase-1-code-must-not-assume)).
-  The PCIe domain, the USB domain and the display domain are apart by
-  convention. The containment cases of R4 whose verdict is user-mode
+* **Isolation between tasks rests on Fiasco and the root.** A task holds
+  only the capabilities the root placed in it, at the rights its
+  creator's mask allowed, and the root checks every service call against
+  its record of them, so a task that bypasses `liberx` with raw
+  invocations or requests is held to the same rights
+  ([design-fiasco.md](design-fiasco.md#who-holds-what)); what that
+  isolation lacks against erXos's kernel is a row of
+  [its downsides](design-fiasco.md#downsides-against-erxoss-kernel).
+  The PCIe domain, the USB domain and the display domain are apart as any
+  two domains are. The containment cases of R4 whose verdict is user-mode
   code's, a function's answer to a malformed descriptor, report or CSW,
   run and count on Fiasco.
-* **No kernel-enforced bounds.** Budgets are records on Fiasco
-  ([design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)), so
-  nothing holds the USB domain to its memory or CPU budget, and nothing
-  protects a neighbour's latency from it: the root's one service thread
-  carries every doorbell and acknowledgement. Only the cases that check
-  those kernel guarantees, a domain held to its budget and a
-  neighbour's latency, report `unsupported` here. R6's bounds are the
+* **Memory walls, no CPU bound.** The USB domain's budget is a wall at
+  its guarantee, its kernel memory a Fiasco factory of its own (FD25), so
+  an allocation past it fails with `ERX_ENOMEM` as on erXos's kernel; its
+  CPU grant places its threads but bounds no time (FD15), so only the
+  bands protect a neighbour's latency from it. The cases that check a
+  CPU bound, a neighbour's latency within one band, report `unsupported`
+  here. R6's bounds are the
   stack's own code and are tested on both phases alike: descriptor and
   report bounds, queue and block capacities, one bitmap in flight per
   hub, the enumeration throttle, process counts per function and medium,

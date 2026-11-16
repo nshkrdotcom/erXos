@@ -189,6 +189,8 @@ each a bug in `TODO.md`:
 * `erx_thread_set_affinity` and a thread's start pass the caller's mask to Fiasco unnarrowed, and a thread with no mask stays on the root service's CPU (`service.c`, `service_thread_set_affinity` and `service_sched_param`).
 * `task_write` is answered for every task (`service.c`, `service_task_write`), and a boot whose seed is the counter alone goes on in every build (`entropy.c`, `erx_fiasco_entropy_init`); the Raspberry Pi 4 reads its RNG200 only when `/chosen` holds no seed at all.
 * `erx_machine_end` resets for every `how` but `ERX_END_OFF`, `ERX_END_TRIAL` included.
+* A missed pet and a root fault power the machine off rather than reset it (`end.c`, `erx_fiasco_end_watchdog`;
+  `service.c`, `service_fault`).
 
 ## The construction
 
@@ -219,6 +221,23 @@ mapping), so a placement of a task, factory, thread or scheduler capability fail
 test that tries one is kept as a build that must fail. The root's receive buffer register is
 zeroed after every `sigma0` call that arms it (`vm.c:396`), and the decoder refuses a request
 whose tag carries items, so no request maps anything into the root.
+
+**A step that takes kernel memory finishes or leaves nothing.** Fiasco charges what a placement or a
+map needs to the receiving task's quota, which is its domain's factory: a placement may need a new
+capability-table page (`obj_space_phys_util.cpp:163,226`), refused as `Insert_err_nomem`
+(`map_util-objs.cpp:117-127`), and a memory map a new page-table page (`Mem_space::v_insert`,
+`arm/mem_space-arm.cpp:229-233`) and its mapping-database node (`Treemap::insert`, `mapdb.cpp:858`),
+refused as `L4_error::Map_failed` (`map_util.cpp:735-760,774-775`). A factory's create fails the same
+way, from the factory it is made from. A domain reaches any of these refusals at will, by spending
+its factory. So three functions of the root take every such step: its one placement function and its
+one map function, the only code that maps into a task, and its one factory create. Each writes the
+root's record only once Fiasco has accepted the step, and answers a refusal as `ERX_ENOMEM`, the
+domain's own. The call that met it then undoes what that call created, the maps it
+made and the objects it made, and returns `ERX_ENOMEM`; undoing unmaps and deletes, which free and so
+take no kernel memory. The two calls that are sequences of independent items keep the items before
+the refused one, as their rows say: a pass (FD4) and an image load (FD10). A refused unmap or delete
+means the root's records and Fiasco's tables disagree, a defect of the root, which ends the machine
+with the reason; nothing else Fiasco refuses does.
 
 One object every thread reaches without a slot is itself: Fiasco resolves the special selector to
 the calling thread with the rights `CWS` (`Obj_cap::deref`, `thread_object.cpp:61-75`). Every
@@ -276,8 +295,9 @@ acknowledgement check no right (`Irq_sender::kinvoke` and `dispatch_irq_proto`, 
 the type gives `trigger` without `ack` (`abi/kernel.txt:505-506`), a difference FD13 records. A ringer's acknowledgement of a
 peer's doorbell does nothing, since a software object has no line to mask
 ([Interrupts and readiness](#interrupts-and-readiness)), and a device line is placed only in the
-domain that holds its device. Pass sets are checked by the root at each pass, and only the root
-passes.
+domain that holds its device. Only the root passes, and every pass it makes is a creator's into a
+space the creator made, which pass sets do not bind on erXos's kernel either
+([Passing a handle](#passing-a-handle)), so the creator's mask is what narrows it.
 
 ### Destroying an object
 
@@ -308,12 +328,16 @@ holds:
 * **What the root holds for the domain.** Some of a domain's cost lands on the root, not on the
   domain's factory: the root's capability to each of the domain's objects grows the root's own
   capability table, which Fiasco charges to the root's quota (`obj_space_phys_util.cpp:163,226`);
-  each map the root makes into the domain's tasks adds mapping-database nodes that the mapping
-  space, the root, pays for (`mapdb.cpp:880-886`); every held exception takes a reply slot of the
+  a map the root makes into one of the domain's tasks takes its mapping-database node from the
+  receiving task's quota, the domain's factory (`mapdb.cpp:858`; `Mapdb::insert`, `mapdb.cpp:1109-1110`,
+  "takes quota from `space`"), so the domain's kernel-memory figure covers it, and only a map smaller
+  than the root's own mapping of the page needs a new submap node, which the root, as the mapping's
+  parent, pays for (`mapdb.cpp:880-886`); every held exception takes a reply slot of the
   root's ([Threads, bands and stops](#threads-bands-and-stops)); and every object takes a record
   and a page-index label of the root's tables. So the domain's row bounds these too: besides its
   thread limit it names an object limit and a mapping limit, the root's cost per thread, object and
-  mapping is a constant of the backend, and the domain service admits a domain only when the root's
+  mapping is a constant of the backend (for a mapping, its record and at most one submap node, never
+  its leaf node, which the domain's factory pays), and the domain service admits a domain only when the root's
   own kernel memory and tables have that cost left, as a budget is carved from what its parent has
   left. A create or map past a limit answers `ERX_ELIMIT`, and no table of the root is shared
   between domains, so a domain that spends its own share fails alone. Its sub-spaces and the
@@ -328,8 +352,14 @@ its CPU set through `l4_scheduler_run_thread`, which takes the priority, the qua
 Fiasco picks a CPU from whatever mask it is given and knows no domain (`scheduler.cpp:96-103`), the
 domain's CPU set is the root's ceiling, applied in one place: every mask the root hands Fiasco for a
 thread is the thread's requested mask, or every CPU when none was requested, intersected with its
-domain's CPU set and the online CPUs. So no start or affinity change places a thread outside its
-domain's set, and no thread is left on the root service's CPU by Fiasco's default. A group's
+domain's CPU set and the online CPUs. The narrowing is one function, and its result is a
+single-member struct that only it returns and that the root's one call of `l4_scheduler_run_thread`
+takes, so a mask that skipped the narrowing fails to build, as a placement of a task capability
+does ([Who holds what](#who-holds-what)), and a test that tries one is kept as a build that must
+fail. The domain service refuses to admit a domain whose CPU set holds no online CPU, with a
+diagnostic naming the domain and its set, so the narrowed mask of a thread with none requested is
+never empty. So no start or affinity change places a thread outside its domain's set, and a thread
+runs on the root service's CPU only when its domain's set holds that CPU. A group's
 configured CPU set is recorded narrowed to the domain's set, as erXos's kernel narrows a group's set
 down the tree, and places no thread (FD15). The root counts a domain's threads across its tasks
 against the domain's thread limit, and a create past it answers `ERX_ELIMIT`. This is L4Re's own shape: ned gives each program a scheduler proxy that
@@ -456,7 +486,7 @@ callers as it says.
 | `erx_cap_dup`, `erx_cap_close`, `erx_cap_pass`, `erx_object_destroy`, `erx_object_info` | Erlang NIF handles, the launcher, the inspector; the domain library installing a domain's capabilities (`erx_dom_install`); a session installing a program's budget, group, channel, data area, code objects and pipe ends | service: the placement records; a pass maps the capability, at the rights the mask and the source allow, from the caller's slot into a slot the root picks in a space the caller created, from any task ([Passing a handle](#passing-a-handle)); destroy deletes the Fiasco objects, for memory revokes every mapping first, and for a budget deletes everything charged to it; `erx_object_info` as [Reporting kernel objects](#reporting-kernel-objects) says | a stale handle `ERX_ESTALE`; a handle used after its own close names what its entry names then; destroying a started thread, or a group that still has a thread, `ERX_ENOTSUP`; destroying an object from a task other than its creator's `ERX_ERIGHTS`, since no pass conveys the delete right; a pass from a space other than the caller's own, into its own, or of a space or gate handle `ERX_ENOTSUP`, as is an item naming the type its handle must have; a thread handle is no entry of the table, so no thread passes; a pass stops at its first refused item with that item's error, an item past a full table `ERX_ELIMIT`, and leaves the items before it passed, which the caller undoes (the domain library by its budget's destroy); the topics and fields that section names `ERX_ENOTSUP` or clear | FD1, FD3, FD4, FD5, FD6 |
 | `erx_budget_create`, `_resize`, `_watch`; `erx_object_destroy` of a budget | the domain library: each domain's own and outer budgets and each connection's child budget; a session: each program's budget; the inspector | service, a create from any task and a resize from the root: a budget is a record of its parent, kind, guarantee and cap and a wall: a domain budget's cap equals its guarantee, its user pages are charged to the record and refused past the cap, and its kernel memory is a Fiasco factory carved from its parent's ([Memory and budgets](#memory-and-budgets), [Budgets and groups as records](#budgets-and-groups-as-records)); its destroy deletes the budgets carved from it and everything charged to them | a handle per create; resize records the two values, and a task's resize `ERX_ENOTSUP`; `used` `unsupported`, as every other field, except the root's budget's `used`, partial ([Reporting a budget](#reporting-a-budget)); watch `ERX_ENOTSUP`; a charge past the cap, or past the kernel memory of the budget's factory, `ERX_ENOMEM`; a resize of the kernel-memory part `ERX_ENOTSUP` | FD25 |
 | the time page, `erx_time_set_offset` | ERTS's time, deadlines | service: one pool page, recorded as a memory object of the root budget, holding the scale of the architecture's user-readable counter and the wall offset. The service maps it read-only into every task at the task's creation, at a constant address just above the task area, the thread table and its label page, that no `erx_vm_reserve` hands out; `erx_time_page` returns that address in a task and the page's window address in the root. Reading is local. `erx_time_set_offset(time_page, offset)` is a service call whose body checks the handle against the caller's slot record, as every service call does: a handle that is not the time page `ERX_ETYPE`, and one without `WRITE`, which only the system domain holds, `ERX_ERIGHTS`, as on erXos's kernel; it then stores the offset as the page's, refusing one outside `0..time_offset_max` with `ERX_EINVAL` ([design-time.md](design-time.md#phase-1)) | correct layout; the boot information's `time_page` names the object and nothing maps from it | FD27 |
-| `erx_entropy_read`, `erx_entropy_add` | ERTS's `crypto` seed, the host link, musl's `getrandom` | service: `liberx/backend/fiasco/entropy.c` over `rng.c`, keyed from the counter, then mixed with `/chosen`'s `rng-seed` and `kaslr-seed` where the device tree carries them (`kernel/core/rng_seed.c`), and on the Raspberry Pi 4 with the board's random generator where it carries none ([The Raspberry Pi 4](#the-raspberry-pi-4)); each reply holds 16 bytes and each request 32, so the stubs loop | the banner names what went in, `erx: entropy: from /chosen/rng-seed (32 bytes), /chosen/kaslr-seed (8 bytes) and the counter`, or on the Raspberry Pi 4 `erx: entropy: from the RNG200 (32 bytes) and the counter`, or says `erx: entropy: quality: low, from the counter alone` when nothing else went in, followed on the Pi 4 by `, since the RNG200 gave too few words within 100 ms` or `, since the RNG200 could not be read` when its read failed. A release image never runs on such a seed, as [design-crypto.md](design-crypto.md) requires: its root counts the bytes that went in from sources other than the counter, the count the banner prints, and with fewer than 32, after the banner's line, writes `erx: entropy: refused: a release does not run without a seed` and ends the machine as `ERX_END_OFF` before it starts any domain, so no key, vault or authentication path ever runs on the counter alone; a development build prints the line and goes on, its banner saying `development build: trusted code only`. `entropy_quality` stays unreported; at most 256 bytes a call; a read the generator cannot serve `ERX_ENOTSUP`; `ERX_ENTROPY_CREDIT` `ERX_ENOTSUP`, since no source is trusted | FD26 |
+| `erx_entropy_read`, `erx_entropy_add` | ERTS's `crypto` seed, the host link, musl's `getrandom` | service: `liberx/backend/fiasco/entropy.c` over `rng.c`, keyed from the counter, then mixed with `/chosen`'s `rng-seed` and `kaslr-seed` where the device tree carries them (`kernel/core/rng_seed.c`), and on the Raspberry Pi 4 with the board's random generator on the condition of [Entropy sources](design-platforms.md#entropy-sources) ([The Raspberry Pi 4](#the-raspberry-pi-4)); each reply holds 16 bytes and each request 32, so the stubs loop | the banner names what went in, `erx: entropy: from /chosen/rng-seed (32 bytes), /chosen/kaslr-seed (8 bytes) and the counter`, or on the Raspberry Pi 4 `erx: entropy: from the RNG200 (32 bytes) and the counter`, or says `erx: entropy: quality: low, from the counter alone` when nothing else went in, followed on the Pi 4 by `, since the RNG200 gave too few words within 100 ms` or `, since the RNG200 could not be read` when its read failed. A release image never runs on such a seed, as [design-crypto.md](design-crypto.md) requires: its root counts the bytes that went in from sources other than the counter, the count the banner prints, and with fewer than 32, after the banner's line, writes `erx: entropy: refused: a release does not run without a seed` and ends the machine as `ERX_END_OFF` before it starts any domain, so no key, vault or authentication path ever runs on the counter alone; a development build prints the line and goes on, its banner saying `development build: trusted code only`. `entropy_quality` stays unreported; at most 256 bytes a call; a read the generator cannot serve `ERX_ENOTSUP`; `ERX_ENTROPY_CREDIT` `ERX_ENOTSUP`, since no source is trusted | FD26 |
 | `erx_debug_log`, `erx_log_read`, `erx_log_take` | `liberx`, ERTS's crash path, test tasks; the Erlang log readers, of which the log service, `erx_syslog`, alone takes | service: [The console](#the-console) | correct | FD26 |
 | `erx_backend_trace_read`, `erx_trace_read` | `erx_trace_ring:read/3`, for `erx:trace` | local, in the root: [The trace ring](#the-trace-ring) | the root's parks, wakes, IRQ deliveries and task starts and ends, reported by `liberx trace`; a cursor past the head, or `max` of 0 or over 512, `ERX_EINVAL`; an exhausted ring `ERX_ELIMIT`; `erx_backend_trace_read` in a task `ERX_ENOTSUP`; `erx_trace_read` `ERX_ENOTSUP` everywhere, so the kernel's row is `unsupported` | FD26 |
 | `erx_watchdog_pet`, the crash record, `erx_machine_end(res, how)` | M3's criteria | pet: a local atomic store in the root, which alone links it (a task's ERTS fails to link, so no task can call it), and hosted `ERX_OK` with no effect. End: the root's alone, a task's call `ERX_ENOTSUP`, as the kernel's `POWER` check leaves it to the system domain ([design-system.md](design-system.md#a-sessions-request)); [The end path](#the-end-path) | `ERX_END_OFF`, `_RESET` and `_PANIC` as erXos's kernel ends them; `ERX_END_TRIAL` `ERX_ENOTSUP`, before anything stops, while the boot value is `unknown`, and otherwise the platform's trial request made by the root and a reset, with no hardware watchdog behind the trial boot; a kernel hang or a stalled watchdog is not caught | FD26, FD29 |
@@ -509,10 +539,14 @@ own, a recorded difference.
 The confinement tests of the stopgaps a release ships (littlefs's port,
 [design-stopgap.md](design-stopgap.md#release-contract), and LVGL's renderer,
 [design-display.md](design-display.md#lvgls-release-contract)) read instead the root's own records of a task, which are
-true by construction ([Who holds what](#who-holds-what)): `erx_fiasco_task_placements`, a local function of the root
-compiled only into test images, lists a task's placed slots, each with its object's kind and the slot's recorded rights,
-and its mapping records, each with its range, object and rights. It sends no request and adds no wire operation, so no
-task can reach it, and a release image does not contain it. A test reads slots and mappings apart: a program holding a
+true by construction ([Who holds what](#who-holds-what)): `erx_fiasco_task_placements`, a local function of the root, lists
+a task's placed slots, each with its object's kind and the slot's recorded rights, and its mapping records, each with its
+range, object and rights. It sends no request and adds no wire operation, so no task can reach it. It is compiled only into
+a development build's root, as the test-task launcher and its `task_write` body are (below): a release build leaves all
+three out, and the release build check fails if the release root's symbol table names any of them, which its seeded case
+proves by building a release root with the launcher left in. So a release image does not contain them, and the confinement
+tests that read placements run on development builds, against the same placement code a release runs. Whether one
+inspection topic should serve this on both kernels instead is [an open decision](#open-decisions). A test reads slots and mappings apart: a program holding a
 mapping of an object holds no slot for it unless it was passed one.
 
 ## Downsides against erXos's kernel
@@ -561,7 +595,7 @@ app sees. Release notes and the user documentation carry it.
 | FD26 | K19, K31 | the kernel's trace ring, entropy, log, watchdog and deterministic mode at the kernel's level (K19, K31) | the root's, in user mode ([The trace ring](#the-trace-ring), [The console](#the-console), [The watchdog](#the-watchdog)); entropy is `liberx`'s generator in the root, and a read's bytes stay in the Fiasco UTCB message registers of the reader and of the root service until a later message long enough overwrites them, and in whatever registers and stack spill slots the compiler used on both sides | the inspector's kernel row is `unsupported`; a kernel hang or a stalled watchdog thread is caught only by the board's hardware watchdog or the harness's deadline; log lines the log service had not taken are lost when it ends the machine; the crash frame may interleave with a writing console driver, a task's frame with the watchdog end's, and a kernel `WARN` or panic line at any time; deterministic mode's comparison starts at erXos's banner, or at the root's first line if Fiasco's own boot proves not deterministic | erXos's kernel |
 | FD27 | none (an address) | the runtime maps the time page from its boot information's `time_page` | the root maps the page read-only into every task at its creation, at a constant address | a task's time page is at one address it cannot move or unmap | erXos's kernel |
 | FD28 | CLAUDE.md "Trust placement" | the startup proof, `erx_root_plan` run by the packer and the kernel, with its charge evidence, and every property of the system manifest checked | the root startup rule, and the manifest check refuses the records of properties outside its scope ([The Phase 1 manifest check](#the-phase-1-manifest-check)) | a manifest that uses those records does not build | erXos's kernel (Track K's first part, before GK3); M9 and M11 for the refused records |
-| FD29 | K31 | each board's platform items: the hardware watchdog, the crash region, the trial request and the device secret | on the Raspberry Pi 4: the root's watchdog thread, with no hardware watchdog behind a hang of Fiasco, since nothing under Fiasco reloads it and the board's `config.txt` leaves `kernel_watchdog_timeout` unset; a crash record on the console alone; the boot value as the firmware reports it; the trial request made by the root through the mailbox ([The end path](#the-end-path)), with no hardware watchdog armed behind it; `sealing` `none` ([The Raspberry Pi 4](#the-raspberry-pi-4)) | a crash leaves no record but the console's, and nothing is sealed to the board; an update's trial boot that hangs stays hung until its power is cycled, after which the committed slot boots | M12 |
+| FD29 | K31 | each board's platform items: the hardware watchdog, the crash region, the trial request and the device secret | on the Raspberry Pi 4: the root's watchdog thread, with no hardware watchdog behind a hang of Fiasco, since nothing under Fiasco reloads it and the board's `config.txt` leaves `kernel_watchdog_timeout` unset; a crash record on the console alone; the boot value as the firmware reports it; the trial request made by the root through the mailbox ([The end path](#the-end-path)), and what a hang during its trial boot does is [an open decision](#open-decisions); `sealing` `none` ([The Raspberry Pi 4](#the-raspberry-pi-4)) | a crash leaves no record but the console's, and nothing is sealed to the board | M12 |
 | FD30 | CLAUDE.md "Trust placement" | no table of the root's at all | the root's own bookkeeping: `erx_fiasco_task_join` trusts its caller, since its stub waits on the ended semaphore of the task index the service named, so a space deleted by another root thread between the answer and the wait leaves the stub spinning on the empty slot, and an index reused in that window takes another join's up (the launcher joins from one thread); a label naming no live task is counted, and nothing reads the count | no domain sees them | erXos's kernel, which drops the root's tables |
 | FD31 | F4, CLAUDE.md "Untrusted input" | a client spends a server's CPU only within the server's admission, on grants the kernel enforces | a service serves requests on its own threads at its own band, and service grants are records ([Consumers that name grants](#consumers-that-name-grants)) | a client makes a service spend that service's band: an app flooding its session, or a file, storage or network server, turns its own low band's CPU into the server's higher band's, delaying that band's other work and every band below it on those CPUs; the same holds for a doorbell's ringer, which makes the holder's dispatcher run, and wake a parked executor, once per delivery at the holder's band, however rarely the holder takes its readiness ([Interrupts and readiness](#interrupts-and-readiness)); the network domain's CPU grant and per-interface ingress budget are no guarantee | stage 5 of [the scheduler](#stages-beyond-bands), or erXos's kernel |
 | FD32 | CLAUDE.md "Trust placement" | branch prediction hardened at every entry from user mode and every switch between address spaces, as [design-arch-aarch64.md](design-arch-aarch64.md#speculation-mitigations) chooses from the CPU | nothing: Fiasco's AArch64 entry makes no SMCCC `ARCH_WORKAROUND` call, clears no branch history and has no speculation barrier, and its prediction barriers are built for AMD64 alone (`src/Kconfig:478-487`) | on a CPU open to branch-target injection (Spectre v2, CVE-2017-5715) or branch-history injection (Spectre-BHB, CVE-2022-23960), a domain may steer Fiasco's, or another domain's, speculative execution to leak memory through the caches; Arm's firmware records the Raspberry Pi 4's Cortex-A72 as affected by both ([Read in source, never run](#read-in-source-never-run)); under HVF a QEMU `virt` guest runs on the host's cores, whose exposure is unverified | [the release's Fiasco build](#the-releases-fiasco-build) if [its open decision](#open-decisions) carries the patch; erXos's kernel |
@@ -593,7 +627,8 @@ A band is a run of Fiasco priorities a domain's threads start in, from its limit
 release needs one priority per band, since nothing changes a thread's urgency. There are six bands,
 from the top: the watchdog at 255 as today; the root service; the system domain; the driver and device
 domains; interactive domains (the display, web and session domains); and apps and programs, the
-lowest, which also holds every domain's background work, so no priority lies below it. A spinning
+lowest, so no priority lies below it. A band is a domain's, not a thread's, so a domain's
+background work runs in its own band. A spinning
 domain therefore delays only its own band and those below.
 What a domain asks of a service or of the root runs at that service's band or the root's, not its
 own, so a flood of requests is not held to the band it comes from (FD17, FD31).
@@ -896,7 +931,11 @@ service's bodies directly.
    ([The pool](#the-pool)). If the pool and the root's
    image together hold less than the manifest's `root_memory`, it refuses the boot.
 6. Makes its own thread table ([Thread creation](#thread-creation)); seeds `rng.c` from the counter and
-   step 4's seeds (`erx_rng_seed`); makes its object
+   step 4's seeds (`erx_rng_seed`), and on the Raspberry Pi 4 from its RNG200 when
+   [Entropy sources](design-platforms.md#entropy-sources) calls for it ([The Raspberry Pi 4](#the-raspberry-pi-4)); prints
+   the entropy line, and in a release, with fewer than 32 bytes from sources other than the counter, the refusal of the
+   `erx_entropy_read` row ([the call table](#the-call-table)), and ends the machine as `ERX_END_OFF`, so no domain starts
+   on the counter alone; makes its object
    tables, then fills the time page, a pool page recorded as a memory object and kept until the
    machine ends ([the call table](#the-call-table)); creates its gate, the service
    thread, stopped, with the `sigma0` gate as pager, and the watchdog with its configuration and start
@@ -1019,7 +1058,8 @@ whatever a file holds. erXos's kernel checks each file at its first slice.
 `erx_boot_args_parse(bytes, length, out)` in `liberx/backend/fiasco/boot_args.c`, a pure function with a
 fuzz target, splits it on spaces and reads five kinds of word: `erx.watchdog=P,D,B`, through the
 existing `erx_watchdog_parse`; `erx.det=1`; `erx.group_report=1`; `erx.hostlink=1`; and `erx.arg=WORD`, at most as many as fit the page's
-strings. Other words are ignored, as a boot loader's may be there. A malformed `erx.` word, and an `erx.` word of no known kind, refuses the
+strings. Other words are ignored, as a boot loader's may be there. A release build refuses the boot on `erx.det=1` with a
+fixed reason, as erXos's kernel does ([design-kernel.md](design-kernel.md#configuration)). A malformed `erx.` word, and an `erx.` word of no known kind, refuses the
 boot with a fixed reason. Bootstrap cuts the record at the last whole word, so a parser never sees half
 a word.
 
@@ -1354,22 +1394,18 @@ A call computes a whole plan (its range, the state each reserved page in it beco
 cannot cover it, and only then applies it, so a refused call changes nothing. Each page's steps come from one table of state against
 target ([Protection](#protection)): take and zero a page, unmap, map, give the page back.
 
-**Only a fresh map can fail, and it runs first.** The pool is the root's, but the kernel memory a map needs is not: a map at an
-address where the task's page table holds no entry may need a new page-table page, which Fiasco takes from the task's own factory
-(`Mem_space::v_insert`, `arm/mem_space-arm.cpp:229-233`, answering `Insert_err_nomem`), and a new mapping-database node, which the
-root's quota pays for; either refusal is `L4_error::Map_failed` (`map_util.cpp:735-760,774-775`). A domain reaches that refusal at will,
-by spending its factory and then asking for a commit in a fresh region. Every other step needs no kernel memory: an unmap frees; a
-raise of rights over a present entry finds the entry at its level, so the walk allocates nothing, and it is an attribute upgrade, which
-adds no mapping-database node (`map_util.cpp:748`); and a drop of a right other than read keeps the entry (`Mem_space::v_delete`,
-`arm/mem_space-arm.cpp:322-340`). So applying runs every fresh map of the plan first, in ascending address order, and only then the
-steps that cannot fail, also in ascending order. A fresh map Fiasco refuses unmaps the fresh maps before it, returns their pages to
-the pool, and answers `ERX_ENOMEM`: the call changes nothing, as a refused plan does, and the failure is the domain's own. Every
-other map the root makes into a task on a domain's behalf answers a refusal the same way, with `ERX_ENOMEM` and the root's records
-matching Fiasco's tables: an object's `erx_vm_map` unmaps the pages of its call it had mapped and drops its mapping record; an
-`erx_space_create` whose time page, thread table or label page is refused deletes the task it made; and an `erx_image_map` keeps
-the segments before the refused one, as every failed load does (FD10). An unmap allocates nothing,
-so Fiasco refusing one means the root's records and Fiasco's tables disagree, a defect of the root, which ends the machine with the
-reason. Commit and decommit pass over holes, as the kernel's do; a protect that meets a hole is `ERX_ERANGE`. A commit,
+**Only a fresh map can fail, and it runs first.** A range call meets the rule of
+[Who holds what](#who-holds-what) for a step that takes kernel memory: a fresh map, at an address where the task's page table
+holds no entry, may need a page-table page and takes a mapping-database node, both from the task's own factory, and either
+refusal is `ERX_ENOMEM`. A fresh map is a commit of an uncommitted page, or a raise of rights on a committed page with no access,
+whose entry the drop to no access cleared (`Mem_space::v_delete`, `arm/mem_space-arm.cpp:334-337`). Every other step needs no
+kernel memory: an unmap frees; a raise of rights over a present entry finds the entry at its level, so the walk allocates nothing,
+and it is an attribute upgrade, which adds no mapping-database node (`map_util.cpp:748`); and a drop of a right other than read
+keeps the entry (`arm/mem_space-arm.cpp:322-340`). So applying runs every fresh map of the plan first, in ascending address order,
+and only then the steps that cannot fail, also in ascending order. A fresh map Fiasco refuses unmaps the fresh maps before it,
+returns to the pool the pages the plan took, and answers `ERX_ENOMEM`; a committed page with no access whose fresh map is undone
+stays committed with no access, its contents kept. The call changes nothing, as a refused plan does, and the failure is the
+domain's own. Commit and decommit pass over holes, as the kernel's do; a protect that meets a hole is `ERX_ERANGE`. A commit,
 decommit whose range meets a mapping, and a release or a fixed reserve that covers part of one, is refused whole with `ERX_EINVAL`, and a protect that meets one with `ERX_ENOTSUP`.
 
 * **Commit:** an uncommitted page takes a page, zeroes it, and `l4_task_map(task, L4_BASE_TASK_CAP, l4_fpage(window,
@@ -1543,21 +1579,25 @@ construction.
 
 Fiasco's objects, page tables and mapping records come from its own allocator, sized at boot: a domain's from its
 factory, and what the root holds for every domain from the root's own quota, which domain admission shares out
-([Memory and budgets](#memory-and-budgets)). A call that fails for lack of it is `ERX_ENOMEM`, a map under a [range call](#the-range-table) included, which undoes its call's fresh maps first, so a domain that spends its factory fails alone; exhaustion on a path that cannot fail is inherited.
+([Memory and budgets](#memory-and-budgets)). A call that fails for lack of it is `ERX_ENOMEM` and undoes what it created ([Who holds what](#who-holds-what)), so a domain that spends its factory fails alone; exhaustion on a path that cannot fail is inherited.
 
 ## Threads, waits and exit
 
 ### Scheduling
 
 Fiasco's fixed-priority scheduler schedules every thread; ERTS schedules its processes within them. Every thread
-runs at the priority of its domain's band, within the band's CPU set, from the domain's manifest row; within a band a
+runs at the priority of its domain's band, within its domain's CPU set, from the domain's manifest row; within a band a
 spinner never outranks a preempted lock holder on its CPU ([Bands](#bands)). The watchdog, which takes no lock, runs at 255.
 `l4_scheduler_run_thread(L4_BASE_SCHEDULER_CAP, thread, &param)` starts each thread, with `param` from
 `l4_sched_param(priority, 0)` and, in `param.affinity`, the thread's mask within its domain's CPU set
 ([Threads, bands and stops](#threads-bands-and-stops)): the requested mask, or every CPU when none was
-requested, intersected with the domain's set and the online CPUs. The root never passes an empty mask, so
-Fiasco's own default, the CPU of the thread that starts it, which for a task's threads is the root service's
-(`scheduler.cpp:98-103`), is never taken. `erx_thread_set_affinity` before the start takes effect at the start,
+requested, intersected with the domain's set and the online CPUs, which admission makes non-empty. Within that
+mask Fiasco puts the thread on one CPU: its home CPU if the mask holds it, else the CPU of the thread that starts it,
+which for a task's threads is the root service's, if the mask holds that, else the mask's first CPU
+(`scheduler.cpp:96-103`). Fiasco's kernel sources hold no load balancer (a search of `src/kern` for one finds none), so a thread stays where it
+was placed, and so a domain's threads started with no
+mask share one CPU of its set rather than spread across it, until an affinity request moves them
+([the performance watch list](todo-performance.md)). `erx_thread_set_affinity` before the start takes effect at the start,
 and after it moves the thread at once, through the same call; a mask whose intersection is empty is
 `ERX_EINVAL` and changes nothing.
 
@@ -2073,8 +2113,12 @@ For each item the body checks the descriptor (any other bit set is `ERX_EINVAL`,
 checked pass, `ERX_ENOTSUP`), the handle and its kind, and room in
 `to`'s table. It then places the object in `to` as every placement is made
 ([Handles are slots](#handles-are-slots)): the new slot's record gets the rights of the caller's slot record intersected with
-the mask and with the type's pass set, less `DESTROY`, since only an object's creator destroys it here, and the root maps its
-own capability to the object into the slot with only the Fiasco rights those allow. It rewrites the item in the caller's UTCB
+the mask, less `DESTROY`, since only an object's creator destroys it here, and, for a kind placed with a capability
+([Who holds what](#who-holds-what)), the root maps its own capability to the object into the slot with only the Fiasco
+rights those allow; a budget, a group or a memory object is placed as the slot's record alone. No pass set applies: as on
+erXos's kernel, a type's pass set binds a pass between peers and a fork's copy, not a creator's pass into a space it
+created ([design-kernel.md](design-kernel.md#passing-capabilities)), and that is the only pass this backend offers, so the
+creator's mask alone narrows what the holder gets. It rewrites the item in the caller's UTCB
 with the slot's index in `to`, its type and those rights. So rights only shrink, in what the call reports, in the record and in
 the capability, as on erXos's kernel. At the first item it refuses it stops and
 returns that item's error, leaving the items before it passed; the caller undoes them, the domain library by
@@ -2095,8 +2139,9 @@ again.
 **Every use checks the passed rights.** The rights an item comes back with are its slot's record, and every service
 operation that names the handle checks the right it needs against that record before it acts, whatever the holder's
 `liberx` asks: a write mapping needs `WRITE` (`ERX_ERIGHTS`, so a party passed its peer's side without write maps it
-read-only or not at all); a bind needs `BIND`, which no pass set carries for a doorbell, and Fiasco's own `sys_bind`
-refuses the holder's capability too, since it lacks the special right; a charge to a budget needs `ALLOC`, and a space
+read-only or not at all); a bind needs `BIND`, which the domain library's and a session's masks leave out of every
+doorbell they pass to a peer and keep on a device line they pass to its holder, and Fiasco's own `sys_bind` refuses the
+holder's capability either way, since it lacks the special right, so only the root binds; a charge to a budget needs `ALLOC`, and a space
 created under it `SPACES`; a thread attached to a group needs `ATTACH`; and a destroy needs the creator's own slot,
 since no pass conveys `DESTROY`. The domain library's and a session's masks are therefore enforced by
 the root, not kept by the holder's discipline, and a domain that bypasses `liberx` with raw requests is held to them
@@ -2195,7 +2240,7 @@ Phase 1 acts on no finer kind.
 ### The watchdog
 
 A root thread at priority 255 runs `watchdog.c`'s step machine: sleep one period, step over the pet word, which holds the time of the last pet.
-In deterministic mode the step is off and the machine page says so. A missed pet takes the end path, with `ERX_END_OFF`, as a root fault does.
+In deterministic mode the step is off and the machine page says so. A missed pet takes the end path and resets the machine, as a root fault does ([The end path](#the-end-path)).
 
 Its numbers and mode come from [the command line](#the-command-line), with the design's defaults of 1, 5 and 60 seconds. **The pet is the design's
 own**: `erx_watchdog`, a process at priority `max` of the release's `kernel`, started among `kernel`'s first children, right after `on_load` lets a module with a NIF load, calling the watchdog NIF from a
@@ -2236,9 +2281,11 @@ The service answers `erx_machine_end` for the root task alone and refuses it fro
      Raspberry Pi 4 the root sends the firmware's reboot-flags property with the `tryboot` flag and then its reboot notification
      through the mailbox, each polled at most 1 s, from the mailbox's window, which the board's platform record names and only
      the root maps. A mailbox error or timeout resets without the flag, so the committed slot boots, as a dropped request does on
-     erXos's kernel. The hardware watchdog that design arms first stays off under Fiasco (FD29), so a trial boot that hangs stays
-     hung until the harness's deadline or a power cycle, after which the firmware's one-shot flag is spent and the committed slot
-     boots.
+     erXos's kernel. The hardware watchdog that design arms first stays off under Fiasco (FD29). A trial boot whose domains hang
+     misses its pet, and the root's watchdog thread resets the machine as for any missed pet; the firmware's one-shot flag is then
+     spent and the committed slot boots. Only a hang of Fiasco, of the root, or of the firmware's own stage stays hung until the
+     harness's deadline or a power cycle, after which the committed slot boots; whether R1 closes that gap is
+     [an open decision](#open-decisions).
 
    Under `-no-reboot` every end exits QEMU. If the shutdown call returns, the thread sleeps until the harness's deadline.
 
@@ -2485,7 +2532,9 @@ global console has one writer of unchanged bytes, the console driver, and every 
 through `erx_debug_log`'s records. The one exception is the test tasks of the test-task launcher in the root (`libc-test`'s
 programs, which run with no descriptor table): `libc_task.c` hands their output to `erx_fiasco_task_write`, one `task_write`
 request per `utcb_bytes_max`, and the service copies each piece from the caller's public UTCB to `erx_fiasco_console_write`, with
-no record, no escape and no rate limit, so that the suite finds a test program's bytes as it wrote them. The service answers
+no record, no escape and no rate limit, so that the suite finds a test program's bytes as it wrote them. The launcher and the `task_write` body exist only in a development build's root
+([What a test reads of a task](#reporting-kernel-objects)), so a release root's decoder answers `task_write` with
+`ERX_ENOTSUP`. In a development build the service answers
 `task_write` only for a task whose record the launcher marked as a test task when it created it; no other creation sets the
 mark, so `erx_space_create` from any task, a domain's and a session's included, makes a task whose `task_write` answers
 `ERX_ENOTSUP` and writes nothing. The pieces of a long write are separate calls, so another thread's output can fall between
@@ -2515,10 +2564,11 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   `config/fiasco/kernel.defconfig`), which finds the interrupt controller, the timer and PSCI's calling method in the
   device tree. BL31's PSCI starts the other CPUs, and `l4_platform_ctl_system_shutdown` reaches its `SYSTEM_OFF` and
   `SYSTEM_RESET` ([The end path](#the-end-path)). `SYSTEM_OFF` leaves the board halted in the firmware, which cannot
-  turn it off, so an end by `ERX_END_OFF`, a missed pet's included, lasts until its power is cycled by hand.
-* **Entropy.** When `/chosen` gives fewer than 32 bytes of `rng-seed` and `kaslr-seed` together, the root also reads 32 bytes from the board's RNG200
-  random generator, waiting at most 100 ms, and seeds its generator from them, as the kernel's platform layer does on
-  erXos's kernel ([Entropy sources](design-platforms.md#entropy-sources)). Where the generator is comes from one
+  turn it off, so an end by `ERX_END_OFF` lasts until its power is cycled by hand; a missed pet and a root fault reset
+  ([The end path](#the-end-path)).
+* **Entropy.** On the condition [Entropy sources](design-platforms.md#entropy-sources) states for the kernel's platform
+  layer, the root also reads 32 bytes from the board's RNG200 random generator, waiting at most 100 ms, and seeds its
+  generator from them, as that layer does on erXos's kernel. Where the generator is comes from one
   checked-in source, its row in the platform record (`config/platforms/raspi4b.json`, unit `rng`, the base and size
   `/soc/rng@7e104000` names, CPU address `0xfe104000` and `0x28` bytes; BCM2711 ARM Peripherals release 4 states the
   bus-to-CPU mapping, section 1.2.4, page 6, but describes no RNG200 registers, so the window is the device tree's,
@@ -2632,7 +2682,9 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
 the architecture's generic timer, which instruction counting makes a function of the instructions executed; the time page, deadlines and entropy derive from
 that counter, since the tree carries no seed. ERTS runs one scheduler and the interpreter, in every domain: when the root's boot
 information carries `ERX_BOOT_DET`, the domain library starts each domain on the interpreter image, whatever image its
-specification names, so no domain gets a JIT space and no code depends on BeamAsm's addresses or hash order. The watchdog's step is off. The comparison starts at erXos's banner, or at the
+specification names, so no domain gets a JIT space and no code depends on BeamAsm's addresses or hash order. The watchdog's step is off.
+Deterministic mode is a development build's ([The command line](#the-command-line)), so the entropy refusal, which a tree
+without seeds triggers in a release, never meets it. The comparison starts at erXos's banner, or at the
 root's first line if Fiasco's own boot proves not deterministic, recorded as a difference (FD26).
 
 ## What Phase 1 code must not assume
@@ -2838,6 +2890,7 @@ Each test below names the seeded failure that proves it ran:
 | Test | Passes when | Seeded failure it must catch |
 | --- | --- | --- |
 | destroyed handle | after a peer's destroy, a holder's trigger and its service call both answer `ERX_ESTALE` | the root frees the holder's slot at the destroy and places a new doorbell there |
+| a creator's pass | the domain library passes a device line to its holder with a mask holding `BIND`, and the holder binds it to its own group; a second line passed to the same holder with a mask without `BIND` makes the holder's bind of it answer `ERX_ERIGHTS` | the pass intersecting with the type's pass set: the first holder's bind answers `ERX_ERIGHTS`; the mask ignored at the pass: the second line's bind succeeds |
 | trigger-only doorbell | a ringer's bind of a peer's doorbell answers `ERX_ERIGHTS` | the root places the ringer's capability with Fiasco's special right |
 | rights shrink | a duplicate with a narrower mask cannot do what the mask removed, directly or by a service call | the root maps the source's Fiasco rights unmasked |
 | delete revokes everywhere | three holders' uses fail after one destroy | the destroy unmaps the root's own slot instead of deleting |
@@ -2854,11 +2907,11 @@ Each test below names the seeded failure that proves it ran:
 | writable or executable | a request for such a mapping into a task fails at Fiasco's map, and the root still boots from `sigma0`'s mapping | the patch's check removed: the mapping is made; the exemption removed: the root does not start |
 | release licenses | the release image's link closure is all permissive | a release build with the debugger on; one with the original `kobject_rpc.h` restored in place |
 | the fuzz campaign | it runs its budget clean, every seed of its corpus reached | a fork build with the bound removed from `L4_snd_item_iter::next` (`if (_buf >= _max)`, `l4_buf_iter.cpp:116-121`), which any domain reaches by a send on its own gate whose words and typed items together pass the 63 message registers (`Utcb::Max_words`, `abi/l4_types.cpp:789`), so the kernel's item transfer writes past the root service's message registers before the root's decoder sees the message (`Thread::transfer_msg_items`, `thread-ipc.cpp:1203-1227`); the seed build counts each pass of the removed bound, the case fails if that count is 0, so it cannot pass without reaching the defect, and it fails if the campaign then reports clean |
-| a map at the factory's end | a domain spends its factory on doorbells, then asks for commits each in a fresh 2 MiB region and for a protect from no access to read and write: each answers `ERX_ENOMEM`, a touch of each refused range faults in the domain alone, the pool's count is what it was before the call, and a neighbour domain keeps committing | the old rule restored, a refused map ending the machine: the machine ends; the undo skipped: the pool's count drops and the first pages of a refused commit can be read |
+| a map at the factory's end | a domain whose row gives it a page budget larger than its kernel-memory figure can map, so its factory is spent before its page cap or its object and mapping limits, first commits a page and sets it to no access, then commits a page in each fresh 2 MiB region, each taking a page-table page, until one answers `ERX_ENOMEM`; it then asks for a two-page commit across a fresh region's edge, a protect of the no-access page to read and write, and an `erx_irq_create`: each answers `ERX_ENOMEM`, a touch of each refused range faults in the domain alone, the pool's count and the domain's object count are what they were before each call, and a neighbour domain keeps committing | a refused map ending the machine: the machine ends; the commit's undo skipped: the pool's count drops and the first page of the refused commit can be read; the undo returning every page of the plan to the pool: the refused protect raises the pool's count; the create's undo skipped: the domain's object count rises by one with no handle returned |
 | writable peer side | a domain sends a raw `erx_vm_map` request asking for read and write on its peer's side, which it was passed without `WRITE`: `ERX_ERIGHTS`, and after the domain writes through every mapping it holds, the peer's side is unchanged | the map body's check against the slot record removed: the mapping is made and the peer's side changes |
-| CPU ceiling | a domain whose CPU set is one CPU, not the root service's, starts its threads with no mask, moves one by a raw affinity request naming every CPU, and spins them all, while a lower band's echo runs on the root service's CPU: the echo answers within one quantum, and a raw request naming only CPUs outside the set answers `ERX_EINVAL` | the narrowing skipped: a spinner lands on the echo's CPU and the echo waits |
+| CPU ceiling | a domain whose CPU set is one CPU, not the root service's, starts its threads with no mask, moves one by a raw affinity request naming every CPU, and spins them all, while a lower band's echo runs on the root service's CPU: the echo answers within one quantum, and a raw request naming only CPUs outside the set answers `ERX_EINVAL`; a domain whose set names only a CPU past the online ones is refused at admission with its diagnostic | the narrowing skipped: a spinner lands on the echo's CPU and the echo waits; the admission check removed: the domain is admitted and its first thread's start fails |
 | repeated delivery | a ringer on another CPU fires a holder's doorbell 10,000 times while the holder's executors postpone `erx_group_take_ready`: the holder's next take returns the object once, and its dispatcher's deliveries and wakes are counted and reported with the run, the load FD31 publishes | the listed flag ignored: the take returns the object more than once |
-| release entropy | a release image booted on QEMU `virt` with no `/chosen` seeds (QEMU's `dtb-randomness=off` machine option, unverified) prints the refusal line and ends before any domain starts; the Raspberry Pi 4's manual checklist does the same with the RNG200's read made to fail | the refusal skipped: the boot goes on and a domain starts |
+| release entropy | a release image booted on QEMU `virt` with no `/chosen` seeds (QEMU's `dtb-randomness=off` machine option, which the harness already passes for deterministic runs, `tools/lib/erx/qemu.rb:39`) prints the refusal line and ends before any domain starts; the Raspberry Pi 4's manual checklist does the same with the RNG200's read made to fail | the refusal skipped: the boot goes on and a domain starts |
 | trial | on QEMU `virt`, an update's `ERX_END_TRIAL` ends with `erx: end trial`, the harness boots the spare slot once, and the committed slot boots after a trial that does not commit; with the boot value `unknown`, `ERX_END_TRIAL` answers `ERX_ENOTSUP` and the machine runs on | trial mapped to a reset: the last line is `erx: end reset` and the harness boots the committed slot; the boot-value check removed: the machine ends |
 
 ## The hosted backend
@@ -3035,9 +3088,10 @@ hooks.
   domains keep running, so the downside is measured rather than assumed. The source read adds to
   the evidence: AArch64's asynchronous-error vectors (`arm/64/ivt.S:355-394`) enter
   `Thread::arm_serror_handler` (`arm/thread-jdb.cpp:100-106`), which counts the error on its CPU
-  and returns, so Fiasco attributes, contains and stops nothing on an asynchronous error; it is an
-  `[arm]` section of a file that also carries `[arm-!debug]` sections, so it is presumably built
-  without the debugger too, which the release build's object list settles.
+  and returns, so Fiasco attributes, contains and stops nothing on an asynchronous error. The release
+  build has the same handler: it is in an unconditional `IMPLEMENTATION [arm]` section
+  (`arm/thread-jdb.cpp:96`), and `Modules.arm` lists `thread-jdb` among the architecture's thread
+  modules with no condition on the debugger (`Modules.arm:151-152`).
 * **An app's session under hard walls.** [design-packaging.md](design-packaging.md#an-apps-principal)
   gives each app principal an elastic budget under the `apps` budget, with no guarantee and the
   `apps` budget's guarantee as its cap, and carves each of its sessions' walls from it. Budgets on
@@ -3072,6 +3126,45 @@ hooks.
   fuzz campaign and the upstream watch defend, since proving either rule of Fiasco's inherited C++
   would be an audit of code that erXos's kernel replaces, and the kernel states both by
   construction.
+
+* **A space's handles and mappings as an inspection topic.** The confinement tests of littlefs's port
+  and LVGL's renderer read a task's slots and mappings through `erx_fiasco_task_placements`, a local
+  function of a development build's root that only Fiasco has
+  ([What a test reads of a task](#reporting-kernel-objects)). The alternative is one inspection
+  topic of a space's handles and mappings, served by both kernels and shown at `/proc`, with the
+  backend named as its reporter and `partial` where it has only part of a field: on Fiasco the
+  root's placement records, which hold no object id (FD2, FD6). It is a new topic of the inspection
+  schema (`abi/inspection.txt`), so it waits on this decision and is not built. Recommendation: the
+  topic, since state a test reads belongs at `/proc` by the system's rule for such a need, it
+  removes a second, Fiasco-only reader of the root's state, and the same confinement tests would
+  then run on a release build and on erXos's kernel unchanged; who may read it follows the
+  inspector's authority over the space. Until then the development-build reader stands.
+* **A hang of Fiasco or of the root during a trial boot.** On the Raspberry Pi 4 a trial boot whose
+  domains hang misses its pet and the root resets the machine, so the committed slot boots; a hang of
+  Fiasco, of the root or of the firmware's own stage stays hung until the power is cycled
+  ([The end path](#the-end-path)). U3 of [design-storage.md](design-storage.md#invariants) and
+  [design-platforms.md](design-platforms.md#trial-requests), which arms the hardware watchdog before
+  the trial request, rely on a watchdog reset there, and FD29 as accepted does not name this
+  consequence. The options:
+  * **(a) Publish it** as part of FD29: a trial boot that hangs in Fiasco or the root needs a power
+    cycle, after which the committed slot boots.
+  * **(b) The root reloads the board's watchdog during a trial.** When the boot value is `trial`,
+    the root's watchdog thread arms the BCM2711's power-management watchdog with
+    [design-platforms.md](design-platforms.md#trial-requests)'s 4 s timeout and reloads it at each
+    of its steps for the rest of that boot, through a window of the block the board's platform
+    record names and only the root maps, as it already reaches the mailbox for the trial request. A
+    hang of Fiasco or of the root stops the reloads and the hardware resets, which spends the
+    firmware's one-shot flag. This is a platform item the root stands in for, as the trial request
+    is, not a kernel mechanism rebuilt in user mode: on erXos's kernel the platform layer arms the
+    same watchdog. A hang in the firmware's stage stays as U3 already states for a board without
+    that configuration.
+
+  Recommendation: (b), since a trial boot is where an untested image first runs and an unattended
+  board cannot have its power cycled; its cost is a clean-room facts record of the power-management
+  watchdog, as for the RNG200, and one more window of the root's. Its test, on the Raspberry Pi 4's
+  manual checklist: a development trial image whose root stops its watchdog thread once it has armed
+  the watchdog ends in the hardware's reset within the timeout and boots the committed slot; seeded failure: the arming
+  skipped, so the board stays hung.
 
 Decided, and applied above:
 

@@ -2764,8 +2764,8 @@ programmed I/O first where the device allows it. The kernel's platform
 items of M12, the hardware watchdog, the crash region, trial boot and the
 device secret, are deferred as Phase 1
 residuals ([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)).
-The random generator is not: the root reads the Pi 4's RNG200 when the
-firmware writes no seed into `/chosen`
+The random generator is not: the root reads the Pi 4's RNG200 on the
+condition of [design-platforms.md](design-platforms.md#entropy-sources)
 ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)), once the
 RNG200 facts record exists; the board's hand test checks that the
 banner names it as the source.
