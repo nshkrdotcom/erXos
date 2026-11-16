@@ -44,7 +44,7 @@ given.
 -export([new/1, step/2, facts/1]).
 -export_type([config/0, input/0, action/0, core/0]).
 
--type handle() :: 0..16#FFF.
+-type handle() :: erx_hci:handle().
 -type token() :: non_neg_integer().
 -type config() :: #{connections := 1..?ERX_BT_CONNECTIONS_MAX, address := <<_:48>>,
                     advertising_data := binary(), scan_response_data := binary(),

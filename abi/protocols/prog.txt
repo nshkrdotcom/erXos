@@ -92,6 +92,8 @@
 # inside another kind.
 
 limit prog_frame_max u32 196608
+# The pids a program may have: 0 and 1 are not programs' (docs/design-programs.md).
+limit prog_pid_min u32 2
 limit prog_pid_max u32 2147483647
 # FreeBSD's OFF_MAX, the largest off_t: an offset kind's bound, and a file's
 # offset and size wherever erXos's Erlang holds one (erx_file_remote).
@@ -128,7 +130,7 @@ limit prog_mem_bytes u64 1073741824
 protocol erx_prog
   version 1
   reader c
-  integer process_id u32 in 2 @prog_pid_max
+  integer process_id u32 in @prog_pid_min @prog_pid_max
   integer parent_id u32 in 1 @prog_pid_max
   integer fd u16 in 0 1023
   integer dup_target u16 in 0 1023 refers fds

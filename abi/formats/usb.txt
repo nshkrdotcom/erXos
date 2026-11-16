@@ -99,6 +99,19 @@ limit usb_ep0_packet_full_max u16 64
 # usb_set_address_settle (usb.h:120), which usbd_req_set_address waits even when the
 # controller sets the address itself (usb_request.c:1596-1599).
 limit usb_set_address_settle_ms u32 10
+# FreeBSD's port timing: a connected port's power-up delay before its reset, the
+# recovery after the reset, and the time added to a hub's power-good time (usb.h:117-124);
+# the unit of a hub descriptor's bPwrOn2PwrGood (usb.h:624), and the value FreeBSD's xHCI
+# root hub descriptor gives it (controller/xhci.c:3533); the deadline of a port's reset,
+# and the interval at which a resetting hub port's status is read again
+# (usbd_req_reset_port, usb_request.c:805-863).
+limit usb_power_up_delay_ms u32 300
+limit usb_reset_recovery_ms u32 20
+limit usb_extra_power_up_ms u32 20
+limit usb_power_good_unit_ms u32 2
+limit usb_root_power_good_units u32 10
+limit usb_reset_deadline_ms u32 1000
+limit usb_reset_poll_ms u32 50
 
 # The least each descriptor a configuration's walk reads must hold: a header's length
 # and type (struct usb_descriptor, usb.h:282-286, less its subtype), an interface's 9

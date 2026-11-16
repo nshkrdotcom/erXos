@@ -62,10 +62,10 @@ it; git history is the record of completed work.
   `apps` row only because it declares no quantity, so adding them would let apps administer the network.
   Make grantability an explicit fact (a mark on the interface the check reads, or a refusal by interface
   beside inspect and files) and require quantities only of grantable interfaces.
-* [Medium] ABI, the facet quantity fields are copied by hand: `FACET_QUANTITIES`
-  (`tools/lib/erx/abi_contracts.rb`) repeats `erx_mf_facet`'s field names and widths from
-  `abi/manifest.txt`, and `facet_row` in `tools/lib/erx/manifest.rb` the key list; take both from the
-  codec's layout.
+* [Low] ABI, which of `erx_mf_facet`'s fields are quantities is stated in Ruby, not in
+  `abi/manifest.txt`: `FACET_QUANTITIES` (`tools/lib/erx/abi_contracts.rb`) names the five fields, whose
+  widths come from the layout. Mark them in the layout (a quantities sub-layout, or a field mark the
+  reader keeps) so the list is derived.
 * [Low] apps, the derivation's readability (`tools/lib/erx/manifest.rb`): `app_template` rebuilds the
   session row and SPACES check `normalize_sessions` writes (one `session_row` for both); `named_artifact`
   duplicates `artifact`'s kind check; `app_facets` maps positional triples where a small `Data` value
@@ -3174,9 +3174,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   driver case's pid with `erx_command_srv:reserve/1`, the shell's process as its speaker. The
   `program-start` chokepoint keeps every Erlang source but the handler from naming `erx_program`, but the
   suite's driver cases type `erx_program:start/1` at a shell, which no build check reads.
-* [Low] ERTS, `sys/erxos/erx_program_core.h`: `ERX_PROGRAM_PID_MIN` and `ERX_PROGRAM_PID_MAX` are written
-  by hand beside the generated `ERX_PROG_PID_MAX` of `abi/protocols/prog.txt`'s `prog_pid_max`; use the
-  generated limit.
 * [Low] ERTS, `sys/erxos/erx_program_drv.c`: the gate worker's 64 registrations (two a program) bound a
   session to 32 programs at once, each start past that refused with `elimit`.
 * [Low] session, `erx_command_srv`: a row drops at any `{'DOWN', _, process, Speaker, _}` the server takes,

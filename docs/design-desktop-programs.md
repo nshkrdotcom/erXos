@@ -513,8 +513,9 @@ metrics in exact arithmetic, rounded half up. A glyph is drawn its
 coverage's offset right of the pen and advances by its advance rounded
 half up to a whole pixel. The step refuses a glyph whose ink leaves the
 line, and a role whose values the subfont format cannot hold (font(7):
-a glyph's column in two bytes, its rows, offset and advance in one), so
-no subfont is cut to fit.
+a glyph's column in two bytes, its rows, offset and advance in one,
+bounds that `abi/formats/subfont.txt` states for the step and for
+`erx_font` alike), so no subfont is cut to fit.
 
 A character outside the theme's ranges has no glyph: the renderer draws
 the replacement box of the role's size. The ranges cover Latin scripts

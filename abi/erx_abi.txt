@@ -33,6 +33,7 @@ include protocols/prog.txt
 include protocols/hostlink.txt
 include formats/ui.txt
 include formats/draw.txt
+include formats/subfont.txt
 include formats/package.txt
 include protocols/web.txt
 include theme.txt

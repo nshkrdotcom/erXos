@@ -75,16 +75,14 @@ bytes and a pair is found by halving them, so a subfont costs its size.
 -export([parse/1, load/2, width/2, runs/2]).
 -export_type([subfont/0, glyph/0, index/0, reason/0]).
 
+-include("generated/erx_abi.hrl").
+
 %% A header field: a number or descriptor right-justified in 11, then a blank.
 -define(FIELD, 12).
 %% The most bytes of pixels one `y` of `load/2` carries.
 -define(Y_BYTES, 8192).
 %% A pair section's entry: two glyph indices and an adjustment.
 -define(PAIR, 5).
-%% The widest and tallest image whose columns and rows a glyph reaches:
-%% its x is two bytes, its top and bottom one each.
--define(MAX_W, 16#ffff).
--define(MAX_H, 255).
 
 -doc """
 Glyph i of a subfont, in the shape of a font cache's record, since the
@@ -257,7 +255,9 @@ image(Bytes, Form) ->
                         {error, einval} -> throw(header)
                     end,
     {[X0, Y0, W, H], AfterRect} = numbers(4, AfterChan),
-    check(X0 =:= 0 andalso Y0 =:= 0 andalso W >= 1 andalso W =< ?MAX_W andalso H >= 1 andalso H =< ?MAX_H,
+    %% No wider or taller than a glyph's column and rows can reach.
+    check(X0 =:= 0 andalso Y0 =:= 0 andalso W >= 1 andalso W =< ?ERX_SUBFONT_X_MAX
+          andalso H >= 1 andalso H =< ?ERX_SUBFONT_ROW_MAX,
           header),
     R = {0, 0, W, H},
     Line = erx_draw_image:bytes_per_line(R, Depth),
@@ -325,14 +325,14 @@ pairs(_Short, _Glyphs) ->
 
 %% Each entry names two glyphs of width above 0 (drawn_width/2), comes after
 %% the one before it (Previous, which starts below every pair), adjusts by
-%% other than 0 and keeps the first glyph's kerned advance in 0 to 255.
+%% other than 0 and keeps the first glyph's kerned advance within an advance.
 check_entries(<<>>, _Widths, _Previous) ->
     ok;
 check_entries(<<A:16/little, B:16/little, Adjustment:8/signed, Rest/binary>>, Widths, Previous) ->
     Kerned = drawn_width(A, Widths) + Adjustment,
     drawn_width(B, Widths),
     check({A, B} > Previous, kern),
-    check(Adjustment =/= 0 andalso Kerned >= 0 andalso Kerned =< 255, kern),
+    check(Adjustment =/= 0 andalso Kerned >= 0 andalso Kerned =< ?ERX_SUBFONT_ADVANCE_MAX, kern),
     check_entries(Rest, Widths, {A, B}).
 
 %% The width of the glyph an entry names, which must be a glyph of the

@@ -1532,7 +1532,7 @@ module Erx
       # system_queue as a source row's does when it states none.
       def derived_quantities(interface, name)
         declared = @codec.schema.services.find { |service| service.fetch(:number) == interface }&.fetch(:quantities) || {}
-        missing = ABI::Contracts::FACET_QUANTITIES.keys - declared.keys
+        missing = ABI::Contracts::FACET_QUANTITIES - declared.keys
         invalid("services names #{name}, whose interface declares no #{missing.join(', ')}", 19, 'apps.services') unless
           missing.empty?
         declared.merge('queue' => number(@source.machine, 'system_queue'))
@@ -2136,7 +2136,7 @@ module Erx
         { 'name' => name, 'grantee_kind' => kind, 'grantee' => index,
           'service' => service,
           'operations' => { 'table' => 'facet_operations', 'first' => 0, 'count' => 0 },
-          'queue' => queue }.merge(%w[max_request in_flight reductions period_ns max_heap_size].to_h { |key| [key, number(record, key)] })
+          'queue' => queue }.merge(ABI::Contracts::FACET_QUANTITIES.to_h { |key| [key, number(record, key)] })
       end
 
       # What the stopgap cannot honour, refused once properties 2, 10 and 11 hold: a

@@ -48,12 +48,13 @@ hub's own port bound. An over-current change is counted, and answered with
 
 **Power.** A hub's ports start `off`, and a hub more than five tiers below
 the root, `usb_hub_depth_max`, keeps them so. The core powers each, one request
-at a time, and the hub's power-good time, `bPwrOn2PwrGood` times 2 ms
-plus FreeBSD's 20 ms (usb_hub.c:1280-1281, usb.h:124 and 624), runs from
-the last one's answer; FreeBSD waits it after each port (usb_hub.c:1512),
+at a time, and the hub's power-good time, `bPwrOn2PwrGood` times
+`usb_power_good_unit_ms` plus FreeBSD's `usb_extra_power_up_ms`
+(usb_hub.c:1280-1281, usb.h:124 and 624), runs from the last one's answer;
+FreeBSD waits it after each port (usb_hub.c:1512),
 and once after the last is enough, since every port's own time started
-earlier. The root hub's is FreeBSD's xHCI root hub value, 10 units
-(sys/dev/usb/controller/xhci.c:3533).
+earlier. The root hub's is FreeBSD's xHCI root hub value,
+`usb_root_power_good_units` (sys/dev/usb/controller/xhci.c:3533).
 
 **The address-zero turn** is not a field: the port that holds it is the
 one in `resetting`, `recovering`, `enumerating` before its address is
@@ -82,8 +83,8 @@ reference and walks the steps of the design's enumeration, each one
 request whose answer is the next event, named by the port's state
 `{enumerating, Ref, Step}`: `{enable_slot, Ref, Step}`; `{address, Ref,
 Step, Params}` with the route, the root port, the speed and the
-transaction translator, whose answer releases the turn; FreeBSD's 10 ms
-settle, `{address_settle, At}`, awaiting no answer; at full speed the
+transaction translator, whose answer releases the turn; `{address_settle,
+At}`, FreeBSD's settle of `usb_set_address_settle_ms`, awaiting no answer; at full speed the
 device descriptor's first 8 bytes and, when its EP0 packet size is not 8,
 `{evaluate_context, Ref, Step, ...}`; the whole device descriptor; the
 configuration's header and then all of it, which erx_usb_claim turns into
@@ -118,20 +119,6 @@ controller process's register accesses and do not fail.
 -export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, port_history/0, step/0]).
 
 -include("generated/erx_abi.hrl").
-
-%% FreeBSD's delays (sys/dev/usb/usb.h:117-124): a connected port's power-up
-%% delay before its reset, the recovery after a reset, and the time added to a
-%% hub's power-good time; the units of bPwrOn2PwrGood (usb.h:624).
--define(POWER_UP_DELAY_MS, 300).
--define(RESET_RECOVERY_MS, 20).
--define(EXTRA_POWER_UP_MS, 20).
--define(POWER_GOOD_UNIT_MS, 2).
-%% FreeBSD's xHCI root hub descriptor's bPwrOn2PwrGood (xhci.c:3533).
--define(ROOT_POWER_GOOD_UNITS, 10).
-%% The deadline of a port's reset and the interval at which a resetting port's
-%% status is read again (docs/design-usb.md, the port-state table; usb_request.c:805-863).
--define(RESET_DEADLINE_MS, 1000).
--define(RESET_POLL_MS, 50).
 
 -doc "A device's reference: fresh for every device the bus ever enumerates.".
 -type ref() :: {device, pos_integer()}.
@@ -246,7 +233,7 @@ hub, its hub descriptor.
 -doc "The bus of a controller whose root hub has RootPorts ports, every port `off`.".
 -spec new(port_no()) -> state().
 new(RootPorts) when is_integer(RootPorts), RootPorts >= 1, RootPorts =< 255 ->
-    #{hubs => #{root => hub(root, RootPorts, ?ROOT_POWER_GOOD_UNITS, false, powering)},
+    #{hubs => #{root => hub(root, RootPorts, ?ERX_USB_ROOT_POWER_GOOD_UNITS, false, powering)},
       devices => #{}, waiting => [], next => {device, 1}}.
 
 -doc "The actions the bus process performs on Event, handled at Now, and the next state.".
@@ -515,7 +502,7 @@ hub_power(Route) when length(Route) > ?ERX_USB_HUB_DEPTH_MAX -> unpowered;
 hub_power(_Route) -> powering.
 
 hub(Parent, Ports, PowerGoodUnits, MultiTT, Power) ->
-    #{parent => Parent, power_good => PowerGoodUnits * ?POWER_GOOD_UNIT_MS + ?EXTRA_POWER_UP_MS,
+    #{parent => Parent, power_good => PowerGoodUnits * ?ERX_USB_POWER_GOOD_UNIT_MS + ?ERX_USB_EXTRA_POWER_UP_MS,
       power => Power, multi_tt => MultiTT,
       ports => maps:from_keys(lists:seq(1, Ports), off),
       histories => maps:from_keys(lists:seq(1, Ports), #{attempts => [], over_current_changes => 0,
@@ -529,7 +516,7 @@ hub(Parent, Ports, PowerGoodUnits, MultiTT, Power) ->
 answered(Id, N, power_on, ok, _Now, State) ->
     update_port(Id, N, fun(off) -> empty; (Other) -> Other end, State);
 answered(Id, N, reset, ok, Now, State) ->
-    update_port(Id, N, fun({resetting, At, sent}) -> {resetting, At, {poll, Now + ?RESET_POLL_MS}};
+    update_port(Id, N, fun({resetting, At, sent}) -> {resetting, At, {poll, Now + ?ERX_USB_RESET_POLL_MS}};
                           (Other) -> Other
                        end, State);
 answered(Id, N, disable, ok, _Now, State) ->
@@ -575,7 +562,7 @@ read(Id, N, Status = #{connected := Connected}, Now, State) ->
     {Actions, Moved} = case connection_changed(Status, Port) of
                            true ->
                                Arrival = case Connected of
-                                             true -> {settling, Now + ?POWER_UP_DELAY_MS};
+                                             true -> {settling, Now + ?ERX_USB_POWER_UP_DELAY_MS};
                                              false -> empty
                                          end,
                                set_port(Id, N, Arrival, State);
@@ -607,9 +594,9 @@ over_current(Id, N, #{changes := Changes}, State) ->
 
 %% A running port its hub disabled is given up; a resetting port's read after its
 %% reset was answered decides the reset, as usbd_req_reset_port does
-%% (usb_request.c:832-844): still resetting, read again in 50 ms; done with the
+%% (usb_request.c:832-844): still resetting, read again in usb_reset_poll_ms; done with the
 %% port disabled, given up; done at a speed the controller cannot run, disabled at
-%% the hub; otherwise its 20 ms recovery.
+%% the hub; otherwise its recovery, usb_reset_recovery_ms.
 follow(Id, N, {running, _Ref}, #{enabled := false}, _Now, State) ->
     set_port(Id, N, {disabled, port_disabled}, State);
 follow(Id, N, {resetting, At, Phase}, Status, Now, State) when Phase =/= sent ->
@@ -617,7 +604,7 @@ follow(Id, N, {resetting, At, Phase}, Status, Now, State) when Phase =/= sent ->
         #{reset := true, changes := Changes} ->
             case lists:member(reset, Changes) of
                 true -> reset_done(Id, N, Status, Now, State);
-                false -> set_port(Id, N, {resetting, At, {poll, Now + ?RESET_POLL_MS}}, State)
+                false -> set_port(Id, N, {resetting, At, {poll, Now + ?ERX_USB_RESET_POLL_MS}}, State)
             end;
         #{} ->
             reset_done(Id, N, Status, Now, State)
@@ -630,7 +617,7 @@ reset_done(Id, N, #{enabled := false}, _Now, State) ->
 reset_done(Id, N, #{speed := unsupported}, _Now, State) ->
     give_up(Id, N, unsupported_speed, State);
 reset_done(Id, N, #{speed := Speed}, Now, State) ->
-    set_port(Id, N, {recovering, Now + ?RESET_RECOVERY_MS, Speed}, State).
+    set_port(Id, N, {recovering, Now + ?ERX_USB_RESET_RECOVERY_MS, Speed}, State).
 
 %% Deadlines.
 
@@ -838,7 +825,7 @@ next_op(Id, Hub = #{ports := Ports}, Now) ->
 next_reset(Id, Hub = #{ports := Ports}, [N | _], Now) ->
     %% From `{resetting, to_send}` to `sent`, neither occupied, so this hub-local
     %% write needs nothing of update_port's.
-    issue(Id, N, reset, Hub#{ports := Ports#{N := {resetting, Now + ?RESET_DEADLINE_MS, sent}}});
+    issue(Id, N, reset, Hub#{ports := Ports#{N := {resetting, Now + ?ERX_USB_RESET_DEADLINE_MS, sent}}});
 next_reset(Id, Hub, [], _Now) ->
     next_read(Id, Hub).
 
