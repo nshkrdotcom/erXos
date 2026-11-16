@@ -1886,6 +1886,415 @@ at each `service` start, stop or restart; they are a symptom of step 3's failure
 not a fault of their own. Name the card's make and size, and for an
 Ethernet step the switch or router the cable goes to.
 
+#### The soak
+
+The passes above check that each part works once. The soak checks that
+the preview's whole workload keeps working on one machine for a day: the
+kiosk with its live quotes, root's SSH sessions with `ps` and `top`,
+files written under `/data`, and the watchdogs that stand behind a hang.
+It runs by hand on the 4 GB Raspberry Pi 4 from the published card, and
+under the QEMU harness on QEMU `virt` under HVF. It is release evidence
+for the preview ([plan.md](plan.md)), run once on the release's commit,
+and a developer's tool, run on demand after a change suspected of a leak.
+
+**The construction.** A soak is a fixed number of identical rounds that
+a program on the development host, the soak driver, runs against the
+machine as its user would: over SSH, with the command shell's own
+commands, logged in as root with the user's own key. The machine's
+console log is the soak's second input. Every pass or fail is decided
+by one pure function, the judge, over the record the rounds leave and
+the console log, so:
+
+* nothing is added to the image for the soak: the published card is
+  soaked as it is published, with no test code, no agent on the machine
+  and no counter of its own;
+* both targets run the same rounds and the same judge, and differ only
+  in where the console log comes from, how far apart the rounds start,
+  and the quotes' sources;
+* a kept record can be judged again later, by a corrected judge,
+  without running the soak again;
+* no rig is needed: the board needs only what the board passes already
+  use, the console adapter and an Ethernet cable.
+
+**What it proves.**
+
+* **The kiosk keeps running.** The dashboard app's `ends` stays 0 and
+  its `state` stays `running` in every round, no configured domain ends,
+  and at the soak's end each quote's last state is the one its sources
+  allow (below).
+* **SSH keeps admitting root.** Every login of every round is admitted
+  and ends in time, each one a session domain made and ended
+  ([design-ssh.md](design-ssh.md#logging-in)), and the host key the
+  first login saw is the one every later login sees.
+* **`ps` and `top` keep answering** as the preview's exit criteria ask:
+  `ps` lists the session's `rc` and `ps` itself, and `top -b -n 1`
+  prints one display of at most 18 rows with its `Mem` line.
+* **`/data` keeps its files.** Every round writes a file under
+  `/data/soak/` and reads back, byte for byte, the file written eight
+  rounds before. The log store's `/var/log/messages` and its rotation
+  ([design-log.md](design-log.md)) write underneath on their own.
+* **Neither watchdog fires on a machine that works.** A day of the
+  system domain's pets under this load, with no end of the machine. On
+  a board whose hardware watchdog runs ([The watchdog](#the-watchdog)),
+  the same day shows that its reloads keep up. That a hang *is* caught
+  is for seeded checks to show (the `native_watchdog` suite on QEMU, and
+  on a board a seeded hang by hand), not the soak: a soak cannot plant a
+  hang without changing the image.
+* **The clock stays set.** Set once at the start, the machine's `date`
+  stays within 60 s of the host's clock in every round.
+* **Nothing grows.** No count of a domain, the free memory of the pool,
+  or the time a login takes, keeps growing (the growth rule below).
+
+**What it does not prove.** Power cuts are the power-cut checklist's;
+repeated boots are no one's yet (the soak boots once); the soak writes
+far less than the data partition holds, so it is no wear or full-volume
+test; Fiasco's own kernel memory is not reported to user mode
+([design-stopgap.md](design-stopgap.md#reporting-a-budget)), so a leak
+there shows only once a session or a call is refused; the board's
+temperature and any throttling by the firmware are not reported at all;
+a screen that froze while the dashboard's processes still run is seen
+only by a person; and hostile load is out of scope for a development
+build.
+
+**A round.** Round N, for N from 1 to the soak's count, makes three
+logins, each one `ssh root@MACHINE COMMAND`, which the SSH domain runs
+as `rc -c COMMAND` ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)):
+
+1. **Inspect:** `date`, `ps`, `top -b -n 1`, and `cat` of
+   `/proc/status`, `/proc/apps/dashboard/status` and every
+   `/proc/domains/*/status`, separated by `echo soak: SECTION` lines so
+   the driver can split the output.
+2. **Write:** `cat > /data/soak/N`, with the round's payload on the
+   login's standard input: 256 KiB whose byte I is (I + N) mod 251, the
+   rule of the block suite's power-cut files
+   (`tools/lib/erx/block_device.rb`, `data_content`), taken from that
+   one definition with its length as an argument.
+3. **Read back:** from round 9 on, `cat /data/soak/M` with M = N - 8,
+   which the driver compares with payload M, and from round 10 on `rm`
+   of file N - 9, so `/data/soak/` holds at most nine files.
+
+Before round 1, a setup login makes `/data/soak` and sets the clock from
+the host's UTC time with the set-time command
+([design-time.md](design-time.md)), as root sets it by hand. Rounds
+start every 60 s on the board and every 10 s on QEMU; a round that runs
+past its slot is followed at once by the next, and the overrun is
+recorded. Each login runs under the host's `Erx::Runner` with a 60 s
+deadline. The driver stops at the first failed round: a soak has failed
+once one round has, and what the machine did next is in the console log.
+That rc runs commands separated by `;` and expands
+`/proc/domains/*/status` is unverified until the shell's tests show it;
+if it does not expand the pattern, the inspect login lists
+`/proc/domains` and reads each directory's `status` by name.
+
+**The quotes' sources.** On the board the kiosk fetches live quotes from
+the internet over the board's Ethernet, as a user's does
+([design-quotes.md](design-quotes.md)), and at the soak's end each
+quote's last `quotes:` line on the console must read `fresh`. A source's
+outage at that moment fails the soak with the reason its line names, and
+the record shows whether the reason was the network's or the kiosk's; the
+operator then runs the soak again. On QEMU the harness's network is
+restricted, so nothing leaves the host, and the soak boots the image of
+the `display_domain/quotes` cell, whose fixture app serves the quotes in
+the guest ([design-quotes.md](design-quotes.md#verification-and-testing)):
+at the end `eth` and `spx` read `fresh` and `btc` reads `stale` with
+`{status,503}`, since the fixture answers `/btc` with 503 after its first
+five answers, so one quote runs the failure path and its backoff for
+hours while two run the success path.
+
+**The growth rule.** Every figure the rounds read is a series: the pool's
+free memory from `top`'s `Mem` line; for each domain name present in
+every round, its `processes`, `atoms`, `ets_tables`, `modules` and
+`threads`; and the time each kind of login takes. The first quarter of
+the rounds is warm-up and is not judged, since allocators and the
+quotes' backoff settle there. A series **fails** when its last quarter
+lies wholly beyond the range of its second quarter in the bad direction:
+for a count or a time, when the last quarter's least value is above the
+second quarter's greatest; for free memory, when the last quarter's
+greatest value is below the second quarter's least. One rule serves
+every series and needs no threshold, since any growth larger than the
+series' own noise over the soak fails it and noise inside its range
+never does. A step that stays, such as a cache filled late, also fails,
+and is a finding to explain before the soak counts. The report also
+gives each series' least-squares slope per hour and, for free memory,
+the hours until the slope would reach zero; these are observations, not
+criteria.
+
+A figure keeps the status its reporter gave
+([design-live.md](design-live.md#inspection-records)). On Fiasco the
+pool's figures are `partial`, reporter `root pool`, and `top` alone
+prints them with their numbers (`/proc` prints a partial value as
+`[partial]`); a partial number is judged as a number and named partial
+in the report. `top` prints sizes in FreeBSD's `format_k()` units, so the
+series' resolution is that of the unit it picks, a mebibyte at the
+pool's sizes (unverified). A figure printed as `-` with its reason is a
+gap in its series, kept with the reason, never a zero. A series with no
+number at all, such as `threads` where Fiasco does not report it
+(unverified), is listed as not reported and does not count; but without
+the pool's free memory the soak has no memory check, so a record that
+lacks it in any quarter cannot pass.
+
+**Pass and fail.** The judge's answer is one of three:
+
+* **passed:** every round ran and passed its checks, the console holds
+  one boot and none of the lines below, every quote ends in its expected
+  state, and no series fails;
+* **failed:** the first check that failed, with its round, the host's
+  time and the evidence: the login's output or the console lines,
+  quoted through the host tool's line escape (`Erx::LineEscape`) and
+  truncated;
+* **incomplete:** the record cannot decide, because the driver stopped
+  for a reason that is not the machine's (the operator stopped it, or a
+  host tool failed before its login started), the console log is
+  missing, or the free-memory series is.
+
+| Check | Read from | Fails when |
+| --- | --- | --- |
+| login | each login | a non-zero exit, the 60 s deadline, or a changed host key, which the known-hosts file of the record refuses |
+| `ps`, `top` | inspect | `ps` lacks `rc` or `ps`; `top` prints no `Mem` line or more than 18 rows |
+| clock | inspect | `date` differs from the host's UTC clock at the login's end by more than 60 s |
+| kiosk | inspect | `/proc/apps/dashboard/status` has `state` other than `running` or `ends` above 0 |
+| reset | inspect | `uptime` in `/proc/status` is below the previous round's: the machine booted between them |
+| `/data` | read back | file M differs from payload M; the report names the first differing offset |
+| boots | console | more than one bootstrap memory line (`Total RAM:`), the first line every boot prints on both targets |
+| ends | console | any `erx: end` line or crash record |
+| domains | console | any `erx_domain: configured domain` line after boot, which the domain service writes when a configured domain ends or does not start (`erx_domain_srv.erl`) |
+| quotes | console, at the end | a quote whose last `quotes:` line is not in the state its target expects |
+| growth | the rounds | any series fails the growth rule |
+
+The domains and quotes checks read the console because the log service
+writes every log line there ([design-log.md](design-log.md#the-line));
+that the published image's console carries the `quotes:` lines of the
+kiosk's session at its log level is unverified until the first soak's
+console log shows them.
+
+**Hangs and resets.** A reset is noticed twice, independently: by the
+reset check, an `uptime` that went down between two rounds, which needs
+no console; and by a second boot line in the console log. A hang is
+noticed by the login check, at the first login that does not end within
+its deadline. Attribution comes from the console lines between the last
+line of the soak's boot and the next boot line, or the log's end:
+
+| The console shows | What it means |
+| --- | --- |
+| a crash record of cause `watchdog`, then `erx: end reset` | a missed pet: the system domain's schedulers or timers stopped while the root ran ([design-stopgap.md](design-stopgap.md#the-watchdog)) |
+| a crash record of a fault, then `erx: end reset` | the root task faulted ([design-stopgap.md](design-stopgap.md#the-end-path)) |
+| `erx: end reset` or `erx: end off` with no crash record | an end someone or something asked for, or the root's own stop; the log lines before it say which |
+| nothing, then a boot line | a reset nobody logged: on a board whose hardware watchdog runs, a hang of Fiasco or of the root, or else a loss of power; the console cannot tell the two apart, and whether the board's reset status tells them apart is unverified |
+| nothing, and no boot line | a hang nothing reset: the board stays silent until its power is cycled; on QEMU, which has no hardware watchdog, the harness's deadline ends the run as timed out |
+| an `erx_domain: configured domain` line | a configured domain ended or did not start, with the reason in the line; the domain service restarts it within its row's intensity |
+
+The judge reads each crash record with `Erx::CrashFrame`, which the
+`native_watchdog` and `native_crash` suites already read records with,
+so the soak has no reader of its own.
+
+**What is measured and what is observed.**
+
+| Measured, in the record, judged | Measured, in the record, not judged | Observed by a person, in the notes |
+| --- | --- | --- |
+| each login's exit and duration; `ps` and `top`; `date` against the host; the dashboard's `state` and `ends`; `uptime`; each read-back; the console's boots, ends, domain lines and last quote states; every series of the growth rule | each series' slope and, for free memory, the hours until it would reach zero; the rounds' overruns; the clock's offset over the soak; the quotes' lines as they change | the kiosk's screen at the start and at the end, its clock against the host's and its quotes live; the board's LEDs; the router's DHCP lease time; on QEMU the two screenshots below |
+
+The pet's lateness is not measured: no inspection value reports how
+close a pet came to its deadline, and the soak's question, whether a
+working machine is ever reset, is answered by the ends check without
+one.
+
+**The record.** The driver writes a new directory, `build/soak/RUN/` by
+default, and refuses one that already holds files, so no record is ever
+overwritten:
+
+* `soak.json`: the target; the commit and the image's SHA-256, from the
+  card's build record on the board or from the harness's report on QEMU;
+  the round count and spacing; the host's operating system, `ssh -V` and,
+  on QEMU, the harness's QEMU identity and invocation; the start and end
+  times in UTC;
+* `rounds.jsonl`: one JSON object per round: its number, its start in
+  UTC and any overrun; for each login its name, exit status, duration and
+  its output and error output in base64, so the bytes are kept as the
+  machine sent them and the judge can be run again on them; the figures
+  the driver read, each with its status and reporter; and the read-back's
+  result;
+* `known_hosts`: the host key the first login saw;
+* `console.log`: a copy of the console log, `screen`'s `screenlog.0` on
+  the board or the harness's serial log on QEMU;
+* `report.json`: the judge's answer, each check's result with its
+  evidence, and each series' summary;
+* `notes.md`, on the board: the operator's notes (below).
+
+A day's record is a few megabytes, mostly the rounds' output; the
+payloads are not kept, since the driver makes each again from its
+number. A record that counts as evidence is copied to the separate
+history repository, `~/erxos-history/soak-TARGET-DATE/`, and committed
+there; a research record in `docs/` states its result and cites it by
+path and commit, as the board pass's record does
+([research-rpi4-board-pass.md](research-rpi4-board-pass.md)). Nothing of
+a record enters erXos's tree, and the research record names no host,
+address or network of the operator's.
+
+**Refusals.** The driver refuses to start, with a diagnostic and before
+any login, on a record directory that holds files; an identity file or
+known-hosts path that `ssh` would not read as written (`DevKey`'s
+`plain_path` rule); a machine address that is not a host name or an IP
+address; a round count below 8, since the growth rule needs four quarters
+of at least two rounds; and, on the board, a build record whose
+SHA-256 is not the card's the operator names. A login's output that the
+driver cannot read (a `top` without its header, a `/proc` file whose
+line is not name, value and reporter) fails that round, quoting the
+bytes escaped and truncated; it is never read as a figure.
+
+**Length.** Both targets run 1,440 rounds: on the board at 60 s, a day;
+on QEMU at 10 s, four hours when a round fits in its slot (how long a
+login takes on either target is unverified, and the record states it).
+The count comes from what the soak must repeat, and the board's day from
+what only time brings:
+
+* **Repetitions.** 1,440 rounds are 4,320 logins, each a session domain
+  made and ended, 1,440 files of 256 KiB written, read and removed (360
+  MiB), up to about 19,000 quote requests a day on the board (two quotes
+  every 10 s and one every 60 s, fewer while a source backs off) and
+  about 170,000 pets of the system's watchdog. A leak of one 4 KiB page
+  per login reaches 17 MiB over the soak, well above the `Mem` line's
+  resolution.
+* **Time.** The board's day crosses one midnight UTC, when the change
+  that Kraken's quotes give against the day's opening price starts again
+  ([design-quotes.md](design-quotes.md#what-the-sources-offer)); it crosses the DHCP client's renewal for any lease
+  of up to two days, if the client renews at half the lease, RFC 2131's
+  default (unverified here); and it holds the quotes' longest waits, the
+  15 minute backoff cap and an hour's `Retry-After`, many times over. On
+  QEMU the restricted network's lease and the wall clock matter less, and
+  four hours hold the backoff's settling and three quarters of judged
+  rounds after it.
+* **Use.** A day is the preview's demo use: a kiosk left on, with SSH
+  sessions now and then. A longer soak would support a longer claim;
+  the length that the release notes may state is an open decision.
+
+**Running it on the board.**
+
+**You need** the board, console adapter and Ethernet cable of the SD
+card and Ethernet pass, a screen on HDMI0, the card written from the
+published image with your public key in `authorized_keys` on its boot
+partition, and the development host on the same wired network as the
+board: a soak fails at its first failed login, so a host on a flaky
+wireless link costs a day.
+
+1. **Boot.** Put the card in the board, start logging on the console
+   adapter with `screen -L`, as the boot pass does, then power the
+   board. Expect the boot pass's lines 1 to 4 and the kiosk on the
+   screen, its quotes panel reading `no data: clock not set`.
+2. **Find its address.** At the console's `%` prompt, `ifconfig genet0`
+   prints the board's address A on its `inet` line.
+3. **Start the soak** on the development host, kept awake for the day
+   (on macOS, under `caffeinate -i`):
+
+   ```sh
+   caffeinate -i tools/erx soak board --address A --identity KEY \
+       --receipt sdcard-DIGEST.img.receipt.json --console screenlog.0
+   ```
+
+   where KEY is the private half of the key on the card. The driver sets
+   the clock and runs its rounds, printing one line per round.
+4. **Write down at the start**: within a few minutes, the quotes panel
+   showing live quotes and the kiosk's clock matching the host's.
+5. **At the end**, a day later, the driver prints the judge's answer and
+   the record's directory. Before stopping `screen`, write down what the
+   screen shows: the clock against the host's, the quotes live or not.
+   Then put into `notes.md` the board's revision, the card's make and
+   size, the power supply, the switch or router and its DHCP lease time,
+   and what you saw at the start and at the end.
+
+If a round fails, the driver stops and prints why; leave `screen` running
+a few minutes so the console log holds what the board did next, then
+judge the record again with `tools/erx soak judge RUN --console
+screenlog.0`, and send back the record. A board that stays silent is
+power-cycled only after the console log is saved.
+
+**Running it on QEMU.** `tools/erx soak qemu` builds the image of the
+`display_domain/quotes` cell with the clone's development login key,
+which makes its builder one of `Checks::LOGIN_KEY_BUILDERS`
+([design-ssh.md](design-ssh.md#login-keys)), and boots it through
+`Erx::Qemu.run` under HVF, with the display, the network device's SSH
+port forward and a fresh data medium, at the CPU count the QEMU
+getting-started steps boot with. The rounds run in the `verify` of the
+checkpoint at which the SSH daemon is up, and the checkpoint after it is
+given the soak's length plus a margin as its time, so the run's deadline
+covers the rounds; this is how the network domain's SSH cells already run
+their logins (`tools/lib/erx/network_domain.rb`, `checkpoints`). Under
+`-no-reboot` any end of the machine exits QEMU, the next login fails, and
+the judge reads the serial log the harness kept. After the last round the
+harness takes two screenshots through QMP 61 s apart, so the kiosk's
+clock has moved between them, and keeps them in the record for a person
+to look at; they are not judged.
+
+**Cost.**
+
+| | The board | QEMU |
+| --- | --- | --- |
+| wall time | a day, and about 45 minutes of a person: 30 to write the card and start, 15 at the end | four hours of the host, unattended, plus the image build |
+| host | a development host awake for a day, running `ssh` once every 20 s on average | one HVF guest with the display suite's memory; under the memory watch when other guests run |
+| network | about 740 MiB over the local network a day (each file twice), and the quotes' requests to the internet | none beyond the host |
+| card | 360 MiB written to `/data`, and the log store's writes | none |
+| when | once on the preview's commit, from the published card | once on the preview's commit, and on demand after a change suspected of a leak; in no gate |
+
+**Tests.** The judge is the soak's one decision, so its tests are host
+tests over records the test generates, each failing on a seeded fault
+of the judge; the driver's plumbing is proven by the QEMU run with its
+seed.
+
+| Test | Passes when | Seeded failure |
+| --- | --- | --- |
+| growth: settling | a series that rises through its warm-up quarter and then stays within a band of noise passes | judging the warm-up quarter too fails it |
+| growth: a leak in a partial figure | free memory with status `partial`, reporter `root pool`, falling one mebibyte every 40 rounds after warm-up fails, named partial | dropping partial figures as unknown passes it, as a record with no memory check |
+| no figure made up | a `top` whose `Mem` line prints `-` with a reason leaves a gap in the series with the reason kept, and the series still passes | reading `-` as 0 fails the series on a fall that was never reported |
+| reset | a round whose `uptime` is below the previous round's fails the reset check, with no console line | comparing each round with the first round's `uptime` misses a reset late in the soak |
+| attribution | generated console logs, crash records made with `Erx::CrashFrame`'s codec, give each row of the hangs and resets table its meaning | matching `erx: end reset` before reading the crash record reads a missed pet as an end someone asked for |
+| read back | a file differing from its payload in one byte at offset 200,000 fails, naming the offset | comparing only the first 64 KiB passes it |
+| `ps` and `top` | an 18-row display passes and a 19-row one fails; a `ps` without `rc` fails | counting `top`'s header lines as rows fails the 18-row display |
+| the whole soak on QEMU | a 120-round run at 10 s passes | the quotes fixture built to make an ETS table for each answer and never delete it fails the growth rule on the fixture's domain's `ets_tables`, which proves the rounds read `/proc`, the record kept it and the judge read the record |
+
+**Building it.** In agent packages of about 50 to 100 calls, each its own
+commit; the figures are estimates, unverified until the packages run:
+
+1. **The judge and the round's readers** (about 70 to 90 calls):
+   `tools/lib/erx/soak.rb`, a pure core: the round plan and the
+   payloads, the readers of `date`, `ps`, `top` and `/proc` status files,
+   the growth rule, the console reader over `Erx::CrashFrame`, and the
+   judge; with the host tests above, `test/host/soak_test.rb`. About 450
+   lines of Ruby and 350 of tests.
+2. **The board's driver** (about 40 to 60 calls): `tools/erx soak board`
+   and `tools/erx soak judge`, the record's writing, and the logins
+   through `Erx::Runner`. `DevKey.ssh_argv` takes the destination and the
+   identity, so the board's `ssh` and the guest's come from one builder.
+   About 200 lines.
+3. **The QEMU run** (about 60 to 90 calls): `tools/erx soak qemu` over
+   `Erx::Qemu.run`, the image's login key, the end screenshots, the
+   leaking fixture build and its seeded run, and one 120-round run
+   passing. It waits on the `display_domain/quotes` cell, SSH's stage 2
+   and the set-time command. About 200 lines.
+4. **The runs** (about 20 to 30 calls, and a person's day for the board):
+   the four-hour QEMU soak and the board's day on the preview's commit,
+   both records in the history repository, and the research record.
+
+**Open decisions.**
+
+1. **What the release notes claim.** The soak supports a statement of
+   the form "soaked for a day on the Raspberry Pi 4 and four hours on
+   QEMU under this workload, with no reset". *Recommendation:* state
+   that, with a link to the research record, and claim no uptime beyond
+   it; a longer claim needs a longer soak, at a person's day per extra
+   day of board time.
+2. **The QEMU soak's quotes.** Offline, from the cell's fixture in the
+   guest, as above, or live, booting the published QEMU medium with an
+   unrestricted network so it soaks the published bytes and the real
+   TLS path, at the price of an automated run that depends on the
+   internet and on third parties' endpoints, against the rule that tests
+   run offline. *Recommendation:* offline; the board's soak already
+   covers the live path and the published card.
+3. **A gate.** Whether the QEMU soak joins the milestone gate, at four
+   hours a run, or stays a release step run on demand.
+   *Recommendation:* a release step and on demand, in no gate: what it
+   finds comes from a change that leaks or wears, which a run after such
+   a change finds as well, and four hours a run would hold a gate host
+   that long at every milestone.
+
 ## Interfaces
 
 * **`hw/kernel_devices.txt`**, the device table, read by the kernel's
@@ -1989,6 +2398,9 @@ in [Trust in the boot](#trust-in-the-boot).
   the hardware watchdog's timeout, how long the system runtime takes to
   its first pet, which `B` must cover, and whether the crash region
   survives `SYSTEM_RESET`; the results go into a research record.
+* **The soak.** The preview's workload for 1,440 rounds on the Raspberry
+  Pi 4 by hand and on QEMU `virt` under the harness, judged from its
+  record and the console log ([The soak](#the-soak)).
 * **The same suite everywhere.** The conformance suite runs on QEMU
   `virt` under HVF and on each board; a test that passes only on
   one accelerator is a bug until explained.
