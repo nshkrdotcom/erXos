@@ -20,7 +20,9 @@
  * pure decision; a record it refuses stops the program the same way.
  *
  * Every failure before main, a mapping or a commit as much as a refused message, stops
- * the program with ERX_PROG_STATUS_REFUSED, as an exec that fails does on UNIX. The layer
+ * the program with ERX_PROG_STATUS_REFUSED, as an exec that fails does on UNIX, except the
+ * release of the loader erx_exec left, which erx_prog_enter makes before musl's start and
+ * which stops it with ERX_PROG_STATUS_RELEASE when refused (liberx/exec/release.h). The layer
  * takes its memory as whole pages (erx_vm_reserve and erx_vm_commit) and calls neither
  * musl's malloc nor its stdio.
  */
@@ -35,6 +37,7 @@
 #include "erx/abi.h"
 #include "erx/lane.h"
 #include "liberx/backend/api.h"
+#include "liberx/exec/release.h"
 #include "liberx/program/channel.h"
 #include "liberx/program/fd.h"
 #include "liberx/program/inbound.h"
@@ -48,8 +51,8 @@ int	main(int, char **, char **);
 
 extern char **environ;
 
-/* program_arg's last value, the second feature word, is its highest index. */
-_Static_assert(ERX_PROGRAM_ARG_HWCAP2 < ERX_ARCH_START_ARGS,
+/* program_arg's last value, the exec record's address, is its highest index. */
+_Static_assert(ERX_PROGRAM_ARG_EXEC < ERX_ARCH_START_ARGS,
     "a program's values fit the argument registers it starts with");
 
 /* The verdict word: the first thread waits while it is VERDICT_WAIT. */
@@ -74,27 +77,29 @@ static uint64_t later_scratch_len;
 static erx_prog_startup_t plan;
 static _Atomic uint32_t verdict = VERDICT_WAIT;
 
-void
-erx_prog_enter(const uint64_t regs[ERX_ARCH_START_ARGS])
-{
-	memcpy(self.regs, regs, sizeof(self.regs));
-}
-
-const erx_prog_self_t *
-erx_prog_self(void)
-{
-	return (&self);
-}
-
 /* Stops the program's space with status; the calling thread never runs on. */
 static _Noreturn void
-stop(int status)
+stop(int64_t status)
 {
 	static _Atomic uint32_t never;
 
 	(void)erx_space_stop(ERX_CAP_SELF, status);
 	for (;;)
 		(void)erx_umtx_wait((uint64_t)(uintptr_t)&never, 0, ERX_WAIT_FOREVER);
+}
+
+void
+erx_prog_enter(const uint64_t regs[ERX_ARCH_START_ARGS])
+{
+	memcpy(self.regs, regs, sizeof(self.regs));
+	if (regs[ERX_PROGRAM_ARG_EXEC] != 0 && !erx_exec_release(regs[ERX_PROGRAM_ARG_EXEC], erx_prog_image()))
+		stop(ERX_PROG_STATUS_RELEASE);
+}
+
+const erx_prog_self_t *
+erx_prog_self(void)
+{
+	return (&self);
 }
 
 /*

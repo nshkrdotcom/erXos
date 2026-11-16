@@ -34,12 +34,13 @@
 
 #include <erx/abi.h>
 
+#include "liberx/exec/load.h"
 #include "liberx/program/startup.h"
 
 /*
  * What liberx keeps of the program's start: the values of the
  * ERX_ARCH_START_ARGS argument registers its first thread starts with, by
- * program_arg index (every register past hwcap2's is 0), and, once
+ * program_arg index (exec's is 0 unless erx_exec loaded the program), and, once
  * main is called, the startup message's process ids, signal state, file
  * mode creation mask, working directory and data area.  rings counts the
  * deliveries the executor took that carried the channel's fixed label,
@@ -62,8 +63,17 @@ typedef struct erx_prog_self {
 	_Atomic uint64_t	 strays;
 } erx_prog_self_t;
 
-/* Stores the first thread's registers; the backend's task entry calls it once, first. */
+/*
+ * Stores the first thread's registers; the backend's task entry calls it
+ * once, first, before musl's start. When program_arg's exec names an exec
+ * record, it releases the loader's span and the record's page
+ * (liberx/exec/release.h) before it returns, so no constructor runs while
+ * either is mapped, and stops the program with ERX_PROG_STATUS_RELEASE
+ * when the release is refused.
+ */
 void	erx_prog_enter(const uint64_t regs[ERX_ARCH_START_ARGS]);
+/* The program's own image, in whole pages, from its link's symbols (image.c). */
+erx_exec_range_t erx_prog_image(void);
 /* What musl's start calls: the start-up above, then main's return. */
 int	liberx_program_main(int argc, char **argv, char **envp);
 /* The program's start, as main sees it; rings and strays move while the executor runs. */

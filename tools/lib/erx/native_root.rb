@@ -88,7 +88,7 @@ module Erx
                          liberx/program/pages.c liberx/program/fd.c liberx/program/fd_plan.c liberx/program/file.c
                          liberx/program/data.c liberx/program/pipe.c liberx/program/wake.c
                          liberx/program/poll.c liberx/program/signal.c liberx/program/spawn.c
-                         liberx/program/spawn_plan.c liberx/erx_lane.c
+                         liberx/program/spawn_plan.c liberx/program/image.c liberx/exec/release.c liberx/erx_lane.c
                          liberx/erx_profile.c build/gen/liberx/generated/prog_profile.c liberx/erx_etf.c
                          kernel/crypto/blake3/blake3.c kernel/crypto/blake3/blake3_portable.c], *PIPE].freeze
     PROGRAM = [*(LIBC_TASK - ["#{BACKEND}/libc_task.c"]), "#{BACKEND}/program_task.c", "#{BACKEND}/api_names.c",

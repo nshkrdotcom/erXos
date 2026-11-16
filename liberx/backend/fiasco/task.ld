@@ -10,7 +10,8 @@
  * nothing else. A section this script does not name would take the segments of the one before
  * it, so .got has its place ahead of them, and a task's link refuses an unnamed section
  * (NativeRoot::TASK_LINK_FLAGS). ERTS keeps data it seldom writes in ERTS_LOW_WRITE
- * (ERTS_WRITE_UNLIKELY in sys.h), which is data like any other here.
+ * (ERTS_WRITE_UNLIKELY in sys.h), which is data like any other here. erx_image_end marks
+ * the end of the last segment, where liberx/program/image.c finds the program's image ends.
  */
 ENTRY(_start)
 PHDRS {
@@ -34,6 +35,7 @@ SECTIONS {
 	.tbss : { *(.tbss .tbss.*) } :data :tls
 	.data : { *(.data .data.*) *(ERTS_LOW_WRITE) } :data
 	.bss : { *(.bss .bss.* COMMON) } :data
+	erx_image_end = .;
 	.symtab 0 : { *(.symtab) }
 	.strtab 0 : { *(.strtab) }
 	.shstrtab 0 : { *(.shstrtab) }

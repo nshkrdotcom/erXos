@@ -31,8 +31,8 @@
 /* The handle table of each space the creator makes. */
 #define CREATED_CAP_LIMIT	16u
 
-_Static_assert(PROGRAM_TAG_ARG > ERX_PROGRAM_ARG_HWCAP2 && PROGRAM_TAG_ARG < ERX_FIASCO_START_ARGS,
-    "the tag's register is an argument register no program value uses");
+_Static_assert(PROGRAM_TAG_ARG == ERX_PROGRAM_ARG_EXEC,
+    "the tag's register is exec's, which only liberx's program layer reads, and this task's entry is its own");
 
 /* A word of the program's writable data, of which each task has its own copy. */
 static volatile uint64_t data_word = DATA_PATTERN;

@@ -21,6 +21,17 @@
 #include "erx/elf_plan.h"
 
 /*
+ * A range of the program's space: size bytes from address. A load holds
+ * its view and its reservation as ranges until its outcome, size 0 holding
+ * nothing; the executable's start-up releases the loader's span as one
+ * (release.h).
+ */
+typedef struct erx_exec_range {
+	uint64_t	address;
+	uint64_t	size;
+} erx_exec_range_t;
+
+/*
  * A loaded executable: its base and entry, and the reservation that holds
  * it, which stays the executable's image.
  */

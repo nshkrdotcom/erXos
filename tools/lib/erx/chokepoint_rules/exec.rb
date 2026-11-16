@@ -5,7 +5,8 @@
 module Erx
   module ChokepointRules
     EXEC_LOAD = 'liberx/exec/load.c'
-    EXEC_FILES = %w[liberx/exec/load.c liberx/exec/load.h liberx/exec/load_plan.c liberx/exec/load_plan.h].freeze
+    EXEC_FILES = %w[liberx/exec/load.c liberx/exec/load.h liberx/exec/load_plan.c liberx/exec/load_plan.h
+                    liberx/exec/release.c liberx/exec/release.h].freeze
 
     # erXos's own C, the stopgap kernel's glue and erXos's C inside ERTS, which links liberx.
     EXEC_SCOPE = Chokepoints::Scope.new(own: true, extra: [GLUE, 'otp/erts/emulator/nifs/erxos/**/*',
@@ -50,6 +51,21 @@ module Erx
           sites: %w[liberx/exec/load.c liberx/exec/load.h test/fixtures/exec_load_effects.c].map { |path| Chokepoints::Site.new(glob: path) },
           seed: { 'liberx/program/seeded.c' => "bool f(void) { return (erx_exec_load(o, n, b, &i, &e)); }\n",
                   'otp/erts/emulator/sys/erxos/seeded.c' => "(void)erx_exec_load(o, n, b, &i, &f);\n" }
+        ),
+        # A loader's tenure ends once, in the program layer's entry, before musl's
+        # start (docs/design-programs.md, "The loader's bootstrap", Release): a
+        # second caller would read a record whose page is already released.
+        Chokepoints::Forbidden.new(
+          name: 'exec-release-once',
+          rule: 'only erx_prog_enter (liberx/program/program.c) calls erx_exec_release, beside its own module ' \
+                'and its host driver',
+          design: 'docs/design-programs.md#what-a-program-can-start',
+          scope: EXEC_SCOPE,
+          pattern: /\berx_exec_release\b/,
+          sites: %w[liberx/exec/release.c liberx/exec/release.h liberx/program/program.c
+                    test/fixtures/exec_release_driver.c].map { |path| Chokepoints::Site.new(glob: path) },
+          seed: { 'liberx/backend/fiasco/seeded.c' => "void f(void) { (void)erx_exec_release(r, own); }\n",
+                  'otp/erts/emulator/sys/erxos/seeded.c' => "static void *release = (void *)erx_exec_release;\n" }
         )
       ],
       unchecked_objects: EXEC_FILES

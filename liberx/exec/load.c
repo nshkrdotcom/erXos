@@ -26,12 +26,6 @@
 #include "liberx/exec/load.h"
 #include "liberx/exec/load_plan.h"
 
-/* A range of the caller's space a load holds until its outcome; size 0 holds nothing. */
-typedef struct erx_exec_range {
-	uint64_t	address;
-	uint64_t	size;
-} erx_exec_range_t;
-
 /* A kernel call that failed: its name and status. */
 static bool
 erx_exec_call_failed(erx_exec_failure_t *failure, const char *call, int status)

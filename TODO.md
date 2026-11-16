@@ -151,12 +151,10 @@ it; git history is the record of completed work.
   is only its load (`liberx/exec/load.c`, `erx_exec_load`: the object viewed and planned, the span
   reserved, segments mapped, copied and committed by a layout decided whole, relocations written), with no
   bootstrap around it (design-programs.md, "The loader's bootstrap" and "The executable's link";
-  design-stopgap.md, "An exec's entry"): not built are the exec record (`program_arg`'s `exec`, register
-  7, and the `erx_exec_record` layout in `abi/erx_abi.txt`; the port driver's create, write and map of it,
-  and the command server's keeping of the file's length), the loader's own C entry ahead of the helpers,
-  the exec entry, `erx_exec_release` with its span check, called from the backend-neutral `erx_prog_enter`
-  (`liberx/program/program.c:78`) when register 7 is not 0, `ERX_PROG_STATUS_RELEASE` beside
-  `ERX_PROG_STATUS_REFUSED`, the loader's failure path that copies its reason into a static and calls its
+  design-stopgap.md, "An exec's entry"): the exec record's layout, register 7 and the executable's
+  `erx_exec_release` (`liberx/exec/release.c`, from `erx_prog_enter`) are built, and not built are the
+  record's writers (the port driver's create, write and map of it, and the command server's keeping of
+  the file's length), the loader's own C entry ahead of the helpers, the exec entry, the loader's failure path that copies its reason into a static and calls its
   start-up with the eighth argument 0, the loader's writing of its span only after a load that succeeded,
   the port driver's release of its own view of the record and its close of the record's capability once
   the first thread has started, the SDK's `liberx_program.a` (`liberx`'s program layer, its backend and
