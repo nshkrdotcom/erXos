@@ -13,7 +13,9 @@
  * load ends by releasing its read-only view of the object, and a failed one
  * its reservation too, which removes every mapping made in them; the
  * failure is reported once, at the step that failed, and a release the
- * space refuses makes the outcome refused cleanup.
+ * space refuses makes the outcome refused cleanup. Before any of it, the
+ * load reserves the rest of the loader's window, so nothing it reserves
+ * lands where the executable will release.
  */
 
 #include <stdbool.h>
@@ -25,6 +27,7 @@
 #include "liberx/backend/api.h"
 #include "liberx/exec/load.h"
 #include "liberx/exec/load_plan.h"
+#include "liberx/program/program.h"
 
 /* A kernel call that failed: its name and status. */
 static bool
@@ -76,6 +79,30 @@ erx_exec_apply(uint64_t object, uint64_t budget, const erx_exec_step_t *step,
 	}
 	if (status != ERX_OK)
 		return (erx_exec_call_failed(failure, call, status));
+	return (true);
+}
+
+/*
+ * The rest of the loader's window (abi/protocols/prog.txt): from the end
+ * of the loader's own image, which starts the window, to the exec record's
+ * page, which the session mapped, reserved fixed and replacing nothing, so
+ * the space places every later reservation, the view and the executable's
+ * among them, outside the window. It is never released here: the
+ * executable releases the whole window, and after a failed load it goes
+ * with the space.
+ */
+static bool
+erx_exec_window(erx_exec_failure_t *failure)
+{
+	const erx_exec_range_t own = erx_prog_image();
+	const uint64_t end = own.address + own.size;
+	uint64_t reserved;
+	int status;
+
+	status = erx_vm_reserve(ERX_CAP_SELF, end, ERX_EXEC_RECORD_PAGE - end, ERX_VM_FIXED | ERX_VM_NOREPLACE,
+	    &reserved);
+	if (status != ERX_OK)
+		return (erx_exec_call_failed(failure, "window", status));
 	return (true);
 }
 
@@ -155,7 +182,7 @@ erx_exec_load(uint64_t object, uint64_t file_bytes, uint64_t budget,
 
 	*image = (erx_exec_image_t){ 0 };
 	*failure = (erx_exec_failure_t){ 0 };
-	loaded = erx_exec_view(object, file_bytes, &view, failure);
+	loaded = erx_exec_window(failure) && erx_exec_view(object, file_bytes, &view, failure);
 	if (loaded)
 		loaded = erx_exec_place(object, file_bytes, budget, &view, &span, &layout, failure);
 	/* The one cleanup: every load releases its view, a failed one its span too. */

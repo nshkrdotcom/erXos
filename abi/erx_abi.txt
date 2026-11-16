@@ -243,9 +243,10 @@ enum exit_kind i64
 # session's own boot information page, which musl's start gives the
 # program as AT_HWCAP and AT_HWCAP2 (docs/design-arch-aarch64.md, "CPU
 # feature words"). erx_program_core.h checks that the feature words
-# follow doorbell directly. exec carries the address of the exec record,
-# erx_exec_record, in the image of the loader erx_exec, and 0 in every
-# other image (docs/design-programs.md, "The loader's bootstrap").
+# follow doorbell directly. exec is 0 in every start a session gives,
+# and not 0 only in the start erx_exec's exec entry gives an executable
+# it loaded, which then releases the loader's window
+# (docs/design-programs.md, "The loader's bootstrap").
 # The values fill every start register an architecture file gives
 # (arch_start_args), which the stopgap's trampoline loads
 # (docs/design-stopgap.md, "The trampoline").
@@ -296,18 +297,15 @@ enum program_grant u8
 limit program_send_no_reply u8 255
 # The exec record (docs/design-programs.md, "The loader's bootstrap"):
 # the first bytes of a page the session writes and maps into the image of
-# the loader erx_exec, at the address program_arg's exec gives. The
-# session writes object, the code object's value in the image's table,
-# and file_bytes, the executable file's exact length; erx_exec writes
-# loader_base and loader_size, the page-aligned span of its own image,
-# only after a load that succeeded, so they are 0 in a record whose load
-# failed. The executable's start-up (erx_exec_release) reads the span and
-# releases it, then the record's page.
-layout erx_exec_record wire_le 8 32
+# the loader erx_exec, at the exec record's page, exec_record_page
+# (abi/protocols/prog.txt), the last of the loader's window. The session
+# writes object, the code object's value in the image's table, and
+# file_bytes, the executable file's exact length; erx_exec reads both and
+# nothing else reads the record. The executable's start-up releases the
+# record's page with the rest of the window.
+layout erx_exec_record wire_le 8 16
   field object cap 0
   field file_bytes u64 8
-  field loader_base u64 16
-  field loader_size u64 24
 # The fault table: the signal whose number, added to ERX_EXIT_SIGNAL, a
 # program's space stops with when one of its threads faults with each
 # kind. Every fault kind but exit, which marks a space's exit record, has

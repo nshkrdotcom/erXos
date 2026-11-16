@@ -11,8 +11,8 @@
 /*
  * A range of the program's space: size bytes from address. A load holds
  * its view and its reservation as ranges until its outcome, size 0 holding
- * nothing (load.h); a program knows its own image and the loader's as
- * ranges, and its start-up releases the loader's span as one (release.h).
+ * nothing (load.h); a program knows its own image as a range, which the
+ * loader's window must not meet (release.h).
  */
 typedef struct erx_exec_range {
 	uint64_t	address;

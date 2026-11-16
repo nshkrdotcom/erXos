@@ -26,6 +26,9 @@
  * reserved there, so no erx_vm_reserve hands it out.
  */
 #define ERX_FIASCO_TIME_PAGE_ADDR	(ERX_FIASCO_AREA_START + ERX_FIASCO_TASK_AREA_BYTES)
+/* The fixed task area, the time page last, ends below the loader's window (abi/protocols/prog.txt). */
+_Static_assert(ERX_FIASCO_TIME_PAGE_ADDR + ERX_PAGE_SIZE <= ERX_EXEC_WINDOW_BASE,
+    "the task area ends below the loader's window");
 /* An odd sequence is a write in progress, so the last write ends at the largest even one. */
 #define ERX_FIASCO_TIME_SEQ_LAST	(UINT64_MAX - 1)
 

@@ -7,6 +7,7 @@ require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../fixtures/elf_fixture'
 require_relative '../fixtures/generated_tree'
+require_relative '../../tools/lib/erx/generated_abi'
 require_relative '../../tools/lib/erx/runner'
 
 # erx_exec's pure core (liberx/exec/load_plan.h) through its host driver
@@ -25,6 +26,12 @@ class ExecLoadTest < Minitest::Test
   # pie's headers: read-execute, note, read-write, dynamic.
   WRITABLE = 2
   EXECUTABLE = 0
+  # The loader's window (abi/protocols/prog.txt), and the loader's image at its base as the
+  # effects driver gives it.
+  WINDOW = Erx::ABI::Generated::CODEC.constant('exec_window_base')
+  WINDOW_END = WINDOW + Erx::ABI::Generated::CODEC.constant('exec_window_bytes')
+  RECORD = Erx::ABI::Generated::CODEC.constant('exec_record_page')
+  LOADER = 64 * 1024
 
   def setup
     @directory = Dir.mktmpdir('erx-exec-load-')
@@ -77,17 +84,22 @@ class ExecLoadTest < Minitest::Test
     error.result
   end
 
-  Effects = Data.define(:outcome, :reserves, :releases)
+  Effects = Data.define(:outcome, :reserves, :releases, :windows, :places, :calls)
 
   # erx_exec_load over the effects driver's memory calls: the outcome line, each
-  # reservation [address, size] and each release [address, size, status].
+  # reservation [address, size] and each release [address, size, status], each fixed
+  # reservation [address, size], the space's place for each other reservation, and the
+  # kind of each of those calls in order.
   def load_effects(bytes, refuse: 0, fail: '-')
     input = File.join(@directory, 'effects.elf')
     File.binwrite(input, bytes)
     text = File.read(run_driver(input, refuse, fail, driver: @effects).fetch('log'))
     Effects.new(outcome: text.lines.last.chomp,
                 reserves: text.scan(/^reserve (\d+) (\d+)$/).map { |row| row.map(&:to_i) },
-                releases: text.scan(/^release (\d+) (\d+) (-?\d+)$/).map { |row| row.map(&:to_i) })
+                releases: text.scan(/^release (\d+) (\d+) (-?\d+)$/).map { |row| row.map(&:to_i) },
+                windows: text.scan(/^window (\d+) (\d+)$/).map { |row| row.map(&:to_i) },
+                places: text.scan(/^place (\d+)$/).flatten.map(&:to_i),
+                calls: text.scan(/^(window|reserve|release) /).flatten)
   end
 
   def pages(bytes) = (bytes + PAGE - 1) / PAGE * PAGE
@@ -180,6 +192,27 @@ class ExecLoadTest < Minitest::Test
     bytes = patch(ElfFixture.pie, WRITABLE, FILE_SIZE, 3000)[0, PAGE + 3000]
     assert_match(/^loaded \d+ \d+$/, load_effects(bytes).outcome)
     assert_equal 'refused load_file_extent 4096', load_effects(patch(bytes, WRITABLE, FILE_SIZE, 3001)).outcome
+  end
+
+  # The load reserves the rest of the loader's window, from the loader's image to the
+  # record's page, before anything else, so the space places a view too large for the
+  # room below the window above it, never inside (seed: a load without that reserve
+  # places a file over 760 KiB in the window, where the executable's release takes it).
+  def test_the_load_reserves_the_windows_rest_before_anything_else
+    loaded = load_effects(ElfFixture.pie.ljust(800 * 1024, "\0".b))
+    assert_match(/^loaded \d+ \d+$/, loaded.outcome)
+    assert_operator loaded.places.first, :>=, WINDOW_END, 'the view lies above the window'
+    loaded.places.zip(loaded.reserves).each do |place, (_, size)|
+      assert(place + size <= WINDOW || place >= WINDOW_END, "a reservation at #{place} meets the window")
+    end
+    assert_equal [[WINDOW + LOADER, RECORD - WINDOW - LOADER]], loaded.windows
+    assert_equal 'window', loaded.calls.first
+  end
+
+  # A window the space refuses fails the load before it reserves or releases anything.
+  def test_a_refused_window_fails_the_load_with_nothing_reserved
+    failed = load_effects(ElfFixture.pie, fail: 'window:1')
+    assert_equal ['failed window -6', [], []], [failed.outcome, failed.reserves, failed.releases]
   end
 
   # A load that succeeds releases its view of the object and keeps the executable's

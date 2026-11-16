@@ -9,10 +9,10 @@
 /*
  * erx_exec's effects (docs/design-programs.md, "An executable file"): the
  * one function of liberx that maps an executable file's code into a
- * program. It maps the code object read-only, plans its bytes with
- * erx_elf_plan, reserves the executable's span, applies the layout
- * load_plan.h decided whole, and writes the relocations, all in the calling
- * program's own space.
+ * program. It reserves the rest of the loader's window first, maps the
+ * code object read-only, plans its bytes with erx_elf_plan, reserves the
+ * executable's span, applies the layout load_plan.h decided whole, and
+ * writes the relocations, all in the calling program's own space.
  */
 
 #include <stdbool.h>
@@ -48,8 +48,8 @@ typedef enum erx_exec_outcome {
 /*
  * Why a load failed. A refused file, which ends the program with status 127
  * and the planner's diagnostic, has call NULL and refusal the planner's or
- * the layout's reason; a kernel call that failed has call its name ("view",
- * "reserve", "map", "child", "commit") and status its status.
+ * the layout's reason; a kernel call that failed has call its name ("window",
+ * "view", "reserve", "map", "child", "commit") and status its status.
  */
 typedef struct erx_exec_failure {
 	const char	*call;

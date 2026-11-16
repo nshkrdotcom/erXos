@@ -264,6 +264,7 @@ module Erx
           add_constant(all_constants, "service_#{service.fetch(:name)}", service.fetch(:number), BASE_TYPES.fetch('u32'), abi.line)
         end
         inspection_bounds(inspection, all_constants, abi.line) if inspection
+        exec_window(all_constants, abi.line) if all_constants.key?('exec_window_base')
         Names.validate(types: types, constants: all_constants, calls: calls,
                        readers: readers, architecture: architecture, line: abi.line)
         result = Schema.new(version: version, architecture: architecture, types: types.freeze,
@@ -1240,6 +1241,23 @@ module Erx
         Inspection.validate(by_kind.fetch('inspection', []), limits: limits, types: types,
                             rights: rights.keys, objects: objects.keys,
                             statuses: by_kind.fetch('status', []).map { |item| item.args.first })
+      end
+
+      # The loader's window (abi/protocols/prog.txt): whole pages, at least
+      # one for the loader and one for the record, apart from the program
+      # memory place, with the exec record on its last page,
+      # exec_record_page. Both limits are u64, so the window's end is below
+      # 2^65 and the comparison of it with 2^64 is exact.
+      def exec_window(constants, line)
+        page = constants.fetch('page_size').value
+        base, bytes, memory, memory_bytes =
+          %w[exec_window_base exec_window_bytes prog_mem_base prog_mem_bytes].map { |name| constants.fetch(name).value }
+        unless (base % page).zero? && (bytes % page).zero? && bytes >= 2 * page && base + bytes <= 1 << 64
+          line.fail!('the exec window must be at least two whole pages ending within 64 bits')
+        end
+        line.fail!('the exec window meets the program memory place') if base < memory + memory_bytes && memory < base + bytes
+        add_constant(constants, 'exec_record_page', base + bytes - page, BASE_TYPES.fetch('u64'), line,
+                     description: "the exec record's page, the loader's window's last")
       end
 
       # What the inspection schema lets an answer of the inspect service be

@@ -6,27 +6,28 @@
 require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../fixtures/generated_tree'
+require_relative '../../tools/lib/erx/generated_abi'
 require_relative '../../tools/lib/erx/runner'
 
 # The end of a loader's tenure (docs/design-programs.md, "The loader's
-# bootstrap", Release, and Verification, "The record's span"): the pure
-# check of erx_exec_release (liberx/exec/release.c) against the linked
-# loader, and the program layer's erx_prog_enter (liberx/program/program.c)
-# running it over a stand-in space, through the host driver
-# test/fixtures/exec_release_driver.c.
+# bootstrap", Release, and Verification, "The loader's window"): the program
+# layer's erx_prog_enter (liberx/program/program.c) running erx_exec_release
+# (liberx/exec/release.c) over a stand-in space, through the host driver
+# test/fixtures/exec_release_driver.c. The window is the ABI's
+# (abi/protocols/prog.txt).
 class ExecReleaseTest < Minitest::Test
   PAGE = 4096
-  MAX = (1 << 64) - 1
+  CODEC = Erx::ABI::Generated::CODEC
+  BASE = CODEC.constant('exec_window_base')
+  BYTES = CODEC.constant('exec_window_bytes')
+  RECORD = CODEC.constant('exec_record_page')
   # ERX_EINVAL (abi/erx_abi.txt), the stand-in space's refusal.
   EINVAL = -1
   # ERX_PROG_STATUS_RELEASE (liberx/program/startup.h).
   RELEASE = -(1 << 32)
-  # In the stand-in space: the record's page, the loader's span and the program's own image.
-  RECORD = 8 * PAGE
-  LOADER = 16 * PAGE
-  LOADER_SIZE = 4 * PAGE
-  OWN = 32 * PAGE
-  OWN_SIZE = 8 * PAGE
+  # An executable's own image, beside the window: just above it, as the space
+  # places one larger than the room below the window.
+  ABOVE = [BASE + BYTES, 8 * PAGE].freeze
 
   def setup
     @directory = Dir.mktmpdir('erx-exec-release-')
@@ -39,8 +40,7 @@ class ExecReleaseTest < Minitest::Test
     flags = sanitizers.empty? ? [] : ["-fsanitize=#{sanitizers.join(',')}", '-fno-omit-frame-pointer']
     @runner.run(['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-O1', '-g', *flags,
                  *Erx::Generated.include_flags(root: root), '-I', File.join(root, 'include'), '-I', root,
-                 *%w[liberx/exec/release.c liberx/program/program.c build/gen/liberx/generated/abi_reader.c
-                     test/fixtures/exec_release_stubs.c
+                 *%w[liberx/exec/release.c liberx/program/program.c test/fixtures/exec_release_stubs.c
                      test/fixtures/exec_release_driver.c].map { |path| File.join(root, path) },
                  '-o', @driver],
                 name: 'compile-exec-release', deadline: 60)
@@ -50,100 +50,41 @@ class ExecReleaseTest < Minitest::Test
     FileUtils.remove_entry(@directory) if passed? && File.directory?(@directory)
   end
 
-  def driver(*arguments)
-    record = @runner.run([@driver, *arguments.map(&:to_s)], name: 'exec-release', deadline: 30)
+  def enter(exec, own, refuse: 0)
+    record = @runner.run([@driver, 'enter', exec, *own, refuse].map(&:to_s), name: 'exec-release', deadline: 30)
     File.read(record.fetch('log')).lines.map(&:chomp)
   end
 
-  def verdict(record, base, size, own: [OWN, OWN_SIZE], loader: [LOADER, LOADER_SIZE])
-    driver('check', record, base, size, *own, *loader).fetch(0)
-  end
-
-  def test_the_check_accepts_the_linked_loader_beside_the_image
-    assert_equal 'go', verdict(PAGE, LOADER, LOADER_SIZE)
-    assert_equal 'go', verdict(PAGE, OWN - LOADER_SIZE, LOADER_SIZE, loader: [OWN - LOADER_SIZE, LOADER_SIZE]),
-                 'ending where the image starts'
-    assert_equal 'go', verdict(PAGE, OWN + OWN_SIZE, LOADER_SIZE, loader: [OWN + OWN_SIZE, LOADER_SIZE]),
-                 'starting where the image ends'
-    assert_equal 'go', verdict(LOADER - PAGE, LOADER, LOADER_SIZE), 'the record just below the loader'
-    assert_equal 'go', verdict(LOADER + LOADER_SIZE, LOADER, LOADER_SIZE), 'the record just above it'
-    assert_equal 'go', verdict(OWN + OWN_SIZE, LOADER, LOADER_SIZE), 'the record just above the image'
-  end
-
-  def test_the_check_refuses_a_record_that_is_not_a_page_boundary
-    assert_equal 'record', verdict(0, LOADER, LOADER_SIZE)
-    assert_equal 'record', verdict(PAGE + 8, LOADER, LOADER_SIZE)
-  end
-
-  # Seeded fault: a check that takes the record's span without comparing it
-  # with the linked loader's releases each of these.
-  def test_the_check_refuses_a_span_other_than_the_linked_loader
-    assert_equal 'loader', verdict(PAGE, LOADER + PAGE, LOADER_SIZE), 'moved by a page'
-    assert_equal 'loader', verdict(PAGE, LOADER, LOADER_SIZE + PAGE), 'a page longer'
-    assert_equal 'loader', verdict(PAGE, LOADER, LOADER_SIZE - PAGE), 'a page shorter'
-    assert_equal 'loader', verdict(PAGE, LOADER + 1, LOADER_SIZE), 'unaligned'
-    assert_equal 'loader', verdict(PAGE, 0, 0), 'the record of a load that failed'
-    assert_equal 'loader', verdict(PAGE, MAX + 1 - PAGE, 2 * PAGE), 'an end past 2^64'
-    assert_equal 'loader', verdict(PAGE, OWN, OWN_SIZE), "the executable's own image"
-  end
-
-  def test_a_task_linked_with_no_loader_refuses_every_record
-    assert_equal 'loader', verdict(PAGE, LOADER, LOADER_SIZE, loader: [0, 0])
-    assert_equal 'loader', verdict(PAGE, 0, 0, loader: [0, 0]), 'a record of zeros'
-  end
-
-  def test_the_check_refuses_a_loader_that_meets_the_image
-    assert_equal 'loader-image', verdict(PAGE, OWN - PAGE, 2 * PAGE, loader: [OWN - PAGE, 2 * PAGE]), 'the image start'
-    assert_equal 'loader-image', verdict(PAGE, OWN + PAGE, PAGE, loader: [OWN + PAGE, PAGE]), 'inside the image'
-  end
-
-  # Seeded fault: a check without the comparison of the record's page with
-  # the executable's image releases a page of the executable.
-  def test_the_check_refuses_a_record_page_in_the_image
-    assert_equal 'record-image', verdict(OWN, LOADER, LOADER_SIZE), 'the first page'
-    assert_equal 'record-image', verdict(OWN + OWN_SIZE - PAGE, LOADER, LOADER_SIZE), 'the last page'
-    assert_equal 'record-image', verdict(MAX + 1 - PAGE, LOADER, LOADER_SIZE, own: [MAX + 1 - 2 * PAGE, 2 * PAGE]),
-                 'the last page of the space'
-    assert_equal 'go', verdict(MAX + 1 - PAGE, LOADER, LOADER_SIZE, own: [MAX + 1 - 2 * PAGE, PAGE]),
-                 'the last page of the space, just above the image'
-  end
-
-  # Seeded fault: a check without the comparison of the record's page with
-  # the loader's span releases the span and then a page of it again.
-  def test_the_check_refuses_a_record_page_in_the_loader
-    assert_equal 'record-loader', verdict(LOADER, LOADER, LOADER_SIZE), 'the first page'
-    assert_equal 'record-loader', verdict(LOADER + LOADER_SIZE - PAGE, LOADER, LOADER_SIZE), 'the last page'
-  end
-
-  def enter(record, base, size, refuse: 0, loader: [LOADER, LOADER_SIZE])
-    driver('enter', record, base, size, OWN, OWN_SIZE, *loader, refuse)
+  def test_the_record_is_the_windows_last_page
+    assert_equal BASE + BYTES - PAGE, RECORD
   end
 
   def test_a_program_erx_exec_did_not_load_releases_nothing
-    assert_equal ['entered'], enter('-', LOADER, LOADER_SIZE)
-    assert_equal ['entered'], enter('-', LOADER, LOADER_SIZE, loader: ['-', 0]), 'a fixed-link task'
+    assert_equal ['entered'], enter(0, ABOVE)
+    assert_equal ['entered'], enter(0, [BASE, 8 * PAGE]), 'a fixed-link task'
   end
 
   # Seeded fault: an erx_prog_enter that leaves the release to liberx_program_main,
-  # after musl's start, lets the constructor read the record.
-  def test_the_span_then_the_record_are_released_before_a_constructor_runs
-    assert_equal ["release #{LOADER} #{LOADER_SIZE} 0", "release #{RECORD} #{PAGE} 0", 'entered',
-                  "constructor #{'dd' * 8}"], enter(RECORD, LOADER, LOADER_SIZE)
+  # after musl's start, lets a constructor run while the loader is mapped.
+  def test_the_whole_window_is_released_once_before_a_constructor_runs
+    assert_equal ["release #{BASE} #{BYTES} 0", 'entered'], enter(RECORD, ABOVE)
+    assert_equal ["release #{BASE} #{BYTES} 0", 'entered'], enter(1, [BASE - 8 * PAGE, 8 * PAGE]),
+                 'an image ending where the window starts, and any exec value but 0'
   end
 
-  def test_a_refused_record_stops_the_program_before_any_release
-    assert_equal ["stop #{RELEASE}"], enter(RECORD, LOADER + PAGE, LOADER_SIZE), 'a span other than the loader'
-    assert_equal ["stop #{RELEASE}"], enter(RECORD, '-', 0), 'the record of a load that failed'
-    assert_equal ["stop #{RELEASE}"], enter(RECORD + 8, LOADER, LOADER_SIZE), 'a record off its page'
-    assert_equal ["stop #{RELEASE}"], enter(OWN, LOADER, LOADER_SIZE), 'a record in the image'
-    assert_equal ["stop #{RELEASE}"], enter(LOADER, LOADER, LOADER_SIZE), 'a record in the loader'
-    assert_equal ["stop #{RELEASE}"], enter(RECORD, LOADER, LOADER_SIZE, loader: ['-', 0]), 'a fixed-link task'
+  # Seeded fault: a release without the comparison with the program's own image
+  # releases the image of a fixed-link task whose register 7 is wrongly not 0.
+  def test_a_window_that_meets_the_programs_own_image_is_refused
+    [[[BASE, 8 * PAGE], 'a fixed-link task, at the window\'s base'],
+     [[BASE - PAGE, 2 * PAGE], 'an image across the window\'s base'],
+     [[RECORD, 2 * PAGE], 'an image across the window\'s end'],
+     [[BASE + PAGE, PAGE], 'an image inside the window'],
+     [[BASE - PAGE, BYTES + 2 * PAGE], 'an image around the window']].each do |own, label|
+      assert_equal ["stop #{RELEASE}"], enter(RECORD, own), label
+    end
   end
 
   def test_a_release_the_space_refuses_stops_the_program
-    assert_equal ["release #{LOADER} #{LOADER_SIZE} #{EINVAL}", "stop #{RELEASE}"],
-                 enter(RECORD, LOADER, LOADER_SIZE, refuse: 1)
-    assert_equal ["release #{LOADER} #{LOADER_SIZE} 0", "release #{RECORD} #{PAGE} #{EINVAL}",
-                  "stop #{RELEASE}"], enter(RECORD, LOADER, LOADER_SIZE, refuse: 2)
+    assert_equal ["release #{BASE} #{BYTES} #{EINVAL}", "stop #{RELEASE}"], enter(RECORD, ABOVE, refuse: 1)
   end
 end

@@ -65,10 +65,9 @@ typedef struct erx_prog_self {
 
 /*
  * Stores the first thread's registers; the backend's task entry calls it
- * once, first, before musl's start. When program_arg's exec names an exec
- * record, it releases the loader's span and the record's page
- * (liberx/exec/release.h) before it returns, so no constructor runs while
- * either is mapped, and stops the program with ERX_PROG_STATUS_RELEASE
+ * once, first, before musl's start. When program_arg's exec is not 0, it
+ * releases the loader's window (liberx/exec/release.h) before it returns,
+ * so no constructor runs while the loader or its record is mapped, and stops the program with ERX_PROG_STATUS_RELEASE
  * when the release is refused.
  */
 void	erx_prog_enter(const uint64_t regs[ERX_ARCH_START_ARGS]);

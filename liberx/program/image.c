@@ -4,8 +4,9 @@
  */
 
 /*
- * The program's own image (program.h), which erx_exec_release keeps the
- * loader's span from meeting: from its file header, at the start of its
+ * The program's own image (program.h): in an executable, the range the
+ * loader's window must not meet (erx_exec_release); in the loader
+ * erx_exec, the start of its window, whose rest erx_exec_load reserves: from its file header, at the start of its
  * first segment, where the linker puts __ehdr_start, to erx_image_end,
  * which the task script (liberx/backend/fiasco/task.ld) sets at the end of
  * its last segment, rounded up to a whole page. Both symbols are
