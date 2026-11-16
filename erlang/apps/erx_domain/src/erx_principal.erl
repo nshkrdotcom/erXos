@@ -66,21 +66,18 @@ name's record.
                     names := #{binary() => app()}}.
 
 -doc """
-Why a registration is refused: a name or record of the wrong shape; a
-record whose entry is not the one `erx_app_admit:entry/4` gives the name
-now; or that rule's own refusal, every entry held (none without an apps
-row, whose `max` is 0) or the name registered under another signer.
-Admission decides by the same rule before the package is committed.
+Why a registration is refused: `erx_app_admit:entry/4`'s refusal, every
+entry held (none without an apps row, whose `max` is 0) or the name
+registered under another signer. Admission refuses by the same rule
+before the package is committed, so the package process meets neither.
 """.
--type reason() :: badarg
-                | {entry, non_neg_integer()}
-                | apps_full
-                | {signer_changed, binary()}.
+-type reason() :: apps_full | {signer_changed, binary()}.
 
 -doc """
 Register the app of `Package`, the package just committed, in one step:
-of its admission the entry, the signer, the declared memory and the kept
-rows, and of its place and checked header the app's record.
+the signer, the declared memory and the kept rows of its admission, the
+entry `erx_app_admit:entry/4` gives the name, and of its place and
+checked header the app's record.
 """.
 -spec register_app(package()) -> ok | {error, reason()}.
 register_app(Package) ->
@@ -97,27 +94,25 @@ new(Max) when is_integer(Max), Max >= 0 ->
     #{max => Max, names => #{}}.
 
 -doc """
-`Apps` with the record of `Package`'s app: the entry, signer, memory and
-rows of its admission and the app's record of its place and header,
-written in the entry `erx_app_admit:entry/4` gives the name, the one
-admission gave: a name not yet registered takes the lowest entry no name
-holds, and a registered one writes its record again in its own entry,
-with its own signer only.
+`Apps` with the record of `Package`'s app: the signer, memory and rows of
+its admission and the app's record of its place and header, written in
+the entry `erx_app_admit:entry/4` gives the name, the one admission
+found: a name not yet registered takes the lowest entry no name holds,
+and a registered one writes its record again in its own entry, with its
+own signer only.
 """.
 -spec register(package(), apps()) -> {ok, apps()} | {error, reason()}.
 register(#{name := Name, place := Place, checked := #{header := #{layout := Layout, start := Start}},
-           admitted := Admitted}, Apps)
-  when is_binary(Name), is_map(Admitted), (Place =:= system orelse Place =:= installed) ->
-    case maps:with([entry, signer, memory, rows], Admitted) of
-        #{entry := Entry, signer := _, memory := Memory, rows := Rows} = Record
-          when is_integer(Entry), Entry >= 0, is_integer(Memory), Memory > 0, is_list(Rows) ->
+           admitted := #{signer := Signer, memory := Memory, rows := Rows}},
+         #{max := Max, names := Names} = Apps) ->
+    case erx_app_admit:entry(Name, Signer, Max, registry(Apps)) of
+        {ok, Entry} ->
             App = #{place => place(Place, Name), layout => Layout, start => Start},
-            write(Name, Record#{app => App}, Apps);
-        #{} ->
-            {error, badarg}
-    end;
-register(_Package, _Apps) ->
-    {error, badarg}.
+            Record = #{entry => Entry, signer => Signer, memory => Memory, rows => Rows, app => App},
+            {ok, Apps#{names := Names#{Name => Record}}};
+        {error, _} = Refused ->
+            Refused
+    end.
 
 %% Where a package's file lies in a session's namespace (docs/design-packaging.md,
 %% "Where a package lies"): an installed one under its `packages` grant, which erx_ns
@@ -125,13 +120,6 @@ register(_Package, _Apps) ->
 %% where erx_pkg_medium reads it for the system domain.
 place(system, Name) -> <<"/pkg/", Name/binary, ".app">>;
 place(installed, Name) -> <<"/packages/", Name/binary, ".app">>.
-
-write(Name, #{entry := Entry, signer := Signer} = Record, #{max := Max, names := Names} = Apps) ->
-    case erx_app_admit:entry(Name, Signer, Max, registry(Apps)) of
-        {ok, Entry} -> {ok, Apps#{names := Names#{Name => Record}}};
-        {ok, _Given} -> {error, {entry, Entry}};
-        {error, _} = Refused -> Refused
-    end.
 
 -doc "What admission compares a package with: each name's entry and signer.".
 -spec registry(apps()) -> erx_app_admit:registry().

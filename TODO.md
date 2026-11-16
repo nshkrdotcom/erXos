@@ -176,6 +176,9 @@ it; git history is the record of completed work.
   `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
   through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
+* [Low] apps, chokepoints (`tools/lib/erx/chokepoint_rules/apps.rb`): the design's rule that only
+  `erx_pkg` calls `erx_principal:register_app/1` and `erx_starter:packages/2`
+  ([design-packaging.md](docs/design-packaging.md#verification-and-testing)) has no build check.
 * [Low] apps, `erx_starter_keeper`: a session that ends before its keeper takes it ends the keeper with
   `noproc`, the exit its trapped link brings, so the supervisor reports a crash naming no session where
   `{shutdown, {ended, Id}}` is meant; `hold/2` can map it, with an `erx_starter_tests` case for the path.

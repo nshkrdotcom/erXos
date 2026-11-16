@@ -30,13 +30,15 @@ class ErxPrincipalTest < Minitest::Test
                        "    Apps\#{names := maps:remove(Name, Names)}.\n"]],
               caught_by: 'no_entry_is_freed_within_a_boot_test'),
     Fault.new(name: 'a record written in an entry the rule does not give',
-              edits: [['{ok, _Given} -> {error, {entry, Entry}};', '{ok, _Given} -> {ok, Apps};']],
-              caught_by: 'a_new_name_takes_the_entry_admission_gives_test'),
+              edits: [['{ok, Entry} ->', '{ok, _Given} -> Entry = map_size(Names),']],
+              caught_by: 'a_name_registered_again_keeps_its_entry_and_signer_test'),
     Fault.new(name: 'credentials kept on an app principal',
-              edits: [['case maps:with([entry, signer, memory, rows], Admitted) of', 'case Admitted of']],
+              edits: [['rows := Rows}},', 'rows := Rows} = Admitted},'],
+                      ['Record = #{entry => Entry, signer => Signer, memory => Memory, rows => Rows, app => App},',
+                       'Record = Admitted#{entry => Entry, app => App},']],
               caught_by: 'a_record_holds_no_credentials_test'),
-    Fault.new(name: 'a refusal of the entry rule written anyway',
-              edits: [['{error, _} = Refused -> Refused', '{error, _} -> {ok, Apps#{names := Names#{Name => Record}}}']],
+    Fault.new(name: 'a refusal of the entry rule answered ok',
+              edits: [["{error, _} = Refused ->\n            Refused", "{error, _} ->\n            {ok, Apps}"]],
               caught_by: 'no_entry_is_freed_within_a_boot_test')
   ].freeze
 

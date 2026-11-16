@@ -1113,12 +1113,14 @@ indices of the app template's `packages` row and of the facet row of
 each of its services, the names of the manifest's principals,
 configured domains, services and facet rows, and the names of the
 image's packages; and the boot's registry of app principals, each
-name's entry and signer. It answers `{ok, Admitted}`, the principal's
-entry (the name's existing one or a free one, which it reserves nothing
-in), the indices of the facet rows kept, the `packages` row and one for
-each need, the start row's display and the signer, which registration
-records for check 4 to compare, or `{error, Reason}`, the first
-of these that fails:
+name's entry and signer. It reserves no entry and answers none:
+registration takes the entry the same rule (`erx_app_admit:entry/4`)
+gives the name when the package is committed, the one check 4 found,
+since the package process alone admits and registers, one package at a
+time. It answers `{ok, Admitted}`, the indices of the facet rows kept,
+the `packages` row and one for each need, the start row's display, the
+declared memory and the signer, which registration records for check 4
+to compare, or `{error, Reason}`, the first of these that fails:
 
 1. the manifest has an `apps` row: `no_apps`;
 2. the header's ABI version and architecture are the image's: `{abi,
