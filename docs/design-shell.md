@@ -1468,8 +1468,21 @@ first, as the line discipline replaces a wait
 from an open that may not read is answered `ok` and parked: the relay
 keeps it, with its caller, outside the line discipline, so no `VTIME`
 timer runs for it. A watch of `out` is never parked, since a background
-job's writes go through in the first tier. It is reported once room is free
-for the master, no writer's message waits and output is not stopped.
+job's writes go through in the first tier. It is reported once no writer's
+message waits and a byte of room is free for the master, as FreeBSD's
+`poll` reports `POLLOUT` (`ttydev_poll`, `sys/kern/tty.c`); output
+stopped does not matter, as it does not to FreeBSD's `poll`. Once a write
+has found too little room for all its bytes, the watch waits instead for
+FreeBSD's low-water mark, nine tenths of the 4 KiB free, as FreeBSD wakes
+a writer that a full output queue held (`TF_HIWAT_OUT`,
+`ttydisc_wakeup_watermark`, `sys/kern/tty_ttydisc.c`). The room reaching
+the mark ends that wait, checked as the master takes output and before
+the writers' messages take the room again, so a writer that keeps
+writing cannot hold the watch off; a flush ends it only through the
+room, since the relay's flush keeps the output the master has. FreeBSD's `poll` itself reports at one byte
+even then, so a program whose next rendering is wider, a newline under
+`ONLCR` with one byte free, would spin between `poll` and `EAGAIN` until
+the master takes output.
 
 **The ordering rule.** The answer goes before anything the request sets
 off. A watch whose condition already holds is answered `ok` and then

@@ -454,6 +454,22 @@ a_drain_waits_for_the_master_test() ->
     T5 = ev({drain, {ph, drained}}, type(<<19>>, T2)),
     {[drained], _} = take(ph, T5).
 
+%% An out wait is reported at one free byte, as FreeBSD's poll is, but once
+%% a write found too little room, at the low-water mark: a newline under
+%% ONLCR with one byte free is eagain, and the watch after it waits for the
+%% master, as FreeBSD wakes a writer once TF_HIWAT_OUT's mark is reached;
+%% from then on a watch is reported at one byte again. A flush keeps the
+%% outstanding output, so it does not end the wait.
+an_out_wait_waits_for_the_low_water_mark_test() ->
+    {{ok, 4095}, T1} = do(pa, {write, aw, binary:copy(<<"x">>, 4095)}, a_holds()),
+    {out, _, T2} = report(pa, aw, ok(pa, {watch, aw, [out]}, T1)),
+    {eagain, T3} = do(pa, {write, aw, <<"\n">>}, T2),
+    T4 = no_report(pa, ok(pa, {watch, aw, [out]}, T3)),
+    T5 = no_report(pa, type(?CTRL_C, T4)),
+    {out, _, T6} = report(pa, aw, ev({master, {tty_taken, 0}}, T5)),
+    {{ok, 4095}, T7} = do(pa, {write, aw, binary:copy(<<"x">>, 4095)}, T6),
+    {out, _, _} = report(pa, aw, ok(pa, {watch, aw, [out]}, T7)).
+
 %%% The exploration
 
 %% Two shells, s1 with job a under g1 and s2 with job b under g2, each job
