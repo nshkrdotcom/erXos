@@ -29,7 +29,7 @@ class ErxSshDevTest < Minitest::Test
     Fault.new(name: 'a callback for every user name', source: DEV,
               from: 'is_auth_key(Key, ?USER, Options) ->', to: 'is_auth_key(Key, _, Options) ->'),
     Fault.new(name: 'any build kind taken for a development one', source: 'erlang/apps/erx/src/erx_build.erl',
-              from: '[_Platform, <<"development">>] -> true;', to: '[_Platform, _] -> true;'),
+              from: '[_Platform, Kind] -> kind(Kind) =:= {ok, development};', to: '[_Platform, _Kind] -> true;'),
     Fault.new(name: 'an Ed25519 private key without its public half', source: 'otp/lib/ssh/src/ssh_message.erl',
               from: '?STRING(<<Priv/binary, Pub/binary>>)>>;', to: '?STRING(Priv)>>;')
   ].freeze

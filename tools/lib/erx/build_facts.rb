@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'error'
+require_relative 'generated_abi'
 
 module Erx
   # The facts of an image's build that `uname -v`, `-i` and `-K` show
@@ -29,29 +30,40 @@ module Erx
   module BuildFacts
     # nil stands for a fact the build could not determine.
     Facts = Data.define(:revision, :date, :configuration, :kernel)
+    CODEC = ABI::Generated::CODEC
+    # The build kinds, development and release, and what configuration adds to
+    # the build kind of a local test image, as abi/erx_abi.txt's build_kind_*
+    # rows give them.
+    KINDS = %w[build_kind_development build_kind_release].map { |name| CODEC.fixed_bytes(name).freeze }.freeze
+    LOCAL = CODEC.fixed_bytes('build_kind_local_suffix').freeze
+    private_constant :CODEC
     # What each fact may hold, which erx_build checks the same way when it
     # reads the file: printable ASCII with no space, so a line splits in two
-    # at its first space and the fact needs no escaping to be shown.
+    # at its first space and the fact needs no escaping to be shown. A
+    # configuration's kind is one of KINDS, with or without LOCAL.
     SHAPES = {
       revision: /\A(?:n[1-9][0-9]{0,9}-)?[0-9a-f]{12}(?:-dirty)?\z/,
       date: /\A[0-9]{1,12}\z/,
-      configuration: %r{\A[a-z0-9][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,31}\z},
+      configuration: %r{\A[a-z0-9][a-z0-9-]{0,63}/#{Regexp.union(KINDS)}(?:#{Regexp.escape(LOCAL)})?\z},
       kernel: /\A[a-z0-9][a-z0-9.-]{0,63}\z/
     }.freeze
     UNKNOWN = 'unknown'
-    # What configuration adds to the build kind of a local test image.
-    LOCAL = '-local'
 
     module_function
 
     # The configuration uname -i names: the platform record's name, a slash and
-    # the build kind (development or release), each as it is, so a build of
+    # the build kind (one of KINDS, development or release), each as it is, so a build of
     # qemu-virt for development is qemu-virt/development. A local test image, one
     # built to take packages whose license is not permissive (`tools/erx pack --local`),
     # adds -local to the build kind, qemu-virt/development-local, so uname -i on the
     # machine says the image may not leave the host that built it. It follows the
-    # records, not where they lie in the tree.
-    def configuration(platform:, build_kind:, local: false) = "#{platform}/#{build_kind}#{LOCAL if local}"
+    # records, not where they lie in the tree. A kind KINDS does not hold raises.
+    def configuration(platform:, build_kind:, local: false)
+      raise Error, "#{build_kind.inspect} is not a build kind; the kinds are #{KINDS.join(' and ')}" unless
+        KINDS.include?(build_kind)
+
+      "#{platform}/#{build_kind}#{LOCAL if local}"
+    end
 
     # Whether configuration, a configuration fact, is a local test image's (configuration's local:).
     def local?(configuration) = configuration.end_with?(LOCAL)

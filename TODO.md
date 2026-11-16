@@ -2058,6 +2058,14 @@ it; git history is the record of completed work.
 
 ## Bugs by subsystem
 
+* [Medium] build, the build kinds' Ruby copies (`tools/lib/erx/manifest.rb`, `pack.rb`, `pack_wire.rb`,
+  `pack_provenance.rb`, `boot_partition.rb`, `production_image.rb` `BUILD_KIND`): `abi/erx_abi.txt`'s
+  `build_kind_*` rows are the one source of the kinds, which `Erx::BuildFacts::KINDS` and `erx_build` read, but
+  these modules still check `%w[development release]` and compare `build_kind == 'development'` themselves. Give
+  the kinds one Ruby owner (a small `Erx::BuildKind` with a checked constructor and `development?`, taking
+  `KINDS` out of `BuildFacts`) and use it at every site; the pack paths it touches (the development flag, the
+  login key, restricted licenses) want their own review.
+
 * [Medium] desktop, the glyph step's glyph count (`tools/lib/erx/glyphs.rb`, `erx_draw_core.erl` `?MAX_GLYPHS`):
   `Erx::Glyphs` refuses only at font(7)'s field limits, so it would write a subfont of more than 4096 glyphs, the
   most a font cache holds, which `erx_font:parse/1` then refuses. No spec holds that limit (`abi/formats/draw.txt`
