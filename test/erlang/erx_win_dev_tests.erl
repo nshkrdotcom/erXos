@@ -16,8 +16,11 @@
 %% tree; a resize reaches the program as an r record of mouse, after which ctl shows the
 %% new rectangle; a kbd read waiting for a key holds up no other request of the grant, a
 %% flush answers it eintr and gives the next key to the next read, and the window's end
-%% answers a read still held eio; a connection killed under the program makes draw answer ebadf while the
-%% tree serves the rest; erx_win's clipboard probe answers the grant's clipboard, an open
+%% answers a read still held eio; the connection sends one read of a file to the display
+%% at a time, so the kbd reads waiting on two windows leave the session's display grant
+%% free for a present, and a read flushed while it waits behind another never reaches the
+%% display; start_window/1's handler and its tree end at the connection's end; erx_win's
+%% clipboard probe answers the grant's clipboard, an open
 %% the display refuses leaves no fid on the display's grant, and an open holds one of the
 %% opener's.
 
@@ -40,7 +43,7 @@
 %% the tree's grant and any tracing end with the case.
 with_dev(Case) ->
     erx_win_tests:with(fun(Fixture) ->
-                               #{tree := Tree} = Dev = dev(),
+                               #{tree := Tree} = Dev = dev(<<"w1">>),
                                try Case(Fixture, Dev)
                                after
                                    _ = erlang:trace(all, false, [call]),
@@ -49,11 +52,11 @@ with_dev(Case) ->
                        end).
 
 %% The window, its connection and the tree's grant, as erx_session_export:start_window/1 makes
-%% them but for the window's name, w1, which the cases walk to, the tree's end, which
+%% them but for the window's name, Name, which the cases walk to, the tree's end, which
 %% with_dev/1 brings about rather than the test process's, and the link to the connection; fid 1 is attached to the root.
-dev() ->
+dev(Name) ->
     ok = erx_fs_version:init(),
-    {ok, Window} = erx_win:open(?SERVICE, #{name => <<"w1">>}),
+    {ok, Window} = erx_win:open(?SERVICE, #{name => Name}),
     {ok, Conn} = erx_draw_conn:start(#{window => Window}),
     Args = #{window => #{window => Window, conn => Conn, display => ?SERVICE,
                          clipboard => erx_win:clipboard(?SERVICE)}},
@@ -107,6 +110,11 @@ write(Grant, Path, Bytes) ->
         {ok, Fid} ?= open(Grant, Path, ?ERX_P9_O_RDWR),
         call(Grant, {write, Fid, 0, Bytes})
     end.
+
+%% Count reads of the grant's kbd, each sent and not waited for.
+send_reads(Grant, Count) ->
+    {ok, Kbd} = open(Grant, [<<"dev">>, <<"kbd">>], 0),
+    [send(Grant, {read, Kbd, 0, 64}) || _ <- lists:seq(1, Count)].
 
 listing(Grant, Path) ->
     {ok, Fid} = open(Grant, Path, 0),
@@ -244,14 +252,43 @@ a_waiting_kbd_read_holds_up_nothing_of_its_grant_test() ->
         ?assertEqual({error, eio}, replied(Held, ?WAIT))
     end).
 
-a_connection_killed_under_the_program_answers_ebadf_test() ->
-    with_dev(fun(_Fixture, #{tree := Tree, conn := Conn}) ->
-        Watch = monitor(process, Conn),
+waiting_kbd_reads_on_two_windows_leave_the_display_grant_free_test() ->
+    with_dev(fun(_Fixture, #{tree := Tree1, window := Window1, conn := Conn1}) ->
+        #{tree := Tree2, conn := Conn2} = dev(<<"w2">>),
+        try
+            %% 80 reads, more than the display grant's 64 requests in flight.
+            Reads = lists:append([send_reads(Tree, 40) || Tree <- [Tree1, Tree2]]),
+            %% Each connection has taken every read its grant handed it.
+            {ok, _} = erx_draw_conn:ctl(Conn1),
+            {ok, _} = erx_draw_conn:ctl(Conn2),
+            ?assertEqual(ok, erx_win:present(Window1, [{0, 0, 1, 1}])),
+            ?assertEqual([], [Answer || Read <- Reads, (Answer = replied(Read, 0)) =/= none])
+        after
+            exit(Tree2, kill)
+        end
+    end).
+
+a_read_flushed_behind_another_never_reaches_the_display_test() ->
+    with_dev(fun(_Fixture, #{tree := Tree}) ->
+        [First, Second, Third] = send_reads(Tree, 3),
+        ?assertEqual(ok, call(Tree, {flush, Second})),
+        ?assertEqual({error, eintr}, replied(Second, 0)),
+        ok = erx_winfs:input(<<"kbd">>, {key, down, 30}),
+        %% The key down is a k record and the rune it types a c record.
+        ?assertMatch({ok, <<"k", _/binary>>}, replied(First, ?WAIT)),
+        ?assertMatch({ok, <<"c", _/binary>>}, replied(Third, ?WAIT))
+    end).
+
+the_handler_and_its_dev_end_at_the_connection_s_end_test() ->
+    erx_win_tests:with(fun(_Fixture) ->
+        ok = erx_fs_version:init(),
+        {{ok, Tree}, Handler} = in_holder(fun() -> erx_session_export:start_window(?SERVICE) end),
+        {links, Links} = process_info(Handler, links),
+        [Conn] = Links -- [Tree],
+        Watches = [monitor(process, Ended) || Ended <- [Handler, Tree]],
         exit(Conn, kill),
-        receive {'DOWN', Watch, process, Conn, _} -> ok end,
-        ?assertEqual({error, ebadf}, write(Tree, [<<"dev">>, <<"draw">>], <<"v">>)),
-        ?assertEqual({ok, <<>>}, read(Tree, [<<"dev">>, <<"null">>], 16)),
-        ?assertMatch({ok, _, _}, write(Tree, [<<"dev">>, <<"label">>], <<"still">>))
+        ?assertEqual([ended, ended], [receive {'DOWN', Watch, process, _, _} -> ended after ?WAIT -> lives end
+                                      || Watch <- Watches])
     end).
 
 the_clipboard_opens_on_a_fid_of_its_own_test() ->

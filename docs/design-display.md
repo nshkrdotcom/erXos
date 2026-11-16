@@ -2709,14 +2709,22 @@ said.
 program's reads of `kbd` and `mouse`, which wait for a record at the
 display ([design-files.md](design-files.md#a-programs-window);
 [design-files.md](design-files.md#serving-the-erx_fs-behaviour),
-"Waiting requests"). It marks each begun, sends it on the window
-handle's fid with `erx_win:send_read/4`, which returns an opaque
-request id at once, and answers it with the display's reply when that
-arrives; a flush of one it sends on with `erx_win:send_flush/2`, which
-takes that id, and answers with what the display answers. It keeps them
-in one `erx_fs_waits` set, at most the `/dev` tree's grant's 64
-requests in flight, each a read's count, which its heap bound covers
-beside its images. A flush that arrives while a `v` of the connection
+"Waiting requests"). It keeps them in one `erx_fs_waits` set and has
+at most one read of each file at the display, as the window serves its
+own readers ([The window process](#the-window-process)): it marks the
+first begun, sends it on the window handle's fid with
+`erx_win:send_read/4`, which returns an opaque request id at once, and
+answers it with the display's reply when that arrives, then begins the
+next of that file in the order they arrived. A flush of a read still
+waiting in the set answers it `EINTR` at once; a flush of the one sent
+on it sends on with `erx_win:send_flush/2`, which takes that id, and
+answers with what the display answers. So every window of a session
+takes at most two of the session's display grant's 64 requests in
+flight for its program's input, and a program that keeps many reads
+waiting leaves the session's presents, `wctl` reads and opens their
+room. The set holds at most the `/dev` tree's grant's 64 requests in
+flight, each a read's count, which its heap bound covers beside its
+images. A flush that arrives while a `v` of the connection
 waits for its present is taken once the present is answered, which the
 screen does within one frame of the device or ends with its driver
 ([design-files.md](design-files.md#a-programs-window)). The connection

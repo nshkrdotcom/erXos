@@ -2126,19 +2126,9 @@ it; git history is the record of completed work.
   wait for an event left in a callback does now that callbacks run in the grant. `erx_fs_locks`, the tree's lock
   table, does not exist yet (the grant serves no lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants`
   supervises it and its grants' supervisor `rest_for_one`, as design-files.md ("Locks") has it.
-* [Medium] display client, a program's input reads (`erlang/apps/erx_win/src/erx_draw_conn.erl`, `relay/6`): the draw
-  connection sends every `kbd` and `mouse` read its program has waiting on to the display at once, and every window of
-  a session sits on the session's one display grant, whose 64 requests in flight they share
-  (`erx_fs_grant.erl:577-579`), so windowed programs that keep enough reads waiting make the session's presents, `wctl`
-  reads and opens answer `emfile`. Sending at most one read per file to the display, and beginning the next when it is
-  answered, as `erx_window` serves its readers, bounds it at two per window; design-display.md ("The program's
-  input") then states it. The same connection has no `max_heap_size`, which "What waiting holds" asks of a keeper.
-* [Medium] session, a program's window (`test/erlang/erx_win_dev_tests.erl`, `erx_session_export:start_window/1`): no
-  test ends the handler and the `/dev` grant at the draw connection's end through `start_window/1`'s link, and no seed
-  drops the link; `a_connection_killed_under_the_program_answers_ebadf_test` still checks a tree that serves after its
-  connection has ended, a state the link leaves only until its signal lands. A connection's `dropped` grant leaves its
-  reads at the display, safe only because the connection has one grant that shares its life; flushing them there
-  makes that hold without the shared life.
+* [Low] session, the relay's writer (docs/design-programs.md:1543, 2400): both name
+  `erx_session_relay:open_writer/1`, but `erx_session_relay` exports `open_writer/2` (`open_writer(Relay, Holder)`);
+  name the call the module has.
 * [Medium] files, the grant's drain (`test/erlang/erx_fs_core_model_tests.erl`, `erx_fs_grant:client_ended/1`):
   design-files.md ("Verification and testing") has the core's model explore the client's end and names the seeded
   fault "a grant that ends at its client's end without its fids' clunks", but `?EVENTS` has no client-end event and
@@ -2161,11 +2151,17 @@ it; git history is the record of completed work.
   UTF-8), so a read of 6 to 8 bytes takes a 9-byte record off the queue, the grant's reply check answers it `EIO`,
   and the key is lost. Answer a reader whose count cannot hold the head record `EINVAL` without taking it
   (`serve_records/2`; the held `{read, File, Count}` keeps the count), with a test that holds Ctrl and Shift.
-* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: the window, the keeper of its `mouse`, `kbd` and `ctl`
-  requests, starts with no `max_heap_size`, where design-display.md has the display set one from the counts of
-  held requests; and no test covers a flush or a clunk of a `ctl` write whose present is in flight (answered
-  with the present's answer, never `EINTR`) or of one waiting behind it (`EINTR`); `never_answers/0` in
-  `test/erlang/erx_winfs_tests.erl` holds such a present, with a seeded fault that drops `began/2` in `pump/1`.
+* [Medium] display, the keepers' heaps (`erlang/apps/erx_display/src/erx_window.erl`,
+  `erlang/apps/erx_win/src/erx_draw_conn.erl`): design-files.md ("What waiting holds") has a keeper run under a
+  `max_heap_size` its tree sets from its counts, and design-display.md has the display set the window's ("The window
+  process") and the draw connection's cover its held reads beside its images ("The program's input"), but names
+  neither value, so both start with none. Name each in design-display.md (the window's from its 64 held requests of
+  at most 1,024 bytes, its pending input and its last present; the connection's from its 64 held reads and its
+  images, whose `erx_memdraw` memory a heap bound may not count, unverified) and set it.
+* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: no test covers a flush or a clunk of a `ctl` write whose
+  present is in flight (answered with the present's answer, never `EINTR`) or of one waiting behind it (`EINTR`);
+  `never_answers/0` in `test/erlang/erx_winfs_tests.erl` holds such a present, with a seeded fault that drops
+  `began/2` in `pump/1`.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: the window table carries no label, so a decorating policy cannot
   see it.
 * [Low] `erlang/apps/erx_display/src/erx_screen.erl`: a present the core refuses (a rectangle past the coordinate limit

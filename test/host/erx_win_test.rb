@@ -130,7 +130,19 @@ class ErxWinTest < Minitest::Test
              anchor: '{begun, Wait, _Read, Flushing} -> {noreply, flush(Wait, Conn#conn{waits = Flushing})};',
              replacement: '{begun, _Wait, _Read, Flushing} -> {noreply, Conn#conn{waits = Flushing}};',
              suite: 'erx_win_dev_tests',
-             catching_case: 'a_waiting_kbd_read_holds_up_nothing_of_its_grant_test')
+             catching_case: 'a_waiting_kbd_read_holds_up_nothing_of_its_grant_test'),
+    Seed.new(fault: "a connection that sends every read of its program on to the display at once",
+             path: CONN_SOURCE,
+             anchor: 'Sent = [Of || {Of, _Id} <- maps:values(Reads), Of =:= File],',
+             replacement: 'Sent = [],',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'waiting_kbd_reads_on_two_windows_leave_the_display_grant_free_test'),
+    Seed.new(fault: "a program's handler that outlives its draw connection",
+             path: 'erlang/apps/erx_session/src/erx_session_export.erl',
+             anchor: "        true = link(Conn),\n",
+             replacement: '',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'the_handler_and_its_dev_end_at_the_connection_s_end_test')
   ].freeze
 
   def setup

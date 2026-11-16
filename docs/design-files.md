@@ -1803,15 +1803,21 @@ as a waiting request ([Serving](#serving-the-erx_fs-behaviour),
 "Waiting requests") whose keeper is the window's draw connection, a
 process the tree already has
 (`erlang/apps/erx_session/src/erx_session_export.erl:125`): the
-connection marks the request begun, sends the read on the handle's fid
-with `erx_win:send_read/4`, which returns an opaque request id without
-waiting for the reply, and answers the
-program's request with the display's reply, after it has made image 0
-anew for an `r` record in it ("A resize", below), a step of its own.
-The program's close of an open whose read the connection holds flushes
-it there (rule 5), and the connection sends the display a flush of its
-read, so the window process settles it, with `eintr` or with the record
-it had already taken, and no key goes to a closed open. A read waiting
+connection holds it, and keeps at most one read of each file at the
+display, as the window serves its own readers one record at a time:
+the first it marks begun and sends on the handle's fid with
+`erx_win:send_read/4`, which returns an opaque request id without
+waiting for the reply, and the rest wait in arrival order until the
+display has answered the one before. It answers each program's request
+with the display's reply, after it has made image 0 anew for an `r`
+record in it ("A resize", below), a step of its own. So a window's
+waiting reads take at most two of the session's display grant's
+requests in flight, however many the program keeps. The program's
+close of an open whose read the connection holds flushes it there
+(rule 5): a read still waiting at the connection is answered `eintr`
+at once, and of the one sent on the connection sends the display a
+flush, so the window process settles it, with `eintr` or with the
+record it had already taken, and no key goes to a closed open. A read waiting
 on one file thus holds up no other, nor the file's close. A read of
 `wctl` or `label` answers at once at the display
 ([design-display.md](design-display.md#the-window-tree)), so

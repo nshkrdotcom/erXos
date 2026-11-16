@@ -37,14 +37,20 @@ left answers no bytes.
 program's reads of its `/dev/kbd` and `/dev/mouse` wait for a record, so
 its `/dev` tree hands each here as a waiting request (`{read, File,
 Offset, Count}`), and the connection is their keeper: it holds each in an
-`erx_fs_waits` set, marks it begun and sends it on to the display on the
-window handle's fid with `erx_win:send_read/4`, from this process, and
-answers it with the display's reply, which `erx_win:reply/2` takes for the
-read's id, once image 0 has the window's new size for an `r` record in a
-`mouse` reply. The first flush of a read goes on to the display with
-`erx_win:send_flush/2`; the display answers the read first, with `eintr`
-or the record it had already taken, so no record goes to a read the
-program has flushed. The display's end answers each read sent on `eio`,
+`erx_fs_waits` set and has at most one read of each file at the display,
+as the window serves its own readers, so a window's input takes at most
+two of its session's display grant's requests in flight, however many
+reads its program keeps waiting. `pump/2` marks the first waiting read of
+a file begun and sends it on to the display on the window handle's fid
+with `erx_win:send_read/4`, from this process; the connection answers it
+with the display's reply, which `erx_win:reply/2` takes for the read's
+id, once image 0 has the window's new size for an `r` record in a
+`mouse` reply, and then sends on the next read of that file. A flush of
+a read still waiting here is answered `eintr` by the set; the first flush
+of the read sent on goes on to the display with `erx_win:send_flush/2`,
+and the display answers the read first, with `eintr` or the record it had
+already taken, so no record goes to a read the program has flushed. The
+display's end answers each read sent on `eio`,
 and the end of a grant that sent reads drops them here; their replies then
 answer nothing. The window's fids are its holder's, the handler's, so the
 reads the connection sent end with the connection, the handler and the
@@ -112,8 +118,9 @@ failed (Failures after the plan).
                images :: #{erx_draw_codec:image_id() => erx_memdraw:image()},
                dirty = [] :: [erx_win_core:rect()],   % what image 0 changed since the last present
                unread = <<>> :: binary(),             % what the last r left for reading
-               %% The program's kbd and mouse reads (erx_fs_waits); each is begun, sent on
-               %% to the display under the id in reads, until the display answers it.
+               %% The program's kbd and mouse reads (erx_fs_waits), in arrival order; at
+               %% most one of each file is begun, sent on to the display under its id in
+               %% reads until the display answers it, and the rest wait.
                waits = erx_fs_waits:new() :: erx_fs_waits:waits(),
                reads = #{} :: #{erx_fs_waits:wait() => {kbd | mouse, erx_win:request()}},
                %% The flushes sent to the display of reads in reads, until it answers each.
@@ -219,8 +226,8 @@ handle_cast(_Message, Conn) ->
 -doc false.
 handle_info({'DOWN', Monitor, process, _Opener, _Why}, #conn{opener_monitor = Monitor} = Conn) ->
     {stop, normal, Conn};
-handle_info(?ERX_FS_WAIT(Wait, {read, File, Offset, Count} = Read), Conn) ->
-    {noreply, relay(Wait, Read, File, Offset, Count, Conn)};
+handle_info(?ERX_FS_WAIT(_Wait, {read, File, _Offset, _Count}) = Held, #conn{waits = Waits} = Conn) ->
+    {noreply, pump(File, Conn#conn{waits = erx_fs_waits:hold(Held, Waits)})};
 handle_info(Message, #conn{waits = Waits} = Conn) ->
     case erx_fs_waits:info(Message, Waits) of
         {flushed, Settled} -> {noreply, Conn#conn{waits = Settled}};
@@ -238,14 +245,23 @@ format_status(Status) ->
 
 %% The program's input ---------------------------------------------------------
 
-%% A read of the program's kbd or mouse, which its /dev tree handed here: marked begun
-%% and sent on to the display on the window's fid, or answered with the refusal of a
-%% read the display client sends nowhere.
-relay(Wait, Read, File, Offset, Count, #conn{window = Window, waits = Waits, reads = Reads} = Conn) ->
-    Begun = erx_fs_waits:began(Wait, erx_fs_waits:hold(?ERX_FS_WAIT(Wait, Read), Waits)),
-    case erx_win:send_read(Window, File, Offset, Count) of
-        {ok, Id} -> Conn#conn{waits = Begun, reads = Reads#{Wait => {File, Id}}};
-        {error, _} = Refused -> Conn#conn{waits = erx_fs_waits:answer(Wait, Refused, Begun)}
+%% Sends the first read of File still waiting on to the display, unless a read of File
+%% is there already: marked begun and sent on the window's fid, or answered with the
+%% refusal of a read the display client sends nowhere, after which the next is tried.
+pump(File, #conn{window = Window, waits = Waits, reads = Reads} = Conn) ->
+    Sent = [Of || {Of, _Id} <- maps:values(Reads), Of =:= File],
+    Waiting = [{Wait, Offset, Count}
+               || {Wait, {read, Of, Offset, Count}, waiting} <- erx_fs_waits:list(Waits), Of =:= File],
+    case {Sent, Waiting} of
+        {[_], _} ->
+            Conn;
+        {[], []} ->
+            Conn;
+        {[], [{Wait, Offset, Count} | _]} ->
+            case erx_win:send_read(Window, File, Offset, Count) of
+                {ok, Id} -> Conn#conn{waits = erx_fs_waits:began(Wait, Waits), reads = Reads#{Wait => {File, Id}}};
+                {error, _} = Refused -> pump(File, answer(Wait, Refused, Conn))
+            end
     end.
 
 %% The first flush of a read sent on goes on to the display, which answers the read
@@ -256,13 +272,13 @@ flush(Wait, #conn{window = Window, reads = Reads, flushes = Flushes} = Conn) ->
     {ok, Flush} = erx_win:send_flush(Window, Id),
     Conn#conn{flushes = [Flush | Flushes]}.
 
-%% A message that answers a read sent on, which answers the program's read, or a flush
-%% sent on, which says only that the display has answered its read; any other message
-%% is dropped.
+%% A message that answers a read sent on, which answers the program's read and sends on
+%% the next of its file, or a flush sent on, which says only that the display has
+%% answered its read; any other message is dropped.
 display_reply(Message, #conn{reads = Reads, flushes = Flushes} = Conn) ->
     case answered(Message, maps:to_list(Reads)) of
         {Wait, File, Answer} ->
-            answer_read(Wait, File, Answer, Conn#conn{reads = maps:remove(Wait, Reads)});
+            pump(File, answer_read(Wait, File, Answer, Conn#conn{reads = maps:remove(Wait, Reads)}));
         none ->
             %% A flush whose answer the message is is spent by the reply that takes it.
             Conn#conn{flushes = [Flush || Flush <- Flushes, erx_win:reply(Message, Flush) =:= no_reply]}
