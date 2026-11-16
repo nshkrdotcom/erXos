@@ -658,8 +658,8 @@ app doom
 A declaration has exactly one of `applications` and `program`. An Erlang
 app that needs a native helper starts it itself with
 `erx_prog_handler:start/1`. A program starts with a window on the
-session's default display when the app needs a `windows` service, and
-otherwise without one. A declaration names no facet parameter, quota,
+session's default display whenever the session has one, and otherwise
+without one. A declaration names no facet parameter, quota,
 CPU share, environment or grant, and there is no field through which it
 could: the illegal declaration is one the grammar cannot write. An app
 that wants the LVGL renderer says so where it opens its UI, with
@@ -1138,8 +1138,11 @@ third from the package the entry was registered from:
   so it refuses that template, and neither entry can pair an app
   principal with another template or the app template with another
   principal;
-* its facets are the template's `packages` and `system` rows and the
-  rows the admission kept, and no others; each mint computes its parameters from
+* its facets are the template's `packages` and `system` rows, the
+  rows the admission kept, and the `code_objects` facet the domain
+  service grants every session by its own policy, with no row
+  ([design-system.md](design-system.md#creating-a-domain), "The
+  `code_objects` facet"), and no others; each mint computes its parameters from
   the session's principal, the app's, as every mint does
   ([design-system.md](design-system.md#facets-a-configured-domain-serves));
 * its environment holds its default display, which its planning sets
@@ -1161,8 +1164,9 @@ third from the package the entry was registered from:
   nothing secret, and a package file begins with its header, not an
   executable's), the
   header's layout, which the file check built, and its
-  applications or its program with its arguments and whether it has a
-  window.
+  applications or its program with its arguments; the record holds no
+  window of its own, since `erx_app` starts a program with a window
+  whenever the session has a default display.
 
 The record comes only once the session's namespace is in place, each of
 its grants of a files service settled, the `packages` and `system`
@@ -1260,7 +1264,7 @@ DIR/Makefile           optional: builds bin/ with the SDK's make variables
   It then parses `app.txt`, checks that each application has its OTP
   application resource file, `lib/APP/ebin/APP.app`, or that the program
   exists and passes `erx_elf_plan` with the SDK's ABI version as a
-  position-independent executable, as `erx_exec` takes it, writes the
+  position-independent executable, as `erx_exec` takes it ([design-programs.md](design-programs.md#what-a-program-can-start)), writes the
   image from an mtree manifest with `fsimg`, computes the hash tree with
   the image's SHA-256 as its salt, writes the header with the
   SDK's ABI version and target, signs it with FILE's key or else the
@@ -1374,9 +1378,8 @@ that server serves. Once the record has come, it:
    outside it; that path as `argv[0]`, the declared arguments after it,
    an empty environment, `/` as its working directory and no right to
    start commands; and the spec's `window` option naming the session's
-   default display, the environment's `display`, when the record's
-   `window` holds, as it does when the app needs a `windows` service,
-   so the handler opens the
+   default display, the environment's `display`, whenever the session
+   has one, so the handler opens the
    window and binds its `/dev/draw`, `/dev/kbd`, `/dev/mouse` and
    `/dev/wctl` ([design-programs.md](design-programs.md#the-handler),
    [design-display.md](design-display.md#the-window-tree)); without,

@@ -1750,7 +1750,24 @@ service calls when the session's command server drops the object
 through the same facet; the rest go with the
 session's budget at its destroy, after every program that mapped one has
 stopped with the session
-([design-programs.md](design-programs.md#file-objects)). A
+([design-programs.md](design-programs.md#file-objects)).
+
+A session is a trusted supplier of its own programs' code, an app's
+session as much as a template's: the copy it holds can be filled with
+any bytes, from any source, and sealed, and nothing below the session
+checks where they came from. That harms no party but the session: the
+object is charged to the session's own budget and runs only in the
+session's own spaces, its own and its programs', which stop with the
+session, and a session whose image carries `ERX_IMAGE_JIT` already
+makes machine code in its own JIT space. What
+the `rx` rule of a grant protects is a program, from running a file
+that it or another program could rewrite: the session's handler fills
+a code object for a program only from a file the program reaches
+through an `rx` entry
+([design-files.md](design-files.md#invariants), F6; [design-programs.md](design-programs.md#invariants), P10).
+It is no check on the session itself.
+
+A
 program from the boot image needs none: its session maps its slice. A
 session's shared mappings of files need nothing of the library either: the
 session serves them from memory objects of its own budget
@@ -1781,8 +1798,12 @@ grants a facet of it to every session it starts, a template's and an
 app's alike, by its own policy
 ([design-domains.md](design-domains.md#facets), "The facet table"),
 with no facet row: what it hands a session, memory of the session's
-own budget within `file_objects`, depends on nothing a template
-chooses, and only the session's command server uses it.
+own budget within `file_objects` for code the session supplies, depends
+on nothing a template chooses, and an app's session lists it among its
+facets ([design-packaging.md](design-packaging.md#an-apps-session)).
+Any process of the session can reach it, an app's own Erlang
+applications among them; that the command server is its one caller in
+erXos's code is no boundary, and the trust above covers them all.
 
 ### Ending a domain
 

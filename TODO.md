@@ -149,10 +149,15 @@ it; git history is the record of completed work.
   `code_object/2` answers `enotsup`, and the loader `erx_exec` does not exist (only `erx_elf_plan` does). So a
   native app's start of `/app/bin/NAME` is refused `{program, einval}` and the session ends; no installable
   native package (the Doom demo) runs until this lands. Also needs the stopgap backend's rows for paged
-  objects, sealing, supply and `ERX_MEM_CODE` (plan.md, 1b-B's backend rows). The resolve step must open a
-  native app's program beneath `/app` without following links, or the `{erofs, app}` mount refuse link
-  inodes: the reader checks only the header's text (`relative_path`) and only the host packer refuses links,
-  so an image `bin/x -> /bin/sh` would start a program outside the package.
+  objects, sealing, supply with its code-cache maintenance, and `ERX_MEM_CODE` (plan.md, 1b-B's backend
+  rows). The session asks for code objects through the `code_objects` facet
+  (`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which every session gets
+  by the domain service's own policy and which is not declared yet; the command server's holds (fill, start,
+  row) decide every drop (design-programs.md, "Holds and drops"). Links are settled: a package mount answers
+  `enotsup` for a link inode, since a package holds no links (design-storage.md, "Reading EROFS images"), so
+  an image `bin/x -> /bin/sh` cannot start a program outside the package; today the reader checks only the
+  header's text (`relative_path`) and only the host packer refuses links, so the mount's refusal is part of
+  this item.
 * [Medium] apps, `erx_app`, a native app's standard streams: design-packaging.md ("Starting an app") starts a
   program without a window with standard input null and its output to the session's log, but
   `erx_prog_handler:start/1` offers only pipe ends and a window's buffer as descriptors, so `erx_app` starts
