@@ -1502,7 +1502,7 @@ reserved:
 | 3 | the starter's handler: **validate** | checks the frame against the protocol's grammar and bounds, the requester's right to start commands, its `children` quota and its principal's `programs` quota, and that every end and open the request names is in the requester's table | nothing to undo; `EPERM` without the right, `EAGAIN` at a quota, `EBADF` for an end or open the requester does not hold |
 | 4 | the starter's handler: **resolve** | resolves `Path` through the requester's namespace to an image ([What a program can start](#what-a-program-can-start)); for an executable file, the handler makes its image check and a filler opens it for reading, and the command server makes or finds its code object ([File objects](#file-objects)) | nothing to undo: the start's hold on a code object passes to the program's row at step 5 or ends with its refusal there ([File objects](#file-objects), "Holds and drops"); `ENOENT` for an unknown command, `EACCES` for a file without `rx`, `ETXTBSY` for a file that keeps changing while it is read, `EAGAIN` when the session already holds `code_objects_max` code objects and `ENOMEM` when its budget cannot cover one more |
 | 5 | the command server, the starter's handler, the program's handler, the pipe server: **reserve** | the starter's handler asks the command server for the program's handler, and the server assigns the next process id, records the program in the starter's job and spawns the handler outside every job ([The command server](#the-command-server)); the starter's handler monitors the new handler and sends it the start, and the handler then makes the program's holder entry in the pipe NIF ([design-pipes.md](design-pipes.md#hand-offs)) and builds the record: it builds the program's table from the requester's, narrowed as the request asks and with no entry on a window tree, which asks no server anything, and gives the program an open of its own naming the open-file description of each file, directory, terminal and socket open it hands on, which asks no server anything ([design-files.md](design-files.md#narrowing-for-a-program), [Descriptors and files](#descriptors-and-files)), copies the requester's rights beyond files and its right to start commands, and has the pipe server make an end of the same kind for each pipe end the request names, with the starter as the end's holder, each answered as a hand-off the handler owns, its doorbell not yet bound, since the program's group does not exist yet ([design-pipes.md](design-pipes.md#inherited-ends), [Hand-offs](design-pipes.md#hand-offs)) | the handler drops the opens it made, and drops the ends' hand-offs and its hold on the program's holder entry, so the pipe server reads the program's gone, and exits, which drops the command server's row, whose id is never given again, and ends the row's hold on a code object; a refusal of the reservation ends the start's hold; `EAGAIN` once every id is spent, `EMFILE` beyond a pipe's read ends, `EINVAL` for a table with an entry at or below a name the export takes at `/dev` or `/etc` |
-| 6 | the program's handler, through the port driver: **build** | hands the port driver one plan, which it validates whole and then applies. The plan first creates the channel and the data area from the session's own budget, since the session maps both and deletes them only after the program's budget. It then carves the program's budget from the session's pool for programs, with the floor as its guarantee and the cap the spec gives it, creates its group under the programs group, and creates the anchor, with the starter's anchor or the session's space as parent, the session's fault gate and a label of its own, and the image below it under another; the driver allocates both labels and never reuses them. For a program given a window's buffer, it then maps the buffer's pages, read-write, at the buffer place of the image, from the lease the spec names, which the plan takes first, so that its return is the last undo, and keeps it until the anchor is released ([design-display.md](design-display.md#the-pixel-area)). It then maps the image, a program command's slices from the boot image with `erx_image_map`, or the loader `erx_exec` from the boot image for an executable file; installs into the image's table the budget, the group, the channel's two sides and the session's doorbell, the data area, the copies of each pipe end's hand-off, which the plan takes by its number with the lease, and the code object for `erx_exec`, for which it also creates the exec record from the program's budget, writes it and maps it into the image ([What a program can start](#what-a-program-can-start), "The loader's bootstrap"); binds the program's doorbell to its group, and each pipe end's doorbell to it with the end's label; and creates the first thread, stopped, with the values of the budget, the group, the channel's two sides and the session's doorbell, then the session's CPU feature words, and for `erx_exec` the exec record's address, in its argument registers | the plan is undone, the anchor stopped and released, which releases the image and the buffer's mapping, the lease returned, the hand-offs let go and the port's hold on the program's holder entry with them, and then step 5's reservations as there; `EAGAIN` for a program nested deeper than the kernel's 64 levels of spaces allow, about 60 generations of programs, `ENOMEM` for the session's budget |
+| 6 | the program's handler, through the port driver: **build** | hands the port driver one plan, which it validates whole and then applies. The plan first creates the channel and the data area from the session's own budget, since the session maps both and deletes them only after the program's budget. It then carves the program's budget from the session's pool for programs, with the floor as its guarantee and the cap the spec gives it, creates its group under the programs group, and creates the anchor, with the starter's anchor or the session's space as parent, the session's fault gate and a label of its own, and the image below it under another; the driver allocates both labels and never reuses them. For a program given a window's buffer, it then maps the buffer's pages, read-write, at the buffer place of the image, from the lease the spec names, which the plan takes first, so that its return is the last undo, and keeps it until the anchor is released ([design-display.md](design-display.md#the-pixel-area)). It then maps the image, a program command's slices from the boot image with `erx_image_map`, or the loader `erx_exec` from the boot image for an executable file; installs into the image's table the budget, the group, the channel's two sides and the session's doorbell, the data area, the copies of each pipe end's hand-off, which the plan takes by its number with the lease, and the code object for `erx_exec`, for which it also creates the exec record from the program's budget, writes it and maps it into the image at the ABI's `exec_record_page` ([What a program can start](#what-a-program-can-start), "The loader's bootstrap"); binds the program's doorbell to its group, and each pipe end's doorbell to it with the end's label; and creates the first thread, stopped, with the values of the budget, the group, the channel's two sides and the session's doorbell, then the session's CPU feature words, in its argument registers, with register 7, `program_arg`'s `exec`, 0 for `erx_exec` as for every image | the plan is undone, the anchor stopped and released, which releases the image and the buffer's mapping, the lease returned, the hand-offs let go and the port's hold on the program's holder entry with them, and then step 5's reservations as there; `EAGAIN` for a program nested deeper than the kernel's 64 levels of spaces allow, about 60 generations of programs, `ENOMEM` for the session's budget |
 | 7 | the program's handler | writes the startup message into the image's inbound lane, with the program's `pid`, `ppid` and `pgid`, the data area's value, each descriptor's values in the program's table | none: the lane is the session's own memory |
 | 8 | the session's job table, then the program's handler | when the program's starter is paused for its job, or the shell starts it for a job it has stopped, the port driver pauses the image first ([Job control](#job-control)); the handler then has the port driver start the first thread | `ERX_EDEAD` when the program was stopped first, by a kill or by its parent's or session's end: the starter still gets `{ok, Pid}`, then the child's end as `SIGKILL` |
 | 9 | the starter's handler, then the program | the handler answers `{ok, Pid}`, before any report about the child, so the reply that introduces a child always precedes the child's states. `liberx`'s start-up runs on the first thread, a worker: it maps the channel, starts the event executor and waits on a umtx word; the event executor takes the startup message from the inbound lane, copying it out as it is published and checking it, builds the descriptor table from it, mapping its pipe ends, before it reads the reports that follow, which may name those ends, and wakes the first thread, which maps the data area, sets its mask, arms itself for vCPU upcalls with its signal IRQ object and calls `main` | a malformed message ends the program with status 127 before `main` and without a line, since its descriptors come only from a message `liberx` accepted ([design-abi.md](design-abi.md#program-protocol)) |
@@ -1779,21 +1779,40 @@ the path into one of four images:
   running. Its whole input is the exec record and its own first thread;
   the program's channel is the executable's alone, from its first byte.
 
+  * **The loader's window** is a fixed place of the program's space,
+    given by two facts of the program protocol
+    (`abi/protocols/prog.txt`): `exec_window_base`, where the task
+    script links every program of the boot image, the loader among
+    them, and `exec_window_bytes`. While `erx_exec` runs, the window
+    holds three things and nothing else: the loader's own image, from
+    the window's base; the rest of the window, which `erx_exec_load`
+    reserves as its first step; and the exec record, on the window's
+    last page, `exec_record_page`, which the generator derives. So the
+    executable removes the loader with one release of the window, and
+    that release can take no memory of its own. The window is the
+    ABI's, not the loader's build's: an executable installed at run
+    time is linked once, by the SDK, and must run under whatever loader
+    the system ships later, so it knows the window from the ABI it was
+    built against and reads nothing of the loader's link or of the
+    record. The generator fails a window that is not whole pages or
+    that meets the program memory place, `prog_mem_base`; the task
+    script asserts that a program's image ends below the record's page,
+    and the stopgap's backend that its fixed task area ends below the
+    window.
   * **The exec record** is an object of one page that the port
     driver creates from the program's budget, writes through a mapping
     of its own that it releases as soon as the fields are written, and
-    maps read-write into the image, at an address it
-    reserves there, before the first thread starts, so the session holds
-    no view of the record while the program runs, and a build plan that
-    fails after the write releases that view in its undo; its layout,
-    `erx_exec_record`, is the ABI file's, and the first thread finds its
-    address in argument register 7, `program_arg`'s `exec`, which is 0
-    for every other image. The driver writes `object`, the code object's
-    value in the image's table, and `file_bytes`, the file's exact
-    length, and `erx_exec` writes `loader_base` and `loader_size`, the
-    page-aligned span its own image occupies, from its link script's
-    symbols, only after a load that succeeded and just before the
-    transfer, so a record whose load failed still holds 0 there. The
+    maps read-write into the image at `exec_record_page` before the
+    first thread starts, so the session holds no view of the record
+    while the program runs, and a build plan that fails after the write
+    releases that view in its undo. Its layout, `erx_exec_record`, is
+    the ABI file's: the driver writes `object`, the code object's value
+    in the image's table, and `file_bytes`, the file's exact length,
+    and nothing writes the record afterwards. `erx_exec` reads both
+    fields at the record's fixed page, copying each once into its own
+    locals before acting on it, and nothing else reads the record. The
+    first thread's argument register 7, `program_arg`'s `exec`, is 0 in
+    every start a session gives, the loader's included. The
     driver closes its capability to the record once the first thread
     has started, or with the program's other values when it never
     starts; from then on the image's mapping is the record's only
@@ -1809,44 +1828,23 @@ the path into one of four images:
 
     The record is the session's word to its own program, not input from
     another domain: the session built the space, chose its image and
-    could have put any code there, so the program trusts the record as
-    it trusts its argument registers. The record's readers check only
-    what keeps a bug of the loader or the session from becoming a wrong
-    release: each copies the fields it uses once into its own locals
-    before acting on them, at the address register 7 gives, a page
-    boundary that is not 0; an address that is not the record faults
-    the reader, a fault of the session's. `erx_exec` takes the object
-    and the length and nothing else. The loader's span in the record
-    is a cross-check, not the authority: `erx_exec` is a fixed-link
-    task, so its span is a constant of its own link, and the build
-    generates that span into every executable's link as
-    `erx_exec_loader()` (`liberx/exec/release.h`), while a fixed-link
-    task, which no loader enters, links a span of size 0 that no
-    record matches. `erx_exec_release` refuses, as it refuses a
-    release the space refuses, a record whose span is not exactly the
-    linked loader's, so a record can name no other memory of the
-    executable's, its helper threads' stacks or another object's
-    mapping, and the linked span is page-aligned, not empty and ends
-    within 64 bits because the loader's link is; a loader span that
-    meets the executable's own image, whose span the executable knows
-    from its own link's symbols; and a record whose page meets that
-    image or lies in the loader's span, so the record's release frees
-    neither a page the executable runs on nor one of the span again.
-    Within those checks the release removes whole
-    mappings only: the space refuses a release that covers part of a
-    mapping and not all of it (`ERX_EINVAL`), so a span reaching into
-    a neighbour is refused rather than cutting it short, and every
-    mapping the span covers whole is released, which for the span the
-    loader wrote is the loader's own segments, since `erx_vm_reserve`
-    gave the executable, and every other reservation, addresses outside
-    them. Nothing writes the record after `erx_exec`
-    does: until the release, only `liberx`'s own start-up runs in the
-    space, and the helper threads it starts never touch the record.
+    could have put any code there, so the loader trusts the record as
+    it trusts its argument registers. A record missing from its page
+    faults the loader, a fault of the session's; a length the object
+    cannot cover fails the load as any failed call does (below).
   * **Loading** runs on the first thread with only that thread's
     synchronous memory calls (`erx_vm_reserve`, `erx_vm_map`,
     `erx_mem_child`, `erx_vm_commit`, `erx_vm_release`), through the
     pure planner and layout of `liberx/exec/load_plan.c` and the effects
-    of `liberx/exec/load.c`. It uses no thread-local storage, calls no
+    of `liberx/exec/load.c`. Its first call reserves the window's rest,
+    from the end of the loader's own image, `erx_prog_image()`, to the
+    record's page, fixed and replacing nothing (`ERX_VM_FIXED` with
+    `ERX_VM_NOREPLACE`), before the view and the executable's
+    reservation, so that from then on every page of the window is taken
+    and the space places nothing else there: not the view, not the
+    executable, not the stacks the executable's start-up takes before
+    its release. The load never releases that reservation; the
+    executable's release of the window does. It uses no thread-local storage, calls no
     musl function that does and uses no heap: what it holds is on its
     first stack. The page rounding of `file_bytes` is checked
     arithmetic; a length that overflows, or an object shorter than the
@@ -1854,8 +1852,9 @@ the path into one of four images:
   * **The transfer.** `erx_exec` gives the same first thread, the
     space's only one, the start a session gives a program's first
     thread: argument registers 0 to 6 as the session wrote them, the
-    `program_arg` values; register 7 the record's address, with the
-    loader's span now written; the stack and thread pointer of a first
+    `program_arg` values; register 7 the record's page,
+    `exec_record_page`, the one start that gives it a value other than
+    0; the stack and thread pointer of a first
     start; and the executable's entry, its base plus the file's entry
     address. The backend's **exec entry**, a few instructions in its
     architecture layer, sets that state and jumps; it is no C call,
@@ -1872,17 +1871,23 @@ the path into one of four images:
     `erx_prog_enter` calls `erx_exec_release` when register 7 is not 0,
     so the one routine that ends a loader's tenure is reached from the
     one call every backend's entry already makes, and no backend names
-    it. So nothing
-    of the executable but `liberx`'s start-up runs while the loader or
-    the record is mapped: no constructor, which musl's start runs, no
+    it. Register 7 is tested only against 0: its value names nothing
+    the release uses. So nothing
+    of the executable but `liberx`'s start-up runs while the window is
+    mapped: no constructor, which musl's start runs, no
     `main` and no part of musl, and `erx_exec_release`, like the
     loader, uses no thread-local storage and no musl function that
-    does. It copies the record once, through the generated
-    `erx_exec_record_decode`, takes its two span fields, and
-    checks them as above, releases the loader's span, which holds its
-    code, its data and the first stack it ran on, and then the record's
-    page, so a loaded program keeps nothing of `erx_exec` but the
-    object's own mappings. A span it refuses, or a release the space
+    does. It reads no record. It refuses, releasing nothing, when the
+    window meets the executable's own image, whose span the executable
+    knows from its own link's symbols, as the image of a program of the
+    boot image does, since the task script links those at the window's
+    base and no loader enters them. Otherwise it makes one
+    `erx_vm_release` over the whole window; the space skips the
+    window's holes and removes every mapping and reservation within it:
+    the loader's code, its data and the first stack it ran on, the
+    reserved rest and the record's page. A loaded program so keeps
+    nothing of `erx_exec` but the object's own mappings. A window it
+    refuses, or a release the space
     refuses, stops the program with the program layer's start-up status
     for a refused release, `ERX_PROG_STATUS_RELEASE`, a negative status
     beside `ERX_PROG_STATUS_REFUSED` that no `main` can return: it is a
@@ -1899,19 +1904,21 @@ the path into one of four images:
     backwards, which the lane refuses as a fault of its reader, so the
     loader never maps the channel at all.
   * **A load that fails** leaves nothing of the executable:
-    `erx_exec_load`'s one failure route releases the reservation and the
-    view, whether the plan refused the file or a call failed part way.
+    `erx_exec_load`'s one failure route releases the executable's
+    reservation and the view, whether the plan refused the file or a
+    call failed part way. A window's rest the space refuses to reserve
+    fails the load with the call `window`, before anything is reserved.
     `erx_exec` copies the reason `erx_exec_load` gave, the planner's
     refusal or the failed call's name and status, by value into one
     static of its own image, the only thing its `main` reads, and then
     calls the ordinary start-up of its own image as a C function, with
-    argument registers 0 to 6 as it received them and register 7 set to
-    0. The record and the loader's own image stay mapped, and nothing on
-    this path releases either: the program ends at once, and both go
-    with the space, so the record's one release is `erx_exec_release`'s
-    on a successful hand-off. With register 7 at 0 that start-up sees an
-    image with no loader behind it, and `erx_exec_release` never runs in
-    the loader. It runs the helpers, the channel and the startup
+    the argument registers as it received them, register 7 among them
+    0. The window stays as it is, and nothing on this path releases it:
+    the program ends at once, and the window goes with the space, so
+    the window's one release is `erx_exec_release`'s on a successful
+    hand-off. With register 7 at 0 that start-up sees an image with no
+    loader behind it, and `erx_exec_release` never runs in the loader.
+    It runs the helpers, the channel and the startup
     message, whose `main` writes the static's diagnostic to its standard
     error and returns 127, after the spawn has answered, as a malformed
     startup message ends a program; no other route reaches the loader's
@@ -1921,7 +1928,8 @@ the path into one of four images:
     cleanup, and each must succeed: `erx_exec_load` therefore has three
     outcomes, loaded with the view released, failed with the view and
     the reservation released, and refused cleanup, when the space
-    refuses either release. Refused cleanup is terminal: the thread is
+    refuses either release. The window's rest is not among them: the
+    load never releases it. Refused cleanup is terminal: the thread is
     never transferred, no diagnostic is attempted, and `erx_exec`
     stops the program with `ERX_PROG_STATUS_RELEASE`, the status
     `erx_exec_release` uses, so one status names every cleanup failure
@@ -1936,8 +1944,8 @@ the path into one of four images:
   **Removing the loader is the executable's start-up's work.** The
   loader leaves its pages to be released by the start-up it enters, so
   their removal rests on the executable running `liberx`'s start-up. An
-  executable whose entry skips that start-up keeps the loader and the
-  record mapped. It gains nothing by it: the loader's code is the
+  executable whose entry skips that start-up keeps the window, the
+  loader and the record in it, mapped. It gains nothing by it: the loader's code is the
   release's and makes no call the program could not make itself, its
   data and stack hold only what the record and the file gave it, the
   record names only the code object already installed in the program's
@@ -1955,8 +1963,12 @@ the path into one of four images:
   its `erx_image_map` loads only a fixed image
   ([design-stopgap.md](design-stopgap.md#the-call-table)). Both links
   are one link script, the task script, with its base as a symbol,
-  `erx_base`, that the link line sets with `--defsym`, the boot image's
-  fixed address for the boot image's programs and 0 for the SDK's, so
+  `erx_base`, that the link line sets with `--defsym`: the loader's
+  window's base, `exec_window_base`, taken from the generated ABI, for
+  the boot image's programs, and 0 for the SDK's. The link line also
+  sets `erx_exec_record_page` from the generated ABI, and the script
+  asserts that the image ends below it, so the loader, linked as every
+  program of the boot image is, never reaches the record's page. So
   the segments, their order and the sections each holds have one
   source:
 
@@ -4381,29 +4393,47 @@ terminal cases.
     finds `SIGUSR1` pending and the handler's waits for room all end.
     Seed: a loader that maps and reads the inbound lane before the
     transfer, which the executable's lane check ends as a fault.
-  * *Cleanup after entry.* The fixture reads a word at the loader's
-    fixed base, a constant generated for it, after `main` starts, and
-    ends with `SIGSEGV`; a start-up that skips `erx_exec_release` lets
-    the read succeed and fails the case. The same run checks that one
-    release removes the loader's whole span on the stopgap. A second
-    run reads instead the first word of the record, at the address
-    `erx_prog_self` keeps from register 7, and ends with `SIGSEGV`
-    too; an `erx_exec_release` that releases the span and not the
-    record's page lets that read succeed.
+  * *Cleanup after entry.* The fixture reads a word at the window's
+    base, `exec_window_base`, after `main` starts, and ends with
+    `SIGSEGV`; a start-up that skips `erx_exec_release` lets the read
+    succeed and fails the case. The same run checks that one release
+    removes the whole window on the stopgap. A second run reads instead
+    the first word of the record, at `exec_record_page`, and ends with
+    `SIGSEGV` too; a release that ends below the record's page lets
+    that read succeed.
   * *Release before constructors.* A second fixture, whose constructor
     reads the same word, ends with a fault before its `main` writes
     anything; a start-up that calls `erx_exec_release` after musl's
     start, where `liberx` maps the channel, lets the constructor's read
     succeed and `main` print, which fails the case.
-  * *The record's span.* A host test of `erx_exec_release`'s check
-    accepts the linked loader's span and refuses every other span (moved,
-    longer, shorter, unaligned, of size 0, ending past 2^64, the
-    executable's own image), every record of a task linked with no
-    loader, a loader that meets the executable's image, and a record
-    whose page lies in the image or in the loader's span; a check that
-    does not compare the span with the linked loader's accepts the
-    moved span, and one without either comparison of the record's page
-    releases that page.
+  * *The window's release.* A host test of `erx_prog_enter`
+    (`test/host/exec_release_test.rb`) finds that a program with
+    register 7 at 0 releases nothing, and that any other value releases
+    the whole window in one call before a constructor runs; seed: an
+    `erx_prog_enter` that leaves the release to musl's start lets a
+    constructor run while the loader is mapped. It refuses, releasing
+    nothing, a window that meets the program's own image (at the
+    window's base, as a program of the boot image is linked, across
+    either end, inside or around it) and stops the program with
+    `ERX_PROG_STATUS_RELEASE`; seed: a release without that comparison
+    releases the image. A release the space refuses stops the program
+    with the same status.
+  * *The window's rest.* A host test of `erx_exec_load`
+    (`test/host/exec_load_test.rb`) finds the window's rest, from the
+    loader's image to the record's page, reserved by the load's first
+    call, and every later reservation outside the window; seed: without
+    that reserve, the view of an 800 KiB file lands inside the window,
+    where the executable's release would take it. A window's rest the
+    space refuses fails the load with the call `window` and nothing
+    reserved or released.
+  * *The window's place.* A host test of the ABI generator
+    (`test/host/abi_limits_test.rb`) finds the record's page derived as
+    the window's last, and generation failing for a window moved onto
+    the program memory place.
+  * *A release over holes.* The stopgap backend's memory test
+    (`test/host/fiasco_vm_test.rb`) has a mutant whose release refuses a
+    range with a hole in it, which the test kills: the one release of
+    the window relies on a release that skips the window's holes.
   * *The driver's view.* A host test of the port driver's build plan
     for an executable file finds the release of the session's view of
     the record before the record's map into the image, and in the undo
@@ -4417,11 +4447,11 @@ terminal cases.
     name and status on its standard error. Two seeds: a failure route
     that stops the program without the ordinary start-up ends it with
     no line on standard error; one that calls the start-up with
-    register 7 still naming the record runs `erx_exec_release` in the
-    loader, which finds the span fields 0, since the loader writes them
-    only after a load that succeeded, refuses a span of size 0 and
-    stops the program with `ERX_PROG_STATUS_RELEASE`, so the case sees
-    that status instead of 127 and no line on standard error.
+    register 7 set to the record's page runs `erx_exec_release` in the
+    loader, which finds the window meeting the loader's own image,
+    refuses it and stops the program with `ERX_PROG_STATUS_RELEASE`, so
+    the case sees that status instead of 127 and no line on standard
+    error.
     The release of what the load made is `erx_exec_load`'s host test's.
   * *A release that fails.* `erx_exec_load`'s host test, over memory
     calls whose release of the view is refused, gets refused cleanup and

@@ -69,6 +69,7 @@ class FiascoVmTest < Minitest::Test
     'the overlap check removed' => ['vm_table.c', ' || mappings_meet(table, addr, end))', ')', 'an alias writable and executable at once'],
     'the release decrement removed' => ['vm_table.c', "\t\teffects->unmapped(gone.object);\n", '', 'a release over a mapping left it'],
     'a release that cuts a mapping admitted' => ['vm_table.c', "\tif (request->op == ERX_BACKEND_VM_RELEASE && mappings_cut(table, plan->start, end))\n\t\treturn (ERX_EINVAL);\n", '', 'a call against a mapping answered wrong'],
+    'a release over a hole refused' => ['vm_table.c', "\tif (request->op == ERX_BACKEND_VM_PROTECT && !range_reserved(table, plan->start, end))\n", "\tif ((request->op == ERX_BACKEND_VM_PROTECT || request->op == ERX_BACKEND_VM_RELEASE) && !range_reserved(table, plan->start, end))\n", "the call's result differs"],
     'a commit over a mapping admitted' => ['vm_table.c', "(request->op == ERX_BACKEND_VM_COMMIT || request->op == ERX_BACKEND_VM_DECOMMIT) &&", "request->op == ERX_BACKEND_VM_DECOMMIT &&", 'a call against a mapping answered wrong'],
     'the index ignores the label' => ['vm_table.c', "\treturn (addr | table->label);\n", "\t(void)table;\n\treturn (addr);\n", 'two tables share a page'],
     'an alias over a committed page admitted' => ['vm_table.c', 'count_takes(table, addr, end, ERX_BACKEND_PAGE_RW) != size / ERX_PAGE_SIZE || mappings_meet', 'mappings_meet', 'an alias over a committed page passed'],

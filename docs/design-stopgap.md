@@ -1072,7 +1072,8 @@ assembly in the backend's architecture layer and `sp` is the record. It stores t
 first user word, as L4Re's pthread does (`descr.h:211`), writes the marker 1, which index 0 needs because the
 root cannot reach a task's native UTCB, sets the stack, the thread pointer and the first eight argument registers
 from the starting registers, and jumps to the entry. A program's values, `program_arg`, use all eight: `budget` to `hwcap2` in registers 0 to 6 and `exec`,
-the exec record's address or 0, in register 7, so a further value a session gives its program travels in the
+0 in every start a session gives, the loader's included, and the exec record's page, `exec_record_page`, only
+in the start `erx_exec`'s exec entry gives, in register 7, so a further value a session gives its program travels in the
 startup message, not in a register. `task_start.c` and `program.c` assert that `exec`, the highest index, is
 below `ERX_ARCH_START_ARGS`, which holds only while `exec` stays the last value.
 
@@ -1081,11 +1082,11 @@ bootstrap") is linked as every task is, but its first instructions name its own 
 `erx_fiasco_thread_first_init` does, so that its memory calls reach the service, and loads the executable before
 `erx_fiasco_task_main` would start the reaper and the dispatcher. It calls that function, as a C function on its own
 first stack, only when the load fails, to report the failure as a program: it first copies the load's reason into a
-static of its own image, which its `main` writes, and passes the first seven arguments as it received them and the
-eighth as 0, so its own `erx_prog_enter` sees no loader behind it and never runs `erx_exec_release`. The exec
-record and the loader's image stay mapped on that path and go with the task. On success its exec entry, a few instructions beside the trampoline, writes into
+static of its own image, which its `main` writes, and passes the eight arguments as it received them, the eighth
+0, so its own `erx_prog_enter` sees no loader behind it and never runs `erx_exec_release`. The loader's
+window, its image, the rest the load reserved and the exec record, stays mapped on that path and goes with the task. On success its exec entry, a few instructions beside the trampoline, writes into
 record 0 what the session's start wrote there: the eight starting arguments, the `program_arg` values with the
-exec record's address in the eighth, and the thread pointer 0. It then sets the stack pointer to record 0 and
+exec record's page, `exec_record_page`, in the eighth, and the thread pointer 0. It then sets the stack pointer to record 0 and
 branches to the executable's entry, which is that executable's `_start` (`task_start.S:19-28`): `_start` stores its
 own first stack, `task_stack_top`, and its own C entry in the record and goes to the trampoline
 (`thread_start.S:25-41`), which loads the stack, the thread pointer and the arguments from the record exactly as at
@@ -1093,12 +1094,12 @@ a first start. The thread's UTCB already names record 0, and the thread records 
 address outside both images (`thread.c:96-100`), so the executable's `erx_fiasco_thread_first_init` readies the
 same record again. A C call of `_start` would leave the stack pointer on `erx_exec`'s stack, which `_start` would
 take for the record. The 256 KiB first stack `erx_exec` ran on is its own `task_stack_top`, in its data segment
-(`task_start.S:30-34`), and goes with its image's span when the executable's start-up releases it. That release
+(`task_start.S:30-34`), and goes with the loader's window when the executable's start-up releases it. That release
 is `erx_prog_enter`'s, which the executable's program entry, `erx_task_main` (`program_task.c:341-346`), calls
 before `erx_fiasco_libc_start`, so musl's start and the constructors it runs find the loader gone, and the backend
 names no part of the release; the reaper and the
 dispatcher, which `erx_fiasco_task_main` starts first (`task_start.c:77`), are `liberx`'s and never touch either
-image's pages. A span `erx_exec_release` refuses, a release the space refuses, and `erx_exec`'s own refused
+image's pages. A window `erx_exec_release` refuses, a release the space refuses, and `erx_exec`'s own refused
 cleanup all stop the task with the program layer's one status for them, `ERX_PROG_STATUS_RELEASE`, beside
 `ERX_PROG_STATUS_REFUSED` (`liberx/program/startup.h:35`). Neither image is ever entered twice, and the task never holds
 two reapers or two dispatchers.

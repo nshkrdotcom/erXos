@@ -92,7 +92,7 @@ erx_exec_apply(uint64_t object, uint64_t budget, const erx_exec_step_t *step,
  * with the space.
  */
 static bool
-erx_exec_window(erx_exec_failure_t *failure)
+erx_exec_window_reserve(erx_exec_failure_t *failure)
 {
 	const erx_exec_range_t own = erx_prog_image();
 	const uint64_t end = own.address + own.size;
@@ -182,7 +182,7 @@ erx_exec_load(uint64_t object, uint64_t file_bytes, uint64_t budget,
 
 	*image = (erx_exec_image_t){ 0 };
 	*failure = (erx_exec_failure_t){ 0 };
-	loaded = erx_exec_window(failure) && erx_exec_view(object, file_bytes, &view, failure);
+	loaded = erx_exec_window_reserve(failure) && erx_exec_view(object, file_bytes, &view, failure);
 	if (loaded)
 		loaded = erx_exec_place(object, file_bytes, budget, &view, &span, &layout, failure);
 	/* The one cleanup: every load releases its view, a failed one its span too. */

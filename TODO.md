@@ -151,22 +151,24 @@ it; git history is the record of completed work.
   is only its load (`liberx/exec/load.c`, `erx_exec_load`: the object viewed and planned, the span
   reserved, segments mapped, copied and committed by a layout decided whole, relocations written), with no
   bootstrap around it (design-programs.md, "The loader's bootstrap" and "The executable's link";
-  design-stopgap.md, "An exec's entry"): the exec record's layout, register 7 and the executable's
+  design-stopgap.md, "An exec's entry"): the loader's window (`abi/protocols/prog.txt`, the task script's link
+  at its base and the load's reserve of its rest), the exec record's layout, register 7 and the executable's
   `erx_exec_release` (`liberx/exec/release.c`, from `erx_prog_enter`) are built, and not built are the
-  record's writers (the port driver's create, write and map of it, and the command server's keeping of
+  record's writers (the port driver's create, write and map of it, which must map it at the ABI's
+  `exec_record_page`, and the command server's keeping of
   the file's length), the loader's own C entry ahead of the helpers, the exec entry, the loader's failure path that copies its reason into a static and calls its
-  start-up with the eighth argument 0, the loader's writing of its span only after a load that succeeded,
+  start-up with the arguments it received,
   the port driver's release of its own view of the record and its close of the record's capability once
   the first thread has started, the SDK's `liberx_program.a` (`liberx`'s program layer, its backend and
-  the members of `erx_boot.a`, `libsigma0.a` and `libl4sys.p.a`), the build's generation of the loader's linked span into an executable's link as `erx_exec_loader()` (every fixed-link task links `liberx/exec/loader_none.c`; the constant ties an executable to the one loader build it was linked against, which an SDK built apart from the system would have to version), the `{ok, Cap, Bytes}` reply to `{map, Path, code}` and the exec switch's
-  record, the task script's base symbol and dynamic sections, and the removal of `image` from the
+  the members of `erx_boot.a`, `libsigma0.a` and `libl4sys.p.a`), the `{ok, Cap, Bytes}` reply to `{map, Path, code}` and the exec switch's
+  record, the SDK's link of the task script at base 0 and its dynamic sections, and the removal of `image` from the
   startup message (`abi/protocols/prog.txt`, the `image` union). The static link needs `-fPIE`
   objects: musl's `libc.a` is built without it (`musl.rb`'s `CFLAGS`), so `vmlock.o` and `ofl.o` fail
   the link, and `liberx`'s program objects without it fail with 344 absolute relocations in read-only
   tables, mostly the generated `prog_profile.c`; `task.ld` names none of `.rela.dyn`, `.hash`,
   `.gnu.hash`, `.dynsym`, `.dynstr` and `.dynamic`, which `--orphan-handling=error` then refuses. A
   probe link with those fixed gave the design's shape (622 relocations, all relative); unverified are
-  `erx_elf_plan` over that link, a booted run, and whether one release removes the loader's whole span
+  `erx_elf_plan` over that link, a booted run, and whether one release removes the loader's whole window
   on the stopgap. The load trusts its object to be a sealed code
   object: it checks neither, the stopgap maps a pool object read-execute, and the relocations are read
   again from the view, so a writer of an unsealed object could move them [Medium, security residual]; the
@@ -644,6 +646,14 @@ it; git history is the record of completed work.
   16 MiB in one kernel call, and the design leaves how that meets the bounded-path rule to the performance watch list.
   Decide it in the design: zero the `erx.dma_pool` once at boot and each range as it returns to the pool, or zero in
   preemptible steps, and keep only the measurement in `docs/todo-performance.md`.
+* [Medium] erXos's kernel, [design-kernel.md](docs/design-kernel.md#threads) ("The kernel-user page"): the kernel maps
+  each thread's kernel-user page "at an address it picks", and nothing keeps that address out of the places the ABI
+  fixes in every program's space: the loader's window (`exec_window_base`, `exec_window_bytes`) and the program
+  memory place (`prog_mem_base`, `prog_mem_bytes`) of `abi/protocols/prog.txt`. A kernel-user page inside the
+  window makes every exec's fixed, non-replacing reserve of the window's rest fail with `ERX_EEXIST`
+  (design-programs.md, "The loader's bootstrap"). State in the design where the kernel places these pages, apart
+  from both, and check it against the ABI's places at build time, as the stopgap's `liberx/backend/fiasco/time.h`
+  asserts that its fixed task area ends below the window.
 * [Low] stopgap, `liberx/backend/fiasco/irq.c`: an IRQ object is unbound by a holder allowed in its group (the group's home, its creator or the root: `irq_group_allowed`) and freed with its last handle. Whether a restarted block driver can rebind its line through that is untested.
 * [Medium] stopgap, `liberx/backend/fiasco/vm.c`, `liberx/backend/core/vm_table.c`: the range table sees an object's mapping as uncommitted, so
   `erx_space_protect` over mapped registers or a mapped run returns `ERX_OK` and puts a fresh pool page there, and a decommit or release leaves the

@@ -54,7 +54,7 @@ module Erx
         ),
         # A loader's tenure ends once, in the program layer's entry, before musl's
         # start (docs/design-programs.md, "The loader's bootstrap", Release): a
-        # second caller would read a record whose page is already released.
+        # second release would free what the space placed in the window after the first.
         Chokepoints::Forbidden.new(
           name: 'exec-release-once',
           rule: 'only erx_prog_enter (liberx/program/program.c) calls erx_exec_release, beside its own module ' \

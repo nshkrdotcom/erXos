@@ -51,7 +51,7 @@ int	main(int, char **, char **);
 
 extern char **environ;
 
-/* program_arg's last value, the exec record's address, is its highest index. */
+/* program_arg's last value, exec, is its highest index. */
 _Static_assert(ERX_PROGRAM_ARG_EXEC < ERX_ARCH_START_ARGS,
     "a program's values fit the argument registers it starts with");
 
