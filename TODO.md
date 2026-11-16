@@ -138,9 +138,26 @@ it; git history is the record of completed work.
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
   the plan's PK10 comparison does not cover it; the rest of the file-backed EROFS mount of
   [todo-system-partition.md](docs/todo-system-partition.md), whose `{erofs, app}` source `erx_app`
-  mounts `/app` with; a native app's start and the record's
-  `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
-  (`erx_app` ends with `{not_supported, program}` until then).
+  mounts `/app` with. A native app's start is built in `erx_app` (`/app/` and the header's `program`, a
+  `relative_path` the reader checks, through `erx_prog_handler:start/1` with the record's `window` on the
+  session's default display, the program's end ending the session); see the next item for what it waits on.
+* [High] programs, an executable file as a program's image
+  ([design-programs.md](docs/design-programs.md#what-a-program-can-start), "File objects"; plan 1b-D,
+  "`erx_exec` with `rx` grants"): not built. `erx_program:start/1` takes only a program of the session's
+  release (`image => <<"bin/NAME">>`), the handler has no resolve step (step 4 of "Starting a program": the
+  image check of the `rx` grant, the filler's read, the command server's code object), the domain library's
+  `code_object/2` answers `enotsup`, and the loader `erx_exec` does not exist (only `erx_elf_plan` does). So a
+  native app's start of `/app/bin/NAME` is refused `{program, einval}` and the session ends; no installable
+  native package (the Doom demo) runs until this lands. Also needs the stopgap backend's rows for paged
+  objects, sealing, supply and `ERX_MEM_CODE` (plan.md, 1b-B's backend rows). The resolve step must open a
+  native app's program beneath `/app` without following links, or the `{erofs, app}` mount refuse link
+  inodes: the reader checks only the header's text (`relative_path`) and only the host packer refuses links,
+  so an image `bin/x -> /bin/sh` would start a program outside the package.
+* [Medium] apps, `erx_app`, a native app's standard streams: design-packaging.md ("Starting an app") starts a
+  program without a window with standard input null and its output to the session's log, but
+  `erx_prog_handler:start/1` offers only pipe ends and a window's buffer as descriptors, so `erx_app` starts
+  every program with descriptors 0 to 2 closed. Needs a null descriptor and one for the session's log in the
+  handler's spec.
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
   an image package's place
   `{system, [apps, NAME.app]}` is written in `erx_principal` beside `erx_pkg_medium`'s `pkg/NAME.app` (one owner wanted); the

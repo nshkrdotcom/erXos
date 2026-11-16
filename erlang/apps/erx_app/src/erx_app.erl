@@ -14,14 +14,23 @@ uses is never the one the code server finds, and starts each declared
 application, permanent, so a declared application's end ends the session and
 the start row's keeper starts it again.
 
+For a native app it starts the package's program, `/app/` and the record's path,
+which the package reader admits only as plain names, so it names a file of the
+image and nothing outside it, with erx_prog_handler:start/1. This process is the
+program's starter: the program's namespace is the session's, and when the
+record's `window` holds, the spec's `window` names the session's default
+display, the environment's `display`, so the handler opens the program's window
+and binds its `/dev/draw`, `/dev/kbd`, `/dev/mouse` and `/dev/wctl`. The
+handler's monitor is the one report of the program's end, which ends this
+process: with `{program_exit, Status}` when the program ended, and with the
+handler's own reason otherwise. The starter's end stops the program, so the
+program never outlives the session.
+
 erx_app's process acknowledges its start first and only then mounts and starts
 the app, so an app that names erx_app, or depends on it, finds it started
 rather than waiting on its own start. The process holds nothing; erx_app is
-permanent, so its end, with the first step's failure as its reason, ends the
-session.
-
-A native app's program needs erx_prog_handler's `window` option, which the
-handler does not offer; its record ends erx_app with `{not_supported, program}`.
+permanent, so its end, with the first step's failure or the program's end as
+its reason, ends the session.
 """.
 -behaviour(application).
 
@@ -29,16 +38,23 @@ handler does not offer; its record ends erx_app with `{not_supported, program}`.
 -export([run/2, init/1]).
 -export_type([effects/0]).
 
+-include("generated/erx_abi.hrl").
+
 -doc """
 The effects run/2 performs: the mount of `/app`, where the mounted image lies,
-and the start type of the declared applications. The application passes its
-own (effects/0): permanent, so a declared application's end ends the session; a
-host test passes a mount over a fixture directory and `temporary`, so a failed
-start ends only the case.
+the start type of the declared applications, the session's default display,
+`none` when it has none, and the program's start. The application passes its
+own (effects/0): permanent, so a declared application's end ends the session,
+and erx_prog_handler:start/1; a host test passes a mount over a fixture
+directory, `temporary`, so a failed start ends only the case, and a start that
+reports what it was asked.
 """.
 -type effects() :: #{mount := fun(() -> ok | {error, term()}),
                      root := string(),
-                     type := permanent | temporary}.
+                     type := permanent | temporary,
+                     display := atom() | none,
+                     start_program := fun((map()) -> {ok, pid(), reference(), list()}
+                                                         | {error, atom()})}.
 
 start(_Type, _Args) ->
     proc_lib:start_link(?MODULE, init, [self()]).
@@ -57,7 +73,10 @@ init(Parent) ->
 
 -doc """
 Mounts the package of `Record` at `/app` and starts what it declares, through
-`Effects`. The first step that fails is the answer.
+`Effects`. The first step that fails is the answer. An Erlang app's answer is
+`ok` once its applications have started; a native app's comes once its
+program has ended, as `{error, {program_exit, Status}}`, or once its handler
+has ended for another reason, as `{error, Reason}`.
 """.
 -spec run(erx:app_record(), effects()) -> ok | {error, term()}.
 run(Record, Effects) ->
@@ -74,17 +93,57 @@ run(Record, Effects) ->
 effects() ->
     #{mount => fun() -> erx_ns:mount({erofs, app}, <<"/app">>, [rx]) end,
       root => "/app",
-      type => permanent}.
+      type => permanent,
+      display => default_display(os:getenv(binary_to_list(?ERX_DISPLAY_KEY_BYTES))),
+      start_program => fun erx_prog_handler:start/1}.
 
-start_app(#{start := {applications, Names}}, #{mount := Mount, root := Root, type := Type}) ->
+%% The session's default display, which its planning names in its environment,
+%% as the atom the domain's grant of it already made; none when the environment
+%% names no display, as for a session planned without one, or names one no atom
+%% stands for.
+default_display(false) ->
+    none;
+default_display(Name) ->
+    try list_to_existing_atom(Name)
+    catch error:badarg -> none
+    end.
+
+start_app(#{start := {applications, Names}}, #{root := Root, type := Type} = Effects) ->
+    mount(Effects),
+    lists:foreach(fun add_path/1, ebins(Root)),
+    lists:foreach(fun(Name) -> start_application(binary_to_atom(Name), Type) end, Names);
+start_app(#{start := {program, Program, Args}, window := Window},
+          #{root := Root, start_program := Start} = Effects) ->
+    mount(Effects),
+    Image = iolist_to_binary([Root, $/, Program]),
+    Spec = #{image => Image, argv => [Image | Args], env => [], cwd => <<"/">>,
+             spawn => false, sigmask => [], sigignore => [], umask => 8#022},
+    Windowed = window(Window, Spec, Effects),
+    case Start(Windowed) of
+        {ok, _Handler, Monitor, _Offsets} -> ended(Monitor);
+        {error, Errno} -> fail({program, Errno})
+    end.
+
+mount(#{mount := Mount}) ->
     case Mount() of
         ok -> ok;
         {error, Reason} -> fail({mount, Reason})
-    end,
-    lists:foreach(fun add_path/1, ebins(Root)),
-    lists:foreach(fun(Name) -> start_application(binary_to_atom(Name), Type) end, Names);
-start_app(#{start := {program, _Program, _Args}}, _Effects) ->
-    fail({not_supported, program}).
+    end.
+
+%% A program with a window has it on the session's default display.
+window(false, Spec, _Effects) -> Spec;
+window(true, _Spec, #{display := none}) -> fail({window, no_display});
+window(true, Spec, #{display := Display}) -> Spec#{window => Display}.
+
+%% The program's end, which the handler's monitor alone reports. It never returns:
+%% a native app's end, an exit with status 0 too, is always its session's end.
+ended(Monitor) ->
+    receive
+        {'DOWN', Monitor, process, _Handler, {shutdown, {program_exit, Status}}} ->
+            fail({program_exit, Status});
+        {'DOWN', Monitor, process, _Handler, Reason} ->
+            fail(Reason)
+    end.
 
 %% Each lib/*/ebin under Root, sorted, so the code path the app adds does not
 %% depend on the order the directory lists.

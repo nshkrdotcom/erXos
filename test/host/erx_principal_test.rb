@@ -33,7 +33,7 @@ class ErxPrincipalTest < Minitest::Test
               edits: [['{ok, Entry} ->', '{ok, _Given} -> Entry = map_size(Names),']],
               caught_by: 'a_name_registered_again_keeps_its_entry_and_signer_test'),
     Fault.new(name: 'credentials kept on an app principal',
-              edits: [['rows := Rows}},', 'rows := Rows} = Admitted},'],
+              edits: [['rows := Rows, display := Display}},', 'rows := Rows, display := Display} = Admitted},'],
                       ['Record = #{entry => Entry, signer => Signer, memory => Memory, rows => Rows, app => App},',
                        'Record = Admitted#{entry => Entry, app => App},']],
               caught_by: 'a_record_holds_no_credentials_test'),

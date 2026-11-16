@@ -723,7 +723,8 @@ app_session_test_() ->
      fun(_) -> {inorder, [fun no_app/0, {timeout, 20, fun app_session/0}]} end}.
 
 -define(APP_MEMORY, 16777216).
--define(APP_RECORD, #{place => {packages, [<<"clock.app">>]}, layout => #{}, start => {applications, [<<"clock">>]}}).
+-define(APP_RECORD, #{place => {packages, [<<"clock.app">>]}, layout => #{}, start => {applications, [<<"clock">>]},
+                     window => false}).
 
 app_setup() ->
     persistent_term:put({erx_domain_fake_lib, apps}, #{template => 2, first => 6, max => 4, memory => 4 * ?APP_MEMORY}),
@@ -756,7 +757,7 @@ app_session() ->
                 signer => image, sha256 => <<0:256>>, extent => 1},
     ok = erx_principal:register_app(#{name => <<"clock">>, place => installed, checked => Checked,
                                       admitted => #{signer => image, memory => ?APP_MEMORY,
-                                                    rows => [1]}}),
+                                                    rows => [1], display => none}}),
     Self = self(),
     erlang:trace(new_processes, true, ['receive', {tracer, Self}]),
     Ref = make_ref(),

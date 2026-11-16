@@ -78,7 +78,9 @@ new(Max) when is_integer(Max), Max >= 0 ->
 
 -doc """
 `Apps` with the record of `Package`'s app: the signer, memory and rows of
-its admission and the app's record of its place and header, written in
+its admission and the app's record of its place and header, with whether
+its program has a window, which it has when the admission kept a
+`windows` service (docs/design-packaging.md, "Starting an app"), written in
 the entry `erx_app_admit:entry/4` gives the name, the one admission
 found: a name not yet registered takes the lowest entry no name holds,
 and a registered one writes its record again in its own entry, with its
@@ -86,11 +88,12 @@ own signer only.
 """.
 -spec register(erx_pkg_plan:published(), apps()) -> {ok, apps()} | {error, reason()}.
 register(#{name := Name, place := Place, checked := #{header := #{layout := Layout, start := Start}},
-           admitted := #{signer := Signer, memory := Memory, rows := Rows}},
+           admitted := #{signer := Signer, memory := Memory, rows := Rows, display := Display}},
          #{max := Max, names := Names} = Apps) ->
     case erx_app_admit:entry(Name, Signer, Max, registry(Apps)) of
         {ok, Entry} ->
-            App = #{place => place(Place, Name), layout => Layout, start => Start},
+            App = #{place => place(Place, Name), layout => Layout, start => Start,
+                    window => Display =/= none},
             Record = #{entry => Entry, signer => Signer, memory => Memory, rows => Rows, app => App},
             {ok, Apps#{names := Names#{Name => Record}}};
         {error, _} = Refused ->

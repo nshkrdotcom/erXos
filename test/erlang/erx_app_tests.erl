@@ -20,10 +20,13 @@ the code server's interactive mode, which a session's runtime runs.
 cases() -> os:getenv("ERX_APP_CASES").
 
 record(Start) ->
-    #{place => <<"packages/image/x.app">>,
+    record(Start, false).
+
+record(Start, Window) ->
+    #{place => {packages, [<<"x.app">>]},
       layout => #{image_offset => 4096, image_length => 4096, tree_offset => 8192,
                   tree_length => 0, salt => <<0:256>>, root_hash => <<0:256>>},
-      start => Start}.
+      start => Start, window => Window}.
 
 %% The mount: each case's fixture directory stands for the image at /app, and the
 %% mount says it ran. It is handed nothing: erx_ns's process takes the package's place
@@ -33,7 +36,26 @@ effects(Root) ->
     Self = self(),
     #{mount => fun() -> Self ! mounted, ok end,
       root => filename:join(cases(), Root),
-      type => temporary}.
+      type => temporary,
+      display => screen,
+      start_program => fun(Spec) -> started(Spec, {shutdown, {program_exit, {exited, 0}}}) end}.
+
+%% A start of the program Spec names, which the case's process hears of, by a
+%% handler that ends at once with End, as one does once its program has ended.
+started(Spec, End) ->
+    self() ! {started, Spec},
+    {Handler, Monitor} = spawn_monitor(fun() -> exit(End) end),
+    {ok, Handler, Monitor, []}.
+
+%% A native app's run of Record over Effects from an empty mailbox: the answer, and
+%% what the case's process heard during it, in order.
+native(Record, Effects) ->
+    _ = heard(),
+    Answer = erx_app:run(Record, Effects),
+    {Answer, heard()}.
+
+heard() ->
+    receive Message -> [Message | heard()] after 0 -> [] end.
 
 %% The release's directory, as a release's are, before the app's; its erx_app_clash
 %% is not loaded yet, so the code server's path order alone decides which copy loads.
@@ -64,6 +86,35 @@ refused_mount_ends_with_its_reason_test() ->
     Effects = (effects("good"))#{mount := fun() -> {error, eio} end},
     ?assertEqual({error, {mount, eio}}, erx_app:run(record({applications, [<<"good_app">>]}), Effects)).
 
-native_app_is_not_supported_test() ->
-    ?assertEqual({error, {not_supported, program}},
-                 erx_app:run(record({program, <<"bin/tiny">>, []}), effects("good"))).
+%% A native app's program starts from /app once /app is mounted, with its window on
+%% the session's default display, and its end is the answer, which ends the session.
+native_app_starts_with_its_window_and_ends_with_its_program_test() ->
+    Effects = effects("good"),
+    Image = list_to_binary(maps:get(root, Effects) ++ "/bin/tiny"),
+    {Answer, Heard} = native(record({program, <<"bin/tiny">>, [<<"-v">>]}, true), Effects),
+    ?assertEqual({error, {program_exit, {exited, 0}}}, Answer),
+    ?assertMatch([mounted, {started, #{image := Image, argv := [Image, <<"-v">>], window := screen}}], Heard).
+
+native_app_without_a_window_test() ->
+    {Answer, [mounted, {started, Spec}]} = native(record({program, <<"bin/tiny">>, []}), effects("good")),
+    ?assertEqual({error, {program_exit, {exited, 0}}}, Answer),
+    ?assertNot(is_map_key(window, Spec)).
+
+%% The handler's own end, a crash or a lost program, ends the session with its reason.
+handler_end_is_the_answer_test() ->
+    Effects = (effects("good"))#{start_program := fun(Spec) -> started(Spec, program_lost) end},
+    ?assertMatch({{error, program_lost}, _}, native(record({program, <<"bin/tiny">>, []}), Effects)).
+
+refused_start_is_the_answer_test() ->
+    Effects = (effects("good"))#{start_program := fun(_Spec) -> {error, enodev} end},
+    ?assertEqual({{error, {program, enodev}}, [mounted]}, native(record({program, <<"bin/tiny">>, []}, true), Effects)).
+
+%% A window with no default display starts nothing.
+window_without_a_display_starts_nothing_test() ->
+    Effects = (effects("good"))#{display := none},
+    ?assertEqual({{error, {window, no_display}}, [mounted]},
+                 native(record({program, <<"bin/tiny">>, []}, true), Effects)).
+
+refused_mount_starts_no_program_test() ->
+    Effects = (effects("good"))#{mount := fun() -> {error, eio} end},
+    ?assertEqual({{error, {mount, eio}}, []}, native(record({program, <<"bin/tiny">>, []}, true), Effects)).

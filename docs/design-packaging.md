@@ -187,11 +187,17 @@ directory, which design-apps.md serves as the `etc` tree at `/etc`) and
 `erx_domain:start_session/2` (TODO.md, the design-apps.md items). The EROFS reader `erx_erofs` and
 its block funnel `erx_verity` read images through a block window
 (`otp/erts/preloaded/src/erx_verity.erl`, which checks no hash tree yet).
-A native program runs either as a program of the boot image or as an
-executable file that a grant with `rx` reaches, through the loader
-`erx_exec` and a code object the domain service makes
+A native program runs as a program of the boot image
+(`otp/erts/preloaded/src/erx_program.erl`, whose `image` is a path in
+the session's release); design-programs.md runs an executable file that
+a grant with `rx` reaches through the loader `erx_exec` and a code
+object the domain service makes
 ([design-programs.md](design-programs.md#what-a-program-can-start),
-[File objects](design-programs.md#file-objects)); a program that draws is
+[File objects](design-programs.md#file-objects)), which a native app's
+program needs (TODO.md, "an executable file as a program's image"). A
+program opens files through its handler
+(`liberx/backend/fiasco/program_task.c`, `SYS_openat`, over
+`liberx/program/file.c`). A program that draws is
 started with a window, whose `/dev/draw`, `/dev/kbd` and `/dev/mouse` its
 handler binds ([design-display.md](design-display.md#the-window-tree),
 "A program's `/dev`"). The session's program handler, `erx_prog_handler`,
@@ -251,7 +257,7 @@ branch `lvglscreen`, commit `82b02f4ff`) and Doom (the repository
 | no SDK: the build drove `tools/lib/erx` internals (`NativeRoot`, `ProductionImage`, `Programs::PROGRAM_PREFIX`) | Doom 1 | [The SDK](#the-sdk) |
 | the program joined the one domain release's `bin/`, seen by every session | Doom 5 | the program is `/app/bin/NAME`, an executable file run through `erx_exec` |
 | app code in the boot image made it 88 MiB, which stays in RAM for the whole boot, out of the room `root_memory` leaves | Doom 6 | the image builder's packages lie in the slot's system partition, outside the boot image ([Where a package lies](#where-a-package-lies)) |
-| no `open()` in a native program: `liberx/program/fd.h:37-41` has null, pipe and mem objects, and the C library seam answers every unlisted call `ENOSYS` (`musl/src/internal/erxos/syscall.c:536-537`), so the WAD was linked in | Doom 4 | designed, not built: [Descriptors and files](design-programs.md#descriptors-and-files) gives a program files through its handler; a package's data is `/app/share`, its writable files `/data` |
+| no `open()` in a native program: `liberx/program/fd.h:37-41` has null, pipe and mem objects, and the C library seam answers every unlisted call `ENOSYS` (`musl/src/internal/erxos/syscall.c:536-537`), so the WAD was linked in | Doom 4 | a program opens files through its handler ([Descriptors and files](design-programs.md#descriptors-and-files)); a package's data is `/app/share`, its writable files `/data` |
 | the launcher invented a pid, parent, group, directory and masks for `erx_program:start/1` | Doom 7 | programs start through `erx_prog_handler`, which assigns them |
 | presents on a 100 ms timer, no keyboard | Doom 8, 11 | a program started with a window draws through `/dev/draw`, flushes when its frame is done, and reads `/dev/kbd` |
 | `erx_win:open/2` answered `{error, none}` until the display's grant arrived, so the launcher polled | Doom 9 | `erx_app` starts the app's code only once the app's record has come, after its grants |
@@ -1355,8 +1361,14 @@ that server serves. Once the record has come, it:
    `application:ensure_all_started(App, permanent)`, its dependencies on
    the release's applications resolved from the release;
 3. for a native app, starts its program with `erx_prog_handler:start/1`:
-   with the spec's `window` option naming the session's default display
-   when the app needs a `windows` service, so the handler opens the
+   the image `/app/` and the header's `program`, a `relative_path` the
+   package reader checks, so it names a file of the image and nothing
+   outside it; that path as `argv[0]`, the declared arguments after it,
+   an empty environment, `/` as its working directory and no right to
+   start commands; and the spec's `window` option naming the session's
+   default display, the environment's `display`, when the record's
+   `window` holds, as it does when the app needs a `windows` service,
+   so the handler opens the
    window and binds its `/dev/draw`, `/dev/kbd`, `/dev/mouse` and
    `/dev/wctl` ([design-programs.md](design-programs.md#the-handler),
    [design-display.md](design-display.md#the-window-tree)); without,
