@@ -1,3 +1,5 @@
+// Modified by erXos: an SError taken in user mode is sent to the running
+// thread as an exception (arm_serror_user_entry).
 INTERFACE [arm]:
 
 class Trap_state;
@@ -704,7 +706,33 @@ IMPLEMENTATION [arm && arm_esr_traps]:
 EXTENSION class Thread
 {
   static void arm_esr_entry(Trap_state *ts) asm ("arm_esr_entry");
+  static void arm_serror_user_entry(Trap_state *ts)
+    asm ("arm_serror_user_entry");
 };
+
+/**
+ * An SError taken from user mode. Without error records the architecture
+ * names no source, so the error is presumed to be the running thread's, and
+ * the thread gets an exception carrying the SError's syndrome, as for any
+ * exception class arm_esr_entry() does not handle itself. The kernel runs
+ * with SErrors masked, so one raised while this CPU was in the kernel is
+ * taken here too, against the next thread to enter user mode. Sigma0 has no
+ * exception handler, and sending it one would panic the kernel, so its
+ * SErrors are only counted.
+ */
+IMPLEMENT
+void
+Thread::arm_serror_user_entry(Trap_state *ts)
+{
+  ++(num_serrors.cpu(current_cpu()));
+  Thread *ct = current_thread();
+  if (ct->space()->is_sigma0())
+    return;
+
+  ts->error_code = Thread::get_esr().raw();
+  ts->pf_address = 0;
+  ct->send_exception(ts);
+}
 
 IMPLEMENT
 void
@@ -714,6 +742,9 @@ Thread::arm_esr_entry(Trap_state *ts)
 
   Arm_esr esr = Thread::get_esr();
   ts->error_code = esr.raw();
+  // Only the branches that read a fault address set one, so an exception
+  // record never carries an earlier frame's.
+  ts->pf_address = 0;
 
   Mword tmp;
   Mword state = ct->state();

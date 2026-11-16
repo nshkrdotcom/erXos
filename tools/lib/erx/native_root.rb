@@ -45,7 +45,7 @@ module Erx
             liberx/backend/core/gate.c].freeze
     # The root service and what it runs on: threads, waits and the end path. The
     # crash writer comes in source, since Fiasco's boot archive holds no crash core.
-    SERVICE = %W[#{BACKEND}/service.c #{BACKEND}/service_task.c #{BACKEND}/service_wire.c #{BACKEND}/arch/aarch64/cache.c #{BACKEND}/service_stubs.c #{BACKEND}/slice.c #{BACKEND}/thread.c
+    SERVICE = %W[#{BACKEND}/service.c #{BACKEND}/service_task.c #{BACKEND}/service_wire.c #{BACKEND}/arch/aarch64/exception.c #{BACKEND}/arch/aarch64/cache.c #{BACKEND}/service_stubs.c #{BACKEND}/slice.c #{BACKEND}/thread.c
                  #{BACKEND}/arch/aarch64/thread_start.S #{BACKEND}/thread_claim.c #{BACKEND}/umtx.c #{BACKEND}/umtx_table.c
                  liberx/backend/core/object_info.c
                  #{BACKEND}/park.c liberx/backend/core/park_table.c #{BACKEND}/group.c #{BACKEND}/irq.c #{BACKEND}/time.c #{BACKEND}/time_page.c #{BACKEND}/time_table.c

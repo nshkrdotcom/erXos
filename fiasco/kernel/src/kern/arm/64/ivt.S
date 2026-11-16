@@ -1,3 +1,4 @@
+/* Modified by erXos: the SError vectors from user mode enter arm_serror_user_entry. */
 /* -*- asm -*- */
 
 #include "globalconfig.h"
@@ -378,7 +379,7 @@ exception_vector:
 	b	.Lirq_entry
 
 	.align 7 /* 0x580 -- SError */
-	ENTRY arm_serror_handler
+	ENTRY arm_serror_user_entry
 
 	# from aarch32 user
 	.align 7 /* 0x600 -- Sync */
@@ -391,6 +392,6 @@ exception_vector:
 	b	.Lirq_entry
 
 	.align 7 /* 0x780 -- SError */
-	ENTRY arm_serror_handler
+	ENTRY arm_serror_user_entry
 
 	.align 7 /* 0x800 */
