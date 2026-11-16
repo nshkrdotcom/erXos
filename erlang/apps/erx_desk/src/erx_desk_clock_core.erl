@@ -114,7 +114,7 @@ next_deadline(#clock{deadline = Deadline}) ->
     Deadline.
 
 -doc "The window's tree for State.".
--spec view(state()) -> erx_ui_model:tree().
+-spec view(state()) -> erx_ui_schema:tree().
 view(#clock{shown = none}) ->
     face(<<"--:--">>, [utc()]);
 view(#clock{shown = #{now := Now, time := Time, machine := Machine}}) ->

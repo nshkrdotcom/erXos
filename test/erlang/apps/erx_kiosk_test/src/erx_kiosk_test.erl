@@ -47,7 +47,7 @@ The tree: a column of a title and a button that covers the screen's middle,
 x 16 to 1263 and y 96 to 655 on the display suite's 1280 by 800 screen
 (test/display/reference/display-lvgl.ppm.gz), where the harness clicks.
 """.
--spec tree() -> erx_ui_model:tree().
+-spec tree() -> erx_ui_schema:tree().
 tree() ->
     {column, #{pad => 16},
      [{label, #{height => 80, text => <<"erXos kiosk">>}, []},
