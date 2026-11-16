@@ -132,7 +132,8 @@ These shape every design and change; the rules below apply them.
   between domains and budgets as walls rest on Fiasco and on the root
   service's request decoder and placement code; where no IOMMU confines
   a DMA-capable device, also on the domain that drives it (FD12); and,
-  until FD32 is decided, on the CPU's branch predictors (FD32). What
+  unless FD32's entry patch is carried, on the CPU's branch predictors
+  (FD32). What
   Fiasco lacks against erXos's kernel is a downside row of
   [docs/design-fiasco.md](docs/design-fiasco.md). Phase 2 builds
   erXos's kernel with every guarantee and replaces Fiasco.
@@ -230,9 +231,9 @@ Third-party components are allowed when they pay for themselves.
   later phase replaces, as R1 runs on Fiasco and Phase 2 replaces it with
   erXos's kernel, is marked `release` in the dependency table. What
   separates it from a stopgap a release ships is where it runs: a stopgap
-  a release ships runs confined as its release contract states (for
-  littlefs, which form R1 ships is an open decision of
-  [docs/design-stopgap.md](docs/design-stopgap.md#open-decisions)), so
+  a release ships runs confined as its release contract states (R1
+  ships littlefs as a NIF in the storage domain, under the release
+  contract of [docs/design-stopgap.md](docs/design-stopgap.md#release-contract)), so
   its contract states that confinement, what a defect in it can reach
   and the input it is fuzzed against,
   while every domain's isolation rests on a `release` component, so its
@@ -671,8 +672,8 @@ scripts live in `~/erxos-scratch/tools/`.
     memory that user mode can write (UTCBs, vCPU state areas, shared areas)
     it reads only through accessors that load each field once per decision.
     On Fiasco these hold only as far as Fiasco's own code gives them
-    (FD24); whether a release accepts that is an open decision of
-    [docs/design-fiasco.md](docs/design-fiasco.md#open-decisions).
+    (FD24), a published downside R1 accepts
+    ([docs/design-fiasco.md](docs/design-fiasco.md#downsides-against-erxoss-kernel)).
   * Never let input-controlled depth drive unbounded recursion. Kernel C
     code recurses only through calls marked `musttail`, which compile to
     jumps or fail to build (on Fiasco, the C17 cores it links: FD24).
