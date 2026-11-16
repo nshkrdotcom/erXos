@@ -167,7 +167,7 @@ numbers are names; the table's order is the order.
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on Fiasco | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
 | 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's boot partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, built by the user, plays on QEMU with the virtio keyboard | the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
-| R1 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and three Fiasco patches (the clean-room interface header, writable or executable, eager FP switching), four if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
+| R1 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and four Fiasco patches (the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, writable or executable, eager FP switching), five if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
 | Fiasco's scheduler stages | status words, deferred preemption, group park and group quotas, in that order, each measured before and after and kept only when its numbers pay; urgency within a band waits for a consumer | 2,000 to 4,050 lines of C++ in the fork, the policy in erXos's C17 cores (unverified estimates, [design-fiasco.md](design-fiasco.md#stages-beyond-bands)) | R1 | each stage, after R1, by its before-and-after numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9); G8 itself is M8's, on erXos's kernel |
 | **Phase 2** | | | | |
 | Track K erXos's kernel | the pilot, then the kernel, booting R1's boot image and passing the conformance suite | 25,000 to 40,000 lines of C17, of which the capability core and the budget core exist; the pilot calibrates the figure | the pilot: M0, starting before Phase 1 is complete; the kernel in full: 1b-A | GK1, GK2, GK3 |
@@ -2224,8 +2224,8 @@ public key its user put in `authorized_keys` on the card's boot
 partition, reaches `rc`. There root sets the clock by hand, and at its
 next round the panel shows live quotes fetched over HTTPS. In the same
 session `ps` and `top` show the session's `rc` and the programs it
-runs, and `ls /proc/domains` lists every domain of the machine, the
-kiosk's among them. A file synced under `/data` survives a power cut,
+runs, and `erl`'s `erx:domains()` lists every domain of the machine,
+the kiosk's among them. A file synced under `/data` survives a power cut,
 and a fault of the system domain resets the board, which boots back to
 the kiosk; so does a hang of the root, through the board's hardware
 watchdog. The QEMU image of the same build boots on QEMU `virt` with
@@ -2262,15 +2262,12 @@ its code, and the item's work waits on it.
   ([design-quotes.md](design-quotes.md#refusals-and-error-results)).
 * **The clock, set by hand.** With no time source the wall clock reads
   1970 plus the uptime ([design-quotes.md](design-quotes.md#what-exists)),
-  and the live quotes' TLS checks refuse every certificate on it. No
-  SNTP client and no clock module: root sets the clock by hand with a
-  command of its own, FreeBSD's `date` with a time argument, after each
-  boot. **No design**: [design-time.md](design-time.md) gives the clock
-  service's facet for the SNTP app's samples, and its first open
-  decision names an operator command as a `ctl` file of a tree the clock
-  service serves and root mounts
-  ([design-time.md](design-time.md#open-decisions)). The set-time
-  command needs its section there first, naming its authority, its
+  and the live quotes' TLS checks refuse every certificate on it. 0.1
+  builds the clock service of [design-time.md](design-time.md) without
+  its SNTP client, and no clock module: root sets the clock by hand with
+  a command of its own, FreeBSD's `date` with a time argument, after
+  each boot. **No design**: the set-time mechanism is a section of
+  design-time.md, written first, which names its authority, its
   grammar, its fuzz target and what a set by hand does to the clock
   service's [steps](design-time.md#steps).
 * **Doom on QEMU `virt`**, with keys from QEMU's virtio keyboard alone,
@@ -2321,29 +2318,36 @@ its code, and the item's work waits on it.
 * **Persistence and recovery.** `/data` on littlefs on the card, 1b-I's
   part (b) ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)).
   A root fault and a missed pet reset the machine, as
-  [design-fiasco.md](design-fiasco.md#the-end-path) has it; the code on
-  `master` powers it off
-  ([design-fiasco.md](design-fiasco.md#what-the-code-does-today)), and
-  branch `fiasco-reset` (7caa70f30, 14fe96ee3, 197becabe) makes both
-  reset. The root's watchdog thread arms the Pi 4's power-management
+  [design-fiasco.md](design-fiasco.md#the-end-path) has it, where the
+  backend's code powers it off
+  ([design-fiasco.md](design-fiasco.md#what-the-code-does-today)); 0.1
+  takes the end path's reset, in which every end names its cause and
+  only a requested power-off powers off. The root's watchdog thread arms the Pi 4's power-management
   watchdog on every boot and reloads it at each step, so a hang of
   Fiasco or of the root resets the board within 4 s
   ([design-fiasco.md](design-fiasco.md#the-watchdog), FD29); its
   registers come from a clean-room facts record of the watchdog, as the
-  RNG200's do. Updates are by reflashing the card, which takes `/data`
+  RNG200's do. Whether a requested off stops that watchdog is the open
+  decision below. Updates are by reflashing the card, which takes `/data`
   with it; no update service and no trial boot.
 * **The preview's kernel.** **No design**:
   [design-fiasco.md](design-fiasco.md#the-releases-fiasco-build) has
   development builds keep the debugger, and 0.1's published images are
   development builds, so design-fiasco.md first names 0.1's kernel
-  configuration. Its starting point is branch `fiasco-release-cfg`
-  (ba8795b4b): `FiascoConfig::RELEASE_UNSET` turns `CONFIG_JDB` and
-  `CONFIG_INPUT` off, so the kernel has no debugger and no console input
-  of its own and a panic reboots instead of waiting on the console, and
-  `tools/erx build release-kernel` builds it. A panic before
-  `Psci::init` still finds no reset method and loops, the gap that
-  branch's `TODO.md` item records, and whether 0.1's kernel keeps
-  `CONFIG_RT_DBG` and `CONFIG_PERF_CNT_USER` is open.
+  configuration. Its starting point is the development configuration
+  with `CONFIG_JDB` and `CONFIG_INPUT` off, so the kernel has no
+  debugger and no console input of its own and a panic reboots instead
+  of waiting on the console (`fiasco/kernel/src/kern/terminate.cpp`),
+  with the configuration check refusing either option in that kernel,
+  a build step that builds it, and the image build packing it. Two gaps
+  stay open there. A panic before `Psci::init` and `Dt::init` in
+  `Startup::stage2` (`kern/arm/startup-arm.cpp`), the handoff checks of
+  `erx/erx_handoff.cpp` among them, finds no reset method and loops
+  (`kern/arm/bsp/gen/reset-arm-gen.cpp`), as `TODO.md` records. And
+  whether 0.1's kernel keeps `CONFIG_RT_DBG`, which adds object naming
+  and the kernel memory statistics to the debugger's kernel object, and
+  `CONFIG_PERF_CNT_USER`, user-mode access to the performance counters,
+  is open.
 * **A distributable closure.** The shipped images' link closure is
   distributable: the license allowlist check of
   [design.md](design.md#licenses-and-notices) holds over each published
@@ -2359,10 +2363,12 @@ its code, and the item's work waits on it.
   kernel refers to it and the capability slot it fills, 10, is then
   empty, which `std_workload.cpp` already allows. sigma0's calls that
   name its objects then fail; that sigma0 ignores the failure is
-  unverified, and a boot of the shipped kernel checks it. The
+  unverified, and a boot of the shipped kernel checks it. These facts
+  come from the clean-room facts record of the file (erxos-history
+  `cleanroom/fiasco-gpl-facts.md`, commit `2a1e35e`). The
   release-licenses check of design-fiasco.md holds on both published
-  kernels with its seeds, one restoring `jdb_object.cpp` and one the
-  original `kobject_rpc.h`. Every other component under a license that
+  kernels with its seeds, one listing `jdb_object.cpp` again in
+  `Modules.generic` and one restoring the original `kobject_rpc.h`. Every other component under a license that
   is not permissive is rewritten, along CLAUDE.md's clean-room rule, or
   dropped. The dependency table names none other in an image beyond the
   accepted ones: the Pi 4's device tree under GPL-2.0, shipped with its
@@ -2405,6 +2411,28 @@ its code, and the item's work waits on it.
 * **The browser demo** runs 0.1's image
   ([site/README.md](../site/README.md)).
 
+**Open decision: the hardware watchdog after a requested off.**
+design-fiasco.md's [watchdog](design-fiasco.md#the-watchdog) has
+`ERX_END_OFF` stop the Pi 4's hardware watchdog before the power-off,
+while design-platforms.md's
+[watchdog](design-platforms.md#the-watchdog) has the platform layer
+never stop it (PL4).
+
+* (a) A requested off stops the watchdog, with the watchdog thread the
+  only writer of the watchdog's window: the end path records that the
+  machine is ending with an off, and the thread, at its next step,
+  stops the watchdog instead of reloading it. The
+  same rule goes into design-platforms.md's
+  [Ending the machine](design-platforms.md#ending-the-machine) for
+  erXos's kernel, and PL4 is reworded to allow that one stop.
+* (b) A requested off leaves the watchdog running, so the board resets
+  4 s after it and boots again; PL4 stays as it is, and the Pi's
+  checklist case after a requested off expects that reset instead.
+
+Recommendation: (a). On a board that cannot cut its own power, a
+requested off that reboots 4 s later is not an off, and keeping one
+writer of the window keeps the stop out of every other path.
+
 **Exit criteria.** Each runs on 0.1's commit.
 
 * The exit criteria of the milestones of 0.1's
@@ -2412,9 +2440,10 @@ its code, and the item's work waits on it.
   [design-ssh.md](design-ssh.md#verification) and
   `ssh -p 2222 root@localhost` reaching `rc`.
 * On QEMU, root's SSH session's `ps` lists its `rc` and `ps` itself,
-  `top -b -n 1` prints its header and a row per process of that table,
-  and `ls /proc/domains` lists the display's and the kiosk's domains; a
-  second boot on the same medium offers the same host key.
+  `top -b -n 1` prints one display whose rows, at most 18, are processes
+  of that table, and `erl`'s `erx:domains()` in that session names the
+  display's and the kiosk's domains, as each one's
+  `/proc/domains/N/status` does; a second boot on the same medium offers the same host key.
 * On QEMU, the full kiosk's cell `display_domain/quotes` of
   [design-quotes.md](design-quotes.md#verification-and-testing) passes
   and fails on its seeds, and the set-time command's tests of its
@@ -2430,7 +2459,8 @@ its code, and the item's work waits on it.
 * The release-licenses check of
   [design-fiasco.md](design-fiasco.md#verification) passes on both
   published images' kernels and fails on its two seeds, `jdb_object.cpp`
-  restored and the original `kobject_rpc.h` restored. The license
+  listed again in `Modules.generic` and the original `kobject_rpc.h`
+  restored. The license
   allowlist check of [design.md](design.md#licenses-and-notices) passes
   over each published image's whole closure and fails on its seed, a
   file recorded under GPL-2.0 added to the QEMU medium.
@@ -2452,7 +2482,8 @@ its code, and the item's work waits on it.
 * By hand on the 4 GB Pi, a development image whose root stops its
   watchdog thread once it has armed the hardware watchdog resets within
   4 s and boots back to the kiosk; seeded: the arming skipped, the board
-  stays hung.
+  stays hung. After a requested off, the board is still halted 10 s
+  later; seeded: the stop skipped, the board resets within 4 s.
 * By hand on QEMU, from a clean clone, Doom's getting-started steps
   build Doom's local image, which boots to Doom's title, and a key from
   the virtio keyboard moves its menu. No gate builds Doom
@@ -2517,8 +2548,8 @@ neighbour answering. The release notes carry the downsides table.
   device of R1's platforms is behind an IOMMU, so a DMA-capable
   device's domain is in the trusted base (FD12); the release's
   Fiasco build (the debugger off and its configuration check, the
-  clean-room header that replaces `kobject_rpc.h`, the
-  writable-or-executable patch, and the check that the image's link
+  clean-room header that replaces `kobject_rpc.h`, the shipped kernel's
+  build without `jdb_object.cpp`, the writable-or-executable patch, and the check that the image's link
   closure is all permissive, and the eager FP switch); the system-call
   fuzz campaign; and the upstream security watch. The build also
   hardens Fiasco's entry against branch-predictor injection only if the

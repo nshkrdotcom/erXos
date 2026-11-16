@@ -135,10 +135,11 @@ From them:
 * **It does not promise** what [Downsides against erXos's kernel](#downsides-against-erxoss-kernel)
   lists. Each row is a property erXos's kernel has and Fiasco lacks, the consequence a user or an
   app sees, and what closes it. Nothing in this backend rebuilds one of those properties in user
-  mode. R1 accepts each row as a published downside, a hostile app's load on the root service
-  (FD17) and FD24's reads of what a domain supplies among them, except FD33, whose acceptance
+  mode. R1 accepts each row but FD33 as a published downside, among them a hostile app's load on
+  the root service (FD17) and FD24's reads of what a domain supplies; FD33's acceptance
   [Open decisions](#open-decisions) holds open. FD32 is published unless its entry patch is
-  carried, which the null-request bench decides ([The release's Fiasco build](#the-releases-fiasco-build)).
+  carried, and the null-request bench decides whether it is
+  ([The release's Fiasco build](#the-releases-fiasco-build)).
 * **It refuses** a call with no consumer in that list with `ERX_ENOTSUP`, which every caller
   checks.
 * **It reports as unknown** what only a kernel could know: `unsupported`, or `partial` with its
@@ -188,7 +189,8 @@ each a bug in `TODO.md`:
 * A map Fiasco refuses under a range call ends the machine ([The range table](#the-range-table) gives the domain-local `ERX_ENOMEM`).
 * `erx_thread_set_affinity` and a thread's start pass the caller's mask to Fiasco unnarrowed, and a thread with no mask stays on the root service's CPU (`service.c`, `service_thread_set_affinity` and `service_sched_param`).
 * `task_write` is answered for every task (`service.c`, `service_task_write`), and a boot whose seed is the counter alone goes on in every build (`entropy.c`, `erx_fiasco_entropy_init`); the Raspberry Pi 4 reads its RNG200 only when `/chosen` holds no seed at all.
-* `erx_machine_end` resets for every `how` but `ERX_END_OFF`, `ERX_END_TRIAL` included.
+* `erx_machine_end` answers `ERX_EINVAL` for every `how` but `ERX_END_OFF` and `ERX_END_RESET`,
+  `ERX_END_TRIAL` included (`service.c`, the `ERX_FIASCO_CALL_MACHINE_END` case).
 * A missed pet, a root fault and the root's own stop power the machine off rather than reset it (`end.c`,
   `erx_fiasco_end_watchdog`; `service.c`, `service_fault`; `service_task.c`, the root's case of a space's stop).
 
@@ -2277,8 +2279,11 @@ slot boots, and after any other boot the board boots its slot again. In determin
 thread does not arm it. `ERX_END_OFF` stops it before the power-off ([The end path](#the-end-path)), so a board halted
 on request stays halted; every other end leaves it running, so an end that hangs still resets. A board stopped in the
 kernel debugger, which development builds keep, resets within the timeout. This is a platform item the root stands in
-for, as the trial request is, not a kernel mechanism rebuilt in user mode: on erXos's kernel the platform layer arms the
-same watchdog. A hang before the root's thread starts, in the
+for, as the trial request is, not a kernel mechanism rebuilt in user mode. It arms the same watchdog as erXos's kernel,
+on every boot only on Fiasco: on erXos's kernel the firmware starts it on an unattended board or the kernel under a
+machine lease, and the platform layer never stops it
+([design-platforms.md](design-platforms.md#the-watchdog), PL4); whether a requested off stops it is open
+([plan.md](plan.md), 0.1). A hang before the root's thread starts, in the
 firmware's own stage or in Fiasco's boot, is not covered: U3 of [design-storage.md](design-storage.md#invariants) states
 that on a board whose firmware does not run the watchdog from power-on a trial whose firmware stage hangs needs a power
 cycle, and on Fiasco that stretch runs until the root's watchdog thread starts. The watchdog's registers and their sequence come from
@@ -2769,8 +2774,8 @@ The file namespace ([design-files.md](design-files.md)) and the shell's command 
 
 **Configuration.** The release configuration is an exact allowlist, which
 `tools/lib/erx/fiasco_config.rb`'s check holds as it holds the development one, so an option off
-the list fails the check. It turns the debugger off, so no capstone is compiled, though
-`jdb_object.cpp` is, until the patch below takes it out; keeps the fixed-priority scheduler; keeps `EXPLICIT_REPLY_CAPS`, which
+the list fails the check. It turns the debugger off, so no capstone is compiled; `jdb_object.cpp`, which
+`Modules.generic` lists for every kernel, the patch below takes out of the shipped kernel. It keeps the fixed-priority scheduler; keeps `EXPLICIT_REPLY_CAPS`, which
 [the pause](#threads-bands-and-stops) needs, and `IOMMU`, for a platform that puts a device behind
 one; turns off `PAGEFAULT_TRAMPOLINE`, `ALIEN` and `IRQ_DIRECT_INJECT`, which no consumer needs
 and which widen what a thread can do with itself ([Who holds what](#who-holds-what)); and turns off
@@ -2789,7 +2794,8 @@ fails the check. Development builds keep the debugger.
   the kernel refers to it, and capability slot 10, which it fills, is then empty, which the boot workload
   (`std_workload.cpp`) already allows. `sigma0`'s calls that name its objects then fail; that `sigma0` ignores the
   failure is unverified, and a boot of the shipped kernel checks it. These facts come from a clean-room facts record of
-  the file, written by an agent that writes none of erXos's code or documents.
+  the file, written by an agent that writes none of erXos's code or documents (erxos-history
+  `cleanroom/fiasco-gpl-facts.md`, commit `2a1e35e`).
 * **Writable or executable.** Fiasco's map refuses a user mapping that would be writable and
   executable at once into any task but the two its boot workload creates (`std_workload.cpp`),
   `sigma0` and the root: `sigma0` hands out RAM read, write and execute
@@ -2974,7 +2980,7 @@ Each test below names the seeded failure that proves it ran:
 | FP state | two threads of different spaces holding distinct vector registers keep them across switches and a migration between CPUs, and a fresh thread reads its vector registers as zero | the switch's restore skipped: the second thread reads the first's registers |
 | DMA confinement | a device's access outside its window is refused and reported | the whole pool mapped into the DMA space |
 | writable or executable | a request for such a mapping into a task fails at Fiasco's map, and the root still boots from `sigma0`'s mapping | the patch's check removed: the mapping is made; the exemption removed: the root does not start |
-| release licenses | the release image's link closure is all permissive | a release build with the debugger on; one with the original `kobject_rpc.h` restored in place |
+| release licenses | the release image's link closure is all permissive | a release build with `jdb_object.cpp` listed again in `Modules.generic`; one with the original `kobject_rpc.h` restored in place |
 | the fuzz campaign | it runs its budget clean, every seed of its corpus reached | a fork build with the bound removed from `L4_snd_item_iter::next` (`if (_buf >= _max)`, `l4_buf_iter.cpp:116-121`), which any domain reaches by a send on its own gate whose words and typed items together pass the 63 message registers (`Utcb::Max_words`, `abi/l4_types.cpp:789`), so the kernel's item transfer writes past the root service's message registers before the root's decoder sees the message (`Thread::transfer_msg_items`, `thread-ipc.cpp:1203-1227`); the seed build counts each pass of the removed bound, the case fails if that count is 0, so it cannot pass without reaching the defect, and it fails if the campaign then reports clean |
 | a map at the factory's end | a domain whose row gives it a page budget larger than its kernel-memory figure can map, so its factory is spent before its page cap or its object and mapping limits, has closed no handle, so the root hands it never-used slots in index order before any freed one ([Handles are slots](#handles-are-slots)). Sizes: a capability-table page is one 4 KiB page (`Config::PAGE_SIZE`, `obj_space_phys_util.cpp:221-226`) of `Config::PAGE_SIZE / sizeof(Obj::Entry)` slots (`obj_space_types.cpp:195-197`), 128 if an entry is the 32 bytes its capability word, list link and flags word add up to (`obj_space_types.cpp:45-102`; read, not measured: a wrong count makes the create below succeed and the case fail); an IRQ object charges its slab entry, `s` bytes (`irq.cpp:1201-1206`, `slab_cache.cpp:295-306`); a commit of a page in a 2 MiB region already mapped charges only its mapping-database node (`mapdb.cpp:858`), under a page. While its factory is ample, the domain makes doorbells until the handle it gets is the last slot of a table page, keeping one of them, `D`, so the next slot the root takes is the first of a page Fiasco has not allocated. It then commits a page and sets it to no access, then commits a page in each fresh 2 MiB region, each taking a page-table page, until one answers `ERX_ENOMEM`, and asks for a two-page commit across a fresh region's edge, a protect of the no-access page to read and write, and an `erx_vcpu_control` arming a thread, which needs the task's second kernel-user area. It then commits single pages in regions already mapped until one answers `ERX_ENOMEM`, so its factory holds less than one node's charge, and destroys and closes `D`: the root's delete returns only once Fiasco has freed the object, past an RCU grace period (`kobject.cpp:155-175`, `:224-233`), its `s` bytes back in the factory (`irq.cpp:1220-1225`), and its slot goes behind the never-used ones. The factory now holds at least `s` and less than `s` and a page together, so the next `erx_irq_create`'s factory create succeeds and its placement into the fresh slot, which needs a new table page, is refused. Each of the commit, the protect, the arming and the create answers `ERX_ENOMEM`, a touch of each refused range faults in the domain alone, the arming leaves the thread unarmed, the pool's count and the domain's object count are what they were before each call, and a neighbour domain keeps committing | a refused map ending the machine: the machine ends; the commit's undo skipped: the pool's count drops and the first page of the refused commit can be read; the undo returning every page of the plan to the pool: the refused protect raises the pool's count; the add's refusal ignored, the arming going on to `vcpu_control`: the arming answers other than `ERX_ENOMEM`; the create's undo skipped: the domain's object count rises by one with no handle returned |
 | writable peer side | a domain sends a raw `erx_vm_map` request asking for read and write on its peer's side, which it was passed without `WRITE`: `ERX_ERIGHTS`, and after the domain writes through every mapping it holds, the peer's side is unchanged | the map body's check against the slot record removed: the mapping is made and the peer's side changes |

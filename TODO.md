@@ -587,8 +587,10 @@ it; git history is the record of completed work.
   unit only the root maps, so a hang of Fiasco or of the root resets the board, into the committed slot after a
   trial boot; `ERX_END_OFF` stops it before the power-off. Needs the clean-room facts record of the watchdog,
   as the RNG200's; its cases are on the board's manual checklist: a development image whose root stops its
-  watchdog thread once it armed the watchdog resets within the timeout and boots again, and a trial image does
-  so into the committed slot; seeded: the arming skipped, so the board stays hung
+  watchdog thread once it armed the watchdog resets within the timeout and boots again; seeded: the arming
+  skipped, so the board stays hung; and after a requested off the board is still halted 10 s later; seeded: the
+  stop skipped, so the board resets. Whether a requested off stops the watchdog at all is an open decision of
+  [plan.md](docs/plan.md) (0.1)
   ([design-fiasco.md](docs/design-fiasco.md#the-watchdog)).
 * [High] apps, an app principal's wall on both kernels (`liberx/system/dom_boot.c`, `erx_domain_core.erl`):
   the domain library carves each app principal's budget at boot as an elastic budget with no guarantee, which
@@ -2763,6 +2765,14 @@ it; git history is the record of completed work.
   that abort by design dump core into the tree root (`mutant-*.core`, `page.core`,
   `object.core`; FreeBSD's `kern.corefile` is `%N.core` in the working directory), 17 files
   per `make check`. Test commands should run with `RLIMIT_CORE` 0.
+* [Medium] stopgap kernel, the early panic (`fiasco/kernel/src/kern/arm/bsp/gen/reset-arm-gen.cpp`,
+  `kern/arm/startup-arm.cpp`): a panic before `Psci::init` and `Dt::init` in `Startup::stage2`, the handoff
+  checks of `erx/erx_handoff.cpp` among them, finds no reset method, since `platform_reset` tries PSCI only once
+  it is detected and the device tree's reset only once it is read, and loops forever, so a kernel built without
+  the debugger, as 0.1's is ([plan.md](docs/plan.md), 0.1, "The preview's kernel"), hangs instead of
+  rebooting. Probe PSCI from the device tree in `platform_reset` when it is not yet initialized; the test boots
+  under QEMU with `-no-reboot` a kernel whose handoff check fails and expects QEMU to exit after the panic line,
+  and its seeded failure leaves the probe out.
 * [Medium] Fiasco build on a FreeBSD host, `tools/lib/erx/fiasco.rb`: the Kconfig step now builds with `cc`
   (`HostOs::HOST_CC`) and the users build is given `HOST_CC`/`HOST_CXX`, but `tools/erx build fiasco` has not been
   run through to an image there; run it on the FreeBSD test host and fix what stops it, then delete this item.
