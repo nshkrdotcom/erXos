@@ -167,7 +167,7 @@ check_entry(Name, Signer, Max, Registry) ->
 The entry of `Max` that `Name`, signed by `Signer`, takes in `Registry`: a
 name the registry holds keeps its entry, for its own signer only, and a new
 name takes the lowest entry no name holds. Admission and registration
-(`erx_principal:register/3`) both decide by it.
+(`erx_principal:register/2`) both decide by it.
 """.
 -spec entry(binary(), erx_pkg_header:authenticator(), non_neg_integer(), registry()) ->
     {ok, non_neg_integer()} | {error, {signer_changed, binary()} | apps_full}.

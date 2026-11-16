@@ -55,11 +55,11 @@ keep(Who, Start) ->
     Helper = spawn_link(fun() -> start(Keeper, Who, Start) end),
     receive
         {Helper, {ok, Domain}} ->
-            %% A session that ended before the keeper took it is an end too.
+            %% A session that ended before the keeper took it is an end too: the keeper
+            %% traps exits, so linking to an ended pid raises nothing and delivers
+            %% {'EXIT', Pid, noproc}, which hold/2 ends the keeper with.
             Pid = erx_domain:pid(Domain),
-            try link(Pid)
-            catch error:noproc -> exit({shutdown, {ended, erx_domain:id(Domain)}})
-            end,
+            true = link(Pid),
             Helper ! {Keeper, taken},
             hold(Pid, Helper);
         {Helper, {error, Reason}} ->

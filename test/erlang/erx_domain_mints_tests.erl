@@ -117,8 +117,8 @@ in_order_test() ->
 
 %% The pixel area is a fact of the pair (pair_area/3): a windows grant's server reads
 %% an area of the grant's pixels in whole pages, or windows_pixels_default where its
-%% limits state none, for a pair of that server's row and the grantee, its row or a
-%% session of its template, in either order and whatever incarnation is ready; any
+%% limits state none, for a pair of that server's row and the grantee's row, or a session
+%% whose facet rows hold the grant, in either order and whatever incarnation is ready; any
 %% other pair, a grant of another service's or a request's domain, has none.
 windows(Grants) ->
     erx_domain_mints:new(#{services => [{?S, display}, {?S, data}], grants => Grants,
@@ -140,13 +140,18 @@ windows_pair_without_pixels_has_the_default_test() ->
 other_pairs_have_no_area_test() ->
     Mints = windows([{?G, data, ?S, #{pixels => 4096}}, {{template, 0}, display, ?S, #{}}]),
     ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {6, {configured, ?G}}, Mints)),
-    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {9, {session, 1}}, Mints)),
+    %% A session that holds no display row has no area, though its template is granted one.
+    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {9, {rows, []}}, Mints)),
+    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {9, {rows, [{data, ?S, #{pixels => 4096}}]}},
+                                                  Mints)),
     ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {9, request}, Mints)),
-    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?T}}, {9, {session, 0}}, Mints)).
+    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?T}}, {9, {rows, [{display, ?S, #{}}]}}, Mints)).
 
-session_pair_has_its_templates_pixels_test() ->
+%% A session's area is its own row's, whatever its template is granted.
+session_pair_has_its_rows_pixels_test() ->
     Mints = windows([{{template, 0}, display, ?S, #{pixels => 3 * 4096}}]),
-    ?assertEqual({3 * 4096, 5}, erx_domain_mints:pair_area({9, {session, 0}}, {5, {configured, ?S}}, Mints)).
+    Rows = [{data, system, #{}}, {display, ?S, #{pixels => 5 * 4096}}],
+    ?assertEqual({5 * 4096, 5}, erx_domain_mints:pair_area({9, {rows, Rows}}, {5, {configured, ?S}}, Mints)).
 
 %% Two displays granted to each other share one connection: the lower server row's
 %% grant gives the pair its area (TODO.md, pair_area/3).
