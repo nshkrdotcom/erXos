@@ -7601,6 +7601,44 @@ to the corpus and follow rc
   `kernel_watchdog_timeout` unset, since nothing under Fiasco reloads the watchdog), no crash region, no trial request and no device
   secret (M12). Development
   builds run trusted code only until M11.
+* [Medium] stopgap, a device's input and a fault's reach on Fiasco (R1's published downsides; erXos's
+  kernel closes them). What holds: an interrupt whose pin was unbound after another CPU acknowledged it
+  is ended at its chip, not dereferenced (`Irq_chip::handle_irq`, `fiasco/kernel/src/kern/irq_chip.cpp`);
+  an SError taken in user mode ends the task of the thread that ran with a fault record of kind
+  `async_error` (`arm_serror_user_entry`, `fiasco/kernel/src/kern/arm/thread-arm.cpp`, decided by
+  `liberx/backend/fiasco/arch/aarch64/exception.c`). What does not:
+  * attribution beyond the running thread: Fiasco's kernel runs with SErrors masked, so an SError
+    is taken at the next entry to user mode on its CPU and presumed that thread's, and a device
+    error raised while a domain was in the kernel, or by a posted write, can end another domain's
+    task (K12's limit). Where it lands in the root, the root's main and runtime threads end the
+    machine (`service_fault`), its service and watchdog threads, whose exception handler is sigma0,
+    resume with nothing recorded (sigma0 refuses the message), and in sigma0 it is only counted; Fiasco has no exit window and reads no severity or error
+    records, so an uncontainable error is not stopped either. No test provokes an SError, since QEMU
+    `virt` raises none a guest can cause: only the root's decision is tested
+    (`test/host/fiasco_exception_test.rb`);
+  * every SError is counted per CPU (`num_serrors`, which jdb shows), but no log line names one and
+    the inspector has no attribute for the count;
+  * a pin read on one CPU while another detaches it (`Irq_chip_gen::detach`) reaches a handler whose
+    object is already bound to the software chip, whose acknowledge does nothing, so that CPU's
+    interrupt is never ended: every GIC priority is the same, so that CPU takes no more timer ticks,
+    IPIs or device interrupts, a silent hang reached by a driver domain ending while its line fires on
+    another CPU. Only `handle_irq` knows which chip acknowledged the interrupt, so no small fix
+    exists; and `Icu_h::op_icu_unbind`
+    (`fiasco/kernel/src/kern/icu_helper.cpp`) detaches without the IRQ's lock that
+    `Irq_chip::detach` requires;
+  * a wedged bus, which stalls the CPU that touches it with no fault to end anything;
+  * DMA of unconfined devices (the item above, FD12);
+  * on the Raspberry Pi 4, no hardware watchdog behind a hang of Fiasco (the item above, FD29); Q15
+    accepts the root reloading the PM watchdog during a trial.
+* [Low] liberx Fiasco backend, `erx_fiasco_exception_kind`
+  (`liberx/backend/fiasco/arch/aarch64/exception.c`): the exception class's position and the SError
+  class are written by hand, since `tools/erx sysreg refresh` refuses ESR_EL1, whose ISS layout
+  depends on EC; let the refresh keep the fields that do not (EC, IL) and generate them. The same
+  function reports alignment and breakpoint exceptions as `undefined`, though the ABI has both kinds.
+* [Medium] hostile suites, an interrupt storm on a driver's line on Fiasco: a line held asserted, or
+  raised at the device's fastest rate, whose pass is that the machine and the other domains keep
+  running, so the downside above is measured rather than assumed (FD33's recommendation). It needs a
+  device on QEMU `virt` that a test can make interrupt without end.
 
 * [Medium] code service, atoms from loads (`erlang/apps/erx_code/src/erx_code.erl`):
   `activate/1` makes each manifest name an atom before ERTS's loader checks it

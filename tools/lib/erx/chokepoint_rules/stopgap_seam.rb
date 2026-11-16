@@ -42,6 +42,7 @@ module Erx
         liberx/backend/hosted/wait.c
         liberx/backend/fiasco/arch/aarch64/cache.c
         liberx/backend/fiasco/arch/aarch64/clock.c
+        liberx/backend/fiasco/arch/aarch64/exception.c
         liberx/backend/fiasco/arch/aarch64/generated/trap.c
         liberx/backend/fiasco/arch/aarch64/root_start.S
         liberx/backend/fiasco/arch/aarch64/task_start.S
@@ -52,6 +53,7 @@ module Erx
         liberx/backend/fiasco/end.c
         liberx/backend/fiasco/entropy.c
         liberx/backend/fiasco/entropy.h
+        liberx/backend/fiasco/exception.h
         liberx/backend/fiasco/generated/calls.c
         liberx/backend/fiasco/generated/calls.h
         liberx/backend/fiasco/group.c
