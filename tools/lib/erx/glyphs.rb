@@ -5,6 +5,7 @@
 require 'fileutils'
 require 'tmpdir'
 require_relative 'error'
+require_relative 'generated_abi'
 require_relative 'abi_theme'
 require_relative 'gpos'
 require_relative 'output_directory'
@@ -65,11 +66,13 @@ module Erx
     # A font(7) field: a word right-justified in 11 bytes, then a blank.
     FIELD = 11
     CHANNEL = 'k8'
-    MAX_X = 0xffff
-    ROW = 0..255
-    LEFT = -128..127
-    ADVANCE = 0..255
-    ADJUSTMENT = -128..127
+    # The subfont format's field bounds (abi/formats/subfont.txt).
+    CODEC = ABI::Generated::CODEC
+    MAX_X = CODEC.constant('subfont_x_max')
+    ROW = 0..CODEC.constant('subfont_row_max')
+    LEFT = CODEC.constant('subfont_left_min')..CODEC.constant('subfont_left_max')
+    ADVANCE = 0..CODEC.constant('subfont_advance_max')
+    ADJUSTMENT = CODEC.constant('subfont_adjustment_min')..CODEC.constant('subfont_adjustment_max')
     PAIRS = 'kern'
     HALF = Rational(1, 2)
 
@@ -247,7 +250,7 @@ module Erx
       unless ADJUSTMENT.cover?(pixels)
         refuse(role, "glyph #{coverage.index}'s kerning of #{units} units is an adjustment of #{pixels} pixels")
       end
-      refuse(role, "glyph #{coverage.index}'s kerned advance of #{kerned} pixels leaves 0 to 255") unless ADVANCE.cover?(kerned)
+      refuse(role, "glyph #{coverage.index}'s kerned advance of #{kerned} pixels leaves #{ADVANCE.min} to #{ADVANCE.max}") unless ADVANCE.cover?(kerned)
       pixels
     end
 
