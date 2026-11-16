@@ -18,6 +18,12 @@ module Erx
     # source is a prebuilt program for one host (Playwright's Chromium), fetched only
     # on that host.
     HOSTS = { 'darwin-arm64' => /\A(?:arm64|aarch64)-darwin/ }.freeze
+    # A file source may also pin what it encodes, an image inside a test program, by
+    # the decoded bytes' SHA-256 and size, both or neither: the reader that decodes it
+    # checks them, and decompresses no more than decoded_bytes. The fetch step checks
+    # only the file's own sha256.
+    DECODED_FIELDS = %w[decoded_sha256 decoded_bytes].freeze
+    MAX_DECODED_BYTES = 1 << 30
     module_function
 
     def parse(bytes)
@@ -51,7 +57,7 @@ module Erx
         fields = COMMON_FIELDS + %w[url directory commit]
         member = 'directory'
       when 'file'
-        fields = COMMON_FIELDS + %w[url filename]
+        fields = COMMON_FIELDS + %w[url filename] + (DECODED_FIELDS.any? { |field| source.key?(field) } ? DECODED_FIELDS : [])
         member = 'filename'
       when 'oci'
         fields = COMMON_FIELDS + %w[repository platform config_sha256]
@@ -60,7 +66,7 @@ module Erx
         raise Error, 'invalid source kind'
       end
       unless source.keys.sort == fields.sort &&
-             source.values.all? { |value| value.is_a?(String) && !value.empty? }
+             source.except('decoded_bytes').values.all? { |value| value.is_a?(String) && !value.empty? }
         raise Error, 'invalid source fields in deps.lock'
       end
       ['id', member].compact.each do |field|
@@ -73,6 +79,11 @@ module Erx
         raise Error, 'invalid source members'
       end
       raise Error, 'invalid source SHA-256' unless /\A[0-9a-f]{64}\z/.match?(source.fetch('sha256'))
+      if source.key?('decoded_sha256') &&
+         !(/\A[0-9a-f]{64}\z/.match?(source.fetch('decoded_sha256')) &&
+           source.fetch('decoded_bytes').is_a?(Integer) && source.fetch('decoded_bytes').between?(1, MAX_DECODED_BYTES))
+        raise Error, 'invalid decoded image pin'
+      end
       raise Error, 'invalid source commit' if source.fetch('kind') == 'git' && !/\A[0-9a-f]{40}\z/.match?(source.fetch('commit'))
       raise Error, 'invalid dependency status' unless %w[permanent stopgap].include?(source.fetch('status'))
       raise Error, 'invalid source host' if source.fetch('kind') == 'zip' && !HOSTS.key?(source.fetch('host'))

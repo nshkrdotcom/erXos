@@ -4796,13 +4796,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   a bound on a path's joined length, refused in the walk, would cap it. A regular file is hashed once
   per name, not per inode, and no listing bounds the bytes it folds, so a sparse file of F2FS's
   largest size, or many links to it, ends only at the test's deadline.
-* [Medium] test, F2FS corpora (`test/erlang/erx_f2fs_corpus.erl`): the corpus ids and file names are kept
-  in the reader as well as in deps.lock, and the decoded images' SHA-256s live in the reader although
-  design-f2fs.md's Corpora table says they are pinned beside the programs'; an optional decoded-hash
-  field on deps.lock's `file` kind would hold both in one place, with the test taking each path from
-  deps.lock. The reader's zstd path has no hostile-file case (bomb, damaged, truncated), nor do base64
-  garbage and an empty file; `collect/5`'s step tokens mix zlib's atoms with its own, and a zlib
-  `need_dictionary` answer is reported as `{zlib, function_clause}`. The corpus test checks
+* [Medium] test, F2FS corpora (`test/erlang/erx_f2fs_corpus_tests.erl`): the corpus test checks
   features and segments per section, not `-a` or `-e cold`. The codec's fuzz target is not yet
   seeded from corpus blocks, which design-f2fs.md's "Reading the medium" asks for.
 * [Low] test, F2FS listing's `file_reader/1`: OTP's file_info holds `st_rdev`, `st_dev` and `st_ino` in
