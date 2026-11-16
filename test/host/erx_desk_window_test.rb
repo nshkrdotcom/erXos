@@ -29,7 +29,13 @@ class ErxDeskWindowTest < Minitest::Test
     Fault.new(name: 'a reload that starts the window again from init',
               from: '{erx_desk, reload, Core} -> loop(present(W));',
               to: '{erx_desk, reload, Core} -> loop(present(W#window{state = element(1, Core:init(#{}))}));',
-              caught_by: 'reload_presents_the_new_view_of_the_kept_state')
+              caught_by: 'reload_presents_the_new_view_of_the_kept_state'),
+    Fault.new(name: 'an inspection worker that reads the wall clock before the inspector',
+              from: "Result = Inspect(Path, \#{timeout => ?INSPECT_TIMEOUT}),\n" \
+                    "                        {inspected, Tag, Result, os:system_time(millisecond)}",
+              to: "Read = os:system_time(millisecond),\n" \
+                  "                        {inspected, Tag, Inspect(Path, \#{timeout => ?INSPECT_TIMEOUT}), Read}",
+              caught_by: 'an_answer_carries_the_wall_clock_read_after_it')
   ].freeze
 
   # An EUnit run: whether it passed, EUnit's report, and both streams for messages.

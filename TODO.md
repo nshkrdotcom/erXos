@@ -8114,11 +8114,6 @@ document's "residual risks accepted" paragraph.
   from `erx_shell` alone (`erx_shell_namespace:from_applications([erx_shell])` in `erx_session_sup`,
   `erx_shell_runner` and `erx_shell_script`), and it names no `-behaviour(erx_cmd)`, which would make `erx_desk`
   build after `erx_shell`. 8.4's QEMU cell, `clock` opened in the desktop session, waits on this.
-* [High] desktop, clock's reading order (`erx_desk_clock_core.erl`, `erx_desk_window.erl`;
-  [design-desktop-programs.md](docs/design-desktop-programs.md#clock), D3): a tick reads the wall clock before its
-  worker reads `[time]`'s `state`, so a clock set between the two reads shows an uptime-from-1970 reading as a
-  `set` date for up to a minute. The state only moves forward within a boot, so reading it before the wall clock
-  fails safe; that changes the design's reading order or effect table and waits on the design.
 * [Medium] desktop, clock's dimmed reading ([design-desktop-programs.md](docs/design-desktop-programs.md#clock),
   the state table and D3): a state that is not `ok` asks for the time and date in the `tertiary` colour, which
   `abi/formats/ui.txt` cannot express; clock shows them in their roles with the status token beside the zone.

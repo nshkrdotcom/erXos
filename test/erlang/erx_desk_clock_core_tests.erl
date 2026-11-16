@@ -37,13 +37,14 @@ fresh() ->
     {State, [{tick_after, 0}]} = ?CORE:init(#{}),
     State.
 
-%% A tick at Now, each inspection it asks answered from World: the state
+%% A tick at Now, each inspection it asks answered from World with the wall
+%% clock still at Now after the answer: the state
 %% after the answers and the delay of the tick it asks for.
 tick(Now, World, State0) ->
     {State1, Effects} = ?CORE:step({tick, Now}, State0),
     [Ms] = [Ms || {tick_after, Ms} <- Effects],
     Answer = fun({inspect, Tag, Path}, State) ->
-                     {Next, []} = ?CORE:step({inspected, Tag, maps:get(Path, World)}, State),
+                     {Next, []} = ?CORE:step({inspected, Tag, maps:get(Path, World), Now}, State),
                      Next;
                 (_Other, State) ->
                      State
@@ -121,9 +122,27 @@ a_failed_worker_shows_its_error_test() ->
     [TimeTag] = [Tag || {inspect, Tag, [time]} <- Effects],
     [MachineTag] = [Tag || {inspect, Tag, []} <- Effects],
     {State2, []} = ?CORE:step({failed, TimeTag, killed}, State1),
-    {State3, []} = ?CORE:step({inspected, MachineTag, maps:get([], world(set, 1))}, State2),
+    {State3, []} = ?CORE:step({inspected, MachineTag, maps:get([], world(set, 1)), at(?NOW)}, State2),
     Tree = ?CORE:view(State3),
     _ = erx_ui_query:find(#{text => {kernel, {error, killed}}}, Tree).
+
+%% A clock set between a tick's wall reading and its `[time]` answer: the
+%% tick read twelve minutes since boot from 1970, and `[time]` answered
+%% `set` with the wall clock already at the set time. The reading shows
+%% the wall clock read after the state, never 00:12 on 1 January 1970 as a
+%% set date.
+a_clock_set_between_the_reads_shows_the_later_reading_test() ->
+    Twelve = 12 * 60 * 1000,
+    World = world(set, Twelve * 1000000),
+    {State1, Effects} = ?CORE:step({tick, Twelve}, fresh()),
+    [TimeTag] = [Tag || {inspect, Tag, [time]} <- Effects],
+    [MachineTag] = [Tag || {inspect, Tag, []} <- Effects],
+    {State2, []} = ?CORE:step({inspected, TimeTag, maps:get([time], World), at(?NOW)}, State1),
+    {State3, []} = ?CORE:step({inspected, MachineTag, maps:get([], World), Twelve}, State2),
+    Tree = ?CORE:view(State3),
+    ?assertEqual(<<"14:07">>, text(#{role => display}, Tree)),
+    _ = erx_ui_query:find(#{text => <<"Sunday 15 November 2026">>}, Tree),
+    absent(#{text => <<"Thursday 1 January 1970">>}, Tree).
 
 %% Before its first reading the window shows no time.
 the_first_view_shows_no_time_test() ->
@@ -160,7 +179,7 @@ an_answer_of_an_earlier_tick_changes_nothing_test() ->
     {State2, Effects2} = ?CORE:step({tick, T0 + 60000}, State1),
     ?assertEqual(lists:sort([{cancel, Tag} || Tag <- Old]),
                  lists:sort([Effect || {cancel, _} = Effect <- Effects2])),
-    {State3, []} = ?CORE:step({inspected, hd(Old), maps:get([time], world(set, 1))}, State2),
+    {State3, []} = ?CORE:step({inspected, hd(Old), maps:get([time], world(set, 1)), T0}, State2),
     ?assertEqual(?CORE:view(State2), ?CORE:view(State3)).
 
 %%% D5: every tree is valid, whatever the inspector answers.

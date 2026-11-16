@@ -5,8 +5,9 @@
 -moduledoc """
 clock's core (docs/design-desktop-programs.md, "clock"): when the program
 reads the time, what it asks the inspector and what it shows. It is a pure
-function of its inputs, with the wall clock an input that each tick
-carries; the window process (erx_desk_window) performs its effects.
+function of its inputs, with the wall clock an input that each tick and
+each inspection's answer carries; the window process (erx_desk_window)
+performs its effects.
 
 A tick is a reading. Each tick asks the inspector for `[time]`, whose
 `state` says whether the wall clock is `set`, read at `boot` from the
@@ -18,12 +19,19 @@ changes the tree once. A tick that comes while the last one's answers
 wait cancels them, and an answer whose tag the core does not wait for
 changes nothing.
 
+A reading's wall time is the one read after `[time]` answered, which the
+answer carries, so the state is read before the wall clock: the state
+only moves forward within a boot, and a clock set between the two reads
+shows as unset for one more minute, never the time since boot as a set
+date. A `[time]` worker that failed gives no such reading, and its
+failure's token is shown beside the wall time the tick read.
+
 Each tick also asks for the next: the delay from its own reading to the
 start of the next minute, so the timer never drifts across minutes and a
 step of the wall clock is shown by the first tick after it. The core keeps
 that deadline, the wall time of the next minute's start, and
 next_deadline/1 answers it. An early tick, after a step back, is not
-dropped: it shows the minute it read.
+dropped: it shows the minute its reading gives.
 
 What clock shows by the state (the design's table): `set` the time and
 date; `boot` the same and "from the real-time clock"; `unset` `--:--`,
@@ -49,7 +57,7 @@ shows UTC and says so.
 
 -doc "An input, as the window process delivers it.".
 -type input() :: {tick, Now :: time()}
-               | {inspected, tag(), answer()}
+               | {inspected, tag(), answer(), Read :: time()}
                | {failed, tag(), Reason :: term()}.
 -doc "An effect, from design-desktop-programs' closed set.".
 -type effect() :: {inspect, tag(), [atom()]}
@@ -58,10 +66,11 @@ shows UTC and says so.
 
 %% Which record an inspection asks: `[time]` or `[]`.
 -type which() :: time | machine.
-%% A reading: the wall clock a tick read and the answers of its inspections.
+%% A reading: its wall time (see wall/3) and the answers of its inspections.
 -type reading() :: #{now := time(), time := answer(), machine := answer()}.
-%% A tick whose inspections wait: its reading so far and the tags it waits
-%% for.
+%% A tick whose inspections wait: its reading so far, `now` the tick's own
+%% wall reading until `[time]` answers and that answer's after, and the
+%% tags it waits for.
 -type pending() :: #{now := time(), waiting := #{tag() => which()},
                      answers := #{which() => answer()}}.
 
@@ -94,10 +103,10 @@ step({tick, Now}, #clock{tag = Tag, pending = Pending} = State) ->
                  pending = #{now => Now, waiting => #{Tag => time, Tag + 1 => machine}, answers => #{}},
                  deadline = Now + Delay},
      Cancels ++ [{inspect, Tag, [time]}, {inspect, Tag + 1, []}, {tick_after, Delay}]};
-step({inspected, Tag, Answer}, State) ->
-    {answered(Tag, Answer, State), []};
+step({inspected, Tag, Answer, Read}, State) ->
+    {answered(Tag, Answer, Read, State), []};
 step({failed, Tag, Reason}, State) ->
-    {answered(Tag, {error, Reason}, State), []}.
+    {answered(Tag, {error, Reason}, none, State), []}.
 
 -doc "The wall time, in milliseconds, of the tick State has asked for.".
 -spec next_deadline(state()) -> time().
@@ -122,17 +131,25 @@ waiting(none) -> #{};
 waiting(#{waiting := Waiting}) -> Waiting.
 
 %% Records Answer if the pending tick waits for Tag, and shows the reading
-%% once nothing more is waited for.
-answered(Tag, Answer, #clock{pending = #{now := Now, waiting := Waiting, answers := Answers}} = State)
+%% once nothing more is waited for. Read, the wall clock read after the
+%% answer or `none` for a failed worker, becomes the reading's wall time
+%% when the answer is `[time]`'s.
+answered(Tag, Answer, Read, #clock{pending = #{now := Ticked, waiting := Waiting, answers := Answers}} = State)
   when is_map_key(Tag, Waiting) ->
     {Which, Rest} = maps:take(Tag, Waiting),
     Got = Answers#{Which => Answer},
+    Now = wall(Which, Read, Ticked),
     case map_size(Rest) of
         0 -> State#clock{pending = none, shown = Got#{now => Now}};
         _ -> State#clock{pending = #{now => Now, waiting => Rest, answers => Got}}
     end;
-answered(_Tag, _Answer, State) ->
+answered(_Tag, _Answer, _Read, State) ->
     State.
+
+%% The reading's wall time: the one read after `[time]` answered, else the
+%% one its tick read.
+wall(time, Read, _Ticked) when is_integer(Read) -> Read;
+wall(_Which, _Read, Ticked) -> Ticked.
 
 %% The attribute Name of a record answer, as {Reporter, Value}; a query
 %% that failed is reported under `kernel`, the attribute's declared

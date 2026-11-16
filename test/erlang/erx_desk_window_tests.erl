@@ -50,7 +50,7 @@ init(#{test := Test, paths := Paths}) ->
 step(Input, Test) ->
     Test ! {input, Input},
     case Input of
-        {inspected, 2, _Answer} -> {Test, [{cancel, 1}]};
+        {inspected, 2, _Answer, _Now} -> {Test, [{cancel, 1}]};
         {failed, _Tag, _Reason} -> {Test, [close]};
         _Other -> {Test, []}
     end.
@@ -71,6 +71,7 @@ window_test_() ->
      [fun closing_a_window_ends_its_workers/0,
       fun a_cancelled_worker_is_killed_and_sends_nothing/0,
       fun a_crashed_worker_fails_its_request/0,
+      fun an_answer_carries_the_wall_clock_read_after_it/0,
       fun reload_presents_the_new_view_of_the_kept_state/0,
       fun the_command_opens_a_window_or_says_why_not/0]}.
 
@@ -104,7 +105,7 @@ a_cancelled_worker_is_killed_and_sends_nothing() ->
     Slow = asked([slow]),
     Ref = monitor(process, Slow),
     asked([fast]) ! go,
-    ?assertEqual({input, {inspected, 2, {ok, fast}}}, input()),
+    ?assertMatch({input, {inspected, 2, {ok, fast}, _Now}}, input()),
     ?assertEqual(killed, down(Ref)),
     ?assertEqual(nothing, input_or_nothing()),
     ?assert(is_process_alive(Window)).
@@ -118,6 +119,18 @@ a_crashed_worker_fails_its_request() ->
     ?assertEqual({input, {failed, 1, {crashed, [one]}}}, input()),
     ?assertEqual(shutdown, down(Ref)),
     receive renderer_stopped -> ok after ?WAIT_MS -> error(not_closed) end.
+
+%% An inspection's answer carries the wall clock read after the inspector
+%% answered: the model waits, then answers with the wall clock it read,
+%% and the answer's reading is no earlier.
+an_answer_carries_the_wall_clock_read_after_it() ->
+    serve(),
+    _Window = window(fun(_Path, _Options) ->
+                             timer:sleep(20),
+                             {ok, os:system_time(millisecond)}
+                     end, [[one]]),
+    {input, {inspected, 1, {ok, Answered}, Read}} = input(),
+    ?assert(Read >= Answered).
 
 %% erx_desk:reload/1 has each open window of a program present its core's
 %% newest view of the state the window holds: the probe ticked before the

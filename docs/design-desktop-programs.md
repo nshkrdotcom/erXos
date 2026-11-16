@@ -244,7 +244,7 @@ timer's tick. Effects form a closed set:
 
 | Effect | Performed as | Answer, as an input |
 | --- | --- | --- |
-| `{inspect, Tag, Path}` | a worker calls `erx:inspect(Path, #{timeout => 1000})` | `{inspected, Tag, Result}` |
+| `{inspect, Tag, Path}` | a worker calls `erx:inspect(Path, #{timeout => 1000})`, then reads the wall clock | `{inspected, Tag, Result, Now}`, `Now` the wall clock read after the answer |
 | `{list, Tag, Dir}` | a worker, its heap capped ([Bounds](#bounds)), calls `file:list_dir_all/1` | `{listed, Tag, Result}`, each name a binary |
 | `{stat, Tag, Dir, Names}` | a worker calls `file:read_link_info/2` with `[{time, posix}]` on each of at most 256 names | `{stated, Tag, Results}`, one result per name, in order |
 | `{read, Tag, Path, Bytes}` | a worker opens the file and reads at most `Bytes` | `{read, Tag, Result}`, `file:read/2`'s result; a folder answers `{error, eisdir}` |
@@ -1148,10 +1148,19 @@ clock shows the hour and minute in the `display` role, the weekday and
 date in `body`, and the zone in `caption`. erXos has no time zone
 setting, so clock shows UTC and says so ([Decisions](#decisions), 5).
 
-**Reading the time.** At each tick the core reads the wall clock,
-`os:system_time(millisecond)`, which is the time page's wall clock in
-ERTS ([design-time.md](design-time.md#what-erxos-already-has)), and the
-clock's state from the inspector's `[time]` record, `state`:
+**Reading the time.** Each tick asks the inspector for the clock's
+state, the `[time]` record's `state`, and the worker that asks reads
+the wall clock after the answer, `os:system_time(millisecond)`, which
+is the time page's wall clock in ERTS
+([design-time.md](design-time.md#what-erxos-already-has)); clock shows
+that wall reading. The order is what makes a reading safe. The state only
+moves forward within a boot, from `unset` to `boot` to `set`
+([design-time.md](design-time.md#what-proc-shows)), so a wall reading
+taken after a state is at least as trusted as that state says. A clock
+set between the two reads shows "Clock not set" for one more minute;
+the other order would show the time since boot as a `set` date. Where
+the `[time]` worker fails and gives no reading, clock shows the wall
+clock its tick read, under that failure's status token:
 
 | `state` | Shown |
 | --- | --- |
@@ -1174,8 +1183,11 @@ across minutes: each delay is recomputed from a fresh reading. A step of
 the wall clock, which `os:system_time/1` shows at once, is not seen
 until the timer set before it fires, so the display is corrected at the
 next tick, at most one minute after the step; a step back makes that
-tick early by the wall clock, and a tick shows the minute it reads,
-since a tick is a reading, not a count. clock wakes once a minute and
+tick early by the wall clock, and a tick shows the minute its reading
+gives, since a tick is a reading, not a count. A tick has two wall
+readings: its own, taken when the timer fires, sets the delay to the
+next tick, and the one its `[time]` answer carries is shown. clock
+wakes once a minute and
 draws one changed label.
 
 The command `clock` takes no arguments.
@@ -1210,7 +1222,8 @@ mark of its own, so the format needs no selection state on buttons.
 `erx_desk_month_core` is a function of a year, a month, a selected day
 and today, `none` or a date, built on stock OTP's `calendar`. Today is
 a date only when the clock's state is `set` or `boot`, read from the
-inspector as clock reads it; otherwise no day is marked, and the window
+inspector as clock reads it, and today is the date of the wall reading
+the `[time]` answer carries, never the tick's own; otherwise no day is marked, and the window
 opens on the month the command names or, when it names none, on the
 month of the wall clock with the caption "Clock not set: no today".
 Moving by month crosses years; Today returns to today's month and is
@@ -1482,7 +1495,7 @@ the menu's labels, reads them as data.
 | --- | --- | --- | --- |
 | **D1.** A program reads only through the session's inspect facet, its namespace and the time page | the effect set is closed, and its performer calls `erx:inspect/2`, `file` and `os:system_time/1` and nothing else; no core performs an effect | a call from `erx_desk` to another erXos module than the public surface, a capability or a facet lookup | a source check over `erx_desk`'s modules: every call into an erXos module is one of `public.txt`'s functions ([design-packaging.md](design-packaging.md#the-sdk)) or `erx:inspect/2`, with a seeded call of `erx_inspector:route/4` failing it |
 | **D2.** No value is shown as other than it came | each derived value carries the worse status of its readings; a status not `ok` reaches the tree as the `attr()` of its text, which the renderer shows as its token (G7); a missing or non-`ok` sample is `none` in `samples`, a gap; a zero denominator is no value | a status dropped on derivation; a gap filled with zero or the last value; a partial sample kept in the ring as a value; a negative rate from a counter that went down; a share of a zero grant shown as 0 or 100 percent | the stats core's status table test over every pair of statuses, with a seeded derivation that keeps `partial` as `ok` failing it; a recorded run with a connections path answering `unsupported`, every row showing the token, with a seeded zero failing it; a counter that goes down, giving a gap, with a seeded subtraction failing it; a partial sample followed by `ok` samples, leaving a gap at the partial point, with a seeded ring that stores partial values failing it; a group of `capacity_mcpu` 0 and a budget of `cap` 0, each giving a gap and its fact, with a seeded division that answers 0 failing it; a session with a scoped facet, see [Verification and testing](#verification-and-testing) |
-| **D3.** A clock never shows an unset clock's reading as the date | the clock and month cores take the state as an input and show a date only for `set` or `boot`, and dimmed with a token when the state is not `ok` | a core that formats the reading without the state | the clock core's test for each state, with a seeded core that ignores `unset` showing `00:12` on 1 January 1970 and failing it |
+| **D3.** A clock never shows an unset clock's reading as the date | the clock and month cores take the state as an input and show a date only for `set` or `boot`, and dimmed with a token when the state is not `ok`; the wall time they show is the one read after the `[time]` answer, and the state only moves forward within a boot | a core that formats the reading without the state | the clock core's test for each state, with a seeded core that ignores `unset` showing `00:12` on 1 January 1970 and failing it, and the row "clock: reading order" with its seeded faults |
 | **D4.** Every action of files reaches the item the person chose | the core acts by index into its own listing of raw names, within the page whose list node is keyed by the listing's generation; the tree holds only shown text | a lookup by shown text; a list key that survives a new listing | a listing whose names `a<U+202E>b`, the eight characters of a token, and a name cut to the same 128 bytes as another, each opened by index and reaching its own file, with a seeded lookup by shown text opening the wrong one; a double click reported on the list of a listing a refresh has replaced, dropped by the widget server, with a seeded key that leaves out the generation opening an item of the new listing |
 | **D5.** Every tree a core builds is valid, whatever the input | names and texts are cut to the schema's bounds at character boundaries, lists to 256 items, previews to 200 lines | a raw name in an `items` entry; a list longer than 256 | a property test over random listings, names of every length to 255 bytes, previews and inspector records, each tree passing `erx_ui_schema`, with a seeded core that skips the cut failing it |
 | **D6.** An idle window costs nothing | the only timers are the core's `tick_after`; a renderer draws only for a tree's change and the transitions it starts (G6) | a periodic redraw; a tick from files, or from month without a today | on the host, an idle files window and a month window without a today, each for a simulated day, issue no tree; a month with a today issues one at midnight; clock issues one a minute; with a seeded once-a-second tick in clock the test fails |
@@ -1507,7 +1520,8 @@ gate. Each test names the fault that must make it fail.
 | stats: partial history and zero denominators | a partial sample followed by `ok` samples leaves a gap at the partial point; a group of `capacity_mcpu` 0, a budget of `cap` 0 and a machine of `memory_total` 0, all legal records of the schema, each give a gap and the number's fact | a ring that stores partial values; a division by zero answered as 0 |
 | stats: a scoped facet | with an inspector model that answers as design-live's scoped facet does, for two ordinary principals, `[]` and `[cpus, N]` with only their `visible any` attributes and a listing of only each principal's own domains, the four machine panels show the same values for both principals, each window's rows are its own principal's domains, and no count of other domains appears anywhere | a CPU panel that reads `running_thread`, which the scoped record leaves out, and shows a gap |
 | clock: states | each `state` and each non-`ok` status gives its row of the table | the state ignored (D3) |
-| clock: ticks | over recorded readings, including a wall step back and forward and an early tick, each tick shows the minute it read and asks for a `tick_after` of the delay from its reading to the next minute's start; a step is shown by the first tick after it | the next tick set 60 s after the last instead of from the reading |
+| clock: ticks | over recorded readings, including a wall step back and forward and an early tick, each tick shows the minute its reading gives and asks for a `tick_after` of the delay from its reading to the next minute's start; a step is shown by the first tick after it | the next tick set 60 s after the last instead of from the reading |
+| clock: reading order | a clock set between a tick's own reading and its `[time]` answer shows the wall reading taken after the answer, never the time since boot as a `set` date; the window's inspection worker reads the wall clock after the inspector answers | the tick's reading shown instead of the answer's (D3); the worker reading the wall clock before the inspector |
 | month: every month | for every month from 1600 to 2400, the grid's first weekday, length and week numbers equal `calendar`'s | February given 29 days in 1900 |
 | month: arguments | every form of `cal` and every refusal | a `MONTH` of 13 accepted |
 | files: kinds and sorting | the kind table over a corpus of names and modes; byte order of names | a link to a folder listed as a folder without its link mark |

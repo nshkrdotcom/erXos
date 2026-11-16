@@ -15,7 +15,9 @@ effects form a closed set, each performed here and nowhere else:
 
 * `{inspect, Tag, Path}`: a worker asks the inspector, through the
   function the window was started with (erx:inspect/2 under erx_desk_sup),
-  with a timeout of one second, and answers `{inspected, Tag, Result}`;
+  with a timeout of one second, then reads the wall clock, and answers
+  `{inspected, Tag, Result, Now}`, so a core reads a state before the
+  wall clock it qualifies;
 * `{list, Tag, Dir}`: a worker under a heap cap of 4 MiB lists the folder
   and answers `{listed, Tag, Result}`, each name a binary;
 * `{stat, Tag, Dir, Names}`: a worker reads each name's link information
@@ -138,7 +140,10 @@ perform(Effects, W) ->
     lists:foldl(fun effect/2, W, Effects).
 
 effect({inspect, Tag, Path}, #window{inspect = Inspect} = W) ->
-    worker(Tag, fun() -> {inspected, Tag, Inspect(Path, #{timeout => ?INSPECT_TIMEOUT})} end, [], W);
+    worker(Tag, fun() ->
+                        Result = Inspect(Path, #{timeout => ?INSPECT_TIMEOUT}),
+                        {inspected, Tag, Result, os:system_time(millisecond)}
+                end, [], W);
 effect({list, Tag, Dir}, W) ->
     worker(Tag, fun() -> {listed, Tag, listing(file:list_dir_all(Dir))} end,
            [{max_heap_size, ?LISTING_HEAP}], W);

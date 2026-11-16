@@ -31,7 +31,10 @@ class ErxDeskClockCoreTest < Minitest::Test
               caught_by: 'one_tree_a_minute_test'),
     Fault.new(name: 'a value that is no status passed into the tree as one (D5)',
               from: 'token(Reporter, _Value) -> {Reporter, unknown}.', to: 'token(Reporter, Value) -> {Reporter, Value}.',
-              caught_by: 'every_tree_is_valid_test')
+              caught_by: 'every_tree_is_valid_test'),
+    Fault.new(name: "the wall clock read before the state: the tick's reading shown",
+              from: '{answered(Tag, Answer, Read, State), []};', to: '{answered(Tag, Answer, none, State), []};',
+              caught_by: 'a_clock_set_between_the_reads_shows_the_later_reading_test')
   ].freeze
   # An EUnit run: whether it passed, EUnit's report, and both streams for messages.
   EunitRun = Data.define(:passed, :report, :text)
