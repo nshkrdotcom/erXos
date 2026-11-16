@@ -296,8 +296,8 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   sink, on top of the message. Settled by the same bench at an interrupt rate a driver sees, with and without one environment
   kept per entry.
 * **`/tmp`'s hops per operation** (`erx_ramfs`, [design-tmp.md](design-tmp.md#where-tmp-runs)): a `/tmp`
-  operation is two or three local message round trips (the grant, the file's owner for an open file's reads and writes,
-  then the tree process; `erx_ramfs`'s reads run in the owner, with no helper), plus the NIF's resolve for a path operation, where a C provider in the NIF would cost one move to a dirty
+  operation is two local message round trips (the grant, then the tree process), plus the NIF's resolve for a path
+  operation, where a C provider in the NIF would cost one move to a dirty
   scheduler; a Common Test run writes its logs a line at a time. Measure, each number against another from the same
   runtime under the same accelerator: 10,000 line-sized `file:write/2` calls and 1,000 `file:read_file_info/1` and
   `file:read_file/1` calls of 4 KiB files on `/tmp`, against the same reads on the release file system, which the NIF

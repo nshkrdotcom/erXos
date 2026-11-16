@@ -1205,8 +1205,7 @@ interface, a stopgap whose limits on large media (files of at most
 has a design of its own, [design-f2fs.md](design-f2fs.md); in brief:
 
 * **Structure.** An Erlang application in the storage domain: a callback
-  module of `erx_fs`, so every grant and every open file is a process of
-  its own ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)),
+  module of `erx_fs`, so every grant is a process of its own ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)),
   and one volume process, the data window's only client, that owns the
   volume's state and runs every request, every checkpoint and the
   cleaner as steps of pure functions that plan their block writes and
@@ -1735,7 +1734,7 @@ reported as a durable checkpoint.
   checkpoint syncs every file open in the volume, then has the block
   driver flush the medium, and answers only then. Before a freezing
   checkpoint reaches that module, `erx_fs` closes mutation admission at
-  every grant and each open file's owner finishes the writes it admitted;
+  every grant, and each grant finishes the writes it admitted;
   the module's checkpoint and the block flush follow those completions,
   and no later write or successful `fsync` is admitted. A session's
   write-back after the freeze is a write like any other, answered

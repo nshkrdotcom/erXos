@@ -2116,25 +2116,34 @@ it; git history is the record of completed work.
   empty configuration; the window policy and its chord come from the display domain's manifest entry
   ([design-display.md](docs/design-display.md#windows-and-the-window-system)).
 * [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs.erl`, `file_loop/4`;
-  `erx_fs_grant.erl`, `run_job/3`, `admit/4`): design-files.md ("Serving", "Waiting requests") hands a read or write
-  that waits for an event to the tree's keeper, but the file's owner calls every callback in its own process, so a
-  read that waits holds up the file's writes, clunks and flushes; a flush is never passed to the tree, and a flush of
-  a request in flight is answered `emfile` at the requests' bound (`test/erlang/erx_fs_tests.erl`, the in-flight
-  bound case, expects it) where the design admits one flush waiting for each request; `admit/4` checks a new
-  request's alias only against `pending`'s keys (`erx_fs_grant.erl:418`) while waiting flushes live inside another
-  request's record (line 427), so a request on a waiting flush's alias is admitted and the alias later gets two
-  answers, where the design keeps one table of live aliases and drops a frame on one; a request on a request's live
-  alias is answered `einval`, where the design drops it; `abi/protocols/9p.txt`'s `errors` lacks `eintr`. Build
-  `{wait, Keeper, Request}`, `erx_fs_waits` (`hold/2`, `began/2`, `answer/3`, `info/2`, `list/1`) and the owner's
-  pure core `erx_fs_file`, with its per-open clunk, with the tests design-files.md lists, regression first. It
-  blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"), the `pair` file, a
-  window's `mouse` and `kbd` reads and held `ctl` writes, which `erx_winfs:read/4` and `write/4` serve today by a
-  `gen_server:call` with no timeout to `erx_window` (`erlang/apps/erx_display/src/erx_winfs.erl`, `call/2`), so a
-  client reading `kbd` on a hidden window cannot clunk or flush it, and a program's `/dev/kbd` and `/dev/mouse`
-  reads, which `erx_session_export:read/4` relays by a synchronous `erx_win:read_at/4`
-  (`erlang/apps/erx_session/src/erx_session_export.erl:308, 318`) where design-files.md ("A program's window")
-  gives them a relay keeper that passes a flush on to the display. Once built, `erx_window` keeps those requests in
-  `erx_fs_waits`, bounded by each grant's 64 requests in flight.
+  `erx_fs_grant.erl`, `run_job/3`, `admit/4`): design-files.md ("Serving", "One process per grant" and "Waiting
+  requests") has the grant call every callback itself and hand a read or write that waits for an event to the tree's
+  keeper, but the grant hands each open file's reads and writes to a file process of its own, which calls the
+  callback and waits in it, so a read that waits holds up the file's writes, clunks and flushes; a flush is never
+  passed to the tree, and a flush of a request in flight is answered `emfile` at the requests' bound
+  (`test/erlang/erx_fs_tests.erl`, the in-flight bound case, expects it) where the design admits one flush waiting
+  for each request; `admit/4` checks a new request's alias only against `pending`'s keys (`erx_fs_grant.erl:418`)
+  while waiting flushes live inside another request's record (line 427), so a request on a waiting flush's alias is
+  admitted and the alias later gets two answers, where the design keeps one table of live aliases and drops a frame
+  on one; a request on a request's live alias is answered `einval`, where the design drops it; the grant answers a
+  client's clunk when it hands it to the file process and drops the tree's `clunk` answer, where the design answers
+  the clunk with that answer once the callback has run (`erx_fs_grant.erl:229-244`); `abi/protocols/9p.txt`'s
+  `errors` lacks `eintr`. Delete the file process (`erx_fs.erl`: `file_loop/4` and the `start_file` effect;
+  `erx_fs_grant.erl`: `#file{}`, `file_started/4`, `file_answer/4`, the `run` effect and the `last_clunk` job), and
+  `read_mode/0` from the behaviour and from the six modules that define it (`erx_lfs` answering `helper`;
+  `erx_ramfs`, `erx_procfs`, `erx_machine_fs`, `erx_devfs` and `erx_starter_fs` answering `immediate`); build
+  `{wait, Keeper, Request}` and the clunk that settles its fid's waits first in the grant's core, and
+  `erx_fs_waits` (`hold/2`, `began/2`, `answer/3`, `info/2`, `list/1`), with the tests design-files.md lists,
+  regression first. It blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
+  the `pair` file, a window's `mouse` and `kbd` reads and held `ctl` writes, which `erx_winfs:read/4` and `write/4`
+  serve today by a `gen_server:call` with no timeout to `erx_window` (`erlang/apps/erx_display/src/erx_winfs.erl`,
+  `call/2`), so a client reading `kbd` on a hidden window cannot clunk or flush it, and a program's `/dev/kbd` and
+  `/dev/mouse` reads, which `erx_session_export:read/4` relays by a synchronous `erx_win:read_at/4`
+  (`erlang/apps/erx_session/src/erx_session_export.erl:308, 318`), where design-files.md ("A program's window") has
+  the window's draw connection keep them, sending each with `erx_win:send_read/4` and its flush with
+  `erx_win:send_flush/2`, which `erx_win` does not have yet, and making image 0 anew itself for an `r` record. Once
+  built, `erx_window` and `erx_draw_conn` keep those requests in `erx_fs_waits`, bounded by each grant's 64 requests
+  in flight.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grants.erl`: the per-grant `Args` (`start_link/2`, `grant/4`) are not named by
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
@@ -2742,11 +2751,6 @@ it; git history is the record of completed work.
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on
   the host OTP.
-* [Medium] files, `erx_fs_grant` (`erlang/apps/erx_files/src/erx_fs_grant.erl:229-244`, `run_job/3`): the
-  grant answers a client's clunk when it hands the clunk to the file's owner and drops the tree's `clunk`
-  answer, where design-files.md has every tree's `clunk` answer `ok` or an errno and the grant pass it back
-  once the owner has run it. Fix: the owner's clunk job answers with the callback's result, and the
-  behaviour's callback spec widens to `ok | {error, posix()}`; the test design-files.md names, with its seed.
 * [Medium] shell, `host` (`erlang/apps/erx_shell/src/erx_cmd_host.erl`, `run/2`): a name or server
   argument with an empty label or a label over 63 bytes (`host a..b`, `host .foo`, `host www .foo`)
   crashes the command with `function_clause` from `inet_dns:encode_labels`, which stock OTP 29.1.2
@@ -4685,22 +4689,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   and `owner_down` with walked fids are seen only end to end, or not at all. Give the test tree `forget`, check in
   `fid_table_model_test_` that the tree holds exactly the walked nodes the fids name after every step, and consider
   making the forget an effect `{forget, Node}` the shell performs, so the core sends nothing.
-* [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: an open file's owner process is one per grant, keyed by the node,
-  where `docs/design-files.md` starts one per open file on any grant; a file open through two grants of one tree has
-  two owners, so its requests are ordered against each other only by the tree, and the locks the design keeps at
-  the file's owner for every grant could not conflict across grants. /tmp serves one grant per tree. Build the
-  tree's owner registry `erx_fs_owners` of design-files.md ("Owners and their grants") before a tree is served on
-  more than one grant: open references in place of handles as the owner's keys (every open of one window file has
-  the handle `Node`, `erlang/apps/erx_display/src/erx_winfs.erl:663`), each open's own grant's `Fs` (which
-  `erx_fs.erl:162` makes per grant and `erx_winfs.erl:624` fills with the client and the grant), attaches sent only
-  by the registry and an owner's retirement when its count of attaches matches the registry's, and monitors in
-  place of today's link (`erx_fs.erl`, `start_file`), dropped at a grant's last clunk on the owner.
-* [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: no read helper exists, so an open file's owner calls `read` itself
-  whatever the module's `read_mode/0` says, which is what design-files.md gives a module without the callback; the
-  behaviour's comment in `erx_fs.erl` (`read_mode/0`, "absent: helper") names `helper` as the default, where the design
-  gives `immediate`, so a stream tree without the callback would get helpers. Correct the comment, and build
-  the helper of `docs/design-files.md` (state-stamped results the owner's core accepts or retries, a `{wait, ...}`
-  from one answered `eio`) with the first tree that answers `helper`.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl:71-72`: `lopen` and `lcreate` answer an `Iounit` of 0, which
   `erx_file_remote` reads as `ERX_P9_IO_MAX` (`otp/erts/preloaded/src/erx_file_remote.erl:515-518`), where
   `docs/design-files.md`'s operation table has the server answer 65,536 inside the machine. The two size a client's
@@ -4713,14 +4701,9 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   through a program's table, so that nothing on a window tree enters a program ("A program's window"): for example
   a description the program's handler opens through the program's own table for the starter, or one whose tree,
   part of its identity, the handler refuses when it is `windows`.
-* [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: a clunk of an opened fid is answered at once and its file process
-  leaves `files` when its last clunk is queued, so a tree whose `clunk` is slow can gather file processes still
-  draining clunks, beyond the pool and outside the in-flight bound, and two processes of one file can run at once.
-  /tmp's clunk is one in-memory step. Defer the clunk's answer to the file process (counted in flight), or keep the
-  file in a closing state that new opens join, before a tree with a slow `clunk` is served.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl`: `add_fid` and `end_fid` push effects into the grant's state, which
   every exported step must drain, and an owner's monitor is `pending` until the shell hands its reference back with
-  `monitored/3`, as an open file's owner is until `file_started/4`. Thread the effects through the step's return instead, so a step that both makes and ends one
+  `monitored/3`. Thread the effects through the step's return instead, so a step that both makes and ends one
   owner's fid can never emit `{demonitor, pending}`.
 
 * [Medium] `abi/manifest.txt`: the `devices[].selector` choice does not make `base`, `size` and `line` inactive for
@@ -6051,14 +6034,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the bridge reads the whole manifest at each session's start;
   design-live.md still says the host tool counts credit from its hello's
   first byte, where it now counts from the hello's reply.
-* [Medium] files, `erx_fs_grant` (`erlang/apps/erx_files/src/erx_fs_grant.erl`,
-  `admit/4`): a flush of a deferred request only waits behind it, and no
-  grant abandons a request at a flush, as design-files.md's Flush allows;
-  so a deferred request whose file process never answers (a stuck job, a
-  waiting lock once locks are served) holds its slot at the grant, and its
-  tag at the host link bridge, until the session ends. Abandoning at a
-  flush (answer only the flush, drop the file process's late answer) lets
-  a flush free both.
 * [Medium] security residual, host link's 9P bridge
   (`erlang/apps/erx_hostlink/src/erx_hostlink_files.erl`, `tree_grant/3`):
   the bridge uses the system domain's own grants and its tags bound, 64,
@@ -7356,7 +7331,7 @@ to the corpus and follow rc
   `flush/4` also costs a window's visible tiles times its 16 dirty
   rectangles.
 
-* [Low] `erlang/apps/erx_files/src/erx_fs.erl`: a grant takes an open file's answer `{erx_fs_file, Tag, Alias, Reply}` and an
+* [Low] `erlang/apps/erx_files/src/erx_fs.erl`: a grant takes a keeper's answer at its wait's alias and a fid
   owner's `DOWN` by matching Erlang references, which a process that can guess one can forge (`list_to_ref/1` on the
   server's node, a crafted external term from a client node). A forged answer can only answer the client's own request
   in flight early, and a forged `DOWN` clunk a fid early. Bind both to the sender when erXos's kernel carries a

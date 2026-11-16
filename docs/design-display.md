@@ -2696,14 +2696,28 @@ said.
   is at the read, and one of fewer fails with `EINVAL`, as devdraw
   refuses a short read (`devdraw.c:1123-1124`); a read at any other
   offset answers no bytes, so `cat` stops after one line. Each read asks
-  the connection anew, and the tree has made image 0 anew before it hands
-  the program an `r` record of `mouse`, so the next read after one shows
+  the connection anew, and the connection has made image 0 anew before
+  it hands the program an `r` record of `mouse`, so the next read after one shows
   the resized image 0
   ([design-files.md](design-files.md#a-programs-window), "A resize"). It is a call answered between writes, so it
   never shows a write half applied. `ctl` takes no write: draw(3)'s
   write of an image id selects another image's information (lines
   92-95), which no erXos client needs, and an open for writing fails
   with `EACCES`.
+
+**The program's input.** The connection is also the keeper of its
+program's reads of `kbd` and `mouse`, which wait for a record at the
+display ([design-files.md](design-files.md#a-programs-window);
+[design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests"). It marks each begun, sends it on the window
+handle's fid with `erx_win:send_read/4`, which returns at once, and
+answers it with the display's reply when that arrives; a flush of one
+it sends on with `erx_win:send_flush/2` and answers with what the
+display answers. It keeps them in one `erx_fs_waits` set, at most the
+`/dev` tree's grant's 64 requests in flight, each a read's count, which
+its heap bound covers beside its images. A flush that arrives while a
+`v` of the connection waits for its present is taken once the present
+is answered.
 
 The text is a pure function of the core's state,
 `erx_draw_core:ctl/1`, tested on the host. So the core's record of an
@@ -4066,7 +4080,11 @@ and allocates nothing; `resize/2` and `label/2` write `wctl`
 and `label`; and `read_at/4` and `write_at/4` read and write the bytes
 of `kbd`, `mouse`, `wctl` or `label` at an offset on the handle's fid of
 that name, for a relay such as a program's `/dev` tree
-([design-files.md](design-files.md#a-programs-window)); neither takes
+([design-files.md](design-files.md#a-programs-window)), and
+`send_read/4` sends such a read of `kbd` or `mouse` and returns at
+once, its reply arriving at the caller as a message, which
+`send_flush/2` flushes, for the draw connection that keeps a program's
+input reads ([The draw connection](#the-draw-connection)); none of them takes
 `ctl`, which only `present/2` and `present/3` write.
 
 **A window over a range it does not own.** The LVGL renderer's frames
@@ -4834,10 +4852,10 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   seeded `erx_winfs` whose `read` calls the window and waits for the
   record makes the clunk miss its deadline
   ([design-files.md](design-files.md#verification-and-testing),
-  "Waiting requests"). Two fids opened on one window's `kbd`, whose
-  handles are equal, each with a read waiting, through one grant and
-  then through two: clunking one answers its read `EINTR` and leaves the
-  other's waiting for the next key, which it gets; seeded: an owner that
+  "Waiting requests"). Two fids opened on one window's `kbd` through
+  one grant, whose handles are equal, each with a read waiting:
+  clunking one answers its read `EINTR` and leaves the
+  other's waiting for the next key, which it gets; seeded: a grant that
   keys waiting requests by handle, which answers both reads `EINTR`.
   Against a screen model that holds its answer, a `ctl` write whose
   present is in flight and one queued behind it, both flushed: the
@@ -4845,10 +4863,10 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   after the screen model's answer, with that answer, then its flush;
   seeded: a window that answers every flushed write `EINTR`, which
   answers the first before the screen does. A program's `/dev/kbd`
-  read waiting at its relay, then the program's close: the close is
-  answered within 1 s, and the next key reaches the window's next
-  reader; seeded: a relay that does not pass the flush on, whose close
-  misses its deadline.
+  read waiting at its window's draw connection, then the program's
+  close: the close is answered within 1 s, and the next key reaches the
+  window's next reader; seeded: a draw connection that does not pass
+  the flush on to the display, whose close misses its deadline.
 * **The window system.** `erx_wm_rio` and `erx_wm_single` are pure and
   tested over sequences of place requests and input events; a property
   test that the single policy shows at most one window and delivers every
