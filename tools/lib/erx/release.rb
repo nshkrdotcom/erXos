@@ -146,7 +146,7 @@ module Erx
                checker: tools.fetch('checker'), hasher: tools.fetch('hasher'),
                domain_planner: DomainPlanner.new(helper: tools.fetch('domains'), runner: @runner),
                provenance: PackProvenance.new(root: @root, catalog: catalog, external: toolchain, runner: @runner,
-                                              imports: { File.join(@root, 'otp') => 'permanent' }))
+                                              imports: ReleaseFiles::IMPORTS))
     end
 
     def toolchain

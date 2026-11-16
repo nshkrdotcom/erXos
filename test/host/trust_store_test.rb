@@ -6,6 +6,7 @@ require 'digest'
 require 'minitest/autorun'
 require 'openssl'
 require 'tmpdir'
+require_relative '../../tools/lib/erx/origin'
 require_relative '../../tools/lib/erx/trust_store'
 
 # The trust store the build writes from config/trust/ (docs/design-crypto.md, "The
@@ -73,5 +74,28 @@ class TrustStoreTest < Minitest::Test
     Dir.mktmpdir('trust-store-') do |directory|
       assert_raises(Erx::Error) { Erx::TrustStore.store(directory) }
     end
+  end
+
+  # The record's inventory has no archive, so its archive_sha256 is the SHA-256 of the
+  # listing shasum -a 256 prints for the roots, sorted by name, as the record says; a root
+  # added or replaced without the record's update fails here.
+  def test_the_records_listing_hash_is_of_the_roots
+    listing = Erx::TrustStore.roots(DIRECTORY).map do |path|
+      "#{Digest::SHA256.file(path).hexdigest}  #{File.basename(path)}\n"
+    end.join
+    inventory = Erx::Origin.new(root: DIRECTORY).inventory
+    assert_equal Digest::SHA256.hexdigest(listing), inventory.fetch('archive_sha256')
+  end
+
+  # Where a release carries the store is where public_key's {unix, erxos} row reads it:
+  # cacerts.pem of code:priv_dir(public_key), in erxos_paths/0 of pubkey_os_cacerts.
+  def test_the_release_path_is_where_pubkey_os_cacerts_reads
+    source = File.read(File.join(ROOT, 'otp/lib/public_key/src/pubkey_os_cacerts.erl'))
+    body = source[/^erxos_paths\(\) ->\n(.*?)\.\n/m, 1]
+    refute_nil body, 'pubkey_os_cacerts has no erxos_paths/0'
+    priv, name = Erx::TrustStore::PATH.split('/')
+    assert_equal 'priv', priv
+    assert_includes body, "code:priv_dir(#{Erx::TrustStore::APPLICATION})"
+    assert_includes body, "filename:join(Priv, \"#{name}\")"
   end
 end

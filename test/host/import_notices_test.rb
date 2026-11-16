@@ -5,6 +5,7 @@
 require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/pack_provenance'
+require_relative '../../tools/lib/erx/release_files'
 
 class ImportNoticesTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__).freeze
@@ -42,7 +43,8 @@ class ImportNoticesTest < Minitest::Test
   end
 
   # As record_for, but through a compiled receipt (a beam's), which names its sources directly
-  # instead of through a linker map. Returns the records and the NOTICES rendered from them.
+  # instead of through a linker map, resolved against the imports the release's files come
+  # from. Returns the records and the NOTICES rendered from them.
   def records_for_compiled(relatives)
     base = File.join(ROOT, 'build/test')
     FileUtils.mkdir_p(base)
@@ -55,7 +57,7 @@ class ImportNoticesTest < Minitest::Test
       path = File.join(directory, 'record.json')
       File.write(path, JSON.generate(receipt))
       catalog = Erx::BuildInputs.pack(root: ROOT, paths: [artifact, path])
-      resolver = Erx::PackProvenance.new(root: ROOT, catalog: catalog, imports: { 'otp' => 'permanent' })
+      resolver = Erx::PackProvenance.new(root: ROOT, catalog: catalog, imports: Erx::ReleaseFiles::IMPORTS)
       records = resolver.resolve(receipt: path, artifact: artifact, build_kind: 'release')
       return [records, resolver.notices(records)]
     end
@@ -125,5 +127,19 @@ class ImportNoticesTest < Minitest::Test
       assert_equal ['config/provenance/notices/Unicode-3.0.txt'],
                    record.fetch('notice_documents').map { |doc| doc.fetch('path') }
     end
+  end
+
+  # A root certificate of the trust store is a public key and a name, facts and not a
+  # creative work, so it carries no license (docs/design.md's dependency table): each root
+  # is LicenseRef-root-certificate, which a release image takes, and the store's origin
+  # record, which names each root's publisher and URL, is its notice.
+  def test_the_trust_stores_roots_enter_a_release_image_with_their_record
+    roots = Dir.glob('config/trust/*.pem', base: ROOT).sort
+    records, notices = records_for_compiled(roots)
+    assert_equal roots, records.map { |record| record.fetch('path') }
+    assert_equal ['LicenseRef-root-certificate'], records.map { |record| record.fetch('license') }.uniq
+    assert_equal [['config/trust/ORIGIN.md']],
+                 records.map { |record| record.fetch('notice_documents').map { |doc| doc.fetch('path') } }.uniq
+    assert_includes notices, File.binread(File.join(ROOT, 'config/trust/ORIGIN.md'))
   end
 end

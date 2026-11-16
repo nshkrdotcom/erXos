@@ -38,6 +38,7 @@ module Erx
   # Diagnostics carry raw names; the CLI's sink escapes them (Terminal.puts).
   class Checks
     IMPORTS = %w[
+      config/trust
       ctaes
       display/font/fixed
       display/fonts/inter

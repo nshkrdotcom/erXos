@@ -76,12 +76,13 @@ module Erx
     # What a machine keeps for the root's image past its place: the image is about 5 MiB.
     ROOT_ROOM_MIB = 8
     LICENSE = 'LICENSE'
-    # The trees imported into the source tree that the root builds from: BLAKE3 for its
-    # reader of the archive and the entropy generator's mixing, ChaCha20 for that
-    # generator's stream, OTP for the release's beams, libfdt for its device-tree reader,
-    # and musl for the HWCAP_* bits the CPU feature decoder (cpu_features.c) takes from its header.
-    IMPORTS = { 'kernel/crypto/blake3' => 'permanent', 'kernel/crypto/chacha20' => 'permanent', 'otp' => 'permanent',
-                'fiasco/libfdt' => 'permanent', 'musl' => 'permanent' }.freeze
+    # The trees imported into the source tree that the image builds from: BLAKE3 for the
+    # root's reader of the archive and the entropy generator's mixing, ChaCha20 for that
+    # generator's stream, libfdt for its device-tree reader, musl for the HWCAP_* bits the
+    # CPU feature decoder (cpu_features.c) takes from its header, and the releases' own
+    # (ReleaseFiles::IMPORTS): OTP for their beams and the trust store's roots.
+    IMPORTS = { 'kernel/crypto/blake3' => 'permanent', 'kernel/crypto/chacha20' => 'permanent',
+                'fiasco/libfdt' => 'permanent', 'musl' => 'permanent', **ReleaseFiles::IMPORTS }.freeze
 
     # The emulator's archive, which holds littlefs's objects beside ERTS's own
     # (otp/erts/emulator/Makefile.in's OS_OBJS), so its attribution carries

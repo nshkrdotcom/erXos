@@ -301,6 +301,26 @@ class ReleaseFilesTest < Minitest::Test
     end
   end
 
+  # A release that holds public_key carries the image's trust store as its priv/cacerts.pem,
+  # where pubkey_os_cacerts's {unix, erxos} row loads it (docs/design-crypto.md, "The trust
+  # store"): the roots of config/trust, each the bytes its origin record pins, joined in name
+  # order, with a receipt naming each root. A release without public_key carries no store.
+  def test_a_release_with_public_key_carries_the_trust_store
+    store = "domains/erxos/lib/public_key-#{VERSION}/priv/cacerts.pem"
+    entry = domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('session')]))
+            .find { |candidate| candidate.fetch('path') == store }
+    refute_nil entry, "the session's release carries no #{store}"
+    recorded = Erx::Origin.new(root: File.join(ROOT, Erx::TrustStore::DIRECTORY)).inventory.fetch('files')
+    roots = recorded.keys.sort.map { |name| File.join(Erx::TrustStore::DIRECTORY, name) }
+    assert_equal recorded.keys.sort.map { |name| recorded.fetch(name).fetch('sha256') },
+                 roots.map { |root| Digest::SHA256.file(File.join(ROOT, root)).hexdigest }
+    assert_equal roots.map { |root| File.binread(File.join(ROOT, root)) }.join, File.binread(entry.fetch('artifact'))
+    assert_equal roots.map { |root| reference(root) }, JSON.parse(File.read(entry.fetch('receipt'))).fetch('sources')
+
+    paths = domain_entries(Erx::ReleaseFiles.domain([base_boot])).map { |candidate| candidate.fetch('path') }
+    assert_empty paths.grep(%r{/priv/cacerts\.pem\z})
+  end
+
   # The network script starts the stack permanent, so the stack's end ends the network
   # domain (docs/design-network-stack.md, "The process tree").
   def test_the_network_script_starts_the_network_stack_permanent
