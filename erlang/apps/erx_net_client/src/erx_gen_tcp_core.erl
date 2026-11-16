@@ -143,7 +143,7 @@ socket process.
                 | {count, erx_sock_admit:check()}
                 | {hand_over, from(), pid(), pid(), own()}
                 | {discard, pid()}
-                | stop.
+                | {stop, normal}.
 
 %% What a request in flight answers: its caller, and what the core does with its result.
 -type tag() :: {send, from()} | {shutdown, from()} | {setopts, from()}
@@ -306,10 +306,10 @@ local([Opt | Opts], Local, Rest) -> local(Opts, Local, [Opt | Rest]).
 -doc "Steps `Event`: the next core and the actions to perform, in order.".
 -spec step(event(), core()) -> {core(), [action()]}.
 step({call, From, close}, #core{state = closed} = C) ->
-    {C, [{reply, From, ok}, stop]};
+    {C, [{reply, From, ok}, {stop, normal}]};
 step({call, From, close}, C) ->
     {N, C1} = number(C),
-    {C1, [{request, N, close}, {reply, From, ok}, stop]};
+    {C1, [{request, N, close}, {reply, From, ok}, {stop, normal}]};
 step({call, From, Call}, #core{state = open} = C) ->
     call(Call, From, C);
 step({call, From, Call}, #core{state = listening} = C) ->
@@ -335,10 +335,10 @@ step(socket_down, #core{state = closed} = C) ->
 step(socket_down, C) ->
     ended({error, econnaborted}, C, []);
 step(owner_down, #core{state = closed} = C) ->
-    {C, [stop]};
+    {C, [{stop, normal}]};
 step(owner_down, C) ->
     {N, C1} = number(C),
-    {C1, [{request, N, close}, stop]}.
+    {C1, [{request, N, close}, {stop, normal}]}.
 
 %% --- Calls of an open socket ------------------------------------------------------------
 

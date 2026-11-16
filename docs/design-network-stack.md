@@ -5248,7 +5248,7 @@ The state is the effect shell's; what is presented, granted and replied
 is decided by a pure step, `erx_gen_tcp_core:step(Event, Core) ->
 {Core, [Action]}` and its datagram twin, whose actions are messages to
 the owner, replies to callers, requests and grants to the socket, and
-`stop`, as every stack process decides
+`{stop, normal}`, always the last, as every stack process decides
 ([One owner, one step](#one-owner-one-step)). The core reads no clock;
 the socket process arms a timer for each deadline it holds, a waiting
 recv's, of a connection or of a datagram socket, and each waiting

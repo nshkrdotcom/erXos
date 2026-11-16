@@ -35,7 +35,7 @@ reply(N, Result, Core) -> step({push, {ok, {reply, N, Result}}}, Core).
 datagram(Data, Core) -> step({push, {ok, {datagram, ?IP, 53, Data}}}, Core).
 
 
-ends(Actions) -> lists:last(Actions) =:= stop.
+ends(Actions) -> lists:last(Actions) =:= {stop, normal}.
 
 core_test_() ->
     [{"a passive recv takes what is held, else waits for a datagram", fun recv_held_and_waiting/0},
@@ -127,7 +127,7 @@ past_credit() ->
 
 stray_reply() ->
     {_, Acts} = reply(7, ok, new(#{})),
-    ?assertMatch([{count, reply}, {request, _, close}, stop], Acts).
+    ?assertMatch([{count, reply}, {request, _, close}, {stop, normal}], Acts).
 
 reply_reason() ->
     {C1, [{request, 0, {send_to, ?IP, 53, <<"q">>}}]} = call(a, {send_to, ?IP, 53, <<"q">>}, new(#{})),
@@ -135,7 +135,7 @@ reply_reason() ->
     %% A broadcast destination without SO_BROADCAST, as FreeBSD answers it.
     ?assertMatch({_, [{reply, a, {error, eacces}}]}, reply(0, {error, eacces}, C1)),
     {_, Acts} = reply(0, {error, econnreset}, C1),
-    ?assertMatch([{count, reason}, {request, 1, close}, {reply, a, {error, closed}}, stop], Acts),
+    ?assertMatch([{count, reason}, {request, 1, close}, {reply, a, {error, closed}}, {stop, normal}], Acts),
     {C2, [{request, 0, sockname}]} = call(s, sockname, new(#{})),
     ?assertMatch({_, [{count, reason} | _]}, reply(0, {error, ehostunreach}, C2)).
 
@@ -159,12 +159,12 @@ close_answers() ->
     {C1, _} = call(s, {send, <<"x">>}, new(#{})),
     {C2, _} = call(r, {recv, infinity}, C1),
     {_, Acts} = call(c, close, C2),
-    ?assertEqual([{request, 1, close}, {reply, c, ok}, {reply, s, {error, closed}}, {reply, r, {error, closed}}, stop],
+    ?assertEqual([{request, 1, close}, {reply, c, ok}, {reply, s, {error, closed}}, {reply, r, {error, closed}}, {stop, normal}],
                  Acts).
 
 socket_down() ->
     {C1, _} = call(r, {recv, infinity}, new(#{})),
-    ?assertEqual({C1, [{reply, r, {error, closed}}, stop]}, step(socket_down, C1)).
+    ?assertEqual({C1, [{reply, r, {error, closed}}, {stop, normal}]}, step(socket_down, C1)).
 
 active_answers_recvs() ->
     {C1, _} = call(a, {recv, infinity}, new(#{})),
