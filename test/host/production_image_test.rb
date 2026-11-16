@@ -101,13 +101,17 @@ class ProductionImageTest < Minitest::Test
 
   # The Raspberry Pi 4's card is the one the website offers: until a release signer exists
   # its manifest leaves out the apps row, as the site's does, and it takes no package and
-  # no --local, refused before anything is built. QEMU's medium keeps the row.
+  # no --local, refused before anything is built. QEMU's medium keeps the row. The Pi's
+  # development manifest has no apps row yet (TODO.md), so the card's edit is shown on
+  # QEMU virt's manifest, which has one.
   def test_a_card_takes_no_packages
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
     apps_row = /^apps$/
-    assert_match apps_row, pi.manifest_source(ROOT)
+    with_row = PLATFORM.manifest_source(ROOT)
+    assert_match apps_row, with_row
+    refute_match apps_row, Erx::ProductionImage.medium_manifest(pi, with_row)
     refute_match apps_row, Erx::ProductionImage.medium_manifest(pi, pi.manifest_source(ROOT))
-    assert_match apps_row, Erx::ProductionImage.medium_manifest(PLATFORM, PLATFORM.manifest_source(ROOT))
+    assert_match apps_row, Erx::ProductionImage.medium_manifest(PLATFORM, with_row)
 
     machine = Erx::ProductionImage::Machine.development(pi)
     image = Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
