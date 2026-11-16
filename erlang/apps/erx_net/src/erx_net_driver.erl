@@ -260,7 +260,7 @@ format_status(Status) ->
 message({transmit, Frames}, #state{backlog = Backlog} = S) when is_list(Frames) ->
     drain(S#state{backlog = queued_transmits(queue:join(Backlog, queue:from_list(Frames)))});
 message({erx_net_clock, hint}, S) ->
-    S#state{armed = infinity};
+    S#state{armed = erx_net_clock:hinted(S#state.armed)};
 message({'DOWN', Ref, process, _, _}, #state{iface = {_, Ref, _}} = S) ->
     S#state{iface = none};
 message({'EXIT', _Medium, Reason}, _S) ->

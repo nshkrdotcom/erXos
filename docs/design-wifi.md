@@ -2258,8 +2258,10 @@ so that there PT, PWE and `rand` are never terms.
   reads at most 32 frames a notice. A frame or indication that finds no
   credit is dropped and counted.
 * **Timers belong to the station and the chip process**, as deadlines
-  checked at each event; the cores take the time as an input, and the
-  memory's holds are compared with it, never timed.
+  in their state, checked at each event; the cores take the time as an
+  input and answer `next_deadline/1` ([design.md](design.md#drivers-and-dma),
+  "Deadlines in state"), and the memory's holds are compared with it,
+  never timed.
 
 ## Failure handling
 

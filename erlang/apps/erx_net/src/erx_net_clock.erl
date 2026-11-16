@@ -6,7 +6,9 @@
 The stack's one source of what differs from one run to the next: the time, the timers and
 the random keys (docs/design-network-stack.md, "The clock"). Every process of erx_net reads
 the time, arms its one timer and draws entropy here and nowhere else, which the build checks
-of tools/lib/erx/net_checks.rb enforce.
+of tools/lib/erx/net_checks.rb enforce for calls; the two exceptions they allow pace a
+supervisor or a device on the host's clock: the driver's hold and the Pi 4 Ethernet's MDIO
+and PHY waits.
 
 The clock is chosen once, by `select/1`, before any process of the stack starts:
 
@@ -20,11 +22,16 @@ The clock is chosen once, by `select/1`, before any process of the stack starts:
 A hint, the message `{erx_net_clock, hint}`, is only a hint: a process that gets one
 looks at its own deadlines, which may have moved. `arm_by/2` keeps at most one timer per
 caller, as the virtual clock keeps one deadline per caller: it arms only when the new
-deadline is earlier than the armed one, and then cancels the armed timer. A process sets
-its `armed()` to `infinity` when a hint arrives, since the one timer it had has fired.
+deadline is earlier than the armed one, and then cancels the armed timer. A process passes
+its `armed()` through `hinted/1` when a hint arrives: the cancel is asynchronous, so the
+hint may be the replaced timer's, and only a hint at or after the armed deadline is that
+timer's own. Both sources keep the contract this rests on: the hint for a deadline arrives
+only once `now/0` has reached it (`send_after/4` at the deadline rounded up, never early;
+the virtual clock sets the time before it sends).
 """.
 
--export([select/1, now/0, arm/1, arm_by/2, entropy/1]).
+-export([select/1, now/0, arm/1, arm_by/2, hinted/1, entropy/1]).
+-compile({no_auto_import, [now/0]}).
 
 -export_type([source/0, armed/0]).
 
@@ -92,6 +99,20 @@ arm_by(Next, {Deadline, Timer}) when Next < Deadline ->
     {Next, start(Next)};
 arm_by(_Next, Armed) ->
     Armed.
+
+-doc """
+What is armed once a hint has arrived: nothing when the armed deadline has passed, since
+its timer has fired; otherwise the hint was a replaced timer's, and the armed one is still
+pending.
+""".
+-spec hinted(armed()) -> armed().
+hinted({Deadline, _Timer} = Armed) ->
+    case Deadline =< now() of
+        true -> infinity;
+        false -> Armed
+    end;
+hinted(infinity) ->
+    infinity.
 
 start(Deadline) ->
     case source() of

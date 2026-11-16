@@ -374,7 +374,7 @@ handle_info({items, _If, Items}, #state{credit = Credit} = S0) when is_list(Item
     ok = erx_net_credit:take(Credit, lists:sum([units(Item) || Item <- Batch])),
     settle(S);
 handle_info({erx_net_clock, hint}, S) ->
-    settle(timeouts(step({expired, erx_net_clock:now()}, S#state{armed = infinity})));
+    settle(timeouts(step({expired, erx_net_clock:now()}, S#state{armed = erx_net_clock:hinted(S#state.armed)})));
 handle_info({'DOWN', Ref, process, _, _}, #state{owner_ref = Ref} = S) ->
     settle(owner_closed(S));
 %% The exits an accepted connection traps: its grant's ends it without a step; its

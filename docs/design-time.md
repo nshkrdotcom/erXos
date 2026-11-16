@@ -332,7 +332,8 @@ The special cases this removes:
   the `log` facet every domain has. It runs `erx_ntpd`, an OTP
   application of its own release: a pure core, `erx_ntp_core`, that takes
   events (a timer fired, a datagram arrived, a resolver answer, the clock
-  service's answer) and returns the next actions and deadline, and a
+  service's answer) and returns the next actions, with its next
+  deadline answered by `next_deadline/1` ([design.md](design.md#drivers-and-dma), "Deadlines in state"), and a
   thin effect process that reads its start flags, resolves names, opens
   sockets, sends, receives and calls the facet. The packet codec,
   `erx_ntp_wire`, is pure and the only reader of NTP bytes.

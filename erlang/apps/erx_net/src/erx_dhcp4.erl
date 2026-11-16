@@ -64,7 +64,7 @@ handle_info({erx_net_if, {link, State}}, S) ->
     {noreply, S#state{link = State}};
 handle_info({erx_net_clock, hint}, S) ->
     %% The core ignores a timeout before its deadline, so a stale hint changes nothing.
-    {noreply, arm(step(timeout, S#state{armed = infinity}))};
+    {noreply, arm(step(timeout, S#state{armed = erx_net_clock:hinted(S#state.armed)}))};
 handle_info(_Msg, S) ->
     {noreply, S}.
 

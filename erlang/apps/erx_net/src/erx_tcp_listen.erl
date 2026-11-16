@@ -147,7 +147,7 @@ handle_info({bound, Conn}, S) when is_pid(Conn) ->
 handle_info({'EXIT', Pid, _}, S) ->
     step({exit, Pid}, S);
 handle_info({erx_net_clock, hint}, S) ->
-    step(expired, S#state{armed = infinity});
+    step(expired, S#state{armed = erx_net_clock:hinted(S#state.armed)});
 handle_info(Msg, #state{socket = Socket, origin = Origin} = S) ->
     case erx_net_admit:request(tcp_listen, Origin, Socket, Msg) of
         {ok, {call, N, {accept, Acceptor, Timeout}}} -> step({accept, N, Acceptor, Timeout}, S);

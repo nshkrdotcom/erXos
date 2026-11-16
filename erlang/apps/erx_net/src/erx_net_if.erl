@@ -132,7 +132,7 @@ message({dhcp, Pid, Action}, #state{dhcp = {Pid, _}} = S) ->
 message({'DOWN', Ref, process, _, _}, #state{dhcp = {_, Ref}} = S) ->
     S#state{dhcp = none};
 message({erx_net_clock, hint}, S) ->
-    step({expired, erx_net_clock:now()}, S#state{armed = infinity});
+    step({expired, erx_net_clock:now()}, S#state{armed = erx_net_clock:hinted(S#state.armed)});
 message(_Msg, S) ->
     S.
 

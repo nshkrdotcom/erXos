@@ -25,6 +25,11 @@ module Erx
   #   erx_net_clock calls
   #   erx_bytes:entropy, so every key passes the clock's seam,
   #   to key a generator or draw a stack-wide secret in their initialisation;
+  # * clock: no module of erx_net calls erlang:monotonic_time, system_time,
+  #   start_timer or send_after, os:timestamp or the timer module but
+  #   CLOCK_READERS, erx_net_clock and the two that pace a supervisor or a
+  #   device on the host's clock, so every other wait of the stack is a
+  #   deadline the stack's clock sees;
   # * grant-key: in the client application, erx_net_client, only erx_inet
   #   calls application:get_env, get_all_env or get_key, or names
   #   erx_net:local_grant, the registered erx_net_grant or
@@ -74,6 +79,14 @@ module Erx
     ENTROPY_CALL = /(?<![A-Za-z0-9_@])erx_bytes\s*:\s*entropy(?![A-Za-z0-9_@])/
     # The one module that draws entropy (design-network-stack.md, "The clock").
     ENTROPY_CALLERS = %w[erx_net_clock].freeze
+    # A read of the host's clock or an Erlang timer (design-network-stack.md,
+    # "Build checks").
+    CLOCK_CALL = /(?<![A-Za-z0-9_@])(?:erlang\s*:\s*(?:monotonic_time|system_time|start_timer|send_after)|
+                  os\s*:\s*timestamp|timer\s*:\s*[a-z_]+)(?![A-Za-z0-9_@])/x
+    # The modules that may make one: the clock, the driver's hold, which paces
+    # its supervisor in the host's seconds ("The driver"), and the Pi 4
+    # Ethernet's MDIO and PHY waits, which pace the device.
+    CLOCK_READERS = %w[erx_net_clock erx_net_driver erx_genet].freeze
     # The TCP modules the seq-wrap rule covers, and the one module it lets do
     # the arithmetic.
     TCP_SOURCE = /\Aerx_tcp(?:_[a-z0-9_]+)?\.(?:erl|hrl)\z/
@@ -164,7 +177,7 @@ module Erx
     def violations(files)
       sources = files.select { |path, _| File.fnmatch?(SCOPE, path, GLOB_FLAGS) }
       client = files.select { |path, _| File.fnmatch?(CLIENT_SCOPE, path, GLOB_FLAGS) }
-      [*atom_violations(sources), *random_violations(sources), *seq_violations(sources),
+      [*atom_violations(sources), *random_violations(sources), *clock_violations(sources), *seq_violations(sources),
        *notice_violations(sources, notice: files[NOTICE]), *grant_key_violations(client),
        *call_timeout_violations(sources.merge(client)), *copy_violations(sources.merge(client)),
        *origin_violations(sources.merge(client))]
@@ -304,6 +317,15 @@ module Erx
 
       matches(code, ENTROPY_CALL).map do |line, _|
         [line, "erx_bytes:entropy outside erx_net_clock (#{ENTROPY_CALLERS.join(', ')})"]
+      end
+    end
+
+    def clock_violations(sources)
+      sources.reject { |path, _| CLOCK_READERS.include?(File.basename(path, '.erl')) }.flat_map do |path, text|
+        matches(calls_text(text), CLOCK_CALL).map do |line, call|
+          Violation.new(rule: 'clock', path: path, line: line,
+                        detail: "#{call.gsub(/\s+/, '')} outside #{CLOCK_READERS.join(', ')}: arm the stack's clock")
+        end
       end
     end
 

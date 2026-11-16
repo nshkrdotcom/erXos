@@ -8,7 +8,8 @@ require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
 # Runs test/erlang/erx_bt_hci_tests.erl, the cases of H4 framing (erx_h4), the HCI codec
-# (erx_hci) and the controller process's core (erx_bt_hci_core), compiled from source on
+# (erx_hci), the controller process's core (erx_bt_hci_core) and, from
+# test/erlang/erx_bt_patch_tests.erl, the patch reader (erx_bt_patch), compiled from source on
 # stock's emulator (ERX_ERL and ERX_ERLC). Then each seeded fault of
 # docs/design-bluetooth.md, "Host tests of the cores", applied to a copy of its module,
 # must fail the case named for it.
@@ -18,17 +19,26 @@ require_relative '../fixtures/erlang_build'
 # takes no bound; the bound is the constant bt_acl_rx_max), and credits not returned at
 # disconnection (the free credits are the buffer count less the live handles' packets in
 # flight, so removing a handle returns its packets). In the second's place the handle is
-# kept live after its Disconnection Complete.
+# kept live after its Disconnection Complete. Nor can a second deadline armed or a
+# deadline cancelled that was never armed: each deadline is a field of the slot's state
+# it guards, so leaving the state drops it and there is no second one to arm.
 class ErxBtHciTest < Minitest::Test
   APPLICATIONS = %w[erx_bt].freeze
-  TESTS = %w[test/erlang/erx_bt_hci_tests.erl].freeze
+  TESTS = %w[test/erlang/erx_bt_hci_tests.erl test/erlang/erx_bt_patch_tests.erl].freeze
   DEADLINE_SECONDS = '300'
   H4 = 'erlang/apps/erx_bt/src/erx_h4.erl'
   CORE = 'erlang/apps/erx_bt/src/erx_bt_hci_core.erl'
+  PATCH = 'erlang/apps/erx_bt/src/erx_bt_patch.erl'
 
   Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
 
   SEEDS = [
+    Seed.new(fault: 'the record length not checked against the bytes left',
+             module_path: PATCH,
+             anchor: "parse(_Bytes, Offset, _Records) ->\n    throw({truncated, Offset}).",
+             replacement: "parse(<<Opcode:16/little, _Length, Payload/binary>>, _Offset, Records) ->\n    lists:reverse([{Opcode, Payload} | Records]);\n" \
+                          "parse(_Bytes, Offset, _Records) ->\n    throw({truncated, Offset}).",
+             catching_case: 'truncated_last_record_is_refused_whole_test'),
     Seed.new(fault: 'the indicator check removed, so an unknown byte is skipped',
              module_path: H4,
              anchor: "split(<<Indicator, _/binary>>, _Packets) ->\n    {error, {bad_indicator, Indicator}};",
@@ -52,19 +62,96 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'a_disconnect_answered_by_status_frees_the_slot_test'),
     Seed.new(fault: 'a handle kept live after its Disconnection Complete',
              module_path: CORE,
-             anchor: '{[{link_down, Handle}], Core#core{links = maps:remove(Handle, Links),',
-             replacement: '{[{link_down, Handle}], Core#core{links = Links,',
+             anchor: 'Core#core{links = maps:remove(Handle, Links),',
+             replacement: 'Core#core{links = Links,',
              catching_case: 'disconnection_returns_a_handles_packets_test'),
     Seed.new(fault: "a completion's count taken without the in-flight bound",
              module_path: CORE,
-             anchor: '#{Handle := InFlight} when Count =< InFlight -> Links#{Handle := InFlight - Count};',
-             replacement: '#{Handle := InFlight} -> Links#{Handle := InFlight - Count};',
+             anchor: '#{Handle := {Serial, InFlight}} when Count =< InFlight - Queued ->',
+             replacement: '#{Handle := {Serial, InFlight}} ->',
              catching_case: 'a_forged_completion_stops_test'),
     Seed.new(fault: 'advertising not enabled again after a disconnection',
              module_path: CORE,
-             anchor: '{[{link_down, Handle}], Core#core{links = maps:remove(Handle, Links),',
-             replacement: '{[{link_down, Handle}], Core#core{advertising = true, links = maps:remove(Handle, Links),',
-             catching_case: 'advertising_resumes_after_a_disconnection_test')
+             anchor: 'Core#core{links = maps:remove(Handle, Links),',
+             replacement: 'Core#core{advertising = true, links = maps:remove(Handle, Links),',
+             catching_case: 'advertising_resumes_after_a_disconnection_test'),
+    Seed.new(fault: "a completion's bound counting packets still on the writer's list",
+             module_path: CORE,
+             anchor: 'when Count =< InFlight - Queued ->',
+             replacement: 'when Count =< InFlight ->',
+             catching_case: 'a_completion_of_a_queued_packet_stops_test'),
+    Seed.new(fault: 'the deadline armed only once the controller allows the command',
+             module_path: CORE,
+             anchor: "        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
+             replacement: "        _ when Core#core.allowed =:= 0 -> {[], Core};\n" \
+                          "        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
+             catching_case: 'a_command_the_controller_never_allows_stops_on_its_deadline_test'),
+    Seed.new(fault: 'the connection limit kept above the buffer count',
+             module_path: CORE,
+             anchor: 'limit = min(Limit, Credits)}',
+             replacement: 'limit = Limit}',
+             catching_case: 'fewer_buffers_than_connections_lower_the_limit_test'),
+    Seed.new(fault: "LE's 27-octet minimum applied to Read Buffer Size",
+             module_path: CORE,
+             anchor: 'bringup(shared_buffers, {Length, Packets}, Core) when Length > 0, Packets > 0 ->',
+             replacement: 'bringup(shared_buffers, {Length, Packets}, Core) when Length >= 27, Packets > 0 ->',
+             catching_case: 'shared_buffers_take_any_length_from_one_test'),
+    Seed.new(fault: "a handle's disconnect kept after its Disconnection Complete, so it reaches the next peer",
+             module_path: CORE,
+             anchor: 'disconnects = lists:keydelete(Handle, 1, Core#core.disconnects)}};',
+             replacement: 'disconnects = Core#core.disconnects}};',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: "a connection before the advertising enable's answer leaving advertising on",
+             module_path: CORE,
+             anchor: 'overtaken({sent, advertise, Command, Opcode, Deadline}) -> {sent, advertise_overtaken, Command, Opcode, Deadline};',
+             replacement: 'overtaken({sent, advertise, Command, Opcode, Deadline}) -> {sent, advertise, Command, Opcode, Deadline};',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: 'a connection accepted on a handle whose disconnect is handed over and unanswered',
+             module_path: CORE,
+             anchor: "connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _, _}}) ->\n" \
+                     "    stop({connection_while_disconnecting, Handle});\n",
+             replacement: '',
+             catching_case: 'a_connection_on_a_handle_being_disconnected_stops_test'),
+    Seed.new(fault: 'any failed disconnect taken as the handle gone',
+             module_path: CORE,
+             anchor: '        Failed -> stop({disconnect_failed, Handle, Failed})',
+             replacement: '        _Failed -> {[], Core}',
+             catching_case: 'a_disconnect_is_asked_once_and_its_failure_stops_test'),
+    Seed.new(fault: "the line's reset under no deadline",
+             module_path: CORE,
+             anchor: '{line_reset, Deadline} -> Deadline;',
+             replacement: '{line_reset, _Deadline} -> infinity;',
+             catching_case: 'a_line_reset_that_never_ends_stops_test'),
+    Seed.new(fault: 'the due deadline restarted on every input, so repeated traffic holds a command off',
+             module_path: CORE,
+             anchor: "command(_Now, #core{slot = {due, _}} = Core) ->\n    case due(Core) of\n" \
+                     "        none -> {[], Core#core{slot = idle}};\n        _ -> {[], Core}\n",
+             replacement: "command(Now, #core{slot = {due, _}} = Core) ->\n    case due(Core) of\n" \
+                          "        none -> {[], Core#core{slot = idle}};\n" \
+                          "        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: 'completions not passed to their links, so a link never counts its share back',
+             module_path: CORE,
+             anchor: '{[{to_link, {Handle, Serial}, {completed, Count}} || Count > 0],',
+             replacement: '{[],',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: 'a deadline passed only after its instant',
+             module_path: CORE,
+             anchor: 'case next_deadline(Core) =< Now of',
+             replacement: 'case next_deadline(Core) < Now of',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: 'a deadline passed a millisecond early',
+             module_path: CORE,
+             anchor: 'case next_deadline(Core) =< Now of',
+             replacement: 'case next_deadline(Core) =< Now + 1 of',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: "a request's link identity ignored, so a gone link's packet reaches its handle's next peer",
+             module_path: CORE,
+             anchor: "current({Handle, Serial}, #core{links = Links}) ->\n    case Links of\n" \
+                     "        \#{Handle := {Serial, InFlight}} -> {current, InFlight};",
+             replacement: "current({Handle, _Serial}, #core{links = Links}) ->\n    case Links of\n" \
+                          "        \#{Handle := {_, InFlight}} -> {current, InFlight};",
+             catching_case: 'explored_core_keeps_its_invariants_test_')
   ].freeze
 
   def test_bluetooth_cases_pass_under_eunit
@@ -90,7 +177,7 @@ class ErxBtHciTest < Minitest::Test
     Dir.mktmpdir('erx-bt-hci-test') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced)
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
-                      '-eval', 'halt(case eunit:test(erx_bt_hci_tests, [verbose]) of ok -> 0; _ -> 1 end)',
+                      '-eval', 'halt(case eunit:test([erx_bt_hci_tests, erx_bt_patch_tests], [verbose]) of ok -> 0; _ -> 1 end)',
                       chdir: work, stdin_data: '')
     end
   end
