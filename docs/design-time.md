@@ -166,13 +166,9 @@ read for this design.
   A reader takes `seq`, the fields and `seq` again, so every runtime
   reads wall time without a kernel call. The system domain corrects it
   with the setter, which needs `WRITE` on the time page
-  ([design-kernel.md](design-kernel.md), "Time"). The setter in the tree
-  is `erx_time_set_wall(wall_ns)`, whose body stores `wall_ns` minus a
-  monotonic reading of its own, taken after the call has crossed to the
-  service on the stopgap (`liberx/backend/fiasco/time_page.c`,
-  `erx_fiasco_time_set_wall_body`), and checks no range; this design
-  replaces it with `erx_time_set_offset`, which stores the offset it is
-  given ([The construction](#the-construction)).
+  ([design-kernel.md](design-kernel.md), "Time"). The setter is
+  `erx_time_set_offset`, which stores the offset it is given
+  ([The construction](#the-construction)).
 * **ERTS reads both clocks from liberx.** `erts_os_system_time` is
   `erx_time_wall_ns`, read on every call and cast to ERTS's signed 64-bit
   `ErtsSystemTime`, `erts_os_monotonic_time` and
@@ -420,7 +416,13 @@ list ([design-abi.md](design-abi.md), the facet record's operations
 span): ntpd's row `sample` alone and root's `set` alone, so ntpd cannot
 set and root's sessions send no samples, and the facet refuses an
 operation its row does not grant before `decode/1` runs
-([Who may set it](#who-may-set-it)).
+([Who may set it](#who-may-set-it)). A row's `operations` reach the
+facet by the manifest's own path: the manifest compiler resolves each
+name against `abi/services/clock.txt` into the facet record's operations
+span, the boot's reader of the manifest checks each number against the
+interface's declared operations, and the facet admits only the operations
+the list names, so a row of `operations none` admits nothing
+([design-domains.md](design-domains.md#facets)).
 
 The answer is `{ok, Action}`:
 
@@ -987,11 +989,20 @@ command raise.
 On the Fiasco backend the setter is a service call that takes no
 capability and checks no right: the dispatch hands the request to the
 body without its caller (`liberx/backend/fiasco/service.c`, the
-`ERX_FIASCO_CALL_TIME_SET_WALL` case), so any task's call writes the
+`ERX_FIASCO_CALL_TIME_SET_OFFSET` case), so any task's call writes the
 page (`liberx/backend/fiasco/time_page.c`). That only the system domain
 sets the clock is therefore held by the chokepoint and the facet, not
 enforced, which is a residual of trusted code recorded in `TODO.md`;
-erXos's kernel checks `WRITE` on the time page. The range check of
+erXos's kernel checks `WRITE` on the time page. The stopgap's `erx_facet` has no generated admission path, so the
+operations a grant lists are checked through its callback: a callback
+that maps a request to its operation (`erx_clock_facet:operation/1`)
+gets every request checked against the grant's `operations`, an empty
+list admitting nothing, and `erx_facet:start/3` refuses a grant that
+lists operations to a callback without that map. A row of `operations
+none` of any other service therefore admits every request its facet
+admits, as before the rows named operations, and the boot refuses
+operations on a row a configured domain serves or a tree grant, since
+nothing there checks them. The range check of
 `erx_time_set_offset` is the body's own and holds on the stopgap as on
 the kernel. The page starts zeroed, `seq` and offset included, so every
 boot is cold. On QEMU `virt` the stopgap's root reads the PL031 once at
@@ -1032,8 +1043,8 @@ guest's time case (`test/guest/native_space/guest.c`): offsets of 0 and
 and `time_offset_max + 1` and -1 answer `ERX_EINVAL` and leave the page
 and its `seq` unchanged; the case also checks that `seq` is zero, so
 `cold` true, before its first set and false after. *Seeded failure:* a
-body that stores `offset_ns` less a monotonic reading, as
-`erx_fiasco_time_set_wall_body` does, fails the exact read-back.
+body that stores `offset_ns` less a monotonic reading fails the exact
+read-back.
 
 Fuzz targets, run by `make check-fuzz`:
 
@@ -1174,6 +1185,23 @@ These were open and are settled as stated here:
 4. **The QEMU suite tests the client end to end** through the extended
    test peer, and FreeBSD's ntpd stays the interoperability oracle on the
    test host ([Verification and testing](#verification-and-testing)).
+5. **`date` sets the clock through the `clock` facet**, with a `set`
+   operation that root's template holds by a facet row of its own,
+   `root_clock`, granting `set` alone, while ntpd's row grants `sample`
+   alone ([Who may set it](#who-may-set-it)). There is one authority
+   over the wall clock, the clock service, with one decode, one setter
+   path and one record, and the rows' `operations` keep measuring and
+   commanding apart. A one-shot command's usual home is a `ctl` file,
+   but this adds one operation to a protocol already declared, not a new
+   protocol or mechanism, and the operator's command is a protocol
+   request, as `host` uses `net`. A line of `/machine/ctl` was rejected because the
+   right to end the machine would also set the clock and the
+   coordinator's tree would forward to a service it does not own; a
+   `ctl` file of a tree the clock service serves was rejected because it
+   adds a `files` service, a mount, a text grammar with its fuzz target
+   and a second route to the clock beside `clock`. Open decision 1's
+   tree, if it comes, takes `cold` alone, or becomes a `clock` operation
+   the same way.
 
 ## Open decisions
 
@@ -1189,34 +1217,6 @@ These were open and are settled as stated here:
    `date` with the right time already recovers the clock without a reboot
    ([What it changes](#what-it-changes)); what stays open is handing the
    next correction back to an unrestricted sample.
-2. **The authority `date` sets the clock through.** This document has
-   `date` send `{set, W}` on the `clock` facet, which root's template
-   holds by a second facet row ([Who may set it](#who-may-set-it)), each
-   row granting its own operation. Under B or C the `set` operation, the
-   `root_clock` row and the text that names them go, and `date` writes a
-   `ctl` line instead. The options:
-   * **A. A `set` operation on the `clock` facet, granted per row**
-     (this document). One authority over the wall clock, the clock
-     service; measuring and commanding stay apart by the rows'
-     `operations`; one decode, one setter path and one record; the
-     operator's command is a protocol request, as `host` uses `net`,
-     rather than a file write.
-   * **B. A line of `/machine/ctl`**, `time W`, which the domain service
-     forwards to the clock service. No new grant for root, but the
-     `machine` grant, "the right to end the machine", would also set the
-     clock, and the coordinator's tree would forward to a service it does
-     not own.
-   * **C. A `ctl` file of a tree the clock service serves**, mounted at
-     `/clock` in root's session, as open decision 1 sketches, the home
-     the project's rules give a one-shot command. It reuses `erx_fs` and
-     the grant supervisor as the `machine` tree does, and adds a service
-     of `files`, a mount, a text grammar with its fuzz target and a
-     second route to the clock beside `clock`.
-
-   Recommendation: A, since it adds one decode clause and a manifest row
-   where B mixes two authorities and C adds a tree and a grammar; open decision 1's
-   tree, if it comes, would then take `cold` alone, or be folded into a
-   `clock` operation the same way.
 
 ## References
 
