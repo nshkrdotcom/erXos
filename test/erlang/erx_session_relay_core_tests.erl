@@ -27,7 +27,7 @@
 
 -record(t, {core, inbox = #{} :: #{term() => [term()]}}).
 
-new() -> #t{core = ?CORE:new(console)}.
+new() -> #t{core = ?CORE:new(console, #{master => present})}.
 
 do(Caller, Request, #t{core = Core} = T) ->
     {Answer, Actions, Core1} = ?CORE:request(Caller, Request, Core),
@@ -469,6 +469,22 @@ an_out_wait_waits_for_the_low_water_mark_test() ->
     {out, _, T6} = report(pa, aw, ev({master, {tty_taken, 0}}, T5)),
     {{ok, 4095}, T7} = do(pa, {write, aw, binary:copy(<<"x">>, 4095)}, T6),
     {out, _, _} = report(pa, aw, ok(pa, {watch, aw, [out]}, T7)).
+
+%% With no master, nothing is sent and a drain is answered at once, with
+%% bytes held and a writer's message waiting; a message as from a master is
+%% dropped.
+no_master_test() ->
+    T0 = #t{core = ?CORE:new(console, #{master => none})},
+    T1 = ok(pa, {open, console, write, cw}, T0),
+    {{ok, 4096}, T2} = do(pa, {write, cw, binary:copy(<<"x">>, 4096)}, T1),
+    T3 = ev({write, {ph, written}, <<"y">>}, T2),
+    T4 = ev({drain, {ph, drained}}, T3),
+    {[drained], T5} = take(ph, T4),
+    {[], T6} = take(master, T5),
+    T7 = ok(console, {open, console, read, c}, T6),
+    T8 = ok(console, {watch, c, [in]}, T7),
+    T9 = ev({master, {tty_size, 10, 20}}, type(<<"rm\n">>, T8)),
+    {[], _} = take(console, T9).
 
 %%% The exploration
 

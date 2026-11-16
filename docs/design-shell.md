@@ -1454,7 +1454,7 @@ the relay waits on none of them:
 | --- | --- | --- |
 | `{erx_console_output, From, Bytes}` | the console | `{erx_console_written, From}`, once every byte has passed `output/3` into what the relay holds for the master, or a flush or a hangup has dropped it |
 | `{tty_write, From, Ref, Bytes}` | `erx_output:write/2`, for a process of the session's domain | `{Ref, ok}`, on the same condition |
-| `{tty_drain, From, Ref}` | `erx_output:halt/2`, at a normal halt | `{Ref, ok}`, once nothing waits to be written and the master has answered every byte the relay holds, or at once while output is stopped, no master is connected or the line has hung up, since nothing would take the bytes; the relay gives up `erx_tty_owner` as it answers, so a second call of `erlang:halt/2` goes straight on; a request by name after it exits in its caller, and the runtime is halting |
+| `{tty_drain, From, Ref}` | `erx_output:halt/2`, at a normal halt | `{Ref, ok}`, once nothing waits to be written and the master has answered every byte the relay holds, or at once while output is stopped, the relay has no master or the line has hung up, since nothing would take the bytes; a relay started with no master, as a session's tty may have none, sends nothing for one, holds its output as it does while output is stopped and drops any message as from a master; the relay gives up `erx_tty_owner` as it answers, so a second call of `erlang:halt/2` goes straight on; a request by name after it exits in its caller, and the runtime is halting |
 
 These bytes join the one output queue with the opens' writes, in the
 order they arrive ([Job control](#job-control), "Output"). Each writer
@@ -1477,9 +1477,8 @@ FreeBSD's low-water mark, nine tenths of the 4 KiB free, as FreeBSD wakes
 a writer that a full output queue held (`TF_HIWAT_OUT`,
 `ttydisc_wakeup_watermark`, `sys/kern/tty_ttydisc.c`). The room reaching
 the mark ends that wait, checked as the master takes output and before
-the writers' messages take the room again, so a writer that keeps
-writing cannot hold the watch off; a flush ends it only through the
-room, since the relay's flush keeps the output the master has. FreeBSD's `poll` itself reports at one byte
+the writers' messages take the room again; a flush ends it only through
+the room, since the relay's flush keeps the output the master has. FreeBSD's `poll` itself reports at one byte
 even then, so a program whose next rendering is wider, a newline under
 `ONLCR` with one byte free, would spin between `poll` and `EAGAIN` until
 the master takes output.

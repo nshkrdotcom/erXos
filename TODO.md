@@ -4496,15 +4496,28 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] runtime, `tools/fuzz/release_fuzz.c`: does not call `erx_release_check` or compare `erx_release_fs_lookup`'s index with the entry's, and has no seed at the longest path; its `fix_index` is a copy of `pack_fuzz.c`'s.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the `Ctrl-G` menu (`erx_console_menu`) lists, connects and detaches; interrupting and killing a session, lock and log out (`docs/design-live.md`, "Job control") come with logins (M10), and `erx:console_size/2` is not built.
 * [Medium] session, terminal relay core (`erlang/apps/erx_session/src/erx_session_relay_core.erl`):
-  (1) The drain row's "no master is connected" has
-  no state behind it in the core or the link. (2) The exploration checks safety only, and its alphabets
-  leave out close, hangup, `tcsetattr`, timers and output; reports are pooled across receivers.
-  (3) Each owner of `erx_tty_link` must call `send/1` at the end of its step (the relay core's `settle/1`,
+  (1) The exploration checks safety only, and its alphabets leave out close, hangup, `tcsetattr`, timers
+  and output; reports are pooled across receivers.
+  (2) Each owner of `erx_tty_link` must call `send/1` at the end of its step (the relay core's `settle/1`,
   `erx_session_tty:effects/2`, the tests' models); a driver that forgets sends nothing and nothing fails. A
   one-event entry that applies the event and then `send/1` would make it hold by construction for every
-  owner but the core. (4) `erx_tty:input/3` returns a room the relay core discards, since it derives the
-  next room from the link; drop it from the result, or use it. (5) `input/3`'s per-call room and output
+  owner but the core. (3) `erx_tty:input/3` returns a room the relay core discards, since it derives the
+  next room from the link; drop it from the result, or use it. (4) `input/3`'s per-call room and output
   stopped live in the persistent `#tty{}` record, reset by `input/3`; thread them as a call-local value.
+  (5) An `out` watch can still be held off while a write's `full` flag waits for the low-water mark: a
+  writer whose messages add 411 to 2048 bytes between the master's takes keeps the room under the mark at
+  every take, so `ebb/1` never clears the flag, where the one-byte rule reported. FreeBSD avoids it by
+  serialising blocking writers (`TF_BUSY_OUT`, `sys/kern/tty.c:537-553`), which the relay's out waiter
+  does not take part in. Either clear `full` at every take that frees output, or drop the flag and report
+  once the room fits the widest one-byte rendering (8 bytes, a tab under `TAB3`). A writer that refills
+  the room exactly as it empties starves `out` waits under either rule, since a waiting writer's message
+  holds them off. (6) "No master" is implemented twice: the relay core skips `erx_tty_link:send/1` and drops
+  master messages, while `erx_session_tty` sends into an output nobody takes and filters the effects, so
+  a flush frees room in one and not the other. Make the master's presence state of `erx_tty_link`
+  (`send/1` and `master/2` refuse with none, one "would anything take the bytes" query for drains) and
+  delete both copies. (7) A writer's message (`{write, Done, Bytes}`) has no size bound and the queue no
+  length bound; with no master it drains only by a flush or a hangup. The writers are synchronous and in
+  the session's own domain.
 * [Medium] session, how the console learns a session's tty (`docs/design-live.md`, "Between domains"): the design has the console learn the tty from a `tty` agent in the session domain's ready report, but the relay needs `erx:cap(console)`, which init sets only after that report, so a relay started by the boot script has no master and one started after the report is not in it. Edit 65's `tty` agent, the domain pid's check that every agent is a pid of the domain's node, and a way for the session's creator to read the agents are not built; `erx_console:add_session/2` takes the tty from whoever creates the session. Settle the order when root's session starts at boot.
 * [Low] tests, `test/integration/runtime_console_test.rb` (`make check-runtime-hosted`): the cases that start the Erlang shell wait for `1> ` at the start of a line, but the hosted system domain is a named node and its shell prompts `(system@erxos)1> `, so every `with_erxos` case times out before it begins. Match the prompt with its node name, or make the patterns node-agnostic as the `Ctrl-G` case is.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl`: the names quota is the constant `NAMES_QUOTA`, 64, for every principal; the manifest's per-principal `names` is read by no one. Take each principal's from its row, as the domain quota is.

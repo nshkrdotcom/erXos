@@ -34,7 +34,7 @@ carry. Processes, groups and the console are terms the core only compares
 and names in actions.
 """.
 
--export([new/1, request/3, event/2]).
+-export([new/2, request/3, event/2]).
 -export([holder/1, numbers/2, termios/1, signal_number/1]).
 -export_type([core/0, request/0, event/0, answer/0, action/0]).
 
@@ -89,6 +89,9 @@ and names in actions.
     link :: erx_tty_link:link(),
     %% The console process, which the console's events and size go to.
     console :: term(),
+    %% Whether the relay has a master: with none, nothing is sent to one and
+    %% a drain is answered at once.
+    master :: none | present,
     %% The group the console last named, which its events carry.
     console_group = none :: term(),
     holder = console :: holder(),
@@ -112,14 +115,18 @@ and names in actions.
 
 -doc """
 A relay whose console is Console: the console holds the terminal from the
-start, in the editing setting made from the tty's defaults.
+start, in the editing setting made from the tty's defaults. With `master`
+`none` the relay has no master, as a session's tty may have none
+(erx_session_tty): it sends nothing for one, output is held as it is
+while stopped, a drain is answered at once, and a master message is dropped.
 """.
--spec new(term()) -> core().
-new(Console) ->
+-spec new(term(), #{master := none | present}) -> core().
+new(Console, #{master := Master}) when Master =:= none; Master =:= present ->
     Tty = erx_tty:new(),
     Cooked = erx_tty:termios(Tty),
     {ok, _, Editing} = erx_tty:set(erx_tty_modes:editing(Cooked), Tty),
-    #core{tty = Editing, link = erx_tty_link:new(), console = Console, cooked = Cooked}.
+    #core{tty = Editing, link = erx_tty_link:new(), console = Console, master = Master,
+          cooked = Cooked}.
 
 -doc "Caller's request: its answer, what follows the answer, and the next core.".
 -spec request(term(), term(), core()) -> {answer(), [action()], core()}.
@@ -429,6 +436,8 @@ close(Open, #core{opens = Opens} = Core) ->
 
 %%% Events
 
+on_event({master, _Message}, #core{master = none} = Core) ->
+    {[], Core};
 on_event({master, Message}, #core{link = Link} = Core) ->
     {Actions, Link1} = erx_tty_link:master(Message, Link),
     link_actions(Actions, Core#core{link = Link1});
@@ -579,13 +588,14 @@ to_master(Bytes, #core{link = Link} = Core) ->
 %% wait for the low-water mark ends if the room has reached it; the
 %% writers' messages take the room there is, in order; `out` waits are
 %% reported once no message waits and room is free; drains are answered once nothing
-%% waits or nothing would take it; and what is held goes to the master.
+%% waits or nothing would take it; and what is held goes to the master, if
+%% there is one.
 settle(Core0) ->
     {Reconciled, Core1} = reconcile(Core0),
     {Pumped, Core2} = pump(ebb(Core1)),
     {Writable, Core3} = writable(Core2),
     {Drained, Core4} = drained(Core3),
-    {Sent, Link} = erx_tty_link:send(Core4#core.link),
+    {Sent, Link} = send(Core4),
     {Reconciled ++ Pumped ++ Writable ++ Drained ++ Sent, Core4#core{link = Link}}.
 
 %% The room has reached the low-water mark, so out waits wait for one byte
@@ -630,11 +640,16 @@ writable(#core{waits = Waits, writes = Writes, link = Link, full = Full, signal 
             {[], Core}
     end.
 
+send(#core{master = none, link = Link}) -> {[], Link};
+send(#core{master = present, link = Link}) -> erx_tty_link:send(Link).
+
+%% A drain waits for the master to take what is held, unless output is
+%% stopped or there is no master, when nothing would take it.
 drained(#core{drains = []} = Core) ->
     {[], Core};
-drained(#core{drains = Drains, writes = Writes, link = Link} = Core) ->
+drained(#core{drains = Drains, writes = Writes, link = Link, master = Master} = Core) ->
     Empty = queue:is_empty(Writes) andalso erx_tty_link:held(Link) =:= 0,
-    case Empty orelse erx_tty_link:stopped(Link) of
+    case Empty orelse erx_tty_link:stopped(Link) orelse Master =:= none of
         true -> {[done(Done) || Done <- Drains] ++ [give_up_name], Core#core{drains = []}};
         false -> {[], Core}
     end.

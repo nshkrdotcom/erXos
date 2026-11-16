@@ -102,8 +102,8 @@ class ErxSessionRelayCoreTest < Minitest::Test
                            broken: '{Sent, Link1} = erx_tty_link:send(erx_tty_link:start(Link)), ' \
                                    '{Sent, Core#core{link = Link1}};',
                            case_name: /a_signal_drops_held_output_before_any_send_test/),
-    never_sent: Fault.new(text: '{Sent, Link} = erx_tty_link:send(Core4#core.link),',
-                          broken: '{Sent, Link} = {[], Core4#core.link},',
+    never_sent: Fault.new(text: 'send(#core{master = present, link = Link}) -> erx_tty_link:send(Link).',
+                          broken: 'send(#core{master = present, link = Link}) -> {[], Link}.',
                           case_name: /a_signal_drops_held_output_before_any_send_test/),
     # Every step ends with its waits armed exactly when their opens may read.
     never_reconciled: Fault.new(text: '{Reconciled, Core1} = reconcile(Core0),',
@@ -120,6 +120,17 @@ class ErxSessionRelayCoreTest < Minitest::Test
     mark_never_clears: Fault.new(text: 'Core#core{full = Core#core.full andalso Free < ?LOW_WATER}.',
                                  broken: 'Core#core{full = Core#core.full andalso Free < ?LOW_WATER + 4096}.',
                                 case_name: /an_out_wait_waits_for_the_low_water_mark_test/),
+    # With no master, a drain waits for output no one takes.
+    no_master_drain_waits: Fault.new(text: 'erx_tty_link:stopped(Link) orelse Master =:= none of',
+                                     broken: 'erx_tty_link:stopped(Link) orelse Master =:= nobody of',
+                                     case_name: /no_master_test/),
+    # With no master, held output is sent all the same.
+    no_master_sends: Fault.new(text: 'send(#core{master = none, link = Link}) -> {[], Link};',
+                               broken: 'send(#core{master = none, link = Link}) -> erx_tty_link:send(Link);',
+                               case_name: /no_master_test/),
+    # With no master, a message as from one types input and sets the size.
+    no_master_heard: Fault.new(text: "on_event({master, _Message}, #core{master = none} = Core) ->\n    {[], Core};\n",
+                               broken: '', case_name: /no_master_test/),
     flush_keeps_writes: Fault.new(text: '{Linked ++ drop_writes(Core1), Core1#core{writes = queue:new()}}.',
                                   broken: '{Linked, Core1}.', case_name: /a_flush_drops_what_is_held_test/),
     stop_ignored: Fault.new(text: '{[], Core#core{link = erx_tty_link:stop(Link)}};', broken: '{[], Core#core{link = Link}};',
