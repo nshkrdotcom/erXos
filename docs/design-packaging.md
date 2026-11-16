@@ -1228,9 +1228,16 @@ by `tools/erx boot --without-web`, and the card by the card build, which
 refuses `--local` and every package ([The shipped manifests](#the-apps-row)).
 The site build takes the card only with the card's build record, which
 names its commit, built with no changes, and takes the website's image
-only with its build record, which names the image's SHA-256, its commit
-and its build facts, and refuses one whose configuration is local or
-whose image carries a package.
+only with its build record, `image.boot.receipt.json`, which the
+website's image build alone writes beside its `image.boot`, and only when
+the tree did not move during the build: the image's SHA-256, the commit
+it was built from and whether the tree had changes,
+its build facts as its build-facts file holds them, and the packages it
+carries. The site build refuses an image with no record, a record of
+another image or commit or of a tree with changes, one whose
+configuration is local, and one that lists a package. The record is not
+signed: it keeps a local image off the site by mistake, and whoever
+publishes the site is trusted not to forge one.
 
 A development image also trusts, as its `development` signer, the public
 half of the development package key of the host that builds it, the key

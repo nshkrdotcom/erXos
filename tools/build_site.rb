@@ -18,18 +18,22 @@ require_relative 'lib/erx/output_directory'
 require_relative 'lib/erx/site'
 
 root = File.expand_path('..', __dir__)
-options = { image: File.join(root, Erx::InteractiveBoot::SITE_DIRECTORY, 'image.boot'),
+options = { image: File.join(root, Erx::InteractiveBoot::SITE_DIRECTORY, Erx::ImageRecord::IMAGE), image_record: nil,
             card: File.join(root, 'build/production-image/raspi4b', Erx::BootPartition::IMAGE), card_record: nil,
             out: File.join(root, 'build/site'), v64: nil, serve: nil, source: nil }
 card_given = false
 parser = OptionParser.new do |flags|
-  flags.banner = 'Usage: ruby tools/build_site.rb [--v64 DIR] [--image PATH] [--card PATH] [--card-record PATH] ' \
-                 '[--no-card] [--source REF] [--out DIR] [--serve PORT]'
+  flags.banner = 'Usage: ruby tools/build_site.rb [--v64 DIR] [--image PATH] [--image-record PATH] [--card PATH] ' \
+                 '[--card-record PATH] [--no-card] [--source REF] [--out DIR] [--serve PORT]'
   flags.on('--v64 DIR', "a v64 tree an earlier run built (default: build the fetched, pinned v64 in #{Erx::SiteV64::STAGING})") do |path|
     options[:v64] = File.expand_path(path)
   end
   flags.on('--image PATH', "erXos boot image (default: the website's, which tools/erx boot --without-web builds)") do |path|
     options[:image] = File.expand_path(path)
+  end
+  flags.on('--image-record PATH', "the image's build record, which its build writes beside it " \
+                                  "(default: the image's path with .receipt.json added)") do |path|
+    options[:image_record] = File.expand_path(path)
   end
   flags.on('--card PATH', "the Raspberry Pi 4's card (default: the one make pack PLATFORM=raspi4b builds)") do |path|
     options[:card] = File.expand_path(path)
@@ -42,7 +46,7 @@ parser = OptionParser.new do |flags|
   flags.on('--no-card', 'build the page without the Raspberry Pi 4 section, for a local preview; the site workflow never uses it') do
     options[:no_card] = true
   end
-  flags.on('--source REF', 'full commit the image and card were built from, as the card\'s record names it (default: this tree\'s HEAD)') do |ref|
+  flags.on('--source REF', 'full commit the image and card were built from, as their records name it (default: this tree\'s HEAD)') do |ref|
     options[:source] = ref
   end
   flags.on('--out DIR', 'output directory (default: build/site)') { |path| options[:out] = File.expand_path(path) }
@@ -76,7 +80,9 @@ begin
   end
   card = options[:no_card] ? nil : options.fetch(:card)
   card_record = card && (options[:card_record] || "#{card}.receipt.json")
-  plan = Erx::Site.inventory(root:, v64:, image: options.fetch(:image), card:, card_record:, source:, disk:)
+  image = options.fetch(:image)
+  image_record = options[:image_record] || Erx::ImageRecord.path(image)
+  plan = Erx::Site.inventory(root:, v64:, image:, image_record:, card:, card_record:, source:, disk:)
   manifest = Erx::Site.publish(plan, out: options.fetch(:out), runner:)
   card_summary = manifest[:card] ? "card #{manifest.dig(:card, :compressed_bytes)} bytes compressed" : 'no card'
   puts "Site: #{options.fetch(:out)} (image #{manifest.fetch(:bytes)} bytes, " \
