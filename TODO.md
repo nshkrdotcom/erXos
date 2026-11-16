@@ -1953,6 +1953,27 @@ it; git history is the record of completed work.
 
 ## Bugs by subsystem
 
+* [Medium] desktop, the glyph step's glyph count (`tools/lib/erx/glyphs.rb`, `erx_draw_core.erl` `?MAX_GLYPHS`):
+  `Erx::Glyphs` refuses only at font(7)'s field limits, so it would write a subfont of more than 4096 glyphs, the
+  most a font cache holds, which `erx_font:parse/1` then refuses. No spec holds that limit (`abi/formats/draw.txt`
+  gives only the messages' layouts), so it is not shared. Make it a fact of the draw format that `tools/gen_abi.rb`
+  gives both `erx_draw_core` and the step, and refuse there. The theme's ranges hold 543 code points. The subfont
+  format's own field limits, x in two bytes and rows in one, are written twice the same way (`Erx::Glyphs` `MAX_X`
+  and `ROW`, `erx_font` `?MAX_W` and `?MAX_H`): a spec of the subfont format would give both.
+* [Medium] display, two splitters of pixels into `y` messages (`erlang/apps/erx_win/src/erx_font.erl` `tiles/3`,
+  `erx_draw.erl` `band_rows/2`): `erx_font` cuts an image into tiles of columns and bands of rows of at most 8192
+  bytes each, while `erx_draw:load/4` cuts only bands of rows, as many as fit a write (`?ERX_P9_IO_MAX` less the
+  header), and refuses a row wider than a write. Make one pure planner of a rectangle's `y`s, its limit taken from
+  the write size, that both call.
+* [Medium] desktop, a present glyph of zero advance (`tools/lib/erx/glyphs.rb` `place`, design-desktop-programs "The
+  glyph step"): width 0 is how a subfont marks a missing glyph, so a glyph whose advance rounds to 0 reads as
+  missing too. Inter has U+200B (zero width space) at advance 0, inside the theme's range `2000-206F`, so the
+  renderer would draw a replacement box for it. Take the format controls out of the ranges, or decide another mark.
+* [Medium] host tools, one build scaffold (`tools/lib/erx/raster.rb`, `rc_oracle.rb`, `fsimg.rb`): `source_record`,
+  `locate` and its build record, `source_tree`, `compiler_identity` and `publish` are the same code three times.
+  Fold them into one module that takes a source id and an output directory.
+* [Low] desktop, the glyph step's refusals of a glyph offset beyond a byte or an advance beyond 255 have no test
+  (`test/host/glyphs_test.rb`).
 * [Medium] liberx, capability calls (`liberx/backend/api.h`, `docs/design-abi.md` "Program protocol"): the program
   profile's capability fields, the walk's array, the pipe ends' handles, the startup record's, `erx_prog_object_map`
   and `erx_cap_close` are `erx_cap_t`, but every other call of `api.h` takes or returns a handle as `uint64_t`

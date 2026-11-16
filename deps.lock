@@ -300,6 +300,17 @@
       "host": "darwin-arm64",
       "license": "BSD-3-Clause",
       "status": "permanent"
+    },
+    {
+      "id": "freetype",
+      "kind": "tar",
+      "version": "2.15.0",
+      "url": "https://download.savannah.gnu.org/releases/freetype/freetype-2.15.0.tar.xz",
+      "sha256": "93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5",
+      "directory": "freetype-2.15.0",
+      "members": "LICENSE.TXT docs/FTL.TXT include src/base src/gzip src/psnames src/sfnt src/smooth src/truetype",
+      "license": "FTL OR GPL-2.0-or-later",
+      "status": "permanent"
     }
   ]
 }

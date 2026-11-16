@@ -27,9 +27,10 @@ header and the glyph table:
 
 `parse/1` refuses what a load could not use as it stands: an image that
 does not start at the origin, since a glyph's x and rows are offsets in
-it, as libdraw's loadchar reads them; an old image whose first field is a
-depth rather than a channel; a row of more than 8192 bytes, the most one
-`y` of `load/2` carries; a glyph count of none or more than a font cache
+it, as libdraw's loadchar reads them; an image wider or taller than a
+glyph's columns and rows can reach, x being two bytes and the rows one; an
+old image whose first field is a depth rather than a channel; a glyph count
+of none or more than a font cache
 holds (`erx_draw_core:max_glyphs/0`); an ascent outside a byte, the field
 `i` carries it in; a glyph whose columns leave the image or run backwards;
 and any byte after the glyph table. A glyph's rows are clamped into the
@@ -41,9 +42,14 @@ file does not hold, and decoding takes no more steps than the file has
 bytes.
 
 `load/2` turns a subfont into the messages that make one image of the
-client's connection hold it: `b` allocates it, `y` loads its pixels in
-bands of at most 8192 bytes, `i` makes it a font cache and one `l` per
-glyph records the glyph, copying it onto itself. The image is its own
+client's connection hold it: `b` allocates it, `y` loads its pixels, `i`
+makes it a font cache and one `l` per glyph records the glyph, copying it
+onto itself. Each `y` it makes carries at most 8192 bytes of pixels, so
+the image is cut into tiles of columns whose rows hold at most that many
+bytes each, and each tile into bands of rows: a subfont holds all its
+glyphs side by side in one row of the image, which may be far wider than
+that, and a `y` may load any rectangle inside the image (draw(3)).
+The image is its own
 cache, so a glyph's index is its index in the subfont and text in it is a
 sequence of `s` messages.
 """.
@@ -53,8 +59,12 @@ sequence of `s` messages.
 
 %% A header field: a number or descriptor right-justified in 11, then a blank.
 -define(FIELD, 12).
-%% The most bytes of pixels one `y` carries, so the widest row a subfont has.
--define(BAND, 8192).
+%% The most bytes of pixels one `y` of `load/2` carries.
+-define(Y_BYTES, 8192).
+%% The widest and tallest image whose columns and rows a glyph reaches:
+%% its x is two bytes, its top and bottom one each.
+-define(MAX_W, 16#ffff).
+-define(MAX_H, 255).
 
 -doc """
 Glyph i of a subfont, in the shape of a font cache's record, since the
@@ -74,14 +84,15 @@ them, the font's height and ascent, and its glyphs in index order.
 
 -doc """
 Why a file is refused: `header` for a missing or malformed field of the
-image or subfont header, or an image not at the origin; `wide` for a row
-over 8192 bytes; `pixels` for pixels short of the rectangle or codes that
+image or subfont header, or an image not at the origin or larger than a
+glyph reaches; `pixels` for
+pixels short of the rectangle or codes that
 do not fill a block; `glyphs` for a table short of n+1 entries, a glyph
 count, height or ascent out of range, or a glyph's columns outside the
 image or backwards; and
 `trailing` for bytes after the table.
 """.
--type reason() :: header | wide | pixels | glyphs | trailing.
+-type reason() :: header | pixels | glyphs | trailing.
 
 -doc "The subfont in file `Bytes`, or why it is refused.".
 -spec parse(binary()) -> {ok, subfont()} | {error, reason()}.
@@ -113,17 +124,33 @@ load(#{chan := Chan, r := {0, 0, W, H} = R, pixels := Pixels, ascent := Ascent,
        glyphs := Glyphs}, Id) ->
     {ok, Depth} = erx_chan:depth(Chan),
     Line = erx_draw_image:bytes_per_line(R, Depth),
-    Rows = ?BAND div Line,
-    Bands = [load_rows(Id, Pixels, W, Line, Y, min(Y + Rows, H))
-             || Y <- lists:seq(0, H - 1, Rows)],
+    Loads = [load_rect(Id, Pixels, Line, Depth, Rect) || Rect <- tiles(W, H, Depth)],
     Records = [{glyph, Id, Id, Index, {X0, Top, X1, Bottom}, {X0, Top}, Left band 16#ff, Width}
                || {Index, {X0, X1, Top, Bottom, Left, Width}} <- lists:enumerate(0, Glyphs)],
     [{alloc, Id, 0, 0, Chan, 0, R, R, 0}]
-        ++ Bands ++ [{font, Id, length(Glyphs), Ascent} | Records].
+        ++ Loads ++ [{font, Id, length(Glyphs), Ascent} | Records].
 
-%% The `y` of rows Y0 to Y1, Line bytes each.
-load_rows(Id, Pixels, W, Line, Y0, Y1) ->
-    {load, Id, {0, Y0, W, Y1}, binary:part(Pixels, Y0 * Line, (Y1 - Y0) * Line)}.
+%% The rectangles of the `y`s that load a W by H image of depth Depth, each
+%% of at most ?Y_BYTES bytes of pixels: tiles of as many columns as a row
+%% of ?Y_BYTES bytes holds, left to right, each cut into bands of as many
+%% rows as fit, top to bottom. A depth divides 8 or is a multiple of 8
+%% (erx_chan:depth/1), so every tile starts on a byte of its rows and a
+%% whole tile's row is at most ?Y_BYTES bytes.
+tiles(W, H, Depth) ->
+    Columns = ?Y_BYTES * 8 div Depth,
+    lists:append([bands({X0, 0, min(X0 + Columns, W), H}, Depth) || X0 <- lists:seq(0, W - 1, Columns)]).
+
+%% The bands of rows of a tile, columns X0 to X1 of all H rows.
+bands({X0, 0, X1, H}, Depth) ->
+    Rows = ?Y_BYTES div erx_draw_image:bytes_per_line({X0, 0, X1, 1}, Depth),
+    [{X0, Y0, X1, min(Y0 + Rows, H)} || Y0 <- lists:seq(0, H - 1, Rows)].
+
+%% The `y` of rectangle R of the image, from the bytes of each of its rows
+%% that hold R's columns; the image's rows are Line bytes each.
+load_rect(Id, Pixels, Line, Depth, {X0, Y0, _, Y1} = R) ->
+    Start = X0 * Depth div 8,
+    Bytes = erx_draw_image:bytes_per_line(R, Depth),
+    {load, Id, R, << <<(binary:part(Pixels, Y * Line + Start, Bytes))/binary>> || Y <- lists:seq(Y0, Y1 - 1) >>}.
 
 %% The image: its header, then its pixels as each row in turn.
 image(<<"compressed\n", Bytes/binary>>) -> image(Bytes, compressed);
@@ -136,10 +163,10 @@ image(Bytes, Form) ->
                         {error, einval} -> throw(header)
                     end,
     {[X0, Y0, W, H], AfterRect} = numbers(4, AfterChan),
-    check(X0 =:= 0 andalso Y0 =:= 0 andalso W >= 1 andalso H >= 1, header),
+    check(X0 =:= 0 andalso Y0 =:= 0 andalso W >= 1 andalso W =< ?MAX_W andalso H >= 1 andalso H =< ?MAX_H,
+          header),
     R = {0, 0, W, H},
     Line = erx_draw_image:bytes_per_line(R, Depth),
-    check(Line =< ?BAND, wide),
     {Pixels, Rest} = pixels(Form, AfterRect, R, Depth, Line),
     {#{chan => Chan, r => R, pixels => Pixels}, Rest}.
 

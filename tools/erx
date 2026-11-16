@@ -798,7 +798,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
       0
     end
 
@@ -836,6 +836,21 @@ module Erx
       require_relative 'lib/erx/rc_oracle'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       RcOracle::Build.new(root: ROOT, runner: runner).call.rc
+    end
+
+    # The theme's role subfonts in build/glyphs (Glyphs), through erx-raster,
+    # which is built first from the fetched FreeType pin when it is missing or
+    # stale (Raster::Build); prints only the output directory.
+    def self.build_glyphs
+      require_relative 'lib/erx/glyphs'
+      runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+      program = begin
+        Raster.locate(root: ROOT)
+      rescue Raster::MissingBuild, Raster::StaleBuild
+        Raster::Build.new(root: ROOT, runner: runner).call
+      end
+      Glyphs.write(root: ROOT, program: program, runner: runner)
+      File.join(ROOT, Glyphs::OUTPUT)
     end
 
     # herd7 for this host, from the fetched herdtools7 pin (Herd::Build), which
@@ -922,8 +937,8 @@ module Erx
     def self.build(input_arguments)
       arguments = input_arguments.dup
       component = arguments.shift
-      unless %w[fiasco runtime jit-runtime rc-oracle fsimg herd7 lvgl openssl web].include?(component)
-        raise OptionParser::InvalidArgument, 'build accepts fiasco, runtime, jit-runtime, rc-oracle, fsimg, herd7, lvgl, openssl or web'
+      unless %w[fiasco runtime jit-runtime rc-oracle glyphs fsimg herd7 lvgl openssl web].include?(component)
+        raise OptionParser::InvalidArgument, 'build accepts fiasco, runtime, jit-runtime, rc-oracle, glyphs, fsimg, herd7, lvgl, openssl or web'
       end
       jobs = 4
       parser = OptionParser.new do |options|
@@ -935,6 +950,7 @@ module Erx
              when 'runtime' then build_runtime(jobs)
              when 'jit-runtime' then build_jit_runtime(jobs)
              when 'rc-oracle' then build_rc_oracle
+             when 'glyphs' then build_glyphs
              when 'fsimg' then build_fsimg(jobs)
              when 'herd7' then build_herd7(jobs)
              when 'lvgl' then build_lvgl(jobs)

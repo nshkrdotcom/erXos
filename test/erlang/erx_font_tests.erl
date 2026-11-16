@@ -133,11 +133,57 @@ header_test_() ->
      ?_assertEqual({error, header}, refused(Small, #{x0 => 1})),
      ?_assertEqual({error, header}, refused(Small, #{w => 0})),
      ?_assertEqual({error, header}, refused(Small, #{h => 0})),
+     ?_assertEqual({error, header}, refused(Small, #{w => 16#10000})),
+     ?_assertEqual({error, header}, refused(Small, #{h => 256})),
      ?_assertEqual({error, header}, refused(Small, #{height => <<"two">>}))].
 
-wide_test() ->
-    ?assertEqual({error, wide}, refused(#{chan => <<"k8">>, w => 8193, pixels => <<0:8193/unit:8>>, height => 1,
-                                          ascent => 1, entries => [{0, 0, 1, 0, 1}, {1, 0, 0, 0, 0}]})).
+%% A row of more than 8192 bytes loads in tiles of columns whose rows hold
+%% at most 8192 bytes, each tile in bands of rows: at 8 bits a pixel, tiles
+%% of 8192 columns, and at 24, tiles of 2730 columns, 8190 bytes a row.
+%% Each `y` lies inside the image of a draw connection, and the tiles put
+%% every pixel back where the file has it.
+tiles_test() ->
+    Wide = [{0, 0, 8192, 1}, {0, 1, 8192, 2}, {0, 2, 8192, 3},
+            {8192, 0, 16384, 1}, {8192, 1, 16384, 2}, {8192, 2, 16384, 3},
+            {16384, 0, 20000, 2}, {16384, 2, 20000, 3}],
+    Deep = [{0, 0, 2730, 1}, {0, 1, 2730, 2}, {0, 2, 2730, 3},
+            {2730, 0, 5460, 1}, {2730, 1, 5460, 2}, {2730, 2, 5460, 3},
+            {5460, 0, 6000, 3}],
+    ?assertEqual(Wide, tiles(<<"k8">>, 20000, 3)),
+    ?assertEqual(Deep, tiles(<<"r8g8b8">>, 6000, 3)).
+
+%% The rectangles of the `y`s that load a W by H subfont of channel Chan,
+%% once each has stepped through a draw connection and their pixels, put
+%% back at their rectangles, have made the file's image again.
+tiles(Chan, W, H) ->
+    Spec = #{chan => Chan, w => W, pixels => <<>>, height => H, ascent => 1,
+             entries => [{0, 0, H, 0, 8}, {W, 0, 0, 0, 0}]},
+    Line = line(Spec),
+    Pixels = << <<(I rem 251 + 1)>> || I <- lists:seq(0, Line * H - 1) >>,
+    Messages = erx_font:load(parsed(Spec#{pixels := Pixels}, rows), 1),
+    Connection = erx_draw_core:new(#{r => {0, 0, 640, 480}, chan => ?ARGB32,
+                                     quota => #{pixels => 1024 * 1024, side => 32768}}),
+    lists:foldl(fun(Message, State) ->
+                        {ok, Next, _} = erx_draw_core:step(State, Message),
+                        Next
+                end, Connection, Messages),
+    Loads = [{R, P} || {load, 1, R, P} <- Messages],
+    {ok, _, Depth} = erx_chan:parse(Chan),
+    ?assertEqual(Pixels, lists:foldl(fun({R, P}, Image) -> put_rect(Image, Line, Depth, R, P) end,
+                                     <<0:(Line * H)/unit:8>>, Loads)),
+    [R || {R, _} <- Loads].
+
+%% Image, whose rows are Line bytes each, with the rows of Pixels in place
+%% at rectangle R, whose columns start and end on a byte.
+put_rect(Image, Line, Depth, {X0, Y0, X1, Y1}, Pixels) ->
+    Bytes = (X1 - X0) * Depth div 8,
+    Rows = [Row || <<Row:Bytes/binary>> <= Pixels],
+    ?assertEqual(Y1 - Y0, length(Rows)),
+    lists:foldl(fun({Y, Row}, Acc) ->
+                        At = Y * Line + X0 * Depth div 8,
+                        <<Before:At/binary, _:Bytes/binary, After/binary>> = Acc,
+                        <<Before/binary, Row/binary, After/binary>>
+                end, Image, lists:zip(lists:seq(Y0, Y1 - 1), Rows)).
 
 %% Compressed blocks that overrun the last row, end at or before the row
 %% they start on, are empty, hold codes short of their rows or past them,

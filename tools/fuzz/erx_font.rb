@@ -23,6 +23,7 @@ module ErxFontFuzz
   SOURCES = %w[erlang/apps/erx_memdraw/src/erx_chan.erl erlang/apps/erx_win/src/erx_draw_image.erl
                erlang/apps/erx_win/src/erx_draw_core.erl test/erlang/erx_font_tests.erl
                test/erlang/erx_font_fuzz.erl].map { |path| File.join(ROOT, path) }.freeze
+  ABI_HEADER = 'erlang/apps/erx/include/generated/erx_abi.hrl'
   FONTS = Dir.glob(File.join(ROOT, 'display/font/fixed/6x13.*')).freeze
   SEEDED = {
     'the right edge' => [' andalso X1 =< W end', ' end'],
@@ -47,12 +48,16 @@ module ErxFontFuzz
 
   # In a directory of its own, which also takes the crash dump of a failed round.
   def fuzz(module_text, seed:)
-    codec = Erx::ABI::Generator.plan(root: ROOT).files.fetch(Erx::ABI::DrawEmitter::ERLANG_PATH)
+    generated = Erx::ABI::Generator.plan(root: ROOT).files
     Dir.mktmpdir('erx-font-fuzz') do |work|
-      File.binwrite(File.join(work, 'erx_draw_codec.erl'), codec)
+      File.binwrite(File.join(work, 'erx_draw_codec.erl'), generated.fetch(Erx::ABI::DrawEmitter::ERLANG_PATH))
+      # erx_draw_core includes the ABI header as generated/erx_abi.hrl.
+      FileUtils.mkdir_p(File.join(work, 'generated'))
+      File.binwrite(File.join(work, 'generated/erx_abi.hrl'), generated.fetch(ABI_HEADER))
       File.binwrite(File.join(work, 'erx_font.erl'), module_text)
       FileUtils.cp(FONTS, work)
-      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
+      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-I', work,
+                                       '-o', work,
                                        File.join(work, 'erx_draw_codec.erl'), File.join(work, 'erx_font.erl'),
                                        *SOURCES, stdin_data: '')
       raise output unless status.success?

@@ -353,7 +353,7 @@ theme 1
   unit 4
   font ui display/fonts/inter regular Inter-Regular.ttf medium Inter-Medium.ttf semibold Inter-SemiBold.ttf
   range ui 0020-007E 00A0-017F 2000-206F 2190-21FF
-  role display  font ui size 48 line 56 weight semibold figures tabular
+  role display  font ui size 48 line 64 weight semibold figures tabular
   role title    font ui size 20 line 28 weight semibold
   role heading  font ui size 15 line 20 weight semibold
   role body     font ui size 13 line 20 weight regular
@@ -454,10 +454,27 @@ Rasterisation is unhinted, as current desktop type is; output is a pure
 function of the font file, the theme and FreeType's pinned release, so
 images stay reproducible. The step chooses the tabular figures by the
 font's glyph names (`FT_Get_Name_Index`, `include/freetype/freetype.h`,
-line 4428) for the roles marked `figures tabular`; that Inter
-4.1's static fonts carry those names (`one.tf` and the rest) is
-unverified until the files are fetched at the pin, and the step refuses
-a role whose substitutions it cannot find.
+line 4428) for the roles marked `figures tabular`: Inter 4.1's static
+fonts have a version 2.0 `post` table that names the digits' tabular
+forms `zero.tf` to `nine.tf`, and the step refuses a role whose font
+lacks one.
+
+A role's subfont has one glyph for each code point of its font's
+ranges, in ascending order across the ranges, so glyph i is the i-th
+code point the ranges list and the renderer finds a glyph from the
+theme alone. A code point the font lacks has an empty glyph of width 0,
+which a Plan 9 font reader takes as missing (plan9port at commit
+`1f13969`, `src/libdraw/font.c`, lines 276-277), so the renderer draws
+the replacement box for it, as for a code point outside the ranges. The
+subfont's image is as tall as the role's line, and its baseline lies
+where CSS puts it, half the line's leading below the font's ascender:
+(line - (ascender + descender)) / 2 + ascender, from the font's own
+metrics in exact arithmetic, rounded half up. A glyph is drawn its
+coverage's offset right of the pen and advances by its advance rounded
+half up to a whole pixel. The step refuses a glyph whose ink leaves the
+line, and a role whose values the subfont format cannot hold (font(7):
+a glyph's column in two bytes, its rows, offset and advance in one), so
+no subfont is cut to fit.
 
 A character outside the theme's ranges has no glyph: the renderer draws
 the replacement box of the role's size. The ranges cover Latin scripts
@@ -1240,8 +1257,8 @@ this part starts:
 
 | Component | Purpose | License | Status |
 | --- | --- | --- | --- |
-| Inter 4.1, Regular, Medium and SemiBold static TrueType fonts | the type of every role of the theme, rasterised by the glyph step into `k8` subfonts and LVGL fonts | OFL-1.1, font data only; the license text at tag `v4.1` names no Reserved Font Name (`LICENSE.txt`, SHA-256 `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a`, fetched from `https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt`) | permanent; the three font files enter the tree at `display/fonts/inter/` with the license and an `ORIGIN.md` recording the release archive's URL and SHA-256 when they are imported |
-| FreeType 2.15.0 | the glyph step's rasteriser of the fonts' glyphs and of the icons' stroked paths, linked into erXos's host program `erx-raster` | FreeType License (FTL) or GPL-2.0, at the user's choice (`LICENSE.TXT`, SHA-256 `bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b`); erXos uses it under the FTL, a BSD-style license (`docs/FTL.TXT`, SHA-256 `5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f`), whose credit and binary-distribution clauses bind a program that contains FreeType, which no image does | permanent build tool, never part of an image; `freetype-2.15.0.tar.xz` from `https://download.savannah.gnu.org/releases/freetype/`, SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`, fetched by the explicit fetch step and verified against that hash, compiled out of tree by erXos's own compiler invocations |
+| Inter 4.1, Regular, Medium and SemiBold static TrueType fonts | the type of every role of the theme, rasterised by the glyph step into `k8` subfonts and LVGL fonts | OFL-1.1, font data only; the license text at tag `v4.1` names no Reserved Font Name (`LICENSE.txt`, SHA-256 `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a`, fetched from `https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt`) | permanent; the three font files are in the tree at `display/fonts/inter/` with the license and an `ORIGIN.md` recording the release archive, `https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip`, SHA-256 `9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e` |
+| FreeType 2.15.0 | the glyph step's rasteriser of the fonts' glyphs and of the icons' stroked paths, linked into erXos's host program `erx-raster` | FreeType License (FTL) or GPL-2.0-or-later, at the user's choice (`LICENSE.TXT`, SHA-256 `bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b`); erXos uses it under the FTL, a BSD-style license (`docs/FTL.TXT`, SHA-256 `5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f`), whose credit and binary-distribution clauses bind a program that contains FreeType, which no image does; its gzip module, which the `sfnt` module's WOFF and SVG-table readers link, is under the zlib license, compatible with the FTL (`LICENSE.TXT`, lines 35-36) | permanent build tool, never part of an image; `freetype-2.15.0.tar.xz` from `https://download.savannah.gnu.org/releases/freetype/`, SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`, fetched by the explicit fetch step and verified against that hash, compiled out of tree by erXos's own compiler invocations (`Erx::Raster::Build`) |
 
 The icon set is erXos's own work, rasterised through FreeType with the
 fonts. What an image carries from the glyph step is the coverage of
