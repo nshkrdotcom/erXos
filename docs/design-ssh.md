@@ -740,8 +740,11 @@ logins:
   the holder, a process of `erx_storage_login_keys` linked to the mint,
   and answers its pid as the tree's arguments; the mount waits for no
   read. The holder spawns the reader with a monitor and is the one owner
-  of the published result: the first of the reader's result message and
-  its `'DOWN'` decides it, and every later message is ignored. The
+  of the published result: the reader's result message is tagged with
+  that monitor's reference, so no other message in the storage domain
+  can be taken for it; the first of that message and the `'DOWN'` with
+  the same reference decides the result, and every later message is
+  ignored. The
   holder runs no decoder and reads no sector, so it ends only with the
   mint, and the mint's end, as for every tree, ends its grants. The
   `erx_fs` grants' callbacks ask the holder for `root` and serve its
@@ -762,11 +765,20 @@ logins:
   incarnation and never changes. So a crafted volume costs SSH logins
   and nothing else, and the domain serves `system` and its other trees
   without waiting for the reader.
-* **The facet's copy is keyed to the grant.** The facet keeps the file
-  it read, keys or none, together with the grant it read it through, and
-  at each key login compares that grant with the one the system domain
-  holds now; a different grant, or none, drops the copy, so each storage
-  incarnation is read once. A read that fails, `eagain`, `eio` or a grant
+* **The facet's copy is keyed to the grant.** The grant is the pid
+  `erx:cap(login_keys)` answers (`erlang/apps/erx/src/erx.erl:159`), the
+  facet the domain service installed in the system domain's table of
+  facets (`mint_act({install, ...})`, `erx_domain_srv.erl:1579`), which
+  a later install of the same name replaces. A new storage incarnation is
+  a new domain whose mint gives a new facet, so its pid differs from
+  every earlier one. At a key login the facet takes that pid, reads
+  `root` through it, and keeps the file it read, keys or none, together
+  with the pid it took before the read. At the next key login it takes
+  the pid again and uses the copy only when the two are equal; a
+  different pid, or none, drops the copy and reads again. So each storage
+  incarnation is read once, and a copy read through a grant that a
+  restart has since replaced is never used, even when the read was still
+  in flight at the restart. A read that fails, `eagain`, `eio` or a grant
   that is gone or not yet installed, answers that login `unavailable`
   and keeps nothing, so the next login reads again.
 * **A restart reads again.** A restart of the storage domain is a new
@@ -1194,7 +1206,7 @@ on the host; the QEMU suite runs the interop and the ends.
 | a downloadable medium with a key of its user's, on QEMU | the QEMU release medium, packed from `medium_manifest` as the website offers it, with no key, boots with no SSH login and its console shows `root has no SSH login key`; the test then adds a key's line, with a comment and a CRLF ending, as `authorized_keys` to the medium's record volume with fsimg's append mode, a FAT writer that allocates only free clusters, as a user's computer does, and not through the image build; the file's first cluster lies past the record's region, and on the next boot `tools/erx ssh` with that key logs in | the reader looking the file up by its short name alone: the file the test added is not found and the login fails; the medium formatted without fsimg's bad-cluster range: the appended file starts beside the record, the reader refuses it as `lies in the boot-selection record's region` and the login fails; the medium's manifest without the SSH domain: nothing listens and the login fails |
 | the login keys' publisher and grants, host tests of the manifest check | a manifest whose `login_keys` service is served by the SSH domain, or by any domain but the `record_volume` window's holder, is refused; so are a `login_keys` service of another interface, a read-write grant of it, a grant to any domain but the system domain, a `login_keys` service without a `record_volume` window, a manifest with two `record_volume` windows, and a `record_volume` window on a domain other than the `system` window's holder; the QEMU development manifest passes | the server comparison removed: the manifest whose `login_keys` the SSH domain serves passes; the holder comparison removed: the window on the web domain passes; the window count not checked: the manifest with two windows passes |
 | the reader's isolation and lifecycle, host tests of the storage domain's start | with the reader held by the test past the grant's 10-second deadline, `system` is served, the system domain's `login_keys` grant is installed within the deadline, a read of `root` answers `eagain` and the facet answers that login `unavailable`; once the test releases the reader, the next login reads the keys and logs in; a volume whose file the decoder refuses gives that finding and an empty `root`; a reader the test kills, and a window whose sector read the test fails, each give `read failed` and a `root` answering `eio`, not an empty file, while `system` is served; a result message the test sends the holder after the reader's `'DOWN'`, and a second one after a result, change nothing | the mount waiting for the reader: the grant fails at its deadline and the login after the release still answers `unavailable`; the facet keeping its `eagain` read: the login after the release answers `unavailable`; the result published only by the reader's message: the killed reader leaves `root` answering `eagain`; the holder publishing the empty file for a killed reader: `root` reads as no keys |
-| storage restarts, host tests of the storage domain and the facet | the storage domain killed while the reader is held, and again after it has published, comes back, reads the medium again and serves the same blobs; a key login after each restart logs in; with the reader killed in the first incarnation, `root` answers `eio` and a key login `unavailable`, and after the storage domain's restart the next key login reads the keys and logs in; the facet reads `root` once per grant, which the test's grants count: once before a restart, however many logins follow, and once through the new grant after it | the reader run only at the domain's first start of the boot: the restarted domain's `root` answers `eagain` for good and the login after the first restart answers `unavailable`; the holder publishing the empty file for a killed reader: the facet keeps no keys and the login after the restart answers `no_match`; the facet keeping its copy for the boot: the new grant is never read, which its count shows |
+| storage restarts, host tests of the storage domain and the facet | the storage domain killed while the reader is held, and again after it has published, comes back, reads the medium again and serves the same blobs; a key login after each restart logs in; with the reader killed in the first incarnation, `root` answers `eio` and a key login `unavailable`, and after the storage domain's restart the next key login reads the keys and logs in; the facet reads `root` once per grant, which the test's grants count: once before a restart, however many logins follow, and once through the new grant after it; a copy read through grant G1 while the test replaces it with G2 (a second install of the name) is not used at the next login, which reads through G2 and keeps its copy under G2's pid | the reader run only at the domain's first start of the boot: the restarted domain's `root` answers `eagain` for good and the login after the first restart answers `unavailable`; the holder publishing the empty file for a killed reader: the facet keeps no keys and the login after the restart answers `no_match`; the facet keeping its copy for the boot, or keying it to the pid taken after the read: the new grant is never read, which its count shows |
 | the SSH domain's grants, host tests of the manifest check | an SSH domain row holding `data`, or any files grant but `ssh_state`'s, is refused; the row of the QEMU manifests passes | the check not looking at files grants: the row with `data` passes |
 | the session's grants | a session started over SSH lists exactly its template's facets in the inspector, the same as at the console | the facet passes the SSH domain's facets into the start map: the lists differ |
 | parallel logins, on QEMU | while one connection has sent its version line and stalls, a second client logs in within 5 s | `parallel_login` left at its default: the second login waits for the first's grace and the test fails |

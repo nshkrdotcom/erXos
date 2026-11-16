@@ -7153,6 +7153,9 @@ to the corpus and follow rc
   `system` to every domain and `data` to every principal, so a flaw in it that a client's requests could steer would be a way to
   root's login. A storage domain whose only client is the system domain, as the vault's is, would
   close it; the vault's arrival, after which the file is not read, closes it too.
+* [Medium] SSH, the browser demo's manifest ([design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)):
+  `config/platforms/qemu-virt.json:10`'s `site_leaves_out` gains `ssh` in the same change that puts the SSH
+  domain into the development manifest, or the demo's image holds a domain that no one can give a key.
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
   system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
   `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader
