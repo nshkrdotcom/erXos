@@ -115,7 +115,7 @@ These shape every design and change; the rules below apply them.
   them as written, with one exception: a development build may boot a
   platform whose DMA handover evidence is not yet recorded; the gap is a
   security residual in `TODO.md` that blocks release. The closure has two
-  forms: R1's on Fiasco and M11's on erXos's own kernel. Fiasco is
+  forms: 0.2's on Fiasco and M11's on erXos's own kernel. Fiasco is
   hardened only as [docs/design-fiasco.md](docs/design-fiasco.md) lists
   (its release build, its patches, the system-call fuzz campaign and the
   upstream watch); what it lacks against erXos's kernel is a downside of
@@ -126,7 +126,7 @@ These shape every design and change; the rules below apply them.
   domain's `liberx` creates every kernel object and places each in its
   holder, as L4Re's root task does, and nothing of erXos's kernel
   semantics is built into Fiasco beyond the few patches
-  [docs/design-fiasco.md](docs/design-fiasco.md) lists. R1, the first
+  [docs/design-fiasco.md](docs/design-fiasco.md) lists. 0.2, the first
   release, ships on that Fiasco: the backend uses Fiasco's own
   capabilities, factories, interrupts and DMA spaces, so isolation
   between domains and budgets as walls rest on Fiasco and on the root
@@ -172,7 +172,7 @@ These shape every design and change; the rules below apply them.
   only to what the
   milestone using it needs and its tests check: no memory errors, no
   deadlock, and the results of the calls it offers, for trusted
-  workloads. A stopgap a release ships, as R1 ships littlefs and LVGL,
+  workloads. A stopgap a release ships, as 0.2 ships littlefs and LVGL,
   also commits to the release contract its design states for untrusted
   workloads, and no more, such as where it runs, what it holds, what
   input reaches it, what its failure ends and which fuzz targets cover
@@ -187,7 +187,7 @@ These shape every design and change; the rules below apply them.
   residuals, or as published downsides for one a release ships, not
   engineered into inherited code. Its reviews check those
   commitments, not the target design's.
-* **What Fiasco promises.** Fiasco is the kernel R1 ships, and its
+* **What Fiasco promises.** Fiasco is the kernel 0.2 ships, and its
   commitments are the release contract of
   [docs/design-fiasco.md](docs/design-fiasco.md#contract), for trusted
   and untrusted workloads, and no more. What it lacks against erXos's
@@ -197,7 +197,7 @@ These shape every design and change; the rules below apply them.
   before the release; a gap that breaks the contract blocks the release.
   Its reviews check that contract, not erXos's kernel's design.
 * **Nothing ships until I say so.** A release ships only the stopgaps its
-  milestone names, each under its release contract: R1 ships littlefs and
+  milestone names, each under its release contract: 0.2 ships littlefs and
   LVGL, and runs on Fiasco, whose status is `release`. Every gap of a
   shipped stopgap beyond its contract is a published downside or a
   residual that blocks the release. Every other stopgap stays out of a
@@ -228,10 +228,10 @@ Third-party components are allowed when they pay for themselves.
   exception is the images the website offers (the browser demo and the
   board cards), each distributed with its source offered.
 * **Release components.** A component in a release's trusted base that a
-  later phase replaces, as R1 runs on Fiasco and Phase 2 replaces it with
+  later phase replaces, as 0.2 runs on Fiasco and Phase 2 replaces it with
   erXos's kernel, is marked `release` in the dependency table. What
   separates it from a stopgap a release ships is where it runs: a stopgap
-  a release ships runs confined as its release contract states (R1
+  a release ships runs confined as its release contract states (0.2
   ships littlefs as a NIF in the storage domain, under the release
   contract of [docs/design-stopgap.md](docs/design-stopgap.md#release-contract)), so
   its contract states that confinement, what a defect in it can reach
@@ -252,7 +252,7 @@ Third-party components are allowed when they pay for themselves.
 * **Code erXos modifies or ships enters the tree as erXos's code.** OTP
   29.1.2's source (ERTS and the applications erXos ships), musl, the Fiasco
   fork that is the first release's kernel,
-  littlefs, OpenSSL, ctaes, the
+  littlefs, OpenSSL, Monocypher, ctaes, the
   BLAKE3, ChaCha20 and SHA-2 cores, libmemdraw, and toybox with `wak`
   live in the tree, keep their license notices and change by ordinary
   edits. Upstream is not tracked, so erXos owns their fixes, security fixes
@@ -672,7 +672,7 @@ scripts live in `~/erxos-scratch/tools/`.
     memory that user mode can write (UTCBs, vCPU state areas, shared areas)
     it reads only through accessors that load each field once per decision.
     On Fiasco these hold only as far as Fiasco's own code gives them
-    (FD24), a published downside R1 accepts
+    (FD24), a published downside 0.2 accepts
     ([docs/design-fiasco.md](docs/design-fiasco.md#downsides-against-erxoss-kernel)).
   * Never let input-controlled depth drive unbounded recursion. Kernel C
     code recurses only through calls marked `musttail`, which compile to
@@ -930,7 +930,8 @@ within about 20 percent of the length, write plain code.
   information, the system manifest's reader, system-call argument
   decoding, `prim_file` path resolution and namespace paths, the 9P2000.L
   codec, the program startup message and protocol, executable headers (`erx_elf_plan`), log records, the funnel,
-  cross-domain frames and their reassembly, the host link deframer, device
+  cross-domain frames and their reassembly, the host link deframer, the
+  `authorized_keys` line decoder (`erx_boot_keys`), device
   ring processing, the netmap ring core, PCIe configuration snapshots, `/proc` names, the command
   shell's parser and `grep`'s pattern translator, each line escaper, the
   partition table, EROFS, F2FS, littlefs and FAT images, update manifests,
