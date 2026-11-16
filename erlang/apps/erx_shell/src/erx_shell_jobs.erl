@@ -181,8 +181,9 @@ end what is in the foreground, the job the line waits for and the line,
 and background jobs run on, as rc's `&` jobs ignore the interrupt; after
 `Ctrl-C`, `{interrupted, Line}` tells the shell to go on with what it had
 before the line, with `$status` saying the line was interrupted
-(erx_shell_eval:interrupted/1). `Ctrl-Z` (suspend) stops the job the line waits for in `fg`, whose `fg`
-returns, or else the line, which becomes a numbered job. With nothing in
+(erx_shell_eval:interrupted/1). `Ctrl-Z` (suspend) stops the job the line
+waits for in `fg`, whose `fg` returns, or else the line, which becomes a
+numbered job. With nothing in
 the foreground a key does nothing, as at a UNIX shell's prompt. The
 relay's tty echoed its key, so the shell then writes only the newline;
 the console's editing setting echoes nothing, so for a key the group
@@ -212,8 +213,8 @@ act_on_key(Key, Echo, J = #jobs{line = #line{tag = LineTag}, fg = Fg}) ->
                       none -> {[], J};
                       Id -> {[{terminate, tag(Id, J)}], remove(Id, J)}
                   end,
-    {Inner ++ [{terminate, LineTag}] ++ [{interrupted, LineTag} || Key =:= interrupt] ++ [{say, Echo}],
-     J1#jobs{line = none, fg = none}}.
+    Status = [{interrupted, LineTag} || Key =:= interrupt],
+    {Inner ++ [{terminate, LineTag}] ++ Status ++ [{say, Echo}], J1#jobs{line = none, fg = none}}.
 
 -doc """
 A shell starts (`true`) or ends (`false`) above the line, as `erl` runs
