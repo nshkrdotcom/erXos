@@ -443,6 +443,9 @@ violation fails the build with the property, the record and the field:
    so no two `line` grants name one UART and none names the console's or
    the host link's
    ([design-bluetooth.md](design-bluetooth.md#the-controllers-line)); the
+   service of the `line` interface is named `line`, the one name by which
+   the line service finds and serves its grants, the facet-names check
+   reads its serve call and its grantees mount it at `/line`; the
    console's UART shares an interrupt line with none of the others, since
    the console starts its own line's owner, while the host link's and the
    `line` grants' UARTs may share lines with each other, one line group

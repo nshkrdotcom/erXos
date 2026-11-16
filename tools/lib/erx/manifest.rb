@@ -1955,19 +1955,31 @@ module Erx
       end
 
       # Property 8's clause for the line interface (docs/design-system.md, "The manifest";
-      # docs/design-bluetooth.md, "The controller's line"): the system domain serves every
-      # line service, and each grant of one, of facets with values, their resolved
-      # parameters in the same order, names by its uart a UART whose unit the system domain
-      # holds, which is neither the console's nor the host link's, is not on the console's
-      # interrupt line (check_uart_lines) and which no other grant names, and holds flow to
-      # none or rts_cts. The grantee is a configured domain, which mounts the tree its
-      # application start reads. The manifest grants the interface at most once, since one
-      # line service serves one line (TODO.md, the line's service side); the duplicate check
-      # runs first, so it holds once that limit is lifted.
+      # docs/design-bluetooth.md, "The controller's line"). The system domain serves every
+      # line service. Of its services, the one named line is exactly the one of the line
+      # interface, so the name the Erlang side keys on (erx_uart_sup:line_grants/1, the
+      # serve call, the facet-names check, erx_ns:place/1) and the interface the root keys
+      # on (boot_manifest.c) pick the same service. Each grant of a line service, of facets
+      # with values, their resolved parameters in the same order, names by its uart a UART
+      # whose unit the system domain holds, which is neither the console's nor the host
+      # link's, is not on the console's interrupt line (check_uart_lines) and which no
+      # other grant names, and holds flow to none or rts_cts. The grantee is a configured
+      # domain, which mounts the tree its application start reads. The manifest grants the
+      # interface at most once, since one line service serves one line (TODO.md, the line's
+      # service side); the duplicate check runs first, so it holds once that limit is lifted.
       def check_line_grants(facets, values, tables)
         line = ->(service) { grant_checker(service.fetch('interface')) == 'line_grant' }
-        if tables.fetch('services').any? { |row| line.call(row) && row.fetch('server') != @codec.constant('mf_none') }
+        system = @codec.constant('mf_none')
+        if tables.fetch('services').any? { |row| line.call(row) && row.fetch('server') != system }
           invalid('only the system domain serves the line interface', 8, 'service.server')
+        end
+        interface = find_interface('line')
+        misnamed = tables.fetch('services').find do |row|
+          row.fetch('server') == system && (row.fetch('interface') == interface) != (row.fetch('name') == 'line')
+        end
+        if misnamed
+          invalid("the system domain's service #{misnamed.fetch('name')} is named line exactly when it is of the line " \
+                  'interface', 8, 'service.name')
         end
         grants = facets.zip(values).select { |row, _| line.call(tables.fetch('services').fetch(row.fetch('service'))) }
         console = @context.platform['console']

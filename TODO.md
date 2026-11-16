@@ -7930,22 +7930,29 @@ document's "residual risks accepted" paragraph.
 
 * [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the line tree,
   `erx_line_fs`, and its keeper, `erx_line`, run in their UART's line group under `erx_uart_sup`, which starts the
-  keeper on the root's `line` record with the rate and flow of the grant of the system domain's service of the line
-  interface (`erx_uart_sup:line_grants/1`) and `init => fresh`; the keeper starts the tree's grants. Missing:
-  serving them. `erx_facet:serve(line, Grants)` in `erx_line:init/1` waits for a manifest that declares a `service`
-  of the line interface and grants it, which adding the Bluetooth domain to a board manifest brings; until then the
-  facet-names chokepoint (`tools/lib/erx/facet_names.rb`) rightly refuses the call, so it and its seeded fault in
-  `test/host/erx_line_test.rb` (the keeper that serves no service) land with that manifest. The served name is then
-  the manifest's: the system side finds the service by interface, but the facet-names check takes a literal name at
-  `erx_facet:serve/2`, and the grantee mounts by name (`erx_ns:place/1` places `line` at `/line`, and
-  `erx:granted/0` carries names alone), so a line service named otherwise is mounted nowhere until the ready answer
-  carries each granted facet's interface or the manifest check fixes the line service's name. With no grant, no boot
+  keeper on the root's `line` record with the rate and flow of the grant of the system domain's service named
+  `line` (`erx_uart_sup:line_grants/1`) and `init => fresh`; the keeper starts the tree's grants. The manifest check
+  names the line interface's service `line` (property 8), the one name of that lookup, the serve call, the
+  facet-names check and the grantee's mount (`erx_ns:place/1`); the name is a literal in each of those and in
+  `check_line_grants`, not one generated fact (declare it in `abi/services/line.txt`, as `packages_service` is in
+  `abi/manifest.txt`). Missing: serving them. `erx_facet:serve(line,
+  Grants)` in `erx_line:init/1` waits for a manifest that declares the `line` service and grants it, which adding
+  the Bluetooth domain to a board manifest brings; until then the facet-names chokepoint
+  (`tools/lib/erx/facet_names.rb`) rightly refuses the call, so it and its seeded fault in
+  `test/host/erx_line_test.rb` (the keeper that serves no service) land with that manifest. With no grant, no boot
   runs the line tree over a UART and the controller group still runs only over a model line. Also missing: the
   power line's steps 2 and 4 of a reset, which `erx_line` does not run, as on a platform with no power line.
   Property 8 and design-bluetooth.md give the line service one tree for each grant of `line`, but the manifest
   check (`check_line_grants` in `tools/lib/erx/manifest.rb`) admits at most one `line` facet in a manifest, since
   the design leaves open how the one process `erx_facet:serve/2` names reaches the tree of each grant when several
   grants name different UARTs; settle that and lift the limit.
+* [Low] domain service, `served_kind/2` (`erlang/apps/erx_domain/src/erx_domain_srv.erl`, `init`): `Trees` lists the
+  tree services of every server but is asked only about the system domain's, by name, so a configured domain's tree
+  service named `log` or `inspect` makes the system's message service of that name minted as a tree grant, which
+  fails and leaves the grantee without the facet; build it from `{system, Name, Interface}` rows, with a test.
+* [Low] line groups (`erx_uart_sup:fresh/2`): a manifest binary whose line-interface service is not named `line`,
+  which the manifest check refuses but the root's reader does not, gives a line record with no grant and a badmatch
+  that stops `erx_uart`; refuse it with a stated reason.
 * [Medium] bluetooth, line groups couple the host link to the line tree at the limits
   (`erlang/apps/erx_uart/src/erx_uart_sup.erl`): each level (top, group, services) allows 3 restarts in 60 s, so a
   line tree's crash loop exhausts its `services` supervisor, whose restart restarts the host link and ends its

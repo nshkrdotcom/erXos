@@ -10,7 +10,7 @@ require_relative '../fixtures/erlang_build'
 # Runs test/erlang/erx_uart_sup_tests.erl, the cases of the line groups (erx_uart_sup):
 # one group, and so one owner, for each interrupt line the system domain's host link and
 # line UARTs use (docs/design-shared-devices.md, "Lines inside a domain"), and seeds that
-# give one line two groups and take the line grants by the service's name.
+# give one line two groups and take a configured domain's line service's grants.
 class ErxUartSupTest < Minitest::Test
   APPLICATIONS = %w[erx_uart].freeze
   TESTS = %w[test/erlang/erx_uart_sup_tests.erl].freeze
@@ -33,14 +33,14 @@ class ErxUartSupTest < Minitest::Test
     assert_match(/one_owner_binds_a_shared_line_test[^\n]*\*failed\*/, output)
   end
 
-  # The grants of the service named line, not of the services of the line interface.
-  def test_line_grants_by_name_fail_the_interface_case
+  # The grants of a service named line whatever its server, a configured domain's too.
+  def test_line_grants_of_any_server_fail_the_server_case
     source = File.binread(File.join(ErlangBuild::ROOT, SUP))
-    anchor = '{_Grantee, Name, system, #{uart := Uart} = Grant} <- Grants, lists:member(Name, Lines)}.'
+    anchor = '{_Grantee, line, system, #{uart := Uart} = Grant} <- Grants}.'
     assert_equal 1, source.scan(anchor).size
-    output, status = run_cases({ SUP => source.sub(anchor) { '{_Grantee, line, system, #{uart := Uart} = Grant} <- Grants, Lines =/= x}.' } })
+    output, status = run_cases({ SUP => source.sub(anchor) { '{_Grantee, line, _Server, #{uart := Uart} = Grant} <- Grants}.' } })
     refute status.success?, 'the cases passed'
-    assert_match(/line_grants_follow_the_interface_test[^\n]*\*failed\*/, output)
+    assert_match(/line_grants_are_the_system_s_line_service_s_test[^\n]*\*failed\*/, output)
   end
 
   private

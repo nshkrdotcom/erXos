@@ -7,7 +7,6 @@
 -module(erx_uart_sup_tests).
 
 -include_lib("eunit/include/eunit.hrl").
--include("generated/erx_abi.hrl").
 
 uart(Path, Line) ->
     #{peripheral => pl011, path => Path, window => {physical, 16#9040000, 4096}, lines => [Line], clock => 24000000,
@@ -34,13 +33,11 @@ uarts_on_two_lines_are_two_groups_test() ->
     {ok, {_, Children}} = erx_uart_sup:init({group, [Hostlink]}),
     ?assertEqual([services], [Id || #{id := Id} <- Children]).
 
-%% The line grants are those of the services the system domain serves of the line
-%% interface, whatever the manifest names them, and no grant of a service of that name
-%% of another interface or server.
-line_grants_follow_the_interface_test() ->
+%% The line grants are those of the system domain's service named line, the name the
+%% manifest check gives the line interface's service, and none of a configured domain's
+%% service of that name or of another of the system domain's services.
+line_grants_are_the_system_s_line_service_s_test() ->
     Grant = #{uart => 3, rate => 115200, flow => <<"rts_cts">>},
-    Configured = #{services => [{system, bt_line, ?ERX_SERVICE_LINE}, {system, line, ?ERX_SERVICE_FILES},
-                                {0, uart, ?ERX_SERVICE_LINE}],
-                   grants => [{1, bt_line, system, Grant}, {1, line, system, Grant#{uart => 4}},
-                              {1, uart, 0, Grant#{uart => 5}}]},
+    Configured = #{grants => [{1, line, system, Grant}, {1, line, 0, Grant#{uart => 4}},
+                              {1, uart, system, Grant#{uart => 5}}]},
     ?assertEqual(#{3 => Grant}, erx_uart_sup:line_grants(Configured)).

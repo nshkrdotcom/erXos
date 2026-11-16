@@ -29,8 +29,6 @@ group.
 """.
 -behaviour(supervisor).
 
--include("generated/erx_abi.hrl").
-
 -export([start_link/0, groups/1, line_grants/1]).
 -export([init/1]).
 
@@ -103,16 +101,15 @@ flow(<<"rts_cts">>) -> rts_cts.
 
 -doc """
 The grants of Configured, what erx_domain_lib:configured/0 reads of the
-system manifest, of each service the system domain serves of the line
-interface, whatever the manifest names it, by the device row their uart
-names. Pure.
+system manifest, of the system domain's service named line, by the device
+row their uart names: the manifest check names the line interface's service
+line, the one name of its lookup, its serve call and its grantees' mount
+(docs/design-system.md, property 8). Pure.
 """.
--spec line_grants(#{services := [{non_neg_integer() | system, atom(), non_neg_integer()}],
-                    grants := [{term(), atom(), non_neg_integer() | system, map()}], atom() => term()}) ->
+-spec line_grants(#{grants := [{term(), atom(), non_neg_integer() | system, map()}], atom() => term()}) ->
           #{non_neg_integer() => map()}.
-line_grants(#{services := Services, grants := Grants}) ->
-    Lines = [Name || {system, Name, ?ERX_SERVICE_LINE} <- Services],
-    #{Uart => Grant || {_Grantee, Name, system, #{uart := Uart} = Grant} <- Grants, lists:member(Name, Lines)}.
+line_grants(#{grants := Grants}) ->
+    #{Uart => Grant || {_Grantee, line, system, #{uart := Uart} = Grant} <- Grants}.
 
 one(Role) ->
     case erx_device_record:find(Role, pl011) of

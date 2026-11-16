@@ -421,7 +421,7 @@ no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files
 `crypto` and `erx_bt`. Its manifest row holds:
 
 * one grant of the `line` interface, which the system domain's line
-  service serves, its parameters naming the controller's UART
+  service serves as its service named `line`, its parameters naming the controller's UART
   ([The controller's line](#the-controllers-line));
 * its arguments: the advertised name (the machine's host name by
   default), the appearance, the connection limit (1 by default, at most

@@ -1161,6 +1161,19 @@ class ManifestDomainsTest < Minitest::Test
                  /only the system domain serves the line/)
   end
 
+  # The line interface's service is named line, the one name its lookup (erx_uart_sup),
+  # its serve call, the facet-names check and its grantees' mount (erx_ns, /line) take.
+  # Seeds: the line service named bt_line, and a system service named line of another
+  # interface.
+  def test_the_line_interface_s_service_is_named_line
+    grant = with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'))
+    admit(grant, context: line_context)
+    refused_line(8, 'service.name', grant.sub("service line\n", "service bt_line\n").sub('@service.line', '@service.bt_line'),
+                 /bt_line is named line exactly when it is of the line interface/)
+    refused_line(8, 'service.name', with_line.sub("interface line\n", "interface net\n"),
+                 /service line is named line exactly when/)
+  end
+
   # Seeds: two grants of one UART; two line grants of different UARTs, since one line
   # service serves one line (TODO.md); and a grant to a session template.
   def test_a_manifest_grants_one_line_to_a_configured_domain
