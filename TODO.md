@@ -183,8 +183,9 @@ it; git history is the record of completed work.
   system domain still reaches root's shell about 3.2 times sooner under TCG (the measurement and the order
   of work are in [todo-performance.md](docs/todo-performance.md), "every domain loads its own kernel and
   stdlib"; raw logs in ~/erxos-history/boot-slow-2026-11-11 and boot-fast-2026-11-11).
-  Order of work: first measure a session's pages at its prompt, with the funnel's scratch sized by frame, which replaces
-  the design's memory estimates; then build the image if the adopters and that measurement still call for it.
+  Order of work: first measure a session's pages at its prompt, with the funnel's scratch sized by frame,
+  which replaces the design's memory estimates; then build the image if the adopters and that measurement
+  still call for it.
 * [Medium] architecture: evaluate the remaining
   [simplification candidates](docs/todo-simplification.md), recording for
   each the mechanism it removes, its cost and the evidence needed to adopt
@@ -4054,7 +4055,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the machine's end is only its last step. design-system.md "Shutting down" also has
   `erx_dom_end_begin` with its ending record and absolute deadline, which the fault thread
   enforces; no domain created or restarted once the end has begun; the vault's quiesce and
-  the storage freeze (the durability facet's checkpoint and freeze, which `erx_lfs` does not serve), with the end chosen from their outcomes. The coordinator's one entry,
+  the storage freeze (the durability facet's checkpoint and freeze, which `erx_lfs` does not serve), with
+  the end chosen from their outcomes. The coordinator's one entry,
   `erx_machine:request/2`, takes `reboot` and `halt` from the system shell and from a
   session's `/machine/ctl`, writes the one log line and answers a second request `busy`, but
   it keeps the accepted request in its own state in place of the ending record and then asks

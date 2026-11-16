@@ -197,7 +197,7 @@ does. `ERX_BOOT_TREE_MAX` is 1 MiB, a limit of `abi/kernel.txt`, many
 times the packed tree of either platform.
 
 The handoff record gains two fields after its last, `tree_start` and
-`tree_size`, each a `u64`, so the record grows from 2,408 to 2,424 bytes;
+`tree_size`, each a `u64`;
 `erx_boot_handoff_accept` refuses, with the reason `tree_range`, a start
 that is not page-aligned, a length of 0 or above `ERX_BOOT_TREE_MAX`, or a
 range whose end overflows. The view it returns carries the range. In its

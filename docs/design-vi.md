@@ -213,7 +213,7 @@ search being typed, the last message, and `Insert` at its right end
 while inserting. A message longer than the row is cut at a character
 boundary. `^G` and `:f` show `FILE: [Modified] line L of N --P%--`, with
 `[Modified]` only when the buffer has changes and `[New file]` for a file
-that does not exist yet.
+that does not exist.
 
 **Differences from nvi**, each a choice for this version and each pinned
 by a test:

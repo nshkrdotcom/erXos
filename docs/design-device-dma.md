@@ -314,7 +314,7 @@ index, then each used entry it covers; GENET's receive completion reads
 the producer index, then the status of each descriptor it covers, at
 most the queue's size; GENET's transmit completion reads the consumer
 index; ADMA2's reads `interrupt`. A value out of its bound breaks the
-queue, as a malformed used entry does today.
+queue, as a malformed used entry does.
 
 A plan is a list over a closed set of steps:
 
@@ -504,7 +504,7 @@ range above.
 it can change an address the device uses, how many bytes the device moves
 at an address, which descriptors the device takes as valid, how it reads
 a descriptor, or how it reports the end of a transfer the NIF tracks.
-The SVD source marks each register `ownedByNif`, as it does today, and
+The SVD source marks each register `ownedByNif`, and
 may instead mark single fields of a register; the generator refuses a
 register with neither. A wholly owned register is refused to `write/3`
 and `write_field/4`, as now. For a register with an owned field,

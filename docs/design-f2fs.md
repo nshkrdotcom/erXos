@@ -3,7 +3,7 @@
 erXos's main read-write file system is F2FS, Linux's flash file system,
 implemented afresh in Erlang and supported at tier 1. It serves the data
 partition and the vault's partition behind the `erx_fs` interface that
-littlefs serves today, and it writes and reads Linux's on-disk format: an
+littlefs serves, and it writes and reads Linux's on-disk format: an
 image erXos writes passes `fsck.f2fs` and mounts in Linux, Linux replays
 the roll-forward records of the files erXos synced, and erXos mounts what
 Linux and `mkfs.f2fs` write, replaying Linux's records in turn. This

@@ -461,7 +461,7 @@ decision, and the SDIO host takes only the first:
   whose CMD52 and CMD53 answer R5 and whose counted CMD53 needs no stop
   command (SDIO 5.3.1, p.39), so the SDIO host never runs it.
 
-The one change is to the wait: its data track, today one block
+The one change is to the wait: its data track, which names one block
 (`{read | write, Size, 1}`), takes a count of blocks, from 1 to 511, so a
 block-mode CMD53 is one command's wait with that many buffer events
 before transfer complete; EMMC2's identification commands keep their
