@@ -45,19 +45,15 @@ that proves the code under test ran.
   fid's grant, which mounts a session-written `/tmp` file once `/tmp` is
   bound at `/apps`; a resolution that keeps the rights a facet's mount
   asked, which runs a file written under an `rx` mount of `data`.
-* [High] packaging, uploads apart from installed packages (`erx_pkg_io`,
-  `erx_lfs`, property 19): the `packages` tree's `new/` and `installed/`,
-  an upload's `tmp.K` in `new/` renamed into `installed/`, the recovery
-  removing `new/tmp.K` by name and listing `installed/`. The `tree`
-  parameter of the files interface (`files_tree`), the app template's
-  derived `packages` row `rights rx` and `tree installed`, its grant
-  rooted at `installed/` (`erx_lfs:subtree/2`) and the system domain's
-  listing of `/packages/installed` are in place, so no `rx` grant reaches
-  `new/`; what remains is the upload path that writes there. Test: the
-  package mounts' row, a walk of `new` and of `../new/tmp.K` through the
-  app's grant during an upload answering `enoent`, which
-  `erx_littlefs_tests`'s `a_tree_reaches_only_its_own` checks of a file
-  in `new/` without the upload process.
+* [High] packaging, the upload path (`erx_pkg_io`, `erx_lfs`): an
+  upload's `tmp.K` written in the `packages` tree's `new/` and renamed
+  into `installed/`, and the recovery removing `new/tmp.K` by name and
+  listing `installed/`. The app template's `packages` grant is `rx` and
+  rooted at `installed/` (`erx_lfs:subtree/3`), so it never reaches
+  `new/`. Test: the package mounts' row, a walk of `new` and of
+  `../new/tmp.K` through the app's grant during an upload answering
+  `enoent`, as `erx_littlefs_tests`'s `a_tree_reaches_only_its_own`
+  checks of a file in `new/` without the upload process.
 * [High] build, the boot image rule (`tools/lib/erx/production_image.rb`):
   a packer check that every file of the boot image is an artifact a
   manifest row names by its role (the kernel, the root, the system release
