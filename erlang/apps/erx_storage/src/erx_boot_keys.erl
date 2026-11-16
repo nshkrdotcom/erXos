@@ -34,7 +34,7 @@ reaches a log. A refusal leaves the decoder through one throw,
 
 -include("generated/erx_abi.hrl").
 
--export([decode/1]).
+-export([decode/1, file_max/0]).
 -export_type([blob/0, finding/0, refusal/0]).
 
 %% The key blob's layout, as erx_ssh_wire reads it from the generated values of
@@ -70,6 +70,10 @@ decode(File) ->
     end.
 
 refuse(Refusal) -> throw({?MODULE, Refusal}).
+
+-doc "The bound on the file, in bytes: a longer file is refused `too_long`.".
+-spec file_max() -> pos_integer().
+file_max() -> ?FILE_MAX.
 
 %% The cursor over the file's lines: File is what follows the end of line Number - 1.
 lines(<<>>, _Number, Keys, Findings) ->

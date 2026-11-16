@@ -12,7 +12,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(NAME, <<"authorized_keys">>).
--define(MAX, 16384).
 
 path(Volume, Extension) -> filename:join(os:getenv("ERX_FAT_VOLUMES"), Volume ++ Extension).
 
@@ -24,7 +23,7 @@ reader(Volume) ->
        (_Sector) -> {error, outside}
     end.
 
-read(Volume) -> erx_fat_read:root_file(reader(Volume), ?NAME, ?MAX).
+read(Volume) -> erx_fat_read:root_file(reader(Volume), ?NAME, erx_boot_keys:file_max()).
 
 contents(Volume) ->
     {ok, Bytes} = file:read_file(path(Volume, ".file")),
@@ -36,7 +35,7 @@ the_file_is_found_by_its_long_name_across_its_chain_test() ->
 the_long_name_is_compared_without_regard_to_case_test() ->
     ?assertEqual({ok, contents("upper")}, read("upper")),
     ?assertEqual({ok, contents("found")},
-                 erx_fat_read:root_file(reader("found"), <<"Authorized_Keys">>, ?MAX)).
+                 erx_fat_read:root_file(reader("found"), <<"Authorized_Keys">>, erx_boot_keys:file_max())).
 
 the_slack_of_the_last_cluster_is_not_answered_test() ->
     Contents = contents("slack"),
@@ -93,16 +92,21 @@ a_volume_not_laid_out_as_the_record_partition_is_refused_test() ->
 
 a_failed_sector_read_ends_the_reader_test() ->
     Read = reader("found"),
-    ?assertEqual({error, read_failed}, erx_fat_read:root_file(fun(_) -> {error, eio} end, ?NAME, ?MAX)),
+    ?assertEqual({error, read_failed}, erx_fat_read:root_file(fun(_) -> {error, eio} end, ?NAME, erx_boot_keys:file_max())),
     ?assertEqual({error, read_failed},
-                 erx_fat_read:root_file(fun(0) -> Read(0); (_) -> {error, eio} end, ?NAME, ?MAX)).
+                 erx_fat_read:root_file(fun(0) -> Read(0); (_) -> {error, eio} end, ?NAME, erx_boot_keys:file_max())).
 
 a_short_sector_is_a_failed_read_test() ->
     Read = reader("found"),
     ?assertEqual({error, read_failed},
                  erx_fat_read:root_file(fun(S) -> {ok, Bytes} = Read(S), {ok, binary:part(Bytes, 0, 511)} end,
-                                        ?NAME, ?MAX)).
+                                        ?NAME, erx_boot_keys:file_max())).
 
 the_answer_is_its_own_copy_test() ->
     {ok, Bytes} = read("slack"),
     ?assertEqual(100, binary:referenced_byte_size(Bytes)).
+
+%% The record volume the medium build has fsimg write (Erx::PiMedium::RECORD_VOLUME) is
+%% admitted as its FAT volume and holds no authorized_keys.
+the_record_volume_fsimg_writes_holds_no_authorized_keys_test() ->
+    ?assertEqual({error, not_found}, read("fsimg_record")).

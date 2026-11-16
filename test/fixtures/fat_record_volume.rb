@@ -137,6 +137,9 @@ module FatRecordVolume
   SLACK = "#{'#' * 99}\n".freeze
   FULL = ("#{'#' * 511}\n" * 32).freeze
 
+  SEVENTEEN = (1..17).map { |seed| key_line(seed) }.join.freeze
+  SKIPPED = (key_line(1) + "ssh-rsa AAAAB3NzaC1yc2E root@host\n" + key_line(2)).freeze
+
   def keys(**options) = file(long: 'authorized_keys', contents: KEYS, clusters: [FREE + 5, FREE + 1, FREE + 9], **options)
 
   def one(clusters, **options) = volume(files: [keys(clusters: clusters, **options)])
@@ -185,6 +188,8 @@ module FatRecordVolume
     'straddle' => volume(files: [*SHORT_ONLY, keys]),
     'out_of_order' => volume(files: [out_of_order]),
     'small_fat' => volume(files: [keys], bpb: { fat_sectors: FAT_SECTORS - 1, reserved: RESERVED + FATS }),
+    'too_many_keys' => volume(files: [file(long: 'authorized_keys', contents: SEVENTEEN, clusters: (FREE...FREE + 4).to_a)]),
+    'skipped_line' => volume(files: [file(long: 'authorized_keys', contents: SKIPPED, clusters: [FREE])]),
     'blank' => {}
   }.freeze
 
