@@ -91,7 +91,7 @@ setup(Options) ->
 %% admission refuses the package of that name; and the image's package
 %% dashboard.
 manifest() ->
-    #{apps => #{memory => 128 * ?MIB, max => 8, packages_row => 0,
+    #{apps => #{memory => 128 * ?MIB, max => 8, packages_row => 0, system_row => none,
                 services => [#{name => <<"display">>, windows => true, row => 1},
                              #{name => <<"data">>, windows => false, row => 2}]},
       reserved => [<<"system">>, <<"other">>],

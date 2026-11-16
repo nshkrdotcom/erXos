@@ -2278,7 +2278,7 @@ the kernel watchdog's period and cannot extend its deadline.
 | partial-boot program, 16 | `0: name str`; `8: image u32`; `12: reserved u32` |
 | start row, 24 | `0: principal u32`; `4: flags u32` (enabled at bit 0); `8: display u32` (a service index or `mf_none`); `12: restarts u32`; `16: restart_period_s u32` (from 1); `20: reserved u32` |
 | display, 16 | `0: service u32`; `4: policy u32`; `8: idle_dim_s u32`; `12: idle_off_s u32` |
-| apps row, 32 | `0: memory u64` (from 1); `8: max u32` (1 to `apps_max_limit`); `12: app_template u32` (a session index); `16: packages_facet u32` (a facet index); `20: system_facet u32` (a facet index); `24: services span` (of `app_services`) |
+| apps row, 32 | `0: memory u64` (from 1); `8: max u32` (1 to `apps_max_limit`); `12: app_template u32` (a session index); `16: packages_facet u32` (a facet index); `20: system_facet u32` (a facet index, or `0xffffffff` in a manifest that holds no `system_service`); `24: services span` (of `app_services`) |
 | app service, 8 | `0: service u32` (a service index); `4: facet u32` (a facet index) |
 | package, 44 | `0: name str` (an identifier); `8: flags u32` (enabled at bit 0); `12: sha256 u8[32]`, its header's SHA-256 |
 | signer, 40 | `0: name str` (an identifier); `8: key u8[signer_key_bytes]`, an Ed25519 public key |

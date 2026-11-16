@@ -12,7 +12,9 @@ checks every count, span, index and string before a field is read:
   or `none` when the manifest has no row and the machine takes no
   packages. Beside the row's budget and max, it holds the rows of the app
   template the row names: the facet row granted to it for the service
-  named `packages_service`, and for each service of the row, its name,
+  named `packages_service`, the one granted to it for the service named
+  `system_service`, or `none` in a manifest that holds no such service,
+  and for each service of the row, its name,
   whether its interface is `windows`, and the facet row granted to the
   template for it, each an index the build packed in the row and the
   boot view checked (docs/design-packaging.md, "The template's rows by
@@ -82,13 +84,19 @@ config(Manifest) ->
 %% app_services, so the row's services are that table's rows.
 apps(_View, []) ->
     none;
-apps(View, [#{memory := Memory, max := Max, packages_facet := Packages}]) ->
+apps(View, [#{memory := Memory, max := Max, packages_facet := Packages, system_facet := System}]) ->
     Services = list_to_tuple(rows(View, services)),
     #{memory => Memory,
       max => Max,
       packages_row => Packages,
+      system_row => system_row(System),
       services => [service(View, element(Index + 1, Services), Facet)
                    || #{service := Index, facet := Facet} <- rows(View, app_services)]}.
+
+%% The template's grant of the `system` tree, none in a manifest that holds no
+%% service named `system_service`.
+system_row(?ERX_MF_NONE) -> none;
+system_row(Row) -> Row.
 
 service(View, #{interface := Interface} = Row, Facet) ->
     #{name => name(View, Row),

@@ -48,12 +48,13 @@ and the index of the app template's facet row that grants it.
 
 -doc """
 The `apps` row: the budget all apps share, how many apps a boot holds, the
-index of the app template's `packages` row, and the services an app may
-need.
+index of the app template's `packages` row and of its `system` row, `none`
+in a manifest with no `system` tree, and the services an app may need.
 """.
 -type apps() :: #{memory := pos_integer(),
                   max := pos_integer(),
                   packages_row := non_neg_integer(),
+                  system_row := none | non_neg_integer(),
                   services := [service()]}.
 
 -doc """
@@ -71,8 +72,8 @@ domains, services and facet rows; and the names of the image's packages.
 
 -doc """
 What an admitted package holds: the indices of the app template's facet
-rows its session keeps, the `packages` row and one row for each need,
-ascending; its start row's display, its one `windows` need if it has
+rows its session keeps, the `packages` row, the `system` row where the
+manifest has one, and one row for each need, ascending; its start row's display, its one `windows` need if it has
 exactly one and `none` otherwise; its declared memory, which its sessions'
 own budgets hold; and the signer the file check named, which registration
 records in the registry for `check_entry` to compare. It holds no entry:
@@ -113,14 +114,15 @@ admit(Checked, Manifest, Registry) ->
 admitted(#{header := #{name := Name, memory := Memory, needs := Needs} = Header,
            signer := Signer},
          #{apps := AppsRow} = Manifest, Registry) ->
-    #{memory := Budget, max := Max, packages_row := PackagesRow,
+    #{memory := Budget, max := Max, packages_row := PackagesRow, system_row := SystemRow,
       services := Offered} = check_apps(AppsRow),
     check_built_for_image(Header),
     check_name(Name, Signer, Manifest),
     check_entry(Name, Signer, Max, Registry),
     check_memory(Memory, Budget),
     Kept = check_needs(Needs, Offered),
-    #{rows => lists:sort([PackagesRow | [Row || #{row := Row} <- Kept]]),
+    #{rows => lists:sort([PackagesRow | [Row || Row <- [SystemRow], Row =/= none]] ++
+                             [Row || #{row := Row} <- Kept]),
       display => display([Service || #{name := Service,
                                        windows := true} <- Kept]),
       memory => Memory,

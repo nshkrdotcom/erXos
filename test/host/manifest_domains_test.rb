@@ -1022,7 +1022,7 @@ class ManifestDomainsTest < Minitest::Test
     admitted = admit(source)
     assert_equal true, admitted.report.fetch('development_key')
     view = @codec.open('manifest', admitted.bytes)
-    assert_equal [{ 'memory' => 1 << 20, 'max' => 2, 'reserved' => 0 }],
+    assert_equal [{ 'memory' => 1 << 20, 'max' => 2, 'system_facet' => @codec.constant('mf_none') }],
                  view.each('apps').map { |row| row.except('services', 'app_template', 'packages_facet') }
     assert_equal 0, view.header.fetch('app_services').fetch('count')
     assert_equal [['clock', 1, "\xab".b * 32], ['quotes', 0, "\xab".b * 32]],
