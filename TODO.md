@@ -2140,10 +2140,25 @@ it; git history is the record of completed work.
   `call/2`), so a client reading `kbd` on a hidden window cannot clunk or flush it, and a program's `/dev/kbd` and
   `/dev/mouse` reads, which `erx_session_export:read/4` relays by a synchronous `erx_win:read_at/4`
   (`erlang/apps/erx_session/src/erx_session_export.erl:308, 318`), where design-files.md ("A program's window") has
-  the window's draw connection keep them, sending each with `erx_win:send_read/4` and its flush with
-  `erx_win:send_flush/2`, which `erx_win` does not have yet, and making image 0 anew itself for an `r` record. Once
-  built, `erx_window` and `erx_draw_conn` keep those requests in `erx_fs_waits`, bounded by each grant's 64 requests
-  in flight.
+  the window's draw connection keep them, sending each with `erx_win:send_read/4`, which answers an opaque request
+  id, taking its reply with `erx_win:reply/2` and its flush with `erx_win:send_flush/2`, all three over
+  `erx_file_remote`'s exchange, which `erx_win` does not have yet, and making image 0 anew itself for an `r` record.
+  Once built, `erx_window` and `erx_draw_conn` keep those requests in `erx_fs_waits`, bounded by each grant's 64
+  requests in flight. The same change admits a clunk or `remove` at any bound and keeps the fid's number until the
+  clunk is answered, answers a flush of a waiting clunk after it, has a grant whose client ended drain, and has the
+  program's handler end at its draw connection's end (`erx_session_export:start_window/1`), so the handler, the
+  connection, the `/dev` grant and the window share one life, as design-files.md's rule 5, "What waiting holds" and
+  "Ownership and lifetime" state. `erx_fs_locks`, the tree's lock table, does not exist yet (the grant serves no
+  lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants` supervises it and its grants' supervisor
+  `rest_for_one`, as design-files.md ("Locks") has it.
+* [Medium] Bluetooth line, held `data` writes (design-bluetooth.md, "The controller's line"): a write the line has
+  handed `erx_pl011` while the controller holds CTS off under `rts_cts` flow waits on the device with no deadline, so its
+  flush, its fid's clunk and the drain of a grant whose Bluetooth domain ended wait until the line's next `reset`, which
+  an idle domain, or one ended past its restart intensity, never sends. Give the driver's write a deadline that ends the
+  driver and answers `eio`, or bound it by the controller's 5 s command deadline.
+* [Medium] files, a lock table's end (design-files.md, "Locks"): `erx_fs_grants` ends every grant of its tree with the
+  table, the system domain's own grants included, which are not remounted (the `own/1,2` item below), and the table's
+  `max_heap_size` is not derived from a bound on the grants it serves. Name that bound and the heap it gives.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grants.erl`: the per-grant `Args` (`start_link/2`, `grant/4`) are not named by
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
@@ -4481,6 +4496,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   volume or, with a request of a volume of its own, writes any sector of the data window;
   a forged `done` answers one client's request with another's result. Tie each request to
   its volume in the NIF and tag each run with a fresh reference.
+* [High] storage, littlefs: one open does not see another's writes. Each open is a littlefs file of its own
+  (`lfs_file_t` in its slot), a write changes only the file it was made through
+  (`otp/erts/emulator/nifs/erxos/erx_littlefs_nif.c:707`), and a read through another open of the same file stops at
+  that open's own recorded size and block chain (`littlefs/lfs.c:3505`), so running the volume's calls one at a time
+  in its worker does not show one open's write to another. design-files.md ("Serving", "Each tree makes its own
+  requests atomic") requires every open to see the file as it is, with only its access mode and position its own, and
+  OTP's `file_SUITE` checks it through a reader opened before the writes
+  (`otp/lib/kernel/test/file_SUITE.erl:3393-3397, 3516-3520`). Make the file's state shared across its opens in the
+  port, keeping access modes and positions per open, with tests of two opens reading and writing one file, disjoint
+  writes, a truncate and appends from both, regression first.
 * [Medium] storage, littlefs: a crafted image whose directory tail points back at itself,
   off the list mount checks, makes `lfs_dir_find` and `lfs_dir_read` loop forever on a
   dirty I/O thread, and every caller of `/data` waits with it (`erx_lfs` calls have no

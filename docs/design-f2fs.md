@@ -459,14 +459,18 @@ the domain's supervisor, with two kinds of process:
   the volume process's pid and a reference made at its start.
 
 A grant's requests reach the volume concurrently with every other
-grant's; the volume interleaves their block requests, and it makes each
-request atomic, which design-files.md leaves to each tree
-([design-files.md](design-files.md#open-files-and-offsets)): it runs one
-request of a file that reads or changes its bytes or its size at a
-time, a read, a write, a size change or a truncate, and holds a later
-one of the same file, from any grant, until the one under way has
-answered. So the volume never runs two writes of one file at once, and
-no read sees part of a write.
+grant's, and the volume makes each request atomic, which design-files.md
+leaves to each tree
+([design-files.md](design-files.md#open-files-and-offsets)), by running
+one complete request at a time: it takes the next request, from any
+grant, only once the one under way has answered. Between the steps of
+the request under way it takes the window's answers to its block
+requests, which arrive as messages, and runs steps of its own, a
+checkpoint and cleaning, as a long truncate's checkpoint and
+foreground cleaning need, but no other client's request. So no two requests of the volume ever interleave,
+no read sees part of a write, and the volume keeps no order of its own
+for a file's requests. Running requests of different files at once is a
+measured question ([todo-performance.md](todo-performance.md)).
 The volume is linked to its supervisor, which runs at a restart
 intensity of 0 as littlefs's does: the end of the volume process, for a
 bug, a failed write or a failed flush, ends the storage domain, and the
@@ -680,7 +684,7 @@ the slots and nodes past it through the same functions; a truncate to a
 block boundary needs no write. A truncate that frees many nodes sets the
 size and rewrites that block in its first step, frees at most 64 nodes
 in each step after it, and answers after its last, and the volume runs
-no other request of the file meanwhile
+no other request meanwhile
 ([Processes and ownership](#processes-and-ownership)). A checkpoint
 between its steps commits nodes past the size still mapped, which no
 read reaches and `fsck.f2fs` does not check ([T 61]), and a cut there
@@ -693,7 +697,7 @@ through the same truncate. Such a step is a size raise by `setattr`, or
 a write that starts past the block holding the old size; a write that
 starts in that block or below it merges zeros, not the old block's
 bytes, wherever its block lies at or past the old size. The volume runs
-one request of a file at a time, so nothing maps a slot of the file
+one request at a time, so nothing maps a slot of the file
 between the truncate and the raise. Normally nothing lies past the old
 size, and the truncate reads only the path to it, which the raise needs
 anyway. So an extension shows zeros, after a restart as before one, as
@@ -2272,7 +2276,6 @@ Each pairs a passing case with a seeded fault that must fail it:
 | the walk on a looped chain fails within its bound | the bound removed |
 | at every format size, filling to the space and churning keeps `need` covered and the cleaner freeing segments, the fragmented pattern measured | victims restricted to full segments |
 | repeated mounts of a busy volume keep the room rule | the mount checkpoint moving every log to a free segment |
-| two grants writing one file's same block range at once, and one reading it, each of 64 KiB of one byte value: every read answers one write's bytes whole, and the file ends with one of them whole | a volume that runs a file's requests as they arrive, which a read finds holding two writes' bytes |
 
 ## Performance
 

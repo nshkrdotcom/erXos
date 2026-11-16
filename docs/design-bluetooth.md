@@ -504,10 +504,32 @@ A request the line has begun is answered with what it did, flushed or
 not ([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
 "Waiting requests", rule 3): a `reset` is begun at its first step, since
 stopping the driver already changes the line, and is answered when its
-last step is done, after at most the off and on times of [The power
-line](#the-power-line); a `data` write is begun once its bytes are
-handed to the driver, and is answered with its count when the driver
-has taken them. A read waiting for bytes, and a write waiting behind a
+last step is done; a `data` write is begun once its bytes are handed to
+the driver, and is answered with its count when the driver has taken
+them. Each step of a reset waits on a timer of the line's or on a
+process it monitors, so a reset ends; a data write may not
+([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests", rule 4):
+
+* a `reset` waits for the old driver's end, then for two notifications
+  of [The power line](#the-power-line), each at most 1 s at the device
+  service's firmware worker once the worker's earlier requests, each at
+  most 1 s, have run, and for the off and on times, and the fresh
+  driver's start programs its registers without waiting; a notification
+  that fails or times out answers the `reset` `eio` before its next
+  step;
+* a `data` write waits for the driver, which may hold bytes for as long
+  as a controller holds CTS off under `rts_cts` flow. Such a write ends
+  at the line's next `reset`, whose first step ends the driver and
+  answers the write `eio`, and the controller's side writes one at
+  every restart: the controller group's, which a command left
+  unanswered for 5 s forces ([Failure handling](#failure-handling)),
+  and a restarted Bluetooth domain's bring-up, whose first step it is
+  ([The bring-up](#the-bring-up)). So a write a controller holds delays
+  its fid's clunk, and the end of a grant whose domain has ended, until
+  that reset.
+
+A read waiting for bytes, and a write waiting behind a
 `reset`, have begun nothing, and a flush or a clunk answers them `eintr`
 at once. The line keeps them in one `erx_fs_waits` set, at most the
 grant's 64 requests in flight, each a read's count or a write's bytes

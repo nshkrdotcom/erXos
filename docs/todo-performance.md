@@ -341,6 +341,17 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   second against littlefs; the fixes on the table are a write buffer per
   file held by the volume and drained by every checkpoint and `fsync`,
   and window requests larger than one block.
+* **[Medium] storage, F2FS runs one request of the volume at a time**
+  ([design-f2fs.md](design-f2fs.md#processes-and-ownership)): the volume
+  takes the next request, from any grant, only once the one under way
+  has answered, so a client reading one file waits behind another
+  client's long read, write or truncate of a different file, and the
+  block driver sees at most one request's blocks in flight. Settled by
+  `tools/erx bench fs` with two grants, one streaming 64 KiB reads of one
+  file and one appending to another, on QEMU under HVF and on the Pi 4's
+  SD card, reporting each client's throughput and worst latency against
+  either client alone; the fix on the table is running requests of
+  different files at once, ordered per file in the volume.
 * **[Low] storage, F2FS checkpoints without journals, the 512-block
   charge, and mount time** ([design-f2fs.md](design-f2fs.md#checkpoints)):
   every checkpoint writes whole NAT and SIT blocks for each changed entry,
