@@ -12,7 +12,7 @@ DOCKER_CONTEXT ?=
 
 .DEFAULT_GOAL := all
 
-.PHONY: all build run check check-sources status setup fetch check-tla check-cbmc check-litmus check-rc-oracle check-arch-terms
+.PHONY: all build run check check-sources status setup fetch check-tla check-cbmc check-litmus check-rc-oracle check-arch-terms check-fiasco-downsides
 .PHONY: oracle-bootstrap oracle-build check-oracle check-oracle-host check-oracle-hosted bench
 .PHONY: generate web pack
 .PHONY: check-reproducible check-fuzz check-sanitizers check-asan check-ubsan check-tsan
@@ -147,6 +147,9 @@ check-rc-oracle:
 
 check-arch-terms:
 	$(RUBY) tools/erx check-arch-terms
+
+check-fiasco-downsides:
+	$(RUBY) tools/erx check-fiasco-downsides
 
 check-stack-proof:
 	$(RUBY) tools/erx check-stack-proof
