@@ -28,6 +28,7 @@ class ErxFsTest < Minitest::Test
     test/erlang/erx_fs_stale_tree.erl
     test/erlang/erx_fs_tests.erl
     test/erlang/erx_fs_version_tests.erl
+    test/erlang/erx_fs_waits_tests.erl
     test/erlang/erx_lfs_mint_tests.erl
     test/erlang/stand_in/erx_dist.erl
     test/erlang/stand_in/erx_connections.erl
@@ -269,7 +270,7 @@ class ErxFsTest < Minitest::Test
       # EUnit's line for its test; the logger stays quiet so each verdict keeps its line.
       Open3.capture2e('gtimeout', '-k', '10', '300', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
                       'logger:set_primary_config(level, none), ' \
-                      'halt(case eunit:test([erx_fs_tests, erx_fs_version_tests, erx_lfs_mint_tests], [verbose]) ' \
+                      'halt(case eunit:test([erx_fs_tests, erx_fs_version_tests, erx_fs_waits_tests, erx_lfs_mint_tests], [verbose]) ' \
                       'of ok -> 0; _ -> 1 end)',
                       chdir: work, stdin_data: '')
     end
