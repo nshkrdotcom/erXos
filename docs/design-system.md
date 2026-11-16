@@ -661,16 +661,22 @@ violation fails the build with the property, the record and the field:
     session template, as many times as its principal's `domains` quota
     lets sessions of it live at once; the costs sum within the display
     domain's outer budget, since the display pays for every pixel area it
-    maps and every side it reads; and no facet row sets the `session`
+    maps and every side it reads; no facet row sets the `session`
     parameter, which the domain service alone sets
-    ([design-display.md](design-display.md#the-pixel-area)). Seeded
+    ([design-display.md](design-display.md#the-pixel-area)); and no
+    facet row turns `clipboard` on for a configured domain on a display
+    whose policy is `single`, which never shows a configured domain's
+    window, so that grant could never hold the window taking the
+    keyboard and use the clipboard
+    ([design-display.md](design-display.md#the-window-process)). Seeded
     violations: a check that counts a template's row once, which admits
     a template whose sessions together pass the budget; a facet row
     that sets `session`; a `windows` service with no `display`
     record, whose grants no sum would count; a check that sums
     each display alone, which admits a domain serving two displays
-    whose grants together pass its budget; and a facet row granting a
-    display to the system domain.
+    whose grants together pass its budget; a facet row granting a
+    display to the system domain; and a configured domain's row with
+    `clipboard` on a `single` display.
 
 Each property has a test that seeds one violation into a manifest and
 expects the build to fail with that property's diagnostic.
@@ -2587,10 +2593,12 @@ manifest's system-shell principals and its development flag
 grant's `session`, the session mark the domain service fixes for the
 display's session and copies into every mint of that grant
 ([design-display.md](design-display.md#the-pixel-area)); and the
-`machine` and `windows` grants' `principal`, the grantee's principal,
-which the tree's log line names ([A session's request](#a-sessions-request))
-and the display's trusted overlay shows for each window
-([design-display.md](design-display.md#windows-and-the-window-system)). A service that
+`machine`, `windows` and `inspect` grants' `principal`, the grantee's
+principal, which the tree's log line names ([A session's request](#a-sessions-request)),
+the display's trusted overlay shows for each window
+([design-display.md](design-display.md#windows-and-the-window-system))
+and the inspector reads to decide who sees a window's tree
+([design-live.md](design-live.md#inspection)). A service that
 needs a value only the domain service knows takes it the same way, never
 through a facet row or a protocol of its own.
 

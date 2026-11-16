@@ -1333,7 +1333,7 @@ For the desktop programs:
 * the cores of `stats`, `clock`, `month` and `files`, the theme's
   generator, the glyph step and `erx_mask`.
 
-In this track W1 to W8 name design-web's invariants and G1 to G9
+In this track W1 to W8 name design-web's invariants and G1 to G10
 design-display's, not the plan's gates or E-S1's workloads. Parts that
 land after M11 repeat M11's closure over what they add.
 

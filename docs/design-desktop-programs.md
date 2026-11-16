@@ -293,8 +293,9 @@ What follows from this shape:
   effects. files sets none; month sets one for the next midnight, only
   while it marks a today; clock sets one for the next minute; stats one
   for the next sample. A renderer draws only for a change of the tree
-  and for the transitions that change starts, which end within their
-  duration ([Motion](#motion); design-display's G6).
+  and for the transitions that change starts, each of which ends with
+  one final present after its deadline ([Motion](#motion);
+  design-display's G6).
 * **The window never waits.** Every read is a worker's, so a file server
   or a domain that does not answer delays only its own answer, and the
   window takes input meanwhile.
@@ -608,16 +609,20 @@ title bar ([Decisions](#decisions), 4).
 Motion is one concept, the **transition**: a short change from a node's
 old look to its new one, declared in the theme, started only by a
 change of the tree and run by the renderer that owns the node's pixels.
-The theme's `transition` rows name a closed set, `ui_transition`, each
-with a trigger the widget format fixes: `press`, a button's down and
-up; `state`, a change of `checked`, `selected`, `current` or `value`;
-`reveal`, a node's `visible` turning true. A transition moves colour and
-opacity only, never a rectangle, so the layout is computed once and a
-transition redraws only the node's own rectangle; a press touches a few
-kilobytes. Each ends within its duration, at most 250 ms, after which
-the window is idle again (design-display's G6, "nothing paints without
-a change or a transition a change started"). The Erlang renderer draws a
-transition's frames at the answers of its presents and has no timer
+The theme's `transition` rows name a closed set, `ui_transition`, which
+the theme's grammar fixes ([design-abi.md](design-abi.md#theme)), each
+started by a change of the tree's properties: `press`, a button's down
+and up; `state`, a change of `checked`, `selected`, `current` or
+`value`; `reveal`, a node's `visible` turning true. A transition moves
+colour and opacity only, never a rectangle, so the layout is computed
+once and a transition redraws only the node's own rectangle; a press
+touches a few kilobytes. Its frames interpolate until its deadline, its
+start plus its duration, at most 250 ms, and one final present after
+the deadline draws its end, as soon as the device has answered the
+present before; then the window is idle again (design-display's G6,
+"nothing paints without a change or a transition a change started").
+The Erlang renderer draws a transition's frames at the answers of its
+presents and has no timer
 ([design-display.md](design-display.md#the-widget-server)); LVGL takes
 the durations from `erx/theme.h` as its styles' transitions; the
 browser takes them from `theme.ts` as CSS transitions. An application

@@ -609,8 +609,13 @@ adding one never exposes it by default:
 * `visible`, the inspect facets that see it: `any`, every inspect facet;
   `owner`, a facet whose scope covers the path's owner, which for a path
   the machine owns is a facet of scope `all`; `all`, a facet of scope
-  `all`; or `system_shell`, only a call presenting the system-shell
-  facet;
+  `all`; `system_shell`, only a call presenting the system-shell
+  facet; or `display`, decided by the caller's principal and by no
+  scope, `all` included: a caller whose principal is the path's owning
+  domain's, or that of the session of the display the path's window is
+  on ([design-display.md](design-display.md#the-widget-server)); the
+  generator refuses it on an attribute of a path outside
+  `[domains, Id, uis]`;
 * `build`, `all` or `development`; a release build's inspector omits a
   `development` attribute from the record, as if it were not declared;
 * `projections`, a comma-separated list of `shell`, `host`, `proc` and
@@ -1059,8 +1064,12 @@ Its members, all at two-space indentation, are rows of the families
 below; each family's names have one namespace, and a name is a lower-case
 letter followed by at most 62 lower-case letters, digits or underscores.
 No member takes a quoted token. `unit`, `hairline`,
-`space`, `radius` and `icons` appear exactly once, and `font`, `role`,
-`color` and `shadow` at least once.
+`space`, `radius` and `icons` appear exactly once, `font`, `role`,
+`color` and `shadow` at least once, and `transition` once for each
+member of `ui_transition`. Every length is in logical pixels, which a
+renderer multiplies by the window's scale
+([Sizes and the scale](design-desktop-programs.md#the-theme-one-declaration));
+`PIXELS` below means logical pixels.
 
 | Member | Meaning |
 | --- | --- |
@@ -1075,6 +1084,7 @@ No member takes a quoted token. `unit`, `hairline`,
 | `color NAME RRGGBB` | an sRGB colour, in six upper-case hexadecimal digits |
 | `contrast FOREGROUND on BACKGROUND... RATIO` | the least contrast ratio, one decimal from 1.0 to 21.0, that FOREGROUND has on each BACKGROUND |
 | `icons PATH sizes SIZE...` | the icons' definition file and the pixel sizes they are rasterised at, ascending |
+| `transition NAME MILLISECONDS CURVE` | a transition ([Motion](design-desktop-programs.md#motion)): NAME a member of `ui_transition`, the closed set `press`, `state` and `reveal`, each started by the change Motion names, which the renderers implement; MILLISECONDS its duration, 1 to 250; CURVE `linear` or `ease_out` |
 
 The generator computes each contrast row's ratios by WCAG 2.2's
 definitions of "contrast ratio" and "relative luminance" (W3C
@@ -1082,14 +1092,18 @@ Recommendation 12 December 2024,
 `https://www.w3.org/TR/2024/REC-WCAG22-20241212/`), and a pair below
 its ratio fails generation with both names and the ratio measured.
 
-It emits three files of constants, each with every length in pixels and
-every colour in its target's own form: `erx_theme` in `erx_memdraw`
-(`color/1` as opaque RGBA32, `role/1`, `space/1`, `radius/1`,
-`shadow/1`, `unit/0`, `hairline/0`, and `colors/0` and `roles/0`, the
-names); `erx/theme.h`, the `ERX_THEME_` macros with colours as
-`0xRRGGBB` and `ERX_THEME_ROLES(X)` over the roles; and `theme.ts`,
+It emits three files of constants, each with every length in logical
+pixels, every duration in milliseconds and every colour in its target's
+own form: `erx_theme` in `erx_memdraw` (`color/1` as opaque RGBA32,
+`role/1`, `space/1`, `radius/1`, `shadow/1`, `transition/1` as
+`{Milliseconds, Curve}`, `unit/0`, `hairline/0`, and `colors/0`,
+`roles/0` and `transitions/0`, the names); `erx/theme.h`, the
+`ERX_THEME_` macros with colours as `0xRRGGBB`, each transition as
+`ERX_THEME_TRANSITION_NAME_MS` and `ERX_THEME_TRANSITION_NAME_CURVE`,
+and `ERX_THEME_ROLES(X)` over the roles; and `theme.ts`,
 `THEME_PROPERTIES`, the CSS custom properties `--erx-...`, where a
-role's weight is its CSS numeric weight. Each family is a set: every
+role's weight is its CSS numeric weight and a transition is its CSS
+duration and timing function, `ease_out` as `ease-out`. Each family is a set: every
 output lists it in name order, so the order of the rows changes no
 byte. Fonts, ranges and icons are the glyph step's inputs and contrast
 rows are checks; none is emitted.
@@ -1105,8 +1119,11 @@ name, a path that is not relative beneath the root, a font without its
 range row or a range row of an undeclared font, a range out of order, a
 role with an unknown, repeated or missing key, an undeclared font or
 colour, a weight its font lacks or `figures` other than the two, a line
-height off the unit's grid, a space wider than 4,096 pixels, a `radius
-window` other than 0, icon sizes that do not ascend, a ratio outside
+height off the unit's grid, a space wider than 4,096 logical pixels, a
+`radius window` other than 0, icon sizes that do not ascend, a
+`transition` row whose name is not a member of `ui_transition` or
+repeats one, a member with no row, a duration outside 1 to 250 or a
+curve other than the two, a ratio outside
 1.0 to 21.0 or not written with one decimal and no leading zero, a
 `contrast` row naming an undeclared colour, and a contrast ratio that
 does not hold.
