@@ -228,6 +228,14 @@ Eshell V17.1.1 (type help(). for help)
   the running system and read its files; `tools/erx web` shows the
   machine's records in a browser.
 * Hosted mode runs the runtime as a macOS process for fast iteration.
+* In every domain but the system domain, `erx_report` filters OTP's crash
+  and logger reports at boot: a report names the process, its registered
+  name, the error's class, the reason's leading atom and the stack's
+  functions, and carries no process state, message, dictionary or call
+  argument. A module's `format_status/1` hides its terms from every
+  `proc_lib`, `gen_server` and `gen_statem` report.
+* The pure Erlang cores return `{State, Actions}`, and one edge loop,
+  `erx_actions:perform/3`, performs a step's actions.
 
 **Shell and commands**
 
@@ -263,9 +271,12 @@ Eshell V17.1.1 (type help(). for help)
   (`pread`, `pwrite`, `lseek`, `fstat`). A program started with a window
   gets a `/dev` of its own (`draw`, `ctl`, `kbd`, `mouse`, `wctl`, `label`
   and, if its grant carries it, `clipboard`) from its handler; host tests
-  cover it over stand-ins of the window and draw connection, and no QEMU
+  cover it over stand-ins of the window and draw connection (the window and
+  the draw connection each have a keeper of their `kbd` and `mouse` reads),
+  and no QEMU
   cell runs a program that draws. The file tree a program will see (`/bin`, `/dev`
-  with `null`, `zero`, `urandom` and `tty`, and `/etc/passwd` and
+  with `null`, `zero`, `urandom` and `tty`, a name that answers `ENXIO` as
+  a file, and `/etc/passwd` and
   `/etc/group`) is written as a file server that nothing starts yet.
 * musl's errno and signal numbers are FreeBSD's, generated from the ABI's
   tables, and `strerror`'s texts are checked against FreeBSD's.
@@ -276,6 +287,10 @@ Eshell V17.1.1 (type help(). for help)
   file system in Erlang. The storage, apps and machine services mount
   their own trees at `/data`, `/apps` and `/machine`, so one path reaches
   each in every session, the system shell's included.
+* A stream file is one whose read waits for an event: a key, a mouse event
+  or bytes. The file's grant hands such a read to a keeper process, which
+  holds the waiting requests, so a program waiting on `/dev/kbd` does not
+  hold up its other files, their writes, clunks and flushes.
 * A storage domain serves `/data` from littlefs over a virtio block driver
   on QEMU and an SD driver on the Pi 4, and restarts cleanly after a
   failure. A QEMU suite kills the block driver in the middle of a transfer
@@ -304,7 +319,8 @@ Eshell V17.1.1 (type help(). for help)
   and root's login there reboots the machine; `tools/erx boot` gives its
   guest no network device yet.
 * OTP's `ssl` and `inets` are in every domain release, with a trust store
-  of five root certificates and its reader. Host tests fetch over HTTPS from
+  of five root certificates, which every release with `public_key` carries
+  as `priv/cacerts.pem` for `public_key:cacerts_get/0`. Host tests fetch over HTTPS from
   loopback `ssl` servers with no internet; no QEMU suite fetches from the
   network yet.
 
