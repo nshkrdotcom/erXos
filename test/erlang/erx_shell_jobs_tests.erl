@@ -114,6 +114,9 @@ check_effect({terminate, T}, V0, _V1) ->
     ?assert(is_line(T, V0) orelse run_of(T, V0) =/= none);
 check_effect({release, T, _Fate}, V0, _V1) ->
     ?assert(is_line(T, V0) orelse run_of(T, V0) =/= none);
+check_effect({interrupted, T}, V0, V1) ->
+    ?assert(is_line(T, V0)),
+    ?assertEqual(none, maps:get(line, V1));
 check_effect({finish_line, T}, V0, V1) ->
     ?assert(is_line(T, V0)),
     ?assertEqual(none, maps:get(line, V1));
@@ -196,7 +199,7 @@ interrupt_spares_background_test() ->
     J2 = erx_shell_jobs:start_line(l, <<"fg %2">>, J1),
     {wait, _, J3} = erx_shell_jobs:foreground({id, 2}, w, J2),
     {E4, J4} = erx_shell_jobs:interrupt(J3),
-    ?assertEqual([{terminate, f}, {terminate, l}, {say, <<"^C\n">>}], E4),
+    ?assertEqual([{terminate, f}, {terminate, l}, {interrupted, l}, {say, <<"^C\n">>}], E4),
     ?assertMatch(#{line := none, fg := none, jobs := #{1 := {b, running, false}}},
                  erx_shell_jobs:view(J4)),
     ?assertEqual(1, map_size(maps:get(jobs, erx_shell_jobs:view(J4)))).

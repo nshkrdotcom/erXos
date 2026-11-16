@@ -48,7 +48,7 @@ runs each evaluator with `max_heap_size` set, so a runaway recursion ends
 its own process, never the session (docs/design-shell.md, SH2).
 """.
 
--export([new/3, run_source/2, run_unit/2, parse_fault/2, status/1, var/2, runner_state/1,
+-export([new/3, run_source/2, run_unit/2, parse_fault/2, interrupted/1, status/1, var/2, runner_state/1,
          true_status/1, pattern_text/1, pattern_match/2]).
 
 -export_type([shell/0, value/0, runner/0, request/0, body/1, pattern/0,
@@ -154,6 +154,15 @@ status(#sh{vars = Vars}) ->
         [Status | _] -> Status;
         [] -> <<>>
     end.
+
+-doc """
+The shell a line that `Ctrl-C` ended leaves, `Sh` being the shell it ran in: its
+variables as they were before the line, and `$status` saying the line was
+interrupted, `sigint`, as a program that `SIGINT` ended gives
+(docs/design-shell.md, "Interaction").
+""".
+-spec interrupted(shell()) -> shell().
+interrupted(Sh) -> set_status(<<"sigint">>, Sh).
 
 -doc "A variable's value; `[]` when it is unset.".
 -spec var(binary(), shell()) -> value().

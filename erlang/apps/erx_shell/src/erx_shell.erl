@@ -554,6 +554,8 @@ effect({release, Tag, Fate}, S) ->
     ok = release(Fate, Tag),
     S1;
 effect({finish_line, _Tag}, S) -> S;
+%% The line Ctrl-C ended: the shell goes on with the variables it had before it.
+effect({interrupted, _Tag}, S = #s{sh = Sh}) -> S#s{sh = erx_shell_eval:interrupted(Sh)};
 effect({say, Bytes}, S = #s{write = Write}) -> ok = Write(Bytes), S;
 effect({answer, Waiter, Reply}, S) -> answer(Waiter, Reply, S).
 

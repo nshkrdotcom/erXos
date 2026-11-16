@@ -86,6 +86,14 @@ session_test_() ->
           {prompt, <<"% ">>}, {out, <<"after\n">>}, {prompt, <<"% ">>}],
          session([{interrupt, 2, <<"while(true) true\n">>},
                   {line, <<"echo after\n">>}, eof])),
+      %% The line Ctrl-C ended leaves `$status` saying it was interrupted, its
+      %% last command's status having been empty.
+      ?_assertEqual(
+         [{prompt, <<"% ">>}, {prompt, <<"% ">>}, {out, <<"^C\n">>},
+          {prompt, <<"% ">>}, {out, <<"sigint\n">>}, {prompt, <<"% ">>}],
+         session([{line, <<"true\n">>},
+                  {interrupt, 1, <<"while(true) true\n">>},
+                  {line, <<"echo $status\n">>}, eof])),
       %% After an `if`, a unit starting `if not` may follow; a bad one is reported
       %% with what is wrong with it, which `$status` then holds.
       ?_assertEqual(

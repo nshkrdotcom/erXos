@@ -68,7 +68,7 @@ made from them.
 %% its heap limit.
 -type result() :: {exited, binary()} | failed.
 -type effect() :: {stop, tag()} | {resume, tag()} | {terminate, tag()}
-                | {release, tag(), keep | kill} | {finish_line, tag()}
+                | {release, tag(), keep | kill} | {finish_line, tag()} | {interrupted, tag()}
                 | {say, iodata()}
 | {answer, waiter(), {ok, binary()} | ok | {error, enotsup}}.
 
@@ -182,8 +182,9 @@ foreground_tags(J = #jobs{line = #line{tag = Tag}, fg = Id}) -> [Tag, tag(Id, J)
 
 -doc """
 `Ctrl-C`: ends what is in the foreground, the job the line waits for and
-the line, and the shell then keeps what it had before the line. Background
-jobs run on, as rc's `&` jobs ignore the interrupt.
+the line, and `{interrupted, Line}` tells the shell to go on with what it
+had before the line, with `$status` saying the line was interrupted
+(erx_shell_eval:interrupted/1). Background jobs run on, as rc's `&` jobs ignore the interrupt.
 """.
 -spec interrupt(jobs()) -> {[effect()], jobs()}.
 interrupt(J = #jobs{line = none}) ->
@@ -193,7 +194,8 @@ interrupt(J = #jobs{line = #line{tag = LineTag}, fg = Fg}) ->
                       none -> {[], J};
                       Id -> {[{terminate, tag(Id, J)}], remove(Id, J)}
                   end,
-    {Inner ++ [{terminate, LineTag}, {say, <<"^C\n">>}], J1#jobs{line = none, fg = none}}.
+    {Inner ++ [{terminate, LineTag}, {interrupted, LineTag}, {say, <<"^C\n">>}],
+     J1#jobs{line = none, fg = none}}.
 
 -doc """
 The first process of the job tagged Tag has ended with Result. The line
