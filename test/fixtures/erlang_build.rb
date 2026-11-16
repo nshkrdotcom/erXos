@@ -46,13 +46,12 @@ module ErlangBuild
   # test modules alike, so a replaced module can be compiled against a header generated
   # from a seeded ABI source. defines: macros erlc defines (-D) for the replaced modules
   # and the test modules, such as TEST for a module that exports a function to its host
-  # tests alone. erlc is the compiler, stock's ERX_ERLC unless a caller run outside make
-  # check names it. Raises Error with erlc's output on a failed compile.
-  def self.compile(work, applications:, tests: [], replaced: {}, includes: [], defines: [], erlc: ENV.fetch('ERX_ERLC'))
+  # tests alone. Raises Error with erlc's output on a failed compile.
+  def self.compile(work, applications:, tests: [], replaced: {}, includes: [], defines: [])
     unknown = replaced.keys - tests - with_dependencies(applications).flat_map { |application| modules(application) }
     raise Error, "replaced names no module compiled here: #{unknown.join(' ')}" unless unknown.empty?
 
-    FileUtils.cp(Dir.glob(File.join(applications_beams(applications, erlc), '*.beam')), work)
+    FileUtils.cp(Dir.glob(File.join(applications_beams(applications), '*.beam')), work)
     # A replacement is written into work, so the directory of the file it replaces is
     # where its quoted includes are still found.
     beside = replaced.keys.flat_map { |source| ['-I', File.dirname(source)] }
@@ -61,9 +60,9 @@ module ErlangBuild
     own = replaced.keys - tests
     searched = includes.flat_map { |directory| ['-I', directory] }
     defined = defines.map { |name| "-D#{name}" }
-    erlc(work, [*REPLACED_FLAGS, *defined, *searched, *beside], own.map { |source| written(work, source, replaced) }, erlc) unless own.empty?
+    erlc(work, [*REPLACED_FLAGS, *defined, *searched, *beside], own.map { |source| written(work, source, replaced) }) unless own.empty?
     flags = [*TEST_FLAGS, *defined, *searched, *beside]
-    erlc(work, flags, tests.map { |source| written(work, source, replaced) }, erlc) unless tests.empty?
+    erlc(work, flags, tests.map { |source| written(work, source, replaced) }) unless tests.empty?
     work
   end
 
@@ -83,20 +82,20 @@ module ErlangBuild
     list.split(',').map(&:strip) & ORDER
   end
 
-  # The directory holding the beams of applications, compiled by erlc on first use.
-  def self.applications_beams(applications, erlc)
+  # The directory holding the beams of applications, compiled on first use.
+  def self.applications_beams(applications)
     unknown = applications - ORDER
     raise Error, "ErlangApps lists no application #{unknown.join(' ')}" unless unknown.empty?
 
     ordered = ORDER & with_dependencies(applications)
-    @lock.synchronize { @cache[[erlc, ordered]] ||= compile_applications(ordered, erlc) }
+    @lock.synchronize { @cache[ordered] ||= compile_applications(ordered) }
   end
 
-  def self.compile_applications(applications, erlc)
+  def self.compile_applications(applications)
     Erx::Generated.ensure(root: ROOT)
     Dir.mktmpdir('erx-erlang-build').tap do |beams|
       at_exit { FileUtils.rm_rf(beams) }
-      applications.each { |application| erlc(beams, Erx::ErlangApps::FLAGS, modules(application), erlc) }
+      applications.each { |application| erlc(beams, Erx::ErlangApps::FLAGS, modules(application)) }
     end
   end
 
@@ -109,8 +108,8 @@ module ErlangBuild
   end
 
   # -pa out: a module may name a behaviour compiled ahead of it into the same directory.
-  def self.erlc(out, flags, sources, erlc)
-    command = ['gtimeout', '-k', '10', DEADLINE.to_s, erlc, *flags,
+  def self.erlc(out, flags, sources)
+    command = ['gtimeout', '-k', '10', DEADLINE.to_s, ENV.fetch('ERX_ERLC'), *flags,
                *Erx::ErlangApps.include_flags(root: ROOT), '-pa', out, '-o', out, *sources]
     output, status = Open3.capture2e(Erx::Oracle::CLEAN_ERLANG_ENV, *command, chdir: ROOT, stdin_data: '')
     raise Error, "erlc failed (#{status}):\n#{output}" unless status.success?

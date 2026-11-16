@@ -28,7 +28,8 @@ module Erx
         ),
         Chokepoints::Elsewhere.new(
           name: 'examples-unlisted', rule: "no file of the build's tools, the board manifests or the test fixtures names " \
-                                           "the examples directory or an example's application",
+                                           "the examples directory or an example's application, but the files " \
+                                           "ExampleLists::EXEMPT lists: the kiosk cell's, which pack one through the SDK",
           design: 'docs/design-packaging.md#examples', check: 'ExampleLists, in Checks', test: 'test/host/sdk_test.rb'
         ),
         Chokepoints::Elsewhere.new(

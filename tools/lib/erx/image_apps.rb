@@ -122,15 +122,21 @@ module Erx
     end
 
     # The packages of the app directories sources as `tools/erx pack --app` packs them:
-    # the SDK exported with stock's compiler into sdk_directory/sdk, then each directory
-    # packed over it and signed by signer into packages_directory (gather). Both
-    # directories must exist and be empty.
+    # the SDK exported into sdk_directory (exported_sdk), then each directory packed over
+    # it and signed by signer into packages_directory (gather). Both directories must
+    # exist and be empty.
     def packed_apps(sources, sdk_directory:, packages_directory:, root:, runner:, signer:, compiler:)
+      gather(sources, into: packages_directory, sdk: exported_sdk(sdk_directory, root: root, runner: runner),
+                      signer: signer, runner: runner, root: root, compiler: compiler)
+    end
+
+    # The SDK the tree at root exports with stock's compiler into directory/sdk, as the
+    # AppPack::Sdk the packer runs from.
+    def exported_sdk(directory, root:, runner:)
       erlc = File.join(File.dirname(Oracle.new(root: root, runner: runner).erl_path(Runtime::HOST_OTP_FLAVOUR)), 'erlc')
-      exported = File.join(sdk_directory, 'sdk')
+      exported = File.join(directory, 'sdk')
       Sdk.new(root: root, runner: runner, erlc: erlc).export(exported)
-      gather(sources, into: packages_directory, sdk: AppPack::Sdk.new(root: exported, erlc: erlc), signer: signer,
-                      runner: runner, root: root, compiler: compiler)
+      AppPack::Sdk.new(root: exported, erlc: erlc)
     end
 
     # The package file at path as the image takes it, refused unless the machine's file

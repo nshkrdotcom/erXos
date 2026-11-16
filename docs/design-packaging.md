@@ -2188,7 +2188,7 @@ it guards.
 | the build's check | each clause of property 19 | each seeded violation of [The build's check](#the-builds-check) |
 | `examples/dashboard` through the SDK | its frame through `erx_ui_host` matches its reference, and a click on Pause changes only the status line and buttons | a status line one pixel taller |
 | the SDK's boundary | the example compiles, and xref finds every call it makes into erXos's modules in `public.txt`, by module, function and arity; a call whose callee xref cannot name, through a variable module or fun, is answered apart, and the app's check pins those to a list it has reviewed, empty for the SDK test's probe app | the example calling `erx_ui:start/1`, exported by a public module but not public, which the check refuses; the example calling through a variable module, which the check answers apart |
-| no list names an example | a source check over `tools/lib/erx`, `config/manifest` and the test lists finds no path under `examples/` | `erx_dashboard` added to `ErlangApps::APPLICATIONS` |
+| no list names an example | a source check over `tools/lib/erx`, `config/manifest` and the test fixtures finds no path under `examples/` and no example's application, but in the kiosk cell's harness (`tools/lib/erx/kiosk.rb` and its suite), which packs one through the SDK | `erx_dashboard` added to `ErlangApps::APPLICATIONS`; a path under `examples/` in a tools file the list does not hold |
 
 **QEMU tests**, in the suites of the plan's parts that bring them:
 

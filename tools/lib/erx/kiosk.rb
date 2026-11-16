@@ -14,7 +14,7 @@ module Erx
   # The offline kiosk as an image package (docs/design-packaging.md, Verification): the
   # production image of the development machine, with the board's own manifest, carries
   # examples/dashboard packed and signed as `tools/erx pack --app examples/dashboard
-  # --enable dashboard` packs it (ImageApps.packed_apps), so the package lies at
+  # --enable dashboard` packs it (the steps of ImageApps.packed_apps), so the package lies at
   # apps/dashboard.app of the slot's system partition and its `package` row binds its
   # header's SHA-256. The harness plays the firmware (MediumBoot.firmware_tree, the dump
   # carrying the boot's virtio-gpu and input devices) and boots the medium with a
@@ -128,20 +128,25 @@ module Erx
       # Why each failed cell failed.
       def notes = @notes.dup.freeze
 
-      # Packs the package once, then an image of it and one of its altered copy, and boots
-      # each at one CPU, the altered cell whatever the first found. Returns
+      # Packs the package once, from a copy of APP in the build tree so the packer's ebin/
+      # never lands in the source tree, then an image of it and one of its altered copy,
+      # and boots each at one CPU, the altered cell whatever the first found. Returns
       # { "hvf-1cpu" => 'passed', "hvf-1cpu-altered" => 'passed' }, a cell that failed
       # 'failed' with its reason in notes.
       def call(jobs: 4, build: true)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
         fiasco.build(jobs: jobs) if build
         work = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/kiosk'))
-        sdk, packages, altered_directory = %w[app-sdk app-packages altered].map { |name| FileUtils.mkdir_p(File.join(work, name)).first }
-        package, = ImageApps.packed_apps([File.join(@root, APP)], sdk_directory: sdk, packages_directory: packages, root: @root,
-                                         runner: @runner, signer: PackageKey.ensure, compiler: @compiler)
-        draw(WARM_MINUTE)
+        sdk_directory, packages, altered_directory = %w[app-sdk app-packages altered].map { |name| FileUtils.mkdir_p(File.join(work, name)).first }
+        app = File.join(work, 'app')
+        FileUtils.cp_r(File.join(@root, APP), app)
+        sdk = ImageApps.exported_sdk(sdk_directory, root: @root, runner: @runner)
+        package, = ImageApps.gather([app], into: packages, sdk: sdk, signer: PackageKey.ensure, runner: @runner, root: @root,
+                                           compiler: @compiler)
+        draw = drawing(app: app, sdk: sdk)
+        draw.call(WARM_MINUTE)
         { 'hvf-1cpu' => package, "hvf-1cpu#{ALTERED}" => Kiosk.altered(package, directory: altered_directory) }
-          .to_h { |cell, packed| [cell, status(cell) { boot(cell, packed, fiasco, work) }] }
+          .to_h { |cell, packed| [cell, status(cell) { boot(cell, packed, fiasco, work, draw: draw) }] }
       end
 
       private
@@ -155,7 +160,7 @@ module Erx
         'failed'
       end
 
-      def boot(cell, package, fiasco, work)
+      def boot(cell, package, fiasco, work, draw:)
         directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(work, cell))
         built, written = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker,
                                              machine: @machine, fiasco: fiasco)
@@ -172,12 +177,12 @@ module Erx
         Qemu.new(root: @root, runner: @runner, program: @qemu)
             .run(platform: @machine.platform, accel: 'hvf', cpus: 1, image: image, memory_mib: @machine.memory_mib,
                  directory: File.join(directory, 'boot'), display: display, dtb: tree, disks: disks,
-                 checkpoints: checkpoints(built, cell, choice, socket: socket, directory: directory))
+                 checkpoints: checkpoints(built, cell, choice, socket: socket, directory: directory, draw: draw))
       end
 
       # The production checkpoints with the boot value's after the image's identity, and
       # the cell's checks at the command shell.
-      def checkpoints(built, cell, choice, socket:, directory:)
+      def checkpoints(built, cell, choice, socket:, directory:, draw:)
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: 1,
                                                   manifest_source: @manifest, memory_mib: @machine.memory_mib)
         at = points.index { |point| point.fetch(:name) == 'image-identity' }
@@ -188,20 +193,19 @@ module Erx
         check = if cell.end_with?(ALTERED)
                   ->(_text) { Kiosk.check_altered(serial: serial) }
                 else
-                  ->(_text) { Kiosk.check_shown(serial: serial, socket: socket, directory: directory, draw: method(:draw)) }
+                  ->(_text) { Kiosk.check_shown(serial: serial, socket: socket, directory: directory, draw: draw) }
                 end
         shell = points.last
         [*points[0..at], MediumBoot.boot_value_checkpoint(choice), *points[(at + 1)...-1],
          shell.merge(seconds: shell.fetch(:seconds) + [SHOWN_SECONDS + DRAW_SECONDS + DisplayDomain::WAIT_SECONDS, REFUSED_SECONDS + SETTLE_SECONDS].max, verify: check).freeze]
       end
 
-      # The dashboard at minute as the host's erx-lvgl draws it, on stock's emulator. The
-      # fixture is loaded here, by the cell alone: loading it sets the host tests' sanitizer
-      # environment in this process (test/fixtures/generated_tree.rb).
-      def draw(minute)
+      # The dashboard at app as a function from a minute to the picture the host's
+      # erx-lvgl draws of it over sdk, on the SDK's emulator (DashboardScreen). The fixture
+      # is loaded here, when the cell runs, so loading the suite loads no test code.
+      def drawing(app:, sdk:)
         require_relative '../../../test/fixtures/dashboard_screen'
-        erl = Oracle.new(root: @root, runner: @runner).erl_path(Runtime::HOST_OTP_FLAVOUR)
-        DashboardScreen.picture(minute, runner: @runner, erl: erl, erlc: File.join(File.dirname(erl), 'erlc'))
+        ->(minute) { DashboardScreen.picture(minute, app: app, sdk: sdk, runner: @runner) }
       end
     end
   end
