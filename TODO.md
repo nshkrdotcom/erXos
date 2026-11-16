@@ -1112,7 +1112,7 @@ it; git history is the record of completed work.
   web domain. Measure the domain with `Footprint` at rest and with the host tool's four connections open, the
   boot's time to the shell before and after the web domain (`tools/erx bench`), and size the row and
   `root_memory` from the figures.
-* [Medium] `erlang/apps/erx_hostlink/src/erx_hostlink_web.erl`, `tools/lib/erx/web_server.rb`,
+* [Medium] `erlang/apps/erx_uart/src/erx_hostlink_web.erl`, `tools/lib/erx/web_server.rb`,
   [The host tool's front end](docs/design-web.md#the-host-tools-front-end): a restart of the web domain ends the
   system domain's facet with the relay (`exit(shutdown)`), and the session drops the facet's number without
   telling the host. The host tool keeps the dead number: every later call is answered `{error, noproc}`, a reply
@@ -3975,7 +3975,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   grant, `erx_ns:mount_own/2`). One function that serves a system domain's files service under
   a supervisor of its own, the grants beside a permanent own-grant child that mounts itself,
   fixes both and lets `own/1,2` go.
-* [Medium] host link trees, `erlang/apps/erx_hostlink/src/erx_hostlink_files.erl`
+* [Medium] host link trees, `erlang/apps/erx_uart/src/erx_hostlink_files.erl`
   (`tree_grant/3`): the link serves any grant entry of the system domain's table whose tree a
   configuration's `files_trees` names, so with the own mounts a configuration that names
   `machine` or `apps` would hand the host the right to end the machine as root and to start
@@ -4002,7 +4002,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   nothing checks it against the `.app.src` files' `applications`; systools quietly reorders a
   release that breaks it, so an application listed too early pulls its dependencies ahead of
   the applications before it in the system boot (as `erx_shell`, before `erx_code`, would pull
-  `erx_domain` and `erx_starter` ahead of `erx_code` and `erx_hostlink`). Check that the order
+  `erx_domain` and `erx_starter` ahead of `erx_code` and `erx_uart`). Check that the order
   is a topological order of the `.app.src` dependency graph in `make check`.
 * [Medium] domain library NIFs, `erlang/apps/erx` and `test/guest/native_domain`: no test
   reaches the module's paths with a library present: a real create's decoding refusals (an
@@ -5980,7 +5980,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   kernel capabilities pass as typed items. File access over 9P carries no
   such handle, its handles being 9P's fids
   ([design-live.md](docs/design-live.md#the-host-link)).
-* [Medium] live, host-link payload check (`erlang/apps/erx_hostlink/src/erx_hostlink_payload.erl`):
+* [Medium] live, host-link payload check (`erlang/apps/erx_uart/src/erx_hostlink_payload.erl`):
   until `liberx`'s `erx_etf` (`liberx/erx_etf.c`) is reachable from the
   system domain's Erlang, a control payload from the host
   is checked by a size bound, `binary_to_term/2` in safe mode and a walk
@@ -5992,7 +5992,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   effect layer may run the check in a process whose `max_heap_size` is the
   room left ([design-live.md](docs/design-live.md#the-host-link)).
 * [Medium] live, host-link resident bound
-  (`erlang/apps/erx_hostlink/src/erx_hostlink_session.erl`): the design's
+  (`erlang/apps/erx_uart/src/erx_hostlink_session.erl`): the design's
   "The host link" says the credit, the call window and the resident limit
   together bound what a host can make the target hold, but a hello forgets
   the replaced session's executing calls and a cast holds no reservation
@@ -6001,7 +6001,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   outstanding calls, matched by their serial, against the next session's
   room until their `call_done` arrives, and give a cast a reservation
   until its handler has taken it.
-* [Medium] live, host-link session (`erlang/apps/erx_hostlink/src/erx_hostlink_session.erl`):
+* [Medium] live, host-link session (`erlang/apps/erx_uart/src/erx_hostlink_session.erl`):
   choices the design leaves open, to settle in design-live.md's "The host
   link":
   * Funs and ports in a reply are rendered `{'$fun', Text}` and
@@ -6009,20 +6009,21 @@ handing call's socket process exit and its connection's, is not yet looked for. 
     that fails the host grammar or the message limit becomes
     `{error, system_limit}`; `message_max` bounds both directions, so a
     release build's 8 KiB limit also bounds replies.
-  * The root (`erlang/apps/erx_hostlink/src/erx_hostlink.erl`) answers
+  * The root (`erlang/apps/erx_uart/src/erx_hostlink.erl`) answers
     `{open, Name}` for a facet the design lists whose service does not
     exist yet with `{error, unsupported}`, and any other request, an
     unlisted name included, with `{error, badarg}`.
 * [Medium] security, host-link session identifiers
-  (`erlang/apps/erx_hostlink/src/erx_hostlink.erl`, `entropy/0`): a session
+  (`erlang/apps/erx_uart/src/erx_hostlink.erl`, `entropy/0`): a session
   identifier is `rand:bytes/1` under the seed `rand` takes from the time and
   the node, which the design accepts only in trusted development modes. Draw
   it from `erx_bytes:entropy/1`
   ([design-runtime.md](docs/design-runtime.md#per-byte-primitives)), which
   takes the generator's bytes through `erx_entropy_take`.
 * [Medium] live, host-link sink check: "only the host link's own sink
-  writes its UART" holds because erx_hostlink alone asks for the `hostlink`
-  device record and owns its erx_pl011, but no build check refuses another
+  writes its UART" holds because erx_uart_sup alone asks for the `hostlink`
+  device record and hands it to erx_hostlink, which owns its erx_pl011, but no
+  build check refuses another
   module that names that record, and erx_pl011 writes whatever any process
   sends it as `{erx_console_output, From, Bytes}`, so the rule rests on no
   other process learning the driver's pid. Have the driver take output only
@@ -6030,7 +6031,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   reply token), which makes the rule hold for both lines by construction,
   and add the record check beside the `device-posters` chokepoint.
 * [Medium] live, host-link facets in a release build
-  (`erlang/apps/erx_hostlink/src/erx_hostlink.erl`, `root/2`): the root offers
+  (`erlang/apps/erx_uart/src/erx_hostlink.erl`, `root/2`): the root offers
   the install facet and takes 16 MiB messages whatever the build, where
   design-live.md gives a release build's host only the facets its manifest
   lists, by default none, and an 8 KiB message limit. Take both from the
@@ -6057,14 +6058,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   against `erx_hostlink_session` on stock OTP or a scripted IO (credit, hello
   repeats, stale grants). It keeps replies to calls nobody awaits without a
   bound, and a payload it refuses loses the rest of that read's frames.
-* [Low] live, host link (`erlang/apps/erx_hostlink/src/erx_hostlink.erl`): the
+* [Low] live, host link (`erlang/apps/erx_uart/src/erx_hostlink.erl`): the
   terminal stream's bodies are dropped uncounted until a console session
   consumes them, so the inspector cannot see the loss.
-* [Low] live, host link's 9P bridge (`erlang/apps/erx_hostlink/src/erx_hostlink_9p.erl`):
+* [Low] live, host link's 9P bridge (`erlang/apps/erx_uart/src/erx_hostlink_9p.erl`):
   its counts (discarded, stray replies) reach no inspector record yet; and
   `tools/erx files` serves one client at a time and reaches only QEMU's UNIX
   socket, like `load` and `watch`.
-* [Low] live, host link's files stream (`erlang/apps/erx_hostlink/src/erx_hostlink_files.erl`): a
+* [Low] live, host link's files stream (`erlang/apps/erx_uart/src/erx_hostlink_files.erl`): a
   `files_trees` configuration that is not a list of atoms is refused at each session's bridge start, one
   crash report per session, and the host's 9P client hears nothing until its deadline; check it once when
   `erx_hostlink` starts and refuse to start, as a bad build word does.
@@ -6075,20 +6076,20 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   returns the trace process's raw exit reason, which the shell prints with printable Unicode unescaped and
   keeps in its history, a fault's reason with the trace's buffers included; return a bounded, escaped
   reason, or `killed` or `fault`, and log the whole reason, before traces are scoped (M5).
-* [Low] live, host link (`erlang/apps/erx_hostlink/src/erx_hostlink.erl`, `bounded_measure/1`): a fault of
+* [Low] live, host link (`erlang/apps/erx_uart/src/erx_hostlink.erl`, `bounded_measure/1`): a fault of
   `erx_hostlink_payload:measure/1` is refused as `{failed, Why}` but counted with malformed payloads as
   `bad_payload` and its reason dropped; count it apart or log it once.
-* [Low] live, host link's 9P bridge (`erlang/apps/erx_hostlink/src/erx_hostlink_9p.erl`),
+* [Low] live, host link's 9P bridge (`erlang/apps/erx_uart/src/erx_hostlink_9p.erl`),
   review findings open: the namespace entry's `ro` is not applied; the bridge's own clunk replies
   count as stray; the tree lookup reads the namespace table on each attach;
   no `proc` tree is mounted yet; and the system manifest has no field for
   the trees a release build lists, so a release build serves none.
-* [Low] live, host link's 9P bridge (`erlang/apps/erx_hostlink/src/erx_hostlink_9p.erl`):
+* [Low] live, host link's 9P bridge (`erlang/apps/erx_uart/src/erx_hostlink_9p.erl`):
   the bridge reads the whole manifest at each session's start;
   design-live.md still says the host tool counts credit from its hello's
   first byte, where it now counts from the hello's reply.
 * [Medium] security residual, host link's 9P bridge
-  (`erlang/apps/erx_hostlink/src/erx_hostlink_files.erl`, `tree_grant/3`):
+  (`erlang/apps/erx_uart/src/erx_hostlink_files.erl`, `tree_grant/3`):
   the bridge uses the system domain's own grants and its tags bound, 64,
   equals a grant's whole 64 requests in flight, so a host that keeps 32
   slow reads and their flushes at the `data` grant makes that grant refuse
@@ -7149,7 +7150,7 @@ to the corpus and follow rc
   `ERX_PROGRAM_THREAD_CLOSE` names no slot of a table of up to 256 handles and closes nothing, and
   in a larger table could close an unrelated capability. On the stopgap only; erXos's kernel gives
   every thread a capability slot.
-* [Medium] Host link, the web facet's casts (`erlang/apps/erx_hostlink/src/erx_hostlink_web.erl`,
+* [Medium] Host link, the web facet's casts (`erlang/apps/erx_uart/src/erx_hostlink_web.erl`,
   `erx_hostlink.erl`): each `{web, C, Bytes}` the web domain sends the facet becomes a `facet_cast` to the host
   link's process, which queues it for the host outside the output bound that holds back input (`OUTPUT_BACKLOG`),
   so a compromised web domain can grow the system domain's memory by sending faster than the host link drains
@@ -7676,9 +7677,7 @@ document's "residual risks accepted" paragraph.
   kind must join; make it follow from the kind's table. `line_uart_read` keeps one UART, the last device parameter
   of the last line facet, and walks the facet parameter span a second time beside the boot view's checked walk
   (`liberx/system/dom_boot_view.c`, `boot_facet_parameters`): ask per device row whether a line facet names it, from
-  one walk, when the one-grant limit is lifted. `tools/lib/erx/production_image.rb`'s `record_words` copies the
-  root's selection and does not count a line record, so a boot with a line grant fails its `erts-start`
-  checkpoint.
+  one walk, when the one-grant limit is lifted.
 * [Medium] manifest check, line grants (`check_line_grants`, `tools/lib/erx/manifest.rb`): a grant naming a UART
   that is not a PL011, the Pi's mini UART, passes, and the root then writes no line record; refuse a line UART of
   any compatible but the PL011's row of `erx_uart_kinds`.
@@ -7688,17 +7687,36 @@ document's "residual risks accepted" paragraph.
 ## Planned features
 
 * [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the line tree,
-  `erx_line_fs`, and its keeper, `erx_line`, are written and run in host tests over a model driver
-  (`test/erlang/erx_line_tests.erl`), but nothing serves them, so the controller group still runs only over a model
-  line. Missing: the line's start, which serves `erx_line_fs` through `erx_fs_grants` and `erx_facet:serve/2` as
-  `erx_machine_fs` does, under `erx_uart_sup` and its line groups; `erx_ns:place(line)` (the
-  facet-name check refuses it until a manifest publishes `line`); a line's driver record, keyed by the index of the
-  UART's device row that the grant's `uart` carries (`erx_domain_lib:configured/0`), which carries `init => fresh`
-  to `erx_pl011:program/1`; and the power line's steps 2 and 4 of a reset, which `erx_line` does not
-  run, as on a platform with no power line. Property 8 and design-bluetooth.md give the line service one tree for
-  each grant of `line`, but the manifest check (`check_line_grants` in `tools/lib/erx/manifest.rb`) admits at most
-  one `line` facet in a manifest, since the design leaves open how the one process `erx_facet:serve(line, _)` names
-  reaches the tree of each grant when several grants name different UARTs; settle that and lift the limit.
+  `erx_line_fs`, and its keeper, `erx_line`, run in their UART's line group under `erx_uart_sup`, which starts the
+  keeper on the root's `line` record with the rate and flow of the grant of the system domain's service of the line
+  interface (`erx_uart_sup:line_grants/1`) and `init => fresh`; the keeper starts the tree's grants. Missing:
+  serving them. `erx_facet:serve(line, Grants)` in `erx_line:init/1` waits for a manifest that declares a `service`
+  of the line interface and grants it, which adding the Bluetooth domain to a board manifest brings; until then the
+  facet-names chokepoint (`tools/lib/erx/facet_names.rb`) rightly refuses the call, so it and its seeded fault in
+  `test/host/erx_line_test.rb` (the keeper that serves no service) land with that manifest. The served name is then
+  the manifest's: the system side finds the service by interface, but the facet-names check takes a literal name at
+  `erx_facet:serve/2`, and the grantee mounts by name (`erx_ns:place/1` places `line` at `/line`, and
+  `erx:granted/0` carries names alone), so a line service named otherwise is mounted nowhere until the ready answer
+  carries each granted facet's interface or the manifest check fixes the line service's name. With no grant, no boot
+  runs the line tree over a UART and the controller group still runs only over a model line. Also missing: the
+  power line's steps 2 and 4 of a reset, which `erx_line` does not run, as on a platform with no power line.
+  Property 8 and design-bluetooth.md give the line service one tree for each grant of `line`, but the manifest
+  check (`check_line_grants` in `tools/lib/erx/manifest.rb`) admits at most one `line` facet in a manifest, since
+  the design leaves open how the one process `erx_facet:serve/2` names reaches the tree of each grant when several
+  grants name different UARTs; settle that and lift the limit.
+* [Medium] bluetooth, line groups couple the host link to the line tree at the limits
+  (`erlang/apps/erx_uart/src/erx_uart_sup.erl`): each level (top, group, services) allows 3 restarts in 60 s, so a
+  line tree's crash loop exhausts its `services` supervisor, whose restart restarts the host link and ends its
+  session, and then the group, `erx_uart_sup` and the permanent `erx_uart` stop and the machine resets; and a line
+  tree that fails to start (an `erx_pl011` refusal, an attach or open error, `erx_domain_lib:configured/0` failing,
+  or a root record `line_grants/1` does not find, which `fresh/2` takes as a bare badmatch) fails `erx_uart`'s start,
+  so the host link never comes up to debug it. Decide whether a line tree's failure may end the machine; if not,
+  let a line tree's give-up end only that line (a `temporary` child, or a significant child with `auto_shutdown`),
+  and fail a line's start with a stated reason that leaves the host link running.
+* [Medium] tools, two copies of the root's physical record selection: `physical_paths` and `held_record_words` in
+  `tools/lib/erx/production_image.rb` restate `device_kind` and `line_uart_read` of
+  `liberx/backend/core/boot_manifest.c` for `record_words`, so a new physical record kind changes both and only a
+  production boot's `erts-start` checkpoint compares them. Count from a host build of `devices_read`.
 * [Medium] bluetooth, `erx_pl011`'s start effects (`run/3`, `discard/2`): `program/1`'s step lists are tested, but no
   test runs the steps over the device stand-in (`test/erlang/stand_in/erx_device.erl`), so a drain that ignores `RXFE`
   or its bound, or a step sent to the wrong register, passes; trace `keep` against the sequence it replaced and the

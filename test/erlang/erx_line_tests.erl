@@ -43,7 +43,9 @@ stop(#{line := Line, grant := Grant}) ->
     exit(Line, kill).
 
 %% The model driver: what the line sends it goes to the test, and the test makes it
-%% deliver input or answer a write.
+%% deliver input or answer a write. It tells the test once it has handed input to the
+%% line, so a case that needs the bytes in the line before its next request waits for
+%% that (input/2); a request through the grant would otherwise race the driver's send.
 driver(Line, Test) ->
     Test ! {driver, self()},
     driver_loop(Line, Test).
@@ -51,10 +53,15 @@ driver(Line, Test) ->
 driver_loop(Line, Test) ->
     receive
         {erx_console_output, Ref, Bytes} -> Test ! {output, self(), Ref, Bytes};
-        {input, Bytes} -> Line ! {erx_console_input, Bytes};
+        {input, Bytes} -> Line ! {erx_console_input, Bytes}, Test ! {delivered, self()};
         {written, Ref} -> Line ! {erx_console_written, Ref}
     end,
     driver_loop(Line, Test).
+
+%% Hands Bytes to the line through Driver and returns once Driver has sent them.
+input(Driver, Bytes) ->
+    Driver ! {input, Bytes},
+    receive {delivered, Driver} -> ok after 1000 -> erlang:error(not_delivered) end.
 
 driver_started() ->
     receive {driver, Driver} -> Driver after 1000 -> erlang:error(no_driver) end.
@@ -219,8 +226,7 @@ a_reset_goes_ahead_of_waiting_writes_test() ->
 %% Bytes the old driver delivered before a reset are not read after it.
 a_reset_drops_what_the_old_driver_read_test() ->
     #{grant := Grant, line := Keeper, driver := Driver} = Line = line(),
-    Driver ! {input, <<"old">>},
-    timer:sleep(50),
+    ok = input(Driver, <<"old">>),
     _ = sys:get_state(Keeper),
     ?assertEqual({ok, 5, 0}, call(Grant, {write, 4, 0, <<"reset">>})),
     Fresh = driver_started(),
@@ -241,8 +247,8 @@ ctl_takes_reset_alone_test() ->
 %% answer eio until a reset, after which the new driver's bytes are read.
 a_broken_line_answers_reads_eio_until_a_reset_test() ->
     #{grant := Grant, driver := Driver} = Line = line(),
-    Driver ! {input, <<"kept">>},
-    Driver ! {input, binary:copy(<<0>>, ?ERX_LINE_RX_MAX)},
+    ok = input(Driver, <<"kept">>),
+    ok = input(Driver, binary:copy(<<0>>, ?ERX_LINE_RX_MAX)),
     ?assertEqual({error, eio}, call(Grant, {read, 2, 0, 16})),
     ?assertEqual({ok, 5, 0}, call(Grant, {write, 4, 0, <<"reset">>})),
     Fresh = driver_started(),
@@ -257,3 +263,45 @@ parse_test() ->
     ?assertEqual({error, einval}, erx_line_fs:parse(<<>>)),
     ?assertEqual({error, einval}, erx_line_fs:parse(<<"Reset">>)),
     ?assertEqual({error, einval}, erx_line_fs:parse(binary:copy(<<"reset">>, 4))).
+
+%% The keeper and the tree's grants (docs/design-bluetooth.md, "The shared line 153") ---
+
+%% The tree's grants, the process the line is linked to besides its driver.
+grants(#{line := Line, driver := Driver}) ->
+    {links, Links} = process_info(Line, links),
+    [Grants] = Links -- [Driver],
+    Grants.
+
+%% The line starts its tree's grants, and a grant of them reads and writes data through
+%% the line.
+the_line_starts_its_trees_grants_test() ->
+    #{driver := Driver} = Fixture = line(),
+    {ok, Grant} = erx_fs_grants:own(grants(Fixture)),
+    {ok, _} = call(Grant, {attach, 1, ?NOFID, <<"user">>, ?ERX_LINE_TREE_BYTES, 0}),
+    {ok, _} = call(Grant, {walk, 1, 2, [<<"data">>]}),
+    {ok, _, _} = call(Grant, {lopen, 2, ?O_RDWR}),
+    Write = send(Grant, {write, 2, 0, <<"cmd">>}),
+    {Ref, <<"cmd">>} = output(Driver, 1000),
+    Driver ! {written, Ref},
+    ?assertMatch({ok, 3, _}, reply_within(Write, 1000)),
+    Read = send(Grant, {read, 2, 0, 16}),
+    Driver ! {input, <<"evt">>},
+    ?assertEqual({ok, <<"evt">>}, reply_within(Read, 1000)),
+    stop(Fixture).
+
+%% The keeper's end ends its grants, and a read it held answers eio; the grants' end
+%% ends the keeper, so its group restarts both together.
+the_keeper_and_its_grants_end_together_test() ->
+    #{line := Line, grant := Grant} = First = line(),
+    Grants = grants(First),
+    Watch = monitor(process, Grants),
+    Held = send(Grant, {read, 2, 0, 16}),
+    exit(Line, kill),
+    ?assertEqual({error, eio}, reply_within(Held, 1000)),
+    receive {'DOWN', Watch, process, Grants, _} -> ok after 1000 -> erlang:error(grants_kept) end,
+    exit(Grant, kill),
+    #{line := Again} = Second = line(),
+    Keeper = monitor(process, Again),
+    exit(grants(Second), kill),
+    receive {'DOWN', Keeper, process, Again, {grants_ended, killed}} -> ok after 1000 -> erlang:error(keeper_kept) end,
+    exit(maps:get(grant, Second), kill).

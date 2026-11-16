@@ -38,19 +38,25 @@ class ErxLineTest < Minitest::Test
              anchor: "event(Message, #line{waits = Waits} = L) ->\n",
              replacement: "event(?ERX_FS_FLUSH(_), L) ->\n    L;\n" \
                           "event(Message, #line{waits = Waits} = L) ->\n",
-           catching_case: 'a_flush_answers_a_waiting_read_eintr_test'),
-  Seed.new(fault: 'a reset that waits for the write the driver holds',
-           module_path: LINE,
-           anchor: "        [{Reset, Done} | _] -> begin_reset(Reset, Done, L);\n",
-           replacement: "        [{Reset, Done} | _] when L#line.writing =:= none -> begin_reset(Reset, Done, L);\n" \
-                        "        [_ | _] -> L;\n",
-           catching_case: 'a_reset_goes_ahead_of_waiting_writes_test'),
-  Seed.new(fault: 'a reset that keeps the buffer',
-           module_path: LINE,
-           anchor: 'L#line{driver = Fresh, rx = <<>>, broken = false, reset = none}',
-           replacement: 'L#line{driver = Fresh, broken = false, reset = none}',
-           catching_case: 'a_reset_drops_what_the_old_driver_read_test')
-].freeze
+             catching_case: 'a_flush_answers_a_waiting_read_eintr_test'),
+    Seed.new(fault: 'a reset that waits for the write the driver holds',
+             module_path: LINE,
+             anchor: "        [{Reset, Done} | _] -> begin_reset(Reset, Done, L);\n",
+             replacement: "        [{Reset, Done} | _] when L#line.writing =:= none -> begin_reset(Reset, Done, L);\n" \
+                          "        [_ | _] -> L;\n",
+             catching_case: 'a_reset_goes_ahead_of_waiting_writes_test'),
+    Seed.new(fault: 'a reset that keeps the buffer',
+             module_path: LINE,
+             anchor: 'L#line{driver = Fresh, rx = <<>>, broken = false, reset = none}',
+             replacement: 'L#line{driver = Fresh, broken = false, reset = none}',
+             catching_case: 'a_reset_drops_what_the_old_driver_read_test'),
+    Seed.new(fault: 'a keeper that outlives its grants, taking their end as any other message',
+             module_path: LINE,
+             anchor: "handle_info({'EXIT', Grants, Reason}, #line{grants = Grants} = L) ->\n" \
+                     "    {stop, {grants_ended, Reason}, L};\n",
+             replacement: '',
+             catching_case: 'the_keeper_and_its_grants_end_together_test')
+  ].freeze
 
   def test_the_cases_pass
     output, status = run_cases({})

@@ -137,15 +137,18 @@ mount_own(Name, Grant) when is_pid(Grant) ->
 
 %% Where the tree of each service Name mounts, read-write on the tree of its own name:
 %% data, the storage domain's tree, at /data; the system domain's files services: the
-%% start service's tree, start, at /etc/start, and the domain service's machine at /machine
-%% (docs/design-apps.md, "Interfaces"; docs/design-system.md, "A session's request").
+%% start service's tree, start, at /etc/start, the domain service's machine at /machine,
+%% and the line service's tree, line, at /line (docs/design-apps.md, "Interfaces";
+%% docs/design-system.md, "A session's request"; docs/design-bluetooth.md, "The
+%% controller's line").
 %% /data is also an empty directory of every release, so a domain not granted data
 %% lists it as empty (ReleaseFiles::MOUNT_POINTS, tools/lib/erx/release_files.rb); a
-%% domain that holds no start or machine facet has no such path, enoent.
+%% domain that holds no start, machine or line facet has no such path, enoent.
 -spec place(atom()) -> {binary(), [option()]} | none.
 place(data) -> {<<"/data">>, [{tree, <<"data">>}, rw]};
 place(start) -> {<<"/etc/start">>, [{tree, <<"start">>}, rw]};
 place(machine) -> {<<"/machine">>, [{tree, <<"machine">>}, rw]};
+place(line) -> {<<"/line">>, [{tree, ?ERX_LINE_TREE_BYTES}, rw]};
 place(_Name) -> none.
 
 %% Removes the entry at exactly To.

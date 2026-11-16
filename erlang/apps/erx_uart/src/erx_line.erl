@@ -45,6 +45,10 @@ it ends the driver and waits for its end, so no byte the old driver read
 is taken after it (one process's messages arrive before its end), then
 empties the buffer, clears the broken mark and starts the driver again.
 
+**The tree's grants** (erx_fs_grants) the line starts and is linked to,
+so the end of either ends the other and its supervisor restarts both. No
+service serves them: TODO.md, "the line's service side".
+
 **The buffer** holds at most `line_rx_max` bytes. Input that would pass it
 marks the line broken: the buffer is dropped and every read answers `eio`
 until the next reset. Input that arrives while broken or during a reset is
@@ -69,6 +73,8 @@ dropped.
 -type start() :: fun((Line :: pid()) -> {ok, pid()}).
 
 -record(line, {start :: start(),
+               %% The tree's grants, linked: the end of either ends the other.
+               grants :: pid(),
                %% The driver, or none from a reset's first step to its last.
                driver :: pid() | none,
                rx = <<>> :: binary(),
@@ -95,7 +101,8 @@ start_link(Start) when is_function(Start, 1) ->
 init(Start) ->
     process_flag(trap_exit, true),
     {ok, Driver} = Start(self()),
-    {ok, #line{start = Start, driver = Driver}}.
+    {ok, Grants} = erx_fs_grants:start_link(erx_line_fs, self()),
+    {ok, #line{start = Start, grants = Grants, driver = Driver}}.
 
 -doc false.
 handle_call(_Request, _From, L) ->
@@ -110,6 +117,8 @@ handle_cast(_Request, L) ->
 -doc false.
 handle_info({'EXIT', Driver, Reason}, #line{driver = Driver} = L) when Driver =/= none ->
     {stop, {driver_ended, Reason}, L};
+handle_info({'EXIT', Grants, Reason}, #line{grants = Grants} = L) ->
+    {stop, {grants_ended, Reason}, L};
 handle_info(Message, L) ->
     {noreply, pump(event(Message, L))}.
 
