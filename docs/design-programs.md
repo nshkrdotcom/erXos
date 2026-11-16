@@ -1167,7 +1167,14 @@ Its key is the file's identity and version, as
 [design-files.md](design-files.md#identity-and-version) defines them, and
 its use, `code` or `data`: the server's domain and the tree, the attach
 name, of the grant the file was read through, the file's qid path, its
-`data_version`, and the use. A code object has an execute ceiling, a data
+`data_version`, and the use. The grant the file was read through is the
+one the entry's own provider names, never a grant beneath it: a file of
+an EROFS mount, which a program reaches through the session's export,
+is keyed by the session's domain, the tree the mount was given, which
+no other mount shares, and the reader's inode number, so two images
+read through one `packages` grant never share a key
+([design-files.md](design-files.md#building-binding-and-mounting)). A
+code object has an execute ceiling, a data
 object none. A domain's id is never reused and no other domain can answer
 for it, so a server names only its own files; a server keeps a qid path
 unique within its tree for the boot, and its domain's runtime never
@@ -1207,13 +1214,14 @@ The filler:
 1. **Opens** the file through the program's namespace on every request,
    whatever the cache holds, with `lopen` for reading, after the
    handler's **image check** for `code`: the namespace entry the path
-   resolved through must carry `rx`. An entry carries at most what its
-   provider allows, a grant's entry at most the grant's rights and an
-   EROFS mount `rx` only through an `rx` grant
-   ([design-files.md](design-files.md#building-binding-and-mounting)),
-   and a bind or a program's narrowed namespace only lowers it. It
-   takes the key from the grant beneath that entry and the opened fid's
-   `getattr`.
+   resolved through and the grant beneath it must both carry `rx`, since
+   an entry's rights only lower its grant's, never raise them
+   ([design-files.md](design-files.md#building-binding-and-mounting),
+   "Rights beneath an entry"). For a program's entry on the session's
+   export, the export's grant carries the rights of the session's own
+   entry it serves, which for an EROFS mount are `rx` only through an
+   `rx` grant. It takes the key from the entry's own provider and the
+   opened fid's `getattr`, as above.
    So the cache never answers for a grant: a
    program whose grant cannot open the file for its use gets the open's
    error, `EACCES` for code through an `ro` grant, even when another

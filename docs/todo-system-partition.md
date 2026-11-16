@@ -44,7 +44,10 @@ that proves the code under test ran.
   `tree_offset`, `tree_length`, `salt` and `root_hash`, named by a
   header field `system_image`), the domain library writing them as
   `-erx_record system_image` into the arguments of the `system` window's
-  holder alone (design-stopgap.md, The booted slot), and the update
+  holder alone (design-stopgap.md, The booted slot), read by
+  `erx_device_record:system_image/1` with its fuzz target and host test,
+  the manifest check refusing a `system` window row without the fields,
+  and the update
   writing the tree and the manifest with the partition; `Erx::ErofsReads` rules that the reader reaches
   blocks only through `erx_verity:read/3` and that only `erx_ns` and
   `erx_storage_system` open an image in it; the
@@ -60,20 +63,33 @@ that proves the code under test ran.
 * [High] files, the file-backed EROFS mount (`erx_ns`, `erx_verity`):
   `erx_ns:mount({erofs, Source}, To, Options)` as the one EROFS mount,
   `Source` `app` (the place and layout of the app's record) or
-  `{header, Path}` (only for a file reached through the `apps` grant),
-  no form taking a layout, `erx_ns`'s process owning the fid, and the
-  mount's rights `ro` or `rx` (`rw` refused with `einval`), `rx` only
-  through an `rx` grant, so only through the app template's `rx`
-  `packages` and `system` grants; `erx_ns:mount({facet, Name}, ...)`
-  refusing with `eacces` a facet the table of mount points does not name;
-  `erx_ns.erl` has only `{erofs, Window}`. Test: the package
-  mounts' host test of design-packaging.md; seeded: a mount that takes
-  its rights from its options, which mounts a file of `/apps` `rx`; a
-  mount bounded only by its grant's rights, which mounts it `rw`; a
-  `header` mount judged by the path rather than the fid's grant, which
-  mounts a session-written `/tmp` file once `/tmp` is bound at `/apps`;
-  and a facet's mount that skips the table, which mounts `packages` `rx`
-  at `/p` and runs an upload's `tmp.K`.
+  `{header, Path}` (only for a file reached through the `apps` grant,
+  its header read by `erx_verity:header/1`), no form taking a layout,
+  `erx_ns`'s process owning the fid, the mount's rights `ro` or `rx`
+  (`rw` refused with `einval`), `rx` only through an `rx` grant, so only
+  through the app template's `rx` `packages` and `system` grants, and
+  each mount's files keyed by a tree of its own; the image check needing
+  `rx` on the entry and on the grant beneath it (design-files.md, "Rights
+  beneath an entry"); `erx_ns.erl` has only `{erofs, Window}`. Test: the
+  package mounts' host test of design-packaging.md and F6's `/x` test;
+  seeded: a mount that takes its rights from its options, which mounts a
+  file of `/apps` `rx`; a mount bounded only by its grant's rights, which
+  mounts it `rw`; a `header` mount judged by the path rather than the
+  fid's grant, which mounts a session-written `/tmp` file once `/tmp` is
+  bound at `/apps`; an image check that reads the entry's rights alone,
+  which runs a file written under an `rx` mount of `data`.
+* [High] packaging, uploads apart from installed packages (`erx_pkg_io`,
+  `erx_lfs`, property 19): the `packages` tree's `new/` and `installed/`,
+  an upload's `tmp.K` in `new/` renamed into `installed/`, the recovery
+  removing `new/tmp.K` by name and listing `installed/`, and the
+  storage service's `tree installed`, which roots the app template's
+  `packages` grant at `installed/`, with property 19 letting only the
+  derived row carry it. The stopgap's `packages` mint roots every grant
+  at `packages/` (design-stopgap.md, the storage domain), so an app's
+  grant reaches an upload in progress until this lands. Test: the
+  package mounts' row, a walk of `new` and of `../new/tmp.K` through the
+  app's grant during an upload answering `enoent`; seeded: the app's
+  grant rooted at `packages/`, which walks to `tmp.K`.
 * [High] apps, packages out of the boot image (`tools/lib/erx/production_image.rb`
   `package_entries`, `erlang/apps/erx_starter/src/erx_pkg_medium.erl`
   `place(system, ..)`, `erx_principal`): the packer writes each image package

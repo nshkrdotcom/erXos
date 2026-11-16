@@ -305,7 +305,7 @@ of each slot's system partition
 | **F3.** Rearranging a namespace or narrowing it for a program never adds authority | `bind` copies an entry that exists, narrowed to a subtree; `unmount` removes one; `mount` takes a pid, which by F1 reaches only what the domain holds; a handler gives a program only entries of its starter's table, each on the provider of the starter's entry, rooted at or below that entry's root, with rights no wider than the starter's there, and walks for it only names the resolver produced over that table; no entry on a window tree passes to any program, and every description a program holds was opened through a program's table, so none lies on one; the one addition, for a program its starter starts with a window, is a `/dev` tree of the session's own that serves that window's files through the session's own grant of the display the starter names, less the window's `ctl`, which the starter could open itself, in place of the export's `/dev`, which every program reaches, and of any entry at exactly `/dev`, whose rights cap it ([A program's window](#a-programs-window)) | an operation that creates a pid or a fid beyond its source; a handler that walks `..` for a program, records wider rights than its starter's, carries an entry on a window tree into a program's table, or admits into a program's open table a description that no program's table opened | property tests over sequences of operations: the set of pids in the table only shrinks or gains pids the domain already held; a property test over chains of spawns that every program's mounts lie within, and carry rights within, its starter's, and that no program's table holds an entry whose tree is `windows` |
 | **F4.** A client spends a server's CPU and memory only within the server's admission | the protocol checks fid, request, payload and lock bounds before any callback; a grant is one process with a `max_heap_size` that counts its binaries, so what it holds for its client is bounded by its fid pool times the server's per-fid bound; the server runs on its own group's grant and its grant processes schedule among themselves as Erlang processes do, so a flooding client fills its own lane and waits in its own runtime ([design-domains.md](design-domains.md#connections), [design-scheduler.md](design-scheduler.md#service-work)); a blocking lock waits as a pending request of the file's owner, within the client's requests in flight, and nothing in the server blocks | a callback before admission; a grant that holds unbounded state for one fid; a server thread that runs on a client's time; a request whose work grows with the client's input outside the grammar's bounds | hostile-client tests below: fid floods, lock floods, retained `/proc` results, a tiny expensive request, a client that never drains its replies |
 | **F5.** A read-only grant never writes | a grant with rights `ro` or `rx` refuses with `erofs`, as part of decoding the request and so before any callback, every operation the protocol's table marks as writing: `lopen` for writing or with truncation, `lcreate` whatever its flags, since whether it creates a file only the server learns, `write`, `setattr`, `remove`, `unlinkat`, `rename`, `renameat`, `link`, `symlink`, `mknod`, `mkdir`, `xattrcreate`, and a write lock | an operation added to the table and not marked; a request that reaches the grant's dispatch by a path other than its decoding funnel | the refusal set is generated from the protocol's operation table, each operation marked as reading or writing; a test of every writing operation through a read-only grant |
-| **F6.** No grant carries write and execute together, and a session runs only what it read through an `rx` mount, the file-level twin of K8 | a grant's rights are one of `ro`, `rw` and `rx`, a type with no value for both; an `rx` grant writes nothing (F5); a handler gives a program rights within its starter's, and the session's command server fills a code object only from a fid the handler opened through a mount whose rights are `rx` ([design-programs.md](design-programs.md#file-objects)); an EROFS mount's rights are `ro` or `rx`, and `rx` only through an `rx` grant, and no argument of the mount names a layout ([Building, binding and mounting](#building-binding-and-mounting)) | a rights representation with separate write and execute bits; a code object filled from a fid on an `ro` or `rw` mount; an EROFS mount whose rights come from its options or its source rather than its fid's grant; a facet's mount of a facet with no place in `erx_ns`'s table of mount points, which reaches a grant no path should | the grammar's rights type; a test that running a file through an `ro` and through an `rw` mount fails with `EACCES` and that an `rx` grant refuses every writing operation; a test that an `rx` mount of a file of `/apps`, reached through the `rw` `apps` grant, is refused with `eacces`, while `/app` mounts `rx` through the `rx` `packages` grant; seeded: a mount that takes its rights from its options alone, which the first mount test catches; a test that a session's `erx_ns:mount({facet, packages}, "/p", [rx])` is refused with `eacces` ([design-packaging.md](design-packaging.md#verification-and-testing)) |
+| **F6.** No grant carries write and execute together, and a session runs only what it read through an `rx` grant, the file-level twin of K8 | a grant's rights are one of `ro`, `rw` and `rx`, a type with no value for both; an `rx` grant writes nothing (F5); an entry's rights only lower the grant's beneath it, so the handler's image check, before the session's command server fills a code object, needs `rx` on the entry the path resolved through and on the grant beneath that entry: a facet's grant, a grant pid, or for an EROFS entry the grant its fid came through ([Building, binding and mounting](#building-binding-and-mounting), "Rights beneath an entry"; [design-programs.md](design-programs.md#file-objects)); a handler gives a program rights within its starter's; an EROFS mount's rights are `ro` or `rx`, and `rx` only through an `rx` grant, and no argument of the mount names a layout | a rights representation with separate write and execute bits; an image check that reads the entry's rights alone, which runs a file through an `rx` entry on an `rw` grant; a code object filled from a fid on an `ro` or `rw` grant; an EROFS mount whose rights come from its options or its source rather than its fid's grant | the grammar's rights type; a test that running a file through an `ro` and through an `rw` mount fails with `EACCES` and that an `rx` grant refuses every writing operation; a test that a session's `erx_ns:mount({facet, data}, "/x", [rx])` succeeds and that running a file the session wrote there fails with `EACCES`; a test that an `rx` mount of a file of `/apps`, reached through the `rw` `apps` grant, is refused with `eacces`, while `/app` mounts `rx` through the `rx` `packages` grant; seeded: an image check that reads the entry's rights alone, which the `/x` test catches, and a mount that takes its rights from its options alone, which the `/apps` test catches |
 | **F7.** A file's bytes, as one session's programs see them, live in one place per session | while any program of a session maps a file shared, the session's one object for the file holds them: every mapping of the file in the session maps that object, and the handlers send every read, write and size change of the file by the session's programs to the file's mapper, which serves them from the object; the session's file table holds at most one mapper per file, keyed by the server's domain, the tree and the qid path | a second object for one file in one session; a handler that relays such a read or write to the server past the mapper; a mapping installed past the filled extent; a write's bytes put in the object before the server acknowledged them | an exhaustive model of one mapper, its object and its server under interleaved stores, reads, writes the server takes whole, in part or not at all, extending writes, truncations, failed fills and write-backs up to depth 8, against a flat file; two programs of one session, one storing through a mapping and one reading through a descriptor |
 | **F8.** Every store through a shared mapping reaches the file's server as an ordinary write, at a point POSIX names | the mapper writes back, with the protocol's `write`, every page the kernel reports as stored to since the last write-back (`erx_mem_dirty`), at `msync`, at every close of a mapping's open (a program's last `munmap` of the file, its `exec` and its end) and at the `close` that leaves the session's programs no open of the file, and deletes the object only after its last write-back; a write-back that fails is returned to the call that caused it, or logged at a program's end ([Shared mappings](#shared-mappings)) | an object deleted before its last write-back; a stored page the report leaves out; a program's end that the mapper does not see; a failed write-back reported nowhere | a test per write-back point, reading the file through another domain after it; a store made while a write-back runs, which the next write-back carries; a server that fails a write-back, whose `msync`, `munmap` and `close` return `EIO` and whose program's end leaves a log line |
 | **F9.** A program reaches a file only through its handler | a program's sub-space holds its channel, its data area and the memory its session mapped, and nothing else: no grant pid, no fid, no lane to any server; its handler acts only on the program's own table and the files it opened ([design-programs.md](design-programs.md#invariants)) | a capability to a lane or a grant installed in a sub-space; a handler that resolves a program's path over any table but the program's | a sub-space test that enumerates a program's capabilities and finds only its channel and mapped memory; a hostile program that names another program's open numbers, every request failing with `EBADF` |
@@ -1309,15 +1309,28 @@ options name.
 `erx_ns:mount({facet, Name}, To, Options)` adds an entry for the facet
 `Name`, with the same options, whose provider names the facet and holds
 no pid (below, "A facet's mount"); it is the only way a grant
-of another domain is mounted. `Name` must be a facet that `erx_ns`'s
-table of mount points names, the table `erx_ns:mount_facets/1` takes its
-points from; any other facet is refused with `eacces` before the table
-changes. A grant whose service has no place there is therefore reached
-by no path: the `packages` and `system` grants of an app's session, whose
-files only the `app` mount below reads
-([design-packaging.md](design-packaging.md#an-apps-session)), are
-reached by none of the session's code, the app's own included, and none
-of its programs.
+of another domain is mounted.
+**Rights beneath an entry.** An entry's rights only lower the rights of
+the grant beneath it, never raise them: a use through an entry is
+allowed only when the entry's rights and the grant's both allow it.
+The grant beneath a facet's entry is the grant the registry holds for
+the facet, whose rights the facet carries (above); beneath a grant
+pid's entry, that grant, started with its rights
+(`erx_fs:start_link(Module, Args, Rights)`), as each grant of a
+session's export is started with the rights of the local entry it
+serves ([Narrowing for a program](#narrowing-for-a-program)); beneath
+an EROFS entry, the grant the mount's fid came through, whose rights
+the mount keeps with the image (below). A write needs no check of the
+client's for this, since a grant whose rights are not `rw` refuses every
+writing operation itself (F5); running a file does, since a server
+cannot tell a read for code from any other read, so the handler's image
+check needs `rx` on the entry and on the grant beneath it
+([design-programs.md](design-programs.md#file-objects)). A mount
+therefore takes the rights its options name without comparing them
+with the grant's, which for a facet may not have arrived yet: a session
+that mounts `{facet, data}` at `/x` with `rx` makes an entry through
+which nothing runs and nothing is written, since `data`'s grant is `rw`
+and the entry `rx`.
 `erx_ns:mount({erofs, Source}, To, Options)`, the one EROFS mount, adds
 an entry for the image a package file holds: `erx_ns`'s process mounts
 the image with the EROFS reader, which reads it through `erx_verity`
@@ -1337,8 +1350,11 @@ of two places the system domain fixed, and no argument carries them.
   walks the name on that grant, the session's `packages` or `system`
   grant; a session that received no record is refused with `enoent`;
 * `{header, Path}`, a package of `/apps`: `erx_ns`'s process decodes the
-  layout from the package header at the file's start, read through the
-  mount's own fid, and takes the file only if it reached it through the
+  layout from the package header at the file's start, which
+  `erx_verity:header/1` reads through the mount's own fid: the
+  file's length, by a `getattr`, and at most `pkg_header_max` bytes
+  from offset 0, in one positioned read, so no
+  module but `erx_verity` reads the fid (E1), and takes the file only if it reached it through the
   `apps` grant, whose header bytes are those the system domain's file
   check accepted
   ([design-packaging.md](design-packaging.md#apps), "Looking inside a
@@ -1357,7 +1373,17 @@ which writes nothing (F5), so a session runs no code from an image it
 could rewrite (F6): `/app` is `rx` through the app template's `rx`
 `packages` and `system` grants, a mount of a file of `/apps`, through
 the `rw` `apps` grant, is at most `ro`, and a file under `/tmp` or
-`/data` is mounted by neither source. `erx_ns`'s
+`/data` is mounted by neither source. The mount keeps the rights of the
+grant its fid came through with the image, the rights the image check
+reads beneath the entry. A file below the mount is a file of the
+domain's own local provider: its identity is the domain, the mount's
+own tree, a name `erx_ns`'s process draws afresh at each mount, as the
+export names a local provider's tree, so an image mounted again is
+another tree
+([Narrowing for a program](#narrowing-for-a-program)), and the reader's
+inode number as its qid path, and never the grant beneath, so two
+images read through one grant never give two files one identity
+([Identity and version](#identity-and-version)). `erx_ns`'s
 process walks the file to one fid of its own, opens it for reading and
 owns it, so the fid lives as long as the mount, and `erx_verity`, in
 whichever process of the domain reads below `To`, sends its positioned
@@ -3241,7 +3267,10 @@ report, so a passing run shows the code under test ran.
   own process, which the second client's latency exposes.
 * F5 and F6: every writing operation through an `ro` and an `rx` grant,
   each refused before its callback; running a file through an `ro` and an
-  `rw` mount, which fails with `EACCES`; an `rx` EROFS mount of a file of
+  `rw` mount, which fails with `EACCES`; running a file the session wrote
+  through an `rx` mount of its `data` facet, which fails with `EACCES`
+  because the grant beneath is `rw`, seeded with an image check that
+  reads the entry's rights alone; an `rx` EROFS mount of a file of
   `/apps`, refused with `eacces`, and a `{header, Path}` mount of a
   package-shaped file the session wrote under `/tmp`, refused with
   `einval`, so neither runs code the session wrote, seeded with a mount
