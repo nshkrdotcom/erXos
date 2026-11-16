@@ -1477,7 +1477,7 @@ land after M11 repeat M11's closure over what they add.
    the desktop session's release, with `erx_desk_window` and the pure
    cores of `stats`, `clock`, `month` and `files`, each an Erlang
    command that opens one window; the widget format's additions,
-   `role`, `area`, `icon`, `icons`, `current`, list activation and the
+   `role`, `area`, `icon`, `icons`, `current`, `name`, list activation and the
    `graph` kind with `none` samples, through the validator, the binary form, the readers
    in Erlang, C and TypeScript, and the Erlang, LVGL and browser
    renderers; `abi/theme.txt` and its generator, writing `erx_theme`,

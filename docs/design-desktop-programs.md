@@ -42,7 +42,7 @@ Decisions every reader of this document needs:
   `erx_ui`, drawn by the Erlang renderer on the desktop and by LVGL or
   the browser where those are the medium. None opens a draw connection.
   The widget format gains what the four need and states as meaning: a
-  `graph` kind, `icon`, `role`, `area` and `current` properties, icons
+  `graph` kind, `icon`, `role`, `area`, `current` and `name` properties, icons
   on a `list` and activation of a list item ([Widget format
   additions](#widget-format-additions)).
 * **Shipped in the session's release, started by commands.** The four
@@ -130,8 +130,8 @@ and it takes no other system's assets, names or icons.
   `column`, `row`, `grid`, `scroll`, `stack`, `label`, `button`,
   `checkbox`, `slider`, `input`, `list`, `image`, `spacer` and `graph`, and
   four enumerations, `ui_align`, `ui_role`, `ui_area` and `ui_icon`. It
-  carries a text's role, a container's area, icons, a button's `current`
-  and a list's `on_submit`, as [Widget format
+  carries a text's role, a container's area, icons, a button's `current`,
+  a node's `name` and a list's `on_submit`, as [Widget format
   additions](#widget-format-additions) describes.
 * **Drawing.** `display/libmemdraw` is 9front's `libmemdraw`. Its draw
   reads a mask without an alpha channel as grey and uses the grey as
