@@ -20,7 +20,7 @@ module Erx
   #     "source": { "commit": "<40 hex>", "dirty": false },
   #     "build_facts": { "revision": "n1234-5e45e725588e", "date": "1794163353",
   #                      "configuration": "qemu-virt/development", "kernel": "fiasco-50bbe8a98119" },
-  #     "packages": [{ "path": "domain/pkg/NAME.app", "sha256": "..." }] }
+  #     "packages": [{ "path": "apps/NAME.app", "sha256": "..." }] }
   #
   # source is the commit the tree was at and whether it differed from it (null for a tree
   # that is no checkout), read once with the revision the build facts name; build_facts is

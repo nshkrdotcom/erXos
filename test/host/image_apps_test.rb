@@ -20,7 +20,7 @@ require_relative '../fixtures/manifest_context'
 # A package added to an image (docs/design-packaging.md, "Adding an app to an image",
 # Erx::ImageApps): examples/dashboard packed with an SDK exported from the tree and a
 # development package key of the test's own, described by the machine's file check on the
-# host, and planned into the image's file at pkg/dashboard.app and its package row, which
+# host, and planned into the system partition's apps/dashboard.app and its package row, which
 # the manifest check binds to the package's artifact, beside the development key the
 # build context carries.
 class ImageAppsTest < Minitest::Test
@@ -78,17 +78,17 @@ class ImageAppsTest < Minitest::Test
 
     key = self.class.signer.public_key
     plan = Erx::ImageApps.plan([dashboard], enable: %w[dashboard])
-    assert_equal({ 'pkg/dashboard.app' => dashboard.path }, plan.entries)
+    assert_equal({ 'apps/dashboard.app' => dashboard.path }, plan.entries)
     assert_equal "package dashboard\n  input @artifact.package-dashboard\n  enable YES\n", plan.rows
 
-    # The archive's artifacts name the package by its entry in the domain release, beside
-    # the release's boot scripts, under the archive's one duplicate-name refusal.
-    paths = %w[domains/erxos/bin/session.boot domains/erxos/pkg/dashboard.app system/root].map(&:b)
+    # The archive's artifacts name the package by its header, beside the release's boot
+    # scripts, under the archive's one duplicate-name refusal; the package lies in the
+    # system partition, so the archive holds no entry of it.
+    paths = %w[domains/erxos/bin/session.boot system/root].map(&:b)
     artifacts = Erx::ProductionImage.artifacts(paths, images: {}, apps: plan)
     assert_equal({ 'kind' => 'package', 'name' => 'dashboard', 'memory' => dashboard.memory,
-                   'sha256' => dashboard.sha256.unpack1('H*'), 'entry' => 1 }, artifacts.fetch('package-dashboard'))
+                   'sha256' => dashboard.sha256.unpack1('H*') }, artifacts.fetch('package-dashboard'))
     assert_equal 0, artifacts.fetch('session').fetch('entry')
-    assert_raises(Erx::Error) { Erx::ProductionImage.artifacts(paths.reject { |path| path.include?('pkg/') }, images: {}, apps: plan) }
 
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
@@ -106,19 +106,17 @@ class ImageAppsTest < Minitest::Test
     assert_equal [[], true], admitted.report.values_at('signers', 'development_key')
   end
 
-  # The package's archive entry carries a package receipt, which the image's provenance
+  # The package's partition entry carries a package receipt, which the image's provenance
   # resolves to the package attributed whole under the license its header declares,
   # registered as permanent; a package of another license is refused there.
   def test_the_dashboard_enters_under_its_declared_license
     dashboard = self.class.dashboard
-    codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     work = self.class.scratch('erx-image-apps-receipts-')
     plan = Erx::ImageApps.plan([dashboard], enable: [])
-    entry, = Erx::ProductionImage.package_entries(plan, directory: work, root: ROOT, codec: codec)
+    entry, = Erx::ProductionImage.package_entries(plan, directory: work, root: ROOT)
     file = File.realpath(dashboard.path)
-    assert_equal({ 'path' => 'domains/erxos/pkg/dashboard.app', 'kind' => codec.member('entry_kind', 'file'), 'flags' => 0,
-                   'id' => 'domains/erxos/pkg/dashboard.app', 'artifact' => file,
-                   'receipt' => File.join(work, 'package-dashboard.receipt.json') }, entry)
+    assert_equal({ 'path' => 'apps/dashboard.app', 'artifact' => file,
+                   'receipt' => File.join(work, 'dashboard.app.receipt.json') }, entry)
     assert_equal({ 'version' => 1, 'kind' => 'package', 'artifact' => { 'path' => file, 'sha256' => Digest::SHA256.file(file).hexdigest } },
                  JSON.parse(File.read(entry.fetch('receipt'))))
 
@@ -128,7 +126,7 @@ class ImageAppsTest < Minitest::Test
       Erx::PackProvenance.new(root: ROOT, catalog: catalog, external: [external])
                          .resolve(receipt: entry.fetch('receipt'), artifact: file, build_kind: 'development')
     end
-    assert_equal [['domains/erxos/pkg/dashboard.app', 'BSD-2-Clause', 'permanent']],
+    assert_equal [['apps/dashboard.app', 'BSD-2-Clause', 'permanent']],
                  resolve.call(dashboard).map { |record| record.values_at('path', 'license', 'status') }
     assert_match(/cannot enter the image: .*no permitted grant/,
                  assert_raises(Erx::Error) { resolve.call(dashboard.with(license: 'GPL-2.0-only')) }.message)
@@ -152,17 +150,16 @@ class ImageAppsTest < Minitest::Test
     refute Erx::ImageApps.none.local
 
     dashboard = self.class.dashboard
-    codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     restricted = dashboard.with(license: 'GPL-2.0-only')
     resolve = lambda do |plan, build_kind|
-      entry, = Erx::ProductionImage.package_entries(plan, directory: self.class.scratch('erx-image-apps-local-'), root: ROOT, codec: codec)
+      entry, = Erx::ProductionImage.package_entries(plan, directory: self.class.scratch('erx-image-apps-local-'), root: ROOT)
       external = Erx::ProductionImage.package_external(restricted, root: ROOT, status: plan.status(restricted))
       catalog = Erx::BuildInputs.pack(root: ROOT, paths: [entry.fetch('artifact'), entry.fetch('receipt')])
       Erx::PackProvenance.new(root: ROOT, catalog: catalog, external: [external])
                          .resolve(receipt: entry.fetch('receipt'), artifact: entry.fetch('artifact'), build_kind: build_kind)
     end
     local = Erx::ImageApps.plan([restricted], enable: [], local: true)
-    assert_equal [['domains/erxos/pkg/dashboard.app', 'GPL-2.0-only', 'package-local']],
+    assert_equal [['apps/dashboard.app', 'GPL-2.0-only', 'package-local']],
                  resolve.call(local, 'development').map { |record| record.values_at('path', 'license', 'status') }
     assert_match(/cannot enter the image: .*no permitted grant; only a local test image/,
                  assert_raises(Erx::Error) { resolve.call(Erx::ImageApps.plan([restricted], enable: []), 'development') }.message)
@@ -174,7 +171,7 @@ class ImageAppsTest < Minitest::Test
   def test_the_plan_follows_from_its_inputs_alone
     one = Erx::ImageApps.plan([package('quotes'), package('clock')], enable: %w[clock])
     assert_equal one, Erx::ImageApps.plan([package('clock'), package('quotes')], enable: %w[clock])
-    assert_equal %w[pkg/clock.app pkg/quotes.app], one.entries.keys
+    assert_equal %w[apps/clock.app apps/quotes.app], one.entries.keys
     assert_match(/\Apackage clock\n.*  enable YES\npackage quotes\n.*  enable NO\n\z/m, one.rows)
   end
 

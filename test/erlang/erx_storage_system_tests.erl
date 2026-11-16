@@ -117,6 +117,23 @@ good_partition_serves_apps_test() ->
     ?assertMatch({ok, #{type := ?ERX_P9_MAGIC_EROFS}}, call(Grant, {statfs, 1})),
     ?assertEqual([], logged()).
 
+%% The packer's partition serves the image's packages, written at apps/NAME.app of the
+%% system partition, and nothing of the release beside them.
+packed_partition_serves_the_image_packages_test() ->
+    Grant = grant(open("packed"), ro),
+    {ok, []} = call(Grant, {walk, 1, 9, []}),
+    {ok, _, _} = call(Grant, {lopen, 9, ?O_RDONLY}),
+    ?assertEqual({ok, [<<"big.app">>, <<"small.app">>]}, names(Grant, 9)),
+    {ok, [_]} = call(Grant, {walk, 1, 2, [<<"big.app">>]}),
+    {ok, _, _} = call(Grant, {lopen, 2, ?O_RDONLY}),
+    ?assertEqual({ok, erx_erofs_tests:contents(20000, 3)}, read_all(Grant, 2, 4096)),
+    {ok, [_]} = call(Grant, {walk, 1, 3, [<<"small.app">>]}),
+    {ok, _, _} = call(Grant, {lopen, 3, ?O_RDONLY}),
+    ?assertEqual({ok, erx_erofs_tests:contents(100, 1)}, read_all(Grant, 3, 4096)),
+    ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"system">>]})),
+    ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"README">>]})),
+    ?assertEqual([], logged()).
+
 %% Writing -------------------------------------------------------------------
 
 %% Every grant of the tree refuses each writing operation with erofs, an rw grant too,

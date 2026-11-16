@@ -88,7 +88,7 @@ it; git history is the record of completed work.
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
   the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
   every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
-  the release's `pkg/NAME.app`, which the system partition replaces
+  the `system` grant's `NAME.app`, the system partition's `apps/NAME.app`
   ([docs/todo-system-partition.md](docs/todo-system-partition.md)), and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
   erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. `erx_pkg:system_config/0` builds
   the config from the manifest and the library's app entries. QEMU virt's development manifest has the
@@ -142,10 +142,10 @@ it; git history is the record of completed work.
   `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
   (`erx_app` ends with `{not_supported, program}` until then).
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
-  an image package's place
-  `{system, [apps, NAME.app]}` is written in `erx_principal` beside `erx_pkg_medium`'s `pkg/NAME.app` (one owner wanted); the
-  `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
-  through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
+  an image package's place on the `system` grant is written in `erx_principal:place/2` and again in
+  `erx_pkg_medium` (`place/2`, `on_system/1`, beside `erx_ns:facet_grant/1`'s grant tuple; one owner wanted); the
+  `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console
+  facet through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
 * [Low] apps, `erx_starter_keeper`: a session that ends before its keeper takes it ends the keeper with
   `noproc`, the exit its trapped link brings, so the supervisor reports a crash naming no session where

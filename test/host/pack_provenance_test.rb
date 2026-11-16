@@ -339,7 +339,7 @@ class PackProvenanceTest < Minitest::Test
   def resolve_package(license, status: 'permanent', build_kind: 'development')
     package = write('clock.app', 'package bytes')
     external = { 'path' => package, 'sha256' => Digest::SHA256.file(package).hexdigest, 'license' => license,
-                 'label' => 'pkg/clock.app', 'evidence' => 'package header', 'status' => status, 'notices' => [] }
+                 'label' => 'apps/clock.app', 'evidence' => 'package header', 'status' => status, 'notices' => [] }
     resolver = Erx::PackProvenance.new(root: @root, catalog: build_catalog, external: [external])
     receipt = write('package.json', JSON.generate('version' => 1, 'kind' => 'package', 'artifact' => reference(package)))
     resolver.instance_variable_set(:@catalog, build_catalog)
@@ -348,10 +348,10 @@ class PackProvenanceTest < Minitest::Test
 
   def test_a_package_enters_only_under_a_permissive_license
     record = resolve_package('BSD-2-Clause').first
-    assert_equal %w[pkg/clock.app BSD-2-Clause permanent], record.values_at('path', 'license', 'status')
+    assert_equal %w[apps/clock.app BSD-2-Clause permanent], record.values_at('path', 'license', 'status')
     { 'GPL-2.0-only' => /no permitted grant/, 'NOASSERTION' => /unresolved source license/ }.each do |license, reason|
       error = assert_raises(Erx::Error) { resolve_package(license) }
-      assert_match(%r{\Athe package pkg/clock\.app cannot enter the image: }, error.message)
+      assert_match(%r{\Athe package apps/clock\.app cannot enter the image: }, error.message)
       assert_match(reason, error.message)
     end
     error = assert_raises(Erx::Error) { resolve_package('GPL-2.0-only', status: 'stopgap') }
@@ -362,7 +362,7 @@ class PackProvenanceTest < Minitest::Test
   # development build admits under its license and a release build refuses.
   def test_a_package_local_enters_only_a_development_build
     record = resolve_package('GPL-2.0-only', status: 'package-local').first
-    assert_equal %w[pkg/clock.app GPL-2.0-only package-local], record.values_at('path', 'license', 'status')
+    assert_equal %w[apps/clock.app GPL-2.0-only package-local], record.values_at('path', 'license', 'status')
     error = assert_raises(Erx::Error) { resolve_package('GPL-2.0-only', status: 'package-local', build_kind: 'release') }
     assert_match(/no permitted grant/, error.message)
   end

@@ -126,6 +126,25 @@ class ProductionImageTest < Minitest::Test
     Erx::ProductionImage.check_card_apps(PLATFORM, Erx::ImageApps.plan([], enable: [], local: true))
   end
 
+  # An image's packages lie in its medium's system partition, so an image built without a
+  # medium refuses them before anything is built, rather than dropping them; --local alone
+  # passes the check (here to the missing directory).
+  def test_an_image_without_a_medium_takes_no_packages
+    image = Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '',
+                                     machine: Erx::ProductionImage::Machine.development(PLATFORM), fiasco: Object.new,
+                                     runtime: nil, jit_runtime: nil)
+    clock = Erx::ImageApps::Package.new(path: '/p/clock.app', name: 'clock', memory: 1 << 22, sha256: "\xab".b * 32,
+                                        license: 'MIT')
+    error = assert_raises(Erx::Error) do
+      image.build(directory: '/nonexistent', manifest_source: '', apps: Erx::ImageApps.plan([clock], enable: []))
+    end
+    assert_equal "an image takes packages only into its medium's system partition: pack them with --medium", error.message
+    error = assert_raises(Erx::Error) do
+      image.build(directory: '/nonexistent', manifest_source: '', apps: Erx::ImageApps.plan([], enable: [], local: true))
+    end
+    refute_match(/packages/, error.message)
+  end
+
   # libbeam.a holds littlefs's objects (lfs.o and lfs_util.o, in the emulator's OS_OBJS), so
   # its attribution names littlefs's license beside OTP's; compiler-rt's builtins carry LLVM's
   # license, and nothing linked is GPL; every notice named is a tree file.

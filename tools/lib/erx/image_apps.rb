@@ -14,8 +14,8 @@ require_relative 'pack_provenance'
 module Erx
   # The packages an image builder adds to an image (docs/design-packaging.md, "Adding an
   # app to an image"), as the rows and files the image takes: for each package NAME.app,
-  # the file at pkg/NAME.app of the release (on the stopgap, the boot image's domain
-  # release, "Where a package lies"), a `package NAME` row whose input is the package's
+  # the file at apps/NAME.app of the slot's system partition, never in the boot image
+  # ("Where a package lies"), a `package NAME` row whose input is the package's
   # artifact and whose enable is YES only when the builder enables it, a `signer` row for
   # each key the builder names (--signer). The builder's development package key, which a
   # development image trusts, is the build context's, never a source row.
@@ -29,7 +29,9 @@ module Erx
   # one that is not permissive enters only a local test image, which the builder asks for
   # with --local and which never leaves the host that built it (Plan#status).
   module ImageApps
-    RELEASE_DIRECTORY = 'pkg'
+    # The system partition's directory of the image's packages, the root of the `system`
+    # tree (erx_storage_system), so a package reaches no other path of the partition.
+    PARTITION_DIRECTORY = 'apps'
     ARTIFACT_KIND = 'package'
     DEVELOPMENT_SIGNER = 'development'
     KEY_BYTES = 32
@@ -46,8 +48,8 @@ module Erx
         super(path: File.expand_path(path), name: name, memory: memory, sha256: sha256, license: license)
       end
 
-      # Where the package lies in its release, and its artifact's name.
-      def entry_path = "#{RELEASE_DIRECTORY}/#{name}.app"
+      # Where the package lies in the system partition, and its artifact's name.
+      def entry_path = "#{PARTITION_DIRECTORY}/#{name}.app"
       def artifact_name = "#{ARTIFACT_KIND}-#{name}"
     end
 
@@ -81,19 +83,16 @@ module Erx
       # Whether the image takes no package, no signer and is no local test image.
       def empty? = packages.empty? && rows.empty? && !local
 
-      # Each release-relative path mapped to the package file that lies there.
+      # Each path of the system partition mapped to the package file that lies there.
       def entries = packages.to_h { |package| [package.entry_path, package.path] }
 
       # Each package's artifact for the manifest check (Manifest's check_packages) by
-      # name, naming its entry in the archive's sorted paths, where the release whose
-      # paths begin with prefix holds it.
-      def artifacts(paths, prefix:)
+      # name: its header's hash, which binds the row to the file the system partition
+      # holds, so the artifact names no entry of the archive.
+      def artifacts
         packages.to_h do |package|
-          entry = paths.index("#{prefix}#{package.entry_path}".b)
-          raise Error, "the archive holds no entry for package #{package.name}" unless entry
-
           [package.artifact_name, { 'kind' => ARTIFACT_KIND, 'name' => package.name, 'memory' => package.memory,
-                                    'sha256' => package.sha256.unpack1('H*'), 'entry' => entry }.freeze]
+                                    'sha256' => package.sha256.unpack1('H*') }.freeze]
         end
       end
     end

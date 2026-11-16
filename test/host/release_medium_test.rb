@@ -14,6 +14,7 @@ require_relative '../../tools/lib/erx/platform'
 require_relative '../../tools/lib/erx/release_medium'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/generated'
+require_relative '../../tools/lib/erx/image_apps'
 require_relative '../fixtures/erlang_build'
 require_relative '../fixtures/manifest_context'
 
@@ -211,15 +212,21 @@ class ReleaseMediumTest < Minitest::Test
   # packer writes, mounted through its tree with erx_verity and erx_erofs:mount/3
   # (test/erlang/erx_release_system_tests.erl) under the words of the system_image record
   # the development manifest packs from the image's artifact, as the domain library
-  # writes them, every file of the release read back. Seeded: one bit of the tree
-  # flipped, which the mount answers eio.
+  # writes them, every file of the release read back, and the image's package at
+  # apps/NAME.app with its bytes, beside the release and never in the boot image.
+  # Seeded: one bit of the tree flipped, which the mount answers eio.
   def test_the_system_partition_reads_through_its_tree_under_the_manifest_record
     Dir.mktmpdir('erx-release-system-') do |directory|
       files = tree(File.join(directory, 'input'))
       boot = File.join(directory, 'image.boot')
       File.binwrite(boot, Random.new(7).bytes(MIB))
       release = files.map { |path, source| { 'path' => path, 'artifact' => source } }
-      medium, artifacts = written(boot, release, File.join(directory, 'medium'))
+      package = File.join(directory, 'clock.app')
+      File.binwrite(package, Random.new(11).bytes(9000))
+      apps = Erx::ImageApps.plan([Erx::ImageApps::Package.new(path: package, name: 'clock', memory: 1 << 22, sha256: "\0".b * 32,
+                                                              license: 'BSD-2-Clause')], enable: [])
+      files['apps/clock.app'] = package
+      medium, artifacts = written(boot, release, File.join(directory, 'medium'), apps: apps)
       row = system_image_row(artifacts)
       length = row.fetch('tree_offset') + row.fetch('tree_length')
       partition = File.open(medium.path, 'rb') { |file| file.pread(length, CODEC.constant('medium_system_a_start') * SECTOR) }
@@ -290,9 +297,9 @@ class ReleaseMediumTest < Minitest::Test
 
   # The image and the medium as ProductionImage#build_medium writes them, and the
   # artifacts the image gives the manifest check.
-  def written(boot, release, directory)
+  def written(boot, release, directory, apps: Erx::ImageApps.none)
     FileUtils.mkdir_p(directory)
-    erofs, artifacts = Erx::ReleaseMedium.image(entries: release, directory: directory, runner: runner(directory))
+    erofs, artifacts = Erx::ReleaseMedium.image(entries: release, apps: apps, directory: directory, runner: runner(directory))
     built = Struct.new(:single, :erofs).new(boot, erofs)
     data_sectors = CODEC.constant('medium_data_sectors_min')
     volume = Erx::DataVolume.format(root: ROOT, owner_root: directory, runner: runner(directory), directory: directory,
