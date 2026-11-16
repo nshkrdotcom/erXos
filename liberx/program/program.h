@@ -34,7 +34,7 @@
 
 #include <erx/abi.h>
 
-#include "liberx/exec/load.h"
+#include "liberx/exec/range.h"
 #include "liberx/program/startup.h"
 
 /*

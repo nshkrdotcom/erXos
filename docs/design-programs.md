@@ -1816,12 +1816,23 @@ the path into one of four images:
     before acting on them, at the address register 7 gives, a page
     boundary that is not 0; an address that is not the record faults
     the reader, a fault of the session's. `erx_exec` takes the object
-    and the length and nothing else. `erx_exec_release` takes the
-    loader's span and refuses it, as it refuses a release the space
-    refuses, unless both its ends are page-aligned, its size is not 0,
-    its end is checked arithmetic, and it does not meet the
-    executable's own image, whose span the executable knows from its
-    own link's symbols. Within those checks the release removes whole
+    and the length and nothing else. The loader's span in the record
+    is a cross-check, not the authority: `erx_exec` is a fixed-link
+    task, so its span is a constant of its own link, and the build
+    generates that span into every executable's link as
+    `erx_exec_loader()` (`liberx/exec/release.h`), while a fixed-link
+    task, which no loader enters, links a span of size 0 that no
+    record matches. `erx_exec_release` refuses, as it refuses a
+    release the space refuses, a record whose span is not exactly the
+    linked loader's, so a record can name no other memory of the
+    executable's, its helper threads' stacks or another object's
+    mapping, and the linked span is page-aligned, not empty and ends
+    within 64 bits because the loader's link is; a loader span that
+    meets the executable's own image, whose span the executable knows
+    from its own link's symbols; and a record whose page meets that
+    image or lies in the loader's span, so the record's release frees
+    neither a page the executable runs on nor one of the span again.
+    Within those checks the release removes whole
     mappings only: the space refuses a release that covers part of a
     mapping and not all of it (`ERX_EINVAL`), so a span reaching into
     a neighbour is refused rather than cutting it short, and every
@@ -1866,7 +1877,8 @@ the path into one of four images:
     the record is mapped: no constructor, which musl's start runs, no
     `main` and no part of musl, and `erx_exec_release`, like the
     loader, uses no thread-local storage and no musl function that
-    does. It copies the record's two fields and
+    does. It copies the record once, through the generated
+    `erx_exec_record_decode`, takes its two span fields, and
     checks them as above, releases the loader's span, which holds its
     code, its data and the first stack it ran on, and then the record's
     page, so a loaded program keeps nothing of `erx_exec` but the
@@ -4384,10 +4396,14 @@ terminal cases.
     start, where `liberx` maps the channel, lets the constructor's read
     succeed and `main` print, which fails the case.
   * *The record's span.* A host test of `erx_exec_release`'s check
-    accepts the loader's span and refuses one that meets the
-    executable's own image, one with an unaligned end, one of size 0
-    and one whose end overflows; a check without the comparison with the
-    executable's image accepts the first refusal.
+    accepts the linked loader's span and refuses every other span (moved,
+    longer, shorter, unaligned, of size 0, ending past 2^64, the
+    executable's own image), every record of a task linked with no
+    loader, a loader that meets the executable's image, and a record
+    whose page lies in the image or in the loader's span; a check that
+    does not compare the span with the linked loader's accepts the
+    moved span, and one without either comparison of the record's page
+    releases that page.
   * *The driver's view.* A host test of the port driver's build plan
     for an executable file finds the release of the session's view of
     the record before the record's map into the image, and in the undo

@@ -246,6 +246,9 @@ enum exit_kind i64
 # follow doorbell directly. exec carries the address of the exec record,
 # erx_exec_record, in the image of the loader erx_exec, and 0 in every
 # other image (docs/design-programs.md, "The loader's bootstrap").
+# The values fill every start register an architecture file gives
+# (arch_start_args), which the stopgap's trampoline loads
+# (docs/design-stopgap.md, "The trampoline").
 enum program_arg u32
   value budget 0
   value group 1

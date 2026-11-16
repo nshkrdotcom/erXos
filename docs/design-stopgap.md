@@ -1071,7 +1071,10 @@ the marker stays 1 and the index is lost until the task ends. A deletion the roo
 assembly in the backend's architecture layer and `sp` is the record. It stores the record in the native UTCB's
 first user word, as L4Re's pthread does (`descr.h:211`), writes the marker 1, which index 0 needs because the
 root cannot reach a task's native UTCB, sets the stack, the thread pointer and the first eight argument registers
-from the starting registers, and jumps to the entry.
+from the starting registers, and jumps to the entry. A program's values, `program_arg`, use all eight: `budget` to `hwcap2` in registers 0 to 6 and `exec`,
+the exec record's address or 0, in register 7, so a further value a session gives its program travels in the
+startup message, not in a register. `task_start.c` and `program.c` assert that `exec`, the highest index, is
+below `ERX_ARCH_START_ARGS`, which holds only while `exec` stays the last value.
 
 **An exec's entry.** `erx_exec` ([design-programs.md](design-programs.md#what-a-program-can-start), "The loader's
 bootstrap") is linked as every task is, but its first instructions name its own C entry, which readies record 0 as

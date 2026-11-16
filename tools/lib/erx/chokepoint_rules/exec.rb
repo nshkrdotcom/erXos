@@ -6,7 +6,7 @@ module Erx
   module ChokepointRules
     EXEC_LOAD = 'liberx/exec/load.c'
     EXEC_FILES = %w[liberx/exec/load.c liberx/exec/load.h liberx/exec/load_plan.c liberx/exec/load_plan.h
-                    liberx/exec/release.c liberx/exec/release.h].freeze
+                    liberx/exec/range.h liberx/exec/release.c liberx/exec/release.h liberx/exec/loader_none.c].freeze
 
     # erXos's own C, the stopgap kernel's glue and erXos's C inside ERTS, which links liberx.
     EXEC_SCOPE = Chokepoints::Scope.new(own: true, extra: [GLUE, 'otp/erts/emulator/nifs/erxos/**/*',

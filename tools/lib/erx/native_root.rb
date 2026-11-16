@@ -83,16 +83,20 @@ module Erx
     # profile reader over the ETF reader, which hashes atoms with BLAKE3, and the backend
     # names the layer calls by, with task_refused.c for those a task has no service answer
     # for. The layer's descriptor table holds the pipe ends the startup message gives, run by
-    # the pipe core (PIPE). The programs suite's programs are built from it.
+    # the pipe core (PIPE). The programs suite's programs are built from it. Each is a
+# fixed-link task, which no loader enters, so it links the size-0 loader of
+# loader_none.c; the layer itself names no loader, so an executable's link that
+# lacks the build's constant fails rather than taking that one.
     PROGRAM_LAYER = [*%w[liberx/program/program.c liberx/program/channel.c liberx/program/startup.c liberx/program/inbound.c
                          liberx/program/pages.c liberx/program/fd.c liberx/program/fd_plan.c liberx/program/file.c
                          liberx/program/data.c liberx/program/pipe.c liberx/program/wake.c
                          liberx/program/poll.c liberx/program/signal.c liberx/program/spawn.c
-                         liberx/program/spawn_plan.c liberx/program/image.c liberx/exec/release.c liberx/erx_lane.c
+                         liberx/program/spawn_plan.c liberx/program/image.c liberx/exec/release.c
+                         build/gen/liberx/generated/abi_reader.c liberx/erx_lane.c
                          liberx/erx_profile.c build/gen/liberx/generated/prog_profile.c liberx/erx_etf.c
                          kernel/crypto/blake3/blake3.c kernel/crypto/blake3/blake3_portable.c], *PIPE].freeze
     PROGRAM = [*(LIBC_TASK - ["#{BACKEND}/libc_task.c"]), "#{BACKEND}/program_task.c", "#{BACKEND}/api_names.c",
-               "#{BACKEND}/task_refused.c",
+               "#{BACKEND}/task_refused.c", "liberx/exec/loader_none.c",
                *PROGRAM_LAYER].freeze
     # The root that checks the handoff and the archive and has nothing to run: the boot
     # suite's. The archive's core comes from Fiasco's boot archive, which does not hold the

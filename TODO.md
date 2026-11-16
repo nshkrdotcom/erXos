@@ -158,7 +158,7 @@ it; git history is the record of completed work.
   start-up with the eighth argument 0, the loader's writing of its span only after a load that succeeded,
   the port driver's release of its own view of the record and its close of the record's capability once
   the first thread has started, the SDK's `liberx_program.a` (`liberx`'s program layer, its backend and
-  the members of `erx_boot.a`, `libsigma0.a` and `libl4sys.p.a`), the `{ok, Cap, Bytes}` reply to `{map, Path, code}` and the exec switch's
+  the members of `erx_boot.a`, `libsigma0.a` and `libl4sys.p.a`), the build's generation of the loader's linked span into an executable's link as `erx_exec_loader()` (every fixed-link task links `liberx/exec/loader_none.c`; the constant ties an executable to the one loader build it was linked against, which an SDK built apart from the system would have to version), the `{ok, Cap, Bytes}` reply to `{map, Path, code}` and the exec switch's
   record, the task script's base symbol and dynamic sections, and the removal of `image` from the
   startup message (`abi/protocols/prog.txt`, the `image` union). The static link needs `-fPIE`
   objects: musl's `libc.a` is built without it (`musl.rb`'s `CFLAGS`), so `vmlock.o` and `ofl.o` fail

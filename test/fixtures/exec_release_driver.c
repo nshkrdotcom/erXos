@@ -8,15 +8,18 @@
  * program layer's erx_prog_enter (liberx/program/program.c), which calls
  * it, for test/host/exec_release_test.rb.
  *
- *   check RECORD BASE SIZE OWN_BASE OWN_SIZE
+ *   check RECORD BASE SIZE OWN_BASE OWN_SIZE LOADER_BASE LOADER_SIZE
  *	prints the check's verdict for the record at RECORD whose loader span
- *	is BASE and SIZE, in a program whose image is OWN_BASE and OWN_SIZE.
- *   enter RECORD BASE SIZE OWN_BASE OWN_SIZE REFUSE
+ *	is BASE and SIZE, in a program whose image is OWN_BASE and OWN_SIZE
+ *	and whose linked loader is LOADER_BASE and LOADER_SIZE.
+ *   enter RECORD BASE SIZE OWN_BASE OWN_SIZE LOADER_BASE LOADER_SIZE REFUSE
  *	runs erx_prog_enter over a stand-in space, one arena of pages,
  *	every address an offset into it: register 7 is the arena's RECORD,
  *	or 0 for "-", and the record there gives the span BASE and SIZE, or
  *	holds 0 in both for BASE "-", as the record of a load that failed
- *	does. The program's own image is OWN_BASE and OWN_SIZE. A release
+ *	does. The program's own image is OWN_BASE and OWN_SIZE and its
+ *	linked loader LOADER_BASE and LOADER_SIZE, or size 0 for "-", as a
+ *	fixed-link task's. A release
  *	fills its range with 0xdd and prints "release OFFSET SIZE STATUS";
  *	REFUSE, when not 0, makes the REFUSE-th release fail with ERX_EINVAL.
  *	A stop prints "stop STATUS" and exits. When erx_prog_enter returns,
@@ -42,15 +45,15 @@
 
 static uint8_t *arena;
 static uint32_t releases, refuse_release;
-static erx_exec_range_t own;
+static erx_exec_range_t own, loader;
 
 static const char *const verdicts[] = {
 	[ERX_EXEC_RELEASE_GO] = "go",
 	[ERX_EXEC_RELEASE_RECORD] = "record",
-	[ERX_EXEC_RELEASE_UNALIGNED] = "unaligned",
-	[ERX_EXEC_RELEASE_EMPTY] = "empty",
-	[ERX_EXEC_RELEASE_OVERFLOW] = "overflow",
-	[ERX_EXEC_RELEASE_OVERLAP] = "overlap",
+	[ERX_EXEC_RELEASE_LOADER] = "loader",
+	[ERX_EXEC_RELEASE_LOADER_IMAGE] = "loader-image",
+	[ERX_EXEC_RELEASE_RECORD_IMAGE] = "record-image",
+	[ERX_EXEC_RELEASE_RECORD_LOADER] = "record-loader",
 };
 
 static uint64_t
@@ -100,13 +103,20 @@ erx_prog_image(void)
 	return (own);
 }
 
+erx_exec_range_t
+erx_exec_loader(void)
+{
+	return (loader);
+}
+
 static int
 check(char **argv)
 {
-	const erx_exec_range_t loader = { .address = number(argv[1]), .size = number(argv[2]) };
+	const erx_exec_range_t recorded = { .address = number(argv[1]), .size = number(argv[2]) };
 	const erx_exec_range_t image = { .address = number(argv[3]), .size = number(argv[4]) };
+	const erx_exec_range_t linked = { .address = number(argv[5]), .size = number(argv[6]) };
 
-	printf("%s\n", verdicts[erx_exec_release_check(number(argv[0]), loader, image)]);
+	printf("%s\n", verdicts[erx_exec_release_check(number(argv[0]), recorded, image, linked)]);
 	return (0);
 }
 
@@ -121,7 +131,9 @@ enter(char **argv)
 		return (3);
 	memset(arena, 0, ARENA_PAGES * ERX_PAGE_SIZE);
 	own = (erx_exec_range_t){ .address = address(number(argv[3])), .size = number(argv[4]) };
-	refuse_release = (uint32_t)number(argv[5]);
+	if (strcmp(argv[5], "-") != 0)
+		loader = (erx_exec_range_t){ .address = address(number(argv[5])), .size = number(argv[6]) };
+	refuse_release = (uint32_t)number(argv[7]);
 	if (strcmp(argv[1], "-") != 0) {
 		record.loader_base = address(number(argv[1]));
 		record.loader_size = number(argv[2]);
@@ -145,9 +157,9 @@ enter(char **argv)
 int
 main(int argc, char **argv)
 {
-	if (argc == 7 && strcmp(argv[1], "check") == 0)
+	if (argc == 9 && strcmp(argv[1], "check") == 0)
 		return (check(argv + 2));
-	if (argc == 8 && strcmp(argv[1], "enter") == 0)
+	if (argc == 10 && strcmp(argv[1], "enter") == 0)
 		return (enter(argv + 2));
 	return (3);
 }

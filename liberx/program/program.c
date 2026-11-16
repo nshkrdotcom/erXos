@@ -92,7 +92,8 @@ void
 erx_prog_enter(const uint64_t regs[ERX_ARCH_START_ARGS])
 {
 	memcpy(self.regs, regs, sizeof(self.regs));
-	if (regs[ERX_PROGRAM_ARG_EXEC] != 0 && !erx_exec_release(regs[ERX_PROGRAM_ARG_EXEC], erx_prog_image()))
+	if (regs[ERX_PROGRAM_ARG_EXEC] != 0 && !erx_exec_release(regs[ERX_PROGRAM_ARG_EXEC], erx_prog_image(),
+	    erx_exec_loader()))
 		stop(ERX_PROG_STATUS_RELEASE);
 }
 
