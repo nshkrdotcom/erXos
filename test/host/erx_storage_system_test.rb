@@ -26,7 +26,8 @@ require_relative '../fixtures/erlang_build'
 # same length, its tree rebuilt to match, with good's record; and "changed-own", the
 # changed partition with the record of its own tree; and "packed", the partition the
 # packer writes (Erx::ReleaseMedium.image) from a release file and the image's packages,
-# big and small, with the record of the artifacts it hands the manifest check.
+# big and small, with the record of the artifacts it hands the manifest check; and
+# "packed-empty", the partition it writes from the release file and no package.
 class ErxStorageSystemTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   APPLICATIONS = %w[erx_storage].freeze
@@ -92,7 +93,8 @@ class ErxStorageSystemTest < Minitest::Test
                    'directory' => [flip_name(good) + good_tree.bytes, record(good, good_tree)],
                    'changed' => [changed + changed_tree.bytes, record(good, good_tree)],
                    'changed-own' => [changed + changed_tree.bytes, record(changed, changed_tree)] }
-    partitions['packed'] = packed(work, runner)
+    partitions['packed'] = packed(work, runner, 'packed', PACKAGES)
+    partitions['packed-empty'] = packed(work, runner, 'packed-empty', {})
     terms = partitions.map do |name, (bytes, words)|
       File.binwrite(File.join(work, "#{name}.img"), bytes)
       "{\"#{name}\", [#{words.map { |word| "\"#{word}\"" }.join(', ')}]}.\n"
@@ -122,12 +124,12 @@ class ErxStorageSystemTest < Minitest::Test
   end
 
   # The partition the packer writes for a release of one file, system/README, and the
-  # image's packages PACKAGES, and the record words of its artifact: the image, then its
+  # image's packages listed, staged in work/LABEL-files, and the record words of its artifact: the image, then its
   # tree from the image's end.
-  def packed(work, runner)
-    sources = File.join(work, 'packed-files')
+  def packed(work, runner, label, listed)
+    sources = File.join(work, "#{label}-files")
     Dir.mkdir(sources)
-    packages = PACKAGES.map do |file, (size, seed)|
+    packages = listed.map do |file, (size, seed)|
       path = File.join(sources, file)
       File.binwrite(path, contents(size, seed))
       Erx::ImageApps::Package.new(path: path, name: File.basename(file, '.app'), memory: 1 << 22, sha256: "\0".b * 32,
@@ -136,7 +138,7 @@ class ErxStorageSystemTest < Minitest::Test
     readme = File.join(sources, 'README')
     File.binwrite(readme, "outside apps\n")
     erofs, artifacts = Erx::ReleaseMedium.image(entries: [{ 'path' => 'system/README', 'artifact' => readme }],
-                                                apps: Erx::ImageApps.plan(packages, enable: []), directory: work, runner: runner)
+                                                apps: Erx::ImageApps.plan(packages, enable: []), directory: sources, runner: runner)
     image = File.binread(erofs)
     tree = artifacts.fetch(Erx::ReleaseMedium::IMAGE).fetch('tree')
     [image + Erx::AppPackage.image_tree(image).bytes,

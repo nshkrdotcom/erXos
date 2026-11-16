@@ -594,30 +594,14 @@ module Erx
     # With --probe header, instead the Raspberry Pi 4's header probe card (HeaderProbe),
     # a card of its own that needs no Fiasco and no image; it is a medium already, so it
     # takes no --medium. Each --app adds an app to the image (image_apps,
-    # docs/design-packaging.md, "Adding an app to an image"), --enable NAME starts it at
+    # docs/design-packaging.md, "Adding an app to an image"), into its medium's system
+    # partition, so --app implies --medium (pack_options); --enable NAME starts it at
     # boot and --signer FILE trusts a deployer's key for packages installed later.
     # --local makes it a local test image, which takes a package whose license is not
     # permissive and never leaves this host (ImageApps::Plan); a board's card, the one the
     # website offers, takes neither (ProductionImage#build_medium).
     def self.pack(arguments)
-      medium = false
-      local = false
-      probe = nil
-      sources = []
-      enable = []
-      signers = []
-      platform = platform_option(arguments) do |flags|
-        flags.on('--medium') { medium = true }
-        flags.on('--probe NAME', %w[header]) { |name| probe = name }
-        flags.on('--app PATH') { |path| sources << File.expand_path(path) }
-        flags.on('--enable NAME') { |name| enable << name }
-        flags.on('--signer FILE') { |path| signers << File.expand_path(path) }
-        flags.on('--local') { local = true }
-      end
-      no_arguments(arguments)
-      raise Error, 'pack: --probe packs a card of its own and takes no --medium' if probe && medium
-      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && (local || !(sources + enable + signers).empty?)
-
+      pack_options(arguments) => { platform:, medium:, probe:, sources:, enable:, signers:, local: }
       require_relative 'lib/erx/production_image'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       environment = host_environment(runner: runner)
@@ -641,6 +625,34 @@ module Erx
         Terminal.puts("release medium: #{written.path}; EROFS image: #{written.erofs}; #{extents.join('; ')}")
       end
       0
+    end
+
+    # pack's options, parsed from arguments and checked whole before anything is built.
+    PackOptions = Data.define(:platform, :medium, :probe, :sources, :enable, :signers, :local)
+
+    # The PackOptions of pack's arguments, parsed and checked. An image's packages lie in its medium's system
+    # partition, so an --app sets medium as --medium does; --probe takes neither.
+    def self.pack_options(arguments)
+      medium = false
+      local = false
+      probe = nil
+      sources = []
+      enable = []
+      signers = []
+      platform = platform_option(arguments) do |flags|
+        flags.on('--medium') { medium = true }
+        flags.on('--probe NAME', %w[header]) { |name| probe = name }
+        flags.on('--app PATH') { |path| sources << File.expand_path(path) }
+        flags.on('--enable NAME') { |name| enable << name }
+        flags.on('--signer FILE') { |path| signers << File.expand_path(path) }
+        flags.on('--local') { local = true }
+      end
+      no_arguments(arguments)
+      raise Error, 'pack: --probe packs a card of its own and takes no --medium' if probe && medium
+      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && (local || !(sources + enable + signers).empty?)
+
+      PackOptions.new(platform: platform, medium: medium || !sources.empty?, probe: probe, sources: sources.freeze,
+                      enable: enable.freeze, signers: signers.freeze, local: local)
     end
 
     # The packages pack's --app options add to the image, as an ImageApps::Plan: each app

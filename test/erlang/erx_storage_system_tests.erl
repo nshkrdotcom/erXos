@@ -134,6 +134,16 @@ packed_partition_serves_the_image_packages_test() ->
     ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"README">>]})),
     ?assertEqual([], logged()).
 
+%% The packer's partition of an image with no package still holds apps/, so the
+%% tree mounts and serves it empty, with nothing logged.
+packed_partition_without_packages_serves_an_empty_tree_test() ->
+    Grant = grant(open("packed-empty"), ro),
+    {ok, []} = call(Grant, {walk, 1, 9, []}),
+    {ok, _, _} = call(Grant, {lopen, 9, ?O_RDONLY}),
+    ?assertEqual({ok, []}, names(Grant, 9)),
+    ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"system">>]})),
+    ?assertEqual([], logged()).
+
 %% Writing -------------------------------------------------------------------
 
 %% Every grant of the tree refuses each writing operation with erofs, an rw grant too,

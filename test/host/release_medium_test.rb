@@ -106,6 +106,14 @@ class ReleaseMediumTest < Minitest::Test
     assert_raises(Erx::Error) { Erofs.check_files("#{'n' * 256}/a" => '/dev/null') }
     assert Erofs.check_files("#{'n' * 255}/a" => '/dev/null')
     assert_raises(Erx::Error) { Erofs.check_files({}) }
+    file = { 'system/README' => '/dev/null' }
+    [['system/README'], ['SYSTEM'], %w[Apps apps], ['../x'], ['apps/'], ['/apps']].each do |named|
+      assert_raises(Erx::Error, named.inspect) { Erofs.check_files(file, named) }
+    end
+    assert Erofs.check_files(file, %w[apps system])
+    digests = { 'system/README' => '0' * 64 }
+    refute_equal Erofs.uuid(digests), Erofs.uuid(digests, directories: Erofs.empty_directories(digests.keys, ['apps']))
+    assert_empty Erofs.empty_directories(digests.keys, %w[system system])
     assert_raises(Erx::Error) { Erx::ReleaseMedium.files([{ 'path' => 'a', 'artifact' => 'x' }, { 'path' => 'a', 'artifact' => 'y' }]) }
   end
 

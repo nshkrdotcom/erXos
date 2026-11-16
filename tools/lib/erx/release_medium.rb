@@ -97,13 +97,17 @@ module Erx
 
     # Writes the system release's EROFS image, EROFS in directory, from entries, the
     # release's entries (ProductionImage::Built#release), and the packages of apps
-    # (ImageApps::Plan) at apps/NAME.app; the file holds the image alone.
+    # (ImageApps::Plan) at apps/NAME.app; the file holds the image alone. apps/ is there
+    # with no package in it too, so the storage domain's `system` tree, rooted at it, is
+    # served on every medium, and "no system tree" in its log is always a fault
+    # (erx_storage_system).
     # Returns its path and the artifacts the packer hands the manifest check: the image
     # under the name the manifest's input names, with its one extent in the slot and the
     # tree the system partition holds after it, its offset from the partition's start, its
     # length, and its salt and root hash in lowercase hex.
     def image(entries:, directory:, runner:, apps: ImageApps.none)
-      path = ErofsImage.new(runner: runner).write(files: files([*entries, *apps.entries.map { |at, file| { 'path' => at, 'artifact' => file } }]), name: IMAGE,
+      path = ErofsImage.new(runner: runner).write(files: files([*entries, *apps.entries.map { |at, file| { 'path' => at, 'artifact' => file } }]),
+                                                  directories: [ImageApps::PARTITION_DIRECTORY], name: IMAGE,
                                                   output: File.join(directory, EROFS))
       system = system_partition(path)
       extents = [{ 'slot_offset' => system.image.slot_offset, 'length' => system.image.file.length }]
