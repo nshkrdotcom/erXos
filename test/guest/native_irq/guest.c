@@ -31,6 +31,7 @@
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/time.h"
 #include "liberx/backend/fiasco/vm.h"
+#include "liberx/backend/runtime_entry.h"
 #include "otp/erts/emulator/nifs/erxos/erx_device.h"
 #include "test/guest/native_irq/holder.h"
 
@@ -579,7 +580,7 @@ check_time(void)
 		fail("erx: irq: the time page's fields disagree FAILED\n");
 	if (now < before || now > after)
 		fail("erx: irq: the page's clock disagrees with the counter's FAILED\n");
-	if (erx_time_set_wall(WALL_NS) != ERX_OK || !erx_time_wall_ns(&wall) || wall < WALL_NS ||
+	if (erx_time_set_offset((erx_cap_t){ .raw = erx_fiasco_time_object() }, WALL_NS - erx_time_monotonic_ns()) != ERX_OK || !erx_time_wall_ns(&wall) || wall < WALL_NS ||
 	    wall - WALL_NS > PATIENCE_NS)
 		fail("erx: irq: the wall clock disagrees FAILED\n");
 	say("erx: irq: the time page agrees with the counter\n");

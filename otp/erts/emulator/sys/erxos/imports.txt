@@ -95,6 +95,12 @@ close fclose fdopen fileno open read write
 [stock_process]
 _exit getpid pthread_kill pthread_sigmask select sigwait
 
+# erx_clock_nif.c alone: the only object of the runtime that may set the wall clock,
+# which erx_clock_nif:set_offset/1 calls for the clock service alone (docs/design-time.md,
+# "The NIF and the liberx calls").
+[only_erx_clock_nif]
+erx_time_set_offset
+
 # erx_watchdog_nif.c alone: the only object of the runtime that may pet the system
 # domain's watchdog, so only the Erlang module that decides when the system is live
 # can keep the machine from resetting.

@@ -1012,8 +1012,9 @@ the wall-clock keeper sets it from a DS3231 module
 ([design-header-io.md](design-header-io.md#devrtc)). The hosted backend reads
 its offset once from the host's clock and keeps it
 ([design-stopgap.md](design-stopgap.md), "The hosted backend"), so its
-`state` is `boot`; its setter answers `ERX_ENOTSUP`. The tree's hosted
-backend defines no setter at all, a gap recorded in `TODO.md`.
+`state` is `boot`; its setter answers `ERX_ENOTSUP`, as the Fiasco
+backend's does in every task but the root's, so only the system domain
+sets the clock.
 
 ## Verification and testing
 

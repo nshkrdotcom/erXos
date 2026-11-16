@@ -3599,10 +3599,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] hosted backend, `liberx/backend/hosted/refused.c`: a hosted runtime runs no programs; the
   channel's first memory object is refused, so `erx_program:start/1` answers `{error, enotsup}`.
   Programs in hosted mode need the hosted backend to make spaces and pass handles.
-* [Low] hosted backend, `liberx/backend/hosted/`: it defines no wall-clock setter, `erx_time_set_wall` in the
-  tree and `erx_time_set_offset` in [design-time.md](docs/design-time.md#phase-1), which says the hosted setter
-  answers `ERX_ENOTSUP`, and declares it only in the Fiasco backend's `time.h`, so `erx_clock_nif` has nothing to
-  call in a hosted build. Add the refusal beside the others in `refused.c`.
 * [Medium] erx_program driver and core (`erx_program_drv.c` `channel_sides`, `install()`;
   `erx_program_core.c` `install_rights`): which channel side sits at which `program_arg` index, how
   the session maps it and what rights the program gets are three tables joined by index, and no
@@ -6738,14 +6734,16 @@ to the corpus and follow rc
 * [High] time, setting the clock by hand (`erlang/apps/erx_shell/src/erx_cmd_date.erl`,
   [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): the 0.1 preview's kiosk needs a right wall
   clock for TLS, and root sets it with `date`. `date` reads, formats and parses its set forms, and `-j` works, but
-  every set answers `eperm`, since no session holds a `clock` grant: the authority is open decision 2 of
-  design-time.md, and the chain behind its option A is unbuilt (`abi/services/clock.txt` with `sample` and `set`,
+  every set answers `eperm`, since no session holds a `clock` grant: design-time.md's decision 5 gives root's
+  template a `clock` row granting `set`, and the chain behind it is unbuilt (the facet rows' `operations` from the
+  manifest compiler through the boot's reader to the facet, `abi/services/clock.txt` with `sample` and `set`,
   the manifest's clock service and the `root_clock` row with `operations set`, `erx_clock_facet`, the clock
-  service `erx_clock` with its set clause and `step_source`, `erx_clock_nif:set_offset/1` and its imports section,
-  and `erx_time_set_offset` on the Fiasco backend in place of `erx_time_set_wall`). In the system domain's own shell a
+  service `erx_clock` with its set clause and `step_source`, and the check over the system release's call graph that
+  allows `erx_clock_nif:set_offset/1` only in `erx_clock`, with its seeded violation; the setter,
+  `erx_time_set_offset`, and the NIF are built). In the system domain's own shell a
   set answers `eperm` too, and `eagain` once the system domain serves `clock` (`erx_cmd_date:request/2`, `local`).
   `date`'s `%N` pass runs inside the strftime scan, not before it as `date.c`'s `strftime_ns` does, so formats such as
-  `%E%N` and `%5%N` differ from FreeBSD [Medium]; make it a format-to-format step first. Once decided, build the
+  `%E%N` and `%5%N` differ from FreeBSD [Medium]; make it a format-to-format step first. Build the
   chain and the QEMU "Set by hand" case, and add a FreeBSD oracle case for `date -j -u` over the operand and
   format corpus, which settles the `mktime(3)` normalization design-time.md marks unverified.
 * [Medium] time, the wall-clock keeper (`docs/design-header-io.md`, "An I2C real-time clock"): the header design
@@ -7249,8 +7247,8 @@ to the corpus and follow rc
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
   checks follow the clock. Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
-* [Low] stopgap, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_WALL` case, lines 385-386):
-  the dispatch passes the body the request's `wall_ns` alone, never its `caller`, and checks no right, so any
+* [Low] stopgap, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case):
+  the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks no right, so any
   task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
   `[only_erx_clock_nif]` imports section and the facet for trusted code; erXos's kernel checks `WRITE` on the
   time page. A Phase 1 residual, not fixed in the stopgap.
