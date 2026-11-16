@@ -11,8 +11,9 @@ require_relative '../fixtures/erlang_build'
 
 # The input records' codec generated from abi/formats/input.txt (docs/design-abi.md,
 # "Input records"): the EUnit cases of erx_input_codec on stock's emulator (ERX_ERL
-# and ERX_ERLC), the same cases against a codec with one bound check removed, which
-# must fail them, and the samples of the declaration the generator refuses, each
+# and ERX_ERLC), the same cases against a codec with one bound check removed and
+# against one whose axis spreads over one step too many, which must fail them, and
+# the samples of the declaration the generator refuses, each
 # breaking one rule of the grammar.
 class ErxInputCodecTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
@@ -22,6 +23,8 @@ class ErxInputCodecTest < Minitest::Test
   TESTS = %w[test/erlang/erx_input_codec_tests.erl].freeze
   # The seeded fault: a touch's slot loses its upper bound.
   SEED = ['Value >= 0 andalso Value =< 9.', 'Value >= 0.'].freeze
+  # Another: a device's axis spread over one step too many, so its maximum falls short.
+  AXIS_SEED = ['* 65535 div (Max - Min).', '* 65535 div (Max - Min + 1).'].freeze
   # A declaration the samples below each break in one place.
   SAMPLE = <<~ABI
     input
@@ -47,6 +50,14 @@ class ErxInputCodecTest < Minitest::Test
     refute status.success?, output
     assert_match(/a_term_past_a_bound_is_no_record_and_does_not_encode_test.*failed/, output)
     assert_match(/each_bad_record_is_dropped_and_counted_and_its_neighbours_kept_test.*failed/, output)
+  end
+
+  def test_an_axis_spread_over_one_step_too_many_fails_its_case
+    text = File.read(File.join(ROOT, MODULE))
+    assert_equal 1, text.scan(AXIS_SEED.first).size, 'the seed no longer applies to the generated codec'
+    output, status = eunit({ MODULE => text.sub(*AXIS_SEED) })
+    refute status.success?, output
+    assert_match(/a_device_axis_spreads_across_the_record_s_axis_test.*failed/, output)
   end
 
   def test_the_sample_is_accepted

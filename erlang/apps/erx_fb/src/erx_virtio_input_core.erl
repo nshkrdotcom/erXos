@@ -247,14 +247,15 @@ step({ok, {key, Code, Edge}}, F) ->
     {Kept, Next} = flush(F),
     {Kept ++ [{key, Edge, Code}], Next};
 step({ok, {rel, wheel, V}}, F) ->
-    wheel(max(?ERX_INPUT_WHEEL_MIN, min(?ERX_INPUT_WHEEL_MAX, V)), F);
+    wheel(erx_input_codec:wheel(V), F);
 step({ok, {rel, x, DX}}, F) -> move({DX, 0}, F);
 step({ok, {rel, y, DY}}, F) -> move({0, DY}, F);
 step({ok, {abs, _, _}}, #fold{axes = none} = F) -> {[], count(unused, F)};
-step({ok, {abs, x, V}}, #fold{axes = {Range, _}, position = {_, Y}} = F) ->
-    {[], F#fold{position = {normalize(V, Range), Y}, moved = true}};
-step({ok, {abs, y, V}}, #fold{axes = {_, Range}, position = {X, _}} = F) ->
-    {[], F#fold{position = {X, normalize(V, Range)}, moved = true}}.
+%% Each axis's range has Min below Max, as new/1 holds every range.
+step({ok, {abs, x, V}}, #fold{axes = {{Min, Max}, _}, position = {_, Y}} = F) ->
+    {[], F#fold{position = {erx_input_codec:axis(V, Min, Max), Y}, moved = true}};
+step({ok, {abs, y, V}}, #fold{axes = {_, {Min, Max}}, position = {X, _}} = F) ->
+    {[], F#fold{position = {X, erx_input_codec:axis(V, Min, Max)}, moved = true}}.
 
 count(Why, #fold{counts = Counts} = F) ->
     #{Why := N} = Counts,
@@ -281,11 +282,6 @@ wheel(Steps, #fold{wheel = Sum} = F) ->
 
 is_rel(V) -> V >= ?ERX_INPUT_REL_MIN andalso V =< ?ERX_INPUT_REL_MAX.
 is_wheel(V) -> V >= ?ERX_INPUT_WHEEL_MIN andalso V =< ?ERX_INPUT_WHEEL_MAX.
-
-%% A value on an axis of range Min..Max, Min below Max as new/1 holds every range, clamped
-%% to the range and scaled to 0..?ERX_INPUT_AXIS_MAX.
-normalize(V, {Min, Max}) ->
-    (max(Min, min(Max, V)) - Min) * ?ERX_INPUT_AXIS_MAX div (Max - Min).
 
 %% What the update kept, to send in its one order, and the update emptied; the position
 %% stays.

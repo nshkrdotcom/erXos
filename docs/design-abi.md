@@ -1170,7 +1170,12 @@ router holds every record to and `encode/1` refuses with `badarg`
 outside; `encode/1`, one record's bytes; `decode/1`, which reads a
 stream's bytes into its records in order, the number it dropped and the
 bytes after the last whole record, fewer than one record, which the
-reader keeps for its next read; and `size/0`. A record whose tag no kind
+reader keeps for its next read; `size/0`; and the clamps a driver
+applies to its device's values before it makes a record: `rel/1` and
+`wheel/1` hold a move and a wheel step to their fields' ranges, and
+`axis/3` clamps a position to a device axis's range, minimum below
+maximum, and spreads it across `input_axis`, which therefore starts at
+0. A record whose tag no kind
 has, whose padding is not zero, or whose field is outside its type's
 range or members is dropped and counted, never decoded; the decoder
 makes no atom. Generation fails for a second `input` declaration or one

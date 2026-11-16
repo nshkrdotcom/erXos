@@ -181,17 +181,15 @@ position(#report{x = X, y = Y}, _) when X =/= none, Y =/= none -> {X, Y};
 position(_, Last) -> Last.
 
 moves(#report{dx = DX, dy = DY, x = X, y = Y}, Moved) ->
-    [{pointer, rel, clamp(DX, ?ERX_INPUT_REL_MIN, ?ERX_INPUT_REL_MAX), clamp(DY, ?ERX_INPUT_REL_MIN, ?ERX_INPUT_REL_MAX)}
+    [{pointer, rel, erx_input_codec:rel(DX), erx_input_codec:rel(DY)}
      || DX =/= 0 orelse DY =/= 0]
         ++ [{pointer, abs, X, Y} || Moved].
 
 wheel(0) -> [];
-wheel(Steps) -> [{wheel, clamp(Steps, ?ERX_INPUT_WHEEL_MIN, ?ERX_INPUT_WHEEL_MAX)}].
+wheel(Steps) -> [{wheel, erx_input_codec:wheel(Steps)}].
 
 edges(Old, New) ->
     [{key, up, Code} || Code <- ordsets:subtract(Old, New)] ++ [{key, down, Code} || Code <- ordsets:subtract(New, Old)].
-
-clamp(V, Min, Max) -> min(max(V, Min), Max).
 
 %% Each value of a field adds what it says to the report.
 read(Field = #{count := Count}, Body, R) ->
@@ -220,8 +218,9 @@ variable(buttons, _, 0, _, R) -> R;
 variable(buttons, Usage, _, _, R) -> R#report{held = [erx_abi_translations:hid_button_key(?ID(Usage)) | R#report.held]};
 variable(x, _, V, #{relative := true}, R) -> R#report{dx = R#report.dx + V};
 variable(y, _, V, #{relative := true}, R) -> R#report{dy = R#report.dy + V};
-variable(x, _, V, Field, R) -> R#report{x = normalized(V, Field)};
-variable(y, _, V, Field, R) -> R#report{y = normalized(V, Field)};
+%% An absolute axis's range has its maximum above its minimum, as role/2 requires.
+variable(x, _, V, #{min := Min, max := Max}, R) -> R#report{x = erx_input_codec:axis(V, Min, Max)};
+variable(y, _, V, #{min := Min, max := Max}, R) -> R#report{y = erx_input_codec:axis(V, Min, Max)};
 variable(wheel, _, V, _, R) -> R#report{wheel = R#report.wheel + V};
 variable(none, _, _, _, R) -> R.
 
@@ -248,11 +247,6 @@ key(Usage, R) ->
         none -> R#report{unmapped = R#report.unmapped + 1};
         Code -> R#report{held = [Code | R#report.held]}
     end.
-
-%% Clamped to the logical range and spread across the record's axis, as the
-%% virtio-input driver does (docs/design-display.md, "The display device").
-normalized(V, #{min := Min, max := Max}) ->
-    (clamp(V, Min, Max) - Min) * ?ERX_INPUT_AXIS_MAX div (Max - Min).
 
 %% Value i of a variable field has usage i of its ranges, flattened, or the last one;
 %% a field with no usage has none.
