@@ -6,6 +6,7 @@ require 'fileutils'
 require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
+require_relative '../fixtures/erlang_build'
 require_relative '../fixtures/generated_tree'
 
 # erx-gate: sanitizers
@@ -37,6 +38,9 @@ class BootInfoTest < Minitest::Test
     'online taken from the cpuset' => [INFO, '(capacity_cpus > schedulers ? schedulers : (uint32_t)capacity_cpus)', 'schedulers', 'erts flags: the words'],
     'a raised process table admitted' => [INFO, 'if (settings->processes > limits->processes)', 'if (false)', 'admit'],
     'the given record without its memory size' => [MANIFEST, 'number_put(words, capacity, &used, given->memory_size)', 'true', 'holder'],
+    'the system_image record without its tree length' => [MANIFEST, 'number_put(words, capacity, &used, row->tree_length)', 'true', 'system_image'],
+    'the system_image length and tree offset swapped' => [MANIFEST, "number_put(words, capacity, &used, row->image_length) &&\n\t    number_put(words, capacity, &used, row->tree_offset)", "number_put(words, capacity, &used, row->tree_offset) &&\n\t    number_put(words, capacity, &used, row->image_length)", 'system_image'],
+    'a system_image salt past its array written' => [MANIFEST, 'row->salt_length == 0 || row->salt_length > sizeof(row->salt)', 'row->salt_length == 0', 'salt past its array'],
     'a second framebuffer record let through' => [INFO, "\t\tif (found)\n\t\t\treturn (false);\n", '', 'second record'],
     'a framebuffer record read before --' => [INFO, "\tdo\n\t\tword = next_word(words, length, &used);\n\twhile (word != NULL && strcmp(word, \"--\") != 0);\n", '', 'emulator flag'],
     'the page marked before the checks' => [INFO, "\tif (status != ERX_BOOT_INFO_OK)\n\t\treturn (status);\n\tif (size < fixed", "\tmemset(page, 0, size);\n\tif (status != ERX_BOOT_INFO_OK)\n\t\treturn (status);\n\tif (size < fixed", 'untouched']
@@ -67,6 +71,26 @@ class BootInfoTest < Minitest::Test
     output, status = Open3.capture2e(build(sources, name: 'driver'), stdin_data: '')
     assert status.success?, output
     assert_match(/\Aboot info: ok\n/, output)
+  end
+
+  # The words the domain library writes for the system window's holder are the words
+  # erx_device_record:system_image/1 reads (docs/design-stopgap.md, "The booted slot"):
+  # the driver's record of a three-byte salt with a leading zero byte and the root hash
+  # 0 to 31 reads back as that row, under stock's emulator (ERX_ERL and ERX_ERLC).
+  def test_the_system_image_record_reads_back_in_erlang
+    words, status = Open3.capture2e(build(sources, name: 'driver'), 'system_image', stdin_data: '')
+    assert status.success?, words
+    record = words.lines(chomp: true).map { |word| %("#{word}") }.join(', ')
+    expected = '#{image_offset => 0, image_length => 16773120, tree_offset => 16777216, tree_length => 135168, ' \
+               "salt => <<0, 171, 127>>, root_hash => list_to_binary(lists:seq(0, 31))}"
+    Dir.mktmpdir('erx-boot-info-record') do |work|
+      ErlangBuild.compile(work, applications: %w[erx])
+      output, status = Open3.capture2e('gtimeout', '-k', '10', '60', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
+                                       "Expected = #{expected}, Read = erx_device_record:system_image([[#{record}]]), " \
+                                       'io:format("~p~n", [Read]), halt(case Read of {ok, Expected} -> 0; _ -> 1 end)',
+                                       chdir: work, stdin_data: '')
+      assert status.success?, output
+    end
   end
 
   MUTANTS.each do |name, (source, original, replacement, diagnostic)|

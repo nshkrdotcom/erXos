@@ -21,13 +21,7 @@ that proves the code under test ran.
   grants, `erx_fs:start_link(erx_storage_system, Tree, Rights)`, handed out
   by the service's mint; the packer and fsimg writing
   the partition's hash tree after its image and refusing an image and
-  tree larger than the partition, the manifest recording the image's
-  length and the tree's offset, length, salt and root hash for the slot
-  (a `system_image` layout of `abi/manifest.txt`, fields `image_length`,
-  `tree_offset`, `tree_length`, `salt` and `root_hash`, named by a
-  header field `system_image`), the domain library writing them as
-  `-erx_record system_image` into the arguments of the `system` window's
-  holder alone (design-stopgap.md, The booted slot), and the update
+  tree larger than the partition, and the update
   writing the tree and the manifest with the partition; `Erx::ErofsReads` rules that the reader reaches
   blocks only through `erx_verity:read/3` and that only `erx_ns` and
   `erx_storage_system` open an image in it; the

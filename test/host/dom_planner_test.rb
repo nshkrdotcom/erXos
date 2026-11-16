@@ -99,11 +99,7 @@ class DomPlannerTest < Minitest::Test
     ManifestContextFixture.with_quota(@plain, quota) + limits + rows.join
   end
 
-  def development_manifest
-    source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
-    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @context.platform))
-    Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner).bytes
-  end
+  def development_manifest = admit_development(development_source)
 
   # The view's catalogue and services, or its refusal, as test/fixtures/dom_view_driver.c prints them,
   # or with mode framebuffer its framebuffer rows' ranges before and after placement.
@@ -819,6 +815,60 @@ class DomPlannerTest < Minitest::Test
     lines = view_lines(display_manifest(with_env.call('displayed=yes display_mode=x')), 'display-own')
     assert_empty lines.grep(/\Arefused /)
     assert_equal 1, lines.grep(/\Adisplay \d+ name=display /).size
+  end
+
+  # The qemu-virt development manifest, admitted over the fixture's release image, or
+  # with its system window and system_image row taken out.
+  def development_source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
+
+  def without_system_image(source)
+    ManifestContextFixture.substitute(ManifestContextFixture.substitute(source, /^window system\n(?:  .*\n)*/, ''),
+                                      /^system_image\n  input @artifact.release\n/, '')
+  end
+
+  def admit_development(source)
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @context.platform))
+    Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner).bytes
+  end
+
+  # The domain library writes -erx_record system_image into the boot page of the configured
+  # row that holds the system window alone (docs/design-stopgap.md, "The booted slot"):
+  # storage, the server of storage_ctl, carries the system_image row's words, and no other
+  # row does; a manifest with no system window gives the record to no row.
+  def test_only_the_system_window_s_holder_carries_the_system_image_record
+    lines = view_lines(admit_development(development_source), 'system-image')
+    storage = lines.grep(/\Aservice \d+ name=storage_ctl /).first[/ server=(\d+) /, 1]
+    tree = ManifestContextFixture.images.fetch('release').fetch('tree')
+    assert_equal ["system_image #{storage} #{tree.fetch('offset')} #{tree.fetch('offset')} #{tree.fetch('length')} " \
+                  "#{tree.fetch('salt')} #{tree.fetch('root_hash')}"], lines.grep(/\Asystem_image /)
+    assert_empty view_lines(admit_development(without_system_image(development_source)), 'no-system-image').grep(/\Asystem_image /)
+  end
+
+  # The view keeps the record's room in the holder's boot page, so a holder whose own
+  # arguments leave less than ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX bytes for it, 12 for the flag,
+  # 13 for the form, three numbers of 21 and two hex words of 65, is refused at the view, not
+  # at its creation: the storage row takes 109 fewer two-byte words when it holds the window,
+  # and the web row, which does not, takes as many either way.
+  def test_the_system_window_s_holder_keeps_room_for_its_record
+    room = lambda do |source, domain|
+      (0..@codec.constant('boot_strings_max')).bsearch do |count|
+        !view_admits?(source.sub(/^(domain #{domain}\n(?:  .*\n)*?  args "[^"]*)"/) { "#{Regexp.last_match(1)}#{' a' * count}\"" })
+      end
+    end
+    without = without_system_image(development_source)
+    assert_equal (12 + 13 + (3 * 21) + 65 + 65) / 2, room.call(without, 'storage') - room.call(development_source, 'storage')
+    assert_equal room.call(without, 'web'), room.call(development_source, 'web')
+  end
+
+  # Whether the boot page holds source's arguments: false for the view's refusal for its
+  # reserve, and the check's for arguments past the strings themselves.
+  def view_admits?(source)
+    admit_development(source)
+    true
+  rescue Erx::Manifest::Invalid => e
+    raise unless [[12, 'view'], [12, 'domain.args']].include?([e.property, e.field])
+
+    false
   end
 
   def test_a_malformed_input_is_refused_by_the_helper
