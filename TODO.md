@@ -8788,6 +8788,11 @@ document's "residual risks accepted" paragraph.
   writes only the record's sector and leaves the rest of the partition zero, so a QEMU medium has no FAT volume
   to hold `authorized_keys`; [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium) has it format
   the partition with `PiMedium::RECORD_VOLUME`, as the card is.
+* [Medium] storage, the record volume's erase unit (`tools/lib/erx/pi_medium.rb`, `RECORD_VOLUME`; fsimg): the
+  clusters of MiB 3 after the record's are free, so fsimg, and a user's computer writing `authorized_keys`, put a
+  file beside the record in its erase unit;
+  [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record) marks clusters 3 to 2049
+  bad in both FATs, and `check_volumes` should check the marks.
 * [Low] Raspberry Pi card labels (`tools/lib/erx/pi_medium.rb`, `RECORD_FORMAT` and `SLOT_FORMAT`): the record
   volume is labelled `ERXREC` and both slots' boot partitions `ERXOS`, where
   [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record) labels the record volume

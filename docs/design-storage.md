@@ -1717,9 +1717,31 @@ many clusters as the size needs, at most 32, each link a cluster of the
 data area; a cluster seen twice, the record's cluster, a link outside the
 data area and an end of chain before the size's clusters are each `does
 not read`, and the chain past the size's clusters is not read, so whatever the FAT holds, the read is a bounded number of
-sector reads. The reader reads before the domain serves anything of its
-result, so a power cut or a restart finds the partition as it was, and
-the next start reads it again.
+sector reads.
+
+The reader also refuses a file with a cluster in the rest of the
+record's region, the erase-unit-aligned region of the layout that holds
+the record's sector, with the finding `lies in the boot-selection
+record's region`: the record is alone in its erase unit
+([System updates](#system-updates)), and a file there would share the
+unit a commit rewrites. The volume is built so that no FAT writer puts a
+file there: the image build marks every cluster of the region after the
+record's as bad in both FATs
+([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record)),
+and a FAT writer, a user's computer among them, allocates only a
+cluster whose entry is free, which a bad cluster's is not (the FAT
+specification's bad-cluster mark; that the hosts of the Raspberry Pi's
+manual checklist honor it is unverified until that step passes). The refusal is the bound for a volume whose marks a host's
+repair tool has cleared: the file is refused with that finding, and the
+record keeps its unit. The region's bounds are computed from
+`abi/medium.txt`'s values, as the record's sector is.
+
+The reader runs in a process of its own and the tree publishes its
+result once, so the domain serves `system` and its other trees without
+waiting for it
+([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium) gives the
+tree's lifecycle). It writes nothing, so a power cut or a restart finds
+the partition as it was, and the next start reads it again.
 
 ### System updates
 

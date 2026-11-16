@@ -259,10 +259,27 @@ refuses an SSH domain without the vault's host key facet, and so, before
 the vault, any SSH domain at all, and refuses the `record_volume` window
 ([Root's login keys on the medium](#roots-login-keys-on-the-medium)); `erx_ssh` starts
 no daemon under a release's build facts, as `erx_ssh_dev` does at stage
-1, and the website's images leave the SSH domain out. So a release build
-reads no `authorized_keys` and admits no development key. The
-system manifest lists the facet in the checked-in facet table with this
-section as its justification.
+1. So a release build reads no `authorized_keys` and admits no
+development key. The system manifest lists the facet in the checked-in
+facet table with this section as its justification.
+
+The website offers two kinds of image, and each takes the SSH domain on
+its own terms; both are development builds:
+
+* **The browser demo**, built from the website's manifest, which leaves
+  out the domains the board record's `site_leaves_out` names
+  (`Platform#site_manifest_source`), leaves the SSH domain
+  out: `ssh` is one of those names. No one can write the medium of an
+  image that runs in a browser, so its SSH domain could never be given a
+  key and would only take room.
+* **The downloadable media**, the Raspberry Pi's card and the QEMU
+  medium, are packed from the development manifest
+  (`ProductionImage.medium_manifest`, which takes out only the card's
+  apps row), so they hold the SSH domain and the `record_volume` window,
+  and their record volume holds no `authorized_keys`
+  ([Login keys](#login-keys)). Until whoever writes the medium adds the
+  file, the domain listens and every key login answers `no_match`; once
+  it is added, the next boot logs root in with it.
 
 `erx_ssh` starts the daemon with `ssh:daemon/3` on a socket listening
 through the grant, as `gen_tcp` does in every domain
@@ -522,9 +539,10 @@ so every worktree of a clone shares it and no commit holds it
 the image build writes the key's public line, without its comment, as
 the record volume's `authorized_keys`, as a user would. Only the
 harnesses that log in pass the key to the image build, which a
-chokepoint check holds (`Checks::LOGIN_KEY_BUILDERS`), so the images the
-website offers carry no `authorized_keys`, and whoever writes one of
-them to a card adds their own. The private half stays on the host.
+chokepoint check holds (`Checks::LOGIN_KEY_BUILDERS`), so the media the
+website offers for download carry no `authorized_keys`, and whoever
+writes one of them to a card or disk adds their own
+([The SSH domain](#the-ssh-domain)). The private half stays on the host.
 `tools/erx ssh` runs the host's `ssh` with that key, the guest's
 forwarded port and no configuration file, and checks the guest's host
 key under one alias against a known-hosts file of the boot's own, in
@@ -592,7 +610,8 @@ domain's `record_volume` window on the whole partition, which
 `abi/manifest.txt` does not mark writable, so its driver refuses every
 write to it. No window grants a write to any other sector of the
 partition, and the reader refuses a volume whose FATs or root directory
-cover either sector, or whose file's chain holds the record's cluster
+cover either sector, or whose file's chain enters the record's region, the
+erase unit the record has to itself
 ([design-storage.md](design-storage.md#removable-media-fat)), so the FAT,
 the root directory and the file are written by no domain, whatever the
 domains do; the one code that could, the block
@@ -645,37 +664,76 @@ which reaches the console, naming the file, the line number and one
 reason of a closed set: `not a plain ssh-ed25519 key`, `key does not
 decode` and `line longer than 1024 bytes` for a skipped line, and for
 the file `no authorized_keys`, `longer than 16 KiB`, `more than 16
-keys`, `the record partition is not its FAT volume` and `does not read`.
-No byte of the file is shown, so nothing a user wrote reaches a sink. At
-its first read of the boot the facet logs `root: N SSH login keys from
+keys`, `the record partition is not its FAT volume`, `lies in the
+boot-selection record's region` ([design-storage.md](design-storage.md#removable-media-fat))
+and `does not read`.
+No byte of the file is shown, so nothing a user wrote reaches a sink.
+When it first reads a result the facet logs `root: N SSH login keys from
 the medium`, or `root has no SSH login key` when there are none. A
 missing, empty or wholly refused file is a boot with no SSH login, since
 no passphrase exists before the vault; the console login is unaffected.
 
-**What the system domain reads.** The tree is `login_keys`, of one
-file, `root`, a files service of the storage domain that serves
-`system`, named in `abi/manifest.txt` by `login_keys_service`, as
-`packages` is by `packages_service`, and granted read-only to the system
-domain alone; the manifest check refuses a `login_keys` grant to any
-other domain, and a `record_volume` window on any domain but the one the
-`system` window row names. The facet reads it at the boot's first `key_ok` or
-`login_key` and keeps it for the boot. It refuses the whole file, with a
-log record, when its length is not a multiple of 51 or is past 16 keys',
-or when a blob does not decode under `erx_ssh_wire`'s key layout or is
-one of the eight points of small order that `add_login_key` refuses
-([Logging in](#logging-in)): the blobs are the reader's output, so a fault
-in them is the reader's and not a line to skip. A read that fails, the
-storage domain not serving yet or restarting, answers `unavailable`, and
-the next request reads again.
+**Who publishes it.** The tree is `login_keys`, of one file, `root`, a
+files service named in `abi/manifest.txt` by `login_keys_service`, as
+`packages` is by `packages_service`. The manifest check makes its
+publisher the reader by the rule it already applies to `system`
+(`Manifest#check_system_service`): a manifest with a `record_volume`
+window holds exactly one service of that name, of the files interface,
+whose server is the window's holder, and a manifest without the window
+holds none; every grant of the service is read-only and the system
+domain's; and a `record_volume` window lies only on the domain that
+holds the `system` window. So the domain that serves root's keys is the
+one whose read-only window covers the record partition, and no manifest
+can name another, the SSH domain among them, as their source.
 
-**Once per boot.** The reader reads the file before it serves the tree,
-so a read of `root` finds the whole result or nothing. It runs in a
-process of its own under one catch, which turns any exception into the
-finding `does not read`, and the domain serves `system` and its other
-trees without waiting for it, so a crafted volume costs SSH logins and
-nothing else; a refused file is served as an empty `root`. No domain writes
-the partition, so a restart of the storage domain reads the same bytes
-and serves the same file, and a restart of the facet reads it again.
+**How the facet reads it.** The facet reads `root` from its start until
+it holds 817 bytes, one past 16 keys' 816, or meets its end, each read
+asking for no more than what is left of the 817, as the starter reads
+`rc.conf` (`erx_starter_rc`). It never asks the file's size, so a server
+that overstates it, or a file that never ends, costs at most 817 bytes,
+and holding 817 it reads no more. An answer longer than the read asked
+for refuses the file. The bytes then go to one pure function,
+`erx_ssh_login:medium_keys/1`, which refuses the whole file, with a log record, when its length is not a multiple of
+51 or is past 16 keys', or when a blob does not decode under
+`erx_ssh_wire`'s key layout or is one of the eight points of small order
+that `add_login_key` refuses ([Logging in](#logging-in)): the blobs are
+the reader's output, so a fault in them is the reader's and not a line
+to skip.
+
+**When it is there.** The reader takes as long as the medium does, and
+the tree's lifecycle keeps that wait from reaching anything but key
+logins:
+
+* The storage domain's `login_keys` mint names itself the service's
+  provider in the domain's start, before its ready report, as each of
+  its mints does (`erx_facet:provide/2`, which refuses a later call).
+  The tree's mount starts the reader as a process of its own, monitored,
+  and returns without waiting for it, so the mint answers the domain
+  service's mint requests at once and the system domain's grant is
+  installed inside its 10-second deadline (`erx_domain_mints`), however
+  long the reader takes. A mount that waited would leave the grant
+  failed at the deadline, and a failed grant is tried again only when an
+  incarnation changes, so SSH would stay closed for the boot after the
+  reader had finished.
+* While the reader runs, a read of `root` answers `eagain`, an error and
+  not an empty file, so no client mistakes the wait for a result.
+* The reader's result is published once: the blobs it sends, or, when it
+  exits without sending any, for whatever reason, the empty final result,
+  with the finding `does not read`. A refused file is the empty final
+  result too. From then on `root` holds that result for the storage
+  domain's incarnation and never changes. So a crafted volume costs SSH
+  logins and nothing else, and the domain serves `system` and its other
+  trees without waiting for the reader.
+* The facet keeps the first result it reads, keys or none, for the boot.
+  A read that fails, `eagain` or a grant that is gone or not yet
+  installed, answers that login `unavailable` and leaves nothing kept,
+  so the next login reads again.
+* A restart of the storage domain is a new incarnation: it reads the
+  medium again and publishes again, and the domain service mints the
+  system domain's grant for it afresh. No domain writes the partition,
+  so it publishes the same blobs, and a facet that kept them loses
+  nothing; a restart of the facet reads them again.
+
 Nothing is written, so a power cut loses nothing. A key added to the
 medium takes effect at the next boot.
 
@@ -685,8 +743,10 @@ FAT format's read core, which finds one file of a FAT volume's root
 directory by its long name
 ([design-storage.md](design-storage.md#removable-media-fat)), and
 `erx_boot_keys:decode/1`, which takes the file's bytes and returns the
-blobs and the findings, or the file's refusal. Each reads through a cursor
-and has a fuzz target ([Verification](#verification)).
+blobs and the findings, or the file's refusal. In the system domain,
+`erx_ssh_login:medium_keys/1` takes the at most 817 bytes the facet read
+and returns the key list or the file's refusal. Each reads through a
+cursor and has a fuzz target ([Verification](#verification)).
 
 ### Sessions, ttys and shells
 
@@ -945,7 +1005,7 @@ change.
 | **H5.** The system domain runs no OpenSSL; neither it nor the vault parses an SSH packet, and the vault decodes no SSH structure | the facet's decoder compares two fixed-format blobs against their one layout and takes five length-prefixed strings, each checked against the bytes that remain, in Erlang; the facet hashes the input as given with `erx_bytes:sha256/1` and checks Ed25519 with the update verifier, which alone decodes a key's bytes as a point; the vault sees lookups, passphrases, 32-byte exchange hashes and key blobs the principal service has already decoded |
 | **H6.** The host key never changes silently | it is made only when absent, and a corrupt one stops the daemon |
 | **H7.** A key login names one exchange that began after the facet chose its cookie and that carried this machine's host key | the facet derives the session identifier from the exchange input itself, finds its own outstanding cookie and the host key in that input, and retires the cookie at the login |
-| **H8.** Before the vault, root's login keys are the medium's `authorized_keys` and nothing else, no domain can write that file, and the system domain reads only key blobs from it | the slot writer's record windows are one sector each, the reader refuses a volume whose FATs or root directory cover either sector or whose file's chain holds the record's cluster, and the reader's `record_volume` window is not writable; the storage domain decodes the lines and serves 51-byte blobs; the facet checks each with `erx_ssh_wire` |
+| **H8.** Before the vault, root's login keys are the medium's `authorized_keys` and nothing else, no domain can write that file, and the system domain reads only key blobs from it | the slot writer's record windows are one sector each, the reader refuses a volume whose FATs or root directory cover either sector or whose file's chain enters the record's region, and the reader's `record_volume` window is not writable; the manifest check makes `login_keys`' server the holder of that window and its grants read-only and the system domain's; the storage domain decodes the lines and serves 51-byte blobs; the facet reads at most 817 bytes of them and checks each with `erx_ssh_wire` |
 
 ## Failure handling
 
@@ -964,7 +1024,8 @@ change.
 | entropy unavailable in the SSH domain | `crypto` raises in the key exchange | that connection closes ([design-crypto.md](design-crypto.md#seeding)) |
 | `authorized_keys` missing, empty or refused whole (before the vault) | the reader's finding, and the facet's `root has no SSH login key` | every key login answers `no_match`; the console login is unaffected |
 | a line of `authorized_keys` that is not a plain `ssh-ed25519` key, does not decode or is too long | the reader's finding, with the line's number | that line is skipped; the other lines' keys log in |
-| the `login_keys` tree not served when a key login arrives | the facet's read fails | that login answers `unavailable`; the next one reads again |
+| the `login_keys` tree still loading, its grant not yet installed, or the storage domain restarting when a key login arrives | the facet's read answers `eagain` or fails | that login answers `unavailable` and nothing is kept; the next one reads again |
+| the reader raises, or its process ends without a result | the tree's monitor | `root` is the empty final result, logged `does not read`; every key login answers `no_match`; `system` and the other trees are served throughout |
 
 ## Refusals and error results
 
@@ -1040,8 +1101,9 @@ the facet answers `no_match`.
   else.
 * **Root's keys on the medium** (before the vault). Whoever can write the
   medium adds a login as `root`, the known limitation above. While the
-  machine runs no domain can write the file, but its keys are as sound as
-  the storage domain that reads them: that domain serves `system` to
+  machine runs no domain can write the file, and the manifest check makes
+  the domain that reads it the only one that can publish root's keys, but
+  its keys are as sound as that storage domain: that domain serves `system` to
   every domain, so a flaw in it that a client's requests could steer
   would be a way to root's login. Development builds run trusted code
   only; the dependency is a security residual in `TODO.md`.
@@ -1083,9 +1145,12 @@ on the host; the QEMU suite runs the interop and the ends.
 | the verifier, host unit tests calling it directly | RFC 8032 section 7.1's Ed25519 vectors verify; each with `S + L` in place of `S`, with `R` encoding `y = p`, with a public key of `x = 0` and the sign bit set, or with a public key whose `y` has no square root is refused; `add_login_key` refuses the encodings of the eight points of small order, the neutral point among them, a list the test checks with RFC 8032 section 5.1.4's addition | the range check on `S` removed from a test build of the verifier: the `S + L` case verifies; the small-order check removed: the neutral point's key is admitted, and a signature the test forges for it verifies |
 | `erx_ssh_wire`'s fuzz target | random and mutated blobs and exchange inputs, strings whose lengths run past the end among them, never crash the decoder and are refused with `badarg` when they do not fit; every accepted blob re-encodes to its input, and every accepted exchange input's five strings re-encode to its prefix | the length check off by one: the round trip fails; the string taken before its length is checked: a length past the end crashes the decoder |
 | the facet's independence, on QEMU | with the SSH domain's own check made to accept any key by the test image's hook, a wrong key is still refused | the facet trusting the domain's word: the wrong key logs in |
-| release builds refuse the development key, host tests | the manifest check refuses a release-kind manifest that holds an SSH domain without the vault's host key facet, and one that holds a `record_volume` window; `erx_ssh` started under a release's build facts answers `not_development` and listens on nothing; the website's manifest has no SSH domain | the release check skipping the `record_volume` row: the manifest with the window passes; the check passing an SSH domain without the host key facet: that manifest passes; `erx_ssh` not reading the build facts: it listens; `ssh` dropped from the website's `site_leaves_out`: the website's manifest holds an SSH domain |
-| the login keys' grants, host tests of the manifest check | a `login_keys` grant to any domain but the system domain, and a `record_volume` window on a domain other than the `system` window's holder, are each refused | the holder comparison removed: the window on the web domain passes |
-| the reader's isolation, host test of the storage domain's start | a volume crafted to make the reader raise gives `does not read` and an empty `root`, and `system` is served | the catch removed: the storage domain's start fails and `system` is not served |
+| release builds refuse the development key, host tests | the manifest check refuses a release-kind manifest that holds an SSH domain without the vault's host key facet, and one that holds a `record_volume` window; `erx_ssh` started under a release's build facts answers `not_development` and listens on nothing | the release check skipping the `record_volume` row: the manifest with the window passes; the check passing an SSH domain without the host key facet: that manifest passes; `erx_ssh` not reading the build facts: it listens |
+| each product's SSH domain, host tests of the manifests | the browser demo's manifest (`site_manifest_source`) holds no SSH domain and no `record_volume` window; the card's manifest (`medium_manifest` of the Raspberry Pi's development manifest) and the QEMU medium's each hold both; neither medium as built holds `authorized_keys` | `ssh` dropped from `site_leaves_out`: the demo's manifest holds an SSH domain; `medium_manifest` taking out the SSH domain with the apps row: the card's manifest holds none; the medium build passing the development key: the medium holds `authorized_keys` |
+| a downloadable medium with a key of its user's, on QEMU | the QEMU medium built as the website offers it, with no key, boots with no SSH login and its console shows `root has no SSH login key`; the test then writes a key's line, with a comment and a CRLF ending, as `authorized_keys` onto the medium's record volume with fsimg, as a user's computer would and not through the image build, and on the next boot `tools/erx ssh` with that key logs in | the reader looking the file up by its short name alone: the file the test wrote is not found and the login fails; the medium's manifest without the SSH domain: nothing listens and the login fails |
+| the login keys' publisher and grants, host tests of the manifest check | a manifest whose `login_keys` service is served by the SSH domain, or by any domain but the `record_volume` window's holder, is refused; so are a `login_keys` service of another interface, a read-write grant of it, a grant to any domain but the system domain, a `login_keys` service without a `record_volume` window, and a `record_volume` window on a domain other than the `system` window's holder; the QEMU development manifest passes | the server comparison removed: the manifest whose `login_keys` the SSH domain serves passes; the holder comparison removed: the window on the web domain passes |
+| the reader's isolation and lifecycle, host tests of the storage domain's start | with the reader held by the test past the grant's 10-second deadline, `system` is served, the system domain's `login_keys` grant is installed within the deadline, a read of `root` answers `eagain` and the facet answers that login `unavailable`; once the test releases the reader, the next login reads the keys and logs in; a volume crafted to make the reader raise, and a reader the test kills, each give `does not read` and an empty final `root` while `system` is served | the mount waiting for the reader: the grant fails at its deadline and the login after the release still answers `unavailable`; the facet keeping its `eagain` read: the login after the release answers `unavailable`; the result published only by the reader's message: the killed reader leaves `root` answering `eagain` |
+| storage restarts, host tests of the storage domain and the facet | the storage domain killed while the reader is held, and again after it has published, comes back, reads the medium again and serves the same blobs; a key login after each restart logs in | the reader run only at the domain's first start of the boot: the restarted domain's `root` answers `eagain` for good and the login after the first restart answers `unavailable` |
 | the SSH domain's grants, host tests of the manifest check | an SSH domain row holding `data`, or any files grant but `ssh_state`'s, is refused; the row of the QEMU manifests passes | the check not looking at files grants: the row with `data` passes |
 | the session's grants | a session started over SSH lists exactly its template's facets in the inspector, the same as at the console | the facet passes the SSH domain's facets into the start map: the lists differ |
 | parallel logins, on QEMU | while one connection has sent its version line and stalls, a second client logs in within 5 s | `parallel_login` left at its default: the second login waits for the first's grace and the test fails |
@@ -1097,10 +1162,11 @@ on the host; the QEMU suite runs the interop and the ends.
 | `erx_boot_keys:decode/1`, host unit tests | a file of two keys with comments, blank lines, `#` lines, leading tabs, CRLF endings and no final line feed gives the two blobs in order; a file of exactly 16 keys and a line of exactly 1024 bytes are taken | `#` lines taken as keys: the comment case gives a finding instead of nothing; the 16-key bound checked with `>=`: the 16-key file is refused |
 | options and other types, host unit tests | `restrict ssh-ed25519 KEY`, `command="ls" ssh-ed25519 KEY`, `ssh-rsa KEY` and `ssh-ed25519` followed by an RSA blob in base64 are each skipped with its reason while the next line's key is taken | the decoder looking for `ssh-ed25519` in any field, as sshd finds a key after its options: the `restrict` line's key is taken |
 | key encoding and bounds, host unit tests | keys of 67 and 69 characters, one ending in `=`, and one holding a character outside the alphabet are skipped as `key does not decode`; a 17-key file and a file of 16 KiB and one byte are refused, and a 1025-byte line is skipped | the length checked as at least 68: the 69-character key is taken; the line bound checked with `>`: the 1025-byte line is taken |
-| `erx_fat_read:root_file/3`, host unit tests over volumes fsimg writes | `authorized_keys` written with a long name is found, and found as `AUTHORIZED_KEYS`; a deleted entry of that name, `authorized_keys.pub`, a directory of that name and a long name whose checksum does not match its short entry are not; a chain with a link outside the data area, a loop, a chain into the record's own cluster, a cluster seen twice, an end of chain before the size's clusters and a size past 16 KiB give `does not read` or the bound, never a crash; a boot sector whose reserved area ends before the reset count's sector is `not its FAT volume`; a boot sector whose data area does not start at the record's sector is `not its FAT volume` | the range check on a link removed: the out-of-range case raises instead of answering; the deleted-entry marker not checked: the deleted file is found |
+| `erx_fat_read:root_file/3`, host unit tests over volumes fsimg writes | `authorized_keys` written with a long name is found, and found as `AUTHORIZED_KEYS`; a deleted entry of that name, `authorized_keys.pub`, a directory of that name and a long name whose checksum does not match its short entry are not; a chain with a link outside the data area, a loop, a chain into the record's own cluster, a chain into any other cluster of the record's region (the first beside the record among them) as `lies in the boot-selection record's region`, a cluster seen twice, an end of chain before the size's clusters and a size past 16 KiB give `does not read` or the bound, never a crash; a boot sector whose reserved area ends before the reset count's sector is `not its FAT volume`; a boot sector whose data area does not start at the record's sector is `not its FAT volume` | the range check on a link removed: the out-of-range case raises instead of answering; the deleted-entry marker not checked: the deleted file is found; the region check comparing with the record's cluster alone: the file beside the record is read |
 | the fuzz targets of `erx_boot_keys:decode/1` and of the lookup | random and mutated files and volumes never crash either, every blob the decoder returns is 51 bytes that `erx_ssh_wire` accepts, and no lookup reads more than 32 clusters | the range check on a FAT link removed: a mutated link crashes the lookup within the target's budget |
+| the fuzz target of `erx_ssh_login:medium_keys/1` | random and mutated concatenations of blobs, of every length up to 1 KiB, valid blobs and small-order keys among them, never crash it; every list it accepts holds at most 16 keys, each 51 bytes that `erx_ssh_wire` accepts and none of small order, and an input whose length is not a multiple of 51 or is past 816 bytes is refused | the bound taken as 17 keys' length: a 17-key input is accepted, which the target's property catches; the small-order check skipped for the last blob: a mutated list ending in the neutral point is accepted |
 | no domain writes the file, host test of the block table | every window on the record partition but `boot_selection` and `reset_count` refuses a write; those two cover one sector each, and a write through either to any other sector answers `erange` | the table's single window over the whole record partition kept: a write to the root directory's sector succeeds |
-| the facet's read of `login_keys`, host unit tests | a file of 51-byte blobs gives that key list; a length of 50, a length past 16 keys, a blob naming another type and the neutral point's key each refuse the whole file with a log record, leaving no key | the small-order check skipped: the neutral point's key is admitted |
+| the facet's read of `login_keys`, host unit tests | a file of 51-byte blobs gives that key list; a length of 50, a length past 16 keys, a blob naming another type and the neutral point's key each refuse the whole file with a log record, leaving no key; a test server that reports a size of 16 MiB for a file of two keys gives the two keys; one whose file never ends is read for 817 bytes, in reads that together ask for no more, and refused; one that answers a read with more bytes than it asked for is refused | the small-order check skipped: the neutral point's key is admitted; the facet reading with `file:read_file/1`: the overstated size is read to 16 MiB and the endless file is read past 817 bytes, which the test server counts |
 | root's keys end to end, on QEMU | an image built with the development key in its record volume logs in with `tools/erx ssh`; an image built with that line prefixed by `restrict` refuses the login and its console shows `line 1: not a plain ssh-ed25519 key`; an image built with no file shows `root has no SSH login key` | the image build writing the key into the system release instead: the first case fails |
 | login keys (stage 4) | `sshkeys add` with a wrong passphrase is refused and with the right one admits the key; `sshkeys del` removes it at once; a key added under `device` and written to the medium by hand does not open | the add path skipping the passphrase check: the wrong-passphrase case succeeds |
 
@@ -1186,6 +1252,15 @@ passes ([design-platforms.md](design-platforms.md#trying-a-card-on-a-board)).
   decoder and a line parser of text from the medium into the trusted
   base; the second gives the file two forms a user must keep in step,
   and a user writing the card has only the line.
+* **A key file sharing the record's erase unit**, with the record's
+  isolation in [design-storage.md](design-storage.md#system-updates)
+  relaxed to its sector. Rejected: on a volume this empty a FAT writer
+  may well take the first free clusters, the ones beside the record (each
+  host's allocation order is unverified), so a user's file could lie
+  there, and a card pulled while its file is written, or a
+  commit cut short, could take the other with it; the record is what
+  boots the card. Marking the region's other clusters bad costs 1 MiB of
+  the 5 MiB volume and no code but the reader's one range check.
 * **The slot writer reading the file**, since it already holds a window
   on the record partition. Rejected: the domain that writes slots would
   parse a volume anyone with the card can craft, against ST-R4 of

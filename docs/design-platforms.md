@@ -1235,9 +1235,14 @@ erase unit of their own. Counted from the partition's first sector:
 * MiB 2 holds the end of the reserved area, both FATs and the root
   directory;
 * the data area starts at sector 6144, 3 MiB in, with `autoboot.txt`,
-  whose one 512-byte cluster is the record (`medium_record_select_start`).
+  whose one 512-byte cluster is the record (`medium_record_select_start`);
+  the rest of MiB 3, clusters 3 to 2049, is marked bad in both FATs, so
+  no FAT writer, the image build's or a user's computer's, puts a file in
+  the record's erase unit, and files such as `authorized_keys` start at
+  MiB 4 ([design-storage.md](design-storage.md#removable-media-fat)).
 
-The 5 MiB data area in 512-byte clusters is 10,240 clusters, a FAT16 by
+The 5 MiB data area in 512-byte clusters is 10,240 clusters, 8,192 of
+them free for files, a FAT16 by
 the cluster count the FAT specification sets
 ([design-storage.md](design-storage.md#references)). The partition
 starts 1 MiB into the medium (`medium_record_start`), so it ends at
