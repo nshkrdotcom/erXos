@@ -4,9 +4,9 @@
 -module(erx_app).
 -moduledoc """
 An app's session (docs/design-packaging.md, "Starting an app"): the application
-that the app template's `-eval` starts once the ready answer has brought the app's
-record (erx:app/0), which mounts the package's image at `/app` and starts what
-the package declares.
+that the app template's `-eval` starts, which asks for the app's record (erx:app/0),
+answered once the session's namespace is in place, then mounts the package's image
+at `/app` and starts what the package declares.
 
 For an Erlang app it puts each `/app/lib/*/ebin` at the end of the code path,
 after the release's, so a module the app ships under a name the release already
@@ -30,8 +30,8 @@ handler does not offer; its record ends erx_app with `{not_supported, program}`.
 -export_type([app_record/0, effects/0]).
 
 -doc """
-The app's record, as the ready answer hands it (docs/design-packaging.md,
-"An app's session"): where the package's file lies in the session's namespace,
+The app's record, as the domain service sends it once the session's namespace
+is in place (docs/design-packaging.md, "An app's session"): where the package's file lies in the session's namespace,
 its header's layout, and what it starts, as its header declares it.
 """.
 -type app_record() :: #{place := binary(),
@@ -58,13 +58,7 @@ stop(_State) ->
 -doc false.
 init(Parent) ->
     proc_lib:init_ack(Parent, {ok, self()}),
-    %% Registered before the record is read, so a record that comes later is sent here
-    %% (erx_connections:put_app/1): it comes once the session's namespace is in place.
-    true = register(?MODULE, self()),
-    Record = case erx:app() of
-                 undefined -> receive {erx_app, App} -> App end;
-                 App -> App
-             end,
+    {ok, Record} = erx:app(),
     case run(Record, effects()) of
         ok -> receive after infinity -> ok end;
         {error, Reason} -> exit(Reason)
@@ -74,7 +68,7 @@ init(Parent) ->
 Mounts the package of `Record` at `/app` and starts what it declares, through
 `Effects`. The first step that fails is the answer.
 """.
--spec run(app_record() | undefined, effects()) -> ok | {error, term()}.
+-spec run(app_record(), effects()) -> ok | {error, term()}.
 run(Record, Effects) ->
     try
         start_app(Record, Effects)
@@ -98,9 +92,7 @@ start_app(#{place := Place, layout := Layout, start := {applications, Names}},
     lists:foreach(fun add_path/1, ebins(Root)),
     lists:foreach(fun(Name) -> start_application(binary_to_atom(Name), Type) end, Names);
 start_app(#{start := {program, _Program, _Args}}, _Effects) ->
-    fail({not_supported, program});
-start_app(undefined, _Effects) ->
-    fail(no_app_record).
+    fail({not_supported, program}).
 
 %% Each lib/*/ebin under Root, sorted, so the code path the app adds does not
 %% depend on the order the directory lists.

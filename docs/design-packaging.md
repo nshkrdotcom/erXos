@@ -1082,10 +1082,12 @@ its grants of a files service settled, the `packages` grant among them
 ([design-system.md](design-system.md#a-session-takes-the-console)),
 and before the session's start is answered, so the app's code never
 starts before its grants exist and its package is readable when it
-starts. The session's connection agent keeps the record and sends it on
-to `erx_app` if that process is registered; `erx_app` registers its name
-before it looks for the record, takes the one the agent kept or else
-waits for it, so the record reaches it whichever comes first. `erx_app`
+starts. The session's connection agent keeps the record, which the
+domain pid sends it as `{erx_app, App}`
+([design-domains.md](design-domains.md#messages-between-the-domain-service-and-a-runtime)),
+and `erx_app` asks the agent for it (`erx:app/0`), which answers at once
+if it holds the record and else once it comes, so the record reaches
+`erx_app` whichever comes first. `erx_app`
 mounts `/app`, `rx`, with `erx_ns:mount({erofs, {file, Place, Layout}},
 "/app", ...)` from the record; a mount the reader refuses ends the
 session with the reason. The root hash is the domain service's, so a
@@ -1113,12 +1115,14 @@ indices of the app template's `packages` row and of the facet row of
 each of its services, the names of the manifest's principals,
 configured domains, services and facet rows, and the names of the
 image's packages; and the boot's registry of app principals, each
-name's entry and signer. It answers `{ok, Admitted}`, the principal's
-entry (the name's existing one or a free one, which it reserves nothing
-in), the indices of the facet rows kept, the `packages` row and one for
-each need, the start row's display and the signer, which registration
-records for check 4 to compare, or `{error, Reason}`, the first
-of these that fails:
+name's entry and signer. It reserves no entry and answers none:
+registration takes the entry the same rule (`erx_app_admit:entry/4`)
+gives the name when the package is committed, the one check 4 found,
+since the package process alone admits and registers, one package at a
+time. It answers `{ok, Admitted}`, the indices of the facet rows kept,
+the `packages` row and one for each need, the start row's display, the
+declared memory and the signer, which registration records for check 4
+to compare, or `{error, Reason}`, the first of these that fails:
 
 1. the manifest has an `apps` row: `no_apps`;
 2. the header's ABI version and architecture are the image's: `{abi,
@@ -1261,8 +1265,9 @@ with a display, and saves screendumps, as Doom's `run.rb boot` did.
 ### Starting an app
 
 `erx_app`, an application of the `app` release, does nothing until the
-app's record has come ([An app's session](#an-apps-session)): it
-registers its name, then takes the record or waits for it. It depends
+app's record has come ([An app's session](#an-apps-session)): it asks
+the connection agent for the record (`erx:app/0`), which answers once
+the record has come. It depends
 on `erx_session`, whose
 command server starts a native app's program, so it starts only once
 that server serves. Once the record has come, it:

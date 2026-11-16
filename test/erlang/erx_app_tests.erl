@@ -66,6 +66,3 @@ refused_mount_ends_with_its_reason_test() ->
 native_app_is_not_supported_test() ->
     ?assertEqual({error, {not_supported, program}},
                  erx_app:run(record({program, <<"bin/tiny">>, []}), effects("good"))).
-
-no_record_test() ->
-    ?assertEqual({error, no_app_record}, erx_app:run(undefined, effects("good"))).

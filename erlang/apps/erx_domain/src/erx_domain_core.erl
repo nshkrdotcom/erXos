@@ -59,7 +59,7 @@ state is a bug of the caller and fails with a badmatch.
                     connection := non_neg_integer(),
                     ctl_slots := non_neg_integer(), reader := non_neg_integer(),
                     facets := #{atom() => {pid(), map()}}, start := start(), inspect := pid() | none,
-                    rows := [session_row()], app := map() | none}.
+                    rows := [session_row()], app := erx_app:app_record() | none}.
 %% A session's facet row, decided once as the session is planned (erx_domain_srv): the
 %% service's name, its server, a configured row or system, and the grant's limits; a
 %% domain of no session holds none. An app's session alone carries the app's record.
@@ -177,8 +177,9 @@ each {Index, Row} by its index in the manifest's facet table:
 Nothing of the plan depends on the record's signer, so one header admitted
 as an image package and as an installed one gives one plan (PK10). The
 record is the domain service's own (erx_principal:register/2), written
-from an admission against the same manifest, so its entry is below Apps'
-max and its rows are the template's.
+in the entry erx_app_admit:entry/4 gives below the registry's max, Apps'
+count, from an admission against the same manifest, so its rows are the
+template's.
 """.
 -spec app_session(binary(), erx_principal:app(), erx_domain_lib:apps(), [{non_neg_integer(), Row}]) ->
           app_session(Row).

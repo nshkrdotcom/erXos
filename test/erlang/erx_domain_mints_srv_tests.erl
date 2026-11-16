@@ -755,7 +755,7 @@ app_session() ->
     Checked = #{header => #{name => <<"clock">>, layout => #{}, start => {applications, [<<"clock">>]}},
                 signer => image, sha256 => <<0:256>>, extent => 1},
     ok = erx_principal:register_app(#{name => <<"clock">>, place => installed, checked => Checked,
-                                      admitted => #{entry => 0, signer => image, memory => ?APP_MEMORY,
+                                      admitted => #{signer => image, memory => ?APP_MEMORY,
                                                     rows => [1]}}),
     Self = self(),
     erlang:trace(new_processes, true, ['receive', {tracer, Self}]),

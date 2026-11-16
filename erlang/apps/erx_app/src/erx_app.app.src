@@ -2,7 +2,7 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% An app's session (docs/design-packaging.md, "Starting an app"): erx_app mounts the
-%% app's package at /app from the record the ready answer brings and starts what the
+%% app's package at /app from the record the agent answers (erx:app/0) and starts what the
 %% package declares. The domain release's app script only loads it; the app template's
 %% -eval starts it, permanent, once the domain holds its facets.
 %% Its applications are those that must run before it starts: erx_session, the
