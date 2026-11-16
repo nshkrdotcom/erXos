@@ -1585,7 +1585,18 @@ and the verdicts.
   model, erXos's mount read-only or read-write, and Linux's mount with
   recovery or `ro,norecovery`. Each name has its kind, mode, link count,
   link class (the names that share an inode), size, symlink target or
-  device numbers, and the SHA-256 of its bytes. A second depth adds the
+  device number, and the SHA-256 of its bytes. A device number is
+  `{Major, Minor}`, which each reader decodes once from its own
+  encoding: the model holds it in that form; erXos's codec decodes the
+  inode's address slot by Linux's old 16-bit and new 32-bit encodings
+  ([F 42]), whose bit layouts the facts records leave open (open
+  question 7 of part 1), so the device nodes of the oracle guest's
+  declared tree are the probe that checks them;
+  and the reader over OTP's `file` module decodes `st_rdev` by the
+  host's own `dev_t` encoding. A link class is the whole set of names
+  found sharing the inode, and a comparison intersects it with the
+  paths both listings state without an error, so an entry in error
+  changes no other entry. A second depth adds the
   owner and the times, which the model does not predict, so only two
   readers of one image are compared on it. Extended attributes are
   compared as bytes, by erXos's codec wherever erXos runs: every inode
