@@ -1844,10 +1844,9 @@ without an app and its deletion, or the rename of its update, leaves the
 app stopped; the recovery's publication brings its row back with no
 record, `installed`, on whichever package its name then holds, and its
 own `start` runs it. A crash of the start service's table process loses
-nothing the package process holds: on its restart it asks the package
-process for the set with a message and waits for no answer; the package
-process answers by publishing its set, in turn with its closes, removals
-and purges, and the table applies `rc.conf` to the rows it holds no
+nothing the package process holds: on its restart it takes the last set
+it took from its records process, and applies `rc.conf` to the rows it
+holds no
 record for only when the boot mark says the boot is not done, and
 otherwise leaves them with no record, `installed`
 ([design-apps.md](design-apps.md#concurrency)).

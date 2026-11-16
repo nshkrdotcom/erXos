@@ -812,9 +812,8 @@ hands the purge to the package process and awaits its answer itself,
 so a purge that waits behind an update waits while the table takes the
 update's publication, and a `ctl` command written after the purge waits
 for it as any later write of a file waits for the one before. A
-restarted table asks the package process for its set with a message
-and waits for no answer: the package process answers by publishing the
-set, which the table takes in turn like any other publication.
+restarted table asks the package process for nothing: it takes the
+last package set from the records process below.
 
 The keepers are a separate branch of the application's supervision
 tree, so a crash of the table's process restarts it and no session ends.
@@ -826,8 +825,14 @@ The rest is held by one plain process in the branch, the records
 process (`erx_starter_records`): each row's record, the row as the
 boot or its own last command applied it, with its refusal if it was
 refused, each replaced in one step; and the **boot mark**, set in the
-same step as the records of the boot's package set, which says that the
-boot has applied the file to every row of its table. A row a
+same step as the rows' records of the boot's package set, which says
+that the boot has applied the file to every row of its table. It also
+holds the last package set the table took, recorded before the table
+stops a row the set drops, so a table that ends between the two leaves
+a held row its successor has no row for, which it stops, and never a
+dropped row it could start again. A restored set stands until the
+package process publishes again, which it does at once when the
+table's end cut its publication short, since that ends its lifetime. A row a
 publication adds gets no record: `installed` is what a row of an
 admitted package shows while it has none, a label derived from that
 absence, with its package's declared settings, so no flag or copy of
@@ -879,14 +884,15 @@ record. `service NAME enable` and `disable` only edit the file and
 write nothing to `ctl`, so no command both writes the file and changes
 a record.
 
-A restarted table takes its rows from the records process and their
-states from the keepers' branch, and asks the package process for its
-set, which arrives as a publication. A row of the set it holds no
+A restarted table takes its rows and the last package set from the
+records process and their states from the keepers' branch. A row of
+the set it holds no
 record for is either one the boot had yet to apply when the table
 ended, or one a publication added, and the boot mark tells which.
 Without the mark the boot is not done: no publication can have followed
-the boot's package set, so the set the restarted table is sent is that
-set, and the table finishes the boot, reading `rc.conf` and applying it
+the boot's package set, so the set the records process holds is that
+set; if it holds none yet, the boot's set arrives as a publication.
+Either way the table finishes the boot, reading `rc.conf` and applying it
 as the boot does to every row of the manifest and of the set that has
 no record, and sets the mark with the set's records. With the mark, it
 does nothing to such a row, which shows `installed` as it did before
@@ -914,7 +920,7 @@ reported.
 | a purge arrives while the package process carries out an install, update or removal | nothing: it is the order the package process takes them in | `ctl`'s file owner waits for the purge's answer while the table takes the operation's publication; the purge is carried out after it, and a later `ctl` write waits for the purge |
 | an edit is lost to a concurrent one | nothing: the last writer wins | the next read takes the last writer's text whole; `/proc/apps` shows which of each row's settings came from the file when it was applied |
 | the display domain restarts under a display's session | the domain service's grant record | the grant is minted again on the new incarnation, with the session mark |
-| the start service crashes | its supervisor | it restarts with the rows the keepers' branch recorded, asks the package process for its set without waiting and takes it as a publication; it reads `rc.conf` only to finish a boot the boot mark says is not done, and leaves any other row with no record `installed`; kept sessions go on, and stopped, down and installed rows stay so |
+| the start service crashes | its supervisor | it restarts with the rows and the last package set the keepers' branch recorded; it reads `rc.conf` only to finish a boot the boot mark says is not done, and leaves any other row with no record `installed`; kept sessions go on, and stopped, down and installed rows stay so |
 | the records process ends, or the keepers' branch passes its intensity | the keepers' branch and the application's top supervisor, each shutting down at its significant child's end | the start service's application ends, and with it the system domain: the machine resets, and the next boot applies `rc.conf` to every row |
 
 Every state above, and every reason the boot finds,
@@ -1171,7 +1177,7 @@ Decisions:
     ([A read that cannot read the file](#the-start-table)).
 11. **The table never waits for the package process**, which waits for
     the table at each publication: `ctl`'s file owner awaits a purge,
-    and a restarted table takes the set as a publication
+    and a restarted table takes the last set from its records process
     ([Concurrency](#concurrency)).
 12. **Publishing an app applies nothing of `rc.conf`**: an install or an
     update only replaces the app's files, and its row is installed until
