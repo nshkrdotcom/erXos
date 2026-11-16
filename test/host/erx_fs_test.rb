@@ -229,12 +229,12 @@ class ErxFsTest < Minitest::Test
               to: "  operation readdir 40\n    request fid fid node\n",
               caught_by: 'directory_operations_on_a_file_or_a_link_reach_no_tree_test'),
     Fault.new(name: 'an answer/3 that leaves its entry', file: WAITS,
-              from: "erlang:send(Alias, {erx_fs_answer, Alias, Result}),\n            forget(Alias, Entry, Waits);",
-              to: "erlang:send(Alias, {erx_fs_answer, Alias, Result}),\n            _ = Entry,\n            Waits;",
+              from: "erlang:send(Alias, {erx_fs_answer, Alias, Result}),\n            forget(Wait, Waits);",
+              to: "erlang:send(Alias, {erx_fs_answer, Alias, Result}),\n            Waits;",
               caught_by: 'a_keeper_that_answers_a_thousand_reads_holds_nothing_test'),
     Fault.new(name: 'a set that does not monitor the grant', file: WAITS,
-              from: '#{} -> Grants#{Grant => {erlang:monitor(process, Grant), 1}}',
-              to: '#{} -> Grants#{Grant => {make_ref(), 1}}',
+              from: '#{} -> {erlang:monitor(process, Grant), #{}}',
+              to: '#{} -> {make_ref(), #{}}',
               caught_by: 'a_grants_end_drops_its_requests_test')
   ].freeze
 

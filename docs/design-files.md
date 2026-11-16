@@ -3128,15 +3128,19 @@ recovers a value's exact bytes
   waiting requests in `erx_fs_waits` and answers them only through it:
   `new/0`; `hold/2`, which takes an `{erx_fs_wait, Wait, Request}`
   message and monitors the grant that sent it, once for all of that
-  grant's requests; `began/2`, which marks a request begun; `answer/3`,
-  which answers a request, forgets it and releases its grant's monitor
-  with that grant's last request; `info/2`, which takes an
-  `{erx_fs_flush, Wait}` or a grant's `DOWN` and answers `{flushed,
-  Waits}` when it has answered a request not yet begun `eintr` itself,
-  `{begun, Wait, Request, Waits}` for a begun one, which the keeper's
-  answer to it settles and which a keeper that passed it on flushes at
-  that server, `{dropped, Waits}` or `unknown`; and `list/1`, its
-  requests in the order they arrived
+  grant's requests, where `Wait` is `{Grant, Alias}`; `began/2`, which
+  marks a request begun; `answer/3`, which sends `{erx_fs_answer, Alias,
+  Result}` to the request's alias, forgets the request and releases its
+  grant's monitor with that grant's last request; `info/2`, which takes
+  an `{erx_fs_flush, Wait}` or a grant's `DOWN` and answers `{flushed,
+  Waits}` when the flush needs nothing of the keeper: the set has
+  answered a request not yet begun `eintr` itself, or the request is
+  answered already, or its first flush is already the keeper's;
+  `{begun, Wait, Request, Waits}` for the first flush of a begun one,
+  which the keeper's answer to it settles and which a keeper that passed
+  it on flushes at that server, `{dropped, Waits}` or `unknown`; and
+  `list/1`, its requests in the order they arrived, each as `{Wait,
+  Request, waiting | begun}`
   ([Serving](#serving-the-erx_fs-behaviour), "Waiting requests").
   `erx_fs_locks` is a tree's lock table, a keeper of the grants' `lock`
   and `getlock` requests: `start_link/0`, and the release of a fid's

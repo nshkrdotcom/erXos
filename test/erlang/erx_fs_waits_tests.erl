@@ -39,24 +39,30 @@ a_flush_of_a_request_not_yet_begun_is_answered_eintr_test() ->
     ?assertEqual({error, eintr}, answered(Wait)),
     ?assertEqual([], erx_fs_waits:list(Waits1)),
     ?assertEqual(Monitors, monitors()),
-    %% The keeper's late answer finds nothing, and sends nothing.
-    ?assertEqual([], erx_fs_waits:list(erx_fs_waits:answer(Wait, {ok, <<"late">>}, Waits1))),
-    ?assertEqual(none, answered(Wait)).
+    %% The keeper's late answer and a late flush find nothing held; the
+    %% alias, which took its one answer, would drop a second anyway.
+    ?assertEqual(Waits1, erx_fs_waits:answer(Wait, {ok, <<"late">>}, Waits1)),
+    Grant ! {flush, Wait},
+    ?assertEqual({flushed, Waits1}, erx_fs_waits:info(next(), Waits1)),
+    ?assertEqual(none, no_answer(Wait)).
 
 a_flush_of_a_begun_request_waits_for_the_keepers_answer_test() ->
+    Monitors = monitors(),
     Grant = grant(),
     {Waits0, Wait} = hold(Grant, {write, <<"bytes">>}, erx_fs_waits:new()),
     Waits1 = erx_fs_waits:began(Wait, Waits0),
+    ?assertError({badmatch, _}, erx_fs_waits:began(Wait, Waits1)),
     Grant ! {flush, Wait},
     {begun, Wait, {write, <<"bytes">>}, Waits2} = erx_fs_waits:info(next(), Waits1),
-    ?assertEqual(none, answered(Wait)),
+    ?assertEqual(none, no_answer(Wait)),
     ?assertEqual([{Wait, {write, <<"bytes">>}, begun}], erx_fs_waits:list(Waits2)),
     %% One flush waits for each request: a second reaches the keeper as settled.
     Grant ! {flush, Wait},
     {flushed, Waits3} = erx_fs_waits:info(next(), Waits2),
     Waits4 = erx_fs_waits:answer(Wait, {ok, 5, 0}, Waits3),
     ?assertEqual({ok, 5, 0}, answered(Wait)),
-    ?assertEqual([], erx_fs_waits:list(Waits4)).
+    ?assertEqual([], erx_fs_waits:list(Waits4)),
+    ?assertEqual(Monitors, monitors()).
 
 a_grants_end_drops_its_requests_test() ->
     Monitors = monitors(),
@@ -65,17 +71,26 @@ a_grants_end_drops_its_requests_test() ->
     {Waits0, First} = hold(Grant, {read, 1}, erx_fs_waits:new()),
     {Waits1, Kept} = hold(Other, {read, 2}, Waits0),
     {Waits2, Second} = hold(Grant, {read, 3}, Waits1),
+    %% One monitor for each grant, however many of its requests are held.
+    ?assertEqual(length(Monitors) + 2, length(monitors())),
     Waits3 = erx_fs_waits:began(Second, Waits2),
-    ?assertEqual([First, Kept, Second], [Wait || {Wait, _, _} <- erx_fs_waits:list(Waits3)]),
+    Grant ! {flush, Second},
+    {begun, Second, {read, 3}, Waits4} = erx_fs_waits:info(next(), Waits3),
+    ?assertEqual([First, Kept, Second], [Wait || {Wait, _, _} <- erx_fs_waits:list(Waits4)]),
+    %% The DOWN of the keeper's own monitor of a grant is the keeper's.
+    Own = erlang:monitor(process, Grant),
     exit(Grant, kill),
-    Down = receive {'DOWN', _, process, Grant, _} = Message -> Message after ?DEADLINE -> no_down end,
-    {dropped, Waits4} = erx_fs_waits:info(Down, Waits3),
-    ?assertEqual([{Kept, {read, 2}, waiting}], erx_fs_waits:list(Waits4)),
+    OwnDown = down(Grant, Own),
+    ?assertMatch({'DOWN', Own, process, Grant, _}, OwnDown),
+    ?assertEqual(unknown, erx_fs_waits:info(OwnDown, Waits4)),
+    Down = down(Grant, {other_than, Own}),
+    {dropped, Waits5} = erx_fs_waits:info(Down, Waits4),
+    ?assertEqual([{Kept, {read, 2}, waiting}], erx_fs_waits:list(Waits5)),
     %% A begun effect's answer then finds nothing to answer.
-    Waits5 = erx_fs_waits:answer(Second, {ok, <<"x">>}, Waits4),
-    Waits6 = erx_fs_waits:answer(Kept, {ok, <<"y">>}, Waits5),
+    Waits6 = erx_fs_waits:answer(Second, {ok, <<"x">>}, Waits5),
+    Waits7 = erx_fs_waits:answer(Kept, {ok, <<"y">>}, Waits6),
     ?assertEqual({ok, <<"y">>}, answered(Kept)),
-    ?assertEqual([], erx_fs_waits:list(Waits6)),
+    ?assertEqual([], erx_fs_waits:list(Waits7)),
     ?assertEqual(Monitors, monitors()).
 
 messages_of_the_keepers_own_are_unknown_test() ->
@@ -110,9 +125,24 @@ next() ->
     after ?DEADLINE -> timeout
     end.
 
-%% The answer the grant received for Wait, or none within a short wait.
+%% The answer the grant received for Wait.
 answered({_, Alias}) ->
+    receive {answered, Alias, Result} -> Result after ?DEADLINE -> timeout end.
+
+%% none when the grant has received no answer for Wait within a short wait;
+%% an answer it missed is still found by the answer the test waits for next.
+no_answer({_, Alias}) ->
     receive {answered, Alias, Result} -> Result after 100 -> none end.
+
+%% The DOWN of Grant on the monitor Own, or on {other_than, Own}.
+down(Grant, {other_than, Own}) ->
+    receive {'DOWN', M, process, Grant, _} = Message when M =/= Own -> Message
+    after ?DEADLINE -> no_down
+    end;
+down(Grant, Own) ->
+    receive {'DOWN', Own, process, Grant, _} = Message -> Message
+    after ?DEADLINE -> no_down
+    end.
 
 monitors() ->
     {monitors, Monitors} = process_info(self(), monitors),

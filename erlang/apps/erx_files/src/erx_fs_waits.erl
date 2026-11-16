@@ -28,9 +28,10 @@ it, so the obligations every keeper shares live here:
   the monitor with that grant's last request; the grant's end drops every
   request it sent, waiting or begun, unanswered.
 
-The requests are kept in one table, keyed by alias; beside it the set keeps
-each held grant's monitor and its count of requests in the table, which
-only `hold/2` and the forgetting of a request change.
+The requests are kept in one table keyed by alias. Beside it, each grant
+with a request held has its monitor and the set of its aliases in the
+table, so whether a grant still has a request held is read from that set,
+not counted.
 """.
 
 -export([new/0, hold/2, began/2, answer/3, info/2, list/1]).
@@ -48,12 +49,12 @@ only `hold/2` and the forgetting of a request change.
                arrival :: non_neg_integer(),
                state :: waiting | begun | flushing}).
 
-%% held: every request the keeper holds, by alias; grants: the monitor of
-%% each grant with a request in held, and how many it has there; arrivals:
-%% the arrival number the next request takes.
+%% held: every request the keeper holds, by alias. grants: for each grant
+%% with a request in held, its monitor and the aliases of its requests
+%% there. next_arrival: the arrival number the next request takes.
 -record(waits, {held = #{} :: #{reference() => #held{}},
-                grants = #{} :: #{pid() => {reference(), pos_integer()}},
-                arrivals = 0 :: non_neg_integer()}).
+                grants = #{} :: #{pid() => {reference(), #{reference() => []}}},
+                next_arrival = 0 :: non_neg_integer()}).
 
 -opaque waits() :: #waits{}.
 
@@ -68,19 +69,27 @@ the grant that sent it unless the set holds a request of that grant already.
 """.
 -spec hold({erx_fs_wait, wait(), term()}, waits()) -> waits().
 hold({erx_fs_wait, {Grant, Alias} = Wait, Request},
-     #waits{held = Held, grants = Grants, arrivals = Arrival} = Waits) ->
-    Waits#waits{held = Held#{Alias => #held{wait = Wait, request = Request,
-                                            arrival = Arrival, state = waiting}},
-                grants = monitor_grant(Grant, Grants),
-                arrivals = Arrival + 1}.
+     #waits{held = Held, grants = Grants, next_arrival = Arrival} = Waits)
+  when is_pid(Grant), is_reference(Alias) ->
+    Entry = #held{wait = Wait, request = Request, arrival = Arrival, state = waiting},
+    {Monitor, Aliases} = case Grants of
+                             #{Grant := Known} -> Known;
+                             #{} -> {erlang:monitor(process, Grant), #{}}
+                         end,
+    Waits#waits{held = Held#{Alias => Entry},
+                grants = Grants#{Grant => {Monitor, Aliases#{Alias => []}}},
+                next_arrival = Arrival + 1}.
 
 -doc """
-Marks a held request begun, before the keeper starts its effect: from then
-a flush waits for the keeper's answer, which says what the effect did.
+Marks a request begun, before the keeper starts its effect: from then a
+flush waits for the keeper's answer, which says what the effect did. The
+request must be one `list/1` shows waiting in the same step of the keeper;
+any other fails with `badmatch`, since a keeper that begins an effect for a
+request it no longer holds has lost track of its own requests.
 """.
 -spec began(wait(), waits()) -> waits().
-began({_, Alias}, #waits{held = Held} = Waits) ->
-    #{Alias := #held{state = waiting} = Entry} = Held,
+began({_, Alias} = Wait, #waits{held = Held} = Waits) ->
+    #{Alias := #held{wait = Wait, state = waiting} = Entry} = Held,
     Waits#waits{held = Held#{Alias := Entry#held{state = begun}}}.
 
 -doc """
@@ -89,11 +98,11 @@ other than a wait, and forgets it. A request the set no longer holds, one
 flushed or dropped meanwhile, is not answered.
 """.
 -spec answer(wait(), term(), waits()) -> waits().
-answer({_, Alias}, Result, #waits{held = Held} = Waits) ->
+answer({_, Alias} = Wait, Result, #waits{held = Held} = Waits) ->
     case Held of
-        #{Alias := Entry} ->
+        #{Alias := #held{wait = Wait}} ->
             erlang:send(Alias, {erx_fs_answer, Alias, Result}),
-            forget(Alias, Entry, Waits);
+            forget(Wait, Waits);
         #{} ->
             Waits
     end.
@@ -112,20 +121,22 @@ Takes a message the keeper received that may be the set's:
 * `unknown` for any other message, which is the keeper's own.
 """.
 -spec info(term(), waits()) ->
-          {flushed, waits()} | {begun, wait(), term(), waits()} | {dropped, waits()} | unknown.
+          {flushed, waits()} | {begun, wait(), term(), waits()}
+        | {dropped, waits()} | unknown.
 info({erx_fs_flush, {_, Alias} = Wait}, #waits{held = Held} = Waits) ->
     case Held of
-        #{Alias := #held{state = waiting}} ->
+        #{Alias := #held{wait = Wait, state = waiting}} ->
             {flushed, answer(Wait, {error, eintr}, Waits)};
-        #{Alias := #held{state = begun, request = Request} = Entry} ->
-            {begun, Wait, Request, Waits#waits{held = Held#{Alias := Entry#held{state = flushing}}}};
+        #{Alias := #held{wait = Wait, state = begun, request = Request} = Entry} ->
+            Flushing = Entry#held{state = flushing},
+            {begun, Wait, Request, Waits#waits{held = Held#{Alias := Flushing}}};
         #{} ->
             {flushed, Waits}
     end;
 info({'DOWN', Monitor, process, Grant, _}, #waits{held = Held, grants = Grants} = Waits) ->
     case Grants of
-        #{Grant := {Monitor, _}} ->
-            {dropped, Waits#waits{held = maps:filter(fun(_, #held{wait = {G, _}}) -> G =/= Grant end, Held),
+        #{Grant := {Monitor, Aliases}} ->
+            {dropped, Waits#waits{held = maps:without(maps:keys(Aliases), Held),
                                   grants = maps:remove(Grant, Grants)}};
         #{} ->
             unknown
@@ -147,22 +158,19 @@ list(#waits{held = Held}) ->
 %% Internal
 %% ---------------------------------------------------------------------------
 
-monitor_grant(Grant, Grants) ->
-    case Grants of
-        #{Grant := {Monitor, Count}} -> Grants#{Grant := {Monitor, Count + 1}};
-        #{} -> Grants#{Grant => {erlang:monitor(process, Grant), 1}}
-    end.
-
-%% Forgets one held request, and its grant's monitor with the grant's last request.
-forget(Alias, #held{wait = {Grant, _}}, #waits{held = Held, grants = Grants} = Waits) ->
-    Waits#waits{held = maps:remove(Alias, Held),
-                grants = case Grants of
-                             #{Grant := {Monitor, 1}} ->
-                                 erlang:demonitor(Monitor, [flush]),
-                                 maps:remove(Grant, Grants);
-                             #{Grant := {Monitor, Count}} ->
-                                 Grants#{Grant := {Monitor, Count - 1}}
-                         end}.
+%% Forgets one held request, and releases its grant's monitor with the
+%% grant's last request there.
+forget({Grant, Alias}, #waits{held = Held, grants = Grants} = Waits) ->
+    #{Grant := {Monitor, Aliases0}} = Grants,
+    Aliases = maps:remove(Alias, Aliases0),
+    Grants1 = case map_size(Aliases) of
+                  0 ->
+                      erlang:demonitor(Monitor, [flush]),
+                      maps:remove(Grant, Grants);
+                  _ ->
+                      Grants#{Grant := {Monitor, Aliases}}
+              end,
+    Waits#waits{held = maps:remove(Alias, Held), grants = Grants1}.
 
 %% A flushing request is begun to the keeper, which holds its flush.
 shown(flushing) -> begun;
