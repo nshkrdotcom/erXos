@@ -1206,7 +1206,7 @@ says where each kind of event applies and which states may follow:
 | `eapol`, a received EAPOL-Key frame | | | | `keys`, `idle` | `open`, `rekey`, `idle` | `rekey`, `idle` |
 | `set_keys_confirm` | | | | `keys`, `open`, `idle` | `open`, `idle` | `rekey`, `open`, `idle` |
 | `disconnected` | | `idle` | `idle` | `idle` | `idle` | `idle` |
-| `deadline` | | `joining`, `idle` | `sae`, `idle` | `keys`, `idle` | | `open` |
+| `deadline` | | `idle` | `sae`, `idle` | `idle` | | `open` |
 
 An empty cell is an event that does not apply: `step/3` drops it,
 counts it as `unexpected_event` and changes nothing. A filled cell names
@@ -1252,7 +1252,12 @@ What the cells do:
   join.
 * **`disconnected`**, the firmware's link down or the access point's
   deauthentication or disassociation, ends the join in every state.
-* **`deadline`** in `rekey` drops the pending PTK and returns to
+* **`deadline`** ends the join in `joining` and `keys`; in `sae` it is
+  the exchange's own, which sends a frame again or ends, and once the
+  exchange is accepted it is the connect's, which ends the join; one that comes
+  before its time is dropped, counted as `early_deadline`, and takes no
+  edge, as a handler takes none for any event it refuses. In `rekey` it
+  drops the pending PTK and returns to
   `open` under the keys still installed: a message 1 has no MIC, so a
   forged one may start a rekey, and must not end the association. A
   genuine rekey that stalls is the access point's to end, which it does

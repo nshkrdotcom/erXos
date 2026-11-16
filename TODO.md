@@ -7437,16 +7437,37 @@ document's "residual risks accepted" paragraph.
     (a capture, or one built by hostapd's own code on the host) checked through `decode`,
     `mic_input` and `check_mic`, with a seeded fault; wpa_supplicant 2.12's tarball carries
     no such frame (its hwsim tests are not in it);
-  - the join slice gives `build(message_2, ...)` the station's own RSNXE, the hash-to-element
-    bit of an SAE join, exactly as its association request carried it;
   - `build/4` takes an untyped `map()`: a caller that leaves out a key gets a `function_clause`
     whose arguments carry the KCK; a map type per message kind lets Dialyzer catch it;
   - the MIC input ends at the key data, while wpa_supplicant covers the whole EAPOL body
     (`wpa.c:4005`); a body longer than its key data fails the MIC (safe, but not
     wpa_supplicant's behavior);
-  - a GTK KDE of key id 0 is accepted; the slots are ids 1 to 3, so the bound goes into
-    `abi/formats/ieee80211.txt` beside the IGTK's, and whether a second RSN element in message
-    3 is allowed is checked against the standard (the codec refuses it);
+  - whether a second RSN element in message 3 is allowed is checked against the standard (the
+    codec refuses it);
+  - the codec reads no Transition Disable KDE (the Wi-Fi Alliance's OUI, `wpa_common.h:155`),
+    so `erx_wifi_join` reports no `{transition_disable, SSID}` ("The 4-way handshake"), and
+    Verification's property and seed for it wait with it;
+  - `erx_wifi_join` takes the station's own RSN element and RSNXE in the `join` request; nothing
+    builds them from the candidate's AKM and PMF yet, which wants the RSN element's layout in
+    `abi/formats/ieee80211.txt`;
+  - `erx_sae` is a stand-in that ends every exchange with the `bss` class, so an SAE join
+    fails; `erx_wifi_keys` makes only the `ptk` request, and the call that performs a request
+    belongs to the station's process;
+  - `erx_wifi_join`'s review left: the join is one map with `_ => _` whose association
+    fields exist only after `join`, so Dialyzer cannot catch a missing one (a record or a
+    map type per phase would); message 3's checks are spread over `eapol/4`, `message/5`,
+    `protected_key_data/3` and `message_3/5` rather than one named sequence in the design's
+    order; `{disconnect, Ref, Reason}` carries the machine's own reason, which wants one
+    mapping to 802.11 reason codes ("RSN element different"); group message 2 goes out
+    before the install it answers, as message 4 does, which the design's group paragraph
+    does not state; `step/3` fails on an event kind outside the table, a contract the
+    station's process must keep;
+  - the join's exploration: no property says that once the access point has message 4 and
+    every install is confirmed the port is open without another frame (liveness always
+    starts a new handshake); the end of a rekey is not checked against the chip's
+    confirmed slots as the port's opening is; the seed that removes `eapol`'s `open` cell
+    is caught by liveness, not as an edge never taken, since the edge list is read from
+    the seeded table;
   - hand-copied facts: `-type akm()` repeats the `ieee80211_akm` enum (the generator could
     emit a type per enum), and the 64- and 48-bit widths of the RSC, IPN and unwrap
     semiblock are written beside their layout counts;
