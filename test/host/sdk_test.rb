@@ -133,6 +133,19 @@ class SdkTest < Minitest::Test
     assert_equal [['config/manifest/x.txt', 1, 'examples/']],
                  Erx::ExampleLists.violations({ 'config/manifest/x.txt' => "input examples/dashboard\n" }, applications: [])
     refute Erx::ExampleLists.covers?('tools/lib/erx/example_lists.rb')
+  end
+
+  # The kiosk cell's files pack the dashboard through the SDK, as the design names them;
+  # a tools file the exemptions do not list is found for the same line.
+  def test_only_an_exempt_file_names_an_example
+    named = "APP = 'examples/dashboard'\n"
+    files = %w[tools/lib/erx/kiosk.rb tools/lib/erx/qemu_suites/kiosk.rb tools/lib/erx/production_image.rb]
+            .to_h { [it, named] }
+    assert_equal [['tools/lib/erx/production_image.rb', 1, 'examples/']],
+                 Erx::ExampleLists.violations(files, applications: ['erx_dashboard'])
+  end
+
+  def test_the_applications_are_the_examples_directories
     Dir.mktmpdir('erx-examples-') do |root|
       FileUtils.mkdir_p(File.join(root, 'examples/dashboard/lib/erx_dashboard'))
       assert_equal ['erx_dashboard'], Erx::ExampleLists.applications(root: root)

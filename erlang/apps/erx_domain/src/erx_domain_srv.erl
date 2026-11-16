@@ -302,8 +302,10 @@ booted(#{lib := Lib} = State) ->
                                            [Grant || {Row, _, _, _} = Grant <- System, is_integer(Row)]),
             %% The system domain's own facets of configured domains: /data only where the
             %% manifest grants the system domain data (docs/design-files.md, "A facet's
-            %% mount").
-            ok = erx_ns:mount_facets(erx_domain_mints:granted_names(system, Mints)),
+            %% mount"), and the installed packages at their system place, /packages.
+            Granted = erx_domain_mints:granted_names(system, Mints),
+            ok = erx_ns:mount_facets(Granted),
+            ok = mount_packages(Granted),
             State#{core := erx_domain_core:new(Host), configured := Configured, mints := Mints, served := Served,
                    facet_rows := lists:enumerate(0, maps:get(grants, Boot, [])), trees := Trees,
                    templates := maps:from_list([{P, T} || #{principal := P} = T <- Templates])};
@@ -1017,9 +1019,10 @@ keep_web_line(_Id, _Node, _Provides, State) ->
     State.
 
 mint(Id, DomainPid, Name, {tree, Grants, Limits}, Exports) ->
-    mint_tree(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
+    mint_tree(Id, DomainPid, Name, Limits, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
 mint(Id, DomainPid, Name, {tree, Grants, Args, Limits}, Exports) ->
-    mint_tree(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Args, Limits, Binding) end, Exports);
+    mint_tree(Id, DomainPid, Name, Limits, fun(Binding) -> erx_fs_grants:grant(Grants, Args, Limits, Binding) end,
+              Exports);
 mint(Id, DomainPid, Name, {facet, Callback, Behind, Grant}, Exports) ->
     case erx_facet:start(Callback, Grant#{grantee => Id, ends_with => [DomainPid, Behind]}, #{exports => Exports}) of
         {ok, Facet} ->
@@ -1036,12 +1039,14 @@ mint(Id, DomainPid, Name, {facet, Callback, Behind, Grant}, Exports) ->
 %% A tree service's grant serves the domain alone, in its envelope and with its names,
 %% and ends with its domain pid; its supervisor's end ends it too. Grant starts it,
 %% with the grant's own argument where the service computed one at the mint
-%% (system_facet/4); a supervisor that ended while the service minted is a refusal.
-mint_tree(Id, DomainPid, Name, Grant, Exports) ->
+%% (system_facet/4); a supervisor that ended while the service minted is a refusal. The
+%% facet goes to the domain with the rights of the row's Limits, those the grant serves
+%% (docs/design-files.md, "Rights beneath an entry").
+mint_tree(Id, DomainPid, Name, Limits, Grant, Exports) ->
     Binding = #{client => Id, ends_with => DomainPid, exports => Exports},
     case try Grant(Binding) catch exit:Exit -> {error, {exit, Exit}} end of
         {ok, Pid} ->
-            {true, Pid};
+            {true, erx_fs_grants:facet(Pid, Limits)};
         {error, Reason} ->
             logger:error("erx_domain: domain ~b's tree grant ~ts did not start: ~0P", [Id, Name, Reason, 8]),
             false
@@ -1635,3 +1640,17 @@ throttle(_Now, {Start, Lines, Held}) when Lines < ?MINT_LOG_BURST ->
     {log, {Start, Lines + 1, Held}};
 throttle(_Now, {Start, Lines, Held}) ->
     {quiet, {Start, Lines, Held + 1}}.
+
+%% The system domain's packages grant at its place (erx_ns:packages_place/0),
+%% /packages, where erx_pkg_medium reads and deletes the installed packages
+%% (docs/design-packaging.md, "Where a package lies"), when the manifest grants it, as a
+%% board with an apps row does. Packages has no place a session mounts, so no session's
+%% mount_facets/1 mounts it; this is its one mount.
+mount_packages(Granted) ->
+    case lists:member(packages, Granted) of
+        true ->
+            {Point, Options} = erx_ns:packages_place(),
+            erx_ns:mount({facet, packages}, Point, Options);
+        false ->
+            ok
+    end.

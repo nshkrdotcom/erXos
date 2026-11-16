@@ -54,15 +54,5 @@ init({Cap, Point, Name}) ->
 -spec start_grant(atom(), binary()) -> {ok, pid()} | {error, term()}.
 start_grant(Name, Point) ->
     ok = code:ensure_modules_loaded(erx_ramfs_serving:modules()),
-    {ok, Grant} = erx_fs:start_link(erx_ramfs, Name, rw),
-    _ = erx_ns:unmount(Point),
-    case erx_ns:mount(Grant, Point, [{tree, <<"tmp">>}, rw]) of
-        ok ->
-            {ok, Grant};
-        {error, _} = Error ->
-            %% A grant the supervisor does not know of must not outlive the start.
-            unlink(Grant),
-            exit(Grant, kill),
-            Error
-    end.
+    erx_fs:start_mounted(erx_ramfs, Name, rw, Point, <<"tmp">>).
 

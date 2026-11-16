@@ -969,8 +969,8 @@ erx_table() ->
 %% erXos: the mounts as erx_ns keeps them: the persistent term erx_ns's process alone
 %% writes, or until it writes one the boot table, the domain's local entries. These are
 %% the release slice at /, and each EROFS image where its release names it, of which
-%% the boot information names none yet; erx_ns:mount/3 mounts an image
-%% erx_verity:open/2 answered.
+%% the boot information names none yet; erx_ns:mount/3 mounts the session's package
+%% as {erofs, app}, which erx_ns's process opens with erx_verity:open_file/3.
 erx_mounts() ->
     persistent_term:get(erx_ns, [#{point => [], provider => release, root => [], rights => ro}]).
 

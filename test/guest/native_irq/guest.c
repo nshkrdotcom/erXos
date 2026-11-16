@@ -78,7 +78,7 @@ static _Noreturn void
 fail(const char *text)
 {
 	say(text);
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 }
 
 /* "erx: irq: <what> 0x<value> 0x<other>\n", all in one write so no line splits. */
@@ -522,7 +522,7 @@ executor_main(uint64_t unused)
 	case_uart("erx: irq: type another\n");
 	case_holder();
 	say("erx: irq: done\n");
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 }
 
 static void
@@ -649,7 +649,7 @@ erx_fiasco_root_main(void)
 		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0, NULL);
 	if (reason != NULL) {
 		say(reason);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	erx_fiasco_task_set_archive(&pack);
 	if (erx_fiasco_launcher_find(&pack, HOLDER_PROGRAM, &holder_entry) != ERX_OK)

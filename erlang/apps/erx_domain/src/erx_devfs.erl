@@ -68,16 +68,11 @@ start_link() ->
     end.
 
 serve() ->
-    {ok, Grant} = erx_fs:start_link(?MODULE, #{rights => rw}, rw),
-    _ = erx_ns:unmount(?POINT),
-    case erx_ns:mount(Grant, ?POINT, [{tree, ?TREE}, rw]) of
-        ok ->
+    case erx_fs:start_mounted(?MODULE, #{rights => rw}, rw, ?POINT, ?TREE) of
+        {ok, Grant} ->
             {ok, Grant};
         {error, Reason} ->
-            %% A grant the supervisor does not know of must not outlive the start, and
-            %% a /dev that cannot be mounted does not stop the domain service's start.
-            unlink(Grant),
-            exit(Grant, kill),
+            %% A /dev that cannot be mounted does not stop the domain service's start.
             logger:warning("/dev not mounted: ~0p", [Reason]),
             ignore
     end.

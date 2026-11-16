@@ -106,7 +106,7 @@ class PackJitTest < Minitest::Test
     pack = Erx::Pack.new(root: ROOT, output_root: @directory, codec: @codec, planner: FixedPlan.new(@codec),
                          checker: self.class.tools.fetch('checker'), hasher: self.class.tools.fetch('hasher'),
                          runner: @runner, provenance: KnownProvenance.new)
-    rows, _records = pack.send(:snapshot, entries, workspace: @directory, budget: 1 << 20, build_kind: 'development')
+    rows, _records = pack.send(:snapshot, entries, partition: [], workspace: @directory, budget: 1 << 20, build_kind: 'development')
     rows
   end
 end

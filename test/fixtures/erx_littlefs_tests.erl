@@ -219,7 +219,9 @@ tree_operations() ->
 %% nothing above it: the mount made the directory, a file of the data tree's
 %% root is no entry of the packages root, and no name walks, makes, removes
 %% or renames out of it. The data tree, the whole volume, sees what the
-%% packages grant wrote under packages/.
+%% packages grant wrote under packages/. A grant rooted at installed/, as the
+%% app template's row roots its packages grant, reaches what lies there and
+%% neither new/ beside it, where an upload in progress lies, nor anything above.
 a_tree_reaches_only_its_own() ->
     Volume = {_, _, Data} = start_volume(fresh_disk(), lfs_trees),
     {ok, Packages} = erx_lfs:init({lfs_trees, packages}),
@@ -240,10 +242,26 @@ a_tree_reaches_only_its_own() ->
     {ok, _, _, App} = erx_lfs:make(Root, <<"a.app">>, {file, 8#644, ?ERX_P9_O_RDWR}, Packages),
     ok = erx_lfs:clunk(App, Packages),
     {ok, RootH} = erx_lfs:open(Root, 0, Packages),
-    {ok, [{_, _, _, <<"a.app">>}]} = erx_lfs:readdir(RootH, 0, 16, Packages),
+    {ok, Listed} = erx_lfs:readdir(RootH, 0, 16, Packages),
+    [<<"a.app">>, <<"installed">>] = lists:sort([Name || {_, _, _, Name} <- Listed]),
     ok = erx_lfs:clunk(RootH, Packages),
     {ok, _, _} = erx_lfs:walk(Top, <<"secret">>, Data),
     {ok, _, {0, _, _}} = erx_lfs:walk(Root, <<"a.app">>, Data),
+    {ok, InstalledArgs} = erx_lfs:subtree({lfs_trees, packages}, installed, #{client => 5, principal => <<"clock">>}),
+    {ok, Installed} = erx_lfs:init(InstalledArgs),
+    {ok, <<"packages">>, Under, {?ERX_P9_QTDIR, _, _}} = erx_lfs:root(Installed),
+    {ok, Under, {?ERX_P9_QTDIR, _, _}} = erx_lfs:walk(Root, <<"installed">>, Packages),
+    {ok, New, _} = erx_lfs:make(Root, <<"new">>, {directory, 8#755, self()}, Packages),
+    {ok, _, _, Upload} = erx_lfs:make(New, <<"tmp.1">>, {file, 8#644, ?ERX_P9_O_RDWR}, Packages),
+    ok = erx_lfs:clunk(Upload, Packages),
+    {ok, _, _, Accepted} = erx_lfs:make(Under, <<"b.app">>, {file, 8#644, ?ERX_P9_O_RDWR}, Packages),
+    ok = erx_lfs:clunk(Accepted, Packages),
+    {ok, _, {0, _, _}} = erx_lfs:walk(Under, <<"b.app">>, Installed),
+    [{error, enoent}] = lists:usort([erx_lfs:walk(Under, Name, Installed) || Name <- [<<"new">>, <<"a.app">>]]),
+    {error, einval} = erx_lfs:walk(Under, <<"..">>, Installed),
+    [{error, einval}] = lists:usort([erx_lfs:subtree({lfs_trees, data}, installed, #{client => 5, principal => <<"clock">>}),
+                                     erx_lfs:subtree({lfs_trees, packages}, apps, #{client => 5, principal => <<"clock">>}),
+                                     erx_lfs:subtree({lfs_trees, packages}, packages, #{client => 5, principal => <<"clock">>})]),
     stop_volume(Volume).
 
 %% A block request the window refuses fails its operation with eio, and the

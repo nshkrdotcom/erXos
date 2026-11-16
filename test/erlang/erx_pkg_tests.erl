@@ -62,10 +62,17 @@ listing_test() ->
 
 %% The package process over the simulated medium.
 
+%% The table the registration and publication stubs log into (test/erlang/erx_pkg_stubs).
+stubs_log() ->
+    _ = [ets:delete(erx_pkg_stubs) || ets:whereis(erx_pkg_stubs) =/= undefined],
+    erx_pkg_stubs = ets:new(erx_pkg_stubs, [named_table, public]),
+    ok.
+
 setup(Options) ->
     process_flag(trap_exit, true),
     ok = erx_fs_version:init(),
     ok = erx_pkg_medium:new(),
+    ok = stubs_log(),
     Dashboard = file("dashboard"),
     Clock = file("clock"),
     erx_pkg_medium:put(system, <<"dashboard.app">>, Dashboard),
@@ -91,7 +98,7 @@ setup(Options) ->
 %% admission refuses the package of that name; and the image's package
 %% dashboard.
 manifest() ->
-    #{apps => #{memory => 128 * ?MIB, max => 8, packages_row => 0,
+    #{apps => #{memory => 128 * ?MIB, max => 8, packages_row => 0, system_row => 3,
                 services => [#{name => <<"display">>, windows => true, row => 1},
                              #{name => <<"data">>, windows => false, row => 2}]},
       reserved => [<<"system">>, <<"other">>],
@@ -113,7 +120,7 @@ wait_until(Done, N) ->
     end.
 
 published() ->
-    case ets:lookup(erx_pkg_medium, published) of
+    case ets:lookup(erx_pkg_stubs, published) of
         [{published, Sets}] -> Sets;
         [] -> []
     end.
@@ -150,7 +157,7 @@ recovery_test() ->
     ?assertEqual([{<<"dashboard">>, system, 0, image}, {<<"clock">>, installed, 1, development}],
                  [{Name, Place, Entry, Signer}
                   || {Name, Place, Entry, #{signer := Signer}}
-                         <- ets:lookup_element(erx_pkg_medium, registered, 2)]),
+                         <- ets:lookup_element(erx_pkg_stubs, registered, 2)]),
     stop(Sup).
 
 path_table_test() ->
@@ -254,10 +261,10 @@ unknown_scan(Listing) ->
     ?assertEqual([{system, <<"dashboard.app">>}], maps:keys(Records)),
     stop(Sup).
 
-%% The listing waits for the system domain's namespace, as the start table's
+%% The recovery waits for the system domain's namespace, as the start table's
 %% first read of rc.conf does (docs/design-packaging.md, "Boot and recovery"):
 %% until the domain service answers, the scan stays unknown and nothing is
-%% published, and once it answers the listing is read.
+%% published, and once it answers the recovery is carried out.
 the_listing_waits_for_the_namespace_test() ->
     Test = self(),
     Holder = spawn_link(fun() ->
@@ -303,7 +310,8 @@ failed_change_test() ->
     ?assertEqual([], published()).
 
 failed_publication_test() ->
-    {Io, Config} = setup([{fail_publish, true}]),
+    {Io, Config} = setup([]),
+    true = ets:insert(erx_pkg_stubs, {fail_publish, true}),
     {ok, Sup} = erx_pkg_sup:start_link(Config),
     receive {'EXIT', Sup, shutdown} -> ok after 5000 -> ?assert(false) end,
     ?assert(is_process_alive(Io)).

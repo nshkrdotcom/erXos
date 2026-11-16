@@ -18,6 +18,10 @@ Third-party notices remain in their original files.
   ],
   "removed": [
     {
+      "path": "arch/generic/bits/termios.h",
+      "reason": "the bits/termios.h generated from abi/termios.txt gives FreeBSD's struct termios, flags, c_cc indices and speeds"
+    },
+    {
       "path": "arch/generic/bits/errno.h",
       "reason": "the bits/errno.h generated from abi/errno.txt gives FreeBSD's numbers"
     },

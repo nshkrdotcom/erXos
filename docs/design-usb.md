@@ -811,11 +811,13 @@ the kernel:
   Cortex-A72 has no RAS extension, so the presumption is all the kernel
   has, and an SError a posted write reports after its window may stop
   another thread, the residual that design already records.
-* **On the stopgap**, Fiasco's SError handler counts the error and
-  returns to the interrupted code (`arm_serror_handler`,
-  `fiasco/kernel/src/kern/arm/thread-jdb.cpp:96-106`), so the access
-  completes with whatever the bus returned and nothing ends; the second
-  link read keeps that value from being used. A synchronous abort takes
+* **On the stopgap**, an SError Fiasco takes in user mode ends the task
+  of the thread that ran with a fault record of kind `async_error`,
+  presumed its own (`arm_serror_user_entry`, `fiasco/kernel/src/kern/arm/thread-arm.cpp:713-735`), as erXos's kernel presumes in user mode; Fiasco's
+  kernel runs with SErrors masked, so one raised while the CPU is in the
+  kernel lands on the next thread to enter user mode, and the access
+  completes with whatever the bus returned; the second link read
+  keeps that value from being used. A synchronous abort takes
   Fiasco's user fault path, which is unverified for an external abort.
   Both are residuals of [On the stopgap](#on-the-stopgap).
 
@@ -2650,9 +2652,9 @@ recorded here as the design's and in `TODO.md` when the code lands:
   the NIF's bounded work per call, the event ring's bound and a stream's
   backpressure, storms included ([Verification](#verification)).
 * **Bus errors.** An SError raised by a configuration access, or by an
-  xHCI register access over a link that has fallen, is counted by
-  Fiasco's handler and otherwise ignored
-  (`fiasco/kernel/src/kern/arm/thread-jdb.cpp:96-106`), so nothing ends;
+  xHCI register access over a link that has fallen, ends the task of
+  the next thread to enter user mode on that CPU, presumed its own
+  ([On the stopgap](#on-the-stopgap));
   the bridge driver's second link read keeps a configuration value read
   that way from being used, and the xHCI driver's next event or command
   deadline fails the controller. A synchronous external abort takes
@@ -2720,7 +2722,7 @@ here so that none is lost:
 | [design-system.md](design-system.md) and `abi/manifest.txt` | a `usb` device role; a `drive` field in `erx_mf_window`, set exactly when the window's device has the `usb` role; the manifest check proves at most `usb_drives_max` drives a controller, each (device, drive, partition) once, and a USB domain in a release build holding its controller's unit alone and serving no file system (property 9) |
 | [design-system.md](design-system.md), "PCIe" | the bridge driver's request for the VL805's firmware notification with `pci_bus:firmware/1`, which the device service makes through `erx_domain_lib:pci_firmware/1` with the bridge's resource, marking the bridge `firmware_lost` at a timeout, and answers its result ([design-pcie.md](design-pcie.md#facets)) ([The VL805's firmware](#the-vl805s-firmware)) |
 | [design-system.md](design-system.md), "Units" and "PCIe" | a USB device is a sub-device of its controller's unit and enters no catalogue |
-| [design-stopgap.md](design-stopgap.md) | the give of a PCIe function on a configured row; `erx_firmware_request` in the root, with its page, deadline and results as [The VL805's firmware](#the-vl805s-firmware) says; the residuals of [On the stopgap](#on-the-stopgap) in its deferred table, Fiasco's ignored SError among them |
+| [design-stopgap.md](design-stopgap.md) | the give of a PCIe function on a configured row; `erx_firmware_request` in the root, with its page, deadline and results as [The VL805's firmware](#the-vl805s-firmware) says; the residuals of [On the stopgap](#on-the-stopgap) in its deferred table, Fiasco's presumed SError among them |
 | [design-platforms.md](design-platforms.md) | the BCM2711 among the PCIe bridges, with the facts of [The BCM2711 bridge](#the-bcm2711-bridge): its bring-up, its link check, its bus-0 and bus-1 rules, its inbound limit and its INTA to INTD on SPIs 143 to 146; the Pi 4's INTx; the trial request's wait for a notification in flight; the EEPROM's boot order of the microSD card alone among what the board's installation writes |
 | [design-kernel.md](design-kernel.md) | `erx_firmware_request(resource (CARVE), index)` in the call table's machine family and its own section: the resource carved with `ERX_CARVE_DEVICE` from a device entry the platform record names with notifications, the index choosing one of them, held only by the root task since resources never pass; its one tag and value from the platform; its poll of at most 1 s with preemption points between reads, `ERX_EWOULDBLOCK` from an executor; its results, `ERX_OK`, `ERX_ENOTSUP` for a firmware answer other than success and for a resource or platform without a notification, `ERX_ETIMEDOUT` for no answer and for every call after one, `ERX_EBUSY` while another mailbox request is in flight; its buffer, a page of the kernel's own that nothing else uses and that a timed-out request leaves to the firmware for the boot; the one mailbox routine that serves one request at a time and takes as an answer only the word naming the request's own buffer; and the trial request's wait for a notification in flight ([The VL805's firmware](#the-vl805s-firmware)) |
 | [design-device-tree.md](design-device-tree.md) | the line a closed bus's `interrupt-map` routes for a position, in the platform facts and the device-tree fuzz target |
@@ -2790,7 +2792,7 @@ medium had gone after the request.
 | a medium that cannot flush | the readiness SYNCHRONIZE CACHE | nothing: its flushes answer `no_flush` | none; the FAT server mounts it read-only, with `no flush: read-only` in the mount's record |
 | a control transfer not answered in 5 s | the controller process's deadline | the transfer, answered `timeout` after Stop Endpoint and Set TR Dequeue Pointer past it | the caller's; EP0 is open again |
 | a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end |
-| a register access that aborts (the controller fell off its bus) | the kernel, on erXos's kernel; on the stopgap an SError is ignored and the controller's next deadline fails it | the USB domain, by the fault, on erXos's kernel; the controller process on the stopgap | the domain service restarts the domain, which gets its unit again; the display's readers see their files end and start again when the tree is granted again, and each drive's holder is introduced again, as for a block driver's domain |
+| a register access that aborts (the controller fell off its bus) | the kernel, on erXos's kernel; on the stopgap an SError ends the task of the next thread to enter user mode on its CPU, which need not be the USB domain's, and the controller's next deadline fails it | the USB domain, by the fault, on erXos's kernel; the controller process on the stopgap | the domain service restarts the domain, which gets its unit again; the display's readers see their files end and start again when the tree is granted again, and each drive's holder is introduced again, as for a block driver's domain |
 | a configuration access below the root port with the link down | the bridge driver's link reads, before and after | the access, answered `link_down`; the function's position is reported gone | none of its own; an abort that does arrive ends the PCIe domain on erXos's kernel, as the next row |
 | the PCIe domain ends | the domain service | the enumerator and the bridge driver | the domain restarts; with the link up and the VL805's firmware present the bridge driver resets nothing and running functions are unchanged; otherwise it turns the link off cleanly, brings the bridge up again and asks for the firmware |
 | an over-current change | the port's status | nothing | cleared and logged once per attempt; the port follows its status |
@@ -3226,5 +3228,7 @@ bridge and the VL805, dated 2026-11-14, is
 [research-brcmstb-pcie.md](research-brcmstb-pcie.md), which lists the
 SHA-256 of every Linux and FreeBSD file its writer read.
 
-Fiasco's SError handler is read in the tree, at
-`fiasco/kernel/src/kern/arm/thread-jdb.cpp:96-106`.
+Fiasco's SError handlers are read in the tree, at
+`fiasco/kernel/src/kern/arm/thread-arm.cpp:713-735` (user mode) and
+`fiasco/kernel/src/kern/arm/thread-jdb.cpp:100-106` (the kernel, where
+SErrors are masked).

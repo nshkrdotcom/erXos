@@ -108,7 +108,11 @@ class PpmTest < Minitest::Test
     picture = Erx::ScreenReference.picture(reference)
     assert_nil Erx::ScreenReference.check(picture, directory: REFERENCES, name: 'no-gpu-driver')
     changed = picture.pixels.dup
-    changed.setbyte(0, changed.getbyte(0) ^ 1)
+    # Pixels (2, 1) and (5, 3) differ: two pixels within x 2..5, y 1..3.
+    [[2, 1], [5, 3]].each do |x, y|
+      at = ((y * picture.width) + x) * 3
+      changed.setbyte(at, changed.getbyte(at) ^ 1)
+    end
     other = Erx::Ppm::Image.new(width: picture.width, height: picture.height, pixels: changed)
     error = assert_raises(Erx::ScreenReference::Mismatch) do
       Erx::ScreenReference.check(other, directory: REFERENCES, name: 'no-gpu-driver')
@@ -116,6 +120,17 @@ class PpmTest < Minitest::Test
     assert_includes error.message, other.digest
     assert_includes error.message, reference.digest
     assert_includes error.message, 'no-gpu-driver.ppm.gz'
+    assert_includes error.message, '2 pixels differ within x 2..5, y 1..3'
+  end
+
+  def test_a_difference_counts_the_pixels_that_differ_and_bounds_them
+    image = Erx::Ppm.decode(ppm)
+    assert_nil image.difference(image)
+    changed = PIXELS.dup
+    changed.setbyte(11, 0)
+    found = image.difference(Erx::Ppm.decode(ppm("P6\n2 2\n255\n", changed)))
+    assert_equal [1, 1, 1, 1, 1], [found.pixels, found.left, found.top, found.right, found.bottom]
+    assert_raises(Erx::Ppm::FormatError) { image.difference(Erx::Ppm.decode(ppm("P6\n1 2\n255\n", PIXELS.byteslice(0, 6)))) }
   end
 
   def test_a_malformed_digest_file_or_name_is_refused

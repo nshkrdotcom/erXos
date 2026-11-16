@@ -13,63 +13,47 @@ image holds what the manifest names to run and no package. Index:
 Each item lands with its tests, each passing case beside a seeded fault
 that proves the code under test ran.
 
-* [High] storage, the `system` tree (`erlang/apps/erx_storage`,
-  `tools/lib/erx/manifest.rb` property 19):
-  the packer and fsimg writing
-  the partition's hash tree after its image and refusing an image and
-  tree larger than the partition, and the update
-  writing the tree and the manifest with the partition; property 19 deriving the
-  `system` rows, the system domain's and the app template's, `ro` and `rx`,
-  and the `apps` row's `system_facet` (a field of `erx_mf_apps`, which
-  `boot_app_grants` in `liberx/system/dom_boot_view.c` and
-  `erx_pkg_manifest` read beside `packages_facet`). Test: a
+* [High] storage, the `system` tree (`erlang/apps/erx_storage`): the
+  packer writes the partition's hash tree after its image, the image's
+  packages at `apps/NAME.app`, and refuses an image and tree larger than
+  the partition (`tools/lib/erx/release_medium.rb`); what remains is the
+  update writing the tree and the manifest with the partition, which
+  waits on the slot writer (the update item below). Test: a
   QEMU test that reads a multi-block package file through the grant;
   seeded: a write through the grant, which must answer `erofs` before any
   callback, and a flipped bit in the partition's directory, which must
   answer `eio` before the reader parses it.
-* [High] files, the file-backed EROFS mount (`erx_ns`, `erx_verity`):
-  `erx_ns:mount({erofs, Source}, To, Options)` as the one EROFS mount,
-  `Source` `app` (the place and layout of the app's record) or
-  `{header, Path}` (only for a file reached through the `apps` grant,
-  its header read by `erx_verity:header/1`), no form taking a layout,
-  `erx_ns`'s process owning the fid, the mount's rights `ro` or `rx`
-  (`rw` refused with `einval`), `rx` only through an `rx` grant, so only
-  through the app template's `rx` `packages` and `system` grants, and
-  each mount's files keyed by a tree of its own; the image check needing
-  `rx` on the entry and on the grant beneath it (design-files.md, "Rights
-  beneath an entry"); `erx_ns.erl` has only `{erofs, Image}`, an image its caller opened, which goes, and `erx_ns` joins `Erx::ErofsReads`'s `MOUNTERS`.
-  `erx_app` mounts `/app` as `{erofs, app}`, which `erx_ns` answers with `einval`
-  until this lands; a record that names an image package's file on the
-  `system` grant also waits on the `system` tree item above. When `erx_ns`
-  reads the record's layout, `erx_app:app_record()` moves into `erx`, so the
-  layer that trusts the layout owns its type. Test: the
+* [High] files, the rest of the file-backed EROFS mount (`erx_ns`,
+  `erx_verity`; design-files.md, "Building, binding and mounting"). The
+  `app` source exists: `erx_ns`'s process takes the place and layout from
+  the record the agent holds (`erx_connections:app_held/0`), walks the
+  names on the facet's grant to a fid it owns, opens it with
+  `erx_verity:open_file/3` and clunks the fid once no entry holds it; its
+  rights are `ro` or `rx`, `rw` refused with `einval`. What remains: the
+  `{header, Path}` source (only for a file reached through the `apps`
+  grant, its header read by `erx_verity:header/1`); a deadline on the file
+  source's exchanges and a clunk that does not wait, since `erx_ns`'s
+  process, and every change and read queued behind it, waits without
+  bound on a file server that stops answering; each mount's files
+  keyed by a tree of its own; the image check needing `rx` on the entry
+  (design-files.md, "Rights beneath an entry"); and a record that names an image package's file on the
+  `system` grant, which waits on the `system` tree item above. Test: the
   package mounts' host test of design-packaging.md and F6's `/x` test;
   seeded: a mount that takes its rights from its options, which mounts a
   file of `/apps` `rx`; a mount bounded only by its grant's rights, which
   mounts it `rw`; a `header` mount judged by the path rather than the
   fid's grant, which mounts a session-written `/tmp` file once `/tmp` is
-  bound at `/apps`; an image check that reads the entry's rights alone,
-  which runs a file written under an `rx` mount of `data`.
-* [High] packaging, uploads apart from installed packages (`erx_pkg_io`,
-  `erx_lfs`, property 19): the `packages` tree's `new/` and `installed/`,
-  an upload's `tmp.K` in `new/` renamed into `installed/`, the recovery
-  removing `new/tmp.K` by name and listing `installed/`, and the
-  storage service's `tree installed`, which roots the app template's
-  `packages` grant at `installed/`, with property 19 letting only the
-  derived row carry it. The stopgap's `packages` mint roots every grant
-  at `packages/` (design-stopgap.md, the storage domain), so an app's
-  grant reaches an upload in progress until this lands. Test: the
-  package mounts' row, a walk of `new` and of `../new/tmp.K` through the
-  app's grant during an upload answering `enoent`; seeded: the app's
-  grant rooted at `packages/`, which walks to `tmp.K`.
-* [High] apps, packages out of the boot image (`tools/lib/erx/production_image.rb`
-  `package_entries`, `erlang/apps/erx_starter/src/erx_pkg_medium.erl`
-  `place(system, ..)`, `erx_principal`): the packer writes each image package
-  to `apps/NAME.app` in the slot's system partition; the package process
-  reads image packages' headers through the `system` grant; the app's
-  record names `NAME.app` on the `system` grant. Test: `ls /apps` on a kiosk image
-  shows the image's package, read-only; seeded: the package left in the
-  boot image, which the packer check below must refuse.
+  bound at `/apps`; a resolution that keeps the rights a facet's mount
+  asked, which runs a file written under an `rx` mount of `data`.
+* [High] packaging, the upload path (`erx_pkg_io`, `erx_lfs`): an
+  upload's `tmp.K` written in the `packages` tree's `new/` and renamed
+  into `installed/`, and the recovery removing `new/tmp.K` by name and
+  listing `installed/`. The app template's `packages` grant is `rx` and
+  rooted at `installed/` (`erx_lfs:subtree/3`), so it never reaches
+  `new/`. Test: the package mounts' row, a walk of `new` and of
+  `../new/tmp.K` through the app's grant during an upload answering
+  `enoent`, as `erx_littlefs_tests`'s `a_tree_reaches_only_its_own`
+  checks of a file in `new/` without the upload process.
 * [High] build, the boot image rule (`tools/lib/erx/production_image.rb`):
   a packer check that every file of the boot image is an artifact a
   manifest row names by its role (the kernel, the root, the system release
@@ -92,7 +76,8 @@ that proves the code under test ran.
   signer's of the name but `image`; nothing written on a trial boot
   ([design-packaging.md](design-packaging.md#boot-and-recovery)). Test: the
   recovery over a directory holding such a package, on a normal and on a
-  trial boot; seeded: the shadow check dropped, which lists the name twice.
+  trial boot, and `ls /apps` on a kiosk image showing the image's package,
+  read-only; seeded: the shadow check dropped, which lists the name twice.
 * [High] update, the slot writer and the update for two partitions
   (the slot writer and update service are not yet built; the TLA+ model
   and the host's exhaustive model of

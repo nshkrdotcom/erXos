@@ -85,7 +85,7 @@ The declaration forms are:
 | --- | --- |
 | `limit NAME TYPE VALUE` | an integer type and a value within it |
 | `scalar NAME TYPE` | a fixed-width base integer; optional inclusive `range MIN MAX` and `align POWER_OF_TWO` constraints |
-| `enum NAME TYPE` | indented `value NAME INTEGER` members; every value explicit and distinct |
+| `enum NAME TYPE` | indented `value NAME INTEGER [ATTRIBUTE...]` members; every value explicit and distinct. Indented `attribute NAME` lines declare the closed set of attributes the member lines may name after their value, each a boolean fact of the members that carry it: a name no `attribute` line declares, a declaration repeated, an attribute named twice on one member, or one no member carries fails the run. The Ruby host codec answers `attribute?(ENUM, VALUE, NAME)`, `erx_abi_enums` gives each enum the type `ENUM()` of its member names and each attribute the predicate `ENUM_ATTRIBUTE/1`, and `erx_abi.hrl` gives each enum the guard `?ERX_IS_ENUM(Term)` beside `?ERX_ENUM_MEMBERS` |
 | `flags NAME TYPE` | indented `bit NAME POSITION` members; every position explicit and distinct |
 | `bytes NAME LENGTH` | a fixed byte count, with an optional `value HEX_BYTES` constraint |
 | `layout NAME STORAGE ALIGN SIZE` | ordered fields; `STORAGE` is `wire_le`, `shared`, `native`, `packed_le` or `packed_be` ([Packed layouts](#packed-layouts)); alignment and fixed prefix size are explicit |
@@ -2142,15 +2142,20 @@ over ([design-device-tree.md](design-device-tree.md),
 the device service still verifies the machine before assigning the unit.
 
 Window roles are boot A 1, boot B 2, boot-selection record 3, reset
-count 4, vault 5, data 6, FAT 7, system 8, system A 9 and system B 10.
+count 4, vault 5, data 6, FAT 7, system 8, system A 9, system B 10 and
+verified image 11. `abi/manifest.txt` marks each role a configured domain
+may hold `configured` and each role whose window may grant write
+`writable`, and the manifest check and the block driver read those
+attributes. Both fail closed: a role that carries neither is the slot
+writer's and read-only.
 Fixed-medium roles have `partition = 0`; the ABI medium layout
 determines their sectors, and a `system` window's are those of the
 system partition of the slot that the boot value names, so an `unknown`
 boot gives none.
 FAT names a primary partition numbered 1 through 4 on the selected
 removable device. Rights are read bit 0 and write
-bit 1, at least read; a `system` window is read-only, and a manifest
-has at most one. No record
+bit 1, at least read; a window of a role not marked `writable` grants
+read alone, and a manifest has at most one `system` window. No record
 contains a caller-selected sector range. Role/holder checks still
 restrict boot partitions, system A and B and the records to the slot
 writer, the `system` window to a storage domain, whose holder is the
@@ -2196,7 +2201,9 @@ interface, strictly ascending and without duplicates. A schema revision
 does not implicitly add newly declared operations to an existing grant.
 The parameters span contains typed scope and option values which the
 same service fragment declares with `parameter NAME NUMBER KIND
-CARDINALITY BOUND`. Cardinality is `one`, `optional` or `set MAX_COUNT`.
+CARDINALITY BOUND`. Cardinality is `one`, `optional` or `set MAX_COUNT`;
+a set is of `u64` and its `MAX_COUNT` at least 2, and its elements are
+packed one row each, in strictly ascending order of their values.
 Each declaration also identifies the checked scope/admission helper that
 consumes it. A missing required parameter, an unknown key or kind, a
 duplicate scalar key, an unsorted/duplicate set, an excessive bound, or a
@@ -2614,7 +2621,8 @@ The output families have explicit locations, shown relative to `build/gen/`:
 | `kernel/generated/NAME_impl.h` | a private layout's offsets, record and operations |
 | `liberx/generated/calls.h` | backend-independent call signatures |
 | `liberx/backend/<backend>/generated/` | the backend's declarations or native trap wrappers, with architecture-specific files inside its architecture directory |
-| `erlang/apps/erx/include/generated/erx_abi.hrl`, `erlang/apps/erx/src/generated/erx_manifest.erl` | constants and the generated manifest reader |
+| `erlang/apps/erx/include/generated/erx_abi.hrl`, `erlang/apps/erx/src/generated/erx_manifest.erl` | constants, each enum's member list and guard, and the generated manifest reader |
+| `erlang/apps/erx/src/generated/erx_abi_enums.erl` | each enum's type and each enum attribute's predicate |
 | `tools/generated/abi.rb` | immutable values, source-driven packer encodings and host readers |
 | `fuzz/generated/` | entry points invoking production readers |
 | `web/src/generated/` | the web client's TypeScript: `web.txt`'s types, codec, limits and hash; `ui.txt`'s tables and the reader and writer of its binary form; the inspection schema's kinds, attribute names, units, stopgap reporters and `present` marks ([design-web.md](design-web.md#the-client)) |

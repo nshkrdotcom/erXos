@@ -224,7 +224,29 @@ Inherited code reads no executable and no modules.
    (`init_kip.cc:30`), which `boot_info_t` carries there.
 
 **The kernel.** Its options are a constant, `Fiasco::KERNEL_OPTIONS` (`fiasco.rb`), built into
-`bootstrap`, with neither `-serial_esc` nor `-serial_input`, and it is built without JDB. Its own
+`bootstrap`, with neither `-serial_esc` nor `-serial_input`. Its configuration is one
+defconfig, `config/fiasco/kernel.defconfig`, for every board. A development kernel is built
+from it as it is, with JDB, the kernel debugger, which selects `CONFIG_INPUT`, the kernel's own
+console input: a panic (`kernel_panic.cc`) enters JDB on the console through
+`Thread::system_abort` (`thread.cpp`) once JDB is initialized, and before that waits at
+`terminate.cpp`'s `raw_exit` for a key; either way the run waits for the operator or the
+harness's deadline. A release kernel is built from the same defconfig with `CONFIG_JDB` and
+`CONFIG_INPUT` written as not set after it, its only differences, stated once in
+`FiascoConfig::RELEASE_UNSET` (`fiasco_config.rb`, `tools/erx build release-kernel`). Without
+JDB a panic calls `terminate`. Its exit question, which `kernel_main` installs
+(`arm/main.cpp`), reboots at once when console input is out of the build
+(`terminate.cpp`, `Exit_question::ask`); before `kernel_main`, during the static
+initialization that runs `Startup::stage1` and `stage2`, `raw_exit` stands in, reads no key
+without console input and resets as well. The reset (`reset-arm-gen.cpp`) is PSCI's system
+reset, or the BCM2711 watchdog where the device tree has one and no PSCI was found, and
+otherwise an endless loop: a panic before `Dt::init` and `Psci::init` in `stage2`, the
+handoff checks among them, does not reset. With console input in, the exit question would
+instead wait on the console with interrupts off. `FiascoConfig` checks the resolved configuration,
+`globalconfig.out`, after every configuration step, since a `select` can set what the defconfig
+leaves unset: every kernel needs `CONFIG_FPU`, `CONFIG_PERFORMANCE`, `CONFIG_PERF_CNT_USER`
+(with `CONFIG_PERF_CNT`, which only JDB turns on by default) and `CONFIG_SYNC_CLOCK`, and none
+has `CONFIG_LAZY_FPU`, `CONFIG_ARM_SVE` or `CONFIG_CPU_VIRT`; a release kernel's has neither
+`CONFIG_JDB` nor `CONFIG_INPUT`. The kernel's own
 changes are `erx_handoff.cpp`: it accepts the record, refusing a boot value and slot that are not
 one of the machine page's pairs, prints the banner (`development build: trusted code only`, the
 build identifier, the index hash, then `erx: boot value <unknown|normal|trial> slot <none|a|b>`,
@@ -1608,7 +1630,7 @@ Phase 1 acts on no finer kind.
 ### The watchdog
 
 A root thread at priority 255 runs `watchdog.c`'s step machine: sleep one period, step over the pet word, which holds the time of the last pet.
-In deterministic mode the step is off and the machine page says so. A missed pet takes the end path, with `ERX_END_OFF`, as a root fault does.
+In deterministic mode the step is off and the machine page says so. A missed pet takes the end path, with `ERX_END_RESET`, as a root fault does.
 
 Its numbers and mode come from [the command line](#the-command-line), with the design's defaults of 1, 5 and 60 seconds. **The pet is the design's
 own**: `erx_watchdog`, a process at priority `max` of the release's `kernel`, started among `kernel`'s first children, right after `on_load` lets a module with a NIF load, calling the watchdog NIF from a
@@ -1623,15 +1645,22 @@ crash record rather than in the harness's kill: the deadline counts from QEMU's 
 
 ### The end path
 
-A root fault, the root's own stop and `erx_machine_end` reach it on the service, a missed pet on the watchdog. It is best effort and takes no lock.
+Every end of the machine is `erx_fiasco_end` with a named cause (`liberx/backend/fiasco/end.c`), and the machine's end itself is
+private to that file, so nothing ends the machine without one; the build check `fiasco-machine-end` keeps
+`l4_platform_ctl_system_shutdown` to that file. A root fault, the root's own stop and `erx_machine_end` reach it on
+the service, a missed pet on the watchdog, and a refusal, of the boot or of a kernel or service step the root cannot go on without,
+on whichever root thread met it. A task holds no platform control, so a task's reaper that is refused sleeps instead. A test
+root's own power-off, when its test passes or fails, is a requested one, made on its own thread. It is best effort and takes no lock.
 The service answers `erx_machine_end` for the root task alone and refuses it from any other task with `ERX_ENOTSUP`, as it refuses
 `erx_log_take`, since on erXos's kernel only the root resource carries the `POWER` the call needs
 ([design-kernel.md](design-kernel.md#kernel-calls), K31).
 
 1. **One caller.** An atomic exchange of the `ending` word; the loser sleeps forever.
-2. **The log.** On the service, which alone writes the log ring, lines the log service has not taken go out through `l4_vcon_write`; lines it has taken and the console has not yet
-   written are not among them ([design-log.md](design-log.md#the-emergency-path)). On the watchdog the service may be mid-write, so the
-   ring is skipped.
+2. **The log.** On the thread that owns the log ring, the service in a root, or the debug-log probe's one thread, which has no service,
+   which alone writes it, lines the log service has not taken go out through `l4_vcon_write`; lines it has taken and the console has not yet
+   written are not among them ([design-log.md](design-log.md#the-emergency-path)). On any other thread, the watchdog's or a root
+   thread's, whatever the cause, the service may be mid-write, so the ring is skipped. The thread decides, not the cause
+   (`erx_fiasco_log_owned`), since the thread is what makes the drain safe.
 3. **The record.** After a fault or missed pet, the crash frame that [design-kernel.md](design-kernel.md) defines and
    `tools/lib/erx/crash_frame.rb` reads, through `l4_vcon_write`. No thread is stopped first.
 4. **The end.** A last line through `l4_vcon_write`, `erx: end off` for `ERX_END_OFF` and `erx: end reset` otherwise, as erXos's
@@ -1639,6 +1668,13 @@ The service answers `erx_machine_end` for the root task alone and refuses it fro
    Then `l4_platform_ctl_system_shutdown(L4_BASE_ICU_CAP, reboot)`, with `reboot` 0 for `ERX_END_OFF` and 1 otherwise
    (`platform_control_object.cpp:88`). Under `-no-reboot` this ends QEMU. If the call returns, the thread sleeps until the harness's
    deadline.
+
+Which end each cause takes is a pure function over the closed set of causes, `erx_fiasco_end_how`
+(`liberx/backend/fiasco/end_how.c`), and the host tests hold it to this: only a requested
+power-off ends with `ERX_END_OFF`; `erx_machine_end` with `ERX_END_RESET` and every end nobody ordered, the root's own stop
+(ERTS's `halt` on a boot that fails), a root fault, a missed pet and a refusal, end with `ERX_END_RESET`, so that an update's
+trial boot that fails, faults or hangs falls back to its other slot ([design-system.md](design-system.md#boot)). This is `erx.panic=reset` on every build: the stopgap has no `halt`, so a
+failure, fault or hang that repeats on every boot repeats the reset.
 
 ### Device records
 
@@ -1878,8 +1914,8 @@ short-root case catches.
 The console's record is `-erx_record console PERIPHERAL BASE SIZE LINE MARK CLOCK`, which the root writes from the device entry `machine.console` names (`erx_boot_console_words`). PERIPHERAL is the CMSIS-SVD peripheral of the entry's compatible string, from the one table of UART kinds, `erx_uart_kinds` in `include/erx/device_kinds.h`, beside the kinds a give drives and apart from them, so a console UART is never given: `arm,pl011` is `pl011`, which is also the host link's UART, and `brcm,bcm2835-aux-uart` is `mini_uart`. The record's first word, `console`, is the row's too. The manifest check refuses a console of any other compatible string, naming it, and the root writes no record for one. The console starts the driver of the peripheral its record names, `erx_pl011` for `pl011` and `erx_mini_uart` for `mini_uart` (`erx_console:console_driver/1`), and stops with a stated reason at any other word, at no record, or at more than one, so the console makes no atom of a record word. The hosted entry writes `-erx_record console stdio`, the same record with no UART after it, which names `erx_stdio`. The driver opens the record's window and line through `erx_device`. It takes exactly one such entry, each number in decimal within its field of the boot manifest's console (64, 64, 32 and 32 bits), MARK `direct` or `shared` as a device record's, and the clock not 0, and stops with a stated reason otherwise (`erx_pl011:console_uart/1`, which has a fuzz target). The clock, the UART's in hertz from the platform record, times a character while the driver reprograms the UART and gives the divisors for 115200 baud when the boot left the UART unprogrammed; a clock with no integer divisor of 1 to 65535 for that rate stops the driver before it touches the UART. A plain `erx.arg` word that joins any of these lists of arguments, the console's or a device record's, is ignored.
 
 Without `-serial_input`, `Config::serial_input` stays `Serial_no_input` (`config.cpp:246,278-282`), so the kernel never attaches the UART's
-receive line, which `Irq_chip_gen::attach` would refuse the driver (`irq_chip_generic.cpp:77-81`). Without JDB a kernel panic halts and the
-harness's deadline ends the run.
+receive line, which `Irq_chip_gen::attach` would refuse the driver (`irq_chip_generic.cpp:77-81`). A development kernel's panic enters JDB on the
+console and the harness's deadline ends the run; a release kernel's reboots ([the kernel](#boot-handoff)).
 
 **The sink** is a variable the service owns. `erx_debug_log` copies `len` bytes from the caller's public UTCB, escapes them, and writes to
 `l4_vcon_write` on `L4_BASE_LOG_CAP`, the kernel's polled UART output, or to a ring of `log.c` records. `erx_log_read` runs `erx_log_copy` into
@@ -1993,8 +2029,9 @@ message size it agrees to at `version`, which it advertises but does not check a
 its process's heap bound in words, shared binaries included. `reductions` and `period_ns` bind no grant, as they bind no facet yet. The grantee's
 namespace reads its `data` grant at each lookup, so the mint keeps no record of what it handed out. The volume's `packages/` directory is
 the files service `packages` ([design-packaging.md](design-packaging.md#where-a-package-lies)), with a mint of its own beside `data`'s that
-works the same way: each of its grants roots at `packages/`, answers `..` there itself, and takes no `.` or `..` as a name, so it reaches
-nothing else of the volume, and the mount makes the directory when the volume lacks it. Only a domain the manifest grants `data`
+works the same way: each of its grants roots at `packages/`, or at `packages/installed/` when its row states `tree installed`, as the
+app template's does (`erx_lfs:subtree/3`), answers `..` there itself, and takes no `.` or `..` as a name, so it reaches nothing else
+of the volume, and the mount makes both directories when the volume lacks them. Only a domain the manifest grants `data`
 mounts its `data` facet at `/data`, read-write and on the tree `data`, with `erx_ns:mount_facets/1` ([design-files.md](design-files.md), "A
 facet's mount"): the system domain's domain service once it has read the manifest, and a session domain as `erx_session` starts
 (`erx_session_app`), from the names of its granted facets its ready answer carries. The mount names the facet, never a grant, so every lookup
@@ -2017,7 +2054,7 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   `config/fiasco/kernel.defconfig`), which finds the interrupt controller, the timer and PSCI's calling method in the
   device tree. BL31's PSCI starts the other CPUs, and `l4_platform_ctl_system_shutdown` reaches its `SYSTEM_OFF` and
   `SYSTEM_RESET` ([The end path](#the-end-path)). `SYSTEM_OFF` leaves the board halted in the firmware, which cannot
-  turn it off, so an end by `ERX_END_OFF`, a missed pet's included, lasts until its power is cycled by hand.
+  turn it off, so an end by `ERX_END_OFF` lasts until its power is cycled by hand; a root fault and a missed pet reset it.
 * **Entropy.** When `/chosen` holds neither `rng-seed` nor `kaslr-seed`, the root reads 32 bytes from the board's RNG200
   random generator, waiting at most 100 ms, and seeds its generator from them, as the kernel's platform layer does on
   erXos's kernel ([Entropy sources](design-platforms.md#entropy-sources)). Where the generator is comes from one
@@ -2297,7 +2334,7 @@ the tests.
 | **Interrupt**, the `native_irq` suite: a UART receive and a software object wake a parked executor, across CPUs at four; a trigger between the empty check and the park returns at once; `erx_group_take_ready` returns each label once and the oldest first; a timed park ends at its deadline on the time page's clock; ack lets the next character through, which the harness types through a FIFO when the transcript asks. A holder task, given the line's object, a register window and a contiguous run by the root as a device's holder is, maps the window, but not as code, maps the run and gets the DMA address the root got, binds the line to its own group and moves its label, takes the third character's label, acks it and takes the label again, since the byte is still unread, which shows its ack opened the line; a bind into the root's group, and a move or unbind of the root's object bound there, are `ERX_ETYPE`. Host: the ready list and flags in the Park row's model, and the page's scale and the wait against exact arithmetic in `test/host/fiasco_time_test.rb` | ack removed: the second character never arrives. Listed flag ignored: the status page's `ready` shows it twice. The interlock removed: the trigger before the park is lost. The dispatcher's trigger removed: a parked executor's deadline fires. The hooked trigger removed: the case's park reaches its deadline. The home check of a task's bind removed: the holder's status is 30 |
 | **Trace ring**, `test/host/trace_ring_test.rb`: records read back field by field; a cursor of `UINT64_MAX` returns the head and counts nothing; a reader lapped by more than 4,096 records counts exactly those skipped; a record a test hook rewrites between the reader's two `seq` loads is counted overwritten, not kept, and so is one read while its writer is between its field stores; a read of four writes four records and not the slot after them; a cursor past the head, `max` 0 and `max` 513 each `ERX_EINVAL`; a ring whose head a test hook sets to the last index writes it, then nothing, and its reader answers `ERX_ELIMIT`; under TSan, four writers and a reader, each kept record whole, its fields derived from its index; a task's call `ERX_ENOTSUP` | the second `seq` load removed: the hooked record is kept. The head start returning 0: the present cursor is not the head. The skip counted one short: the lapped count differs. The cursor check removed: the past-the-head case copies stale slots. The `max` bound removed: `max` 513 is accepted. A read that ignores `max`: the read of four copies more, past its slot. The terminal check removed: the write past the last index is accepted. The exhausted head's check removed: its read is not `ERX_ELIMIT`. The odd store removed: the record read in the middle of its write is kept. The ring linked into a task in place of the stub: the link lists' test fails |
 | **Trace on four CPUs**, the QEMU gate's `native_trace` suite: a test workload spawned at the Erlang shell, a process that waits for a message or 20 ms and loops, traced with `erx:trace(#{select => [Workload], kernel => true})` and sent a message, shows the kernel's row as exactly one `unsupported` line reported by `kernel`, a backend `park` followed by a `wake` of the same slot, and the workload's `in`, not marked `late`, with every `erts` line naming the workload; a test task started and stopped shows `space_start` and `space_end` with the same `target` and the task's status; the suite never sets the wall clock, so the clock offset is constant. The workload is off the console's output path, but with `kernel => true` printing still feeds the backend row: each printed line parks and wakes executors, whose `park` and `wake` records the trace then prints, and the window bounds that loop; only the trace process and the printer are kept out of the trace, by `{erx_untraced, true}` | the park core's `trace` effect removed: no `park` or `wake`. The clock offset added with the wrong sign: the workload's `in` comes out `late` or out of order with the backend's lines. `erx_trace_read` answering `ERX_OK` with no records: the `unsupported` line is missing, which shows the line comes from the call's answer |
-| **Watchdog**, the `native_watchdog` suite: pets hold the machine up past `erx.watchdog=1,2,2`; once they stop, a spinning first thread does not keep the machine from ending, with cause and time since the pet in the record | the end skipped: the guest's own line reports it. Pets ignored: the machine ends before the guest's line |
+| **Watchdog**, the `native_watchdog` suite: pets hold the machine up past `erx.watchdog=1,2,2`; once they stop, a spinning first thread does not keep the machine from ending, with cause and time since the pet in the record, and the machine resets | the end skipped: the guest's own line reports it. Pets ignored: the machine ends before the guest's line |
 | **A semaphore's wake across CPUs**, `tools/lib/erx/native_semaphore_race.rb` under `make check-native-seeds`, under HVF at 4 CPUs as every seed runs, on a test kernel whose up holds itself between the dequeue and the activation until the waiter is queued again or half a second passes: at least three raced downs each, followed by an IPC wait that lasts its whole length and by a down that times out; too few raced downs fail the case | the bit's wait removed: the IPC wait ends early and the second down reports an up that never came |
 | **End path**, on a quiet console, the QEMU gate's `native_crash` suite: a read of a decommitted page, a write to a read-only page, a read from another thread and a trap each give a whole crash frame, held to what the guest said it would touch; a root fault gives the undrained lines; `erx_machine_end` with each `how` | the frame's write removed: `crash_frame.rb` reports none. The drain removed: the last line is missing |
 | **Console handoff**: lines before and after the log service's first take arrive once, in order; a counter of the service's `l4_vcon_write` calls stays still after that take; an earlier map of the console's page leaves the sink alone. On the host, `dispatch_test.rb`'s handoff, readers and wrap cases count the core's console writes; natively, the console suite logs a tab and an escape sequence after the take and finds them escaped on the line, and a root that stops with the log service suspended still shows its parked record | the sink never switched: the counter moves |

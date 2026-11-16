@@ -48,14 +48,14 @@ erx_fiasco_root_main(void)
 		function_api_say("erx: function-api: init FAILED: ");
 		function_api_say(reason);
 		function_api_say("\n");
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	if (erx_group_create(0, 0, &group) != ERX_OK) {
 		function_api_say("erx: function-api: init FAILED: no group\n");
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	function_api_say("erx: function-api: service up\n");
 	function_api_run(function_api_irq_cases, function_api_irq_case_count, function_api_device_cases,
 	    function_api_device_case_count);
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 }

@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # The termios table (docs/design-live.md, "The tty"): every flag and special
 # character a tty's termios may hold, with the bit or index a C program's
-# struct termios gives it. Names and numbers are FreeBSD 15.1's
+# struct termios gives it, and the speeds a program may name. musl's
+# bits/termios.h and erx_abi_termios are generated from it, so a C program
+# and the tty read the same numbers. Names and numbers are FreeBSD 15.1's
 # (sys/sys/_termios.h); test/host/abi_termios_test.rb compares them with the
 # header at deps.lock's freebsd-termios pin. The sets are FreeBSD's supported
 # ones (sys/kern/tty.c:88-96) less what erx_tty does not keep: ECHOPRT,
@@ -13,15 +15,20 @@
 #     size NAME MASK FIRST
 #   termios cc COUNT UNNAMED
 #     char NAME INDEX
+#   termios speed
+#     rate SPEED
 #
 # FIELD is iflag, oflag, cflag or lflag, a 32-bit word of struct termios.
 # flag names one bit of it. size names a field of contiguous bits under MASK
 # whose value 0 reads as FIRST: CSIZE's CS5 to CS8 are csize 5 to 8. cc is
 # c_cc, COUNT bytes (NCCS); char names the byte at INDEX, and a byte no char
-# names is written UNNAMED (_POSIX_VDISABLE) and ignored when read. A bit or
-# byte the table does not name is dropped when a program's termios is read,
-# as FreeBSD's tcsetattr drops the bits it does not support
-# (sys/kern/tty.c:1760-1764).
+# names is written UNNAMED (_POSIX_VDISABLE) and ignored when read. struct
+# termios holds the four words in this order, then c_cc, then c_ispeed and
+# c_ospeed, each a 32-bit speed_t whose value is the rate in bits per second:
+# rate names the speed a program may write as B and the rate (B9600 is 9600),
+# and any other value is a speed too, as in FreeBSD. A bit or byte the table
+# does not name is dropped when a program's termios is read, as FreeBSD's
+# tcsetattr drops the bits it does not support (sys/kern/tty.c:1760-1764).
 termios iflag
   flag ignbrk 0x00000001
   flag brkint 0x00000002
@@ -89,3 +96,37 @@ termios cc 20 0xff
   char vmin 16
   char vtime 17
   char vstatus 18
+termios speed
+  rate 0
+  rate 50
+  rate 75
+  rate 110
+  rate 134
+  rate 150
+  rate 200
+  rate 300
+  rate 600
+  rate 1200
+  rate 1800
+  rate 2400
+  rate 4800
+  rate 7200
+  rate 9600
+  rate 14400
+  rate 19200
+  rate 28800
+  rate 38400
+  rate 57600
+  rate 76800
+  rate 115200
+  rate 230400
+  rate 460800
+  rate 500000
+  rate 921600
+  rate 1000000
+  rate 1500000
+  rate 2000000
+  rate 2500000
+  rate 3000000
+  rate 3500000
+  rate 4000000

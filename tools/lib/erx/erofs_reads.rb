@@ -18,15 +18,17 @@ module Erx
   #
   # * outside erx_verity.erl, any naming of erx_verity, a call, a quoted atom, a
   #   string or a record of the handle's name, except:
-  #   * the call erx_verity:open( in MOUNTERS, erx_storage_system alone, which opens
-  #     the `system` window with its layout;
+  #   * in MOUNTERS, each mounter's one open: erx_verity:open( in erx_storage_system,
+  #     which opens the `system` window with its layout, and erx_verity:open_file( in
+  #     erx_ns, whose EROFS file mount opens the fid it walked with the layout of the
+  #     app's record, a form with no `unchecked`;
   #   * in the reader's modules, the call erx_verity:read( (or its name,
   #     erx_verity:read/3) and the type erx_verity:image(;
   # * in the reader's modules, a remote call or fun M:F/A on a module outside
   #   READER_MODULES, a remote call through a variable or a macro, and a call of apply.
   #
-  # So erx_ns, which mounts a handle its caller opened, opens none, and no release
-  # module opens a window unchecked.
+  # So erx_ns opens only files, never a window, and no release module opens a window
+  # unchecked.
   #
   # Like the other text rules it catches a slip, not a call built from pieces.
   module ErofsReads
@@ -38,10 +40,12 @@ module Erx
     # BIFs that reach no state outside their arguments.
     READER_MODULES = %w[erx_verity binary maps].freeze
     SYSTEM = 'erlang/apps/erx_storage/src/erx_storage_system.erl'
-    MOUNTERS = [SYSTEM].freeze
+    NS = 'erlang/apps/erx/src/erx_ns.erl'
+    # Each mounter and the one open it may call.
+    MOUNTERS = { SYSTEM => /\A'?erx_verity'?\s*:\s*'?open'?\s*\(/,
+                 NS => /\A'?erx_verity'?\s*:\s*'?open_file'?\s*\(/ }.freeze
     NAMED = /(?<![A-Za-z0-9_@])'?erx_verity'?(?![A-Za-z0-9_@])/
     READER_USE = /\A'?erx_verity'?\s*:\s*'?(?:read'?\s*[(\/]|image'?\s*\()/
-    MOUNTER_USE = /\A'?erx_verity'?\s*:\s*'?open'?\s*\(/
     # A remote call or a fun M:F/A, its module a name, a variable or a macro.
     REMOTE = /(?<![A-Za-z0-9_@])(?<module>\??[A-Za-z_][A-Za-z0-9_@]*)\s*:\s*[a-z][A-Za-z0-9_@]*\s*[(\/]/
     APPLY = /(?<![A-Za-z0-9_@:])apply\s*\(/
@@ -69,10 +73,10 @@ module Erx
       code.to_enum(:scan, NAMED).filter_map do
         offset = Regexp.last_match.begin(0)
         next if READER_USE.match?(code[offset..]) && READERS.include?(path)
-        next if MOUNTER_USE.match?(code[offset..]) && MOUNTERS.include?(path)
+        next if MOUNTERS[path]&.match?(code[offset..])
 
         Violation.new(path: path, line: line_of(code, offset),
-                      detail: "only #{FUNNEL} names erx_verity, but for the mounters' call erx_verity:open( " \
+                      detail: "only #{FUNNEL} names erx_verity, but for each mounter's own open, erx_verity:open( or erx_verity:open_file(, " \
                               "and the reader's erx_verity:read/3 and type erx_verity:image()")
       end
     end

@@ -21,7 +21,8 @@ domain that serves `system` serves the booted slot's system partition.
   hash or `unchecked`, and only the mint mounts the tree: every block the
   reader parses, the directories included, matched the root hash the boot
   image pins before it is parsed (E1), and a partition changed under a
-  rebuilt tree answers `eio`. A record that is absent or refused, an image the reader refuses,
+  rebuilt tree answers `eio`. A mount that serves its tree logs `serving the system
+  tree`, so a boot shows it served one. A record that is absent or refused, an image the reader refuses,
   and an image whose `apps/` is not a directory leave the tree `none`; the
   reason goes to the log once.
 * **Serving.** start_mint/0 starts the service's mint, erx_storage_mint, which
@@ -116,6 +117,7 @@ mount_window(Window, Layout, Log) ->
 mounted({ok, Fs}, Log) ->
     case erx_erofs:read_file_info(Fs, [?APPS]) of
         {ok, #{type := directory} = Info} ->
+            _ = Log(<<"serving the system tree">>),
             {erofs, Fs, qid(Info)};
         _ ->
             _ = Log(<<"no system tree: the image has no apps directory">>),

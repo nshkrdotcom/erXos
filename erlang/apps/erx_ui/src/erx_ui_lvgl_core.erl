@@ -21,7 +21,9 @@ rows have.
 
 * A report read while idle is judged at its own size. When that is the
   last screen record's size, the renderer presents its rectangles at that
-  width and height and is open until the display answers the present
+  width and height, each turned from the program's corner, width and
+  height into the window's half-open `{X0, Y0, X1, Y1}`
+  (erx_win_core:rect()), and is open until the display answers the present
   (`shown`); then it writes `presented`. A report of another size was
   drawn before the program read a later screen record, at a stride the
   buffer no longer has: it is presented as nothing and answered at once.
@@ -63,10 +65,9 @@ bugs, raised as errors.
 """.
 
 -export([start/3, step/2, size/1, reads_window/1, input/2]).
--export_type([state/0, event/0, action/0, stop_reason/0, exit_status/0, rect/0]).
+-export_type([state/0, event/0, action/0, stop_reason/0, exit_status/0]).
 
 -type size() :: {Width :: 1..65535, Height :: 1..65535}.
--type rect() :: {X :: 0..65535, Y :: 0..65535, Width :: 1..65535, Height :: 1..65535}.
 -type token() :: term().
 -type held() :: erx_ui_model:diff_op() | {input, term()} | repaint.
 
@@ -93,7 +94,7 @@ left without room until its deadline.
 -type event() :: {apply, [erx_ui_model:diff_op()], token()}
                | {window, {input, term()} | repaint}
                | {resize, integer(), integer(), Chan :: 0..16#ffffffff}
-               | {damage, 0..65535, 0..65535, [rect(), ...]}
+               | {damage, 0..65535, 0..65535, [erx_ui_wire:rect(), ...]}
                | {event, erx_ui_model:node_id(), atom(), term()}
                | shown
                | {refused, term()}
@@ -108,7 +109,7 @@ answer an apply by its token, hand the widget server a hit as
 `{ui_hit, Node, Event, Value}`, or stop the program, always the last.
 """.
 -type action() :: {write, [erx_ui_wire:wire_record()]}
-                | {present, 1..65535, 1..65535, [rect(), ...]}
+                | {present, 1..65535, 1..65535, [erx_win_core:rect(), ...]}
                 | {reply, token()}
                 | {hit, erx_ui_model:node_id(), atom(), term()}
                 | {stop, stop_reason()}.
@@ -168,7 +169,7 @@ step(Event, {Extent, Phase}) ->
     {{Extent, Phase1}, Actions}.
 
 phase({damage, W, H, Rects}, {idle, {W, H}} = Idle) ->
-    {open(Idle), [{present, W, H, Rects}]};
+    {open(Idle), [{present, W, H, [half_open(Rect) || Rect <- Rects]}]};
 phase({damage, _W, _H, _Rects}, {idle, _Size} = Idle) ->
     {Idle, [{write, [presented]}]};
 phase({damage, _W, _H, _Rects}, {open, _, _, _} = Open) ->
@@ -207,6 +208,10 @@ coordinate(C) -> max(0, min(C, 16#ffff)).
 
 resized({idle, _Old}, Size) -> {idle, Size};
 resized({open, _Old, Held, Waiter}, Size) -> {open, Size, Held, Waiter}.
+
+%% A report's rectangle, its corner, width and height (erx_ui_wire:rect()),
+%% as the window presents it: half-open, {X0, Y0, X1, Y1}.
+half_open({X, Y, Width, Height}) -> {X, Y, X + Width, Y + Height}.
 
 reply(none) -> [];
 reply(Token) -> [{reply, Token}].

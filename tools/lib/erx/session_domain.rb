@@ -464,9 +464,9 @@ module Erx
 
       # A boot of its own that `command` ends, which QEMU's exit under -no-reboot shows,
       # with the command's log line on the console before the end's and no crash frame, so
-      # a watchdog's end does not pass for it. The stopgap's end of the root's own halt
-      # also says `erx: end off`, so the halt boot cannot tell init's commit from init's
-      # halt after a refused one; the reboot boot can.
+      # a watchdog's end does not pass for it. The end line is not read: init's halt
+      # after a refused commit ends the root with its own stop, which resets, so only the
+      # halt boot's `erx: end off` would tell the commit from it (TODO.md).
       def machine_end(accel, count, remote, built, written, command:)
         run = "#{accel}-#{count}cpu-#{command}-#{Process.pid}-#{Random.bytes(8).unpack1('H*')}"
         directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(@root, 'build/session-domain', run))

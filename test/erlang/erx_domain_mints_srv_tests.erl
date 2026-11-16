@@ -426,15 +426,25 @@ system_data_mount_test_() ->
      {"not granted", fun() -> ?assertEqual([#{point => [], provider => release, root => [], rights => ro}],
                                            system_mounts([{0, data, 1, #{}}])) end}].
 
-%% The system domain's mounts once the service has booted from a manifest whose data is
-%% a files service of a (row 1) with Grants, as start_link returns them, with no call
-%% to the service first, as the release's later applications read /data.
+%% The packages tree, which no session mounts, the system domain mounts at its system
+%% place, /packages (erx_ns:packages_place/0), where erx_pkg_medium reads the installed
+%% packages, and only when the manifest grants it packages.
+system_packages_mount_test_() ->
+    [{"granted", fun() -> ?assertMatch([_, #{point := [<<"packages">>], provider := {facet, packages, <<"packages">>},
+                                             rights := rw}],
+                                       system_mounts([{system, packages, 1, #{}}, {0, packages, 1, #{}}])) end},
+     {"not granted", fun() -> ?assertEqual([#{point => [], provider => release, root => [], rights => ro}],
+                                           system_mounts([{0, packages, 1, #{}}])) end}].
+
+%% The system domain's mounts once the service has booted from a manifest whose data and
+%% packages are files services of a (row 1) with Grants, as start_link returns them, with
+%% no call to the service first, as the release's later applications read /data.
 system_mounts(Grants) ->
     Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
                                      restarts => 0, restart_period_s => 60, boot_timeout_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)],
-                          services => [{1, data, 5}], grants => Grants}),
+                          services => [{1, data, 5}, {1, packages, 5}], grants => Grants}),
     persistent_term:erase(erx_ns),
     {ok, Ns} = erx_ns:start_link(erx_ns_prim_stub),
     unlink(Ns),
@@ -516,7 +526,7 @@ session_files_grant_test() ->
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
         DomainPid = domain_pid(Id),
-        #{start := Grant} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
+        #{start := {Grant, rw}} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
         ?assertEqual([start], maps:keys(Facets)),
         ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)]),
         %% The grant exports itself to the session, after the session's start.
@@ -552,7 +562,7 @@ session_line_grant_test() ->
                                           [{{template, 0}, line, system, #{max_request => 131072}}]),
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
-        #{line := Grant} = maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})),
+        #{line := {Grant, rw}} = maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})),
         ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)])
     after
         files_cleanup(Started)
@@ -745,7 +755,7 @@ app_session_test_() ->
      fun(_) -> {inorder, [fun no_app/0, {timeout, 20, fun app_session/0}]} end}.
 
 -define(APP_MEMORY, 16777216).
--define(APP_RECORD, #{place => <<"/packages/clock.app">>, layout => #{}, start => {applications, [<<"clock">>]}}).
+-define(APP_RECORD, #{place => {packages, [<<"clock.app">>]}, layout => #{}, start => {applications, [<<"clock">>]}}).
 
 app_setup() ->
     persistent_term:put({erx_domain_fake_lib, apps}, #{template => 2, first => 6, max => 4, memory => 4 * ?APP_MEMORY}),

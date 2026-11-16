@@ -422,6 +422,8 @@ module Erx
                    name: 'fuzz-erx-apps-ctl', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_cmd_date.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-cmd-date', deadline: 300, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_ssh_wire.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-ssh-wire', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_quotes.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-quotes', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_hci.rb'), '--seed', options.fetch(:seed).to_s],
@@ -600,30 +602,14 @@ module Erx
     # With --probe header, instead the Raspberry Pi 4's header probe card (HeaderProbe),
     # a card of its own that needs no Fiasco and no image; it is a medium already, so it
     # takes no --medium. Each --app adds an app to the image (image_apps,
-    # docs/design-packaging.md, "Adding an app to an image"), --enable NAME starts it at
+    # docs/design-packaging.md, "Adding an app to an image"), into its medium's system
+    # partition, so --app implies --medium (pack_options); --enable NAME starts it at
     # boot and --signer FILE trusts a deployer's key for packages installed later.
     # --local makes it a local test image, which takes a package whose license is not
     # permissive and never leaves this host (ImageApps::Plan); a board's card, the one the
     # website offers, takes neither (ProductionImage#build_medium).
     def self.pack(arguments)
-      medium = false
-      local = false
-      probe = nil
-      sources = []
-      enable = []
-      signers = []
-      platform = platform_option(arguments) do |flags|
-        flags.on('--medium') { medium = true }
-        flags.on('--probe NAME', %w[header]) { |name| probe = name }
-        flags.on('--app PATH') { |path| sources << File.expand_path(path) }
-        flags.on('--enable NAME') { |name| enable << name }
-        flags.on('--signer FILE') { |path| signers << File.expand_path(path) }
-        flags.on('--local') { local = true }
-      end
-      no_arguments(arguments)
-      raise Error, 'pack: --probe packs a card of its own and takes no --medium' if probe && medium
-      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && (local || !(sources + enable + signers).empty?)
-
+      pack_options(arguments) => { platform:, medium:, probe:, sources:, enable:, signers:, local: }
       require_relative 'lib/erx/production_image'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       environment = host_environment(runner: runner)
@@ -649,6 +635,34 @@ module Erx
       0
     end
 
+    # pack's options, parsed from arguments and checked whole before anything is built.
+    PackOptions = Data.define(:platform, :medium, :probe, :sources, :enable, :signers, :local)
+
+    # The PackOptions of pack's arguments, parsed and checked. An image's packages lie in its medium's system
+    # partition, so an --app sets medium as --medium does; --probe takes neither.
+    def self.pack_options(arguments)
+      medium = false
+      local = false
+      probe = nil
+      sources = []
+      enable = []
+      signers = []
+      platform = platform_option(arguments) do |flags|
+        flags.on('--medium') { medium = true }
+        flags.on('--probe NAME', %w[header]) { |name| probe = name }
+        flags.on('--app PATH') { |path| sources << File.expand_path(path) }
+        flags.on('--enable NAME') { |name| enable << name }
+        flags.on('--signer FILE') { |path| signers << File.expand_path(path) }
+        flags.on('--local') { local = true }
+      end
+      no_arguments(arguments)
+      raise Error, 'pack: --probe packs a card of its own and takes no --medium' if probe && medium
+      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && (local || !(sources + enable + signers).empty?)
+
+      PackOptions.new(platform: platform, medium: medium || !sources.empty?, probe: probe, sources: sources.freeze,
+                      enable: enable.freeze, signers: signers.freeze, local: local)
+    end
+
     # The packages pack's --app options add to the image, as an ImageApps::Plan: each app
     # directory packed with the SDK exported into build/app-sdk and the host's development
     # package key (Erx::PackageKey), or each package file as given, both staged in
@@ -668,11 +682,9 @@ module Erx
     # The packages of sources (ImageApps.gather), packed with an SDK exported into
     # build/app-sdk and signed by signer, staged in build/app-packages.
     def self.gathered_apps(sources, runner:, signer:, compiler:)
-      erlc = File.join(File.dirname(Oracle.new(root: ROOT, runner: runner).erl_path(Runtime::HOST_OTP_FLAVOUR)), 'erlc')
-      exported = File.join(empty_build_directory('build/app-sdk'), 'sdk')
-      Sdk.new(root: ROOT, runner: runner, erlc: erlc).export(exported)
-      ImageApps.gather(sources, into: empty_build_directory('build/app-packages'), sdk: AppPack::Sdk.new(root: exported, erlc: erlc),
-                                signer: signer, runner: runner, root: ROOT, compiler: compiler)
+      ImageApps.packed_apps(sources, sdk_directory: empty_build_directory('build/app-sdk'),
+                                     packages_directory: empty_build_directory('build/app-packages'),
+                                     root: ROOT, runner: runner, signer: signer, compiler: compiler)
     end
 
     # The directory relative names under the tree, made empty.
@@ -871,7 +883,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build release-kernel | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
       0
     end
 
@@ -1011,8 +1023,9 @@ module Erx
     def self.build(input_arguments)
       arguments = input_arguments.dup
       component = arguments.shift
-      unless %w[fiasco runtime jit-runtime rc-oracle glyphs fsimg herd7 lvgl openssl web].include?(component)
-        raise OptionParser::InvalidArgument, 'build accepts fiasco, runtime, jit-runtime, rc-oracle, glyphs, fsimg, herd7, lvgl, openssl or web'
+      unless %w[fiasco release-kernel runtime jit-runtime rc-oracle glyphs fsimg herd7 lvgl openssl web].include?(component)
+        raise OptionParser::InvalidArgument,
+              'build accepts fiasco, release-kernel, runtime, jit-runtime, rc-oracle, glyphs, fsimg, herd7, lvgl, openssl or web'
       end
       jobs = 4
       parser = OptionParser.new do |options|
@@ -1029,6 +1042,7 @@ module Erx
              when 'herd7' then build_herd7(jobs)
              when 'lvgl' then build_lvgl(jobs)
              when 'openssl' then build_openssl(jobs)
+             when 'release-kernel' then Fiasco.new(root: ROOT).build_release_kernel(jobs: jobs)
              when 'web' then WebBuild.build(root: ROOT, runner: Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs')))
              else Fiasco.new(root: ROOT).build(jobs: jobs)
              end

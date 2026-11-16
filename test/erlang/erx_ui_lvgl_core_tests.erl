@@ -10,7 +10,8 @@
 %% every step what the program and the widget server rely on:
 %%
 %% * a present is made only of a report drawn at the size of the last
-%%   screen record written, and a report of another size read while idle
+%%   screen record written, of the report's rectangles made half-open,
+%%   and a report of another size read while idle
 %%   is answered at once with `presented` and nothing else;
 %% * while a present is outstanding the program is written nothing but
 %%   screen records, and a resize's screen record is written at once, in
@@ -37,7 +38,10 @@
 -define(BIG, {4, 3}).
 -define(SMALL, {2, 2}).
 -define(CHAN, 16#68081828).
--define(RECTS, [{0, 0, 1, 1}]).
+%% A report's rectangles, corner, width and height, away from the origin, and
+%% the half-open rectangles a present of them carries.
+-define(RECTS, [{1, 1, 1, 1}]).
+-define(PRESENTED, [{1, 1, 2, 2}]).
 
 %% The shell's view: the core's state, everything written to the program
 %% in order, the present outstanding or none, the applies not yet answered,
@@ -58,12 +62,21 @@ every_reachable_state_keeps_the_protocol_test_() ->
 
 a_resize_during_a_present_is_written_at_once_and_the_report_still_shown_test() ->
     {Idle, _} = erx_ui_lvgl_core:start(4, 3, ?CHAN),
-    {Open, [{present, 4, 3, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 4, 3, ?RECTS}, Idle),
+    {Open, [{present, 4, 3, ?PRESENTED}]} = erx_ui_lvgl_core:step({damage, 4, 3, ?RECTS}, Idle),
     {Resized, [{write, [{screen, 2, 2, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 2, 2, ?CHAN}, Open),
     {Again, [{write, [presented]}]} = erx_ui_lvgl_core:step(shown, Resized),
     {2, 2} = erx_ui_lvgl_core:size(Again),
     %% The program's next report, drawn after it read the screen record.
-    {_, [{present, 2, 2, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 2, 2, ?RECTS}, Again).
+    {_, [{present, 2, 2, ?PRESENTED}]} = erx_ui_lvgl_core:step({damage, 2, 2, ?RECTS}, Again).
+
+%% The program reports a rectangle as its corner, width and height, and the
+%% window presents half-open rectangles {X0, Y0, X1, Y1} (erx_win_core:rect()).
+%% A core that passed the report through would present the wrong area of
+%% every rectangle away from the origin.
+a_report_away_from_the_origin_is_presented_as_a_half_open_rect_test() ->
+    {Idle, _} = erx_ui_lvgl_core:start(1280, 800, ?CHAN),
+    {_, [{present, 1280, 800, [{23, 151, 1257, 459}, {0, 0, 1280, 800}]}]} =
+        erx_ui_lvgl_core:step({damage, 1280, 800, [{23, 151, 1234, 308}, {0, 0, 1280, 800}]}, Idle).
 
 %% The buffer was allocated at the size the renderer started at, so no
 %% screen record passes it: a window grown past it is a screen of the
@@ -72,7 +85,7 @@ a_resize_during_a_present_is_written_at_once_and_the_report_still_shown_test() -
 a_resize_past_the_buffer_is_clipped_to_it_test() ->
     {Idle, _} = erx_ui_lvgl_core:start(4, 3, ?CHAN),
     {Grown, [{write, [{screen, 4, 2, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 8, 2, ?CHAN}, Idle),
-    {_, [{present, 4, 2, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 4, 2, ?RECTS}, Grown),
+    {_, [{present, 4, 2, ?PRESENTED}]} = erx_ui_lvgl_core:step({damage, 4, 2, ?RECTS}, Grown),
     {Open, _} = going(erx_ui_lvgl_core:step({damage, 4, 2, ?RECTS}, Grown)),
     {Taller, [{write, [{screen, 4, 3, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 9, 70000, ?CHAN}, Open),
     {4, 3} = erx_ui_lvgl_core:size(Taller),
@@ -209,9 +222,9 @@ check(Event, Actions, Before, After) ->
 
 %% A present only of a report at the last screen record's size; one of
 %% another size read while idle is answered at once and alone.
-present_only_at_last_screen({damage, W, H, R}, Actions, LastScreen, Fail) ->
+present_only_at_last_screen({damage, W, H, ?RECTS}, Actions, LastScreen, Fail) ->
     case Actions of
-        [{present, W, H, R}] when {W, H} =:= LastScreen -> ok;
+        [{present, W, H, ?PRESENTED}] when {W, H} =:= LastScreen -> ok;
         [{write, [presented]}] when {W, H} =/= LastScreen -> ok;
         _ -> Fail(misjudged_report)
     end;

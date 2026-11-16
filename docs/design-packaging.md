@@ -452,9 +452,9 @@ board's source does not hold and the build record lists:
   `windows_pixels_default`, `abi/services/files.txt` gives `rights` the
   default `rw`, `net` declares no parameter, and each of the three
   declares the five quantities. A service of the files interface is
-  refused until the storage service's `tree` parameter exists, since
-  without `tree apps` its grant would reach the whole tree rather than
-  the app's own directory.
+  refused until the data partition's storage service roots a grant at
+  `tree apps`, since without it its grant would reach the whole tree
+  rather than the app's own directory.
   A row of the data partition's storage service carries the parameter
   `tree apps`, which roots its grants among the app directories ([Where
   an app's files lie](#where-an-apps-files-lie));
@@ -473,7 +473,9 @@ board's source does not hold and the build record lists:
 * **the `system` rows**: the system domain's grant of the service named
   `system_service` (`abi/manifest.txt`), the `system` tree, `rights ro`,
   and the app template's, `rights rx`, each with the files interface's
-  quantities. The app template's two grants are `rx` because its
+  quantities; a manifest with an `apps` row holds that service, and so a
+  `system` window (property 19), so every app's session holds its
+  `system` row. The app template's two grants are `rx` because its
   session runs its package's code from `/app`, which is mounted through
   one of them, and an EROFS mount is `rx` only through an `rx` grant,
   which writes nothing
@@ -599,12 +601,15 @@ the packages are well formed**, beside the eighteen of
 7. no facet row of the board's source is granted to the app template,
    carries `tree apps` or `tree installed`, or names the `apps` service: only the rows the
    build derives do;
-8. the manifest holds at most one service named `system_service`, of
-   the files interface, and its server is the holder of the manifest's
-   `system` window ([design-storage.md](design-storage.md#the-system-tree)),
-   so the domain that mints the tree's grants is the one whose block
-   driver serves its partition; no facet row of the board's source names
-   it, since only the derived `system` rows do.
+8. the manifest holds one service named `system_service`, of the files
+   interface, exactly when it has a `system` window, and its server is
+   the holder of that window
+   ([design-storage.md](design-storage.md#the-system-tree)), so the
+   domain that mints the tree's grants is the one whose block driver
+   serves its partition; a manifest with an `apps` row holds the service,
+   so the build derives the `system` rows every app's session mounts its
+   image package through; no facet row of the board's source names it,
+   since only the derived `system` rows do.
 
 Each clause has a seeded violation: a check that counts the app template
 once in property 18, which admits a row whose apps together pass the
@@ -613,8 +618,9 @@ rows pass 256; `apps` in `services`; `etc` in `services`; a service
 in `services` whose ABI file gives a parameter no default; two enabled packages whose memory
 passes the `apps` budget; a `package` row whose declaration needs a
 service the row lacks; a configured domain's `data` row carrying `tree
-apps`; a `system_service` served by a domain that does not hold the
-`system` window; a source facet row of `system_service`.
+apps`; an `apps` row in a manifest with no `system_service`; a
+`system_service` served by a domain that does not hold the `system`
+window; a source facet row of `system_service`.
 
 ### The declaration
 
@@ -808,7 +814,13 @@ writes; the storage domain that serves it checks every block of the
 partition against the root hash the manifest records, and the file
 check authenticates each header there against its `package` row's
 hash, so a package listed under another's name, or a file that is not
-a package, is refused. Since `erx_verity` checks
+a package, is refused. The system domain mounts its `packages` grant
+at `/packages`, so the installed packages lie there at
+`/packages/installed/`. That mount point is a place of the system
+domain's alone (`erx_ns:packages_place/0`), which no session's
+`erx_ns:mount_facets/1` mounts; a path reaches only a grant its own
+domain holds, so an app's session reaches the tree only through its own
+grant. Since `erx_verity` checks
 every block against the root hash of the authenticated header, no
 property of a package rests on the storage domain but its presence: a
 storage domain can withhold a package, put back an older one of the same
@@ -1132,9 +1144,11 @@ third from the package the entry was registered from:
 * its environment holds its default display, which its planning sets
   ([design-apps.md](design-apps.md#starting-a-session)), and the domain
   service sends it the app's record, in a message of its own after the
-  ready answer: the place of the package's file, its grant and its name
-  there (`NAME.app` on its `packages` grant, or, for a package of the
-  image, on its `system` grant; neither service has a mount point in the
+  ready answer: the place of the package's file, `{Facet, Names}`, the
+  facet whose grant holds it and its names below that facet's tree
+  (`{packages, [NAME.app]}`, at the root of the `packages` grant, or, for
+  a package of the image, `{system, [apps, NAME.app]}` on the `system`
+  grant; neither service has a mount point in the
   session's namespace, and what the session reaches through either
   grant, by `erx:cap/1` or by any entry its code puts in its table, is
   what the grant reaches: the `packages` grant, packages of
@@ -2138,7 +2152,6 @@ what rests on parts that arrive later, reporting each as it is:
 | Deferred | Until | Meanwhile |
 | --- | --- | --- |
 | isolation between apps' domains, and budgets and quotas as limits | erXos's kernel | as for every domain ([design-apps.md](design-apps.md#phase-1)) |
-| the hash check in `erx_verity` | the security closure, M11 ([plan.md](plan.md#m11-security-closure)) | `erx_verity` passes blocks through unchecked, as for every image, so a byte changed on the medium is read as it is; PK3's QEMU test waits for M11 |
 | rooting `data` grants by principal, `apps/`, `tree apps` and the signer in an app's directory | principals' directories (M10) | apps can reach each other's directories, the residual design-apps.md records; the directory half of PK4's test waits, its `/proc` half runs |
 | `purge` with `remove_app` | the same | `service NAME purge` answers `enotsup` |
 
@@ -2181,16 +2194,28 @@ it guards.
 | the build's check | each clause of property 19 | each seeded violation of [The build's check](#the-builds-check) |
 | `examples/dashboard` through the SDK | its frame through `erx_ui_host` matches its reference, and a click on Pause changes only the status line and buttons | a status line one pixel taller |
 | the SDK's boundary | the example compiles, and xref finds every call it makes into erXos's modules in `public.txt`, by module, function and arity; a call whose callee xref cannot name, through a variable module or fun, is answered apart, and the app's check pins those to a list it has reviewed, empty for the SDK test's probe app | the example calling `erx_ui:start/1`, exported by a public module but not public, which the check refuses; the example calling through a variable module, which the check answers apart |
-| no list names an example | a source check over `tools/lib/erx`, `config/manifest` and the test lists finds no path under `examples/` | `erx_dashboard` added to `ErlangApps::APPLICATIONS` |
+| no list names an example | a source check over `tools/lib/erx`, `config/manifest` and the test fixtures finds no path under `examples/` and no example's application, but in the kiosk cell's harness (`tools/lib/erx/kiosk.rb` and its suite), which packs one through the SDK | `erx_dashboard` added to `ErlangApps::APPLICATIONS`; a path under `examples/` in a tools file the list does not hold |
 
 **QEMU tests**, in the suites of the plan's parts that bring them:
 
-* a kiosk image with `examples/dashboard` added by `tools/erx pack --app
-  --enable dashboard` boots to its UI on the display, whose screendump
-  matches the host test's reference, and `ls /apps` shows
-  `dashboard.app`, read from the `system` tree, while the boot image
-  holds no package; seeded: `--enable` dropped, and the screen stays
-  blank;
+* the kiosk cell (`tools/lib/erx/kiosk.rb`, suite `kiosk`): the
+  production image of the development machine with `examples/dashboard`
+  packed, signed and enabled as `tools/erx pack --app examples/dashboard
+  --enable dashboard` does it, so the package lies at
+  `apps/dashboard.app` of the slot's system partition, boots from its
+  release medium with a display, the harness playing the firmware. The
+  serial log shows the storage domain serving the `system` tree, the
+  package admitted, the app's session mounting `/app`, and the
+  dashboard's line naming the minute its clock showed; the screendump
+  equals the dashboard as the host's erx-lvgl draws it with the sample
+  board (the host test's renderer) at that minute or the next, since
+  the guest's clock is not pinned. Seeded: one bit of the header's root
+  hash flipped and the package row bound to the altered header, so the
+  build's file check never sees it: the package is admitted by its row,
+  its `/app` mount is refused and nothing is shown. `ls /apps` showing
+  `dashboard.app` while the boot image holds no package, and
+  `--enable` dropped leaving the screen blank, are further cases of the
+  same boot;
 * two apps: neither's `/proc` shows the other's domains; once `data`
   grants are rooted by principal, neither reads the other's `/data`;
 * a test program packaged with a display need draws through `/dev/draw`

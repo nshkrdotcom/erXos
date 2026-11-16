@@ -242,16 +242,16 @@ module AbiManifestFixture
   end
 
   # The names the packages fixture adds to the valid fixture's strings.
-  PACKAGE_NAMES = %w[clock quotes ops storage packages display data spare kiosk_display pkg_admin].freeze
+  PACKAGE_NAMES = %w[clock quotes ops storage packages display data spare system kiosk_display pkg_admin].freeze
 
   # The valid fixture as a manifest of flags (development by default) holding everything
   # erx_pkg_manifest reads. Its principal root; the domain storage; the session templates
   # 0, the app template, whose principal is absent, and 1, root's;
-  # the services packages, data and spare of storage's files interface and display of the
-  # system domain's windows interface; the facet rows 0 kiosk_display, display granted to
-  # template 1, 1 pkg_admin, packages granted to the system domain, and the app template's
-  # 2 packages, 3 display and 4 data; an apps row of 1 MiB and max 2 naming template 0
-  # and its packages row 2 and offering display and data, each with the template's row,
+  # the services packages, data, spare and system of storage's files interface and display
+  # of the system domain's windows interface; the facet rows 0 kiosk_display, display
+  # granted to template 1, 1 pkg_admin, packages granted to the system domain, and the app
+  # template's 2 packages, 3 display, 4 data and 5 system; an apps row of 1 MiB and max 2
+  # naming template 0, its packages row 2 and its system row 5, and offering display and data, each with the template's row,
   # whose span claims apps rows, which the reader bounds to 1; the enabled package clock and the package quotes; the
   # signer ops; and the development key of 7s when development is true.
   def packages(flags: 1, apps: 1, development: true)
@@ -271,13 +271,14 @@ module AbiManifestFixture
       sessions: [[0xffffffff, *[0] * 9], [0] * 10].map { |fields| fields.pack('V10') },
       limits: [valid.byteslice(528, 160)],
       runtime_limits: [valid.byteslice(688, 56)],
-      services: [['packages', 0, 5], ['display', 0xffffffff, 8], ['data', 0, 5], ['spare', 0, 5]]
+      services: [['packages', 0, 5], ['display', 0xffffffff, 8], ['data', 0, 5], ['spare', 0, 5], ['system', 0, 5]]
         .map { |label, server, interface| name.(label) + [server, interface, 0].pack('V2Q<') },
       facets: [facet.('kiosk_display', kind: 2, grantee: 1, service: 1),
                facet.('pkg_admin', kind: 0, grantee: 0, service: 0),
                facet.('packages', kind: 2, grantee: 0, service: 0),
                facet.('display', kind: 2, grantee: 0, service: 1),
-               facet.('data', kind: 2, grantee: 0, service: 2)],
+               facet.('data', kind: 2, grantee: 0, service: 2),
+               facet.('system', kind: 2, grantee: 0, service: 4)],
       apps: ["\0".b * 32],
       app_services: [[1, 3].pack('V2'), [2, 4].pack('V2')],
       packages: [name.('clock') + [1].pack('V') + "\xab".b * 32, name.('quotes') + [0].pack('V') + "\xee".b * 32],
@@ -285,13 +286,14 @@ module AbiManifestFixture
       development_key: development ? ["\x07".b * 32] : []
     }
     layout(flags: flags, rows: rows, text: text, counts: { apps: apps }) do |bytes, at|
-      5.times do |index|
+      6.times do |index|
         span(bytes, at[:facets] + index * 80 + 16, at[:facet_operations], 0)
         span(bytes, at[:facets] + index * 80 + 24, at[:facet_parameters], 0)
       end
       integer(bytes, at[:apps], 1_048_576, width: 8)
       integer(bytes, at[:apps] + 8, 2)
       integer(bytes, at[:apps] + 16, 2)
+      integer(bytes, at[:apps] + 20, 5)
       span(bytes, at[:apps] + 24, at[:app_services], 2)
     end
   end

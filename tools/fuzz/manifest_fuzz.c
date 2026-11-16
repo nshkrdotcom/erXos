@@ -77,6 +77,7 @@ declares(const erx_service_parameter_t *declared, size_t ndeclared, const erx_se
 		if (declared[index].interface == parameter->interface && declared[index].number == parameter->number &&
 		    declared[index].kind == parameter->kind && declared[index].required == parameter->required &&
 		    declared[index].minimum == parameter->minimum && declared[index].maximum == parameter->maximum &&
+		    declared[index].most == parameter->most &&
 		    strcmp(declared[index].name, parameter->name) == 0)
 			return (true);
 	return (false);
@@ -121,8 +122,10 @@ operations_admitted(const erx_manifest_view_t *view, const erx_dom_view_t *dom, 
 /*
  * Whether the view carries facet row facet_row's parameters as facet's, each
  * of them: one per row, so none is dropped; each a declaration of the
- * service's interface, in strictly ascending number order, so none is
- * stated twice; of a kind the boot carries and within its declared bound,
+ * service's interface, in ascending number order, a number repeated only
+ * by a set's next element, of a greater value, and at most its most
+ * times in a row, so nothing else is stated twice; of a kind the boot
+ * carries and within its declared bound,
  * a device reference a row of the view's devices; and with every
  * declaration the interface requires among them.
  */
@@ -131,7 +134,7 @@ parameters_admitted(const erx_dom_view_t *dom, const erx_dom_facet_t *facet, con
 {
 	const erx_service_parameter_t *declared, *parameter;
 	const erx_dom_parameter_t *value;
-	size_t ndeclared, required = 0, stated = 0;
+	size_t ndeclared, required = 0, stated = 0, run = 0;
 	bool within;
 
 	declared = erx_service_parameters(dom->services[facet->service].interface, &ndeclared);
@@ -142,9 +145,17 @@ parameters_admitted(const erx_dom_view_t *dom, const erx_dom_facet_t *facet, con
 	for (uint32_t index = 0; index < facet->nparameters; index++) {
 		value = &facet->parameters[index];
 		parameter = value->declared;
-		if (!declares(declared, ndeclared, parameter) ||
-		    (index > 0 && parameter->number <= facet->parameters[index - 1].declared->number))
+		if (!declares(declared, ndeclared, parameter))
 			return (false);
+		if (index > 0 && parameter->number == facet->parameters[index - 1].declared->number) {
+			/* The next element of a set, its values strictly ascending. */
+			if (++run >= parameter->most || value->scalar <= facet->parameters[index - 1].scalar)
+				return (false);
+		} else if (index > 0 && parameter->number < facet->parameters[index - 1].declared->number) {
+			return (false);
+		} else {
+			run = 0;
+		}
 		stated += parameter->required;
 		switch (parameter->kind) {
 		case ERX_MF_PARAMETER_U64:

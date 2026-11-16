@@ -18,7 +18,10 @@
 %% operations.bin is the development manifest with root's template granted both
 %% of inspect's operations, which reach the grant's limits by name in number
 %% order; each forged-operations-NAME.bin forges its operation rows, or names
-%% them on a service a configured domain serves, and the view refuses it.
+%% them on a service a configured domain serves, and the view refuses it. net.bin is
+%% the development manifest with its session template's grant of net stating sockets,
+%% 16 ports and one listen port; each set reaches the limits as the list of its elements in
+%% ascending order.
 -module(erx_facet_parameters_tests).
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
@@ -68,9 +71,20 @@ the_line_grant_s_uart_is_its_device_row_test() ->
     {ok, Past} = file:read_file("unreadable-device-past-the-table.bin"),
     ?assertEqual(unreadable, served(Past)).
 
+the_net_grant_s_sets_are_lists_test() ->
+    {ok, Bytes} = file:read_file("net.bin"),
+    {ok, {Services, Grants}} = served(Bytes),
+    [{Server, Name}] = [{Row, N} || {Row, N, ?ERX_SERVICE_NET} <- Services],
+    [Limits] = [L || {{template, _}, N, S, #{sockets := _} = L} <- Grants, N =:= Name, S =:= Server],
+    Ports = lists:seq(2000, 2015),
+    ?assertMatch(#{sockets := 80, ports := Ports, listen := [2015], operations := []}, Limits),
+    ?assertEqual(lists:sort([max_request, in_flight, reductions, period_ns, max_heap_size, queue,
+                             operations, sockets, ports, listen]),
+                 lists:sort(maps:keys(Limits))).
+
 forged_parameter_rows_are_refused_test() ->
     Forged = filelib:wildcard("refused-*.bin"),
-    ?assertEqual(5, length(Forged)),
+    ?assertEqual(8, length(Forged)),
     [?assertMatch({File, {refused, _}}, {File, served(element(2, file:read_file(File)))}) || File <- Forged].
 
 the_grant_s_limits_carry_its_operations_by_name_test() ->

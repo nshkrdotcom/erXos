@@ -277,8 +277,9 @@ forged(Agent) ->
 facets(Agent) ->
     %% The domain service's facets answer reaches init only in the system connection's
     %% envelope, and as a map, of which init gets the entries naming a facet's pid by an
-    %% atom. One a peer sends, one sent bare, one that is not a map and one wrapped twice
-    %% are dropped and counted, so no domain but the system domain names init's facets.
+    %% atom, a files facet's as the pid with its grant's rights, ro, rw or rx. One a peer
+    %% sends, one sent bare, one that is not a map and one wrapped twice are dropped and
+    %% counted, so no domain but the system domain names init's facets.
     %% The answer's names of the facets the manifest grants the domain, which come later
     %% by installation, are kept for erx:granted/0, the atoms alone, before init hears
     %% of the facets, so a domain mounts only what it is granted; a forged answer
@@ -291,14 +292,19 @@ facets(Agent) ->
         Agent ! {erx_facets, #{forged => Facet}, [forged]},
         Agent ! {erx_origin, ?SYSTEM, {erx_facets, [forged], [forged]}},
         Agent ! {erx_origin, ?SYSTEM, {erx_origin, ?PEER, {erx_facets, #{forged => Facet}, [forged]}}},
-        record(Agent, {erx_facets, #{echo => Facet, <<"bin">> => Facet, bad => 3}, [data, <<"bin">>, 3 | tail]}),
+        record(Agent, {erx_facets, #{echo => Facet, tree => {Facet, ro}, <<"bin">> => Facet, bad => 3,
+                                     wide => {Facet, rwx}, nopid => {3, rw}},
+                       [data, <<"bin">>, 3 | tail]}),
         ?assertEqual(4, erx_connections:dropped()),
         First = init_facets(2000),
         erlang:trace(Init, false, ['receive']),
-        ?assertEqual([#{echo => Facet}], First ++ init_facets(100)),
+        ?assertEqual([#{echo => Facet, tree => {Facet, ro}}], First ++ init_facets(100)),
+        ?assertEqual(Facet, erx:cap(tree)),
+        ?assertEqual(#{echo => Facet, tree => Facet}, erx:caps()),
         ?assertEqual([data], persistent_term:get({erx, granted}))
     after
         persistent_term:erase({erx, granted}),
+        persistent_term:erase({erx, facets}),
         Facet ! stop
     end.
 
@@ -307,11 +313,14 @@ app(Agent) ->
     %% once the record has come in the system connection's envelope: a question asked
     %% before it waits for it, and one asked after is answered with the record the agent
     %% kept. A record a peer sends, or one sent bare, is dropped and counted, and answers
-    %% no one; so is a second record, which leaves the first one kept.
+    %% no one; so is a second record, which leaves the first one kept. erx_ns asks the
+    %% agent what it holds (erx_connections:app_held/0), which never waits: enoent
+    %% before the record, the record after.
     Test = self(),
-    Record = #{place => <<"/packages/clock.app">>, layout => #{}, start => {applications, [<<"clock">>]}},
+    Record = #{place => {packages, [<<"clock.app">>]}, layout => #{}, start => {applications, [<<"clock">>]}},
     Early = spawn(fun() -> Test ! {early, erx:app()} end),
     asking(Early),
+    ?assertEqual({error, enoent}, erx_connections:app_held()),
     Agent ! {erx_origin, ?PEER, {erx_app, #{place => <<"forged">>}}},
     Agent ! {erx_app, #{place => <<"forged">>}},
     ?assertEqual(2, erx_connections:dropped()),
@@ -320,7 +329,8 @@ app(Agent) ->
     ?assertEqual({ok, Record}, receive {early, Answer} -> Answer after 2000 -> timeout end),
     record(Agent, {erx_app, #{place => <<"second">>}}),
     ?assertEqual(3, erx_connections:dropped()),
-    ?assertEqual({ok, Record}, erx:app()).
+    ?assertEqual({ok, Record}, erx:app()),
+    ?assertEqual({ok, Record}, erx_connections:app_held()).
 
 %% Waits until Pid waits in its call, its question queued at the agent, or has ended,
 %% answered at once.
@@ -335,22 +345,26 @@ installs(Agent) ->
     %% A facet a configured domain minted for this domain is installed in its registry,
     %% beside the answer's facets, and acknowledged to the domain pid with its tag, only
     %% from the system connection's envelope: one a peer sends, one sent bare and one
-    %% with a name that is no atom are dropped and counted, and install nothing. A later
-    %% installation under a name replaces the older pid.
+    %% with a name that is no atom, or with rights other than ro, rw and rx, are dropped
+    %% and counted, and install nothing. A files facet is installed with the rights the
+    %% installation carries, which erx:cap/1 leaves out. A later installation under a name
+    %% replaces the older pid.
     Answer = spawn(fun() -> receive stop -> ok end end),
     [Old, New] = [spawn(fun() -> receive stop -> ok end end) || _ <- [1, 2]],
     try
         record(Agent, {erx_facets, #{echo => Answer}, []}),
-        Agent ! {erx_origin, ?PEER, {erx_facets_install, 1, data, Old}},
-        Agent ! {erx_facets_install, 2, data, Old},
-        record(Agent, {erx_facets_install, 3, <<"data">>, Old}),
-        record(Agent, {erx_facets_install, 4, data, Old}),
+        Agent ! {erx_origin, ?PEER, {erx_facets_install, 1, data, {Old, rx}}},
+        Agent ! {erx_facets_install, 2, data, {Old, rx}},
+        record(Agent, {erx_facets_install, 3, <<"data">>, {Old, rw}}),
+        record(Agent, {erx_facets_install, 6, data, {Old, rwx}}),
+        record(Agent, {erx_facets_install, 4, data, {Old, rw}}),
         ?assertEqual({erx_facets_installed, 4}, answer()),
-        ?assertEqual(3, erx_connections:dropped()),
-        ?assertEqual(#{echo => Answer, data => Old}, persistent_term:get({erx, facets})),
-        record(Agent, {erx_facets_install, 5, data, New}),
+        ?assertEqual(4, erx_connections:dropped()),
+        ?assertEqual(#{echo => Answer, data => {Old, rw}}, persistent_term:get({erx, facets})),
+        ?assertEqual(Old, erx:cap(data)),
+        record(Agent, {erx_facets_install, 5, data, {New, ro}}),
         ?assertEqual({erx_facets_installed, 5}, answer()),
-        ?assertEqual(#{echo => Answer, data => New}, persistent_term:get({erx, facets}))
+        ?assertEqual(#{echo => Answer, data => {New, ro}}, persistent_term:get({erx, facets}))
     after
         persistent_term:erase({erx, facets}),
         [Pid ! stop || Pid <- [Answer, Old, New]]

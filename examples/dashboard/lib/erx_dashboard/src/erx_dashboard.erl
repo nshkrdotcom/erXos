@@ -18,7 +18,8 @@ refusal unlike the one before is logged as `erx_dashboard: refused
 Reason`. Once a minute, on the minute, and whenever a board comes, it
 computes the tree and hands it to the UI if it differs from the one
 shown. The first tree a window takes is logged as `erx_dashboard:
-shown`. The tree takes no input, so the UI's events are dropped.
+shown YYYY-MM-DD HH:MM`, the minute of the clock it shows
+(erx_dashboard_view:minute/1). The tree takes no input, so the UI's events are dropped.
 """.
 -behaviour(gen_server).
 
@@ -95,15 +96,15 @@ open(#{refused := Last} = State) ->
 render(#{window := none} = State) ->
     {noreply, State};
 render(#{window := Window, board := Board, shown := Shown} = State) ->
-    Model = #{time => calendar:universal_time(), board => Board},
-    case erx_dashboard_view:tree(Model) of
+    Time = calendar:universal_time(),
+    case erx_dashboard_view:tree(#{time => Time, board => Board}) of
         Shown ->
             {noreply, State};
         Tree ->
             case erx_ui:tree(Window, Tree) of
                 ok ->
                     case Shown of
-                        none -> logger:notice("erx_dashboard: shown");
+                        none -> logger:notice("erx_dashboard: shown ~ts", [erx_dashboard_view:minute(Time)]);
                         _Before -> ok
                     end,
                     {noreply, State#{shown := Tree}};

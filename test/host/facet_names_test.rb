@@ -58,17 +58,17 @@ class FacetNamesTest < Minitest::Test
                                             %w[inspect inspect]]
   end
 
-  # The system tree's mint names its service written out, so the check holds it to the
-  # manifest's row: without the row, the storage domain's mint of system is a use of a
-  # facet the table does not list.
+  # The system tree's mint and its reader name the service written out, so the check
+  # holds both to the manifest's row: without the row, the storage domain's mint of
+  # system and the system domain's read of it are uses of a facet the table does not list.
   def test_the_system_tree_s_mint_needs_its_manifest_row
     files, docs = tree
     board = 'config/manifest/development.txt'
     row = "service system\n  server @domain.storage\n  interface files\n"
     assert_includes files.fetch(board), row
     without = files.merge(board => files.fetch(board).sub(row, ''))
-    assert_equal ['erlang/apps/erx_storage/src/erx_storage_system.erl'],
-                 Erx::FacetNames.violations(without, docs: docs).map(&:path)
+    assert_equal %w[erlang/apps/erx_starter/src/erx_pkg_medium.erl erlang/apps/erx_storage/src/erx_storage_system.erl],
+                 Erx::FacetNames.violations(without, docs: docs).map(&:path).sort
   end
 
   # inspect is a manifest service of a declared interface that cites its design section,

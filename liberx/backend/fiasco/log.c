@@ -9,9 +9,11 @@
  * which is the kernel's own dispatch and log cores, as on the hosted backend.
  * Each record goes out through the kernel's log object as it is written. A
  * public UTCB of this file's own holds what the caller stores, since each
- * native call overwrites the native UTCB's message registers.
+ * native call overwrites the native UTCB's message registers. The cores' effects
+ * are the root's own (end.c), which the probe links for its end.
  */
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -19,7 +21,6 @@
 #include "erx/core/dispatch.h"
 #include "erx/core/effects.h"
 #include "erx/log.h"
-#include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/generated/calls.h"
 #include "liberx/backend/fiasco/log.h"
 
@@ -38,28 +39,6 @@ erx_utcb_self(void)
 }
 
 void
-erx_effect_log_lock(void)
-{
-}
-
-void
-erx_effect_log_unlock(void)
-{
-}
-
-void
-erx_effect_console_write(const char *line, size_t length)
-{
-	erx_fiasco_console_write(line, length);
-}
-
-uint64_t
-erx_effect_clock_ns(void)
-{
-	return (erx_fiasco_clock_ns());
-}
-
-void
 erx_fiasco_call(uint64_t number, const uint64_t args[ERX_TRAP_ARG_COUNT],
     uint64_t results[ERX_TRAP_RESULT_COUNT])
 {
@@ -71,6 +50,13 @@ erx_fiasco_call(uint64_t number, const uint64_t args[ERX_TRAP_ARG_COUNT],
 	};
 
 	erx_dispatch(&caller, number, args, results);
+}
+
+/* The probe's one thread runs the cores, so whichever thread asks owns the log. */
+bool
+erx_fiasco_log_owned(void)
+{
+	return (true);
 }
 
 erx_status_t

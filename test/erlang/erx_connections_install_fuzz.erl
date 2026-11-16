@@ -75,6 +75,9 @@ message(Agent, {Model, Dropped, Tally}) ->
 accepted({erx_origin, ?SYSTEM, {erx_facets_install, Tag, Name, Facet}})
   when is_integer(Tag), is_atom(Name), is_pid(Facet) ->
     {yes, Tag, Name, Facet};
+accepted({erx_origin, ?SYSTEM, {erx_facets_install, Tag, Name, {Pid, Rights} = Facet}})
+  when is_integer(Tag), is_atom(Name), is_pid(Pid), (Rights =:= ro orelse Rights =:= rw orelse Rights =:= rx) ->
+    {yes, Tag, Name, Facet};
 accepted(_Message) ->
     no.
 
@@ -101,7 +104,8 @@ random_message() ->
 
 tag() -> pick([1, 2, 7, 1 bsl 70, -3, 0, 1.0, tag, <<1>>, make_ref()]).
 name() -> pick([data, echo, log, data, '', <<"data">>, 1, {data}, "data"]).
-facet() -> pick([pid(5), pid(5), pid(99), self(), data, fun() -> ok end, make_ref(), {pid(5)}, [pid(5)]]).
+facet() -> pick([pid(5), pid(5), pid(99), self(), data, fun() -> ok end, make_ref(), {pid(5)}, [pid(5)],
+                  {pid(5), rx}, {pid(5), rw}, {pid(99), ro}, {pid(5), rwx}, {data, rw}, {pid(5), ro, x}]).
 field() -> pick([tag(), name(), facet()]).
 
 random_term() ->

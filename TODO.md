@@ -88,7 +88,7 @@ it; git history is the record of completed work.
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
   the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
   every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
-  the release's `pkg/NAME.app`, which the system partition replaces
+  the `system` grant's `NAME.app`, the system partition's `apps/NAME.app`
   ([docs/todo-system-partition.md](docs/todo-system-partition.md)), and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
   erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. `erx_pkg:system_config/0` builds
   the config from the manifest and the library's app entries. QEMU virt's development manifest has the
@@ -136,17 +136,16 @@ it; git history is the record of completed work.
   package rows (`erx_starter:packages/2`) and their keepers, the only starters of an app's sessions (PK7);
   the app principal's CPU group under an apps group, which the stopgap's flat groups leave out; a `tree
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
-  the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
-  which `erx_app` calls as `{erofs, app}` and `erx_ns` refuses with `einval` until the file-backed
-  EROFS mount of [todo-system-partition.md](docs/todo-system-partition.md) lands, so every Erlang
-  app's session ends with `{mount, einval}`; a native app's start and the record's
+  the plan's PK10 comparison does not cover it; the rest of the file-backed EROFS mount of
+  [todo-system-partition.md](docs/todo-system-partition.md), whose `{erofs, app}` source `erx_app`
+  mounts `/app` with; a native app's start and the record's
   `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
   (`erx_app` ends with `{not_supported, program}` until then).
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
-  an image package's place
-  `/pkg/NAME.app`, which becomes `/system/NAME.app`, is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
-  `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
-  through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
+  an image package's place on the `system` grant is written in `erx_principal:place/2` and again in
+  `erx_pkg_medium` (`place/2`, `on_system/1`, beside `erx_ns:facet_grant/1`'s grant tuple; one owner wanted); the
+  `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console
+  facet through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
 * [Low] apps, `erx_starter_keeper`: a session that ends before its keeper takes it ends the keeper with
   `noproc`, the exit its trapped link brings, so the supervisor reports a crash naming no session where
@@ -480,6 +479,17 @@ it; git history is the record of completed work.
   log, and nothing shows that a write to the archive faults. The same holds
   for the crash frame's write removed. `make check-native-seeds` keeps the threads
   and watchdog suites' seeds.
+* [Medium] stopgap, `liberx/backend/fiasco/end.c` and `service.c`: nothing tests that an end on the service drains
+  the debug log (`erx_fiasco_log_owned`); a broken owner check would lose the emergency-path lines once the log is
+  handed to the console, and no gate would fail. Add a native cell that hands the log to the console, logs a record
+  and ends on the service, its judge requiring the record before `erx: end`, with a `check-native-seeds` seed that
+  makes the check false. The owner check also rests on the service alone calling `erx_debug_log_read`, `_take`,
+  `_hand_to_console` and `_take_back` in a root; only `erx_dispatch` has a chokepoint (`dispatch-one-caller`); add
+  one for those with a seed.
+* [Medium] tooling, `tools/lib/erx/system_domain_regrant.rb` and `session_domain.rb`: the regrant judge does not
+  read the end line, so a root fault that powered off would pass, and its fixture `abort.log` still ends
+  `erx: end off` and needs recapturing first; the session suite's halt boot could require `erx: end off`, which
+  init's halt after a refused commit, now a reset, no longer prints. The crash and watchdog suites check the end line.
 * [Low] stopgap, the crash suite's end-path row: `erx_machine_end` runs only with
   `ERX_END_OFF`; under `-no-reboot` both ends exit QEMU, so the suite cannot tell
   them apart, and the refusal of a bad `how` has no case.
@@ -1676,6 +1686,21 @@ it; git history is the record of completed work.
   It should fill `struct utsname` from `erx/abi.h`'s `ERX_UNAME_SYSNAME_STRING`, `ERX_UNAME_RELEASE_STRING` and
   `ERX_ARCH_MACHINE_STRING`, and the node name from the host part of the boot information's node name, which the shell's `uname`
   (`erlang/apps/erx_shell/src/erx_cmd_uname.erl`) reads as init's `-sname` or `-name`, with no value of its own; `docs/design-shell.md`, "Text commands".
+* [Low] musl, `musl/include/sys/ttydefaults.h`: the `TTYDEF_*` flags and the `C*` characters are FreeBSD's
+  (`sys/sys/ttydefaults.h`), but they restate `erx_tty:new/0`'s defaults by hand. Generate the header from
+  the tty's defaults, or move the defaults into `abi/termios.txt`, so the C and Erlang defaults have one
+  source.
+* [Low] musl, `abi/termios.txt`: the generated `bits/termios.h` defines only the table's names, so a FreeBSD
+  program naming a bit erx_tty drops (`ECHOPRT`, `FLUSHO`, `PENDIN`, `EXTPROC`, `CIGNORE`, `CRTSCTS`,
+  `MDMBUF` and the other modem flow-control flags) or `TABDLY`, `TAB0`, `EXTA` and `EXTB` does not build,
+  where FreeBSD's `tcsetattr` would drop the bit. Every name is also visible without `_BSD_SOURCE`, where
+  FreeBSD hides its BSD names unless `__BSD_VISIBLE`. Give the table a line for a name a program may write
+  that the tty drops, and a visibility column, when a ported program needs them.
+* [Low] musl, `musl/include/termios.h`: `TCSANOW`, `TCIFLUSH` and `TCOOFF` and their siblings are FreeBSD's
+  numbers (`include/termios.h:59-72`) copied by hand, and `TCSASOFT` is missing (musl's `tcsetattr` refuses
+  any action above `TCSAFLUSH`). No seam reads them yet: `tcflush` and `tcflow` fail with `ENOTTY` in a
+  program and `ENOSYS` in the root domain. Move them into `abi/termios.txt` when the program protocol
+  carries them, so the seam's decoder reads the same numbers.
 * [Low] bootstrap, CPU feature words (`kernel/arch/aarch64/cpu_id.c`): only the boot CPU's identification
   registers are read, and every CPU is taken to have its features. QEMU `virt` and the Raspberry Pi boards
   have identical CPUs; a board whose CPUs differ needs the intersection over all of them.
@@ -2058,6 +2083,11 @@ it; git history is the record of completed work.
 
 ## Bugs by subsystem
 
+* [Low] stopgap Fiasco, bootstrap (`fiasco/bootstrap/server/src/platform/arm_virt.cc`): `init`
+  never calls `query_psci_method()`, so `reboot_psci` uses the default `Psci_smc`
+  (`platform-arm.h:96`) while QEMU virt's device tree says hvc; bootstrap's own reboot path on
+  virt would issue SMC through the wrong conduit. The fix is one call in `init`, with a test.
+
 * [Medium] desktop, the glyph step's glyph count (`tools/lib/erx/glyphs.rb`, `erx_draw_core.erl` `?MAX_GLYPHS`):
   `Erx::Glyphs` refuses only at font(7)'s field limits, so it would write a subfont of more than 4096 glyphs, the
   most a font cache holds, which `erx_font:parse/1` then refuses. No spec holds that limit (`abi/formats/draw.txt`
@@ -2247,6 +2277,20 @@ it; git history is the record of completed work.
   in `default:`, so a new kind is not a build failure where it is unhandled; derive `allowed` from the enum and
   drop the `default:` cases. `Contracts.member_bound`'s enum may hold negative values, which fail safe at the
   view but should be refused at the declaration.
+* [Low] `tools/lib/erx/abi_emit_erlang.rb` `enum_members`: an atom enum is emitted only as the list
+  `?ERX_<ENUM>_MEMBERS`, with no guard macro and no `-type`, so code that needs a guard or a type copies the
+  members by hand: `files_rights`'s `ro | rw | rx` in `erx_fs_grant.erl`, `erx_prog_handler_core.erl`, `erx_ns.erl`
+  (`mount_options/3`, `rights()`), `erx.erl` (`facet()`), `erx_file_remote.erl` and `erx_verity.erl`, about a
+  dozen copies that refuse a member the ABI gains while the generated list accepts it. Emit
+  `?ERX_IS_<ENUM>(X)` and a type per atom enum and convert the copies.
+* [Medium] apps, a refused `/app` mount (`erlang/apps/erx_app/src/erx_app.erl`, `start_app/2`): in the kiosk
+  suite's altered cell, whose image the verity read refuses, `erx_app` fails with `{mount, Reason}` and is
+  started again about every 0.2 s for as long as the guest runs, logging each attempt. The design ends the
+  session at its start with the reader's reason ([design-packaging.md](docs/design-packaging.md), the failure
+  table's "the image does not mount" row) and lets the start row's keeper restart it only within the row's
+  intensity, 5 ends in 600 s by default, after which the row is `down`
+  ([design-apps.md](docs/design-apps.md)); the restarts break that bound, so either they bypass the row's
+  supervisor or its intensity is not applied to this row.
 * [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
   `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
   needs an `rx` mount); the mount should take the facet's rights.
@@ -2420,9 +2464,9 @@ it; git history is the record of completed work.
 * [Low] host tests, EUnit runs (`test/host/*_test.rb`): each test file starts `erl` for `eunit:test` on its
   own, and a logger report a case provokes can split EUnit's verbose line for that case on standard output.
   `erx_inspector_test.rb` sends the logger to standard error and matches verdicts on standard output alone;
-  `erx_fs_test.rb` and `erx_ramfs_test.rb` silence the logger instead; the rest do neither. Give the host
-  tests one EUnit runner that keeps the logger on standard error and returns the two streams apart, and move
-  every suite onto it.
+  `erx_fs_test.rb`, `erx_ramfs_test.rb`, `erx_bt_group_test.rb`, `erx_line_test.rb`,
+  `erx_console_reads_test.rb` and `erx_win_test.rb` silence the logger instead; the rest do neither. Give the host tests one EUnit runner that keeps the logger on standard error and returns the two
+  streams apart, and move every suite onto it.
 * [Low] ABI generator, frame profiles (`tools/lib/erx/abi_profile.rb`, `include/erx/profile.h`): the C
   check's bounds on depth and totals are written in both files, tied only by the generated table's static
   asserts, and the 64-key bound of a map or union (`ERX_PROFILE_KEYS_MAX`) has no model rule, so a protocol
@@ -5098,6 +5142,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] session, `erlang/apps/erx_session/src/erx_tty.erl`: erasing a UTF-8 character backs over one column, where FreeBSD measures it with `teken_wcwidth` and backs over two for a double-width character (`tty_ttydisc.c:889-962`).
 * [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: waiters are keyed by open, so a blocking read and a `poll` of one open replace each other and the read loses its `VMIN`/`VTIME` timer. Key a wait by a handle (`{Open, read}`, `{Open, poll}`) before the terminal relay lets two threads wait on one open.
 * [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: `set/2` re-arms every waiting read's timer and forgets which reads timed out, even when `VMIN`, `VTIME` and `ICANON` did not change, so frequent `tcsetattr` calls keep a timed read of another open waiting, where FreeBSD fixes the deadline at the read's start (`sys/kern/tty_ttydisc.c:314-318`). Re-arm only on a change, and keep the expiry in the waiter's own state.
+* [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: `?VDISABLE` (0xff) and `?MAX_SPEED` restate
+  `abi/termios.txt`'s `UNNAMED` byte and the codec's 32-bit word, which musl's generated `bits/vdisable.h`
+  and `erx_abi_termios` take from the table; a changed `UNNAMED` would leave a byte that C programs think
+  disabled live in the tty. Export them from `erx_abi_termios` and use them in `erx_tty`.
 * [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: no flush of held input or output, which `tcflush`, `TCSAFLUSH` (`readpassphrase`) and FreeBSD's flush on last close (`tty.c:1768-1773`, `tty_ttydisc.c:104-108`) need; add `flush/2` and name it in design-live.md ("The tty"). `TOSTOP` is in the flag table, but design-programs.md has a first-tier `tcsetattr` with it fail with `EINVAL`; the relay must refuse it until the second tier.
 * [Medium] session, `test/erlang/erx_tty_tests.erl`: the exploration checks what readers get, not what is echoed or sent to the master (caret notation, erase widths, reprint, the output flags and the column), its only `set` event flips `ICANON`, and the seeded faults design-live.md names for the timers and the bound (a `read_wait` that starts no timer, a `poll` that starts one, the bound removed) and for stale timers and lost wakeups are not planted. The flag tables are written out again in the test and the fuzz target; export them from `erx_tty` or generate all three from the program protocol's termios table.
 * [Low] session, `erlang/apps/erx_session/src/erx_tty.erl`: a full raw queue switched to cooked holds no line end and takes none, so reads get `eagain` until a signal flushes it; FreeBSD's cooked read takes a partial canonicalized line (`tty_ttydisc.c:236-256`). `read/3`, `input/3`, `output/3` and `status/3` crash on a non-integer or negative size where `set/2` and `size/3` return `einval`, so the relay checks those arguments.
@@ -6907,10 +6955,12 @@ to the corpus and follow rc
   is recorded as `BSD-2-Clause`. Use `Attribution.erxos_addition?`, or a
   test of the same strength, once the audit's real inputs can be run
   against it.
-* [Low] build, import inventory (`tools/lib/erx/origin.rb`, `Origin#check`,
-  and `PackProvenance#imported_item`): a `changes` row whose hash no longer
-  matches still supplies the file's license when the file has an erXos
-  header; a stale row should be refused.
+* [Low] build, import inventory (`tools/lib/erx/pack_provenance.rb`,
+  `PackProvenance#imported_item`): a file captured after its tree's
+  `Origin#check` takes its `changes` row's license without comparing the
+  row's hash to the captured bytes; one Origin reader that returns a row only
+  for the bytes it records would serve this, `FiascoProvenance#attribute` and
+  `Glyphs` alike.
 * [Medium] build, notice check (`tools/lib/erx/pack_provenance.rb`,
   `attribute`; `tools/lib/erx/import_notices.rb`, `select`): the check that
   a selected import grant has a notice document looks at the whole
@@ -7116,7 +7166,7 @@ to the corpus and follow rc
   kernel.
 
 * [Low] tests, `test/host/erx_starter_test.rb`: the suite takes about 4.5 minutes, most of it seeded fault 0 (the keeper not linking), under which nearly every case waits out EUnit's 5 s timeout. Fail the fault's cases fast instead of by timeout.
-* [Low] tests, `liberx/system/dom_apply.c` (`apply_given_words`): no host test checks the record words written for a framebuffer handed to a domain other than the system domain; placement and the apply steps are tested, and the raspi4b suite only sees the display domain start without a screen.
+* [Low] tests, `liberx/system/dom_apply.c` (`apply_given_words`): no host test checks the record words written for a framebuffer handed to a domain other than the system domain; placement, the apply steps and `erx_boot_framebuffer_words` itself (`boot_manifest_test.rb`) are tested, and the raspi4b suite's tcg-4cpu cell, one QEMU boot under TCG, checks the display domain's record through its driver's framebuffer line and, for the base and offset, only through its picture.
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](docs/design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
 * [Medium] USB, the bus core and the controller core (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
   a detach while Address Device is in flight releases the address-zero turn, which follows from the port's state,
@@ -7570,12 +7620,23 @@ to the corpus and follow rc
   other clients' entries in resolution; the sender credit bounds only the rate of hand-overs. Bound it per
   grant: tag each hand-over with its grant, count the entries each grant's packets started, and drop a
   grant's hand-overs past a cap as lost frames.
+* [Medium] network, grant limits (`abi/services/net.txt`, `erx_net_grant_core:new/1`): a net facet row's
+  `sockets` and `buffers` are each bounded per grant, but nothing sums the grants' buffers, stated or default,
+  against the network domain's memory (36 MiB on development.txt beside 16 MiB a grant by default), so grantees
+  that fill their grants can exhaust it and restart the domain for all of them. And the grant and the mint
+  (`erx_net_admit:mint/2`) read the limits, `ports` and `listen` among them, by atoms written by hand, falling
+  back to the default for a missing key, so a parameter renamed in net.txt alone widens every row that states
+  it to the default; and the least unprivileged port, 1024, is written both in `erx_net_grant_core`'s default
+  and in net.txt's `net_unprivileged_port`, which the manifest check reads (`check_net_ports`). Sum the buffers per serving domain in
+  net_grant, as property 18 sums pixel areas, and generate the key names and the port for Erlang from the
+  ABI; the grant's portable modules include no ABI header, so the erXos runtime (`erx_net_erxos`) would
+  hand them over.
 * [Medium] network, sockets (`erlang/apps/erx_net/src/erx_net_grant.erl`, `erx_net_bind`,
   `erx_net_input:udp/3`): a socket bound to a specific address and a port takes that address's
   datagrams from a socket another domain bound to `any` on the same port, since input tries the
   specific binding first and the bind asks nothing of who holds the wildcard one; FreeBSD's
   `in_pcbbind_setup` refuses such a bind with `EADDRINUSE` when the wildcard socket belongs to
-  another user. And within its 1,024 sockets a grant can still hold a large share of the
+  another user. And within its `sockets` limit, 1,024 by default and at most 4,096, a grant can still hold a large share of the
   ephemeral ports or of the ICMP echo identifiers. Refuse a specific bind over another grant's
   wildcard one, as FreeBSD does across users.
 * [Low] network, TCP TIME-WAIT (`erx_tcp_conn`, configured/1): a configuration change that
@@ -7612,6 +7673,44 @@ to the corpus and follow rc
   `kernel_watchdog_timeout` unset, since nothing under Fiasco reloads the watchdog), no crash region, no trial request and no device
   secret (M12). Development
   builds run trusted code only until M11.
+* [Medium] stopgap, a device's input and a fault's reach on Fiasco (R1's published downsides; erXos's
+  kernel closes them). What holds: an interrupt whose pin was unbound after another CPU acknowledged it
+  is ended at its chip, not dereferenced (`Irq_chip::handle_irq`, `fiasco/kernel/src/kern/irq_chip.cpp`);
+  an SError taken in user mode ends the task of the thread that ran with a fault record of kind
+  `async_error` (`arm_serror_user_entry`, `fiasco/kernel/src/kern/arm/thread-arm.cpp`, decided by
+  `liberx/backend/fiasco/arch/aarch64/exception.c`). What does not:
+  * attribution beyond the running thread: Fiasco's kernel runs with SErrors masked, so an SError
+    is taken at the next entry to user mode on its CPU and presumed that thread's, and a device
+    error raised while a domain was in the kernel, or by a posted write, can end another domain's
+    task (K12's limit). Where it lands in the root, the root's main and runtime threads end the
+    machine (`service_fault`), its service and watchdog threads, whose exception handler is sigma0,
+    resume with nothing recorded (sigma0 refuses the message), and in sigma0 it is only counted; Fiasco has no exit window and reads no severity or error
+    records, so an uncontainable error is not stopped either. No test provokes an SError, since QEMU
+    `virt` raises none a guest can cause: only the root's decision is tested
+    (`test/host/fiasco_exception_test.rb`);
+  * every SError is counted per CPU (`num_serrors`, which jdb shows), but no log line names one and
+    the inspector has no attribute for the count;
+  * a pin read on one CPU while another detaches it (`Irq_chip_gen::detach`) reaches a handler whose
+    object is already bound to the software chip, whose acknowledge does nothing, so that CPU's
+    interrupt is never ended: every GIC priority is the same, so that CPU takes no more timer ticks,
+    IPIs or device interrupts, a silent hang reached by a driver domain ending while its line fires on
+    another CPU. Only `handle_irq` knows which chip acknowledged the interrupt, so no small fix
+    exists; and `Icu_h::op_icu_unbind`
+    (`fiasco/kernel/src/kern/icu_helper.cpp`) detaches without the IRQ's lock that
+    `Irq_chip::detach` requires;
+  * a wedged bus, which stalls the CPU that touches it with no fault to end anything;
+  * DMA of unconfined devices (the item above, FD12);
+  * on the Raspberry Pi 4, no hardware watchdog behind a hang of Fiasco (the item above, FD29); Q15
+    accepts the root reloading the PM watchdog during a trial.
+* [Low] liberx Fiasco backend, `erx_fiasco_exception_kind`
+  (`liberx/backend/fiasco/arch/aarch64/exception.c`): the exception class's position and the SError
+  class are written by hand, since `tools/erx sysreg refresh` refuses ESR_EL1, whose ISS layout
+  depends on EC; let the refresh keep the fields that do not (EC, IL) and generate them. The same
+  function reports alignment and breakpoint exceptions as `undefined`, though the ABI has both kinds.
+* [Medium] hostile suites, an interrupt storm on a driver's line on Fiasco: a line held asserted, or
+  raised at the device's fastest rate, whose pass is that the machine and the other domains keep
+  running, so the downside above is measured rather than assumed (FD33's recommendation). It needs a
+  device on QEMU `virt` that a test can make interrupt without end.
 
 * [Medium] code service, atoms from loads (`erlang/apps/erx_code/src/erx_code.erl`):
   `activate/1` makes each manifest name an atom before ERTS's loader checks it
@@ -8019,6 +8118,31 @@ document's "residual risks accepted" paragraph.
   design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
   takes the same shape.
 
+* [Medium] stopgap kernel, release builds (design-stopgap.md, "Boot handoff", the kernel): a
+  release kernel is configured without JDB and the kernel's console input, so a panic reboots
+  instead of waiting on the console (`tools/erx build release-kernel`, `FiascoConfig::RELEASE_UNSET`),
+  but no image packs it: every image is a development build (`ProductionImage::BUILD_KIND`);
+  the release image build must take `Fiasco#build_release_kernel`'s kernel and extend the
+  provenance audit (`fiasco_provenance.rb`, which reads `build/fiasco/kernel`) and the build
+  memo to it. A panic before `Psci::init` and `Dt::init` in `Startup::stage2`, the handoff
+  checks of `erx_handoff.cpp` among them, finds no reset method and loops forever
+  (`reset-arm-gen.cpp`). The kernel picks the PSCI conduit at run time from the device tree
+  (`CONFIG_ARM_PSCI_DYN`; QEMU virt says hvc, the Pi 4 SMC through BL31), and the device tree
+  is readable only after `Kip_init`, while the banner's handoff check runs in stage1. The fix
+  is to run `Kip_init` and `Dt::init` ahead of `Kmem_alloc::init` in stage2, fold the banner
+  and `check_descriptors` into one handoff step right after `Dt::init`, and have
+  `platform_reset` run Psci's own probe (without the ACPI fallback) when PSCI is not yet
+  detected; Fiasco's own stage1 and `Kip_init` panics stay a residual. The test boots a
+  release image whose handoff record is refused. The reboot rests on reading `kernel_panic.cc`, `thread.cpp`,
+  `terminate.cpp` and `reset-arm-gen.cpp` and on the configuration check; no release kernel
+  has panicked under QEMU. The test that settles it boots a release image whose kernel panics
+  after `Psci::init` with `-no-reboot` and expects QEMU to exit after the panic line, and one
+  whose handoff fails, once the early reset is fixed. Still in a release kernel and each a
+  question for the release: `CONFIG_RT_DBG`, which adds object naming and the kernel memory
+  statistics dump to the console (`jdb_kobject`, `CONFIG_JDB_KMEM_STATS`) to the debugger
+  kernel object `jdb_object` that every kernel has; and `CONFIG_PERF_CNT_USER`, user-mode
+  access to the performance counters, which Fiasco's Kconfig marks for debugging only.
+
 ## Planned features
 
 * [Medium] apps, who may read the start table's row names in a release build ([design-apps.md](docs/design-apps.md),
@@ -8131,9 +8255,22 @@ document's "residual risks accepted" paragraph.
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
   `examples/dashboard` describes a Pause click and a status line, which this dashboard of a clock, a date
   and a quotes panel does not have, and its host test goes through `erx_ui_host` and the SDK's boundary
-  check, which this host test does not. The plan's idle-kiosk check (G6, no wake for a minute) cannot hold
-  for a clock of minutes, so it needs a kiosk whose tree does not change, or a reworded criterion. plan.md
+  check, which this host test does not. G6 (design-display.md) holds when no device request comes between
+  two changes of the tree. The kiosk cell (`tools/lib/erx/kiosk.rb`) boots it as an image package and
+  checks its frame; no QEMU test checks G6 yet: the cell's next step counts the driver's
+  requests between two of the dashboard's clock ticks, where a seeded timer that repaints with no change
+  fails the count. plan.md
   and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
+
+* [Medium] the kiosk cell (`tools/lib/erx/kiosk.rb`), left from its review: its boot repeats
+  MediumBoot::Run's (fresh medium, slot parse, firmware tree, the boot value spliced after the image's
+  identity) instead of sharing one MediumBoot function; it loads `test/fixtures/dashboard_screen.rb`
+  from tools/lib, whose `generated_tree` sets the host tests' sanitizer environment in the gate process,
+  so the renderer and the part of ErlangBuild it needs belong in tools/lib without that side effect;
+  `packages: refused` is logged for admission refusals only, not for a header the file check refuses;
+  AppPack builds an app's beams into the app directory's own `ebin/`, which each run of the cell or of
+  `tools/erx pack --app` leaves in the source tree. `ls /apps` and a dropped `--enable` are not yet
+  cases of its boot.
 
 * [High] `examples/dashboard` full kiosk, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"
   above), which a real fetch of the live quotes on the target waits for, and no run on the target that fetches
@@ -8901,7 +9038,12 @@ document's "residual risks accepted" paragraph.
   the glue's GCC objects (`erx_handoff.cpp` already exists, and its imports
   are unchecked until then); and the vector route. Each fails the check as
   soon as a file it awaits lands, except the files it lists as existing
-  ([design-kernel.md](docs/design-kernel.md#chokepoint-checks)).
+  ([design-kernel.md](docs/design-kernel.md#chokepoint-checks)). The
+  object leg's stated reason, that no build produces liberx's target
+  objects, no longer holds (the native roots build them, for example
+  `build/native-watchdog/root/liberx_backend_fiasco_end_how_c.o`), and its
+  exemptions, the groups' `unchecked_objects`, grow with every new liberx
+  source instead of shrinking; landing it deletes those lists.
 * [Medium] chokepoints, gaps of the text rules until the object leg
   closes them (`tools/lib/erx/chokepoints.rb`): rules match names, so they
   do not follow includes (a `kernel/core/cap.h` allowed to include

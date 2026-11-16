@@ -1497,7 +1497,7 @@ module Erx
 
       # Property 19's first and seventh clauses; answers the index of each service of the
       # apps row's services, the services the board's sums count max apps holding. No
-      # source facet carries `tree apps`, which only a derived row may. Each name is the
+      # source facet carries a tree, which only a derived row may. Each name is the
       # name of exactly one service of the manifest, none of app_services_refused, of an
       # interface an ABI file declares, which gives every parameter a default (an optional
       # parameter), since an app's row is granted with no parameter stated, and every
@@ -1506,8 +1506,8 @@ module Erx
       # the files interface until the storage service's `tree apps` roots its grant at
       # the app's own directory, by interface, whatever its name.
       def check_apps(tables)
-        invalid('a facet of the source carries tree apps, which only the rows the build derives may', 19, 'facet.parameter') if
-          records('facet').any? { |record| record.parameters.any? { |key, value| key.value == 'tree' && value.value == 'apps' } }
+        invalid('a facet of the source carries a tree, which only the rows the build derives may', 19, 'facet.parameter') if
+          records('facet').any? { |record| record.parameters.any? { |key, _value| key.value == 'tree' } }
         service_rows = tables.fetch('services')
         refused = app_services_refused
         indices = @apps.services.map do |name|
@@ -1523,7 +1523,7 @@ module Erx
             interface == fetch_interface('files')
           declared = declared_parameters(interface) ||
                      invalid("services names #{name}, whose interface no ABI file declares", 19, 'apps.services')
-          required = declared.reject { |_key, parameter| parameter.fetch(:cardinality) == 'optional' }.keys
+          required = declared.select { |_key, parameter| parameter.fetch(:cardinality) == 'one' }.keys
           invalid("services names #{name}, whose interface gives #{required.join(', ')} no default", 19, 'apps.services') unless
             required.empty?
           derived_quantities(interface, name)
@@ -1546,7 +1546,12 @@ module Erx
 
       # The facet rows the build derives from the apps row (docs/design-packaging.md, "The
       # apps row"), none without one: the system domain's grant of the service named
-      # packages_service, rights rw, the app template's, rights ro, and the template's grant
+      # packages_service, rights rw, rooted at the tree's root, and the app template's,
+      # rights rx and tree installed, rooted at installed/, where no upload in progress
+      # lies; the system domain's grant of the service named system_service, rights ro, and
+      # the template's, rights rx; the template's two grants are rx because an app's session
+      # mounts its installed or image package at /app through one of them
+      # (design-files.md F6: an rx mount only through an rx grant); and the template's grant
       # of each service of app_services, which states no parameter. Each is named as its
       # service is and takes derived_quantities. Answers each row with its resolved
       # parameter values, as normalize_facets builds a source row's.
@@ -1554,19 +1559,31 @@ module Erx
         return [] if @apps == NO_APPS
 
         service_rows = tables.fetch('services')
-        packages_name = @codec.fixed_bytes('packages_service')
-        packages = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == packages_name }
-        invalid("the apps row needs one service named #{packages_name}, of the files interface", 19, 'apps') unless
-          packages.size == 1 && service_rows.fetch(packages.first).fetch('interface') == fetch_interface('files')
+        packages = fetch_files_service(service_rows, 'packages_service', required_by: 'an apps row')
+        tree = fetch_files_service(service_rows, 'system_service', required_by: 'an apps row')
         template = [grantee_kind('session'), tables.fetch('sessions').size - 1]
         system = [grantee_kind('system'), 0]
-        [[system, packages.first, { 'rights' => 'rw' }], [template, packages.first, { 'rights' => 'ro' }],
+        [[system, packages, { 'rights' => 'rw' }], [template, packages, { 'rights' => 'rx', 'tree' => 'installed' }],
+         [system, tree, { 'rights' => 'ro' }], [template, tree, { 'rights' => 'rx' }],
          *app_services.map { |service| [template, service, {}] }].map do |(kind, grantee), service, values|
           row = service_rows.fetch(service)
           { 'name' => row.fetch('name'), 'grantee_kind' => kind, 'grantee' => grantee, 'service' => service,
             'operations' => { 'table' => 'facet_operations', 'first' => 0, 'count' => 0 },
             **derived_quantities(row.fetch('interface'), row.fetch('name')) }.then { |facet| [facet, values.freeze] }
         end
+      end
+
+      # The index of the one service named by the machine constant name, of the files
+      # interface, which property 19 requires of a manifest with an apps row
+      # (packages_service and system_service, app_facets) and of one with a system window
+      # (system_service, its eighth clause), required_by naming which.
+      def fetch_files_service(service_rows, name, required_by:)
+        bytes = @codec.fixed_bytes(name)
+        named = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == bytes }
+        invalid("a manifest with #{required_by} holds one service named #{bytes}", 19, 'service.name') unless named.size == 1
+        invalid("the service named #{bytes} is of the files interface", 19, 'service.interface') unless
+          service_rows.fetch(named.first).fetch('interface') == fetch_interface('files')
+        named.first
       end
 
       # Property 19's third clause: the start rows and every app's row fit the start table.
@@ -1578,7 +1595,7 @@ module Erx
 
       # The packed apps row and its app_services rows: none without an apps row, and
       # otherwise the row, with the indices of the app template, last among the sessions,
-      # and of its packages facet row, and its services, the indices check_apps resolved,
+      # and of its packages and system facet rows, and its services, the indices check_apps resolved,
       # ascending, each with the index of the facet row granted to the template for it.
       # The rows are the ones app_facets derived, found by grantee and service, which no
       # source row shares with them: no source row names the template.
@@ -1586,18 +1603,18 @@ module Erx
         return [[], []] if @apps == NO_APPS
 
         template = tables.fetch('sessions').size - 1
-        packages_name = @codec.fixed_bytes('packages_service')
         facets = tables.fetch('facets')
+        tree = ->(name) { fetch_files_service(tables.fetch('services'), name, required_by: 'an apps row') }
         granted = lambda do |service|
           facets.index do |facet|
             facet.fetch('grantee_kind') == grantee_kind('session') && facet.fetch('grantee') == template &&
               facet.fetch('service') == service
           end
         end
-        packages = tables.fetch('services').index { |row| row.fetch('name') == packages_name }
         services = service_indices.sort.map { |index| { 'service' => index, 'facet' => granted.call(index) } }
         [[{ 'memory' => @apps.memory, 'max' => @apps.max, 'app_template' => template,
-            'packages_facet' => granted.call(packages), 'reserved' => 0,
+            'packages_facet' => granted.call(tree.call('packages_service')),
+            'system_facet' => granted.call(tree.call('system_service')),
             'services' => { 'table' => 'app_services', 'first' => 0, 'count' => services.size } }], services]
       end
 
@@ -1830,7 +1847,7 @@ module Erx
         control = fetch_interface('driver_control')
         invalid('only the system domain holds a driver-control facet', 8, 'facet.grantee') if
           rows.any? { |row| row.fetch('grantee_kind') != grantee_kind('system') && service_rows.fetch(row.fetch('service')).fetch('interface') == control }
-        check_network_grants(rows, tables)
+        check_network_grants(rows, packed.map(&:first), tables)
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
         check_line_grants(rows, packed.map(&:first), tables)
@@ -1876,16 +1893,21 @@ module Erx
       # declarations give in checked_by, each with the keys it consumes (docs/design-abi.md,
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
       # check_display_grants, which reads pixels and session, and range-checks windows and
-      # clipboard as their declarations bound them; line_grant is property 8's line clause,
-      # check_line_grants, which reads uart and flow and range-checks rate; files_grant
-      # takes a files facet's rights, whose member kind alone bounds them to ro, rw and rx,
-      # and which the grant applies at run time. A service declaring a parameter that no
-      # checker here consumes is unusable: no facet of it is admitted, since nothing would
-      # check what it grants. Each checker takes the facets of the services that name it
-      # (grant_checker), whatever their interface.
+      # clipboard as their declarations bound them. line_grant is property 8's line clause,
+      # check_line_grants, which reads uart and flow and range-checks rate. net_grant is
+      # property 15's parameter clause, check_net_ports, which reads a net facet's ports and
+      # listen; its sockets and buffers their declarations alone bound, and the grant
+      # enforces all four at run time (abi/services/net.txt). files_grant takes a files
+      # facet's rights and tree, whose member kinds alone bound them to their members, and
+      # which the grant applies at run time; property 19 lets only a derived row state a
+      # tree. A service declaring a parameter that no checker here consumes is unusable: no
+      # facet of it is admitted, since nothing would check what it grants. Each checker
+      # takes the facets of the services that name it (grant_checker), whatever their
+      # interface.
       GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze,
                          'line_grant' => %w[uart rate flow].freeze,
-                         'files_grant' => %w[rights].freeze }.freeze
+                         'net_grant' => %w[sockets buffers ports listen].freeze,
+                         'files_grant' => %w[rights tree].freeze }.freeze
 
       # A facet record's parameters resolved against its service's declarations: every
       # stated key is declared, appears once and has a value of its declared kind within
@@ -1905,20 +1927,36 @@ module Erx
         unsupported("facet #{row.fetch('name')}'s service declares a parameter no grant checker consumes", 'facet.parameter')
       end
 
-      # Resolved parameter values, by key, and their packed facet_parameters rows in key order.
+      # Resolved parameter values, by key, and their packed facet_parameters rows in key
+      # order, a set's one row an element, in ascending order of its elements.
       def pack_parameters(values, declared)
-        [values.freeze, values.map { |key, value| parameter_row(declared.fetch(key), value) }.sort_by { |item| item.fetch('key') }]
+        rows = values.flat_map do |key, value|
+          parameter = declared.fetch(key)
+          parameter.fetch(:cardinality) == 'set' ? value.map { |item| parameter_row(parameter, item) } : [parameter_row(parameter, value)]
+        end
+        [values.freeze, rows.sort_by { |item| item.values_at('key', 'scalar') }]
       end
 
       # A facet record's parameter lines, KEY VALUE, as a map from key to value, a device
-      # reference resolved against devices, the placed device rows.
+      # reference resolved against devices, the placed device rows. A set's lines, one an
+      # element, give it the array of their values in ascending order: at most its
+      # MAX_COUNT of them, and none twice. Every other key is stated at most once.
       def resolve_parameters(record, declared, devices)
         values = record.parameters.each_with_object({}) do |(key_token, value_token), result|
           key = key_token.value
           parameter = (!key_token.quoted && declared[key]) ||
                       invalid("facet parameter #{key} is not declared by its service", 2, 'facet.parameter')
-          invalid("facet parameter #{key} is stated twice", 2, 'facet.parameter') if result.key?(key)
-          result[key] = parameter_value(key, parameter, value_token, record.line, devices)
+          value = parameter_value(key, parameter, value_token, record.line, devices)
+          if parameter.fetch(:cardinality) == 'set'
+            set = result.fetch(key, [])
+            invalid("facet parameter #{key} states #{value} twice", 2, 'facet.parameter') if set.include?(value)
+            invalid("facet parameter #{key} states over #{parameter.fetch(:maximum_count)} values", 2, 'facet.parameter') if
+              set.size == parameter.fetch(:maximum_count)
+            result[key] = (set + [value]).sort.freeze
+          else
+            invalid("facet parameter #{key} is stated twice", 2, 'facet.parameter') if result.key?(key)
+            result[key] = value
+          end
         end
         declared.each do |key, parameter|
           invalid("facet parameter #{key} is required", 2, 'facet.parameter') if parameter.fetch(:cardinality) == 'one' && !values.key?(key)
@@ -1930,13 +1968,12 @@ module Erx
       # boolean, quoted bytes within their bound, the bare name of one of a member kind's
       # members, which is the value, or for a device reference the index in devices of the
       # device-tree row at the quoted path, which its grant checker judges
-      # (docs/design-abi.md, "Services, facets and their parameter schemas"). A set and
-      # the domain and principal references are refused while no service declares one, so
-      # nothing here guesses their spelling.
+      # (docs/design-abi.md, "Services, facets and their parameter schemas"); a set's
+      # element is one value of its kind, which is u64 (the ABI reader refuses a set of
+      # another). The domain and principal references are refused while no service
+      # declares one, so nothing here guesses their spelling.
       def parameter_value(key, parameter, token, line, devices)
         kind = parameter.fetch(:kind)
-        unsupported("facet parameter #{key} is a set, which no service declares", 'facet.parameter') if
-          parameter.fetch(:cardinality) == 'set'
         case kind
         when 'u64', 'i64'
           line.fail!("parameter #{key} requires an integer") if token.quoted
@@ -2139,8 +2176,8 @@ module Erx
       # frames of at least net_max_frame_min bytes under their own runtime limits, since
       # the socket protocol's piece and its envelope arrive in one frame. The manifest is the only
       # source of a net grant, since no requested create carries one, so this holds for
-      # every grant there is.
-      def check_network_grants(facets, tables)
+      # every grant there is. The grants' ports are its parameter clause (check_net_ports).
+      def check_network_grants(facets, values, tables)
         net, netadmin = fetch_interface('net'), fetch_interface('netadmin')
         interface = ->(row) { tables.fetch('services').fetch(row.fetch('service')).fetch('interface') }
         facets.each do |row|
@@ -2150,6 +2187,35 @@ module Erx
         end
         floor = @codec.constant('net_max_frame_min')
         facets_of(facets, 'net', tables).each { |row| check_receiver_floors(row, tables, 'net', { 'max_frame' => floor }, property: 15) }
+        check_net_ports(facets.zip(values).select { |row, _| interface.call(row) == net }, tables)
+      end
+
+      # Property 15's parameter clause, over each net grant and its resolved parameters
+      # (abi/services/net.txt): every listen port is one of the grant's ports, those it
+      # lists or by default net_unprivileged_port to 65535, so no listen line is void; and a
+      # privileged port, below net_unprivileged_port, which a grant binds only when it lists it,
+      # is listed by one grant of its network domain alone, to a configured domain. That
+      # domain's stack binds a port for the first grant to claim it (erx_net_bind), so a
+      # second grant listing it could take it first, and a session template's grant is
+      # every session's made from it.
+      def check_net_ports(grants, tables)
+        unprivileged = @codec.constant('net_unprivileged_port')
+        privileged = grants.flat_map do |row, stated|
+          server = tables.fetch('services').fetch(row.fetch('service')).fetch('server')
+          ports = stated['ports']
+          unbound = stated.fetch('listen', []).reject { |port| ports ? ports.include?(port) : port >= unprivileged }
+          invalid("facet #{row.fetch('name')} listens on #{unbound.join(', ')}, none of its ports", 15, 'facet.parameter') unless
+            unbound.empty?
+          low = (ports || []).select { |port| port < unprivileged }
+          invalid("facet #{row.fetch('name')} grants privileged ports to a session template", 15, 'facet.grantee') if
+            !low.empty? && row.fetch('grantee_kind') != grantee_kind('domain')
+          low.map { |port| [[server, port], row.fetch('name')] }
+        end
+        shared = privileged.group_by(&:first).select { |_held, holders| holders.size > 1 }
+        shared.each do |(_server, port), holders|
+          invalid("privileged port #{port} is listed by facets #{holders.map(&:last).join(', ')} of one network domain",
+                  15, 'facet.parameter')
+        end
       end
 
       # Property 16: every domain that receives the files protocol of a facet of an
@@ -2419,22 +2485,17 @@ module Erx
         { 'kind' => row.fetch('kind'), 'flags' => row.fetch('flags'), 'head' => head }
       end
 
-      # The roles a configured domain may hold. Every other role, both slots' boot and
-      # system partitions and the two records, is the slot writer's, and in Phase 1 the
-      # system domain writes the slots (PW1), so a role the ABI adds is the system
-      # domain's until it is listed here.
-      CONFIGURED_ROLES = %w[vault data fat system verified_image].freeze
-
       # Property 8's windows (docs/design-abi.md, "Devices and partition windows"; PW1 of
-      # docs/design-storage.md): the slot writer's roles are the system domain's alone, and
-      # the one system window is read-only and held by its block device's holder, the
-      # storage domain whose block driver serves it, since the driver hands a window only to
-      # its own domain (docs/design-stopgap.md, "The booted slot").
+      # docs/design-storage.md): a role abi/manifest.txt does not mark configured is the
+      # slot writer's, the system domain's alone in Phase 1, and the one system window is
+      # read-only and held by its block device's holder, the storage domain whose block
+      # driver serves it, since the driver hands a window only to its own domain
+      # (docs/design-stopgap.md, "The booted slot").
       def normalize_windows(tables)
         devices = tables.fetch('devices')
         rows = records('window').map do |record|
           role = window_role(record)
-          slot_writer = CONFIGURED_ROLES.none? { |name| role == @codec.member('mf_window_role', name) }
+          slot_writer = !@codec.attribute?('mf_window_role', role, 'configured')
           invalid('only the system domain, the slot writer, holds the slot windows', 8, 'window.holder') if
             slot_writer && !(one(record, 'holder').value == 'system' && !one(record, 'holder').quoted)
           { 'holder' => holder_index(one(record, 'holder'), property: 8, field: 'window.holder'),
@@ -2461,8 +2522,8 @@ module Erx
         rights = flags(record, 'rights', 'mf_window_rights')
         read = @codec.member('mf_window_rights', 'read')
         invalid('a window grants at least read', 8, 'window.rights') if (rights & read).zero?
-        invalid('a verified-image window is read-only', 8, 'window.rights') if role == image_role && rights != read
-        invalid('a system window is read-only', 8, 'window.rights') if role == system_role && rights != read
+        writable = @codec.attribute?('mf_window_role', role, 'writable')
+        invalid('a window of a role not marked writable grants read alone', 8, 'window.rights') if !writable && rights != read
         rights
       end
 
@@ -2488,19 +2549,21 @@ module Erx
       # manifest with a system window holds exactly one service named system_service,
       # of the files interface, served by the window's holder, so the domain that mints
       # the tree's grants is the one whose block driver serves its partition, and one
-      # without a system window holds none; and no source facet row grants it, by
-      # whatever label its record carries.
+      # without a system window holds none, so an apps row, which needs the service,
+      # needs the window; and no source facet row grants it, by whatever label its record
+      # carries.
       def check_system_service(tables)
         name = @codec.fixed_bytes('system_service')
-        services = tables.fetch('services').select { |row| row.fetch('name') == name }
         window = tables.fetch('windows').find { |row| row.fetch('role') == system_role }
-        invalid("a manifest with a system window holds one service named #{name}, and one without holds none", 19,
-                'service.name') unless services.size == (window ? 1 : 0)
-        return if services.empty?
+        unless window
+          invalid("an apps row needs a system window, whose holder serves #{name}", 19, 'apps') unless @apps == NO_APPS
+          invalid("a manifest without a system window holds no service named #{name}", 19, 'service.name') if
+            tables.fetch('services').any? { |row| row.fetch('name') == name }
+          return
+        end
 
-        service = services.first
-        invalid("the service named #{name} is of the files interface", 19, 'service.interface') unless
-          service.fetch('interface') == fetch_interface('files')
+        index = fetch_files_service(tables.fetch('services'), 'system_service', required_by: 'a system window')
+        service = tables.fetch('services').fetch(index)
         invalid("the service named #{name} is served by the holder of the system window", 19, 'service.server') unless
           window.fetch('holder') == service.fetch('server')
         labels = records('service').select { |record| service_name(record) == name }.map { |record| "@service.#{record.name}" }

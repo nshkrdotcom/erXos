@@ -316,7 +316,7 @@ erx_fiasco_root_main(void)
 		line_write("erx: memory: init FAILED: ");
 		line_write(reason);
 		line_write("\n");
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	free_before = erx_fiasco_vm_free_pages();
 	line_write_number("erx: memory: pool before ", free_before);
@@ -336,7 +336,7 @@ erx_fiasco_root_main(void)
 	line_write_number("erx: memory: pool after ", erx_fiasco_vm_free_pages());
 	report("pool_count_steady", erx_fiasco_vm_free_pages() == free_before);
 	line_write("erx: memory: done\n");
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 }
 
 static void

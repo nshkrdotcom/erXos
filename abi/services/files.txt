@@ -11,14 +11,19 @@
 # mounting"): ro reads, rw also writes and rx also runs what it reads, and no member
 # both writes and runs (F6). A row that states none is rw. The grant refuses every
 # writing operation of an ro or rx grant before its callback (F5), and nothing a client
-# sends widens its rights. files_grant is the manifest check's acceptance of the
-# parameter, whose kind alone bounds it to these members.
+# sends widens its rights. A row's tree roots its grant at a directory within the
+# service's tree (docs/design-packaging.md, "The apps row"): installed at the packages
+# tree's installed/, apps at the app's own directory among the data tree's apps/; a row
+# that states none is rooted at the tree's root, and only the rows the build derives
+# state one (property 19). files_grant is the manifest check's acceptance of the
+# parameters, whose kinds alone bound them to these members.
 # A facet row the build derives (an app's, docs/design-packaging.md, "The apps row")
 # takes the quantities below: requests of files_max_frame_min bytes, 16 in flight, and a
 # grant process heap of 262144 words (2 MiB), which holds 16 write requests of 64 KiB.
 service files 5
   served_as tree
   parameter rights 1 member optional member files_rights checked_by files_grant
+  parameter tree 2 member optional member files_tree checked_by files_grant
   quantity max_request 131072
   quantity in_flight 16
   quantity reductions 100000
@@ -29,3 +34,6 @@ enum files_rights u8
   value ro 1
   value rw 2
   value rx 3
+enum files_tree u8
+  value apps 1
+  value installed 2

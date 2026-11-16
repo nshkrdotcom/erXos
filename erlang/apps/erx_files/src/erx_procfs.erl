@@ -56,17 +56,7 @@ it at `/proc`, after removing any entry an earlier instance left there.
 """.
 -spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() ->
-    {ok, Grant} = erx_fs:start_link(?MODULE, fun erx_inspector:inspect/2, ro),
-    _ = erx_ns:unmount(?POINT),
-    case erx_ns:mount(Grant, ?POINT, [{tree, ?TREE}, ro]) of
-        ok ->
-            {ok, Grant};
-        {error, _} = Error ->
-            %% A grant the supervisor does not know of must not outlive the start.
-            unlink(Grant),
-            exit(Grant, kill),
-            Error
-    end.
+    erx_fs:start_mounted(?MODULE, fun erx_inspector:inspect/2, ro, ?POINT, ?TREE).
 
 %% ---------------------------------------------------------------------------
 %% The erx_fs callbacks

@@ -578,7 +578,16 @@ violation fails the build with the property, the record and the field:
     interface written as its number; a `net` grantee whose runtime limits
     have a `max_frame` below the floor while the system domain's are
     above it; and a mint request naming the system domain, which the mint
-    refuses and counts.
+    refuses and counts. A `net` grant's ports are this property's too: every
+    port its `listen` lists is one of its `ports`, those it lists or by
+    default 1,024 to 65,535, and a privileged port, below 1,024, which a
+    grant binds only when its row lists it, is listed by one grant of its
+    network domain alone, to a configured domain, never to a session
+    template, whose grant every session made from it holds. The stack binds a
+    port for the first grant to claim it, so without this any other grant of
+    the same network domain could take a service's privileged port first.
+    Seeded violation: two grants of one network domain listing the same
+    port below 1,024.
 16. **Every receiver of `files` and of `inspect` takes its frames:** for each facet of an
     interface `abi/services` declares `served_as tree` (`files`, `windows`
     and `line`), compared by number, the
@@ -2449,7 +2458,7 @@ pair, so each operation is bound to both incarnations by construction:
 | `idle` | the grant has no pair: its server or its grantee is not ready, or the server provided no mint for the name |
 | `introducing` | the domain service is introducing the grantee to the server ([Creating a domain](#creating-a-domain)); skipped when the grantee is the system domain, which every domain is connected to |
 | `minting` | the mint has been asked for a facet bound to the grantee, and its reply is awaited |
-| `installing` | the facet's pid has been sent to the grantee's registry, and its acknowledgement is awaited |
+| `installing` | the facet has been sent to the grantee's registry, its pid and, for a files service, the rights of the grant's facet row, and its acknowledgement is awaited |
 | `installed` | the grantee acknowledged; the grant holds the facet's pid |
 | `failed` | the operation for this pair failed, and was logged; nothing is retried for the pair |
 
@@ -2502,7 +2511,11 @@ The record moves on these events, and on nothing else:
   that tag. `{ok, Facet}` with `Facet` a pid the server's incarnation
   owns, node and creation both, moves the operation to `installing` and
   sends the grantee
-  `{erx_facets_install, Tag, Name, Facet}`; any other reply fails it. A
+  `{erx_facets_install, Tag, Name, Facet}`, where `Facet` is the pid, or
+  for a files service `{Pid, Rights}` with the rights of the grant's
+  facet row, which the manifest states and no reply sets
+  ([design-files.md](design-files.md#building-binding-and-mounting),
+  "Rights beneath an entry"); any other reply fails it. A
   reply with an unknown or finished tag, a second reply, or one from
   any other domain is dropped and counted;
 * **the acknowledgement**, `{erx_facets_installed, Tag}` from the
@@ -2511,8 +2524,8 @@ The record moves on these events, and on nothing else:
   it answers `connection_mapped`. It counts only from the pair's grantee,
   for an operation in `installing` with that tag, and makes the grant
   `installed`. Anything else is dropped and counted. The system domain's
-  own registry is local: the domain service installs there itself and
-  acknowledges at once;
+  own registry is local: the domain service installs there itself, the
+  same value it would send, and acknowledges at once;
 * **the deadline**, which fails an operation still pending.
 
 Since an operation exists only while both incarnations of its pair are
@@ -2620,7 +2633,8 @@ The domain library's boot view, the one reader of the packed manifest on
 the boot path, is the one place a row is decoded: it checks each facet's
 rows against the parameters its service's interface declares, from a
 table the build generates from `abi/services` (`erx_service_parameters`
-in `erx/abi.h`), so each row names a declared parameter once, in number
+in `erx/abi.h`), so each declared parameter appears once, except a set,
+whose elements are consecutive rows in ascending order, in number
 order, of its declared kind and within its declared bound, and no
 parameter the interface requires is left out. A device reference, such
 as the `line` grant's `uart`, is the index of its device row, which the
@@ -2630,11 +2644,12 @@ reference, which no service declares, is refused, as the manifest check
 refuses one. `erx_domain_lib:configured/0` then gives
 each checked parameter in the grant's `Limits` under its declared name,
 beside the row's six limit fields: an integer kind as an integer, a
-boolean as `true` or `false`, text or bytes as a binary, and a device
-reference as its row's index in the manifest's device table. The
-generator refuses a parameter that takes a limit field's name, so the
-two never meet in one map, and a `set` declaration, whose many values
-the view does not carry. So the `windows` grant's `pixels`, `windows`
+boolean as `true` or `false`, text or bytes as a binary, a device
+reference as its row's index in the manifest's device table, and a
+`set`, whose elements the view takes as consecutive rows of its key in
+strictly ascending order and at most its `MAX_COUNT`, as the list of its
+elements in that order. The generator refuses a parameter that takes a
+limit field's name, so the two never meet in one map. So the `windows` grant's `pixels`, `windows`
 and `clipboard` are the row's, and the pixel area `erx_domain_mints` charges
 the display is the one property 18 summed.
 
@@ -3557,10 +3572,10 @@ a session that hands it on shares the facet's control with the receiver
 ([design-files.md](design-files.md#narrowing-for-a-program)); the facet
 serves the tree from a process linked to it, so revoking the facet ends
 the tree and every fid on it, and no grant of the tree outlives the facet.
-Like every facet that serves a file tree, each of the two carries its
-tree's name with its pid and rights, as `erx_ns:mount`'s options do, so a
-namespace entry names the facet's pid, its rights and the tree, and the
-grant answers `enoent` to an attach that names any other tree
+Like every facet that serves a file tree, each of the two installs as its
+pid with the rights of its facet row; a namespace entry names the facet
+and the tree its mount's options give, and resolves with the lesser of
+its own rights and the facet's, and the grant answers `enoent` to an attach that names any other tree
 ([design-files.md](design-files.md#namespaces)).
 
 #### The holder's driver-control facet

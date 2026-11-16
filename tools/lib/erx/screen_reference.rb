@@ -39,14 +39,32 @@ module Erx
       raise Error, "cannot read #{path}: #{e.class.name.split('::').last}"
     end
 
-    # Nil when image is the reference's picture; otherwise Mismatch, naming both digests and
-    # the reference picture to compare by eye.
+    # Whether image is the reference's picture, by its digest file alone.
+    def matches?(image, reference)
+      image.digest == reference.digest && image.width == reference.width && image.height == reference.height
+    end
+
+    # Nil when image is the reference's picture; otherwise Mismatch, naming both digests,
+    # the reference picture to compare by eye and, for a screen of the reference's size,
+    # how many pixels differ from that picture and where.
     def check(image, directory:, name:)
       reference = load(directory, name)
-      return nil if image.digest == reference.digest && image.width == reference.width && image.height == reference.height
+      return nil if matches?(image, reference)
 
       raise Mismatch, "screen is #{image.width}x#{image.height} digest #{image.digest}; reference #{name} is " \
-                      "#{reference.width}x#{reference.height} digest #{reference.digest} (picture: #{reference.picture_path})"
+                      "#{reference.width}x#{reference.height} digest #{reference.digest} (picture: #{reference.picture_path})" \
+                      "#{difference(image, reference)}"
+    end
+
+    # The part of a mismatch's message that says where image differs from the reference's
+    # picture; empty for a screen of another size, which the message's sizes already show.
+    def difference(image, reference)
+      return '' unless [image.width, image.height] == [reference.width, reference.height]
+
+      found = image.difference(picture(reference))
+      found ? "; #{found}" : '; no pixel differs from the picture, which its digest file does not name'
+    rescue Error => e
+      "; #{e.message}"
     end
 
     # The reference's own picture, decoded.
@@ -56,6 +74,17 @@ module Erx
       end
     rescue Zlib::Error, SystemCallError => e
       raise Error, "cannot read #{reference.picture_path}: #{e.class.name.split('::').last}"
+    end
+
+    # Writes image as the reference NAME in directory, both its files; answers the picture's path.
+    def write(directory, name, image)
+      raise Error, "invalid reference name #{name.inspect}" unless name.is_a?(String) && NAME.match?(name)
+
+      digest, picture = encode(image)
+      File.write(File.join(directory, "#{name}.sha256"), digest)
+      File.join(directory, "#{name}.ppm.gz").tap { |path| File.binwrite(path, picture) }
+    rescue SystemCallError => e
+      raise Error, "cannot write the reference #{name} in #{directory}: #{e.class.name.split('::').last}"
     end
 
     # The two files of a reference for image, as [digest line, gzip PPM], for a person who

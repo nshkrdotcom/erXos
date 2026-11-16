@@ -70,8 +70,12 @@ mint request; anything
 else is `unknown` (docs/design-system.md, "Facets a configured domain serves"). A
 request whose `Grantee` is the system domain's own id is refused, `{refused, eperm,
 Tag}`, for the mint to answer and count: the system domain never holds the grant
-(docs/design-network-stack.md, "The grant"). The mint's counts, `counts`, are asked
-only bare and from a process of this node, as the grant's are.
+(docs/design-network-stack.md, "The grant"). A request's `ports` and `listen`, each the
+list of ports a manifest's set states (abi/services/net.txt), become the grant's lists of
+ranges, each port `P` the range `{P, P}`, which the grant judges as it judges any range
+(erx_net_grant_core:bind_ports/3), so an element that is not a port allows nothing. The
+mint's counts, `counts`, are asked only bare and from a process of this node, as the
+grant's are.
 
 The operation schema's generator will produce these checks from `abi/services/net.txt`;
 until it exists they are written here with its signatures.
@@ -224,12 +228,20 @@ mint(System, {erx_origin, D, {erx_facet_mint, Tag, net, Grantee, Principal, Limi
        is_map(Limits) ->
     case Grantee =:= System of
         true -> {refused, eperm, Tag};
-        false -> {ok, Tag, Grantee, Limits}
+        false -> {ok, Tag, Grantee, maps:map(fun grant_limit/2, Limits)}
     end;
 mint(_System, {'$gen_call', {Pid, _} = From, counts}) when is_pid(Pid), node(Pid) =:= node() ->
     {counts, From};
 mint(_System, _Message) ->
     unknown.
+
+%% A manifest's limit as the grant holds it: a set of ports as their one-port ranges. The
+%% length guard fails for an improper list, which passes unchanged, and the grant takes it
+%% as no ranges at all.
+grant_limit(Key, Ports) when (Key =:= ports orelse Key =:= listen), is_list(Ports), length(Ports) >= 0 ->
+    [{P, P} || P <- Ports];
+grant_limit(_Key, Value) ->
+    Value.
 
 -doc """
 Takes `Message`, received by a socket of kind `Kind` whose socket process is `SockProc`

@@ -476,9 +476,10 @@ file. The development
 machine, 512 MiB, links the root 64 MiB into RAM, below the device tree at
 128 MiB, which keeps it inside small machines; a single file longer than
 about 62 MiB has its archive moved. Below 256 MiB
-the device tree sits at half of RAM, so on a machine of roughly 127 to
-137 MiB it lands on the root and bootstrap refuses the boot with
-`place_overlap`. The QEMU oracle's machine, 2 GiB, links it 192 MiB into
+the device tree sits at half of RAM, or right behind a file that ends
+higher, so on a machine of roughly 127 to 137 MiB, or on one below
+144 MiB whose file ends on the root, it lands on the root and bootstrap
+refuses the boot with `place_overlap`. The QEMU oracle's machine, 2 GiB, links it 192 MiB into
 RAM, above its single file of about 188 MiB, which so stays in place. In the two-file
 form, for debugging, `-initrd` on the oracle's machine places the boot
 image at `0x48000000` with the device tree directly after it. The root
@@ -1672,7 +1673,12 @@ Put the card in the Pi, start logging on the adapter, then power the Pi.
    outside BASE SIZE` instead names where the firmware put the
    framebuffer, outside the window of
    [the framebuffer's unit](#raspberry-pi-4-model-b); `erx_fb: the
-   framebuffer is not driven:` names why the driver refused it.
+   framebuffer is not driven:` names why the driver refused it. Leave
+   HDMI1 empty: the firmware may make a framebuffer for each port with a
+   display ([design-device-tree.md](design-device-tree.md#context)),
+   and two nodes give `framebuffer absent ambiguous`. Record the root's
+   line, since the format it names at the firmware's default depth of
+   16 bits is unverified.
 
 **What the pass settles.** Typing works, so the mini UART raises its
 receive interrupt with bits 3:2 of its interrupt-enable register set, as

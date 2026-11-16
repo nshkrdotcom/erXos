@@ -28,7 +28,7 @@ class ErxAppSessionTest < Minitest::Test
   FAULTS = [
     Fault.new(name: 'a plan that grants every row of the template',
               edits: [[KEPT_ROWS, 'rows => [Row || {_Index, Row} <- TemplateRows, Kept =/= x]']],
-              caught_by: 'the_rows_are_packages_and_the_needs_test'),
+              caught_by: 'the_rows_are_packages_system_and_the_needs_test'),
     Fault.new(name: "a scope computed from the template's key",
               edits: [[PLAN_HEAD,
                        "app_session(Name, \#{entry := Entry, memory := Memory, rows := Kept}, " \

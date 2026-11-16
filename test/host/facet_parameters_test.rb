@@ -24,14 +24,16 @@ require_relative '../../tools/lib/erx/host_os'
 # the row's pixel area, and the view refuses each forged parameter row of FORGED. The
 # line-grant seed (Erx::ManifestSeeds.line_grant) takes the same road: its grant's uart
 # reaches the terms as the index of its UART's device row, and the manifest's reader, which
-# the view reads through, refuses a uart one past the device table. Seeded faults that drop
-# a parameter on the way, or admit one out of bound, must each fail a case. The
-# operations seed (Erx::ManifestSeeds.operations_grant), root's template granted both of
-# inspect's operations, takes the same road: the grant's limits carry their names in
+# the view reads through, refuses a uart one past the device table. The net-grant seed
+# (Erx::ManifestSeeds.net_grant) carries sets: its grant's ports, a full set of 16, and
+# listen reach the terms as lists in ascending order, and the view refuses each forgery of
+# NET_FORGED. The operations seed (Erx::ManifestSeeds.operations_grant), root's template granted both
+# of inspect's operations, takes the same road: the grant's limits carry their names in
 # number order, and the view refuses each forgery of FORGED_OPERATIONS, the last naming
-# operations on a service a configured domain serves; seeded faults that drop an
-# operation, or admit an undeclared one or one of a configured domain's service, must
-# each fail a case.
+# operations on a service a configured domain serves. Seeded faults that drop a parameter
+# or an operation on the way, admit a value out of bound, an undeclared operation or an
+# operation of a configured domain's service, or let a set pass unsorted or past its most,
+# must each fail a case.
 class FacetParametersTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
@@ -47,6 +49,7 @@ class FacetParametersTest < Minitest::Test
   OPERATIONS_CASE = 'the_grant_s_limits_carry_its_operations_by_name_test'
   FORGED_OPERATIONS_CASE = 'forged_operation_rows_are_refused_test'
   LINE_CASE = 'the_line_grant_s_uart_is_its_device_row_test'
+  NET_CASE = 'the_net_grant_s_sets_are_lists_test'
 
   # The grant's packed parameter rows are windows (key 1), pixels (2) and clipboard (3), the
   # manifest's only ones, 32 bytes each: key u32 at 0, kind u32 at 4, scalar u64 at 8.
@@ -57,6 +60,14 @@ class FacetParametersTest < Minitest::Test
     'stated-twice' => ->(rows) { rows[1] = rows[0].dup },
     'other-kind' => ->(rows) { rows[0][4, 4] = [2].pack('V') },
     'below-its-bound' => ->(rows) { rows[1][8, 8] = [4095].pack('Q<') }
+  }.freeze
+
+  # The net grant's rows are sockets (key 1), its 16 ports (3) in ascending order and listen
+  # (4), 18 in all. Each forgery breaks the set's order or its most.
+  NET_FORGED = {
+    'set-unsorted' => ->(rows) { rows[1], rows[2] = rows[2], rows[1] },
+    'set-repeated' => ->(rows) { rows[2] = rows[1].dup },
+    'set-past-its-most' => ->(rows) { rows[17] = [3, 1, 2016].pack('VVQ<') + rows[17].byteslice(16, 16) }
   }.freeze
 
   # The operations seed's grant of inspect packs inspect (1) and entries (2), 4 bytes
@@ -70,7 +81,7 @@ class FacetParametersTest < Minitest::Test
   }.freeze
 
   def test_a_packed_row_reaches_the_mint
-    assert_match(/^  All 6 tests passed\.$/, run_cases)
+    assert_match(/^  All 7 tests passed\.$/, run_cases)
   end
 
   # A seeded fault: the file it edits, the anchor found once there, its replacement and
@@ -81,7 +92,7 @@ class FacetParametersTest < Minitest::Test
        '.parameters = &parameters[first], .nparameters = facet.parameters.count - (facet.parameters.count != 0) };',
        LIMITS_CASE],
     'the terms leave the parameters out' =>
-      [TERMS, 'for (uint32_t at = 0; at < facet->nparameters; at++) {', 'for (uint32_t at = 0; at < 0; at++) {',
+      [TERMS, 'for (uint32_t at = 0; at < facet->nparameters; at += taken) {', 'for (uint32_t at = 0; at < 0; at += taken) {',
        LIMITS_CASE],
     'the view admits a value out of its bound' =>
       [VIEW, 'return (within ? NULL : "manifest: a facet parameter is outside its declared bound");', 'return ((void)within, NULL);',
@@ -100,7 +111,13 @@ class FacetParametersTest < Minitest::Test
        '.operations = &operations[named], .noperations = facet.operations.count - (facet.operations.count != 0),',
        OPERATIONS_CASE],
     'the terms leave the operations out' =>
-      [TERMS, 'for (uint32_t at = facet->noperations; at-- > 0;)', 'for (uint32_t at = 0; at-- > 0;)', OPERATIONS_CASE]
+      [TERMS, 'for (uint32_t at = facet->noperations; at-- > 0;)', 'for (uint32_t at = 0; at-- > 0;)', OPERATIONS_CASE],
+    'the view takes a set past its most' =>
+      [VIEW, 'of < declared[at].most && matched < count', 'matched < count', FORGED_CASE],
+    'the view takes a set unsorted' =>
+      [VIEW, 'if (of > 0 && row.scalar <= parameters[matched - 1].scalar)', 'if (false)', FORGED_CASE],
+    'the terms give a set its first element alone' =>
+      [TERMS, '*taken < count && parameters', '*taken < 1 && parameters', NET_CASE]
   }.freeze
 
   def test_seeded_faults_are_caught
@@ -117,6 +134,7 @@ class FacetParametersTest < Minitest::Test
   def codec = @codec ||= Erx::ABI::Codec.new(Erx::ABI::Generator.plan(root: ROOT).schema)
   def manifest = @manifest ||= Erx::ManifestSeeds.windows_grant(ROOT, codec)
   def line_manifest = @line_manifest ||= Erx::ManifestSeeds.line_grant(ROOT, codec)
+  def net_manifest = @net_manifest ||= Erx::ManifestSeeds.net_grant(ROOT, codec)
 
   def operations_manifest
     @operations_manifest ||= Erx::ManifestSeeds.operations_grant(
@@ -166,14 +184,27 @@ class FacetParametersTest < Minitest::Test
     line_manifest.b.tap { |copy| copy[offset, encoded.bytesize] = encoded }
   end
 
-  # The manifest with its parameter rows edited by forge.
-  def forged(forge)
-    table = codec.open('manifest', manifest).header.fetch('facet_parameters')
-    assert_equal 3, table.fetch('count')
-    offset = table.fetch('offset')
-    rows = Array.new(3) { |index| manifest.byteslice(offset + (index * 32), 32).b }
+  # The parameter rows of the one facet of bytes named facet that states any, or with facet
+  # nil the whole table, as their offset and count.
+  def parameter_span(bytes, facet)
+    view = codec.open('manifest', bytes)
+    return view.header.fetch('facet_parameters') unless facet
+
+    rows = view.count('facets').times.map { |index| view.fetch('facets', index) }
+               .select { |row| view.string(row.fetch('name')) == facet && row.fetch('parameters').fetch('count').positive? }
+    assert_equal 1, rows.size
+    rows.first.fetch('parameters')
+  end
+
+  # The manifest bytes with the count parameter rows of parameter_span(bytes, facet)
+  # edited by forge.
+  def forged(bytes, facet, count, forge)
+    span = parameter_span(bytes, facet)
+    assert_equal count, span.fetch('count')
+    offset = span.fetch('offset')
+    rows = Array.new(count) { |index| bytes.byteslice(offset + (index * 32), 32).b }
     forge.call(rows)
-    manifest.b.tap { |copy| copy[offset, 96] = rows.join }
+    bytes.b.tap { |copy| copy[offset, count * 32] = rows.join }
   end
 
   # The cases' output, with the harness built from sources, each path's text as given
@@ -181,7 +212,9 @@ class FacetParametersTest < Minitest::Test
   def run_cases(sources = {})
     Dir.mktmpdir('erx-facet-parameters-') do |work|
       File.binwrite(File.join(work, 'manifest.bin'), manifest)
-      FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(forge)) }
+      FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(manifest, nil, 3, forge)) }
+      NET_FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(net_manifest, 'net', 18, forge)) }
+      File.binwrite(File.join(work, 'net.bin'), net_manifest)
       File.binwrite(File.join(work, 'line.bin'), line_manifest)
       File.binwrite(File.join(work, 'operations.bin'), operations_manifest)
       FORGED_OPERATIONS.each { |name, forge| File.binwrite(File.join(work, "forged-operations-#{name}.bin"), forged_operations(forge)) }

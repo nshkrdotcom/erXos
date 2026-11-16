@@ -65,6 +65,28 @@ parameter_term(ErlNifEnv *env, const erx_dom_parameter_t *parameter, ERL_NIF_TER
 	}
 }
 
+/*
+ * The set whose elements begin at parameters[0], the view's consecutive
+ * entries of its declaration, at most count of them, as a list in their
+ * order; *taken is how many it holds.
+ */
+static bool
+set_term(ErlNifEnv *env, const erx_dom_parameter_t *parameters, uint32_t count, ERL_NIF_TERM *value,
+    uint32_t *taken)
+{
+	ERL_NIF_TERM element;
+
+	for (*taken = 1; *taken < count && parameters[*taken].declared->number == parameters[0].declared->number;)
+		(*taken)++;
+	*value = enif_make_list(env, 0);
+	for (uint32_t at = *taken; at-- > 0;) {
+		if (!parameter_term(env, &parameters[at], &element))
+			return (false);
+		*value = enif_make_list_cell(env, element, *value);
+	}
+	return (true);
+}
+
 /* A configured row, or for ERX_MF_NONE the system domain, as the atom system. */
 static ERL_NIF_TERM
 server_term(ErlNifEnv *env, uint32_t server)
@@ -84,8 +106,9 @@ server_term(ErlNifEnv *env, uint32_t server)
  * or, for a service the system domain serves, the atom system, and Limits
  * the grant's limits by name: the facet row's six limit fields, its
  * operations, as the list of their declared names, and each parameter it
- * states, under its declared name (parameter_term), which the ABI
- * generator keeps apart from the fields' names; each list in
+ * states, under its declared name (parameter_term), a set as the list of
+ * its elements in ascending order (set_term), which the ABI generator keeps
+ * apart from the fields' names; each list in
  * manifest order
  * (docs/design-system.md, "Facets a configured domain serves"). The
  * domain service hands only the configured domains' services to its mint
@@ -99,13 +122,13 @@ erx_domain_served_terms(ErlNifEnv *env, const erx_dom_view_t *view, ERL_NIF_TERM
 {
 	/*
 	 * The facet row's six limit fields, its operations and at most one
-	 * parameter a declaration (boot_facet_parameters).
+	 * key a declaration (boot_facet_parameters).
 	 */
 	ERL_NIF_TERM keys[7 + ERX_SERVICE_PARAMETERS_MAX], values[7 + ERX_SERVICE_PARAMETERS_MAX];
 	ERL_NIF_TERM limits, grantee, name, operations;
 	const erx_dom_service_t *service;
 	const erx_dom_facet_t *facet;
-	uint32_t index, nkeys;
+	uint32_t index, nkeys, taken;
 
 	/* Each list built from the last row back, so its head is the first row. */
 	*services = enif_make_list(env, 0);
@@ -131,13 +154,19 @@ erx_domain_served_terms(ErlNifEnv *env, const erx_dom_view_t *view, ERL_NIF_TERM
 		for (uint32_t at = facet->noperations; at-- > 0;)
 			operations = enif_make_list_cell(env, atom(env, facet->operations[at]->name), operations);
 		keys[nkeys] = atom(env, "operations"), values[nkeys++] = operations;
-		/* The view states each parameter once, so at most ERX_SERVICE_PARAMETERS_MAX of them. */
-		if (facet->nparameters > sizeof(keys) / sizeof(keys[0]) - nkeys)
-			return (false);
-		for (uint32_t at = 0; at < facet->nparameters; at++) {
-			keys[nkeys] = atom(env, facet->parameters[at].declared->name);
-			if (!parameter_term(env, &facet->parameters[at], &values[nkeys++]))
+		/* The view states each declaration's key once, so at most ERX_SERVICE_PARAMETERS_MAX of them. */
+		for (uint32_t at = 0; at < facet->nparameters; at += taken) {
+			if (nkeys == sizeof(keys) / sizeof(keys[0]))
 				return (false);
+			keys[nkeys] = atom(env, facet->parameters[at].declared->name);
+			if (facet->parameters[at].declared->most > 1) {
+				if (!set_term(env, &facet->parameters[at], facet->nparameters - at, &values[nkeys++], &taken))
+					return (false);
+			} else {
+				taken = 1;
+				if (!parameter_term(env, &facet->parameters[at], &values[nkeys++]))
+					return (false);
+			}
 		}
 		if (!enif_make_map_from_arrays(env, keys, values, nkeys, &limits))
 			return (false);

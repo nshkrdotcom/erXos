@@ -40,6 +40,11 @@ module Erx
     WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter clipboard yes\n"
     # The operations operations_grant's grant of inspect names.
     INSPECT_OPERATIONS = 'entries,inspect'
+    # The net grant's parameters: sockets, ports a full set of 16, stated out of order, and
+    # listen one of them, so its rows are a scalar, two sets, and a set at its most.
+    NET_PORTS = (2000...2016).to_a.freeze
+    NET_PARAMETERS = "  parameter sockets 80\n#{NET_PORTS.reverse.map { |port| "  parameter ports #{port}\n" }.join}" \
+                     "  parameter listen #{NET_PORTS.last}\n".freeze
     # The UART line_grant's grant names.
     LINE_UART = ManifestContextFixture::LINE_UARTS.fetch('line_a').first
 
@@ -72,6 +77,7 @@ module Erx
                                                      'windows-grant' => windows_grant(repository, codec),
                                                      'line-grant' => line_grant(repository, codec),
                                                      'operations-grant' => operations_grant(source, codec, platform),
+                                                     'net-grant' => net_grant(repository, codec),
                                                      'domains' => domains.bytes, 'session-grantee' => session.bytes,
                                                      'start-row' => start.bytes, 'raspi4b' => pi.bytes,
                                                      'packages' => packages(source, codec, platform),
@@ -100,6 +106,18 @@ module Erx
                      planner: ManifestContextFixture.accepting_planner).bytes
     end
 
+    # The development manifest on QEMU virt with its session template's grant of net
+    # stating NET_PARAMETERS, as the check packs it.
+    def net_grant(repository, codec)
+      grant = "facet net\n  grantee @session.system\n  service @service.net\n"
+      source = Platform.load(root: repository, name: 'qemu-virt').manifest_source(repository)
+      raise Error, 'the development manifest grants no net to its session template' unless source.include?(grant)
+
+      context = Manifest::Context.new(**ManifestContextFixture.arguments(codec), platform: platform_of(repository, 'qemu-virt'))
+      Manifest.admit(source: source.sub(grant) { grant + NET_PARAMETERS }, codec: codec, context: context,
+                     planner: ManifestContextFixture.accepting_planner).bytes
+    end
+
     # The configured domains' manifest (ManifestContextFixture.domain_source) on QEMU virt
     # with two more UARTs, alpha granted the line on the first
     # (ManifestContextFixture.with_line), as the check packs it.
@@ -112,8 +130,9 @@ module Erx
                      codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
-    # The configured domains' manifest with PACKAGE_ROWS, room for the apps row in
-    # max_domains and root_memory, and a development key.
+    # The configured domains' manifest with PACKAGE_ROWS, the system tree the apps row
+    # needs, held by beta, room for the apps row in max_domains and root_memory, and a
+    # development key.
     def packages(source, codec, platform)
       arguments = ManifestContextFixture.arguments(codec)
       artifacts = %w[clock quotes].to_h do |name|
@@ -123,7 +142,8 @@ module Erx
                                                    development_key: "\x07".b * 32)
       roomy = ManifestContextFixture.domain_source(source).sub(/^(  max_domains )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + 2}" }
                                                          .sub(/^(  root_memory )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + 1_048_576}" }
-      Manifest.admit(source: roomy + PACKAGE_ROWS, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
+      source = ManifestContextFixture.with_system_tree(roomy, holder: '@domain.beta') + PACKAGE_ROWS
+      Manifest.admit(source: source, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
     # The platform record config/platforms/NAME.json.

@@ -39,6 +39,14 @@ class ErxNetGrantTest < Minitest::Test
     assert_case_failed(:minted_exported, output)
   end
 
+  # A grant that ignores its listen limit: a listener binds a port of the grant's ports
+  # that listen leaves out.
+  def test_an_ignored_listen_limit_is_caught
+    ignored = ['Ranges when is_list(Ranges) -> ranges(Ranges);', 'Ranges when is_list(Ranges) -> all;']
+    output = refute_erx_net_eunit(:erx_net_grant_tests, fault: { 'erx_net_grant_core' => ignored })
+    assert_case_failed(:tcp_listen_ports, output)
+  end
+
   # A sockets limit that admits one socket past it: the grant at its limit opens a second
   # socket.
   def test_a_sockets_limit_off_by_one_is_caught
