@@ -7573,9 +7573,38 @@ document's "residual risks accepted" paragraph.
   and a quotes panel does not have, and its host test goes through `erx_ui_host` and the SDK's boundary
   check, which this host test does not. The plan's idle-kiosk check (G6, no wake for a minute) cannot hold
   for a clock of minutes, so it needs a kiosk whose tree does not change, or a reworded criterion. plan.md
-  has the dashboard fetch quotes in part 4b while design-quotes.md gives that to `examples/quotes`; the
-  dashboard's board (`erx_dashboard_source`) carries no fetch time, so a live source needs design-quotes'
-  per-quote value and age first.
+  and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
+
+* [High] `examples/dashboard` full kiosk, `ssl` and `inets` (otp/lib has neither; `tools/lib/erx/release_files.rb`'s
+  `app` script lists `asn1`, `crypto` and `public_key` only) and the trust store (no `cacerts.pem` in
+  `public_key`'s `priv`, no `{unix, erxos}` row in `pubkey_os_cacerts`): the image has neither, which blocks a
+  real fetch of the live quotes on the target ([design-crypto.md](docs/design-crypto.md#https-clients)).
+
+* [Medium] `examples/dashboard` full kiosk: the live dashboard's reference frame, `dashboard-live` under
+  `test/display/reference/` (the dashboard's tree for a fixed time and a fixed live board), is not recorded;
+  design-quotes.md's frame test row names it.
+
+* [Medium] `erx_quotes` (`examples/dashboard/lib/erx_dashboard/src/`): the per-quote state log lines the QEMU
+  cell reads (`quotes: btc fresh 64412.50 kraken_btc`, design-quotes.md "The QEMU cell") are not written yet.
+
+* [Low] `erx_quotes_http` (`classify/4`): "no name servers in the grant's answer" maps to `failed`, not `dns` as
+  design-quotes.md's reasons table says, since the shape httpc gives for it was not seen.
+
+* [Medium] `erx_quotes_core` (`trying`): a round in flight has no deadline, so a request httpc never
+  answers (a handler killed without replying) keeps its quote from fetching until the source restarts.
+  Fix by construction: a deadline in `trying` that `tick/3` ends as `timeout`, and requests keyed by quote.
+
+* [Medium] `erx_quotes`, `erx_quotes_view`: both take apart `erx_quotes_core:state()` (the table's source
+  rows); the `fetch` action should carry the source row and the view take the table, so the core alone
+  owns its representation.
+
+* [Medium] `examples/dashboard` (`erx_dashboard.app.src`): the full kiosk needs `ssl` and `inets`, which
+  `erx_quotes` starts at run time but no `.app` file declares, and `quotes_table` is not in `env`; settle
+  with design-quotes.md's open decision on the full kiosk's package.
+
+* [Medium] `erx_quotes` tests: the effect process's own paths (an unknown request dropped, a redirect
+  followed within the round, a request httpc refuses at once, the tick) have no test; the HTTPS test
+  covers a value, a refused certificate and a body too big.
 
 * [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`, `set_role`): a node with no `role` shows LVGL's own face
   and colour, while ui.txt makes `body` the default, which an explicit `role => body` shows in the theme's

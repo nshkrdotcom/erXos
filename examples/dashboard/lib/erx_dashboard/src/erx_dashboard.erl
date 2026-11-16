@@ -10,8 +10,9 @@ in the sense of docs/design-display.md, "Kiosks and glasses": it opens
 its UI with `erx_ui:open(#{renderer => lvgl})`, and when the UI ends its
 supervisor starts it again, with a new window.
 
-At start it starts the source the application's `source` value names
-and asks for its window. A refused open is asked again every ?RETRY_MS,
+At start it starts the source the application's `source` value names,
+stopping with its reason if it refuses, and asks for its window. A
+refused open is asked again every ?RETRY_MS,
 since the session's display or pixel area may not be ready yet; each
 refusal unlike the one before is logged as `erx_dashboard: refused
 Reason`. Once a minute, on the minute, and whenever a board comes, it
@@ -38,16 +39,17 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 -doc false.
--spec init([]) -> {ok, state(), {continue, open}}.
+-spec init([]) -> {ok, state(), {continue, open}} | {stop, term()}.
 init([]) ->
     {ok, Source} = application:get_env(erx_dashboard, source),
     case Source:start_link(self()) of
-        {ok, _Pid} -> ok;
-        ignore -> ok
-    end,
-    next_tick(),
-    {ok, #{window => none, board => none, shown => none, refused => none},
-     {continue, open}}.
+        {error, Reason} ->
+            {stop, {source, Reason}};
+        _Started ->
+            next_tick(),
+            {ok, #{window => none, board => none, shown => none, refused => none},
+             {continue, open}}
+    end.
 
 -doc false.
 handle_continue(open, State) ->

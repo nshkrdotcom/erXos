@@ -1546,12 +1546,17 @@ only as a third party would build it, through the SDK.
 * **`examples/dashboard/`**, the kiosk dashboard, erXos's own code under
   its license: `app.txt`, `lib/erx_dashboard/` and its host test, which
   checks a frame through `erx_ui_host` against
-  `test/display/reference/dashboard`.
-* **`examples/quotes/`**, the quotes kiosk, erXos's own code under its
-  license: `app.txt`, which needs `display` and `net`,
-  `lib/erx_quotes/`, its source table `share/quotes.config`, its host
-  tests and its fuzz target, which the landing gate runs at a small
-  budget and `make check-fuzz` at its configured one
+  `test/display/reference/dashboard`. As the basic kiosk it shows the
+  clock, the date and sample quotes offline: its `app.txt` needs
+  `display` alone and its default quotes source is `erx_dashboard_sample`.
+  The same application directory holds the full kiosk's live quotes, the
+  modules `erx_quotes` and `erx_quotes_{config,core,http,extract,view}`
+  of `lib/erx_dashboard/`, a quotes source of the dashboard's seam that
+  the basic kiosk never starts; the development source table
+  `live/quotes.config`, outside `share/` so that the basic kiosk's package
+  does not carry it; the live quotes' host tests, run through
+  `test/host/erx_quotes_test.rb`, and their fuzz target, which the landing
+  gate runs at a small budget and `make check-fuzz` at its configured one
   ([design-quotes.md](design-quotes.md)).
 * **`examples/doom/`**, the Doom demo, structured as a separate app:
   `ORIGIN.md` beside `doom/`, a git submodule pinned by its gitlink, as
@@ -1573,7 +1578,7 @@ only as a third party would build it, through the SDK.
 
 To the packer each is an app directory with an `app.txt`, as is a
 third party's anywhere on disk. The landing gate exports the SDK, packs
-and host-tests `examples/dashboard` and `examples/quotes` with nothing
+and host-tests `examples/dashboard` with nothing
 but the SDK on their paths, and checks that every call each example makes into erXos's
 modules is one of `public.txt`'s functions, so a change that breaks the
 boundary fails there.
