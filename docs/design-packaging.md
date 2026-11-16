@@ -422,20 +422,44 @@ board's source does not hold and the build record lists:
   `erx_net_client`, OTP's `asn1`, `crypto`, `public_key`, `ssl` and
   `inets`, which it only loads, for an app's HTTPS requests
   ([design-crypto.md](design-crypto.md#https-clients)), and `erx_app`),
-  and whose limits are a session's defaults with `SPACES` (property 14);
+  and whose limits are the manifest's `limits session` record, the
+  defaults every session template takes, which enables `SPACES`
+  (property 14), the template's sessions drawing their memory from the
+  row's `memory`; a manifest with an `apps` row and no `limits session`
+  record is refused. Its words are one fixed recipe,
+  `DomainStartup::APP_TEMPLATE` in `tools/lib/erx/domain_startup.rb`,
+  which the release scripts also take the `app` script's name from: the
+  interpreter runtime, the `app` release, no environment, and the arguments every session template
+  gives init, the network client's `-erx_net_client grant` flag and
+  `-eval ok=application:start(erx_session,permanent),ok=application:start(erx_app,permanent)`,
+  since `erx_app` depends on `erx_session`. Since the template names no
+  principal, no source row can name it: a facet's `@session.NAME`
+  resolves through a principal, and the template is the session row
+  whose principal is `mf_none`, last among the sessions;
 * **one facet row for each service of `services`**, which never holds
   `packages`, `start`, `apps` or `etc` (property 19), granted to the app
-  template, named as the service is, with the parameters the service's
-  ABI file gives as its defaults. A service may be named in `services`
-  only if its ABI file declares a default for every parameter its rows
-  take: `abi/services/windows.txt` declares `windows_default` and
+  template, named as the service is. **Parameters and quantities**: the
+  row states no parameter, so each takes the default its service's ABI
+  file gives it, and it takes `max_request`, `in_flight`, `reductions`,
+  `period_ns` and `max_heap_size` from the service's `quantity` lines
+  ([design-abi.md](design-abi.md#services-facets-and-their-parameter-schemas)),
+  and `queue` from the machine's `system_queue`, as a source row that
+  states none does. A service may be named in `services` only if its ABI
+  file gives every parameter its rows take a default and declares every
+  quantity: `abi/services/windows.txt` declares `windows_default` and
   `windows_pixels_default`, `abi/services/files.txt` gives `rights` the
-  default `rw`, and `net` declares no parameter.
+  default `rw`, `net` declares no parameter, and each of the three
+  declares the five quantities. A service of the files interface is
+  refused until the storage service's `tree` parameter exists, since
+  without `tree apps` its grant would reach the whole tree rather than
+  the app's own directory.
   A row of the data partition's storage service carries the parameter
   `tree apps`, which roots its grants among the app directories ([Where
   an app's files lie](#where-an-apps-files-lie));
-* **the `packages` rows**: the system domain's grant of the `packages`
-  service, read-write, and the app template's, read-only;
+* **the `packages` rows**: the system domain's grant of the service
+  named `packages_service` (`abi/manifest.txt`), `rights rw`, and the
+  app template's, `rights ro`, each with the files interface's
+  quantities;
 * **the `apps` rows**: the `apps` service, an instance of `files` that
   the system domain serves, and its facet row granted to every session
   template the manifest grants the start service's tree, `start`
@@ -482,8 +506,9 @@ no room for the row's memory. The row's size follows from how the build counts i
   When the archive grows past the room `max` leaves it, the packer
   refuses the image, and the board's `max` is lowered then; a `max` set
   from the archive's size would change with every build.
-* `services` is `display data net`: the services both boards serve that
-  the examples and a developer's apps need.
+* `services` is `display net`: the display and the network, which both
+  boards serve and the examples need. `data` waits for `tree apps`,
+  since a files service is refused until then.
 * `memory` is not multiplied by `max`: it is one wall, carved from
   `root_memory` and counted by property 4, that the apps running at
   once share, and the kernel refuses a start that does not fit. So it is
@@ -979,7 +1004,21 @@ template, the session template that names no principal and comes last.
 The row and the template come together, since the build derives the
 template from the row, and the view refuses a manifest with one and not
 the other, so the library holds app entries exactly when the manifest
-has the row. `erx_domain_lib:apps/0` answers them; the domain service
+has the row.
+
+**The template's rows by index.** The build packs, in the `apps` row,
+the index of the app template among the sessions (`app_template`) and of
+its `packages` facet row (`packages_facet`), and in each `app_services`
+row the index of the facet row granted to the template for that service
+(`facet`), the rows it derived; the generated reader checks each index
+against its table. The boot view checks once, as it reads an untrusted
+manifest, that `app_template` is the session row naming no principal, the
+last, and that each of those facet rows is granted to that template for
+its service, `packages_facet` for the service named `packages_service`.
+`erx_pkg_manifest` reads the indices and searches for nothing, so the
+packer's host check and the boot cannot disagree about which session is
+the template or which rows are its grants, and a manifest the view
+refuses boots no package process. `erx_domain_lib:apps/0` answers them; the domain service
 bounds the registry by their `max`, and the package process gives
 admission the same `max`, so admission and registration cannot disagree
 about how many entries there are.

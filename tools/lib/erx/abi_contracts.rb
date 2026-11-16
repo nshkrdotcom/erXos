@@ -562,6 +562,13 @@ module Erx
         end
       end
 
+      # The quantities a facet row carries (erx_mf_facet, abi/manifest.txt), each with
+      # its field's width in bits. A service's `quantity KEY VALUE` lines are the values
+      # a facet row the build derives for it takes (docs/design-abi.md, "Services, facets
+      # and their parameter schemas"); each is positive and fits its field.
+      FACET_QUANTITIES = { 'max_request' => 32, 'in_flight' => 32, 'reductions' => 64,
+                           'period_ns' => 64, 'max_heap_size' => 64 }.freeze
+
       # Service interfaces have a namespace of their own, as their constants'
       # service_ prefix says, so an interface may share its name with a right
       # or a type (the inspect interface and the inspect right).
@@ -579,6 +586,7 @@ module Erx
           seen_numbers[number] = name
           operations = {}
           parameters = {}
+          quantities = {}
           liveness = nil
           declaration.members.each do |line|
             keyword, *words = line.words
@@ -609,6 +617,12 @@ module Erx
                                   kind: kind, cardinality: cardinality, maximum_count: count,
                                   bound: constraint.freeze, minimum: minimum, maximum: maximum, members: members,
                                   helper: helper }.freeze
+            when 'quantity'
+              Model.arity(line, 3)
+              key, value = words
+              width = FACET_QUANTITIES[key] || line.fail!("quantity names none of #{FACET_QUANTITIES.keys.join(', ')}")
+              line.fail!('duplicate quantity') if quantities.key?(key)
+              quantities[key] = Model.positive(value, line, maximum: (1 << width) - 1)
             else line.fail!('unknown service metadata member')
             end
           end
@@ -616,7 +630,8 @@ module Erx
           Model.unique_values(operations, label: 'operation', line: declaration.line)
           Model.unique_values(parameters.transform_values { |value| value.fetch(:number) }, label: 'parameter', line: declaration.line)
           { name: name, number: number,
-            operations: operations.freeze, parameters: parameters.freeze, liveness: liveness }.freeze
+            operations: operations.freeze, parameters: parameters.freeze, quantities: quantities.freeze,
+            liveness: liveness }.freeze
         end.freeze
       end
 

@@ -11,10 +11,12 @@ checks every count, span, index and string before a field is read:
 * `apps`: the `apps` row as admission reads it (`erx_app_admit:apps()`),
   or `none` when the manifest has no row and the machine takes no
   packages. Beside the row's budget and max, it holds the rows of the app
-  template, the one session template whose principal is absent: the facet
-  row granted to it for the `packages` service, and for each service of
-  the row, its name, whether its interface is `windows`, and the facet row
-  granted to the template for it;
+  template the row names: the facet row granted to it for the service
+  named `packages_service`, and for each service of the row, its name,
+  whether its interface is `windows`, and the facet row granted to the
+  template for it, each an index the build packed in the row and the
+  boot view checked (docs/design-packaging.md, "The template's rows by
+  index");
 * `reserved`: the names no app may take, those of the manifest's
   principal, domain, service and facet rows, sorted;
 * `packages`: the image's packages, each its app's name, the SHA-256 of
@@ -27,13 +29,9 @@ checks every count, span, index and string before a field is read:
   key, which the generated reader accepts in a development manifest
   alone, or `none`.
 
-A manifest with an `apps` row and not exactly one app template, or whose
-template holds not exactly one facet row of the `packages` service or of
-a service of the row, is refused: the domain library places no app
-entries for it, and admission would have no row to keep. The reader reads
-the bytes alone, so the packer runs it, and admission over its answer, on
-the host. It takes no policy decision; the package process builds its
-recovery's config from this answer.
+The reader reads the bytes alone, so the packer runs it, and admission
+over its answer, on the host. It takes no policy decision; the package
+process builds its recovery's config from this answer.
 """.
 
 -export([system_config/1, admission/1]).
@@ -53,15 +51,8 @@ recovery's config from this answer.
                     signers := [{binary(), <<_:256>>}],
                     development := none | <<_:256>>}.
 
--doc """
-Why a manifest is refused: the generated reader's error, or an `apps` row
-whose app template is not one session template (`{templates, Count}`), or
-whose template holds `Count` facet rows, not one, of the service named
-`Service` (`{grants, Service, Count}`).
-""".
--type error() :: erx_manifest:error()
-               | {apps, {templates, non_neg_integer()}
-                      | {grants, binary(), non_neg_integer()}}.
+-doc "Why a manifest is refused: the generated reader's error.".
+-type error() :: erx_manifest:error().
 
 -doc "Read `Manifest`, the bytes of a system manifest, or refuse it.".
 -spec system_config(binary()) -> {ok, config()} | {error, error()}.
@@ -91,45 +82,18 @@ config(Manifest) ->
 %% app_services, so the row's services are that table's rows.
 apps(_View, []) ->
     none;
-apps(View, [#{memory := Memory, max := Max}]) ->
+apps(View, [#{memory := Memory, max := Max, packages_facet := Packages}]) ->
     Services = list_to_tuple(rows(View, services)),
-    Granted = granted(app_template(rows(View, sessions)), rows(View, facets)),
-    IsPackages = fun(Index) -> name(View, element(Index + 1, Services)) =:= ?ERX_PACKAGES_SERVICE_BYTES end,
     #{memory => Memory,
       max => Max,
-      packages_row => template_row(Granted, IsPackages, ?ERX_PACKAGES_SERVICE_BYTES),
-      services => [service(View, Index, element(Index + 1, Services), Granted)
-                   || #{service := Index} <- rows(View, app_services)]}.
+      packages_row => Packages,
+      services => [service(View, element(Index + 1, Services), Facet)
+                   || #{service := Index, facet := Facet} <- rows(View, app_services)]}.
 
-%% The index of the app template, the one session template whose principal
-%% is absent.
-app_template(Sessions) ->
-    case [Index || {Index, #{principal := ?ERX_MF_NONE}} <- lists:enumerate(0, Sessions)] of
-        [Template] -> Template;
-        Templates -> throw({?MODULE, {apps, {templates, length(Templates)}}})
-    end.
-
-%% The facet rows granted to the sessions of Template, each its index and
-%% its service's; a row granted to a domain, the system domain or another
-%% template is none of them.
-granted(Template, Facets) ->
-    [{Row, Service} || {Row, #{grantee_kind := ?ERX_MF_GRANTEE_SESSION, grantee := Grantee,
-                               service := Service}} <- lists:enumerate(0, Facets),
-                       Grantee =:= Template].
-
-%% The one row of Granted whose service IsService takes, or the refusal
-%% naming Service.
-template_row(Granted, IsService, Service) ->
-    case [Row || {Row, Index} <- Granted, IsService(Index)] of
-        [Row] -> Row;
-        Rows -> throw({?MODULE, {apps, {grants, Service, length(Rows)}}})
-    end.
-
-service(View, Index, #{interface := Interface} = Row, Granted) ->
-    Name = name(View, Row),
-    #{name => Name,
+service(View, #{interface := Interface} = Row, Facet) ->
+    #{name => name(View, Row),
       windows => Interface =:= ?ERX_SERVICE_WINDOWS,
-      row => template_row(Granted, fun(Service) -> Service =:= Index end, Name)}.
+      row => Facet}.
 
 package(View, #{flags := Flags, sha256 := Sha256} = Row) ->
     #{name => name(View, Row), sha256 => Sha256, enabled => Flags band ?ERX_MF_PACKAGE_ENABLED =/= 0}.

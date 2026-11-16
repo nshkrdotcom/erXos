@@ -63,6 +63,8 @@ static uint32_t	boot_apps_max(const erx_manifest_view_t *);
 static const char *boot_principals(erx_dom_lib_t *, const erx_manifest_view_t *,
 		    const erx_dom_boot_tables_t *);
 static const char *boot_apps(erx_dom_lib_t *, const erx_manifest_view_t *);
+static const char *boot_app_grants(const erx_dom_view_t *, const erx_manifest_view_t *);
+static bool	boot_app_grant(const erx_dom_view_t *, uint32_t, uint32_t, uint32_t);
 static bool	boot_pages(uint64_t, uint64_t, erx_dom_range_t *);
 static bool	boot_compatible_is(const erx_manifest_view_t *, const erx_mf_device_t *, const char *);
 static bool	boot_reach(const erx_dom_device_entry_t *, erx_dom_range_t *);
@@ -753,14 +755,59 @@ boot_apps(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
 		return (has_app_template ? "manifest: an app template with no apps row" : NULL);
 	if (!erx_manifest_apps_at(manifest, 0, &row))
 		return ("manifest: an apps row the reader cannot read");
-	if (!has_app_template)
-		return ("manifest: an apps row with no app template");
+	/* boot_templates keeps the one template naming no principal last; the row must name that one. */
+	if (!has_app_template || row.app_template != view->ntemplates - 1)
+		return ("manifest: an apps row whose app_template is not the session template naming no principal");
 	/* The principal and held tables hold boot_apps_max entries past the principals: place those. */
-	if (erx_dom_apps_place(view, view->ntemplates - 1, row.memory, boot_apps_max(manifest)) != ERX_OK)
+	if (erx_dom_apps_place(view, row.app_template, row.memory, boot_apps_max(manifest)) != ERX_OK)
 		return ("manifest: the domain library refuses the app entries");
 	for (uint32_t entry = 0; entry < view->apps.max; entry++)
 		lib->held.principals[view->apps.first - 1 + entry] = (erx_dom_principal_held_t){ UINT64_MAX, UINT64_MAX };
 	return (NULL);
+}
+
+/*
+ * The app template's facet rows the apps row names by index
+ * (docs/design-packaging.md, "The template's rows by index"), checked
+ * once here so that every later reader of the indices, erx_pkg_manifest
+ * among them, takes them as the build packed them: packages_facet grants
+ * the template the service named packages_service, and each app_services
+ * row's facet grants the template that row's service. The reader checked
+ * each index against its table; boot_apps checked app_template.
+ */
+static const char *
+boot_app_grants(const erx_dom_view_t *view, const erx_manifest_view_t *manifest)
+{
+	static const uint8_t packages[] = ERX_PACKAGES_SERVICE_BYTES;
+	const erx_dom_service_t *service;
+	erx_mf_app_service_t granted;
+	erx_mf_apps_t row;
+
+	if (manifest->header.apps.count == 0)
+		return (NULL);
+	if (!erx_manifest_apps_at(manifest, 0, &row))
+		return ("manifest: an apps row the reader cannot read");
+	service = &view->services[view->facets[row.packages_facet].service];
+	if (!boot_app_grant(view, row.app_template, row.packages_facet, view->facets[row.packages_facet].service) ||
+	    service->name_len != sizeof(packages) || memcmp(service->name, packages, sizeof(packages)) != 0)
+		return ("manifest: the apps row's packages_facet is not the app template's grant of packages_service");
+	/* The one apps row's services span partitions app_services, so it holds every row. */
+	for (uint32_t index = 0; index < manifest->header.app_services.count; index++) {
+		if (!erx_manifest_app_services_at(manifest, index, &granted))
+			return ("manifest: an app_services row the reader cannot read");
+		if (!boot_app_grant(view, row.app_template, granted.facet, granted.service))
+			return ("manifest: an app_services row's facet is not the app template's grant of its service");
+	}
+	return (NULL);
+}
+
+/* Whether facet row facet grants session template template the service service. */
+static bool
+boot_app_grant(const erx_dom_view_t *view, uint32_t template, uint32_t facet, uint32_t service)
+{
+	const erx_dom_facet_t *row = &view->facets[facet];
+
+	return (row->grantee_kind == ERX_MF_GRANTEE_SESSION && row->grantee == template && row->service == service);
 }
 
 /*
@@ -1002,7 +1049,8 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	    (reason = boot_configured(&lib->view, manifest, tables->configured)) != NULL ||
 	    (reason = boot_templates(&lib->view, manifest, tables->templates)) != NULL ||
 	    (reason = boot_apps(lib, manifest)) != NULL ||
-	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->parameters)) != NULL)
+	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->parameters)) != NULL ||
+	    (reason = boot_app_grants(&lib->view, manifest)) != NULL)
 		return (reason);
 	if (!boot_limits(manifest, header->native_limits, &lib->view.native_limits))
 		return ("manifest: native_limits names no limits record");

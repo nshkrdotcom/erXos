@@ -52,7 +52,7 @@ module AbiFuzz
     system_platform = JSON.parse(File.read(File.join(top, 'config/platforms/qemu-virt.json')))
     system_context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(codec).merge(platform: system_platform))
     domain_seed = ManifestContextFixture.domain_source(system_seed)
-    domain_context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(codec).merge(platform: system_platform))
+    domain_context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(codec).merge(platform: system_platform))
     until Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
       begin
         case count % 5
