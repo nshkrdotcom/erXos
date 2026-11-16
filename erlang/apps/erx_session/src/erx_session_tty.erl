@@ -20,7 +20,14 @@ its master in the six messages, and is read by its console on demand
   open/1, as a terminal on a display does (docs/design-display.md, "The
   terminal"), much as a program's posix_openpt makes a pseudo-terminal. Its
   relay holds no name: its console reaches it by pid, and every open names the
-  relay that made it.
+  relay that made it;
+* a tty for each SSH channel the session's line to the SSH domain opens with
+  open_channel/3 (erx_ssh_line; docs/design-ssh.md, "Sessions, ttys and
+  shells"), whose master is the channel, a process of that domain. Its shell is
+  the command shell, or `rc -c Command` for an exec request, and it is not
+  started again: once the shell has ended and the channel has taken its last
+  output, the console reports the shell's exit status and ends, its relay with
+  it.
 
 A tty is two processes. The groups that run its shells are driven by a console
 of the session role (erx_console:start_link/1), unregistered, exactly as the
@@ -37,7 +44,15 @@ its end is the tty's hangup, as a pseudo-terminal master's close is
 then itself, its relay with it, and the session's other ttys run on.
 """.
 
--export([start_link/0, start_link/1, open/1]).
+-export([start_link/0, start_link/1, open/1, open_channel/3, start_channel/3]).
+
+-export_type([run/0, channel/0]).
+
+%% What runs on a channel's tty: the command shell, or rc on one command.
+-type run() :: shell | {exec, binary()}.
+%% A channel's tty: what runs on it, its first window size as {Rows, Columns}, and the
+%% shell's first variables (erx_shell_script:first_vars/1).
+-type channel() :: #{run := run(), size := {1..65535, 1..65535}, vars := erx_shell_script:vars()}.
 
 -doc """
 Starts the session's console tty, with the master erx:cap(console) names, as the
@@ -71,17 +86,50 @@ open(Master) when is_pid(Master), node(Master) =:= node() ->
                              type => worker,
                              modules => [?MODULE, erx_console, erx_session_relay]}).
 
+-doc """
+Opens a tty of the session for Channel, a process of another domain, the
+SSH domain the session's line serves, under the session's supervisor, which
+never restarts it. Tty says what runs on it and its first size (channel());
+Notify gets the exit status of what ran once Channel has taken the tty's last
+output (erx_console's `on_shell_end`). Returns its console. The caller
+has checked that Channel is a process of the domain it serves: the relay
+hears the channel only in that domain's envelope.
+""".
+-spec open_channel(pid(), channel(), fun((0..255) -> term())) -> {ok, pid()} | {error, term()}.
+open_channel(Channel, Tty, Notify) when is_pid(Channel), node(Channel) =/= node(), is_function(Notify, 1) ->
+    supervisor:start_child(erx_session_sup,
+                           #{id => {?MODULE, make_ref()},
+                             start => {?MODULE, start_channel, [Channel, Tty, Notify]},
+                             restart => temporary,
+                             type => worker,
+                             modules => [?MODULE, erx_console, erx_session_relay]}).
+
+-doc false.
+start_channel(Channel, #{run := Run, size := {Rows, Columns} = Size, vars := Vars}, Notify) ->
+    %% The relay's tty and the console's terminal both start at the size.
+    erx_console:start_link(#{role => session, user => none,
+                             on_shell_end => {exit, Notify},
+                             size => {Columns, Rows},
+                             driver => relay(Channel, #{size => Size}),
+                             first_shell => fun(Terminal) -> shell_of(Run, Terminal#{vars => Vars}) end}).
+
+%% What runs on a tty's terminal: the command shell, or rc on one command, each
+%% with the terminal's first variables.
+shell_of(shell, Terminal) -> {erx_shell, server, [{erx_shell_runner, Terminal}]};
+shell_of({exec, Command}, #{vars := Vars}) -> {erx_shell_script, command, [Command, Vars]}.
+
 %% A console of the session role driven by a relay for Master, the relay of the
 %% domain's line when Options says the console is that line, and whose first
 %% shell is the command shell on that console's own terminal.
 start_console(Master, Options) ->
     RelayOptions = maps:with([domain_line], Options),
     erx_console:start_link(Options#{role => session,
-                                    driver => fun(Console) ->
-                                                      {ok, Pid} = erx_session_relay:start_link(Console, Master,
-                                                                                               RelayOptions),
-                                                      {ok, Pid, relay}
-                                              end,
-                                    first_shell => fun(Terminal) ->
-                                                           {erx_shell, server, [{erx_shell_runner, Terminal}]}
-                                                   end}).
+                                    driver => relay(Master, RelayOptions),
+                                    first_shell => fun(Terminal) -> shell_of(shell, Terminal) end}).
+
+%% The console's driver: a relay for Master, the console's line driver.
+relay(Master, RelayOptions) ->
+    fun(Console) ->
+            {ok, Pid} = erx_session_relay:start_link(Console, Master, RelayOptions),
+            {ok, Pid, relay}
+    end.

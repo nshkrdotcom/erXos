@@ -81,9 +81,11 @@ boot's step 5). erx_domain:display_settled/1 is answered ok, by the same
 checks, once no starting configured row serves the display it names, which
 the start table waits on before it starts a row that names a display.
 
-A session's ready report names its line to the web domain among its provides;
-the service keeps that pid until the session ends and hands it out only
-through erx_domain:web_line/2, when the host opens its web facet.
+A session's ready report names its lines among its provides, each under a
+name of the closed set ?ERX_LINES: its line to the web domain, web_line, and to
+the SSH domain, ssh_line. The service keeps each pid until the session ends
+and hands it out only through erx_domain:line/3, to the domain the line
+serves, when that domain asks for the session's line.
 
 Its state, erx_domain_core's and erx_domain_links's, lives in its own heap and nowhere else. The
 service is never restarted: its end, however it comes, ends the system
@@ -107,6 +109,7 @@ reach it only through facets, which arrive with the connections.
 %% The keys of a session's start beyond its console: the display the session is the
 %% session of, or the one it only takes as its default (session_start/3).
 -define(START_DISPLAYS, [display, default_display]).
+
 %% The keys of a request beyond its name, boot and boot_timeout: erx_domain_lib:spec()'s, less
 %% id, principal and domain_pid, which the service sets, and facets, the service's own.
 -define(REQUEST_KEYS, [runtime, release, release_files, memory, outer, grant, lane, args, env,
@@ -199,7 +202,7 @@ state(Lib, Principals, Opts) ->
       held => #{}, release_wait => maps:get(release_wait, Opts, ?RELEASE_WAIT),
       mint_config => MintConfig, mints => erx_domain_mints:new(MintConfig#{services => [], grants => []}),
       mint_timers => #{}, mint_counts => #{}, mint_log => {erlang:monotonic_time(millisecond), 0, 0},
-      served => #{}, web_lines => #{},
+      served => #{}, lines => #{},
       facet_names => maps:get(facet_names, Opts, ?ERX_FACET_NAMES),
       inspect_policy => inspect_policy(Opts), principals => Principals,
       facet_rows => [], trees => [], app_entries => AppEntries,
@@ -367,9 +370,9 @@ handle_call(system_principal, _From, #{principals := #{system := System}} = Stat
                 _ -> {ok, System}
             end,
     {reply, Reply, State};
-handle_call({web_line, Id}, _From, #{web_lines := Lines} = State) ->
+handle_call({line, Name, Id}, _From, #{lines := Lines} = State) ->
     case Lines of
-        #{Id := Line} -> {reply, {ok, Line}, State};
+        #{Id := #{Name := Line}} -> {reply, {ok, Line}, State};
         #{} -> {reply, {error, no_line}, State}
     end;
 handle_call({inspect_view, Scope}, _From, #{core := Core} = State)
@@ -916,7 +919,7 @@ ready(Id, Ref, Provides, Inspect, #{core := Core, waiting := Waiting} = State) -
             case Origin of
                 {configured, Row} -> mints({ready, Row, Id, Node, Provides}, Answered);
                 {session, _Template} -> mints({session_ready, minted_rows(Domain), Id, marked(Start)},
-                                              keep_web_line(Id, Node, Provides, Answered));
+                                              keep_lines(Id, Node, Provides, Answered));
                 request -> Answered
             end;
         {_, #{Id := #{ref := Ref, ended := {running, _Info}}}} ->
@@ -1002,14 +1005,17 @@ served_kind(Name, Trees) ->
         false -> message
     end.
 
-%% A session's line to the web domain, which its ready report names among its provides as
-%% web_line, a process of the session's own node (erx_web_line). The service keeps it
-%% until the session ends, for erx_domain:web_line/2 to hand to the web domain when the
-%% host opens the web facet; it hands the pid to no one before then.
-keep_web_line(Id, Node, #{web_line := Line}, #{web_lines := Lines} = State) when is_pid(Line), node(Line) =:= Node ->
-    State#{web_lines := Lines#{Id => Line}};
-keep_web_line(_Id, _Node, _Provides, State) ->
-    State.
+%% A session's lines, which its ready report names among its provides under the names
+%% of ?ERX_LINES, each a process of the session's own node (erx_web_line, erx_ssh_line). The
+%% service keeps them until the session ends, for erx_domain:line/3 to hand to the
+%% domain a line serves; it hands a pid to no one before then. A provide of another
+%% name, or one that is no process of the session, names no line.
+keep_lines(Id, Node, Provides, #{lines := Lines} = State) ->
+    case maps:filter(fun(_Name, Line) -> is_pid(Line) andalso node(Line) =:= Node end,
+                     maps:with(?ERX_LINES, Provides)) of
+        Kept when map_size(Kept) =:= 0 -> State;
+        Kept -> State#{lines := Lines#{Id => Kept}}
+    end.
 
 mint(Id, DomainPid, Name, {tree, Grants, Limits}, Exports) ->
     mint_tree(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
@@ -1477,8 +1483,8 @@ log_end(Level, Name, Id, Info, Then) ->
 %% "A session takes the console": a session does not wait for a restart). A session's end cancels its grants'
 %% operations and deletes the grants.
 unprovide({configured, Row}, Id, State) -> mints({ended, Row, Id}, State);
-unprovide({session, _Template}, Id, #{web_lines := Lines} = State) ->
-    mints({session_ended, Id}, State#{web_lines := maps:remove(Id, Lines)});
+unprovide({session, _Template}, Id, #{lines := Lines} = State) ->
+    mints({session_ended, Id}, State#{lines := maps:remove(Id, Lines)});
 unprovide(request, _Id, State) -> State.
 
 %%% The facets configured domains serve (docs/design-system.md, "Facets a configured

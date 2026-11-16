@@ -534,7 +534,7 @@ domain, heard through that domain's envelope, and answers each `ok` or
   on it. From then on the tty and the channel exchange the six console
   messages, with `window-change` sent as `tty_size` and the channel's end
   or the connection's as `tty_hangup`. The shell's `TERM` is `Term` when
-  `abi/termcap` names it and `vt100` otherwise; a size of zero, which
+  `abi/terminal.txt` names it and `vt100` otherwise; a size of zero, which
   `pty-req` allows, is taken as 24 rows or 80 columns.
 * **`{open_job, Channel, Run}`** for a channel with no pseudo-terminal.
   The session starts the shell with standard input, output and error on
@@ -980,6 +980,23 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
   a paste larger than the bound into a program that is not reading loses
   bytes. An acknowledgement of input in the console interface would carry
   the SSH window to the tty; recorded in `TODO.md`.
+* **A command that a signal ends.** OpenSSH's `sshd` sends `exit-status`
+  only for a command that exited, and `exit-signal` (the signal's name
+  without `SIG`, whether it dumped core, and an empty message and
+  language) for one a signal ended (`session_exit_message` in
+  `session.c`), so FreeBSD's `sshd` reports a session whose shell Ctrl-C
+  ends as signal `INT` (whether FreeBSD's `sh -c` itself dies of that
+  SIGINT, rather than exiting 130, is not checked here). The line sends a
+  channel only
+  `{exited, Status}` with a status from 0 to 255, so the same command on
+  erXos reports `exit-status` 130, the status rc gives a command SIGINT
+  ended, and a client sees an exit, not a signal. The question is whether
+  the line should carry the signal. Recommendation: yes, as FreeBSD
+  behaves: a second ending, `{signalled, Name}`, with `Name` from a closed
+  list in `abi/services/ssh.txt` (`INT` alone at first, since Ctrl-C is
+  the only signal that ends an exec on a tty), which the channel sends as
+  `exit-signal` with no core dump; a hangup needs none, since the channel
+  is gone by then.
 * **Session creation per login** costs a domain's start; the latency of
   an SSH login is on the watch list
   ([todo-performance.md](todo-performance.md)),
@@ -1003,6 +1020,11 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
   `version.h` `3605cf2244753b660a0d06f0946665f77ce2e446b367ecee5fe6e11db28318ff`,
   `auth2.c` `d4364911846a7296bc232660ae3427e45b6fc7726c5c7ff34c86c50ef9f5cdbf`,
   `monitor.c` `f6a0096c9ade1fd45a485099c73c07044fb2f8bdf3d3da993513b38490aeace1`.
+* `session.c` (`session_exit_message`), from FreeBSD's
+  `release/15.1.0-p6` `crypto/openssh/`, SHA-256
+  `3420f3f5bfb4bee8c8d96f08b04605b432f583044725f38e017be3a530c588e6`,
+  and from `https://raw.githubusercontent.com/openssh/openssh-portable/V_9_9_P2/`,
+  SHA-256 `05113a9413336600d055f19190c1a057bc164f57e215df240016478db1c4944e`.
 * From `https://www.rfc-editor.org/rfc/`: RFC 4252, "The Secure Shell
   (SSH) Authentication Protocol", section 7, `rfc4252.txt`
   `a36b882cf77b107335d49921b5e955b4ba78e253205dfbce5096ebc0e78bdf14`;

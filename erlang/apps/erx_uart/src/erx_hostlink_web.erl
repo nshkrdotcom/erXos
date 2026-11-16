@@ -73,7 +73,7 @@ the answer is `{error, unsupported}` and no facet starts.
 Only once all three hold does the facet reach for root's line: the line of
 the session the console logged root in at (erx_console:login_session/0),
 which the system domain has exported to the web domain as the facet opens
-(erx_domain:web_line/2), so the web domain reaches no session before the
+(erx_domain:line/3), so the web domain reaches no session before the
 host opens the facet. Its connections are bound to that line and their
 views are of root's session. With no such session, or a line that could
 not be exported, the facet opens all the same and every view a browser
@@ -103,13 +103,13 @@ open(_Link, _Relay, _Build, _Development, _LineOf) ->
 %% Root's line, exported to the web domain Web, or none. Every wait is bounded: the
 %% console's and the domain service's lookups by gen_server's default deadline, the
 %% introduction by the service's own (erx_domain:introduce/2) and the export by
-%% erx_domain:web_line/2's. A lookup that ends in an exit, a console not running or a
+%% erx_domain:line/3's. A lookup that ends in an exit, a console not running or a
 %% deadline passed, leaves the facet without a line, as no session does.
 root_line(Web) ->
     try
         maybe
             {ok, Session} ?= erx_console:login_session(),
-            {ok, Line} ?= erx_domain:web_line(Session, Web),
+            {ok, Line} ?= erx_domain:line(web_line, Session, Web),
             #{line => Line}
         else
             none -> #{};

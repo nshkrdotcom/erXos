@@ -124,6 +124,19 @@ class FacetNamesTest < Minitest::Test
                                                  "service other 10\n  served_as message\n")
   end
 
+  # A session's line is provided under its name, which is no facet: the check passes it
+  # in any file, and a manifest service of that name is refused.
+  def test_a_line_is_no_facet
+    assert_empty found("f() -> erx_facet:provide(ssh_line, self()).\ng() -> erx_facet:provide(web_line, self()).\n")
+    files, = table
+    Dir.mktmpdir do |root|
+      write(root, files.merge(MANIFEST => files.fetch(MANIFEST).sub("  interface seeded\n",
+                                                                    "  interface seeded\n  name \"ssh_line\"\n")))
+      error = assert_raises(Erx::Error) { Erx::FacetNames.generation(root: root) }
+      assert_match 'both declared and exempt or lines: ssh_line', error.message
+    end
+  end
+
   def test_an_exempt_name_outside_its_listed_files_fails
     assert_equal [[MODULE, 1]], found("f() -> erx:cap(log).\n")
   end
@@ -159,7 +172,8 @@ class FacetNamesTest < Minitest::Test
       write(root, files.merge(MANIFEST => files.fetch(MANIFEST).sub("facet seeded\n", "facet seeded\n  name \"other\"\n")))
       plan = Erx::FacetNames.generation(root: root)
       header = plan.files.fetch(Erx::FacetNames::HEADER)
-      assert_equal ["-define(ERX_FACET_NAMES, ['seeded'])."], header.lines(chomp: true).grep(/^-define\(ERX_/).grep_v(/_HRL,/)
+      assert_equal ["-define(ERX_FACET_NAMES, ['seeded']).", "-define(ERX_LINES, ['ssh_line', 'web_line'])."],
+                   header.lines(chomp: true).grep(/^-define\(ERX_/).grep_v(/_HRL,/)
       assert_equal({ 'abi/services/*.txt' => [INTERFACE], 'config/manifest/*.txt' => [MANIFEST] }, plan.globs)
     end
   end
@@ -172,9 +186,9 @@ class FacetNamesTest < Minitest::Test
     detail = ->(list) { Erx::FacetNames.exemption_violations(list).map(&:to_s).join }
     assert_empty detail.call(exemptions)
     longer = exemptions.merge('rogue' => Erx::FacetNames::Exemption.new(todo: 'none', sites: []))
-    assert_match(/UNDECLARED holds 3 names, not EXEMPTIONS_MAX \(2\): the exemptions only shrink/, detail.call(longer))
-    assert_match(/UNDECLARED holds 1 names, not EXEMPTIONS_MAX \(2\): lower EXEMPTIONS_MAX/,
-                 detail.call(exemptions.except('web_line')))
+    assert_match(/UNDECLARED holds 2 names, not EXEMPTIONS_MAX \(1\): the exemptions only shrink/, detail.call(longer))
+    assert_match(/UNDECLARED holds 0 names, not EXEMPTIONS_MAX \(1\): lower EXEMPTIONS_MAX/,
+                 detail.call(exemptions.except('console')))
   end
 
   # A manifest name outside the atom syntax generates nothing, so a name cannot close the
@@ -206,7 +220,7 @@ class FacetNamesTest < Minitest::Test
     Dir.mktmpdir do |root|
       write(root, files.merge(MANIFEST => files.fetch(MANIFEST).sub("  interface seeded\n", "  interface seeded\n  name \"console\"\n")))
       error = assert_raises(Erx::Error) { Erx::FacetNames.generation(root: root) }
-      assert_match 'both declared and exempt in UNDECLARED: console', error.message
+      assert_match 'both declared and exempt or lines: console', error.message
     end
   end
 

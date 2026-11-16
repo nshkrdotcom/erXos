@@ -47,9 +47,9 @@ class TerminalGenerationTest < Minitest::Test
     end
   end
 
-  # The source holds only the line escape rules; the golden points below pin
-  # that tab and newline are escaped.
-  def test_the_source_declares_only_the_line_escape_rules
+  # The source holds the line escape rules and the terminal types; the golden
+  # points below pin that tab and newline are escaped.
+  def test_the_source_declares_the_line_escape_rules_and_terminal_types
     model = Erx::TerminalRules.source(source)
     assert_equal %w[byte codepoint field kernel], model.fetch('token').keys.sort
     assert_equal({ 'prefix' => '\x', 'minimum' => 2, 'maximum' => 2,
@@ -58,6 +58,8 @@ class TerminalGenerationTest < Minitest::Test
     assert_equal({ 'prefix' => '<U+', 'minimum' => 4, 'maximum' => 6,
                    'suffix' => '>', 'digits' => 'uppercase_hex' }, model.fetch('token').fetch('codepoint'))
     assert_equal %w[east_asian_width properties unicode_data], model.fetch('input').keys.sort
+    assert_equal %w[vt100 xterm xterm-256color], model.fetch("term_types")
+    assert_equal "vt100", model.fetch("term_default")
     assert model.frozen?
   end
 
@@ -74,6 +76,10 @@ class TerminalGenerationTest < Minitest::Test
        source.sub('token field \x 2 2 -', "token field #{forged}")
      end,
      source.sub(/^input properties .*\n/, ''),
+     # The default must be a listed type, and a type a terminfo-like name.
+     source.sub("term_default vt100", "term_default ansi"), source.sub(/^term_default .*\n/, ''),
+     source.sub("term_types vt100", "term_types vt100 vt100"), source.sub("xterm-256color", "Xterm"),
+     source.sub("xterm-256color", "xterm\e[31m"),
      source + "pass strict 0009 000A\n", source + "sequence prim_tty cursor_up 1B5B - - 41 none\n",
      source + "input prim_tty otp/lib/kernel/src/prim_tty.erl\n", "\xff".b, 'x' * 65_537].each do |bytes|
       assert_raises(Erx::Error) { Erx::TerminalRules.source(bytes) }

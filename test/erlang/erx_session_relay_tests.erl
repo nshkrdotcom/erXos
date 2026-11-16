@@ -24,10 +24,13 @@ start(Console, Master) ->
     started(fun() -> ?RELAY:start_link(Console, Master, #{domain_line => true}) end).
 
 %% A relay whose master is in domain D, which stock's emulator cannot name:
-%% the server is started with the origin start_link/2 would have found.
-start_in_domain(D) ->
+%% the server is started with the origin start_link/2 would have found, with
+%% the test as the console and as the master unless Master is given.
+start_in_domain(D) -> start_in_domain(D, self()).
+
+start_in_domain(D, Master) ->
     started(fun() ->
-                    gen_server:start_link({local, ?NAME}, ?RELAY, {self(), {domain, self(), D}}, [])
+                    gen_server:start_link({local, ?NAME}, ?RELAY, {self(), {domain, Master, D}, #{}}, [])
             end).
 
 %% While the test traps exits, the end of any process linked to it is a
@@ -278,4 +281,26 @@ a_master_in_another_domain_test() ->
         ?assertMatch({ready, Open, [in], 0}, next())
     after
         stop(Relay)
+    end.
+
+%% The end of a master in another domain is the tty's hangup too, though it says no
+%% tty_hangup: a crash of its connection, where a 'DOWN' that names the master with a
+%% reference the relay never made changes nothing, and the end of its domain, which here
+%% is a node never reached, whose monitor fires with noconnection.
+a_master_in_another_domain_that_ends_hangs_up_test() ->
+    Master = group(),
+    Relay = start_in_domain(7, Master),
+    try
+        Relay ! {'DOWN', make_ref(), process, Master, killed},
+        nothing_after(fun() -> sys:get_state(Relay) end),
+        exit(Master, kill),
+        ?assertEqual(erx_console_eof, next())
+    after
+        stop(Relay)
+    end,
+    Gone = start_in_domain(8, binary_to_term(<<131, 88, 119, 9, "erx@other", 1:32, 0:32, 1:32>>)),
+    try
+        ?assertEqual(erx_console_eof, next())
+    after
+        stop(Gone)
     end.

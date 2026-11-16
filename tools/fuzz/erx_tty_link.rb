@@ -18,6 +18,9 @@ module ErxTtyLinkFuzz
   TARGET_SOURCE = File.join(ROOT, 'test/erlang/erx_tty_link_fuzz.erl')
   # erx_tty_link takes its room from erx_tty:master_room/0.
   TTY_SOURCE = File.join(ROOT, 'erlang/apps/erx_session/src/erx_tty.erl')
+  # The SSH line core, whose requests the same target feeds (docs/design-ssh.md, "Sessions, ttys
+  # and shells").
+  LINE_SOURCE = File.join(ROOT, 'erlang/apps/erx_ssh_line/src/erx_ssh_line_core.erl')
   # A broken guarantee: the text that keeps it, what replaces it, and the property that must
   # then fail, as the target names it.
   Seed = Data.define(:text, :broken, :property)
@@ -48,32 +51,52 @@ module ErxTtyLinkFuzz
                                                        broken: '{?MAX_HELD - held(L), 0, Stopped}',
                                                        property: 'room_wrong')
   }.freeze
+  LINE_SEEDED = {
+    "the channel being the peer's" => Seed.new(text: 'case {valid_run(Run), Owner(Channel) =:= Peer} of',
+                                               broken: 'case {valid_run(Run), is_function(Owner, 1)} of',
+                                               property: 'foreign_channel'),
+    'a command holding no NUL' => Seed.new(text: 'binary:match(Command, <<0>>) =:= nomatch;', broken: 'true;',
+                                           property: 'bad_run'),
+    'ten channels at most' => Seed.new(text: 'when map_size(Ttys) >= ?MAX_CHANNELS ->',
+                                       broken: 'when map_size(Ttys) > ?MAX_CHANNELS ->', property: 'over_limit'),
+    'a zero side taken as the default' => Seed.new(text: 'side(0, Default) -> Default;',
+                                                   broken: 'side(0, _Default) -> 0;', property: 'size_out_of_range')
+  }.freeze
+  # Each module under test, and the guarantees seeded out of it.
+  TARGETS = { MODULE_SOURCE => SEEDED, LINE_SOURCE => LINE_SEEDED }.freeze
   DEADLINE_SECONDS = '60'
 
   module_function
 
   def run(seed:)
-    source = File.binread(MODULE_SOURCE)
-    output, status = fuzz(source, seed: seed)
+    sources = TARGETS.keys.to_h { |path| [path, File.binread(path)] }
+    output, status = fuzz(sources, seed: seed)
     abort(output[0, 4000]) unless status.success? && output.match?(/^fuzz: \d+ rounds ok$/)
-    SEEDED.each do |guarantee, planted|
-      raise "no #{guarantee} (#{planted.text}) in #{MODULE_SOURCE}" unless source.include?(planted.text)
+    TARGETS.each do |path, seeds|
+      source = sources.fetch(path)
+      seeds.each do |guarantee, planted|
+        raise "no #{guarantee} (#{planted.text}) in #{path}" unless source.include?(planted.text)
 
-      output, status = fuzz(source.sub(planted.text, planted.broken), seed: seed)
-      unless !status.success? && output.include?("fuzz_failure,#{planted.property}")
-        abort("erx_tty_link without #{guarantee} did not fail #{planted.property}:\n#{output[0, 4000]}")
+        output, status = fuzz(sources.merge(path => source.sub(planted.text, planted.broken)), seed: seed)
+        unless !status.success? && output.include?("fuzz_failure,#{planted.property}")
+          abort("#{File.basename(path, '.erl')} without #{guarantee} did not fail #{planted.property}:\n" \
+                "#{output[0, 4000]}")
+        end
       end
     end
-    puts "erx_tty_link keeps its guarantees, and copies without #{SEEDED.keys.join(', ')} do not"
+    puts 'erx_tty_link and erx_ssh_line_core keep their guarantees, and copies without ' \
+         "#{TARGETS.values.flat_map(&:keys).join(', ')} do not"
   end
 
-  # In a directory of its own, which also takes the crash dump of a failed round.
-  def fuzz(module_text, seed:)
+  # In a directory of its own, which also takes the crash dump of a failed round: each
+  # module under test as sources holds it, and the target.
+  def fuzz(sources, seed:)
     Dir.mktmpdir('erx-tty-link-fuzz') do |work|
-      module_path = File.join(work, 'erx_tty_link.erl')
-      File.binwrite(module_path, module_text)
+      module_paths = sources.map do |path, text|
+        File.join(work, File.basename(path)).tap { |copy| File.binwrite(copy, text) }
+      end
       output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
-                                       module_path, TTY_SOURCE, TARGET_SOURCE, stdin_data: '')
+                                       *module_paths, TTY_SOURCE, TARGET_SOURCE, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

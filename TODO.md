@@ -3067,18 +3067,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   declaration holds no facet by construction, and shrink the command-needs build check
   (`tools/lib/erx/command_needs.rb`) to "no erx_shell module names a stack module": its list of OTP's
   network modules and functions is an enumeration that a new OTP call outside it gets past.
-* [Medium] domains, two facets of no declared interface (`tools/lib/erx/facet_names.rb`, `UNDECLARED`;
+* [Medium] domains, a facet of no manifest service (`tools/lib/erx/facet_names.rb`, `UNDECLARED`;
   [design-abi.md](docs/design-abi.md#services-facets-and-their-parameter-schemas)): a session's `console`
   facet, which `erx_console` hands in its create spec and `erx_session_tty` reads with `erx:cap(console)`
-  ([design-live.md](docs/design-live.md#the-console)), is of no interface, since `abi/services/console.txt`
-  declares no service; and `web_line`, which `erx_web_line_app` provides through `erx_facet:provide/2` and the
-  domain service hands the web domain ([design-web.md](docs/design-web.md#overview)), is an export of the
-  session's line that rides the facet registry. Declare the console's interface in `abi/services/console.txt`
-  with the tty's six messages, as design-live.md ("The tty") states, and take `web_line` off the registry,
-  since design-web.md ("Overview") makes the line a name the login hands out rather than a facet, then drop
-  both from `UNDECLARED` and lower `EXEMPTIONS_MAX` to match. Declaring `console` also deletes the funnel's
-  literal `console` clause (`erx_domain_srv:facet/3`), so it waits for the attenuating hand-on of the
-  facets item below, through which the console facet is then handed on like any recorded facet.
+  ([design-live.md](docs/design-live.md#the-console)), is of the interface `abi/services/console.txt`
+  declares, but no system manifest service instantiates it, so the funnel takes it through a literal
+  `console` clause of its own (`erx_domain_srv:facet/3`). Instantiate it once the attenuating hand-on of
+  the facets item below lands, through which the console facet is then handed on like any recorded facet;
+  that deletes the literal clause, and `console` leaves `UNDECLARED` with `EXEMPTIONS_MAX` lowered to 0.
 * [Low] domains, the facet table's manifest reader (`tools/lib/erx/facet_names.rb`, `records_of`): the
   facet-names check, and the funnel's table generated from it (`erx_facet_names.hrl`), read the manifest
   with a small parser of their own rather than `Erx::ABI::Syntax.parse`. Read it with the manifest's own
@@ -5030,9 +5026,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the `Ctrl-G` menu (`erx_console_menu`) lists, connects and detaches; interrupting and killing a session, lock and log out (`docs/design-live.md`, "Job control") come with logins (M10), and `erx:console_size/2` is not built.
 * [Medium] session, terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`): each tty of the
   session has a relay, which its console reads on demand, but `erx_cmd` does not read through
-  `open_reader/2` ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)). The runtime's
+  `open_reader/2` ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)): a stage's
+  standard input with no pipe or redirection is end of input (`erx_shell_runner:new/1`'s and
+  `erx_shell_script:run/2`'s `0 => null`), not the session's tty as design-shell.md ("Pipelines") has it,
+  so an SSH `exec` on a channel with a tty reads nothing where FreeBSD's sshd gives it the pty. The runtime's
   writers' sender, `otp/lib/kernel/src/erx_output.erl`, which the design and the `relay-name` rule name, is
-  not in the tree, so nothing sends `tty_write` or `tty_drain`, nor are edit 35's trap and edit 42
+  not in the tree, so nothing sends `tty_write`, and `tty_drain` comes only from a console that exits with
+  its shell (`erx_console`'s `on_shell_end`), nor are edit 35's trap and edit 42
   (`beam/bif.c`), which reach it; and `erx_tty_owner` is missing from `erx_session.app.src`'s
   `registered` list.
 * [Medium] session, terminal relay requests (`erlang/apps/erx_session/src/erx_session_relay.erl`): the
@@ -6383,8 +6383,9 @@ to the corpus and follow rc
   end at once, and the shell's `kill` of a job reaches its programs as their starter's end, `sigkill`.
 * [Medium] shell, a job's processes are found by group leader, not by
   job tag: until the runtime's job tags exist (docs/design-shell.md,
-  "Jobs and their tags"), `erx_shell` runs each line and each `&` job
-  under a group leader of its own that forwards io to the shell's group;
+  "Jobs and their tags"), `erx_shell` runs each line and each `&` job,
+  and `erx_shell_script:command/2` each `rc -c` on a tty, under a group
+  leader of its own (`erx_shell_leader`) that forwards io to the shell's group;
   stopping a job pauses every process that leader leads with
   `erlang:suspend_process/1`, in passes, and `Ctrl-C`, `kill`, the heap
   limit or a crash kill them (`pause/2`, `terminate/2`, `end_line/3`).
@@ -6395,7 +6396,7 @@ to the corpus and follow rc
   every process of the runtime. `erx_prog_handler:start/1` likewise
   records a program in its caller's group leader's job at the command
   server, where the design reads the caller's tag with `erx_job:tag/0`.
-  Replace both with the job tag (`erlang/apps/erx_shell/src/erx_shell.erl`,
+  Replace both with the job tag (`erlang/apps/erx_shell/src/erx_shell_leader.erl`,
   `erlang/apps/erx/src/erx_prog_handler.erl`).
 * [Medium] shell, a script's processes when its evaluator is killed:
   `erx_shell_script:run/2` runs a source in an evaluator process with a
@@ -7142,6 +7143,13 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Low] funnel, a 'DOWN' is matched by reference alone (`liberx/erx_funnel.c`, the target rule for
+  `ERX_FUNNEL_PAYLOAD_MONITOR_P_EXIT`; ERTS's `erl_proc_sig_queue.c`): the funnel checks that a monitor
+  exit's `from` is the sending domain's and that its reference is the receiver's node's, but not that the
+  monitor was set up towards that domain, so a domain that learned a monitor's reference could end another
+  domain's monitor with a 'DOWN' of its own pid, which the receiver drops (`erx_session_relay` matches pid
+  and reference) while ERTS has removed the monitor; the relay's watch of a master in another domain would
+  then hang nothing up. Phase 2's kernel checks the monitor's connection.
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
   system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
   `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader

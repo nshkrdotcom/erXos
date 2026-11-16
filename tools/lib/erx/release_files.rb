@@ -169,7 +169,7 @@ module Erx
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
-                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_web_line'].freeze,
+                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_web_line', 'erx_ssh_line'].freeze,
                         'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage', 'erx_f2fs'].freeze,
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,

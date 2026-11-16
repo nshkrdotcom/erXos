@@ -32,8 +32,8 @@ class ErxSessionRelayTest < Minitest::Test
       case_name: /order_test/
     ),
     # A relay that takes a second name, which a process cannot hold.
-    second_name: Fault.new(text: "init({Console, Origin}) ->\n",
-                           broken: "init({Console, Origin}) ->\n    true = register(erx_relay_seed, self()),\n",
+    second_name: Fault.new(text: "init({Console, Origin, TtyOptions}) ->\n",
+                           broken: "init({Console, Origin, TtyOptions}) ->\n    true = register(erx_relay_seed, self()),\n",
                            case_name: /the_name_test/),
     # A drain answered without giving the name up.
     name_kept: Fault.new(text: '_ = whereis(?NAME) =:= self() andalso unregister(?NAME),',
@@ -74,9 +74,17 @@ class ErxSessionRelayTest < Minitest::Test
                                broken: "group_checked(_Group, Request) ->\n    {ok, Request}.",
                                case_name: /malformed_messages_are_refused_test/),
     # An enveloped message taken as the master's from any domain.
-    any_domain: Fault.new(text: '#state{master = {domain, _Pid, D}} = State) ->',
-                          broken: '#state{master = {domain, _Pid, _}} = State) ->',
-                          case_name: /a_master_in_another_domain_test/)
+    any_domain: Fault.new(text: '#state{master = {domain, _Pid, D, _Ref}} = State) ->',
+                          broken: '#state{master = {domain, _Pid, _, _Ref}} = State) ->',
+                          case_name: /a_master_in_another_domain_test/),
+    # A master in another domain left unwatched, so its end hangs nothing up.
+    unwatched_domain: Fault.new(text: '{domain, Pid, D, erlang:monitor(process, Pid)}',
+                                broken: '{domain, Pid, D, make_ref()}',
+                                case_name: /a_master_in_another_domain_that_ends_hangs_up_test/),
+    # A 'DOWN' naming a foreign master taken with any reference, so a forged one hangs up.
+    any_domain_down: Fault.new(text: "{'DOWN', Ref, process, Pid, _}, #state{master = {domain, Pid, _D, Ref}}",
+                               broken: "{'DOWN', _Ref, process, Pid, _}, #state{master = {domain, Pid, _D, _}}",
+                               case_name: /a_master_in_another_domain_that_ends_hangs_up_test/)
   }.freeze
 
   def test_the_cases_pass

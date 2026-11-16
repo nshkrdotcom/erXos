@@ -144,7 +144,9 @@ provide(Node) -> provide_a(fun(Id) -> #{echo => pid(Node, Id, 1)} end).
 provide_a(Provides) ->
     persistent_term:put({erx_domain_fake_lib, provides},
                         #{<<"a">> => Provides,
-                          <<"root_1">> => fun(Id) -> #{web_line => pid('root_1@erxos', Id, 3)} end}).
+                          <<"root_1">> => fun(Id) -> #{web_line => pid('root_1@erxos', Id, 3),
+                                                       ssh_line => pid('root_1@erxos', Id, 4),
+                                                       rogue_line => pid('root_1@erxos', Id, 6)} end}).
 
 %% The whole path for both grants: b is introduced to a, a's mint is asked, its reply
 %% installs the facet in b's registry through b's domain pid, and b's acknowledgement
@@ -223,7 +225,7 @@ funnel() ->
 %% stands outside it and still passes with a process of the system domain, so the spec
 %% fails only at its boot, and is refused with a process of another node; log, a
 %% manifest service name in the table that a spec cannot hand on, since the funnel
-%% passes no facet on unattenuated (attenuated/2), web_line, exempt in the check but
+%% passes no facet on unattenuated (attenuated/2), web_line, a line of the check's LINES but
 %% no stopgap of the funnel, and a name in neither are refused, alone or beside
 %% console.
 stopgap_names() ->
@@ -626,17 +628,19 @@ sessions() ->
     Facet = pid('a@erxos', 5, 7),
     PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, Facet}}},
     ?assertEqual(Facet, receive {trace, Pid7, 'receive', {_, install, Tag, echo, F}} -> F after 2000 -> none end),
-    %% The session's ready report named its web line, which the service keeps for the
-    %% session until it ends.
-    ?assertEqual({ok, pid('root_1@erxos', 7, 3)}, gen_server:call(erx_domain_srv, {web_line, 7})),
-    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {web_line, 5})),
+    %% The session's ready report named its web and SSH lines, which the service keeps
+    %% for the session until it ends, and a name outside the closed set, which it does not.
+    ?assertEqual({ok, pid('root_1@erxos', 7, 3)}, gen_server:call(erx_domain_srv, {line, web_line, 7})),
+    ?assertEqual({ok, pid('root_1@erxos', 7, 4)}, gen_server:call(erx_domain_srv, {line, ssh_line, 7})),
+    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {line, rogue_line, 7})),
+    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {line, web_line, 5})),
     PidB ! {erx_origin, 6, {erx_facets_installed, Tag}},
     wait_counts(fun(#{{dropped, wrong_domain} := N}) -> N =:= 1 end),
     Pid7 ! {erx_origin, 7, {erx_facets_installed, Tag}},
     wait(fun(#{Key := {installed, {5, 7}, F}}) -> F =:= Facet end),
     ok = erx_domain:stop(Session, kill),
     wait(fun(Grants) -> not is_map_key(Key, Grants) end),
-    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {web_line, 7})),
+    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {line, web_line, 7})),
     PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, Facet}}},
     wait_counts(fun(#{{dropped, unknown_tag} := N}) -> N =:= 1 end).
 

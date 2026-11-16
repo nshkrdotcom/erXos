@@ -136,7 +136,7 @@ class ReleaseFilesTest < Minitest::Test
     paths = entries.map { |entry| entry.fetch('path') }
     release = File.read(File.join(@scratch, 'release/boot/start/start.rel'))
     only = %w[asn1 crypto public_key ssh ssl inets erx_blk erx_storage erx_f2fs erx_memdraw erx_display erx_fb erx_usb erx_win erx_ui
-              erx_desk erx_web erx_net erx_net_client erx_wifi erx_web_line erx_app erx_bt]
+              erx_desk erx_web erx_net erx_net_client erx_wifi erx_web_line erx_ssh_line erx_app erx_bt]
     assert_equal Erx::ReleaseFiles::APPLICATIONS - Erx::ReleaseFiles::SYSTEM_APPLICATIONS, only
     only.each do |application|
       refute_includes release, "{#{application},"
@@ -267,7 +267,7 @@ class ReleaseFilesTest < Minitest::Test
   # facets.
   def test_the_session_script_boots_the_shell_and_erx_session
     domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('session')]))
-    assert_match(/\{erx_shell,"#{VERSION}"\},\{erx_web_line,"#{VERSION}"\},\{erx_session,"#{VERSION}",load\}\]\}\.\n\z/,
+    assert_match(/\{erx_shell,"#{VERSION}"\},\{erx_web_line,"#{VERSION}"\},\{erx_ssh_line,"#{VERSION}"\},\{erx_session,"#{VERSION}",load\}\]\}\.\n\z/,
                  boot_release_file('session'), 'the session script starts the line and only loads erx_session')
   end
 

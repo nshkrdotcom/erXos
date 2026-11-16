@@ -14,7 +14,9 @@ module Erx
     # byte, and the /proc field escape's byte.
     TOKENS = %w[byte codepoint field kernel].freeze
     SINGLETONS = %w[terminal unicode unsafe_categories unsafe_property exceptions invalid_scalars kernel_ascii
-                    width_zero_categories width_zero_exceptions width_wide].freeze
+                    width_zero_categories width_zero_exceptions width_wide term_types term_default].freeze
+    # A terminal type's name, as terminfo spells one: short, lowercase, no space.
+    TERM_NAME = /\A[a-z0-9][a-z0-9.+-]{0,31}\z/
     EAST_ASIAN_WIDTHS = %w[A F H N Na W].freeze
     INPUTS = %w[east_asian_width properties unicode_data].freeze
     OUTPUTS = %w[include/erx/terminal_ascii.h erlang/apps/erx/src/erx_text_tables.erl
@@ -66,6 +68,12 @@ module Erx
       when 'width_wide'
         raise Error, 'invalid wide East Asian Width values' unless !values.empty? && values.uniq == values && (values - EAST_ASIAN_WIDTHS).empty?
         values
+      when 'term_types'
+        raise Error, 'invalid terminal types' unless !values.empty? && values.uniq == values && values.all?(TERM_NAME)
+        values
+      when 'term_default'
+        raise Error, 'invalid default terminal type' unless values.size == 1 && values.first.match?(TERM_NAME)
+        values.first
       when 'unsafe_property'
         raise Error, 'unsupported Unicode property' unless values == ['Default_Ignorable_Code_Point']
         values.first
@@ -120,6 +128,7 @@ module Erx
       raise Error, 'incomplete terminal rules' unless (SINGLETONS - model.keys).empty?
       raise Error, 'incomplete terminal input list' unless model.fetch('input').keys.sort == INPUTS
       raise Error, 'incomplete escape token grammar' unless model.fetch('token').keys.sort == TOKENS
+      raise Error, 'the default terminal type is not a listed one' unless model.fetch('term_types').include?(model.fetch('term_default'))
     end
     private_class_method :validate_model
 

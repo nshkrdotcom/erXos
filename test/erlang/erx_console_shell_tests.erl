@@ -3,10 +3,12 @@
 
 %% The console's choice of its first shell, what follows that shell's end, which group
 %% shell:whereis/0 reports, and which driver the boot records name
-%% (erx_console:first_shell/1, erx_console:after_first_shell/2,
+%% (erx_console:first_shell/1, erx_console:shell_end/4,
 %% erx_console:erlang_shell_group/1, erx_console:console_driver/1).
 -module(erx_console_shell_tests).
 -include_lib("eunit/include/eunit.hrl").
+
+-define(REASONS, [normal, {shutdown, {exited, 3}}, killed, {badarg, []}, shutdown]).
 
 the_command_shell_is_the_first_shell_test() ->
     ?assertEqual({erx_shell, console, []},
@@ -17,13 +19,31 @@ noshell_or_noinput_leaves_no_shell_test() ->
      || {NoShell, NoInput} <- [{true, false}, {false, true}, {true, true}]].
 
 the_first_shell_starts_again_while_input_may_come_test() ->
-    [?assertEqual(restart, erx_console:after_first_shell(Reason, false))
-     || Reason <- [normal, killed, {badarg, []}, shutdown]].
+    [?assertEqual(restart, erx_console:shell_end(restart, Draining, Reason, false))
+     || Reason <- ?REASONS, Draining <- [false, true]].
 
 the_end_of_input_ends_the_runtime_test() ->
-    ?assertEqual({halt, 0}, erx_console:after_first_shell(normal, true)),
-    [?assertEqual({halt, 1}, erx_console:after_first_shell(Reason, true))
-     || Reason <- [killed, {badarg, []}, shutdown]].
+    [?assertEqual({halt, 0}, erx_console:shell_end(restart, Draining, Reason, true))
+     || Reason <- [normal, {shutdown, {exited, 3}}], Draining <- [false, true]],
+    [?assertEqual({halt, 1}, erx_console:shell_end(restart, Draining, Reason, true))
+     || Reason <- [killed, {badarg, []}, shutdown], Draining <- [false, true]].
+
+%% A tty that exits with its shell waits on the drain at the group's first exit, with the
+%% status that exit carries, whether or not its input has ended.
+a_console_that_exits_drains_with_the_status_test() ->
+    Exit = {exit, fun(_) -> ok end},
+    [?assertEqual({drain, Status}, erx_console:shell_end(Exit, false, Reason, Ended))
+     || {Reason, Status} <- [{normal, 0}, {{shutdown, {exited, 0}}, 0},
+                             {{shutdown, {exited, 7}}, 7}, {{shutdown, {exited, 255}}, 255},
+                             {killed, 1}, {{badarg, []}, 1}, {shutdown, 1},
+                             {{shutdown, {exited, 256}}, 1}, {{shutdown, {exited, -1}}, 1}],
+        Ended <- [false, true]].
+
+%% The group's own exit after its first changes nothing: the status is the first's.
+a_draining_console_ignores_the_later_exit_test() ->
+    Exit = {exit, fun(_) -> ok end},
+    [?assertEqual(ignore, erx_console:shell_end(Exit, true, Reason, Ended))
+     || Reason <- ?REASONS, Ended <- [false, true]].
 
 %% shell:whereis/0 names only an Erlang shell: shell:get_state/0 waits for its answer,
 %% which a command shell never sends, so edlin_expand:expand/1 would wait forever with

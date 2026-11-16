@@ -1,0 +1,21 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# A session's line to the SSH domain (docs/design-ssh.md, "Sessions, ttys and
+# shells"): the messages a channel process of the SSH domain and the session's
+# erx_ssh_line exchange, each heard through the other's domain envelope and checked
+# by its receiver as that section says. A channel sends open_tty and open_job, each a
+# call the line answers, and for a job job_input, job_eof, job_sent and job_hangup;
+# the line sends a job's channel job_written and job_output, and every channel exited
+# once what it started has ended and its last output has been taken. A channel with a
+# tty exchanges the console messages (console.txt) with the tty itself.
+service ssh_line 12
+  served_as message
+  operation open_tty 1
+  operation open_job 2
+  operation job_input 3
+  operation job_written 4
+  operation job_eof 5
+  operation job_output 6
+  operation job_sent 7
+  operation job_hangup 8
+  operation exited 9

@@ -773,6 +773,12 @@ the runtime image running this shell's release in program mode
   else, an error's text among them, exit 1. A script it cannot parse
   writes the parser's diagnostic to its standard error and exits 1.
 
+* **On a tty.** `rc -c` on a tty's channel (an SSH exec) runs its command
+  as one job, started as the command shell starts a job's evaluator, so
+  every process the command starts, `&` jobs included, ends with it: at
+  Ctrl-C, which ends it with status 130, at the tty's hangup, and when
+  the command ends, as a UNIX session's processes end with its terminal.
+
 A command for `system` is rc, not sh. The common translations:
 
 | sh | rc |
@@ -2326,6 +2332,17 @@ program's table is built from its starter's
 `wait` and `whatis`, and erXos's `erl`, `within`, `jobs`, `fg`, `bg` and
 `kill` ([Commands](#commands)); `rc` as a program has rc's builtins and
 `within` ([rc as a program](#rc-as-a-program)).
+
+**The shell's first variables.** The terminal a shell starts on may carry
+`vars`, variables in the evaluator's own form, each name with a list of
+words of at most 256 bytes together (`erx_shell_script:first_vars/1`, which
+checks them once as they arrive). The shell sets them once, as it starts,
+over its own defaults (`$prompt`, `$*`), and never reads `vars` again;
+`rc -c` on a tty takes the same map through the same check. The code that builds the
+terminal chooses every value: a tty of an SSH channel sets only `TERM`,
+to a name `abi/terminal.txt` lists, `vt100` for any other the client
+asked for ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)), so
+no byte a peer sends becomes a variable.
 
 **Interaction with other subsystems.** The console carries the bytes of
 the session's tty
