@@ -169,7 +169,8 @@ machine-wide, among them 256 IRQ objects for every task together (`irq_objects`,
 ([Scheduling](#scheduling)). Fiasco builds with its debugger on by default
 (`src/Kconfig:773-775`), and every kernel build compiles the GPL-2.0 `kobject_rpc.h`, which
 `task.cpp`, `ipc_gate.cpp`, `irq.cpp`, `icu_helper.cpp`, `pi_mutex.cpp` and `arm/smc_user.cpp`
-include, so no build may be distributed ([design.md](design.md#dependencies)).
+include, and the GPL-2.0 `jdb_object.cpp`, which `Modules.generic` lists for every kernel
+whatever the debugger's setting (`fiasco/kernel/src/Modules.generic:58`), so no build may be distributed ([design.md](design.md#dependencies)).
 
 Beyond that construction, today's code gives these results where the call table gives others,
 each a bug in `TODO.md`:
@@ -188,8 +189,8 @@ each a bug in `TODO.md`:
 * `erx_thread_set_affinity` and a thread's start pass the caller's mask to Fiasco unnarrowed, and a thread with no mask stays on the root service's CPU (`service.c`, `service_thread_set_affinity` and `service_sched_param`).
 * `task_write` is answered for every task (`service.c`, `service_task_write`), and a boot whose seed is the counter alone goes on in every build (`entropy.c`, `erx_fiasco_entropy_init`); the Raspberry Pi 4 reads its RNG200 only when `/chosen` holds no seed at all.
 * `erx_machine_end` resets for every `how` but `ERX_END_OFF`, `ERX_END_TRIAL` included.
-* A missed pet and a root fault power the machine off rather than reset it (`end.c`, `erx_fiasco_end_watchdog`;
-  `service.c`, `service_fault`).
+* A missed pet, a root fault and the root's own stop power the machine off rather than reset it (`end.c`,
+  `erx_fiasco_end_watchdog`; `service.c`, `service_fault`; `service_task.c`, the root's case of a space's stop).
 
 ## The construction
 
@@ -498,7 +499,7 @@ callers as it says.
 | `erx_entropy_read`, `erx_entropy_add` | ERTS's `crypto` seed, the host link, musl's `getrandom` | service: `liberx/backend/fiasco/entropy.c` over `rng.c`, keyed from the counter, then mixed with `/chosen`'s `rng-seed` and `kaslr-seed` where the device tree carries them (`kernel/core/rng_seed.c`), and on the Raspberry Pi 4 with the board's random generator on the condition of [Entropy sources](design-platforms.md#entropy-sources) ([The Raspberry Pi 4](#the-raspberry-pi-4)); each reply holds 16 bytes and each request 32, so the stubs loop | the banner names what went in, `erx: entropy: from /chosen/rng-seed (32 bytes), /chosen/kaslr-seed (8 bytes) and the counter`, or on the Raspberry Pi 4 `erx: entropy: from the RNG200 (32 bytes) and the counter`, or says `erx: entropy: quality: low, from the counter alone` when nothing else went in, followed on the Pi 4 by `, since the RNG200 gave too few words within 100 ms` or `, since the RNG200 could not be read` when its read failed. A release image never runs on such a seed, as [design-crypto.md](design-crypto.md) requires: its root counts the bytes that went in from sources other than the counter, the count the banner prints, and with fewer than 32, after the banner's line, writes `erx: entropy: refused: a release does not run without a seed` and ends the machine as `ERX_END_OFF` before it starts any domain, so no key, vault or authentication path ever runs on the counter alone; a development build prints the line and goes on, its banner saying `development build: trusted code only`. `entropy_quality` stays unreported; at most 256 bytes a call; a read the generator cannot serve `ERX_ENOTSUP`; `ERX_ENTROPY_CREDIT` `ERX_ENOTSUP`, since no source is trusted | FD26 |
 | `erx_debug_log`, `erx_log_read`, `erx_log_take` | `liberx`, ERTS's crash path, test tasks; the Erlang log readers, of which the log service, `erx_syslog`, alone takes | service: [The console](#the-console) | correct | FD26 |
 | `erx_backend_trace_read`, `erx_trace_read` | `erx_trace_ring:read/3`, for `erx:trace` | local, in the root: [The trace ring](#the-trace-ring) | the root's parks, wakes, IRQ deliveries and task starts and ends, reported by `liberx trace`; a cursor past the head, or `max` of 0 or over 512, `ERX_EINVAL`; an exhausted ring `ERX_ELIMIT`; `erx_backend_trace_read` in a task `ERX_ENOTSUP`; `erx_trace_read` `ERX_ENOTSUP` everywhere, so the kernel's row is `unsupported` | FD26 |
-| `erx_watchdog_pet`, the crash record, `erx_machine_end(res, how)` | M3's criteria | pet: a local atomic store in the root, which alone links it (a task's ERTS fails to link, so no task can call it), and hosted `ERX_OK` with no effect. End: the root's alone, a task's call `ERX_ENOTSUP`, as the kernel's `POWER` check leaves it to the system domain ([design-system.md](design-system.md#a-sessions-request)); [The end path](#the-end-path) | `ERX_END_OFF`, `_RESET` and `_PANIC` as erXos's kernel ends them; `ERX_END_TRIAL` `ERX_ENOTSUP`, before anything stops, while the boot value is `unknown`, and otherwise the platform's trial request made by the root and a reset, with no hardware watchdog behind the trial boot; a kernel hang or a stalled watchdog is not caught | FD26, FD29 |
+| `erx_watchdog_pet`, the crash record, `erx_machine_end(res, how)` | M3's criteria | pet: a local atomic store in the root, which alone links it (a task's ERTS fails to link, so no task can call it), and hosted `ERX_OK` with no effect. End: the root's alone, a task's call `ERX_ENOTSUP`, as the kernel's `POWER` check leaves it to the system domain ([design-system.md](design-system.md#a-sessions-request)); [The end path](#the-end-path) | `ERX_END_OFF`, `_RESET` and `_PANIC` as erXos's kernel ends them; `ERX_END_TRIAL` `ERX_ENOTSUP`, before anything stops, while the boot value is `unknown`, and otherwise the platform's trial request made by the root and a reset, a kernel hang or a stalled watchdog is caught only on a board whose platform record names a hardware watchdog, from the start of the root's watchdog thread ([The watchdog](#the-watchdog)) | FD26, FD29 |
 | a thread's fault | a domain's or a program's fault; a test task's fault | [Faults](#faults-and-the-fault-of-the-root-task) | a fault record at the space's fault gate, thread `unknown`, the faulting thread left waiting; with no fault gate, a crash record and the task's end; the machine's end for the root | FD19, FD20 |
 | `erx_vcpu_control`, `erx_vcpu_resume`; `erx_irq_bind` to a thread | `liberx`'s signals in programs (Track P) | [vCPU upcalls on Fiasco](#vcpu-upcalls-on-fiasco), over Fiasco's vCPU interface with no kernel change | correct for programs whose every kernel call keeps `liberx`'s event rule; no umtx wait ends with `ERX_EINTR`, and a delivery that arrives during a kernel call is taken at the thread's return to its own code; an arming whose kernel-user memory Fiasco refuses `ERX_ENOMEM`, nothing armed | FD23 |
 | messages through gates, rendezvous passing, `erx_mem_child`, `erx_mem_own`, `erx_mem_dirty`, `erx_dma_*`, `erx_resource_carve`, `erx_space_quiesce`, `_clear_caps`, `_copy` | none | none | `ERX_ENOTSUP` | FD3, FD9, FD12, FD13 |
@@ -612,7 +613,7 @@ app sees. Release notes and the user documentation carry it.
 | FD26 | K19, K31 | the kernel's trace ring, entropy, log, watchdog and deterministic mode at the kernel's level (K19, K31) | the root's, in user mode ([The trace ring](#the-trace-ring), [The console](#the-console), [The watchdog](#the-watchdog)); entropy is `liberx`'s generator in the root, and a read's bytes stay in the Fiasco UTCB message registers of the reader and of the root service until a later message long enough overwrites them, and in whatever registers and stack spill slots the compiler used on both sides | the inspector's kernel row is `unsupported`; a kernel hang or a stalled watchdog thread is caught only by the board's hardware watchdog or the harness's deadline; log lines the log service had not taken are lost when it ends the machine; the crash frame may interleave with a writing console driver, a task's frame with the watchdog end's, and a kernel `WARN` or panic line at any time; deterministic mode's comparison starts at erXos's banner, or at the root's first line if Fiasco's own boot proves not deterministic | erXos's kernel |
 | FD27 | none (an address) | the runtime maps the time page from its boot information's `time_page` | the root maps the page read-only into every task at its creation, at a constant address | a task's time page is at one address it cannot move or unmap | erXos's kernel |
 | FD28 | CLAUDE.md "Trust placement" | the startup proof, `erx_root_plan` run by the packer and the kernel, with its charge evidence, and every property of the system manifest checked | the root startup rule, and the manifest check refuses the records of properties outside its scope ([The Phase 1 manifest check](#the-phase-1-manifest-check)) | a manifest that uses those records does not build | erXos's kernel (Track K's first part, before GK3); M9 and M11 for the refused records |
-| FD29 | K31 | each board's platform items: the hardware watchdog, the crash region, the trial request and the device secret | on the Raspberry Pi 4: the root's watchdog thread, with no hardware watchdog behind a hang of Fiasco outside a trial boot, since nothing else under Fiasco reloads it and the board's `config.txt` leaves `kernel_watchdog_timeout` unset; a crash record on the console alone; the boot value as the firmware reports it; the trial request made by the root through the mailbox, and during a trial boot alone the BCM2711's power-management watchdog, which the root's watchdog thread arms and reloads, so a hang of Fiasco or of the root then resets the board ([The end path](#the-end-path)); `sealing` `none` ([The Raspberry Pi 4](#the-raspberry-pi-4)) | a crash leaves no record but the console's; outside a trial boot a hang of Fiasco or of the root stays hung until the power is cycled; and nothing is sealed to the board | M12 |
+| FD29 | K31 | each board's platform items: the hardware watchdog, the crash region, the trial request and the device secret | on the Raspberry Pi 4: the root's watchdog thread, which arms the BCM2711's power-management watchdog on every boot and reloads it, so a hang of Fiasco or of the root resets the board, with nothing behind the stretch before that thread starts, since the board's `config.txt` leaves `kernel_watchdog_timeout` unset and nothing under Fiasco would reload it earlier ([The watchdog](#the-watchdog)); a crash record on the console alone; the boot value as the firmware reports it; the trial request made by the root through the mailbox ([The end path](#the-end-path)); `sealing` `none` ([The Raspberry Pi 4](#the-raspberry-pi-4)) | a crash leaves no record but the console's; a hang before the root's watchdog thread starts, in the firmware's stage or in Fiasco's boot, stays hung until the power is cycled; and nothing is sealed to the board | M12 |
 | FD30 | CLAUDE.md "Trust placement" | no table of the root's at all | the root's own bookkeeping: `erx_fiasco_task_join` trusts its caller, since its stub waits on the ended semaphore of the task index the service named, so a space deleted by another root thread between the answer and the wait leaves the stub spinning on the empty slot, and an index reused in that window takes another join's up (the launcher joins from one thread); a label naming no live task is counted, and nothing reads the count | no domain sees them | erXos's kernel, which drops the root's tables |
 | FD31 | F4, CLAUDE.md "Untrusted input" | a client spends a server's CPU only within the server's admission, on grants the kernel enforces | a service serves requests on its own threads at its own band, and service grants are records ([Consumers that name grants](#consumers-that-name-grants)) | a client makes a service spend that service's band: an app flooding its session, or a file, storage or network server, turns its own low band's CPU into the server's higher band's, delaying that band's other work and every band below it on those CPUs; the same holds for a doorbell's ringer, which makes the holder's dispatcher run, and wake a parked executor, once per delivery at the holder's band, however rarely the holder takes its readiness ([Interrupts and readiness](#interrupts-and-readiness)); the network domain's CPU grant and per-interface ingress budget are no guarantee | stage 5 of [the scheduler](#stages-beyond-bands), or erXos's kernel |
 | FD32 | CLAUDE.md "Trust placement" | branch prediction hardened at every entry from user mode and every switch between address spaces, as [design-arch-aarch64.md](design-arch-aarch64.md#speculation-mitigations) chooses from the CPU | nothing: Fiasco's AArch64 entry makes no SMCCC `ARCH_WORKAROUND` call, clears no branch history and has no speculation barrier, and its prediction barriers are built for AMD64 alone (`src/Kconfig:478-487`) | on a CPU open to branch-target injection (Spectre v2, CVE-2017-5715) or branch-history injection (Spectre-BHB, CVE-2022-23960), a domain may steer Fiasco's, or another domain's, speculative execution to leak memory through the caches; Arm's firmware records the Raspberry Pi 4's Cortex-A72 as affected by both ([Read in source, never run](#read-in-source-never-run)); under HVF a QEMU `virt` guest runs on the host's cores, whose exposure is unverified | [the release's Fiasco build](#the-releases-fiasco-build) if the null-request bench shows its entry patch costs nothing measurable; erXos's kernel |
@@ -2266,16 +2267,18 @@ Phase 1 acts on no finer kind.
 A root thread at priority 255 runs `watchdog.c`'s step machine: sleep one period, step over the pet word, which holds the time of the last pet.
 In deterministic mode the step is off and the machine page says so. A missed pet takes the end path and resets the machine, as a root fault does ([The end path](#the-end-path)).
 
-**The trial watchdog.** On a board whose platform record names a hardware watchdog, the Raspberry Pi 4's BCM2711
-power-management watchdog, the same thread stands behind a hang of Fiasco or of the root during an update's trial boot,
-and only then. When the boot value is `trial`, it arms the hardware watchdog with the 4 s timeout of
-[design-platforms.md](design-platforms.md#trial-requests) before its first step and reloads it at every step for the
-rest of that boot, through a window of the watchdog's block that the platform record names and only the root maps, as
-it reaches the mailbox for the trial request. A hang of Fiasco or of the root stops the steps, and the hardware resets
-the board within the timeout; the firmware's one-shot flag is spent, so the committed slot boots. This is a platform
-item the root stands in for, as the trial request is, not a kernel mechanism rebuilt in user mode: on erXos's kernel
-the platform layer arms the same watchdog. On any other boot value the thread never touches the watchdog, and a hang of
-Fiasco or of the root stays hung until the power is cycled (FD29). A hang before the root's thread starts, in the
+**The hardware watchdog.** On a board whose platform record names a hardware watchdog, the Raspberry Pi 4's BCM2711
+power-management watchdog, the same thread stands behind a hang of Fiasco or of the root on every boot. It arms the
+hardware watchdog with the 4 s timeout of [design-platforms.md](design-platforms.md#trial-requests) before its first
+step and reloads it at every step, through a window of the watchdog's block that the platform record names and only the
+root maps, as it reaches the mailbox for the trial request. A hang of Fiasco or of the root stops the steps, and the
+hardware resets the board within the timeout: after a trial boot the firmware's one-shot flag is spent, so the committed
+slot boots, and after any other boot the board boots its slot again. In deterministic mode, where the step is off, the
+thread does not arm it. `ERX_END_OFF` stops it before the power-off ([The end path](#the-end-path)), so a board halted
+on request stays halted; every other end leaves it running, so an end that hangs still resets. A board stopped in the
+kernel debugger, which development builds keep, resets within the timeout. This is a platform item the root stands in
+for, as the trial request is, not a kernel mechanism rebuilt in user mode: on erXos's kernel the platform layer arms the
+same watchdog. A hang before the root's thread starts, in the
 firmware's own stage or in Fiasco's boot, is not covered: U3 of [design-storage.md](design-storage.md#invariants) states
 that on a board whose firmware does not run the watchdog from power-on a trial whose firmware stage hangs needs a power
 cycle, and on Fiasco that stretch runs until the root's watchdog thread starts. The watchdog's registers and their sequence come from
@@ -2308,7 +2311,8 @@ The service answers `erx_machine_end` for the root task alone and refuses it fro
 4. **The end.** A last line through `l4_vcon_write` naming the end taken, `erx: end off`, `reset`, `panic` or `trial`, as erXos's
    kernel's last line names its end ([design-kernel.md](design-kernel.md#console-log-and-panic)), so a test reads which end was taken.
    Then, by `how`:
-   * `ERX_END_OFF`: `l4_platform_ctl_system_shutdown(L4_BASE_ICU_CAP, 0)`. `ERX_END_RESET`, a root fault, the root's own stop and
+   * `ERX_END_OFF`: on a board whose hardware watchdog the root armed, the root stops it through the same window
+     ([The watchdog](#the-watchdog)); then `l4_platform_ctl_system_shutdown(L4_BASE_ICU_CAP, 0)`. `ERX_END_RESET`, a root fault, the root's own stop and
      a missed pet: the same with 1 (`platform_control_object.cpp:82-96`).
    * `ERX_END_PANIC`: the crash record of cause `ERX_CRASH_HALT` at step 3 and a line saying the system domain asked, then the
      reset.
@@ -2320,8 +2324,8 @@ The service answers `erx_machine_end` for the root task alone and refuses it fro
      Raspberry Pi 4 the root sends the firmware's reboot-flags property with the `tryboot` flag and then its reboot notification
      through the mailbox, each polled at most 1 s, from the mailbox's window, which the board's platform record names and only
      the root maps. A mailbox error or timeout resets without the flag, so the committed slot boots, as a dropped request does on
-     erXos's kernel. The root does not arm the hardware watchdog before the request, as that design does; it arms it in the
-     trial boot itself ([The trial watchdog](#the-watchdog)). A trial boot whose domains hang misses its pet, and the root's
+     erXos's kernel. The root does not arm the hardware watchdog before the request, as that design does; it arms it at the
+     start of every boot, the trial boot included ([The watchdog](#the-watchdog)). A trial boot whose domains hang misses its pet, and the root's
      watchdog thread resets the machine as for any missed pet; a hang of Fiasco or of the root stops the thread, and the
      hardware watchdog resets the board. Either way the firmware's one-shot flag is then spent and the committed slot boots.
      Only a hang before the root's watchdog thread starts, in the firmware's own stage or in Fiasco's boot, stays hung until
@@ -2606,9 +2610,9 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   `SYSTEM_RESET` ([The end path](#the-end-path)). `SYSTEM_OFF` leaves the board halted in the firmware, which cannot
   turn it off, so an end by `ERX_END_OFF` lasts until its power is cycled by hand; a missed pet and a root fault reset
   ([The end path](#the-end-path)).
-* **The trial watchdog.** The board's power-management watchdog, a unit of the platform record
+* **The hardware watchdog.** The board's power-management watchdog, a unit of the platform record
   (`config/platforms/raspi4b.json`) that the manifest gives the system domain, whose window only the root maps, armed
-  and reloaded only during a trial boot ([The trial watchdog](#the-watchdog)).
+  and reloaded on every boot ([The watchdog](#the-watchdog)).
 * **Entropy.** On the condition [Entropy sources](design-platforms.md#entropy-sources) states for the kernel's platform
   layer, the root also reads 32 bytes from the board's RNG200 random generator, waiting at most 100 ms, and seeds its
   generator from them, as that layer does on erXos's kernel. Where the generator is comes from one
@@ -2710,10 +2714,10 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   it lies, inside the window of its manifest row, and its geometry from the `simple-framebuffer` node, if the firmware adds one, which the board pass
   confirms ([design-device-tree.md](design-device-tree.md#facts-into-records)).
 * **What the board does not get here.** The kernel's platform items, which M12 brings on erXos's kernel: the
-  hardware watchdog stays off, even on a board that runs unattended, since nothing under Fiasco reloads it and the root
-  does not, so a hang of Fiasco or of the root's watchdog thread is caught only by the harness's deadline, after which
-  its power is cycled by hand; there is no crash region, so the crash record reaches the
-  console alone; the trial request is the root's mailbox request of [The end path](#the-end-path), with no hardware watchdog behind the trial boot, and the boot value is what `/chosen/bootloader` says;
+  firmware does not start the hardware watchdog, even on a board that runs unattended, since nothing under Fiasco would
+  reload it before the root's watchdog thread starts and arms it, so a hang before then is caught only by the harness's
+  deadline, after which its power is cycled by hand; there is no crash region, so the crash record reaches the
+  console alone; the trial request is the root's mailbox request of [The end path](#the-end-path), and the boot value is what `/chosen/bootloader` says;
   and there is no device secret, so `sealing` stays `none`. Together they are FD29. The
   random generator is not among them: the root reads it (the Entropy item above).
 * **The watchdog's numbers.** The board runs natively, so the harness gives it the design's defaults, as it gives
@@ -2765,8 +2769,8 @@ The file namespace ([design-files.md](design-files.md)) and the shell's command 
 
 **Configuration.** The release configuration is an exact allowlist, which
 `tools/lib/erx/fiasco_config.rb`'s check holds as it holds the development one, so an option off
-the list fails the check. It turns the debugger off, so no `jdb_object.cpp` and no capstone are
-compiled; keeps the fixed-priority scheduler; keeps `EXPLICIT_REPLY_CAPS`, which
+the list fails the check. It turns the debugger off, so no capstone is compiled, though
+`jdb_object.cpp` is, until the patch below takes it out; keeps the fixed-priority scheduler; keeps `EXPLICIT_REPLY_CAPS`, which
 [the pause](#threads-bands-and-stops) needs, and `IOMMU`, for a platform that puts a device behind
 one; turns off `PAGEFAULT_TRAMPOLINE`, `ALIEN` and `IRQ_DIRECT_INJECT`, which no consumer needs
 and which widen what a thread can do with itself ([Who holds what](#who-holds-what)); and turns off
@@ -2779,6 +2783,13 @@ fails the check. Development builds keep the debugger.
   `kobject_rpc.h` in every build. It is written from what the MIT files that include it call and
   from the IPC layouts of `l4sys` (MIT); no one reads the GPL header to write it, and no agent that
   has read it writes it.
+* **`jdb_object.cpp` out of the shipped kernel.** `Modules.generic` lists the debugger's kernel object for every
+  kernel, whatever `CONFIG_JDB` says (`fiasco/kernel/src/Modules.generic:58`), so turning the debugger off leaves the
+  GPL-2.0 file compiled. The fork lists it only for a kernel built with the debugger, a one-line edit: no MIT file of
+  the kernel refers to it, and capability slot 10, which it fills, is then empty, which the boot workload
+  (`std_workload.cpp`) already allows. `sigma0`'s calls that name its objects then fail; that `sigma0` ignores the
+  failure is unverified, and a boot of the shipped kernel checks it. These facts come from a clean-room facts record of
+  the file, written by an agent that writes none of erXos's code or documents.
 * **Writable or executable.** Fiasco's map refuses a user mapping that would be writable and
   executable at once into any task but the two its boot workload creates (`std_workload.cpp`),
   `sigma0` and the root: `sigma0` hands out RAM read, write and execute
@@ -2814,13 +2825,13 @@ fails the check. Development builds keep the debugger.
 Nothing else of erXos's kernel is built into Fiasco for the first release; the scheduler's stages
 come after it.
 
-**License.** With the header replaced and the debugger off, the shipped kernel is Fiasco's MIT code
+**License.** With the header replaced and `jdb_object.cpp` out, the shipped kernel is Fiasco's MIT code
 and erXos's BSD-2-Clause additions. `bootstrap` and `sigma0` ship under the link closure their
 import records (`fiasco/bootstrap/ORIGIN.md`, `fiasco/l4re-core/ORIGIN.md`), and a release build
 check fails if any file compiled or linked into the image's kernel, `bootstrap` or `sigma0` is
 recorded with a license that is not permissive; the check counts headers, since `kobject_rpc.h`
-is one. Its seeded failures are two: a release build with the debugger on, which compiles
-`jdb_object.cpp`, and one with the original `kobject_rpc.h` restored in place of the clean-room
+is one. Its seeded failures are two: a release build with `jdb_object.cpp` listed again in
+`Modules.generic`, and one with the original `kobject_rpc.h` restored in place of the clean-room
 header, so the headers case fails on its own; neither seed needs anyone to open either file. The mk
 build links the toolchain's `libgcc` only under `CONFIG_COMPILER_RT_USE_TOOLCHAIN_LIBGCC`
 (`fiasco/mk/mk/Makeconf:505-506`); whether the release's `bootstrap` and `sigma0` set it is
@@ -3168,9 +3179,8 @@ Decided, and applied above:
 * **A space's handles and mappings** are one development-build inspection topic on both kernels,
   served on Fiasco by the backend reporter `liberx_placements` and partial where the root has no
   object id ([What a test reads of a task](#reporting-kernel-objects)).
-* **A hang of Fiasco or of the root during a trial boot** resets the board through the
-  power-management watchdog that the root's watchdog thread arms and reloads during a trial boot
-  alone ([The trial watchdog](#the-watchdog)).
+* **A hang of Fiasco or of the root** resets the board through the power-management watchdog
+  that the root's watchdog thread arms and reloads on every boot ([The watchdog](#the-watchdog)).
 * **A missed pet and a root fault** reset the machine; neither turns it off
   ([The end path](#the-end-path)).
 * **The cross compiler's three headers** are allowed by name and hash

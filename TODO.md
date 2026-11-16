@@ -29,8 +29,9 @@ it; git history is the record of completed work.
   Every build carries GPL-2.0 code, Fiasco's `kobject_rpc.h`, without which
   the kernel does not build, and the kernel debugger's `jdb_object.cpp`, so
   any distribution outside the project, in source or binary form, waits for
-  the clean-room header that replaces `kobject_rpc.h` and a release build
-  with the debugger off (the R1 items below,
+  the clean-room header that replaces `kobject_rpc.h` and a shipped kernel
+  built without `jdb_object.cpp`, which `Modules.generic` lists for every kernel
+  whatever the debugger's setting (0.1's and R1's items below,
   [design.md](docs/design.md#dependencies)). The import also records the
   link closure of L4Re's `bootstrap` and `sigma0`, their `drivers-frst`
   UART support, and the license of each library in it.
@@ -459,7 +460,11 @@ it; git history is the record of completed work.
 * [High] R1 on Fiasco, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device, and
   MSIs through Fiasco's interrupt manager; whether QEMU's SMMUv3 works with Fiasco's binding under HVF is
   unverified ([design-fiasco.md](docs/design-fiasco.md#devices)).
-* [High] R1 on Fiasco, `fiasco/kernel`: an erXos-authored BSD-2-Clause header that replaces the GPL-2.0
+* [High] 0.1 and R1 on Fiasco, `fiasco/kernel/src/Modules.generic`: `jdb_object.cpp` listed only for a kernel
+  built with the debugger, so the shipped kernel's build leaves the GPL-2.0 file out; a boot of that kernel
+  checks that `sigma0` ignores its object-naming calls failing
+  ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
+* [High] 0.1 and R1 on Fiasco, `fiasco/kernel`: an erXos-authored BSD-2-Clause header that replaces the GPL-2.0
   `kobject_rpc.h` in every build, written clean-room from what the MIT files that include it call and from
   `l4sys`'s IPC layouts, by an agent that has never read the GPL header
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
@@ -479,9 +484,9 @@ it; git history is the record of completed work.
 * [Medium] R1 on Fiasco, `fiasco/kernel/ORIGIN.md`: the monthly upstream security watch, a review of
   Kernkonzept's `fiasco` commits since the last one recorded, backporting each fix reachable in erXos's
   configuration ([design-fiasco.md](docs/design-fiasco.md#upstream-security-fixes)).
-* [Medium] R1 on Fiasco, the release build: a check that fails when any file of the release image's link
+* [Medium] 0.1 and R1 on Fiasco, the release build: a check that fails when any file of the release image's link
   closure (kernel, `bootstrap`, `sigma0`) is recorded with a license that is not permissive, headers
-  included, with two seeded failures: a release build with the debugger on, and one with the original
+  included, with two seeded failures: a build with `jdb_object.cpp` listed again in `Modules.generic`, and one with the original
   `kobject_rpc.h` restored in place of the clean-room header, made without anyone opening it; the check also
   settles whether the toolchain's `libgcc` links into `bootstrap` or `sigma0` (`fiasco/mk/mk/Makeconf:505-506`)
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
@@ -576,13 +581,14 @@ it; git history is the record of completed work.
   Raspberry Pi 4 with and without it ([todo-performance.md](docs/todo-performance.md)), and carry it only if the
   patched median lies within the unpatched runs' spread; otherwise drop it and publish FD32
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
-* [High] R1 on Fiasco, the Raspberry Pi 4's trial watchdog (`liberx/backend/fiasco/watchdog_thread.c`,
-  `config/platforms/raspi4b.json`): during a trial boot alone the root's watchdog thread arms the BCM2711's
+* [High] 0.1 on Fiasco, the Raspberry Pi 4's hardware watchdog (`liberx/backend/fiasco/watchdog_thread.c`,
+  `config/platforms/raspi4b.json`): on every boot the root's watchdog thread arms the BCM2711's
   power-management watchdog with a 4 s timeout and reloads it at every step, through a window of a platform
-  unit only the root maps, so a hang of Fiasco or of the root resets the board into the committed slot. Needs
-  the clean-room facts record of the watchdog, as the RNG200's; its case is on the board's manual checklist: a
-  development trial image whose root stops its watchdog thread once it armed the watchdog resets within the
-  timeout and boots the committed slot; seeded: the arming skipped, so the board stays hung
+  unit only the root maps, so a hang of Fiasco or of the root resets the board, into the committed slot after a
+  trial boot; `ERX_END_OFF` stops it before the power-off. Needs the clean-room facts record of the watchdog,
+  as the RNG200's; its cases are on the board's manual checklist: a development image whose root stops its
+  watchdog thread once it armed the watchdog resets within the timeout and boots again, and a trial image does
+  so into the committed slot; seeded: the arming skipped, so the board stays hung
   ([design-fiasco.md](docs/design-fiasco.md#the-watchdog)).
 * [High] apps, an app principal's wall on both kernels (`liberx/system/dom_boot.c`, `erx_domain_core.erl`):
   the domain library carves each app principal's budget at boot as an elastic budget with no guarantee, which

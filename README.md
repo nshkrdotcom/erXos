@@ -168,9 +168,9 @@ pixels. The [overview](docs/overview.md) tells the longer story.
 erXos is in Phase 1 of the [roadmap](docs/plan.md): the system is up on the
 Fiasco kernel, and Phase 1b moves the user-facing parts into
 domains of their own. The next milestone is
-[R0, the preview](docs/plan.md#r0-the-preview-erxoss-first-public-release),
-erXos's first public release: a development build for the Raspberry
-Pi 4 and QEMU `virt` with the kiosk on the screen, SSH to `rc`, and Doom
+[0.1, the preview](docs/plan.md#01-the-preview),
+erXos's first public preview: a development build for the Raspberry
+Pi 4 and QEMU `virt` with the kiosk and its live quotes on the screen, SSH to `rc`, and Doom
 on QEMU for whoever builds it. Every build is a development build and prints
 `development build: trusted code only`. `tools/erx boot` builds an image
 and boots it in QEMU to the command shell:
