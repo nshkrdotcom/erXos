@@ -93,9 +93,9 @@ class ErxWinTest < Minitest::Test
              catching_case: 'a_connection_frees_its_images_when_its_window_ends_test'),
     Seed.new(fault: "a refused write that applies the messages before the refused one, as devdraw's does",
              path: CONN_SOURCE,
-             anchor: "{error, Errno, Offset} ->\n",
-             replacement: "{error, Errno, Offset} ->\n" \
-                          '_ = perform_write(element(3, erx_draw_core:plan(Core, binary:part(Bytes, 0, Offset))), ' \
+             anchor: "{Core, [{error, Errno, Offset}]} ->\n",
+             replacement: "{Core, [{error, Errno, Offset}]} ->\n" \
+                          '_ = perform_write(element(2, erx_draw_core:plan(Core, binary:part(Bytes, 0, Offset))), ' \
                           "Conn),\n",
              suite: 'erx_draw_tests',
              catching_case: 'a_refused_write_applies_nothing_test'),

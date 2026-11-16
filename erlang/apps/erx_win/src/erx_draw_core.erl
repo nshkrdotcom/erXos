@@ -21,18 +21,21 @@ font cache gives back exactly what it took. An image costs at least 4 KiB,
 so the quota bounds the number of images and the state with it.
 
 `step/2` takes a state and one message decoded by `erx_draw_codec` and
-returns the next state and the operations `erx_memdraw` performs for it, or
-the errno of the refusal: `enoent` for an id the connection does not hold or
-a screen other than 0, `eexist` for a `b` of an id it holds, `enomem` past
-the quota, and `einval` for the rest the design lists. For a message the
-codec has framed, the checks are devdraw's in devdraw's order, so a message
-failing two of them fails with the errno devdraw reports. `plan/2` folds a
-whole write: it decodes each message with the depths of the images as
-planned so far, so an image a `b` allocated earlier in the same write has
-its depth and one an `f` freed has none, and it returns the state and the
-operations, or the errno and the offset of the first message that failed.
-The caller performs the operations only after `plan/2` returns, so a write
-is checked whole before any of it is applied.
+returns `{State, Actions}`, the one step shape of docs/style.md: the next
+state and the operations `erx_memdraw` performs for it, or, for a refusal,
+the state unchanged and the one action `{error, Errno}`: `enoent` for an id
+the connection does not hold or a screen other than 0, `eexist` for a `b` of
+an id it holds, `enomem` past the quota, and `einval` for the rest the
+design lists. For a message the codec has framed, the checks are devdraw's
+in devdraw's order, so a message failing two of them fails with the errno
+devdraw reports. `plan/2` folds a whole write: it decodes each message with
+the depths of the images as planned so far, so an image a `b` allocated
+earlier in the same write has its depth and one an `f` freed has none, and
+it returns the state and the operations, or, for a refusal, the state
+before the write and the one action `{error, Errno, Offset}`, the offset
+being that of the first message that failed. The caller performs the
+operations only after `plan/2` returns, so a write is checked whole before
+any of it is applied, and a refused write is abandoned whole.
 
 **Operations** name images by id; the window process maps ids to its
 `erx_memdraw` images while it applies them, in order. Every decision that
@@ -181,21 +184,28 @@ plane() ->
 max_glyphs() -> ?MAX_GLYPHS.
 
 -doc """
-The state and operations after the whole write Bytes, or the errno and the
-offset from the write's start of the message that failed. A write longer
-than the file protocol's payload fails whole at offset 0.
+The state and operations after the whole write Bytes; a refused write
+leaves the state as it was before the write, with `{error, Errno, Offset}`
+its one action, Offset from the write's start of the message that failed.
+A write longer than the file protocol's payload fails whole at offset 0.
 """.
--spec plan(state(), binary()) -> {ok, state(), [op()]} | {error, errno(), Offset :: non_neg_integer()}.
-plan(_State, Bytes) when byte_size(Bytes) > ?ERX_P9_IO_MAX -> {error, einval, 0};
-plan(State, Bytes) -> plan(State, Bytes, 0, []).
+-spec plan(state(), binary()) -> {state(), [op()] | [{error, errno(), Offset :: non_neg_integer()}]}.
+plan(State, Bytes) when byte_size(Bytes) > ?ERX_P9_IO_MAX -> {State, [{error, einval, 0}]};
+plan(State, Bytes) ->
+    case fold(State, Bytes, 0, []) of
+        {ok, Next, Ops} -> {Next, Ops};
+        {error, Errno, Offset} -> {State, [{error, Errno, Offset}]}
+    end.
 
-plan(State, <<>>, _Offset, Planned) ->
+%% The write message by message: {ok, State, Ops}, or the errno and offset of
+%% the first message refused.
+fold(State, <<>>, _Offset, Planned) ->
     {ok, State, last_read_only(lists:append(lists:reverse(Planned)))};
-plan(State, Bytes, Offset, Planned) ->
+fold(State, Bytes, Offset, Planned) ->
     maybe
         {ok, Msg, Rest} ?= erx_draw_codec:decode(Bytes, depth_fun(State)),
-        {ok, Next, Ops} ?= step(State, Msg),
-        plan(Next, Rest, Offset + byte_size(Bytes) - byte_size(Rest), [Ops | Planned])
+        {ok, Next, Ops} ?= decide(State, Msg),
+        fold(Next, Rest, Offset + byte_size(Bytes) - byte_size(Rest), [Ops | Planned])
     else
         {error, Errno, _Field} -> {error, Errno, Offset};
         {error, Errno} -> {error, Errno, Offset}
@@ -229,9 +239,20 @@ depth_fun(#{images := Images}) ->
             end
     end.
 
--doc "The state and operations after one decoded message, or the errno of its refusal.".
--spec step(state(), erx_draw_codec:msg()) -> {ok, state(), [op()]} | {error, errno()}.
-step(State, {alloc, Id, Screen, _Refresh, Chan, Repl, R, Clipr, Color}) ->
+-doc """
+The state and operations after one decoded message; a refused message
+leaves the state as it was, with `{error, Errno}` its one action.
+""".
+-spec step(state(), erx_draw_codec:msg()) -> {state(), [op()] | [{error, errno()}]}.
+step(State, Msg) ->
+    case decide(State, Msg) of
+        {ok, Next, Ops} -> {Next, Ops};
+        {error, Errno} -> {State, [{error, Errno}]}
+    end.
+
+%% One message's checks, in devdraw's order, and what it does: the next
+%% state and its operations, or the errno of the first check it fails.
+decide(State, {alloc, Id, Screen, _Refresh, Chan, Repl, R, Clipr, Color}) ->
     maybe
         ok ?= absent(State, Id),
         ok ?= check(Screen =:= 0, enoent),
@@ -243,7 +264,7 @@ step(State, {alloc, Id, Screen, _Refresh, Chan, Repl, R, Clipr, Color}) ->
                                            clip => Clip, glyphs => none}),
         {ok, Next, [{alloc, Id, Chan, R, Clip, Repl =/= 0, Color}]}
     end;
-step(State, {clip, Dst, Repl, Clipr}) ->
+decide(State, {clip, Dst, Repl, Clipr}) ->
     maybe
         {ok, #{repl := Was} = Image} ?= lookup(State, Dst),
         %% devdraw sets the bit and never clears it.
@@ -251,13 +272,13 @@ step(State, {clip, Dst, Repl, Clipr}) ->
         {ok, Next} ?= replace(State, Dst, Image#{repl := Now, clip := Clipr}),
         {ok, Next, [{clip, Dst, Now, Clipr}]}
     end;
-step(State, {draw, Dst, Src, Mask, R, Sp, Mp}) ->
+decide(State, {draw, Dst, Src, Mask, R, Sp, Mp}) ->
     maybe
         ok ?= held(State, [Dst, Src, Mask]),
         {Op, Next} = take_op(State),
         {ok, Next, [{draw, Dst, R, Src, Sp, Mask, Mp, Op, dst}]}
     end;
-step(State, {Kind, Dst, Src, C, A, B, Thick, Sp, Alpha, Phi}) when Kind =:= ellipse; Kind =:= fill_ellipse ->
+decide(State, {Kind, Dst, Src, C, A, B, Thick, Sp, Alpha, Phi}) when Kind =:= ellipse; Kind =:= fill_ellipse ->
     maybe
         ok ?= held(State, [Dst, Src]),
         ok ?= check(axis_ok(A) andalso axis_ok(B) andalso Thick >= 0 andalso coords_ok([C, Sp]), einval),
@@ -266,15 +287,15 @@ step(State, {Kind, Dst, Src, C, A, B, Thick, Sp, Alpha, Phi}) when Kind =:= elli
         {Op, Next} = take_op(State),
         {ok, Next, [ellipse(Kind, Dst, Src, C, A, B, Thick, Sp, arc(Alpha), Phi, Op)]}
     end;
-step(_State, {free, 0}) -> {error, einval};
-step(State, {free, Id}) ->
+decide(_State, {free, 0}) -> {error, einval};
+decide(State, {free, Id}) ->
     maybe
         ok ?= held(State, [Id]),
         {ok, Next} ?= replace(State, Id, none),
         {ok, Next, [{free, Id}]}
     end;
-step(_State, {font, 0, _N, _Ascent}) -> {error, einval};
-step(State, {font, Id, N, Ascent}) ->
+decide(_State, {font, 0, _N, _Ascent}) -> {error, einval};
+decide(State, {font, Id, N, Ascent}) ->
     maybe
         {ok, Image} ?= lookup(State, Id),
         ok ?= check(N >= 1 andalso N =< ?MAX_GLYPHS, einval),
@@ -283,7 +304,7 @@ step(State, {font, Id, N, Ascent}) ->
         {ok, Next} ?= replace(State, Id, Image#{glyphs := {Ascent, <<0:(N * ?GLYPH_BYTES)/unit:8>>}}),
         {ok, Next, []}
     end;
-step(State, {glyph, Cache, Src, Index, {X0, Y0, X1, Y1} = R, Sp, Left, Width}) ->
+decide(State, {glyph, Cache, Src, Index, {X0, Y0, X1, Y1} = R, Sp, Left, Width}) ->
     maybe
         {ok, #{glyphs := {Ascent, Records}} = Font} ?= font_cache(State, Cache),
         ok ?= held(State, [Src]),
@@ -292,7 +313,7 @@ step(State, {glyph, Cache, Src, Index, {X0, Y0, X1, Y1} = R, Sp, Left, Width}) -
         {ok, Next} ?= replace(State, Cache, Font#{glyphs := {Ascent, set_glyph(Records, Index, Glyph)}}),
         {ok, Next, [{draw, Cache, R, Src, Sp, opaque, Sp, ?S, dst}]}
     end;
-step(State, {line, Dst, P0, P1, End0, End1, Thick, Src, Sp}) ->
+decide(State, {line, Dst, P0, P1, End0, End1, Thick, Src, Sp}) ->
     maybe
         ok ?= held(State, [Dst]),
         ok ?= check(thick_ok(Thick) andalso coords_ok([P0, P1, Sp]), einval),
@@ -300,14 +321,14 @@ step(State, {line, Dst, P0, P1, End0, End1, Thick, Src, Sp}) ->
         {Op, Next} = take_op(State),
         {ok, Next, [{line, Dst, P0, P1, End0, End1, Thick, Src, Sp, Op}]}
     end;
-step(State, {origin, Id, _Rmin, _Scr}) ->
+decide(State, {origin, Id, _Rmin, _Scr}) ->
     maybe
         ok ?= held(State, [Id]),
         {ok, State, []}
     end;
-step(State, {op, Op}) when Op =< ?MAX_OP -> {ok, State#{op := Op}, []};
-step(_State, {op, _Op}) -> {error, einval};
-step(State, {poly, Dst, End0, End1, Thick, Src, Sp, Points}) ->
+decide(State, {op, Op}) when Op =< ?MAX_OP -> {ok, State#{op := Op}, []};
+decide(_State, {op, _Op}) -> {error, einval};
+decide(State, {poly, Dst, End0, End1, Thick, Src, Sp, Points}) ->
     maybe
         ok ?= held(State, [Dst]),
         ok ?= check(thick_ok(Thick) andalso coords_ok([Sp | Points]), einval),
@@ -315,24 +336,24 @@ step(State, {poly, Dst, End0, End1, Thick, Src, Sp, Points}) ->
         {Op, Next} = take_op(State),
         {ok, Next, [{poly, Dst, Points, End0, End1, Thick, Src, Sp, Op}]}
     end;
-step(State, {fill_poly, Dst, Wind, _Ignore, Src, Sp, Points}) ->
+decide(State, {fill_poly, Dst, Wind, _Ignore, Src, Sp, Points}) ->
     maybe
         ok ?= held(State, [Dst, Src]),
         ok ?= check(coords_ok([Sp | Points]), einval),
         {Op, Next} = take_op(State),
         {ok, Next, [{fill_poly, Dst, Points, Wind, Src, Sp, Op}]}
     end;
-step(State, {read, Id, R}) ->
+decide(State, {read, Id, R}) ->
     maybe
         ok ?= inside(State, Id, R),
         {ok, State, [{read, Id, R}]}
     end;
-step(State, {string, Dst, Src, Font, P, Clipr, Sp, Indices}) ->
+decide(State, {string, Dst, Src, Font, P, Clipr, Sp, Indices}) ->
     string(State, #{dst => Dst, src => Src, font => Font, clip => Clipr}, P, Sp, none, Indices);
-step(State, {string_bg, Dst, Src, Font, P, Clipr, Sp, Bg, Bp, Indices}) ->
+decide(State, {string_bg, Dst, Src, Font, P, Clipr, Sp, Bg, Bp, Indices}) ->
     string(State, #{dst => Dst, src => Src, font => Font, clip => Clipr}, P, Sp, {Bg, Bp}, Indices);
-step(State, flush) -> {ok, State, [flush]};
-step(State, {Load, Id, R, Pixels}) when Load =:= load; Load =:= cload ->
+decide(State, flush) -> {ok, State, [flush]};
+decide(State, {Load, Id, R, Pixels}) when Load =:= load; Load =:= cload ->
     %% The codec framed the pixels at the image's depth, so it holds the
     %% image; a cload's pixels are already decoded and load as a load's.
     maybe

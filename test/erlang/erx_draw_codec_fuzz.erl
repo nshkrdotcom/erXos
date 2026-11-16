@@ -12,8 +12,9 @@
 %% are then planned whole by erx_draw_core:plan/2 from a connection holding
 %% ids 1 to 7 at every depth, which must return a plan whose charge is that
 %% of the images it holds and within the quota and whose operations carry
-%% only 32-bit coordinates, or einval, enoent, eexist or enomem at a
-%% message's offset within the write, and never raise.
+%% only 32-bit coordinates, or, as its one action beside the connection
+%% unchanged, einval, enoent, eexist or enomem at a message's offset within
+%% the write, and never raise.
 -module(erx_draw_codec_fuzz).
 -export([run/1]).
 
@@ -38,14 +39,17 @@ round() ->
            end,
     <<Depths:8/binary, Messages/binary>> = Case,
     walk(Messages, erx_draw_codec_tests:depth_fun(Depths)),
-    plan(erx_draw_core:plan(get(prelude), Messages), byte_size(Messages)).
+    Prelude = get(prelude),
+    plan(erx_draw_core:plan(Prelude, Messages), Prelude, byte_size(Messages)).
 
-plan({ok, #{images := Images, bytes := Bytes, quota := #{pixels := Quota}}, Ops}, _Size) ->
+%% A refusal is the plan's one action and leaves the connection as it was.
+plan({Prelude, [{error, Errno, Offset}]}, Prelude, Size) when Offset < Size ->
+    true = lists:member(Errno, [einval, enoent, eexist, enomem]);
+plan({#{images := Images, bytes := Bytes, quota := #{pixels := Quota}}, Ops}, _Prelude, _Size) ->
+    false = lists:keymember(error, 1, Ops),
     Bytes = erx_draw_core_tests:charged(Images),
     true = Bytes =< Quota,
-    true = lists:all(fun erx_draw_core_tests:in_coords/1, Ops);
-plan({error, Errno, Offset}, Size) when Offset < Size ->
-    true = lists:member(Errno, [einval, enoent, eexist, enomem]).
+    true = lists:all(fun erx_draw_core_tests:in_coords/1, Ops).
 
 walk(<<>>, _) -> ok;
 walk(Bytes, Depth) ->
