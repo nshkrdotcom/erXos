@@ -669,10 +669,13 @@ clock's state is `/proc/time/status`'s `state`: `unset`, `boot` or `set`
 | Machine | Wall clock at boot |
 | --- | --- |
 | QEMU `virt` on erXos's kernel | the PL031's reading, which the kernel takes once at boot ([design-kernel.md](design-kernel.md), "Time"), so `state` is `boot`. QEMU starts its real-time clock at the host's time unless `-rtc base=` says otherwise (unverified: QEMU's documentation was not read); deterministic mode starts it at 2026-01-01 ([design-stopgap.md](design-stopgap.md#deterministic-mode)) |
-| the stopgap, on QEMU `virt` and the Raspberry Pi 4 | 1970-01-01, `unset`: the stopgap reads no real-time clock and nothing sets the clock ([design-time.md](design-time.md#phase-1)) |
+| the stopgap, on QEMU `virt` | the PL031's reading, which the stopgap's root takes once at boot into the time page, as erXos's kernel does, so `state` is `boot`, and QEMU's clock starts as in the row above |
+| the stopgap, on the Raspberry Pi 4 without a module | 1970-01-01, `unset`: the board has no real-time clock and nothing sets the clock ([design-time.md](design-time.md#phase-1)) |
 | the Raspberry Pi 4 with a DS3231 module | the module's time, read at `/dev/rtc/time` by the system domain's wall-clock keeper ([design-header-io.md](design-header-io.md#devrtc)), so `state` is `set` |
 | any machine running `ntpd` | set by the first sample ([design-time.md](design-time.md)); off unless enabled |
 | hosted mode | the host's clock, `boot` |
+
+The stopgap's root reads the PL031 because that gives the time page the value the kernel interface promises and touches nothing above it. The Raspberry Pi 4 gets its time from a DS3231 module and the wall-clock keeper, since the board has no clock of its own. `ntpd` is designed and off unless an operator enables it with a server of their own.
 
 **What an unset clock does.** Validation compares each certificate's
 validity period with the wall clock as it reads; it never reads the
@@ -865,7 +868,8 @@ which OpenSSL's tests do not.
   Apache-2.0, part of the imported OTP.
 * The trust store's five root certificates, from their publishers,
   imported into `config/trust/` with an origin file
-  ([design.md](design.md#dependencies)).
+  ([design.md](design.md#dependencies)). They need no license: a root
+  certificate is a public key and a name, facts and not a creative work.
 * Perl on the build host, for OpenSSL's `Configure` and assembler
   generators, as OTP's build already needs.
 
@@ -969,18 +973,7 @@ The decisions below are open:
    its license was read for this design). *Recommendation:* the explicit list,
    which bounds whom every client trusts; take Mozilla's set when a
    general fetcher needs it, if MPL-2.0 is accepted for that data.
-2. **The clock on the stopgap.** Every boot on the stopgap is `unset`, so
-   no HTTPS client reaches a real server until something sets the clock.
-   The options: (a) the stopgap's root reads QEMU `virt`'s PL031 once at
-   boot into the time page, as erXos's kernel does; (b) `ntpd` with a
-   server the operator names, designed and off; (c) on the Raspberry
-   Pi 4, the DS3231 module of the header design and the wall-clock keeper
-   that sets the clock from it; (d) nothing, and HTTPS clients show
-   `clock not set` until erXos's kernel. *Recommendation:* (a) for QEMU,
-   since it gives the time page the value the kernel interface promises
-   and touches nothing above it, and (c) for the Raspberry Pi 4; (b)
-   stays off.
-3. **How far an app's `net` reaches.** The `apps` row's `net` gives every
+2. **How far an app's `net` reaches.** The `apps` row's `net` gives every
    app that names it the grant's defaults: any remote address, this
    machine's listeners included, and listening on any port above 1,023
    ([Security](#security)). The options: (a) that; (b) an app
