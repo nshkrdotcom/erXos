@@ -581,7 +581,7 @@ exchange:
   the first boot, root's `authorized_keys`
   ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)). It
   belongs to neither slot, so no update writes it but at the record's
-  sector, and it is the same volume on every platform's medium.
+  and the reset count's sectors, and it is the same volume on every platform's medium.
 
 A medium holds the **boot-selection record**, two **slots**, the vault's
 partition and the data partition. Each slot holds a system in two
@@ -1695,19 +1695,28 @@ writes with its verify (`fsimg W`).
 record partition is read on the target: root's `authorized_keys`
 ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)). The
 storage domain that serves `system` reads it once, at its start, through
-the read-only `record_volume` window, with the read core of `erx_fat`
-above, the same decoders and bounds, called as functions and serving
-nothing of the volume; only the keys the file names leave the domain.
+the read-only `record_volume` window, with `erx_fat_read`, the pure read
+core of the FAT format that the FAT server above reads through too:
+`root_file(ReadSector, Name, MaxBytes)` takes a function that reads one
+sector of the window, the long name and the size bound, and answers
+`{ok, Bytes}` or `{error, Finding}`, one of the closed set of
+[design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium). Stage 2 of
+SSH builds it, and the FAT server, which comes later, is built on it. It
+is called as functions and serves nothing of the volume; only the keys the file names leave the domain.
 No FAT server runs on the record partition and nothing writes through
 the window. The read core admits the volume only as the layout makes
 it: 512-byte sectors and one-sector clusters, every region inside the
-partition, and the data area starting at the record's sector
+partition, the reserved area covering the reset count's sector
+(`medium_record_count_start`), so neither FAT nor the root directory
+holds it, and the data area starting at the record's sector
 (`medium_record_select_start`), so its clusters are the layout's and no
 other. It looks the file up in the root directory alone, by its long
 name, compared as above; refuses an entry that is a directory or a label
 and a size past 16 KiB before it reads a cluster; and reads exactly as
 many clusters as the size needs, at most 32, each link a cluster of the
-data area, so whatever the FAT holds, the read is a bounded number of
+data area; a cluster seen twice, the record's cluster, a link outside the
+data area and an end of chain before the size's clusters are each `does
+not read`, and the chain past the size's clusters is not read, so whatever the FAT holds, the read is a bounded number of
 sector reads. The reader reads before the domain serves anything of its
 result, so a power cut or a restart finds the partition as it was, and
 the next start reads it again.

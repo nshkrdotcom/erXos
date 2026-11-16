@@ -7150,7 +7150,7 @@ to the corpus and follow rc
 * [Low] SSH, root's login keys on the medium (development builds, before the vault;
   [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)): the keys are as sound as the
   storage domain that reads `authorized_keys` and serves them as `login_keys`, and that domain serves
-  `system` to every domain, so a flaw in it that a client's requests could steer would be a way to
+  `system` to every domain and `data` to every principal, so a flaw in it that a client's requests could steer would be a way to
   root's login. A storage domain whose only client is the system domain, as the vault's is, would
   close it; the vault's arrival, after which the file is not read, closes it too.
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
@@ -7238,11 +7238,14 @@ to the corpus and follow rc
 
 * [Medium] SSH before the vault, stages 2 and 3, development builds only
   ([design-ssh.md](docs/design-ssh.md#login-keys)): `erx_ssh_login`'s
-  `login_key` admits root's development key on the SSH domain's own
-  signature check and compares no host key, so a compromised SSH domain
-  logs in as root, and the host key is a file of the SSH domain's directory
-  on the data partition. Stage 4 closes both, with the system domain's
-  Ed25519 verifier and the vault's host key.
+  `login_key` checks the signature itself but compares no host key, and
+  the host key is the file `/data/ssh/ssh_host_ed25519_key`, which the SSH
+  domain reaches through `ssh_state` and whoever reads the data partition
+  reads. So whoever takes the key poses as this machine to clients, and a
+  compromised SSH domain logs in as root whenever a client holding one of
+  root's keys completes an exchange with it, under any host key that
+  client accepts. Stage 4 closes both, with the vault's host key and the
+  facet's comparison of it.
 * [Medium] network time, unauthenticated ([design-time.md](docs/design-time.md#security)): the NTP server
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
@@ -8781,6 +8784,15 @@ document's "residual risks accepted" paragraph.
   `BootRecord.read` and `extract`; `release.erofs` and `data.lfs` are not scanned for the build path (the EROFS
   files are, through `image.boot`); an oversized `kernel8.img` fails in fsimg rather than with a diagnostic;
   `FatVolume::Layout` keeps a root offset and a root cluster for both FAT types where each means something for one.
+* [Medium] SSH stage 2, the QEMU medium's record partition (`tools/lib/erx/release_medium.rb`, `medium`): it
+  writes only the record's sector and leaves the rest of the partition zero, so a QEMU medium has no FAT volume
+  to hold `authorized_keys`; [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium) has it format
+  the partition with `PiMedium::RECORD_VOLUME`, as the card is.
+* [Low] Raspberry Pi card labels (`tools/lib/erx/pi_medium.rb`, `RECORD_FORMAT` and `SLOT_FORMAT`): the record
+  volume is labelled `ERXREC` and both slots' boot partitions `ERXOS`, where
+  [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record) labels the record volume
+  `ERXOS` and the slots `ERXSLOTA` and `ERXSLOTB`, so the volume that takes `authorized_keys` is the one named for
+  the system.
 * [Medium] storage, the reset count's encoding (`abi/medium.txt`, `tools/lib/erx/pi_medium.rb`): no encoding of the
   count is defined, so the Pi card's writer leaves its sector the zeros fsimg writes in the reserved area instead of
   the count's first value (design-platforms.md, "Slots and the boot-selection record"), as the QEMU medium does.
