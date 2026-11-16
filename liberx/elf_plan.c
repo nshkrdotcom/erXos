@@ -59,6 +59,9 @@ static bool erx_elf_phdr_address(const erx_elf_plan_t *, uint64_t,
 static bool erx_elf_memory_covered(const erx_elf_plan_t *, uint64_t, uint64_t);
 static bool erx_elf_metadata_mapped(const erx_elf_plan_t *,
     const erx_elf64_phdr_t *, bool, erx_elf_error_t *);
+static bool erx_elf_dynamic_empty(const erx_elf64_phdr_t *);
+static bool erx_elf_dynamic_placed(const erx_elf_plan_t *,
+    const erx_elf64_phdr_t *, erx_elf_error_t *);
 
 static bool
 erx_elf_fail(erx_elf_error_t *error, const char *reason, uint64_t offset)
@@ -187,8 +190,11 @@ erx_elf_rela_tag(erx_elf_rela_tags_t *tags, const erx_elf64_dyn_t *dynamic)
 }
 
 /*
- * The dynamic section up to DT_NULL: no dependency, no text relocation, and
- * no relocation table but one DT_RELA table, whose tags land in tags.
+ * The dynamic section up to DT_NULL: only the tags of abi/formats/elf64.txt's
+ * closed elf_dt list, whose generated name lookup answers NULL for any other
+ * (a dependency, a text relocation and every relocation table but DT_RELA
+ * among them), DT_FLAGS without DF_TEXTREL, and the one DT_RELA table, whose
+ * tags land in tags.
  */
 static bool
 erx_elf_dynamic(const uint8_t *bytes, size_t length, uint64_t file_offset,
@@ -204,16 +210,11 @@ erx_elf_dynamic(const uint8_t *bytes, size_t length, uint64_t file_offset,
 			return (erx_elf_fail(error, "dynamic_extent", file_offset + offset));
 		if (dynamic.d_tag == ERX_ELF_DT_NULL)
 			return (true);
-		if (dynamic.d_tag == ERX_ELF_DT_NEEDED)
-			return (erx_elf_fail(error, "dynamic_dependency", file_offset + offset));
-		if (dynamic.d_tag == ERX_ELF_DT_TEXTREL ||
-		    (dynamic.d_tag == ERX_ELF_DT_FLAGS &&
-		    (dynamic.d_value & ERX_ELF_DF_TEXTREL) != 0))
+		if (erx_elf_dt_name(dynamic.d_tag) == NULL)
+			return (erx_elf_fail(error, "dynamic_tag", file_offset + offset));
+		if (dynamic.d_tag == ERX_ELF_DT_FLAGS &&
+		    (dynamic.d_value & ERX_ELF_DF_TEXTREL) != 0)
 			return (erx_elf_fail(error, "text_relocation", file_offset + offset));
-		if (dynamic.d_tag == ERX_ELF_DT_REL ||
-		    dynamic.d_tag == ERX_ELF_DT_RELR ||
-		    dynamic.d_tag == ERX_ELF_DT_JMPREL)
-			return (erx_elf_fail(error, "relocation_kind", file_offset + offset));
 		if (!erx_elf_rela_tag(tags, &dynamic))
 			return (erx_elf_fail(error, "relocation_table", file_offset + offset));
 	}
@@ -472,6 +473,34 @@ erx_elf_metadata_mapped(const erx_elf_plan_t *plan,
 	return (true);
 }
 
+/* The dynamic header a fixed link writes, having no dynamic section: no bytes. */
+static bool
+erx_elf_dynamic_empty(const erx_elf64_phdr_t *program)
+{
+	return (program->p_filesz == 0 && program->p_memsz == 0);
+}
+
+/*
+ * A position-independent file's dynamic header, NULL when it has none,
+ * against the placed plan: not empty and wholly inside one writable
+ * segment, since musl's start finds the thread-local image through it
+ * (docs/design-programs.md, "The executable's link").
+ */
+static bool
+erx_elf_dynamic_placed(const erx_elf_plan_t *plan,
+    const erx_elf64_phdr_t *dynamic, erx_elf_error_t *error)
+{
+	if (dynamic == NULL || erx_elf_dynamic_empty(dynamic))
+		return (erx_elf_fail(error, "dynamic_missing", 0));
+	if (!erx_elf_metadata_mapped(plan, dynamic, false, error))
+		return (false);
+	/* Mapped, so its address is at or above the origin. */
+	if (!erx_elf_writable(plan, dynamic->p_vaddr - plan->virtual_origin,
+	    dynamic->p_memsz))
+		return (erx_elf_fail(error, "dynamic_segment", dynamic->p_offset));
+	return (true);
+}
+
 static bool
 erx_elf_place(erx_elf_plan_t *plan, const erx_elf64_ehdr_t *header,
     const erx_elf64_phdr_t *phdr_hint, uint64_t output_budget,
@@ -634,6 +663,9 @@ erx_elf_plan(const uint8_t *bytes, size_t length, uint64_t output_budget,
 			if (program.p_type == ERX_ELF_PT_DYNAMIC) {
 				if (has_dynamic)
 					return (erx_elf_fail(error, "duplicate_dynamic", program.p_offset));
+				/* A fixed image is never relocated, so its header holds nothing. */
+				if (header.e_type == ERX_ELF_ET_EXEC && !erx_elf_dynamic_empty(&program))
+					return (erx_elf_fail(error, "fixed_dynamic", program.p_offset));
 				dynamic = program;
 				has_dynamic = true;
 			}
@@ -642,21 +674,20 @@ erx_elf_plan(const uint8_t *bytes, size_t length, uint64_t output_budget,
 			    (size_t)program.p_filesz, program.p_offset, &notes, error))
 				return (false);
 			if (program.p_type == ERX_ELF_PT_DYNAMIC &&
+			    !erx_elf_dynamic_empty(&program) &&
 			    !erx_elf_dynamic(bytes + (size_t)program.p_offset,
 			    (size_t)program.p_filesz, program.p_offset, &rela_tags,
 			    error))
 				return (false);
 		}
 	}
-	/* Only a position-independent file, linked at 0, has relocations. */
-	if (header.e_type == ERX_ELF_ET_EXEC && rela_tags.seen != 0)
-		return (erx_elf_fail(error, "fixed_relocations", dynamic.p_offset));
 	if (notes != 1)
 		return (erx_elf_fail(error, "missing_abi_note", 0));
 	if (!erx_elf_place(&plan, &header,
 	    has_phdr_hint ? &phdr_hint : NULL, output_budget, error))
 		return (false);
-	if ((has_dynamic && !erx_elf_metadata_mapped(&plan, &dynamic, false, error)) ||
+	if ((header.e_type == ERX_ELF_ET_DYN &&
+	    !erx_elf_dynamic_placed(&plan, has_dynamic ? &dynamic : NULL, error)) ||
 	    (has_tls && !erx_elf_metadata_mapped(&plan, &tls, true, error)) ||
 	    !erx_elf_relocations(&plan, bytes, &rela_tags, error))
 		return (false);

@@ -70,15 +70,20 @@ class ElfPlanTest < Minitest::Test
   end
 
   def test_dynamic_alignment_preserves_leading_residue
-    bytes = ElfFixture.valid(dynamic: true, origin: 0x1000,
-                             source_offset: 4096, alignment: 65536)
+    # A read-write page after the read-execute one, whose first bytes, all zeros, are a
+    # dynamic section of one DT_NULL.
+    writable = ElfFixture.program(type: 1, flags: 6, offset: 8192, address: 0x2000, file_size: 4096,
+                                  alignment: 4096)
+    dynamic = ElfFixture.program(type: 2, flags: 6, offset: 8192, address: 0x2000, file_size: 16, alignment: 8)
+    bytes = ElfFixture.valid(dynamic: true, origin: 0x1000, source_offset: 4096, alignment: 65536,
+                             extra: [writable, dynamic]) + ("\0".b * 4096)
     status, output = plan(bytes)
     assert_equal 0, status, output
     value = Erx::JsonInput.parse(output)
     assert_equal 0, value.fetch('virtual_origin')
     assert_equal 65536, value.fetch('base_alignment')
     assert_equal 4096, value.fetch('loads').first.fetch('mem_offset')
-    assert_equal 8192, value.fetch('span')
+    assert_equal 12288, value.fetch('span')
   end
 
   def test_missing_duplicate_and_wrong_version_notes_are_refused
@@ -104,10 +109,7 @@ class ElfPlanTest < Minitest::Test
   def test_interpreter_and_dynamic_dependencies_are_refused
     interpreter = ElfFixture.program(type: 3, offset: 2048, address: 0x10800, file_size: 16)
     reject(ElfFixture.valid(extra: [interpreter]), 'interpreter')
-    dynamic = ElfFixture.program(type: 2, offset: 2048, address: 0x10800, file_size: 16, alignment: 8)
-    bytes = ElfFixture.valid(extra: [dynamic])
-    ElfFixture.integer(bytes, 2048, 1)
-    reject(bytes, 'dynamic_dependency')
+    reject(ElfFixture.pie(tags: [*ElfFixture.rela_tags, [1, 1]]), 'dynamic_tag')
   end
 
   def test_overlapping_metadata_work_is_bounded_by_source_bytes
@@ -116,8 +118,9 @@ class ElfPlanTest < Minitest::Test
   end
 
   def test_dynamic_file_and_virtual_views_must_agree
-    dynamic = ElfFixture.program(type: 2, offset: 2048, address: 0x10900, file_size: 16, alignment: 8)
-    reject(ElfFixture.valid(extra: [dynamic]), 'dynamic_mapping')
+    bytes = ElfFixture.pie
+    ElfFixture.integer(bytes, ElfFixture::PHOFF + 3 * ElfFixture::PHENT + 16, ElfFixture::DYNAMIC_OFFSET + 256)
+    reject(bytes, 'dynamic_mapping')
   end
 
   def test_tls_template_sizes_and_alignment_are_checked
@@ -170,7 +173,7 @@ class ElfPlanTest < Minitest::Test
   def test_relocation_tables_other_than_one_rela_table_are_refused
     rela = [[7, ElfFixture::RELA_OFFSET], [8, 72], [9, 24]]
     [17, 23, 36].each do |tag|
-      reject(ElfFixture.pie(tags: [*rela, [tag, ElfFixture::RELA_OFFSET]]), 'relocation_kind')
+      reject(ElfFixture.pie(tags: [*rela, [tag, ElfFixture::RELA_OFFSET]]), 'dynamic_tag')
     end
     reject(ElfFixture.pie(tags: [*rela, [7, ElfFixture::RELA_OFFSET]]), 'relocation_table')
     reject(ElfFixture.pie(tags: [[7, ElfFixture::RELA_OFFSET], [8, 72]]), 'relocation_table')
@@ -213,10 +216,51 @@ class ElfPlanTest < Minitest::Test
     reject(bytes, 'load_zero_tail')
   end
 
-  # A fixed loader applies no relocation, so a fixed file carrying a table is refused.
+  # The dynamic section's tags are a closed list: every listed one, the six of the
+  # constructors and destructors among them, plans, and any tag outside it, here one of
+  # the operating system's range, is refused (seed: a planner that refuses only the
+  # relocation tags it names accepts it).
+  def test_dynamic_tags_are_a_closed_list
+    rela = ElfFixture.rela_tags
+    status, output = plan(ElfFixture.pie(tags: [*rela, *ElfFixture::LISTED_TAGS.values]))
+    assert_equal 0, status, output
+    assert_equal 3, Erx::JsonInput.parse(output).fetch('relocation_count')
+    reject(ElfFixture.pie(tags: [*rela, *ElfFixture::LISTED_TAGS.values, [0x6000000d, 0]]), 'dynamic_tag')
+    reject(ElfFixture.pie(tags: [*rela, [30, 4]]), 'text_relocation')
+  end
+
+  # A fixed link has no dynamic section, so its PT_DYNAMIC header is empty, at address 0,
+  # which the planner reads as no section (seeds: a planner that parses it refuses the file
+  # for its missing terminator, one that checks it as metadata a load must cover refuses
+  # it for its address). A fixed header holding bytes, a DT_RELA table or any other, is
+  # refused.
+  def test_fixed_empty_dynamic_header_is_no_dynamic_section
+    status, output = plan(ElfFixture.valid(extra: [ElfFixture.empty_dynamic]))
+    assert_equal 0, status, output
+    assert_equal 1, Erx::JsonInput.parse(output).fetch('flags')
+    reject(ElfFixture.valid(extra: [ElfFixture.empty_dynamic] * 2), 'duplicate_dynamic')
+    debug = ElfFixture.program(type: 2, offset: 3072, address: 0x10c00, file_size: 32, alignment: 8)
+    reject(ElfFixture.valid(extra: [debug]).tap { |bytes| ElfFixture.integer(bytes, 3072, 21) }, 'fixed_dynamic')
+  end
+
+  # musl's start finds a position-independent program's thread-local image through
+  # PT_DYNAMIC, so the planner requires exactly one, not empty, wholly inside one writable
+  # segment (seed: a planner without that requirement accepts the header-less file).
+  def test_position_independent_file_needs_its_dynamic_header_in_the_writable_load
+    reject(ElfFixture.pie(dynamic: :none), 'dynamic_missing')
+    reject(ElfFixture.pie(dynamic: :empty), 'dynamic_missing')
+    reject(ElfFixture.pie(dynamic: :readonly), 'dynamic_segment')
+    # A section starting in the read-execute load and running on into the writable one.
+    bytes = ElfFixture.pie
+    [8, 16].each { |field| ElfFixture.integer(bytes, ElfFixture::PHOFF + 3 * ElfFixture::PHENT + field, 4080) }
+    reject(bytes, 'dynamic_segment')
+  end
+
+  # A fixed loader applies no relocation, so a fixed file whose dynamic header names a
+  # table is refused.
   def test_fixed_executable_with_relocations_is_refused
     bytes = ElfFixture.pie
     ElfFixture.integer(bytes, 16, 2, width: 2)
-    reject(bytes, 'fixed_relocations')
+    reject(bytes, 'fixed_dynamic')
   end
 end
