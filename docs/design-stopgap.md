@@ -2100,8 +2100,8 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   tree on the host like every other.
 * **Boot files.** One directory, `boot/`, serves as the firmware's network boot root and holds the files slot A's
   FAT holds, written by `tools/erx pack --medium --platform raspi4b` into `build/production-image/raspi4b/` beside
-  `sdcard.img` (`tools/lib/erx/boot_partition.rb`): the firmware and its license; `config.txt`, written from the platform record, with,
-  on a development card only, the firmware's boot log on the console (`uart_2ndstage=1`) and the ARM's JTAG on GPIO 22
+  `sdcard.img` (`tools/lib/erx/boot_partition.rb`): the firmware and its license; `config.txt`, written from the platform record; it asks the firmware for one 32-bit framebuffer
+  (`framebuffer_depth=32`, `framebuffer_ignore_alpha=1`, `max_framebuffers=1`) and, on a development card only, the firmware's boot log on the console (`uart_2ndstage=1`) and the ARM's JTAG on GPIO 22
   to 27 (`enable_jtag_gpio=1`);
   BL31 and its license; the bootable file as `kernel8.img`; Linux's device tree for the board, compiled from its
   pinned source with its two serial aliases swapped, so that `serial0` names the console, with that source beside it; and the overlays `config.txt` names, which the firmware applies.

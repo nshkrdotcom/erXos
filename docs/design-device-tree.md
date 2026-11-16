@@ -63,14 +63,21 @@ is unverified here. The board's Ethernet node has no address property
 Linux 6.18's `arch/arm/boot/dts/broadcom/` has a `simple-framebuffer`
 node, so a framebuffer node can come only from the firmware, and whether
 it adds one is unverified. Raspberry Pi's legacy video options for
-`config.txt` name two framebuffer settings, which erXos's boot partition
-leaves unset. `framebuffer_depth` is 16 bits per pixel by default
-(`legacy_config_txt/video.adoc:1696-1718`). `max_framebuffers` is 2 on
-the Raspberry Pi 4, "as it has two HDMI ports", and a framebuffer is
-made only for a display the firmware detects (`:1749-1755`). Whether
-those options still apply to the pinned firmware, which format name it
-writes at 16 bits, and whether a screen on each port gives two nodes
-are unverified. The cut-down firmware, which only `gpu_mem=16` selects,
+`config.txt` name several framebuffer options, and the card's `config.txt`
+sets three of them. `framebuffer_depth=32` asks for 32 bits per pixel
+instead of the default 16; at 32 the source says it "may need to be used
+in conjunction with" `framebuffer_ignore_alpha=1`, which disables the
+alpha channel (`legacy_config_txt/video.adoc:1696-1722`).
+`max_framebuffers=1` allows one framebuffer, where the Raspberry Pi 4
+default is 2, "as it has two HDMI ports"; a framebuffer is made only for
+a display the firmware detects (`:1749-1755`), so the root sees at most
+one `simple-framebuffer` node. Whether those options still apply to the
+pinned firmware, which format name it writes for 32 bits (the root drives
+`x8r8g8b8` if the alpha byte is unused and the order is RGB, and the
+other 32-bit names the binding lists as well), which display gets the one
+framebuffer when only HDMI1 has a screen, and whether 32 bits fit the
+`gpu_mem` window are unverified; the board pass settles them. The cut-down
+firmware, which only `gpu_mem=16` selects,
 limits the early framebuffer to 1080p at 16 bits
 (`config_txt/boot.adoc:12`); the boot partition ships no cut-down
 firmware files and sets a larger `gpu_mem`
