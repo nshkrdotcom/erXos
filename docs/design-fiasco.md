@@ -96,7 +96,7 @@ and, on the scheduler:
 > I'd defer cooperation pieces too after everything else works. It does not seem urgent and more
 > of an optimization
 
-**Phase 1** in this document includes Phase 1b of [plan.md](plan.md) and R1, the first release:
+**Phase 1** in this document includes Phase 1b of [plan.md](plan.md) and 0.2, the first release:
 the user-facing system carried further on the same backend, behind the same interface. Its
 consumers are:
 
@@ -105,7 +105,7 @@ consumers are:
 * **domains** and their connections: the web domain, the session domain, the display domain,
   the network domain, the storage domain and test domains, each a task the domain library builds;
 * **programs in sub-spaces**: toybox and recompiled programs, started by a session's port driver
-  with their channels, pipe ends and code objects; R1 runs littlefs as a NIF in the storage
+  with their channels, pipe ends and code objects; 0.2 runs littlefs as a NIF in the storage
   domain, not in a sub-space ([design-stopgap.md](design-stopgap.md#release-contract));
 * **drivers in their own domains**: virtio-mmio block, net, gpu and input, each held by the
   domain the manifest names.
@@ -123,7 +123,7 @@ From them:
   (FD12) and, unless FD32's entry patch is carried, on the CPU's branch predictors (FD32); rights that only
   shrink; a deleted object gone for every holder at once; memory budgets as hard walls, over user pages, the domain's kernel memory and what the domain can make
   the root hold for it ([Memory and budgets](#memory-and-budgets)); device memory access confined
-  by the IOMMU for a device the platform puts behind one, which on R1's platforms is none
+  by the IOMMU for a device the platform puts behind one, which on 0.2's platforms is none
   ([Devices](#devices)); no one user mapping writable and executable at once in any task but
   `sigma0` and the root (FD8 for two mappings of one page); the results of [the call table](#the-call-table); and the guarantees that rest on
   user-mode code alone, which hold as on erXos's kernel: D1 to D6, D9, D13 and D18 of
@@ -135,7 +135,7 @@ From them:
 * **It does not promise** what [Downsides against erXos's kernel](#downsides-against-erxoss-kernel)
   lists. Each row is a property erXos's kernel has and Fiasco lacks, the consequence a user or an
   app sees, and what closes it. Nothing in this backend rebuilds one of those properties in user
-  mode. R1 accepts each row but FD33 as a published downside, among them a hostile app's load on
+  mode. 0.2 accepts each row but FD33 as a published downside, among them a hostile app's load on
   the root service (FD17) and FD24's reads of what a domain supplies; FD33's acceptance
   [Open decisions](#open-decisions) holds open. FD32 is published unless its entry patch is
   carried, and the null-request bench decides whether it is
@@ -426,10 +426,10 @@ Fiasco carries DMA spaces behind an IOMMU (`dmar_space.cpp`, the QEMU `virt` bin
 `arm/bsp/virt/iommu-arm-smmu-v3-virt.cpp`). For a device behind one, the root creates a DMA space
 in the device domain's factory, maps the device's buffers into it at the addresses
 `erx_mem_dma_addr` reports, and binds the device's stream to it; the device reaches nothing else.
-On R1's platforms no device is behind one: QEMU `virt`'s IOMMU serves only PCIe functions on the
+On 0.2's platforms no device is behind one: QEMU `virt`'s IOMMU serves only PCIe functions on the
 root bus, which the harness does not start for the production image, and never a virtio-mmio
 device, and the Raspberry Pi 4 has no IOMMU at all
-([design-platforms.md](design-platforms.md), the DMA table). So every DMA-capable device of R1 is
+([design-platforms.md](design-platforms.md), the DMA table). So every DMA-capable device of 0.2 is
 unconfined, and on the Pi 4 a compromise of any driver that masters DMA is a compromise of the
 machine (FD12). An unconfined device runs as on erXos's kernel, a property of the hardware, not of
 the kernel, and the manifest check refuses such a device to any domain but the one the manifest
@@ -561,7 +561,7 @@ recorded rights, and a mapping's range, object kind and rights, each with its fu
 record of it, not an object id, which only the kernel has (FD2, FD6), so the backend marks that field partial and the
 inspector shows it as `{{backend, liberx_placements}, {partial, Record}}`, under the backend reporter `liberx_placements`
 that `abi/inspection.txt` declares as standing in for `kernel` ([design-live.md](design-live.md#inspection-records)). The
-confinement test of the stopgap R1 ships in a sub-space, LVGL's renderer
+confinement test of the stopgap 0.2 ships in a sub-space, LVGL's renderer
 ([design-display.md](design-display.md#lvgls-release-contract)), reads the program's handles and mappings through `/proc`,
 so it runs unchanged on a development build of either kernel, against the same placement code a release runs. A test reads
 slots and mappings apart: a program holding a mapping of an object holds no slot for it unless it was passed one. The
@@ -595,15 +595,15 @@ app sees. Release notes and the user documentation carry it.
 | FD6 | none (a missing report) | `erx_object_info` answers every topic, with object ids | the root answers what its own tables hold ([Reporting kernel objects](#reporting-kernel-objects)) | the inspector shows the rest `unsupported` or `partial`, with their reporter | erXos's kernel |
 | FD7 | K6 | committed memory is populated lazily, with every page it can need reserved and charged at the commit, and a refused call keeps the parts before it (K6); a reserve without `ERX_VM_FIXED` searches below the placement base | a commit populates every page at once and a refused call keeps none of its parts; a reserve takes the lowest free range of its area | a committed page is present at once here, and no code reads timing or fault counts from it | erXos's kernel |
 | FD8 | F6, K4, K5, K8, K9 | a mapping's protection moves only beneath a ceiling fixed from the capability that made it, and only a JIT space makes code (K4, K5, K9); no page is executable through one mapping while it is writable through another, by the CPU or a device (K8) | the root's range table keeps a record per mapping at the rights it was made with, and Fiasco's patched map refuses one mapping that is writable and executable ([The release's Fiasco build](#the-releases-fiasco-build)); `ERX_SPACE_JIT` gates only `ERX_MEM_JIT`, so an object with no flag can be mapped writable in one place and executable in another, and an unconfined device can write any page; the root's own mappings from `sigma0`, its image and its pool window, through which it reaches every page, are writable and executable at once (`l4re-core/sigma0/server/src/memmap.cc:96,125`) | any domain can run code it wrote into its own memory, so F6 holds by the file servers' and the session's own code alone; a stray write by the root to any page it reaches through its window can make code there | erXos's kernel |
-| FD9 | F7, F8, K22, K23 | objects grow; paged objects are supplied on demand, a supply filling only pages not yet supplied; copy-on-write children, store tracking and a space's copy, quiesce and capability clearing (K22, K23) | none of them; a supply writes every page of its range | no copy-on-write `fork` and no shared file mappings written back by store | Track Q, after R1 |
+| FD9 | F7, F8, K22, K23 | objects grow; paged objects are supplied on demand, a supply filling only pages not yet supplied; copy-on-write children, store tracking and a space's copy, quiesce and capability clearing (K22, K23) | none of them; a supply writes every page of its range | no copy-on-write `fork` and no shared file mappings written back by store | Track Q, after 0.2 |
 | FD10 | K16 | an image map refuses another ABI version and a range in use each with its own status and keeps no part of a failed load; slicing is checked against `SYSTEM`; no file is read or mapped before its check (K16) | the root plans and maps images, keeping the segments a failed load mapped until the space ends; a file entry's hash is not checked and its segments are copied into each space; slicing checks no file; a slice's destroy revokes its entries' pages from every space; the root maps the whole archive read and execute, its files included, and its own image read, write and execute from `sigma0` | a damaged file entry is not caught at its map, and a stray write to the root's code or read-only data does not fault | erXos's kernel |
 | FD11 | CLAUDE.md "Untrusted input" | `erx_mem_copy` and an image entry's listing run in the kernel, through its own mappings | the root copies through its window, forward over overlapping ranges of one object, and lists a task's entries on its own thread | copies and listings take the root's time (FD17) | erXos's kernel |
-| FD12 | K4, K8, K22, CLAUDE.md "Trust placement" | every device's DMA reaches only the windows its driver maps (`erx_dma_map`), MSIs go through a frame the kernel drives, device buffers live by their references, and each board has its device secret (M9, M12) | a device is confined only by a DMA space behind an IOMMU, and no device of R1's platforms is behind one ([Devices](#devices)); MSIs are lines of QEMU `virt`'s MSI frame | the domain that holds a DMA-capable device can reach all memory through it, so that domain is in the trusted base, and on the Raspberry Pi 4 a compromise of any driver that masters DMA (the network domain's, which parses packets, the storage domain's) is a compromise of the machine; the devices that can write the MSI frame can raise one another's lines | erXos's kernel (M9's kernel part); M12 (the secret) |
+| FD12 | K4, K8, K22, CLAUDE.md "Trust placement" | every device's DMA reaches only the windows its driver maps (`erx_dma_map`), MSIs go through a frame the kernel drives, device buffers live by their references, and each board has its device secret (M9, M12) | a device is confined only by a DMA space behind an IOMMU, and no device of 0.2's platforms is behind one ([Devices](#devices)); MSIs are lines of QEMU `virt`'s MSI frame | the domain that holds a DMA-capable device can reach all memory through it, so that domain is in the trusted base, and on the Raspberry Pi 4 a compromise of any driver that masters DMA (the network domain's, which parses packets, the storage domain's) is a compromise of the machine; the devices that can write the MSI frame can raise one another's lines | erXos's kernel (M9's kernel part); M12 (the secret) |
 | FD13 | none (missing calls) | resources are carved (`erx_resource_carve`) and a domain makes physical objects and lines within a carved resource's rights; `erx_irq_route` applies a route; an IRQ object moves between groups | the root alone makes physical memory, contiguous memory, lines and MSIs, from the manifest's device entries; no carve, route or move between groups; every holder of an IRQ object can acknowledge it, since Fiasco's acknowledgement checks no right ([Rights](#rights)), where erXos's pass set gives `trigger` without `ack` | a device reaches a domain only by the domain library's give; a ringer's acknowledgement of a peer's doorbell does nothing, since a software object has no line to mask, and a device line is placed only in the domain that holds its device | erXos's kernel |
 | FD14 | D12, K3 | a domain's objects are bounded by its budget alone | they are bounded also by its row's thread, object and mapping limits ([Memory and budgets](#memory-and-budgets)); a task holds at most 128 threads, a record waits for Fiasco's marker write before reuse, and a failed start that did not reach Fiasco's kill path loses its index until the task ends ([Table sizes](#table-sizes)) | a domain is refused at a limit while its budget has memory free, so its row is sized at its largest; D12's bounds hold at those limits | erXos's kernel |
 | FD15 | CLAUDE.md "Trust placement", CLAUDE.md "ERTS is a parts bin" | CPU grants to runtime groups, quotas charged up the group tree, own-group charging, `erx_group_configure` enforced with usage reported, a group's threads in any space, a thread on any CPU of its mask | per-domain priority bands, CPU sets and thread limits ([Threads, bands and stops](#threads-bands-and-stops)); a group's grant is a record, its threads run in its home task, and affinity runs a thread on one CPU of its mask, narrowed to its domain's CPU set | a domain spinning at its band's top takes its CPUs from every lower band and shares its band round robin in proportion to its threads; CPU use per domain is reported as `unsupported`; M10's "one runs out of CPU alone" holds between bands, not within one | stage 5 of [the scheduler](#stages-beyond-bands), or erXos's kernel |
 | FD16 | none (performance) | the cooperation ladder: status words, deferred preemption, published urgency within the group's ceiling, group park in the kernel with the executor switched, capacity advice the kernel stands behind | none in the first release; park and wake go through semaphores and a dispatcher thread per task ([The park protocol](#the-park-protocol)) | ERTS behaves as stock BEAM does on a general-purpose kernel: it spins briefly and backs off on a lock whose holder is preempted, and a wake, a doorbell's included, goes through one more thread switch | stages 1 to 4, or erXos's kernel |
-| FD17 | K31, CLAUDE.md "Untrusted input" | a kernel call runs on the caller's own thread and is charged to its own group, so what one domain makes another spend is bounded and declared; a fault of the root task ends the machine at once (K31) | setup, faults, copies and every service call run on the root service's one thread at the root's band, and a program's start costs one service request per object; a long body (a stop of a large tree, a budget's destroy and its sweeps of the object table) delays every other | an app flooding the root with requests or faults takes CPU from every lower band on the root's CPU, the system domain, the drivers and the display included, and delays every other domain's setup and faults, which R1 accepts; a fault of the root service hangs every client until the watchdog or the harness's deadline ends the run | erXos's kernel |
+| FD17 | K31, CLAUDE.md "Untrusted input" | a kernel call runs on the caller's own thread and is charged to its own group, so what one domain makes another spend is bounded and declared; a fault of the root task ends the machine at once (K31) | setup, faults, copies and every service call run on the root service's one thread at the root's band, and a program's start costs one service request per object; a long body (a stop of a large tree, a budget's destroy and its sweeps of the object table) delays every other | an app flooding the root with requests or faults takes CPU from every lower band on the root's CPU, the system domain, the drivers and the display included, and delays every other domain's setup and faults, which 0.2 accepts; a fault of the root service hangs every client until the watchdog or the harness's deadline ends the run | erXos's kernel |
 | FD18 | K20 | the executor rule refused by the kernel | `liberx`'s stub refuses it | a runtime that bypasses `liberx` can stall its own executors, harming only itself | erXos's kernel |
 | FD19 | none (missing calls) | threads are backed and charged at their create, any number run in a space the caller holds, a start resumes a repaired thread, and `erx_thread_stop`, `_read` and `_write` work | a creator starts only a space's first thread; a faulting thread waits until its space stops; no stop, read or write of a thread; a gate's thread is of the gate's own task | no debugger or pager repairs a thread | erXos's kernel |
 | FD20 | D7, D17, K18, K27, K28 | a stop's bounded finishing path (K18, K27) and fault and exit records from the kernel with the thread's identity (K28) | the root ends a tree children first and posts each exit record, at the gate fixed at creation, after every thread's deletion has returned; a fault's record comes from a pool of its space; a fault message's words are the task's own | an exit record arrives when the root's walk completes, with no bound under hostile load, so D7 and D17 hold without their bound; a dead domain's write position is final when its end is reported; a task that reaps faulted threads and faults again can run its own pool out and lose its own records, and its raw IPC can put stale numbers in its own crash record | erXos's kernel |
@@ -731,13 +731,13 @@ branch-predictor injection it may read memory it cannot reach (FD32).
 The security closure is the point from which a release build may run untrusted code. It has two
 forms, one per kernel, and the first release reaches the first.
 
-* **On Fiasco**, within [plan.md](plan.md)'s R1: M11's scope wherever it does not name erXos's
+* **On Fiasco**, within [plan.md](plan.md)'s 0.2: M11's scope wherever it does not name erXos's
   kernel (the funnel and the services behind it, the vault, image hashes, packages, the host link,
   every user-mode fuzz target at full budget, the sanitizers on host builds, the external review),
   and in place of its kernel half: the release's Fiasco build of the next section; the system-call
   fuzz campaign at its full budget with no open finding; the hostile suites' Fiasco set below; the
   upstream watch current; the IOMMU confining every device the platform puts behind one, of which
-  R1's platforms have none, and each unconfined device in a domain of its own (FD12); FD32's entry
+  0.2's platforms have none, and each unconfined device in a domain of its own (FD12); FD32's entry
   patch carried or FD32 published, as the null-request bench decides; and this document's downsides published with
   the release.
 * **On erXos's kernel**, M11 as written: every hostile suite in full and every guarantee of
@@ -2822,7 +2822,7 @@ fails the check. Development builds keep the debugger.
   with the patch and one without, each run at least ten times. The patch is carried when the patched build's median round
   trip lies within the spread of the unpatched build's medians across its runs; otherwise it is not, and FD32 stays a
   published downside. QEMU numbers do not settle it, since the cost is the firmware's call on the affected CPU. If the
-  firmware reports neither workaround, the patch has nothing to call and FD32 stays published as well; whether R1's BL31
+  firmware reports neither workaround, the patch has nothing to call and FD32 stays published as well; whether 0.2's BL31
   build turns them on is unverified. If carried, its case, on the Raspberry Pi 4's manual checklist: the kernel's boot
   log names the workarounds the firmware reported and the entry uses; seeded failure: the firmware's answer ignored, so
   the log names none and the case fails.
@@ -3070,7 +3070,7 @@ center at `developer.arm.com` refused the fetch with HTTP 403, and read as data:
 Fiasco's `kern/arm` was searched for the SMCCC function identifiers `0x80008000` and `0x80003fff`,
 for branch-history clearing and for `CSDB`, and none appears outside 32-bit code; `src/Kconfig`'s
 prediction barriers (`INTEL_IA32_BRANCH_BARRIERS`, `:478-487`) depend on AMD64. The Raspberry Pi
-4's A72 revision, whether R1's BL31 build turns the two workarounds on, and the exposure of the
+4's A72 revision, whether 0.2's BL31 build turns the two workarounds on, and the exposure of the
 Apple cores an HVF guest runs on are unverified.
 
 **The thread package:**
@@ -3135,7 +3135,7 @@ hooks.
 | Risk | Likelihood | Impact | Response |
 | --- | --- | --- | --- |
 | a Fiasco defect reachable from a domain breaks isolation | medium | high | the fuzz campaign, the upstream watch, every domain holding only what the root placed; a defect found is fixed in the fork and reported |
-| a platform R1 later supports puts a device behind an IOMMU that Fiasco's binding does not drive | unknown | medium | the device runs unconfined in a domain of its own, as every R1 device does (FD12), until its confinement case passes |
+| a platform 0.2 later supports puts a device behind an IOMMU that Fiasco's binding does not drive | unknown | medium | the device runs unconfined in a domain of its own, as every 0.2 device does (FD12), until its confinement case passes |
 | bands alone give interactive latency worse than users accept | medium | medium | the band test and the latency benchmarks; stages 1 and 2 are the next steps |
 | the release configuration drifts from the one tests run | medium | medium | the milestone gate runs the release configuration's suites, and the landing gate one smoke boot of it |
 | two kernels to maintain while Track K is written | high | medium | Fiasco's part is the backend and a few patches; Track K writes against the same conformance suite |
@@ -3148,7 +3148,7 @@ hooks.
   the system-call fuzz campaign checks (FD24). Whether a release also accepts that nothing a device
   does panics Fiasco, and that a fault ends only the faulting domain, only as far as Fiasco's own
   code gives it, with no erXos test driving that code, is not decided. Recommendation: accept it as
-  a published downside for R1, since no device of R1's platforms is confined (FD12) and a
+  a published downside for 0.2, since no device of 0.2's platforms is confined (FD12) and a
   misbehaving DMA-capable device already reaches the whole machine; add to the hostile suites'
   Fiasco set an interrupt storm on a driver's line, whose pass is that the machine and the other
   domains keep running, so the downside is measured rather than assumed. The source read adds to
@@ -3161,8 +3161,8 @@ hooks.
 
 Decided, and applied above:
 
-* **R1's features** are Phase 1b and track A, and M9's devices, the rest of track P, M10, M12, track D's
-  parts 5 and 9, and the security closure in its Fiasco form; track Q follows R1 (FD9).
+* **0.2's features** are Phase 1b and track A, and M9's devices, the rest of track P, M10, M12, track D's
+  parts 5 and 9, and the security closure in its Fiasco form; track Q follows 0.2 (FD9).
 * **Bands**: the six of [Bands](#bands), fixed in the manifest's schema, with no per-domain choice
   of priority beyond the band.
 * **The pause**: the root's, stopping each thread, with no Fiasco patch
@@ -3177,10 +3177,10 @@ Decided, and applied above:
   principal's budget from `apps` as a wall when it starts the app's session and destroys it once
   that session has retired ([design-packaging.md](design-packaging.md#an-apps-principal)), so no
   budget under `apps` is elastic and the backend needs no case of its own.
-* **A hostile app's load on the root service** is a published downside of R1 (FD17).
+* **A hostile app's load on the root service** is a published downside of 0.2 (FD17).
 * **The kernel's reads of what a domain supplies**, that it never loads or stores through an address
   a domain supplies and reads each user-writable field once per decision (K7), hold on Fiasco only
-  as far as Fiasco's own code gives them, a published downside of R1 (FD24).
+  as far as Fiasco's own code gives them, a published downside of 0.2 (FD24).
 * **A space's handles and mappings** are one development-build inspection topic on both kernels,
   served on Fiasco by the backend reporter `liberx_placements` and partial where the root has no
   object id ([What a test reads of a task](#reporting-kernel-objects)).

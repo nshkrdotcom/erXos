@@ -1,7 +1,7 @@
 # Stopgaps no other design carries
 
 Each component here is a stopgap: the roadmap replaces it, and CLAUDE.md's rule for what a
-stopgap promises binds it. R1 ships littlefs in its NIF form, under [its release contract](#release-contract), whatever M13's
+stopgap promises binds it. 0.2 ships littlefs in its NIF form, under [its release contract](#release-contract), whatever M13's
 gate G13 decides; a release ships no other stopgap of this document. The kernel the first release runs on,
 Fiasco, and `liberx`'s backend over it are [design-fiasco.md](design-fiasco.md)'s, and the
 sections of that backend named below are there.
@@ -17,7 +17,7 @@ handle](design-fiasco.md#passing-a-handle), [Fault gates](design-fiasco.md#fault
 A crash injected into littlefs ends only its port, since a fault ends nothing but its space once its gate's server stops
 it. A port that bypasses `liberx` reaches only what the storage domain placed in its space, as any sub-space does ([design-fiasco.md](design-fiasco.md#who-holds-what)).
 
-**The NIF form.** Phase 1 and R1 run littlefs as a NIF behind the `erx_fs` callback module, the seam the design names, in the
+**The NIF form.** Phase 1 and 0.2 run littlefs as a NIF behind the `erx_fs` callback module, the seam the design names, in the
 domain that holds the data window: the storage domain, which the development manifest configures as an interpreter service
 domain with the `block` unit and runs `erx_blk` and `erx_storage` (`erx_lfs_sup` under `erx_storage_sup`). The system
 release ships neither application, so a manifest that leaves the `block` unit with the system domain runs no block
@@ -107,7 +107,7 @@ directory there.
 
 ## Release contract
 
-R1 ships littlefs as the read-write file system of the data partition and of the vault's partition. Beyond what CLAUDE.md's
+0.2 ships littlefs as the read-write file system of the data partition and of the vault's partition. Beyond what CLAUDE.md's
 rule for a stopgap promises, a release commits to this for every domain, trusted or not, and no more; a gap that breaks it
 blocks the release, and every other gap is a published downside below. A test marked *new* is written before the
 release; the others are [Verification](#verification)'s or the fuzz campaign's.
@@ -133,11 +133,11 @@ release; the others are [Verification](#verification)'s or the fuzz campaign's.
   that crashes that runtime ends the storage domain, and its restart mounts the volume afresh; one that a crafted partition or
   a client's requests can steer reaches whatever that runtime holds: every grant of the volume, so every principal's files on
   it, with no grant or principal check between the defect and the volume, and, in the default configuration, the block driver
-  and every window on the medium. The block device masters DMA and no device of R1's platforms is confined
+  and every window on the medium. The block device masters DMA and no device of 0.2's platforms is confined
   ([design-fiasco.md](design-fiasco.md#devices), FD12), so through it that runtime reads and writes all of memory: every
   domain's, and the vault's live keys. The image and request fuzz targets running their full budgets clean before the release
   are the defence. Only a configuration that gives the block device a domain that runs no littlefs bounds such an error to the
-  volume; no R1 manifest names one;
+  volume; no 0.2 manifest names one;
 * any block error, deadline or driver restart ends the storage domain, and `/data` is unavailable until its restart has mounted the
   volume again.
 
@@ -148,7 +148,7 @@ target text describes the port, states the placement and links to it.
 
 None is open. Decided, and applied above:
 
-* **The form R1 ships** is the NIF, which works today, with its memory errors a published downside. The sub-space port, which
+* **The form 0.2 ships** is the NIF, which works today, with its memory errors a published downside. The sub-space port, which
   confines littlefs's C code to a sub-space holding the port's channel and data area, is the stopgap's next placement, a
   stopgap replacement of [TODO.md](../TODO.md), and no release waits for it.
 * **A crafted image that loops or asserts.** The loop of `lfs_dir_find` and `lfs_dir_read` over a directory tail that points

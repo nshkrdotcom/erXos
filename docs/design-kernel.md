@@ -8697,7 +8697,7 @@ TLB, at most about once a second for each CPU that creates spaces on the
 first architecture, whose 65,535 ASIDs
 ([design-arch-aarch64.md](design-arch-aarch64.md#tlb-maintenance)) must
 all be used between rollovers, while creating and running a space takes
-an estimated 15 microseconds or more. What Fiasco, which R1 runs on,
+an estimated 15 microseconds or more. What Fiasco, which 0.2 runs on,
 lacks against this kernel is not among them: it is a published downside,
 a row of [design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)'s
 table.

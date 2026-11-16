@@ -5962,7 +5962,7 @@ draws attaches as [Graphics hardware](#graphics-hardware) says.
 | --- | --- | --- | --- |
 | Plan 9's `libmemdraw`, from 9front | the per-byte pixel primitives of `erx_memdraw`; its image(6) loader `cloadmemimage` is linked into no release, since the `Y` decoder is the Erlang `erx_draw_image` | MIT (9front's `lib/legal/NOTICE`, whose exceptions cover only fonts) | permanent; 9front at commit 2859ae04, imported as erXos's code into `display/libmemdraw` with an `ORIGIN.md` listing its edits |
 | the 9front build: 9front's `libmemdraw` and the parts of its `libdraw` it links, unmodified | test tool: the oracle of the shapes' pixels, of every `erx_memdraw` operation against the code it was imported from, and through `cloadmemimage` of `erx_draw_image`'s decoding and of the C twin's framing of `Y` (Verification) | MIT | tool, never part of a shipped image; fetched at the commit the import's origin file records, verified against a pinned SHA-256, and built for the host out of tree by erXos's own compiler invocations against plan9port's `lib9`, which is already fetched for rc; 9front's mkfiles never run |
-| LVGL 9 | the native widget renderer for panels, the program `erx-lvgl` of the application's session | MIT; its built-in fonts are OFL-1.1 font data | stopgap, shipped in R1 under [its release contract](#lvgls-release-contract) and replaced by the Erlang renderer when the parity test and the panel's frame times admit it; a git submodule from erXos's fork pinned at a recorded commit, built out of tree as a native program, its display and input glue erXos's own |
+| LVGL 9 | the native widget renderer for panels, the program `erx-lvgl` of the application's session | MIT; its built-in fonts are OFL-1.1 font data | stopgap, shipped in 0.2 under [its release contract](#lvgls-release-contract) and replaced by the Erlang renderer when the parity test and the panel's frame times admit it; a git submodule from erXos's fork pinned at a recorded commit, built out of tree as a native program, its display and input glue erXos's own |
 | fonts | the glyphs of `erx_term` and of the Erlang renderer, in a session's release, as Plan 9 subfonts, and of the menu, in the display's, as a generated module | plan9port's `fixed` fonts (public domain, converted from X.Org's `misc-fixed` BDF files) for the terminal, of which the 6x13 subfonts of U+0000, U+2000 and U+2500 are imported into `display/font/fixed` with an origin file; Inter 4.1 (OFL-1.1, font data only) for the theme's roles, rasterised at build through FreeType, a host build tool used under the FTL, into 8-bit subfonts and the menu's module ([design-desktop-programs.md](design-desktop-programs.md#type)) | permanent |
 | libvterm 0.3.3 | the differential oracle of `erx_vt` | MIT | test tool, never in an image and never linked into erXos; fetched at its pinned release and SHA-256 and built out of tree for the host with the harness `test/vt/vterm_dump.c` |
 | `vttest`, Thomas Dickey's | the source of the corpus's `vttest` recordings | MIT-style (X11), confirmed at the pin | test tool, never in an image; fetched at a pinned release and SHA-256, built out of tree for the host and run on a host pseudo-terminal |
@@ -5970,7 +5970,7 @@ draws attaches as [Graphics hardware](#graphics-hardware) says.
 
 ### LVGL's release contract
 
-R1 ships LVGL as a stopgap renderer. Beyond what CLAUDE.md's rule for a stopgap promises, a
+0.2 ships LVGL as a stopgap renderer. Beyond what CLAUDE.md's rule for a stopgap promises, a
 release commits to this for every application, trusted or not, and no more; a gap that breaks
 it blocks the release, and every other gap is a published downside. Each test is a case of
 [Verification and testing](#verification-and-testing) ("A kiosk"), with its seeded failure,
@@ -5982,7 +5982,7 @@ except the fuzz budgets, which are the milestone gate's.
 | **Input** | the program reads only the binary form of `abi/formats/ui.txt` through the generated bounded C reader, never an application's term; `erx_ui_lvgl` reads the program's records through the generated Erlang reader | `tools/fuzz/ui_wire_fuzz.c` (the C reader) and `test/erlang/erx_ui_wire_fuzz.erl` (the Erlang reader) at their full `check-fuzz` budgets with no open finding before the release; a reader without the `damage` report's count check fails its target |
 | **Failure** | a malformed `damage` report, a second report before the first is answered, or a program that leaves its standard input full stops the program, and the application receives `{ui_down, Window, renderer_down}`; the worst a hostile or broken `erx-lvgl` does is confined to its own application's session | each of the first two stops the program and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that presents them fails. *new*: a program that stops reading its standard input until the pipe is full is stopped and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that waits on the full pipe instead fails |
 | **Notices** | the image's notices carry LVGL's MIT license and the OFL-1.1 license of its built-in fonts, which the release check admits as font data only ([design.md](design.md#dependencies), LVGL's row) | `test_ofl_is_admitted_only_for_an_input_that_states_font_data` (`test/host/license_expression_test.rb`): OFL-1.1 refused for an input that does not state font data; and `test/host/production_image_test.rb`, which reads the LVGL archive as `MIT AND OFL-1.1` with font data |
-| **Retirement** | gate GD decides whether the Erlang renderer replaces LVGL on panels ([plan.md](plan.md#decision-gates)); GD is not among R1's gates, and a release after a GD that retires LVGL ships no LVGL | none: a plan gate |
+| **Retirement** | gate GD decides whether the Erlang renderer replaces LVGL on panels ([plan.md](plan.md#decision-gates)); GD is not among 0.2's gates, and a release after a GD that retires LVGL ships no LVGL | none: a plan gate |
 
 **Published downsides.** A defect in LVGL's C code can crash or hang its application's interface,
 which the application sees as `{ui_down, Window, renderer_down}` or a stalled frame; it reaches
@@ -6070,7 +6070,7 @@ Decisions:
 2. **LVGL is a stopgap.** The Erlang renderer exists for the desktop
    regardless, and one renderer is the simpler system; LVGL retires on
    panels when the parity test passes and the Erlang renderer matches
-   its frame times on a 240x240 panel, and stays until then, in R1
+   its frame times on a 240x240 panel, and stays until then, in 0.2
    under [its release contract](#lvgls-release-contract). Both gates
    compare the two on the same panel: the parity test on meaning, the
    frame times on speed; neither asks for the same pixels.
