@@ -7718,8 +7718,9 @@ Each with a test proving it catches a violation:
 * only `erx_net_tables` reads the configuration tables, so every reader
   gets them through its `configuration/0` and `snapshot/3`'s pid check;
 * only `erx_net_credit` sends packet batches between stack processes;
-* only `erx_net_clock` reads a clock or arms a timer in `erx_net`: no
-  other module calls `erlang:monotonic_time`, `erlang:system_time`,
+* only `erx_net_clock` reads a clock or arms a timer in `erx_net`, but
+  the driver's hold and the Pi 4 Ethernet's MDIO and PHY waits, which pace
+  a supervisor or a device on the host's clock: no other module calls `erlang:monotonic_time`, `erlang:system_time`,
   `os:timestamp`, `erlang:start_timer`, `erlang:send_after` or the
   `timer` module, or writes a `receive ... after` with a timeout other
   than `infinity` or 0, and no module of `erx_net` or `erx_net_client`

@@ -2671,12 +2671,18 @@ it; git history is the record of completed work.
   `erx_net_if_core` (counted `unsupported`); an `erx_net` application module and its `env` keys
   (the stack starts with `erx_net_sup:start_link/1`); the credit limits are fixed defines, not
   application keys; a datagram socket's credit counts datagrams, not bytes of its receive
-  buffer. Build checks still to add: the clock chokepoint (`erlang:send_after`, `monotonic_time`
-  and the rest only in `erx_net_clock`), `erx_net_bind` as the only demultiplexing inserter,
+  buffer. Build checks still to add: the clock chokepoint's `receive ... after` rule (its calls are
+  checked: `net_checks.rb`'s `clock`, which allows `erx_net_driver` and `erx_genet` whole where the design
+  names only the driver's hold and the MDIO and PHY waits), `erx_net_bind` as the only demultiplexing inserter,
   `erx_net_if` as the only configuration writer and `erx_net_credit` as the only batch sender.
   With IPv6 interface addresses, `lo0` takes `::1/128` and `fe80::1%lo0` as it comes up, as
   FreeBSD's `in6_ifattach` gives them (`in6_ifattach.c:541-543`, `:816-823`); `erx_net_sup`
   gives `lo0` 127.0.0.1/8 alone.
+* [Medium] network, the cookie keys' rotation (`erlang/apps/erx_net/src/erx_net_tables.erl`'s
+  `{erx_net_clock, hint}`): each hint rotates the keys and arms the next, so a stray or repeated hint would
+  start a second chain and rotate twice as often, halving how long a cookie is accepted. Keep the reseed
+  deadline in the owner's state and rotate only once `now/0` reaches it, with a test of the deadline armed,
+  and take the lifetime from `erx_tcp_syncache`'s `SYNCOOKIE_LIFETIME` instead of a second define.
 * [Medium] network, virtio-net transport (`erlang/apps/erx_net/erxos/erx_virtio_net.erl`): what the
   first package leaves. No host tests of its pure functions (`frame/3`, `mtu/2`, `lladdr/2`,
   `link_state/2`, `segments/1`, `erx_net_app:interfaces/1`): export them under `TEST` or move
