@@ -6,6 +6,7 @@ require 'fileutils'
 require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/native_irq'
+require_relative '../../tools/lib/erx/native_kernel_trap'
 require_relative '../../tools/lib/erx/native_semaphore_race'
 require_relative '../../tools/lib/erx/native_threads'
 require_relative '../../tools/lib/erx/native_task'
@@ -102,6 +103,15 @@ class NativeSeedsTest < Minitest::Test
   def test_an_up_held_across_a_timed_down
     ran = Erx::NativeSemaphoreRace::Run.new(root: ROOT).call(accels: %w[hvf], cpus: [4], build: true)
     assert_equal %w[hvf-4cpu], ran.keys
+  end
+
+  # A seed of the kernel's own: a release-configuration kernel that loads from an
+  # unmapped address in kernel mode must panic once and end the machine through PSCI,
+  # which a kernel that kills the faulting thread and returns never does.
+  def test_a_kernel_trap_ends_a_release_kernel
+    serial = File.binread(Erx::NativeKernelTrap::Run.new(root: ROOT).call(accel: 'hvf', build: true))
+    assert_equal({ trap_dumps: 1, panics: 1 },
+                 { trap_dumps: serial.scan('EXCEPTION:').size, panics: serial.scan('Panic: kernel trap').size })
   end
 
   SEEDS.each do |name, seed|

@@ -1704,6 +1704,15 @@ Put the card in the Pi, start logging on the adapter, then power the Pi.
      stopped, with no BL31 banner for at least 30 s. A board that resets
      anyway is reset by something else, and the first check proved
      nothing.
+   * **A kernel trap on a release kernel resets.** Build the card by hand
+     with the release-configuration test kernel of
+     `tools/lib/erx/native_kernel_trap.rb` (`build/fiasco/test-kernel-kernel-trap/fiasco`,
+     which loads from an unmapped address in kernel mode once boot is done)
+     in place of the card's kernel: the console shows `erx: kernel trap seed`,
+     the trap's state and one `Panic: kernel trap` line, and BL31's banner
+     follows within about 1 s, since BL31's system reset sets the watchdog
+     to about 153 us ([design-fiasco.md](design-fiasco.md#the-watchdog)). Trap
+     dumps that repeat, or no banner within 10 s, fail.
    * **A requested off becomes a reset.** In `erl`, `erlang:halt().` ends
      with `erx: end off`; the board halts in the firmware and the armed
      watchdog resets it, so BL31's banner follows within about 5 s.

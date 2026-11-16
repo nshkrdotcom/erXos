@@ -928,7 +928,13 @@ console input: a panic (`kernel_panic.cc`) enters JDB on the console through
 harness's deadline. A release kernel is built from the same defconfig with `CONFIG_JDB` and
 `CONFIG_INPUT` written as not set after it, its only differences, stated once in
 `FiascoConfig::RELEASE_UNSET` (`fiasco_config.rb`, `tools/erx build release-kernel`). Without
-JDB a panic calls `terminate`. Its exit question, which `kernel_main` installs
+JDB a panic calls `terminate`, and so does a trap in kernel mode. Every synchronous kernel-mode
+exception that does not panic at once (`arm/64/thread-arm-64.cpp`, `Thread::arm_kernel_sync_entry`) reaches
+`Thread::call_nested_trap_handler` (`arm/thread-jdb.cpp`), which is JDB's entry in a development
+kernel, stopping every CPU, and in a release kernel prints the trap state and panics: a kernel
+trap is fatal in both, and neither leaves the faulting CPU to trap again while the others run. A
+kernel-mode SError is counted and execution goes on, in both (`Thread::arm_serror_handler`).
+Its exit question, which `kernel_main` installs
 (`arm/main.cpp`), reboots at once when console input is out of the build
 (`terminate.cpp`, `Exit_question::ask`); before `kernel_main`, during the static
 initialization that runs `Startup::stage1` and `stage2`, `raw_exit` stands in, reads no key
@@ -2309,7 +2315,12 @@ hardware resets the board within the timeout: after a trial boot the firmware's 
 slot boots, and after any other boot the board boots its slot again. In deterministic mode, where the step is off, the
 thread does not arm it. At an end the thread reloads no more and nothing stops the hardware ([The end path](#the-end-path)), so a board halted on request, and an end that
 hangs, reset when it fires. An attended development board runs the hardware watchdog too, since the root arms it whatever its `config.txt` sets. A board stopped in the
-kernel debugger, which development builds keep, resets within the timeout. This is a platform item the root stands in
+kernel debugger, which development builds keep, resets within the timeout. A release kernel panics
+instead, at a kernel trap as at any other fatal error ([The kernel](#boot-handoff)), and resets through PSCI's
+system reset, which TF-A's BL31 makes by setting the same watchdog to 10 ticks, about 153 us, and its reset
+configuration to a full reset (`plat/rpi/common/rpi3_pm.c`, `rpi3_watchdog_reset`): the board resets
+at once, unless this thread's reload on another CPU lands inside those 153 us, and then the board stays up
+for good, about one panic in 6,500. This is a platform item the root stands in
 for, as the trial request is, not a kernel mechanism rebuilt in user mode. It arms the same watchdog as erXos's kernel,
 on every boot only on Fiasco: on erXos's kernel the firmware starts it on an unattended board or the kernel under a
 machine lease. Neither kernel ever stops it
@@ -2928,7 +2939,7 @@ defect found by erXos is fixed in the fork and reported to the address in
 ## Verification
 
 Each increment is a QEMU transcript test under HVF, one and four CPUs, kept in the suite (TCG runs only the production image's deterministic transcript and one boot smoke at one CPU). A case has a seeded failure, a test-only patch that makes it fail, where it could otherwise pass vacuously, which shows the case
-ran the code it claims to; `make check-native-seeds` keeps the suites' seeds and the semaphore race's test kernel. Exhaustive models are written for permanent cores only; a row of the call table is tested by a QEMU case for each call it offers, with AddressSanitizer on the host build, and TSan where it adds a lock. Host tests and TSan models run the pure cores. M7's parity gate runs the `erx` backend differentially against this one over the test corpus. Fuller recipes live with
+ran the code it claims to; `make check-native-seeds` keeps the suites' seeds and the test kernels of the semaphore race and the kernel trap. Exhaustive models are written for permanent cores only; a row of the call table is tested by a QEMU case for each call it offers, with AddressSanitizer on the host build, and TSan where it adds a lock. Host tests and TSan models run the pure cores. M7's parity gate runs the `erx` backend differentially against this one over the test corpus. Fuller recipes live with
 the tests.
 
 **One test set, two kernels.** The function-API set, `test/guest/function_api`, and Track K's
@@ -2986,6 +2997,7 @@ gate sets; a crash or hang of Fiasco is a HIGH finding and its input joins the c
 | **Trace on four CPUs**, the QEMU gate's `native_trace` suite: a test workload spawned at the Erlang shell, a process that waits for a message or 20 ms and loops, traced with `erx:trace(#{select => [Workload], kernel => true})` and sent a message, shows the kernel's row as exactly one `unsupported` line reported by `kernel`, a backend `park` followed by a `wake` of the same slot, and the workload's `in`, not marked `late`, with every `erts` line naming the workload; a test task started and stopped shows `space_start` and `space_end` with the same `target` and the task's status; the suite never sets the wall clock, so the clock offset is constant. The workload is off the console's output path, but with `kernel => true` printing still feeds the backend row: each printed line parks and wakes executors, whose `park` and `wake` records the trace then prints, and the window bounds that loop; only the trace process and the printer are kept out of the trace, by `{erx_untraced, true}` | the park core's `trace` effect removed: no `park` or `wake`. The clock offset added with the wrong sign: the workload's `in` comes out `late` or out of order with the backend's lines. `erx_trace_read` answering `ERX_OK` with no records: the `unsupported` line is missing, which shows the line comes from the call's answer |
 | **Watchdog**, the `native_watchdog` suite: pets hold the machine up past `erx.watchdog=1,2,2`; once they stop, a spinning first thread does not keep the machine from ending, with cause and time since the pet in the record, and the machine resets | the end skipped: the guest's own line reports it. Pets ignored: the machine ends before the guest's line |
 | **A semaphore's wake across CPUs**, `tools/lib/erx/native_semaphore_race.rb` under `make check-native-seeds`, under HVF at 4 CPUs as every seed runs, on a test kernel whose up holds itself between the dequeue and the activation until the waiter is queued again or half a second passes: at least three raced downs each, followed by an IPC wait that lasts its whole length and by a down that times out; too few raced downs fail the case | the bit's wait removed: the IPC wait ends early and the second down reports an up that never came |
+| **A kernel trap on a release kernel**, `tools/lib/erx/native_kernel_trap.rb` under `make check-native-seeds`, under HVF at 1 CPU, on a test kernel of the release configuration that loads from an unmapped address in kernel mode once boot is done, with `-no-reboot`: one `Panic: kernel trap` line, then QEMU exits through PSCI's system reset | the trap handler that kills the faulting thread and returns, as Fiasco's own release build does: trap dumps repeat until the deadline |
 | **End path**, on a quiet console, the QEMU gate's `native_crash` suite: a read of a decommitted page, a write to a read-only page, a read from another thread and a trap each give a whole crash frame, held to what the guest said it would touch; a root fault gives the undrained lines; `erx_machine_end` with each `how` | the frame's write removed: `crash_frame.rb` reports none. The drain removed: the last line is missing |
 | **Console handoff**: lines before and after the log service's first take arrive once, in order; a counter of the service's `l4_vcon_write` calls stays still after that take; an earlier map of the console's page leaves the sink alone. On the host, `dispatch_test.rb`'s handoff, readers and wrap cases count the core's console writes; natively, the console suite logs a tab and an escape sequence after the take and finds them escaped on the line, and a root that stops with the log service suspended still shows its parked record | the sink never switched: the counter moves |
 | **Manifest check**: each kept property with a seeded violation, each refusal with a seeded record | [the table](#the-phase-1-manifest-check) is the pairing |
