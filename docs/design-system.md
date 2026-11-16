@@ -1735,18 +1735,19 @@ own capabilities to budgets carry `CODE`: the root budget's, and its
 capability to every budget it carves, each principal's and each
 domain's; the capability a domain receives to its own budget never does,
 so no table but the system domain's holds `CODE`. The session asks
-through its facet, and the domain service calls
+through its `code_objects` facet, and the domain service calls
 `erx_dom_code_object(session, size)`, which creates the object from the
 session's budget through the system domain's own capability to it, so
 the session pays for its code, and gives the
 session a copy with `SUPPLY`, `READ`, `MAP`, `CHILD`, `DUP`, `GIVE` and
-`EXEC`: the session fills and seals it, and maps it into its programs'
-sub-spaces itself, as their creator; the kernel refuses an executable
+`EXEC`: the session fills and seals it, and installs it into its
+programs' sub-spaces itself, as their creator, where the loader maps
+it; the kernel refuses an executable
 mapping before the seal. The library keeps the only `DESTROY`, so the
 session's copy carries none, bounds the objects at `file_objects` per
 session, and deletes one at `erx_dom_code_drop`, which the domain
-service calls when the session's command server evicts the object from
-its cache by asking over the session's connection; the rest go with the
+service calls when the session's command server drops the object
+through the same facet; the rest go with the
 session's budget at its destroy, after every program that mapped one has
 stopped with the session
 ([design-programs.md](design-programs.md#file-objects)). A
@@ -1754,6 +1755,34 @@ program from the boot image needs none: its session maps its slice. A
 session's shared mappings of files need nothing of the library either: the
 session serves them from memory objects of its own budget
 ([design-files.md](design-files.md#shared-mappings)).
+
+**The `code_objects` facet.** `abi/services/code_objects.txt` declares
+the interface a session reaches the domain service's code objects
+through:
+
+```text
+service code_objects 11
+  operation create 1
+  operation drop 2
+```
+
+`create` takes the object's size in bytes, a positive integer, and
+answers `{ok, Number, Cap}`, the object's number and the session's value
+of its copy, or the library's refusal, `{error, enomem}` for the
+session's budget and `{error, elimit}` beyond `file_objects`; `drop`
+takes a number and answers `ok`, or `{error, einval}` for a number that
+names none of the grantee's live objects. The facet's decoder refuses
+any other request with `{error, badarg}`. The session is the facet's
+grantee, taken from its grant record and never from a request, so no
+request names a session: a session makes objects only from its own
+budget and drops only its own. The system manifest declares the
+service once, served by the system domain, and the domain service
+grants a facet of it to every session it starts, a template's and an
+app's alike, by its own policy
+([design-domains.md](design-domains.md#facets), "The facet table"),
+with no facet row: what it hands a session, memory of the session's
+own budget within `file_objects`, depends on nothing a template
+chooses, and only the session's command server uses it.
 
 ### Ending a domain
 

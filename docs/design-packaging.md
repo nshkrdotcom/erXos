@@ -692,8 +692,8 @@ A package is one file, `NAME.app`, of three parts, each starting at a
 | hash tree | the image's dm-verity tree, over the image's blocks as they lie in the file, its levels top first; an image of one block has no level, its block's hash being the root hash |
 
 The image uses only the layouts the EROFS reader implements: compact and
-extended inodes, the plain and inline data layouts, regular files,
-directories and symbolic links, and no compression
+extended inodes, the plain and inline data layouts, regular files and
+directories, and no compression
 ([design-storage.md](design-storage.md#reading-erofs-images)). They are
 the layouts `fsimg` writes with the options every erXos image is made
 with, `-o cluster=4096 -o compression=none`
@@ -702,9 +702,16 @@ uses too. The file check reads only the header, so an image another tool
 made in another layout is admitted and fails where the reader meets it:
 the mount refuses an incompatible feature bit, and an inode of a
 compressed or chunked layout answers `enotsup` when it is reached, in the
-reading session alone. The image's entries carry fixed owner, mode and
+reading session alone. **A package holds no links.** The packer writes
+none, and on a package mount, `{erofs, app}` or `{erofs, {header,
+Path}}`, the reader answers a symbolic-link inode with `enotsup` wherever
+it reaches one, as it answers an inode of a layout it does not
+implement, so a walk, a `readlink` and an open through a link all fail
+and no path beneath `/app` leads out of the package: a program the
+header names, and every file a program of the package opens there, is
+the package's own. The image's entries carry fixed owner, mode and
 time, so the same inputs give the same bytes and no host metadata leaks
-into a package. The image names no device, socket or link leaving it.
+into a package. The image names no device or socket.
 
 **The decoder**, `erx_pkg_header:decode(Length, Bytes)`, is the one
 parser of a package file's structure, whatever the file's origin and
@@ -1252,7 +1259,8 @@ DIR/Makefile           optional: builds bin/ with the SDK's make variables
   when `DIR/Makefile` exists, runs `make` there with the SDK's variables.
   It then parses `app.txt`, checks that each application has its OTP
   application resource file, `lib/APP/ebin/APP.app`, or that the program
-  exists and passes `erx_elf_plan` with the SDK's ABI version, writes the
+  exists and passes `erx_elf_plan` with the SDK's ABI version as a
+  position-independent executable, as `erx_exec` takes it, writes the
   image from an mtree manifest with `fsimg`, computes the hash tree with
   the image's SHA-256 as its salt, writes the header with the
   SDK's ABI version and target, signs it with FILE's key or else the
@@ -1711,8 +1719,8 @@ or `one` command, or at the next boot.
 | --- | --- |
 | `SDK.txt` | the erXos commit, `ERX_ABI_VERSION`, the target architecture, the OTP release (29.1.2), the minimum LLVM, `fsimg`'s version |
 | `sysroot/<arch>/include` | musl's headers as erXos ships them; the draw protocol's message layouts, generated from `abi/formats/draw.txt` |
-| `sysroot/<arch>/lib` | `libc.a`; `liberx_program.a`, liberx's program layer and entry, prebuilt; the compiler's builtins; the program link script |
-| `share/erxos/sdk.mk` | make variables: the compiler and flags erXos's own programs build with, and the link line |
+| `sysroot/<arch>/lib` | `libc.a`; `liberx_program.a`, liberx's program layer and entry, prebuilt; the compiler's builtins; the program link script, which lays a static position-independent executable out from address 0 ([design-programs.md](design-programs.md#what-a-program-can-start), "An executable file") |
+| `share/erxos/sdk.mk` | make variables: the compiler and flags erXos's own programs build with, position-independent, and the link line, which links a static position-independent executable |
 | `erlang/` | the public Erlang applications as `.app`, `.beam` and `include/` files, `public.txt`, the list of public functions as `Module:Function/Arity`, and `erx_ui_host` |
 | `host/bin/` | `erx-app`, the packer, and `fsimg`; `erx-lvgl` built for the host, for `erx_ui_host` |
 | `host/erlang/ebin` | `erx_bytes` for stock OTP 29.1.2, a model of the per-byte primitives that stock lacks, with which the packer runs the file check on the host |
