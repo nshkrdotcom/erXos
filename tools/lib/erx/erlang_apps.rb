@@ -14,8 +14,8 @@ module Erx
   # every application's files from (docs/design.md, the tree layout). Each build starts
   # from an empty ebin, so a module that left the tree leaves the release, and the
   # application file is the .app.src, refused unless it lists exactly the src/ modules
-  # compiled, with the modules of erxos/ added to its list, so systools and the code
-  # server see what the release holds. An
+  # compiled, with the modules of erxos/ and the derived ones (see derived) added to its
+  # list, so systools and the code server see what the release holds. An
   # application's generated modules and headers are in the generated tree, at the same
   # paths under build/gen/erlang/apps/<application> (Erx::Generated), and compile with
   # its own.
@@ -37,6 +37,15 @@ module Erx
     # `+deterministic` so that another checkout builds the same bytes.
     FLAGS = %w[-Werror +debug_info +deterministic +warn_deprecated_catch +warn_obsolete_bool_op].freeze
     DEADLINE = 300
+
+    # What derives modules of an application from the build's own beams: each answers
+    # MODULE, its name, source(otp:), its absolute source for the OTP copy, and build(runner:, erlc:, flags:,
+    # otp:, root:), which writes and compiles it and answers its module name (ServingSet).
+    # No .app.src lists such a module, and the application file lists it beside erxos/'s.
+    def self.derived(application) = application == ServingSet::APPLICATION ? [ServingSet] : []
+
+    # The sources of an application's derived modules for the OTP copy otp, absolute.
+    def self.derived_sources(application, otp:) = derived(application).map { |deriving| deriving.source(otp: otp) }
 
     # The tree's directory of an application, relative to the root.
     def self.source(application) = File.join(TEST_ONLY.include?(application) ? TEST_SOURCE : SOURCE, application)
@@ -109,11 +118,12 @@ module Erx
     end
 
     # Every file a build compiles or copies for applications, as absolute paths: the
-    # sources the release's receipts name for them.
-    def self.sources(root:, applications: APPLICATIONS)
+    # sources the release's receipts name for them, the derived ones those of the OTP
+    # copy otp.
+    def self.sources(root:, otp:, applications: APPLICATIONS)
       applications.flat_map do |application|
         [*modules(root: root, application: application), File.join(source(application), 'src', "#{application}.app.src")]
-          .map { |path| File.join(root, path) }
+          .map { |path| File.join(root, path) } + derived_sources(application, otp: otp)
       end
     end
 
@@ -171,14 +181,11 @@ module Erx
       @erlc = erlc
     end
 
-    # Compiles every application into otp/lib/<application>/ebin, then holds /tmp's
-    # serving set to what the built beams reach (ServingSet).
+    # Compiles every application into otp/lib/<application>/ebin.
     def build(otp:)
       self.class.refuse_unlisted(root: @root)
 
       [*APPLICATIONS, *TEST_ONLY].each { |application| build_application(application, otp: otp) }
-      ServingSet.check(runner: @runner, erl: File.join(File.dirname(@erlc), 'erl'),
-                       directories: ServingSet.directories(otp: otp), root: @root)
     end
 
     # Compiles the applications named, each with every one it depends on among them
@@ -204,7 +211,11 @@ module Erx
                             .flat_map { |other| ['-pa', File.join(otp, 'lib', other, 'ebin')] }
       @runner.run([@erlc, *FLAGS, *includes, *earlier, '-pa', ebin, '-o', ebin, *modules], name: "erlang-app-#{application}",
                                                                    deadline: DEADLINE, chdir: @root, env: Oracle::CLEAN_ERLANG_ENV)
-      File.write(File.join(ebin, "#{application}.app"), self.class.with_modules(sources.resource, [*sources.listed, *sources.erxos]))
+      self.class.derived(application).each do |deriving|
+        raise Error, "#{application}.app.src lists #{deriving::MODULE}, which the build derives" if sources.listed.include?(deriving::MODULE)
+      end
+      derived = self.class.derived(application).map { |deriving| deriving.build(runner: @runner, erlc: @erlc, flags: FLAGS, otp: otp, root: @root) }
+      File.write(File.join(ebin, "#{application}.app"), self.class.with_modules(sources.resource, [*sources.listed, *sources.erxos, *derived]))
     end
 
     # Every application's include directory, so one application can include another's

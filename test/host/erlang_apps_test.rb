@@ -39,7 +39,7 @@ class ErlangAppsTest < Minitest::Test
   def test_the_receipts_sources_name_generated_modules_and_the_resource_file
     write('erlang/apps/erx/src/erx_text.erl')
     write('build/gen/erlang/apps/erx/src/generated/erx_manifest.erl')
-    sources = ErlangApps.sources(root: @root).select { |path| path.include?('/apps/erx/') }
+    sources = ErlangApps.sources(root: @root, otp: File.join(@root, 'otp')).select { |path| path.include?('/apps/erx/') }
     assert_equal %w[build/gen/erlang/apps/erx/src/generated/erx_manifest.erl erlang/apps/erx/src/erx.app.src
                     erlang/apps/erx/src/erx_text.erl].map { |path| File.join(@root, path) }, sources.sort
   end

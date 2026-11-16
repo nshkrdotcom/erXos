@@ -495,7 +495,7 @@ module Erx
                       root_task: root_task, added_archives: [*domain.archives, *added.archives], apps: apps,
                       images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
                       imports: IMPORTS.merge(added.imports),
-                      inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root), *made_sources, *domain.inputs,
+                      inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root, otp: erts.otp), *made_sources, *domain.inputs,
                                *packages.flat_map { |entry| entry.values_at('artifact', 'receipt') }, *added.inputs].uniq,
                       test_code: test_code, machine: machine)
         single = File.join(directory, ImageRecord::IMAGE)
@@ -1723,7 +1723,7 @@ module Erx
       jit_image = { 'path' => JIT_RUNTIME_PATH, 'kind' => @codec.member('entry_kind', 'image'), 'flags' => 0, 'jit' => true,
                     'id' => 'jit-runtime', 'artifact' => beamasm.fetch(:program), 'receipt' => beamasm.fetch(:receipt) }
       Added.new(entries: [image, jit_image, *releases, *toolkit.entries, *domain_release.directories].freeze,
-                inputs: [*runtime.fetch(:inputs), *beamasm.fetch(:inputs), *ReleaseFiles.inputs_of(releases, root: @root, applications: release.applications),
+                inputs: [*runtime.fetch(:inputs), *beamasm.fetch(:inputs), *ReleaseFiles.inputs_of(releases, root: @root, otp: erts.otp, applications: release.applications),
                          *toolkit.inputs].freeze,
                 imports: {}.freeze, archives: toolkit.archives)
     end

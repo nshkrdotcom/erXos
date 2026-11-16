@@ -5,6 +5,7 @@
 require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/pack_provenance'
+require_relative '../../tools/lib/erx/serving_set'
 
 class PackProvenanceTest < Minitest::Test
   # Each catalog class closes over the caller's record, including instances
@@ -248,6 +249,21 @@ class PackProvenanceTest < Minitest::Test
   def test_a_compiled_receipt_attributes_its_sources
     records = resolve_compiled('sources' => [reference(@source)])
     assert_equal ['root.c'], records.map { |record| record.fetch('path') }
+    assert_equal 'BSD-2-Clause', records.first.fetch('license')
+  end
+
+  # The serving module's source is written by a runtime build, whose OTP copy holds the
+  # imported tree's ORIGIN.md as the copy makes it: the receipt of the beam compiled from
+  # it still resolves, as a generated source, since the source is not under that copy.
+  def test_a_compiled_receipt_attributes_the_derived_serving_source_of_an_otp_copy
+    copy = File.join(@root, 'build/runtime/hosted/otp')
+    FileUtils.mkdir_p(copy)
+    File.write(File.join(copy, 'ORIGIN.md'), "# origin\n")
+    source = Erx::ServingSet.source(otp: copy)
+    FileUtils.mkdir_p(File.dirname(source))
+    @produced << source
+    File.write(source, "%% SPDX-License-Identifier: BSD-2-Clause\n-module(erx_ramfs_serving).\n")
+    records = resolve_compiled('sources' => [reference(source)])
     assert_equal 'BSD-2-Clause', records.first.fetch('license')
   end
 

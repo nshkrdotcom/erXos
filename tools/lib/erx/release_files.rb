@@ -305,10 +305,10 @@ module Erx
     # receipt, and the sources the receipts name in erXos's own applications among
     # applications, the release's, test-only ones included. OTP's sources are in its
     # imported tree's catalog already. An empty directory entry has no artifact.
-    def self.inputs_of(entries, root:, applications: ErlangApps::APPLICATIONS)
+    def self.inputs_of(entries, root:, otp:, applications: ErlangApps::APPLICATIONS)
       own = applications.select { |application| ErlangApps.own?(application) }
       built = entries.select { |entry| entry.key?('artifact') }
-      [*built.flat_map { |entry| [entry.fetch('artifact'), entry.fetch('receipt')] }, *ErlangApps.sources(root: root, applications: own)]
+      [*built.flat_map { |entry| [entry.fetch('artifact'), entry.fetch('receipt')] }, *ErlangApps.sources(root: root, otp: otp, applications: own)]
     end
 
     # What one application ships, as paths under its directory to the files they copy:
@@ -433,7 +433,9 @@ module Erx
 
     def erxos_source(application, base)
       module_path = ErlangApps.modules(root: @root, application: application).find { |path| File.basename(path, '.erl') == base }
-      module_path && File.join(@root, module_path)
+      return File.join(@root, module_path) if module_path
+
+      ErlangApps.derived_sources(application, otp: @otp).find { |path| File.basename(path, '.erl') == base }
     end
 
     # An OTP module's source: its Erlang, or the parser or lexer definition yecc or leex
