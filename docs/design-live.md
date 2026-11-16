@@ -539,24 +539,68 @@ on the host:
   POSIX's output flags. With `OPOST` clear the bytes are its input. A CR-LF is
   never split, so 4 KiB of newlines with 4 KiB of room takes 2 KiB. This is the
   only thing that ever happens to a program's output.
-* `input(Bytes, Tty)` returns the next state and what to do: bytes to echo, a
-  signal for the foreground group, a report that a waiting read can go on. A
+* `input(Bytes, Room, Tty)` returns what to do (bytes to echo, a signal
+  for the foreground group, a report that a waiting read can go on), the
+  bytes it did not take, the room left and the next state. `Room` is the
+  room the owner has for the master, `{Free, Kept, Stopped}`: what is free
+  of it, what it holds that a flush cannot drop, the output it has sent and
+  the master has not taken, and whether output is stopped. It stops after a
+  key that makes a signal and returns the bytes after it untaken, as
+  FreeBSD's `ttydisc_rint` signals the
+  foreground group before it takes the next byte
+  (`sys/kern/tty_ttydisc.c:1124-1133`), so the owner acts on the signal before
+  any reader can be reported the bytes typed after the key
+  ([design-shell.md](design-shell.md#the-terminal-relays-protocol)), and then
+  passes them to `input/3` again, with the room it returned. A
   line in cooked mode holds at most 4,095 bytes and its end, and in raw mode at
   most 4 KiB wait unread; further bytes are dropped and counted, with a bell
   when `IMAXBEL` is set, as FreeBSD's `ttydisc_rint` drops a byte that finds
   the queue full (`sys/kern/tty_ttydisc.c:1220-1236`). FreeBSD holds back
   the device instead when a line waits to be read; a master cannot be held
-  back, so the tty drops in that case too. One call's echo is at most
-  16 KiB, and the rest is dropped, as FreeBSD drops echo that finds its
-  output queue full, so a run of `VREPRINT` keys costs no more than its
-  bytes.
-* `read_wait(Open, Tty)`, for a blocking read that starts to wait,
+  back, so the tty drops in that case too. Echo goes to the master with a
+  program's output, so it takes the owner's room for the master, as
+  `output/3` does: a piece of echo, one byte's rendering or one character's
+  erase, that does not fit what is left is dropped whole and the rest of
+  the room stays, as
+  FreeBSD's `ttydisc_echo_force` puts echo in the output queue through
+  `ttyoutq_write_nofrag` (`sys/kern/tty_ttydisc.c:724-760`,
+  `sys/kern/tty_outq.c:322-334`) while a program's write waits for room
+  (`sys/kern/tty_ttydisc.c:628-645`). A master that does not read so gets
+  no more echo than the room, however many calls a signal key cuts its
+  input into. The tty knows the whole room, the 4 KiB the owner holds for
+  the master at most, the output outstanding at the master among them
+  (`master_room/0`, the one record of it), and a signal's `flush_output`,
+  which empties what the owner holds but `Kept`, gives echo the rest of
+  the whole room back before the key is echoed, in FreeBSD's order:
+  `ttydisc_rint` flushes the queues and then echoes the key
+  (`sys/kern/tty_ttydisc.c:1128-1130`). So the room `input/3` returns is
+  what the echo left of `Free`, or of the whole room less `Kept` after a
+  flush, and no owner counts echo itself.
+  A `VREPRINT` retypes `VREPRINT`, a newline and the line, as FreeBSD's
+  `ttydisc_reprint` does (`sys/kern/tty_ttydisc.c:786-799`), but its walk
+  ends at the first piece that does not fit. FreeBSD tries every piece
+  and its queue drops each that does not fit, so each `VREPRINT` walks the
+  whole line; a master that reads nothing and sends `VREPRINT` over and
+  over at a little room would cost the owner a walk of the line per key.
+  Ending the walk there bounds what a `VREPRINT` renders by the room it
+  fills, but for pieces that render to nothing, and with `ECHO` clear,
+  when nothing of a cooked line echoes, the line is not walked. The
+  bytes differ from FreeBSD's only by the smaller pieces that would
+  still fit after the first that does not, which make no sense on the
+  screen without it.
+* `read_wait(Open, Count, Tty)`, for a blocking read of `Count` bytes that
+  starts to wait,
   `poll_wait(Open, Tty)`, for a `poll` that waits for input,
   `cancel(Open, Tty)`, for a wait that a signal or a close ends,
   `timer(Timer, Tty)`, for a timer's end, and `read(Open, Max, Tty)`, for the
-  read itself, return the next state and what to do: bytes for the reader,
-  none for an end of file or a raw read with nothing to wait for, or
-  `eagain` when another reader took the bytes; a report `{ready, Open}`,
+  read itself, return the next state and what to do: bytes for the reader;
+  `eof` for an end of file, `VEOF` at the start of a cooked line or a read
+  that finds no bytes after a hangup; no bytes for a raw read with nothing
+  to wait for; or `eagain` when another reader took the bytes. The end of
+  file and an empty raw read stay apart because an Erlang command's read
+  returns `eof` for one and `<<>>` for the other, and only the step that
+  makes the answer knows which it is; a program's `read` returns 0 for
+  both, as POSIX's does. A report `{ready, Open}`,
   once per wait, that the read can go on; a timer to start or cancel. Each
   timer start names a fresh `{Open, Serial}`, so the end of a timer that was
   cancelled or replaced does nothing. A `poll` is ready at a complete line
@@ -591,7 +635,9 @@ on the host:
 
 The owner carries out what they return and owns the timers, so time reaches the
 machine only as `timer`, and the exploration on the host drives it event by
-event.
+event. The owner names a wait by its open and its kind, `{Open, read}` or
+`{Open, in}`, so a blocking read and a `poll` of one open, from two threads of a
+program, are two waiters, and neither replaces the other.
 
 **Cooked and raw** mean what they mean on UNIX, as flags of `termios`:
 
@@ -601,11 +647,22 @@ event.
 * **Raw**, `ICANON` clear: a read gets bytes as `VMIN` and `VTIME` ask for,
   by POSIX's four cases:
   * `VMIN` above 0, `VTIME` 0: the read can go on at `VMIN` bytes;
-  * `VMIN` and `VTIME` above 0: at `VMIN` bytes, or when a timer that each byte
-    restarts, and the first byte starts, ends;
+  * `VMIN` and `VTIME` above 0: at `VMIN` bytes, or when a timer that the
+    first byte starts ends. Later bytes do not restart it: FreeBSD sets one
+    deadline after the first byte (`ttydisc_read_raw_interbyte_timer`,
+    `tty_ttydisc.c:360-405`, with `:306-320`), where POSIX's interbyte
+    wording reads as a restart at each byte. macOS's tty is expected to
+    restart it (not yet verified against its source), so a comparison with a
+    host pseudo-terminal on macOS treats this case as a documented
+    difference and tests FreeBSD's rule;
   * `VMIN` 0, `VTIME` above 0: at the first byte, or when a timer that
     `read_wait` starts ends, and the read then returns no bytes;
   * both 0: at once, with whatever waits.
+
+  In the first two cases a read of fewer bytes than `VMIN` can go on at its
+  own count, as FreeBSD's read returns once its buffer is full
+  (`tty_ttydisc.c:290`, `:331`, `:384`), which is why `read_wait` takes the
+  count.
 * `ECHO`, `ISIG` and `OPOST` are flags of their own, which `cfmakeraw` clears
   with the rest, so a tty made raw with it delivers `Ctrl-Z` as data.
 * With `ISIG`, `VINTR`, `VQUIT` and `VSUSP` signal the foreground group.
@@ -616,11 +673,16 @@ event.
 
 * With `IXON`, `VSTOP` stops output and `VSTART` starts it again, and with
   `IXANY` any key starts it, as FreeBSD's do (`tty_ttydisc.c:1055-1058`,
-  `:1141-1162`). `input/2` returns `stop_output` and `start_output`, and
-  `output/3` takes nothing while output is stopped, so the owner holds every
-  byte for the master, echo among them, until output starts. A signal from
-  a key, `info` and a window-size change start it too, as FreeBSD's
-  `tty_signal_pgrp` does (`tty.c:1538-1540`, `:1645-1648`).
+  `:1141-1162`). Output stopped is the owner's alone, recorded with what it
+  holds for the master as FreeBSD keeps `TF_STOPPED` with the output queue
+  (`sys/sys/tty.h:82`): `input/3` is given it in the room and returns
+  `stop_output` and `start_output` as its keys change it. While output is
+  stopped, `output/3` and echo still take the room, as FreeBSD's
+  `ttydisc_write` fills the output queue whatever `TF_STOPPED` says
+  (`tty_ttydisc.c:560-665`), and the owner sends the master nothing until
+  output starts. A signal from a key and `info` start it too, and a
+  window-size change always does, as FreeBSD's `tty_signal_pgrp` does
+  (`tty.c:1536-1538`, `:1646`).
 
 A new tty starts cooked, with FreeBSD's defaults
 (`sys/sys/ttydefaults.h:46-52`, `:102-104`): `ECHO`, `ECHOE`, `ECHOKE`,
@@ -628,23 +690,48 @@ A new tty starts cooked, with FreeBSD's defaults
 `IXON`, `IXANY`, `IUTF8`, `OPOST` and `ONLCR` set, and `VSTATUS` `^T`.
 
 **A shell's line editor is a program on a raw tty.** `group`, `edlin` and
-`prim_tty` are to a shell what readline is to `bash`. While the shell
-prompts, its tty has `ICANON`, `ECHO`, `ICRNL` and `OPOST` clear, as stock
-OTP sets a real terminal (`erts/emulator/nifs/common/prim_tty_nif.c:1115-1127`,
-so `prim_tty` writes its own CR-LF), and `ISIG` clear, since `ssh_cli` and the
-group take `Ctrl-C` as data. The process that drives the group, the terminal
-relay or for the system shell `erx_console`, takes each request through
+`prim_tty` are to a shell what readline is to `bash` and libedit to
+FreeBSD's `sh`. While the shell prompts, its tty has `ICANON`, `ECHO` and
+`OPOST` clear, as stock OTP sets a real terminal
+(`erts/emulator/nifs/common/prim_tty_nif.c:1115-1127`, so `prim_tty`
+writes its own CR-LF), and `VMIN` 1 and `VTIME` 0, so a key is read as
+it is typed. `ISIG` and `ICRNL` stay set, which stock OTP clears, as
+libedit keeps them while it edits (`contrib/libedit/tty.c:79-88`):
+`Ctrl-C` and `Ctrl-Z` are then the tty's signals whether or not the
+editor is reading, and an Enter typed ahead of a command is a newline in
+the tty, the end of the command's cooked line
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)), and
+`edlin` takes `\n` as it takes `\r`
+(`lib/stdlib/src/edlin_key.erl:201-202`). The process that drives the group
+is `erx_console`, whose line driver is the session's terminal relay for a
+session's shell and the UART's driver for the system shell
+([design-runtime.md](design-runtime.md)). It takes each request through
 `prim_tty:handle_request/2`, whose state comes from `prim_tty:init_ssh/3`
 (`lib/kernel/src/prim_tty.erl:308`), which needs neither a terminal
-descriptor nor terminfo, and writes the bytes to the tty as any writer does, or
-for the system shell to the driver. Input goes to the group as `{self(), {data, Chars}}`, the protocol `ssh_cli`
-uses (`lib/ssh/src/ssh_cli.erl:420`), and `Ctrl-C` interrupts the shell's
-evaluator as `ssh_cli` turns it into `exit(Group, interrupt)`
-(`lib/ssh/src/ssh_cli.erl:409-411`). Before the shell starts a foreground
-job it sets the tty's `termios` back to cooked, keeps the job's when the job
-stops, and restores its own when the job ends or stops and the job's at `fg`,
-as a UNIX shell does. So a program that ends in raw mode leaves nothing in
-the `termios`. What it left on the terminal itself, an alternate screen, a
+descriptor nor terminfo, and writes the bytes to its driver; the relay
+writes them to the tty as any writer does. Input goes to the group as `{self(), {data, Chars}}`, the protocol `ssh_cli`
+uses (`lib/ssh/src/ssh_cli.erl:420`). A session's console takes it from
+the tty as libedit does, one byte at a time and only while its group's
+editor waits for a key (`contrib/libedit/read.c:289`, at FreeBSD commit
+`95719d8a`), through an open of the relay, and gives it to the group as
+the answer `{self(), {read, Ref, Chars}}` to the group's ask, edit 72 of
+[design-runtime.md](design-runtime.md). The editor alone decides
+where a line ends, whatever keys its keymap binds to that, and the
+command shell's group reads for the shell alone, refusing every other
+process's input request (edit 74), and the shell asks for no line
+before it has acted on the last, so a line typed ahead for the next
+command stays in the tty for that command
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+`Ctrl-C` interrupts the shell's evaluator as `ssh_cli` turns it into
+`exit(Group, interrupt)` (`lib/ssh/src/ssh_cli.erl:409-411`). A foreground
+job starts with the session's cooked `termios`, a stopped job keeps its
+own for `fg`, and the prompt takes the terminal back when the job ends or
+stops, as a UNIX shell does. Each time it does, the cooked `termios`
+takes in what the job left by libedit's rule, which takes a setting only
+when it is canonical and forces `ECHO`, `ISIG` and `ICRNL` on among other
+flags ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+So a program that ends in raw mode leaves nothing in the `termios`, and
+`stty status ^X` lasts. What it left on the terminal itself, an alternate screen, a
 hidden cursor or a colour, stays until the operator runs `reset`, as on UNIX.
 
 **The editor's rendering is not the tty's.** A process's `io:put_chars` is
@@ -693,7 +780,7 @@ gets, whatever the sender's own limits:
 | `{tty_open, Tty}` | tty to master | `Tty` is a pid of the domain its console facet names; the first names the session's tty, and the same pid again is nothing | the console detaches the tty and logs a line under the domain's id |
 | `{tty_output, N, Bytes}` | tty to master | a binary of at most 4 KiB, charged after `output/3`; `N` is the tty's next output number, or the last one again with `Bytes` empty | the console detaches the tty and logs a line under the domain's id |
 | `{tty_taken, N}` | master to tty | `N` is the output outstanding | ignored, since it is a late repeat |
-| `{tty_input, Bytes}` | master to tty | a binary of at most 4 KiB; `input/2` bounds what waits unread | dropped and counted |
+| `{tty_input, Bytes}` | master to tty | a binary of at most 4 KiB; `input/3` bounds what waits unread | dropped and counted |
 | `{tty_size, Rows, Columns}` | master to tty | `size/3`, each from 1 to 65,535, so a zero column count never reaches `prim_tty` | the old size stays, counted |
 | `tty_hangup` | master to tty | that atom; it holds from then on | not applicable |
 
@@ -758,12 +845,15 @@ with no request outstanding, and then sends a write that is answered at once,
 with the count taken ([Writing a
 terminal](design-programs.md#the-terminal)).
 
-An Erlang command reads the tty as a program does, because its outstanding
+An Erlang command reads the tty the same way, because its outstanding
 read must not block its `receive` either: it asks for one ready report, the
 line discipline's `read_wait`, takes the report as a message, and then sends
 a read that `read/3` answers at once, so one `receive` of the command takes
 its keys, its size reports and its own timers
-([Interfaces](design-shell.md#interfaces)).
+([Interfaces](design-shell.md#interfaces)). The read names the report it
+follows, so a signal made in between leaves the bytes in the tty
+([design-shell.md](design-shell.md#the-terminal-relays-protocol), "A
+reader the signal ends").
 
 **A stopped tty.** A tty whose master takes no more output is stopped, as a
 line held by XOFF is: the owner holds at most 4 KiB, counted after `output/3`,
@@ -2732,20 +2822,50 @@ determinism test of the generated tree.
   a small alphabet of bytes, and differentially against a host pseudo-terminal
   with the same `termios`, comparing what a reader gets, what is echoed and
   what the master gets. `ONLCR` applied with `OPOST` clear fails both. Its
-  `set/2`, `size/3` and `input/2` have a fuzz target. The exploration also drives
-  `read_wait/2`, `timer/2` and `read/3` as events, over each of POSIX's four
-  `VMIN` and `VTIME` cases.
-* **Cooked and raw:** a program that reads a line in cooked mode, with
-  `VERASE` and `VKILL` typed; one that turns off `ECHO` and reads a password
-  that is not echoed; one that goes raw, reads single keys and draws; `Ctrl-Z`
-  from a program that clears `ICANON` and `ECHO` and keeps `ISIG`, after which
-  the shell's prompt works, and `fg`, after which the program's settings are back.
-  With the shell's restore removed, the prompt test fails. A program made raw
-  with `cfmakeraw` reads `Ctrl-Z` as a byte; with `ISIG` ignored by `input/2`
-  in the first case the program is never stopped, and that case fails.
-* **Timed reads:** a blocking read with `VMIN` 0 and `VTIME` 1 returns no bytes
-  after its timeout with no input, and a `poll` with the same settings reports
-  nothing and starts no timer. In the exploration, `read_wait` that starts no
+  `set/2`, `size/3` and `input/3` have a fuzz target. The exploration also drives
+  `read_wait/3`, `timer/2` and `read/3` as events, over each of
+  POSIX's four `VMIN` and `VTIME` cases and read counts below and above
+  `VMIN`. A `read_wait` that ignores its count fails the exploration's
+  model. `input/3` returns untaken exactly the bytes after the first key
+  that makes a signal, which an EUnit case and the fuzz target check; an
+  `input/3` that goes on past the key fails both. With no reader waiting,
+  passing the bytes back until none is left, each time with the room
+  `input/3` returned, gives the same state and the same actions, neighbouring
+  echoes joined, as passing the input a byte at a time; the fuzz target
+  checks it over random rooms, and echoes joined out of order fail it. It
+  checks of every call that the room returned is what the echo left, and
+  a dropped piece of echo that drops the rest of its call fails that.
+  Repeated `VREPRINT` and `VINTR` with `NOFLSH`, fed back as the relay feeds it,
+  echo no more than the room; a bound of each call's own fails that case.
+  A signal key at room 0 echoes after its flush and returns the whole room
+  less that echo and the output the master has not taken, which the fuzz
+  target checks of every call; a flush that keeps the room fails both, and
+  one that also gives back the output not taken fails the case. A `VREPRINT` with room for the line up to a
+  `^A` echoes nothing after it; FreeBSD's walk past the drop fails that
+  case. A waiting reader is
+  told once per call, after its last key, as FreeBSD's `ttydisc_rint_done`
+  wakes readers once after a run of `ttydisc_rint` calls
+  (`sys/kern/tty_ttydisc.c:1294-1305`), so with `VMIN` 2 and `VTIME` 1 a
+  byte at a time starts and cancels a timer that one call of both bytes
+  never starts. `erx_tty_modes`' `adopt/2` is checked
+  exhaustively over the flags of `erx_tty`'s table against libedit's
+  masks, with and without `ICANON` in what a job left; an `adopt/2`
+  without its masks fails it.
+* **Cooked and raw:** an Erlang test command, reading through `erx_cmd`
+  ([design-shell.md](design-shell.md#interfaces)), that reads a line in
+  cooked mode, with `VERASE` and `VKILL` typed; one that turns off `ECHO`
+  and reads a password that is not echoed; one that goes raw, reads single
+  keys and draws; `Ctrl-Z` from a program that clears `ICANON` and `ECHO`
+  and keeps `ISIG`, after which the shell's prompt works, and `fg`, after
+  which the program's settings are back. With the shell's restore removed,
+  the prompt test fails. A command made raw as `cfmakeraw` makes it reads
+  `Ctrl-Z` as a byte; with `ISIG` ignored by `input/3` in the `Ctrl-Z`
+  case the program is never stopped, and that case fails. The same reads
+  by C programs run with the signal handshake that lets programs read the
+  terminal ([design-programs.md](design-programs.md#the-terminal)).
+* **Timed reads:** a blocking read by an Erlang command with `VMIN` 0 and
+  `VTIME` 1 returns no bytes after its timeout with no input, and a `poll`
+  by a program with the same settings reports nothing and starts no timer. In the exploration, `read_wait` that starts no
   timer leaves the first test waiting past its deadline, and `poll` that starts
   one fails the second. A cooked line past 4,095 bytes keeps its end and
   drops the rest with a count; with the bound removed the model's state grows

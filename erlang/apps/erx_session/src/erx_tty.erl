@@ -24,19 +24,30 @@ cooked line keeps one byte free for its end, so a line holds at most 4,095
 bytes and its end. A byte that does not fit is dropped and counted, with a
 bell when IMAXBEL is set, as ttydisc_rint drops a byte when nothing can be
 read (tty_ttydisc.c:1220-1236); the relay cannot hold back its master, so
-it drops in every case. One call echoes at most ?MAX_ECHO bytes and drops
-the rest, as FreeBSD drops echo its full output queue cannot take, so a
-chunk of VREPRINT keys cannot make megabytes of echo.
+it drops in every case. Echo goes to the master with a program's output,
+so it takes the room the owner has for the master, which input/3 is given
+as output/3 is: a piece of echo that does not fit what is left is dropped
+whole, as FreeBSD's ttydisc_echo_force puts echo in the output queue
+through ttyoutq_write_nofrag (tty_ttydisc.c:724-760, tty_outq.c:322-334).
+So a master that does not read gets no more echo than that room, however
+its input is cut into calls. The owner holds at most ?MASTER_ROOM bytes for
+the master, master_room/0, and a signal's flush_output empties them but
+for the output the master has not taken, so a signal key gives echo that
+room back before its own echo, as ttydisc_rint flushes before it echoes
+the key (tty_ttydisc.c:1128-1130).
 
-A reader waits before it reads. read_wait/2 and poll_wait/2 register a
+A reader waits before it reads. read_wait/3 and poll_wait/2 register a
 waiter for an open, and the tty reports `{ready, Open}` once, when the
 waiter's condition holds: a complete line in cooked mode; in raw mode, for
-a read, what VMIN and VTIME ask for by POSIX's four cases, and for a poll
-one byte, as FreeBSD's poll counts the canonicalized bytes (ttydisc.h:72).
-read/3 then answers at once, with bytes, with no bytes for an end of file,
-a timed-out raw read or a hung-up tty, or `eagain` when another reader took
-the bytes first. A timer is named by `timer()`, which the tty makes fresh
-for every start, so a late timer of a cancelled wait does nothing.
+a read, what VMIN and VTIME ask for by POSIX's four cases, or the read's
+count when that is fewer, and for a poll one byte, as FreeBSD's poll counts
+the canonicalized bytes (ttydisc.h:72). read/3 then answers at once, with
+bytes, with `eof` for an end of file or a hung-up tty, with no bytes for a
+timed-out raw read, or `eagain` when another reader took the bytes first.
+The owner may name a waiter by any term, so it can wait for a read and a
+poll of one open as two waiters. A timer is named by `timer()`, which the
+tty makes fresh for every start, so a late timer of a cancelled wait does
+nothing.
 
 termios is a map of flag lists and characters, checked whole by set/2: a
 flag outside this module's tables, a missing or extra key, or a value out
@@ -51,56 +62,44 @@ have nothing to act on, since a master reports no breaks or parity errors
 and takes no flow control.
 """.
 
--export([new/0, termios/1, set/2, winsize/1, size/3, input/2, output/3,
-         read_wait/2, poll_wait/2, cancel/2, timer/2, read/3, status/3,
+-export([new/0, master_room/0, termios/1, set/2, winsize/1, size/3, input/3, output/3,
+         read_wait/3, poll_wait/2, cancel/2, timer/2, read/3, status/3,
          hangup/1, waiting/1, dropped/1]).
--export_type([tty/0, termios/0, open/0, timer/0, action/0]).
+-export_type([tty/0, termios/0, open/0, timer/0, room/0, action/0]).
 
 %% Bytes held: complete lines unread and the line being edited.
 -define(MAX_INPUT, 4096).
+%% Bytes the owner holds for the master at most (docs/design-shell.md,
+%% "Output").
+-define(MASTER_ROOM, 4096).
 %% FreeBSD's _POSIX_VDISABLE (sys/sys/_termios.h:77).
 -define(VDISABLE, 16#ff).
 -define(MAX_SPEED, 16#ffffffff).
 -define(MAX_SIDE, 65535).
-%% FreeBSD prints a status line only with this much room (sys/kern/tty.c:2057-2062).
+%% FreeBSD prints a status line only with this much room
+%% (sys/kern/tty.c:2057-2062).
 -define(STATUS_ROOM, 256).
 %% Erlang has no escape for BEL.
-%% The most one input/2 echoes; FreeBSD drops echo that finds its output
-%% queue full (ttyoutq_write_nofrag), and this bounds what a chunk can make.
--define(MAX_ECHO, 16384).
 -define(BELL, 7).
 
-%% The tables: every flag and character a termios may hold, FreeBSD's
-%% supported sets (sys/kern/tty.c:88-96) less those named in the moduledoc.
--define(IFLAGS, [brkint, icrnl, ignbrk, igncr, ignpar, imaxbel, inlcr, inpck,
-                 istrip, iutf8, ixany, ixoff, ixon, parmrk]).
--define(OFLAGS, [ocrnl, onlcr, onlret, onocr, onoeot, opost, tab3]).
--define(CFLAGS, [clocal, cread, cstopb, hupcl, parenb, parodd]).
--define(LFLAGS, [altwerase, echo, echoctl, echoe, echok, echoke, echonl, icanon,
-                 iexten, isig, noflsh, nokerninfo, tostop]).
--define(CHARS, [vdiscard, vdsusp, veof, veol, veol2, verase, verase2, vintr,
-                vkill, vlnext, vmin, vquit, vreprint, vstart, vstatus, vstop,
-                vsusp, vtime, vwerase]).
-
--type iflag() :: brkint | icrnl | ignbrk | igncr | ignpar | imaxbel | inlcr |
-                 inpck | istrip | iutf8 | ixany | ixoff | ixon | parmrk.
--type oflag() :: ocrnl | onlcr | onlret | onocr | onoeot | opost | tab3.
--type cflag() :: clocal | cread | cstopb | hupcl | parenb | parodd.
--type lflag() :: altwerase | echo | echoctl | echoe | echok | echoke | echonl |
-                 icanon | iexten | isig | noflsh | nokerninfo | tostop.
--type char_name() :: vdiscard | vdsusp | veof | veol | veol2 | verase |
-                     verase2 | vintr | vkill | vlnext | vmin | vquit |
-                     vreprint | vstart | vstatus | vstop | vsusp | vtime |
-                     vwerase.
--type speed() :: 0..?MAX_SPEED.
--type termios() :: #{iflag := [iflag()], oflag := [oflag()],
-                     cflag := [cflag()], lflag := [lflag()],
-                     csize := 5..8, cc := #{char_name() => byte()},
-                     ispeed := speed(), ospeed := speed()}.
+%% The termios map and its tables, every flag and character a termios may
+%% hold, are the ABI file's termios table (abi/termios.txt), which
+%% erx_abi_termios gives: FreeBSD's supported sets (sys/kern/tty.c:88-96)
+%% less those named in the moduledoc.
+-type termios() :: erx_abi_termios:termios().
 -doc "Whatever names a reader: the relay's open.".
 -type open() :: term().
 -doc "A read's timer: the open it times and a serial no other timer has.".
 -type timer() :: {open(), non_neg_integer()}.
+-doc """
+The room the owner has for the master, `{Free, Kept, Stopped}`: what is
+free of master_room() now; what it holds that a flush cannot drop, the
+output already sent to the master and not yet taken; and whether output
+is stopped, which only the owner records, as FreeBSD keeps TF_STOPPED
+with the output queue (sys/sys/tty.h:82): while it is stopped, writes
+and echo still fill the room and nothing goes to the master.
+""".
+-type room() :: {non_neg_integer(), non_neg_integer(), boolean()}.
 -type action() :: {echo, binary()}               % bytes for the master
                 | {signal, sigint | sigquit | sigtstp} % for the foreground group
                 | info                           % VSTATUS: the foreground job's status
@@ -110,7 +109,9 @@ and takes no flow control.
                 | {timer_start, timer(), pos_integer()} % milliseconds
                 | {timer_cancel, timer()}
                 | winch.                         % the window size changed
--type waiter() :: {read, timer() | none} | poll.
+%% A read waits for its count, a poll for one byte of input.
+-type kind() :: {read, pos_integer()} | poll.
+-type waiter() :: {read, pos_integer(), timer() | none} | poll.
 
 -record(tty, {
     termios :: termios(),
@@ -123,7 +124,6 @@ and takes no flow control.
     column = 0 :: non_neg_integer(),
     writepos = 0 :: non_neg_integer(),
     reprintpos = 0 :: non_neg_integer(),
-    stopped = false :: boolean(),
     hungup = false :: boolean(),
     waiters = #{} :: #{open() => waiter()},
     %% Opens whose read timer ended, so their next raw read with VMIN 0
@@ -132,8 +132,15 @@ and takes no flow control.
     serial = 0 :: non_neg_integer(),
     received = 0 :: non_neg_integer(),
     dropped = 0 :: non_neg_integer(),
-    %% The echo left to the input/2 under way, 0 between calls.
-    echo_room = 0 :: integer()
+    %% The room for echo left to the input/3 under way, 0 between calls.
+    echo_room = 0 :: non_neg_integer(),
+    %% What the owner holds for the master that a flush cannot drop, for
+    %% the input/3 under way, 0 between calls.
+    echo_kept = 0 :: non_neg_integer(),
+    %% Whether output is stopped, for the input/3 under way, false between
+    %% calls: the owner records it, and input/3's keys change it as they
+    %% return stop_output and start_output.
+    out_stopped = false :: boolean()
 }).
 
 -opaque tty() :: #tty{}.
@@ -162,6 +169,13 @@ new() ->
                              vtime => 0, vstatus => $\^T},
                      ispeed => 9600, ospeed => 9600}}.
 
+-doc """
+All the room the owner has for the master: the bytes it holds for the
+master at most, and the room a signal's flush_output leaves.
+""".
+-spec master_room() -> pos_integer().
+master_room() -> ?MASTER_ROOM.
+
 -doc "The tty's termios, for tcgetattr.".
 -spec termios(tty()) -> termios().
 termios(#tty{termios = Termios}) -> Termios.
@@ -189,8 +203,8 @@ winsize(#tty{size = Size}) -> Size.
 -doc """
 Takes a window size the master reports, each side from 1 to 65,535, and
 refuses any other. It returns `winch` only when the size changes, after
-`start_output` when output was stopped, since SIGWINCH starts it as every
-signal does on FreeBSD (sys/kern/tty.c:1645-1648).
+`start_output`, since SIGWINCH starts output as every signal does on
+FreeBSD (sys/kern/tty.c:1646, :1536-1538).
 """.
 -spec size(term(), term(), tty()) -> {ok, [action()], tty()} | {error, einval}.
 size(Rows, Columns, #tty{size = Size} = Tty)
@@ -199,15 +213,14 @@ size(Rows, Columns, #tty{size = Size} = Tty)
     case Size of
         {Rows, Columns} -> {ok, [], Tty};
         _ ->
-            {Started, Tty1} = start([], Tty),
-            {ok, lists:reverse([winch | Started]), Tty1#tty{size = {Rows, Columns}}}
+            {ok, [start_output, winch], Tty#tty{size = {Rows, Columns}}}
     end;
 size(_, _, _) ->
     {error, einval}.
 
 -doc """
 The master hung up. Every waiter is ready, and from now on every read that
-finds no bytes returns none, an end of file.
+finds no bytes returns `eof`.
 """.
 -spec hangup(tty()) -> {[action()], tty()}.
 hangup(Tty) ->
@@ -238,13 +251,14 @@ checked(#{iflag := I, oflag := O, cflag := C, lflag := L, csize := Size,
              0 -> Out;
              Speed -> Speed
          end,
-    #{iflag => flags(I, ?IFLAGS), oflag => flags(O, ?OFLAGS),
-      cflag => flags(C, ?CFLAGS), lflag => flags(L, ?LFLAGS),
+    #{iflag => flags(I, iflag), oflag => flags(O, oflag),
+      cflag => flags(C, cflag), lflag => flags(L, lflag),
       csize => Size, cc => chars(Chars), ispeed => In, ospeed => Out};
 checked(_) ->
     throw(einval).
 
-flags(List, Table) -> flags(List, Table, []).
+%% The flags of a word of termios, each one the table names.
+flags(List, Word) -> flags(List, erx_abi_termios:flags(Word), []).
 
 flags([], _, Acc) ->
     lists:usort(Acc);
@@ -256,7 +270,9 @@ flags([Flag | Rest], Table, Acc) ->
 flags(_, _, _) ->
     throw(einval).
 
-chars(Chars) when is_map(Chars), map_size(Chars) =:= length(?CHARS) ->
+chars(Chars) when is_map(Chars) ->
+    Names = erx_abi_termios:chars(),
+    map_size(Chars) =:= length(Names) orelse throw(einval),
     lists:foreach(fun(Name) ->
                           case Chars of
                               #{Name := Value} when is_integer(Value),
@@ -264,7 +280,7 @@ chars(Chars) when is_map(Chars), map_size(Chars) =:= length(?CHARS) ->
                                                     Value =< 255 -> ok;
                               _ -> throw(einval)
                           end
-                  end, ?CHARS),
+                  end, Names),
     Chars;
 chars(_) ->
     throw(einval).
@@ -308,24 +324,47 @@ last_end(Line, Tty) ->
 %%% Input
 
 -doc """
-Bytes from the master. Each goes through FreeBSD's steps in ttydisc_rint's
+Bytes from the master, with at most Room bytes of echo to give, the room
+the owner has for the master. Each goes through FreeBSD's steps in ttydisc_rint's
 order (tty_ttydisc.c:1012-1250); then every waiter whose condition now
-holds is ready, and a raw read waiting with VMIN and VTIME above 0 restarts
-its timer on the bytes that arrived.
+holds is ready, and a raw read waiting with VMIN and VTIME above 0 starts
+its timer at its first byte and keeps that deadline. It stops after a key
+that makes a signal and returns the bytes after it untaken, as
+ttydisc_rint signals the foreground group before it takes the next byte
+(tty_ttydisc.c:1124-1133), so the owner acts on the signal before any
+reader is reported a byte typed after the key, and then passes the rest
+to input/3 again, with the room it returns. That room is what the echo
+left of Room, or after a flush_output of master_room() less what the
+owner keeps, since the flush empties the rest of what it holds.
 """.
--spec input(binary(), tty()) -> {[action()], tty()}.
-input(Bytes, #tty{received = Before} = Tty0) when is_binary(Bytes) ->
-    {Keyed, Tty1} = lists:foldl(fun key/2, {[], Tty0#tty{echo_room = ?MAX_ECHO}},
-                                binary_to_list(Bytes)),
+-spec input(binary(), room(), tty()) -> {[action()], binary(), room(), tty()}.
+input(Bytes, {Free, Kept, Stopped}, #tty{received = Before} = Tty0)
+  when is_binary(Bytes), is_integer(Free), Free >= 0, is_integer(Kept), Kept >= 0,
+       Free + Kept =< ?MASTER_ROOM, is_boolean(Stopped) ->
+    {Keyed, Rest, Tty1} = keys(Bytes, [], Tty0#tty{echo_room = Free, echo_kept = Kept,
+                                                   out_stopped = Stopped}),
     Arrived = Tty1#tty.received > Before,
-    {Settled, Tty2} = settle(Arrived, Tty1#tty{echo_room = 0}),
-    {merge(lists:reverse(Keyed)) ++ Settled, Tty2}.
+    %% The room lives only within a call: it is read from Tty1 and
+    %% cleared in the tty returned.
+    {Settled, Tty2} = settle(Arrived, Tty1#tty{echo_room = 0, echo_kept = 0,
+                                               out_stopped = false}),
+    {merge(lists:reverse(Keyed)) ++ Settled, Rest,
+     {Tty1#tty.echo_room, Kept, Tty1#tty.out_stopped}, Tty2}.
+
+%% The keys up to and including the first that makes a signal.
+keys(<<Byte, Rest/binary>>, Actions0, Tty0) ->
+    case key(Byte, {Actions0, Tty0}) of
+        {[{signal, _} | _] = Actions, Tty} -> {Actions, Rest, Tty};
+        {Actions, Tty} -> keys(Rest, Actions, Tty)
+    end;
+keys(<<>>, Actions, Tty) ->
+    {Actions, <<>>, Tty}.
 
 %% Actions are gathered newest first, and merge/1 joins neighbouring echoes.
 key(Byte, {Actions0, Tty0}) ->
-    {Actions, Tty} = case on(ixany, Tty0) andalso Tty0#tty.stopped of
+    {Actions, Tty} = case on(ixany, Tty0) andalso Tty0#tty.out_stopped of
                          true -> {[start_output | Actions0],
-                                  Tty0#tty{stopped = false}};
+                                  Tty0#tty{out_stopped = false}};
                          false -> {Actions0, Tty0}
                      end,
     Char = case on(istrip, Tty) of
@@ -365,26 +404,30 @@ signal_of(Char, Tty) ->
 
 %% A signal from a key starts stopped output, as FreeBSD's tty_signal_pgrp
 %% does (sys/kern/tty.c:1538-1540).
-start(Actions, #tty{stopped = true} = Tty) ->
-    {[start_output | Actions], Tty#tty{stopped = false}};
+start(Actions, #tty{out_stopped = true} = Tty) ->
+    {[start_output | Actions], Tty#tty{out_stopped = false}};
 start(Actions, Tty) ->
     {Actions, Tty}.
 
+%% The owner drops what it holds for the master at flush_output, all but
+%% what it has sent and the master has not taken, so echo has the rest of
+%% the whole room.
 flush(Actions, Tty) ->
     case on(noflsh, Tty) of
         true -> {Actions, Tty};
         false -> {[flush_output | Actions],
-                  Tty#tty{ready = <<>>, line = <<>>, reprintpos = 0}}
+                  Tty#tty{ready = <<>>, line = <<>>, reprintpos = 0,
+                          echo_room = ?MASTER_ROOM - Tty#tty.echo_kept}}
     end.
 
 %% IXON: VSTOP stops output and VSTART starts it; with both the same
 %% character, it toggles (tty_ttydisc.c:1140-1162).
-flow_key(Char, Actions, #tty{stopped = Stopped} = Tty) ->
+flow_key(Char, Actions, #tty{out_stopped = Stopped} = Tty) ->
     Stop = on(ixon, Tty) andalso is_char(vstop, Char, Tty),
     Start = on(ixon, Tty) andalso is_char(vstart, Char, Tty),
     if
-        Stop, not Stopped -> {[stop_output | Actions], Tty#tty{stopped = true}};
-        Start, Stopped -> {[start_output | Actions], Tty#tty{stopped = false}};
+        Stop, not Stopped -> {[stop_output | Actions], Tty#tty{out_stopped = true}};
+        Start, Stopped -> {[start_output | Actions], Tty#tty{out_stopped = false}};
         Stop; Start -> {Actions, Tty};
         true -> map_key(Char, Actions, Tty)
     end.
@@ -447,11 +490,11 @@ store(Char, Actions, #tty{ready = Ready, line = Line} = Tty) ->
     end.
 
 full(Actions, #tty{dropped = Dropped} = Tty) ->
-    Bell = case on(imaxbel, Tty) of
-               true -> [{echo, <<?BELL>>}];
-               false -> []
-           end,
-    {Bell ++ Actions, Tty#tty{dropped = Dropped + 1}}.
+    Counted = Tty#tty{dropped = Dropped + 1},
+    case on(imaxbel, Tty) of
+        true -> emit(<<?BELL>>, Actions, Counted);
+        false -> {Actions, Counted}
+    end.
 
 %%% Line editing (tty_ttydisc.c:833-1010)
 
@@ -527,11 +570,11 @@ erase_visually(Char, Actions, Tty) ->
     case caret(Char) of
         true ->
             case on(echoctl, Tty) of
-                true -> {[{echo, <<"\b\b  \b\b">>} | Actions], back(2, Tty)};
+                true -> emit(<<"\b\b  \b\b">>, Actions, back(2, Tty));
                 false -> {Actions, Tty}
             end;
         false when Char =:= $\s ->
-            {[{echo, <<$\b>>} | Actions], back(1, Tty)};
+            emit(<<$\b>>, Actions, back(1, Tty));
         false when Char =:= $\t ->
             %% The tab's width is what the line before it leaves to the
             %% column, within 1 to 8.
@@ -540,17 +583,16 @@ erase_visually(Char, Actions, Tty) ->
                         true -> 1;
                         false -> min(8, Tty#tty.column - Before)
                     end,
-            {[{echo, binary:copy(<<$\b>>, Width)} | Actions],
-             Tty#tty{column = Before}};
+            emit(binary:copy(<<$\b>>, Width), Actions, Tty#tty{column = Before});
         false when Utf8 ->
             %% The rest of a UTF-8 character goes with its last byte.
             Line = Tty#tty.line,
             More = utf8_tail(<<Line/binary, Char>>) - 1,
             Keep = byte_size(Line) - More,
             <<Rest:Keep/binary, _/binary>> = Line,
-            {[{echo, <<"\b \b">>} | Actions], back(1, shorten(Rest, Tty))};
+            emit(<<"\b \b">>, Actions, back(1, shorten(Rest, Tty)));
         false ->
-            {[{echo, <<"\b \b">>} | Actions], back(1, Tty)}
+            emit(<<"\b \b">>, Actions, back(1, Tty))
     end.
 
 %% The length of the valid UTF-8 character that ends Bytes, else 1.
@@ -565,19 +607,42 @@ utf8_tail(Bytes) ->
 one_character(<<_/utf8>>) -> true;
 one_character(_) -> false.
 
-%% VREPRINT and a newline, then the line again (ttydisc_reprint); nothing
-%% once the echo room is spent, so a run of them costs no more than its bytes.
-reprint(Actions, #tty{echo_room = Room} = Tty) when Room =< 0 ->
-    {Actions, Tty};
+%% VREPRINT and a newline, then the line again, as FreeBSD's
+%% ttydisc_reprint (tty_ttydisc.c:786-799), but the walk ends at its first
+%% piece that does not fit the room. FreeBSD echoes every piece and its
+%% output queue drops each that does not fit, so each VREPRINT costs the
+%% whole line; a master that reads nothing and sends VREPRINT over and
+%% over, with a little room left, then costs the owner a walk of the line
+%% per key. Ending the walk there bounds each VREPRINT by the room it
+%% fills, but for pieces that render to nothing. What reaches the master
+%% differs from FreeBSD's only in the smaller pieces that would still fit
+%% after the first that does not, and those make no sense on the screen
+%% without it. With ECHO clear no character of a cooked line echoes (it
+%% holds no newline), so the line is not walked.
 reprint(Actions, Tty) ->
-    {Keyed, Tty1} = case char(vreprint, Tty) of
-                        ?VDISABLE -> {Actions, Tty};
-                        Reprint -> echo(Reprint, Actions, Tty)
-                    end,
-    {Ended, Tty2} = echo($\n, Keyed, Tty1),
-    lists:foldl(fun(Char, {Acc, T}) -> echo(Char, Acc, T) end,
-                {Ended, Tty2#tty{reprintpos = 0}},
-                binary_to_list(Tty2#tty.line)).
+    Keys = case char(vreprint, Tty) of
+               ?VDISABLE -> [$\n];
+               Reprint -> [Reprint, $\n]
+           end,
+    {Fit, Ended, Tty1} = retype(Keys, Actions, Tty),
+    Line = case Fit andalso on(echo, Tty) of
+               true -> binary_to_list(Tty1#tty.line);
+               false -> []
+           end,
+    {_, Retyped, Tty2} = retype(Line, Ended, Tty1#tty{reprintpos = 0}),
+    {Retyped, Tty2}.
+
+%% Echoes Chars in order up to the first piece that does not fit, which
+%% moves the column as any dropped echo does, and says whether all fit.
+%% The column then leaves out the rest of the line, which was not shown.
+retype([], Actions, Tty) ->
+    {true, Actions, Tty};
+retype([Char | Rest], Actions, Tty) ->
+    {Bytes, Tty1} = echoed(Char, Tty),
+    case put_echo(Bytes, Actions, Tty1) of
+        {true, Echoed, Tty2} -> retype(Rest, Echoed, Tty2);
+        {false, _, _} = Cut -> Cut
+    end.
 
 %% Where the column was before the line's last character: the column of
 %% the last write plus the width of what was echoed since.
@@ -612,18 +677,34 @@ alnum(Char) ->
 
 %%% Echo and output rendering (tty_ttydisc.c:452-536, :725-776)
 
-%% ECHO echoes every byte; ECHONL alone echoes a newline.
-echo(_Char, Actions, #tty{echo_room = Room} = Tty) when Room =< 0 ->
-    {Actions, Tty};
 echo(Char, Actions, Tty) ->
+    {Bytes, Tty1} = echoed(Char, Tty),
+    emit(Bytes, Actions, Tty1).
+
+%% What echo makes of Char: ECHO echoes every byte, ECHONL alone a newline.
+echoed(Char, Tty) ->
     case on(echo, Tty) orelse (Char =:= $\n andalso on(echonl, Tty)) of
-        true ->
-            {Bytes, Tty1} = render(Char, Tty),
-            Room = Tty1#tty.echo_room - byte_size(Bytes),
-            {[{echo, Bytes} | Actions], Tty1#tty{echo_room = Room}};
-        false ->
-            {Actions, Tty}
+        true -> render(Char, Tty);
+        false -> {<<>>, Tty}
     end.
+
+%% Every echo goes through here: a piece that does not fit what is left of
+%% the room is dropped whole and leaves the room as it was, as
+%% ttyoutq_write_nofrag drops it (tty_outq.c:322-334). The room left is
+%% then a function of what was echoed, so input fed back with the room
+%% its echo left echoes as input a byte at a time does. An empty piece
+%% fits and adds nothing.
+emit(Bytes, Actions, Tty) ->
+    {_, Actions1, Tty1} = put_echo(Bytes, Actions, Tty),
+    {Actions1, Tty1}.
+
+%% emit/3 that also says whether the piece fit.
+put_echo(<<>>, Actions, Tty) ->
+    {true, Actions, Tty};
+put_echo(Bytes, Actions, #tty{echo_room = Room} = Tty) when byte_size(Bytes) =< Room ->
+    {true, [{echo, Bytes} | Actions], Tty#tty{echo_room = Room - byte_size(Bytes)}};
+put_echo(_, Actions, Tty) ->
+    {false, Actions, Tty}.
 
 %% One byte for the screen: OPOST's processing for backspace, tab, newline
 %% and carriage return; ECHOCTL's caret notation for another control
@@ -702,20 +783,19 @@ returns how many of Bytes it took and what they became. With OPOST clear
 the bytes are themselves; with OPOST, each control character becomes what
 its output flags make it (ttydisc_write_oproc), and a byte's rendering is
 never split, so 4 KiB of newlines with ONLCR and 4 KiB of room takes 2 KiB.
-Output stopped by VSTOP takes nothing.
+Output stopped by VSTOP takes bytes as any other output does, as FreeBSD's
+ttydisc_write fills the output queue whatever TF_STOPPED says
+(sys/kern/tty_ttydisc.c:560-665): the owner holds them until output starts.
 """.
 -spec output(binary(), non_neg_integer(), tty()) ->
           {non_neg_integer(), binary(), tty()}.
-output(Bytes, Room, #tty{stopped = Stopped} = Tty)
-  when is_binary(Bytes), is_integer(Room), Room >= 0 ->
-    case {Stopped, on(opost, Tty)} of
-        {true, _} ->
-            {0, <<>>, Tty};
-        {false, false} ->
+output(Bytes, Room, Tty) when is_binary(Bytes), is_integer(Room), Room >= 0 ->
+    case on(opost, Tty) of
+        false ->
             Taken = min(Room, byte_size(Bytes)),
             <<Out:Taken/binary, _/binary>> = Bytes,
             {Taken, Out, wrote(Taken, forward(Taken, Tty), Tty)};
-        {false, true} ->
+        true ->
             post_bytes(Bytes, Room, 0, [], Tty)
     end.
 
@@ -765,14 +845,17 @@ status(Line, Room, #tty{column = Column} = Tty) when is_binary(Line) ->
 %%% Readers
 
 -doc """
-A blocking read of Open starts to wait. The tty reports `{ready, Open}` at
-once when the read can go on, and otherwise when it can: with a timer
-started now for VMIN 0 and VTIME above 0, or for VMIN and VTIME above 0
-when bytes already wait. A wait of the same open replaces it.
+A blocking read of Count bytes from Open starts to wait. The tty reports
+`{ready, Open}` at once when the read can go on, and otherwise when it
+can: with a timer started now for VMIN 0 and VTIME above 0, or for VMIN
+and VTIME above 0 when bytes already wait. A raw read with VMIN above 0
+can go on at Count bytes when Count is fewer than VMIN, as FreeBSD's read
+returns once its buffer is full (tty_ttydisc.c:290, :331, :384). A wait of
+the same open replaces it.
 """.
--spec read_wait(open(), tty()) -> {[action()], tty()}.
-read_wait(Open, Tty) ->
-    wait(Open, read, Tty#tty{expired = lists:delete(Open, Tty#tty.expired)}).
+-spec read_wait(open(), pos_integer(), tty()) -> {[action()], tty()}.
+read_wait(Open, Count, Tty) when is_integer(Count), Count > 0 ->
+    wait(Open, {read, Count}, Tty#tty{expired = lists:delete(Open, Tty#tty.expired)}).
 
 -doc """
 A poll of Open waits for input, with no timer: `{ready, Open}` comes when a
@@ -794,7 +877,7 @@ go on; any other timer, cancelled or replaced, does nothing.
 -spec timer(timer(), tty()) -> {[action()], tty()}.
 timer({Open, _} = Timer, #tty{waiters = Waiters, expired = Expired} = Tty) ->
     case Waiters of
-        #{Open := {read, Timer}} ->
+        #{Open := {read, _, Timer}} ->
             {[{ready, Open}],
              Tty#tty{waiters = maps:remove(Open, Waiters),
                      expired = [Open | lists:delete(Open, Expired)]}};
@@ -805,13 +888,15 @@ timer({Open, _} = Timer, #tty{waiters = Waiters, expired = Expired} = Tty) ->
 -doc """
 Open reads at most Max bytes, at once. In cooked mode it gets the first
 line, or as much of it as fits, with its newline or VEOL and without its
-VEOF, so VEOF at the start of a line gives no bytes, an end of file
-(ttydisc_read_canonical). In raw mode it gets what waits, up to Max. It
-gets no bytes when nothing waits and the tty has hung up, or in raw mode
-with VMIN 0 when VTIME is 0 or its timer ended; otherwise `eagain`.
+VEOF, so VEOF at the start of a line is `eof`, an end of file
+(ttydisc_read_canonical). In raw mode it gets what waits, up to Max. A
+read that finds nothing gets `eof` once the tty has hung up, and no bytes
+in raw mode with VMIN 0 when VTIME is 0 or its timer ended; otherwise
+`eagain`. The end of file and an empty raw read stay apart because an
+Erlang command's read returns `eof` for one and `<<>>` for the other.
 """.
 -spec read(open(), non_neg_integer(), tty()) ->
-          {{ok, binary()} | eagain, tty()}.
+          {{ok, binary()} | eof | eagain, tty()}.
 read(_Open, 0, Tty) ->
     {{ok, <<>>}, Tty};
 read(Open, Max, #tty{expired = Expired} = Tty0)
@@ -825,7 +910,7 @@ read(Open, Max, #tty{expired = Expired} = Tty0)
 read_line(Max, #tty{ready = Ready, hungup = Hungup} = Tty) ->
     case line_end(Tty) of
         none when Hungup ->
-            {{ok, <<>>}, Tty};
+            {eof, Tty};
         none ->
             {eagain, Tty};
         {Length, Eof} ->
@@ -840,13 +925,18 @@ read_line(Max, #tty{ready = Ready, hungup = Hungup} = Tty) ->
                        end,
             <<Got:Taken/binary, _:(Consumed - Taken)/binary, Rest/binary>> =
                 Ready,
-            {{ok, Got}, Tty#tty{ready = Rest}}
+            Answer = case Got of
+                         <<>> -> eof;
+                         _ -> {ok, Got}
+                     end,
+            {Answer, Tty#tty{ready = Rest}}
     end.
 
 read_raw(Max, Expired, #tty{ready = Ready, hungup = Hungup} = Tty) ->
-    Empty = Hungup orelse
-        (char(vmin, Tty) =:= 0 andalso (char(vtime, Tty) =:= 0 orelse Expired)),
+    Empty = char(vmin, Tty) =:= 0 andalso (char(vtime, Tty) =:= 0 orelse Expired),
     case min(Max, byte_size(Ready)) of
+        0 when Hungup ->
+            {eof, Tty};
         0 when Empty ->
             {{ok, <<>>}, Tty};
         0 ->
@@ -868,7 +958,7 @@ wait(Open, Kind, Tty0) ->
 
 unwait(Open, #tty{waiters = Waiters} = Tty) ->
     case maps:take(Open, Waiters) of
-        {{read, {_, _} = Timer}, Rest} ->
+        {{read, _, {_, _} = Timer}, Rest} ->
             {[{timer_cancel, Timer}], Tty#tty{waiters = Rest}};
         {_, Rest} ->
             {[], Tty#tty{waiters = Rest}};
@@ -878,23 +968,25 @@ unwait(Open, #tty{waiters = Waiters} = Tty) ->
 
 arm(Open, poll, #tty{waiters = Waiters} = Tty) ->
     {[], Tty#tty{waiters = Waiters#{Open => poll}}};
-arm(Open, read, #tty{waiters = Waiters, ready = Ready} = Tty) ->
+arm(Open, {read, Count}, #tty{waiters = Waiters, ready = Ready} = Tty) ->
     Timed = raw_timer(Tty) andalso
         (char(vmin, Tty) =:= 0 orelse byte_size(Ready) > 0),
     case Timed of
-        true -> start_timer(Open, Tty);
-        false -> {[], Tty#tty{waiters = Waiters#{Open => {read, none}}}}
+        true -> start_timer(Open, Count, Tty);
+        false -> {[], Tty#tty{waiters = Waiters#{Open => {read, Count, none}}}}
     end.
 
-start_timer(Open, #tty{serial = Serial, waiters = Waiters} = Tty) ->
+start_timer(Open, Count, #tty{serial = Serial, waiters = Waiters} = Tty) ->
     Timer = {Open, Serial},
     {[{timer_start, Timer, char(vtime, Tty) * 100}],
-     Tty#tty{serial = Serial + 1, waiters = Waiters#{Open => {read, Timer}}}}.
+     Tty#tty{serial = Serial + 1, waiters = Waiters#{Open => {read, Count, Timer}}}}.
 
 raw_timer(Tty) ->
     not on(icanon, Tty) andalso char(vtime, Tty) > 0.
 
-%% POSIX's four cases for a read, one byte for a poll, a line when cooked.
+%% POSIX's four cases for a read, at most its count, one byte for a poll, a
+%% line when cooked.
+-spec ready_for(kind(), tty()) -> boolean().
 ready_for(_, #tty{hungup = true}) ->
     true;
 ready_for(Kind, #tty{ready = Ready} = Tty) ->
@@ -905,16 +997,18 @@ ready_for(Kind, #tty{ready = Ready} = Tty) ->
 
 wanted(poll, _) ->
     1;
-wanted(read, Tty) ->
+wanted({read, Count}, Tty) ->
     case {char(vmin, Tty), char(vtime, Tty)} of
         {0, 0} -> 0;
         {0, _} -> 1;
-        {Min, _} -> Min
+        {Min, _} -> min(Min, Count)
     end.
 
 %% After input: each waiter whose condition holds is ready. A raw read with
-%% VMIN and VTIME above 0 that still waits restarts its timer when bytes
-%% arrived, and stops it when a flush left nothing.
+%% VMIN and VTIME above 0 that still waits starts its timer when its first
+%% byte arrives, and keeps that one deadline as more bytes arrive, as
+%% FreeBSD's ttydisc_read_raw_interbyte_timer sets it once after the first
+%% byte (tty_ttydisc.c:360-405, :306-320); a flush that left nothing stops it.
 settle(Arrived, #tty{waiters = Waiters} = Tty0) ->
     lists:foldl(fun({Open, Waiter}, {Actions, Tty}) ->
                         {More, Tty1} = settle(Open, Waiter, Arrived, Tty),
@@ -923,19 +1017,16 @@ settle(Arrived, #tty{waiters = Waiters} = Tty0) ->
 
 settle(Open, Waiter, Arrived, #tty{ready = Ready} = Tty) ->
     Kind = kind(Waiter),
-    Interbyte = Kind =:= read andalso raw_timer(Tty) andalso
-        char(vmin, Tty) > 0,
+    Interbyte = Kind =/= poll andalso raw_timer(Tty) andalso char(vmin, Tty) > 0,
     case ready_for(Kind, Tty) of
         true ->
             {Cancelled, Tty1} = unwait(Open, Tty),
             {Cancelled ++ [{ready, Open}], Tty1};
-        false when Interbyte, Arrived, Ready =/= <<>> ->
+        false when Interbyte, Arrived, Ready =/= <<>>, element(3, Waiter) =:= none ->
+            start_timer(Open, element(2, Waiter), Tty);
+        false when Interbyte, Ready =:= <<>>, element(3, Waiter) =/= none ->
             {Cancelled, Tty1} = unwait(Open, Tty),
-            {Started, Tty2} = start_timer(Open, Tty1),
-            {Cancelled ++ Started, Tty2};
-        false when Interbyte, Ready =:= <<>>, Waiter =/= {read, none} ->
-            {Cancelled, Tty1} = unwait(Open, Tty),
-            Untimed = (Tty1#tty.waiters)#{Open => {read, none}},
+            Untimed = (Tty1#tty.waiters)#{Open => setelement(3, Waiter, none)},
             {Cancelled, Tty1#tty{waiters = Untimed}};
         false ->
             {[], Tty}
@@ -949,7 +1040,7 @@ rewait(#tty{waiters = Waiters} = Tty0) ->
                 end, {[], Tty0}, lists:sort(maps:to_list(Waiters))).
 
 kind(poll) -> poll;
-kind({read, _}) -> read.
+kind({read, Count, _}) -> {read, Count}.
 
 %%% termios lookups
 

@@ -2015,6 +2015,11 @@ it; git history is the record of completed work.
   released, so the next build or reader meets them. Every other exit, SIGTERM and SIGINT included, ends each
   command's process group in `Runner#run`'s ensure. Handing the lock's open file to the build's commands would keep
   the lock held until the last of them exits.
+* [Low] `docs/design-runtime.md`, "The edits outside `sys/erxos`": the numbers 66, 67 and 68 each name two edits
+  (`link/1,2` on a connection and the `select_val` fall-through; `erlang:send/3`'s `notify` and the controller keeping
+  `init` as its group leader; init's reboot and the dirty scheduler's elapsed-time charge), so a reference such as
+  "edit 68" is ambiguous. Give the second of each pair a number of its own and update the references in
+  `docs/design-runtime.md`, `docs/design-domains.md`, `docs/design-network-stack.md` and `docs/todo-performance.md`.
 * [Low] development manifests (`tools/lib/erx/platform.rb` `manifest_source`, `config/manifest/`): a reader error in
   a board's composed manifest names the line of the joined text (`config/manifest:403`), not the file and line of
   `development.txt` or the board's part; pass the parts to `ABI::Syntax.parse` with their paths. The network
@@ -4193,6 +4198,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `record()`'s `entries` is answered only for `[kernel, log]`; a domain's pids, also marked `entries`, are still
   a listing's children, and no query takes `limit`, so a page is always erx_schema's 1,000. Answer every
   `entries` path with entries and take `limit` in `erx_inspector:inspect/3`.
+* [Low] shell, `erlang/apps/erx_shell/src/erx_shell.erl:177`: the console's shell waits for the boot in `booted()`
+  before `init/3` traps exits (`:192`), so a console `Ctrl-C` during that wait, which the shell's group passes on as
+  the exit signal `interrupt` while it serves no request (`otp/lib/kernel/src/group.erl:519-522`), ends the shell
+  before its banner. Trap exits before the wait.
 * [Low] `erlang/apps/erx_shell/src/erx_render.erl`, `erlang/apps/erx_web_line/src/erx_web_value.erl`: neither shows a
   record's `entries`, so `erx:i([kernel, log])` prints an empty record and the web's log view
   ([design-web.md](docs/design-web.md#views-on-the-line)) has nothing to read; `/proc/kernel/log` and `dmesg`
@@ -4800,6 +4809,18 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] runtime, `liberx/backend/core/boot_manifest.c`: the printable rule for `system_args` lives in the reader, so `Manifest.admit` packs a manifest that then fails at boot, and `domains[].args`, the same string class, is not covered. The rule belongs in the `args` class of the ABI generator.
 * [Low] runtime, `tools/fuzz/release_fuzz.c`: does not call `erx_release_check` or compare `erx_release_fs_lookup`'s index with the entry's, and has no seed at the longest path; its `fix_index` is a copy of `pack_fuzz.c`'s.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the `Ctrl-G` menu (`erx_console_menu`) lists, connects and detaches; interrupting and killing a session, lock and log out (`docs/design-live.md`, "Job control") come with logins (M10), and `erx:console_size/2` is not built.
+* [Medium] session, terminal relay core (`erlang/apps/erx_session/src/erx_session_relay_core.erl`):
+  (1) An `out` watch is reported at any free byte, though `output/3` never splits a rendering, so a newline
+  under `ONLCR` with 1 byte free is `eagain` and a poll loop spins until the master takes output; report at
+  a low-water mark after reading FreeBSD's `ttydev_poll`. (2) The drain row's "no master is connected" has
+  no state behind it in the core or the link. (3) The exploration checks safety only, and its alphabets
+  leave out close, hangup, `tcsetattr`, timers and output; reports are pooled across receivers.
+  (4) Each owner of `erx_tty_link` must call `send/1` at the end of its step (the relay core's `settle/1`,
+  `erx_session_tty:effects/2`, the tests' models); a driver that forgets sends nothing and nothing fails. A
+  one-event entry that applies the event and then `send/1` would make it hold by construction for every
+  owner but the core. (5) `erx_tty:input/3` returns a room the relay core discards, since it derives the
+  next room from the link; drop it from the result, or use it. (6) `input/3`'s per-call room and output
+  stopped live in the persistent `#tty{}` record, reset by `input/3`; thread them as a call-local value.
 * [Medium] session, how the console learns a session's tty (`docs/design-live.md`, "Between domains"): the design has the console learn the tty from a `tty` agent in the session domain's ready report, but the relay needs `erx:cap(console)`, which init sets only after that report, so a relay started by the boot script has no master and one started after the report is not in it. Edit 65's `tty` agent, the domain pid's check that every agent is a pid of the domain's node, and a way for the session's creator to read the agents are not built; `erx_console:add_session/2` takes the tty from whoever creates the session. Settle the order when root's session starts at boot.
 * [Low] tests, `test/integration/runtime_console_test.rb` (`make check-runtime-hosted`): the cases that start the Erlang shell wait for `1> ` at the start of a line, but the hosted system domain is a named node and its shell prompts `(system@erxos)1> `, so every `with_erxos` case times out before it begins. Match the prompt with its node name, or make the patterns node-agnostic as the `Ctrl-G` case is.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl`: the names quota is the constant `NAMES_QUOTA`, 64, for every principal; the manifest's per-principal `names` is read by no one. Take each principal's from its row, as the domain quota is.
@@ -4817,7 +4838,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: `set/2` re-arms every waiting read's timer and forgets which reads timed out, even when `VMIN`, `VTIME` and `ICANON` did not change, so frequent `tcsetattr` calls keep a timed read of another open waiting, where FreeBSD fixes the deadline at the read's start (`sys/kern/tty_ttydisc.c:314-318`). Re-arm only on a change, and keep the expiry in the waiter's own state.
 * [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: no flush of held input or output, which `tcflush`, `TCSAFLUSH` (`readpassphrase`) and FreeBSD's flush on last close (`tty.c:1768-1773`, `tty_ttydisc.c:104-108`) need; add `flush/2` and name it in design-live.md ("The tty"). `TOSTOP` is in the flag table, but design-programs.md has a first-tier `tcsetattr` with it fail with `EINVAL`; the relay must refuse it until the second tier.
 * [Medium] session, `test/erlang/erx_tty_tests.erl`: the exploration checks what readers get, not what is echoed or sent to the master (caret notation, erase widths, reprint, the output flags and the column), its only `set` event flips `ICANON`, and the seeded faults design-live.md names for the timers and the bound (a `read_wait` that starts no timer, a `poll` that starts one, the bound removed) and for stale timers and lost wakeups are not planted. The flag tables are written out again in the test and the fuzz target; export them from `erx_tty` or generate all three from the program protocol's termios table.
-* [Low] session, `erlang/apps/erx_session/src/erx_tty.erl`: a full raw queue switched to cooked holds no line end and takes none, so reads get `eagain` until a signal flushes it; FreeBSD's cooked read takes a partial canonicalized line (`tty_ttydisc.c:236-256`). `read/3`, `input/2`, `output/3` and `status/3` crash on a non-integer or negative size where `set/2` and `size/3` return `einval`, so the relay checks those arguments.
+* [Low] session, `erlang/apps/erx_session/src/erx_tty.erl`: a full raw queue switched to cooked holds no line end and takes none, so reads get `eagain` until a signal flushes it; FreeBSD's cooked read takes a partial canonicalized line (`tty_ttydisc.c:236-256`). `read/3`, `input/3`, `output/3` and `status/3` crash on a non-integer or negative size where `set/2` and `size/3` return `einval`, so the relay checks those arguments.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the login's life (`none`, `starting`, `{started, D}`, `{connected, D}`) moves in eight functions on five kinds of event, and only the session_domain QEMU suite covers it; make it a pure `login_next(Event, Login) -> {Login, Actions}` tested over every event in every state.
 * [Low] runtime, `erlang/apps/erx/src/erx_console.erl`: a session whose console facet ends before its domain is dropped as ended, and the login started again is refused while the old domain lives; take only the domain pid's end as the session's, or stop the domain when its facet ends.
 * [Low] domain service, `erlang/apps/erx_domain/src/erx_domain_srv.erl`: a held start runs even if its caller died while it was held, and a start invalid on its face (a bad name, no template) waits out the hold before its refusal; monitor the caller while held and check the request before holding it.
@@ -7105,7 +7126,7 @@ to the corpus and follow rc
   domain library names for its own domain (data and the image), refusing slot, record and
   vault roles outside the slot writer's domain, with a test that a request for them fails.
 * [Medium] Forged pids and `erx:owner/1` (erx.erl `owner/1`, erx_dist, the funnel): a pid's creation is a field its maker writes, while ERTS sends to a remote pid over the connection its node names, so a pid with domain A's creation and domain X's node passes an `erx:owner(Pid) =:= A` check and a send to it goes to X's connection, handing every local pid in the frame out to X (external.c's encoder) before X's funnel drops the frame as one to a dead name. erx_facet's caller check and the `erx:owner/1` doc's "a reply sent to a forged name goes to no third domain" rely on the creation alone. erx_domain_mints checks node and creation both. The fix by construction: the funnel refuses, at decode, a pid, reference or port whose node is a domain of this machine and whose creation is not that domain's, so `erx:owner/1` is authoritative for every caller; then the node check in erx_domain_mints can go.
-* [Medium] Session tty input (erx_session_tty, erx_tty_link): each `{tty_input, Bytes}` is checked at 4 KiB, but what waits unread in the shell's group has no bound; a master that types faster than the session reads grows the session's heap. erx_tty's `input/2` bound (docs/design-live.md, "Between domains") closes it when the line discipline lands.
+* [Medium] Session tty input (erx_session_tty, erx_tty_link): each `{tty_input, Bytes}` is checked at 4 KiB, but what waits unread in the shell's group has no bound; a master that types faster than the session reads grows the session's heap. erx_tty's `input/3` bound (docs/design-live.md, "Between domains") closes it when the line discipline lands.
 * [Low] Console line and terminal reports (erx_console.erl, erx_console_keys.erl): a terminal that reports text a session chose, such as xterm's title report where it is allowed, lets the session type anything at the line, `Ctrl-G` included, which no rule over the bytes can tell from typing. The menu drops the rest of the read that opened it and takes only one-byte reads, which stops a reply that arrives in one read; one the line driver splits into single bytes could still choose an entry, the system shell included. Settle it when logins come (M10): the system shell entry asks for the line's login again, or the host tool's console refuses terminal reports the session did not ask for. A terminal that sends 8-bit controls as raw bytes (0x9D, not U+009D written as UTF-8) is not recognized either, since such a byte is a UTF-8 continuation byte; recognizing it needs the rule to track UTF-8 lead bytes.
 * [Medium] Console line and keyboard modes (erx_console.erl, erx_console_keys.erl): a session's output reaches the operator's terminal unchanged, so it can switch on the kitty keyboard protocol (`ESC [ > 1 u`), xterm's modifyOtherKeys level 2 (`ESC [ > 4 ; 2 m`) or keyboard lock (KAM, `ESC [ 2 h`), after which `Ctrl-G` arrives as `ESC [ 103 ; 5 u` or `ESC [ 27 ; 5 ; 103 ~`, or not at all, and the operator cannot reach the menu until they reset their terminal; `docs/design-live.md` says Ctrl-G always reaches it. Teach `erx_console_keys` those encodings of `Ctrl-G` (a terminal sends neither unasked), and have the console reset the terminal's keyboard modes whenever it takes the line from a session.
 * [Medium] Console line after it comes back (erx_console.erl, `to_groups/2`): a session's output already sent to the line driver, up to 4 KiB, still reaches the line after `Ctrl-G`, `detach/0` or the session's end, after the console's notice, so it can draw a false prompt. Give the line back once the outstanding write is written, holding the groups' output until then.
@@ -7804,6 +7825,43 @@ document's "residual risks accepted" paragraph.
 * [Low] ABI, `tools/lib/erx/abi_errno.rb`: an errno name is any `e[a-z0-9]{1,15}`, so a row `errno eof 99` would
   generate `#define EOF 99` against `<stdio.h>`; and `abi_errno_test.rb`'s `ERRNO_DEFINE` drops a FreeBSD define
   of another form unnoticed, where the musl comparison counted every define.
+* [Medium] musl, `musl/arch/aarch64/bits/signal.h`, `abi/signals.txt`,
+  `erlang/apps/erx_shell/src/erx_shell_jobs.erl`: give erXos's musl FreeBSD's signal numbers from the signal
+  table of the ABI file ([design-programs.md](docs/design-programs.md#signal-numbers)). The table holds each
+  signal's name, number and default action, and generates the `ERX_SIG` constants, `erx_sig_name`,
+  `erx_sig_action` and `erx_sig_valid` in `erx/abi.h` and the Erlang `erx_abi_signals`; its numbers are compared
+  with FreeBSD 15.1's `sys/sys/signal.h`. Today musl keeps Linux's
+  numbers (`bits/signal.h`, `SIGSTOP` 19, `SIGCONT` 18, `SIGPWR` 30, `_NSIG` 65), its real-time range starts at
+  35 (`musl/src/signal/sigrtmin.c`), and the shell's `?SIGNALS` writes
+  FreeBSD's numbers by hand. The work: the table's descriptions (`sys_siglist`'s text) and number 34 as reserved,
+  the comparison with the names of `sys_signame` in FreeBSD's `lib/libc/gen/siglist.c`, and musl's number header
+  and set of valid signals generated from it; `erx_prog`, the protocol's grammar and the shell on
+  `erx_abi_signals`; in musl, the
+  generated header in place of the Linux block, `SIGRTMIN` 65 and `SIGRTMAX` 126 as constants, `_NSIG` 128,
+  the generated predicate in `sigaddset`, `sigdelset`, `sigismember`, `sigaction` and `pthread_kill`,
+  `sigfillset`'s generated set, `strsignal` on FreeBSD's text, `sysconf(_SC_RTSIG_MAX)` 62, and new
+  `sig2str`, `str2sig`, `sys_signame`, `sys_siglist` and `sys_nsig`; the shell's table read from the generated
+  one; the `difference` kind in `test/conformance/libc-test-verdicts.txt` and `tools/lib/erx/libc_test.rb`;
+  the tests of design-programs.md's "Signal numbers" bullet. The package also carries the errno numbers as
+  a table of the ABI file, and lands before the Track P ports.
+* [Medium] programs and shell, terminal reads by programs and by command domains
+  ([design-programs.md](docs/design-programs.md#the-terminal), "No terminal input without the signal handshake";
+  [design-shell.md](docs/design-shell.md#the-terminal-relays-protocol), "A reader the signal ends"): a program's
+  handler and a command domain's stream relay open the terminal write-only, so a program's terminal `read` fails
+  with `EBADF` and a command domain's read of a terminal stream, named `write` in its startup message, ends the
+  command with status `ebadf`, because neither the handler nor the stream relay belongs to a job, so no tag mark
+  stops it, and nothing orders the handler's report of a signal to its program, or the run server's mark in the
+  command domain, before the relay's ready report: a program or a narrowed command that a `Ctrl-C` ends could read a
+  key typed after it. Design the handshake: each handler and stream relay answers the shell once its program or run
+  has taken the signal, and the shell sends `{foreground, Job, current, Signals}` only after every answer; with it
+  the handler and the stream relay open the terminal with `erx_session_relay:open_reader/1` (and join the
+  chokepoint's list), the stream relay names a terminal stream `{relayed, read_write, tty}` and copies its input, the handler's
+  reads pass as "Reading a terminal" describes, and that section's tests run.
+* [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):
+  the group keeps every line its editor returns, so a long session, or a paste or peer that sends many lines, grows
+  the group without end, though edit 73 of [design-runtime.md](docs/design-runtime.md) bounds each line. Keep the
+  most recent lines only, with the bound in design-runtime.md's edit table and a test that measures the whole group
+  after many lines, beside design-shell.md's "A line that never ends".
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
   request, right after the signal and errno table package, which gives `SIGINFO` its number.

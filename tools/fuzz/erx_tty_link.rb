@@ -16,6 +16,8 @@ module ErxTtyLinkFuzz
   ROOT = File.expand_path('../..', __dir__)
   MODULE_SOURCE = File.join(ROOT, 'erlang/apps/erx_session/src/erx_tty_link.erl')
   TARGET_SOURCE = File.join(ROOT, 'test/erlang/erx_tty_link_fuzz.erl')
+  # erx_tty_link takes its room from erx_tty:master_room/0.
+  TTY_SOURCE = File.join(ROOT, 'erlang/apps/erx_session/src/erx_tty.erl')
   # A broken guarantee: the text that keeps it, what replaces it, and the property that must
   # then fail, as the target names it.
   Seed = Data.define(:text, :broken, :property)
@@ -32,7 +34,19 @@ module ErxTtyLinkFuzz
                                        property: 'numbering'),
     'the answer to a write held whole' => Seed.new(text: '<<>> -> fill(Next#link{waiting = Rest}, [done(Writer) | Done]);',
                                                    broken: '<<>> -> fill(Next#link{waiting = Rest}, Done);',
-                                                   property: 'write_unanswered')
+                                                   property: 'write_unanswered'),
+    'output held while stopped' => Seed.new(text: 'held = Held, next = N, stopped = false})',
+                                            broken: 'held = Held, next = N})',
+                                            property: 'output_while_stopped'),
+    'a flush dropping what is held' => Seed.new(text: '{Done, L#link{held = <<>>, waiting = queue:new(), unowned = 0}}.',
+                                                broken: '{Done, L#link{waiting = queue:new(), unowned = 0}}.',
+                                                property: 'sent_not_written'),
+    'room/1 counting the outstanding output' => Seed.new(text: '{?MAX_HELD - held(L), outstanding_size(Outstanding), Stopped}',
+                                                         broken: '{?MAX_HELD - held(L), byte_size(L#link.held), Stopped}',
+                                                         property: 'room_wrong'),
+    'room/1 naming the outstanding output' => Seed.new(text: '{?MAX_HELD - held(L), outstanding_size(Outstanding), Stopped}',
+                                                       broken: '{?MAX_HELD - held(L), 0, Stopped}',
+                                                       property: 'room_wrong')
   }.freeze
   DEADLINE_SECONDS = '60'
 
@@ -59,7 +73,7 @@ module ErxTtyLinkFuzz
       module_path = File.join(work, 'erx_tty_link.erl')
       File.binwrite(module_path, module_text)
       output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
-                                       module_path, TARGET_SOURCE, stdin_data: '')
+                                       module_path, TTY_SOURCE, TARGET_SOURCE, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

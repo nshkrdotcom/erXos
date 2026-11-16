@@ -19,16 +19,61 @@ class ErxTtyTest < Minitest::Test
   DEADLINE = '600'
   Fault = Data.define(:text, :broken, :property)
   FAULTS = {
-    vmin_ignored: Fault.new(text: '{Min, _} -> Min', broken: '{_, _} -> 1', property: /early_wakeup/),
+    vmin_ignored: Fault.new(text: '{Min, _} -> min(Min, Count)', broken: '{_, _} -> 1', property: /early_wakeup/),
+    count_ignored: Fault.new(text: '{Min, _} -> min(Min, Count)', broken: '{Min, _} -> Min',
+                             property: /a_short_raw_read_goes_on_at_its_count/),
+    # Input that goes on past a signal key reports a reader the bytes after it.
+    signal_not_stopping: Fault.new(text: '{[{signal, _} | _] = Actions, Tty} -> {Actions, Rest, Tty};',
+                                   broken: '', property: /a_signal_key_stops_input_and_returns_the_rest/),
+    eof_as_empty: Fault.new(text: '<<>> -> eof;', broken: '<<>> -> {ok, <<>>};', property: /read_differs/),
     echo_without_echo: Fault.new(text: 'case on(echo, Tty) orelse (Char =:= $\n andalso on(echonl, Tty)) of',
                                  broken: 'case true of', property: /echo_without_echo/),
-    onlcr_without_opost: Fault.new(text: 'case {Stopped, on(opost, Tty)} of', broken: 'case {Stopped, true} of',
+    onlcr_without_opost: Fault.new(text: 'case on(opost, Tty) of', broken: 'case true of',
                                    property: /opost_clear_changes_bytes/),
     vstatus_without_iexten: Fault.new(text: 'case on(icanon, Tty) andalso on(iexten, Tty) andalso',
                                       broken: 'case on(icanon, Tty) andalso', property: /vstatus/),
     vstatus_echoed: Fault.new(text: "{[info | Started], Tty1};",
                               broken: "echo(Char, [info | Started], Tty1);",
-                              property: /vstatus_echoed/)
+                              property: /vstatus_echoed/),
+    # POSIX's reading, a restart at each byte, in place of FreeBSD's one deadline.
+    interbyte_restarted: Fault.new(text: "Ready =/= <<>>, element(3, Waiter) =:= none ->\n" \
+                                         "            start_timer(Open, element(2, Waiter), Tty);",
+                                   broken: "Ready =/= <<>> ->\n            {Cancelled, Tty1} = unwait(Open, Tty),\n" \
+                                           "            {Started, Tty2} = start_timer(Open, element(2, Waiter), Tty1),\n" \
+                                           "            {Cancelled ++ Started, Tty2};",
+                                   property: /interbyte_deadline/),
+    # An echo that would end exactly where the room ends is dropped.
+    echo_short_of_its_bound: Fault.new(text: 'Tty) when byte_size(Bytes) =< Room ->',
+                                       broken: 'Tty) when byte_size(Bytes) < Room ->',
+                                       property: /echo_at_its_bound/),
+    # Each call starts with a fresh bound of its own, whatever room the
+    # owner has, so a chunk that a signal key cuts into calls echoes more.
+    # Output stopped is the owner's: input/3 takes it from the room it is given.
+    stopped_not_taken: Fault.new(text: 'out_stopped = Stopped}),', broken: 'out_stopped = false}),',
+                                 property: /signal_left_output_stopped/),
+    echo_bound_per_call: Fault.new(text: 'keys(Bytes, [], Tty0#tty{echo_room = Free,',
+                                   broken: 'keys(Bytes, [], Tty0#tty{echo_room = 4096,',
+                                   property: /echo_across_calls_takes_one_room/),
+    # A dropped piece of echo drops every later one in the call too.
+    echo_dropped_after_a_drop: Fault.new(text: "put_echo(_, Actions, Tty) ->\n    {false, Actions, Tty}.",
+                                         broken: "put_echo(_, Actions, Tty) ->\n    {false, Actions, Tty#tty{echo_room = 0}}.",
+                                         property: /a_piece_that_does_not_fit_is_dropped_alone/),
+    # A flush that leaves the room as it was, so a signal key at room 0
+    # echoes nothing though the owner has dropped all it held.
+    flush_keeps_the_room: Fault.new(text: 'echo_room = ?MASTER_ROOM - Tty#tty.echo_kept}}',
+                                    broken: 'echo_room = Tty#tty.echo_room}}',
+                                    property: /a_flush_gives_the_room_back/),
+    # A flush that gives back output the master has not taken.
+    flush_drops_the_kept: Fault.new(text: 'echo_room = ?MASTER_ROOM - Tty#tty.echo_kept}}', broken: 'echo_room = ?MASTER_ROOM}}',
+                                    property: /a_flush_gives_the_room_back/),
+    # A cooked line walked with ECHO clear, every piece empty.
+    reprint_walks_quietly: Fault.new(text: 'Line = case Fit andalso on(echo, Tty) of',
+                                     broken: 'Line = case Fit of',
+                                     property: /a_reprint_ends_at_its_first_dropped_piece/),
+    # FreeBSD's walk: every piece of the retyped line is tried.
+    reprint_walks_on: Fault.new(text: '{false, _, _} = Cut -> Cut',
+                                broken: '{false, Echoed, Tty2} -> retype(Rest, Echoed, Tty2)',
+                                property: /a_reprint_ends_at_its_first_dropped_piece/)
   }.freeze
 
   def test_the_cases_and_the_exploration_pass
@@ -41,11 +86,35 @@ class ErxTtyTest < Minitest::Test
 
   def test_echo_with_echo_clear_fails = assert_fault_fails(:echo_without_echo)
 
+  def test_a_read_that_ignores_its_count_fails = assert_fault_fails(:count_ignored)
+
+  def test_input_past_a_signal_key_fails = assert_fault_fails(:signal_not_stopping)
+
+  def test_an_end_of_file_read_as_empty_fails = assert_fault_fails(:eof_as_empty)
+
   def test_onlcr_with_opost_clear_fails = assert_fault_fails(:onlcr_without_opost)
+
+  def test_output_stopped_not_taken_from_the_room_fails = assert_fault_fails(:stopped_not_taken)
 
   def test_vstatus_without_iexten_fails = assert_fault_fails(:vstatus_without_iexten)
 
   def test_an_echoed_vstatus_fails = assert_fault_fails(:vstatus_echoed)
+
+  def test_an_echo_short_of_its_bound_fails = assert_fault_fails(:echo_short_of_its_bound)
+
+  def test_an_echo_bound_per_call_fails = assert_fault_fails(:echo_bound_per_call)
+
+  def test_a_flush_that_keeps_the_room_fails = assert_fault_fails(:flush_keeps_the_room)
+
+  def test_a_flush_that_drops_the_kept_fails = assert_fault_fails(:flush_drops_the_kept)
+
+  def test_a_quiet_reprint_that_walks_the_line_fails = assert_fault_fails(:reprint_walks_quietly)
+
+  def test_a_reprint_that_walks_past_a_drop_fails = assert_fault_fails(:reprint_walks_on)
+
+  def test_echo_dropped_after_a_drop_fails = assert_fault_fails(:echo_dropped_after_a_drop)
+
+  def test_a_restarted_interbyte_timer_fails = assert_fault_fails(:interbyte_restarted)
 
   private
 
@@ -56,7 +125,9 @@ class ErxTtyTest < Minitest::Test
 
     output, status = eunit(source.sub(fault.text, fault.broken))
     refute status.success?, output
-    assert_match fault.property, output
+    # A case fails as "name_test...*failed*"; an exploration property is
+    # the second element of the error term, followed by a comma.
+    assert_match(/#{fault.property.source}\S*(\.\.\.\*failed\*|,)/, output)
   end
 
   # Compiles erx and erx_session with erx_tty as module_text, and the cases,

@@ -237,7 +237,10 @@ lost({tty_output, N, Bytes}, S = #{lost := Lost}) when Bytes =/= <<>> ->
 lost(_Message, S) ->
     S.
 
-tty({Actions, Tty}, S) ->
+%% Each step of the tty ends in send/1, as erx_session_tty's steps do.
+tty({Actions0, Tty0}, S) ->
+    {Sends, Tty} = erx_tty_link:send(Tty0),
+    Actions = Actions0 ++ Sends,
     lists:foldl(fun({output, N, Bytes}, Acc = #{to_master := Q, sent := Sent}) ->
                         Acc#{to_master := Q ++ [{tty_output, N, Bytes}],
                              sent := Sent ++ [{N, Bytes} || Bytes =/= <<>>]};

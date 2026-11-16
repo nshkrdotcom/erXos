@@ -441,6 +441,11 @@ carries what a sub-space needs:
 %%            | {mem, Page :: 1..16#ffffffff, Pages :: 1..16#ffffffff}
 %%                                  % memory the session mapped into the
 %%                                  % program while building it
+%%            | {relayed, read | write | read_write}
+%%            | {relayed, write, tty}
+%%                                  % only in a run's Start: a stream the
+%%                                  % stream relay copies, by the mode its
+%%                                  % end or open allows; tty: the terminal
 %%            | null
 %% Open = 0..16#ffff           % an entry of the program's open table in its handler
 %% PipeEnd, EndValues = a pipe end's numbers and the values in the program's
@@ -476,7 +481,8 @@ another ([Passing descriptors](#passing-descriptors)). A `file` descriptor
 names an **open** of the handler's open table, an open-file description at
 its server reached through a grant the handler holds, with that
 description's access mode ([Descriptors and files](#descriptors-and-files));
-a `tty` descriptor is the same for a terminal, a `dir` an open directory,
+a `tty` descriptor names an open of a terminal's description, which the
+terminal relay serves ([The terminal](#the-terminal)), a `dir` an open directory,
 through which `openat` resolves, and a `socket` an open of a socket's
 open-file description; a `dup` makes its number name the same object as another
 descriptor of the message, which is not itself a `dup`. A `mem`
@@ -506,7 +512,18 @@ rounded length computed with checked arithmetic, passes 2^64, fail with
 `EINVAL` as for any `munmap`, and only then is the range compared with
 the mem range. It names a mapping of this one
 sub-space, so a spawn's `Start` cannot name one, `fork` does not copy
-it and `erx_exec` closes it. `uid` is the number of the principal the session runs for, which the
+it and `erx_exec` closes it. A `relayed` descriptor is valid only in the
+`Start` of a run that a stream relay asks of a command domain's run
+server ([What a program can start](#what-a-program-can-start),
+[design-runtime.md](design-runtime.md#native-programs)), and every
+descriptor of that `Start` is `relayed` or `null`: it names a stream
+the stream relay copies over its connection, by the mode the relay's
+own end or open allows, and with `tty` a stream that is the session's
+terminal, whose open is always write-only. The `descriptor` union of
+the ABI file `abi/protocols/prog.txt` gains the two forms; a program's
+startup message, which its handler writes, never holds one, and the run
+server's validator refuses a run's `Start` that holds any descriptor
+but these and `null`. `uid` is the number of the principal the session runs for, which the
 handler takes from the session's `principal` environment variable, set
 to that number when the session is planned; `liberx` keeps it in its
 record of the program's start, and `getuid`, `getgid` and their
@@ -821,14 +838,14 @@ holds one ends the program (Credit, below).
 | Request | Meaning | Reply |
 | --- | --- | --- |
 | `{spawn, Path, Start}` | start a command: `Path` is resolved through the program's namespace to an executable with `rx` ([What a program can start](#what-a-program-can-start)); `Start` is the startup message's map without `pid`, `ppid`, `pgid`, `uid`, `data_area` and `image`, each descriptor written `{pipe, End}`, `{socketpair, End, End}`, `{open, Open}`, `{dup, Fd}` or `null`, naming ends and opens the starter holds | `{ok, Pid}`; `{error, eperm}` without the right to start commands; `{error, Errno}` |
-| `{kill, Target, Signal}` | signal one of the requester's own children, the requester itself, or a process its `signal` right reaches, `Target` being a process id; in the second tier, also a process group of the requester's own POSIX session, `{group, Pgid}` ([The terminal](#the-terminal)); `Signal` is a signal's name, never 0. When the requester is among the targets, its own report precedes the reply, so it takes the signal before `kill` returns, as POSIX requires | `ok`; `{error, esrch}` for any other target; `{error, eperm}` in the first tier for `sigstop`, `sigtstp`, `sigttin`, `sigttou` and `sigcont`, which belong to the session's job control |
+| `{kill, Target, Signal}` | signal one of the requester's own children, the requester itself, or a process its `signal` right reaches, `Target` being a process id; in the second tier, also a process group of the requester's own POSIX session, `{group, Pgid}` ([The terminal](#the-terminal)); `Signal` is a signal's name, never 0. When the requester is among the targets, its own report precedes the reply, so it takes the signal before `kill` returns, as POSIX requires | `ok`; `{error, esrch}` for any other target; `{error, eperm}` in the first tier for `sigstop`, `sigttin`, `sigttou` and `sigcont`, and for `sigtstp` to any target but the requester, which belong to the session's job control ([The terminal](#the-terminal)) |
 | `{probe, Target}` | `kill` with signal 0: check that `Target`, as `kill` names it, exists and that `kill` would reach it, sending nothing | `ok` where `kill` would signal a target; `{error, Errno}` otherwise, `esrch` wherever `kill` answers `esrch`, so a process beyond the requester's reach reads as absent |
 | `{waited, Pid, N}` | the program's `wait`, `waitpid` or `waitid` returned the state of its child `Pid` whose count of state changes is `N`, and a `waitid` with `WNOWAIT` sends none ([A program's end](#a-programs-end)); the event executor sends it too for an exit that `liberx` reaps itself (Automatic reaping, below). When `N` is the record's latest for `Pid`, the handler marks that state taken, and for an exit the child leaves the record and the `children` quota, after which a `kill` of it fails with `esrch`; so a program cannot lift its quota by naming a child that runs | `ok`, also when `N` is not the latest, which changes nothing |
-| `{stop, Signal}` | in the second tier, pause the program for a stop signal under its default action ([The terminal](#the-terminal)) | `ok` once the program has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
+| `{stop, Signal}` | in the second tier, pause the program for a stop signal under its default action; in the first tier, only `SIGTTOU` from a background `tcsetattr` and `SIGTSTP` that the program raises for itself, each of which stops the program's whole job, as `Ctrl-Z` does ([The terminal](#the-terminal)) | `ok` once the program, or in the first tier its job, has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
 | `{file, Op, ...}` | an operation of 9P2000.L for the program, its name `Op` after `file` and its fields after the name, so each operation is a case of the request union with a reply of its own ([design-files.md](design-files.md#the-file-protocol)), with a path to resolve through the program's namespace, or the program's `Open`, in place of a fid: `walk`, `lopen`, `lcreate`, `read`, `write`, `clunk`, `close`, the program's own operation for a descriptor close that leaves its open other references, which releases the program's locks on the file and keeps the open ([Descriptors and files](#descriptors-and-files)), `remove`, `getattr`, `setattr`, `readdir`, `fsync`, `lock`, `getlock`, `link`, `symlink`, `mknod`, `renameat`, `unlinkat`, `readlink`, `mkdir`, `statfs` and the xattr operations; a read or a write names a count and a slot of the data area, and for `pread` and `pwrite` an offset, and its open's description supplies the offset otherwise; for `lock` and `getlock` the handler sets `ProcId` to the program's own, one per program, so its programs' locks conflict as UNIX processes' do ([Descriptors and files](#descriptors-and-files), [design-files.md](design-files.md#locks)) | the operation's reply, `{ok, Open}` for an `lopen` or an `lcreate`, `{ok, Count}` for a read or a write, `{ok, Stat}` for a `getattr` of an open, mapped to `Errno` on failure. `Stat` is a map of the attributes the file's server gave, each key present only when it gave that field: `mode` (`mode_t`'s 16 bits), `nlink`, `uid` and `gid` (each a `u32`), `size` (an `off_t`), and `atime`, `mtime` and `ctime` (each a `time_t` of whole seconds) with `atime_nsec`, `mtime_nsec` and `ctime_nsec` beside them. `liberx`'s `fstat` reports `tv_nsec` 0 for a time whose nanoseconds are not given and 0 for every field not given, as `struct stat` marks none unknown. A server's value past its field is `eoverflow`, as FreeBSD's `freebsd11_stat` answers an `nlink` past its old `nlink_t` |
 | `{local, Op, ...}` | an operation the session answers from its own tables, which reaches no server but by a `walk` or a `getattr`, its name `Op` after `local` and its fields after the name, as a file request's: `{local, seek, Open, Offset, Whence}` on the open's description, `Whence` one of `bof`, `cur` and `eof` for `SEEK_SET`, `SEEK_CUR` and `SEEK_END`, `{local, setfl, Open, Flags}` of the description's status flags, `{local, chdir, Path}`, and `{local, access, Path, Mode}`, answered from the rights of the grant the path resolves through ([Descriptors and files](#descriptors-and-files)) | `{ok, Value}`; `{error, Errno}` |
-| `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer; `{error, enotty}` for any other open |
-| `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`: the session's terminal relay answers for a terminal, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later |
+| `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `{tcsetattr, Termios, sigttou_ignored}` from a thread that ignores or blocks `SIGTTOU`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer, `{background, Orphaned}` among them, from which `liberx` decides as [The terminal](#the-terminal) says; `{error, enotty}` for any other open |
+| `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`, a terminal's read naming its count as `{read, Count}`: the session's terminal relay answers for a terminal, `{error, ebadf}` for the watch of a read while the handler's open of it is write-only, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later; `{error, ebadf}` at once, and no report, for the watch of a read on a terminal while the handler's open of it is write-only |
 | `{map, What, Use}` | give the requester an object of a file: for `Use` of `code` or `data`, the file's sealed file object, `What` a path the handler opens with `lopen` for reading, and for code only through a grant of the program's that carries `rx` ([File objects](#file-objects)); for `{shared, End}`, the session's object for the file, covering at least `End` bytes, `What` the program's `Open` of a file ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)) | `{ok, Cap}`, the object's capability value in the requester's table, and for a shared mapping `{ok, Cap, Open}`, with the mapping open that holds the requester's share; `{error, Errno}` |
 | `{fork, Start}` | the second tier's `fork`: `Start` names what the child receives, planned as for a spawn: every descriptor without a `dup`, each as `{pipe, End}`, `{socketpair, End, End}` or `{open, Open}`, and the flags of `cloexec` ([Fork](#fork)) | `{ok, Pid}`; `{error, Errno}` |
 | `{exec, Image, Start}` | the second tier's `exec`, first step, sent once the program's other threads are parked: build the requester's next image from `Image`, `{object, Cap}` for a file object of code that `liberx` obtained with `{map, Path, code}` and checked, or `{command, Path}` for a command of `/bin`; `Start` holds what the next image keeps that the parking froze ([Exec](#exec)) | `ok` once the next image is built, past which `exec` never returns; `{error, e2big}` past the message's bound; `{error, Errno}`; each error with the old image whole |
@@ -906,7 +923,7 @@ which the program does not answer:
 | `{exit, N, Pid, Status}` | a child ended: `Status` is `{exited, 0..255}` or `{signaled, Signal}`, and `N` the child's count of state changes ([A program's end](#a-programs-end)) |
 | `{signal, Signal, Sender}` | a signal for the program, any but `sigkill` and `sigstop`; `Sender` is the process id of the program that sent it, or 1 for the session |
 | `{stopped, N, Pid, Signal}`, `{continued, N, Pid}` | in the second tier, a child stopped by a stop signal or continued by `SIGCONT` ([The terminal](#the-terminal)); kept in the child table for `waitpid`'s `WUNTRACED` and `WCONTINUED` |
-| `{ready, Open, Events}` | a terminal or a socket the program watches is ready for the events named ([The terminal](#the-terminal)) |
+| `{ready, Open, Events}` | a terminal or a socket the program watches is ready for the events named; for a terminal, the relay's report with the program's open in place of the relay's and without the relay's signal number, which the handler keeps ([The terminal](#the-terminal)) |
 | `{server_gone, Open}` | the server of an open ended: the open's requests fail with `EIO` from then on |
 | `{pipe_writer, ...}`, `{pipe_writer_gone, ...}`, `{pipe_reader, ...}`, `{pipe_reader_gone, ...}`, `{pipe_lost, ...}`, `pipe_server_lost` | the pipe reports of [design-pipes.md](design-pipes.md#the-program-protocol) |
 
@@ -998,7 +1015,7 @@ on anything but a terminal fails with `ENOTTY`. The table belongs
 to the image, so a change to it costs no frame to the handler beyond the
 opens and closes it causes; an `exec` names its kept part in `{exec}`, from
 which the handler builds the next image's ([Exec](#exec)).
-**Open-file descriptions.** An `open` of a file, a directory or a terminal
+**Open-file descriptions.** An `open` of a file or a directory
 makes an **open-file description**, as POSIX names it: a process of the
 session that holds two fids at the file's server, an **unopened fid** of
 the file and an **opened fid**, in the access mode and with the
@@ -1011,6 +1028,11 @@ session too, which holds no fid and is the socket's owner at the network
 service instead, and which the rules below for sharing, passing and
 closing a description cover as they cover a file's
 ([design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs)).
+An `open` of `/dev/tty` at the session's export makes a terminal's
+description in the same way: it holds no fid, keeps the status flags, and
+each program's open of it carries an open of the terminal relay that the
+program's handler made under the program's job ([The
+terminal](#the-terminal)).
 
 The two fids arise at the `open`. `lopen` opens a fid in place, so
 without `O_CREAT` the handler walks the path to the unopened fid, clones
@@ -1064,7 +1086,13 @@ the handler hands the request to the open's description, which sends
 session's connection to the file's server and advances its offset by the
 count, and the handler copies the reply's bytes into the slot, or the
 slot's bytes into the request, through the program's port, which copies
-only within the slot the request names; the reply names the
+only within the slot the request names. A terminal's description
+instead sends the relay `{write, Open, Bytes}`, at most 4 KiB, which the
+relay answers at once, and a read as `{tty_read, Open, Count, N}`, which
+the relay answers `{error, ebadf}` while the handler's open is
+write-only, until the signal handshake opens it for reading
+([The terminal](#the-terminal)); a socket's goes to the network
+service. The reply names the
 count, and `liberx` then copies out of or into the caller's memory and
 frees the slot. So no byte crosses the channel, no server reaches a
 program's memory, and every server stays a plain process speaking frames.
@@ -1338,7 +1366,7 @@ handler that asks keeps serving its program meanwhile (P3):
 | `{await, Tag}` | the shell's job table, once a job's evaluator has ended ([design-shell.md](design-shell.md#job-control)) | answers `{programs_ended, Tag}` once no row carries `Tag`, at once when none does, and otherwise when the `'DOWN'` that removes the last such row arrives |
 | `{kill, Scope, Target, Signal, Sender}` | a program's handler, for a `kill` whose target is neither its program nor one of its children | hands `Signal` from `Sender` to the handler of each row that `Target` names within `Scope`, the requester's `signal` right or, in the second tier, its POSIX session; answers `ok`, or `{error, esrch}` when no row is in scope, pid 1 included |
 | `{probe, Scope, Target}` | a program's handler, for a probe whose target is neither its program nor one of its children | answers as `kill` with the same `Scope` and `Target` would, `ok` or `{error, esrch}`, and hands nothing to any handler |
-| `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, and the terminal relay at `Ctrl-C` | sends `Action` to the handler of each row with the tag: a program's handler carries it out with the `job` cause ([Job control](#job-control)), and a command's stream relay as [What a program can start](#what-a-program-can-start) says |
+| `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, `Ctrl-C` among them ([design-shell.md](design-shell.md#the-terminal-relays-protocol)) | sends `Action` to the handler of each row with the tag: a program's handler carries it out with the `job` cause ([Job control](#job-control)), and a command's stream relay as [What a program can start](#what-a-program-can-start) says |
 
 A spawn is an effect, so the pure core decides it and the server
 performs it. On `{handler, Starter, Key}` the core assigns the id and
@@ -1511,9 +1539,29 @@ the path into one of four images:
   ends and opens the program handed the command and copies bytes between
   them and the command domain's connection, the session's one path to
   another domain ([design-domains.md](design-domains.md#connections)).
+  Its open of the session's tty is a write-only one, which it asks for
+  with `erx_session_relay:open_writer/1`, as a program's handler does
+  ([The terminal](#the-terminal)). The stream relay belongs to no job, so
+  no signal's mark would stop it taking a key typed after the signal;
+  its open takes none, and a build check proves that it asks for no open
+  that reads ([design.md](design.md#chokepoint-checks)). The startup
+  message it sends names each stream with the mode its own end or open
+  allows, `{relayed, read}`, `{relayed, write}` or `{relayed,
+  read_write}`, or `null` ([design-runtime.md](design-runtime.md#native-programs)):
+  a pipe's read end `read`, its write end `write`, a file open its access
+  mode, and the terminal `{relayed, write, tty}`, the `tty` telling the
+  command that the stream is a terminal, so that `erx_cmd:isatty/2` is
+  true for it and a command that shows names, as `ls` does, hides the
+  characters that do not print as it does at the session's own
+  terminal ([design-shell.md](design-shell.md#pipelines)). The command's `erx_cmd` answers a read
+  of a stream named `write` itself, sending nothing, and ends the command
+  with status `ebadf`, as the terminal relay answers a read on a
+  write-only open, so a command there that reads a standard input that is
+  the terminal ends at once and the typed input stays in the tty.
   The relay starts its command as a run of the command domain's run
   server: it sends `{erx_start, 1, Start, Relay}`, `Start` the startup
-  message the handler built for the command and `Relay` itself, and
+  message the handler built for the command with its streams so named
+  and `Relay` itself, and
   takes the answer, `{erx_run, Alias, Run}`, the run's alias and pid,
   which it monitors ([design-runtime.md](design-runtime.md#native-programs)).
   The relay is its command's row's handler, so the job's actions reach
@@ -1769,9 +1817,14 @@ composes them and the image runs only when no cause remains. A
 continue lifts both from its target, as POSIX's `SIGCONT` continues a
 process however it was stopped: an authorized `SIGCONT` makes the
 program's handler lift the `signal` cause and tells the job table, which
-lifts the `job` cause and shows the job running, as a UNIX shell does once
-one of a stopped job's processes runs; `fg` and `bg` lift the `job` cause
-from every program of the job and send each `SIGCONT`. Each reaches only
+lifts the `job` cause from that program alone and shows the job running,
+in the step that gives the stop's kept answers
+([design-shell.md](design-shell.md#job-control)), as a UNIX shell does once
+one of a stopped job's processes runs, while the job's other members stay
+held; `fg`, `bg` and the shell's `kill -s CONT %N` lift the `job` cause
+from every program of the job and send each `SIGCONT`, whatever the job
+table shows of the job, lifting a cause that a program does not hold
+being no change. Each reaches only
 its target, so an outer job's `fg` continues no program of another job,
 and no continue lifts a hold that is not job control's, such as a `fork`'s
 copy's, which is a hold of its own. The causes belong to the program,
@@ -1786,9 +1839,9 @@ children belong to its job, which the command server records at each spawn
 and fork, and a program created or forked while its starter is paused for
 the job, or started by the shell for a job it has stopped, is paused
 before its first thread starts, so `Ctrl-C` and `Ctrl-Z` reach the whole
-tree: the terminal relay asks each handler of the foreground job to send
-`SIGINT` or to pause its program
-([design-shell.md](design-shell.md#job-control)). `Ctrl-Z` pauses a job
+tree: the shell, which the terminal relay tells of the key, asks each
+handler of the foreground job to send `SIGINT` or to pause its program
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)). `Ctrl-Z` pauses a job
 without sending `SIGTSTP`: the shell keeps the job's `termios` and restores
 it at `fg`, and a second-tier program on a pseudo-terminal
 gets its `SIGTSTP` from the terminal's line discipline instead ([The
@@ -1823,7 +1876,7 @@ each has one owner:
 | --- | --- | --- |
 | a fault | the kernel, which stops the thread and posts the record, and the port driver, which ends the program ([A program's end](#a-programs-end)) | nothing: no handler runs, whatever `sigaction` recorded |
 | `SIGKILL` from another, and any end of the image | the target's handler, which stops the anchor | nothing |
-| stopping and continuing | the session's job control, which pauses and resumes the image ([Job control](#job-control)) | `SIGCONT` after a continue; a program's own `SIGSTOP` fails with `EPERM`; `SIGTSTP`, `SIGTTIN` and `SIGTTOU` under their default action are discarded in the first tier, as POSIX discards them for a member of an orphaned process group, and in the second tier pause the program through its handler when its process group is not orphaned ([The terminal](#the-terminal)) |
+| stopping and continuing | the session's job control, which pauses and resumes the image ([Job control](#job-control)) | `SIGCONT` after a continue; a program's own `SIGSTOP` fails with `EPERM`; in the first tier, a `SIGTSTP` the program raises for itself under its default action stops its whole job through its handler, as `Ctrl-Z` does, and `SIGTTIN` and `SIGTTOU` under their default action are discarded, as POSIX discards them for a member of an orphaned process group; in the second tier the three pause the program through its handler when its process group is not orphaned ([The terminal](#the-terminal)) |
 
 **State.** `liberx` keeps the dispositions, the process's pending set, and
 for each thread, in the order the threads were created, a pending set for
@@ -1941,12 +1994,13 @@ function of the state and the signal, by the first rule that applies:
    process or for its thread, even when its action is to ignore it, since
    the action may change before it is unblocked (as on Linux), so
    `sigwait` for `SIGCHLD` works under its default action;
-3. a signal whose action is to ignore it is dropped;
+3. a signal whose action is to ignore it is dropped, and so, in the first
+   tier, is `SIGTTIN` or `SIGTTOU` under its default action;
 4. a default action that ends the program runs at once on the raising
    thread, as `erx_space_stop(ERX_CAP_SELF, ERX_EXIT_SIGNAL + N)` for
    the signal numbered `N`, which writes no frame and interrupts nothing;
-5. a caught signal, and in the second tier a stop signal under its default
-   action, stays pending, in the process's set or its thread's, and the
+5. a caught signal, and a stop signal under its default action, which in
+   the first tier can only be `SIGTSTP`, stays pending, in the process's set or its thread's, and the
    thread it goes to is woken: its target, or else the first thread, in
    creation order, that does not block it; for a stop signal that thread
    runs `liberx`'s stop action where it would run a handler ([The
@@ -2339,25 +2393,61 @@ UNIX process:
 
 **`/dev/tty`.** A session's terminal is a tty
 ([design-live.md](design-live.md#the-tty)), which the session's terminal relay
-owns. The session's export serves it as `/dev/tty`, a file whose reads and
-writes reach the relay, and a program's standard streams that go to the
-terminal are opens on it, so one program's output and error streams reach the
+owns. The session's export names it `/dev/tty`, and a program's standard
+streams that go to the terminal are opens on it. The export serves the name
+alone: the handler that opens it makes a terminal's description
+([Descriptors and files](#descriptors-and-files)) and asks the relay for an
+open with `erx_session_relay:open_writer/1`, under its program's job,
+which the command server's row gives it, and every read, write, watch and
+control of that open goes to the relay and never through the file
+protocol ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+So the relay knows the job of every opener, as a terminal knows the
+process group of every process that reads it. The handler passes each
+request with the relay's open in place of the program's, and the relay's
+report `{ready, RelayOpen, Events, N}` back to the program as `{ready,
+Open, Events}`, the program's open in place of the relay's; it keeps `N`,
+the relay's signal number, with the open and names it in the read it
+passes on, `{tty_read, RelayOpen, Count, N}`, so the reads the handshake
+below enables need no other translation. One program's output and error streams reach the
 terminal in the order the program wrote them, as they do through one UNIX
 terminal. A write reaches the terminal exact, apart from the tty's output
-flags, whichever job wrote it. A read returns what the line discipline gives
-while the program's job is in the foreground, a line when the tty is cooked,
-and waits while the job is in the background, as on UNIX. A terminal's
+flags, whichever job wrote it. A program's read of the terminal fails with
+`EBADF` until the handshake below exists. A terminal's
 `ioctl`s are `{tty, Open, Request}` requests to the handler, which takes them
 to the relay ([The program protocol](#the-program-protocol)). `tcgetattr` and
-`tcsetattr` read and set the tty's `termios`, so a program can turn off `ECHO`
-for a password prompt, or go raw and draw with control sequences. `TIOCGWINSZ`
+`tcsetattr` read and set the tty's `termios`, so a program can go raw and
+draw with control sequences, and, once its reads run, turn off `ECHO` for a
+password prompt. `TIOCGWINSZ`
 answers from the size the master reports, and when that size changes each
 program of the foreground job gets `SIGWINCH` through its handler, as the shell
 delivers it ([design-shell.md](design-shell.md#window-size)). A program opens `/dev/tty` through
 its namespace, so a narrowed program without the export's `/dev` has no
 terminal beyond the streams it was started with.
 
-**Reading a terminal.** A terminal read waits for input before it asks for
+**No terminal input without the signal handshake.** A program must not
+read a key typed after a signal it has not yet taken, and nothing orders
+a handler's report of a signal to its program before the relay's ready
+report ([design-shell.md](design-shell.md#the-terminal-relays-protocol),
+"A reader the signal ends"): with a program waiting for `y` to confirm
+that it should delete a file, `Ctrl-C` and `y` typed together would let
+it read `y` and delete the file before `SIGINT` ends it. So the handler's
+open is a write-only one, and the relay answers the program's `read` of
+it, and its watch of `{read, Count}` there, `{error, ebadf}`, as it
+answers any read on a write-only open, so the `read` fails with
+`EBADF`; a build check proves that no handler asks for an open that
+reads ([design.md](design.md#chokepoint-checks)). The reads described
+next run only under a handshake that orders them: each handler answers
+the shell once its program has taken the signal, and the shell gives
+the job its reads back only after every answer, and with it the
+handler opens the terminal for reading. That handshake is open work
+([TODO.md](../TODO.md)). Writes, `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`
+and a `poll`, for input or output, are not affected; a `poll` for input
+takes no byte.
+
+**Reading a terminal**, under the handshake. A read returns what the line
+discipline gives while the program's job is in the foreground, a line
+when the tty is cooked, and waits while the job is in the background, as
+on UNIX. A terminal read waits for input before it asks for
 it, as a socket's read does, so the wait has no request in flight and a
 signal interrupts it by POSIX's rules ([Signals in
 liberx](#signals-in-liberx)). `liberx` first sends its handler a watch, which the handler answers at once
@@ -2368,9 +2458,12 @@ then does `liberx` send the read, which is answered at once, with bytes or
 with `eagain` when another reader took them first, and `liberx` then
 watches again. Several opens of a foreground job may read, as on UNIX, and
 the relay serves their reads one at a time. A read under `O_NONBLOCK` is sent
-at once and fails with `EAGAIN` on `eagain`. A blocking read watches
-`{watch, Open, [read]}`, which is the line discipline's `read_wait` and starts
-the timer that `VTIME` asks for. `poll` watches `{watch, Open, [in]}`, which
+at once and fails with `EAGAIN` on `eagain`. A blocking read of `Count`
+bytes watches `{watch, Open, [{read, Count}]}`, `Count` at most 4,096, which
+is the line discipline's `read_wait` and starts the timer that `VTIME` asks
+for; a raw read is ready at `Count` bytes when that is fewer than `VMIN`, as
+FreeBSD's read returns once its buffer is full
+(`sys/kern/tty_ttydisc.c:290`). `poll` watches `{watch, Open, [in]}`, which
 starts no timer and reports only when bytes wait: a complete line when the
 terminal is cooked and otherwise one byte, whatever `VMIN` says, as FreeBSD's
 `poll` counts the bytes a read could take; it reports `POLLIN` from that, so a `poll` never
@@ -2398,6 +2491,51 @@ on `eagain`. `poll` reports `POLLOUT` from the same reports. musl's stdio is
 ordinary code above this: `__stdio_write` repeats on a short count, and a failed
 `write` sets `F_ERR` and discards its buffer (`musl/src/stdio/__stdio_write.c`),
 as it does on any UNIX.
+
+**Setting a terminal from the background.** A `tcsetattr` follows
+FreeBSD's rule for a process outside the terminal's foreground group
+(`sys/kern/tty.c:421-497`), which `liberx` applies, since it alone knows
+the calling thread's signal state. From a thread that ignores or blocks
+`SIGTTOU` it sends `{tcsetattr, Termios, sigttou_ignored}`, which the relay
+makes whichever job holds the terminal. From any other thread it sends
+`{tcsetattr, Termios}`, which the relay answers `{background, Orphaned}`,
+changing nothing, when the program's job does not hold the terminal. An
+orphaned group's call then fails with `EIO`. A group that is not orphaned
+takes `SIGTTOU`, as FreeBSD's terminal sends it to the group and waits
+until the group is in the foreground (`tty.c:486-497`): under its default
+action `liberx` runs its stop action and sends the request again once
+the program is continued, and a thread that catches it runs its handler,
+after which the call fails with `EINTR`, or is sent again under
+`SA_RESTART`. In the first tier the terminal takes a job as FreeBSD's
+takes a job of `sh`, a group of the shell's session that is not
+orphaned, so `Orphaned` is always `false`, and the stop action stops the
+whole job, as `Ctrl-Z` does: the handler asks the job table for that
+stop and replies when the table gives the stop's answer, in the step
+that continues the job, whatever continues it
+([design-shell.md](design-shell.md#job-control), "A stop keeps its
+answers"). So a background
+program that sets its terminal stops, `jobs` shows it stopped, `fg` lets
+the change through, and a job continued by `bg` stops again at its next
+`tcsetattr`. In the second tier the command server's process table
+decides `Orphaned`, and a group that is not orphaned gets `SIGTTOU`, as
+for a write under `TOSTOP`. An Erlang command, which has no signal
+state, stops its job the same way
+([design-shell.md](design-shell.md#interfaces)).
+
+**Stopping itself.** A first-tier program's own `SIGTSTP` takes the same
+path, as a program of a job of FreeBSD's `sh` stops when it raises it.
+`raise(SIGTSTP)`, and `kill` of it to the program's own process id, with
+a `pid` of 0 or of minus its group, reach the program alone, since the
+handler refuses `sigtstp` to every other target, and under its default
+action the thread that takes it runs `liberx`'s stop action, which sends
+`{stop, sigtstp}`; the handler asks the job table for the stop `Ctrl-Z`
+makes and replies when the table gives the stop's answer, in the step
+that continues the job, whatever continues it. So the whole job
+stops, its other programs with it, `jobs` shows it stopped, and the call
+returns only once the job is continued: a full-screen program that calls
+`endwin` and then `kill(0, SIGTSTP)`, as `less` does, redraws only after
+`fg`. An Erlang command does the same with `erx_cmd:stop/1`
+([design-shell.md](design-shell.md#job-control)).
 
 **Status: `VSTATUS` and `SIGINFO`.** `termios` has FreeBSD's `VSTATUS`
 character, `^T` by default, and its `NOKERNINFO` flag, clear by default.
@@ -2497,8 +2635,9 @@ The session's own job control pauses its programs beneath this with its
 own cause, which such a `SIGCONT` lifts too, and its `fg` and `bg`
 continue a job whatever stopped its programs ([Job
 control](#job-control)). A program that never calls these keeps the first
-tier's rule: its job is one group and one session, which counts as
-orphaned, so no `SIGTSTP`, `SIGTTIN` or `SIGTTOU` of its own stops it.
+tier's rule: its job is one group and one session, a `SIGTSTP` it raises
+for itself and a background `tcsetattr` stop the whole job, and a
+`SIGTTIN` or `SIGTTOU` it raises is discarded, as above.
 
 **Full-screen programs.** A program such as `less` or `hexedit` goes raw
 and draws with control sequences, which reach the terminal as it wrote them.
@@ -3188,8 +3327,12 @@ define it.
   its children, and fail with `ESRCH` for any other process; a program's
   children join its job. The group is orphaned, as POSIX defines it, since
   each member's parent is a member or the command server, which is in no
-  job's session, so `SIGTSTP`, `SIGTTIN` and `SIGTTOU` under their default
-  action are discarded. `waitpid` with a `pid` of 0, or of minus the
+  job's session, so `SIGTTIN` and `SIGTTOU` under their default action
+  are discarded. The terminal and the program's own `SIGTSTP` take the
+  job as FreeBSD takes a job of `sh`, which is not orphaned, so a
+  background `tcsetattr`, `raise(SIGTSTP)` and `kill(0, SIGTSTP)` stop
+  the whole job ([The terminal](#the-terminal)). `waitpid` with a `pid`
+  of 0, or of minus the
   caller's group, waits for any child, since every child is in the caller's
   group. `kill` with a `pid` of 0, of minus the caller's group or of -1
   signals the processes it may signal among those it names, its children,
@@ -3405,7 +3548,7 @@ test:
 | `system` and `popen` run rc, not sh | erXos ships no POSIX shell |
 | `mprotect` that gives reserved memory access fails with `ENOMEM` when the program's budget cannot cover the pages, and charges at any access, read-only included, where Linux charges a private mapping only when it becomes writable and POSIX names no out-of-memory error for `mprotect` | a readable private page is a real page from the program's reserve, since the kernel shares no zero page, and committed memory never faults for lack of memory (K6); Linux and QNX both allocate at the `mprotect` and refuse with `ENOMEM` |
 | a handler for `SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGTRAP` or `SIGSYS` runs for a signal raised with `raise` or `kill`, never for a fault, which ends the program | a fault ends only the faulting space, from the kernel's record ([A program's end](#a-programs-end)) |
-| in the first tier, a program cannot stop or continue itself or another: `kill` and `raise` of `SIGSTOP` fail with `EPERM`, and `SIGTSTP`, `SIGTTIN` and `SIGTTOU` under their default action are discarded | stopping is the session's job control, and a job's process group is orphaned, for whose members POSIX discards those three; the second tier stops and continues programs within a POSIX session ([The terminal](#the-terminal)) |
+| in the first tier, a program stops only its whole job, and continues nothing: `kill` and `raise` of `SIGSTOP` fail with `EPERM`, `kill` of `SIGTSTP` to another process fails with `EPERM`, a `SIGTSTP` it raises for itself under its default action stops its whole job, and `SIGTTIN` and `SIGTTOU` under their default action are discarded | stopping is the session's job control, which stops a job whole; a job's process group is orphaned, for whose members POSIX discards `SIGTTIN` and `SIGTTOU`, while the terminal and `SIGTSTP` take the job as FreeBSD takes a job of `sh`; the second tier stops and continues programs within a POSIX session ([The terminal](#the-terminal)) |
 | in the first tier, a job is one process group and session that no program can leave | process groups and sessions that programs create come with pseudo-terminals, in the second tier |
 | in the first tier, `tcsetattr` with `TOSTOP` fails with `EINVAL`, and a background job's write goes through | `TOSTOP`'s rules are about process groups and `SIGTTOU`, which come in the second tier, where POSIX's rules apply |
 | `kill` of a process that is neither the caller's child nor in a `signal` right's scope it holds fails with `ESRCH`, even when it exists | a process id grants nothing, and the error does not say whether it exists |
@@ -3756,10 +3899,25 @@ terminal cases.
   again, or fails with `ETXTBSY` when it is rewritten again; `system` and
   `popen` of rc commands, whose wait statuses follow `$status`; a program
   whose standard output and error both go to the terminal, interleaved
-  line by line in the order written; `/dev/tty` read in the foreground, a
-  background job's read that waits until `fg`, a password prompt with
-  `ECHO` cleared that does not echo, and `Ctrl-D` that ends one `read`
-  with 0 while the next reads on; a program whose frame is outside the
+  line by line in the order written; a `read` of `/dev/tty`, in the
+  foreground and in the background, which fails with `EBADF` while a
+  typed line stays in the tty for the next prompt, where a handler that
+  opens the terminal for reading fails the
+  case (the reads of "Reading a terminal" are tested with the handshake
+  that enables them); an Erlang command that `rc` as a program starts in
+  its command domain, whose standard input is the terminal, and whose
+  `erx_cmd:read/1` ends it with status `ebadf` while a typed line stays
+  in the tty for the next prompt, where a stream relay that opens the
+  terminal for reading, names the stream `read_write` and copies the
+  terminal's input fails the case; a background program's `tcsetattr` that stops
+  its job, which `jobs` shows stopped with the `termios` unchanged, and
+  is made after `fg`, where a `liberx` that fails the call with `EIO` as
+  for an orphaned group fails the case, and the same call with `SIGTTOU`
+  blocked, which is made at once, where a `liberx` that ignores the
+  signal state fails it; `cat` typed together with a line in one
+  write of the master, after which `cat` reads that line and the shell
+  never runs it, which a console that reads more than one byte for an ask
+  fails; a program whose frame is outside the
   grammar, which ends with `SIGSYS`; and each row of the exit status
   table.
 * **The POSIX-lite personality.** musl's `libc-test` and the Open POSIX Test
@@ -3801,7 +3959,13 @@ terminal cases.
   has ended succeeds until `waitpid` reaps it and fails with `ESRCH`
   after, when the child stops counting against `children`; `kill` of
   `SIGSTOP`, `SIGTSTP` or `SIGCONT` to a child fails with `EPERM`, and
-  `raise(SIGTSTP)` under its default action returns with nothing done;
+  `raise(SIGTTIN)` under its default action returns with nothing done;
+  `kill(0, SIGTSTP)` and `raise(SIGTSTP)` under their default action, in
+  a foreground program with a running child, stop the whole job, which
+  `jobs` shows stopped with the child, and return only after `fg`,
+  seeded with a handler that answers `{stop, sigtstp}` at once, as for a
+  discarded signal, which the test catches when the call returns before
+  the job is continued;
   `raise(SIGABRT)` ends the program with status `sigabrt`; a program whose
   last worker calls `pthread_exit` ends with status 0; `xargs` with more
   than 4,096 short arguments runs; a session whose process ids are spent,

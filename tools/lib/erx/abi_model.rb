@@ -143,7 +143,7 @@ module Erx
                         :constants, :rights, :objects, :kinds, :caps, :calls,
                         :readers, :translations, :services, :projections,
                         :protocols, :inspection, :ui, :draw, :input_records, :web, :theme, :inputs, :statuses, :signals, :faults,
-                        :errnos, :elements,
+                        :errnos, :elements, :termios,
                         keyword_init: true) do
       # The enums with args lines, in type order: the ones the generator
       # emits event tables for.
@@ -158,7 +158,7 @@ module Erx
       TOP_LEVEL = %w[abi arch trap reg limit scalar enum flags bytes layout
                      status right type kind cap call reader translation service
                      projection protocol inspection ui draw input web theme signal reserved_signal realtime
-                     fault errno elements].freeze
+                     fault errno elements termios].freeze
       TYPE_KINDS = %w[scalar enum flags bytes layout].freeze
       BASE_TYPES = [1, 2, 4, 8].flat_map do |size|
         [false, true].map do |signed|
@@ -272,7 +272,8 @@ module Erx
                    projections: projections.freeze, protocols: protocols,
                    inspection: inspection, ui: ui, draw: draw, input_records: input_records, web: web, theme: theme, inputs: source.inputs,
                    statuses: status_values(by_kind), signals: signals, faults: faults,
-                   errnos: errnos, elements: elements.sort_by(&:name).freeze).freeze
+                   errnos: errnos, elements: elements.sort_by(&:name).freeze,
+                   termios: validate_termios(by_kind)).freeze
         freeze_value(result)
       end
 
@@ -365,7 +366,7 @@ module Erx
         definitions = {}
         declarations.each do |declaration|
           next if %w[abi arch trap reg cap inspection ui draw input web theme signal reserved_signal realtime fault
-                     errno service].include?(declaration.kind)
+                     errno termios service].include?(declaration.kind)
           name = Syntax.identifier(declaration.args.first, line: declaration.line)
           declaration.fail!("duplicate definition #{name}") if definitions.key?(name) || BASE_TYPES.key?(name)
           definitions[name] = declaration
@@ -1208,6 +1209,11 @@ module Erx
       def validate_errnos(by_kind)
         require_relative 'abi_errno'
         Errnos.validate(by_kind)
+      end
+
+      def validate_termios(by_kind)
+        require_relative 'abi_termios'
+        Termios.validate(by_kind)
       end
 
       # The inspection schema's members have a namespace of their own and

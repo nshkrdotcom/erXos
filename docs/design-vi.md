@@ -245,8 +245,8 @@ function as its standard output (`erx_shell_runner.erl:90`). `columns/1`
 and `rows/1` read `COLUMNS` and `LINES` and then, when a standard stream
 is the terminal, the size the terminal holds. `catch_events/1`,
 `requested/1`, the shell's delivery of `{erx_cmd, winch}` and `stop/1`
-exist. The terminal stream as a relay open, `tty/2`, `watch/1` and the
-terminal form of `read/1`, which need the session's terminal relay and
+exist. The terminal stream as a relay open, `tty/2`, `watch/1`, `read/2` and
+the terminal form of `read/1`, which need the session's terminal relay and
 its line discipline `erx_tty`, are the interfaces of [design-shell.md](design-shell.md#interfaces)
 this design builds on.
 
@@ -255,7 +255,7 @@ this design builds on.
 ```text
  terminal master ── tty (terminal relay, erx_tty) ── vi's open
                                                        │
-     {erx_cmd, ready} ─┐                               │
+  {ready, Open, _, _} ─┐                               │
      {erx_cmd, winch} ─┤                               │
      escape timer    ──┼─> erx_cmd_vi: the loop  ──────┘ erx_cmd:write/2
      match helper    ──┘     │          ▲
@@ -557,7 +557,7 @@ H`, `CSI K`, `CSI 2 J`, `CSI ? 25 l` and `h`, and BEL for the bell.
    `IEXTEN`, `ICRNL`, `IXON` and `OPOST` clear, `VMIN` 1 and `VTIME` 0,
    as `cfmakeraw` sets them); opts in to size reports with
    `erx_cmd:catch_events([winch])`; and arms the first ready report with
-   `erx_cmd:watch/1`.
+   `erx_cmd:watch/1`, keeping the open's reference `Open` it returns.
 4. Runs the rest inside `try ... after`. It **takes the terminal**: sets
    `Raw` with `tty(Ctx, {tcsetattr, Raw})`, which in a job that is not in
    the foreground stops the job and returns only once `fg` has brought it
@@ -571,9 +571,11 @@ H`, `CSI K`, `CSI 2 J`, `CSI ? 25 l` and `h`, and BEL for the bell.
 
 **The loop** is one `receive`:
 
-* `{erx_cmd, ready}`: `erx_cmd:read/1` makes one read, which, after the
+* the ready report `{ready, Open, _, _}`, matched with `Open` bound:
+  `erx_cmd:read/2` on it makes one read, which, after the
   report, never waits: it returns the waiting bytes, at most 4 KiB, or
-  nothing when another reader of the job took them first
+  nothing when another reader of the job took them first or a signal
+  came since the report
   ([design-shell.md](design-shell.md#interfaces)); the core gets
   `{bytes, Bytes}`, and the loop arms the next report with
   `erx_cmd:watch/1`;

@@ -417,8 +417,8 @@ fails until the list names it.
 ### The edits outside `sys/erxos`
 
 Everything the adapter adds lives in `sys/erxos`, the drivers and NIFs
-included. The edits to ERTS's own files, and those to sixteen files of
-`kernel`, eight of `stdlib` and the preloaded `erlang.erl` and `init.erl`, are these, each at a seam named above; an edit is one change
+included. The edits to ERTS's own files, and those to seventeen files of
+`kernel`, ten of `stdlib` and the preloaded `erlang.erl` and `init.erl`, are these, each at a seam named above; an edit is one change
 of behaviour, however many lines it touches:
 
 | File | Edit |
@@ -470,7 +470,7 @@ of behaviour, however many lines it touches:
 | `beam/erl_process.h`, `beam/erl_process.c`, `beam/erl_ptab.h`, `beam/erl_trace.c`, `beam/bif.c`, `beam/beam_bp.c`, `beam/emu/trace_instrs.tab`, `beam/jit/beam_jit_common.cpp`, `beam/atom.names`, `erts/preloaded/src/erlang.erl` | 52. the spawn option `{erx_untraced, true}` keeps a process out of every trace session for its whole life: the new process's trace flags hold `F_ERX_UNTRACED`, and it takes no session's flags at creation, neither new-process tracing nor its parent's `set_on_spawn`, which it does not use up; `erts_sum_all_trace_flags` keeps it as it keeps `sensitive`, so no session's flags take effect, whenever the session opened, and the call-trace breakpoint, meta-trace and return-to paths skip the process as they skip a sensitive one, through one macro, `ERTS_IS_P_TRACE_HIDDEN`; `process_flag(sensitive, _)` leaves it set. Unlike `sensitive` it hides nothing from `process_info` or crash dumps and leaves `save_calls` and `seq_trace`, which is no session, as they are. `erx_trace` spawns its own processes so ([design-live.md](design-live.md#tracing)) |
 | `lib/stdlib/src/shell.erl`, `lib/stdlib/src/edlin_expand.erl` | 53. a function defined at the prompt has each of its calls resolved, and is itself refused, by name and arity, through `edlin_expand:shell_default_or_bif/2`: a shortcut that `shell_default`'s `erx_shortcuts` attribute lists answers `shell_default` at its own arity only, and every other call gets stock's answer by name alone over OTP's exports, which `shell_default_or_bif/1`, and so argument completion, keeps. A call of a quoted name resolves by its atom: stock's shell resolves it by the name's unquoted text, which for `'Foo'(X)` scans to no atom, so its server dies of a `case_clause`, and for `'self%x'(X)` scans to another atom, `self`, so the call goes to `erlang` ([design-live.md](design-live.md#erlang-in-every-domain)) |
 | `lib/kernel/src/inet.erl`, `lib/kernel/src/inet_db.erl` | 54. `inet_backend` takes a third value, `erx`, and it is the default, which `kernel`'s `inet_backend` setting may also name: `gen_tcp_module/2` and `gen_udp_module/2` return `erx_gen_tcp` and `erx_gen_udp` for it, whose sockets are `{'$inet', Module, Pid}` terms that `gen_tcp`, `gen_udp` and `inet` already dispatch on, and `getifaddrs/0` and `gethostname/0` ask the domain's network grant ([design-network-stack.md](design-network-stack.md#the-backend)) |
-| `lib/kernel/src/group.erl` | 55. the driver's `suspend`, which `erx_console` sends for `Ctrl-Z`, reaches the group's shell as `{Group, suspend}`, as an interrupt reaches it as an exit signal, so the command shell can stop its foreground job ([design-shell.md](design-shell.md#job-control)) |
+| `lib/kernel/src/group.erl` | 55. the driver's `suspend`, which `erx_console` sends for `Ctrl-Z`, reaches the group's shell as `{Group, suspend}`, as an interrupt reaches it as an exit signal, so the command shell can stop its foreground job ([design-shell.md](design-shell.md#job-control)); 72. the group has one ask for input outstanding at most: every point at which its line editor waits for more, in every state and with a shell or without (`more_chars`, `blink`, and the end of the blink's timer), calls one function, which sends the driver `{self(), read, Ref}`, `Ref` a new reference, only when no ask is outstanding, and keeps `Ref` in the group's state, outside the input state a nested request pushes and pops. The driver's answer, `{Drv, {read, Ref, Chars}}` or `{Drv, {read, Ref, eof}}`, ends the ask and is taken as stock takes `{Drv, {data, Chars}}` and `{Drv, eof}`; an interrupt, an error and a nested request leave the ask outstanding, so the next request is served by it. Stock sends `{self(), read, N}` only in its raw `noshell` state (`group.erl:342`, `:346`), keeps no record of it, and asks again at each wait. A session's console reads its tty only for an outstanding ask, one byte at a time, so the group is never handed a byte past the key that ends its line, and a command shell's group serves its shell alone (edit 74), so once it has answered a line it makes no ask until the shell asks for the next ([design-shell.md](design-shell.md#the-terminal-relays-protocol)); the system console's driver sends input as it arrives, and the ask stays unanswered there. `ssh_cli` matches the ask with none of its clauses but the last, which ignores it (`ssh_cli.erl:280-338`), and `user_drv`, the one driver that reads stock's count (`user_drv.erl:501-505`), does not run where `erx_console` does; 74. a group started with the option `{readers, shell}` takes an input request and a `setopts` only from the process it started as its shell and answers any other process `{error, enotsup}`, changing nothing, at each place a request enters it: the request that finds no request in progress (`group.erl:249`), the nested request that would push the current one (`:311`, `:389`) and `setopts` (`:486`). `erx_console` starts every shell's group but the Erlang shell's with it; the default, `{readers, any}`, is stock's. In every group, the output dispatcher answers an entry of `requests` that is not output, an input request and a `setopts` among them, `{error, request}`, as the group answers any request it does not know (`:505-507`); stock's fallback there returns `{error, {error, request}}` (`:671-672`), which its caller does not match (`:608-614`), so the group crashes with `case_clause` and its shell ends with it, an upstream bug. So a job's process, or any process that made the command shell's group its leader, can neither take a key meant for the shell nor change its echo or encoding, and a command reads its standard input through `erx_cmd` ([design-shell.md](design-shell.md#the-terminal-relays-protocol)) |
 | `beam/dist.c`, `beam/erl_proc_sig_queue.c`, `beam/erl_monitor_link.c` | 56. A distribution entry that goes down with a reason `{domain_down, D, Info}`, `D` exactly the creation the entry had as it went down, fires every link, monitor and pending spawn it held with that reason, where stock fires `noconnection`; every other reason fires `noconnection` as stock, and the reason reaches `net_kernel:monitor_nodes/2`'s `nodedown_reason` from the cleanup's own copy, as stock passes it. `erts_do_net_exits` checks the reason and copies it once into the connection's record of links and monitors (`ErtsMonLnkDist`) before the record is marked dead. Every link, monitor and pending spawn of the connection holds that record, and the copy is freed with it, so the copy outlives the cleanup's yielding passes and every signal they send. Each exit `link_connection_down` fires carries the record's reason. `monitor_connection_down` still sends each monitor and pending spawn its `DOWN` with the immediate `noconnection`, because a `DOWN` with any other reason travels as a message the peer could have sent, which a pending spawn takes as a missing `spawn_reply`; the receiver, converting that `DOWN` into the `DOWN` message or into the `spawn_request` error reply, takes the record's reason in its place and copies it into the message. `Info` is small, a tag or a tag and a status (`{halt, Status}`, `crash`, `{fault, Kind}`, `stopped`), and only a process of this domain that can end the entry's port chooses it. A record made dead with no connection, as `link/1` and `monitor/2` make on a connection already down, has no reason and fires `noconnection` ([Connections in ERTS](#connections-in-erts)) |
 | `lib/kernel/src/logger.erl`, `lib/kernel/src/error_logger.erl` | 57. `init_default_config/2` makes `erx_log_h` the `default` handler where nothing configures one and the logger's type is a standard device, in place of `logger_std_h`, so every domain's events go to the log sink; `error_logger:tty/1` switches that handler on and off as it does `logger_std_h` on `standard_io`, and never adds a second handler on `standard_io` ([design-live.md](design-live.md#the-console)) |
 | `lib/stdlib/src/gen.erl` | 58. every receive of a call's reply, in `do_call` and in `send_request`'s `wait_response`, `receive_response` and `check_response` with their collection forms, also takes the reply as `{erx_origin, D, {Tag, Reply}}`, the envelope of edit 16; `Tag` holds the call's own alias, which only the callee's domain was handed, so the reply's domain needs no check ([design-domains.md](design-domains.md#the-peer)) |
@@ -487,8 +487,108 @@ of behaviour, however many lines it touches:
 | `beam/beam_debug.c` | 69. the dirty test BIFs of `erts_debug` take `busy_wait`, the busy loop that `wait` runs only on a dirty CPU scheduler, on either pool, so a test can charge a busy dirty I/O call |
 | `beam/erl_process.h`, `beam/erl_process.c`, `beam/erl_wakeup_other.h` | 70. no reduction counter of a dirty run queue can wrap, though a dirty call is charged up to `INT_MAX` (edit 68): a charge on a dirty scheduler leaves alone the balance counters, `prio_info[].reds` and `check_balance_reds`, which only `check_balance` reads and resets and only on normal queues, and which stock lets grow there until they wrap; `wakeup_other_reds` is 64 bits wide, since the schedulers sharing a dirty queue may each add a charge before one of them looks; and the wakeup-other check, a pure function in `erl_wakeup_other.h`, clamps that sum to `INT_MAX`, computes in 64 bits and keeps its count within its limit on every queue kind, a dirty queue's count holding at the limit, so each later look with a backlog still wakes a waiting dirty scheduler, where stock's grows until it wraps and the backlog wake stops. A threshold's negative shift, `+swt low` and `very_low`, divides the decay by its power of two, as stock's mask suggests was meant; stock shifts left by a negative count, which is undefined (with the shift count taken mod 32, as AArch64 and x86-64 take it, the mask then clears the decay; inferred, not disassembled) |
 | `beam/erl_driver.h`, `beam/io.c` | 71. a driver may set `ERL_DRV_FLAG_ERX_NO_CONNECT`, and `set_port_connected` then refuses every connect to its ports, as it refuses one of the wrong form: `port_connect/2` raises `badarg`, and a `{Pid, {connect, NewPid}}` port message sends the owner `badsig`; the program driver sets it, so a program port's owner is always the process that opened it ([Programs as ports](#programs-as-ports)) |
+| `lib/stdlib/src/edlin_key.erl`, `lib/stdlib/src/edlin.erl` | 73. the editor's answer for a key depends on the key's characters alone, never on where its input was cut, and what it holds for one line is bounded however much is typed; its seven parts are listed after the table |
 
-Seventy-one edits outside `sys/erxos`, in seventy-four named files outside
+**Edit 73, in parts.** `get_valid_escape_key/2` in `edlin_key` follows
+the first three rules, and `edlin` the other four:
+
+1. The end of its input only makes it wait: it answers
+   `{escape_prefix, State}` wherever one more character can still
+   continue a sequence, after `ESC O` and after the digits and semicolons
+   of a CSI sequence too. Stock ends the key after `ESC O` and after
+   `ESC [` and one digit (`edlin_key.erl:35-38`, `:53`), and after more
+   digits answers `{mode, {csi, Acc}}` (`:50`), for which `edlin:edit/5`
+   has no clause. A digit or semicolon continues a CSI sequence only
+   while the sequence holds fewer than 15 characters, `ESC [` included;
+   past that it cannot continue it, so rule 2 ends the sequence there as
+   an invalid key and reads the character again, as text. Stock
+   accumulates every digit and semicolon (`:97`, `:103-104`), so `ESC [`
+   and an endless run of digits would grow the group's state with no
+   line ever ending. With the bound the editor holds at most 15
+   characters of an unfinished key and a complete key has at most 16, a
+   `shell_keymap` entry longer than that is refused as rule 3 refuses any
+   entry that is not one key, and the longest keys of the default keymap,
+   such as `ESC [ 1 ; 5 C` (`:260-300`), have 6.
+2. A character that cannot continue a sequence ends it as an invalid key
+   and is read again: the clauses after `ESC` (`:71`), `ESC ESC` (`:77`),
+   `ESC O` (`:82`), `ESC ESC [` (`:87`), `ESC [` (`:93`), a CSI semicolon
+   (`:98`) and a CSI digit (`:100-106`) each answer
+   `{invalid, Acc, [C | Rest]}`, as stock does only for `m` (`:105`).
+   Stock takes the character into the invalid key, so `ESC O` and then NL
+   is one invalid key and the line does not end; after a CSI digit it has
+   no clause for a character outside `!` to `~`, so `ESC [ 3` and a NL
+   arriving together crash its parser. With the edit, `ESC` and then a
+   space or `é` likewise drops the `ESC` and inserts the character.
+3. A complete key ends at its last character, where stock takes one more
+   `~` into it (`:108-111`). With stock, `ESC [ A ~` arriving together is
+   one unbound key that loses the `~`, and a `shell_keymap` entry
+   `ESC [ H ~`, which characters arriving apart can never match, passes
+   the check of the keymap (`:124-133`); with the edit that check refuses
+   it, as it refuses any entry that is not one key.
+4. An escape prefix keeps the `tab_expand` mode, where stock leaves for
+   `normal` at once (`edlin.erl:314`).
+5. A key that `tab_expand_quit` or `{mode, _}` hands to another mode is
+   read there again from its first character, the key and what follows
+   it, where stock reads again from the start of the last input
+   (`:364-365`, `:403-406`), which holds only the key's last character
+   when its characters arrive apart.
+6. `new_line`, the default binding of `ESC` and then NL or CR
+   (`edlin_key.erl:204-205`), adds its redraw to the requests gathered
+   before it in their order, as `redraw_line` does (`edlin.erl:382-385`).
+   Stock reverses the gathered requests there (`:375-377`), so with `ab`,
+   `ESC` and NL arriving together it asks for the redraw and then the
+   inserts of `b` and `a`, and arriving apart for the inserts of `a` and
+   `b` and then the redraw.
+7. A line holds at most 65,536 codepoints, all its lines together, and
+   a grapheme cluster of it at most 32: an operation whose result would
+   hold more is answered as `beep` is (`edlin.erl:640-641`), leaving the
+   line as it was. The unit is the codepoint, not the element of
+   `edlin`'s line. An element is a grapheme cluster, into which an insert
+   merges a combining character with `string:to_graphemes([Bef, C])`
+   (`:428-439`), so a count of elements would take `a` followed by a
+   megabyte of U+0301 as one, and each merge costs time in the length of
+   the cluster it joins; the cluster bound keeps that merge within 32
+   codepoints. The count is kept in the editor's continuation beside the
+   line, not taken again from the line at each key: an insert, the
+   operation of each typed character, adds the one codepoint it inserts, so
+   it costs the same time however long the line is, and any other
+   operation counts the line it returns with `cp_len/1` (`:903-908`), in
+   time bounded by the line's own bound; a continuation made from a
+   whole line, at the start and from history, counts it once. Every
+   change to the line is an operation of `do_op/3` (`:426-643`), which
+   `edit/5` calls for each key (`:342`, `:413`), and both bounds are
+   checked around that call, so no operation is listed.
+   A character typed past the bound is dropped with a bell, as FreeBSD's
+   `ttydisc_rint` drops a byte that finds the input queue full and rings
+   the bell under `IMAXBEL` (`sys/kern/tty_ttydisc.c:1220-1236`), and
+   erXos's tty does for a cooked line
+   ([design-live.md](design-live.md#the-tty)). Stock grows the line with
+   every character, so a paste or a peer that sends megabytes with no
+   newline grows the group without end. The bound is above rc's 4 KiB
+   unit, since a codepoint takes at least a byte, so a line the editor
+   cut never runs as rc's: its parser refuses it as `line too long`
+   ([design-shell.md](design-shell.md#failure-handling-diagnostics-and-debuggability)).
+   It is the editor's own bound and is not tied to the 64 KiB in bytes
+   that `erx_cmd:read_line/1` puts on a line a command reads from its
+   standard input, which the editor's line never reaches.
+   A heap limit on the group would bound it too, but would end the
+   session's console, and every shell on it, at a paste, where a
+   terminal drops what does not fit and goes on.
+
+`edlin` already keeps an escape prefix from one call to the next for
+`ESC`, `ESC ESC` and `ESC [` (`edlin_key.erl:52-56`), so with the edit
+`edlin` gives a key the same action in every mode whether its characters
+arrive in one call or one per call, as libedit's `read_getcmd` reads on
+while what it has read leads a bound sequence (`contrib/libedit/read.c:255-270`,
+at FreeBSD commit `95719d8a`). The edit leaves `group` alone, whose
+clauses for a history key and for the end of a search drop what follows
+the key in the same call; a session's console, which hands its group one
+character per answer, gives them nothing to drop unless a
+`shell_keymap` binds one of those keys to a character from U+0080 to
+U+00FF
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+
+Seventy-six edits outside `sys/erxos`, in seventy-six named files outside
 the JIT's directory, in the JIT's directory and in asmjit's `VirtMem`;
 the interpreter build, and so the system and interpreter images, is
 built without the last two. Nothing in `erl_ptab.c`: processes take their pids as stock
@@ -2363,8 +2463,10 @@ holding an executor. While another process holds the registered name
 `erx_tty_owner`, the two functions trap (edit 35) to `erx_output:write/2`, in
 `kernel`, which monitors the owner, sends it `{tty_write, From, Ref, Bytes}` and
 waits in `receive` for the answer, the shape of `standard_error`'s `put_chars`
-over `prim_tty:write/3` (`standard_error.erl:200`, `prim_tty.erl:544`). The owner
-depends on the domain:
+over `prim_tty:write/3` (`standard_error.erl:200`, `prim_tty.erl:544`). The
+owner holds no other registered name, since a process can hold only one
+(`register.c:216-218`), and its other callers reach it by this name or by its
+pid. The owner depends on the domain:
 
 | The domain | `erx_tty_owner` | What it does with the bytes |
 | --- | --- | --- |
@@ -2427,7 +2529,7 @@ refused there). A driver is a module with `start_link(Console) -> {ok, Pid, Term
 where `Terminal` says whether a person's terminal is on the line, which it always
 is for a UART. With none, as `user_drv` does, the shell's group is `dumb` and
 `prim_tty`'s output raw, so a pipe gets bytes with no editing or echo. Both drivers
-speak the same messages:
+speak these messages:
 
 | Message | Direction | Meaning |
 | --- | --- | --- |
@@ -2436,6 +2538,23 @@ speak the same messages:
 | `{erx_console_input, Bytes}` | to `erx_console` | bytes as read, in order, cut anywhere |
 | `{erx_console_size, Columns, Rows}` | to `erx_console` | the line's size is known or has changed; `erx_console` ignores a side outside 1 to 65,535 |
 | `erx_console_eof` | to `erx_console` | input has ended, after every byte read before it |
+
+They send input as it arrives, since nothing else reads their line, and
+`erx_console` passes it to its current group, which holds what it has not
+asked for, as stock's group holds a driver's data. A session's terminal
+relay is the line driver of a console of the session role for output and
+size alone: that console reads its input from the tty through an open of
+the relay, as every reader of the tty does, one byte at a time and only
+for its current group's outstanding ask (edit 72), each read's answer
+taken as a message in order with the relay's events, and it answers the
+ask with the characters the bytes read complete, holding the bytes of a
+character not yet complete for the group they were read for, so the
+relay sends it no
+`erx_console_input` and no `erx_console_eof`. It names its current group
+to the relay at its start and at each change, with `{console_group,
+Group}`, so that the relay's events name the group they were made for.
+The system console ignores its groups' asks
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
 
 `-user erx_console` holds against `-noshell` and `-noinput`, which `erx_console`
 reads: it starts no shell's group and gives `user` the input. A console whose driver
@@ -2461,7 +2580,16 @@ The rest goes to the shell's group as UTF-8, with a character cut across two rea
 held until its end arrives and a byte that belongs to no character read as latin-1,
 as `prim_tty`'s reader does. `erx_console:input/2` is that decision, a pure function
 with a fuzz target. `Ctrl-\` is an ordinary byte on this path, as on any raw
-terminal.
+terminal. A console of the session role takes no byte out: its tty's `ISIG`
+makes `Ctrl-C` and `Ctrl-Z` the line discipline's signals, which the relay
+sends it as `{erx_tty_event, Group, interrupt}` and `{erx_tty_event,
+Group, suspend}`, `Group` being the group it had named when the key was
+typed. It acts on those as on the two bytes here, but for `Group` rather
+than its current group, and drops one whose group has ended. The bytes
+of a cut character it holds belong to the group they were read for,
+across that group's asks; every signal for that group drops them,
+since the signal flushed the input typed with them, and so do the
+group's end of file and its end; it has no menu ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
 
 `erx_stdio` is an Erlang process of `erx` over `erx_stdio_nif`. A worker
 thread of the NIF, blocked in `poll`, reads standard input into a buffer and
@@ -3522,8 +3650,13 @@ message reaches it as an unknown one and is dropped:
   each Erlang command or `rc` script the program starts. `Start` is the
   program's startup message
   ([design-programs.md](design-programs.md#the-startup-message)) with its
-  streams relayed, and `Relay` must be a pid of `D` by `erx:owner/1`,
-  since the answers go to it. The server makes a new alias for the run,
+  streams relayed: each descriptor is `{relayed, read}`, `{relayed,
+  write}`, `{relayed, read_write}`, `{relayed, write, tty}` or `null`,
+  the mode the stream relay's own end or open allows, and `tty` when
+  that open is of the session's terminal, which the ABI file declares
+  beside the startup message and the validator checks
+  ([design-programs.md](design-programs.md#the-startup-message)). `Relay` must be a pid of `D` by
+  `erx:owner/1`, since the answers go to it. The server makes a new alias for the run,
   spawns the run with `erx_job:spawn/1`, so under a new tag that neither
   the server nor any other run carries ([Scheduling](#scheduling)),
   monitors it, and answers `Relay` `{erx_run, Alias, Run}`, `Run` the
@@ -3531,6 +3664,20 @@ message reaches it as an unknown one and is dropped:
   `Start` names and runs either `rc` with a script or one Erlang command
   with exactly those capabilities in its context, and exits with its
   status as its reason: the command's result or `rc`'s `$status`. A
+  read of a stream named `write` never leaves the domain: `erx_cmd`
+  answers it itself and ends the command with status `ebadf`, which is
+  how a command there that reads a terminal on its standard input ends,
+  the stream relay's open of the terminal being a write-only one
+  ([design-programs.md](design-programs.md#what-a-program-can-start)). A
+  stream named `{relayed, write, tty}` is the terminal to
+  `erx_cmd:isatty/2`, so a command there that shows names, as `ls`
+  does, hides the characters that do not print as it does at the
+  session's own terminal and sends no file name's escape sequences to
+  the operator's terminal; `erx_cmd:columns/1` and `erx_cmd:rows/1` there
+  answer `COLUMNS` and `LINES` from `Start`'s environment, else
+  `unknown`, and the terminal calls `erx_cmd:tty/2` and `watch/1` answer
+  `{error, enotty}`, since no terminal call reaches the terminal from a
+  command domain. A
   `Start` the validator refuses, which only a bug in the session can
   produce, is answered `{erx_run_refused, Reason}` and runs nothing.
 * `{erx_job, Action}`, taken only at a run's alias, so only from the one
@@ -3793,6 +3940,8 @@ Everything not listed behaves as stock OTP 29.1.2.
 | `file`, `prim_file` | the release file system read-only at `/`, EROFS images read-only where a release mounts them, a RAM file system at `/tmp` ([Files](#files)) |
 | `gen_tcp`, `gen_udp`, `inet`, `socket`, `net` | served by the network service through the domain's grant of it ([design-network-stack.md](design-network-stack.md#the-interface-towards-erlang-programs)): `gen_tcp`, `gen_udp` and `inet` reach it through the `erx` socket backend, `erx_gen_tcp` and `erx_gen_udp`, which is the default `inet_backend` (edit 54); `socket` and `net` through an Erlang `prim_socket` speaking the same protocol, and until that lands `socket:open` answers `{error, enotsup}`, a documented difference with a test; without a grant, `{error, eacces}`, as POSIX's `socket` answers a refused protocol; where stock's result depends on Linux beneath it, FreeBSD's, each a documented difference with a test |
 | `gen_sctp` | `{error, enotsup}`: the network stack has no SCTP |
+| `io:get_line`, `io:get_chars`, `io:get_password`, `io:read`, `io:fread` and every other input request, and `io:setopts`, sent to a command shell's group, the group leader of the commands it runs, by any process but that shell | `{error, enotsup}`, where stock's group would read the terminal: a command reads its standard input through `erx_cmd` (edit 74, [design-shell.md](design-shell.md#compatibility-and-migration)); in the Erlang shell, `erl`, they read as on stock |
+| `{requests, Reqs}` sent to any group, `Reqs` holding an input request or a `setopts` | `{error, request}`, where stock's group exits with `case_clause` and takes its shell with it (edit 74) |
 | `node/0`, `node/1`, `nodes/0,1`, `erlang:system_info(creation)` | stock semantics: the domain is the node `<id>@<host>` with its domain id as creation, a pid's node is its domain's, and `nodes()` lists the domains this domain is connected to ([Connections in ERTS](#connections-in-erts)) |
 | distribution | `net_kernel` runs in every domain with the `erx` carrier, no port mapper and no cookie; a send, link, monitor or spawn toward a domain this domain has no connection with behaves as toward a node that cannot be reached, since `erx_dist` makes no connection; `monitor_node/2`, `net_kernel:monitor_nodes/1` and `erlang:disconnect_node/1` keep their stock semantics; an exposed domain reaches other machines over the network service under the same name ([design-domains.md](design-domains.md#domain-ids-pids-and-references)) |
 | `net_ticktime`, `net_kernel:set_net_ticktime/1,2`, the `net_tick_timeout` reason | a connection between domains has no tick supervision: the carrier reports no ticks, `net_kernel`'s tick timer does not apply to it, and a peer silent past `net_ticktime`, or starved of CPU that long, stays connected ([Connections in ERTS](#connections-in-erts)); the settings keep their stock meaning for the connections of other carriers |

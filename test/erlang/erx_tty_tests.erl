@@ -13,6 +13,11 @@
 -module(erx_tty_tests).
 -include_lib("eunit/include/eunit.hrl").
 
+%% The room the relay has for the master when it holds nothing for it.
+-define(ROOM, 4096).
+-define(FREE, {?ROOM, 0, false}).
+-define(STOPPED, {?ROOM, 0, true}).
+
 %%% Cases
 
 defaults_are_freebsds_test() ->
@@ -24,40 +29,65 @@ defaults_are_freebsds_test() ->
                    veol := 255}, maps:get(cc, Termios)).
 
 a_cooked_line_is_edited_echoed_and_read_whole_test() ->
-    {Actions, Tty} = erx_tty:input(<<"ab", 127, "c\r">>, erx_tty:new()),
+    {Actions, Tty} = input(<<"ab", 127, "c\r">>, erx_tty:new()),
     ?assertEqual([{echo, <<"ab\b \bc\r\n">>}], Actions),
     ?assertEqual(3, erx_tty:waiting(Tty)),
     ?assertMatch({{ok, <<"ac\n">>}, _}, erx_tty:read(r, 64, Tty)).
 
 a_partial_line_is_not_read_test() ->
-    {_, Tty} = erx_tty:input(<<"ab">>, erx_tty:new()),
+    {_, Tty} = input(<<"ab">>, erx_tty:new()),
     ?assertMatch({eagain, _}, erx_tty:read(r, 64, Tty)).
 
 veof_ends_a_line_and_alone_is_end_of_file_test() ->
-    {[{echo, Echo}], Tty} = erx_tty:input(<<"ab", 4, 4>>, erx_tty:new()),
+    {[{echo, Echo}], Tty} = input(<<"ab", 4, 4>>, erx_tty:new()),
     ?assertEqual(<<"ab^D\b\b^D\b\b">>, Echo),
     {{ok, <<"ab">>}, Tty1} = erx_tty:read(r, 64, Tty),
-    ?assertMatch({{ok, <<>>}, _}, erx_tty:read(r, 64, Tty1)).
+    {eof, Tty2} = erx_tty:read(r, 64, Tty1),
+    ?assertMatch({eagain, _}, erx_tty:read(r, 64, Tty2)).
+
+a_signal_key_stops_input_and_returns_the_rest_test() ->
+    Tty = erx_tty:new(),
+    {Actions, <<"ls\n">>, _, Tty1} = erx_tty:input(<<"ab", 3, "ls\n">>, ?FREE, Tty),
+    ?assertEqual([{echo, <<"ab">>}, flush_output, {echo, <<"^C">>}, {signal, sigint}], Actions),
+    ?assertEqual(0, erx_tty:waiting(Tty1)),
+    {[{echo, <<"ls\r\n">>}], <<>>, _, Tty2} = erx_tty:input(<<"ls\n">>, ?FREE, Tty1),
+    ?assertMatch({{ok, <<"ls\n">>}, _}, erx_tty:read(r, 64, Tty2)),
+    %% A waiting read is not reported the bytes after the key.
+    {[], Waiting} = erx_tty:read_wait(r, 4096, Tty),
+    {[flush_output, {echo, <<"^C">>}, {signal, sigint}], <<"x\n">>, _, _} =
+        erx_tty:input(<<3, "x\n">>, ?FREE, Waiting),
+    %% VSTATUS is no signal, and input goes on past it.
+    {[info, {echo, <<"x">>}], <<>>, _, _} = erx_tty:input(<<20, "x">>, ?FREE, Tty),
+    %% Without ISIG the key is data.
+    {_, <<>>, _, Raw} = erx_tty:input(<<3, "y">>, ?FREE, raw(1, 0)),
+    ?assertMatch({{ok, <<3, "y">>}, _}, erx_tty:read(r, 64, Raw)).
+
+a_short_raw_read_goes_on_at_its_count_test() ->
+    {[], W} = erx_tty:read_wait(r, 1, raw(10, 0)),
+    {[{ready, r}], W1} = input(<<"a">>, W),
+    ?assertMatch({{ok, <<"a">>}, _}, erx_tty:read(r, 1, W1)),
+    {[], V} = erx_tty:read_wait(r, 4096, raw(10, 0)),
+    ?assertMatch({[], _}, input(<<"a">>, V)).
 
 kill_and_word_erase_test() ->
-    {_, Tty} = erx_tty:input(<<"one two  ", 23, "x", 21, "z\n">>, erx_tty:new()),
+    {_, Tty} = input(<<"one two  ", 23, "x", 21, "z\n">>, erx_tty:new()),
     ?assertMatch({{ok, <<"z\n">>}, _}, erx_tty:read(r, 64, Tty)),
-    {_, Tty1} = erx_tty:input(<<"one two  ", 23, "\n">>, erx_tty:new()),
+    {_, Tty1} = input(<<"one two  ", 23, "\n">>, erx_tty:new()),
     ?assertMatch({{ok, <<"one \n">>}, _}, erx_tty:read(r, 64, Tty1)).
 
 vstatus_gives_info_keeps_the_line_and_echoes_nothing_test() ->
-    {Actions, Tty} = erx_tty:input(<<"ab", 20>>, erx_tty:new()),
+    {Actions, Tty} = input(<<"ab", 20>>, erx_tty:new()),
     ?assertEqual([{echo, <<"ab">>}, info], Actions),
-    {_, Tty1} = erx_tty:input(<<"\r">>, Tty),
+    {_, Tty1} = input(<<"\r">>, Tty),
     ?assertMatch({{ok, <<"ab\n">>}, _}, erx_tty:read(r, 64, Tty1)),
-    {[{echo, <<"^T">>}], _} = erx_tty:input(<<20>>, with([], [iexten], erx_tty:new())).
+    {[{echo, <<"^T">>}], _} = input(<<20>>, with([], [iexten], erx_tty:new())).
 
 intr_flushes_echoes_and_signals_test() ->
-    {_, Tty} = erx_tty:input(<<"ab\rcd">>, erx_tty:new()),
-    {Actions, Tty1} = erx_tty:input(<<3>>, Tty),
+    {_, Tty} = input(<<"ab\rcd">>, erx_tty:new()),
+    {Actions, Tty1} = input(<<3>>, Tty),
     ?assertEqual([flush_output, {echo, <<"^C">>}, {signal, sigint}], Actions),
     ?assertEqual(0, erx_tty:waiting(Tty1)),
-    {_, Tty2} = erx_tty:input(<<3>>, with([noflsh], [], Tty)),
+    {_, Tty2} = input(<<3>>, with([noflsh], [], Tty)),
     ?assertEqual(3, erx_tty:waiting(Tty2)).
 
 a_crlf_is_never_split_test() ->
@@ -77,51 +107,142 @@ output_flags_test() ->
     Tty = with([tab3, onoeot, onocr, ocrnl], [], erx_tty:new()),
     ?assertMatch({6, <<"ab      \n">>, _}, erx_tty:output(<<"\rab\t", 4, "\r">>, 64, Tty)).
 
+%% The owner records output stopped and passes it in the room; input/3
+%% returns the room with it as its keys left it.
 ixon_stops_and_starts_output_test() ->
-    {[stop_output], Stopped} = erx_tty:input(<<19>>, erx_tty:new()),
-    ?assertMatch({0, <<>>, _}, erx_tty:output(<<"x">>, 64, Stopped)),
-    {[start_output], Started} = erx_tty:input(<<17>>, with([], [ixany], Stopped)),
-    ?assertMatch({1, <<"x">>, _}, erx_tty:output(<<"x">>, 64, Started)),
+    Tty = erx_tty:new(),
+    ?assertMatch({[stop_output], <<>>, {_, 0, true}, _}, erx_tty:input(<<19>>, ?FREE, Tty)),
+    %% With IXANY the key starts output before it stops it again.
+    ?assertMatch({[start_output, stop_output], <<>>, {_, 0, true}, _},
+                 erx_tty:input(<<19>>, ?STOPPED, Tty)),
+    Strict = with([], [ixany], Tty),
+    ?assertMatch({[], <<>>, {_, 0, true}, _}, erx_tty:input(<<19>>, ?STOPPED, Strict)),
+    ?assertMatch({[start_output], <<>>, {_, 0, false}, _}, erx_tty:input(<<17>>, ?STOPPED, Strict)),
+    ?assertMatch({[], <<>>, {_, 0, false}, _}, erx_tty:input(<<17>>, ?FREE, Strict)),
+    %% With VSTOP and VSTART the same, the key toggles (tty_ttydisc.c:1141-1159).
+    Toggle = erx_tty:termios(Strict),
+    {ok, _, Same} = erx_tty:set(Toggle#{cc := (maps:get(cc, Toggle))#{vstart := $\^S}}, Strict),
+    ?assertMatch({[stop_output, start_output], <<>>, {_, 0, false}, _},
+                 erx_tty:input(<<19, 19>>, ?FREE, Same)),
+    %% Output stopped takes bytes as any output does; the owner holds them.
+    ?assertMatch({1, <<"x">>, _}, erx_tty:output(<<"x">>, 64, Tty)),
     %% IXANY: any key restarts output, and is itself input.
-    {[start_output, {echo, <<"q">>}], _} = erx_tty:input(<<"q">>, Stopped),
-    %% A signal from a key, VSTATUS and a new size start it too, as on FreeBSD.
-    Strict = with([], [ixany], Stopped),
-    {[start_output, flush_output, {echo, <<"^C">>}, {signal, sigint}], _} = erx_tty:input(<<3>>, Strict),
-    {[start_output, info], _} = erx_tty:input(<<20>>, Strict),
+    ?assertMatch({[start_output, {echo, <<"q">>}], <<>>, {_, 0, false}, _},
+                 erx_tty:input(<<"q">>, ?STOPPED, Tty)),
+    %% A signal from a key and VSTATUS start it too, as on FreeBSD, and a
+    %% new size starts it whatever the owner holds (tty.c:1536-1538, :1646).
+    ?assertMatch({[start_output, flush_output, {echo, <<"^C">>}, {signal, sigint}], <<>>, _, _},
+                 erx_tty:input(<<3>>, ?STOPPED, Strict)),
+    ?assertMatch({[start_output, info], <<>>, _, _}, erx_tty:input(<<20>>, ?STOPPED, Strict)),
+    ?assertMatch({[flush_output, {echo, <<"^C">>}, {signal, sigint}], <<>>, _, _},
+                 erx_tty:input(<<3>>, ?FREE, Strict)),
     {ok, [start_output, winch], _} = erx_tty:size(30, 100, Strict).
 
-echo_of_one_input_is_bounded_test() ->
-    Keys = <<(binary:copy(<<"a">>, 2048))/binary, (binary:copy(<<18>>, 2048))/binary>>,
-    {Actions, _} = erx_tty:input(Keys, erx_tty:new()),
-    Echo = iolist_to_binary([Bytes || {echo, Bytes} <- Actions]),
-    ?assert(byte_size(Echo) =< 16384 + 8).
+%% A signal's flush empties what the owner holds for the master, so the
+%% key's echo and the bytes after it have the whole room again, whatever
+%% was left before, as ttydisc_rint flushes before it echoes the key
+%% (tty_ttydisc.c:1128-1130), all but the output the master has not taken.
+%% With NOFLSH nothing is flushed, and the room stays as the echo left it.
+a_flush_gives_the_room_back_test() ->
+    Full = erx_tty:master_room(),
+    {Actions, <<"x">>, Left, Tty} = erx_tty:input(<<"ab", 3, "x">>, {0, 0, false}, erx_tty:new()),
+    ?assertEqual([flush_output, {echo, <<"^C">>}, {signal, sigint}], Actions),
+    ?assertEqual({Full - 2, 0, false}, Left),
+    ?assertMatch({[{echo, <<"x">>}], <<>>, _, _}, erx_tty:input(<<"x">>, Left, Tty)),
+    Kept = with([noflsh], [], erx_tty:new()),
+    ?assertMatch({[{signal, sigint}], <<>>, {0, 0, false}, _}, erx_tty:input(<<"ab", 3>>, {0, 0, false}, Kept)),
+    ?assertMatch({[{echo, <<"a">>}, {signal, sigint}], <<>>, {0, 0, false}, _},
+                 erx_tty:input(<<"a", 3>>, {1, 0, false}, Kept)),
+    %% Output sent and not taken stays: the flush gives back the rest.
+    ?assertMatch({[flush_output, {echo, <<"^C">>}, {signal, sigint}], <<>>, {94, 4000, false}, _},
+                 erx_tty:input(<<3>>, {0, 4000, false}, erx_tty:new())),
+    ?assertMatch({[flush_output, {signal, sigint}], <<>>, {1, 4095, false}, _},
+                 erx_tty:input(<<3>>, {0, 4095, false}, erx_tty:new())).
+
+%% The retyped line ends at its first piece that does not fit: with room
+%% for "^R", CR-LF, "a" and one byte more, ^A's two bytes end the walk,
+%% and the "b" after it, which FreeBSD's queue would still take, is not
+%% echoed.
+a_reprint_ends_at_its_first_dropped_piece_test() ->
+    {_, Typed} = input(<<"a", 1, "b">>, erx_tty:new()),
+    ?assertMatch({[{echo, <<"^R\r\na">>}], <<>>, {1, 0, false}, _}, erx_tty:input(<<18>>, {6, 0, false}, Typed)),
+    ?assertMatch({[{echo, <<"^R\r\na^Ab">>}], <<>>, {0, 0, false}, _}, erx_tty:input(<<18>>, {8, 0, false}, Typed)),
+    %% With ECHO clear nothing echoes, and the line is not walked: 4 KiB of
+    %% VREPRINT after a full line makes no action, within a bound on
+    %% heap and work that a walk of the line per key, or an action per
+    %% character, passes: the case takes 0.7 M reductions.
+    {_, Quiet} = input(binary:copy(<<"a">>, 4095), with([], [echo], erx_tty:new())),
+    ?assertMatch({[], _}, bounded(fun() -> input(binary:copy(<<18>>, 4096), Quiet) end)).
+
+%% 2,048 bytes of the line, then 2,052 for each VREPRINT ("^R", CR-LF and
+%% the line): the first cut where the room ends, and nothing after it.
+echo_takes_only_its_room_test() ->
+    Keys = <<(binary:copy(<<"a">>, 2048))/binary,
+             (binary:copy(<<18>>, 2048))/binary>>,
+    {Actions, _} = input(Keys, erx_tty:new()),
+    ?assertEqual(?ROOM, byte_size(echoed(Actions))),
+    {[], _} = input(<<"x">>, 0, erx_tty:new()).
+
+%% With NOFLSH each VINTR ends a call and keeps the line, so a master that
+%% sends VREPRINT and VINTR over and over, and reads nothing, makes many
+%% calls; their echo together still fits the one room. Room given again,
+%% once the master reads, echoes again.
+echo_across_calls_takes_one_room_test() ->
+    Tty = with([noflsh], [], erx_tty:new()),
+    Keys = <<(binary:copy(<<"a">>, 1000))/binary,
+             (binary:copy(<<18, 3>>, 200))/binary>>,
+    {Actions, Typed} = input(Keys, Tty),
+    ?assertEqual(?ROOM, byte_size(echoed(Actions))),
+    ?assertEqual(200, length([S || {signal, S} <- Actions])),
+    ?assertMatch({[{echo, <<"x">>}], _}, input(<<"x">>, 1, Typed)).
+
+%% A piece of echo that does not fit is dropped whole, and a smaller one
+%% after it still fits, as ttyoutq_write_nofrag drops only what it cannot
+%% take: ^A is two bytes, a is one.
+a_piece_that_does_not_fit_is_dropped_alone_test() ->
+    ?assertMatch({[{echo, <<"a">>}], _}, input(<<1, "a">>, 1, erx_tty:new())).
+
+%% A full line of 4,095 bytes, then four bells for the bytes that do not
+%% fit and 1,364 visual erases of 3 bytes fill the whole room exactly; the
+%% next byte is stored but not echoed.
+echo_at_its_bound_test() ->
+    {_, Full} = input(binary:copy(<<"a">>, 4095), erx_tty:new()),
+    Keys = <<"aaaa", (binary:copy(<<127>>, 1364))/binary, "b">>,
+    {Actions, Tty} = input(Keys, Full),
+    Echo = echoed(Actions),
+    ?assertEqual(?ROOM, byte_size(Echo)),
+    ?assertEqual(<<7, 7, 7, 7, "\b \b">>, binary:part(Echo, 0, 7)),
+    ?assertEqual(<<"\b \b">>, binary:part(Echo, ?ROOM - 3, 3)),
+    {_, Ended} = input(<<"\n">>, Tty),
+    {{ok, Line}, _} = erx_tty:read(r, 8192, Ended),
+    ?assertEqual(<<(binary:copy(<<"a">>, 2731))/binary, "b\n">>, Line).
 
 input_beyond_its_bound_is_dropped_and_counted_test() ->
-    {Actions, Raw} = erx_tty:input(binary:copy(<<"a">>, 5000), raw(1, 0)),
+    {Actions, Raw} = input(binary:copy(<<"a">>, 5000), raw(1, 0)),
     ?assertEqual([], Actions),
     ?assertEqual({4096, 904}, {erx_tty:waiting(Raw), erx_tty:dropped(Raw)}),
     Quiet = with([], [echo], erx_tty:new()),
-    {Bells, Full} = erx_tty:input(binary:copy(<<"a">>, 4096), Quiet),
+    {Bells, Full} = input(binary:copy(<<"a">>, 4096), Quiet),
     ?assertEqual([{echo, <<7>>}], Bells),
-    {[], Ended} = erx_tty:input(<<"\n">>, Full),
+    {[], Ended} = input(<<"\n">>, Full),
     ?assertEqual(4096, erx_tty:waiting(Ended)).
 
 utf8_tab_and_covered_erase_test() ->
-    {_, Utf8} = erx_tty:input(<<"x", 16#c3, 16#a9>>, erx_tty:new()),
-    {[{echo, <<"\b \b">>}], Erased} = erx_tty:input(<<127>>, Utf8),
-    {_, Erased1} = erx_tty:input(<<"\n">>, Erased),
+    {_, Utf8} = input(<<"x", 16#c3, 16#a9>>, erx_tty:new()),
+    {[{echo, <<"\b \b">>}], Erased} = input(<<127>>, Utf8),
+    {_, Erased1} = input(<<"\n">>, Erased),
     ?assertMatch({{ok, <<"x\n">>}, _}, erx_tty:read(r, 64, Erased1)),
-    {_, Tab} = erx_tty:input(<<"a\t">>, erx_tty:new()),
-    {[{echo, <<"\b\b\b\b\b\b\b">>}], _} = erx_tty:input(<<127>>, Tab),
+    {_, Tab} = input(<<"a\t">>, erx_tty:new()),
+    {[{echo, <<"\b\b\b\b\b\b\b">>}], _} = input(<<127>>, Tab),
     %% Output written over the line since: the line is typed again.
-    {_, Typed} = erx_tty:input(<<"ab">>, erx_tty:new()),
+    {_, Typed} = input(<<"ab">>, erx_tty:new()),
     {1, _, Covered} = erx_tty:output(<<"x">>, 64, Typed),
-    {[{echo, <<"^R\r\na">>}], _} = erx_tty:input(<<127>>, Covered).
+    {[{echo, <<"^R\r\na">>}], _} = input(<<127>>, Covered).
 
 status_line_test() ->
     Line = <<"load: 0.00\n">>,
     {<<"load: 0.00\r\n">>, _} = erx_tty:status(Line, 256, erx_tty:new()),
-    {_, Typed} = erx_tty:input(<<"ab">>, erx_tty:new()),
+    {_, Typed} = input(<<"ab">>, erx_tty:new()),
     {<<"\r\nload: 0.00\r\n">>, _} = erx_tty:status(Line, 256, Typed),
     {<<>>, _} = erx_tty:status(Line, 255, erx_tty:new()),
     {<<>>, _} = erx_tty:status(binary:copy(<<"x">>, 300), 299, erx_tty:new()),
@@ -129,7 +250,7 @@ status_line_test() ->
 
 window_size_test() ->
     Tty = erx_tty:new(),
-    {ok, [winch], Tty1} = erx_tty:size(50, 132, Tty),
+    {ok, [start_output, winch], Tty1} = erx_tty:size(50, 132, Tty),
     ?assertEqual({50, 132}, erx_tty:winsize(Tty1)),
     {ok, [], _} = erx_tty:size(50, 132, Tty1),
     [?assertEqual({error, einval}, erx_tty:size(R, C, Tty))
@@ -149,38 +270,74 @@ set_checks_the_termios_whole_test() ->
     ?assertMatch(#{ispeed := 38400, lflag := [echo, isig]}, erx_tty:termios(Set)).
 
 switching_to_raw_makes_the_line_readable_test() ->
-    {_, Typed} = erx_tty:input(<<"ab">>, erx_tty:new()),
-    {[], Waiting} = erx_tty:read_wait(r, Typed),
+    {_, Typed} = input(<<"ab">>, erx_tty:new()),
+    {[], Waiting} = erx_tty:read_wait(r, 4096, Typed),
     {ok, [{ready, r}], Raw} = erx_tty:set(erx_tty:termios(raw(1, 0)), Waiting),
     ?assertMatch({{ok, <<"ab">>}, _}, erx_tty:read(r, 64, Raw)).
 
 %% POSIX's four cases, each driven event by event.
 vmin_and_vtime_test() ->
     %% VMIN 2, VTIME 0: ready at two bytes.
-    {[], W1} = erx_tty:read_wait(r, raw(2, 0)),
-    {[], W2} = erx_tty:input(<<"a">>, W1),
-    {[{ready, r}], W3} = erx_tty:input(<<"b">>, W2),
+    {[], W1} = erx_tty:read_wait(r, 4096, raw(2, 0)),
+    {[], W2} = input(<<"a">>, W1),
+    {[{ready, r}], W3} = input(<<"b">>, W2),
     {{ok, <<"ab">>}, _} = erx_tty:read(r, 64, W3),
-    %% VMIN 2, VTIME 1: the first byte starts a timer, each byte restarts it.
-    {[], T1} = erx_tty:read_wait(r, raw(2, 1)),
-    {[{timer_start, Timer1, 100}], T2} = erx_tty:input(<<"a">>, T1),
+    %% VMIN 3, VTIME 1: the first byte starts a timer, and later bytes keep
+    %% its deadline, as FreeBSD's interbyte timer does.
+    {[], T0} = erx_tty:read_wait(r, 4096, raw(3, 1)),
+    {[{timer_start, Timer1, 100}], T1} = input(<<"a">>, T0),
+    {[], T2} = input(<<"b">>, T1),
     {[], T2} = erx_tty:timer({r, 999}, T2),
     {[{ready, r}], T3} = erx_tty:timer(Timer1, T2),
-    {{ok, <<"a">>}, _} = erx_tty:read(r, 64, T3),
+    {{ok, <<"ab">>}, _} = erx_tty:read(r, 64, T3),
     %% VMIN 0, VTIME 1: the wait starts the timer; its end gives no bytes.
-    {[{timer_start, Timer2, 100}], E1} = erx_tty:read_wait(r, raw(0, 1)),
+    {[{timer_start, Timer2, 100}], E1} = erx_tty:read_wait(r, 4096, raw(0, 1)),
     {[{ready, r}], E2} = erx_tty:timer(Timer2, E1),
     {{ok, <<>>}, _} = erx_tty:read(r, 64, E2),
-    {[{timer_start, Timer3, 100}], F1} = erx_tty:read_wait(r, raw(0, 1)),
-    {[{timer_cancel, Timer3}, {ready, r}], _} = erx_tty:input(<<"a">>, F1),
+    {[{timer_start, Timer3, 100}], F1} = erx_tty:read_wait(r, 4096, raw(0, 1)),
+    {[{timer_cancel, Timer3}, {ready, r}], _} = input(<<"a">>, F1),
     %% VMIN 0, VTIME 0: at once, with whatever waits.
-    {[{ready, r}], Z} = erx_tty:read_wait(r, raw(0, 0)),
+    {[{ready, r}], Z} = erx_tty:read_wait(r, 4096, raw(0, 0)),
     {{ok, <<>>}, _} = erx_tty:read(r, 64, Z).
 
 hangup_readies_every_waiter_test() ->
-    {[], W} = erx_tty:poll_wait(p, element(2, erx_tty:read_wait(r, erx_tty:new()))),
+    {[], W} = erx_tty:poll_wait(p, element(2, erx_tty:read_wait(r, 4096, erx_tty:new()))),
     {[{ready, p}, {ready, r}], H} = erx_tty:hangup(W),
-    {{ok, <<>>}, _} = erx_tty:read(r, 64, H).
+    eof = element(1, erx_tty:read(r, 64, H)),
+    eof = element(1, erx_tty:read(r, 64, element(3, erx_tty:set(erx_tty:termios(raw(0, 0)), H)))).
+
+%% All of Bytes, as an owner feeds them with Room for the master: input/3
+%% again on what a signal key left untaken, with the room it returned,
+%% the actions joined in order.
+input(Bytes, Tty) -> input(Bytes, ?ROOM, Tty).
+
+input(Bytes, Room, Tty) when is_integer(Room) ->
+    input(Bytes, {Room, 0, false}, Tty);
+input(Bytes, Room, Tty) ->
+    case erx_tty:input(Bytes, Room, Tty) of
+        {Actions, <<>>, _, Tty1} -> {Actions, Tty1};
+        {Actions, Rest, Left, Tty1} ->
+            {More, Tty2} = input(Rest, Left, Tty1),
+            {Actions ++ More, Tty2}
+    end.
+
+echoed(Actions) -> iolist_to_binary([Bytes || {echo, Bytes} <- Actions]).
+
+%% Fun's value, from a process killed past a heap of 1 Mi words, and an
+% error if it took 10 M reductions or more.
+bounded(Fun) ->
+    Measured = fun() ->
+                       {reductions, Before} = process_info(self(), reductions),
+                       Value = Fun(),
+                       {reductions, After} = process_info(self(), reductions),
+                       exit({value, Value, After - Before})
+               end,
+    {Pid, Ref} = spawn_opt(Measured,
+                           [monitor, {max_heap_size, #{size => 1 bsl 20, kill => true}}]),
+    receive
+        {'DOWN', Ref, process, Pid, {value, Value, Work}} when Work < 10000000 -> Value;
+        {'DOWN', Ref, process, Pid, Reason} -> error({over_bound, Reason})
+    end.
 
 %%% Exploration
 
@@ -223,22 +380,23 @@ explore(Model, Keys, Depth, Path) ->
 
 events(#model{armed = Armed, stale = Stale}, Keys) ->
     [{input, <<Key>>} || Key <- Keys] ++
-        [{read_wait, r}, {read_wait, s}, {poll_wait, p}, {cancel, r},
+        [{read_wait, r, 4096}, {read_wait, s, 1}, {poll_wait, p}, {cancel, r},
          {read, r, 1}, {read, s, 64}, {output, <<"a\n\tb">>, 3}, toggle, hangup] ++
         [{timer, Timer} || Timer <- lists:sort(maps:keys(Armed))] ++
         [{timer, Timer} || Timer <- lists:sublist(Stale, 1)].
 
 step({input, <<Key>> = Bytes}, #model{tty = Tty, spec = Spec} = M, Path) ->
-    {Actions, Tty1} = erx_tty:input(Bytes, Tty),
+    {Actions, Rest, _, Tty1} = erx_tty:input(Bytes, {?ROOM, 0, Spec#spec.stopped}, Tty),
+    property(Rest =:= <<>>, one_byte_left_untaken, Path),
     Spec1 = spec_key(Key, Spec, erx_tty:termios(Tty)),
     check_keyed(Key, Actions, erx_tty:termios(Tty), Spec#spec.stopped, Path),
     M1 = acted(Actions, input, M#model{tty = Tty1, spec = Spec1}, Path),
-    check_interbyte(Spec, M1, Actions, Path),
+    check_interbyte(M, M1, Actions, Path),
     M1;
-step({read_wait, Open}, #model{tty = Tty} = M, Path) ->
-    {Actions, Tty1} = erx_tty:read_wait(Open, Tty),
+step({read_wait, Open, Count}, #model{tty = Tty} = M, Path) ->
+    {Actions, Tty1} = erx_tty:read_wait(Open, Count, Tty),
     acted(Actions, wait, (forget(Open, M))#model{tty = Tty1,
-        waiting = (M#model.waiting)#{Open => read}}, Path);
+        waiting = (M#model.waiting)#{Open => {read, Count}}}, Path);
 step({poll_wait, Open}, #model{tty = Tty} = M, Path) ->
     {Actions, Tty1} = erx_tty:poll_wait(Open, Tty),
     acted(Actions, wait, M#model{tty = Tty1, waiting = (M#model.waiting)#{Open => poll}}, Path);
@@ -265,11 +423,10 @@ step({read, Open, Max}, #model{tty = Tty, spec = Spec} = M, Path) ->
     {Want, Spec1} = spec_read(Max, Expired, Spec, erx_tty:termios(Tty)),
     property(Got =:= Want, read_differs, Path),
     M#model{tty = Tty1, spec = Spec1, expired = lists:delete(Open, M#model.expired)};
-step({output, Bytes, Room}, #model{tty = Tty, spec = Spec} = M, Path) ->
+step({output, Bytes, Room}, #model{tty = Tty} = M, Path) ->
     {Taken, Out, Tty1} = erx_tty:output(Bytes, Room, Tty),
     Opost = has(opost, erx_tty:termios(Tty)),
     property(byte_size(Out) =< Room, output_over_room, Path),
-    property(not Spec#spec.stopped orelse Taken =:= 0, output_while_stopped, Path),
     property(Opost orelse Out =:= binary:part(Bytes, 0, Taken), opost_clear_changes_bytes, Path),
     M#model{tty = Tty1};
 step(toggle, #model{tty = Tty, spec = Spec} = M, Path) ->
@@ -350,13 +507,20 @@ check_keyed(Key, Actions, Termios, Stopped, Path) ->
     property(not (Stopped andalso Signals =/= []) orelse lists:member(start_output, Actions),
              signal_left_output_stopped, Path).
 
-%% Bytes that arrive for a raw read with VMIN and VTIME above 0 restart its timer.
-check_interbyte(#spec{ready = Before}, #model{waiting = Waiting, spec = Spec} = M, Actions, Path) ->
+%% Bytes that arrive for a raw read with VMIN and VTIME above 0 start its
+%% timer when it has none and leave a running one alone: one deadline after
+%% the first byte, as FreeBSD's interbyte timer sets it.
+check_interbyte(#model{spec = #spec{ready = Before}, armed = Armed},
+                #model{waiting = Waiting, spec = Spec} = M, Actions, Path) ->
     #{cc := #{vmin := Min, vtime := Time}} = Termios = erx_tty:termios(M#model.tty),
     Arrived = not has(icanon, Termios) andalso length(Spec#spec.ready) > length(Before),
-    [property(lists:any(fun({timer_start, {O, _}, _}) -> O =:= Open; (_) -> false end, Actions),
-              interbyte_restart, Path)
-     || Arrived, Min > 0, Time > 0, {Open, read} <- maps:to_list(Waiting)],
+    Started = fun(Open) -> lists:any(fun({timer_start, {O, _}, _}) -> O =:= Open;
+                                        (_) -> false
+                                     end, Actions)
+              end,
+    [property(Started(Open) =/= lists:member(Open, maps:values(Armed)),
+              interbyte_deadline, Path)
+     || Arrived, Min > 0, Time > 0, {Open, {read, _}} <- maps:to_list(Waiting)],
     ok.
 
 property(true, _, _) -> ok;
@@ -477,9 +641,9 @@ spec_ready(Kind, #spec{ready = Ready}, #{cc := #{vmin := Min, vtime := Time}} = 
     case {has(icanon, Tm), Kind} of
         {true, _} -> spec_line(Ready, Tm) =/= none;
         {false, poll} -> length(Ready) >= 1;
-        {false, read} when Min =:= 0, Time =:= 0 -> true;
-        {false, read} when Min =:= 0 -> length(Ready) >= 1;
-        {false, read} -> length(Ready) >= Min
+        {false, {read, _}} when Min =:= 0, Time =:= 0 -> true;
+        {false, {read, _}} when Min =:= 0 -> length(Ready) >= 1;
+        {false, {read, Count}} -> length(Ready) >= min(Min, Count)
     end.
 
 %% How many timers a waiting read may have: one when raw with VTIME and VMIN
@@ -488,7 +652,7 @@ spec_ready(Kind, #spec{ready = Ready}, #{cc := #{vmin := Min, vtime := Time}} = 
 %% nothing and waits again.
 spec_timers(poll, _, _) ->
     [0];
-spec_timers(read, #spec{ready = Ready}, #{cc := #{vmin := Min, vtime := Time}} = Tm) ->
+spec_timers({read, _}, #spec{ready = Ready}, #{cc := #{vmin := Min, vtime := Time}} = Tm) ->
     Timed = not has(icanon, Tm) andalso Time > 0,
     if
         Timed, Min =:= 0; Timed, Ready =/= [] -> [1];
@@ -501,7 +665,8 @@ spec_read(Max, Expired, #spec{ready = Ready, hungup = Hungup} = Spec,
     case has(icanon, Tm) of
         true ->
             case spec_line(Ready, Tm) of
-                none when Hungup -> {{ok, <<>>}, Spec};
+                none when Hungup -> {eof, Spec};
+{[], true} -> {eof, Spec#spec{ready = tl(Ready)}};
                 none -> {eagain, Spec};
                 {Data, Eof} ->
                     Got = lists:sublist(Data, Max),
@@ -511,8 +676,10 @@ spec_read(Max, Expired, #spec{ready = Ready, hungup = Hungup} = Spec,
                            end,
                     {{ok, list_to_binary(Got)}, Spec#spec{ready = lists:nthtail(Gone, Ready)}}
             end;
+        false when Ready =:= [], Hungup ->
+            {eof, Spec};
         false when Ready =:= [] ->
-            case Hungup orelse (Min =:= 0 andalso (Time =:= 0 orelse Expired)) of
+            case Min =:= 0 andalso (Time =:= 0 orelse Expired) of
                 true -> {{ok, <<>>}, Spec};
                 false -> {eagain, Spec}
             end;
@@ -533,19 +700,12 @@ cc(Name, Char, #{cc := Chars}) ->
 with(Set, Cleared, Tty) ->
     Termios = erx_tty:termios(Tty),
     Changed = maps:map(fun(Field, Flags) when is_list(Flags) ->
-                               Known = table(Field),
+                               Known = erx_abi_termios:flags(Field),
                                (Flags -- Cleared) ++ [F || F <- Set, lists:member(F, Known)];
                           (_, Value) -> Value
                        end, Termios),
     {ok, _, Tty1} = erx_tty:set(Changed, Tty),
     Tty1.
-
-table(iflag) -> [brkint, icrnl, ignbrk, igncr, ignpar, imaxbel, inlcr, inpck, istrip, iutf8,
-                 ixany, ixoff, ixon, parmrk];
-table(oflag) -> [ocrnl, onlcr, onlret, onocr, onoeot, opost, tab3];
-table(cflag) -> [clocal, cread, cstopb, hupcl, parenb, parodd];
-table(lflag) -> [altwerase, echo, echoctl, echoe, echok, echoke, echonl, icanon, iexten, isig,
-                 noflsh, nokerninfo, tostop].
 
 %% As cfmakeraw leaves a tty, with VMIN and VTIME.
 raw(Min, Time) ->

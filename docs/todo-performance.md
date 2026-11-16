@@ -1104,3 +1104,4 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
 * **[Low] liberx, a page per open file.** `liberx/program/file.c` (`erx_prog_file_openat`): each file object is a run of its own from
   `erx_prog_pages_take`, a page and two kernel calls per open and one per last close, as each pipe end is.
   Settled by timing 1,000 opens and closes of one file against a static pool of `ERX_PROG_FDS_MAX` objects.
+* **[Low] shell, the console's one-byte reads.** The console reads one byte per ask while the group's line editor waits for a key ([design-shell.md](design-shell.md), the terminal relay), about six messages per typed byte. Settle it with the paste latency of 4 KiB at the prompt, under HVF at one CPU, against the same paste into a program that reads its tty raw; if it shows, the fix on the table is a read that answers every byte already buffered while the editor's state is plain insertion.
