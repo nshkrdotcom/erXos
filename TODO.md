@@ -154,13 +154,27 @@ it; git history is the record of completed work.
   design-stopgap.md, "An exec's entry"): not built are the exec record (`program_arg`'s `exec`, register
   7, and the `erx_exec_record` layout in `abi/erx_abi.txt`; the port driver's create, write and map of it,
   and the command server's keeping of the file's length), the loader's own C entry ahead of the helpers,
-  the exec entry, `erx_exec_release` in `liberx`'s start-up, the task script's base symbol and dynamic
-  sections, and the removal of `image` from the startup message (`abi/protocols/prog.txt`, the `image`
-  union). `load.c` plans the page-rounded view size, not the file's exact length (`load.c:92`, `:119`),
+  the exec entry, `erx_exec_release` with its span check in `program_task.c`'s `erx_task_main` before
+  `erx_fiasco_libc_start`, `ERX_FIASCO_TASK_STATUS_RELEASE`, the loader's failure path that releases its
+  record mapping and enters its start-up with the eighth argument 0, the port driver's release of its
+  own view of the record, the `{ok, Cap, Bytes}` reply to `{map, Path, code}` and the exec switch's
+  record, the task script's base symbol and dynamic sections, and the removal of `image` from the
+  startup message (`abi/protocols/prog.txt`, the `image` union). `load.c` plans the page-rounded view
+  size, not the file's exact length (`load.c:92`, `:119`); its rollback discards both releases'
+  statuses (`load.c:125`, `:130`), where a refused release is the terminal refused-cleanup outcome;
   and `load.h`'s comment says the executable releases the view, which the loader releases itself before
-  the transfer. Unverified until a probe link: whether today's archives built `-fPIE` link as static PIE
-  with the task script, whether the fixed link gets an empty `PT_DYNAMIC` header, and whether one
-  release removes the loader's whole span on the stopgap. The load trusts its object to be a sealed code
+  the transfer. The planner passes every dynamic tag it does not name (`elf_plan.c:179`) where the
+  design's list is closed, `abi/formats/elf64.txt` holds no such list (it names only the tags the
+  planner tests, none of the six constructor and destructor tags the static link writes), and a fixed file's empty `PT_DYNAMIC` fails `erx_elf_dynamic` with
+  `dynamic_terminator` (`elf_plan.c:644`, `:217`), so the shared task script's fixed link would be
+  refused by the stopgap's `erx_image_map` (`service_task.c:515`). The static link needs `-fPIE`
+  objects: musl's `libc.a` is built without it (`musl.rb`'s `CFLAGS`), so `vmlock.o` and `ofl.o` fail
+  the link, and `liberx`'s program objects without it fail with 344 absolute relocations in read-only
+  tables, mostly the generated `prog_profile.c`; `task.ld` names none of `.rela.dyn`, `.hash`,
+  `.gnu.hash`, `.dynsym`, `.dynstr` and `.dynamic`, which `--orphan-handling=error` then refuses. A
+  probe link with those fixed gave the design's shape (622 relocations, all relative); unverified are
+  `erx_elf_plan` over that link, a booted run, and whether one release removes the loader's whole span
+  on the stopgap. The load trusts its object to be a sealed code
   object: it checks neither, the stopgap maps a pool object read-execute, and the relocations are read
   again from the view, so a writer of an unsealed object could move them [Medium, security residual]; the
   exec record names only an object the command server sealed. `load.c` runs in no test yet: the

@@ -1077,7 +1077,8 @@ from the starting registers, and jumps to the entry.
 bootstrap") is linked as every task is, but its first instructions name its own C entry, which readies record 0 as
 `erx_fiasco_thread_first_init` does, so that its memory calls reach the service, and loads the executable before
 `erx_fiasco_task_main` would start the reaper and the dispatcher; it reaches that function only when the load fails,
-to report the failure as a program. On success its exec entry, a few instructions beside the trampoline, writes into
+to report the failure as a program, and then only after releasing its mapping of the exec record, with the eighth
+argument 0, so its own `erx_task_main` sees no loader behind it and never runs `erx_exec_release`. On success its exec entry, a few instructions beside the trampoline, writes into
 record 0 what the session's start wrote there: the eight starting arguments, the `program_arg` values with the
 exec record's address in the eighth, and the thread pointer 0. It then sets the stack pointer to record 0 and
 branches to the executable's entry, which is that executable's `_start` (`task_start.S:19-28`): `_start` stores its
@@ -1087,9 +1088,14 @@ a first start. The thread's UTCB already names record 0, and the thread records 
 address outside both images (`thread.c:96-100`), so the executable's `erx_fiasco_thread_first_init` readies the
 same record again. A C call of `_start` would leave the stack pointer on `erx_exec`'s stack, which `_start` would
 take for the record. The 256 KiB first stack `erx_exec` ran on is its own `task_stack_top`, in its data segment
-(`task_start.S:30-34`), and goes with its image's span when the executable's start-up releases it; a release the
-space refuses stops the task with a start-up status of its own, beside `ERX_FIASCO_TASK_STATUS_ENTROPY`
-(`task_start.h:20`). Neither image is ever entered twice, and the task never holds two reapers or two dispatchers.
+(`task_start.S:30-34`), and goes with its image's span when the executable's start-up releases it. That release
+is the executable's program entry's, `erx_task_main` (`program_task.c:341-346`), between `erx_prog_enter` and
+`erx_fiasco_libc_start`, so musl's start and the constructors it runs find the loader gone; the reaper and the
+dispatcher, which `erx_fiasco_task_main` starts first (`task_start.c:77`), are `liberx`'s and never touch either
+image's pages. A span `erx_exec_release` refuses, a release the space refuses, and `erx_exec`'s own refused
+cleanup all stop the task with one start-up status of their own, `ERX_FIASCO_TASK_STATUS_RELEASE`, beside
+`ERX_FIASCO_TASK_STATUS_ENTROPY` (`task_start.h:20`). Neither image is ever entered twice, and the task never holds
+two reapers or two dispatchers.
 
 **Musl's thread identifier.** `self->tid` is the index plus one: nonzero for `__tl_lock`'s `a_cas(.., 0, tid)`,
 and within the 30 bits `pthread_mutex_trylock.c:8-12` compares. The record is freed after the reaper's last step,
