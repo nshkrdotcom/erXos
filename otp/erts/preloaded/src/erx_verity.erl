@@ -21,8 +21,8 @@ the window out of it; what keeps every other module off the window is the
 build check `Erx::ErofsReads`, which refuses every naming of this module
 outside it but two:
 
-* the call `open/2` in the two modules that open an image, `erx_ns` and
-  `erx_storage_system`;
+* the call `open/2` in the one module of a release that opens an image,
+  `erx_storage_system`, on the `system` window with its layout;
 * the call `read/3` and the type `image()` in the reader, which mounts the
   handle they open, and whose other calls the check keeps to modules that
   reach no state.
@@ -48,8 +48,9 @@ calls only BIFs and preloaded modules, the SHA-256 built-ins of
 `erx_bytes` and `erx_verity_tree`, since it runs in whatever process reads
 a path, the code server included.
 
-The tree `unchecked` opens a window that has no layout, the image mounts
-of `erx_ns`, whose blocks pass through unchecked until the security
+The tree `unchecked` opens a window that has no layout, which no module of
+a release does: the tests and the medium boot's checkpoint mount images that
+way, whose blocks pass through unchecked until the security
 closure (docs/plan.md, M11).
 """.
 

@@ -2,7 +2,7 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% The windows on the booted slot's EROFS images (docs/design-storage.md, "Data model";
-%% docs/design-stopgap.md, "Image windows"): the block service's pure core for them, as
+%% docs/todo-system-partition.md, deletions): the block service's pure core for them, as
 %% erx_blk_table is for the partition table. erx_blk_service hands it the booted
 %% slot and the release's manifest, and starts a window for each window it returns.
 %%

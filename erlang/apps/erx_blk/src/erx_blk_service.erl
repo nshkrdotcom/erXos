@@ -21,10 +21,10 @@
 %% gives the system domain, of role
 %% {image, Name}, which erx_blk_image places from the slot and the manifest. A boot with
 %% no slot, an unknown boot, serves neither; so does a boot value the reader refuses,
-%% which is one line of the log, as is each image refused. mount_images/0, the
-%% supervisor's next child, mounts each image at /images/NAME
-%% (docs/design-stopgap.md, "Image windows"). In a storage domain, whose namespace holds
-%% no manifest, the read fails and no image is served, which is one line of the log.
+%% which is one line of the log, as is each image refused. Nothing mounts an image
+%% window: only erx_storage_system opens an image on a window, the `system` window with
+%% its layout (Erx::ErofsReads). In a storage domain, whose namespace holds no manifest,
+%% the read fails and no image is served, which is one line of the log.
 %%
 %% The windows are linked to the service, which does not trap exits, so a window that
 %% crashes takes the service and its other windows with it, and so, through erx_blk_sup,
@@ -40,14 +40,10 @@
 -module(erx_blk_service).
 -behaviour(gen_server).
 
--export([start_link/0, window/1, mount_images/0]).
+-export([start_link/0, window/1]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2]).
 
 -include("generated/erx_abi.hrl").
-
-%% Where the system domain's images mount, each under its manifest name (docs/design-stopgap.md,
-%% "Image windows").
--define(IMAGES_POINT, "/images/").
 
 %% The table is read after init/1 returns, so the boot does not wait on the device; a
 %% call made before then waits for it: at most the capacity and three reads, each bounded
@@ -67,32 +63,6 @@ window(Role) ->
     case whereis(?MODULE) of
         undefined -> {error, no_service};
         Pid -> try gen_server:call(Pid, {window, Role}, ?CALL_TIMEOUT) catch exit:_ -> {error, no_service} end
-    end.
-
-%% Mounts each image window at /images/NAME, read-only, and starts no process: the
-%% supervisor's child after the service, which a call reaches once the table is admitted.
-%% A mount that fails is one line of the log; erx_ns has logged the reader's diagnostic.
-%% A mount that exits, as erx_ns's call does when its process ends, is a line of the log
-%% too, so no mount stops the block driver's start and /data.
--spec mount_images() -> ignore.
-mount_images() ->
-    Images = case whereis(?MODULE) of
-                 undefined -> {error, no_service};
-                 Pid -> try gen_server:call(Pid, images, ?CALL_TIMEOUT) catch exit:_ -> {error, no_answer} end
-             end,
-    case Images of
-        {error, Reason} -> log("no image is mounted: ~0p", [Reason]);
-        _ -> lists:foreach(fun mount_image/1, Images)
-    end,
-    ignore.
-
-mount_image({Name, Window}) ->
-    Point = <<?IMAGES_POINT, Name/binary>>,
-    try erx_ns:mount({erofs, Window}, Point, []) of
-        ok -> log("image ~s mounted at ~s", [Name, Point]);
-        {error, Reason} -> log("image ~s is not mounted: ~0p", [Name, Reason])
-    catch
-        exit:_ -> log("image ~s is not mounted: the namespace did not answer", [Name])
     end.
 
 init([]) ->
@@ -192,10 +162,6 @@ handle_call({window, Role}, _From, State = {served, Windows}) ->
     end;
 handle_call({window, _Role}, _From, State = {refused, Reason}) ->
     {reply, {error, {refused, Reason}}, State};
-handle_call(images, _From, State = {served, Windows}) ->
-    {reply, [{Name, Pid} || {{image, Name}, Pid} <- maps:to_list(Windows)], State};
-handle_call(images, _From, State) ->
-    {reply, [], State};
 handle_call(_Other, _From, State) ->
     {reply, {error, badarg}, State}.
 

@@ -13,10 +13,13 @@
 %% table, change/2, which a session's handler can apply to a program's table as well;
 %% each is pure but for an image's mount, which reads the image.
 %%
-%% An EROFS image mounts from the block service's window on it, read-only: the change
-%% opens the image unchecked and mounts it with erx_erofs:mount/2 once the point and
+%% An EROFS image mounts read-only from the handle the module that opened it in
+%% erx_verity hands erx_ns: the change mounts it with erx_erofs:mount/2 once the point and
 %% options pass, and the entry holds that mount as its provider, so the table holds only
-%% mounts erx_ns made.
+%% mounts erx_ns made. erx_ns opens no image: in a release only the `system` tree's
+%% backend opens one, on the `system` window with its layout (Erx::ErofsReads), so no
+%% module reaches a window's blocks unchecked through erx_ns. Anything but an opened
+%% image fails at the reader's first read: the mount answers eio and logs why.
 %% A mount that fails answers its error, and its diagnostic goes to the kernel log, as
 %% does the diagnostic of every later operation that fails on the image.
 %%
@@ -66,16 +69,19 @@
 -type entry() :: #{point := [name()], provider := provider(), root := [name()], rights := rights()}.
 -type table() :: [entry()].
 -type option() :: {tree, binary()} | rights().
+%% An image erx_verity:open/2 answered, whose handle the reader takes; any other term
+%% fails at the reader's first read.
+-type image() :: term().
 -type reason() :: einval | enametoolong | enoent | eexist | ebusy | system_limit | file:posix().
 %% A change as the process receives it, from this module's functions or from any other
 %% process, so every field is checked before it changes anything. A bind's source is
 %% the place it reached, an absolute path of plain names.
--type request() :: {mount, To :: binary(), pid() | {erofs, Window :: pid()} | {facet, atom()}, [option()]}
+-type request() :: {mount, To :: binary(), pid() | {erofs, image()} | {facet, atom()}, [option()]}
                  | {bind, From :: binary(), To :: binary(), [] | [ro]}
                  | {unmount, To :: binary()}.
 %% A change once checked against the table, with its paths as plain names.
 -type checked() :: {mount, [name()], provider(), rights()}
-                 | {mount_image, [name()], Window :: pid()}
+                 | {mount_image, [name()], image()}
                  | {bind, [name()], [name()], boolean()}
                  | {unmount, [name()]}.
 %% The module whose erx_mounts/0 reads the term (prim_file, or a stub in the EUnit
@@ -98,11 +104,11 @@ start_link(Prim) ->
 %% the domain's facet registry holds for Name when a path under To is resolved, a grant
 %% of another domain included, which is the only way such a grant is mounted.
 %%
-%% Or mounts at To, read-only, the EROFS image the block service's window Window holds,
-%% with no option or ro alone.
--spec mount(pid() | {facet, atom()} | {erofs, pid()}, file:name_all(), [option()]) -> ok | {error, reason()}.
-mount({erofs, Window}, To, Options) ->
-    request(fun() -> {mount, text(To), {erofs, Window}, Options} end);
+%% Or mounts at To, read-only, the EROFS image Image, which erx_verity:open/2 answered,
+%% with no option or ro alone; any other term answers eio, its diagnostic in the log.
+-spec mount(pid() | {facet, atom()} | {erofs, image()}, file:name_all(), [option()]) -> ok | {error, reason()}.
+mount({erofs, Image}, To, Options) ->
+    request(fun() -> {mount, text(To), {erofs, Image}, Options} end);
 mount(Pid, To, Options) ->
     request(fun() -> {mount, text(To), Pid, Options} end).
 
@@ -251,10 +257,9 @@ checked({mount, To, {facet, Name}, Options}, Table) when is_atom(Name) ->
         ok ?= tree(Tree),
         {ok, {mount, Point, {facet, Name, Tree}, Rights}}
     end;
-checked({mount, To, {erofs, Window}, Options}, Table)
-  when is_pid(Window), node(Window) =:= node(), Options =:= [] orelse Options =:= [ro] ->
+checked({mount, To, {erofs, Image}, Options}, Table) when Options =:= []; Options =:= [ro] ->
     case new_point(To, Table) of
-        {ok, Point} -> {ok, {mount_image, Point, Window}};
+        {ok, Point} -> {ok, {mount_image, Point, Image}};
         {error, _} = Error -> Error
     end;
 checked({bind, From, To, Options}, Table) when Options =:= []; Options =:= [ro] ->
@@ -376,24 +381,18 @@ ended(Pid, Table) ->
 %% process reads a path on the image.
 
 %% A checked change with its image mounted: the mount's entry change, or the error once
-%% its diagnostic, fixed text and numbers, is in the kernel log with the window's pid. Every other change is ready as it is.
-mounted({mount_image, Point, Window}) ->
-    case mount_window(Window) of
+%% its diagnostic, fixed text and numbers, is in the kernel log. Every other change is
+%% ready as it is.
+mounted({mount_image, Point, Image}) ->
+    case erx_erofs:mount(Image, fun ?MODULE:image_log/1) of
         {ok, Fs} ->
             {ok, {mount, Point, {erofs, Fs}, ro}};
         {error, Reason, Diagnostic} ->
-            _ = erx_log:debug(["erx_ns: image ", pid_to_list(Window), ": ", Diagnostic]),
+            _ = image_log(Diagnostic),
             {error, Reason}
     end;
 mounted(Checked) ->
     {ok, Checked}.
-
-%% The mount of the window's image, opened unchecked, or the error and its diagnostic.
-mount_window(Window) ->
-    case erx_verity:open(Window, unchecked) of
-        {ok, Image} -> erx_erofs:mount(Image, fun ?MODULE:image_log/1);
-        {error, eio} -> {error, eio, <<"erofs: the image did not open">>}
-    end.
 
 %% The kernel log line of an operation that failed on a mounted image, which runs in the
 %% process that read the path: a fun of an exported function, so a reload of this module

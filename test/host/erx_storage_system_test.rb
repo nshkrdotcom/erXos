@@ -34,6 +34,8 @@ class ErxStorageSystemTest < Minitest::Test
              test/erlang/stand_in/erx_dist.erl test/erlang/erx_storage_system_tests.erl].freeze
   INCLUDES = [File.join(ROOT, 'otp/lib/kernel/include')].freeze
   SALT = "\x5a".b * 8
+  # The arities of mount the compiled module exports.
+  EXPORTS = 'io:format("~w~n", [[A || {mount, A} <- erx_storage_system:module_info(exports)]]), halt().'
   # The packages' sizes and the seeds of their bytes, as erx_erofs_tests:contents/2 makes
   # them: big.app spans several blocks and ends inside one.
   PACKAGES = { 'big.app' => [20_000, 3], 'small.app' => [100, 1] }.freeze
@@ -47,9 +49,8 @@ class ErxStorageSystemTest < Minitest::Test
   def test_the_shipped_module_exports_no_mount
     Dir.mktmpdir('erx-storage-system-shipped') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS)
-      script = 'io:format("~w~n", [[A || {mount, A} <- erx_storage_system:module_info(exports)]]), halt().'
       output, status = Open3.capture2e('gtimeout', '-k', '10', '60', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
-                                       '-eval', script, chdir: work, stdin_data: '')
+                                       '-eval', EXPORTS, chdir: work, stdin_data: '')
       assert status.success?, output
       assert_equal '[]', output.strip
     end
@@ -66,6 +67,10 @@ class ErxStorageSystemTest < Minitest::Test
                                        chdir: work, stdin_data: '')
       assert status.success?, output
       assert_match(/All \d+ tests passed/, output)
+      # The seed of the exports probe: the same module compiled with TEST shows mount/3.
+      output, = Open3.capture2e('gtimeout', '-k', '10', '60', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
+                                '-eval', EXPORTS, chdir: work, stdin_data: '')
+      assert_equal '[3]', output.strip
     end
   end
 

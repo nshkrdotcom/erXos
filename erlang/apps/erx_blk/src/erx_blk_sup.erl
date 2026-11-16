@@ -7,9 +7,8 @@
 %% owners of the shared interrupt lines its record names, from erx_irq_line:owners/1 (the
 %% Pi 4's EMMC2 shares its line with the legacy SD controller, docs/design-storage.md, "The
 %% SD controller's line"), rest_for_one; then the partition process, erx_blk_service,
-%% which admits the partition table and holds the windows; then the mounts of its image
-%% windows at /images/NAME. erx_storage's supervisor starts /data on the data window once
-%% this application has started. A machine without a disk starts no device process:
+%% which admits the partition table and holds the windows. erx_storage's supervisor
+%% starts /data on the data window once this application has started. A machine without a disk starts no device process:
 %% erx_blk:start_link/0 returns ignore, and the partition process serves no window.
 %%
 %% It restarts nothing (docs/design-stopgap.md, "littlefs in the storage domain"): every
@@ -50,14 +49,7 @@ init([]) ->
                 shutdown => 2000,
                 type => worker,
                 modules => [erx_blk_service]},
-    %% /images/NAME: each image window of the service, mounted once; it starts no process.
-    Images = #{id => images,
-               start => {erx_blk_service, mount_images, []},
-               restart => temporary,
-               shutdown => brutal_kill,
-               type => worker,
-               modules => [erx_blk_service]},
-    {ok, {#{strategy => rest_for_one, intensity => 0, period => 1}, Owners ++ [Device, Service, Images]}}.
+    {ok, {#{strategy => rest_for_one, intensity => 0, period => 1}, Owners ++ [Device, Service]}}.
 
 %% The shared lines of the chosen record, each with the record and its index there; none
 %% when no record is chosen, so that erx_blk:start_link/0 alone reports why.

@@ -471,11 +471,10 @@ module Erx
     # At the Erlang shell's banner, the person types an expression that waits for the
     # storage domain to run erx_storage, and so the block driver, and then, at that node
     # over erpc, places a read-only window on the system release's EROFS image in the
-    # booted slot with erx_blk_image:place/2, mounts it at /images/release in the storage
-    # domain's namespace and prints the MD5 of IMAGE_FILE as the mount shows it; it must
+    # booted slot with erx_blk_image:place/2, opens its image unchecked, mounts it at
+    # /images/release in the storage domain's namespace and prints the MD5 of IMAGE_FILE as the mount shows it; it must
     # be the MD5 of the file the packer put in the image. The storage domain serves no
-    # image window of its own, since no manifest is in its namespace (docs/design-stopgap.md,
-    # "Image windows"), so the expression places the window from image, the harness's
+    # image window of its own, since no manifest is in its namespace, so the expression places the window from image, the harness's
     # SlotImage. A call that raises answers {image_md5, {Class, Reason}}. The echo of the
     # line does not start {image_md5, so only the answer matches.
     def image_checkpoints(shell, release, image)
@@ -488,7 +487,7 @@ module Erx
               "extents=>[{#{image.slot_offset},#{image.length}}]}"
       read = "fun()->{ok,ImSlot}=erx_blk_image:boot_slot(erx_device_record:records())," \
              "{ok,ImWindow}=erx_blk_image:place(#{place},ImSlot),{ok,ImPid}=erx_blk_window:start_link(ImWindow)," \
-             "ok=erx_ns:mount({erofs,ImPid},<<\"/images/release\">>,[])," \
+             "{ok,ImImage}=erx_verity:open(ImPid,unchecked),ok=erx_ns:mount({erofs,ImImage},<<\"/images/release\">>,[])," \
              "case file:read_file(\"#{path}\") of {ok,B}->binary:encode_hex(erlang:md5(B));E->E end end"
       expression = "ImWait=fun ImW(0)->timeout;ImW(N)->case lists:keymember(erx_storage,1,try erpc:call('#{STORAGE_NODE}'," \
                    "application,which_applications,[],1000) catch _:_->[] end) of true->ok;false->timer:sleep(500),ImW(N-1) end end," \

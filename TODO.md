@@ -5099,11 +5099,11 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   image's window, so a window pid the runtime later gives another process would receive the image's
   reads. No test.
 * [Medium] runtime, `erx_ns`: an image's mount reads the image in `erx_ns`'s own process, so a window
-  that does not answer, or any local pid passed as one, holds every mount, bind and unmount of the
+  behind the image it is handed that does not answer holds every mount, bind and unmount of the
   domain for up to 40 s a read (three reads a mount); the mount belongs in a monitored worker whose
   result the process applies once it checks the point again. No test.
 * [Medium] runtime, `erx_verity`: an image opened with a layout is checked against its tree, but
-  `erx_ns`'s window mounts (`mount_image`) have no layout and open `unchecked`, so their blocks pass
+  an image opened `unchecked` (the tests' and the medium boot checkpoint's) has no layout, so its blocks pass
   through unchecked until M11; there is no cache, neither of checked tree blocks, so each read
   fetches its tree path again, nor the reader's ETS table
   of 256 metadata blocks per image ([design-storage.md](docs/design-storage.md#reading-erofs-images)
@@ -5118,7 +5118,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] runtime, `erx_erofs`: the superblock's CRC-32C is computed bit by bit in Erlang, not by the
   per-byte primitive `erx_bytes:crc32c/2`: the reader's EUnit cases and fuzz target run it on stock
   OTP, which has no `erx_bytes` BIFs, so moving it needs an Erlang stand-in for those runs (at boot
-  only `erx_ns`, in the same `erx` application as the primitive, mounts an image). The reader's form
+  only `erx_storage_system` mounts an image, on erXos's ERTS, which has the primitive). The reader's form
   is Linux's, seeded with all ones and not inverted at the end, so over the covered bytes it is
   `erx_bytes:crc32c(0, Covered) bxor 16#FFFFFFFF`. Device, FIFO and socket inodes answer `enotsup`, which the
   packer's trees never hold.
@@ -7488,15 +7488,12 @@ to the corpus and follow rc
   (`erlang/apps/erx/src/erx_console.erl`).
 
 
-* [Medium] storage, `erx_verity` (Phase 1): the EROFS reader reads the blocks
-  of an image mounted without a layout, `erx_ns`'s window mounts, unchecked
+* [Low] test, `erx_verity` (Phase 1): the EROFS reader reads the blocks
+  of an image mounted without a layout, the medium boot checkpoint's (test code alone), unchecked
   until M11 ([design-storage.md](docs/design-storage.md), E1), so a swapped
-  medium or a flipped bit reaches the parser. `erx_ns` takes the window from
-  its caller, so a module of the storage domain can mount the `system` window
-  this way (`erx_blk_service:window(system)`) and read the partition without
-  its root hash; deleting the window mounts
-  ([todo-system-partition.md](docs/todo-system-partition.md)) closes it; an image opened with a layout
-  is checked inside `erx_verity:read/3`.
+  medium or a flipped bit reaches the parser. Deleting the image windows
+  ([todo-system-partition.md](docs/todo-system-partition.md), deletions) closes it;
+  an image opened with a layout is checked inside `erx_verity:read/3`.
 * [Medium] system domain, the reset count
   ([design-system.md](docs/design-system.md)): any successful login clears the
   count, including a web login, so a machine with a boot fault that lets

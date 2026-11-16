@@ -44,7 +44,7 @@ that proves the code under test ran.
   through the app template's `rx` `packages` and `system` grants, and
   each mount's files keyed by a tree of its own; the image check needing
   `rx` on the entry and on the grant beneath it (design-files.md, "Rights
-  beneath an entry"); `erx_ns.erl` has only `{erofs, Window}`. Test: the
+  beneath an entry"); `erx_ns.erl` has only `{erofs, Image}`, an image its caller opened, which goes, and `erx_ns` joins `Erx::ErofsReads`'s `MOUNTERS`. Test: the
   package mounts' host test of design-packaging.md and F6's `/x` test;
   seeded: a mount that takes its rights from its options, which mounts a
   file of `/apps` `rx`; a mount bounded only by its grant's rights, which
@@ -104,8 +104,7 @@ that proves the code under test ran.
   partition (U1, U3, U5). Test: the model; seeded: a check that covers the
   boot partition alone, which the model must catch.
 * [Medium] storage, deletions (`erlang/apps/erx_blk/src/erx_blk_image.erl`,
-  `erx_blk_service.erl` `image_windows/1` and `mount_images/0`, the
-  `/images/NAME` child of `erx_blk_sup.erl`, the `{image, Name}` role of
+  `erx_blk_service.erl` `image_windows/1`, the `{image, Name}` role of
   `erx_blk_table` (`read_only/1`), `abi/manifest.txt`'s
   `verified_image` window role, the `images` and `extents` tables, the
   `image` declaration and the window's `image` field, `erofs_unchecked`,

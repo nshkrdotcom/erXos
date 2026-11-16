@@ -103,7 +103,7 @@ flags mf_device_flags u32
 # slots' boot and system partitions and the two records are the slot writer's; system is
 # the one read-only window on the system partition of the slot the boot value names, and
 # an unknown boot has none (docs/design-storage.md, PW1). verified_image is a window on
-# one EROFS image of the booted slot (docs/design-stopgap.md, "Image windows").
+# one EROFS image of the booted slot (docs/todo-system-partition.md, deletions).
 enum mf_window_role u32
   value boot_a 1
   value boot_b 2

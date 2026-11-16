@@ -33,8 +33,9 @@ by its names and the image's size; nothing recurses on the image's data.
 It calls only BIFs, since it runs in whatever process reads a path, the
 code server included.
 
-`mount/2` takes an image the funnel opened, which only `erx_ns` and
-`erx_storage_system` open: `erx_ns` mounts the result in the namespace,
+`mount/2` takes an image the funnel opened, which in a release only
+`erx_storage_system` opens: `erx_ns` mounts an image its caller opened in the
+namespace,
 where `prim_file` calls the operations below on the names `erx_path`
 resolves and an open file of the image is `erx_erofs_file`'s, and
 `erx_storage_system` serves it as the `system` tree.

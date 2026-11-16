@@ -8,21 +8,25 @@ module Erx
   # The chokepoint of invariant E1 (docs/design-storage.md, "Reading EROFS images"):
   # the EROFS reader reaches an image's blocks only through erx_verity:read/3, the
   # funnel that checks each block against the image's hash tree, nothing else
-  # reaches the window behind it, and only two modules open an image in it.
+  # reaches the window behind it, and only erx_storage_system opens an image in it.
   #
   # erx_verity's opaque handle holds the image's window, and erx_erofs:mount/2 takes
-  # only that handle, so the rule keeps every module but the two mounters from opening
+  # only that handle, so the rule keeps every module but the mounter from opening
   # one, every other module from naming erx_verity, and the reader's calls on the
   # funnel and on BIFs that reach no state. It reads the Erlang sources that can enter
   # a release, as ErlangText reads them, and refuses:
   #
   # * outside erx_verity.erl, any naming of erx_verity, a call, a quoted atom, a
-  #   string or a record of the handle's name, except the call erx_verity:open( in MOUNTERS, erx_ns's, for the one EROFS
-  #   file mount, and erx_storage_system's, for the `system` window, and in the
-  #   reader's modules the call erx_verity:read( (or its name, erx_verity:read/3) and
-  #   the type erx_verity:image(;
+  #   string or a record of the handle's name, except:
+  #   * the call erx_verity:open( in MOUNTERS, erx_storage_system alone, which opens
+  #     the `system` window with its layout;
+  #   * in the reader's modules, the call erx_verity:read( (or its name,
+  #     erx_verity:read/3) and the type erx_verity:image(;
   # * in the reader's modules, a remote call or fun M:F/A on a module outside
-  #   READER_MODULES, a remote call through a variable or a macro, and apply;
+  #   READER_MODULES, a remote call through a variable or a macro, and a call of apply.
+  #
+  # So erx_ns, which mounts a handle its caller opened, opens none, and no release
+  # module opens a window unchecked.
   #
   # Like the other text rules it catches a slip, not a call built from pieces.
   module ErofsReads
@@ -34,7 +38,7 @@ module Erx
     # BIFs that reach no state outside their arguments.
     READER_MODULES = %w[erx_verity binary maps].freeze
     SYSTEM = 'erlang/apps/erx_storage/src/erx_storage_system.erl'
-    MOUNTERS = ['erlang/apps/erx/src/erx_ns.erl', SYSTEM].freeze
+    MOUNTERS = [SYSTEM].freeze
     NAMED = /(?<![A-Za-z0-9_@])'?erx_verity'?(?![A-Za-z0-9_@])/
     READER_USE = /\A'?erx_verity'?\s*:\s*'?(?:read'?\s*[(\/]|image'?\s*\()/
     MOUNTER_USE = /\A'?erx_verity'?\s*:\s*'?open'?\s*\(/
