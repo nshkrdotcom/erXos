@@ -30,10 +30,17 @@ start_in_domain(D) ->
                     gen_server:start_link({local, ?NAME}, ?RELAY, {self(), {domain, self(), D}}, [])
             end).
 
+%% While the test traps exits, the end of any process linked to it is a
+%% message, and eunit links each case's group leader to the test process and
+%% lets it end after the case: a leader whose end the test handles inside the
+%% next case's start would be taken for one of the relay's messages. Such
+%% normal ends are dropped; a failed start's own 'EXIT' proc_lib has already
+%% taken, and its {error, Reason} fails the match below.
 started(Start) ->
     Trapping = process_flag(trap_exit, true),
     Started = Start(),
     process_flag(trap_exit, Trapping),
+    flush_exits(),
     {ok, Relay} = Started,
     unlink(Relay),
     Relay.
@@ -67,6 +74,9 @@ stop(Relay) ->
 
 flush() ->
     receive _ -> flush() after 0 -> ok end.
+
+flush_exits() ->
+    receive {'EXIT', _, normal} -> flush_exits() after 0 -> ok end.
 
 next() ->
     receive Message -> Message after ?WAIT_MS -> error(nothing_received) end.
