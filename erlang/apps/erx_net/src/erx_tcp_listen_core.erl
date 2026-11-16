@@ -20,8 +20,8 @@ A waiting call is answered `{error, econnaborted}` when its socket process ends 
 `{error, timeout}` at its deadline; a handing call has no deadline and ignores its socket
 process's end, which ends its connection in turn. So each call the step takes is answered
 exactly once while the listener runs. The exit of the listener's own socket process or of
-its grant is the listener's end, `stop`; its socket process then answers the calls it still
-holds.
+its grant is the listener's end, `{stop, normal}`; its socket process then answers the
+calls it still holds.
 
 A call past the 64 in flight, or one naming the listener's own socket process or its grant
 as its acceptor, whose unlink would cut a link the listener ends by, is answered
@@ -80,7 +80,7 @@ end the listener.
                 | {bind, Conn :: pid(), SockProc :: pid()}
                 | {reply, call_id(), reply()}
                 | take_unit
-                | stop.
+                | {stop, normal}.
 
 -doc "A listener for its socket process and its grant, with nothing queued or waiting.".
 -spec new(pid(), pid()) -> core().
@@ -130,9 +130,9 @@ step(expired, #core{waiting = Waiting} = Core, #{now := Now}) ->
 %% handing call's socket process changes nothing here: its connection ends, and that exit
 %% answers the call.
 exit_of(Pid, #core{socket = Pid} = Core) ->
-    {Core, [stop]};
+    {Core, [{stop, normal}]};
 exit_of(Pid, #core{grant = Pid} = Core) ->
-    {Core, [stop]};
+    {Core, [{stop, normal}]};
 exit_of(Pid, #core{queue = Queue} = Core) ->
     case lists:member(Pid, Queue) of
         true -> {Core#core{queue = lists:delete(Pid, Queue)}, [take_unit]};

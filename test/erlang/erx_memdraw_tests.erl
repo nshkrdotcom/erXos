@@ -74,14 +74,17 @@ walk(N, Connection) -> walk(N - 1, step(message(Connection), Connection)).
 step(Message, #{core := Core, ref := Ref, images := Images, log := Log} = Connection) ->
     Seen = Connection#{log := [Message | Log]},
     case {erx_draw_ref:step(Message, Ref), erx_draw_core:step(Core, Message)} of
-        {{error, Errno}, {error, Errno}} ->
+        %% A refusal is the core's one action and leaves it as it was.
+        {{error, Errno}, {Core, [{error, Errno}]}} ->
             Seen;
-        {{ok, Ref1}, {ok, Core1, Ops}} ->
+        {_, {_, [{error, _}]}} = Refused ->
+            error({disagree, Refused, lists:reverse(Seen)});
+        {{ok, Ref1}, {Core1, Ops}} ->
             Images1 = lists:foldl(fun(Op, Acc) -> perform(Op, Acc, Seen) end, Images, Ops),
             Next = Seen#{core := Core1, ref := Ref1, images := Images1},
             same_images(Next),
             Next;
-        {{reply, Pixels, Ref1}, {ok, Core1, [{read, Id, R}]}} ->
+        {{reply, Pixels, Ref1}, {Core1, [{read, Id, R}]}} ->
             {ok, Read} = erx_memdraw:read(element(1, maps:get(Id, Images)), R),
             same_pixels(Pixels, Read, maps:get(Id, maps:get(images, Ref1)), Seen),
             Seen#{core := Core1, ref := Ref1};

@@ -418,7 +418,7 @@ port_effect(_Op, Port) ->
     Port.
 
 deliver(Event, M, Core0) ->
-    {Actions, Core} = erx_usb_bus_core:step(Event, maps:get(now, M), Core0),
+    {Core, Actions} = erx_usb_bus_core:step(Event, maps:get(now, M), Core0),
     observe(Event, Actions, M, Core0, Core).
 
 %% The checks, and the model's bookkeeping of the actions.
@@ -450,9 +450,9 @@ check_stale(Event, M = #{answered := Answered, now := Now}, Core) ->
 
 stale(Stale, Now, Core) ->
     case erx_usb_bus_core:step(Stale, Now, Core) of
-        {Actions, Core} ->
+        {Core, Actions} ->
             [] =:= [A || A <- Actions, element(1, A) =/= deadline] orelse error({stale_answer_acted, Stale, Actions});
-        {_Actions, _Changed} ->
+        {_Changed, _Actions} ->
             error({stale_answer_changed_the_state, Stale})
     end.
 
@@ -712,9 +712,9 @@ over_current_changes_are_logged_once_per_attempt_test() ->
     {Logged3, Core3} = root_read(?CONNECTION bor ?OVER_CURRENT, ?CONNECTION bor ?OVER_CURRENT, Now, Core2),
     ?assertMatch(#{{root, 1} := {settling, _}}, erx_usb_bus_core:ports(Core3)),
     Started = Now + 300,
-    {Reset, Core4} = erx_usb_bus_core:step(expired, Started, Core3),
+    {Core4, Reset} = erx_usb_bus_core:step(expired, Started, Core3),
     ?assert(lists:member({port, root, 1, reset}, Reset)),
-    {_, Core5} = erx_usb_bus_core:step({port_done, root, 1, ok}, Started, Core4),
+    {Core5, _} = erx_usb_bus_core:step({port_done, root, 1, ok}, Started, Core4),
     {Logged4, Core6} = root_read(?CONNECTION bor ?OVER_CURRENT, ?OVER_CURRENT, Started, Core5),
     {Logged5, Core7} = root_read(?CONNECTION bor ?OVER_CURRENT, ?OVER_CURRENT, Started, Core6),
     ?assertEqual([Log, [], [], Log, []], [Logged1, Logged2, Logged3, Logged4, Logged5]),
@@ -723,8 +723,8 @@ over_current_changes_are_logged_once_per_attempt_test() ->
 %% Root port 1 of an idle bus signals, its status read answers Status and Change, and
 %% each change bit is cleared in turn; the read's log actions and the state after.
 root_read(Status, Change, Now, Core0) ->
-    {[{port, root, 1, get_status} | _], Core1} = erx_usb_bus_core:step({port_event, 1}, Now, Core0),
-    {Actions, Core2} = erx_usb_bus_core:step({port_done, root, 1, {ok, <<Status:16/little, Change:16/little>>, 3}},
+    {Core1, [{port, root, 1, get_status} | _]} = erx_usb_bus_core:step({port_event, 1}, Now, Core0),
+    {Core2, Actions} = erx_usb_bus_core:step({port_done, root, 1, {ok, <<Status:16/little, Change:16/little>>, 3}},
                                              Now, Core1),
     {[A || A = {log, _, _, _} <- Actions], cleared(Actions, Now, Core2)}.
 
@@ -733,7 +733,7 @@ cleared(Actions, Now, Core) ->
         [] ->
             Core;
         [_] ->
-            {More, Next} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now, Core),
+            {Next, More} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now, Core),
             cleared(More, Now, Next)
     end.
 
@@ -762,7 +762,7 @@ a_hub_detached_during_its_childs_enumeration_test() ->
               fun(Node) -> not is_map_key(HubRef, erx_usb_bus_core:devices(element(2, Node))) end, Root),
     ?assertEqual([{detach, {device, 2}}, {detach, HubRef}], [A || A = {detach, _} <- Last]),
     ?assertEqual(#{}, erx_usb_bus_core:devices(Core)),
-    {Late, _} = erx_usb_bus_core:step({addressed, {device, 2}, addressing, {ok, 2}}, maps:get(now, element(1, Unplugged)), Core),
+    {_, Late} = erx_usb_bus_core:step({addressed, {device, 2}, addressing, {ok, 2}}, maps:get(now, element(1, Unplugged)), Core),
     ?assertEqual([], [A || A <- Late, element(1, A) =/= deadline]),
     Next = settle(follow({stimulus, [2], dev1}, settle(Unplugged))),
     ?assertMatch({running, _}, port_of(Next, {root, 2})).
@@ -770,15 +770,15 @@ a_hub_detached_during_its_childs_enumeration_test() ->
 %% Power: every port off until its power-on answer, then no status read before the
 %% hub's power-good time; the root's is 40 ms after its last port's answer.
 the_root_hub_powers_its_ports_before_reading_them_test() ->
-    {A1, S1} = erx_usb_bus_core:step(expired, 0, erx_usb_bus_core:new(2)),
+    {S1, A1} = erx_usb_bus_core:step(expired, 0, erx_usb_bus_core:new(2)),
     ?assertEqual([{port, root, 1, power_on}], A1),
-    {A2, S2} = erx_usb_bus_core:step({port_done, root, 1, ok}, 5, S1),
+    {S2, A2} = erx_usb_bus_core:step({port_done, root, 1, ok}, 5, S1),
     ?assertEqual([{port, root, 2, power_on}], A2),
-    {A3, S3} = erx_usb_bus_core:step({port_done, root, 2, ok}, 7, S2),
+    {S3, A3} = erx_usb_bus_core:step({port_done, root, 2, ok}, 7, S2),
     ?assertEqual([{deadline, 47}], A3),
     ?assertEqual(#{{root, 1} => empty, {root, 2} => empty}, erx_usb_bus_core:ports(S3)),
-    ?assertMatch({[{deadline, 47}], _}, erx_usb_bus_core:step(expired, 46, S3)),
-    ?assertMatch({[{port, root, 1, get_status}], _}, erx_usb_bus_core:step(expired, 47, S3)).
+    ?assertMatch({_, [{deadline, 47}]}, erx_usb_bus_core:step(expired, 46, S3)),
+    ?assertMatch({_, [{port, root, 1, get_status}]}, erx_usb_bus_core:step(expired, 47, S3)).
 
 %% A report naming a port the hub does not have reads nothing of it, and an answer of
 %% a shape its operation never answers gives the hub up, as a failed answer does.
@@ -786,13 +786,13 @@ out_of_shape_reports_and_answers_test() ->
     Powering = fun({#{ops := Ops}, _}) -> [H || H := {_, power_on} <- Ops, H =/= root] =/= [] end,
     {#{now := Now}, Core} = Node = drive(follow({stimulus, [1], hub}, trace_start()), Powering, fun(_) -> true end),
     {running, HubRef} = port_of(Node, {root, 1}),
-    {Detached, _} = erx_usb_bus_core:step({port_done, HubRef, 1, {ok, <<>>}}, Now, Core),
+    {_, Detached} = erx_usb_bus_core:step({port_done, HubRef, 1, {ok, <<>>}}, Now, Core),
     ?assertEqual([{detach, HubRef}], [A || A = {detach, _} <- Detached]),
     {_, Idle} = Hub = settle(Node),
     Later = maps:get(now, element(1, Hub)),
-    {A1, S1} = erx_usb_bus_core:step({changed, HubRef, [3], fn}, Later, Idle),
+    {S1, A1} = erx_usb_bus_core:step({changed, HubRef, [3], fn}, Later, Idle),
     ?assertEqual([{handled, HubRef, fn}], [A || A <- A1, element(1, A) =/= deadline]),
-    ?assertMatch({[{port, HubRef, 1, get_status} | _], _}, erx_usb_bus_core:step({changed, HubRef, [1, 3], fn}, Later, S1)).
+    ?assertMatch({_, [{port, HubRef, 1, get_status} | _]}, erx_usb_bus_core:step({changed, HubRef, [1, 3], fn}, Later, S1)).
 
 %% A hub given up while a port below it holds the turn keeps the turn on its own port
 %% until its parent answers the disable, since the child stays reachable through the
@@ -806,11 +806,11 @@ a_hub_given_up_keeps_its_childs_turn_test() ->
     Waiting = fun(Node) -> port_of(Node, {root, 2}) =:= waiting end,
     {#{now := Now, ops := #{HubRef := {Target, _}}}, Core} =
         drive(follow({stimulus, [2], dev1}, Child), Waiting, fun(C) -> not HubAnswer(C) end),
-    {Actions, Failed} = erx_usb_bus_core:step({port_done, HubRef, Target, {error, stall}}, Now, Core),
+    {Failed, Actions} = erx_usb_bus_core:step({port_done, HubRef, Target, {error, stall}}, Now, Core),
     ?assertEqual([{detach, HubRef}], [A || A = {detach, _} <- Actions]),
     ?assertMatch(#{{root, 1} := {disabling, _, true}, {root, 2} := waiting}, erx_usb_bus_core:ports(Failed)),
     ?assert(lists:member({port, root, 1, disable}, Actions)),
-    {Next, _} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now, Failed),
+    {_, Next} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now, Failed),
     ?assert(lists:member({port, root, 2, reset}, Next)).
 
 %% A chain of six hubs, each on port 1 of the one above: the fifth, five tiers below the
@@ -840,13 +840,13 @@ a_hub_past_the_depth_limit_keeps_its_ports_off_test() ->
 handled_goes_to_the_reporter_test() ->
     {_, Node} = Hub = settle(follow({stimulus, [1], hub}, trace_start())),
     {running, HubRef} = port_of(Hub, {root, 1}),
-    {A1, S1} = erx_usb_bus_core:step({changed, HubRef, [1], old}, maps:get(now, element(1, Hub)), Node),
+    {S1, A1} = erx_usb_bus_core:step({changed, HubRef, [1], old}, maps:get(now, element(1, Hub)), Node),
     ?assertMatch([{port, HubRef, 1, get_status} | _], A1),
-    {A2, S2} = erx_usb_bus_core:step({changed, HubRef, [2], new}, maps:get(now, element(1, Hub)), S1),
+    {S2, A2} = erx_usb_bus_core:step({changed, HubRef, [2], new}, maps:get(now, element(1, Hub)), S1),
     ?assertEqual([], [A || A = {handled, _, _} <- A2]),
-    {A3, S3} = erx_usb_bus_core:step({port_done, HubRef, 1, {ok, <<1:16/little, 0:16>>}}, maps:get(now, element(1, Hub)), S2),
+    {S3, A3} = erx_usb_bus_core:step({port_done, HubRef, 1, {ok, <<1:16/little, 0:16>>}}, maps:get(now, element(1, Hub)), S2),
     ?assertMatch([{port, HubRef, 2, get_status} | _], A3),
-    {A4, _} = erx_usb_bus_core:step({port_done, HubRef, 2, {ok, <<0:16, 0:16>>}}, maps:get(now, element(1, Hub)), S3),
+    {_, A4} = erx_usb_bus_core:step({port_done, HubRef, 2, {ok, <<0:16, 0:16>>}}, maps:get(now, element(1, Hub)), S3),
     ?assertEqual([{handled, HubRef, new}], [A || A = {handled, _, _} <- A4]).
 
 %% Canonical form: times relative to Now, references renumbered in order.

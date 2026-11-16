@@ -213,13 +213,10 @@ step(Event, Screen) ->
     Screen1.
 
 step_actions(Event, #{core := Core} = Screen) ->
-    case erx_ui_lvgl_core:step(Event, Core) of
-        {ok, Core1, Actions} ->
-            send(Screen, [Record || {write, Records} <- Actions, Record <- Records]),
-            {Screen#{core := Core1}, Actions};
-        {stop, Reason} ->
-            error({renderer_stopped, Reason})
-    end.
+    {Core1, Actions} = erx_ui_lvgl_core:step(Event, Core),
+    [error({renderer_stopped, Reason}) || {stop, Reason} <- Actions],
+    send(Screen, [Record || {write, Records} <- Actions, Record <- Records]),
+    {Screen#{core := Core1}, Actions}.
 
 send(#{port := Port}, Records) ->
     Present = fun(_Type, _Value) -> error(no_presentations) end,

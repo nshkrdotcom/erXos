@@ -147,12 +147,16 @@ step_noreply(Input, State) ->
 steps([], State) ->
     {ok, wake_up(State)};
 steps([Input | Inputs], #hci{core = Core} = State) ->
-    case erx_bt_hci_core:step(Input, erlang:monotonic_time(millisecond), Core) of
-        {ok, Actions, Next} ->
-            steps(Inputs, lists:foldl(fun perform/2, after_input(Input, State#hci{core = Next}), Actions));
-        {stop, Reason} ->
-            {stop, Reason}
+    {Next, Actions} = erx_bt_hci_core:step(Input, erlang:monotonic_time(millisecond), Core),
+    case perform_all(Actions, State#hci{core = Next}) of
+        {ok, Performed} -> steps(Inputs, after_input(Input, Performed));
+        {stop, _Reason} = Stop -> Stop
     end.
+
+%% Performs a step's actions in order; a stop, always the last, ends the process.
+perform_all([{stop, Reason}], _State) -> {stop, Reason};
+perform_all([Action | Actions], State) -> perform_all(Actions, perform(Action, State));
+perform_all([], State) -> {ok, State}.
 
 %% The line's reset answered: the reader's first acknowledgement.
 after_input(line_ready, State) ->

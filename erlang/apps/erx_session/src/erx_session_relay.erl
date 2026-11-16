@@ -180,10 +180,11 @@ announce(Master) -> master_pid(Master) ! {tty_open, self()}, ok.
 
 -doc false.
 handle_call(Request, {Caller, _Tag} = From, #state{core = Core0} = State) ->
-    {Answer, Actions, Core} =
+    %% The answer is a request's first action, given before the rest.
+    {Core, [{answer, Answer} | Actions]} =
         case checked(Request) of
             {ok, Checked} -> erx_session_relay_core:request(Caller, Checked, Core0);
-            refused -> {{error, einval}, [], Core0}
+            refused -> {Core0, [{answer, {error, einval}}]}
         end,
     gen_server:reply(From, Answer),
     {noreply, carry_out(Actions, State#state{core = Core})}.
@@ -255,7 +256,7 @@ take_write(Done, Bytes, State) ->
     end.
 
 event(Event, #state{core = Core0} = State) ->
-    {Actions, Core} = erx_session_relay_core:event(Event, Core0),
+    {Core, Actions} = erx_session_relay_core:event(Event, Core0),
     {noreply, carry_out(Actions, State#state{core = Core})}.
 
 %%% The core's actions, in the order it gives them

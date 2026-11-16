@@ -58,12 +58,12 @@ every_reachable_state_keeps_the_protocol_test_() ->
 
 a_resize_during_a_present_is_written_at_once_and_the_report_still_shown_test() ->
     {Idle, _} = erx_ui_lvgl_core:start(4, 3, ?CHAN),
-    {ok, Open, [{present, 4, 3, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 4, 3, ?RECTS}, Idle),
-    {ok, Resized, [{write, [{screen, 2, 2, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 2, 2, ?CHAN}, Open),
-    {ok, Again, [{write, [presented]}]} = erx_ui_lvgl_core:step(shown, Resized),
+    {Open, [{present, 4, 3, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 4, 3, ?RECTS}, Idle),
+    {Resized, [{write, [{screen, 2, 2, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 2, 2, ?CHAN}, Open),
+    {Again, [{write, [presented]}]} = erx_ui_lvgl_core:step(shown, Resized),
     {2, 2} = erx_ui_lvgl_core:size(Again),
     %% The program's next report, drawn after it read the screen record.
-    {ok, _, [{present, 2, 2, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 2, 2, ?RECTS}, Again).
+    {_, [{present, 2, 2, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 2, 2, ?RECTS}, Again).
 
 %% The buffer was allocated at the size the renderer started at, so no
 %% screen record passes it: a window grown past it is a screen of the
@@ -71,12 +71,12 @@ a_resize_during_a_present_is_written_at_once_and_the_report_still_shown_test() -
 %% that writes the window's unclipped size fails.
 a_resize_past_the_buffer_is_clipped_to_it_test() ->
     {Idle, _} = erx_ui_lvgl_core:start(4, 3, ?CHAN),
-    {ok, Grown, [{write, [{screen, 4, 2, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 8, 2, ?CHAN}, Idle),
-    {ok, _, [{present, 4, 2, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 4, 2, ?RECTS}, Grown),
-    {ok, Open, _} = erx_ui_lvgl_core:step({damage, 4, 2, ?RECTS}, Grown),
-    {ok, Taller, [{write, [{screen, 4, 3, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 9, 70000, ?CHAN}, Open),
+    {Grown, [{write, [{screen, 4, 2, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 8, 2, ?CHAN}, Idle),
+    {_, [{present, 4, 2, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 4, 2, ?RECTS}, Grown),
+    {Open, _} = going(erx_ui_lvgl_core:step({damage, 4, 2, ?RECTS}, Grown)),
+    {Taller, [{write, [{screen, 4, 3, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 9, 70000, ?CHAN}, Open),
     {4, 3} = erx_ui_lvgl_core:size(Taller),
-    {ok, Gone, [{write, [{screen, 1, 1, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 0, -5, ?CHAN}, Idle),
+    {Gone, [{write, [{screen, 1, 1, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 0, -5, ?CHAN}, Idle),
     {1, 1} = erx_ui_lvgl_core:size(Gone).
 
 %% A window's records as the program's input: a pointer relative to the
@@ -96,12 +96,12 @@ window_records_become_input_records_test() ->
 
 held_records_follow_the_answer_in_order_test() ->
     {Idle, _} = erx_ui_lvgl_core:start(4, 3, ?CHAN),
-    {ok, Open, _} = erx_ui_lvgl_core:step({damage, 4, 3, ?RECTS}, Idle),
-    {ok, Open1, []} = erx_ui_lvgl_core:step({window, {input, {wheel, 1}}}, Open),
+    {Open, _} = going(erx_ui_lvgl_core:step({damage, 4, 3, ?RECTS}, Idle)),
+    {Open1, []} = erx_ui_lvgl_core:step({window, {input, {wheel, 1}}}, Open),
     Ops = [{set, 2, #{text => <<"a">>}, []}, commit],
-    {ok, Open2, []} = erx_ui_lvgl_core:step({apply, Ops, from}, Open1),
-    {ok, Open3, []} = erx_ui_lvgl_core:step({window, repaint}, Open2),
-    {ok, _, [{write, Written}, {reply, from}]} = erx_ui_lvgl_core:step(shown, Open3),
+    {Open2, []} = erx_ui_lvgl_core:step({apply, Ops, from}, Open1),
+    {Open3, []} = erx_ui_lvgl_core:step({window, repaint}, Open2),
+    {_, [{write, Written}, {reply, from}]} = erx_ui_lvgl_core:step(shown, Open3),
     [presented, {input, {wheel, 1}} | Rest] = Written,
     Rest = Ops ++ [repaint].
 
@@ -147,13 +147,13 @@ try_step(Event, #shell{core = Core} = Shell) ->
     Result = erx_ui_lvgl_core:step(Event, Core),
     case expected_stop(Event, Shell) of
         none ->
-            {ok, Core1, Actions} = Result,
+            {Core1, Actions} = going(Result),
             Shell1 = perform(Actions, record(Event, Shell#shell{core = Core1,
                                                                serial = Shell#shell.serial + 1})),
             check(Event, Actions, Shell, Shell1),
             {next, Shell1};
         Reason ->
-            ?assertEqual({stop, Reason}, Result),
+            ?assertMatch({_, [{stop, Reason}]}, Result),
             stopped
     end.
 
@@ -278,3 +278,9 @@ last_screen(Written) ->
 
 is_screen({screen, _, _, _}) -> true;
 is_screen(_Record) -> false.
+
+%% A step's result whose actions hold no stop, so a site that ignores the
+%% actions still fails on a step that started stopping.
+going({_Core, Actions} = Result) ->
+    ?assertEqual(false, lists:keymember(stop, 1, Actions)),
+    Result.

@@ -6,9 +6,10 @@
 The terminal relay's decisions (docs/design-shell.md, "The terminal relay's
 protocol") as a pure state machine. erx_session_relay, the gen_server
 registered as the relay's name, hands every request and message to
-request/3 or event/2 and carries out the actions they return, in order,
-after it has answered the request: so the answer goes before anything the
-request sets off, the design's ordering rule.
+request/3 or event/2, each of which returns `{Core, Actions}`, and carries
+out the actions in order. A request's first action is its answer,
+`{answer, Answer}`: so the answer goes before anything the request sets
+off, the design's ordering rule.
 
 The core holds the line discipline (erx_tty) and the tty's side of the
 master's messages (erx_tty_link) beside the relay's own state, and derives
@@ -119,19 +120,19 @@ new(Console, #{master := Master}) ->
     #core{tty = Editing, link = erx_tty_link:new(Master), console = Console,
           cooked = Cooked}.
 
--doc "Caller's request: its answer, what follows the answer, and the next core.".
--spec request(term(), term(), core()) -> {answer(), [action()], core()}.
+-doc "Caller's request: the next core and what to do, first `{answer, Answer}`.".
+-spec request(term(), term(), core()) -> {core(), [{answer, answer()} | action()]}.
 request(Caller, Request, Core0) ->
     {Answer, Actions, Core1} = handle(Caller, Request, Core0),
     {Settled, Core2} = settle(Core1),
-    {Answer, Actions ++ Settled, Core2}.
+    {Core2, [{answer, Answer} | Actions ++ Settled]}.
 
--doc "A message that is not a request: what to do and the next core.".
--spec event(event(), core()) -> {[action()], core()}.
+-doc "A message that is not a request: the next core and what to do.".
+-spec event(event(), core()) -> {core(), [action()]}.
 event(Event, Core0) ->
     {Actions, Core1} = on_event(Event, Core0),
     {Settled, Core2} = settle(Core1),
-    {Actions ++ Settled, Core2}.
+    {Core2, Actions ++ Settled}.
 
 -doc "Who holds the terminal: `console` or `{job, Tag}`.".
 -spec holder(core()) -> console | {job, term()}.

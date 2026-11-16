@@ -730,7 +730,7 @@ block, is *to be settled by the board probe* and measured by
 **The functional core.** Three pure parts, built and tested on the host:
 
 * `erx_blk_sd_card`, the card: its identification as a state machine,
-  `step(State, Event) -> {Actions, State}`, whose events are a response,
+  `step(State, Event) -> {State, Actions}`, whose events are a response,
   a command timeout or an error and whose actions are the next step to
   issue, a line reset, a wait, a clock or bus change, the identified card
   or a refusal; and the parsers of what the card sends: R1 (card

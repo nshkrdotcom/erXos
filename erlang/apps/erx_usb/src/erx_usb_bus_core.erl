@@ -236,8 +236,8 @@ new(RootPorts) when is_integer(RootPorts), RootPorts >= 1, RootPorts =< 255 ->
     #{hubs => #{root => hub(root, RootPorts, ?ERX_USB_ROOT_POWER_GOOD_UNITS, false, powering)},
       devices => #{}, waiting => [], next => {device, 1}}.
 
--doc "The actions the bus process performs on Event, handled at Now, and the next state.".
--spec step(event(), ms(), state()) -> {[action()], state()}.
+-doc "The next state on Event, handled at Now, and the actions the bus process performs.".
+-spec step(event(), ms(), state()) -> {state(), [action()]}.
 step(Event, Now, State0) ->
     {Actions, State} = event(Event, Now, State0),
     settle(Now, Actions, State).
@@ -759,7 +759,7 @@ occupant(_Unoccupied) -> [].
 settle(Now, Actions, State0) ->
     {Granted, State1} = grant_turn(prune_waiting(State0)),
     {Operations, State} = run_hubs(Now, State1),
-    {Actions ++ Granted ++ Operations ++ deadline(State), State}.
+    {State, Actions ++ Granted ++ Operations ++ deadline(State)}.
 
 %% The arrival order keeps only ports still `waiting`.
 prune_waiting(State = #{waiting := Waiting}) ->

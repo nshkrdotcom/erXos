@@ -1268,12 +1268,13 @@ step the core with it, and continue from the next byte, until the write
 is consumed or a message fails. Because the depth function reads the
 planned connection, an image a `b` allocated earlier in the same write
 has its depth and one an `f` freed has none, and there is no second table
-of depths to keep in step with the images. The fold returns the planned
-connection and the list of `erx_memdraw` operations, or the errno and the
-offset of the message that failed. The draw connection performs the
-operations only after the fold returns, so a write is decoded and checked
-whole before any of it is applied, and a write that fails applies
-nothing (plan, then apply).
+of depths to keep in step with the images. The fold returns `{Conn, Ops}`,
+the planned connection and the list of `erx_memdraw` operations, or the
+connection as it was and the one action `{error, Errno, Offset}`, the
+errno and offset of the message that failed. The draw connection
+performs the operations only after the fold returns, so a write is
+decoded and checked whole before any of it is applied, and a write that
+fails applies nothing (plan, then apply).
 
 **A message never spans writes.** Each write holds whole messages, as
 Plan 9's `devdraw` requires: a message whose fields or payload run
@@ -2735,8 +2736,8 @@ connection gets a binary, which `erx_draw_core:plan/2` decodes and
 checks whole, message by message against the connection as planned so
 far ([Draw messages](#draw-messages)). Its step takes the planned
 connection and one decoded message and returns the next state and the
-`erx_memdraw` operation to perform, or an errno from the refusals that
-section lists. A failure fails the write with that errno, and the
+`erx_memdraw` operation to perform, or, as its one action, an errno from
+the refusals that section lists. A failure fails the write with that errno, and the
 session's log records the connection, the errno and the offset of the
 message. The process performs the operations only after the fold has
 consumed the whole write, so a failed write applies none of them. The

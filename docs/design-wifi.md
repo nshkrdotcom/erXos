@@ -1011,7 +1011,7 @@ features, and erXos has one chip.
 ## The station
 
 `erx_wifi_station` is one process around one pure function,
-`erx_wifi_sta:step(State, Event, Ctx) -> {Actions, State}`. The process
+`erx_wifi_sta:step(State, Event, Ctx) -> {State, Actions}`. The process
 performs the actions, owns the timers, and gives every step the time
 and 32 fresh random bytes in `Ctx`; the function reads nothing else.
 It is made of three parts, each a pure module with one job, and a thin
@@ -1020,7 +1020,7 @@ lifecycle around them:
 | Part | Interface | Decides | Keeps |
 | --- | --- | --- | --- |
 | the choice, `erx_wifi_choose` | `choose(View) -> #{verdicts := [{Bss, Verdict}], pick := Candidate \| none}` | which BSS to join, and for every other BSS seen why not | nothing |
-| the join machine, `erx_wifi_join` | `step(Join, Event, Ctx) -> {Actions, Join}` | one join, from the request to an open port: SAE, the handshakes, rekeys, the port, and how the join ended | the association's state |
+| the join machine, `erx_wifi_join` | `step(Join, Event, Ctx) -> {Join, Actions}` | one join, from the request to an open port: SAE, the handshakes, rekeys, the port, and how the join ended | the association's state |
 | the failure memory, `erx_wifi_memory` | `fail/3`, `ok/2`, `held/3` | which BSS and which secret failed lately, and until when each is held | a bounded map |
 | the lifecycle, in `erx_wifi_sta` | the step above | whether the radio is up, when to scan, when to ask the choice, and the `ctl` commands | the configuration, the names, the marks it has learned, the scan table, `want` |
 

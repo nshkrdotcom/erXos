@@ -118,7 +118,7 @@ handle_call({next, Role}, {Pid, _Tag} = From, State = #state{clock = Clock, syst
                                                              consumers = Consumers})
   when Role =:= console; Role =:= store ->
     Monitor = monitor(process, Pid),
-    {Actions, Next} = erx_syslog_core:ask(Role, {From, Monitor}, Clock(), System, Consumers),
+    {Next, Actions} = erx_syslog_core:ask(Role, {From, Monitor}, Clock(), System, Consumers),
     {noreply, act(Actions, State#state{consumers = Next})};
 handle_call(_Request, _From, State) ->
     {reply, {error, badarg}, State}.
@@ -176,7 +176,7 @@ written(Source, Records, State = #state{clock = Clock, rate = Rate}) ->
 %% may fall due with no line added.
 tick(Now, State = #state{system = System, rate = Rate, consumers = Consumers}) ->
     {Drops, NextRate} = erx_syslog_core:turn(Now, System, Rate),
-    {Actions, Next} = erx_syslog_core:due(Now, System, Consumers),
+    {Next, Actions} = erx_syslog_core:due(Now, System, Consumers),
     joined(Now, [{messages, Line} || Line <- Drops],
            act(Actions, State#state{rate = NextRate, consumers = Next})).
 
@@ -201,7 +201,7 @@ notes(Now, Texts, State = #state{system = System}) ->
     joined(Now, [{messages, erx_syslog_core:note(Now, System, Text)} || Text <- Texts], State).
 
 joined(Now, Lines, State = #state{system = System, consumers = Consumers}) ->
-    {Actions, Next} = erx_syslog_core:lines(Now, System, Lines, Consumers),
+    {Next, Actions} = erx_syslog_core:lines(Now, System, Lines, Consumers),
     act(Actions, State#state{consumers = Next}).
 
 %% The core's actions: a batch answers its request, and an answered or replaced

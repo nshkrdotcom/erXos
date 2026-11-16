@@ -26,12 +26,12 @@ class ErxUsbHubCoreTest < Minitest::Test
 
   SEEDS = [
     Seed.new(fault: 'a change report sent with the next transfer posted',
-             anchor: 'Set -> {[{changed, Set}], State#{phase := reporting}}',
-             replacement: 'Set -> {[{changed, Set}, {post, transfer_length(Ports)}], State#{phase := posted}}',
+             anchor: 'Set -> {State#{phase := reporting}, [{changed, Set}]}',
+             replacement: 'Set -> {State#{phase := posted}, [{changed, Set}, {post, transfer_length(Ports)}]}',
              catching_case: 'the_machine_keeps_one_bitmap_in_flight_test'),
     Seed.new(fault: "the bus process's answer taken without posting the next transfer",
              anchor: "step(handled, State = \#{phase := reporting}) ->\n    post(State);",
-             replacement: "step(handled, State = \#{phase := reporting}) ->\n    {[], State\#{phase := posted}};",
+             replacement: "step(handled, State = \#{phase := reporting}) ->\n    {State\#{phase := posted}, []};",
              catching_case: 'the_machine_keeps_one_bitmap_in_flight_test'),
     Seed.new(fault: 'the bits above the port count kept',
              anchor: '[Port || Port <- lists:seq(1, Ports), Bits band (1 bsl Port) =/= 0]',

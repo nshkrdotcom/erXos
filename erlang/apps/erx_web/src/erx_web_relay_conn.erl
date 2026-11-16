@@ -90,7 +90,7 @@ view_ended(Pid, Reason, #{views := Views} = State) ->
 %% Feeds the core one input and performs its actions in order, feeding back
 %% what each produced: the view the line started, or why it could not.
 step(Input, #{core := Core} = State) ->
-    {Actions, Next} = erx_web_conn:step(Input, Core),
+    {Next, Actions} = erx_web_conn:step(Input, Core),
     lists:foldl(fun perform/2, State#{core := Next}, Actions).
 
 perform(Action, #{sink := Sink, c := C, line := Line} = State) ->

@@ -1278,7 +1278,7 @@ the function, and a medium's windows end with its block service.
 
 ### Ports, hubs and devices: the bus core
 
-`erx_usb_bus_core:step(Event, Now, State) -> {Actions, State}` holds the
+`erx_usb_bus_core:step(Event, Now, State) -> {State, Actions}` holds the
 whole topology; `Now` is the time the event is handled at, from which
 the step sets its deadlines. Its state is a map of hubs, the root hub among them, each
 with its ports and its pending change set, and of devices, each with its
