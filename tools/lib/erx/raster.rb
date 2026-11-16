@@ -37,13 +37,16 @@ module Erx
     # A font's vertical metrics, in its own units: DESCENDER is negative below
     # the baseline.
     Face = Data.define(:units_per_em, :ascender, :descender)
-    # One glyph's coverage: ADVANCE in 26.6 pixels, LEFT and TOP the coverage's
+    # One glyph's coverage: INDEX the font's glyph index, ADVANCE in 26.6
+    # pixels, LEFT and TOP the coverage's
     # top-left corner from the pen in pixels, TOP upward, and ROWS its WIDTH-byte
     # rows of coverage from 0 to 255, top first.
-    Coverage = Data.define(:advance, :left, :top, :width, :rows)
+    Coverage = Data.define(:index, :advance, :left, :top, :width, :rows)
     # One run: the font's Face and, for each glyph asked for, in order, its
-    # Coverage, or nil when the font has no such glyph.
-    Result = Data.define(:face, :glyphs)
+    # Coverage, or nil when the font has no such glyph; the font's GPOS and
+    # GDEF tables as bytes, each empty when the font has none, for Gpos; and
+    # LEGACY_KERN, whether the font has a legacy kern table.
+    Result = Data.define(:face, :glyphs, :gpos, :gdef, :legacy_kern)
 
     module_function
 
@@ -100,14 +103,17 @@ module Erx
       glyphs = Array.new(count) do
         next nil if cursor.unsigned(1).zero?
 
+        index = cursor.unsigned(2)
         advance, left, top = Array.new(3) { cursor.signed(4) }
         width, height = Array.new(2) { cursor.unsigned(4) }
-        Coverage.new(advance: advance, left: left, top: top, width: width,
+        Coverage.new(index: index, advance: advance, left: left, top: top, width: width,
                      rows: Array.new(height) { cursor.bytes(width) }.freeze)
       end
-      raise Error, 'erx-raster wrote bytes after its last glyph' unless cursor.done?
+      gpos, gdef = Array.new(2) { cursor.bytes(cursor.unsigned(4)).freeze }
+      legacy_kern = cursor.unsigned(1) == 1
+      raise Error, 'erx-raster wrote bytes after its last field' unless cursor.done?
 
-      Result.new(face: face, glyphs: glyphs.freeze)
+      Result.new(face: face, glyphs: glyphs.freeze, gpos: gpos, gdef: gdef, legacy_kern: legacy_kern)
     end
 
     # Little-endian fields of erx-raster's output, read in order; reading
@@ -129,7 +135,7 @@ module Erx
       private
 
       def take(size)
-        raise Error, 'erx-raster output ends inside a glyph' if @bytes.bytesize - @offset < size
+        raise Error, 'erx-raster output ends inside a field' if @bytes.bytesize - @offset < size
 
         @offset += size
         @bytes.byteslice(@offset - size, size)
@@ -137,7 +143,8 @@ module Erx
     end
 
     # The most bytes one run may write: the largest role of a theme
-    # rasterises well under a megabyte.
+    # rasterises well under a megabyte, and erx-raster writes a table of at
+    # most 16 MiB (MAX_TABLE).
     MAX_OUTPUT = 64 << 20
     RUN_DEADLINE = 120
 

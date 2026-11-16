@@ -14,7 +14,9 @@
  * digits, '.' and '_'), which FreeType looks up in the font's glyph names.
  * Each glyph is loaded unhinted and rendered with FreeType's anti-aliasing
  * rasteriser, so the output is a pure function of the font file, the size
- * and FreeType's release.
+ * and FreeType's release. After the glyphs it writes the font's GPOS and
+ * GDEF tables as the font holds them, for the glyph step's own kerning
+ * reader ("Kerning"), and whether the font has a legacy kern table.
  *
  * Output, every integer little-endian:
  *
@@ -22,6 +24,7 @@
  *	u32 glyph count					the GLYPH count
  *	then for each GLYPH, a u8 that is 0 when the font has no such glyph,
  *	which ends that glyph's record, or 1, followed by
+ *	u16 index					the font's glyph index
  *	s32 advance					26.6 pixels
  *	s32 left, s32 top				the coverage's top-left
  *							corner from the pen, in
@@ -29,12 +32,17 @@
  *	u32 width, u32 rows				the coverage's size
  *	rows * width bytes				coverage, 0 to 255, row
  *							by row from the top
+ *	then u32 length and length bytes		the GPOS table, length 0
+ *							when the font has none
+ *	u32 length and length bytes			the GDEF table, likewise
+ *	u8 1 when the font has a kern table, else 0
  *
  * A glyph that is absent is reported, not substituted: what to do with it
  * is the caller's decision. Every failure (an argument out of its form, a
  * font FreeType refuses, a glyph that is not an outline or whose coverage
- * passes MAX_SIDE, a short write) prints one diagnostic on standard error
- * and exits 1, having written nothing the caller may read as complete.
+ * passes MAX_SIDE, a glyph index past 16 bits, a table that is empty or
+ * longer than MAX_TABLE, a short write) prints one diagnostic on standard
+ * error and exits 1, having written nothing the caller may read as complete.
  * The font is untrusted input: FreeType parses it, and every size this
  * program takes from FreeType's results is bounded before it is used.
  */
@@ -50,6 +58,8 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_TRUETYPE_TABLES_H
+#include FT_TRUETYPE_TAGS_H
 
 /* The largest SIZE, in pixels per em. */
 #define MAX_SIZE	256
@@ -59,6 +69,8 @@
 #define MAX_NAME	63
 /* The largest width or height of one glyph's coverage, in pixels. */
 #define MAX_SIDE	4096
+/* The longest table written whole, in bytes. */
+#define MAX_TABLE	(16 << 20)
 
 /* What one GLYPH argument selects: a character or a glyph name. */
 typedef struct glyph_request {
@@ -70,7 +82,9 @@ static void	fail(const char *, ...) __attribute__((noreturn,
 		    format(printf, 1, 2)));
 static bool	parse_request(const char *, glyph_request_t *);
 static bool	parse_size(const char *, unsigned *);
+static bool	has_table(FT_Face, FT_ULong);
 static void	put_bytes(const void *, size_t);
+static void	put_table(FT_Face, const char *, FT_ULong, const char *);
 static void	put_u16(uint16_t);
 static void	put_u32(uint32_t);
 static void	render(FT_Face, const char *, const glyph_request_t *);
@@ -117,6 +131,9 @@ main(int argc, char *argv[])
 	put_u32((uint32_t)count);
 	for (i = 0; i < count; i++)
 		render(face, font, &requests[i]);
+	put_table(face, font, TTAG_GPOS, "GPOS");
+	put_table(face, font, TTAG_GDEF, "GDEF");
+	put_bytes(has_table(face, TTAG_kern) ? "\1" : "\0", 1);
 	if (fflush(stdout) != 0 || ferror(stdout))
 		fail("writing the coverage: %s", strerror(errno));
 
@@ -168,10 +185,13 @@ render(FT_Face face, const char *font, const glyph_request_t *request)
 	    bitmap->num_grays != 256 || bitmap->pitch < 0 ||
 	    (unsigned)bitmap->pitch < bitmap->width))
 		fail("%s: glyph %u has no 8-bit coverage", font, index);
+	if (index > UINT16_MAX)
+		fail("%s: glyph %u is past a 16-bit index", font, index);
 	if (slot->advance.x < INT32_MIN || slot->advance.x > INT32_MAX)
 		fail("%s: glyph %u advances out of range", font, index);
 
 	put_bytes("\1", 1);
+	put_u16((uint16_t)index);
 	put_u32((uint32_t)(int32_t)slot->advance.x);
 	put_u32((uint32_t)(int32_t)slot->bitmap_left);
 	put_u32((uint32_t)(int32_t)slot->bitmap_top);
@@ -180,6 +200,43 @@ render(FT_Face face, const char *font, const glyph_request_t *request)
 	for (row = 0; row < bitmap->rows && bitmap->width > 0; row++)
 		put_bytes(bitmap->buffer + (size_t)row * (size_t)bitmap->pitch,
 		    bitmap->width);
+}
+
+/* Whether the font holds the table TAG, by FreeType's read of its directory. */
+static bool
+has_table(FT_Face face, FT_ULong tag)
+{
+	FT_ULong length;
+
+	length = 0;
+	return (FT_Load_Sfnt_Table(face, tag, 0, NULL, &length) == 0);
+}
+
+/* The table TAG as its length and bytes, length 0 when the font has none. */
+static void
+put_table(FT_Face face, const char *font, FT_ULong tag, const char *name)
+{
+	FT_Byte *bytes;
+	FT_Error error;
+	FT_ULong length;
+
+	if (!has_table(face, tag)) {
+		put_u32(0);
+		return;
+	}
+	length = 0;
+	if ((error = FT_Load_Sfnt_Table(face, tag, 0, NULL, &length)) != 0)
+		fail("%s: the %s table did not load: error %d", font, name, error);
+	if (length == 0 || length > MAX_TABLE)
+		fail("%s: the %s table is %lu bytes, outside 1 to %d", font, name,
+		    (unsigned long)length, MAX_TABLE);
+	if ((bytes = malloc(length)) == NULL)
+		fail("out of memory");
+	if ((error = FT_Load_Sfnt_Table(face, tag, 0, bytes, &length)) != 0)
+		fail("%s: the %s table did not load: error %d", font, name, error);
+	put_u32((uint32_t)length);
+	put_bytes(bytes, length);
+	free(bytes);
 }
 
 /* U+XXXX, at most U+10FFFF, or a glyph name. */

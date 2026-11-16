@@ -6,6 +6,7 @@ require 'fileutils'
 require 'tmpdir'
 require_relative 'error'
 require_relative 'abi_theme'
+require_relative 'gpos'
 require_relative 'output_directory'
 require_relative 'raster'
 require_relative 'glyphs_menu'
@@ -36,6 +37,19 @@ module Erx
   # (font(7): x in two bytes, rows, left and width in one), is refused, so
   # no subfont is cut to fit.
   #
+  # The kerning ("Kerning"): each role's pairs, from its font's GPOS table
+  # through Gpos, are adjustments in whole pixels of the first glyph's
+  # advance when the second follows it, chosen so that width(a) + kern(a, b)
+  # is the font's exact kerned advance rounded half up, as width(a) is the
+  # exact advance rounded half up. Pairs name only drawn glyphs, those of
+  # width other than 0, and a pair whose adjustment is 0 is not kept. They
+  # follow the glyph table as the pair section: the word kern and the pair
+  # count as two header fields, then per pair the two glyph indices, two
+  # bytes each low byte first, and the adjustment as a signed byte, in
+  # strictly ascending order. A role whose font has a legacy kern table, or
+  # whose GPOS or GDEF table Gpos refuses, or with a pair whose adjustment
+  # leaves a signed byte or whose kerned advance leaves 0 to 255, is refused.
+  #
   # Each role's subfont is computed whole before any file is written, and
   # the whole directory is written beside its destination and renamed onto
   # it, so no reader sees a partial set and no stale role's file remains.
@@ -54,6 +68,9 @@ module Erx
     ROW = 0..255
     LEFT = -128..127
     ADVANCE = 0..255
+    ADJUSTMENT = -128..127
+    PAIRS = 'kern'
+    HALF = Rational(1, 2)
 
     class Refused < Error; end
 
@@ -66,19 +83,29 @@ module Erx
     Placed = Data.define(:glyph, :coverage)
 
     # A k8 subfont: an image WIDTH by HEIGHT whose PIXELS are its rows top
-    # first, one byte of coverage each, the baseline ASCENT rows down, and
-    # GLYPHS in index order.
-    Subfont = Data.define(:width, :height, :ascent, :pixels, :glyphs) do
+    # first, one byte of coverage each, the baseline ASCENT rows down,
+    # GLYPHS in index order, and PAIRS, each [first, second, adjustment] by
+    # glyph index, ascending.
+    Subfont = Data.define(:width, :height, :ascent, :pixels, :glyphs, :pairs) do
+      def initialize(pairs: [].freeze, **fields) = super
+
       # The file: the image (image(7)), then the subfont header and the
       # glyph table with its closing entry, which gives only the end of the
-      # last glyph's columns (font(7)).
+      # last glyph's columns (font(7)), then the pair section when there
+      # are pairs.
       def encode
         header = [CHANNEL, 0, 0, width, height].map { |word| Glyphs.field(word) }.join
         table = [height, ascent].map { |word| Glyphs.field(word) }.join
         entries = [*glyphs, Glyph.new(x: width, top: 0, bottom: 0, left: 0, width: 0)].map do |glyph|
           [glyph.x, glyph.top, glyph.bottom, glyph.left, glyph.width].pack('vCCcC')
         end
-        header + pixels + Glyphs.field(glyphs.size) + table + entries.join
+        header + pixels + Glyphs.field(glyphs.size) + table + entries.join + pair_section
+      end
+
+      def pair_section
+        return '' if pairs.empty?
+
+        [PAIRS, pairs.size].map { |word| Glyphs.field(word) }.join + pairs.map { |pair| pair.pack('vvc') }.join
       end
     end
 
@@ -177,7 +204,43 @@ module Erx
         place(role, request, coverage, x: x, ascent: ascent)
       end
       Subfont.new(width: width, height: role.line, ascent: ascent, pixels: image(placed, width: width, height: role.line),
-                  glyphs: placed.map(&:glyph).freeze)
+                  glyphs: placed.map(&:glyph).freeze, pairs: pairs(role, result: result, placed: placed))
+    end
+
+    # The role's pairs, [first, second, adjustment] by subfont glyph index in
+    # ascending order, from the font's kerning of its drawn glyphs.
+    def pairs(role, result:, placed:)
+      refuse(role, 'its font has a legacy kern table, a second source of kerning') if result.legacy_kern
+      drawn = placed.each_index.select { |index| placed[index].glyph.width.positive? }
+      # The drawn subfont glyphs by the font glyph each draws.
+      by_font_glyph = drawn.group_by { |index| result.glyphs.fetch(index).index }
+      font_pairs(role, result: result, glyphs: by_font_glyph.keys).flat_map do |(font_first, font_second), units|
+        by_font_glyph.fetch(font_first).product(by_font_glyph.fetch(font_second)).filter_map do |first, second|
+          pixels = adjustment(role, result.face, result.glyphs.fetch(first), units)
+          [first, second, pixels] unless pixels.zero?
+        end
+      end.sort.freeze
+    end
+
+    # Gpos's pairs of the font's glyphs GLYPHS, its refusal the role's.
+    def font_pairs(role, result:, glyphs:)
+      Gpos.pairs(gpos: result.gpos, gdef: result.gdef, glyphs: glyphs)
+    rescue Gpos::Refused => e
+      refuse(role, "its kerning: #{e.message}")
+    end
+
+    # The first glyph's kerned advance rounded half up, less its advance
+    # rounded half up, in exact arithmetic: a the advance in 26.6 pixels
+    # over 64, k the pair's UNITS scaled to the role's size.
+    def adjustment(role, face, coverage, units)
+      advance = Rational(coverage.advance, 64)
+      kerned = (advance + Rational(units * role.size, face.units_per_em) + HALF).floor
+      pixels = kerned - (advance + HALF).floor
+      unless ADJUSTMENT.cover?(pixels)
+        refuse(role, "glyph #{coverage.index}'s kerning of #{units} units is an adjustment of #{pixels} pixels")
+      end
+      refuse(role, "glyph #{coverage.index}'s kerned advance of #{kerned} pixels leaves 0 to 255") unless ADVANCE.cover?(kerned)
+      pixels
     end
 
     # The baseline's row: half the line's leading below the font's ascender,

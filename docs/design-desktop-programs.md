@@ -733,9 +733,12 @@ under a `kern` feature, has a lookup that is not a pair adjustment, an
 extension that wraps another extension, a lookup flag other than the
 mark bits above, a pair adjustment of a format other than 1 or 2, value
 formats other than an advance of the first glyph and nothing of the
-second, an offset or count that reaches past the table, or a class at
-or past its subtable's class count; and a pair whose adjustment or
-kerned advance leaves its range, as above. Each names the role, and the
+second, an offset or count that reaches past the table, a class at or
+past its subtable's class count, a class count of 0, which leaves no
+class for the glyphs a class definition does not list, or a coverage or
+class definition whose glyphs do not ascend without repeating, as the
+specification requires and as reading each glyph by halving needs; and
+a pair whose adjustment or kerned advance leaves its range, as above. Each names the role, and the
 lookup and subtable where there is one.
 
 ### Spacing and layout
