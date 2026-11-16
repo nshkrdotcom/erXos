@@ -199,6 +199,19 @@ module Erx
     # `service -e` there: the configured domains in boot order and the enabled rows, read
     # from /proc/apps through the session's inspect facet, with status 0.
     SERVICE_E = "service -e && echo service-listed\r"
+    # Set by hand (docs/design-time.md, "Verification and testing"): root's session sets
+    # the wall clock with date through its clock grant, which writes the time it set, and a
+    # reading date writes it back; 12:30 UTC that day is SET_EPOCH_S. Its Erlang shell's
+    # sample through the same grant is refused eperm, since root's row grants set alone,
+    # and its monotonic clock has not moved with the set; the system shell then reads the
+    # set time in another domain.
+    DATE_SET = "date 202611161230 +%Y%m%d%H%M\r"
+    DATE_READ = "date +%Y%m%d%H%M\r"
+    DATE_SET_LINE = '202611161230'
+    CLOCK_SAMPLE = "gen_server:call(erx:cap(clock), {sample, 0, 0, 1, {0, 0, 0, 0}}).\r"
+    MONOTONIC_KEPT = "os:perf_counter(second) < 3600.\r"
+    SET_EPOCH_S = 1_794_832_200
+    WALL_SET = "abs(os:system_time(second) - #{SET_EPOCH_S}) < 900.\r".freeze
     # erx:i([]) at root_1's Erlang shell: the machine's record through the session's facet.
     MACHINE = "erx:i([]).\r"
     MACHINE_UPTIME = /\A +uptime +kernel +[0-9]+\r*\n\z/n
@@ -342,9 +355,13 @@ module Erx
        { name: 'session-proc-status', pattern: PROC_UPTIME, seconds: 60, type: START_LISTED }.freeze,
        { name: 'session-start-listed', pattern: line('start-listed'), seconds: 60, type: START_CTL_REFUSED }.freeze,
        { name: 'session-start-ctl-refused', pattern: line('start-ctl-refused-invalid argument'), seconds: 60, type: SERVICE_E }.freeze,
-       { name: 'session-service-e', pattern: line('service-listed'), seconds: 60, type: ERL }.freeze,
+       { name: 'session-service-e', pattern: line('service-listed'), seconds: 60, type: DATE_SET }.freeze,
+       { name: 'session-date-set', pattern: line(DATE_SET_LINE), seconds: 60, type: DATE_READ }.freeze,
+       { name: 'session-date-read', pattern: line(DATE_SET_LINE), seconds: 60, type: ERL }.freeze,
        shell.merge(name: 'root_1-erlang-shell', type: "node().\r").freeze,
-       { name: 'root_1-node', pattern: answer('root_1@erxos'), seconds: 60, type: MACHINE }.freeze,
+       { name: 'root_1-node', pattern: answer('root_1@erxos'), seconds: 60, type: CLOCK_SAMPLE }.freeze,
+       { name: 'root_1-sample-refused', pattern: answer('{error,eperm}'), seconds: 60, type: MONOTONIC_KEPT }.freeze,
+       { name: 'root_1-monotonic-kept', pattern: answer('true'), seconds: 60, type: MACHINE }.freeze,
        { name: 'root_1-machine', pattern: MACHINE_UPTIME, seconds: 60, type: PROGRAM_REFUSED }.freeze,
        { name: 'program-refused', pattern: answer('{{error,einval},{error,einval}}'), seconds: 60,
          type: PIPES }.freeze,
@@ -365,7 +382,8 @@ module Erx
        { name: 'system-ps', pattern: line('1'), seconds: 60, type: CAT_ACROSS }.freeze,
        { name: 'system-data', pattern: line('across'), seconds: 60, type: ERL }.freeze,
        shell.merge(name: 'system-erlang-shell', type: "node().\r").freeze,
-       { name: 'system-node', pattern: answer('system@erxos'), seconds: 60, type: SESSION_PROCESS }.freeze,
+       { name: 'system-node', pattern: answer('system@erxos'), seconds: 60, type: WALL_SET }.freeze,
+       { name: 'system-wall-set', pattern: answer('true'), seconds: 60, type: SESSION_PROCESS }.freeze,
        { name: 'session-process', pattern: SESSION_REDUCTIONS, seconds: 60,
          type: RESTART_STORAGE + with_data(READ_ACROSS, guard: 'Grant =/= Old') }.freeze,
        { name: 'storage-regranted', pattern: answer(ACROSS_READ), seconds: 180, type: KILL_SESSION }.freeze,

@@ -568,6 +568,19 @@ class AbiSchemaTest < Minitest::Test
     end
   end
 
+  # The table the boot view checks a facet's operation rows against (erx_service_operations):
+  # a declaration's rows in number order, and an interface served as a tree that declares
+  # operations, which no tree grant checks on the stopgap, refused.
+  def test_service_operations_are_tabled_and_a_tree_s_are_refused
+    declared = "service shown 3\n  served_as message\n  operation take 2\n  operation give 1\n"
+    header = Erx::ABI::CEmitter.header(schema(FACET_ROW + declared))
+    assert_includes header, "\t\t{ ERX_SERVICE_SHOWN, 1, \"give\" },\n\t\t{ ERX_SERVICE_SHOWN, 2, \"take\" },\n"
+    assert_includes header, 'erx_service_operations(uint32_t interface, size_t *count)'
+    assert_raises(Erx::ABI::SchemaError) do
+      Erx::ABI::CEmitter.header(schema("#{FACET_ROW}service shown 3\n  served_as tree\n  operation read 1\n"))
+    end
+  end
+
   # A member parameter's bound is an enum the ABI declares, with no gap between its
   # values, so the boot view's range check admits exactly its members, and its table row
   # names them in value order. Each refused sample breaks only that rule: no such enum,

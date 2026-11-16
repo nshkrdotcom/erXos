@@ -1247,7 +1247,8 @@ module Erx
           rows['services'].map { |row| row.values_at('server', 'name') }.uniq.size == services.size
         rows['introductions'] = normalize_introductions
         app_services = check_apps(rows)
-        rows['facets'], rows['facet_parameters'], facet_values = normalize_facets(services.map(&:first), rows, app_services)
+        rows['facets'], rows['facet_operations'], rows['facet_parameters'], facet_values =
+          normalize_facets(services.map(&:first), rows, app_services)
         rows['starts'] = normalize_starts(services.map(&:first), rows)
         rows['apps'], rows['app_services'] = apps_rows(app_services, rows)
         check_app_start_rows
@@ -1259,7 +1260,7 @@ module Erx
         edges = boot_edges(rows['facets'], rows['services'])
         rows['boot_order'] = boot_order(rows['domains'], edges)
         check_rescue(rows['domains'], edges)
-        check_facets_supported
+        check_facets_supported(rows)
         rows['images'], rows['extents'] = normalize_images(rows.fetch('devices'))
         rows['system_image'] = system_image_rows
         rows['windows'] = normalize_windows(rows)
@@ -1818,9 +1819,10 @@ module Erx
       # system domain holds one (property 8); the network's facets are property 15's
       # (check_network_grants), and the files and inspect receivers' floors property 16's
       # (check_files_grants, check_inspect_grants). Each facet's parameters are resolved
-      # against its service's declarations (facet_parameters). Answers the sorted rows, each
-      # with its parameters span, the facet_parameters table and each row's resolved
-      # parameter values, by key name, in the rows' order.
+      # against its service's declarations (facet_parameters), and its operations against
+      # its interface's (facet_operations). Answers the sorted rows, each with its
+      # operations and parameters spans, the facet_operations and facet_parameters tables
+      # and each row's resolved parameter values, by key name, in the rows' order.
       def normalize_facets(services, tables, app_services)
         service_rows = tables.fetch('services')
         sources = records('facet').map do |record|
@@ -1849,15 +1851,42 @@ module Erx
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
         check_line_grants(rows, packed.map(&:first), tables)
+        operations = records('facet').zip(sources).map { |record, row| facet_operations(record, row, service_rows) } +
+                     derived.map { [] }
         order = rows.each_index.sort_by { |at| [rows.fetch(at).fetch('name'), *grantee.call(rows.fetch(at))] }
-        first = 0
-        facets = order.map do |at|
-          count = packed.fetch(at).last.size
-          span = { 'table' => 'facet_parameters', 'first' => first, 'count' => count }
-          first += count
-          rows.fetch(at).merge('parameters' => span)
+        facets = order.zip(spans(order.map { |at| operations.fetch(at) }, 'facet_operations'),
+                           spans(order.map { |at| packed.fetch(at).last }, 'facet_parameters')).map do |at, named, stated|
+          rows.fetch(at).merge('operations' => named, 'parameters' => stated)
         end
-        [facets, order.flat_map { |at| packed.fetch(at).last }, order.map { |at| packed.fetch(at).first }]
+        [facets, order.flat_map { |at| operations.fetch(at) }.map { |number| { 'operation' => number } },
+         order.flat_map { |at| packed.fetch(at).last }, order.map { |at| packed.fetch(at).first }]
+      end
+
+      # One span of table per list, each list's rows following the last's from row 0.
+      def spans(lists, table)
+        lists.each_with_object([]) do |list, result|
+          first = result.empty? ? 0 : result.last.fetch('first') + result.last.fetch('count')
+          result << { 'table' => table, 'first' => first, 'count' => list.size }
+        end
+      end
+
+      # A facet record's operations, `none` or a comma-separated list of the names its
+      # service's interface declares, each once (property 2), as their numbers in ascending
+      # order, the facet_operations rows its span takes (docs/design-abi.md, "Services,
+      # facets and their parameter schemas"). Which rows the stopgap can honour is
+      # check_facets_supported's.
+      def facet_operations(record, row, service_rows)
+        token = one(record, 'operations')
+        return [] if !token.quoted && token.value == 'none'
+
+        declared = service_declaration(service_rows.fetch(row.fetch('service')).fetch('interface'))&.fetch(:operations) || {}
+        record.line.fail!('operations requires none or unquoted operation names') if token.quoted
+        names = token.value.split(',', -1)
+        numbers = names.map { |name| declared[name] }
+        invalid("facet #{row.fetch('name')}'s operations name an operation its interface does not declare", 2, 'facet.operations') if
+          names.empty? || numbers.include?(nil)
+        invalid("facet #{row.fetch('name')}'s operations name one twice", 2, 'facet.operations') unless names.uniq.size == names.size
+        numbers.sort
       end
 
       # The checkers that consume a service's declared parameters, by the name its
@@ -2313,16 +2342,19 @@ module Erx
           'queue' => queue }.merge(ABI::Contracts::FACET_QUANTITIES.to_h { |key| [key, number(record, key)] })
       end
 
-      # What the stopgap cannot honour, refused once properties 2, 10 and 11 hold: a
-      # facet that names an operation, which resolves against its service's generated
-      # declarations at M5, so the row would grant every operation. Its parameters are
-      # resolved (facet_parameters).
-      def check_facets_supported
-        records('facet').each do |record|
-          operations = one(record, 'operations')
-          next if !operations.quoted && operations.value == 'none'
+      # What the stopgap cannot honour, refused once properties 2, 10 and 11 hold
+      # (docs/design-time.md, "Phase 1"): a facet that names operations of a service a
+      # configured domain serves, since only the system domain's erx_facet checks a
+      # grant's operations, so the row would grant every operation. A tree's interface
+      # declares none (facet_operations). Its parameters are resolved (facet_parameters).
+      def check_facets_supported(rows)
+        none = @codec.constant('mf_none')
+        rows.fetch('facets').each do |facet|
+          next if facet.fetch('operations').fetch('count').zero?
 
-          unsupported('a facet resolves its operations against its service\'s generated declarations, which M5 brings', 'facet')
+          service = rows.fetch('services').fetch(facet.fetch('service'))
+          unsupported("facet #{facet.fetch('name')} names operations of a service a configured domain serves, " \
+                      'which nothing on the stopgap checks', 'facet.operations') unless service.fetch('server') == none
         end
       end
 

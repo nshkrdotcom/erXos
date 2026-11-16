@@ -973,6 +973,11 @@ system_facet(log, {message, Behind, Limits}, _Principal, _State) ->
     %% docs/design-log.md, "The log facet": Behind is erx_syslog_sup, and the callback
     %% finds erx_syslog at each request.
     {facet, erx_log_facet, Behind, Limits};
+system_facet(clock, {message, Behind, Limits}, _Principal, _State) ->
+    %% docs/design-time.md, "The clock facet": Behind is erx_clock_sup, and the
+    %% callback finds erx_clock at each request and checks the grant's operations, sample
+    %% or set, against what it decodes.
+    {facet, erx_clock_facet, Behind, Limits};
 system_facet(_Name, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_domain_facet, Behind, Limits#{behind => Behind}};
 system_facet(machine, {tree, Grants, Limits}, Principal, #{principals := #{system := System}} = State) ->
@@ -1105,9 +1110,11 @@ served(Grantee, Rows) ->
                              end
                      end, Rows)).
 
+%% A message grant carries its row's operations, which the facet admits alone
+%% (erx_facet:start/3); a tree grant's row names none (dom_boot_view.c).
 served_grant(message, Behind, Limits) ->
     case grant({Behind, maps:with([max_request, in_flight], Limits)}) of
-        {ok, {Behind, Checked}} -> {ok, {message, Behind, Checked}};
+        {ok, {Behind, Checked}} -> {ok, {message, Behind, Checked#{operations => maps:get(operations, Limits, [])}}};
         invalid -> invalid
     end;
 served_grant(tree, Grants, Limits) ->

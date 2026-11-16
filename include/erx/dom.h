@@ -505,10 +505,10 @@ typedef struct erx_dom_parameter {
  * entries in ascending order. A session template takes facets of configured domains'
  * services, which their servers grant each session made from it, and of
  * the system domain's, which the domain service grants each such session
- * in its ready answer (property 14). It names no operation: operations
- * resolve against the service's generated declarations, which nothing on the boot path reads, so the
- * view refuses a row that names any rather than have the domain service
- * grant every operation.
+ * in its ready answer (property 14). Its operations are declarations of
+ * the service's interface, in ascending number order, each once; only a
+ * service the system domain serves has any, since only its erx_facet
+ * checks them on the stopgap (docs/design-time.md, "Phase 1").
  */
 typedef struct erx_dom_facet {
 	uint32_t	grantee_kind;	/* ERX_MF_GRANTEE_SYSTEM, _DOMAIN or _SESSION */
@@ -517,6 +517,8 @@ typedef struct erx_dom_facet {
 	uint32_t	max_request;	/* the largest request, in encoded bytes */
 	uint32_t	in_flight;	/* forwards outstanding at once */
 	uint64_t	reductions, period_ns, max_heap_size, queue;
+	const erx_service_operation_t *const *operations; /* noperations, in the view's table */
+	uint32_t	noperations;
 	const erx_dom_parameter_t *parameters;	/* nparameters, in the view's table */
 	uint32_t	nparameters;
 } erx_dom_facet_t;

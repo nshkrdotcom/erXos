@@ -227,11 +227,44 @@ class ManifestDomainsTest < Minitest::Test
     assert_match(/interface names no service/, error.message)
   end
 
-  # A facet's operations resolve against its service's generated declarations, which
-  # the packer does not read in Phase 1, so a facet that names any is refused.
-  def test_a_facet_naming_an_operation_is_refused_naming_its_milestone
-    named = facet('ab', '@domain.alpha', '@service.b').sub('operations none', 'operations read')
-    refused(Erx::Manifest::Unsupported, 'unsupported', 'facet', @source + service('b', '@domain.beta') + named, message: /M5/)
+  # A grant of the inspect interface (abi/services/inspect.txt: inspect 1, entries 2),
+  # served by the system domain, to the system principal's session template, naming
+  # operations.
+  def inspect_grant(operations)
+    inspect = service('i', 'system').sub('interface 1', 'interface inspect')
+    with_session(self.class.session) + inspect +
+      facet('i', '@session.system', '@service.i').sub('operations none', "operations #{operations}")
+  end
+
+  # A facet's operations resolve against its interface's declarations into its span of
+  # facet_operations, in ascending number order whatever the order the row names them.
+  def test_a_facet_s_operations_are_packed_as_their_numbers
+    view = @codec.open('manifest', admit(inspect_grant('entries,inspect')).bytes)
+    facet = rows(view, 'facets').find { |row| view.string(row.fetch('name')) == 'i' }
+    span = facet.fetch('operations')
+    first = (span.fetch('offset') - view.header.fetch('facet_operations').fetch('offset')) / 4
+    assert_equal [1, 2], span.fetch('count').times.map { |at| view.fetch('facet_operations', first + at).fetch('operation') }
+    assert_equal [2], rows(@codec.open('manifest', admit(inspect_grant('entries')).bytes), 'facet_operations')
+      .map { |row| row.fetch('operation') }
+  end
+
+  def test_a_facet_naming_an_undeclared_or_repeated_operation_is_refused
+    %w[set inspect,set inspect,inspect inspect, ,inspect].each do |operations|
+      refused(Erx::Manifest::Invalid, 2, 'facet.operations', inspect_grant(operations), message: /facet i's operations name/)
+    end
+  end
+
+  # Only the system domain's erx_facet checks a grant's operations (docs/design-time.md,
+  # "Phase 1"), so a row naming operations of a service a configured domain serves is
+  # refused, as is one of a tree, whose interfaces declare none.
+  def test_operations_only_the_stopgap_checks_are_admitted
+    web = "service w\n  server @domain.beta\n  interface web\n"
+    named = facet('w', '@domain.alpha', '@service.w').sub('operations none', 'operations data')
+    refused(Erx::Manifest::Unsupported, 'unsupported', 'facet.operations', @source + web + named,
+            message: /a service a configured domain serves/)
+    files = "service f\n  server @domain.beta\n  interface files\n"
+    tree = window_facet('f', '@domain.alpha', '@service.f').sub('operations none', 'operations read')
+    refused(Erx::Manifest::Invalid, 2, 'facet.operations', @source + files + tree, message: /does not declare/)
   end
 
   def test_introductions_are_written_once_lower_index_first

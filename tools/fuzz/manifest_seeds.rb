@@ -21,7 +21,9 @@ module Erx
   # display_domain suite's manifest with its client's grant of the display stating each
   # parameter of the windows interface a facet row may, so the facet table holds parameter
   # rows, the configured domains' with alpha granted the line on a UART of its own, so a
-  # parameter row holds a device reference, and the configured domains' with an apps row
+  # parameter row holds a device reference, the development manifest with its inspect grant
+  # naming both operations, so the facet table holds operation rows, and the configured
+  # domains' with an apps row
   # offering one service, two packages, a signer and the build's development key, so each
   # of those tables holds rows.
   module ManifestSeeds
@@ -36,6 +38,8 @@ module Erx
                    "apps\n  memory 1048576\n  max 2\n  services appnet\npackage clock\n  input @artifact.package-clock\n  enable YES\n" \
                    "package quotes\n  input @artifact.package-quotes\nsigner ops\n  key hex:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\n"
     WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter clipboard yes\n"
+    # The operations operations_grant's grant of inspect names.
+    INSPECT_OPERATIONS = 'entries,inspect'
     # The net grant's parameters: sockets, ports a full set of 16, stated out of order, and
     # listen one of them, so its rows are a scalar, two sets, and a set at its most.
     NET_PORTS = (2000...2016).to_a.freeze
@@ -72,6 +76,7 @@ module Erx
       PackFuzz.prefix_seeds(development.bytes).merge('empty' => empty.bytes, 'system-args-escape' => escape.bytes,
                                                      'windows-grant' => windows_grant(repository, codec),
                                                      'line-grant' => line_grant(repository, codec),
+                                                     'operations-grant' => operations_grant(source, codec, platform),
                                                      'net-grant' => net_grant(repository, codec),
                                                      'domains' => domains.bytes, 'session-grantee' => session.bytes,
                                                      'start-row' => start.bytes, 'raspi4b' => pi.bytes,
@@ -89,6 +94,16 @@ module Erx
       context = Manifest::Context.new(**arguments, platform: platform_of(repository, 'qemu-virt'))
       planner = ->(view) { %w[domains introductions sessions].to_h { |key| [key, view.fetch(key == 'domains' ? 'order' : key).map { 0 }] } }
       Manifest.admit(source: source, codec: codec, context: context, planner: planner).bytes
+    end
+
+    # The development manifest with its grant of inspect to root's template naming both of
+    # the interface's operations, out of number order, as the check packs it.
+    def operations_grant(source, codec, platform)
+      granted = source.sub("  service @service.inspect\n  operations none\n", "  service @service.inspect\n  operations #{INSPECT_OPERATIONS}\n")
+      raise Error, 'the development manifest has no inspect grant of operations none' if granted == source
+
+      Manifest.admit(source: granted, codec: codec, context: Manifest::Context.new(**ManifestContextFixture.arguments(codec), platform: platform),
+                     planner: ManifestContextFixture.accepting_planner).bytes
     end
 
     # The development manifest on QEMU virt with its session template's grant of net

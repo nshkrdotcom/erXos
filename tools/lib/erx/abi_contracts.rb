@@ -645,6 +645,9 @@ module Erx
           end
           declaration.fail!('liveness must name a declared operation') if liveness && !operations.key?(liveness)
           declaration.fail!('service must state served_as') unless served_as
+          # A tree's operations are its protocol's own messages, which no facet row names
+          # (abi/services/files.txt), so the boot view never checks a tree grant's.
+          declaration.fail!('a service served as a tree declares no operation') if served_as == 'tree' && operations.any?
           checkers = parameters.values.map { |parameter| parameter.fetch(:helper) }.uniq
           declaration.fail!('a service\'s parameters name one checked_by helper') if checkers.size > 1
           Model.unique_values(operations, label: 'operation', line: declaration.line)

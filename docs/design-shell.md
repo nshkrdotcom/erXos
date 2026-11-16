@@ -338,7 +338,7 @@ shell and for `erx:` functions that run commands:
    implements the `erx_cmd` behaviour and declares its name
    (`-erx_command(ps)`): the UNIX utilities `ps`, `echo`, `cat`, `ls`,
    `pwd`, `mkdir`, `rm`, `mv`, `cp`, `grep`, `sort`, `wc`, `uname`,
-   `dmesg`, `true` and `false`, which follow FreeBSD's utilities of the same names
+   `date`, `dmesg`, `true` and `false`, which follow FreeBSD's utilities of the same names
    ([Text commands](#text-commands)), so toybox's applets of those names
    are never built; the screen editor `vi`, which behaves like FreeBSD's
    nvi in its basics ([design-vi.md](design-vi.md)), so toybox's `vi` is
@@ -696,6 +696,12 @@ erXos value and is not offered, nor are the `UNAME_x` environment
 variables that override a field. The values are erXos's own, so the
 FreeBSD oracle has
 no `uname` case; its tests pin the order, the layout and the values.
+
+**`date [-jnu] [[[[[cc]yy]mm]dd]HH]MM[.SS] [+format]`** writes the wall
+time through a strftime(3) format, or sets it, as FreeBSD's `date` does,
+in UTC, the only zone erXos has. Setting needs the `clock` grant, which
+root's session holds; its forms, conversions and failure paths are
+[design-time.md](design-time.md#setting-the-clock-by-hand)'s.
 
 **`host name [server]`** looks a name or an address up in the DNS, as
 FreeBSD's `host` does, through `inet_res` and the domain's name servers

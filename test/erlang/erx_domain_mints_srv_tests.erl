@@ -329,9 +329,11 @@ last_end() ->
 
 %% A configured domain's facets of services the system domain serves: b (row 0) is
 %% granted log, which a process of this runtime names with erx_facet:serve/2 before
-%% the service starts, and a (row 1) is granted clock, which no service names. b's
-%% ready answer carries a facet in front of log's process, bound to b and within the
-%% row's max_request; a's carries none, and no grant reaches the mint core.
+%% the service starts, and a (row 1) is granted clock, which no service names, and log
+%% by a row that lists its write operation, which erx_log_facet has no operation/1 to
+%% check (erx_facet:start/3). b's ready answer carries a facet in front of log's
+%% process, bound to b and within the row's max_request; a's carries none, and no grant
+%% reaches the mint core.
 %% It starts the service itself: the trace of the domain pids goes to the process that
 %% asks for it, and EUnit runs a fixture's setup in another process than its test.
 served_test() ->
@@ -344,7 +346,8 @@ served_setup() ->
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)], services => [],
                           grants => [{0, log, system, #{max_request => 64, in_flight => 2, queue => 4096}},
-                                     {1, clock, system, #{max_request => 1}}]}),
+                                     {1, clock, system, #{max_request => 1}},
+                                     {1, log, system, #{max_request => 64, operations => [write]}}]}),
     Log = spawn(fun() -> receive stop -> ok end end),
     ok = erx_facet:serve(log, Log),
     Self = self(),

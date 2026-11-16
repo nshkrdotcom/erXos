@@ -36,6 +36,7 @@
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/time.h"
 #include "liberx/backend/fiasco/vm.h"
+#include "liberx/backend/runtime_entry.h"
 #include "test/guest/native_space/modes.h"
 
 /* Closes a handle an integer-typed call returned (erx_cap_close takes erx_cap_t). */
@@ -1003,16 +1004,48 @@ warm_up(void)
 		say("erx: space: warm-up refused\n");
 }
 
+/* Sets wall time to wall_ns from now on, through the offset the setter takes. */
+static bool
+set_wall(uint64_t wall_ns)
+{
+	return (erx_time_set_offset((erx_cap_t){ .raw = erx_fiasco_time_object() },
+	    wall_ns - erx_time_monotonic_ns()) == ERX_OK);
+}
+
+/* The setter stores offset_ns exactly, as erx_time_offset reads it back. */
+static bool
+set_exact(uint64_t offset_ns)
+{
+	int64_t offset;
+	bool cold;
+
+	return (erx_time_set_offset((erx_cap_t){ .raw = erx_fiasco_time_object() }, offset_ns) == ERX_OK &&
+	    erx_time_offset(&offset, &cold) && !cold && (uint64_t)offset == offset_ns);
+}
+
+/* An offset past the range is refused and leaves the page's offset as it was. */
+static bool
+set_refused(uint64_t offset_ns, uint64_t kept_ns)
+{
+	int64_t offset;
+	bool cold;
+
+	return (erx_time_set_offset((erx_cap_t){ .raw = erx_fiasco_time_object() }, offset_ns) == ERX_EINVAL &&
+	    erx_time_offset(&offset, &cold) && (uint64_t)offset == kept_ns);
+}
+
 /*
  * A task reads the wall clock the root set before the task was made, raises its signal,
- * and then sees the root move it: the task reads the root's one page, not a copy.
+ * and then sees the root move it: the task reads the root's one page, not a copy. Then
+ * the setter's range: 0 and time_offset_max are stored exactly, one past it and -1 are
+ * refused (docs/design-time.md, "Verification and testing").
  */
 static void
 case_time(void)
 {
 	uint64_t signal, signal_addr, space, deadline;
 	int64_t status = INT64_MIN;
-	bool passed = erx_time_set_wall(TIME_FIRST_NS) == ERX_OK && erx_mem_create(0, PAGE, 0, &signal) == ERX_OK &&
+	bool passed = set_wall(TIME_FIRST_NS) && erx_mem_create(0, PAGE, 0, &signal) == ERX_OK &&
 	    erx_vm_reserve(ERX_CAP_SELF, 0, PAGE, 0, &signal_addr) == ERX_OK &&
 	    erx_vm_map(ERX_CAP_SELF, signal_addr, PAGE, signal, 0, ERX_PROT_RW) == ERX_OK && task_make(&space, SIGNAL_ADDR, 1) &&
 	    erx_vm_map(space, SIGNAL_ADDR, PAGE, signal, 0, ERX_PROT_RW) == ERX_OK &&
@@ -1024,11 +1057,13 @@ case_time(void)
 	while (passed && atomic_load_explicit((_Atomic uint64_t *)(uintptr_t)signal_addr, memory_order_acquire) == 0 &&
 	    erx_fiasco_task_join_until(space, erx_fiasco_clock_ns() + SHORT_NS, &status) == ERX_ETIMEDOUT)
 		passed = erx_fiasco_clock_ns() < deadline;
-	passed = passed && status == INT64_MIN && erx_time_set_wall(TIME_SECOND_NS) == ERX_OK;
+	passed = passed && status == INT64_MIN && set_wall(TIME_SECOND_NS);
 	if (started && status == INT64_MIN)
 		(void)erx_fiasco_task_join_until(space, erx_fiasco_clock_ns() + WAIT_NS, &status);
 	say_count("time_status", (uint64_t)status);
-	passed = passed && status == 0 && erx_vm_release(ERX_CAP_SELF, signal_addr, PAGE) == ERX_OK &&
+	passed = passed && status == 0 && set_exact(0) && set_exact(ERX_TIME_OFFSET_MAX) &&
+	    set_refused(ERX_TIME_OFFSET_MAX + 1, ERX_TIME_OFFSET_MAX) && set_refused(UINT64_MAX, ERX_TIME_OFFSET_MAX) &&
+	    set_wall(TIME_SECOND_NS) && erx_vm_release(ERX_CAP_SELF, signal_addr, PAGE) == ERX_OK &&
 	    handle_close(signal) == ERX_OK;
 	say_case("time", passed);
 }

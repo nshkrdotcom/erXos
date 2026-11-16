@@ -40,7 +40,9 @@ What arrives is sorted by its shape before the callback sees a request:
   else is dropped and counted, with no answer, since an answer would go to
   a name the sender chose. A request past the grant's limit in flight is
   refused with {error, busy}, which the grantee may retry, and one the
-  callback refuses with its reason; each is counted.
+  callback refuses with its reason; each is counted. A request of an
+  operation the grant does not list is refused before admit/3 sees it (see
+  below).
   admit/3 decides the rest: a reply, a refusal, or a forward, which the
   behaviour sends itself as a gen_server call with a fresh alias as its tag;
 * a message of the grantee's in no call's shape, {erx_origin, Grantee, Message},
@@ -60,6 +62,16 @@ What arrives is sorted by its shape before the callback sees a request:
 Every other message, a local one without an envelope included, is dropped
 and counted: a facet acts for its grantee alone.
 
+A grant's operations, the names its manifest row lists (erx_domain_lib:configured/0),
+are checked through the callback's operation/1, which maps a request or a message of
+the grantee's to the interface operation it invokes (docs/design-time.md, "Phase 1").
+For a callback with operation/1 the facet admits only the operations the grant lists,
+none when it lists none: a request of any other is refused with {error, eperm}, one
+that names no operation of the interface with {error, badarg}, and such a message is
+dropped, each counted, before the callback's admit/3 or message/2 sees it. A callback
+without operation/1 admits what its admit/3 admits, and start/3 refuses a grant that
+lists operations to it, since nothing would check them.
+
 Stopgap residuals of the behaviour, each in TODO.md: the
 generated admission path from the service's operation schema; admission by
 the grantee's share of reductions; the funnel's check of max_request
@@ -78,15 +90,23 @@ before a message is queued, and the facet's queue quota and heap limit.
 -callback message(Message :: term(), State :: term()) ->
               {forward, Service :: pid(), State1 :: term()}
             | {drop, State1 :: term()}.
--optional_callbacks([message/2]).
+
+%% The interface operation a request or a message of the grantee's invokes, by its
+%% abi/services name, or error for one that invokes none. It is total over any term and
+%% creates no atom, and it reads a request as admit/3 does, so the operation it names
+%% is the one admit/3 serves.
+-callback operation(Request :: term()) -> {ok, Operation :: atom()} | error.
+-optional_callbacks([message/2, operation/1]).
 
 -export_type([grant/0]).
 
 %% A grant: the grantee's domain id, the processes whose end ends the facet, the largest
-%% message the facet takes from the grantee, in encoded bytes, and how many forwards may
-%% be outstanding at once; the callback's own keys besides.
+%% message the facet takes from the grantee, in encoded bytes, how many forwards may
+%% be outstanding at once, and the operations it grants, none if absent; the callback's
+%% own keys besides.
 -type grant() :: #{grantee := pos_integer(), ends_with := [pid()],
-                   max_request => pos_integer(), in_flight => pos_integer(), atom() => term()}.
+                   max_request => pos_integer(), in_flight => pos_integer(), operations => [atom()],
+                   atom() => term()}.
 
 %% docs/design-domains.md, "What a facet costs its domain": 4 KiB by default.
 -define(MAX_REQUEST, 4096).
@@ -94,12 +114,13 @@ before a message is queued, and the facet's queue quota and heap limit.
 %% How long start/3 waits for the new facet's init and export.
 -define(START_TIMEOUT, 5000).
 
-%% The facet's state: its grant's checks, the callback and its state, the monitors of
+%% The facet's state: its grant's checks, the operations it admits, all for a callback
+%% without operation/1, the callback and its state, the monitors of
 %% ends_with, each outstanding forward by its monitor, which is also its reply's alias,
 %% and the counts info/1 reports.
 %% A forward's caller: the grantee's, or none for a forwarded message.
 -type forward() :: #{from := {pid(), [alias | reference()]} | none, service := pid()}.
--type state() :: #{callback := module(), cb_state := term(), grantee := pos_integer(),
+-type state() :: #{callback := module(), cb_state := term(), grantee := pos_integer(), operations := all | [atom()],
                    max_request := pos_integer(), in_flight := pos_integer(), exports := module(),
                    ends_with := #{reference() => pid()}, forwards := #{reference() => forward()},
                    dropped := non_neg_integer(), refused := non_neg_integer()}.
@@ -188,17 +209,24 @@ minted(Tag, Reply) when is_integer(Tag), Tag > 0 ->
 
 -doc """
 Starts a facet of Callback for Grant. Opts may name exports, the export table's
-module (erx_dist), for a host test's stand-in. {error, Reason} when the callback's
-init fails, when a process of ends_with has already ended, or when the export
-table refuses the export.
+module (erx_dist), for a host test's stand-in. {error, unchecked_operations} for a
+grant that lists operations to a callback without operation/1, {error, badarg} for
+operations that are no list, and {error, Reason} when the callback's init fails,
+when a process of ends_with has already ended, or when the export table refuses the
+export.
 """.
 -spec start(module(), grant(), #{exports => module()}) -> {ok, pid()} | {error, term()}.
 start(Callback, #{grantee := Grantee, ends_with := EndsWith} = Grant, Opts)
   when is_atom(Callback), is_integer(Grantee), Grantee > 0, is_list(EndsWith) ->
-    Exports = maps:get(exports, Opts, erx_dist),
+    case operations(Callback, maps:get(operations, Grant, [])) of
+        {ok, Operations} -> start(Callback, Grant, Operations, maps:get(exports, Opts, erx_dist));
+        {error, _} = Error -> Error
+    end.
+
+start(Callback, Grant, Operations, Exports) ->
     Parent = self(),
     Tag = make_ref(),
-    {Pid, Monitor} = spawn_monitor(fun() -> init(Parent, Tag, Callback, Grant, Exports) end),
+    {Pid, Monitor} = spawn_monitor(fun() -> init(Parent, Tag, Callback, Grant, Operations, Exports) end),
     receive
         {Tag, ok} ->
             demonitor(Monitor, [flush]),
@@ -219,7 +247,18 @@ info(Facet) ->
     {ok, Info} = gen:call(Facet, '$erx_facet', info),
     Info.
 
-init(Parent, Tag, Callback, #{grantee := Grantee, ends_with := EndsWith} = Grant, Exports) ->
+%% The operations a facet of Callback admits for a grant that lists Listed: Listed for a
+%% callback with operation/1, and all for one without it, whose grant must list none.
+operations(Callback, Listed) when is_list(Listed) ->
+    case code:ensure_loaded(Callback) =:= {module, Callback} andalso erlang:function_exported(Callback, operation, 1) of
+        true -> {ok, Listed};
+        false when Listed =:= [] -> {ok, all};
+        false -> {error, unchecked_operations}
+    end;
+operations(_Callback, _Listed) ->
+    {error, badarg}.
+
+init(Parent, Tag, Callback, #{grantee := Grantee, ends_with := EndsWith} = Grant, Operations, Exports) ->
     Monitors = maps:from_list([{monitor(process, Pid), Pid} || Pid <- EndsWith]),
     {ok, CbState} = Callback:init(Grant),
     %% No facet starts, or is exported, for a grant one of whose local processes has
@@ -233,7 +272,7 @@ init(Parent, Tag, Callback, #{grantee := Grantee, ends_with := EndsWith} = Grant
         {error, Reason} -> exit({export, Reason})
     end,
     Parent ! {Tag, ok},
-    loop(#{callback => Callback, cb_state => CbState, grantee => Grantee,
+    loop(#{callback => Callback, cb_state => CbState, grantee => Grantee, operations => Operations,
            max_request => maps:get(max_request, Grant, ?MAX_REQUEST),
            in_flight => maps:get(in_flight, Grant, ?IN_FLIGHT), exports => Exports,
            ends_with => Monitors, forwards => #{}, dropped => 0, refused => 0}).
@@ -295,7 +334,7 @@ request(_Message, State) ->
 message(Message, #{max_request := MaxRequest, forwards := Forwards, in_flight := InFlight,
                    callback := Callback, cb_state := CbState, grantee := Grantee} = State) ->
     case erlang:external_size(Message) =< MaxRequest andalso map_size(Forwards) < InFlight andalso
-         erlang:function_exported(Callback, message, 2) of
+         erlang:function_exported(Callback, message, 2) andalso granted(Message, State) =:= ok of
         true ->
             case Callback:message(Message, CbState) of
                 {forward, Service, CbState1} when is_pid(Service) ->
@@ -312,7 +351,14 @@ admit(_Request, From, #{forwards := Forwards, in_flight := InFlight} = State)
   when map_size(Forwards) >= InFlight ->
     refuse(From, busy, State);
 admit(Request, {Pid, _Tag} = From, #{callback := Callback, cb_state := CbState} = State) ->
-    case Callback:admit(Request, Pid, CbState) of
+    case granted(Request, State) of
+        ok -> decided(Callback:admit(Request, Pid, CbState), From, State);
+        Refusal -> refuse(From, Refusal, State)
+    end.
+
+%% The callback's decision on a request the grant admits.
+decided(Decision, From, State) ->
+    case Decision of
         {forward, Service, Request1, CbState1} when is_pid(Service) ->
             forward(Service, {call, Request1}, From, State#{cb_state := CbState1});
         {reply, Reply, CbState1} ->
@@ -320,6 +366,22 @@ admit(Request, {Pid, _Tag} = From, #{callback := Callback, cb_state := CbState} 
             State#{cb_state := CbState1};
         {refuse, Reason, CbState1} ->
             refuse(From, Reason, State#{cb_state := CbState1})
+    end.
+
+%% Whether the grant admits the operation Request, a request or a message of the
+%% grantee's, invokes: ok, eperm for an operation the grant does not list, or badarg for
+%% a request that invokes no operation of the interface.
+granted(_Request, #{operations := all}) ->
+    ok;
+granted(Request, #{callback := Callback, operations := Operations}) ->
+    case Callback:operation(Request) of
+        {ok, Operation} ->
+            case lists:member(Operation, Operations) of
+                true -> ok;
+                false -> eperm
+            end;
+        error ->
+            badarg
     end.
 
 %% A forward to Service whose reply target is the alias of a monitor on it, as gen:call

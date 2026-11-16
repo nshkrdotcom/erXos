@@ -10,6 +10,9 @@
 -module(erx_facet_tests).
 -include_lib("eunit/include/eunit.hrl").
 -export([export/3, owner/1]).
+%% The callback of a facet whose grant lists operations: it forwards every request and
+%% message to the process behind, and a request {Operation, _} invokes Operation.
+-export([init/1, admit/3, message/2, operation/1]).
 
 -define(GRANTEE, 7).
 -define(OTHER, 9).
@@ -45,7 +48,34 @@ facet(Behind, Ends, Grant) ->
                                       #{exports => ?MODULE}),
         %% The facet exported itself toward its grantee, with send alone, before start/3
         %% answered.
-        ?assertEqual({exported, Facet, [send], ?GRANTEE}, receive {exported, _, _, _} = E -> E after 0 -> none end),
+        ?assertEqual({exported, Facet, [send], ?GRANTEE}, receive {exported, Facet, _, _} = E -> E after 0 -> none end),
+        Facet
+    after
+        unregister(erx_facet_tests)
+    end.
+
+init(#{behind := Behind}) ->
+    {ok, Behind}.
+
+admit(Request, _From, Behind) ->
+    {forward, Behind, Request, Behind}.
+
+message(_Message, Behind) ->
+    {forward, Behind, Behind}.
+
+operation({Operation, _}) when is_atom(Operation) ->
+    {ok, Operation};
+operation(_Request) ->
+    error.
+
+%% A facet of this module's callback granted to ?GRANTEE in front of Behind, with
+%% Grant's operations.
+operations_facet(Behind, Grant) ->
+    true = register(erx_facet_tests, self()),
+    try
+        {ok, Facet} = erx_facet:start(?MODULE, Grant#{grantee => ?GRANTEE, ends_with => [domain_pid(), Behind],
+                                                      behind => Behind}, #{exports => ?MODULE}),
+        {exported, Facet, [send], ?GRANTEE} = receive {exported, Facet, _, _} = E -> E after 0 -> none end,
         Facet
     after
         unregister(erx_facet_tests)
@@ -180,3 +210,31 @@ provide_is_refused_after_the_report_test() ->
     after
         persistent_term:erase({erx, provides})
     end.
+
+%% A grant's operations are its callback's to check: a request of an operation the
+%% grant lists is forwarded, one of another refused with {error, eperm} and one that
+%% invokes none with {error, badarg}, before the callback's admit/3 sees either; a
+%% message of another operation is dropped before message/2. A grant that lists none,
+%% or names no operations, admits nothing.
+admits_only_its_grants_operations_test() ->
+    Facet = operations_facet(echo(), #{operations => [read]}),
+    ?assertEqual({echo, {read, 1}}, call(Facet, {read, 1})),
+    ?assertEqual({error, eperm}, call(Facet, {write, 1})),
+    ?assertEqual({error, badarg}, call(Facet, ping)),
+    ?assertMatch(#{refused := 2, dropped := 0}, erx_facet:info(Facet)),
+    Behind = operations_facet(self(), #{operations => [read]}),
+    Behind ! {erx_origin, ?GRANTEE, {write, 2}},
+    Behind ! {erx_origin, ?GRANTEE, {read, 2}},
+    ?assertEqual({read, 2}, receive {'$erx_facet_message', _, ?GRANTEE, M} -> M after 1000 -> none end),
+    ?assertMatch(#{dropped := 1}, erx_facet:info(Behind)),
+    [?assertEqual({error, eperm}, call(operations_facet(echo(), Grant), {read, 1})) || Grant <- [#{operations => []}, #{}]].
+
+%% A grant that lists operations to a callback with no operation/1 to check them starts
+%% no facet; one that lists none starts one that admits what the callback admits.
+a_grant_s_operations_need_a_checking_callback_test() ->
+    Grant = #{grantee => ?GRANTEE, ends_with => [domain_pid()], behind => echo()},
+    ?assertEqual({error, unchecked_operations},
+                 erx_facet:start(erx_domain_facet, Grant#{operations => [read]}, #{exports => ?MODULE})),
+    ?assertEqual({error, badarg}, erx_facet:start(?MODULE, Grant#{operations => read}, #{exports => ?MODULE})),
+    Facet = facet(echo(), domain_pid(), #{operations => []}),
+    ?assertEqual({echo, {write, 1}}, call(Facet, {write, 1})).

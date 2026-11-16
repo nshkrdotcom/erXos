@@ -43,9 +43,7 @@ uint64_t	erx_time_monotonic_ns(void);
 /* False when the page's sequence has run out, which leaves wall time unavailable. */
 bool		erx_time_wall_ns(uint64_t *wall_ns) ERX_WARN_UNUSED_RESULT;
 
-/* Sets wall time from now on. ERX_ELIMIT when the page's sequence has run out. */
-int		erx_time_set_wall(uint64_t wall_ns) ERX_WARN_UNUSED_RESULT;
-/* The call's body, on the service. */
-int		erx_fiasco_time_set_wall_body(uint64_t wall_ns);
+/* erx_time_set_offset's body, on the service (runtime_entry.h). */
+int		erx_fiasco_time_set_offset_body(uint64_t offset_ns);
 
 #endif /* ERX_FIASCO_TIME_H */

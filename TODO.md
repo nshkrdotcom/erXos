@@ -3923,10 +3923,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] hosted backend, `liberx/backend/hosted/refused.c`: a hosted runtime runs no programs; the
   channel's first memory object is refused, so `erx_program:start/1` answers `{error, enotsup}`.
   Programs in hosted mode need the hosted backend to make spaces and pass handles.
-* [Low] hosted backend, `liberx/backend/hosted/`: it defines no wall-clock setter, `erx_time_set_wall` in the
-  tree and `erx_time_set_offset` in [design-time.md](docs/design-time.md#phase-1), which says the hosted setter
-  answers `ERX_ENOTSUP`, and declares it only in the Fiasco backend's `time.h`, so `erx_clock_nif` has nothing to
-  call in a hosted build. Add the refusal beside the others in `refused.c`.
 * [Medium] erx_program driver and core (`erx_program_drv.c` `channel_sides`, `install()`;
   `erx_program_core.c` `install_rights`): which channel side sits at which `program_arg` index, how
   the session maps it and what rights the program gets are three tables joined by index, and no
@@ -4533,11 +4529,20 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   development one grown. Build test images' domain boot scripts from their manifest's
   rows, as the production image does.
 * [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Stopgap#check_facets_supported`):
-  a facet that names an operation is refused (`unsupported`, naming M5), because
-  operations resolve against its service's generated declarations (design-abi.md,
-  "Services, facets and their parameter schemas"), which the packer does not read; the
-  boot view refuses one too, so an admitted facet grants every operation of its service.
-  The server's release is not checked to supply the service's interface.
+  a facet that names operations of a service a configured domain serves, or of a tree,
+  is refused (`unsupported`), as the boot view refuses it, since only the system
+  domain's `erx_facet` checks a grant's operations (design-time.md, "Phase 1"); a mint
+  in a configured domain and an `erx_fs` grant check none, so such a row would grant
+  every operation. The server's release is not checked to supply the service's
+  interface.
+* [Low] time, the clock setter's chokepoint (`tools/lib/erx/chokepoint_rules/clock.rb`): it is a text check of five
+  spellings, not the call-graph check [design-time.md](docs/design-time.md) names; a variable function name gets past
+  it. The QEMU "Set by hand" case sets 2026-11-16 12:30 UTC, close to the host time the PL031 seeds, where the design
+  sets 2030.
+* [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` (`operation/1`): only the clock facet's callback
+  exports `operation/1`, so a row naming operations of another system-served service compiles and boots, and only
+  its mint refuses it (`unchecked_operations`, logged, no facet), until the generated admission path checks every
+  service's operations.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_srv.erl` (`served/2`): a
   configured domain's facet of a service the system domain serves ends with the process
   behind it, and when that service restarts and names a new process (`erx_facet:serve/2`)
@@ -7076,6 +7081,17 @@ to the corpus and follow rc
   PL031 once at boot into the time page and sets the offset, so `state` is `boot` and HTTPS clients can validate
   certificates ([design-time.md](docs/design-time.md#phase-1), [design-crypto.md](docs/design-crypto.md#time)).
   Today the page starts zeroed and the wall clock reads 1970-01-01.
+* [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
+  [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
+  through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:
+  the service's record is kept but not reported, so `/proc/time/status` shows every attribute but `state` as
+  `unsupported` (`erx_time_records`); a set's log line names the domain, not the grant's principal as the
+  design says; in the system domain's own shell a set answers `eagain`, since that shell holds the service
+  itself (`erx_cmd_date:request/2`, `local`); a session of a template without the row is checked for `eperm` on
+  the host only, as the development manifest has no other session template. `date`'s `%N` pass runs inside the
+  strftime scan, not before it as `date.c`'s `strftime_ns` does, so formats such as `%E%N` and `%5%N` differ
+  from FreeBSD; make it a format-to-format step first. Add a FreeBSD oracle case for `date -j -u` over the
+  operand and format corpus, which settles the `mktime(3)` normalization design-time.md marks unverified.
 * [Medium] time, the wall-clock keeper (`docs/design-header-io.md`, "An I2C real-time clock"): the header design
   says "the system domain's wall-clock keeper, designed with network time, reads `/dev/rtc/time` at boot and writes
   it after each correction", but [design-time.md](docs/design-time.md) designs no keeper and no use of `/dev/rtc`,
@@ -7597,6 +7613,11 @@ to the corpus and follow rc
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
   checks follow the clock. Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
+* [Low] stopgap, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case):
+  the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks no right, so any
+  task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
+  `[only_erx_clock_nif]` imports section and the facet for trusted code; erXos's kernel checks `WRITE` on the
+  time page. A Phase 1 residual, not fixed in the stopgap.
 * [Medium] WiFi's key holder before its release placement, development
   builds only ([design-wifi.md](docs/design-wifi.md#where-the-holder-runs)):
   the holder runs as a process of the WiFi domain, so the networks'

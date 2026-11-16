@@ -394,8 +394,8 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 	case ERX_FIASCO_CALL_IRQ_ACK:
 	case ERX_FIASCO_CALL_IRQ_TRIGGER:
 		return (service_irq(decoded, reply));
-	case ERX_FIASCO_CALL_TIME_SET_WALL:
-		return (erx_fiasco_time_set_wall_body(((const erx_fiasco_time_set_wall_request_t *)words)->wall_ns));
+	case ERX_FIASCO_CALL_TIME_SET_OFFSET:
+		return (erx_fiasco_time_set_offset_body(((const erx_fiasco_time_set_offset_request_t *)words)->offset_ns));
 	case ERX_FIASCO_CALL_MEM_CREATE:
 		return (erx_fiasco_task_mem_create_body(decoded->task, words, &reply->first));
 	case ERX_FIASCO_CALL_MEM_CREATE_PHYSICAL:

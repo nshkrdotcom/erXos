@@ -1155,10 +1155,11 @@ system domain and its configured domains. It accepts the records the system
 release's services and the configured domains need, `domain`, `window`,
 `service`, `facet` and `introduce` among them, and refuses
 `partial_boot` and `liveness` records with a diagnostic naming the milestone
-that brings them. It accepts a `facet` only of a service a configured domain
-serves, and only when it names no operation: operations resolve against the
-service's generated declarations at M5, so such a facet would grant the whole
-service, and the domain library's boot view refuses one that names any. A
+that brings them. It accepts a `facet` that names operations only of a message
+service the system domain serves, whose `erx_facet` checks them through its
+callback ([design-time.md](design-time.md#phase-1)): a mint in a configured
+domain and an `erx_fs` grant check none, so such a facet would grant the whole
+service, and the domain library's boot view refuses one too. A
 facet's parameters it resolves as [design-abi.md](design-abi.md) says, each
 key against its service's declaration and each value against that key's kind
 and bound, and the manifest property that consumes them holds as written, as

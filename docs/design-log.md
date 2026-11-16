@@ -624,7 +624,8 @@ when the writer synced them first.
 
 `erx_syslog_sup` is a `one_for_one` supervisor of `erx_syslog`, which
 restarts it at most four times an hour, as `kernel_safe_sup` restarts
-its children. It is a `temporary` child of `kernel_sup`, as `erx_console`
+its children; it is an `erx_service_sup`, as the clock service's
+`erx_clock_sup` is ([design-time.md](design-time.md#who-does-what)). It is a `temporary` child of `kernel_sup`, as `erx_console`
 is through `user_sup`, so its end is neither restarted nor counted by
 `kernel_sup` and ends no other service
 (`otp/lib/stdlib/src/supervisor.erl:1441-1444`). The service's first
