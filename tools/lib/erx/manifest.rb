@@ -1818,7 +1818,8 @@ module Erx
         facets_of(facets, 'net', tables).each { |row| check_receiver_floors(row, tables, 'net', { 'max_frame' => floor }, property: 15) }
       end
 
-      # Property 16: every domain that receives the files protocol of a files facet, its
+      # Property 16: every domain that receives the files protocol of a facet of an
+      # interface abi/services declares served_as tree (files, windows, line), its
       # grantee (the system domain, a configured domain or a session template) and its
       # server, takes frames of at least files_max_frame_min bytes under its own runtime
       # limits, and the facet's max_request admits a request that long, since a read reply
@@ -1826,12 +1827,15 @@ module Erx
       # the funnel drops a longer frame and the facet a longer request.
       def check_files_grants(facets, tables)
         floor = @codec.constant('files_max_frame_min')
-        facets_of(facets, 'files', tables).each do |row|
-          if row.fetch('max_request') < floor
-            invalid("facet #{row.fetch('name')}'s max_request #{row.fetch('max_request')} is below files' floor of #{floor}",
-                    16, 'facet.max_request')
+        trees = @codec.schema.services.select { |service| service.fetch(:served_as) == 'tree' }
+        trees.each do |service|
+          facets_of(facets, service.fetch(:name), tables).each do |row|
+            if row.fetch('max_request') < floor
+              invalid("facet #{row.fetch('name')}'s max_request #{row.fetch('max_request')} is below " \
+                      "#{service.fetch(:name)}'s floor of #{floor}", 16, 'facet.max_request')
+            end
+            check_receiver_floors(row, tables, service.fetch(:name), { 'max_frame' => floor }, property: 16)
           end
-          check_receiver_floors(row, tables, 'files', { 'max_frame' => floor }, property: 16)
         end
       end
 

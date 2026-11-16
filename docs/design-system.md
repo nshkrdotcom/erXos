@@ -576,8 +576,9 @@ violation fails the build with the property, the record and the field:
     have a `max_frame` below the floor while the system domain's are
     above it; and a mint request naming the system domain, which the mint
     refuses and counts.
-16. **Every receiver of `files` and of `inspect` takes its frames:** for each facet of the
-    `files` interface (`abi/services/files.txt`), compared by number, the
+16. **Every receiver of `files` and of `inspect` takes its frames:** for each facet of an
+    interface `abi/services` declares `served_as tree` (`files`, `windows`
+    and `line`), compared by number, the
     grantee (the system domain under the machine's system runtime limits, a
     configured domain or a session template) and the service's server
     each run with a `max_frame` of at least `files_max_frame_min`, 128 KiB:
@@ -2563,7 +2564,8 @@ pure function gives for the grantee where the service has scopes, as
 and sends it in the ready answer with any other facet the domain gets
 there. So these facets reach every incarnation and every session with
 its ready answer, before any installation, and end with it, or with the
-process behind them. For a service of the `files` interface the process
+process behind them. For a service of an interface `abi/services` declares
+`served_as tree` (`files` and `line`) the process
 behind it is the supervisor of its tree's grants (`erx_fs_grants`), and
 the domain service asks it for an `erx_fs` grant bound to the grantee and
 ending with its domain pid, in place of a facet in front of it, as a

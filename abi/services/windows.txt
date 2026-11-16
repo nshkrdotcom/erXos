@@ -16,6 +16,7 @@
 # session, and holds windows and clipboard to their declared bounds; erx_winfs
 # enforces windows and clipboard at run time.
 service windows 8
+  served_as tree
   parameter windows 1 u64 optional range 1 4096 checked_by windows_grant
   parameter pixels 2 u64 optional range 4096 1099511627776 checked_by windows_grant
   parameter clipboard 3 boolean optional boolean checked_by windows_grant

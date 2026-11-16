@@ -9,6 +9,7 @@
 # the system domain, refuses two grants that name one UART and a grant that names the
 # console's or the host link's, and holds flow to its two words.
 service line 10
+  served_as tree
   parameter uart 1 device one target devices checked_by line_grant
   parameter rate 2 u64 one range 115200 115200 checked_by line_grant
   parameter flow 3 identifier one bytes 7 checked_by line_grant

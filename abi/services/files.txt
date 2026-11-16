@@ -8,4 +8,5 @@
 # 64 KiB transfer unit and its encoding arrive in one frame (abi/protocols/9p.txt,
 # docs/design-domains.md, "Floors from a protocol").
 service files 5
+  served_as tree
 limit files_max_frame_min u32 131072

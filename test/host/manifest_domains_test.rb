@@ -81,6 +81,12 @@ class ManifestDomainsTest < Minitest::Test
       "  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n"
   end
 
+  # A facet of a windows service, an erx_fs grant of a tree, whose max_request is
+  # property 16's files floor.
+  def window_facet(name, grantee, service)
+    facet(name, grantee, service).sub("  max_request 1\n", "  max_request #{@codec.constant('files_max_frame_min')}\n")
+  end
+
   def rows(view, table) = view.count(table).times.map { |index| view.fetch(table, index) }
 
   def test_configured_domains_reach_the_encoded_manifest_in_name_order
@@ -541,6 +547,28 @@ class ManifestDomainsTest < Minitest::Test
     end
   end
 
+  # Property 16 binds every interface abi/services serves as a tree, not files alone: a
+  # line grantee carries the files frame floor (docs/design-bluetooth.md, "The
+  # controller's line"). The line service's own parameters wait on their grant checker,
+  # so the seed is an interface declared as line is, served_as tree, without them.
+  def test_a_tree_receiver_below_the_files_frame_floor_is_refused
+    root = File.expand_path('../..', __dir__)
+    carried = Erx::ABI::Syntax.parse("service carried 99\n  served_as tree\n", path: 'abi/services/carried.txt')
+    sources = Erx::ABI::Sources.read(root: root)
+    @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(
+                                   Erx::ABI::SourceSet.new(declarations: sources.declarations + carried, inputs: sources.inputs)
+                                 ))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: @platform))
+    floor = @codec.constant('files_max_frame_min')
+    granted = with_session(self.class.session) + "service c\n  server system\n  interface carried\n" +
+              facet('c', '@session.system', '@service.c').sub('max_request 1', "max_request #{floor}")
+    admit(granted)
+    refused(Erx::Manifest::Invalid, 16, 'facet.max_request', granted.sub("max_request #{floor}", "max_request #{floor - 1}"),
+            message: /c's max_request #{floor - 1} .*#{floor}/)
+    refused(Erx::Manifest::Invalid, 16, 'runtime_limits.max_frame', with_max_frame(granted, 'session', floor - 1),
+            message: /c's grantee .*#{floor}/)
+  end
+
   # Property 16 for inspect: a grantee of an inspect facet, here a session template, and
   # its server, the system domain, each run with max_frame, max_message_heap and
   # funnel_depth at least the interface's floors, as the development manifest's
@@ -613,8 +641,8 @@ class ManifestDomainsTest < Minitest::Test
   def with_windows(*starts, server: '@domain.beta', record: DISPLAY, sb: "  parameter pixels 4096\n",
                    ob: "  parameter pixels 4096\n")
     with_display(*starts, served: "service b\n  server #{server}\n  interface windows\n#{record}",
-                          grants: [facet('sb', '@session.system', '@service.b') + sb,
-                                   facet('ob', '@session.other', '@service.b') + ob])
+                          grants: [window_facet('sb', '@session.system', '@service.b') + sb,
+                                   window_facet('ob', '@session.other', '@service.b') + ob])
   end
 
   def service_index(view, name) = rows(view, 'services').index { |row| view.string(row.fetch('name')) == name }
@@ -672,7 +700,7 @@ class ManifestDomainsTest < Minitest::Test
             message: /does not contain/)
     other_only = with_display(self.class.start('system', display),
                               served: "service b\n  server @domain.beta\n  interface windows\n#{DISPLAY}",
-                              grants: [facet('ob', '@session.other', '@service.b') + "  parameter pixels 4096\n"])
+                              grants: [window_facet('ob', '@session.other', '@service.b') + "  parameter pixels 4096\n"])
     refused(Erx::Manifest::Invalid, 17, 'start.display', other_only, message: /not granted/)
   end
 
@@ -728,7 +756,7 @@ class ManifestDomainsTest < Minitest::Test
   # outer budget, which each display's sum alone admits.
   def test_one_domain_serves_one_display
     second = "service c\n  server @domain.beta\n  interface windows\n#{DISPLAY.sub('display b', 'display c')}" +
-             facet('sc', '@session.system', '@service.c') + "  parameter pixels 4096\n"
+             window_facet('sc', '@session.system', '@service.c') + "  parameter pixels 4096\n"
     refused(Erx::Manifest::Invalid, 18, 'display.name', with_windows + second, message: /one domain serves two displays/)
     admit(with_windows + second.gsub('@domain.beta', '@domain.alpha'))
   end
@@ -741,7 +769,7 @@ class ManifestDomainsTest < Minitest::Test
   # introduction, so its connection to a display has no pixel area (design-display.md,
   # "The pixel area"); a windows grant to it would be installed without one.
   def test_no_display_is_granted_to_the_system_domain
-    granted = with_windows + facet('ys', 'system', '@service.b') + "  parameter pixels 4096\n"
+    granted = with_windows + window_facet('ys', 'system', '@service.b') + "  parameter pixels 4096\n"
     refused(Erx::Manifest::Invalid, 18, 'facet.grantee', granted, message: /grants a display to the system domain/)
   end
 

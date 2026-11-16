@@ -60,7 +60,8 @@ system domain serves that the manifest grants a configured domain or a
 session's template go in the domain's ready answer, each in front of the
 process its service named with erx_facet:serve/2 (served/2); the inspect
 facet with the scope erx_domain_core:inspect_scope/3 gives the domain's
-principal (system_facet/4); and for a service of the `files` interface, an
+principal (system_facet/4); and for a service of an interface abi/services
+declares served_as tree (?ERX_TREE_SERVICES), an
 erx_fs grant that the process its service named, an erx_fs_grants
 supervisor, starts bound to the domain and ending with it, in place of a
 facet.
@@ -262,15 +263,18 @@ booted(#{lib := Lib} = State) ->
                                                maps:get(grants, Boot, [])),
             %% erx_domain_mints takes each configured domain's service as {Server,
             %% Name}; the interface number tells files services, which the mint core
-            %% settles before a session's start answers and which the system domain
-            %% serves as erx_fs grants (served_kind/2).
+            %% settles before a session's start answers. The services of interfaces
+            %% abi/services declares served_as tree, ?ERX_TREE_SERVICES, are those the
+            %% system domain serves as erx_fs grants (served_kind/2).
             Services = [{Server, Name} || {Server, Name, _Interface} <- maps:get(services, Boot, []), Server =/= system],
             Files = [Name || {_Server, Name, ?ERX_SERVICE_FILES} <- maps:get(services, Boot, [])],
             Windows = [Name || {_Server, Name, ?ERX_SERVICE_WINDOWS} <- maps:get(services, Boot, [])],
+            Trees = [Name || {_Server, Name, Interface} <- maps:get(services, Boot, []),
+                             lists:member(Interface, ?ERX_TREE_SERVICES)],
             Mints = erx_domain_mints:new((maps:get(mint_config, State))#{services => Services,
                                            grants => Minted, files => Files, windows => Windows}),
             Served = maps:groups_from_list(fun({Grantee, _, _, _}) -> Grantee end,
-                                           fun({_, Name, _, Limits}) -> {Name, served_kind(Name, Files), Limits} end,
+                                           fun({_, Name, _, Limits}) -> {Name, served_kind(Name, Trees), Limits} end,
                                            System),
             %% The system domain's own facets of configured domains: /data only where the
             %% manifest grants the system domain data (docs/design-files.md, "A facet's
@@ -890,12 +894,12 @@ system_facet(_Name, {files, Grants, Limits}, _Principal, _State) ->
 machine_principal(System, System, _Names) -> system;
 machine_principal(Principal, _System, Names) -> maps:get(Principal, Names).
 
-%% How the system domain serves its service Name to a grantee: an erx_fs grant for a
-%% service of the files interface, whose clients speak 9P (docs/design-system.md,
-%% "Facets of the system domain's services"), and a facet in front of the service's
-%% process for any other.
-served_kind(Name, Files) ->
-    case lists:member(Name, Files) of
+%% How the system domain serves its service Name to a grantee: files, an erx_fs grant,
+%% for a service of Trees, those of the interfaces abi/services declares served_as
+%% tree, whose clients speak 9P (docs/design-system.md, "Facets of the system domain's
+%% services"), and message, a facet in front of the service's process, for any other.
+served_kind(Name, Trees) ->
+    case lists:member(Name, Trees) of
         true -> files;
         false -> message
     end.

@@ -526,6 +526,26 @@ class AbiSchemaTest < Minitest::Test
     assert_raises(Erx::ABI::SchemaError) { schema("service first 1\nservice second 1\n") }
   end
 
+  # served_as tree marks an interface whose grants are erx_fs grants of one tree, which
+  # ?ERX_TREE_SERVICES lists by number for the domain service; an interface without it is
+  # served as a message facet. Seeds: a value outside the closed set, a missing or extra
+  # word, and the member stated twice.
+  def test_served_as_tree_is_listed_and_any_other_spelling_is_refused
+    parsed = schema("service plain 2\nservice carried 3\n  served_as tree\n")
+    assert_equal({ 'plain' => nil, 'carried' => 'tree' }, parsed.services.to_h { |service| [service.fetch(:name), service.fetch(:served_as)] })
+    assert_includes Erx::ABI::ErlangEmitter.header(parsed), "-define(ERX_TREE_SERVICES, [3]).\n"
+    ['  served_as message', '  served_as', '  served_as tree tree', "  served_as tree\n  served_as tree"].each do |member|
+      assert_raises(Erx::ABI::SchemaError, member) { schema("service carried 3\n#{member}\n") }
+    end
+  end
+
+  # The checked-in interfaces served as trees are files, windows and line.
+  def test_files_windows_and_line_are_served_as_trees
+    root = File.expand_path('../..', __dir__)
+    services = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: root)).services
+    assert_equal %w[files line windows], services.select { |service| service.fetch(:served_as) == 'tree' }.map { |service| service.fetch(:name) }.sort
+  end
+
   # The table the boot view checks a facet's parameter rows against (erx_service_parameters):
   # a declaration's row, and the two declarations no facet can carry, a set, and a name a
   # facet row's limit field takes in the grant's limits.

@@ -152,7 +152,19 @@ module Erx
             lines << enum_members(schema, type)
           end
         end
+        lines << tree_services(schema)
         (lines + ['', '-endif.', '']).join("\n")
+      end
+
+      # ?ERX_TREE_SERVICES: the numbers of the abi/services interfaces declared
+      # served_as tree, whose grants are erx_fs grants of one tree, in number order,
+      # so the domain service tells them from message services by the ABI alone.
+      def tree_services(schema)
+        raise SchemaError, 'tree_services collides with a constant' if schema.constants.key?('tree_services')
+
+        numbers = schema.services.select { |service| service.fetch(:served_as) == 'tree' }
+                        .map { |service| service.fetch(:number) }.sort
+        "-define(ERX_TREE_SERVICES, [#{numbers.join(', ')}])."
       end
 
       # ?ERX_<ENUM>_MEMBERS: an enum's members as {Name, Value} in value order,

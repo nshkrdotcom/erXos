@@ -540,15 +540,34 @@ session_without_files_grant_test() ->
         files_cleanup(Started)
     end.
 
-%% No configured domain, start a files service of the system domain with a test tree's
-%% grants behind it, and a trace of the domain pids' receives to this process, with
-%% Grants the manifest's.
+%% A session's template granted line, a service of the line interface, which abi/services
+%% declares served as a tree, finds an erx_fs grant of the tree's erx_fs_grants in its
+%% ready answer, as a files service's grantee does, and no facet in front of the tree
+%% (docs/design-bluetooth.md, "The controller's line").
+session_line_grant_test() ->
+    Started = {_, _, Grants} = tree_setup(line, ?ERX_SERVICE_LINE,
+                                          [{{template, 0}, line, system, #{max_request => 131072}}]),
+    try
+        {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
+        #{line := Grant} = maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})),
+        ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)])
+    after
+        files_cleanup(Started)
+    end.
+
+%% No configured domain, start the system domain's files service named start, with a
+%% test tree's grants behind it, and a trace of the domain pids' receives to this process,
+%% with Grants the manifest's.
 files_setup(Grants) ->
+    tree_setup(start, ?ERX_SERVICE_FILES, Grants).
+
+%% As files_setup/1, for the system domain's service Name of interface Interface.
+tree_setup(Name, Interface, Grants) ->
     persistent_term:put({erx_domain_fake_lib, boot},
-                        #{domains => [], services => [{system, start, ?ERX_SERVICE_FILES}], grants => Grants}),
+                        #{domains => [], services => [{system, Name, Interface}], grants => Grants}),
     {ok, Tree} = erx_fs_grants:start_link(erx_fs_test_tree, []),
     unlink(Tree),
-    ok = erx_facet:serve(start, Tree),
+    ok = erx_facet:serve(Name, Tree),
     erlang:trace(new_processes, true, ['receive', {tracer, self()}]),
     Fake = erx_domain_fake_lib:start_log(),
     %% The service reads the manifest in its init, so a boot it refuses is start_link's

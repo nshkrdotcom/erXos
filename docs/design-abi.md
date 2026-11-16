@@ -2158,8 +2158,18 @@ duplicate scalar key, an unsorted/duplicate set, an excessive bound, or a
 parameter without that checked consumer fails validation.
 
 Within `service NAME NUMBER`, the exact metadata members are
-`operation NAME NUMBER`, `liveness OPERATION_NAME` and `parameter NAME NUMBER KIND CARDINALITY
-BOUND checked_by HELPER`. For integer kinds, BOUND is `range MIN MAX`;
+`operation NAME NUMBER`, `liveness OPERATION_NAME`, `served_as tree` and `parameter NAME NUMBER KIND CARDINALITY
+BOUND checked_by HELPER`. `served_as tree`, stated at most once and with
+`tree` its one value, marks an interface whose grants are `erx_fs`
+grants of one tree, which the grantee mounts and speaks 9P2000.L to
+(`files`, `windows` and `line`); an interface without it is served as a
+message facet. It is the one source of that fact: the generator lists
+those interfaces' numbers for Erlang as `?ERX_TREE_SERVICES`, from
+which the domain service serves the system domain's such services as
+`erx_fs` grants ([design-system.md](design-system.md#facets-a-configured-domain-serves),
+"Facets of the system domain's services"), and the manifest check holds
+every receiver of such a facet to `files_max_frame_min` (property 16 of
+design-system.md). For integer kinds, BOUND is `range MIN MAX`;
 for identifier, path or bytes it is `bytes MAX_BYTES`; boolean uses
 `boolean`; a reference kind uses `target TABLE`, with `domains`,
 `principals` or `devices` as appropriate. A domain reference additionally

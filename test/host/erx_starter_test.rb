@@ -132,7 +132,7 @@ class ErxStarterTest < Minitest::Test
       grantee @session.#{Erx::Apps::PRINCIPAL}
       service @service.screen
       operations none
-      max_request 1
+      max_request 131072
       in_flight 1
       reductions 1
       period_ns 1
