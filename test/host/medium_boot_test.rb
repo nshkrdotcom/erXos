@@ -167,7 +167,7 @@ class MediumBootTest < Minitest::Test
     assert_includes expression, 'DlNotCreate=Lib:create(Spec)'
     assert_includes expression, 'DlNotService=Lib:configured(17,0,self())'
     assert_includes expression, 'DlNotStop=Lib:stop(5,0)'
-    assert expression.start_with?('io:format("~0p~n",[(fun(Lib,Spec,JitFields,FacetFields,UpFields)->DlDeath=fun(Id)->')
+    assert expression.start_with?('io:format("~0kp~n",[(fun(Lib,Spec,JitFields,FacetFields,UpFields)->DlDeath=fun(Id)->')
     # The BeamAsm domain names the BeamAsm image and halts 0 only as BeamAsm.
     assert_match(/\},\#\{runtime=>42,args=><<"--",0,.*"-eval",0,"erlang:halt\(case erlang:system_info\(emu_flavor\) of jit->0;_->2 end\)",0>>\},/,
                  expression)

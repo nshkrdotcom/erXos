@@ -69,7 +69,7 @@ module Erx
                  'Name = list_to_binary(filename:basename(Path)), ' \
                  'Authority = {signers, [{<<"packer">>, binary:decode_hex(list_to_binary(Hex))}]}, ' \
                  'case erx_pkg_header:check_file({Name, byte_size(Bytes), Bytes}, Authority) of ' \
-                 '{ok, _} -> io:format("ok~n"); Refused -> io:format("~0p~n", [Refused]) end, halt().'
+                 '{ok, _} -> io:format("ok~n"); Refused -> io:format("~0kp~n", [Refused]) end, halt().'
 
     # The file check as an image's package takes it: the package at the first plain
     # argument under the hash of its own header, whose length the machine's decoder
@@ -84,7 +84,7 @@ module Erx
                     'Refused -> Refused end, ' \
                     'case Answer of {ok, #{header := #{name := App, memory := Memory, license := License}, sha256 := Sha256}} -> ' \
                     'io:format("ok ~s ~b ~s ~s~n", [App, Memory, binary:encode_hex(Sha256, lowercase), License]); ' \
-                    'Other -> io:format("~0p~n", [Other]) end, halt().'
+                    'Other -> io:format("~0kp~n", [Other]) end, halt().'
 
     # What the file check found in a package of an image: its app's name, its declared
     # memory, its header's SHA-256, which the image's package row records, and the SPDX

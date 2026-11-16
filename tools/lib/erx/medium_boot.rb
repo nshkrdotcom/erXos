@@ -272,9 +272,10 @@ module Erx
     # their answers. Variables are fun parameters or carry a Dl prefix no earlier
     # expression binds, since the shell keeps every binding. The domain service is the
     # library's registrant, so the shell's own register is refused and no end reaches it. The
-    # answers are printed with ~0p, on one line however long, and the shell's own ok
-    # follows on the next. The expression starts with io:format, so the shell's echo of it
-    # does not start {domain_lib, and only the printed answer matches DOMAIN_LIB_START.
+    # answers are printed with ~0kp, on one line however long and with map keys in term
+    # order, and the shell's own ok follows on the next. The expression starts with
+    # io:format, so the shell's echo of it does not start {domain_lib, and only the printed
+    # answer matches DOMAIN_LIB_START.
     def domain_lib_expression(domain)
       spec = erlang_map(id: FREE_ID, name: '<<"cell">>', principal: 1, runtime: domain.runtime, release: domain.release,
                         release_files: domain.release_files, memory: DOMAIN_MEMORY, outer: DOMAIN_OUTER,
@@ -285,7 +286,7 @@ module Erx
       up = erlang_map(args: binary_args(UP_ARGS))
       badarg = 'DlBadarg=fun(Call)->try Call() catch error:badarg->badarg end end'
       steps = DOMAIN_LIB_STEPS.map { |name, call, _answer| "#{name}=#{call}" }
-      "io:format(\"~0p~n\",[(fun(Lib,Spec,JitFields,FacetFields,UpFields)->DlDeath=#{DOMAIN_LIB_DEATH}," \
+      "io:format(\"~0kp~n\",[(fun(Lib,Spec,JitFields,FacetFields,UpFields)->DlDeath=#{DOMAIN_LIB_DEATH}," \
         "DlRunWith=#{DOMAIN_LIB_RUN},DlRun=fun(Name,Then)->DlRunWith(Name,\#{},Then) end,DlAsk=#{DOMAIN_LIB_ASK}," \
         "DlFirstDeaths=#{DOMAIN_LIB_WAIT},#{badarg},DlFree=#{DOMAIN_LIB_FREE},DlCost=#{DOMAIN_LIB_COST}," \
         "#{steps.join(',')},{domain_lib,#{DOMAIN_LIB_STEPS.map(&:first).join(',')}} end)" \
@@ -724,7 +725,7 @@ module Erx
           'timer:sleep(3000)',
           'FpSys={erlang:memory(),FpCarriers(node()),FpThreads(node()),FpUsed()}',
           "FpRun=lists:map(fun({FpA2,FpE2,FpB2,FpC2,FpD2})->FpStep(FpA2,FpE2,FpB2,FpC2,FpD2) end,[#{calls.join(',')}])",
-          'io:format("~0p~n",[{fp_report,FpWaited,FpSys,FpRun,FpUsed()}])'
+          'io:format("~0kp~n",[{fp_report,FpWaited,FpSys,FpRun,FpUsed()}])'
         ].join(',') + '.'
       end
 

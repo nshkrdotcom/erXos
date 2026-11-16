@@ -129,7 +129,7 @@ module Erx
             '_=PpGive(PpW2,fun(PpE)->ok=erx_pipe_srv:write(PpE,<<"abc">>,5000) end),' \
             'ok=erx_pipe_srv:close(PpW2),' \
             'PpA2=[erx_pipe_srv:read(PpR2,100,5000),erx_pipe_srv:read(PpR2,100,5000)],' \
-            "io:format(\"~0p~n\",[{pipes,PpA1,PpA2}]).\r"
+            "io:format(\"~0kp~n\",[{pipes,PpA1,PpA2}]).\r"
     PIPES_ANSWER = '{pipes,true,[<<"abc">>,eof]}'
     # The rest, a line of its own, so that neither line nears a terminal's line limit.
     PIPES_LOST = '{ok,PpR3,PpW3}=erx_pipe_srv:pipe(),_=PpGive(PpR3,fun(_)->ok end),ok=erx_pipe_srv:close(PpR3),' \
@@ -142,7 +142,7 @@ module Erx
                  'PpP when is_pid(PpP),PpP=/=PpOld->ok;_->timer:sleep(100),PpM(PpK-1) end end,ok=PpNew(100),logger:unset_module_level(supervisor),' \
                  '{ok,PpR5,PpW5}=erx_pipe_srv:pipe(),ok=erx_pipe_srv:write(PpW5,<<"z">>,5000),' \
                  'PpA5=erx_pipe_srv:read(PpR5,10,5000),' \
-                 "io:format(\"~0p~n\",[{pipes_lost,PpA3,PpA4,PpA5}]).\r"
+                 "io:format(\"~0kp~n\",[{pipes_lost,PpA3,PpA4,PpA5}]).\r"
     PIPES_LOST_ANSWER = '{pipes_lost,epipe,{error,eio},<<"z">>}'
     # The file root's session writes and every later step reads, in Erlang and at the system
     # shell, and its one line, `across`, as file:read_file/1 answers it in the shell.
@@ -219,17 +219,20 @@ module Erx
                  'V10K <- [group_leader, links, monitors], {_, {ok, V10V}} <- [maps:get(V10K, V10A, none)], ' \
                  'V10I <- lists:flatten([V10V]), element(2, V10I) =:= 4]), ' \
                  'V10Before = [{V10X, erx:exports(V10X)} || V10X <- V10Names, is_process_alive(V10X)], ' \
-                 'io:format("~0p~n", [{v10_names, length(V10Names) > 10, ' \
+                 'io:format("~0kp~n", [{v10_names, length(V10Names) > 10, ' \
                  "[V10M || \#{attrs := \#{monitors := {_, {ok, [_ | _] = V10M}}}} <- V10Rs] =/= []}]).\r"
     V10_BEFORE_ANSWER = '{v10_names,true,true}'
-    V10_READ = "#{V10_RECORDS}io:format(\"~0p~n\", [{v10_read, length(V10Rs) > 10}]).\r"
+    V10_READ = "#{V10_RECORDS}io:format(\"~0kp~n\", [{v10_read, length(V10Rs) > 10}]).\r"
     V10_READ_ANSWER = '{v10_read,true}'
-    V10_AFTER = 'io:format("~0p~n", [{v10_changed, [{V10X, V10E, erx:exports(V10X)} || ' \
+    V10_AFTER = 'io:format("~0kp~n", [{v10_changed, [{V10X, V10E, erx:exports(V10X)} || ' \
                 "{V10X, V10E} <- V10Before, is_process_alive(V10X), erx:exports(V10X) =/= V10E]}]).\r"
     V10_AFTER_ANSWER = '{v10_changed,[]}'
 
     module_function
 
+    # A checkpoint matches the probe's printed text literally, so a probe prints with
+    # ~0kp: one line, and every map's keys in term order. Plain ~p prints a small map's
+    # atom keys in atom-table order, which differs from boot to boot.
     def answer(text) = /\A#{PROMPT}#{Regexp.escape(text)}\r*\n\z/n
 
     def line(text) = /\A#{Regexp.escape(text)}\r*\n\z/n

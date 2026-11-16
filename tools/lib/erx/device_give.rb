@@ -70,7 +70,7 @@ module Erx
     # the new domain's read, the answer, and the kill of the domain service.
     SEQUENCE = 'DgI1=DgWait(0,600),DgR1=DgRead(),spawn(erts@erxos,erlang,halt,[3]),' \
                'DgI2=DgWait(DgI1,600),DgR2=DgRead(),' \
-               'io:format("~0p~n",[{device_give,DgI1,DgR1,DgI2,DgR2}]),exit(whereis(erx_domain_srv),kill).'
+               'io:format("~0kp~n",[{device_give,DgI1,DgR1,DgI2,DgR2}]),exit(whereis(erx_domain_srv),kill).'
     LINE = [READY, WAIT, READ_DEVICE, SEQUENCE].join(',').freeze
     # What each domain's read answers: the magic, the window's place, and the domain's id.
     def self.read_answer(id) = "{#{MAGIC},#{OFFSET},#{SIZE},#{id}}"

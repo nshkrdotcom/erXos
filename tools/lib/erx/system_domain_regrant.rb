@@ -99,14 +99,14 @@ module Erx
                    "RgG2=RgWait(RgSk,{#{ERTS_AGAIN},#{SESSION}},1200),RgT2=RgSee(#{SESSION_NODE},RgG2)," \
                    'RgAsk(peer@erxos,erlang,halt,[0]),' \
                    "RgF3=RgWait(RgPeer,{#{ERTS_AGAIN},#{PEER_AGAIN}},1200),RgS3=RgSee(peer@erxos,RgF3)," \
-                   'io:format("~0p~n",[{regrant,RgS1,RgD,RgS2,RgF2=/=RgF1,RgLate,RgSys=:=erx:cap(echo),RgS3,RgF3=/=RgF2,' \
+                   'io:format("~0kp~n",[{regrant,RgS1,RgD,RgS2,RgF2=/=RgF1,RgLate,RgSys=:=erx:cap(echo),RgS3,RgF3=/=RgF2,' \
                    '{session,RgT1,RgDs,RgT2,RgG2=/=RgG1},maps:get(counts,RgMints())}]),' \
                    'RgLc=counters:new(3,[write_concurrency]),' \
                    'RgLoad=fun RgL(RgLi,RgLn,RgLf)->case RgAsk(RgLn,gen_server,call,[RgLf,{echo,hi},5000]) of ' \
                    '{echo,hi}->counters:add(RgLc,RgLi,1);_->ok end,RgL(RgLi,RgLn,RgLf) end,' \
                    '[spawn(fun()->RgLoad(RgQi,RgQn,RgQf) end)||' \
                    "{RgQi,RgQn,RgQf}<-[{1,node(),RgSys},{2,peer@erxos,RgF3},{3,#{SESSION_NODE},RgG2}],_<-lists:seq(1,#{LOADERS})]," \
-                   "timer:sleep(#{LOAD_MS}),io:format(\"~0p~n\",[{load,[counters:get(RgLc,RgPi)>0||RgPi<-[1,2,3]]}])," \
+                   "timer:sleep(#{LOAD_MS}),io:format(\"~0kp~n\",[{load,[counters:get(RgLc,RgPi)>0||RgPi<-[1,2,3]]}])," \
                    "timer:sleep(#{DRAIN_MS}),erlang:halt(abort)."
       # peer's first facet is erts's and answers; it ends with erts, which the system
       # domain's monitor sees as erts's domain_down with its halt; the
