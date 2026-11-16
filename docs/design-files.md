@@ -180,6 +180,13 @@ Functional:
    programs alike: one name at a time, with `.`, `..` and symbolic links
    taken physically, and FreeBSD's answers for a path that cannot
    resolve or whose last name an operation cannot take.
+10. A tree serves stream files, whose reads wait for bytes another party
+    supplies, as the Bluetooth controller's line `data`
+    ([design-bluetooth.md](design-bluetooth.md#the-controllers-line)) and
+    a window's `kbd` and `mouse`
+    ([design-display.md](design-display.md#the-window-tree)) do: a read
+    that waits never holds up a write, a clunk or a flush of the same
+    file, through the same grant or another.
 
 Non-functional:
 
@@ -286,7 +293,7 @@ clients](#native-clients-liberxs-file-client)).
 | **F1.** A path never reaches a file server the domain does not hold | a request is a frame on the lane from the client's domain to the server's, addressed to a grant pid; the server's funnel admits a frame only to a pid its runtime exported to the domain that lane belongs to, with `send` ([design-domains.md](design-domains.md#invariants) D3); a grant's pid reaches a domain only through the system domain's introduction of the two; a namespace entry stores only a pid | a request path that names servers by anything but a pid; a server that acts on a pid named inside a request; a runtime that exported a grant to a domain the server did not make it for | a domain test mounts a pid its domain was never introduced to and finds every request fails with `eio`; the funnel's export tests |
 | **F2.** No request reaches above its grant's root | a grant's root is fixed at the server when the grant is made; a walk of `..` at the root stays at the root, as 9P's walk(5) specifies and 9P2000.L keeps, and the grammar refuses a name holding `/` or NUL; the server follows no link during a walk or an open, so a link's text is resolved by the client through its own namespace; erXos's clients send neither `.` nor `..`, since both act on the client's place (F11) and every walk `erx_path` asks for carries only plain names, and the client's one request function refuses a walk that names `.`, `..` or an empty name | a server that accepts `/` inside a name, walks above its root on `..`, follows a link during a walk or an open, or roots a grant from anything the client sends after it is made | the resolver's fuzz target and properties; the grammar's refusals; an `erx_fs` test that walks `..` from the root and from below it, and whose links point above the root, at other mounts and in loops |
 | **F3.** Rearranging a namespace or narrowing it for a program never adds authority | `bind` copies an entry that exists, narrowed to a subtree; `unmount` removes one; `mount` takes a pid, which by F1 reaches only what the domain holds; a handler gives a program only entries of its starter's table, each on the provider of the starter's entry, rooted at or below that entry's root, with rights no wider than the starter's there, and walks for it only names the resolver produced over that table; no entry on a window tree passes to any program, and every description a program holds was opened through a program's table, so none lies on one; the one addition, for a program its starter starts with a window, is a `/dev` tree of the session's own that serves that window's files through the session's own grant of the display the starter names, less the window's `ctl`, which the starter could open itself, in place of the export's `/dev`, which every program reaches, and of any entry at exactly `/dev`, whose rights cap it ([A program's window](#a-programs-window)) | an operation that creates a pid or a fid beyond its source; a handler that walks `..` for a program, records wider rights than its starter's, carries an entry on a window tree into a program's table, or admits into a program's open table a description that no program's table opened | property tests over sequences of operations: the set of pids in the table only shrinks or gains pids the domain already held; a property test over chains of spawns that every program's mounts lie within, and carry rights within, its starter's, and that no program's table holds an entry whose tree is `windows` |
-| **F4.** A client spends a server's CPU and memory only within the server's admission | the protocol checks fid, request, payload and lock bounds before any callback; a grant is one process with a `max_heap_size` that counts its binaries, so what it holds for its client is bounded by its fid pool times the server's per-fid bound; the server runs on its own group's grant and its grant processes schedule among themselves as Erlang processes do, so a flooding client fills its own lane and waits in its own runtime ([design-domains.md](design-domains.md#connections), [design-scheduler.md](design-scheduler.md#service-work)); a blocking lock waits as a pending request of the file's owner, within the client's requests in flight, and nothing in the server blocks | a callback before admission; a grant that holds unbounded state for one fid; a server thread that runs on a client's time; a request whose work grows with the client's input outside the grammar's bounds | hostile-client tests below: fid floods, lock floods, retained `/proc` results, a tiny expensive request, a client that never drains its replies |
+| **F4.** A client spends a server's CPU and memory only within the server's admission | the protocol checks fid, request, payload and lock bounds before any callback; a grant is one process with a `max_heap_size` that counts its binaries, so what it holds for its client is bounded by its fid pool times the server's per-fid bound; the server runs on its own group's grant and its grant processes schedule among themselves as Erlang processes do, so a flooding client fills its own lane and waits in its own runtime ([design-domains.md](design-domains.md#connections), [design-scheduler.md](design-scheduler.md#service-work)); a request that waits for an event, a blocking lock or a stream's read or write, is a waiting request held by the process that owns what it waits for, the file's owner for a lock and the tree's keeper for a stream ([Serving](#serving-the-erx_fs-behaviour), "Waiting requests"), within the client's requests in flight, and nothing in the server blocks on it | a callback before admission; a grant that holds unbounded state for one fid; a server thread that runs on a client's time; a request whose work grows with the client's input outside the grammar's bounds; a callback that waits for an event in the process that runs the file's other requests | hostile-client tests below: fid floods, lock floods, retained `/proc` results, a tiny expensive request, a client that never drains its replies, a window of waiting reads that is flushed and clunked |
 | **F5.** A read-only grant never writes | a grant with rights `ro` or `rx` refuses with `erofs`, as part of decoding the request and so before any callback, every operation the protocol's table marks as writing: `lopen` for writing or with truncation, `lcreate` whatever its flags, since whether it creates a file only the server learns, `write`, `setattr`, `remove`, `unlinkat`, `rename`, `renameat`, `link`, `symlink`, `mknod`, `mkdir`, `xattrcreate`, and a write lock | an operation added to the table and not marked; a request that reaches the grant's dispatch by a path other than its decoding funnel | the refusal set is generated from the protocol's operation table, each operation marked as reading or writing; a test of every writing operation through a read-only grant |
 | **F6.** No grant carries write and execute together, and a session runs only what it read through an `rx` mount, the file-level twin of K8 | a grant's rights are one of `ro`, `rw` and `rx`, a type with no value for both; an `rx` grant writes nothing (F5); a handler gives a program rights within its starter's, and the session's command server fills a code object only from a fid the handler opened through a mount whose rights are `rx` ([design-programs.md](design-programs.md#file-objects)) | a rights representation with separate write and execute bits; a code object filled from a fid on an `ro` or `rw` mount | the grammar's rights type; a test that running a file through an `ro` and through an `rw` mount fails with `EACCES` and that an `rx` grant refuses every writing operation |
 | **F7.** A file's bytes, as one session's programs see them, live in one place per session | while any program of a session maps a file shared, the session's one object for the file holds them: every mapping of the file in the session maps that object, and the handlers send every read, write and size change of the file by the session's programs to the file's mapper, which serves them from the object; the session's file table holds at most one mapper per file, keyed by the server's domain, the tree and the qid path | a second object for one file in one session; a handler that relays such a read or write to the server past the mapper; a mapping installed past the filled extent; a write's bytes put in the object before the server acknowledged them | an exhaustive model of one mapper, its object and its server under interleaved stores, reads, writes the server takes whole, in part or not at all, extending writes, truncations, failed fills and write-backs up to depth 8, against a flat file; two programs of one session, one storing through a mapping and one reading through a descriptor |
@@ -589,11 +596,13 @@ entry for it by its domain, tree and path.
 Posix}`, with an atom of OTP's `file:posix()` that names the same error
 (`enoent`, `eacces`, `eperm`, `eexist`, `enotdir`, `eisdir`, `enotempty`,
 `erofs`, `enospc`, `efbig`, `einval`, `ebadf`, `emfile`, `enfile`, `eio`,
-`enametoolong`, `enotsup`, `eloop`, `enxio`, `exdev`, `enomem`, `eagain`,
-`enodata` for a missing extended attribute, `erange` for a buffer too
-small for one, `enolck`, and `ebusy` for something another holder has, such
-as a display); an atom outside that list is refused by the
-grammar. The wire carries Linux's numbering, and the codec reads an error
+`enametoolong`, `enotsup`, `eloop`, `enxio`, `edquot`, `exdev`, `enomem`,
+`eagain`, `enodata` for a missing extended attribute, `erange` for a
+buffer too small for one, `enolck`, `ebusy` for something another holder
+has, such as a display, and `eintr` for a request that was still waiting
+when a flush or its fid's clunk ended it, [Flush](#flush)); an atom
+outside that list, the `errors` table of `abi/protocols/9p.txt`, is
+refused by the grammar. The wire carries Linux's numbering, and the codec reads an error
 number outside the list as `eio`, which also covers a server that answers
 in another system's numbering, as QEMU's does on a macOS host
 ([design-live.md](design-live.md#files-between-the-host-and-the-machine)).
@@ -605,11 +614,31 @@ once, and that a reply to the flushed request that arrives before the
 flush's answer stands: its effect happened and the client takes it. A
 `flush` of a completed, unknown or flush request is answered `ok` too,
 never with an error. erXos's servers, as QEMU's, answer a `flush` only
-after they have answered the flushed request or abandoned it, so a tag,
-and inside the machine an alias, is never reused while its request could
-still be answered. A client that flushes a request deactivates its alias
-once the flush is answered, so nothing arrives after. A flushed lock
-request therefore either was granted or took nothing ([Locks](#locks)).
+after the flushed request is settled, so a tag, and inside the machine
+an alias, is never reused while its request could still be answered.
+
+erXos's servers settle a flushed request by answering it, always before
+the flush's answer, so every request a grant admits gets exactly one
+reply. A request that has finished, or has had an effect, is answered
+with its result: the bytes a read took, the count a write already
+handed on. A request still waiting for an event, having taken nothing,
+is answered `{error, eintr}` at once: a waiting read, a waiting write of
+which nothing was taken, a blocking lock not yet granted ([Serving](#serving-the-erx_fs-behaviour),
+"Waiting requests"). So a client that receives the flush's answer has
+seen what the request did, and a reply of `eintr` says that it did
+nothing; no client has to tell a request that did nothing from one
+whose reply was lost. A client that flushes a request deactivates
+its alias once the flush is answered, so nothing arrives after. A
+flushed lock request therefore either was granted before the flush's
+answer or was answered `eintr` and took nothing ([Locks](#locks)).
+
+Inside the machine only a 9P bridge sends `flush`, for its edge client's
+own: erXos's native programs never abandon a request
+([design-programs.md](design-programs.md#invariants), P7), and an
+Erlang process waits for its reply or for its grant's end ([Erlang
+clients](#erlang-clients-prim_file-and-erx_file_remote)). Their waiting
+requests end when they are answered, at their fid's clunk, at the
+keeper's end or at the grant's end.
 
 #### Open files and offsets
 
@@ -617,10 +646,14 @@ request therefore either was granted or took nothing ([Locks](#locks)).
 its offset, and the client keeps the file's position. A server holds, for
 each open fid, the callback's handle, and orders the reads, writes, size
 changes and locks of each open file through one process, the file's
-**owner**, which `erx_fs` starts at the file's first open and ends at its
-last clunk, so each `read` and `write` request on a regular file is
-atomic with respect to every other whichever fids they come through, as
-POSIX asks of regular files. The unit is one request of at most 64 KiB: a
+**owner**, which `erx_fs` starts at the file's first open, on any grant,
+and ends at its last clunk, so each `read` and `write` request on a
+regular file is atomic with respect to every other whichever fids and
+grants they come through, as POSIX asks of regular files. A request that
+waits for an event, as a stream file's read does, is handed to the
+tree's keeper of that event and is atomic at the step the keeper
+answers it ([Serving](#serving-the-erx_fs-behaviour), "Waiting
+requests"); the file's other requests go on while it waits. The unit is one request of at most 64 KiB: a
 caller's write larger than that is several requests, each atomic, which
 another writer's requests may fall between, as over Linux's own 9P2000.L
 client; a request refused part way through such a write, with `enospc`
@@ -721,10 +754,12 @@ as its own. A session gives each program a `ProcId` of its own, so its
 programs' locks conflict with each other as UNIX processes' do. A read
 lock needs a fid open for reading and a write lock a fid open for writing.
 A request without 9P2000.L's `BLOCK` flag that conflicts is answered
-`blocked` at once; one with it is held, as a pending request of the file's
-owner, an Erlang process's wait in which nothing in the server blocks,
-until the lock is granted or the request is flushed, and it counts among
-the client's requests in flight. erXos's clients send `BLOCK` for a
+`blocked` at once; one with it is held, as a waiting request whose
+keeper is the file's owner itself ([Serving](#serving-the-erx_fs-behaviour),
+"Waiting requests"), in which nothing in the server blocks, until the
+lock is granted, the request is flushed or its fid is clunked, the last
+two answering it `eintr`, and it counts among the client's requests in
+flight. erXos's clients send `BLOCK` for a
 blocking `fcntl` lock, so they wait no longer than the holder holds;
 Linux's client, which retries a `blocked` lock after sleeping 30 s, waits
 at an edge as long as Linux makes it. A lock ends when its owner unlocks
@@ -773,7 +808,11 @@ boundary and can reach the tree without a grant.
 
 At every server, each grant holds at most its **pool** of fids, 4,096 by
 default, which the server's policy may set for each grant; at most 64
-requests in flight; and at most 256 locks. A request beyond a bound fails
+requests in flight, waiting requests among them; at most 64 flushes
+waiting for their requests, besides, so a client whose window is full of
+waiting reads can still flush every one; and at most 256 locks. A
+flush of a request that is not in flight waits for nothing and is
+answered at once, at any bound. A request beyond a bound fails
 with `emfile` or waits in the client, never at the server. A `clunk` or
 `remove` that is refused, at a bound or otherwise, still ends its fid, as
 clunk(5) and remove(5) say, so a refused clunk never keeps a file, and the
@@ -802,7 +841,12 @@ for, whatever count its handler answers.
 A grant handles its client's requests in the order they arrive, a
 guarantee of erXos's servers rather than of the protocol, whose intro(5)
 lets a server reorder, so a client may send a walk, an `lopen` and a first
-read on the new fid together, one round trip for all three. A client of a
+read on the new fid together, one round trip for all three. The order is
+the order in which requests start: a request that waits is answered when
+its keeper answers it, after later requests perhaps, so replies can
+arrive in another order than their requests, as intro(5) allows, and a
+client matches each reply to its request by its alias, at an edge by its
+tag. A client of a
 server from outside erXos, as the host-tree domain's bridge is of QEMU's,
 which runs each request on its own, waits for a reply before it sends a
 request that depends on it. An alias names one request: a request sent
@@ -1850,9 +1894,11 @@ writes in Erlang form the `erx_files` application
               {ok, attr()} | {error, file:posix()}.
 -callback open(Node :: term(), Flags :: non_neg_integer(), Fs :: term()) ->
               {ok, Handle :: term()} | {error, file:posix()}.
+%% A read or a write that waits for an event answers {wait, Keeper, Request}:
+%% the tree's Keeper answers it later, through erx_fs:answer/2 ("Waiting requests").
 -callback read(Handle :: term(), Offset :: non_neg_integer(),
                Count :: 1..65536, Fs :: term()) ->
-              {ok, binary()} | {error, file:posix()}.
+              {ok, binary()} | {error, file:posix()} | wait().
 -callback readdir(Handle :: term(), Offset :: non_neg_integer(),
                   Max :: 1..256, Fs :: term()) ->
               {ok, [dirent()]} | {error, file:posix()}.
@@ -1868,7 +1914,7 @@ writes in Erlang form the `erx_files` application
 -callback write(Handle :: term(), Offset :: non_neg_integer(), binary(),
                 Fs :: term()) ->
               {ok, Count :: non_neg_integer(), At :: non_neg_integer()}
-            | {error, file:posix()}.
+            | {error, file:posix()} | wait().
 %% A {file, ...} make answers with the open Handle; every other kind without.
 -callback make(Dir :: term(), Name :: binary(), What :: what(), Fs :: term()) ->
               {ok, Node :: term(), qid(), Handle :: term()}
@@ -1895,6 +1941,7 @@ writes in Erlang form the `erx_files` application
               | {symlink, Target :: binary()} | {link, Node :: term()}
               | {node, Mode :: non_neg_integer(), Major :: non_neg_integer(),
                  Minor :: non_neg_integer()}.
+-type wait() :: {wait, Keeper :: pid(), Request :: term()}.
 ```
 
 `make` serves `lcreate`, `mkdir`, `symlink`, `link` and `mknod`, one
@@ -1969,7 +2016,81 @@ other client's request can come between its parts:
   itself, in turn with the file's other operations, and starts no helper,
   since a helper would only add a process to every read. `erx_fs` reads
   the answer once, when the grant starts; a module without the callback
-  gets helpers.
+  gets helpers. Helpers and waiting requests (below) do different jobs:
+  a helper takes a slow read of stored bytes out of the file's turn, and
+  the owner repeats it when the file changed meanwhile, which only a read
+  that can be repeated allows; a keeper takes a request that waits for an
+  event, consumes what it answers with, and never repeats it.
+* **Waiting requests.** No process that runs a file's requests waits in
+  one of them for an event. A read or a write that must wait for an
+  event, bytes a device has not sent yet, a key not yet pressed, a driver
+  that has not yet taken what was written, is handed to the process that
+  owns that event, the request's **keeper**, a process of the tree, which
+  answers it when the event comes; meanwhile the file's owner goes on with
+  the file's other requests, its clunks and its flushes. A blocking lock
+  is the same construction with the file's owner as its own keeper
+  ([Locks](#locks)). The rules below follow from two facts: a request
+  has one keeper, which answers it once, and everything the keeper hears
+  about it comes from the file's owner, one sender, so in the order the
+  owner sent it:
+  1. **The callback answers at once**: its result, or `{wait, Keeper,
+     Request}`, which names the keeper and the tree's own term for what
+     to do. The owner monitors `Keeper` with an alias that the first
+     reply deactivates (`erlang:monitor/3` with `{alias,
+     reply_demonitor}`), sends it `{erx_fs_wait, Wait, Request}`, where
+     `Wait` carries the alias and the owner's pid, records the request
+     against the alias and its handle, and takes its next job. When
+     `Keeper` is not a process of the server's own runtime, or is the
+     owner itself, the owner answers the request `eio`.
+  2. **The keeper answers once**, with `erx_fs:answer(Wait, Result)`, a
+     send to the alias, where `Result` is one of the callback's own
+     answers other than a wait. The alias takes one answer, so a second
+     one is dropped by construction. The owner holds the answer to the
+     callback's shapes and the grant holds it to the grammar's reply
+     check, as for an answer made at once, and the grant answers the
+     client.
+  3. **A flush reaches the keeper through the owner.** The grant sends
+     the flush of a request it sent an owner to that owner, behind every
+     job sent before, so the owner meets the flush after the request has
+     started. A request already answered needs nothing; a lock it keeps
+     itself it answers `eintr`; a request a keeper holds it passes on as
+     `{erx_fs_flush, Wait}`, which the keeper answers at once, from its
+     own loop, with what the request has done or `{error, eintr}`
+     ([Flush](#flush)). The grant answers the flush after the request's
+     reply. A flush sent straight to the keeper could overtake the
+     request it names, since messages of two senders are not ordered.
+  4. **A clunk settles its handle's waits first.** Before the owner runs
+     a handle's `clunk` callback it flushes every request of that handle
+     that waits, and takes no other job until each is answered, which its
+     keeper does at once. So no request waits on a handle the tree has
+     closed, the clunk still runs after every request sent before it, and
+     the file's last clunk leaves nothing waiting.
+  5. **The keeper's end answers its requests `eio`**: the owner's monitor
+     fires for each request the keeper held, as a window that has ended
+     answers `EIO` ([design-display.md](design-display.md#the-window-tree)).
+  6. **The owner's end drops its requests at the keeper.** A keeper keeps
+     its waiting requests in an `erx_fs_waits` set, which `erx_fs`
+     provides: holding a request monitors the owner that sent it, a
+     flush hands the request back for the keeper to answer at once, and
+     the owner's `DOWN` drops every request that owner sent, so no request
+     of an owner that crashed takes bytes the next reader should have.
+     A keeper's three obligations, to answer once, to answer a flush at
+     once and to drop what an ended owner sent, live in that one module;
+     the keeper adds only its decision of when a request is done and
+     with what.
+
+  A waiting request counts among its client's requests in flight until
+  its reply ([Bounds](#bounds)), so a keeper holds at most 64 of them
+  for each grant. The owner's decisions are a pure core, `erx_fs_file`,
+  which takes each job, callback result, keeper's answer and `DOWN` and
+  returns the next state and the effects to perform (answer the grant,
+  send a request or a flush to a keeper, run a callback), so the orders
+  of rules 3 and 4 are properties of one function, which the tests
+  explore exhaustively ([Verification](#verification-and-testing)). A
+  callback that waits for an event itself, in a `receive` or in a call
+  that its callee answers only at an event, is the defect this
+  construction replaces; a tree's review checks its `read` and `write`
+  for one.
 * **One handle per tree.** `init/1` answers the tree's handle, `Fs`,
   which never changes: every callback receives it and answers only its
   result, never a next state. The grant and each owner call the
@@ -1982,20 +2103,29 @@ other client's request can come between its parts:
   shapes, a next state appended included, reaches the client as `eio`.
   A callback keeps no state in the process that calls it, and an answer
   turned into `eio` does not undo what the tree did.
-* **Owners and their grant.** An owner is linked to its grant, so a
-  callback that crashes in it ends the grant, and the
-  grant's end ends its owners. The grant sends an owner its file's
-  requests and the clunks of its opened fids in order and takes back
-  only the answers that carry the owner's tag; a clunk therefore runs
-  after every request sent before it, and the owner ends once it has
-  run the file's last clunk, so every live owner is one of a file still
-  open through the grant or one finishing the clunks it was sent. The
+* **Owners and their grants.** An owner serves every grant through which
+  its file is open, and it and each of those grants watch each other's
+  end: a callback that crashes in the owner ends the owner, and each
+  grant it served ends at its `DOWN`, as a grant whose own callback
+  crashed does; a grant that ends has the owner run the clunks of that
+  grant's handles, as if the grant had sent them, rule 4 of waiting
+  requests included, so the tree hears of every open's end and the
+  owner goes on for the other grants. Each grant sends the owner its
+  file's requests and the clunks of its opened fids in order and takes
+  back only the answers that carry its own tag; a clunk therefore runs
+  after every request its grant sent before it, and the owner ends once
+  it has run the file's last clunk on any grant, so every live owner is
+  one of a file still open through some grant or one finishing the
+  clunks it was sent. The owner answers each request when it is done, a
+  waiting one when its keeper answers, so answers come back in the order
+  requests finish, not the order they were sent. The
   grant answers a client's clunk of an opened fid with what the tree's
   `clunk` answered, once the owner has run it, so a close reports what
-  the tree could not commit, after every request sent before it; the
-  fid has ended whatever the answer, as clunk(5) says. A clunk the grant
-  makes itself, at an owner's `DOWN` or at the grant's end, has no one to
-  answer, and its answer is dropped.
+  the tree could not commit, after the reply of every request sent
+  before it, which is `eintr` for one of the fid's that was still
+  waiting; the fid has ended whatever the answer, as clunk(5) says. A clunk the
+  grant makes itself, at an owner's `DOWN` or at the grant's end, has no
+  one to answer, and its answer is dropped.
 * **Checks before callbacks.** Every message a grant receives, but its
   owners' `DOWN`s, passes one decoding funnel, which takes the frame and
   the grant's rights and admits a request only if it came from the client
@@ -2037,7 +2167,9 @@ other client's request can come between its parts:
   Its own steps are bounded by the grammar: no loop over client-sized data
   outside the decoder, and a payload of at most 64 KiB. Work that depends
   on a medium runs in the file's owner or its helper, so a grant keeps
-  answering its other fids while one read waits for the medium, and the
+  answering its other fids while one read waits for the medium, work
+  that waits for an event waits at its keeper and runs in no process
+  until the event comes, and the
   server's runtime schedules its clients' work among them as it schedules
   any processes. A client that sends faster than its grant answers fills
   its own lane and waits in its own runtime; a client that never reads its
@@ -2083,9 +2215,12 @@ other client's request can come between its parts:
   place in that listing,
   so a listing never skips or repeats an entry the tree added or removed
   meanwhile; and a statfs that holds no blocks.
-* **Flush.** A flush tells the callback's work, when it runs in a helper,
-  to stop, and is answered after the flushed request's reply or after the
-  owner has abandoned it ([Flush](#flush)).
+* **Flush.** A flush goes to the file's owner behind the request it
+  names. A request still in a helper the owner stops and answers
+  `eintr`, since a helper's read can be repeated and took nothing; one a
+  keeper holds goes to the keeper (rule 3 of waiting requests); one
+  already answered needs nothing. The grant answers the flush after the
+  flushed request's one reply ([Flush](#flush)).
 * **Freezing.** A freezing checkpoint, which the system domain asks of a
   storage service before a trial or a reset, closes mutation admission at
   every grant, lets each owner finish the writes it admitted, and only
@@ -2460,8 +2595,9 @@ Error step 5 below finds the working directory through this path.
   ends with a request in flight needs no cleanup of its own: the reply
   goes to an alias that ended with it, and the grant clunks its fids when
   its end arrives ([Fid owners](#fid-owners)). `flush` is for a request a
-  live client abandons, as a native program's interrupted wait for a
-  lock is. A server that dies while files are open turns their next
+  live client abandons, which only an edge client does, through its 9P
+  bridge; no Erlang client or native program of erXos sends one
+  ([Flush](#flush)). A server that dies while files are open turns their next
   operations into `{error, eio}`.
 
 A rename or a `make_link` resolves its two paths one after the other,
@@ -2798,7 +2934,16 @@ recovers a value's exact bytes
   tree ([A program's window](#a-programs-window)); or `none` for a grant
   that lives as long as the server's domain) and the export table it exports
   itself through before its start returns (`exports`);
-  every file server is one. `erx_fs_grants` supervises the grants of one
+  every file server is one. A keeper answers a waiting request with
+  `erx_fs:answer(Wait, Result)` and keeps its requests in
+  `erx_fs_waits`: `new/0`; `hold/2`, which takes an `{erx_fs_wait, Wait,
+  Request}` message and monitors the owner that sent it; `answer/3`,
+  which answers a request and forgets it; `info/2`, which takes an
+  `{erx_fs_flush, Wait}` or an owner's `DOWN` and answers `{flushed,
+  Wait, Request, Waits}`, for the keeper to answer at once, `{dropped,
+  Waits}` or `unknown`; and `list/1`, its requests in the order they
+  arrived ([Serving](#serving-the-erx_fs-behaviour), "Waiting
+  requests"). `erx_fs_grants` supervises the grants of one
   tree that a files service hands to other domains: `start_link/2`, and
   `grant/3`, which starts one grant bound to a client with the options
   a facet row's limits give it (`grant_options/1`).
@@ -2927,7 +3072,10 @@ that hold them.
 | A client over its bounds | `erx_fs` or the facet | its existing fids | none | `emfile` |
 | A program over its handler's bounds, or naming a file number it does not own | the handler | the program's existing files | none | `EMFILE` or `EBADF` |
 | A link loop or a chain over 32 links | the resolver's count | nothing | none | `eloop` |
-| A slow medium | none: the request waits | the request at the server | none | a wait, as on a local file system; an interrupt flushes it |
+| A slow medium | none: the request waits | the request at the server | none | a wait, as on a local file system; an edge client's interrupt flushes it |
+| A stream file has nothing to read | none: the read waits at its keeper | the request at the keeper, counted in flight | none | a wait; the file's writes, clunks and flushes go on meanwhile |
+| A keeper ends with requests waiting | the owner's monitor on the keeper | nothing | the owner answers each of them | `eio` on each waiting request |
+| A file's owner ends with requests waiting at a keeper | the keeper's `erx_fs_waits` monitor on the owner | nothing | the keeper drops every request that owner sent | each grant the owner served ends, as at a callback's crash |
 | A server dies, or a grant ends | the client's monitor on the grant, which the connection's end also fires | nothing at the server | the client marks its fids dead | `eio` on every open file of that grant; the mount stays, so a restarted service can be mounted again |
 | A client process ends | the grant's monitor on each fid owner, whose `DOWN` follows every request the owner sent ([Fid owners](#fid-owners)) | nothing | the grant clunks every fid the process owned, which releases their locks and, for an open file, the file's open | nothing |
 | A client domain dies | the connection going down, which ends every export across it and fires the grant's monitor on the client ([design-domains.md](design-domains.md#connections)) | nothing | the grant clunks every fid it holds, which releases their locks | nothing |
@@ -3188,7 +3336,12 @@ report, so a passing run shows the code under test ran.
 * F4: a tiny request whose callback is slow, sent in a flood by one
   client, which delays that client's grant and no other, and spends no
   more than the server's grant; seeded: a grant that runs callbacks in its
-  own process, which the second client's latency exposes.
+  own process, which the second client's latency exposes. A client with
+  64 reads waiting at a stream's keeper holds its 64 slots, 64 entries of
+  the keeper's `erx_fs_waits` and no process of the server beyond its
+  grant and the file's owner; seeded: an owner that runs each waiting
+  read in a process of its own, which the server's process count
+  catches.
 * F5 and F6: every writing operation through an `ro` and an `rx` grant,
   each refused before its callback; running a file through an `ro` and an
   `rw` mount, which fails with `EACCES`; seeded: an operation removed from
@@ -3221,11 +3374,65 @@ report, so a passing run shows the code under test ran.
   the opened fid an `F_SETFL` replaces, which the `O_APPEND` case
   catches.
 * Flush: a blocking lock request flushed before the holder unlocks,
-  which gets no reply but the flush's, and one flushed as the holder
-  unlocks, whose reply grants the lock before the flush's answer;
-  seeded: a server that answers the flush before the request it granted,
-  which leaves the lock taken with no owner who knows it and fails the
-  test. The export answers an `lopen` of `/dev/tty` with `enxio`; seeded:
+  which is answered `eintr` before the flush's answer, and one flushed as
+  the holder unlocks, whose reply grants the lock before the flush's
+  answer; seeded: a server that answers the flush before the request it
+  granted, which leaves the lock taken with no owner who knows it and
+  fails the test.
+* Waiting requests. Each case runs through a real `erx_fs` grant over a
+  test stream tree whose keeper keeps its requests in `erx_fs_waits` and
+  takes bytes the test hands it, and each wait the test asserts on has a
+  deadline of 1 s.
+  * The regression, written first and seen to fail before waiting
+    requests are built: one grant, two fids opened on one stream file, a
+    read sent on the empty stream and then a write; the write is
+    answered while the read still waits, and the bytes the test then
+    hands the keeper answer the read, once. Seeded: a tree whose `read`
+    waits inside its callback, which makes the write miss its deadline.
+  * The owner's core, `erx_fs_file`, composed with the grant's table of
+    requests in flight and explored over every order of three requests
+    on two handles (two that wait, one answered at once), two flushes
+    (one of a waiting request, one of an answered one), a clunk of one
+    handle, the keeper's answers at every point, a second answer from
+    the keeper and the keeper's end: every request is answered exactly
+    once; a flush is answered after its request and flushes in the
+    order they came; no request of a handle waits once its clunk has
+    run; the owner ends only after its last clunk, with nothing waiting.
+    Seeded, each caught by the property named: a grant that answers a
+    flush before the keeper's answer (flush after its request); a clunk
+    that runs without flushing its handle's waits (nothing waits after
+    a clunk); an owner that does not monitor its keeper, at the keeper's
+    end (answered exactly once); an alias without `reply_demonitor`,
+    which takes the keeper's second answer (answered exactly once).
+  * A flush sent in one batch right behind its read reaches the keeper
+    after the read: the read is answered `eintr`, then the flush `ok`.
+    Seeded: a grant that sends the flush to the keeper itself, whose
+    flush overtakes the read and leaves both unanswered past the
+    deadline.
+  * A read flushed as the keeper answers it: the read's bytes, then the
+    flush's `ok`, and the bytes are not handed to anyone else.
+  * A clunk of a fid whose read waits is answered within the deadline,
+    after the read's `eintr`, and the tree's `clunk` runs once, when
+    its keeper holds nothing of that handle; seeded: an owner that runs
+    the clunk while the read still waits, which the test tree's check at
+    `clunk` catches.
+  * An owner killed with its grant while its read waits at the keeper; a
+    second grant opens the file and reads; the bytes the test then hands
+    the keeper answer the second read whole. Seeded: an `erx_fs_waits`
+    that does not monitor the owner, whose dead request takes the bytes.
+  * A keeper killed while two reads wait: each is answered `eio`, and
+    the file's next read waits at the restarted keeper.
+  * Bounds, in the grant's core: 64 waiting reads fill a grant's window
+    and a 65th request is answered `emfile`; 64 flushes are then
+    admitted, each answered after its read's `eintr`. Seeded: flushes
+    counted in the requests' window, whose first flush is answered
+    `emfile`.
+  * The stream trees that use waiting requests run their own cases over
+    a real grant: a window's `kbd` read on a hidden window, whose clunk
+    is answered within the deadline
+    ([design-display.md](design-display.md#the-window-tree)), and the
+    Bluetooth line's reader and writer on one `data` file
+    ([design-bluetooth.md](design-bluetooth.md#verification)). The export answers an `lopen` of `/dev/tty` with `enxio`; seeded:
   an export that opens it, which the case catches.
 * F1: a domain test that a mounted pid the domain was not introduced to
   reaches nothing. F2 and F3: a program given `/data/logs` whose requests
@@ -3688,6 +3895,35 @@ write another domain made anywhere in the range would be overwritten at
 every write-back, and the cost of an `msync` would follow the mapping's
 size, not what changed.
 
+**A stream's reads and writes in separate processes.** The file's owner
+would run reads in one process and writes in another, so a read that
+waits holds up no write. It loses: a reset, a clunk and a flush would
+then coordinate two processes over one stream's state, regular files
+would lose the one order that makes their requests atomic, and a read
+that waits would still hold up the next read and every clunk.
+
+**Helper reads for streams, without the retry.** Each waiting read would
+run in a helper the owner starts, and a flush would end the helper. It
+loses: ending a helper does not say whether it took bytes, so a flush
+could lose input, and making it say so needs the stream's owner to
+decide, which is a keeper with a process more. Plan 9's 9front shows
+the keeper's form: kbdfs hands a waiting read to the thread that owns
+the keyboard's bytes and cancels it there at a flush (9front commit
+`eb49f1f8788ccbb2f86ce5767d2f046c3593162e`, `sys/src/cmd/aux/kbdfs/kbdfs.c`,
+lines 1023-1040 and 1444-1469, as the research for this section read
+it; unverified here).
+
+**Two files, `rx` and `tx`, for each stream.** A stream would split its
+reads and writes into two files, each with its own owner. It loses: the
+interface would follow a limit of the server, each stream would pay for
+it, and a waiting read would still hold up its own file's clunk and
+flush.
+
+**A process for each request.** Every request would run in a process of
+its own, so nothing waits behind anything. It loses: regular files would
+need their atomicity rebuilt, a process would start for every read, and
+ending a process at a flush says nothing of what it took.
+
 ## Risks and open questions
 
 | Risk | Likelihood | Impact | Mitigation |
@@ -3696,10 +3932,12 @@ size, not what changed.
 | The handler's relay makes a program's file I/O slower than an Erlang process's | medium | toybox's applets read at the speed of the channel round trip | the data area's 64 KiB slots; walk, open and read in one round trip; `tools/erx bench fs` from a program; more slots per program where the session's policy allows |
 | A program depends on `..` following a directory that a concurrent rename moves | low | the resolution passes the old path, reaching what it names then or failing | FreeBSD resolves no path atomically either; the difference is documented, and only a racing rename shows it |
 | Servers in user domains hold clients' state too long | low | a user domain's memory grows | the per-grant bounds; the client's death clunks everything |
-| One owner per open file serializes the file's reads and writes | medium | readers of one large file wait for each other | reads of 64 KiB extents in helper processes; `tools/erx bench fs` |
+| One owner per open file serializes the file's reads and writes | medium | readers of one large file wait for each other | reads of 64 KiB extents in helper processes; `tools/erx bench fs`; a request that waits for an event waits at its keeper, not in the owner's turn |
+| A tree's `read` or `write` waits for an event inside its callback instead of answering `{wait, ...}` | medium | the file's other requests, its clunks and its flushes wait for that event, and a stream's reader and writer deadlock | the waiting-request tests below for each stream tree; a tree's review checks its callbacks for waits |
+| A keeper answers a flush late | low | the flush, and a clunk of the request's fid, wait as long as the keeper does | `erx_fs_waits` hands the flushed request back at once; the keeper tests answer a flush within a bound |
 | A large shared mapping costs a read of its whole range before it is installed | medium | slow `mmap` of large files | gate GQ measures the fill and the write-backs; the corpus's users map small files |
 | Two sessions, or a session and another domain, write one page of a mapped file | low | the later write-back's page wins, as between clients of a network file system | write-back of stored pages alone; record locks for programs that coordinate; a documented difference with a test |
-| A request to a hung server waits until the caller gives up | low | a process or program waits on a live server that never answers | the caller's interrupt flushes it; the server's end gives `eio`; the inspector shows requests in flight |
+| A request to a hung server waits until the caller gives up | low | a process or program waits on a live server that never answers | an erXos caller waits, as on a local disk that hangs, and an edge client's interrupt flushes it; the server's end gives `eio`; the inspector shows requests in flight |
 
 Open question for the user:
 

@@ -2115,14 +2115,19 @@ it; git history is the record of completed work.
 * [Medium] `erlang/apps/erx_display/src/erx_winfs.erl`: `start_link/1` given a service starts the single policy with an
   empty configuration; the window policy and its chord come from the display domain's manifest entry
   ([design-display.md](docs/design-display.md#windows-and-the-window-system)).
-* [Medium] `erx_fs` and `erx_window` (`erlang/apps/erx_files/src/erx_fs.erl`): a waiting `mouse` or `kbd` read cannot
-  be cancelled by the client's flush, since `erx_fs` has no helper mode, so the file's owner blocks and the flush
-  waits; a client reading `kbd` on a hidden window hangs. design-display.md says these reads are helper-mode reads that
-  wait for a record.
-* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: a `wctl` read answers at once; design-display.md ("The window
-  tree") says it waits for a record.
-* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: held `ctl` writes and `mouse` and `kbd` readers are bounded
-  only by `erx_fs`'s one request per open file; give them a cap of their own.
+* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs.erl`, `file_loop/4`;
+  `erx_fs_grant.erl`, `run_job/3`, `admit/4`): design-files.md ("Serving", "Waiting requests") hands a read or write
+  that waits for an event to the tree's keeper, but the file's owner calls every callback in its own process, so a
+  read that waits holds up the file's writes, clunks and flushes; a flush is never passed to the tree, and a flush of
+  a request in flight is answered `emfile` at the requests' bound (`test/erlang/erx_fs_tests.erl`, the in-flight
+  bound case, expects it) where the design gives flushes a bound of their own; `abi/protocols/9p.txt`'s `errors`
+  lacks `eintr`. Build `{wait, Keeper, Request}`, `erx_fs:answer/2`, `erx_fs_waits` and the owner's pure core
+  `erx_fs_file`, with the tests design-files.md lists, regression first. It blocks the Bluetooth line service
+  (`erx_line`, design-bluetooth.md, "The controller's line"), the `pair` file, and a window's `mouse` and `kbd`
+  reads and held `ctl` writes, which `erx_winfs:read/4` and `write/4` serve today by a `gen_server:call` with no
+  timeout to `erx_window` (`erlang/apps/erx_display/src/erx_winfs.erl`, `call/2`), so a client reading `kbd` on a
+  hidden window cannot clunk or flush it; once built, `erx_window` keeps those requests in `erx_fs_waits`, bounded
+  by each grant's 64 requests in flight.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grants.erl`: the per-grant `Args` (`start_link/2`, `grant/4`) are not named by
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
@@ -4675,8 +4680,11 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   making the forget an effect `{forget, Node}` the shell performs, so the core sends nothing.
 * [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: an open file's owner process is one per grant, keyed by the node,
   where `docs/design-files.md` starts one per open file on any grant; a file open through two grants of one tree has
-  two owners, so its requests are ordered against each other only by the tree. /tmp serves one grant per tree. Add
-  a per-tree registry of owners before a tree is served on more than one grant.
+  two owners, so its requests are ordered against each other only by the tree, and the locks the design keeps at
+  the file's owner for every grant could not conflict across grants. /tmp serves one grant per tree. Add a per-tree
+  registry of owners before a tree is served on more than one grant; the owner and its grants then watch each
+  other's end by monitors in place of today's link (`erx_fs.erl`, `start_file`), and a grant's end has the owner run
+  that grant's clunks, as design-files.md ("Owners and their grants") gives.
 * [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: no read helper exists, so an open file's owner calls `read` itself
   whatever the module's `read_mode/0` says, and a read that waits for a medium holds up the file's other requests.
   Build the helper of `docs/design-files.md` (state-stamped results the owner's core accepts or retries) with the

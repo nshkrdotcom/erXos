@@ -956,9 +956,14 @@ modifiers and the other keys that type no character are runes of
 9front's private-use range ([Input events](#input-events)). Because
 every `k` and `K` record carries the whole set, a reader that lost
 records to the queue's bound has the right set again at the next one. A read of
-`mouse`, `kbd` or `wctl` is a
-helper-mode read that waits for a record
-([The `erx_fs` behaviour](design-files.md#serving-the-erx_fs-behaviour)).
+`mouse` or `kbd` that finds no record waits for one as a waiting request
+whose keeper is the window process
+([The `erx_fs` behaviour](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests"), so the window's other files, a clunk of the fid
+and a flush go on while it waits, and a clunk answers the waiting read
+`EINTR`; a held `ctl` write (below) waits the same way. A read of `wctl`
+answers at once with the window's rectangle and state at the read, as
+the terminal reads it after each `r` record.
 Only these names exist; `cons`, `winname`, `consctl` and `wsys` do not,
 since a terminal is a program's choice and attachment by name is gone.
 
@@ -2440,7 +2445,8 @@ its last present. A write to `ctl` reaches it as a binary, which
 pixel area ([The window tree](#the-window-tree)); it then calls
 `erx_screen:present_request/2`, which returns at once as
 `erx_display:flush_request/3` does, keeps at most one present in flight
-to `erx_screen` and holds its client's write until the answer, so the
+to `erx_screen` and holds its client's write, as a waiting request it
+keeps ([The window tree](#the-window-tree)), until the answer, so the
 window still takes input while it waits; it then records the buffer as its last present
 and answers the write. A second `ctl` write that arrives while a present
 is in flight is held too, and queues behind it. When `erx_screen` ends
@@ -4811,7 +4817,14 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   reader without its record-length check fails it; a window's end
   leaving the display domain's memory as it was before the window,
   measured by the domain's budget; a seeded window process that keeps
-  its image of the buffer fails it.
+  its image of the buffer fails it. Through a real grant, a `kbd` read
+  waiting on a hidden window leaves the window's `label` writable and
+  its fid's clunk answered within 1 s, after the read's `EINTR`, and a
+  key typed after a second `kbd` read is sent reaches that read; a
+  seeded `erx_winfs` whose `read` calls the window and waits for the
+  record makes the clunk miss its deadline
+  ([design-files.md](design-files.md#verification-and-testing),
+  "Waiting requests").
 * **The window system.** `erx_wm_rio` and `erx_wm_single` are pure and
   tested over sequences of place requests and input events; a property
   test that the single policy shows at most one window and delivers every
