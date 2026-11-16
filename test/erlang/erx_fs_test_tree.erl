@@ -33,20 +33,22 @@ change of a directory answers `eisdir` and of a link `einval`, as Linux
 answers them.
 
 With `{observer, Pid}` in its arguments, every callback first sends
-`{tree_call, Callback}` to `Pid`, so a test can show a request never reached
+`{tree_call, Callback}` to `Pid` (subtree/3 sends `{tree_subtree, Tree, Grantee}`), so a test can show a request never reached
 the tree. A walk of ".." crashes the grant: erx_fs must answer ".." itself.
 
 With `{cap, Bytes}`, a write ending past `Bytes` answers `enospc` and writes
 nothing, as a full tree answers. With `{name, Name}` the tree is named `Name`
 rather than `test`, and with `{file, Name, Bytes}` its root also holds the
-file `Name`, inode 7, holding `Bytes`.
+file `Name`, inode 7, holding `Bytes`. With `{subtree, Tree}` it roots a grant
+at `Tree` (subtree/3), as the tree named after `Tree`, and tells its observer
+the grantee it was asked for; it roots none at any other.
 """.
 
 -behaviour(erx_fs).
 
 -include("generated/erx_abi.hrl").
 
--export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4,
+-export([init/1, subtree/3, root/1, walk/3, getattr/2, open/3, read/4, readdir/4,
          readlink/2, statfs/1, clunk/2, write/4, make/4, setattr/3, unlink/4,
          rename/5]).
 
@@ -110,6 +112,19 @@ apply_step(#{tree := Tree}, Step) ->
     receive
         {Ref, Reply} -> demonitor(Ref, [flush]), Reply;
         {'DOWN', Ref, process, Tree, Why} -> exit({tree_ended, Why})
+    end.
+
+-doc """
+A grant rooted at Tree, the tree's `{subtree, Tree}` argument, starts as the tree
+named after Tree; Grantee goes to the observer as `{tree_subtree, Tree, Grantee}`.
+""".
+subtree(Args, Tree, Grantee) ->
+    case proplists:get_value(subtree, Args) of
+        Tree ->
+            _ = [Observer ! {tree_subtree, Tree, Grantee} || {observer, Observer} <- Args],
+            {ok, [{name, atom_to_binary(Tree)} | Args]};
+        _ ->
+            {error, einval}
     end.
 
 -doc "The tree is named `test`, or the name its `{name, Name}` argument gives.".

@@ -66,9 +66,11 @@ client as `eio`.
 -callback init(Args :: term()) -> {ok, Fs :: term()}.
 %% A tree whose grants a facet row's `tree` may root within it (abi/services/files.txt)
 %% adds subtree: the init Args of a grant of the tree Args name, rooted at the root Tree
-%% names, or {error, einval}. erx_fs_grants asks it before such a grant starts; a tree
-%% without it starts no grant whose row states a tree.
--callback subtree(Args :: term(), Tree :: atom()) -> {ok, Args1 :: term()} | {error, einval}.
+%% names for Grantee, the domain the grant is for and the principal its mint named
+%% (erx_fs_grants:grantee/0), or {error, einval}. erx_fs_grants asks it before such a
+%% grant starts; a tree without it starts no grant whose row states a tree.
+-callback subtree(Args :: term(), Tree :: atom(), Grantee :: erx_fs_grants:grantee()) ->
+              {ok, Args1 :: term()} | {error, einval}.
 %% The tree the grant roots in: its name, which attach's Aname must match, and its root.
 -callback root(Fs :: term()) -> {ok, Tree :: binary(), Node :: term(), qid()}.
 -callback walk(Node :: term(), Name :: binary(), Fs :: term()) ->
@@ -120,7 +122,7 @@ client as `eio`.
               ok | {error, file:posix()}.
 -callback xattr(Node :: term(), Op :: term(), Fs :: term()) ->
               {ok, term()} | {error, file:posix()}.
--optional_callbacks([subtree/2, forget/2, readlink/2, write/4, make/4, setattr/3,
+-optional_callbacks([subtree/3, forget/2, readlink/2, write/4, make/4, setattr/3,
                      unlink/4, rename/5, fsync/2, xattr/3]).
 
 %% What a grant's process may hold for its client, its fids and their paths,

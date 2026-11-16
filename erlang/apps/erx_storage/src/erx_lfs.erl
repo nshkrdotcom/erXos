@@ -41,7 +41,7 @@ of installed app packages (docs/design-packaging.md, "Where a package
 lies"), which holds `installed/`, the packages whose checks passed, apart
 from any upload in progress. A grant of a tree roots at the tree's root, or,
 when its facet row states the files interface's `tree` (erx_fs_grants,
-subtree/2), at the root that `tree` names within it: `installed`, the
+subtree/3), at the root that `tree` names within it: `installed`, the
 packages tree's `installed/`, where the app template's grant roots.
 tree_root/1 is the one table of the roots. A grant names its root in init/1
 and roots there, and nothing it sends names a node above that root:
@@ -70,7 +70,7 @@ only on a request that carries the reference.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/2, owner/1, worker/2, trees/0, subtree/2]).
+-export([start_link/2, owner/1, worker/2, trees/0, subtree/3]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4, statfs/1,
          clunk/2, write/4, make/4, setattr/3, unlink/4, rename/5,
          fsync/2]).
@@ -631,12 +631,13 @@ trees() -> [data, packages].
 -doc """
 The arguments of a grant of the tree that Args name, rooted at the root that
 Tree, a facet row's `tree` (abi/services/files.txt), names within it, which
-erx_fs_grants asks before it starts the grant: `installed` within `packages`;
-`{error, einval}` for any other, so a row's tree never roots a grant elsewhere.
+erx_fs_grants asks before it starts the grant: `installed` within `packages`,
+the same root for every grantee; `{error, einval}` for any other, so a row's
+tree never roots a grant elsewhere.
 """.
--spec subtree({atom(), atom()}, atom()) -> {ok, {atom(), atom()}} | {error, einval}.
-subtree({Name, packages}, installed) -> {ok, {Name, installed}};
-subtree({_Name, _Tree}, _Subtree) -> {error, einval}.
+-spec subtree({atom(), atom()}, atom(), erx_fs_grants:grantee()) -> {ok, {atom(), atom()}} | {error, einval}.
+subtree({Name, packages}, installed, _Grantee) -> {ok, {Name, installed}};
+subtree({_Name, _Tree}, _Subtree, _Grantee) -> {error, einval}.
 
 %% Every root a grant starts from, each after the one it lies within.
 roots() -> trees() ++ [installed].

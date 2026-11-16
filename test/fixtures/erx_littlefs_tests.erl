@@ -247,7 +247,7 @@ a_tree_reaches_only_its_own() ->
     ok = erx_lfs:clunk(RootH, Packages),
     {ok, _, _} = erx_lfs:walk(Top, <<"secret">>, Data),
     {ok, _, {0, _, _}} = erx_lfs:walk(Root, <<"a.app">>, Data),
-    {ok, InstalledArgs} = erx_lfs:subtree({lfs_trees, packages}, installed),
+    {ok, InstalledArgs} = erx_lfs:subtree({lfs_trees, packages}, installed, #{client => 5, principal => <<"clock">>}),
     {ok, Installed} = erx_lfs:init(InstalledArgs),
     {ok, <<"packages">>, Under, {?ERX_P9_QTDIR, _, _}} = erx_lfs:root(Installed),
     {ok, Under, {?ERX_P9_QTDIR, _, _}} = erx_lfs:walk(Root, <<"installed">>, Packages),
@@ -259,9 +259,9 @@ a_tree_reaches_only_its_own() ->
     {ok, _, {0, _, _}} = erx_lfs:walk(Under, <<"b.app">>, Installed),
     [{error, enoent}] = lists:usort([erx_lfs:walk(Under, Name, Installed) || Name <- [<<"new">>, <<"a.app">>]]),
     {error, einval} = erx_lfs:walk(Under, <<"..">>, Installed),
-    [{error, einval}] = lists:usort([erx_lfs:subtree({lfs_trees, data}, installed),
-                                     erx_lfs:subtree({lfs_trees, packages}, apps),
-                                     erx_lfs:subtree({lfs_trees, packages}, packages)]),
+    [{error, einval}] = lists:usort([erx_lfs:subtree({lfs_trees, data}, installed, #{client => 5, principal => <<"clock">>}),
+                                     erx_lfs:subtree({lfs_trees, packages}, apps, #{client => 5, principal => <<"clock">>}),
+                                     erx_lfs:subtree({lfs_trees, packages}, packages, #{client => 5, principal => <<"clock">>})]),
     stop_volume(Volume).
 
 %% A block request the window refuses fails its operation with eio, and the

@@ -22,7 +22,7 @@ Of a facet row's limits and parameters a grant applies five (grant_options/1):
   rights are fixed when the grant starts, so no request widens them;
 * `tree`, the files interface's other parameter, a member of `files_tree`: the
   grant starts from the arguments its tree's module answers for that root
-  (erx_fs's subtree/2), and a module that roots none there refuses the grant
+  for its grantee (erx_fs's subtree/3), and a module that roots none there refuses the grant
   with `{error, einval}`, so a grant is rooted where its row says or not started;
   a row that states none roots the grant at the tree's root;
 * `in_flight`, the most requests it holds at once, at most erx_fs_grant's 64;
@@ -48,6 +48,11 @@ Of a facet row's limits and parameters a grant applies five (grant_options/1):
 -define(MSIZE_MAX, 65560).
 %% The limits an own grant (own/1,2) starts with, from which its facet's rights follow.
 -define(OWN, #{rights => rw}).
+
+%% The grantee a tree's subtree/3 roots a grant for: the domain the grant is for, and
+%% the name of its principal where the grant's mint named one (erx_storage_mint).
+-type grantee() :: #{client := erx_fs_grant:client(), principal => binary()}.
+-export_type([grantee/0]).
 
 -doc """
 Starts the supervisor of the grants of the tree Module serves from Args, linked to
@@ -89,7 +94,8 @@ client through before this returns. A refused export, or Limits a row would
 refuse, is the answer and leaves no grant.
 """.
 -spec grant(pid(), map(), #{client := pos_integer(), ends_with := port() | pid() | none,
-                            exports := module()}) -> {ok, pid()} | {error, term()}.
+                            exports := module(), principal => binary()}) ->
+          {ok, pid()} | {error, term()}.
 grant(Grants, Limits, #{client := Client, ends_with := _, exports := _} = Binding)
   when is_integer(Client), Client > 0 ->
     case grant_options(Limits) of
@@ -182,20 +188,21 @@ grant_spec(Start) ->
 -doc false.
 -spec start_grant(module(), term(), map()) -> {ok, pid()} | {error, term()}.
 start_grant(Module, Args, Options) ->
-    {Rights, Rest} = maps:take(rights, Options),
+    Grantee = maps:with([client, principal], Options),
+    {Rights, Rest} = maps:take(rights, maps:remove(principal, Options)),
     case maps:take(tree, Rest) of
         error -> erx_fs:start_link(Module, Args, Rights, Rest);
-        {Tree, FsOptions} -> start_rooted(Module, subtree(Module, Args, Tree), Rights, FsOptions)
+        {Tree, FsOptions} -> start_rooted(Module, subtree(Module, Args, Tree, Grantee), Rights, FsOptions)
     end.
 
 start_rooted(Module, {ok, Rooted}, Rights, FsOptions) -> erx_fs:start_link(Module, Rooted, Rights, FsOptions);
 start_rooted(_Module, {error, einval} = Refused, _Rights, _FsOptions) -> Refused.
 
-%% The arguments of a grant rooted at Tree within the tree Args name, from the tree's
-%% module, which roots none there unless it has subtree/2 and that answers it.
-subtree(Module, Args, Tree) ->
+%% The arguments of a grant for Grantee rooted at Tree within the tree Args name, from
+%% the tree's module, which roots none there unless it has subtree/3 and that answers it.
+subtree(Module, Args, Tree, Grantee) ->
     _ = code:ensure_loaded(Module),
-    case erlang:function_exported(Module, subtree, 2) of
-        true -> Module:subtree(Args, Tree);
+    case erlang:function_exported(Module, subtree, 3) of
+        true -> Module:subtree(Args, Tree, Grantee);
         false -> {error, einval}
     end.

@@ -266,7 +266,7 @@ minted_grants_of_no_tree_answer_eio_test() ->
 minted(Tree, Rights) ->
     {ok, Grants} = erx_fs_grants:start_link(erx_storage_system, Tree),
     unlink(Grants),
-    {ok, Grant} = erx_storage_mint:grant(Grants, ?SYSTEM, ?SYSTEM, #{rights => Rights}, ?MODULE),
+    {ok, Grant} = erx_storage_mint:grant(Grants, ?SYSTEM, ?SYSTEM, <<"system">>, #{rights => Rights}, ?MODULE),
     Grant.
 
 %% The stand-in of the export table, which exports every grant.

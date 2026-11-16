@@ -33,7 +33,7 @@ and so the tree's, ends every grant. erx_fs_grants applies the facet row's limit
 and tree.
 """.
 
--export([start_link/3, mint_request/3, grant/5]).
+-export([start_link/3, mint_request/3, grant/6]).
 %% The mint's process.
 -export([mint_init/2]).
 
@@ -60,8 +60,8 @@ mint(System, Service, Grants) ->
             mint(System, Service, Grants)
     end.
 
-mint_one({grant, Tag, Grantee, Limits}, System, Grants) ->
-    _ = erx_facet:minted(Tag, grant(Grants, System, Grantee, Limits, erx_dist)),
+mint_one({grant, Tag, Grantee, Principal, Limits}, System, Grants) ->
+    _ = erx_facet:minted(Tag, grant(Grants, System, Grantee, Principal, Limits, erx_dist)),
     ok;
 mint_one(unknown, _System, _Grants) ->
     ok.
@@ -74,24 +74,26 @@ limits, is granted;
 anything else is unknown and dropped.
 """.
 -spec mint_request(pos_integer(), atom(), term()) ->
-          {grant, pos_integer(), pos_integer(), map()} | unknown.
+          {grant, pos_integer(), pos_integer(), binary(), map()} | unknown.
 mint_request(System, Service, {erx_origin, System, {erx_facet_mint, Tag, Service, Grantee, Principal, Limits}})
   when is_integer(Tag), Tag > 0, is_integer(Grantee), Grantee > 0, is_binary(Principal), is_map(Limits) ->
-    {grant, Tag, Grantee, Limits};
+    {grant, Tag, Grantee, Principal, Limits};
 mint_request(_System, _Service, _Message) ->
     unknown.
 
 -doc """
 The answer to one granted request, in a domain whose system domain's id is System: a
-grant under Grants for Grantee with the options Limits give it, exported to Grantee
+grant under Grants for Grantee, whose principal is named Principal, with the options
+Limits give it, rooted for that grantee where Limits state a tree, exported to Grantee
 through Exports (erx_dist, or a host test's stand-in) before this returns; or the
 refusal, which leaves no grant.
 """.
--spec grant(pid(), pos_integer(), pos_integer(), map(), module()) -> {ok, pid()} | {error, term()}.
-grant(Grants, System, Grantee, Limits, Exports) ->
+-spec grant(pid(), pos_integer(), pos_integer(), binary(), map(), module()) -> {ok, pid()} | {error, term()}.
+grant(Grants, System, Grantee, Principal, Limits, Exports) ->
     case connection_to(System, Grantee) of
         {ok, Connection} ->
-            erx_fs_grants:grant(Grants, Limits, #{client => Grantee, ends_with => Connection, exports => Exports});
+            erx_fs_grants:grant(Grants, Limits, #{client => Grantee, principal => Principal,
+                                                  ends_with => Connection, exports => Exports});
         {error, _} = Refused ->
             Refused
     end.
