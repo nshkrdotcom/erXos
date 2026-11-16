@@ -18,7 +18,9 @@ require_relative '../fixtures/erlang_build'
 # takes no bound; the bound is the constant bt_acl_rx_max), and credits not returned at
 # disconnection (the free credits are the buffer count less the live handles' packets in
 # flight, so removing a handle returns its packets). In the second's place the handle is
-# kept live after its Disconnection Complete.
+# kept live after its Disconnection Complete. Nor can a second deadline armed or a
+# deadline cancelled that was never armed: each deadline is a field of the slot's state
+# it guards, so leaving the state drops it and there is no second one to arm.
 class ErxBtHciTest < Minitest::Test
   APPLICATIONS = %w[erx_bt].freeze
   TESTS = %w[test/erlang/erx_bt_hci_tests.erl].freeze
@@ -46,9 +48,9 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'acl_of_252_octets_is_an_error_test'),
     Seed.new(fault: 'the command slot not cleared by Command Status',
              module_path: CORE,
-             anchor: 'answered(Label, Command, Answer, Core#core{slot = idle}),',
+             anchor: 'answered(Label, Command, Answer, Core#core{slot = idle});',
              replacement: 'answered(Label, Command, Answer, case Answer of {status, _} -> Core; _ -> ' \
-                          'Core#core{slot = idle} end),',
+                          'Core#core{slot = idle} end);',
              catching_case: 'a_disconnect_answered_by_status_frees_the_slot_test'),
     Seed.new(fault: 'a handle kept live after its Disconnection Complete',
              module_path: CORE,
@@ -72,9 +74,9 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'a_completion_of_a_queued_packet_stops_test'),
     Seed.new(fault: 'the deadline armed only once the controller allows the command',
              module_path: CORE,
-             anchor: "        _ -> {[{timer, ?ERX_BT_COMMAND_TIMEOUT_MS}], Core#core{slot = due}}\n",
+             anchor: "        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
              replacement: "        _ when Core#core.allowed =:= 0 -> {[], Core};\n" \
-                          "        _ -> {[{timer, ?ERX_BT_COMMAND_TIMEOUT_MS}], Core#core{slot = due}}\n",
+                          "        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
              catching_case: 'a_command_the_controller_never_allows_stops_on_its_deadline_test'),
     Seed.new(fault: 'the connection limit kept above the buffer count',
              module_path: CORE,
@@ -93,25 +95,43 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: "a connection before the advertising enable's answer leaving advertising on",
              module_path: CORE,
-             anchor: 'overtaken({sent, advertise, Command, Opcode}) -> {sent, advertise_overtaken, Command, Opcode};',
-             replacement: 'overtaken({sent, advertise, Command, Opcode}) -> {sent, advertise, Command, Opcode};',
+             anchor: 'overtaken({sent, advertise, Command, Opcode, Deadline}) -> {sent, advertise_overtaken, Command, Opcode, Deadline};',
+             replacement: 'overtaken({sent, advertise, Command, Opcode, Deadline}) -> {sent, advertise, Command, Opcode, Deadline};',
              catching_case: 'explored_core_keeps_its_invariants_test_'),
-Seed.new(fault: 'a connection accepted on a handle whose disconnect is handed over and unanswered',
-         module_path: CORE,
-         anchor: "connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _}}) ->\n" \
-                 "    stop({connection_while_disconnecting, Handle});\n",
-         replacement: '',
-         catching_case: 'a_connection_on_a_handle_being_disconnected_stops_test'),
-Seed.new(fault: 'any failed disconnect taken as the handle gone',
+    Seed.new(fault: 'a connection accepted on a handle whose disconnect is handed over and unanswered',
+             module_path: CORE,
+             anchor: "connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _, _}}) ->\n" \
+                     "    stop({connection_while_disconnecting, Handle});\n",
+             replacement: '',
+             catching_case: 'a_connection_on_a_handle_being_disconnected_stops_test'),
+    Seed.new(fault: 'any failed disconnect taken as the handle gone',
              module_path: CORE,
              anchor: '        Failed -> stop({disconnect_failed, Handle, Failed})',
              replacement: '        _Failed -> {[], Core}',
              catching_case: 'a_disconnect_is_asked_once_and_its_failure_stops_test'),
     Seed.new(fault: "the line's reset under no deadline",
              module_path: CORE,
-             anchor: '{[{timer, ?ERX_BT_LINE_RESET_TIMEOUT_MS}, line_reset],',
-             replacement: '{[line_reset],',
-             catching_case: 'a_line_reset_that_never_ends_stops_test')
+             anchor: '{line_reset, Deadline} -> Deadline;',
+             replacement: '{line_reset, _Deadline} -> infinity;',
+             catching_case: 'a_line_reset_that_never_ends_stops_test'),
+    Seed.new(fault: 'the due deadline restarted on every input, so repeated traffic holds a command off',
+             module_path: CORE,
+             anchor: "command(_Now, #core{slot = {due, _}} = Core) ->\n    case due(Core) of\n" \
+                     "        none -> {[], Core#core{slot = idle}};\n        _ -> {[], Core}\n",
+             replacement: "command(Now, #core{slot = {due, _}} = Core) ->\n    case due(Core) of\n" \
+                          "        none -> {[], Core#core{slot = idle}};\n" \
+                          "        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: 'a deadline passed only after its instant',
+             module_path: CORE,
+             anchor: 'case next_deadline(Core) =< Now of',
+             replacement: 'case next_deadline(Core) < Now of',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: 'a deadline passed a millisecond early',
+             module_path: CORE,
+             anchor: 'case next_deadline(Core) =< Now of',
+             replacement: 'case next_deadline(Core) =< Now + 1 of',
+             catching_case: 'explored_core_keeps_its_invariants_test_')
   ].freeze
 
   def test_bluetooth_cases_pass_under_eunit

@@ -4,8 +4,8 @@
 -module(erx_bt_hci_core).
 -moduledoc """
 The pure core of the controller process, `erx_bt_hci` (docs/design-bluetooth.md, "One
-owner, one step", "The bring-up" and "Commands and data credits"). `step/2` takes one
-input and the state and returns the actions the process performs and the next state, or
+owner, one step", "The bring-up" and "Commands and data credits"). `step/3` takes one
+input, the current time and the state and returns the actions the process performs and the next state, or
 `{stop, Reason}`, after which the process ends and its group's restart resets the line.
 
 **The bring-up** is a line of steps fixed by `new/1`: reset the line, `HCI_Reset`,
@@ -16,16 +16,17 @@ Command Complete with status success; any other answer, or none within
 `bt_command_timeout_ms`, stops with the step and the status. The patched steps are
 distinct from the first ones, so the bring-up patches at most once.
 
-**The slot** holds the one thing the one deadline guards, so a bring-up wait and a
-command are never both active:
+**The slot** holds the one thing a deadline guards, with that deadline, so a bring-up
+wait and a command are never both active and leaving a state drops its deadline:
 
-- `idle`: nothing, and no deadline armed;
-- `line_reset`: the line is being reset, until `line_ready`; the process does not wait
-  on the reset, so its deadline can pass while the line service holds it;
-- `wait`: a bring-up wait, which ends when its deadline passes;
-- `due`: a command is due and waits for the writer and for the controller's
+- `idle`: nothing, and no deadline;
+- `{line_reset, Deadline}`: the line is being reset, until `line_ready`; the process
+  does not wait on the reset, so its deadline can pass while the line service holds it;
+- `{wait, Deadline}`: a bring-up wait, which ends when its deadline passes;
+- `{due, Deadline}`: a command is due and waits for the writer and for the controller's
   `Num_HCI_Command_Packets` to be at least one (Part E, 4.4);
-- `{sent, Label, Command, Opcode}`: the writer has the command, until its answer.
+- `{sent, Label, Command, Opcode, Deadline}`: the writer has the command, until its
+  answer; the deadline is the one it had when it fell due.
 
 Which command is due is decided again on every step and taken only when it is handed to
 the writer, so a disconnect for a handle that has gone, even one the controller has given
@@ -63,30 +64,32 @@ stops it when a connection completes, and the core enables it again whenever the
 free and connections are below the limit. A connection that completes while the enable
 is sent came from that enable, so the enable's answer leaves advertising off.
 
-Inputs and actions are terms; the process does the I/O and keeps the one deadline the
-core may have armed at a time: `{timer, Milliseconds}` arms it, `cancel_timer` disarms
-it, and `timeout` answers it, the process discarding a timer it cancelled or replaced
-by its reference (the design's "Commands and data credits"), so the state holds no
-timer token. The patch arrives as records already read whole by `erx_bt_patch` (a later
+**Time** is an input (docs/design.md, "Deadlines in state"): every step takes the
+current time in milliseconds, a deadline is that time plus its timeout, and
+`next_deadline/1` answers the slot's deadline. The process reads the clock, keeps one
+wake-up timer at that deadline and steps `expired` when it fires; `expired` runs a
+deadline at or before the time given and changes nothing otherwise, so a late, early or
+repeated wake-up costs one look. Inputs and actions are terms. The patch arrives as records already read whole by `erx_bt_patch` (a later
 slice): this core sends what it is given.
 """.
 
 -include("generated/erx_abi.hrl").
 
--export([new/1, step/2, facts/1]).
+-export([new/1, step/3, next_deadline/1, facts/1]).
+-export_type([time/0]).
 -export_type([config/0, input/0, action/0, core/0]).
 
 -type handle() :: 0..16#FFF.
 -type config() :: #{connections := 1..?ERX_BT_CONNECTIONS_MAX, address := <<_:48>>,
                     advertising_data := binary(), scan_response_data := binary(),
                     patch := none | #{manufacturer := 0..16#FFFF, records := [{0..16#FFFF, binary()}]}}.
--type input() :: start | line_ready | written | timeout
+-type time() :: integer().                    % milliseconds, the process's monotonic clock
+-type input() :: start | line_ready | written | expired
                | {event, erx_hci:event()}
                | {acl, handle(), 0..3, 0..3, binary()}
                | {send, handle(), 0..3, binary()}
                | {disconnect, handle(), byte()}.
--type action() :: line_reset | {write, binary()} | {timer, pos_integer()} | cancel_timer
-                | {ready, map()} | {link_up, handle(), map()} | {link_down, handle()}
+-type action() :: line_reset | {write, binary()} | {ready, map()} | {link_up, handle(), map()} | {link_down, handle()}
                 | {to_link, handle(), term()} | {busy, handle()}.
 
 %% A bring-up step: reset the line, send a command under a label, or wait.
@@ -97,8 +100,8 @@ slice): this core sends what it is given.
     manufacturer :: none | 0..16#FFFF,
     plan :: [step()],                          % the bring-up steps left; [] once ready
     stage = bringup :: bringup | ready,
-    slot = idle :: idle | line_reset | wait | due   % what the one deadline guards (moduledoc)
-                 | {sent, Label :: term(), erx_hci:command(), Opcode :: 0..16#FFFF},
+    slot = idle :: idle | {line_reset, time()} | {wait, time()} | {due, time()}  % moduledoc
+                 | {sent, Label :: term(), erx_hci:command(), Opcode :: 0..16#FFFF, time()},
     allowed = 1 :: byte(),                     % Num_HCI_Command_Packets
     writer = idle :: idle | busy,
     out = [] :: [{handle(), binary()}],        % ACL packets for the writer, in order, each with its handle
@@ -155,12 +158,15 @@ whether advertising is on.
 facts(#core{facts = Facts, dropped = Dropped, limit = Limit, links = Links, advertising = Advertising} = Core) ->
     Facts#{dropped => Dropped, limit => Limit, links => Links, free => free(Core), advertising => Advertising}.
 
--doc "One input: the actions to perform, in order, and the next state; or the reason to stop.".
--spec step(input(), core()) -> {ok, [action()], core()} | {stop, term()}.
-step(Input, Core) ->
+-doc """
+One input at the time `Now`: the actions to perform, in order, and the next state; or
+the reason to stop.
+""".
+-spec step(input(), time(), core()) -> {ok, [action()], core()} | {stop, term()}.
+step(Input, Now, Core) ->
     try
-        {Actions, Next} = input(Input, Core),
-        {More, Pumped} = pump(Next),
+        {Actions, Next} = input(Input, Now, Core),
+        {More, Pumped} = pump(Now, Next),
         {ok, Actions ++ More, Pumped}
     catch
         throw:{stop, Reason} -> {stop, Reason}
@@ -168,31 +174,53 @@ step(Input, Core) ->
 
 stop(Reason) -> throw({stop, Reason}).
 
-input(start, #core{plan = [line_reset | Plan], slot = idle} = Core) ->
-    {[{timer, ?ERX_BT_LINE_RESET_TIMEOUT_MS}, line_reset], Core#core{plan = Plan, slot = line_reset}};
-input(line_ready, #core{slot = line_reset} = Core) ->
-    {[cancel_timer], Core#core{slot = idle}};
-input(written, #core{writer = busy} = Core) ->
-    {[], Core#core{writer = idle}};
-input(timeout, #core{slot = line_reset}) ->
-    stop(line_reset_timeout);
-input(timeout, #core{slot = wait} = Core) ->
+-doc "The deadline the slot holds, `infinity` when it holds none.".
+-spec next_deadline(core()) -> time() | infinity.
+next_deadline(#core{slot = Slot}) ->
+    case Slot of
+        idle -> infinity;
+        {line_reset, Deadline} -> Deadline;
+        {wait, Deadline} -> Deadline;
+        {due, Deadline} -> Deadline;
+        {sent, _Label, _Command, _Opcode, Deadline} -> Deadline
+    end.
+
+input(start, Now, #core{plan = [line_reset | Plan], slot = idle} = Core) ->
+    {[line_reset], Core#core{plan = Plan, slot = {line_reset, Now + ?ERX_BT_LINE_RESET_TIMEOUT_MS}}};
+input(line_ready, _Now, #core{slot = {line_reset, _}} = Core) ->
     {[], Core#core{slot = idle}};
-input(timeout, #core{slot = due} = Core) ->
-    %% A due slot always has a command due: every state step/2 returns has been pumped,
-    %% and command/1 empties the slot whenever due/1 names none.
+input(expired, Now, Core) ->
+    case next_deadline(Core) =< Now of
+        true -> expired(Core);
+        false -> {[], Core}
+    end;
+input(Input, _Now, Core) ->
+    untimed(Input, Core).
+
+%% The slot's deadline has passed.
+expired(#core{slot = {line_reset, _}}) ->
+    stop(line_reset_timeout);
+expired(#core{slot = {wait, _}} = Core) ->
+    {[], Core#core{slot = idle}};
+expired(#core{slot = {due, _}} = Core) ->
+    %% A due slot always has a command due: every state step/3 returns has been pumped,
+    %% and command/2 empties the slot whenever due/1 names none.
     {Label, _, _} = due(Core),
     stop({command_timeout, Label});
-input(timeout, #core{slot = {sent, Label, _, _}}) ->
-    stop({command_timeout, Label});
-input({event, Event}, Core) ->
+expired(#core{slot = {sent, Label, _, _, _}}) ->
+    stop({command_timeout, Label}).
+
+%% The inputs that do not read the time, and start or line_ready out of their state.
+untimed(written, #core{writer = busy} = Core) ->
+    {[], Core#core{writer = idle}};
+untimed({event, Event}, Core) ->
     event(Event, Core);
-input({acl, Handle, Boundary, _Broadcast, Data}, #core{links = Links} = Core) ->
+untimed({acl, Handle, Boundary, _Broadcast, Data}, #core{links = Links} = Core) ->
     case is_map_key(Handle, Links) of
         true -> {[{to_link, Handle, {acl, Boundary, Data}}], Core};
         false -> {[], dropped(Core)}
     end;
-input({send, Handle, Boundary, Data}, #core{links = Links} = Core) ->
+untimed({send, Handle, Boundary, Data}, #core{links = Links} = Core) ->
     case Links of
         #{Handle := InFlight} ->
             case InFlight < share(Core) andalso free(Core) > 0 of
@@ -202,12 +230,12 @@ input({send, Handle, Boundary, Data}, #core{links = Links} = Core) ->
             end;
         #{} -> {[], Core}
     end;
-input({disconnect, Handle, Reason}, #core{links = Links, disconnects = Pending} = Core) ->
+untimed({disconnect, Handle, Reason}, #core{links = Links, disconnects = Pending} = Core) ->
     case is_map_key(Handle, Links) andalso not lists:keymember(Handle, 1, Pending) of
         true -> {[], Core#core{disconnects = Pending ++ [{Handle, {asked, Reason}}]}};
         false -> {[], Core}
     end;
-input(Input, _Core) ->
+untimed(Input, _Core) ->
     stop({unexpected_input, Input}).
 
 %% The credits no live handle holds, and a link's share of all of them.
@@ -279,7 +307,7 @@ connected(Handle, _Info, #core{stage = bringup}) ->
     stop({connection_during_bringup, Handle});
 connected(Handle, _Info, #core{links = Links}) when is_map_key(Handle, Links) ->
     stop({duplicate_handle, Handle});
-connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _}}) ->
+connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _, _}}) ->
     stop({connection_while_disconnecting, Handle});
 connected(Handle, _Info, #core{links = Links, limit = Limit}) when map_size(Links) >= Limit ->
     stop({connection_beyond_limit, Handle});
@@ -290,16 +318,15 @@ connected(Handle, Info, #core{links = Links, acl_tx_max = TxMax, slot = Slot} = 
 %% A connection while the advertising enable is sent came from that enable, which the
 %% controller has carried out and not yet answered: its answer must leave advertising
 %% off.
-overtaken({sent, advertise, Command, Opcode}) -> {sent, advertise_overtaken, Command, Opcode};
+overtaken({sent, advertise, Command, Opcode, Deadline}) -> {sent, advertise_overtaken, Command, Opcode, Deadline};
 overtaken(Slot) -> Slot.
 
 %% Command Complete or Status for the command in the slot; opcode 0 only updates the
 %% count (Part E, 4.4).
 answer(0, _Answer, Core) ->
     {[], Core};
-answer(Opcode, Answer, #core{slot = {sent, Label, Command, Opcode}} = Core) ->
-    {Actions, Next} = answered(Label, Command, Answer, Core#core{slot = idle}),
-    {[cancel_timer | Actions], Next};
+answer(Opcode, Answer, #core{slot = {sent, Label, Command, Opcode, _Deadline}} = Core) ->
+    answered(Label, Command, Answer, Core#core{slot = idle});
 answer(Opcode, _Answer, _Core) ->
     stop({answer_to_other_command, Opcode}).
 
@@ -366,17 +393,17 @@ buffers(Length, Packets, #core{limit = Limit} = Core) ->
 
 %% After every input: the bring-up's next wait or its end, the command slot, then the
 %% writer's next item.
-pump(Core) ->
-    {Steps, Stepped} = next_step(Core),
-    {Commands, Commanded} = command(Stepped),
+pump(Now, Core) ->
+    {Steps, Stepped} = next_step(Now, Core),
+    {Commands, Commanded} = command(Now, Stepped),
     {Writes, Written} = feed(Commanded),
     {Steps ++ Commands ++ Writes, Written}.
 
-next_step(#core{stage = bringup, slot = idle, plan = [{wait, Milliseconds} | Plan]} = Core) ->
-    {[{timer, Milliseconds}], Core#core{plan = Plan, slot = wait}};
-next_step(#core{stage = bringup, slot = idle, plan = []} = Core) ->
+next_step(Now, #core{stage = bringup, slot = idle, plan = [{wait, Milliseconds} | Plan]} = Core) ->
+    {[], Core#core{plan = Plan, slot = {wait, Now + Milliseconds}}};
+next_step(_Now, #core{stage = bringup, slot = idle, plan = []} = Core) ->
     {[{ready, facts(Core)}], Core#core{stage = ready}};
-next_step(Core) ->
+next_step(_Now, Core) ->
     {[], Core}.
 
 %% The command due now, if any: its label, the command, and the state once it is taken
@@ -402,28 +429,29 @@ advertise(#core{advertising = false, links = Links, limit = Limit} = Core) when 
 advertise(_Core) ->
     none.
 
-%% The slot, when free or due: a command falling due arms its deadline, and a due
-%% command no longer due disarms it.
-command(#core{slot = idle} = Core) ->
+%% The slot, when free or due: a command falling due starts its deadline, and a due
+%% command no longer due empties the slot, its deadline with it.
+command(Now, #core{slot = idle} = Core) ->
     case due(Core) of
         none -> {[], Core};
-        _ -> {[{timer, ?ERX_BT_COMMAND_TIMEOUT_MS}], Core#core{slot = due}}
+        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}
     end;
-command(#core{slot = due} = Core) ->
+command(_Now, #core{slot = {due, _}} = Core) ->
     case due(Core) of
-        none -> {[cancel_timer], Core#core{slot = idle}};
+        none -> {[], Core#core{slot = idle}};
         _ -> {[], Core}
     end;
-command(Core) ->
+command(_Now, Core) ->
     {[], Core}.
 
 %% The writer, when idle, takes the due command once the controller allows one, which
-%% is decided and sent at that moment, else the next packet.
-feed(#core{writer = idle, slot = due, allowed = Allowed} = Core) when Allowed > 0 ->
+%% is decided and sent at that moment and keeps the deadline it fell due with, else the
+%% next packet.
+feed(#core{writer = idle, slot = {due, Deadline}, allowed = Allowed} = Core) when Allowed > 0 ->
     {Label, Command, Taken} = due(Core),
     {Opcode, Parameters} = erx_hci:command(Command),
     {[{write, erx_h4:command(Opcode, Parameters)}],
-     Taken#core{writer = busy, slot = {sent, Label, Command, Opcode}, allowed = Allowed - 1}};
+     Taken#core{writer = busy, slot = {sent, Label, Command, Opcode, Deadline}, allowed = Allowed - 1}};
 feed(#core{writer = idle, out = [{_Handle, Packet} | Out]} = Core) ->
     {[{write, Packet}], Core#core{writer = busy, out = Out}};
 feed(Core) ->

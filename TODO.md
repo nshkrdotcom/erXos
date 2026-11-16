@@ -6683,7 +6683,12 @@ to the corpus and follow rc
   termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
   Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
   ones that mean the handle is going.
-* [Medium] bluetooth, requests that name only a handle (`erx_bt_hci_core:step/2`'s `{send, ...}` and
+* [Low] bluetooth, the advertising enable's deadline refilled (`erx_bt_hci_core`'s `command/2`): at the
+  connection limit with `Num_HCI_Command_Packets` 0, a controller alternating LE Connection Complete and
+  Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
+  enable never times out and the core never stops; the controller process should end when a command stays
+  unsent across refills for longer than `bt_command_timeout_ms`.
+* [Medium] bluetooth, requests that name only a handle (`erx_bt_hci_core:step/3`'s `{send, ...}` and
   `{disconnect, ...}`; docs/design-bluetooth.md "Commands and data credits"): the controller reuses handles, so a
   request of a link that has gone, handled after the handle's Disconnection Complete and a new LE Connection
   Complete, would send the old link's packet to, or disconnect, the new peer. The design puts the filter in the
