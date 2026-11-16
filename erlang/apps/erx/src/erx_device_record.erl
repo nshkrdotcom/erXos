@@ -11,9 +11,10 @@
 %%   the system domain holds, the transport's offset and size in the window object, the
 %%   memory's bytes, 0 for a device that does no DMA, and the firmware tree's coherence mark
 %%   and hardware address;
-%% - `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK`, the system domain's physical record
-%%   of its host link's UART, which does no DMA, built by liberx/backend/core/boot_manifest.c
-%%   from the system manifest.
+%% - `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, the system domain's physical record
+%%   of its host link's UART or its line's, which do no DMA, built by
+%%   liberx/backend/core/boot_manifest.c from the system manifest; INDEX is the device's
+%%   row in the manifest's device table, which a line grant's uart names.
 %%
 %% A domain that holds a framebuffer finds a third form, `-erx_record framebuffer WINDOW_H OFFSET
 %% SIZE WIDTH HEIGHT STRIDE FORMAT`, read by framebuffers/0 (docs/design-device-tree.md,
@@ -56,7 +57,8 @@
                   memory => {object, non_neg_integer(), pos_integer()}, clock := non_neg_integer(),
                   coherent := boolean(), mac => 1..16#ffffffffffff}
               | #{peripheral := atom(), path := binary(), window := {physical, non_neg_integer(), non_neg_integer()},
-                  lines := [non_neg_integer() | {shared, non_neg_integer()}], clock := non_neg_integer()}.
+                  lines := [non_neg_integer() | {shared, non_neg_integer()}], clock := non_neg_integer(),
+                  index := non_neg_integer()}.
 
 %% A framebuffer record as its display driver takes it: the window object and the
 %% framebuffer's offset and bytes in it, as a given record's window, and its geometry.
@@ -170,21 +172,21 @@ spec(Peripheral, {"given", [Path, Window, Offset, Size, Line, Mark, Memory, Memo
     end;
 spec(_Peripheral, {"given", _}) ->
     bad("a given device record has fewer than a path, nine numbers and a line mark");
-spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock | _]}) ->
-    case {number(Base, 64), number(Size, 64), number(Line, 32), number(Clock, 32), mark(Mark), path(Path)} of
-        {{ok, B}, {ok, S}, {ok, L}, {ok, C}, {ok, Sharing}, {ok, P}} ->
+spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock, Index | _]}) ->
+    case {number(Base, 64), number(Size, 64), number(Line, 32), {number(Clock, 32), number(Index, 32)}, mark(Mark), path(Path)} of
+        {{ok, B}, {ok, S}, {ok, L}, {{ok, C}, {ok, I}}, {ok, Sharing}, {ok, P}} ->
             {ok, #{peripheral => Peripheral, path => P, window => {physical, B, S}, lines => [marked(Sharing, L)],
-                   clock => C}};
-        {{ok, _}, {ok, _}, {ok, _}, {ok, _}, {ok, _}, error} ->
+                   clock => C, index => I}};
+        {{ok, _}, {ok, _}, {ok, _}, {{ok, _}, {ok, _}}, {ok, _}, error} ->
             bad("a device record's path is not a node path of at most "
                 ++ integer_to_list(?ERX_DEVICE_PATH_MAX) ++ " bytes");
-        {{ok, _}, {ok, _}, {ok, _}, {ok, _}, error, _} ->
+        {{ok, _}, {ok, _}, {ok, _}, {{ok, _}, {ok, _}}, error, _} ->
             bad("a device record's line mark is neither direct nor shared");
         _ ->
-            bad("a device record's base, size, line or clock is not a decimal number of its field's width")
+            bad("a device record's base, size, line, clock or index is not a decimal number of its field's width")
     end;
 spec(_Peripheral, {"device", _}) ->
-    bad("a device record has fewer than a path, four numbers and a line mark").
+    bad("a device record has fewer than a path, five numbers and a line mark").
 
 %% A device record's PATH as erx_boot_device_path_valid admits it: `/` and the characters a
 %% device tree allows in names, at most ERX_DEVICE_PATH_MAX bytes, so with its NUL it fits

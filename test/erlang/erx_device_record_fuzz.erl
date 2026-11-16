@@ -102,11 +102,13 @@ spec("given", [Path, Window, Offset, Size, Line, Mark, Memory, Bytes, Clock, Coh
         _ ->
             bad
     end;
-spec("device", [Path, Base, Size, Line, Mark, Clock | _]) ->
-    case {decimal(Base, ?U64), decimal(Size, ?U64), decimal(Line, ?U32), decimal(Clock, ?U32), node_path(Path)} of
-        {B, S, L, C, P} when is_integer(B), is_integer(S), is_integer(L), is_integer(C), is_binary(P),
-                             (Mark =:= "direct" orelse Mark =:= "shared") ->
-            #{peripheral => virtio_mmio, path => P, window => {physical, B, S}, lines => [marked(L, Mark)], clock => C};
+spec("device", [Path, Base, Size, Line, Mark, Clock, Index | _]) ->
+    case {decimal(Base, ?U64), decimal(Size, ?U64), decimal(Line, ?U32), decimal(Clock, ?U32), decimal(Index, ?U32),
+          node_path(Path)} of
+        {B, S, L, C, I, P} when is_integer(B), is_integer(S), is_integer(L), is_integer(C), is_integer(I), is_binary(P),
+                                (Mark =:= "direct" orelse Mark =:= "shared") ->
+            #{peripheral => virtio_mmio, path => P, window => {physical, B, S}, lines => [marked(L, Mark)], clock => C,
+              index => I};
         _ ->
             bad
     end;
@@ -177,7 +179,7 @@ entry() ->
     Words = [word() || _ <- lists:seq(1, rand:uniform(?MAX_WORDS + 1) - 1)],
     Form = Pick(["device", "given"]),
     %% The numbers before the mark word and after it.
-    Count = #{"device" => {3, 1}, "given" => {4, 5}},
+    Count = #{"device" => {3, 2}, "given" => {4, 5}},
     {Before, After} = maps:get(Form, Count),
     Numbers = fun(N) -> [number() || _ <- lists:seq(1, N)] end,
     case rand:uniform(5) of

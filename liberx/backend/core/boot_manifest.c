@@ -27,12 +27,18 @@
  * describes, which the host link's driver alone asks for (docs/design-live.md, "The host
  * link"), when the boot asks for the host link: a machine may have no UART at that path,
  * and a driver's first read of an absent device faults the system domain
- * (docs/design-stopgap.md, "Device records").
+ * (docs/design-stopgap.md, "Device records"). A line grant's uart names a third, by its
+ * device row's index, which becomes the record line_kind describes, which the line
+ * service alone asks for (docs/design-bluetooth.md, "The controller's line"). Every
+ * physical record ends with its row's index, by which a service matches a grant to it.
  */
 typedef erx_device_kind_t device_kind_t;
 
 /* Selected by machine.hostlink's path, among the PL011s, the one UART its driver drives. */
 static const device_kind_t hostlink_kind = { ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "hostlink", "pl011", true };
+
+/* Selected by its row's index, which the line grant's uart carries, among the PL011s. */
+static const device_kind_t line_kind = { ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "line", "pl011", true };
 
 /* erx_manifest_open checked every string against the table, so these reads stay inside it. */
 static const uint8_t *
@@ -96,10 +102,13 @@ kind_find(const erx_manifest_view_t *view, const erx_mf_device_t *device, const 
 }
 
 static const device_kind_t *
-device_kind(const erx_manifest_view_t *view, const erx_mf_device_t *device, bool hostlink)
+device_kind(const erx_manifest_view_t *view, const erx_mf_device_t *device, uint32_t index, bool hostlink,
+    uint32_t line_uart)
 {
 	if (device->selector != ERX_MF_SELECTOR_DT)
 		return (NULL);
+	if (index == line_uart && kind_find(view, device, &line_kind, 1) != NULL)
+		return (&line_kind);
 	if (hostlink && view->header.hostlink.length != 0 && string_equal(view, &device->path, &view->header.hostlink) &&
 	    kind_find(view, device, &hostlink_kind, 1) != NULL)
 		return (&hostlink_kind);
@@ -161,7 +170,7 @@ line_shared(const erx_manifest_view_t *view, uint32_t self, uint32_t line)
  * reader cannot read, or more records than ERX_BOOT_DEVICES_MAX.
  */
 static const char *
-devices_read(const erx_manifest_view_t *view, bool hostlink, erx_boot_manifest_t *result)
+devices_read(const erx_manifest_view_t *view, bool hostlink, uint32_t line_uart, erx_boot_manifest_t *result)
 {
 	erx_mf_device_t device;
 	erx_mf_unit_t unit;
@@ -180,7 +189,7 @@ devices_read(const erx_manifest_view_t *view, bool hostlink, erx_boot_manifest_t
 				return ("devices");
 			const bool framebuffer = device.selector == ERX_MF_SELECTOR_DT && device.role == ERX_MF_DEVICE_ROLE_FRAMEBUFFER;
 
-			if ((kind = device_kind(view, &device, hostlink)) == NULL && !framebuffer)
+			if ((kind = device_kind(view, &device, index, hostlink, line_uart)) == NULL && !framebuffer)
 				continue;
 			if (result->device_count == ERX_BOOT_DEVICES_MAX)
 				return ("device_records");
@@ -192,7 +201,7 @@ devices_read(const erx_manifest_view_t *view, bool hostlink, erx_boot_manifest_t
 				continue;
 			}
 			result->devices[result->device_count++] = (erx_boot_device_t){
-				.role = kind->role_word, .peripheral = kind->peripheral, .given = kind != &hostlink_kind,
+				.role = kind->role_word, .peripheral = kind->peripheral, .given = kind != &hostlink_kind && kind != &line_kind,
 				.base = device.base,
 				.size = device.size, .line = device.line,
 				.line_shared = line_shared(view, index, device.line), .clock = device.clock,
@@ -203,6 +212,38 @@ devices_read(const erx_manifest_view_t *view, bool hostlink, erx_boot_manifest_t
 			/* Its path is its record's PATH, so the record is never refused for it. */
 			if (!erx_boot_device_path_valid(result->devices[result->device_count - 1].path))
 				return ("device_path");
+		}
+	}
+	return (NULL);
+}
+
+/*
+ * The device row the line grant's uart names, or UINT32_MAX for a manifest with none
+ * (docs/design-bluetooth.md, "The controller's line"): the uart is the line interface's
+ * one device parameter, and the manifest check admits at most one line grant.
+ * erx_manifest_open checked that the parameter spans partition their table, so a span's
+ * rows are read by index from its offset. Returns NULL, or the table it cannot read.
+ */
+static const char *
+line_uart_read(const erx_manifest_view_t *view, uint32_t *uart)
+{
+	erx_mf_service_t service;
+	erx_mf_parameter_t row;
+	erx_mf_facet_t facet;
+
+	*uart = UINT32_MAX;
+	for (uint32_t at = 0; at < view->header.facets.count; at++) {
+		if (!erx_manifest_facets_at(view, at, &facet) || !erx_manifest_services_at(view, facet.service, &service))
+			return ("facets");
+		if (service.interface != ERX_SERVICE_LINE)
+			continue;
+		const uint32_t first = (facet.parameters.offset - view->header.facet_parameters.offset) / ERX_MF_PARAMETER_SIZE;
+
+		for (uint32_t key = 0; key < facet.parameters.count; key++) {
+			if (!erx_manifest_facet_parameters_at(view, first + key, &row))
+				return ("facet_parameters");
+			if (row.kind == ERX_MF_PARAMETER_DEVICE)
+				*uart = row.index;
 		}
 	}
 	return (NULL);
@@ -257,6 +298,7 @@ erx_boot_manifest_read(const uint8_t *bytes, size_t length, bool hostlink, erx_b
     const char **reason)
 {
 	erx_manifest_view_t view;
+	uint32_t line_uart;
 	erx_abi_error_t error;
 	erx_mf_runtime_limits_t limits;
 	const uint8_t *host;
@@ -297,7 +339,8 @@ erx_boot_manifest_read(const uint8_t *bytes, size_t length, bool hostlink, erx_b
 		.foreign_atoms = limits.foreign_atoms,
 		.processes = limits.processes,
 	};
-	if ((*reason = devices_read(&view, hostlink, result)) != NULL)
+	if ((*reason = line_uart_read(&view, &line_uart)) != NULL ||
+	    (*reason = devices_read(&view, hostlink, line_uart, result)) != NULL)
 		return (false);
 	result->console = console_read(&view);
 	result->console_path = (erx_boot_words_t){
@@ -427,7 +470,7 @@ erx_boot_device_words(const erx_boot_device_t *device, char *words, size_t capac
 	    number_put(words, capacity, &used, device->base) && number_put(words, capacity, &used, device->size) &&
 	    number_put(words, capacity, &used, device->line) &&
 	    word_put(words, capacity, &used, line_mark(device->line_shared)) &&
-	    number_put(words, capacity, &used, device->clock))
+	    number_put(words, capacity, &used, device->clock) && number_put(words, capacity, &used, device->index))
 		return (used);
 	return (0);
 }

@@ -1664,8 +1664,11 @@ its interrupt line and the DMA memory the platform reserves for it. So a device 
 has one form in every domain: its queues are carved from its one memory, and the system domain's
 driver opens it exactly as a holder's does. Nothing deletes these objects, since the system
 domain holds the device for the boot and its fault resets the machine; an object the backend
-refuses refuses the boot, naming the record. The host link's UART, which does no DMA, is the one
-physical record, `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK`, PATH as in the given record. The record also names, after CLOCK, the base and length
+refuses refuses the boot, naming the record. The host link's UART and the line's
+([design-bluetooth.md](design-bluetooth.md#the-controllers-line)), which do no DMA, are the
+physical records, `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, PATH as in the given record and INDEX the
+device's row in the manifest's device table, which a line grant's `uart` names; the root writes the
+line's record for that row alone. The record also names, after CLOCK, the base and length
 of the run of pages its unit's registers cover around its own, so the device NIF maps that run once, at the first open of any record in
 it, as it maps a window object once, and two physical records in one page share one mapping; `-erx_record console` names its run the same way. CLOCK is the device entry's
 clock in hertz, which the driver reads and the NIF does not. The record's window and line the device

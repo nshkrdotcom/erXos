@@ -777,10 +777,10 @@ module Erx
       def self.arguments_always(root) = ARGUMENTS_FIXED + allocator_words(root).size
       # The words of -erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
       # MEM_SIZE CLOCK COHERENT MAC, which the root adds for each device of a kind in a unit the system
-      # domain holds, and of -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK, the host
-      # link's UART's physical record (docs/design-stopgap.md, "Device records"; record_words).
+      # domain holds, and of -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX, the
+      # host link's UART's physical record (docs/design-stopgap.md, "Device records"; record_words).
       GIVEN_RECORD_WORDS = 15
-      DEVICE_RECORD_WORDS = 10
+      DEVICE_RECORD_WORDS = 11
       # The words of the records the root adds to the system domain's arguments: for each unit
       # the manifest gives the system domain, each device of its placement in the platform
       # record that is of a kind (DeviceKinds.given) gives a -erx_record given record, and the host link's

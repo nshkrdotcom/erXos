@@ -7671,6 +7671,19 @@ document's "residual risks accepted" paragraph.
   server's own domain id, not `own`, drops every frame, since its own domain's frames
   arrive bare; nothing refuses that option. Refuse it, or take it as `own`, in
   `erx_fs:init/2`.
+* [Medium] root's physical records (`liberx/backend/core/boot_manifest.c`, `devices_read`): whether a record is
+  given or physical is the pointer test `kind != &hostlink_kind && kind != &line_kind`, a list each new physical
+  kind must join; make it follow from the kind's table. `line_uart_read` keeps one UART, the last device parameter
+  of the last line facet, and walks the facet parameter span a second time beside the boot view's checked walk
+  (`liberx/system/dom_boot_view.c`, `boot_facet_parameters`): ask per device row whether a line facet names it, from
+  one walk, when the one-grant limit is lifted. `tools/lib/erx/production_image.rb`'s `record_words` copies the
+  root's selection and does not count a line record, so a boot with a line grant fails its `erts-start`
+  checkpoint.
+* [Medium] manifest check, line grants (`check_line_grants`, `tools/lib/erx/manifest.rb`): a grant naming a UART
+  that is not a PL011, the Pi's mini UART, passes, and the root then writes no line record; refuse a line UART of
+  any compatible but the PL011's row of `erx_uart_kinds`.
+* [Low] docs/design-stopgap.md, "Device records": the physical record is said to name the page run around its
+  registers after CLOCK; the root writes no such words.
 
 ## Planned features
 
