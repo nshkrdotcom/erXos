@@ -20,9 +20,11 @@ message from another domain arrives in, and replies leave as
 The grant is a plain `proc_lib` process, not a `gen_server`: whoever holds a
 grant's pid, a process of another domain included, can send it any term, and
 a `gen_server` would act on a `system` message (`sys:replace_state/2`,
-`sys:suspend/1`) or a call from it. This loop has one receive, and everything
+`sys:suspend/1`) or a call from it. Its loop has one receive, and everything
 it receives but its `DOWN`s and its keepers' answers is a frame for the
-funnel.
+funnel. Once its client has ended the grant drains: it takes no frame,
+clunks every fid by rule 5, answers nothing and ends once the last clunk
+has run.
 
 The grant runs every callback itself, one at a time, in the order the
 requests arrive, and none waits for an event: a read or a write that must
@@ -43,7 +45,7 @@ client as `eio`.
 """.
 
 -export([start_link/3, start_link/4]).
--export([init/2, loop/2]).
+-export([init/2, loop/2, drain/1]).
 
 -include("erx_fs_waits.hrl").
 
@@ -139,9 +141,10 @@ alone, before this returns, through `exports` (erx_dist, or a host test's
 stand-in); a refused export is answered `{error, Reason}` and leaves no
 grant. Such a grant must name `ends_with`: the port of this domain's connection to
 the client, or, in the system domain, which holds no port of a connection, the
-client's domain pid, which the grant monitors before the export and ends with
-`{shutdown, connection_ended}` when it ends, so the grant and its export
-never outlive the connection its client calls through; or `none`, for a
+client's domain pid, which the grant monitors before the export; at its end
+the grant drains, answering nothing, and then ends with
+`{shutdown, connection_ended}`, so the grant and its export outlive the
+connection its client calls through only while the grant drains; or `none`, for a
 client whose grant lives as long as this domain. A grant for another domain
 without it fails to start. A grant for its own domain ends with the process
 `ends_with` names, whatever that process's reason, as a program's `/dev`
@@ -206,13 +209,34 @@ export(Client, Exports) ->
 loop(Grant, ConnectionMonitor) ->
     receive
         {'DOWN', ConnectionMonitor, _PortOrProcess, _, _} when is_reference(ConnectionMonitor) ->
-            exit({shutdown, connection_ended});
+            ?MODULE:drain(perform(erx_fs_grant:client_ended(Grant)));
         {'DOWN', Ref, process, Pid, _} when is_reference(Ref), is_pid(Pid) ->
             ?MODULE:loop(perform(erx_fs_grant:down(Ref, Pid, Grant)), ConnectionMonitor);
         ?ERX_FS_ANSWER(Ref, Result) when is_reference(Ref) ->
             ?MODULE:loop(perform(erx_fs_grant:answered(Ref, Result, Grant)), ConnectionMonitor);
         Frame ->
             ?MODULE:loop(perform(erx_fs_grant:handle_frame(Frame, Grant)), ConnectionMonitor)
+    end.
+
+%% A grant whose client has ended drains (docs/design-files.md, "What waiting
+%% holds"): it takes its keepers' answers and ends and its owners' ends, which
+%% settle its fids' held requests and run their clunks, drops every other
+%% message unread, and ends once the last clunk has run.
+-doc false.
+-spec drain(erx_fs_grant:grant()) -> no_return().
+drain(Grant) ->
+    case erx_fs_grant:drained(Grant) of
+        true ->
+            exit({shutdown, connection_ended});
+        false ->
+            receive
+                {'DOWN', Ref, process, Pid, _} when is_reference(Ref), is_pid(Pid) ->
+                    ?MODULE:drain(perform(erx_fs_grant:down(Ref, Pid, Grant)));
+                ?ERX_FS_ANSWER(Ref, Result) when is_reference(Ref) ->
+                    ?MODULE:drain(perform(erx_fs_grant:answered(Ref, Result, Grant)));
+                _ ->
+                    ?MODULE:drain(Grant)
+            end
     end.
 
 perform({Effects, Grant}) ->

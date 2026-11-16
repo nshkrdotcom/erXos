@@ -2115,14 +2115,12 @@ it; git history is the record of completed work.
 * [Medium] `erlang/apps/erx_display/src/erx_winfs.erl`: `start_link/1` given a service starts the single policy with an
   empty configuration; the window policy and its chord come from the display domain's manifest entry
   ([design-display.md](docs/design-display.md#windows-and-the-window-system)).
-* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs.erl`, `loop/2`; `erx_fs_grant.erl`, `flush_waits/4`): the
+* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, and the trees named below): the
   grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
   which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
-  aliases, as design-files.md ("Serving", "Waiting requests", rules 1, 2 and 4 to 6, "Bounds") has it, but a grant
-  whose client has ended exits at once (`erx_fs:loop/2`, its connection's `DOWN`) where the design has it drain,
-  clunking every fid by rule 5 before it ends; and the design does not bound a flush of a waiting flush, which the
-  core counts in the requests' window and answers `emfile` when the window is full (`flush_waits/4`). Build the drain
-  in the shell with its test, and state the flush-of-a-flush bound in design-files.md. It blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
+  aliases, and a grant whose client has ended drains, as design-files.md ("Serving", "Waiting requests", rules 1, 2
+  and 4 to 6, "Bounds") has it. What is left is the trees that still wait for an event inside a callback, which
+  blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
   the `pair` file, a window's `mouse` and `kbd` reads and held `ctl` writes, which `erx_winfs:read/4` and `write/4`
   serve today by a `gen_server:call` with no timeout to `erx_window` (`erlang/apps/erx_display/src/erx_winfs.erl`,
   `call/2`), so a client reading `kbd` on a hidden window stops its whole grant, every other request, clunk and
@@ -2137,13 +2135,17 @@ it; git history is the record of completed work.
   id, taking its reply with `erx_win:reply/2` and its flush with `erx_win:send_flush/2`, all three over
   `erx_file_remote`'s exchange, which `erx_win` does not have yet, and making image 0 anew itself for an `r` record.
   Once built, `erx_window` and `erx_draw_conn` keep those requests in `erx_fs_waits`, bounded by each grant's 64
-  requests in flight. The same change admits a clunk or `remove` at any bound and keeps the fid's number until the
-  clunk is answered, answers a flush of a waiting clunk after it, has a grant whose client ended drain, and has the
+  requests in flight. The same change has the
   program's handler end at its draw connection's end (`erx_session_export:start_window/1`), so the handler, the
   connection, the `/dev` grant and the window share one life, as design-files.md's rule 5, "What waiting holds" and
   "Ownership and lifetime" state. `erx_fs_locks`, the tree's lock table, does not exist yet (the grant serves no
   lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants` supervises it and its grants' supervisor
   `rest_for_one`, as design-files.md ("Locks") has it.
+* [Medium] files, the grant's drain (`test/erlang/erx_fs_core_model_tests.erl`, `erx_fs_grant:client_ended/1`):
+  design-files.md ("Verification and testing") has the core's model explore the client's end and names the seeded
+  fault "a grant that ends at its client's end without its fids' clunks", but `?EVENTS` has no client-end event and
+  only `erx_fs_tests:a_grant_whose_client_ended_drains_test` covers the drain. Add a `client_end` event that checks no
+  reply follows it, each fid's clunk runs once and `drained/1` holds after settling, and seed that fault.
 * [Medium] Bluetooth line, held `data` writes (design-bluetooth.md, "The controller's line"): a write the line has
   handed `erx_pl011` while the controller holds CTS off under `rts_cts` flow waits on the device with no deadline, so its
   flush, its fid's clunk and the drain of a grant whose Bluetooth domain ended wait until the line's next `reset`, which

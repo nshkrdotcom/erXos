@@ -58,7 +58,8 @@ fids name, whichever way the step went: a walk that stopped, a reply the
 check rejected, a clunk, `..`, an owner's end.
 """.
 
--export([new/1, handle_frame/2, monitored/3, waiting/3, answered/3, down/3, info/1]).
+-export([new/1, handle_frame/2, monitored/3, waiting/3, answered/3, down/3, client_ended/1,
+         drained/1, info/1]).
 
 -export_type([grant/0, effect/0, rights/0, client/0]).
 
@@ -112,25 +113,29 @@ check rejected, a clunk, `..`, an owner's end.
 %% still to answer, or, for a keeper alias, still to hear from. `what` is
 %%
 %% * a #held{}: the client's read or write a keeper holds;
-%% * {flush, Old, InWindow}: a flush of the live alias Old, answered after Old
-%%   is; InWindow for a flush of a flush, a request of its own;
-%% * {ending, Fid}: a clunk or a remove of Fid, answered once the requests of
-%%   Fid that keepers hold are answered and its clunk has run (rule 5);
+%% * {flush, Old}: a flush of the live alias Old, a held request or a held
+%%   clunk or remove, answered after Old is;
+%% * ending: a clunk or a remove, answered once the requests of its fid that
+%%   keepers hold are answered and its clunk has run (rule 5); its #closing{}
+%%   holds the rest;
 %% * {keeper, Alias}: a keeper alias, naming the client's Alias of the request
 %%   the keeper holds, whose answer comes to it.
 %%
 %% `flush` is the one flush of the client's waiting on the alias. A frame sent
-%% to a live alias is dropped and counted, and so is a second flush of one.
--record(live, {what :: #held{} | {flush, reference(), boolean()} | {ending, fid()}
-                     | {keeper, reference()},
+%% to a live alias is dropped and counted, and so is a second flush of one. A
+%% flush of a flush is answered at once and never live, so no flush waits on
+%% another.
+-record(live, {what :: #held{} | {flush, reference()} | ending | {keeper, reference()},
                flush = none :: reference() | none}).
 
 %% A fid whose clunk or remove waits for the requests of it that keepers hold:
 %% the fid, the ending request and its client's alias, none for a clunk the
-%% grant makes itself, the refusal it answers once its clunk has run, none when
-%% it was admitted, and how many of the fid's requests keepers still hold.
+%% grant makes itself, the answer it gets once its clunk has run, and how many
+%% of the fid's requests keepers still hold. The answer is `closed` for what
+%% the tree's clunk answers; a remove's was decided when it was taken, by its
+%% unlink or its refusal.
 -record(closing, {fid :: #fid{}, alias :: reference() | none,
-                  request :: {clunk | remove, fid()}, refusal :: none | atom(),
+                  request :: {clunk | remove, fid()}, answer :: closed | term(),
                   waits :: non_neg_integer()}).
 
 -record(grant, {module :: module(),
@@ -151,6 +156,8 @@ check rejected, a clunk, `..`, an owner's end.
                 %% The requests' window: the live aliases window/1 counts.
                 in_flight = 0 :: non_neg_integer(),
                 refused = 0 :: non_neg_integer(),
+                %% Once the client has ended, the grant drains and answers nothing.
+                ended = false :: boolean(),
                 effects = [] :: [effect()]}).
 
 -opaque grant() :: #grant{}.
@@ -203,7 +210,7 @@ handle_frame(Frame, #grant{aliases = Live} = Grant) ->
         {_, Alias, _, _} when is_map_key(Alias, Live) ->
             dropped(Grant);
         {refuse, Alias, Posix, {Ends, Fid} = Request} when Ends =:= clunk; Ends =:= remove ->
-            end_fid(Alias, Fid, Request, Posix, Grant);
+            end_fid(Alias, Fid, Request, {error, Posix}, Grant);
         {refuse, Alias, Posix, Request} ->
             finish(Alias, Request, {error, Posix}, Grant);
         {admit, Alias, Owner, Request} ->
@@ -275,9 +282,25 @@ owner_down(Owner, #grant{owners = Owners, effects = Effects} = Grant) ->
                 Forgotten, maps:keys(Owned)).
 
 end_owned(Fid, #grant{fids = Fids} = Grant) when is_map_key(Fid, Fids) ->
-    end_fid(none, Fid, {clunk, Fid}, none, Grant);
+    end_fid(none, Fid, {clunk, Fid}, closed, Grant);
 end_owned(_, Grant) ->
     {[], Grant}.
+
+-doc """
+The client's end: the grant drains (design-files.md, "What waiting holds").
+It answers nothing from then on and clunks every fid by rule 5, as an
+owner's end does; the shell takes no frame after this and ends once
+`drained/1` holds.
+""".
+-spec client_ended(grant()) -> {[effect()], grant()}.
+client_ended(#grant{fids = Fids} = Grant) ->
+    lists:foldl(fun(Fid, Step) -> then(Step, fun(G) -> end_owned(Fid, G) end) end,
+                drain(Grant#grant{ended = true}), maps:keys(Fids)).
+
+-doc "Whether every fid has ended and its clunk has run.".
+-spec drained(grant()) -> boolean().
+drained(#grant{fids = Fids, closing = Closing}) ->
+    map_size(Fids) + map_size(Closing) =:= 0.
 
 %% The effects of a step, then those of Next on the grant the step left.
 then({Effects, Grant}, Next) ->
@@ -375,11 +398,9 @@ info(#grant{fids = Fids, closing = Closing, owners = Owners, aliases = Live,
       in_flight => InFlight, aliases => map_size(Live), refused => Refused, rights => Rights}.
 
 %% The one pair of functions that add and remove live aliases, and with them
-%% count the requests' window: a held request takes a slot, as does a flush of
-%% a flush, a request of its own; a flush of a held request or of a clunk, and
-%% the clunk itself, wait beside the window, so a full window can still be
-%% flushed and clunked (design-files.md, "Bounds"), and a keeper alias is the
-%% grant's own.
+%% count the requests' window: a held request takes a slot; a flush and a
+%% clunk wait beside the window, so a full window can still be flushed and
+%% clunked (design-files.md, "Bounds"), and a keeper alias is the grant's own.
 live(Alias, What, #grant{aliases = Live, in_flight = InFlight} = Grant)
   when not is_map_key(Alias, Live) ->
     Grant#grant{aliases = Live#{Alias => #live{what = What}}, in_flight = InFlight + window(What)}.
@@ -389,7 +410,6 @@ unlive(Alias, #grant{aliases = Live, in_flight = InFlight} = Grant) ->
     {Entry, Grant#grant{aliases = Rest, in_flight = InFlight - window(What)}}.
 
 window(#held{}) -> 1;
-window({flush, _, true}) -> 1;
 window(_) -> 0.
 
 %% A held request's answer, from its keeper or its keeper's end: the keeper
@@ -409,7 +429,7 @@ answer(Alias, Request, Reply, Grant) ->
 answer_flush(none, Grant) ->
     {[], Grant};
 answer_flush(Flush, #grant{aliases = Live} = Grant) ->
-    #{Flush := #live{what = {flush, Old, _}}} = Live,
+    #{Flush := #live{what = {flush, Old}}} = Live,
     answer(Flush, {flush, Old}, ok, Grant).
 
 one_wait_less(Fid, #grant{closing = Closing} = Grant) ->
@@ -426,16 +446,16 @@ one_wait_less(Fid, #grant{closing = Closing} = Grant) ->
 %% at its owner's end (rule 5). The fid leaves the fid table, so a later request
 %% on it is ebadf while its number stays taken; each of its requests a keeper
 %% holds is flushed; and its clunk runs once the last of them is answered, at
-%% once when there are none. Refusal is the error a remove refused before
-%% admission answers once its clunk has run, as remove(5) says. A fid the grant
-%% does not hold, or one already closing, is answered at once.
-end_fid(Alias, Fid, Request, Refusal, #grant{fids = Fids, aliases = Live} = Grant) ->
+%% once when there are none. Answer is what the ending gets once its clunk has
+%% run (#closing{}): a remove's unlink or its refusal, as remove(5) says. A fid
+%% the grant does not hold, or one already closing, is answered at once.
+end_fid(Alias, Fid, Request, Answer, #grant{fids = Fids, aliases = Live} = Grant) ->
     case maps:take(Fid, Fids) of
         {Record, Rest} ->
             Waits = [Held || Held := #live{what = #held{fid = Of}} <- Live, Of =:= Fid],
             Ending = #closing{fid = Record, alias = Alias, request = Request,
-                              refusal = Refusal, waits = length(Waits)},
-            Grant1 = live_ending(Alias, Fid, Grant#grant{fids = Rest}),
+                              answer = Answer, waits = length(Waits)},
+            Grant1 = live_ending(Alias, Grant#grant{fids = Rest}),
             case Waits of
                 [] ->
                     run_clunk(Fid, Ending, Grant1);
@@ -445,33 +465,29 @@ end_fid(Alias, Fid, Request, Refusal, #grant{fids = Fids, aliases = Live} = Gran
                                       Grant1#grant{closing = Closing#{Fid => Ending}}, Waits))
             end;
         error ->
-            finish(Alias, Request, {error, unheld(Refusal)}, Grant)
+            finish(Alias, Request, unheld(Answer), Grant)
     end.
 
-unheld(none) -> ebadf;
-unheld(Posix) -> Posix.
+unheld(closed) -> {error, ebadf};
+unheld(Refusal) -> Refusal.
 
-live_ending(none, _, Grant) -> Grant;
-live_ending(Alias, Fid, Grant) -> live(Alias, {ending, Fid}, Grant).
+live_ending(none, Grant) -> Grant;
+live_ending(Alias, Grant) -> live(Alias, ending, Grant).
 
-%% Ends a fid whose held requests are all answered: a remove admitted unlinks
-%% its entry first, then the tree's clunk runs, and the clunk is answered what
-%% the tree's clunk answered, the remove what its unlink did, and a refused
-%% remove its refusal.
-run_clunk(Fid, #closing{fid = #fid{path = Path} = Record, alias = Alias, request = Request,
-                        refusal = Refusal}, Grant) ->
-    Unlinked = case {Request, Refusal} of
-                   {{remove, _}, none} -> unlinked(Path, Grant);
-                   _ -> none
-               end,
+%% Ends a fid whose held requests are all answered: the tree's clunk runs, and
+%% the ending is answered what the clunk answered, or a remove what its unlink
+%% or its refusal decided.
+run_clunk(Fid, #closing{fid = Record, alias = Alias, request = Request, answer = Answer}, Grant) ->
     {Closed, Grant1} = close_fid(Fid, Record, Grant),
-    answer_ending(Alias, Request, ending_reply(Refusal, Unlinked, Closed), Grant1).
+    Reply = case Answer of
+                closed -> Closed;
+                _ -> Answer
+            end,
+    answer_ending(Alias, Request, Reply, Grant1).
 
-ending_reply(none, none, Closed) -> Closed;
-ending_reply(none, Unlinked, _) -> Unlinked;
-ending_reply(Posix, _, _) -> {error, Posix}.
-
-%% A remove unlinks the entry its fid was walked by, only while that entry
+%% A remove unlinks when it is taken, before its fid's held requests settle,
+%% so a request after it sees the name gone; only its clunk waits for them.
+%% It unlinks the entry its fid was walked by, only while that entry
 %% still names the fid's node (the tree decides, in one step); the root has no
 %% entry to unlink.
 unlinked([{_, _, root}], _) ->
@@ -540,16 +556,24 @@ of_client(Name, Client) -> erx_dist:owner(Name) =:= Client.
 
 %% A flush and a clunk or a remove are admitted at any bound, since each ends
 %% something the window already counts or a fid, which ends once; every other
-%% request takes a slot of the window, or is emfile when it is full.
+%% request takes a slot of the window, or is emfile when it is full. A flush of
+%% a keeper alias, of a flush or of no live alias waits for nothing and is
+%% answered at once.
 admit(Alias, _, {flush, Old} = Request, #grant{aliases = Live} = Grant) ->
     case Live of
         #{Old := #live{what = {keeper, _}}} -> finish(Alias, Request, ok, Grant);
-        #{Old := #live{flush = none, what = What}} -> flush_waits(Alias, Old, What, Grant);
+        #{Old := #live{what = {flush, _}}} -> finish(Alias, Request, ok, Grant);
+        #{Old := #live{flush = none} = Entry} -> flush_waits(Alias, Old, Entry, Grant);
         #{Old := #live{}} -> dropped(Grant);
         #{} -> finish(Alias, Request, ok, Grant)
     end;
-admit(Alias, _, {Ends, Fid} = Request, Grant) when Ends =:= clunk; Ends =:= remove ->
-    end_fid(Alias, Fid, Request, none, Grant);
+admit(Alias, _, {clunk, Fid} = Request, Grant) ->
+    end_fid(Alias, Fid, Request, closed, Grant);
+admit(Alias, _, {remove, Fid} = Request, #grant{fids = Fids} = Grant) ->
+    case Fids of
+        #{Fid := #fid{path = Path}} -> end_fid(Alias, Fid, Request, unlinked(Path, Grant), Grant);
+        #{} -> finish(Alias, Request, {error, ebadf}, Grant)
+    end;
 admit(Alias, _, Request, #grant{in_flight = InFlight, in_flight_max = Max} = Grant)
   when InFlight >= Max ->
     finish(Alias, Request, {error, emfile}, Grant);
@@ -592,21 +616,12 @@ hand_over(Alias, {_, Fid, _, _} = Request, Keeper, Held, #grant{self = Self} = G
 hand_over(Alias, Request, _, _, Grant) ->
     finish(Alias, Request, {error, eio}, Grant).
 
-%% A flush waits for the live alias it names (rule 4): the flush of a held
-%% request goes on to its keeper; one of a clunk waits for the clunk's answer;
-%% and one of a flush is a request of its own, which takes a slot of the
-%% window, or is emfile when it is full, so a chain of flushes stays bounded.
-flush_waits(Alias, Old, {flush, _, _}, #grant{in_flight = InFlight, in_flight_max = Max} = Grant)
-  when InFlight >= Max ->
-    finish(Alias, {flush, Old}, {error, emfile}, Grant);
-flush_waits(Alias, Old, What, #grant{aliases = Live} = Grant) ->
-    #{Old := Entry} = Live,
+%% A flush waits for the live alias it names, Entry (rule 4): the flush of a
+%% held request goes on to its keeper; one of a clunk waits for the clunk's
+%% answer.
+flush_waits(Alias, Old, Entry, #grant{aliases = Live} = Grant) ->
     Waiting = Grant#grant{aliases = Live#{Old := Entry#live{flush = Alias}}},
-    OfFlush = case What of
-                  {flush, _, _} -> true;
-                  _ -> false
-              end,
-    drain(flush_at_keeper(Old, live(Alias, {flush, Old, OfFlush}, Waiting))).
+    drain(flush_at_keeper(Old, live(Alias, {flush, Old}, Waiting))).
 
 %% The keeper that holds a request hears of its flush, the client's or its
 %% fid's clunk's, once, and after the request, since both come from the grant;
@@ -647,7 +662,10 @@ finish(Alias, Request, Reply, Built, Before) ->
                  _ -> Grant
              end,
     {Effects, Grant2} = drain(Grant1),
-    {Effects ++ [{reply, Alias, Checked}], Grant2}.
+    case Grant2 of
+        #grant{ended = true} -> {Effects, Grant2};
+        #grant{} -> {Effects ++ [{reply, Alias, Checked}], Grant2}
+    end.
 
 %% The holds a step took stay taken when its grant is dropped: they are the
 %% tree's, and drain/1 forgets those no fid of Before names.

@@ -1280,3 +1280,69 @@ flush_read(Alias, KeeperAlias, Keeper, Core) ->
     {[{flush, Keeper, KeeperAlias}], Core1} =
         erx_fs_grant:handle_frame({erx_9p, Flush, self(), {flush, Alias}}, Core),
     {Flush, Core1}.
+
+%% A flush of a flush is answered ok at once, at any bound, and holds nothing
+%% (design-files.md, "Flush" and "Bounds"): with the window full of waiting
+%% reads, a flush of a read's waiting flush is answered before the flush it
+%% names, the window and the live aliases stay as they were, and the read and
+%% its flush are then answered in order.
+a_flush_of_a_flush_is_answered_at_once_test() ->
+    Keeper = erx_fs_stream_tree:start_keeper(),
+    Fids = lists:seq(2, 65),
+    {[{Read, At} | _], Full} = lists:mapfoldl(fun(Fid, C) -> wait_read(Fid, Keeper, C) end,
+                                              stream_core(Keeper, Fids), Fids),
+    {Flush, Flushing} = flush_read(Read, At, Keeper, Full),
+    OfFlush = make_ref(),
+    {Answered, After} = erx_fs_grant:handle_frame({erx_9p, OfFlush, self(), {flush, Flush}}, Flushing),
+    ?assertEqual([{reply, OfFlush, ok}], Answered),
+    Counts = fun(Core) -> maps:with([in_flight, aliases], erx_fs_grant:info(Core)) end,
+    ?assertEqual(Counts(Flushing), Counts(After)),
+    ?assertMatch({[{reply, Read, {error, eintr}}, {reply, Flush, ok}], _},
+                 erx_fs_grant:answered(At, {error, eintr}, After)),
+    unlink(Keeper),
+    exit(Keeper, kill).
+
+%% A remove unlinks when it is admitted, while its fid's read still waits, so
+%% the requests after it see the order they were sent in; only its clunk waits
+%% for the read, and the remove is answered after the read's eintr with what
+%% its unlink answered (design-files.md, "Waiting requests", rule 5).
+a_remove_unlinks_when_it_is_admitted_test() ->
+    Keeper = erx_fs_stream_tree:start_keeper(),
+    {{Read, At}, Waiting} = wait_read(2, Keeper, stream_core(Keeper)),
+    Remove = make_ref(),
+    {[{flush, Keeper, At}], Removing} =
+        erx_fs_grant:handle_frame({erx_9p, Remove, self(), {remove, 2}}, Waiting),
+    ?assertEqual([unlink], erx_fs_stream_tree:log(Keeper)),
+    ?assertMatch({[{reply, Read, {error, eintr}}, {reply, Remove, ok}], _},
+                 erx_fs_grant:answered(At, {error, eintr}, Removing)),
+    ?assertEqual([unlink, {clunk, 0}], erx_fs_stream_tree:log(Keeper)),
+    unlink(Keeper),
+    exit(Keeper, kill).
+
+%% A grant whose client has ended drains (rule 5): its keeper gets the flush
+%% of the read that waits, the tree's clunk of the read's fid runs once, after
+%% the read has settled, nothing is answered, and then the grant ends.
+a_grant_whose_client_ended_drains_test() ->
+    Keeper = erx_fs_stream_tree:start_keeper(),
+    Holder = spawn(fun() -> receive go -> ok end end),
+    {ok, Grant} = erx_fs:start_link(erx_fs_stream_tree, Keeper, rw, #{ends_with => Holder}),
+    unlink(Grant),
+    Watch = monitor(process, Grant),
+    {ok, _} = attach(Grant, 1),
+    {ok, _} = walk(Grant, 1, 2, [<<"s">>]),
+    {ok, _, _} = call(Grant, {lopen, 2, ?O_RDONLY}),
+    Read = send(Grant, self(), {read, 2, 0, 16}),
+    %% The grant handed the read over before it answers the next request.
+    {ok, []} = walk(Grant, 1, 3, []),
+    ?assertMatch([_], erx_fs_stream_tree:held(Keeper)),
+    Holder ! go,
+    receive
+        {'DOWN', Watch, process, Grant, Reason} -> ?assertEqual({shutdown, connection_ended}, Reason)
+    after 4000 ->
+        stop(Grant),
+        ?assert(false)
+    end,
+    ?assertEqual([flushed, {clunk, 0}], erx_fs_stream_tree:log(Keeper)),
+    ?assertEqual(none, reply_within(Read, 0)),
+    unlink(Keeper),
+    exit(Keeper, kill).

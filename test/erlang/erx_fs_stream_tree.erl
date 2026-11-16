@@ -20,8 +20,8 @@ bytes the test hands answer a read.
 -include("erx_fs_waits.hrl").
 
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4, statfs/1,
-         clunk/2, write/4]).
--export([start_keeper/0, hand/2, held/1]).
+         clunk/2, write/4, unlink/4]).
+-export([start_keeper/0, hand/2, held/1, log/1]).
 
 -define(TREE, <<"test">>).
 -define(ROOT_QID, {16#80, 0, 1}).
@@ -29,7 +29,7 @@ bytes the test hands answer a read.
 
 -doc "A keeper with no requests and no bytes, linked to the caller.".
 start_keeper() ->
-    spawn_link(fun() -> keep(erx_fs_waits:new(), <<>>) end).
+    spawn_link(fun() -> keep(erx_fs_waits:new(), <<>>, []) end).
 
 -doc "Hands the keeper bytes for the reads it holds.".
 hand(Keeper, Bytes) ->
@@ -38,13 +38,15 @@ hand(Keeper, Bytes) ->
 
 -doc "The requests the keeper holds, as erx_fs_waits:list/1 shows them.".
 held(Keeper) ->
-    Ref = make_ref(),
-    Keeper ! {held, self(), Ref},
-    receive
-        {Ref, Held} -> Held
-    after 2000 ->
-        erlang:error(no_keeper)
-    end.
+    ask(Keeper, held).
+
+-doc """
+What reached the keeper, oldest first: `{clunk, Held}` for each clunk, with
+the count of requests it held then, `unlink` for each unlink and `flushed`
+for each flush its set took.
+""".
+log(Keeper) ->
+    ask(Keeper, log).
 
 init(Keeper) when is_pid(Keeper) ->
     {ok, Keeper}.
@@ -80,41 +82,68 @@ statfs(_) ->
 
 %% A clunk runs only once its keeper holds no request: one that runs while a
 %% read of its fid still waits answers ebusy, so the case that clunks a fid
-%% whose read waits sees it.
+%% whose read waits sees it. The keeper logs it with the count it held.
 clunk(_, Keeper) ->
-    case held(Keeper) of
+    case ask(Keeper, clunk) of
         [] -> ok;
         [_ | _] -> {error, ebusy}
     end.
 
-%% The keeper: every request it holds is in Waits, and Bytes are the bytes the
-%% test handed it that no read has taken yet.
-keep(Waits, Bytes) ->
+%% Unlinking `s` is logged at the keeper; the name stays, as no case walks
+%% to it after.
+unlink(root, <<"s">>, _, Keeper) ->
+    ask(Keeper, unlink);
+unlink(_, _, _, _) ->
+    {error, enoent}.
+
+ask(Keeper, What) ->
+    Ref = make_ref(),
+    Keeper ! {ask, What, self(), Ref},
+    receive
+        {Ref, Answer} -> Answer
+    after 2000 ->
+        erlang:error(no_keeper)
+    end.
+
+%% The keeper: every request it holds is in Waits, Bytes are the bytes the
+%% test handed it that no read has taken yet, and Log the tree's calls and
+%% the flushes that reached it, newest first.
+keep(Waits, Bytes, Log) ->
     receive
         ?ERX_FS_WAIT(_, _) = Wait ->
-            serve(erx_fs_waits:hold(Wait, Waits), Bytes);
+            serve(erx_fs_waits:hold(Wait, Waits), Bytes, Log);
         {bytes, More} ->
-            serve(Waits, <<Bytes/binary, More/binary>>);
-        {held, From, Ref} ->
+            serve(Waits, <<Bytes/binary, More/binary>>, Log);
+        {ask, held, From, Ref} ->
             From ! {Ref, erx_fs_waits:list(Waits)},
-            keep(Waits, Bytes);
+            keep(Waits, Bytes, Log);
+        {ask, log, From, Ref} ->
+            From ! {Ref, lists:reverse(Log)},
+            keep(Waits, Bytes, Log);
+        {ask, clunk, From, Ref} ->
+            Held = erx_fs_waits:list(Waits),
+            From ! {Ref, Held},
+            keep(Waits, Bytes, [{clunk, length(Held)} | Log]);
+        {ask, unlink, From, Ref} ->
+            From ! {Ref, ok},
+            keep(Waits, Bytes, [unlink | Log]);
         Message ->
             case erx_fs_waits:info(Message, Waits) of
-                {flushed, Waits1} -> keep(Waits1, Bytes);
-                {dropped, Waits1} -> keep(Waits1, Bytes);
-                unknown -> keep(Waits, Bytes)
+                {flushed, Waits1} -> keep(Waits1, Bytes, [flushed | Log]);
+                {dropped, Waits1} -> keep(Waits1, Bytes, Log);
+                unknown -> keep(Waits, Bytes, Log)
             end
     end.
 
 %% Answers the oldest held read from the bytes held, while there are both.
-serve(Waits, <<>>) ->
-    keep(Waits, <<>>);
-serve(Waits, Bytes) ->
+serve(Waits, <<>>, Log) ->
+    keep(Waits, <<>>, Log);
+serve(Waits, Bytes, Log) ->
     case erx_fs_waits:list(Waits) of
         [{Wait, {read, Count}, waiting} | _] ->
             Size = min(Count, byte_size(Bytes)),
             <<Taken:Size/binary, Rest/binary>> = Bytes,
-            serve(erx_fs_waits:answer(Wait, {ok, Taken}, Waits), Rest);
+            serve(erx_fs_waits:answer(Wait, {ok, Taken}, Waits), Rest, Log);
         [] ->
-            keep(Waits, Bytes)
+            keep(Waits, Bytes, Log)
     end.

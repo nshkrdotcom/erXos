@@ -617,6 +617,10 @@ flush's answer stands: its effect happened and the client takes it. A
 never with an error. erXos's servers, as QEMU's, answer a `flush` only
 after the flushed request is settled, so a tag, and inside the machine
 an alias, is never reused while its request could still be answered.
+The one exception is a flush of a flush, which is answered at once: no
+client depends on its order behind the flush it names, and answering it
+at once means no flush ever waits on another, so chains of flushes are
+bounded by construction.
 
 erXos's servers settle a flushed request by answering it, always before
 the flush's answer, so every request a grant admits gets exactly one
@@ -862,8 +866,9 @@ most one flush waiting for each and one clunk for each fid they name,
 with one flush waiting for each such clunk, so a client whose window is full of waiting reads can still flush and
 clunk every one; and at most 256 locks. A
 flush of a request that is neither in flight nor a held clunk waits for nothing and is
-answered at once, at any bound. A flush may be neither refused nor
-answered before its request, so a second flush of a request that
+answered at once, at any bound, and so is a flush of a flush, which
+takes no slot and holds nothing, so no flush waits on another. Any other
+flush may be neither refused nor answered before its request, so a second flush of a request that
 already has one waiting is dropped and counted, as a frame on an alias
 in use is ([Pipelined requests](#pipelined-requests)): a 9P bridge
 holds an edge's later flushes of one request itself and answers them
@@ -2183,7 +2188,11 @@ other client's request can come between its parts:
      on with its other fids; it runs the fid's `clunk` callback once the
      last of those requests is answered, holding the clunk as it holds a
      flush behind its request, and then answers the clunk with what the
-     callback answered. A request that names a closing fid fails with
+     callback answered. A `remove` unlinks its name when the grant takes
+     it, before its fid's requests settle, so a walk or an `O_EXCL`
+     `lcreate` sent after it finds the name gone, in the order the
+     requests were sent; only its clunk waits, and the `remove` is answered
+     after it with what the unlink answered. A request that names a closing fid fails with
      `ebadf`. So no request waits on an open the tree has closed; the
      clunk runs after every request sent before it through the fid,
      since the grant had run each of those to its answer or handed it to

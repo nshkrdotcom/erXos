@@ -23,7 +23,8 @@
 %%   envelope or bare for the server's own domain, awaits one, and
 %%   decode_reply/2 accepts it for that frame's request (an error reply, for a frame the
 %%   grammar refused); the core runs the same check before it replies, so what this adds
-%%   is the alias, the count and the order: a flush answered ok comes after what it flushed;
+%%   is the alias, the count and the order: a flush answered ok comes after what it flushed,
+%%   unless what it flushed is a flush, of which a flush is answered at once;
 %% * a frame sent to an alias that still awaits its reply, and a second flush of an alias
 %%   whose first flush still waits, are dropped: nothing answers them;
 %% * a clunk or a remove answered other than ebadf is answered when no request of its fid
@@ -42,7 +43,11 @@
 %% * at the end of a sequence, with every owner down and every request at a keeper answered
 %%   or its keeper ended, every frame that awaits a reply has had exactly one, and the
 %%   grant holds nothing, no live alias included.
-%% The seed comes from make check-fuzz.
+%% The seed comes from make check-fuzz. tools/fuzz/erx_fs_grant.rb also seeds six faults in
+%% the core, each of which these checks must catch within the seed's sequences: a pool
+%% admitting one fid more, a grant taking any domain's names for another domain's, a flush
+%% kept from the keeper that holds its request, a grant that checks only requests' aliases,
+%% a second flush answered ok at once, and a clunk that runs without flushing its fid's waits.
 
 -module(erx_fs_grant_fuzz).
 -export([run/1]).
@@ -241,13 +246,15 @@ effects([Effect | _], _) ->
 %% that tells them apart, so the replies an alias has had must match its frames one to
 %% one in some order, each valid for the frame it matches.
 %% A flush answered ok comes after the replies of every frame it may have flushed: those
-%% sent with its old tag before it (docs/design-files.md, flush).
+%% sent with its old tag before it (docs/design-files.md, flush), unless the last of them
+%% is a flush, which a flush of answers at once.
 replied(Alias, Reply, #shell{awaited = Awaited, replies = Replies} = Shell) ->
     Waiting = [What || {_, What} <- maps:get(Alias, Awaited, [])],
     Had = [Reply | maps:get(Alias, Replies, [])],
     matched(Had, Waiting) orelse error({check_failed, unexpected_reply, Alias, Reply, Waiting}),
     Flushes = [{Sent, Old} || {Sent, {request, {flush, Old}}} <- maps:get(Alias, Awaited, []), Reply =:= ok],
     Flushes =:= [] orelse lists:any(fun({Sent, Old}) -> flushed_after(Old, Sent, Shell) end, Flushes)
+        orelse lists:any(fun({Sent, Old}) -> of_a_flush(Old, Sent, Shell) end, Flushes)
         orelse error({check_failed, flush_answered_first, Alias, Flushes}),
     [What | _] = [W || W <- Waiting, valid_reply(W, Reply)],
     settled_fid(lists:last(Waiting), Reply, Shell),
@@ -265,6 +272,17 @@ settled_fid({request, {Ends, Fid}}, Reply, #shell{held = Held})
     Waiting =:= [] orelse error({check_failed, clunk_before_its_fids_requests, Fid, Reply, Waiting});
 settled_fid(_, _, _) ->
     true.
+
+of_a_flush(Old, Sent, #shell{awaited = Awaited}) ->
+    case [What || {S, What} <- maps:get(Old, Awaited, []), S < Sent] of
+        [_ | _] = Before ->
+            case lists:last(Before) of
+                {request, {flush, _}} -> true;
+                _ -> false
+            end;
+        [] ->
+            false
+    end.
 
 flushed_after(Old, Sent, #shell{awaited = Awaited, replies = Replies}) ->
     Before = [S || {S, _} <- maps:get(Old, Awaited, []), S < Sent],
