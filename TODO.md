@@ -2938,6 +2938,21 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   alone, not the boot image's programs the command namespace lists, so `/bin/rc`, the shell
   `/etc/passwd` names, is missing; and `/dev/tty` answers a read with `enotsup` until the terminal
   relay's line discipline serves the tty's readers.
+* [Medium] shell, `erx_shell` (`above_terminal/1`) and `erx_shell_jobs` (`above/2`): the flag that
+  gives the console the terminal while `erl` runs is a boolean the caller sets back in a `try ... after`,
+  so a stage running `erl` that is killed leaves the line's terminal with the console until the line
+  ends, and two `erl` in one line share the flag. Monitor each caller of `{above, true}` and keep the
+  live callers in the line, so the console holds while the set is not empty.
+* [Medium] shell, a job's leader (`erx_shell.erl`, `leader/1`) passes input requests to the shell's
+  group, and the group answers an interrupt to whichever input request is current, so a job reading
+  through `io:get_line` at the prompt would take a `Ctrl-C` the shell never counts, after which every
+  `foreground` lags the relay's count and later jobs' reads stay parked. No command reads that way
+  yet; have the leader refuse input requests, so the group has one reader by construction.
+* [Low] shell, `erx_shell_jobs`: a key the relay reports for the line just before `erl`'s
+  `{above, true}` stops or ends the line while the Erlang shell, led by its own group, runs on.
+  Every exported step of the table settles on its own; one dispatching entry that always settles
+  would make the rule hold for steps added later. `fg` resumes the job before the relay gives it
+  the terminal.
 * [Medium] session, `erx_session_export`: a write to `/dev/tty` waits until the tty takes it
   (`erx_console:write/2`, a call without a timeout), and a stopped tty holds 4 KiB, so writes to a
   stopped tty fill the `rw` grant's 64 requests in flight and that grant answers `emfile` to every

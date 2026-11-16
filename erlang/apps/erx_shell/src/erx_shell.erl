@@ -93,7 +93,11 @@ changes come, and each delivery sends a process one message.
 %% The terminal a runner writes a unit's output to.
 -type terminal() :: #{write := fun((iodata()) -> ok),
                       run_shell => fun((erx_console:shell()) -> ok | {error, term()}),
-                      job_control => job_control()}.
+                      job_control => job_control(),
+                      foreground => foreground()}.
+%% How the shell tells the terminal relay who holds the terminal
+%% (erx_session_relay:foreground/2,3), on a terminal the relay serves.
+-type foreground() :: fun((erx_shell_jobs:target(), {pid(), non_neg_integer()}) -> term()).
 %% How a runner reaches the shell's job table: the shell's process.
 -opaque job_control() :: pid().
 
@@ -124,6 +128,8 @@ changes come, and each delivery sends a process one message.
             %% The delivery of a size change that runs, by its monitor, and
             %% whether another change came while it ran.
             delivery = none :: none | {reference(), Again :: boolean()},
+            %% The terminal's foreground/2, or none where no relay serves it.
+            foreground = none :: none | foreground(),
             stop = false :: boolean()}).
 
 %% Whether more input may come.
@@ -201,11 +207,30 @@ booted() ->
 
 init(Runner, Terminal = #{write := Write}, Banner) ->
     process_flag(trap_exit, true),
-    {RunnerFun, RunnerState} = Runner:new(Terminal#{job_control => self()}),
+    {RunnerFun, RunnerState} = Runner:new(above_terminal(Terminal#{job_control => self()})),
     Sh = erx_shell_eval:new(#{<<"prompt">> => ?DEFAULT_PROMPT, <<"*">> => []},
                             RunnerFun, RunnerState),
     ok = Write(Banner),
-    next(#s{sh = Sh, reader = reader(<<>>), write = Write, group = group_leader()}).
+    next(#s{sh = Sh, reader = reader(<<>>), write = Write, group = group_leader(),
+            foreground = maps:get(foreground, Terminal, none)}).
+
+%% The terminal the runner gets: its run_shell tells the job table that a
+%% shell runs above the line while it runs, so the console holds the
+%% terminal meanwhile; a caller the table refuses, as a background job,
+%% runs the shell all the same.
+above_terminal(Terminal = #{run_shell := RunShell, job_control := Shell}) ->
+    Terminal#{run_shell => fun(Above) ->
+                                   case call(Shell, {above, true}) of
+                                       ok ->
+                                           try RunShell(Above)
+                                           after call(Shell, {above, false})
+                                           end;
+                                       {error, _} ->
+                                           RunShell(Above)
+                                   end
+                           end};
+above_terminal(Terminal) ->
+    Terminal.
 
 %%% The functional core
 
@@ -319,12 +344,18 @@ wait(S = #s{group = Group, reading = Reading, firsts = Firsts, delivery = Delive
             %% outstanding the group answers it with `{error, interrupted}`
             %% instead (group.erl, `handle_info/3` on `interrupt`), so an
             %% interrupt that arrives while a line is read came before it,
-            %% and the table, with no line running, ignores it.
-            next(table(erx_shell_jobs:interrupt(S#s.jobs), S));
+            %% and the table, with no line running, counts it alone.
+            next(table(erx_shell_jobs:typed(interrupt, group, S#s.jobs), S));
         {Group, suspend} ->
-            next(table(erx_shell_jobs:suspend(S#s.jobs), S));
+            next(table(erx_shell_jobs:typed(suspend, group, S#s.jobs), S));
         {Group, winch} ->
             next(size_changed(S));
+        {erx_tty_event, _Tag, winch} ->
+            next(size_changed(S));
+        {erx_tty_event, Tag, Key} when Key =:= interrupt; Key =:= suspend; Key =:= quit ->
+            %% A signal key the relay reports while a job holds the
+            %% terminal, naming that job.
+            next(table(erx_shell_jobs:typed(Key, {tty, Tag}, S#s.jobs), S));
         {'DOWN', Delivering, process, _Pid, _Reason} ->
             next(delivered(S));
         {?MODULE, From, Ref, Request} when is_pid(From), node(From) =:= node(), is_reference(Ref) ->
@@ -348,9 +379,10 @@ wait(S = #s{group = Group, reading = Reading, firsts = Firsts, delivery = Delive
 got_line(eof, S) ->
     S#s{input = ended};
 got_line({error, interrupted}, S = #s{write = Write, reader = R}) ->
-    %% Ctrl-C while editing: the unit read so far is dropped.
+    %% Ctrl-C while editing: the unit read so far is dropped, and the
+    %% table counts the key, which the relay counted for the shell's group.
     ok = Write(<<"\n">>),
-    S#s{reader = R#reader{source = <<>>}};
+    table(erx_shell_jobs:typed(interrupt, group, S#s.jobs), S#s{reader = R#reader{source = <<>>}});
 got_line({error, _Reason}, S) ->
     S#s{stop = true};
 got_line(Chars, S = #s{reader = R = #reader{source = Source}}) ->
@@ -391,8 +423,11 @@ start_line(Evaluate, Text, S = #s{jobs = Jobs}) ->
                              end,
                    exit({?MODULE, Outcome})
            end,
-    {Leader, S1} = start_first(Unit, S),
-    S1#s{jobs = erx_shell_jobs:start_line(Leader, Text, Jobs), text = Text}.
+    {Leader, Go, S1} = start_first(Unit, S),
+    %% The line takes the terminal before it runs.
+    S2 = table(erx_shell_jobs:start_line(Leader, Text, Jobs), S1#s{text = Text}),
+    Go(),
+    S2.
 
 %% Starts Run, a background block of the running line, as a numbered job.
 start_job(Run, S) ->
@@ -402,12 +437,15 @@ start_job(Run, S) ->
                            end,
                   exit({?MODULE, job, Status})
           end,
-    start_first(Job, S).
+    {Leader, Go, S1} = start_first(Job, S),
+    Go(),
+    {Leader, S1}.
 
 %% Starts a job's first process under a group leader of the job's own,
 %% which is its tag, with the heap limit every evaluator has (SH2). The
-%% process waits until the shell has given it the leader, so everything it
-%% starts inherits the leader, and the leader finds it if the shell ends.
+%% process waits until the shell has given it the leader and called Go, so
+%% everything it starts inherits the leader, the leader finds it if the
+%% shell ends, and the shell can carry out what its start calls for first.
 start_first(Body, S = #s{group = Group, firsts = Firsts}) ->
     Leader = leader(Group),
     Heap = #{size => ?UNIT_HEAP_BYTES div erlang:system_info(wordsize),
@@ -415,8 +453,7 @@ start_first(Body, S = #s{group = Group, firsts = Firsts}) ->
     First = fun() -> receive {?MODULE, go} -> Body() end end,
     {Pid, Ref} = spawn_opt(First, [monitor, {max_heap_size, Heap}]),
     true = group_leader(Leader, Pid),
-    Pid ! {?MODULE, go},
-    {Leader, S#s{firsts = Firsts#{Ref => {Leader, Pid}}}}.
+    {Leader, fun() -> Pid ! {?MODULE, go} end, S#s{firsts = Firsts#{Ref => {Leader, Pid}}}}.
 
 %% What a job's first process ended with, for the table, and for the
 %% shell if the process was the line's and the line ends in the foreground.
@@ -493,6 +530,8 @@ serve({background, Run}, Waiter, S = #s{text = Text}) ->
     {Leader, S1 = #s{jobs = Jobs}} = start_job(Run, S),
     {Id, Effects, Jobs1} = erx_shell_jobs:start_background(Leader, Text, Jobs),
     answer(Waiter, {ok, Id}, effects(Effects, S1#s{jobs = Jobs1}));
+serve({above, Above}, Waiter, S) ->
+    answer(Waiter, ok, table(erx_shell_jobs:above(Above, S#s.jobs), S));
 serve({jobs}, Waiter, S = #s{jobs = Jobs}) ->
     {Text, Jobs1} = erx_shell_jobs:list(Jobs),
     answer(Waiter, {ok, Text}, S#s{jobs = Jobs1});
@@ -551,7 +590,17 @@ effect({release, Tag, Fate}, S) ->
     S1;
 effect({finish_line, _Tag}, S) -> S;
 effect({say, Bytes}, S = #s{write = Write}) -> ok = Write(Bytes), S;
-effect({answer, Waiter, Reply}, S) -> answer(Waiter, Reply, S).
+effect({answer, Waiter, Reply}, S) -> answer(Waiter, Reply, S);
+effect({foreground, _Target, _Seen, _Keep}, S = #s{foreground = none}) -> S;
+effect({foreground, Target, Seen, Keep}, S = #s{foreground = Foreground, group = Group}) ->
+    %% The shell's own requests are never refused (docs/design-shell.md,
+    %% "The foreground rule"), so a refusal is a fault of the shell or the
+    %% relay: the shell ends with the request and the answer. The reason is a
+    %% shutdown, so proc_lib logs no report of the shell's queue.
+    case Foreground(Target, {Group, Seen}) of
+        {ok, Left, _Sent} -> S#s{jobs = erx_shell_jobs:kept(Keep, Left, S#s.jobs)};
+        Refused -> exit({shutdown, {foreground_refused, Target, Seen, Refused}})
+    end.
 
 %% Pauses every process of the job tagged Tag. Each pass pauses those not
 %% paused yet; erlang:suspend_process/1 returns once its process is

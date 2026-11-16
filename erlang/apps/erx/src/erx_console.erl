@@ -392,7 +392,7 @@ init(Config = #{role := Role, driver := Start, first_shell := First}) ->
     %% A domain has one line, which terminal/0 names.
     [persistent_term:put({?MODULE, line}, self()) || maps:get(domain_line, Config, false)],
     FirstShell = case First of
-                     Make when is_function(Make, 1) -> Make(terminal(self()));
+                     Make when is_function(Make, 1) -> Make(shell_terminal(Role, Config));
                      Given -> Given
                  end,
     Console = self(),
@@ -424,6 +424,16 @@ init(Config = #{role := Role, driver := Start, first_shell := First}) ->
                            owner = maps:get(owner, Config, fun erx:owner/1),
                            endpoint = spawn(fun() -> facet_endpoint(Console) end),
                            reader = reader(Role, maps:get(domain_line, Config, false))})}.
+
+%% The terminal the console's first shell holds: on a session domain's line, which the
+%% terminal relay drives, it also tells the relay which job holds the terminal.
+shell_terminal(session, #{domain_line := true}) ->
+    (terminal(self()))#{foreground => fun relay_foreground/2};
+shell_terminal(_Role, _Config) ->
+    terminal(self()).
+
+relay_foreground(console, Signals) -> erx_session_relay:foreground(console, Signals);
+relay_foreground({Tag, Mode}, Signals) -> erx_session_relay:foreground(Tag, Mode, Signals).
 
 %% A session domain's line is driven by the terminal relay, erx_tty_owner, which its
 %% driver function has just started: the console makes its one open there.

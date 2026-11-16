@@ -41,20 +41,36 @@ Effects, each carried out by erx_shell:
   its outcome;
 * `{say, Bytes}` writes to the terminal;
 * `{answer, Waiter, Reply}` answers the line waiting in `fg`, or the
-  process that asked to stop its own job.
+  process that asked to stop its own job;
+* `{foreground, Target, Seen, Keep}` asks the terminal relay to give the
+  terminal to Target (docs/design-shell.md, "The foreground rule"):
+  `console`, `{Tag, cooked}`, `{Tag, Termios}` or `{Tag, current}`, with
+  Seen the number of signal keys the table has taken; erx_shell gives the
+  termios the answer says the previous holder left back to kept/3 with
+  Keep, the tag of the job whose stop took the terminal, or `none`.
+
+**The terminal follows the table.** The holder is a fact derived from the
+table: the console with no line or while a shell runs above the line
+(above/2, as `erl` does), else the job the line waits for in `fg`, else
+the line. Every step ends in settle/2, which sends a `foreground` exactly
+when that holder differs from the one last given, or `current` for the
+job that holds when the step took a signal key, so no step has to know
+whether it moved the terminal. The line runs under the cooked termios; a
+job `fg` brings back under the termios its last stop left, or the cooked
+one if it never stopped.
 
 Job specifications and `kill`'s arguments are untrusted text: they are
 matched against fixed binaries and bounded digit strings, and no atom is
 made from them.
 """.
 
--export([new/0, line/1, start_line/3, start_background/3, suspend/1, interrupt/1,
+-export([new/0, line/1, start_line/3, start_background/3, typed/3, above/2, kept/3,
          ended/3, foreground/3, background/2, signal/3, reap/1, list/1]).
 -export([stop_own/3, foreground_tags/1]).
 -export([parse_spec/1, parse_kill/1, signal_names/0, valid_request/1, line_tag/1]).
 -export([invariant/1, view/1]).
 
--export_type([jobs/0, effect/0, result/0, spec/0, signal/0]).
+-export_type([jobs/0, effect/0, result/0, spec/0, signal/0, target/0]).
 
 -type tag() :: term().
 -type waiter() :: term().
@@ -67,10 +83,19 @@ made from them.
 %% How a job's first process ended: with an rc status, or by a crash or
 %% its heap limit.
 -type result() :: {exited, binary()} | failed.
+%% A signal key typed at the terminal, and who reported it: the group, at
+%% the console's editor, or the relay, naming the job that held the terminal.
+-type key() :: interrupt | suspend | quit.
+-type key_source() :: group | {tty, tag()}.
+%% A termios as the relay hands it out; the table only keeps it.
+-type termios() :: term().
+%% What a `foreground` gives the terminal to.
+-type target() :: console | {tag(), cooked | current | termios()}.
 -type effect() :: {stop, tag()} | {resume, tag()} | {terminate, tag()}
                 | {release, tag(), keep | kill} | {finish_line, tag()}
                 | {say, iodata()}
-| {answer, waiter(), {ok, binary()} | ok | {error, enotsup}}.
+                | {answer, waiter(), {ok, binary()} | ok | {error, enotsup}}
+                | {foreground, target(), non_neg_integer(), tag() | none}.
 
 -record(job, {tag :: tag(),
               text :: binary(),
@@ -78,9 +103,13 @@ made from them.
               %% The signal that is ending the job, which its report names.
               ending = none :: none | binary(),
               %% The line waiting in `fg` for this job, while it is in the foreground.
-              waiter = none :: none | {waiter, waiter()}}).
+              waiter = none :: none | {waiter, waiter()},
+              %% The termios the job left when it last stopped holding the terminal.
+              kept = none :: none | {kept, termios()}}).
 
--record(line, {tag :: tag(), text :: binary()}).
+-record(line, {tag :: tag(), text :: binary(),
+               %% Whether a shell runs above the line, as `erl` runs one.
+               above = false :: boolean()}).
 
 -record(jobs, {line = none :: none | #line{},
                %% The numbered job the line brought to the foreground with `fg`.
@@ -88,7 +117,11 @@ made from them.
                table = #{} :: #{id() => #job{}},
                %% Job numbers, most recently started, stopped or continued first:
                %% the head is the current job and the next the previous one.
-               order = [] :: [id()]}).
+               order = [] :: [id()],
+               %% The holder the last `foreground` named, and the number of
+               %% signal keys taken.
+               given = console :: console | tag(),
+               seen = 0 :: non_neg_integer()}).
 
 -opaque jobs() :: #jobs{}.
 
@@ -119,10 +152,13 @@ line_tag(#jobs{line = #line{tag = Tag}}) -> Tag.
 line(#jobs{line = none}) -> idle;
 line(#jobs{}) -> busy.
 
--doc "Starts a line in the foreground; no line may be running.".
--spec start_line(tag(), binary(), jobs()) -> jobs().
+-doc """
+Starts a line in the foreground, which takes the terminal; no line may be
+running. erx_shell carries the effects out before the line runs.
+""".
+-spec start_line(tag(), binary(), jobs()) -> {[effect()], jobs()}.
 start_line(Tag, Text, J = #jobs{line = none}) ->
-    J#jobs{line = #line{tag = Tag, text = Text}}.
+    settle(0, {[], J#jobs{line = #line{tag = Tag, text = Text}}}).
 
 -doc """
 Starts a numbered job in the background, which becomes the current job, and
@@ -132,21 +168,74 @@ says its number as FreeBSD sh does.
 start_background(Tag, Text, J = #jobs{table = Table}) ->
     Id = free_id(Table),
     J1 = to_front(Id, J#jobs{table = Table#{Id => #job{tag = Tag, text = Text}}}),
-    {Id, [{say, [$[, integer_to_binary(Id), <<"]\n">>]}], J1}.
+    settled({Id, [{say, [$[, integer_to_binary(Id), <<"]\n">>]}], J1}).
 
 -doc """
-`Ctrl-Z`: stops the job in the foreground. The job the line waits for in
-`fg` stops first, and the line's `fg` returns; otherwise the line itself
-stops and becomes a numbered job. With nothing in the foreground it does
-nothing, as `Ctrl-Z` at a UNIX shell's prompt does.
+A signal key typed at the terminal, which the table counts whatever it
+does. The group reports a key typed while the console holds the terminal
+and names no job, so it acts on what is in the foreground; the relay names
+the job that held the terminal, and the key acts only while that job is
+still in the foreground, so a key that comes after its job ended or
+stopped changes no other job. `Ctrl-C` (interrupt) and `Ctrl-\` (quit)
+end what is in the foreground, the job the line waits for and the line,
+and background jobs run on, as rc's `&` jobs ignore the interrupt.
+`Ctrl-Z` (suspend) stops the job the line waits for in `fg`, whose `fg`
+returns, or else the line, which becomes a numbered job. With nothing in
+the foreground a key does nothing, as at a UNIX shell's prompt. The
+relay's tty echoed its key, so the shell then writes only the newline;
+the console's editing setting echoes nothing, so for a key the group
+reports while a line runs the shell writes the key's caret form.
 """.
--spec suspend(jobs()) -> {[effect()], jobs()}.
-suspend(J = #jobs{fg = Id}) when Id =/= none ->
-    stop_job(Id, <<"sigtstp">>, <<"^Z\n">>, J);
-suspend(J = #jobs{line = #line{}}) ->
-    stop_line(<<"^Z\n">>, J);
-suspend(J = #jobs{line = none}) ->
+-spec typed(key(), key_source(), jobs()) -> {[effect()], jobs()}.
+typed(Key, group, J) ->
+    settle(1, act_on_key(Key, echo(Key), J));
+typed(Key, {tty, Tag}, J) ->
+    case lists:member(Tag, foreground_tags(J)) of
+        true -> settle(1, act_on_key(Key, <<"\n">>, J));
+        false -> settle(1, {[], J})
+    end.
+
+echo(interrupt) -> <<"^C\n">>;
+echo(quit) -> <<"^\\\n">>;
+echo(suspend) -> <<"^Z\n">>.
+
+act_on_key(suspend, Echo, J = #jobs{fg = Id}) when Id =/= none ->
+    stop_job(Id, <<"sigtstp">>, Echo, J);
+act_on_key(suspend, Echo, J = #jobs{line = #line{}}) ->
+    stop_line(Echo, J);
+act_on_key(_Key, _Echo, J = #jobs{line = none}) ->
+    {[], J};
+act_on_key(_InterruptOrQuit, Echo, J = #jobs{line = #line{tag = LineTag}, fg = Fg}) ->
+    {Inner, J1} = case Fg of
+                      none -> {[], J};
+                      Id -> {[{terminate, tag(Id, J)}], remove(Id, J)}
+                  end,
+    {Inner ++ [{terminate, LineTag}, {say, Echo}], J1#jobs{line = none, fg = none}}.
+
+-doc """
+A shell starts (`true`) or ends (`false`) above the line, as `erl` runs
+the Erlang shell, whose group reads through the console: the console holds
+the terminal while it runs. With no line it changes nothing.
+""".
+-spec above(boolean(), jobs()) -> {[effect()], jobs()}.
+above(Above, J = #jobs{line = Line = #line{}}) ->
+    settle(0, {[], J#jobs{line = Line#line{above = Above}}});
+above(_Above, J = #jobs{line = none}) ->
     {[], J}.
+
+-doc """
+Keeps Left, the termios the relay's answer to a `foreground` says the
+previous holder left, for the `fg` of the job Keep names, as the effect
+gave it; `none`, or a job no longer held, keeps nothing.
+""".
+-spec kept(tag() | none, termios(), jobs()) -> jobs().
+kept(none, _Left, J) ->
+    J;
+kept(Keep, Left, J) ->
+    case find(Keep, J) of
+        {Id, Job} -> put_job(Id, Job#job{kept = {kept, Left}}, J);
+        none -> J
+    end.
 
 -doc """
 A process of the job tagged Tag stops its own job, as a program raises
@@ -161,10 +250,10 @@ its `ok` once the job is continued.
 """.
 -spec stop_own(tag(), waiter(), jobs()) -> {[effect()], jobs()}.
 stop_own(Tag, W, J = #jobs{line = #line{tag = Tag}, fg = none}) ->
-    answered(W, stop_line(<<>>, J));
+    settle(0, answered(W, stop_line(<<>>, J)));
 stop_own(Tag, W, J) ->
     case find(Tag, J) of
-        {Id, #job{run = running}} -> answered(W, stop_job(Id, <<"sigtstp">>, <<>>, J));
+        {Id, #job{run = running}} -> settle(0, answered(W, stop_job(Id, <<"sigtstp">>, <<>>, J)));
         {_Id, #job{run = stopped}} -> {[{answer, W, ok}], J};
         _ -> {[{answer, W, {error, enotsup}}], J}
     end.
@@ -181,28 +270,15 @@ foreground_tags(#jobs{line = #line{tag = Tag}, fg = none}) -> [Tag];
 foreground_tags(J = #jobs{line = #line{tag = Tag}, fg = Id}) -> [Tag, tag(Id, J)].
 
 -doc """
-`Ctrl-C`: ends what is in the foreground, the job the line waits for and
-the line, and the shell then keeps what it had before the line. Background
-jobs run on, as rc's `&` jobs ignore the interrupt.
-""".
--spec interrupt(jobs()) -> {[effect()], jobs()}.
-interrupt(J = #jobs{line = none}) ->
-    {[], J};
-interrupt(J = #jobs{line = #line{tag = LineTag}, fg = Fg}) ->
-    {Inner, J1} = case Fg of
-                      none -> {[], J};
-                      Id -> {[{terminate, tag(Id, J)}], remove(Id, J)}
-                  end,
-    {Inner ++ [{terminate, LineTag}, {say, <<"^C\n">>}], J1#jobs{line = none, fg = none}}.
-
--doc """
 The first process of the job tagged Tag has ended with Result. The line
 finishes; the job the line waits for answers it with its status; a
 background job is done, and is reported before the next prompt. A tag the
-table no longer holds, as of a job interrupt/1 ended, changes nothing.
+table no longer holds, as of a job typed/3 ended, changes nothing.
 """.
 -spec ended(tag(), result(), jobs()) -> {[effect()], jobs()}.
-ended(Tag, Result, J = #jobs{line = #line{tag = Tag}, fg = Fg}) ->
+ended(Tag, Result, J) -> settle(0, end_job(Tag, Result, J)).
+
+end_job(Tag, Result, J = #jobs{line = #line{tag = Tag}, fg = Fg}) ->
     %% A line that ends while it waits in `fg`, as by its heap limit, leaves
     %% the job it waited for running in the background.
     J1 = case Fg of
@@ -210,7 +286,7 @@ ended(Tag, Result, J = #jobs{line = #line{tag = Tag}, fg = Fg}) ->
              Id -> put_job(Id, (maps:get(Id, J#jobs.table))#job{waiter = none}, J)
          end,
     {[{release, Tag, fate(Result)}, {finish_line, Tag}], J1#jobs{line = none, fg = none}};
-ended(Tag, Result, J) ->
+end_job(Tag, Result, J) ->
     case find(Tag, J) of
         none ->
             {[], J};
@@ -230,11 +306,13 @@ was stopped, and its command is shown, as FreeBSD sh shows it.
 """.
 -spec foreground(spec(), waiter(), jobs()) ->
           {wait | {error, binary()}, [effect()], jobs()}.
-foreground(_Spec, _W, J = #jobs{line = none}) ->
+foreground(Spec, W, J) -> settled(bring(Spec, W, J)).
+
+bring(_Spec, _W, J = #jobs{line = none}) ->
     {{error, <<"no job control">>}, [], J};
-foreground(_Spec, _W, J = #jobs{fg = Fg}) when Fg =/= none ->
+bring(_Spec, _W, J = #jobs{fg = Fg}) when Fg =/= none ->
     {{error, <<"a job is in the foreground">>}, [], J};
-foreground(Spec, W, J) ->
+bring(Spec, W, J) ->
     with_live_job(Spec, J,
                   fun(Id, Job = #job{tag = Tag, text = Text, run = Run}) ->
                           Resume = [{resume, Tag} || Run =:= stopped],
@@ -247,7 +325,9 @@ foreground(Spec, W, J) ->
 FreeBSD sh does. A job already running is shown and left as it is.
 """.
 -spec background(spec(), jobs()) -> {ok | {error, binary()}, [effect()], jobs()}.
-background(Spec, J) ->
+background(Spec, J) -> settled(continue(Spec, J)).
+
+continue(Spec, J) ->
     with_live_job(Spec, J,
                   fun(Id, Job = #job{tag = Tag, text = Text, run = Run}) ->
                           Resume = [{resume, Tag} || Run =:= stopped],
@@ -263,7 +343,9 @@ done, with the signal named, once its first process has ended. `STOP` and
 `TSTP` stop it, and `CONT` continues it in the background.
 """.
 -spec signal(signal(), spec(), jobs()) -> {ok | {error, binary()}, [effect()], jobs()}.
-signal(Signal, Spec, J) ->
+signal(Signal, Spec, J) -> settled(send_signal(Signal, Spec, J)).
+
+send_signal(Signal, Spec, J) ->
     with_live_job(Spec, J, fun(Id, Job) -> signal_job(Signal, Id, Job, J) end).
 
 signal_job({terminate, Name}, Id, Job = #job{tag = Tag}, J) ->
@@ -312,14 +394,19 @@ invariant(#jobs{line = Line, fg = Fg, table = Table, order = Order}) ->
         andalso length(Order) =:= length(lists:usort(Order)).
 
 -doc """
-The table as plain terms: the line's tag, the number of the job in the
-foreground, and each job's tag, state and whether the line waits for it.
-Exported for the tests.
+The table as plain terms: the line's tag and whether a shell runs above
+it, the number of the job in the foreground, each job's tag, state and
+whether the line waits for it, the holder last given and the signal keys
+taken. Exported for the tests.
 """.
--spec view(jobs()) -> #{line := tag() | none, fg := id() | none,
-                        jobs := #{id() => {tag(), running | stopped | done, boolean()}}}.
-view(#jobs{line = Line, fg = Fg, table = Table}) ->
+-spec view(jobs()) -> #{line := tag() | none, above := boolean(), fg := id() | none,
+                        jobs := #{id() => {tag(), running | stopped | done, boolean()}},
+                        given := console | tag(), seen := non_neg_integer()}.
+view(#jobs{line = Line, fg = Fg, table = Table, given = Given, seen = Seen}) ->
     #{line => case Line of none -> none; #line{tag = T} -> T end,
+      above => case Line of none -> false; #line{above = A} -> A end,
+      given => Given,
+      seen => Seen,
       fg => Fg,
       jobs => #{Id => {T, case Run of {done, _} -> done; _ -> Run end, W =/= none}
                 || Id := #job{tag = T, run = Run, waiter = W} <- Table}}.
@@ -379,6 +466,7 @@ valid_request({fg, Spec}) -> valid_spec(Spec);
 valid_request({bg, Spec}) -> valid_spec(Spec);
 valid_request({signal, Signal, Spec}) -> valid_signal(Signal) andalso valid_spec(Spec);
 valid_request({stop}) -> true;
+valid_request({above, Above}) -> is_boolean(Above);
 valid_request(_Other) -> false.
 
 valid_spec(current) -> true;
@@ -415,6 +503,58 @@ digits(Bin) -> lists:all(fun(C) -> C >= $0 andalso C =< $9 end, binary_to_list(B
 
 upper(Bin) -> << <<(case C of _ when C >= $a, C =< $z -> C - 32; _ -> C end)>> || <<C>> <= Bin >>.
 lower(Bin) -> << <<(case C of _ when C >= $A, C =< $Z -> C + 32; _ -> C end)>> || <<C>> <= Bin >>.
+
+%%% The terminal's holder
+
+%% Where every step ends: Counted signal keys are added to those taken,
+%% and the terminal goes to the holder the table now derives. A change of
+%% holder sends that holder's `foreground`, with Keep naming the job that
+%% gave the terminal up by stopping; a key that leaves a job holding sends
+%% `current` for it, so the relay gives that job its reads back. The
+%% `foreground` follows what the step does to processes and precedes its
+%% answers, so a line released from `fg` finds the terminal back
+%% (docs/design-shell.md, "The foreground rule": "`fg` then returns").
+settle(Counted, {Effects, J0 = #jobs{given = Given, seen = Seen0}}) ->
+    J = J0#jobs{seen = Seen0 + Counted},
+    Target = target(J),
+    case holder_of(Target) of
+        Given when Counted > 0, Given =/= console ->
+            {before_answers({foreground, {Given, current}, J#jobs.seen, none}, Effects), J};
+        Given ->
+            {Effects, J};
+        Holder ->
+            {before_answers({foreground, Target, J#jobs.seen, stopped(Given, J)}, Effects),
+             J#jobs{given = Holder}}
+    end.
+
+before_answers(Foreground, Effects) ->
+    {Answers, Acts} = lists:partition(fun(E) -> element(1, E) =:= answer end, Effects),
+    Acts ++ [Foreground | Answers].
+
+settled({Reply, Effects, J}) ->
+    {Effects1, J1} = settle(0, {Effects, J}),
+    {Reply, Effects1, J1}.
+
+%% The `foreground` the table's state calls for.
+target(#jobs{line = none}) -> console;
+target(#jobs{line = #line{above = true}}) -> console;
+target(#jobs{line = #line{tag = Tag}, fg = none}) -> {Tag, cooked};
+target(J = #jobs{fg = Id}) ->
+    case maps:get(Id, J#jobs.table) of
+        #job{tag = Tag, kept = none} -> {Tag, cooked};
+        #job{tag = Tag, kept = {kept, Termios}} -> {Tag, Termios}
+    end.
+
+holder_of(console) -> console;
+holder_of({Tag, _Mode}) -> Tag.
+
+%% The previous holder, when it is a job that has stopped.
+stopped(console, _J) -> none;
+stopped(Tag, J) ->
+    case find(Tag, J) of
+        {_Id, #job{run = stopped}} -> Tag;
+        _ -> none
+    end.
 
 %%% Helpers
 
