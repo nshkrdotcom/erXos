@@ -714,7 +714,7 @@ PW1). On the Phase 1 stopgap, whose block service reads no manifest, the
 domain library marks it in the one record it already writes for that
 holder alone: `-erx_record system_image` gains a sixth word,
 `record_volume`, exactly when the manifest holds the window
-([design-stopgap.md](design-stopgap.md#the-booted-slot)). From that word
+([design-fiasco.md](design-fiasco.md#the-booted-slot)). From that word
 `erx_blk_table:booted/1` starts the read-only `record_volume` window,
 whatever slot the boot names, and `erx_storage_login_keys:start_mint/0`
 starts the tree's mint on it; a domain whose record lacks the word, or
@@ -1013,21 +1013,38 @@ identifier.
 
 ### Stages
 
-1. **Crypto and the Erlang shell** (1b-G). [design-crypto.md](design-crypto.md)
+1. **Crypto and `rc` in root's session** (1b-G; 0.1 ships this stage).
+   [design-crypto.md](design-crypto.md)
    whole; `crypto`, `public_key`, `asn1` and `ssh` imported with their edits and carried by every domain's runtime image (`tools/lib/erx/domain_image_apps.rb`); in a development build,
    `erx_ssh_dev:start(Port)` (`erlang/apps/erx_session`) run in root's session starts `ssh:daemon` in
-   that session, through root's own `net` grant, with OTP's Erlang shell
-   (`shell` set to start `shell:start/0`) and OTP's `erlang_eval` exec,
-   which evaluates a command's expression and prints its value. Its host
+   that session, through root's own `net` grant. Its sessions are
+   interactive ttys only: a session channel's callback,
+   `erx_ssh_dev_channel`, is the master of a tty of root's session
+   (`erx_session_tty:open_channel/3`), speaking the tty's six messages
+   to its relay as stage 2's channel does, so the command shell runs on
+   it with the tty's line discipline. `pty-req` gives the tty's size and
+   TERM (`erx_ssh_line_core:tty/4`), `window-change` resizes it, Ctrl-C
+   reaches the shell as the line discipline's SIGINT, and how the shell
+   ended is the channel's `exit-status`, or `exit-signal` `INT`
+   ([Sessions, ttys and shells](#sessions-ttys-and-shells)). An `exec`
+   request is answered `exec is not supported in 0.1` on standard error
+   with exit status 1, and no subsystem is offered. Its host
    key is root's, Ed25519, at `/data/ssh/ssh_host_ed25519_key`, read
    through OTP's `ssh_file`, made when missing and refused when it does
-   not decode. Its only login is the development key for `root`
-   ([Login keys](#login-keys)), whose public line, without its comment,
+   not decode. It admits `root` alone, by public key alone, with
+   `max_auth_tries` at 6, with root's keys from the medium
+   ([Root's login keys on the medium](#roots-login-keys-on-the-medium)),
+   read at each login as the facet reads them, for at most 817 bytes,
+   from the session's read-only grant of `login_keys` when the session
+   holds one, and the development key ([Login keys](#login-keys)),
+   whose public line, without its comment,
    the image build writes into the system release and every domain
    release at `abi/erx_abi.txt`'s `ssh_authorized_keys_path` for the
    harnesses that log in, and which the packer refuses in any build but a
-   development one; it is offered by public key alone, with
-   `max_auth_tries` at 6. In any other build `start/1` starts nothing,
+   development one. A file of `login_keys` that is no whole number of
+   51-byte blobs within 16 admits no key, and a blob is compared whole
+   with the offered key's encoding, so one that is no Ed25519 key admits
+   nothing. In any other build `start/1` starts nothing,
    taking the build kind from its release's build facts
    (`erx_build:development_facts/1`); a release image carries no login
    key, and the module exports no entry that names another keys file. A
@@ -1036,8 +1053,13 @@ identifier.
    renamed into place.
    The host's `ssh`, run by `tools/erx ssh`, reaches it through a host
    loopback port forwarded to the guest's port 2222. This is any principal running a daemon in its
-   own session with its own authority; it needs no new facet.
-2. **The SSH domain and `rc`** (1b-G, M14). The SSH domain, the login
+   own session with its own authority; it needs no new facet. The
+   network-facing SSH code, OTP's transport and authentication
+   included, runs in root's session with root's authority, so a flaw in
+   it reached before authentication is root's session; 0.1 publishes
+   that as a known limitation, and stage 2 moves it into a domain of its
+   own.
+2. **The SSH domain and `rc`** (1b-G, M14; 0.2). The SSH domain, the login
    facet with its cookies, derived session identifiers and its own
    signature check, the `ssh_state` service, `erx_ssh_line`
    with its ttys and jobs, the channel and algorithm policies and the
@@ -1071,6 +1093,7 @@ identifier.
 | `lib/ssh/src/ssh_auth.erl`, `ssh_options.erl`, `ssh.hrl` | a daemon option `max_auth_tries`, default `infinity`, counted as FreeBSD's `MaxAuthTries` is ([Context](#context)), with counts of requests and failures in `#ssh{}`: every server result of user authentication passes one function, which counts each `SSH_MSG_USERAUTH_FAILURE` except the answer to a `none` request that is the connection's first request, and answers the failure that brings the count to `max_auth_tries` with a disconnect, `SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE`, instead; a request for a method the daemon does not offer reaches it as `none`, since OTP's user authentication answers such a request as `none`, so it counts unless it is the first | the default |
 | `lib/ssh/src/ssh_server_key_api.erl`, `ssh_transport.erl` | `host_key/2` may return `{ok, {ssh2_pubkey, Blob}}` and an optional `sign(Blob, Hash, Options)`, the shape of the client key API's `sign/3`, signs the exchange hash ([design-system.md](design-system.md#the-vault)); such a key is usable only when the module exports `sign/3` and `Blob` is the one encoding of a key of the negotiated algorithm | a callback that returns a private key |
 | `lib/ssh/src/ssh_message.erl` | `ssh2_privkey_encode/1` writes an Ed25519 or Ed448 private key as OpenSSH's private key format holds it, the private key followed by the public key, which is what `ssh2_privkey_decode2/1` reads back; stock writes the private key alone, so stock `ssh_file` cannot read an Ed25519 key it wrote in `openssh_key_v1`, an upstream bug | every other key type's encoding, and the decoder |
+| `lib/ssh/src/ssh_connection.erl` | a new `exit_signal/3`, which a server channel calls to send `exit-signal` with the signal's name, no core dump and empty message and language (RFC 4254, section 6.10), as `exit_status/3` sends `exit-status`; stage 1's channel sends it for a shell Ctrl-C ended | every other function and message unchanged |
 
 `kex_input` holds the first exchange's shared secret, from which that
 exchange's traffic keys follow, so it lives only in the connection's

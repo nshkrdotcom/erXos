@@ -58,7 +58,7 @@ these messages are handled by
 
 %% Potential API currently unsupported and not tested
 -export([window_change/4, window_change/6,
-	 signal/3, exit_status/3]).
+	 signal/3, exit_status/3, exit_signal/3]).  % exit_signal/3: erXos edit
 
 %% Internal SSH application API
 -export([channel_data/5,
@@ -713,6 +713,21 @@ to the client.
 exit_status(ConnectionRef, Channel, Status) ->
     ssh_connection_handler:request(ConnectionRef, Channel,
 				   "exit-status", false, [?uint32(Status)], 0).
+
+-doc """
+Is to be called by a server-channel process to send the client the signal, its
+RFC 4254 name without the `SIG` prefix, that ended the command, with no core
+dumped and no error message (RFC 4254, section 6.10). erXos edit: OTP sends
+`exit-status` alone.
+""".
+-spec exit_signal(ConnectionRef, ChannelId, Signal) -> ok when
+      ConnectionRef :: ssh:connection_ref(),
+      ChannelId :: ssh:channel_id(),
+      Signal :: string().
+exit_signal(ConnectionRef, Channel, Signal) ->
+    ssh_connection_handler:request(ConnectionRef, Channel,
+				   "exit-signal", false,
+				   [?string(Signal), ?boolean(false), ?string(""), ?string("")], 0).
 
 %%--------------------------------------------------------------------
 %%% Internal, that is, ssh application internal API

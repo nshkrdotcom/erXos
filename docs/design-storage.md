@@ -1315,7 +1315,7 @@ salt and root hash, which the update writes with the partition
 the system domain, hands them to the storage domain that serves `system`, and to no other domain, in a boot
 record of its own, `-erx_record system_image`, beside the `-erx_record
 boot VALUE SLOT` record, whose words, one reader and refusals
-[design-stopgap.md](design-fiasco.md#the-booted-slot) defines: a
+[design-fiasco.md](design-fiasco.md#the-booted-slot) defines: a
 record that is malformed or absent leaves every request on the tree
 answering `eio`, so the image packages are absent, as on an `unknown`
 boot, and the manifest check refuses a manifest with a
@@ -1707,7 +1707,7 @@ kernel from the device service's derivation (PW1), and on the Phase 1
 stopgap from the sixth word, `record_volume`, of the domain's
 `-erx_record system_image`, which the domain library writes only for
 the holder of the manifest's window
-([design-stopgap.md](design-stopgap.md#the-booted-slot)). It reads the
+([design-fiasco.md](design-fiasco.md#the-booted-slot)). It reads the
 file with `erx_fat_read`, the pure read
 core of the FAT format that the FAT server above reads through too:
 `root_file(ReadSector, Name, MaxBytes)` takes a function that reads one

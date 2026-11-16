@@ -30,7 +30,7 @@ until its tty ends (ended/2), and the tty's report of how its shell ended
 goes to that channel alone (report/2).
 """.
 
--export([new/0, exported/2, peer/1, request/3, term/1, opened/3, ended/2, report/2]).
+-export([new/0, exported/2, peer/1, request/3, tty/4, term/1, opened/3, ended/2, report/2]).
 -export_type([core/0]).
 
 %% `max_channels`: the channels one connection may hold open (design-ssh.md).
@@ -73,13 +73,22 @@ request({open_tty, Channel, Run, Term, Rows, Columns}, Owner, #{peer := Peer, tt
        is_integer(Columns), Columns >= 0, Columns =< ?MAX_SIDE ->
     case {valid_run(Run), Owner(Channel) =:= Peer} of
         {true, true} when map_size(Ttys) >= ?MAX_CHANNELS -> {error, limited};
-        {true, true} ->
-            Size = {side(Rows, ?DEFAULT_ROWS), side(Columns, ?DEFAULT_COLUMNS)},
-            {open_tty, Channel, #{run => Run, size => Size, vars => #{<<"TERM">> => [term(Term)]}}};
+        {true, true} -> {open_tty, Channel, tty(Run, Term, Rows, Columns)};
         _ -> {error, badarg}
     end;
 request(_Request, _Owner, _Core) ->
     {error, badarg}.
+
+-doc """
+The tty a channel asked for: Run on it at Rows by Columns, a side of zero
+taken as 24 rows or 80 columns, its shell's TERM from Term (term/1). The
+caller has bounded Term and the sides, as request/3 does; erx_ssh_dev_channel,
+SSH's first stage in the session, takes its ttys from here too.
+""".
+-spec tty(erx_session_tty:run(), binary(), 0..?MAX_SIDE, 0..?MAX_SIDE) -> erx_session_tty:channel().
+tty(Run, Term, Rows, Columns) ->
+    #{run => Run, size => {side(Rows, ?DEFAULT_ROWS), side(Columns, ?DEFAULT_COLUMNS)},
+      vars => #{<<"TERM">> => [term(Term)]}}.
 
 -doc """
 The shell's TERM for a channel that asked for Term: Term itself when

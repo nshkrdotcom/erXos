@@ -60,6 +60,7 @@ anywhere, so an owner waits for output to drain only while it does.
 
 -export([new/1, write/3, master/2, timeout/2, flush/1, stop/1, start/1, send/1]).
 -export([held/1, room/1, stopped/1, flowing/1, waiting/1, counts/1]).
+-export([input_max/0]).
 
 -export_type([link/0, writer/0, action/0, master_message/0]).
 
@@ -107,6 +108,10 @@ anywhere, so an owner waits for output to drain only while it does.
             :: #{atom() => non_neg_integer()}}).
 
 -opaque link() :: #link{}.
+
+-doc "The most bytes one `{tty_input, Bytes}` carries; a longer one is dropped.".
+-spec input_max() -> pos_integer().
+input_max() -> ?MAX_INPUT.
 
 -doc """
 A tty with nothing written, no size and no master message seen, whose
