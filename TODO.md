@@ -3255,14 +3255,28 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the session's local providers, named from the session's counter when it is mounted
   (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands
   alone, not the boot image's programs the command namespace lists, so `/bin/rc`, the shell
-  `/etc/passwd` names, is missing; and `/dev/tty` answers a read with `enotsup` until the terminal
-  relay's line discipline serves the tty's readers.
-* [Medium] session, `erx_session_export`: a write to `/dev/tty` waits until the tty takes it
-  (`erx_console:write/2`, a call without a timeout), and a stopped tty holds 4 KiB, so writes to a
-  stopped tty fill the `rw` grant's 64 requests in flight and that grant answers `emfile` to every
-  program of the session, for `/etc` too. Have the terminal relay that owns the tty serve
-  `/dev/tty`'s opens, or answer a write once the relay accepts it, so a stopped tty blocks its
-  writers alone, as on UNIX.
+  `/etc/passwd` names, is missing.
+* [Medium] shell, `erx_shell` (`above_terminal/1`) and `erx_shell_jobs` (`above/2`): the flag that
+  gives the console the terminal while `erl` runs is a boolean the caller sets back in a `try ... after`,
+  so a stage running `erl` that is killed leaves the line's terminal with the console until the line
+  ends, and two `erl` in one line share the flag. Monitor each caller of `{above, true}` and keep the
+  live callers in the line, so the console holds while the set is not empty.
+* [Medium] shell, a job's leader (`erx_shell.erl`, `leader/1`) passes input requests to the shell's
+  group, and the group answers an interrupt to whichever input request is current, so a job reading
+  through `io:get_line` at the prompt would take a `Ctrl-C` the shell never counts, after which every
+  `foreground` lags the relay's count and later jobs' reads stay parked. No command reads that way
+  yet; have the leader refuse input requests, so the group has one reader by construction.
+* [Low] shell, `erx_shell_jobs`: a key the relay reports for the line just before `erl`'s
+  `{above, true}` stops or ends the line while the Erlang shell, led by its own group, runs on.
+  Every exported step of the table settles on its own; one dispatching entry that always settles
+  would make the rule hold for steps added later. `fg` resumes the job before the relay gives it
+  the terminal.
+* [Medium] programs, a program's `/dev/tty` (`erlang/apps/erx_session/src/erx_session_export.erl`): the
+  export answers every open of `/dev/tty` `enxio`, as [design-files.md](docs/design-files.md) ("Narrowing
+  for a program") has it, but no program handler makes a terminal's description in its place, an open of
+  its tty's relay through `erx_session_relay:open_writer/2` under the program's job
+  ([design-programs.md](docs/design-programs.md#the-terminal)), so a program's open of `/dev/tty`
+  (musl's `getpass`, a `ctermid` user) fails with `ENXIO`.
 * [Low] session, `erx_session_export`: its statfs answers devfs's type for a tree that also holds
   `/bin` and `/etc` (`abi/protocols/9p.txt`, `p9_magic`, one type per kind of tree), its files show
   uid 0 where the design's owner of a file its server records none for is `nobody`
@@ -4970,18 +4984,55 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the modules that check names do not exist, no module uses `erx_tty_owner`, no process holds it, and a session's ttys are `erx_session_tty`'s, raw, with no line
   discipline. Build them together, the check with design-shell.md's two seeded handler modules in
   `test/host/chokepoints_test.rb`.
+* [Medium] session, terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`): each tty of the
+  session has a relay, which its console reads on demand, but `erx_cmd` does not read through
+  `open_reader/2` ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)). The runtime's
+  writers' sender, `otp/lib/kernel/src/erx_output.erl`, which the design and the `relay-name` rule name, is
+  not in the tree, so nothing sends `tty_write` or `tty_drain`; and `erx_tty_owner` is missing from
+  `erx_session.app.src`'s `registered` list.
+* [Medium] session, terminal relay requests (`erlang/apps/erx_session/src/erx_session_relay.erl`): the
+  chokepoints keep `erx_tty_owner` and the request for an open made for reading to `erx_session_relay`, and
+  an open is opaque, but a module that holds a relay's pid can still build any other request by hand
+  (`{tty, Open, ...}`, `{foreground, ...}`, `{console_group, G}`), which nothing checks. Option: one request
+  tag, `{erx_relay, Req}`, that the relay requires of every call, with one atom chokepoint keeping
+  `erx_relay` to `erx_session_relay`, which replaces the `relay-requests` shape rule.
+* [Medium] shell and programs, finding a tty's relay ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)):
+  a relay other than the domain's line's holds no name, and no design names how a program's handler, a
+  command domain's stream relay or `erx_cmd` finds the relay of the tty its job runs on. Suggested home:
+  the shell's `terminal()` map, which already carries the console's terminal functions, gains the relay's
+  pid, and the shell passes it to each job it starts.
+* [Medium] session, a command's output through the console (`erlang/apps/erx/src/erx_console.erl`,
+  `onlcr/1`): an Erlang command writes through the console's write/1, which turns each newline into CR-LF
+  for a cooked tty, and the relay's `OPOST` and `ONLCR`, set while the command's job holds the terminal,
+  turn it again, so the master gets CR CR LF (`test/erlang/erx_session_tty_tests.erl` compares output
+  with carriage returns aside). Commands writing through `erx_cmd`'s opens, whose bytes only the relay
+  processes, remove the console's conversion for a relay's console.
+* [Medium] session, the console's reads of the relay (`erlang/apps/erx/src/erx_console.erl`, `read_for_ask/2`):
+  a process of the session's domain that sets the tty raw with `VMIN` 0 and `VTIME` 0 (an open's
+  `tcsetattr` with SIGTTOU ignored) makes the console's one-byte watch ready at once and its read answer
+  `{ok, <<>>}`, which `read_for_ask/2` has no clause for, so the console crashes and the line's shells
+  end. Watching again would spin; the console should not watch while such a setting holds, or read
+  through a mode of its own.
+* [Medium] session, the console's reads of the relay (`erlang/apps/erx/src/erx_console.erl`, `reader()`):
+  (1) The console-read
+  cases and seeded faults the design's Verification lists beyond the seven in
+  `test/erlang/erx_console_reads_tests.erl` (reads per ask, held bytes across a signal, one held set per
+  group, an interrupt queued before a read, one ask through blink and interrupt, a late event) are not
+  written, and the interrupt case does not pin that the group keeps its ask. (2) The ask, report, read and
+  event decisions are effects in the console; a pure core returning actions would let them be tested
+  without a relay. (3) After the relay gives up its name at a halt, a group's ask makes the console's call
+  exit `noproc`.
 * [Medium] session, terminal relay core (`erlang/apps/erx_session/src/erx_session_relay_core.erl`):
-  (1) An `out` watch is reported at any free byte, though `output/3` never splits a rendering, so a newline
-  under `ONLCR` with 1 byte free is `eagain` and a poll loop spins until the master takes output; report at
-  a low-water mark after reading FreeBSD's `ttydev_poll`. (2) The drain row's "no master is connected" has
-  no state behind it in the core or the link. (3) The exploration checks safety only, and its alphabets
-  leave out close, hangup, `tcsetattr`, timers and output; reports are pooled across receivers.
-  (4) Each owner of `erx_tty_link` must call `send/1` at the end of its step (the relay core's `settle/1`,
-  `erx_session_tty:effects/2`, the tests' models); a driver that forgets sends nothing and nothing fails. A
-  one-event entry that applies the event and then `send/1` would make it hold by construction for every
-  owner but the core. (5) `erx_tty:input/3` returns a room the relay core discards, since it derives the
-  next room from the link; drop it from the result, or use it. (6) `input/3`'s per-call room and output
-  stopped live in the persistent `#tty{}` record, reset by `input/3`; thread them as a call-local value.
+  (1) The exploration checks safety only, and its alphabets leave out close, hangup, `tcsetattr`, timers and
+  output; reports are pooled across receivers.
+  (2) `erx_tty:input/3` returns a room the relay core discards, since it derives the next room from the
+  link; drop it from the result, or use it.
+  (3) `input/3`'s per-call room and output stopped live in the persistent `#tty{}` record, reset by
+  `input/3`; thread them as a call-local value.
+  (4) A writer's message (`{write, Done, Bytes}`) has no size bound and the queue no length bound; with no
+  master it drains only by a flush or a hangup. The writers are synchronous and in the session's own domain.
+  Writers whose messages refill the room exactly as it empties hold `out` waits off for as long as they keep
+  it up, since an `out` wait is reported only while no message waits.
 * [Medium] session, how the console learns a session's tty (`docs/design-live.md`, "Between domains"): the design has the console learn the tty from a `tty` agent in the session domain's ready report, but the relay needs `erx:cap(console)`, which init sets only after that report, so a relay started by the boot script has no master and one started after the report is not in it. Edit 65's `tty` agent, the domain pid's check that every agent is a pid of the domain's node, and a way for the session's creator to read the agents are not built; `erx_console:add_session/2` takes the tty from whoever creates the session. Settle the order when root's session starts at boot.
 * [Low] tests, `test/integration/runtime_console_test.rb` (`make check-runtime-hosted`): the cases that start the Erlang shell wait for `1> ` at the start of a line, but the hosted system domain is a named node and its shell prompts `(system@erxos)1> `, so every `with_erxos` case times out before it begins. Match the prompt with its node name, or make the patterns node-agnostic as the `Ctrl-G` case is.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl`: the names quota is the constant `NAMES_QUOTA`, 64, for every principal; the manifest's per-principal `names` is read by no one. Take each principal's from its row, as the domain quota is.
@@ -7055,6 +7106,12 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Medium] session, a window's terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`,
+  `handle_info/2`): a relay whose master is in the session's own domain takes every plain message it
+  does not otherwise know as its master's, and its pid travels in every open, so any process of the
+  domain that holds an open can send it master messages (input, a hangup, a size). Acceptable for Phase
+  1's trusted domains. Fix: the relay names the reference of its monitor of the master in its `tty_open`,
+  and the master tags each message with it, which the relay requires.
 * [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and
@@ -8080,7 +8137,7 @@ document's "residual risks accepted" paragraph.
   command domain, before the relay's ready report: a program or a narrowed command that a `Ctrl-C` ends could read a
   key typed after it. Design the handshake: each handler and stream relay answers the shell once its program or run
   has taken the signal, and the shell sends `{foreground, Job, current, Signals}` only after every answer; with it
-  the handler and the stream relay open the terminal with `erx_session_relay:open_reader/1` (and join the
+  the handler and the stream relay open the terminal with `erx_session_relay:open_reader/2` (and join the
   chokepoint's list), the stream relay names a terminal stream `{relayed, read_write, tty}` and copies its input, the handler's
   reads pass as "Reading a terminal" describes, and that section's tests run.
 * [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):

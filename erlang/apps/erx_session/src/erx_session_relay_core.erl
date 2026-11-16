@@ -5,7 +5,7 @@
 -moduledoc """
 The terminal relay's decisions (docs/design-shell.md, "The terminal relay's
 protocol") as a pure state machine. erx_session_relay, the gen_server
-registered as erx_tty_owner, hands every request and message to
+registered as the relay's name, hands every request and message to
 request/3 or event/2 and carries out the actions they return, in order,
 after it has answered the request: so the answer goes before anything the
 request sets off, the design's ordering rule.
@@ -28,13 +28,13 @@ in the step drops reaches it first, as FreeBSD wakes the device once a
 step (ttydisc_rint_done, sys/kern/tty_ttydisc.c:1293-1305).
 
 Opens and waits are named by the edge: an open by the term the `open`
-request carries (a reference the server makes), a wait by `{Open, Kind}`,
+request carries (the server's pid and a reference it makes), a wait by `{Open, Kind}`,
 Kind being `read`, `in` or `out`, the names erx_tty's waiters and timers
 carry. Processes, groups and the console are terms the core only compares
 and names in actions.
 """.
 
--export([new/1, request/3, event/2]).
+-export([new/2, request/3, event/2]).
 -export([holder/1, numbers/2, termios/1, signal_number/1]).
 -export_type([core/0, request/0, event/0, answer/0, action/0]).
 
@@ -106,14 +106,18 @@ and names in actions.
 
 -doc """
 A relay whose console is Console: the console holds the terminal from the
-start, in the editing setting made from the tty's defaults.
+start, in the editing setting made from the tty's defaults. With `master`
+`none` the relay has no master, as a session's console tty may have none
+(erx_session_tty:start_link/0): erx_tty_link sends nothing for one and drops a master
+message, and a drain is answered at once.
 """.
--spec new(term()) -> core().
-new(Console) ->
+-spec new(term(), #{master := none | present}) -> core().
+new(Console, #{master := Master}) ->
     Tty = erx_tty:new(),
     Cooked = erx_tty:termios(Tty),
     {ok, _, Editing} = erx_tty:set(erx_tty_modes:editing(Cooked), Tty),
-    #core{tty = Editing, link = erx_tty_link:new(), console = Console, cooked = Cooked}.
+    #core{tty = Editing, link = erx_tty_link:new(Master), console = Console,
+          cooked = Cooked}.
 
 -doc "Caller's request: its answer, what follows the answer, and the next core.".
 -spec request(term(), term(), core()) -> {answer(), [action()], core()}.
@@ -269,7 +273,7 @@ write(Bytes, #core{writes = Writes} = Core) ->
             {eagain, [], Core};
         true ->
             case put_output(Bytes, Core) of
-                {0, _, _} -> {eagain, [], Core};
+                {0, Actions, Core1} -> {eagain, Actions, Core1};
                 {Taken, Actions, Core1} -> {{ok, Taken}, Actions, Core1}
             end
     end.
@@ -473,10 +477,13 @@ link_action({resend_after, _} = Resend, Core) -> {[Resend], Core};
 link_action({done, _Writer}, Core) -> {[], Core};
 link_action({input, Bytes}, Core) -> typed(Bytes, Core);
 link_action({size, Rows, Columns}, Core) -> resize(Rows, Columns, Core);
-link_action(hangup, #core{tty = Tty} = Core) ->
+%% The hangup is the permanent end of the console's line, told at once whether or
+%% not a read waits (erx_tty_link emits hangup at most once), before the waits it readies.
+link_action(hangup, #core{tty = Tty, console = Console} = Core) ->
     {Actions, Tty1} = erx_tty:hangup(Tty),
     {Ready, Core1} = carry(Actions, Core#core{tty = Tty1}),
-    {Ready ++ drop_writes(Core1), Core1#core{writes = queue:new()}}.
+    {[{send, Console, erx_console_eof} | Ready] ++ drop_writes(Core1),
+     Core1#core{writes = queue:new()}}.
 
 %% Typed bytes go to input/3 until none is left: it stops after each
 %% signal key, and the next call gets the room the link holds after it.
@@ -568,8 +575,9 @@ to_master(Bytes, #core{link = Link} = Core) ->
 
 %% The end of every step: the waits are reconciled with who may read; the
 %% writers' messages take the room there is, in order; `out` waits are
-%% reported once a write would be taken; drains are answered once nothing
-%% waits or nothing would take it; and what is held goes to the master.
+%% reported once no message waits and any byte's rendering fits; drains
+%% are answered once nothing waits or nothing would take it; and what is
+%% held goes to the master.
 settle(Core0) ->
     {Reconciled, Core1} = reconcile(Core0),
     {Pumped, Core2} = pump(Core1),
@@ -593,9 +601,16 @@ pump(#core{writes = Writes} = Core) ->
             {[], Core}
     end.
 
+%% An out wait is reported once no writer's message waits and the room fits
+%% the widest rendering of one byte, so the write it lets go takes at least
+%% its first byte. FreeBSD's poll reports at one free byte (ttydev_poll,
+%% sys/kern/tty.c:667), where a newline under ONLCR is EAGAIN and a
+%% program polling for out would spin until the master took output. The
+%% rule keeps no state, so no writer can hold it off while the room is
+%% there. Output stopped does not matter, as it does not to FreeBSD's poll.
 writable(#core{waits = Waits, writes = Writes, link = Link, signal = N} = Core) ->
     {Free, _Kept, _Stopped} = erx_tty_link:room(Link),
-    case queue:is_empty(Writes) andalso Free > 0 of
+    case queue:is_empty(Writes) andalso Free >= erx_tty:widest_rendering() of
         true ->
             Ready = lists:sort([{Open, Caller} || {Open, out} := #wait{caller = Caller} <- Waits]),
             {[{send, Caller, {ready, Open, [out], N}} || {Open, Caller} <- Ready],
@@ -604,11 +619,14 @@ writable(#core{waits = Waits, writes = Writes, link = Link, signal = N} = Core) 
             {[], Core}
     end.
 
+%% A drain waits for the master to take what is held, while what is held
+%% flows to a master (erx_tty_link:flowing/1); otherwise nothing would
+%% take it.
 drained(#core{drains = []} = Core) ->
     {[], Core};
 drained(#core{drains = Drains, writes = Writes, link = Link} = Core) ->
     Empty = queue:is_empty(Writes) andalso erx_tty_link:held(Link) =:= 0,
-    case Empty orelse erx_tty_link:stopped(Link) of
+    case Empty orelse not erx_tty_link:flowing(Link) of
         true -> {[done(Done) || Done <- Drains] ++ [give_up_name], Core#core{drains = []}};
         false -> {[], Core}
     end.

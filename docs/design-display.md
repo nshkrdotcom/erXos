@@ -2936,9 +2936,9 @@ else of it. A terminal owns four things:
   xterm-compatible subset, named `xterm` as FreeBSD's console is; rio's
   mouse-driven text editing is a program's choice on top, not the
   terminal's.
-* **Its tty**, which the session's terminal relay serves
-  ([The tty](design-live.md#the-tty)). The terminal asks the relay for a
-  new tty, as a program's `posix_openpt` makes a pseudo-terminal
+* **Its tty**, which a terminal relay of the session serves
+  ([The tty](design-live.md#the-tty)). The terminal asks the session for a
+  new tty, driven by a terminal relay of its own, as a program's `posix_openpt` makes a pseudo-terminal
   ([design-programs.md](design-programs.md#the-terminal)), becomes its
   master, and starts the session's command shell on it with
   `TERM=xterm`. A master in the tty's own domain exchanges the tty's
