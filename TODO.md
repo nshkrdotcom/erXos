@@ -6502,6 +6502,23 @@ to the corpus and follow rc
   address is still being set. The design's transaction-translator argument wants the turn held until that answer,
   or the controller to order the next Enable Slot after the failed address's cleanup; the controller core's design
   decides which.
+* [Low] USB, the bus core's enumeration (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
+  step 3, the language table and the manufacturer, product and serial strings, is not run, so a device's
+  inspection record has no strings; a failure there fails nothing, so adding it is a step between `device` and
+  `config_head` with the strings kept on the device.
+* [Medium] USB, the bus core's enumeration tests (`test/erlang/erx_usb_bus_core_tests.erl`): no case reaches a
+  multi-TT hub (SET_INTERFACE's setup bytes, `multi_tt => true` in Configure Endpoint, `multi => true` in a
+  child's translator), a refused `bMaxPacketSize0`, a SuperSpeed hub-class device or a malformed descriptor
+  answer; add a multi-TT hub kind and targeted cases, with seeds for the EP0 bound loosened and SET_INTERFACE's
+  fields swapped. Also from review: answers name only `{Kind, Ref}` and seven steps share `control_done`, so the
+  core trusts the controller to answer each request once; echoing the step in request and answer would make a
+  stray answer stale by construction. A full-speed hub gets hub fields and possibly the MTT flag, which FreeBSD
+  sets only at high speed (`controller/xhci.c:2662-2690`).
+* [Medium] USB, the bus core's exploration cost (`test/erlang/erx_usb_bus_core_tests.erl`): with the descriptor
+  steps and the address settle's deadline one eunit run of the module takes about 295 s on the M-series
+  development host (21 s before the steps), and the host test runs it once per seeded fault. Find a sound
+  reduction (the settle's deadline and a device's requests commute with other hubs' work) or move the deeper
+  depth off the landing gate.
 * [Medium] USB, the bus core's attempts (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
   the design's bound of 3 enumeration attempts on a port in 60 s is not kept; every connection change starts a
   new attempt, so a device that toggles its connection costs an Enable Slot each time. State stays bounded.
@@ -7291,7 +7308,7 @@ document's "residual risks accepted" paragraph.
   Pi 4's DWC2 is the USB-C power connector's, so it comes after Track U's parts
   ([plan.md](docs/plan.md#track-u-usb-proposed)); its design keeps the three rules the USB design records.
 * [Low] USB, SuperSpeed hubs ([design-usb.md](docs/design-usb.md#outside-this-design)): the bus core gives up a
-  hub configured at SuperSpeed (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
+  hub at SuperSpeed at its device descriptor (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
   design of its own, with the VL805's bulk-out burst quirk for mass storage behind such a hub that the design lists
   beside it.
 * [Low] apps, [design-packaging.md](docs/design-packaging.md#the-apps-row): a setting for the apps group's

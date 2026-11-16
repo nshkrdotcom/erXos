@@ -112,6 +112,21 @@ the_fixtures_decode_to_their_interfaces_and_endpoints_test() ->
 
 %% The design's seed: bytes past wTotalLength, here an interface the claim would take,
 %% are never walked.
+%% The device descriptor's first 8 bytes give bMaxPacketSize0 alone; a configuration's
+%% header gives wTotalLength, bounded as the whole configuration's is.
+the_heads_give_ep0s_packet_and_the_configurations_length_test() ->
+    ?assertEqual({ok, 64}, erx_usb_desc:device_head(binary:part(device(0, 0, 0), 0, 8))),
+    ?assertEqual({ok, 64}, erx_usb_desc:device_head(device(0, 0, 0))),
+    ?assertEqual({error, malformed_descriptor}, erx_usb_desc:device_head(binary:part(device(0, 0, 0), 0, 7))),
+    ?assertEqual({error, malformed_descriptor}, erx_usb_desc:device_head(<<8, 1, 0:48>>)),
+    Keyboard = boot_keyboard(),
+    <<_:2/binary, Total:16/little, _/binary>> = Keyboard,
+    ?assertEqual({ok, Total}, erx_usb_desc:configuration_length(binary:part(Keyboard, 0, 9))),
+    ?assertEqual({error, malformed_descriptor}, erx_usb_desc:configuration_length(binary:part(Keyboard, 0, 8))),
+    ?assertEqual({ok, 4096}, erx_usb_desc:configuration_length(<<9, 2, 4096:16/little, 0:40>>)),
+    ?assertEqual({error, descriptor_too_long}, erx_usb_desc:configuration_length(<<9, 2, 4097:16/little, 0:40>>)),
+    ?assertEqual({error, malformed_descriptor}, erx_usb_desc:configuration_length(<<9, 2, 8:16/little, 0:40>>)).
+
 the_walk_stops_at_wtotallength_test() ->
     Vendor = configuration([interface(0, 0, 16#ff, 0, 0)]),
     Trailing = iolist_to_binary([interface(1, 0, 3, 1, 1), hid(63), endpoint(16#82, 3, 8, 10)]),

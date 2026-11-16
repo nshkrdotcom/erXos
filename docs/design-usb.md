@@ -1308,7 +1308,7 @@ only the other ways out:
 | `recovering` | FreeBSD's 20 ms reset recovery, holding the turn | the deadline: `enumerating` |
 | `enumerating` | the device is addressed, read and configured; the turn is released when the address is assigned or the attempt fails | configured: `running`; any failure: `disabling` |
 | `disabling` | given up while its device may still be enabled: the occupant detached, the port being disabled at its hub; holding the turn if it, or a port below the hub on it, held it when given up | the hub's answer: `disabled` |
-| `running` | the device's functions run | the port reported disabled by its hub: detach, `disabled`; a hub whose control pipe fails or that is configured at SuperSpeed: `disabling` |
+| `running` | the device's functions run | the port reported disabled by its hub: detach, `disabled`; a hub whose control pipe fails: `disabling` |
 | `disabled` | given up; the port's last failure and its step are kept | none: only a connection change, and not before the port's attempts allow ([What a device can make the domain spend](#what-a-device-can-make-the-domain-spend)) |
 
 Every port is reset before its device is addressed, a USB 3 root port
@@ -1353,14 +1353,18 @@ event:
    process](#the-controller-process), "A failed address"), and the turn
    is released only on that answer, so the translator serves no other
    device's enumeration before its buffer is clear.
-2. **Device descriptor.** The first 8 bytes, with EP0's packet size at
-   its speed's default: 8 at low speed, 64 at high speed and 512 at
-   SuperSpeed, "the only packet sizes allowed" there, and 8 at full
-   speed, where the descriptor's `bMaxPacketSize0` decides (xHCI 4.3,
-   p. 85; FreeBSD's `USB_MAX_IPACKET`, `usb.h:70`). When the value
-   differs, an Evaluate Context updates EP0 (xHCI 4.8.2.1, p. 161: a
-   SuperSpeed device's value is the exponent of its size). Then all 18
-   bytes.
+2. **Device descriptor.** EP0 starts at its speed's packet size: 8 at
+   low speed, 64 at high speed and 512 at SuperSpeed, "the only packet
+   sizes allowed" there, and 8 at full speed, where the descriptor's
+   `bMaxPacketSize0` decides (xHCI 4.3, p. 85; FreeBSD's
+   `USB_MAX_IPACKET`, `usb.h:70`). So only a full-speed device has its
+   first 8 bytes read first, as `usbd_setup_device_desc` does
+   (`usb_request.c:1984-2026`), and when `bMaxPacketSize0` is not 8 an
+   Evaluate Context updates EP0 (xHCI 4.8.2.1, p. 161); a value other
+   than a power of two from 8 to `usb_ep0_packet_full_max`, the sizes
+   FreeBSD's fallback tries (`usb_request.c:1998-2011`), refuses the
+   device. Then all 18 bytes, which every other device has read at once.
+   A hub at SuperSpeed is refused here (`superspeed_hub`).
 3. **Strings.** The language table, then the manufacturer, product and
    serial strings in the table's first language whose primary language
    is English, its low byte 09h under the mask 00ffh, and in its first
@@ -1373,9 +1377,11 @@ event:
 5. **Claim.** `erx_usb_claim:functions/3`.
 6. **Configure.** SET_CONFIGURATION with the first configuration's value.
 7. **Hub setup**, for a hub only: SET_INTERFACE to alternate setting 1 on
-   a multi-TT hub; then the hub descriptor, first at the length that
-   describes one port and again whole when it names 8 ports or more, as
-   `uhub_attach` reads it (`usb_hub.c:1262-1300`). The slot's hub fields
+   a multi-TT hub; then the hub descriptor's 7-byte head,
+   `usb_hub_descriptor_head`, which holds every field the stack reads;
+   `uhub_attach` reads it again whole for 8 ports or more
+   (`usb_hub.c:1262-1300`) for the port bitmaps after it, which erXos
+   does not use. The slot's hub fields
    need it: xHCI's Configure Endpoint takes the hub flag, the port count
    from `bNbrPorts`, the think time from `wHubCharacteristics` and the
    multi-TT flag only once the multi-TT interface has been selected
@@ -2838,7 +2844,7 @@ targeted traces carry the longer sequences.
 
 | Test | Passes when | Seeded fault that must fail it |
 | --- | --- | --- |
-| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, and a chain of six hubs | every enabled slot belongs to a device that is enumerating, running or in teardown; after a detach the device's reference and places are gone; at most one port holds the address-zero turn, and a failed Address Device keeps it until the controller's answer; a connection change on an occupied port detaches before anything else; per hub at most one bitmap is unhandled; a function is started again only after every one of its pipes answered its reset; a hub function's restart changes no port whose status agrees with its state; no reset names a port that is `off` or `empty`; Address Device's root port and route are the device's place and name at most five tiers; a hub more than five tiers below the root is never sent a power-on; at most one simulated device is enabled and not yet addressed | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted |
+| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, and a chain of six hubs | every enabled slot belongs to a device that is enumerating, running or in teardown; after a detach the device's reference and places are gone; at most one port holds the address-zero turn, and a failed Address Device keeps it until the controller's answer; a connection change on an occupied port detaches before anything else; per hub at most one bitmap is unhandled; a function is started again only after every one of its pipes answered its reset; a hub function's restart changes no port whose status agrees with its state; no reset names a port that is `off` or `empty`; Address Device's root port and route are the device's place and name at most five tiers, and a translator it names is the hub's slot and the device's port; each device sees exactly its kind's requests and commands in the enumeration's order, every setup packet as chapter 9 writes it, before its functions start; a hub more than five tiers below the root is never sent a power-on; at most one simulated device is enabled and not yet addressed | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted |
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | the first report names the hub and every port; exactly one transfer posted or one bitmap unhandled until the function stops; every reported set is a non-empty ordset of the hub and ports within the count; bit *n* is port *n* and bits above the count are ignored; a hub port's speed follows the hub's speed | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | Reset Endpoint is issued only for a halted queue; a halt is reset once; EP0 is never in a drop or an add; an aborted control request is answered `timeout` only after Stop Endpoint and a Set TR Dequeue Pointer to the enqueue position, and EP0 then accepts the next request; a failed Address Device behind a translator with a USB Transaction Error is answered only after Disable Slot and CLEAR_TT_BUFFER, and a failed clear answers `tt_clear`; Disable Slot follows only stops that answered; new posts are refused while a reset runs | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer |
 | `erx_device_trb`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a buffer returns only by the event that completes its transfer or by a command after which the controller holds nothing of its ring; a short data stage leaves its transfer posted until the status event; a stop's event at every place of Table 4-2 is accepted and completes nothing: after the completion of the TD it names, at a link inside a TD and between two, inside a control transfer's data stage, at the enqueue position of an idle ring and across the ring's wrap; a second event for one stop breaks the form; the enqueue position is never a link TRB; every ring has its pad; every address a plan writes lies in the record; every decision passes `erx_device_dma_check`; every built context has no streams | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; Disable Slot accepted with a queue running; the TRB pointer's range check removed |

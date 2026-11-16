@@ -40,8 +40,8 @@ class ErxUsbDescTest < Minitest::Test
 
   SEEDS = [
     Seed.new(fault: 'the walk run over the bytes received instead of wTotalLength', file: DESC,
-             anchor: '<<_:Length/binary, Body:(Total - Length)/binary, _Unread/binary>> = Bytes,',
-             replacement: '<<_:Length/binary, Body/binary>> = Bytes,',
+             anchor: 'Body:(Total - ?ERX_USB_CONFIGURATION_DESCRIPTOR_SIZE)/binary, _Unread/binary>> = Bytes,',
+             replacement: 'Body/binary>> = Bytes,',
              catching_case: 'the_walk_stops_at_wtotallength_test'),
     Seed.new(fault: 'the second definition of an interface setting kept over the first', file: DESC,
              anchor: 'check(not is_map_key(Key, Settings), duplicate_interface),',
