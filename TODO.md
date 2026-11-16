@@ -4520,16 +4520,20 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   process: the relay is one registered process per session, while
   [design-live.md](docs/design-live.md) ("The tty") has such a master ask the relay for a tty of its own,
   which the relay's design does not provide.
+* [Medium] session, the console's reads of the relay (`erlang/apps/erx/src/erx_console.erl`, `read_for_ask/2`):
+  a process of the session's domain that sets the tty raw with `VMIN` 0 and `VTIME` 0 (an open's
+  `tcsetattr` with SIGTTOU ignored) makes the console's one-byte watch ready at once and its read answer
+  `{ok, <<>>}`, which `read_for_ask/2` has no clause for, so the console crashes and the line's shells
+  end. Watching again would spin; the console should not watch while such a setting holds, or read
+  through a mode of its own.
 * [Medium] session, the console's reads of the relay (`erlang/apps/erx/src/erx_console.erl`, `reader()`):
-  (1) The design answers a read's `eof` to the group as `{read, Ref, eof}`; the console takes it as
-  the hangup instead (no group is told, so the Erlang shell does not halt the runtime), which holds only
-  while the editing setting leaves `ICANON` clear; settle one meaning in the design. (2) The console-read
-  cases and seeded faults the design's Verification lists beyond the six in
+  (1) The console-read
+  cases and seeded faults the design's Verification lists beyond the seven in
   `test/erlang/erx_console_reads_tests.erl` (reads per ask, held bytes across a signal, one held set per
   group, an interrupt queued before a read, one ask through blink and interrupt, a late event) are not
-  written, and the interrupt case does not pin that the group keeps its ask. (3) The ask, report, read and
+  written, and the interrupt case does not pin that the group keeps its ask. (2) The ask, report, read and
   event decisions are effects in the console; a pure core returning actions would let them be tested
-  without a relay. (4) After the relay gives up its name at a halt, a group's ask makes the console's call
+  without a relay. (3) After the relay gives up its name at a halt, a group's ask makes the console's call
   exit `noproc`.
 * [Medium] session, terminal relay core (`erlang/apps/erx_session/src/erx_session_relay_core.erl`):
   (1) The exploration checks safety only, and its alphabets leave out close, hangup, `tcsetattr`, timers and

@@ -13,12 +13,15 @@ require_relative '../fixtures/erlang_build'
 # the tree's group.erl loaded in place of stock's. `user` is erx_test_user, so no group
 # runs stock's code when the tree's is loaded. The seeded faults: stock's group, which
 # never asks its driver for input in a shell's group (edit 72 of design-runtime.md),
-# and a relay core that tells the console nothing at a hangup.
+# a relay core that tells the console nothing at a hangup, and a console that takes a
+# read's end of file as the hangup.
 class ErxConsoleReadsTest < Minitest::Test
   CASES = %w[test/erlang/erx_test_user.erl test/erlang/erx_console_reads_tests.erl].freeze
   GROUP = 'otp/lib/kernel/src/group.erl'
   CORE = 'erlang/apps/erx_session/src/erx_session_relay_core.erl'
   NOTICE = '{[{send, Console, erx_console_eof} | Ready]'
+  CONSOLE = 'erlang/apps/erx/src/erx_console.erl'
+  SWALLOWED = 'eof -> {noreply, watch(drop_held(Group, State))}'
   DEADLINE = '120'
   LOAD_GROUP = 'code:unstick_mod(group), {module, group} = code:load_abs("group"), '
 
@@ -40,6 +43,14 @@ class ErxConsoleReadsTest < Minitest::Test
     output, status = eunit(LOAD_GROUP, replaced: { CORE => source.sub(NOTICE, '{Ready') })
     refute status.success?, output
     assert_match(/a_hangup_with_no_read_outstanding_ends_the_console_test\S*\.\.\.\*failed\*/, output)
+  end
+
+  def test_a_console_that_hangs_up_at_a_reads_eof_fails
+    source = File.binread(File.join(ErlangBuild::ROOT, CONSOLE))
+    flunk "#{CONSOLE} no longer holds #{SWALLOWED.inspect}" unless source.include?(SWALLOWED)
+    output, status = eunit(LOAD_GROUP, replaced: { CONSOLE => source.sub(SWALLOWED, 'eof -> hang_up(State)') })
+    refute status.success?, output
+    assert_match(/an_end_of_file_on_a_read_ends_no_shell_test\S*\.\.\.\*failed\*/, output)
   end
 
   private

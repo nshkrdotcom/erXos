@@ -1395,7 +1395,7 @@ stopped, as FreeBSD's do.
   the master's hangup it sends the console `erx_console_eof`, once, the
   permanent end of the line, whether or not a read is outstanding, before
   the waits the hangup readies; the console ends every shell on the line
-  at it.
+  at it. A read's `eof` is that read's end of file and never the hangup.
 * The runtime's writers reach it through `erx_tty_owner`:
   `erlang:display_string/2`, `erlang:display/1`, `standard_error` and a
   normal halt.
@@ -1708,9 +1708,14 @@ holds the session's authority anyway (SH1).
   the next character (`read.c:325-331`). When the byte completes
   nothing, as for the first byte of `é`, the ask stays outstanding and
   the console watches again. A read
-  answered `eagain` sends it back to watching, and an end of file is
-  answered `{Console, {read, Ref, eof}}`, which ends the ask and drops
-  what the console holds for the group. Each of the line discipline's signals that names
+  answered `eagain` sends it back to watching. An end of file, which a
+  read finds when a background program has set `ICANON` and `VEOF` is
+  typed at a line's start, or after a hangup before the console has
+  taken the notice, is that read's end and never the hangup,
+  which the relay tells with `erx_console_eof`: the console takes it as
+  a read that found nothing, answers no ask, drops what it holds for
+  the group and watches again, so no group sees an end of file and no
+  shell ends at it. Each of the line discipline's signals that names
   a group, `interrupt`, `suspend` and `quit` alike, drops what the
   console holds for that group, since the signal flushed the tty's input
   typed with it, and leaves the ask outstanding, as libedit's
@@ -2887,6 +2892,11 @@ remain independent of catalog generation.
     evaluates: every shell on the line and the console end at once.
     Seeded: a relay that sends the console no `erx_console_eof`, whose
     shells live on.
+  * An end of file on a read: a background program sets `ICANON` with
+    `SIGTTOU` ignored, `Ctrl-D` is typed at a line's start while the
+    shell reads, and then `x\n`; the shell gets `x\n`, and no shell nor
+    the console ends. Seeded: a console that takes a read's `eof` as
+    the hangup, which ends them.
 * **The job table and the terminal.** EUnit cases of the job table's core,
   which returns the `foreground` requests and job effects it decides, in
   the order it decides them; the table counts each signal it takes, and

@@ -19,7 +19,7 @@
 %%
 %% Modified by erXos: the driver's suspend (Ctrl-Z) and window-size change
 %% (winch) reach the shell; the group has one ask for input outstanding at
-%% most (ask/1), which the driver answers with {read, Ref, Chars | eof}.
+%% most (ask/1), which the driver answers with {read, Ref, Chars}.
 %%
 %% %CopyrightEnd%
 %%
@@ -488,10 +488,9 @@ ask(Data) ->
     Data.
 
 %% Handle the info messages that needs to be managed in all states
-handle_info(State, {Drv, {read, Ref, eof}}, Data = #state{ driver = Drv, ask = Ref }) ->
+handle_info(State, {Drv, {read, Ref, Chars}}, Data = #state{ driver = Drv, ask = Ref })
+  when is_list(Chars); is_binary(Chars) ->
     %% erXos: the answer to the outstanding ask ends it.
-    ?MODULE:State(data, eof, Data#state{ ask = none });
-handle_info(State, {Drv, {read, Ref, Chars}}, Data = #state{ driver = Drv, ask = Ref }) ->
     ?MODULE:State(data, Chars, Data#state{ ask = none });
 handle_info(State, {Drv, {data, Buf}}, Data = #state{ driver = Drv }) ->
     ?MODULE:State(data, Buf, Data);

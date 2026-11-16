@@ -90,6 +90,25 @@ a_hangup_with_no_read_outstanding_ends_the_console_test() ->
                          receive {'DOWN', Ref, process, Console, normal} -> ok after ?WAIT_MS -> error(console_lives) end
                  end).
 
+%% A background program that sets ICANON, with SIGTTOU ignored, makes VEOF at a line's
+%% start an end of file for the console's read. That is the read's end and no hangup:
+%% the console answers no ask, no shell ends, and the next line is read through the
+%% same ask.
+an_end_of_file_on_a_read_ends_no_shell_test() ->
+    with_console(fun(Relay, Shell) ->
+                         Console = persistent_term:get({erx_console, line}),
+                         {ok, Open} = erx_session_relay:open_writer(background),
+                         {ok, #{lflag := L} = Termios} = erx_session_relay:tty(Open, tcgetattr),
+                         Canonical = Termios#{lflag := [icanon | L -- [icanon]]},
+                         ok = erx_session_relay:tty(Open, {tcsetattr, Canonical, sigttou_ignored}),
+                         Shell ! {get_line, self()},
+                         type(Relay, <<4>>),
+                         type(Relay, <<"x\r">>),
+                         ?assertEqual("x\n", line()),
+                         ?assert(is_process_alive(Shell)),
+                         ?assert(is_process_alive(Console))
+                 end).
+
 %%% The console, the relay and the stand-in shell
 
 with_console(Case) ->

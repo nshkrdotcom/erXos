@@ -618,12 +618,12 @@ info(erx_console_eof, State = #state{role = session}) ->
     hang_up(State);
 info({ready, Open, [{read, 1}], N}, State = #state{reader = Reader = #{open := Open}}) ->
     read_for_ask(N, State#state{reader = Reader#{watching := false}});
-info({erx_tty_event, Group, Event}, State = #state{reader = Reader = #{held := Held}})
+info({erx_tty_event, Group, Event}, State = #state{reader = #{held := _}})
   when Event =:= interrupt; Event =:= suspend; Event =:= quit ->
     %% A signal the line discipline made while Group was the console's current group
     %% flushed the tty's input typed with it, so the bytes held for Group go, and
     %% Group's ask stays outstanding. Only a group of this console's is acted on.
-    State1 = State#state{reader = Reader#{held := maps:remove(Group, Held)}},
+    State1 = drop_held(Group, State),
     [signal(Event, Group, State1) || is_pid(Group), is_group(Group, State1)],
     {noreply, State1};
 info({erx_tty_event, _Group, _Event}, State) ->
@@ -1339,17 +1339,23 @@ watch(State) ->
     State.
 
 %% The watch's report, numbered N: one byte is read for the current group's ask, if it
-%% has one; otherwise the byte stays in the tty until a group asks. A read that finds
-%% no byte after a hangup is the end of the line, since the editing setting leaves
-%% ICANON clear and so no key reads as an end of file.
+%% has one; otherwise the byte stays in the tty until a group asks. An end of file, VEOF
+%% at a line's start while a background program left ICANON set, is that read's end and
+%% never the hangup, which the relay tells with erx_console_eof: it is a read that found
+%% nothing, so the ask stays outstanding and the bytes held for the group go.
 read_for_ask(N, State = #state{reader = #{open := Open, asks := Asks}}) ->
     Group = current(State),
     case is_map_key(Group, Asks) andalso erx_session_relay:read(Open, 1, N) of
         false -> {noreply, State};
         {ok, <<Byte>>} -> {noreply, watch(answer(Group, Byte, State))};
         eagain -> {noreply, watch(State)};
-        eof -> hang_up(State)
+        eof -> {noreply, watch(drop_held(Group, State))}
     end.
+
+%% The bytes held for Group go: a signal flushed the input typed with them, or a read
+%% found the end of file.
+drop_held(Group, State = #state{reader = Reader = #{held := Held}}) ->
+    State#state{reader = Reader#{held := maps:remove(Group, Held)}}.
 
 %% Byte, read for Group's ask, joins the bytes held for Group: what they complete ends
 %% the ask, and what they leave incomplete stays held for Group's next ask.
