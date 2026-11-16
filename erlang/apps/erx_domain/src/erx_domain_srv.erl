@@ -157,6 +157,8 @@ start_link(Opts) ->
 init(Opts) ->
     process_flag(trap_exit, true),
     Lib = library(maps:get(lib, Opts, erx_domain_lib)),
+    %% The code_objects service is the domain service's own (code_objects_row/0).
+    ok = erx_facet:serve(code_objects, self()),
     case principals(Lib, Opts) of
         {ok, Principals} ->
             {ok, booted(state(Lib, Principals, Opts)), {continue, boot}};
@@ -374,6 +376,13 @@ handle_call({inspect_view, Scope}, _From, #{core := Core} = State)
 handle_call(mints, _From, #{mints := Mints, mint_counts := Counts} = State) ->
     %% Each grant's state, configured and per session, and how many of each refusal and drop were counted.
     {reply, #{grants => erx_domain_mints:grants(Mints), counts => Counts}, State};
+%% A session's code objects, which its code_objects facet forwards with the session it was
+%% minted for (erx_code_objects_facet): the library answers, and refuses a number that is
+%% not that session's.
+handle_call({code_object, Session, Size}, _From, #{lib := Lib} = State) ->
+    {reply, Lib:code_object(Session, Size), State};
+handle_call({code_drop, Session, Number}, _From, #{lib := Lib} = State) ->
+    {reply, Lib:code_drop(Session, Number), State};
 handle_call(_Request, _From, State) ->
     {reply, {error, badarg}, State}.
 
@@ -964,6 +973,8 @@ system_facet(log, {message, Behind, Limits}, _Principal, _State) ->
     %% docs/design-log.md, "The log facet": Behind is erx_syslog_sup, and the callback
     %% finds erx_syslog at each request.
     {facet, erx_log_facet, Behind, Limits};
+system_facet(code_objects, {message, Behind, Limits}, _Principal, _State) ->
+    {facet, erx_code_objects_facet, Behind, Limits#{behind => Behind}};
 system_facet(_Name, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_domain_facet, Behind, Limits#{behind => Behind}};
 system_facet(machine, {files, Grants, Limits}, Principal, #{principals := #{system := System}} = State) ->
@@ -1052,9 +1063,16 @@ mint_files(Id, DomainPid, Name, Grant, Exports) ->
 served({configured, Row}, _Domain, #{served := Served}) ->
     served(Row, maps:get(Row, Served, []));
 served({session, _Template}, #{rows := Rows}, #{files := Files}) ->
-    served(session, [{Name, served_kind(Name, Files), Limits} || {Name, system, Limits} <- Rows]);
+    served(session, [code_objects_row() | [{Name, served_kind(Name, Files), Limits} || {Name, system, Limits} <- Rows]]);
 served(request, _Domain, _State) ->
     #{}.
+
+%% The code_objects facet every session holds, by the domain service's own policy and with
+%% no facet row (docs/design-system.md, "Creating a domain", "The code_objects facet"): a
+%% request is a create or a drop of a few words, so max_request is small, and in_flight
+%% lets a session's command server fill a few programs' objects at once.
+code_objects_row() ->
+    {code_objects, message, #{max_request => 256, in_flight => 4}}.
 
 %% The names of the facets of configured domains the manifest grants a domain of
 %% Origin: its row's, or a session's own rows, and no other domain's; none for a domain

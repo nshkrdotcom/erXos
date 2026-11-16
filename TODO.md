@@ -152,8 +152,12 @@ it; git history is the record of completed work.
   `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this
   lands. Also needs the stopgap backend's `erx_mem_child`, an eager copy (design-stopgap.md, the call
   table). The session asks for code objects through the `code_objects` facet
-  (`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which every session gets
-  by the domain service's own policy and which is not declared yet; the command server's holds (fill, start,
+  (`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which the domain service
+  grants every session by its own policy and forwards to `erx_domain_lib:code_object/2` and `code_drop/2`;
+  those answer `enotsup`, since the domain library has no `erx_dom_code_object` or `erx_dom_code_drop` over
+  `erx_mem_create_paged`, no per-session table bounded at `code_objects_max`, and no close of a session's
+  code-object handles at its retire. The facet's decoder (`erx_code_objects_facet:decode/1`) has EUnit cases
+  but no fuzz target. The command server's holds (fill, start,
   row) decide every drop (design-programs.md, "Holds and drops"). Links: a package mount answers `enotsup`
   for a link inode, since a package holds no links (design-storage.md, "Reading EROFS images"), but today
   the reader checks only the header's text (`relative_path`) and only the host packer refuses links, so the
