@@ -2087,6 +2087,10 @@ writes in Erlang form the `erx_files` application
 
 ```erlang
 -callback init(Args :: term()) -> {ok, Fs :: term()}.
+%% A tree whose grants a facet row's `tree` (abi/services/files.txt) may root within it:
+%% the init Args of a grant rooted at the root Tree names. erx_fs_grants asks it before
+%% such a grant starts, and a tree without it starts no grant whose row states a tree.
+-callback subtree(Args :: term(), Tree :: atom()) -> {ok, Args1 :: term()} | {error, einval}.
 %% The tree the grant roots in: its name, which attach's Aname must match, and its root.
 -callback root(Fs :: term()) -> {ok, Tree :: binary(), Node :: term(), qid()}.
 -callback walk(Node :: term(), Name :: binary(), Fs :: term()) ->
@@ -2135,7 +2139,7 @@ writes in Erlang form the `erx_files` application
               ok | {error, file:posix()}.
 -callback xattr(Node :: term(), Op :: xattr_op(), Fs :: term()) ->
               {ok, term()} | {error, file:posix()}.
--optional_callbacks([forget/2, readlink/2, write/4, make/4, setattr/3,
+-optional_callbacks([subtree/2, forget/2, readlink/2, write/4, make/4, setattr/3,
                      unlink/4, rename/5, fsync/2, xattr/3]).
 
 -type what() :: {file, Mode :: 0..8#7777, Flags :: non_neg_integer()}

@@ -16,7 +16,8 @@ before it takes a request: the supervisor that starts it waits for no mount, and
 request that comes first waits in the mint's queue.
 
 For each mint request in the system domain's envelope (mint_request/3) it starts one
-erx_fs grant of the service's tree, with the facet row's rights, whose client is the
+erx_fs grant of the service's tree, with the facet row's rights and rooted where its
+tree says (erx_fs_grants), whose client is the
 grantee's domain id, so the grant takes frames only in that domain's envelope and with
 that domain's names (erx_fs_grant, S9). The grant exports itself to the grantee, with
 `send` alone, before its start returns, so no answer names a grant the grantee cannot
@@ -28,7 +29,8 @@ long as this domain, whose link to the system domain is its own.
 
 The grants run under erx_fs_grants, a supervisor of temporary children that the mint
 starts linked to itself, so the end of a grant ends nothing else, while the mint's end,
-and so the tree's, ends every grant. erx_fs_grants applies the facet row's limits and rights.
+and so the tree's, ends every grant. erx_fs_grants applies the facet row's limits, rights
+and tree.
 """.
 
 -export([start_link/3, mint_request/3, grant/5]).

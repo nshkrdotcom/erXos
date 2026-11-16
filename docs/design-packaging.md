@@ -452,9 +452,9 @@ board's source does not hold and the build record lists:
   `windows_pixels_default`, `abi/services/files.txt` gives `rights` the
   default `rw`, `net` declares no parameter, and each of the three
   declares the five quantities. A service of the files interface is
-  refused until the storage service's `tree` parameter exists, since
-  without `tree apps` its grant would reach the whole tree rather than
-  the app's own directory.
+  refused until the data partition's storage service roots a grant at
+  `tree apps`, since without it its grant would reach the whole tree
+  rather than the app's own directory.
   A row of the data partition's storage service carries the parameter
   `tree apps`, which roots its grants among the app directories ([Where
   an app's files lie](#where-an-apps-files-lie));
@@ -473,8 +473,8 @@ board's source does not hold and the build record lists:
 * **the `system` rows**: the system domain's grant of the service named
   `system_service` (`abi/manifest.txt`), the `system` tree, `rights ro`,
   and the app template's, `rights rx`, each with the files interface's
-  quantities, in a manifest that holds that service; one without a
-  `system` window holds none (property 19), and so its apps row names no
+  quantities; a manifest with an `apps` row holds that service, and so a
+  `system` window (property 19), so every app's session holds its
   `system` row. The app template's two grants are `rx` because its
   session runs its package's code from `/app`, which is mounted through
   one of them, and an EROFS mount is `rx` only through an `rx` grant,
@@ -601,12 +601,15 @@ the packages are well formed**, beside the eighteen of
 7. no facet row of the board's source is granted to the app template,
    carries `tree apps` or `tree installed`, or names the `apps` service: only the rows the
    build derives do;
-8. the manifest holds at most one service named `system_service`, of
-   the files interface, and its server is the holder of the manifest's
-   `system` window ([design-storage.md](design-storage.md#the-system-tree)),
-   so the domain that mints the tree's grants is the one whose block
-   driver serves its partition; no facet row of the board's source names
-   it, since only the derived `system` rows do.
+8. the manifest holds one service named `system_service`, of the files
+   interface, exactly when it has a `system` window, and its server is
+   the holder of that window
+   ([design-storage.md](design-storage.md#the-system-tree)), so the
+   domain that mints the tree's grants is the one whose block driver
+   serves its partition; a manifest with an `apps` row holds the service,
+   so the build derives the `system` rows every app's session mounts its
+   image package through; no facet row of the board's source names it,
+   since only the derived `system` rows do.
 
 Each clause has a seeded violation: a check that counts the app template
 once in property 18, which admits a row whose apps together pass the
@@ -615,8 +618,9 @@ rows pass 256; `apps` in `services`; `etc` in `services`; a service
 in `services` whose ABI file gives a parameter no default; two enabled packages whose memory
 passes the `apps` budget; a `package` row whose declaration needs a
 service the row lacks; a configured domain's `data` row carrying `tree
-apps`; a `system_service` served by a domain that does not hold the
-`system` window; a source facet row of `system_service`.
+apps`; an `apps` row in a manifest with no `system_service`; a
+`system_service` served by a domain that does not hold the `system`
+window; a source facet row of `system_service`.
 
 ### The declaration
 
@@ -1088,8 +1092,7 @@ against its table. The boot view checks once, as it reads an untrusted
 manifest, that `app_template` is the session row naming no principal, the
 last, and that each of those facet rows is granted to that template for
 its service, `packages_facet` for the service named `packages_service`
-and `system_facet` for the one named `system_service`, `0xffffffff`
-exactly when the manifest holds no such service, and that the
+and `system_facet` for the one named `system_service`, and that the
 template holds no other facet row, so an app's session
 reaches only the services the `apps` row names.
 `erx_pkg_manifest` reads the indices and searches for nothing, so the

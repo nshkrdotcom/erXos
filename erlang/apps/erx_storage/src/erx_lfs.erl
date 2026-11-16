@@ -38,12 +38,18 @@ volume afresh, so no write of the failed volume can race a later one.
 (docs/design-storage.md, "Interfaces"), each a files service of its name:
 `data`, the whole volume, and `packages`, the volume's `packages/` directory
 of installed app packages (docs/design-packaging.md, "Where a package
-lies"). tree_root/1 is the one table of them. A grant names its tree in
-init/1 and roots there, and nothing it sends names a node above that root:
+lies"), which holds `installed/`, the packages whose checks passed, apart
+from any upload in progress. A grant of a tree roots at the tree's root, or,
+when its facet row states the files interface's `tree` (erx_fs_grants,
+subtree/2), at the root that `tree` names within it: `installed`, the
+packages tree's `installed/`, where the app template's grant roots.
+tree_root/1 is the one table of the roots. A grant names its root in init/1
+and roots there, and nothing it sends names a node above that root:
 the grant answers `..` itself, staying at its root (erx_fs_grant), and every
 path the owner makes extends a node the grant already holds by one name that
-is neither `.` nor `..` (child/2). The mount makes each tree's directory the
-volume lacks; one it cannot make is logged and costs only its own tree, whose
+is neither `.` nor `..` (child/2). The mount makes each root's directory the
+volume lacks, each after the one it lies within; one it cannot make is
+logged and costs only the grants rooted there, whose
 requests then fail, never the volume or the `data` tree.
 
 Nodes are paths from the volume's root, `<<"/">>` and `<<"/a/b">>`, and a
@@ -64,7 +70,7 @@ only on a request that carries the reference.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/2, owner/1, worker/2, trees/0]).
+-export([start_link/2, owner/1, worker/2, trees/0, subtree/2]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4, statfs/1,
          clunk/2, write/4, make/4, setattr/3, unlink/4, rename/5,
          fsync/2]).
@@ -243,12 +249,13 @@ done(Result, #owner{busy = {Alias, Then}} = State) ->
 reply(mount, _Reply) -> ok;
 reply(Alias, Reply) -> erlang:send(Alias, {?MODULE, Alias, Reply}).
 
-%% The worker's mount: the volume, then each tree's directory it lacks. Only the
-%% volume's own mount decides the answer: a directory that cannot be made, on a
-%% full volume say, is logged and leaves its tree failing its requests.
+%% The worker's mount: the volume, then each root's directory it lacks, in
+%% roots/0's order, so a root's parent is made first. Only the volume's own
+%% mount decides the answer: a directory that cannot be made, on a full volume
+%% say, is logged and leaves the grants rooted there failing their requests.
 mount(Vol) ->
     case erx_littlefs:mount(Vol) of
-        ok -> make_roots(Vol, [tree_root(Tree) || Tree <- trees(), tree_root(Tree) =/= ?ROOT]);
+        ok -> make_roots(Vol, [Root || {_Service, Root} <- [tree_root(At) || At <- roots()], Root =/= ?ROOT]);
         Error -> Error
     end.
 
@@ -621,25 +628,40 @@ call({Pid, Secret, _Tree}, Request) ->
 -spec trees() -> [atom()].
 trees() -> [data, packages].
 
-%% Where each tree of trees/0 roots in the volume.
-tree_root(data) -> ?ROOT;
-tree_root(packages) -> <<"/packages">>.
+-doc """
+The arguments of a grant of the tree that Args name, rooted at the root that
+Tree, a facet row's `tree` (abi/services/files.txt), names within it, which
+erx_fs_grants asks before it starts the grant: `installed` within `packages`;
+`{error, einval}` for any other, so a row's tree never roots a grant elsewhere.
+""".
+-spec subtree({atom(), atom()}, atom()) -> {ok, {atom(), atom()}} | {error, einval}.
+subtree({Name, packages}, installed) -> {ok, {Name, installed}};
+subtree({_Name, _Tree}, _Subtree) -> {error, einval}.
+
+%% Every root a grant starts from, each after the one it lies within.
+roots() -> trees() ++ [installed].
+
+%% Where each root of roots/0 lies in the volume, with the tree it lies within,
+%% whose files service's name the grant answers at attach.
+tree_root(data) -> {data, ?ROOT};
+tree_root(packages) -> {packages, <<"/packages">>};
+tree_root(installed) -> {packages, <<"/packages/installed">>}.
 
 -doc false.
 init({Name, Tree}) when is_atom(Name) ->
-    _ = tree_root(Tree),
+    {_, _} = tree_root(Tree),
     {Pid, Secret} = persistent_term:get({?MODULE, Name}),
     true = Pid =:= whereis(Name),
     {ok, {Pid, Secret, Tree}}.
 
 -doc false.
 root({_Pid, _Secret, Tree} = Server) ->
-    Root = tree_root(Tree),
+    {Service, Root} = tree_root(Tree),
     case call(Server, {getattr, Root}) of
-        {ok, #{qid := Qid}} -> {ok, atom_to_binary(Tree), Root, Qid};
+        {ok, #{qid := Qid}} -> {ok, atom_to_binary(Service), Root, Qid};
         %% An owner that has ended still roots a tree, whose every
         %% request then answers eio.
-        _ -> {ok, atom_to_binary(Tree), Root, {?ERX_P9_QTDIR, 0, 0}}
+        _ -> {ok, atom_to_binary(Service), Root, {?ERX_P9_QTDIR, 0, 0}}
     end.
 
 -doc false.

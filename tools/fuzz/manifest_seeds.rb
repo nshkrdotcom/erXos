@@ -97,8 +97,9 @@ module Erx
                      codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
-    # The configured domains' manifest with PACKAGE_ROWS, room for the apps row in
-    # max_domains and root_memory, and a development key.
+    # The configured domains' manifest with PACKAGE_ROWS, the system tree the apps row
+    # needs, held by beta, room for the apps row in max_domains and root_memory, and a
+    # development key.
     def packages(source, codec, platform)
       arguments = ManifestContextFixture.arguments(codec)
       artifacts = %w[clock quotes].to_h do |name|
@@ -108,7 +109,8 @@ module Erx
                                                    development_key: "\x07".b * 32)
       roomy = ManifestContextFixture.domain_source(source).sub(/^(  max_domains )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + 2}" }
                                                          .sub(/^(  root_memory )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + 1_048_576}" }
-      Manifest.admit(source: roomy + PACKAGE_ROWS, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
+      source = ManifestContextFixture.with_system_tree(roomy, holder: '@domain.beta') + PACKAGE_ROWS
+      Manifest.admit(source: source, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
     # The platform record config/platforms/NAME.json.

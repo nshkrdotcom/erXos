@@ -7221,6 +7221,17 @@ to the corpus and follow rc
   by copying a trusted key into its header. Such a package shows signer `unchecked`. Development builds run
   trusted code only; a release build must refuse every installed package until the verifier runs, and this
   blocks release.
+* [High] files, the app mount's rights, `erlang/apps/erx/src/erx_ns.erl` (`facet_grant/1`;
+  [design-files.md](docs/design-files.md#building-binding-and-mounting)): `erx_ns` cannot check the
+  rights of the grant an EROFS mount's fid came through, since a 9P client cannot learn a grant's rights,
+  so `{erofs, app}` mounts `rx` without refusing an `ro` or `rw` grant with `eacces` and keeps no grant
+  rights for the image check; that the mount is `rx` only through an `rx` grant (F6 of design-files.md)
+  rests on the manifest alone. Property 19 derives the app template's `system` and `packages` rows
+  `rx` (`app_facets` in `tools/lib/erx/manifest.rb`), the `packages` row with `tree installed`, which
+  roots its grant at `packages/installed/` (`erx_lfs:subtree/2`), so an image or installed package's
+  `/app` goes through an `rx` grant that reaches no upload in progress. What either mount holds is bound by the record's root hash, which
+  the domain service sets. How a client learns a grant's rights is an open question for
+  design-files.md. Development builds run trusted code only; this blocks release.
 * [Low] manifest check, `signer` rows: a signer key of small order, or one that does not
   decode, would accept a seal anyone can make, as design-ssh.md's acceptance rules note for
   login keys. Have property 19's signer clause refuse such a key, with the eight small-order

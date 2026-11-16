@@ -7,10 +7,12 @@ The packages as storage holds them (docs/design-packaging.md, "Where a
 package lies"), the medium erx_pkg_io reads and deletes through, and only
 erx_pkg_io calls it.
 
-* **Installed packages** lie in the data partition's `packages/`
-  directory, which the storage domain serves as the files service
-  `packages`; the system domain reaches it through its grant, mounted at
-  `/packages` (erx_domain_srv), and every request goes through the system domain's
+* **Installed packages** lie in `installed/` of the data partition's
+  `packages/` directory, which the storage domain serves as the files
+  service `packages`; the system domain reaches it through its grant,
+  rooted at `packages/` and mounted at `/packages` (erx_domain_srv), so they
+  lie at `/packages/installed`, where an app's own grant roots, and every
+  request goes through the system domain's
   file client, erx_file_remote, in erx_pkg_io's own process. While the
   grant is not in place the path is the root's and the directory absent,
   which the listing answers as `{error, absent}`.
@@ -28,10 +30,10 @@ every failure is the file client's reason.
 
 -include_lib("kernel/include/file.hrl").
 
--define(INSTALLED, <<"/packages">>).
+-define(INSTALLED, <<"/packages/installed">>).
 
 -doc """
-At most `Max` entries of `packages/` and whether it holds more;
+At most `Max` entries of `packages/installed/` and whether it holds more;
 `{error, absent}` while the packages grant is not in place.
 """.
 -spec list(pos_integer()) -> {ok, [binary()], boolean()} | {error, atom()}.
@@ -68,7 +70,7 @@ pread(Place, File, Offset, Size) ->
             Error
     end.
 
--doc "Delete an entry of `packages/`.".
+-doc "Delete an entry of `packages/installed/`.".
 -spec delete(binary()) -> ok | {error, atom()}.
 delete(File) ->
     file:delete(path(installed, File), [raw]).

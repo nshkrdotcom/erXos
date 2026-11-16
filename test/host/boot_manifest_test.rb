@@ -245,11 +245,13 @@ class BootManifestTest < Minitest::Test
     refute_includes output, '/pl011@9060000'
   end
 
-  # A missing disk is a normal state: a manifest with no block unit, and so no windows and
-  # no system_image row, reads, and has no record.
+  # A missing disk is a normal state: a manifest with no block unit, and so no windows, no
+  # system_image row and no apps row, which needs the system tree (property 19), reads, and
+  # has no record.
   def test_a_manifest_without_the_block_unit_has_no_device_record
-    source = @source.sub(/^unit block\n(?:  .*\n)*/, '').gsub(/^(?:window|image) \w+\n(?:  .*\n)*|^system_image\n(?:  .*\n)*/, '')
-                    .sub(/^service system\n(?:  .*\n)*/, '')
+    source = Erx::Manifest::Edit.without_apps(@source).sub(/^unit block\n(?:  .*\n)*/, '')
+                                                      .gsub(/^(?:window|image) \w+\n(?:  .*\n)*|^system_image\n(?:  .*\n)*/, '')
+                                                      .sub(/^service system\n(?:  .*\n)*/, '')
     refute_equal @source, source
     output, status = read(admitted(source))
     assert status.success?, output

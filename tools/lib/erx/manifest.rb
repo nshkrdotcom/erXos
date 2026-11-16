@@ -1496,7 +1496,7 @@ module Erx
 
       # Property 19's first and seventh clauses; answers the index of each service of the
       # apps row's services, the services the board's sums count max apps holding. No
-      # source facet carries `tree apps`, which only a derived row may. Each name is the
+      # source facet carries a tree, which only a derived row may. Each name is the
       # name of exactly one service of the manifest, none of app_services_refused, of an
       # interface an ABI file declares, which gives every parameter a default (an optional
       # parameter), since an app's row is granted with no parameter stated, and every
@@ -1505,8 +1505,8 @@ module Erx
       # the files interface until the storage service's `tree apps` roots its grant at
       # the app's own directory, by interface, whatever its name.
       def check_apps(tables)
-        invalid('a facet of the source carries tree apps, which only the rows the build derives may', 19, 'facet.parameter') if
-          records('facet').any? { |record| record.parameters.any? { |key, value| key.value == 'tree' && value.value == 'apps' } }
+        invalid('a facet of the source carries a tree, which only the rows the build derives may', 19, 'facet.parameter') if
+          records('facet').any? { |record| record.parameters.any? { |key, _value| key.value == 'tree' } }
         service_rows = tables.fetch('services')
         refused = app_services_refused
         indices = @apps.services.map do |name|
@@ -1545,9 +1545,11 @@ module Erx
 
       # The facet rows the build derives from the apps row (docs/design-packaging.md, "The
       # apps row"), none without one: the system domain's grant of the service named
-      # packages_service, rights rw, the app template's, rights ro; in a manifest holding the
-      # service named system_service, the system domain's grant of it, rights ro, and the
-      # template's, rights rx, from which an app's session mounts its image package at /app
+      # packages_service, rights rw, rooted at the tree's root, and the app template's,
+      # rights rx and tree installed, rooted at installed/, where no upload in progress
+      # lies; the system domain's grant of the service named system_service, rights ro, and
+      # the template's, rights rx; the template's two grants are rx because an app's session
+      # mounts its installed or image package at /app through one of them
       # (design-files.md F6: an rx mount only through an rx grant); and the template's grant
       # of each service of app_services, which states no parameter. Each is named as its
       # service is and takes derived_quantities. Answers each row with its resolved
@@ -1556,16 +1558,12 @@ module Erx
         return [] if @apps == NO_APPS
 
         service_rows = tables.fetch('services')
-        packages_name = @codec.fixed_bytes('packages_service')
-        packages = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == packages_name }
-        invalid("the apps row needs one service named #{packages_name}, of the files interface", 19, 'apps') unless
-          packages.size == 1 && service_rows.fetch(packages.first).fetch('interface') == fetch_interface('files')
+        packages = fetch_files_service(service_rows, 'packages_service', required_by: 'an apps row')
+        tree = fetch_files_service(service_rows, 'system_service', required_by: 'an apps row')
         template = [grantee_kind('session'), tables.fetch('sessions').size - 1]
         system = [grantee_kind('system'), 0]
-        trees = system_service_index(service_rows)&.then do |tree|
-          [[system, tree, { 'rights' => 'ro' }], [template, tree, { 'rights' => 'rx' }]]
-        end
-        [[system, packages.first, { 'rights' => 'rw' }], [template, packages.first, { 'rights' => 'ro' }], *trees,
+        [[system, packages, { 'rights' => 'rw' }], [template, packages, { 'rights' => 'rx', 'tree' => 'installed' }],
+         [system, tree, { 'rights' => 'ro' }], [template, tree, { 'rights' => 'rx' }],
          *app_services.map { |service| [template, service, {}] }].map do |(kind, grantee), service, values|
           row = service_rows.fetch(service)
           { 'name' => row.fetch('name'), 'grantee_kind' => kind, 'grantee' => grantee, 'service' => service,
@@ -1574,15 +1572,17 @@ module Erx
         end
       end
 
-      # The index of the service named system_service, which check_system_service allows at
-      # most once, or nil in a manifest that holds none; property 19's eighth clause
-      # requires it of the files interface, checked here, where app_facets meets it first.
-      def system_service_index(service_rows)
-        name = @codec.fixed_bytes('system_service')
-        service_rows.index { |row| row.fetch('name') == name }&.tap do |index|
-          invalid("the service named #{name} is of the files interface", 19, 'service.interface') unless
-            service_rows.fetch(index).fetch('interface') == fetch_interface('files')
-        end
+      # The index of the one service named by the machine constant name, of the files
+      # interface, which property 19 requires of a manifest with an apps row
+      # (packages_service and system_service, app_facets) and of one with a system window
+      # (system_service, its eighth clause), required_by naming which.
+      def fetch_files_service(service_rows, name, required_by:)
+        bytes = @codec.fixed_bytes(name)
+        named = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == bytes }
+        invalid("a manifest with #{required_by} holds one service named #{bytes}", 19, 'service.name') unless named.size == 1
+        invalid("the service named #{bytes} is of the files interface", 19, 'service.interface') unless
+          service_rows.fetch(named.first).fetch('interface') == fetch_interface('files')
+        named.first
       end
 
       # Property 19's third clause: the start rows and every app's row fit the start table.
@@ -1594,8 +1594,7 @@ module Erx
 
       # The packed apps row and its app_services rows: none without an apps row, and
       # otherwise the row, with the indices of the app template, last among the sessions,
-      # and of its packages and system facet rows, the system row mf_none in a manifest
-      # holding no system_service, and its services, the indices check_apps resolved,
+      # and of its packages and system facet rows, and its services, the indices check_apps resolved,
       # ascending, each with the index of the facet row granted to the template for it.
       # The rows are the ones app_facets derived, found by grantee and service, which no
       # source row shares with them: no source row names the template.
@@ -1603,20 +1602,18 @@ module Erx
         return [[], []] if @apps == NO_APPS
 
         template = tables.fetch('sessions').size - 1
-        packages_name = @codec.fixed_bytes('packages_service')
         facets = tables.fetch('facets')
+        tree = ->(name) { fetch_files_service(tables.fetch('services'), name, required_by: 'an apps row') }
         granted = lambda do |service|
           facets.index do |facet|
             facet.fetch('grantee_kind') == grantee_kind('session') && facet.fetch('grantee') == template &&
               facet.fetch('service') == service
           end
         end
-        packages = tables.fetch('services').index { |row| row.fetch('name') == packages_name }
-        tree = system_service_index(tables.fetch('services'))
         services = service_indices.sort.map { |index| { 'service' => index, 'facet' => granted.call(index) } }
         [[{ 'memory' => @apps.memory, 'max' => @apps.max, 'app_template' => template,
-            'packages_facet' => granted.call(packages),
-            'system_facet' => tree ? granted.call(tree) : @codec.constant('mf_none'),
+            'packages_facet' => granted.call(tree.call('packages_service')),
+            'system_facet' => granted.call(tree.call('system_service')),
             'services' => { 'table' => 'app_services', 'first' => 0, 'count' => services.size } }], services]
       end
 
@@ -1869,14 +1866,15 @@ module Erx
       # check_display_grants, which reads pixels and session, and range-checks windows and
       # clipboard as their declarations bound them; line_grant is property 8's line clause,
       # check_line_grants, which reads uart and flow and range-checks rate; files_grant
-      # takes a files facet's rights, whose member kind alone bounds them to ro, rw and rx,
-      # and which the grant applies at run time. A service declaring a parameter that no
-      # checker here consumes is unusable: no facet of it is admitted, since nothing would
-      # check what it grants. Each checker takes the facets of the services that name it
-      # (grant_checker), whatever their interface.
+      # takes a files facet's rights and tree, whose member kinds alone bound them to their
+      # members, and which the grant applies at run time; property 19 lets only a derived
+      # row state a tree. A service declaring a parameter that no checker here consumes is
+      # unusable: no facet of it is admitted, since nothing would check what it grants.
+      # Each checker takes the facets of the services that name it (grant_checker),
+      # whatever their interface.
       GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze,
                          'line_grant' => %w[uart rate flow].freeze,
-                         'files_grant' => %w[rights].freeze }.freeze
+                         'files_grant' => %w[rights tree].freeze }.freeze
 
       # A facet record's parameters resolved against its service's declarations: every
       # stated key is declared, appears once and has a value of its declared kind within
@@ -2476,17 +2474,21 @@ module Erx
       # manifest with a system window holds exactly one service named system_service,
       # of the files interface, served by the window's holder, so the domain that mints
       # the tree's grants is the one whose block driver serves its partition, and one
-      # without a system window holds none; and no source facet row grants it, by
-      # whatever label its record carries.
+      # without a system window holds none, so an apps row, which needs the service,
+      # needs the window; and no source facet row grants it, by whatever label its record
+      # carries.
       def check_system_service(tables)
         name = @codec.fixed_bytes('system_service')
-        services = tables.fetch('services').select { |row| row.fetch('name') == name }
         window = tables.fetch('windows').find { |row| row.fetch('role') == system_role }
-        invalid("a manifest with a system window holds one service named #{name}, and one without holds none", 19,
-                'service.name') unless services.size == (window ? 1 : 0)
-        return if services.empty?
+        unless window
+          invalid("an apps row needs a system window, whose holder serves #{name}", 19, 'apps') unless @apps == NO_APPS
+          invalid("a manifest without a system window holds no service named #{name}", 19, 'service.name') if
+            tables.fetch('services').any? { |row| row.fetch('name') == name }
+          return
+        end
 
-        service = tables.fetch('services').fetch(system_service_index(tables.fetch('services')))
+        index = fetch_files_service(tables.fetch('services'), 'system_service', required_by: 'a system window')
+        service = tables.fetch('services').fetch(index)
         invalid("the service named #{name} is served by the holder of the system window", 19, 'service.server') unless
           window.fetch('holder') == service.fetch('server')
         labels = records('service').select { |record| service_name(record) == name }.map { |record| "@service.#{record.name}" }

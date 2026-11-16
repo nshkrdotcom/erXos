@@ -107,6 +107,18 @@ module ManifestContextFixture
       "service probe\n  server @domain.alpha\n  interface 1\nintroduce @domain.alpha @domain.beta\n"
   end
 
+  # The system tree an apps row needs (property 19, docs/design-packaging.md, "The apps
+  # row"), added to a source of configured domains whose block device the system domain
+  # holds: the block device held by holder, which property 8 makes the system window's
+  # holder, that window on the device's partition 0, its system_image row and holder's
+  # service named system_service.
+  def with_system_tree(source, holder:)
+    substitute(source, BLOCK_UNIT, "\\1#{holder}") +
+      "window system\n  holder #{holder}\n  device \"/virtio_mmio@a003e00\"\n  role system\n  partition 0\n" \
+      "  rights read\n  image none\nsystem_image\n  input @artifact.release\n" \
+      "service system\n  server #{holder}\n  interface files\n"
+  end
+
   # The system principal's session template, its domain quota and max_domains in
   # the development manifest.
   SESSION_TEMPLATE = /^session system\n(?:  .*\n)*/
@@ -114,6 +126,7 @@ module ManifestContextFixture
   APPS_ROW = /^apps\n(?:  .*\n)*/
   SYSTEM_WINDOW = /^window system\n(?:  .*\n)*/
   SYSTEM_IMAGE = /^system_image\n(?:  .*\n)*/
+  BLOCK_UNIT = /^(unit block\n(?:  .*\n)*?  holder )system$/
   SYSTEM_QUOTA = /^(principal system\n(?:  .*\n)*?  domains )\d+$/
   MAX_DOMAINS = /^(  max_domains )\d+$/
 

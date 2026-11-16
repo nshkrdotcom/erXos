@@ -47,20 +47,16 @@ that proves the code under test ran.
 * [High] packaging, uploads apart from installed packages (`erx_pkg_io`,
   `erx_lfs`, property 19): the `packages` tree's `new/` and `installed/`,
   an upload's `tmp.K` in `new/` renamed into `installed/`, the recovery
-  removing `new/tmp.K` by name and listing `installed/`, and the
-  storage service's `tree installed`, which roots the app template's
-  `packages` grant at `installed/`, with property 19 letting only the
-  derived row carry it, and property 19 deriving that row `rights rx`
-  rather than the `ro` that `app_facets` (`tools/lib/erx/manifest.rb`)
-  derives today, the two together so no `rx` grant reaches `new/`; until then an installed package's
-  `rx` `/app` mount answers `eacces`, so no installed package runs, while an image
-  package's mounts `rx` through the `rx` `system` row. The stopgap's `packages` mint roots every grant
-  at `packages/` (design-stopgap.md, the storage domain), so an app's
-  grant reaches an upload in progress until this lands. Test: the
+  removing `new/tmp.K` by name and listing `installed/`. The `tree`
+  parameter of the files interface (`files_tree`), the app template's
+  derived `packages` row `rights rx` and `tree installed`, its grant
+  rooted at `installed/` (`erx_lfs:subtree/2`) and the system domain's
+  listing of `/packages/installed` are in place, so no `rx` grant reaches
+  `new/`; what remains is the upload path that writes there. Test: the
   package mounts' row, a walk of `new` and of `../new/tmp.K` through the
-  app's grant during an upload answering `enoent`; seeded: the app's
-  grant rooted at `packages/`, which walks to `tmp.K`; and a manifest
-  test that the template's derived `packages` row is `rx`.
+  app's grant during an upload answering `enoent`, which
+  `erx_littlefs_tests`'s `a_tree_reaches_only_its_own` checks of a file
+  in `new/` without the upload process.
 * [High] apps, packages out of the boot image (`tools/lib/erx/production_image.rb`
   `package_entries`, `erlang/apps/erx_starter/src/erx_pkg_medium.erl`
   `place(system, ..)`, `erx_principal`): the packer writes each image package
