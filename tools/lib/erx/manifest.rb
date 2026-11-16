@@ -1476,12 +1476,6 @@ module Erx
       # An interface a check reasons from, which the ABI must declare.
       def fetch_interface(name) = find_interface(name) || raise(Erx::Error, "abi/services declares no interface #{name}")
 
-      # A start row's restart intensity where its source states none: more than
-      # START_RESTARTS ends within START_RESTART_PERIOD_S seconds leave the row down
-      # (docs/design-apps.md, "The start table").
-      START_RESTARTS = 5
-      START_RESTART_PERIOD_S = 600
-
       # The services an app may never take, whatever the apps row says, by name
       # (docs/design-packaging.md, "The build's check", property 19's first clause): the
       # service named packages_service, which every app holds already, and those that
@@ -1668,8 +1662,8 @@ module Erx
       end
 
       # The manifest's start rows, sorted by their principal's index, each with its
-      # defaults applied: enabled, no display and START_RESTARTS ends in
-      # START_RESTART_PERIOD_S seconds. Property 17's structural clauses: a row is keyed
+      # defaults applied: enabled, no display and start_restarts_default ends in
+      # start_period_default_s seconds (abi/manifest.txt). Property 17's structural clauses: a row is keyed
       # by its principal's name, so the frontend gives a principal at most one, and that
       # principal has a session template; no two enabled rows name one display; and a
       # display is a service of the windows interface that a facet row grants the
@@ -1698,8 +1692,8 @@ module Erx
         row = { 'principal' => principal,
                 'flags' => stated.call('enable', @codec.member('mf_start_flags', 'enabled')) { start_flags(record) },
                 'display' => stated.call('display', @codec.constant('mf_none')) { start_display(record, services) },
-                'restarts' => stated.call('restarts', START_RESTARTS) { |key| number(record, key) },
-                'restart_period_s' => stated.call('restart_period_s', START_RESTART_PERIOD_S) { |key| number(record, key) } }
+                'restarts' => stated.call('restarts', @codec.constant('start_restarts_default')) { |key| number(record, key) },
+                'restart_period_s' => stated.call('restart_period_s', @codec.constant('start_period_default_s')) { |key| number(record, key) } }
         invalid('a start row\'s restart period is under a second', 17, 'start.restart_period_s') if row.fetch('restart_period_s').zero?
         check_start_ceiling(row, 'restarts', 'start_restarts_max')
         check_start_ceiling(row, 'restart_period_s', 'start_period_max_s')

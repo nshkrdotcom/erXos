@@ -21,7 +21,7 @@ manifest() ->
                #{principal => <<"logger">>, enable => true, display => none, restarts => 5, period => 600}],
       grants => #{},
       principals => #{<<"clock">> => 1, <<"kiosk">> => 2, <<"logger">> => 3},
-      boot_order => [<<"storage">>, <<"net">>]}.
+      boot_order => [<<"storage">>, <<"net">>], windows => [], packages => none}.
 
 -define(CLOCK, 1).
 -define(KIOSK, 2).
@@ -67,6 +67,12 @@ namespace_test_() ->
     {foreach, fun() -> setup(fun unreadable/1, held) end,
      fun cleanup/1, [fun no_row_starts_before_the_namespace_is_in_place/1]}.
 
+%% A package set (erx_starter:packages/2): the image's package dash, which its
+%% manifest row enables, and the installed package notes, which no row enables.
+packages_test_() ->
+    {foreach, fun() -> setup(fun(_Dir) -> ok end, answer, (manifest())#{packages := #{<<"dash">> => true}}) end,
+     fun cleanup/1, [fun a_published_app_has_a_keeper_row/1]}.
+
 unreadable(Dir) ->
     file:make_dir(filename:join(Dir, "rc.conf")).
 
@@ -88,7 +94,7 @@ display_manifest() ->
                #{principal => <<"painter">>, enable => true, display => <<"screen">>, restarts => 5, period => 600}],
       grants => #{<<"painter">> => [<<"screen">>]},
       principals => #{<<"kiosk">> => 1, <<"painter">> => 2},
-      boot_order => [<<"display">>]}.
+      boot_order => [<<"display">>], windows => [<<"screen">>], packages => none}.
 
 %% AP5 over a packed manifest, which only test/host/erx_starter_test.rb packs
 %% (ERX_STARTER_MANIFEST, from the apps QEMU suite's): clock's template is
@@ -215,7 +221,8 @@ watch() ->
 stub(#{refuse := Refuse, hold := Hold, held := Held, next := Id} = State) ->
     Stub = self(),
     receive
-        {'$gen_call', From, {start_session, Principal, Start}} ->
+        {'$gen_call', From, {Call, Who, Start}} when Call =:= start_session; Call =:= start_app ->
+            Principal = case Call of start_app -> {app, Who}; start_session -> Who end,
             case lists:member(Principal, Refuse) of
                 true ->
                     gen:reply(From, {error, quota}),
@@ -275,6 +282,29 @@ session(Test, Id, Principal) ->
 
 %% ---------------------------------------------------------------------------
 %% The cases
+
+%% The boot's package set starts dash, the row its manifest enables, as an app's
+%% session, and not notes; a set without dash answers once dash's session has
+%% ended (docs/design-packaging.md, PK7) and drops its row.
+a_published_app_has_a_keeper_row(_) ->
+    fun() ->
+            ok = watch(),
+            _ = started(?KIOSK),
+            _ = started(?LOGGER),
+            ok = erx_starter:packages(self(), [package(<<"dash">>, system), package(<<"notes">>, installed)]),
+            Dash = started({app, <<"dash">>}),
+            ?assertEqual(none, started_within({app, <<"notes">>}, 200)),
+            ?assertEqual(running, run(<<"dash">>)),
+            ?assertEqual(none, run(<<"notes">>)),
+            ok = erx_starter:packages(self(), [package(<<"notes">>, installed)]),
+            ?assertNot(is_process_alive(Dash)),
+            ?assertEqual(unmade, run(<<"dash">>)),
+            ?assertEqual(none, run(<<"notes">>))
+    end.
+
+%% A package of a set erx_pkg publishes, with what the table reads of it.
+package(Name, Place) ->
+    #{name => Name, place => Place, checked => #{header => #{needs => []}}, admitted => #{display => none}}.
 
 an_ended_session_is_started_again(_) ->
     fun() ->
@@ -451,8 +481,10 @@ a_keeper_stopped_while_its_start_is_pending_ends_the_session(_) ->
             Kiosk ! {end_session, crashed},
             %% The stub has made the session and holds its answer.
             Pending = started(?KIOSK),
+            %% The stop answers once the abandoned session has ended, so the stub's
+            %% answer is released after the stop has reached the keeper.
+            _ = spawn(fun() -> timer:sleep(200), erx_domain_srv ! release end),
             ?assertEqual(ok, erx_starter:command({stop, <<"kiosk">>, #{}})),
-            erx_domain_srv ! release,
             receive {ended, ?KIOSK, Pending, abandoned} -> ok after ?WAIT_MS -> error(abandoned_session_kept) end
     end.
 

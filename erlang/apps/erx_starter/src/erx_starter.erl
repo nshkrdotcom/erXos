@@ -12,7 +12,7 @@ erx_start_table's; this process carries them out.
 * **The manifest.** At its start the process reads the start rows, each
   principal's number and the `windows` services each session template is
   granted, the displays its rows may name, from the system manifest
-  (manifest_table/1), as erx_build reads its tables. A manifest with no start row makes an empty table, and nothing
+  (manifest_table/1), as erx_build reads its tables. A manifest with no start row and no `apps` row makes an empty table, and nothing
   more happens: no rc.conf is read.
 * **rc.conf.** The process does no file operation itself. The rc.conf
   process (erx_starter_rc) reads and writes rc.conf for it and answers
@@ -55,11 +55,21 @@ erx_start_table's; this process carries them out.
   view of the display of its own. Until the answer the row is `starting`;
   a `start` command waiting on it is answered when its start is carried
   out, and `stop` of it answers the waiting start ok and starts nothing.
+* **Package sets.** The package process publishes its set with
+  packages/2, taken in turn with the commands. The set's rows follow the
+  manifest's (erx_start_table:package_rows/3), each kept by a keeper of
+  `{app, Name}`; every keeper of a name that neither the manifest nor the
+  set holds is stopped before the answer, which so comes once each app the
+  set drops has no session (docs/design-packaging.md, PK7); and once the
+  table is made it is made again with the set's rows, so the boot's set
+  starts the rows rc.conf enables. Until the first set arrives the table
+  leaves a held row it has no row for, an app's, as it is.
 * **Restart.** A restarted process makes the table from the text the
   keepers' branch recorded, and changes nothing the branch holds until
   its own read of rc.conf answers: a row rc.conf enabled is not stopped
   because the file cannot be read, and a row that is down or stopped
-  stays so. With no record, it starts as at boot. A write the ended
+  stays so, and it asks the package process for its set (erx_pkg:ask_set/0),
+  which comes as a publication. With no record, it starts as at boot. A write the ended
   process asked for lands before this read or not at all, as the rc.conf
   process serves only the process whose read came last, so the text the
   read finds is the file's until this process writes it.
@@ -68,7 +78,7 @@ erx_start_table's; this process carries them out.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/2, command/1, rows/0]).
+-export([start_link/2, command/1, rows/0, packages/2]).
 -export_type([source/0, answer/0, run/0]).
 -export([manifest_table/1]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2]).
@@ -77,9 +87,13 @@ erx_start_table's; this process carries them out.
 %% services each principal's session template is granted (the displays its
 %% row may name), each principal's number,
 %% its manifest index plus one, by its name, and the configured domains'
-%% names in boot order, which `/proc/apps` shows beside the rows.
+%% names in boot order, which `/proc/apps` shows beside the rows; the names of
+%% its `windows` services, the displays an app's row may name; and each image
+%% package's default `enable` by its app name, or none for a manifest with no
+%% `apps` row, which runs no package process.
 -type manifest() :: #{rows := [erx_start_table:row()], grants := #{binary() => [binary()]},
-                      principals := #{binary() => pos_integer()}, boot_order := [binary()]}.
+                      principals := #{binary() => pos_integer()}, boot_order := [binary()],
+                      windows := [binary()], packages := none | #{binary() => boolean()}}.
 
 %% Where the table reads the manifest from: the system manifest, or a
 %% manifest table made beforehand, for the tests.
@@ -112,6 +126,18 @@ of its row that follows fails.
 -spec command(erx_start_table:command()) -> answer().
 command(Command) ->
     gen_server:call(?MODULE, {command, Command}, infinity).
+
+-doc """
+Takes Set, the package set the package process Lifetime publishes
+(docs/design-packaging.md, "Boot and recovery", step 5), and answers ok
+once every app the set drops has no session; or {error, no_table} while
+no table runs, which ends the publishing lifetime as a failed change does.
+""".
+-spec packages(pid(), [erx_pkg_plan:published()]) -> ok | {error, no_table}.
+packages(Lifetime, Set) ->
+    try gen_server:call(?MODULE, {packages, Lifetime, Set}, infinity)
+    catch exit:{noproc, _} -> {error, no_table}
+    end.
 
 -doc """
 The table: each manifest row merged, with the key `run` (run()), or
@@ -167,12 +193,22 @@ manifest_table({ok, Manifest}) ->
         {ok, #{rows => Rows,
                grants => maps:groups_from_list(fun({P, _}) -> P end, fun({_, S}) -> S end, Granted),
                principals => #{Principal => Number || {Number, Principal} <- lists:enumerate(Names)},
-               boot_order => [lists:nth(Domain + 1, Domains) || #{domain := Domain} <- Order]}}
+               boot_order => [lists:nth(Domain + 1, Domains) || #{domain := Domain} <- Order],
+               windows => [Shown || {At, Shown} <- lists:enumerate(0, Services), Windows(At)],
+               packages => package_defaults(erx_pkg_manifest:system_config(Manifest))}}
     else
         _ -> error
     end;
 manifest_table({error, _}) ->
     error.
+
+%% Each image package's default `enable`, from erx_pkg_manifest, the reader of the
+%% manifest's package rows. A manifest it refuses runs no package process
+%% (erx_pkg:system_config/2), so it gives none, as one with no `apps` row does.
+package_defaults({ok, #{apps := #{}, packages := Packages}}) ->
+    #{Name => Enabled || #{name := Name, enabled := Enabled} <- Packages};
+package_defaults(_NoApps) ->
+    none.
 
 display(?ERX_MF_NONE, _Service) -> none;
 display(Index, Service) -> Service(Index).
@@ -209,32 +245,46 @@ init({system, Directory}) ->
                        Table;
                    error ->
                        logger:error("erx_starter: the system manifest's start rows cannot be read; no row starts"),
-                       #{rows => [], grants => #{}, principals => #{}, boot_order => []}
+                       #{rows => [], grants => #{}, principals => #{}, boot_order => [], windows => [],
+                         packages => none}
                end,
     init({Manifest, Directory});
-init({#{} = Manifest, Directory}) ->
-    {ok, Manifest#{directory => Directory, text => <<>>, local => {unread, 0}, merged => none, skipped => [],
+%% rows and grants are the table's, the manifest's and the package set's;
+%% manifest_rows and manifest_grants the manifest's alone, which each set follows.
+init({#{rows := Rows, grants := Grants} = Manifest, Directory}) ->
+    {ok, Manifest#{manifest_rows => Rows, manifest_grants => Grants,
+                   directory => Directory, text => <<>>, local => {unread, 0}, merged => none, skipped => [],
                    reader => none, writer => none, queue => queue:new(), displays => #{}}, {continue, read}}.
 
 %% The first read of rc.conf waits for the system domain's namespace: the
 %% table asks the domain service now and reads once it answers
-%% (namespace_answered/2).
-handle_continue(read, #{rows := []} = State) ->
+%% (namespace_answered/2). A manifest with no start row and no package process
+%% has no row to read rc.conf for. The package process is asked for its set,
+%% which a restarted table has lost; at boot it publishes the set anyway.
+handle_continue(read, #{rows := [], packages := none} = State) ->
     {noreply, State#{local := read, merged := []}};
 handle_continue(read, State) ->
     Recorded = case erx_starter_records:recorded() of
                    {ok, Text} -> make(Text, State);
                    none -> State
                end,
+    ok = erx_pkg:ask_set(),
     {noreply, Recorded#{reader := {namespace, erx_domain:system_namespace()}}}.
 
-handle_call({command, Command}, From, #{writer := none, queue := Queue} = State) ->
-    true = queue:is_empty(Queue),
-    {noreply, run(Command, From, State)};
-handle_call({command, Command}, From, #{queue := Queue} = State) ->
-    {noreply, State#{queue := queue:in({Command, From}, Queue)}};
+handle_call({command, Command}, From, State) ->
+    {noreply, take(Command, From, State)};
+handle_call({packages, _Lifetime, Set}, From, State) ->
+    {noreply, take({packages, Set}, From, State)};
 handle_call(rows, _From, State) ->
     {reply, table(State), State}.
+
+%% A command or a publication is carried out at once when no write of rc.conf is
+%% in progress, and otherwise queued behind it, so the table takes them one at a time.
+take(Request, From, #{writer := none, queue := Queue} = State) ->
+    true = queue:is_empty(Queue),
+    run(Request, From, State);
+take(Request, From, #{queue := Queue} = State) ->
+    State#{queue := queue:in({Request, From}, Queue)}.
 
 handle_cast(_Request, State) ->
     {noreply, State}.
@@ -321,15 +371,39 @@ effect({retry, Delay}, State) ->
 
 %% The table made from Text, rc.conf's text or the empty text of the manifest's
 %% rows alone, recorded in the keepers' branch first, with the rows' keepers
-%% reconciled with it.
+%% reconciled with it. A held row the table has no row for, an app's before a
+%% restarted table has the package set again, is left to the set (publish/2).
 apply_text(Text, State) ->
     ok = erx_starter_records:record(Text),
     #{merged := After} = Made = make(Text, State),
     {Rows, Stopped} = erx_starter_sup:held(),
-    Held = #{Name => {running_or_down(Run), kept(Row)} || {Name, Run, Row} <- Rows},
+    Known = #{Name => true || #{principal := Name} <- After},
+    Held = #{Name => {running_or_down(Run), kept(Row)} || {Name, Run, Row} <- Rows, is_map_key(Name, Known)},
     {Stop, Start} = erx_start_table:reconcile(Held, Stopped, After),
     lists:foreach(fun erx_starter_sup:stop/1, Stop),
     lists:foldl(fun(Name, Acc) -> start_row(Name, none, Acc) end, Made, Start).
+
+%% A package set: its rows follow the manifest's, and every keeper of a name
+%% neither the manifest nor the set holds is stopped, its session ended, before
+%% the table answers (PK7); a made table is made again with the set's rows.
+publish(Set, #{manifest_rows := Rows, manifest_grants := Grants, packages := Defaults, windows := Windows,
+               principals := Principals} = State) ->
+    {AppRows, AppGrants} = erx_start_table:package_rows(Set, defaults(Defaults), Windows),
+    Apps = #{Name => true || #{principal := Name} <- AppRows},
+    Dropped = [Name || Name <- erx_starter_sup:keeping(), not is_map_key(Name, Principals),
+                       not is_map_key(Name, Apps)],
+    lists:foreach(fun erx_starter_sup:stop/1, Dropped),
+    Published = lists:foldl(fun unwait/2, State#{rows := Rows ++ AppRows, grants := maps:merge(Grants, AppGrants)},
+                            Dropped),
+    case Published of
+        #{merged := none} -> Published;
+        #{text := Text} -> apply_text(Text, Published)
+    end.
+
+%% A manifest whose package rows were not read sends no set; one that does has
+%% its defaults.
+defaults(none) -> #{};
+defaults(#{} = Defaults) -> Defaults.
 
 %% The table rc.conf's Text makes, with every skipped line and refused row
 %% logged; no keeper changes.
@@ -355,7 +429,12 @@ make(Text, #{rows := Rows, grants := Grants} = State) ->
 %% Before any table is made every command is refused, so none answers ok and is
 %% undone when the table is made. A command that writes rc.conf before the file
 %% has been read is refused, so it never writes over settings it has not read;
-%% start and stop act on the table as it is.
+%% start and stop act on the table as it is. A publication is taken whether or not
+%% the table is made.
+run({packages, Set}, From, State) ->
+    Published = publish(Set, State),
+    gen_server:reply(From, ok),
+    next(Published);
 run(_Command, From, #{merged := none} = State) ->
     gen_server:reply(From, {error, rc_conf_unread}),
     next(State);
@@ -377,8 +456,8 @@ run(Command, From, #{text := Text, rows := Rows, grants := Grants, local := Loca
             next(State)
     end.
 
-act({start_once, Name, Start}, #{principals := Principals} = State) ->
-    started(erx_starter_sup:start_once(Name, map_get(Name, Principals), with_default_display(Name, Start, State)));
+act({start_once, Name, Start}, State) ->
+    started(erx_starter_sup:start_once(Name, who(Name, State), with_default_display(Name, Start, State)));
 act({stop, Name}, State) ->
     case row(Name, State) of
         {ok, _Row} -> erx_starter_sup:stop_row(Name);
@@ -500,19 +579,28 @@ started({error, Why}) -> {error, {failed, Why}}.
 
 %% What enabled row Name's supervisor keeps (erx_starter_row:row()), or none
 %% for a row that is not enabled.
-row(Name, #{merged := Merged, principals := Principals} = State) when is_list(Merged) ->
+row(Name, #{merged := Merged} = State) when is_list(Merged) ->
     case [Row || #{principal := Principal, status := enabled} = Row <- Merged, Principal =:= Name] of
         [#{display := Display, restarts := Restarts, period := Period}] ->
             Start = case Display of
                         none -> with_default_display(Name, #{}, State);
                         _ -> #{display => Display}
                     end,
-            {ok, #{principal => map_get(Name, Principals), start => Start, restarts => Restarts, period => Period}};
+            {ok, #{principal => who(Name, State), start => Start, restarts => Restarts, period => Period}};
         [] ->
             none
     end;
 row(_Name, #{merged := none}) ->
     none.
+
+%% Whose session row Name keeps (erx_starter_keeper): a manifest principal's
+%% number, or the app's of that name, since admission refuses an app a manifest
+%% principal's name (docs/design-packaging.md, "Admission").
+who(Name, #{principals := Principals}) ->
+    case Principals of
+        #{Name := Number} -> Number;
+        #{} -> {app, Name}
+    end.
 
 %% Start for row Name's session, which names a display or names none: with none, the one
 %% display Name's template is granted, where it is granted exactly one, as the session's

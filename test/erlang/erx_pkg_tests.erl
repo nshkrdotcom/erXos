@@ -254,6 +254,30 @@ unknown_scan(Listing) ->
     ?assertEqual([{system, <<"dashboard.app">>}], maps:keys(Records)),
     stop(Sup).
 
+%% The listing waits for the system domain's namespace, as the start table's
+%% first read of rc.conf does (docs/design-packaging.md, "Boot and recovery"):
+%% until the domain service answers, the scan stays unknown and nothing is
+%% published, and once it answers the listing is read.
+the_listing_waits_for_the_namespace_test() ->
+    Test = self(),
+    Holder = spawn_link(fun() ->
+                                register(erx_pkg_namespace, self()),
+                                Test ! registered,
+                                receive {'$gen_call', From, system_namespace} ->
+                                        receive release -> gen:reply(From, ok) end
+                                end
+                        end),
+    receive registered -> ok end,
+    {_Io, Config} = setup([]),
+    {ok, Sup} = erx_pkg_sup:start_link(Config),
+    timer:sleep(200),
+    ?assertMatch(#{scan := unknown}, erx_pkg:packages()),
+    ?assertEqual([], published()),
+    Holder ! release,
+    wait_recovered(),
+    ?assertMatch(#{scan := {ok, _}}, erx_pkg:packages()),
+    stop(Sup).
+
 %% The recovery runs one action per message: a call made during it waits for
 %% one action, here one slow header read, never for the whole recovery,
 %% whose five slow reads take longer than a call's timeout.

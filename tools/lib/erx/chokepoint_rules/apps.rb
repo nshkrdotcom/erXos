@@ -9,6 +9,9 @@ module Erx
     STARTER = 'erlang/apps/erx_starter/**/*'
     # The modules that start a session; the web login joins them when it is built.
     KEEPER = 'erlang/apps/erx_starter/src/erx_starter_keeper.erl'
+    # Packaging's modules, which share the start service's application but not its
+    # table: AP1 bounds the table and its keepers, and design-packaging.md bounds these.
+    PACKAGE_PROCESS = 'erlang/apps/erx_starter/src/erx_pkg*.erl'
     START_CALLERS = ['erlang/apps/erx/src/erx_console.erl', KEEPER].freeze
     # What erx_starter may call of erx_domain: start_session/2, start_app/2 and stop/2;
     # system_namespace/0, the wait before the first read of rc.conf, and
@@ -40,7 +43,7 @@ module Erx
                                        '(reading a handle with id/1 and pid/1), ' \
                                        'and calls nothing through a variable or ' \
                                        'macro module or apply',
-          design: "#{APPS}#invariants", scope: [STARTER], strings: :blanked,
+          design: "#{APPS}#invariants", scope: [STARTER], sites: [PACKAGE_PROCESS], strings: :blanked,
           allowed: STARTER_REACH,
           pattern: /
               (?<![A-Za-z0-9_@'])'?erx_domain[A-Za-z0-9_@]*'?#{ErlangText::NOT_NAME}

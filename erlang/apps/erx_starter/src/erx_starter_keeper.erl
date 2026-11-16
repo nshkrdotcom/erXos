@@ -67,9 +67,11 @@ keep(Who, Start) ->
         {'EXIT', Helper, Reason} ->
             exit(Reason);
         {'EXIT', _Supervisor, Reason} ->
-            %% Stopped while the start runs: the helper, linked to the keeper, stops the
-            %% session the start makes and ends once that session has ended, so the
-            %% keeper ends only then too.
+            %% Stopped while the start runs: the helper takes the keeper's exit signal as
+            %% the keeper's end, stops the session the start makes and ends once that
+            %% session has ended, so the keeper ends only then too. The keeper has not
+            %% ended yet, so it sends the signal itself before it waits.
+            exit(Helper, Reason),
             receive {'EXIT', Helper, _} -> exit(Reason) end
     end.
 

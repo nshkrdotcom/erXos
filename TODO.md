@@ -84,16 +84,14 @@ it; git history is the record of completed work.
   erx_pkg, 0.33 s into the system domain and before the storage domain had mounted its volume, ran its
   recovery to the publication and crashed there on `erx_starter:packages/2`, which does not exist (`undef`),
   four times, until erx_pkg_sup reached its intensity and stopped; the start service and the rest of the
-  boot carried on, and `erx_pkg:packages/0` answers `noproc`. The QEMU check that awaits it (typed at the
-  system's Erlang shell in the unlisted boot, expecting `{packages,4,#{packages => #{},scan => {ok,0}}}`)
-  is kept out of the tree until it can pass. Building the publication is the first step; the listing
-  taken before the volume is mounted is the second (see the retry below).
-  What remains: `erx_starter:packages/2` and the start table's package rows, with the start table's boot waiting for the
-  boot's package set before it applies `rc.conf` (erx_pkg_sup starts before the table, so a publication can
-  otherwise find no table, and a restart of the table restarts no erx_pkg, so the table takes the
-  last set from erx_pkg as it starts rather than waiting for a publication); a retry of the listing once the `packages` grant is in place, which the
-  recovery leaves `unknown` (the installed ones come in a later set, with no record, which `rc.conf`
-  does not enable until the next boot, as design-packaging.md states); the
+  boot carried on, and `erx_pkg:packages/0` answers `noproc`. The publication (`erx_starter:packages/2`: the set's rows after the manifest's, kept by keepers of
+  `{app, Name}`, a dropped app's keepers stopped before the answer, the table's ask on restart) and the
+  listing's wait for the system domain's namespace are built, and the apps suite's unlisted boot checks
+  `{packages,4,#{packages => #{},scan => {ok,0}}}`. What remains: a listing that still fails after the wait
+  leaves the scan `unknown`, and nothing lists the installed packages again before the next lifetime (the later
+  set design-packaging.md names, with no record, which `rc.conf` does not enable until the next boot); the
+  `installed` state and the boot mark of a later set, which wait for the table's records (the `/etc/start/ctl`
+  item below), so until then every make of the table applies `rc.conf` to the set's rows too; the
   `apps` tree serving `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]`
   and `[packages, Name]` in `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute
   included; the system_domain QEMU cell; the log lines for a refused package and an entry of no recognized
@@ -101,6 +99,20 @@ it; git history is the record of completed work.
   the `packages` grant. `erx_pkg_medium` reads the whole
   directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
   bounded read at a time (Phase 1: the storage domain is trusted).
+* [Medium] apps, the package set's publication (`erlang/apps/erx_starter/src/erx_starter.erl`,
+  `publish/2` and `apply_text/2`): the decision which keepers a set drops and the filter that keeps a
+  restarted table from stopping an app's held row before the set returns are made in the effect layer,
+  not in `erx_start_table` beside `reconcile/3`, whose "stop a held name Merged does not name" branch is
+  now dead in its one caller; no case restarts the table while an app runs or exercises `erx_pkg:ask_set/0`,
+  and no seeded fault removes the filter. The table keeps `rows`/`grants` beside `manifest_rows`/
+  `manifest_grants` (two copies of the manifest's rows). `packages/2` ignores its `Lifetime`, which the
+  design checks (docs/design-packaging.md, "The package lifetime"). Until the set arrives, rc.conf's lines
+  for apps are logged as `{undeclared, App}` and shown as skipped.
+* [Medium] apps, chokepoints (`tools/lib/erx/chokepoint_rules/apps.rb`): `starter-reach` covers the start
+  table and its keepers, not packaging's `erx_pkg*`, and design-packaging.md's own checks are not built:
+  that `erx_pkg` and `erx_pkg_io` call no `erx_domain:stop/2`, and that only `erx_pkg` calls
+  `erx_starter:packages/2` (docs/design-packaging.md, "Verification and testing"). Add a `pkg-reach` rule
+  allowing `erx_domain:system_namespace/0` and `erx_domain_lib:apps/0`, and a publishers rule.
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
   and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
   (`erx_domain_srv:grant_facets/4`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
@@ -117,9 +129,7 @@ it; git history is the record of completed work.
   which the manifest's names do not hold, and a `tree apps` grant's root `apps/NAME/SIGNER/`, whose
   signer is the registry record's and outside the plan, so the plan's PK10 comparison does not cover
   it; the record in the ready answer, whose place, layout and
-  applications the registry does not keep; the start service's package rows
-  (`erx_starter:packages/2`, which `erx_pkg` calls and nothing exports) and their keepers, the only
-  starters of an app's sessions (PK7), with a check that no other caller starts one; the app
+  applications the registry does not keep; the app
   principal's CPU group under an apps group, which the stopgap's flat groups leave out;
   `erx_ns:mount/3` of an image file through `erx_verity`, which
   held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps`

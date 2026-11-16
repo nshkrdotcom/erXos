@@ -62,7 +62,7 @@ a literal of this module.
 -include("generated/erx_abi.hrl").
 
 -export([parse_rc_conf/1, merge/3, parse_ctl/1, set/3]).
--export([apply_ctl/4, ctl_errno/1, reconcile/3, kept/1, read_answered/3, rc_conf_limit/0]).
+-export([apply_ctl/4, ctl_errno/1, reconcile/3, kept/1, package_rows/3, read_answered/3, rc_conf_limit/0]).
 
 -export_type([row/0, field/0, value/0, local/0, merged/0, command/0, action/0, ctl_error/0, kept/0, held/0]).
 -export_type([reading/0, read_answer/0, read_effect/0]).
@@ -499,6 +499,26 @@ decide({_Run, _Kept}, false, error) -> stop;
 decide({running, Kept}, false, {ok, Kept}) -> keep;
 decide({running, _Kept}, false, {ok, _Changed}) -> restart;
 decide({down, _Kept}, false, {ok, _Is}) -> keep.
+
+-doc """
+The start rows of Set, a package set erx_pkg publishes, and each app's
+`windows` services (docs/design-packaging.md, "The start table's rows"):
+in Set's order, the image packages' then the installed ones', each row
+named for its app; enabled by default only for an image package whose
+manifest `package` row enables it (Enabled, by app name); on the display
+its admission chose, its one `windows` need, or none; with the default
+intensity. An app's grants are the needs among Windows, the manifest's
+`windows` services, which the merge lets its row name as a display.
+""".
+-spec package_rows([erx_pkg_plan:published()], #{name() => boolean()}, [name()]) ->
+          {[row()], #{name() => [name()]}}.
+package_rows(Set, Enabled, Windows) ->
+    Rows = [#{principal => Name, enable => Place =:= system andalso maps:get(Name, Enabled, false),
+              display => Display, restarts => ?ERX_START_RESTARTS_DEFAULT, period => ?ERX_START_PERIOD_DEFAULT_S}
+            || #{name := Name, place := Place, admitted := #{display := Display}} <- Set],
+    Grants = #{Name => [Need || Need <- Needs, lists:member(Need, Windows)]
+               || #{name := Name, checked := #{header := #{needs := Needs}}} <- Set},
+    {Rows, Grants}.
 
 -doc "Each enabled row of Merged by its name, with what its session is kept with.".
 -spec kept([merged()]) -> #{name() => kept()}.

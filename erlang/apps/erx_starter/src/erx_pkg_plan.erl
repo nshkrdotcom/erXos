@@ -33,7 +33,7 @@ of its bytes; one admission refuses keeps its authenticated header's entry.
 """.
 
 -export([recover/2, listing/3, package_file/1]).
--export_type([config/0, action/0, plan/0, package_record/0, entry/0, scan/0]).
+-export_type([config/0, action/0, plan/0, package_record/0, entry/0, scan/0, published/0]).
 
 -type place() :: system | installed.
 

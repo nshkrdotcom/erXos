@@ -17,9 +17,10 @@ service refuses, end the keeper, which is started again; more than
 -export([init/1]).
 -export_type([row/0]).
 
-%% What a row's supervisor keeps: the principal's number, the start map its
+%% What a row's supervisor keeps: whose session, a manifest principal's number or an
+%% app's {app, Name}, the start map its
 %% keeper hands the domain service, and the intensity.
--type row() :: #{principal := pos_integer(), start := map(),
+-type row() :: #{principal := pos_integer() | {app, binary()}, start := map(),
                  restarts := non_neg_integer(), period := pos_integer()}.
 
 -spec start_link(row()) -> supervisor:startlink_ret().

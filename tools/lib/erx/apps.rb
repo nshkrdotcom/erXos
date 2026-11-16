@@ -40,7 +40,10 @@ module Erx
   # * disabled: the same row with `enable NO`, the kept boot's seeded fault: no session
   #   of clock starts and the row is disabled (NO_CLOCK).
   # * unlisted: no `start` row: no session but root's console login (AP2), and
-  #   /proc/apps has no clock.
+  #   /proc/apps has no clock. The package process runs (PACKAGES): the development
+  #   manifest's apps row gives the library its app entries, so the start service starts
+  #   erx_pkg, whose recovery publishes the image's packages, none, and the scan of the
+  #   empty packages tree.
   #
   # Then the kept image boots three times from one copy of its medium (CHAIN), so what
   # `service` wrote to rc.conf on /data is what the next boot reads:
@@ -194,6 +197,12 @@ module Erx
                '{ok, #{attrs := #{state := {_, {ok, CkSt}}, local := {_, {ok, CkLo}}}}} -> {CkSt, CkLo}; ' \
                'CkO -> CkO end, ' \
                "io:format(\"~0p~n\", [{no_clock, lists:sort([CkName || \#{origin := {session, _}, node := CkName} <- CkDoms()]), CkRow}]).\r"
+    # Typed at the system's Erlang shell: the library's max app entries and what the
+    # package process holds (docs/design-packaging.md, "Boot and recovery"), each caught
+    # so a missing library or process answers its exit in the line.
+    PACKAGES = 'io:format("~0p~n", [{packages, (catch maps:get(max, element(2, erx_domain_lib:apps()))), ' \
+               "(catch erx_pkg:packages())}]).\r"
+    PACKAGES_ANSWER = '{packages,4,#{packages => #{},scan => {ok,0}}}'
     NO_CLOCK_ANSWER = { disabled: '{no_clock,[root_1@erxos],{disabled,[]}}',
                         reenable: '{no_clock,[root_1@erxos],{disabled,[enable]}}',
                         unlisted: '{no_clock,[root_1@erxos],{error,scope}}' }.freeze
@@ -263,7 +272,9 @@ module Erx
       erlang = ProductionImage::Run::ERLANG_SHELL.merge(name: 'system-erlang-shell').freeze
       steps = case boot
               in :kept then kept_steps(erlang)
-              in :disabled | :unlisted then no_clock_steps(erlang, boot)
+              in :disabled then no_clock_steps(erlang, boot)
+              in :unlisted then [*no_clock_steps(erlang, boot, then_type: PACKAGES),
+                                 { name: 'packages', pattern: answer(PACKAGES_ANSWER), seconds: 60 }.freeze]
               in :disable then disable_steps(erlang)
               in :reenable then reenable_steps(erlang)
               in :enabled then enabled_steps(erlang)
