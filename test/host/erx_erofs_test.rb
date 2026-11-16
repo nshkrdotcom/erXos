@@ -51,20 +51,25 @@ class ErxErofsTest < Minitest::Test
 
   # The hash check's cases: each image with its tree, as NAME.img, and the layouts in
   # verity.terms as {NAME, Layout}. "levels" puts a block of 0xFF between image and tree.
+  # "deep", 16700 blocks under a tree of three levels, stores only its tree: the EUnit
+  # case's window makes each image block from its number, as numbered_blocks does.
   def write_verity_cases(work)
-    salts = { 'levels' => "\x05".b * 7, 'one' => "\x09".b, 'erofs' => "\x01".b * 32 }
-    images = { 'levels' => (0...200).map { [it].pack('N') * 1024 }.join.b, 'one' => "\x07".b * 4096,
-               'erofs' => File.binread(File.join(FIXTURES, 'compact.img')) }
+    salts = { 'levels' => "\x05".b * 7, 'one' => "\x09".b, 'erofs' => "\x01".b * 32, 'deep' => "\x03".b * 5 }
+    images = { 'levels' => numbered_blocks(200), 'one' => "\x07".b * 4096,
+               'erofs' => File.binread(File.join(FIXTURES, 'compact.img')), 'deep' => numbered_blocks(16_700) }
     terms = images.map do |name, image|
       tree = Erx::AppPackage.verity_tree(image, salt: salts.fetch(name))
       gap = name == 'levels' ? "\xff".b * 4096 : ''.b
-      File.binwrite(File.join(work, "#{name}.img"), image + gap + tree.bytes)
+      File.binwrite(File.join(work, "#{name}.img"), name == 'deep' ? tree.bytes : image + gap + tree.bytes)
       layout = { image_length: image.bytesize, tree_offset: image.bytesize + gap.bytesize,
                  tree_length: tree.bytes.bytesize, salt: salts.fetch(name), root_hash: tree.root_hash }
       "{\"#{name}\", #{erlang_map(layout)}}.\n"
     end
     File.write(File.join(work, 'verity.terms'), terms.join)
   end
+
+  # count blocks, block I its number as a 32-bit big-endian word, 1024 times.
+  def numbered_blocks(count) = (0...count).map { [it].pack('N') * 1024 }.join.b
 
   def erlang_map(fields)
     pairs = fields.map { |key, value| "#{key} => #{value.is_a?(String) ? "<<#{value.bytes.join(',')}>>" : value}" }

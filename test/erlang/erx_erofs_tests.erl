@@ -287,7 +287,8 @@ open_file_refusals_test() ->
 %% one-block top and a two-block lowest level, with a block of 0xFF between the image and
 %% the tree; "one", one block and no tree, its block's hash the root; and "erofs", the
 %% compact fixture image. Every block must read as the image holds it, and any changed
-%% byte of a block, of a tree block on its path or of the root answer eio.
+%% byte of a block, of a tree block on its path or of the root answer eio. "deep", a tree
+%% of three levels, is read in parts below.
 
 verity_case(Name) ->
     Dir = os:getenv("ERX_VERITY_CASES"),
@@ -392,3 +393,60 @@ verity_read_across_two_tree_blocks_test() ->
     {ok, Image} = erx_verity:open(window(Bytes), Layout),
     {ok, Got} = erx_verity:read(Image, 120, 16),
     ?assertEqual(binary:part(Bytes, 120 * ?BLOCK, 16 * ?BLOCK), iolist_to_binary(Got)).
+
+%% "deep": 16700 blocks under a tree of three levels, which lie top first: the top at the
+%% tree's block 0, the middle level at 1 and 2, the second holding the hashes of the
+%% lowest level's blocks 128 to 130, and the lowest level at 3 to 133. Only the tree is
+%% stored; the window makes image block I as the writer did, numbered(I).
+-define(DEEP_BLOCKS, 16700).
+
+numbered(Block) -> binary:copy(<<Block:32>>, ?BLOCK div 4).
+
+numbered(First, Count) -> {ok, [numbered(Block) || Block <- lists:seq(First, First + Count - 1)]}.
+
+%% A window over the image Data makes, Data(Block) for each block, with Tree after it.
+deep_window(Tree, Data) -> spawn(fun() -> deep_serve(Tree, Data) end).
+
+deep_serve(Tree, Data) ->
+    receive
+        {'$gen_call', From, info} ->
+            gen:reply(From, {ok, #{role => system, sectors => (?DEEP_BLOCKS * ?BLOCK + byte_size(Tree)) div ?SECTOR}});
+        {'$gen_call', From, {read, Sector, 8}} when Sector rem 8 =:= 0, Sector div 8 < ?DEEP_BLOCKS ->
+            gen:reply(From, {ok, Data(Sector div 8)});
+        {'$gen_call', From, {read, Sector, 8}} when Sector rem 8 =:= 0 ->
+            gen:reply(From, {ok, binary:part(Tree, (Sector div 8 - ?DEEP_BLOCKS) * ?BLOCK, ?BLOCK)})
+    after ?WINDOW_IDLE ->
+        exit(idle)
+    end,
+    deep_serve(Tree, Data).
+
+deep_read(Tree, Data, Block, Count) ->
+    {_, Layout} = verity_case("deep"),
+    {ok, Image} = erx_verity:open(deep_window(Tree, Data), Layout),
+    erx_verity:read(Image, Block, Count).
+
+%% Reads at the start, across a block boundary of both lower levels (data blocks 16376 to
+%% 16391 hash into the lowest level's blocks 127 and 128, whose hashes lie in the middle
+%% level's blocks 0 and 1) and at the end.
+verity_three_levels_read_test_() ->
+    {Tree, _} = verity_case("deep"),
+    [?_assertEqual(numbered(Block, Count), deep_read(Tree, fun numbered/1, Block, Count))
+     || {Block, Count} <- [{0, 16}, {16376, 16}, {16684, 16}, {16699, 1}]].
+
+%% A changed byte on block 16600's path, at each level, answers eio for it. Block 16600 is
+%% slot 88 of the lowest level's block 129, which is slot 1 of the middle level's block 1,
+%% slot 1 of the top. Block 0's path shares only the top block, so it still reads unless
+%% the top changed, which no longer matches the root.
+verity_three_levels_flipped_test_() ->
+    {Tree, _} = verity_case("deep"),
+    Data = fun(16600) -> flip_byte(numbered(16600), 9); (Block) -> numbered(Block) end,
+    Cases = [{"data", Tree, Data, numbered(0, 1)},
+             {"lowest", flip_byte(Tree, (3 + 129) * ?BLOCK + 88 * 32 + 5), fun numbered/1, numbered(0, 1)},
+             {"middle", flip_byte(Tree, 2 * ?BLOCK + 32 + 5), fun numbered/1, numbered(0, 1)},
+             %% Off the read's slot: the middle block's hash of the lowest level's block 130.
+             {"middle block", flip_byte(Tree, 2 * ?BLOCK + 2 * 32 + 5), fun numbered/1, numbered(0, 1)},
+             {"top", flip_byte(Tree, 32 + 5), fun numbered/1, {error, eio}}],
+    [{Name, fun() ->
+                    ?assertEqual({error, eio}, deep_read(Flipped, Serve, 16600, 1)),
+                    ?assertEqual(First, deep_read(Flipped, Serve, 0, 1))
+            end} || {Name, Flipped, Serve, First} <- Cases].

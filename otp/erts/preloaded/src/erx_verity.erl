@@ -209,17 +209,22 @@ check(Salt, Parent, [], {_, Blocks} = Data) ->
     end.
 
 %% Whether each block of a level, index First onwards, hashes to its slot in the parent
-%% level: block I's hash is hash I rem HASHES of the parent's block I div HASHES.
+%% level: block I's hash is hash I of the parent level, its parent blocks read from index
+%% ParentFirst, HASHES hashes in each (the root, at index 0, is the one hash). A block
+%% whose slot lies outside the parent blocks read does not match.
 matches(Salt, {ParentFirst, Parents}, {First, Blocks}) ->
-    ParentBlocks = list_to_tuple(Parents),
-    every(fun(Index, Block) ->
-                  Parent = element(Index div ?HASHES - ParentFirst + 1, ParentBlocks),
-                  binary:part(Parent, (Index rem ?HASHES) * ?ERX_VERITY_HASH_SIZE, ?ERX_VERITY_HASH_SIZE)
-                      =:= hash(Salt, Block)
-          end, First, Blocks).
+    Hashes = iolist_to_binary(Parents),
+    SlotOffset = (First - ParentFirst * ?HASHES) * ?ERX_VERITY_HASH_SIZE,
+    SlotOffset >= 0 andalso SlotOffset =< byte_size(Hashes)
+        andalso hashed(Salt, binary:part(Hashes, SlotOffset, byte_size(Hashes) - SlotOffset), Blocks).
 
-every(_Check, _Index, []) -> true;
-every(Check, Index, [Block | Blocks]) -> Check(Index, Block) andalso every(Check, Index + 1, Blocks).
+%% Whether each block hashes to the next hash of Hashes.
+hashed(_Salt, _Hashes, []) ->
+    true;
+hashed(Salt, <<Hash:?ERX_VERITY_HASH_SIZE/binary, Hashes/binary>>, [Block | Blocks]) ->
+    Hash =:= hash(Salt, Block) andalso hashed(Salt, Hashes, Blocks);
+hashed(_Salt, _Hashes, _Blocks) ->
+    false.
 
 hash(Salt, Block) ->
     erx_bytes:sha256_final(erx_bytes:sha256_update(erx_bytes:sha256_update(erx_bytes:sha256_init(), Salt), Block)).
@@ -258,11 +263,12 @@ drop(Tags) ->
 
 %% lists:seq/2, lists:split/2, lists:zip/2 and lists:reverse/2, which this module cannot
 %% call (lists is not preloaded): From to To in order onto a tail, a list's first N
-%% elements and the rest, two lists paired, and a list reversed onto a tail.
+%% elements and the rest, two lists paired, and a list reversed onto a tail. As indexes/3
+%% makes no index of an empty range, split/3 takes no element for a count below one.
 indexes(To, From, Indexes) when To < From -> Indexes;
 indexes(To, From, Indexes) -> indexes(To - 1, From, [To | Indexes]).
 
-split(0, List, Taken) -> {reverse(Taken, []), List};
+split(N, List, Taken) when N =< 0 -> {reverse(Taken, []), List};
 split(N, [Head | List], Taken) -> split(N - 1, List, [Head | Taken]).
 
 zip([A | As], [B | Bs]) -> [{A, B} | zip(As, Bs)];
