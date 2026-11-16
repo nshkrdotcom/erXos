@@ -762,21 +762,14 @@ class DomPlannerTest < Minitest::Test
       end
     interface = ->(name) { @codec.schema.services.find { |service| service.fetch(:name) == name }.fetch(:number) }
     # The services, in name order, each with its server's index in boot order (display 0,
-    # network 1, storage 2, web 3) or none for the system domain: data, of files, display,
-    # of windows, inspect, log, machine, of files, net, network_ctl, packages, of files,
-    # start, of files, storage_ctl, system, of files, and web.
-    assert_equal ["service 0 name=data server=2 interface=#{interface.call('files')}",
-                  "service 1 name=display server=0 interface=#{interface.call('windows')}",
-                  "service 2 name=inspect server=none interface=#{interface.call('inspect')}",
-                  "service 3 name=log server=none interface=#{interface.call('log')}",
-                  "service 4 name=machine server=none interface=#{interface.call('files')}",
-                  "service 5 name=net server=1 interface=#{interface.call('net')}",
-                  "service 6 name=network_ctl server=1 interface=#{interface.call('driver_control')}",
-                  "service 7 name=packages server=2 interface=#{interface.call('files')}",
-                  "service 8 name=start server=none interface=#{interface.call('files')}",
-                  "service 9 name=storage_ctl server=2 interface=#{interface.call('driver_control')}",
-                  "service 10 name=system server=2 interface=#{interface.call('files')}",
-                  "service 11 name=web server=3 interface=#{interface.call('web')}"],
+    # network 1, storage 2, web 3) or none for the system domain, and its interface.
+    services = [%w[clock none clock], %w[data 2 files], %w[display 0 windows], %w[inspect none inspect],
+                %w[log none log], %w[machine none files], %w[net 1 net], %w[network_ctl 1 driver_control],
+                %w[packages 2 files], %w[start none files], %w[storage_ctl 2 driver_control],
+                %w[system 2 files], %w[web 3 web]]
+    assert_equal services.each_with_index.map { |(name, server, kind), index|
+                   "service #{index} name=#{name} server=#{server} interface=#{interface.call(kind)}"
+                 },
                  lines.grep(/\Aservice /)
   end
 
