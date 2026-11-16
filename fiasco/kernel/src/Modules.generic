@@ -1,5 +1,6 @@
 # Modified by erXos: it boots from erXos's boot image (docs/design-stopgap.md, "Boot handoff").
 # Modified by erXos: the glue module of erx/ joins the kernel.
+# Modified by erXos: jdb_object is built only into a kernel with the debugger.
 # -*- makefile -*-
 # vi:se ft=make:
 
@@ -55,8 +56,11 @@ INTERFACES_KERNEL	:= cpu_mask rcupdate kobject_mapdb context_base pm \
 			   sched_context utcb_init perf_cnt trap_state       \
 			   buddy_alloc vkey kdb_ke prio_list ipi scheduler   \
 			   clock sys_call_page boot_alloc                    \
-			   semaphore jdb_object tlbs amp_node global_data    \
+			   semaphore tlbs amp_node global_data               \
 			   observer_irq dt pf_trampoline
+
+# The debugger object (GPL-2.0) is built only into a kernel with the debugger.
+INTERFACES_KERNEL-$(CONFIG_JDB) += jdb_object
 
 INTERFACES_KERNEL-$(or $(CONFIG_OUTPUT),$(CONFIG_INPUT)) += vlog
 

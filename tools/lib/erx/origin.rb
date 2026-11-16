@@ -224,6 +224,8 @@ module Erx
         @authorize.call(absolute) if @authorize
         baseline = original[path]
         if File.symlink?(absolute)
+          raise Error, "an imported link cannot have a changes row: #{path}" if payload.fetch('changes').key?(path)
+
           validate_link(absolute)
           hash = Digest::SHA256.hexdigest("symlink\0" + File.readlink(absolute))
           unless baseline && baseline.fetch('kind') == 'symlink' && baseline.fetch('sha256') == hash
@@ -234,20 +236,24 @@ module Erx
         if baseline && baseline.fetch('kind') != 'file'
           raise Error, "imported file type differs from its source record: #{path}"
         end
-        # Only an immutable input-tree owner supplies this callback, after its
-        # complete byte/path verification. Unchanged files need no second read;
-        # modified files still pass the ordinary notice and ASCII checks below.
-        if baseline && @known_hash && @known_hash.call(absolute) == baseline.fetch('sha256')
-          next
-        end
-        bytes = read_content(absolute)
-        if baseline && baseline.fetch('sha256') == Digest::SHA256.hexdigest(bytes)
-          next
-        end
+        # A changes row records the exact bytes erXos put at its path, so the
+        # file must still be those bytes; a source among them also passes the
+        # notice and ASCII checks below; a file of any other kind needs no more.
         explicit_change = payload.fetch('changes')[path]
-        if !source?(path, bytes: bytes) && explicit_change &&
-           explicit_change.fetch('sha256') == Digest::SHA256.hexdigest(bytes)
-          next
+        if explicit_change
+          bytes = read_content(absolute)
+          unless explicit_change.fetch('sha256') == Digest::SHA256.hexdigest(bytes)
+            raise Error, "file differs from its changes row; re-review its license and evidence: #{path}"
+          end
+          next unless source?(path, bytes: bytes)
+        else
+          # Only an immutable input-tree owner supplies this callback, after its
+          # complete byte/path verification. Unchanged files need no second read;
+          # modified files still pass the ordinary notice and ASCII checks below.
+          next if baseline && @known_hash && @known_hash.call(absolute) == baseline.fetch('sha256')
+
+          bytes = read_content(absolute)
+          next if baseline && baseline.fetch('sha256') == Digest::SHA256.hexdigest(bytes)
         end
         if baseline
           unnoticed << path unless Attribution.header_notice?(bytes, notice: MODIFIED_NOTICE)

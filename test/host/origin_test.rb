@@ -220,6 +220,27 @@ class OriginTest < Minitest::Test
     assert_raises(Erx::Error) { @origin.check }
   end
 
+  # A replaced source (fiasco/kernel's kobject_rpc.h) is held to its changes
+  # row's bytes: editing it after the row was written is refused, notice or
+  # not, so the row's license never describes bytes it was not written for.
+  def test_a_replaced_source_must_keep_its_changes_rows_bytes
+    write_file('source.c', "int upstream;\n")
+    write_origin
+    replacement = "/* Modified by erXos: a replacement */\nint replaced;\n"
+    write_file('source.c', replacement)
+    replace_inventory do |payload|
+      payload.fetch('changes')['source.c'] = {
+        'sha256' => Digest::SHA256.hexdigest(replacement), 'license' => 'MIT',
+        'evidence' => 'replacement fixture'
+      }
+      payload
+    end
+    assert @origin.check
+    write_file('source.c', replacement + "int edited;\n")
+    error = assert_raises(Erx::Error) { @origin.check }
+    assert_match(/differs from its changes row.*: source\.c/, error.message)
+  end
+
   def test_link_marker_bytes_do_not_make_a_regular_file_an_imported_link
     write_file('target.c', "/* upstream */\n")
     link = File.join(@directory, 'link.c')

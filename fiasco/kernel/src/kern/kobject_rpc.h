@@ -1,47 +1,66 @@
-// vi:ft=cpp
-
-/*
- * Copyright (C) 2015, 2019, 2021, 2023-2025 Kernkonzept GmbH.
- * Author: Alexander Warg <alexander.warg@kernkonzept.com>
- *
- * This file is distributed under the terms of the GNU General Public
- * License, version 2.  Please see the COPYING-GPL-2 file for details.
- */
+// Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+// SPDX-License-Identifier: MIT
+//
+// Modified by erXos: this file is erXos's clean-room replacement of Fiasco's
+// kobject_rpc.h, written without reading the original from the interface
+// its MIT callers use and the message layout the l4sys client stubs send
+// (fiasco/kernel/ORIGIN.md, the entry for this file, names the facts
+// record it was written from).
+//
+// Decoding a kernel-object invocation.  The helpers check an invocation's
+// protocol label, rights and size and resolve capability send items into
+// typed kernel objects.  L4_RPC declares one method of an object's protocol:
+// the generated Msg_<name>::call decodes the message for the declared
+// argument list, calls the object's op_<name>() and builds the reply tag.
+//
+// The message layout of an L4_RPC method:
+//  - word 0 of the input message registers is the opcode, which the
+//    dispatching object reads itself to pick the Msg_<name>;
+//  - by-value parameters are inputs, laid out from byte sizeof(Mword) of the
+//    input registers in declaration order, each at the next offset aligned
+//    to its type's alignment;
+//  - pointer parameters T * are outputs, laid out the same way from byte 0
+//    of the output registers; the handler writes through the pointer;
+//  - Ko::Cap<T> parameters take no bytes: each resolves the next send item,
+//    after the untyped words, in declaration order;
+//  - reference parameters do not build.
+// Every input is copied out of the user-writable UTCB, once, before any
+// capability is resolved or the handler runs, so the handler never re-reads
+// an input and its outputs, which may overlay the inputs, cannot change one.
 
 #pragma once
 
 #include <cxx/type_traits>
-#include <l4_types.h>
-#include <l4_buf_iter.h>
+#include <cxx/dyn_cast>
+#include "context.h"
+#include "kobject_iface.h"
+#include "l4_buf_iter.h"
+#include "l4_types.h"
+#include "space.h"
 
 namespace Ko {
 
-/// import L4_fpage::Rights into Ko namespace
-typedef L4_fpage::Rights Rights;
+using Rights = L4_fpage::Rights;
 
-/// create an L4_msg_tag with the given return code
 inline L4_msg_tag
 commit_result(Mword error, unsigned words = 0, unsigned items = 0)
-{ return L4_msg_tag(words, items, 0, error); }
+{ return Kobject_iface::commit_result(error, words, items); }
+
+inline L4_msg_tag
+commit_error(Utcb const *utcb, L4_error const &e,
+             L4_msg_tag const &tag = L4_msg_tag(0, 0, 0, 0))
+{ return Kobject_iface::commit_error(utcb, e, tag); }
 
 /**
- * create an L4_msg_tag with IPC error flag set and write the given IPC
- * error code into the UTCB error register.
+ * Whether `rights` holds every capability right (CS, CW) of `need`; other
+ * bits of `need` are not checked.  On failure, `*tag`, if given, becomes the
+ * -EPerm reply.
  */
-inline L4_msg_tag
-commit_error(Utcb const *utcb, L4_error e,
-             L4_msg_tag tag = L4_msg_tag(0, 0, 0, 0))
-{
-  const_cast<Utcb*>(utcb)->error = e;
-  return L4_msg_tag(tag, L4_msg_tag::Error);
-}
-
-/// Check if `rights` has at least all `need` rights.
 inline bool
 check_rights(Rights rights, Rights need, L4_msg_tag *tag = nullptr)
 {
   need &= Rights::CS() | Rights::CW();
-  if ((rights & need) == need) [[likely]]
+  if ((rights & need) == need)
     return true;
 
   if (tag)
@@ -50,8 +69,9 @@ check_rights(Rights rights, Rights need, L4_msg_tag *tag = nullptr)
 }
 
 /**
- * Check typical RPC conditions, such as the correct message size, the correct
- * label, and sufficient rights.
+ * The entry check of an invocation: the label, then the rights, then at
+ * least one untyped word.  On the first failure `*tag` becomes its error
+ * reply (-EBadproto, -EPerm, -EMsgtooshort) and the result is false.
  */
 inline bool
 check_basics(L4_msg_tag *tag, Rights rights, long label, Rights need)
@@ -74,419 +94,286 @@ check_basics(L4_msg_tag *tag, Rights rights, long label, Rights need)
   return true;
 }
 
-/**
- * Check the label and correct minimum message size of an RPC.
- */
 inline bool
 check_basics(L4_msg_tag *tag, long label)
 { return check_basics(tag, Rights(0), label, Rights(0)); }
 
-/**
- * Helper function to dereference a capability send message
- * item and check the correct object type.
- */
-template<typename OBJ> __attribute__((nonnull(5)))
-OBJ *deref_next(L4_msg_tag *tag, Utcb const *utcb,
-                L4_snd_item_iter &snd_items, Space *space,
-                Rights *rights)
+/// The number of message words that hold `bytes` bytes.
+constexpr unsigned long
+message_words(unsigned long bytes)
+{ return (bytes + sizeof(Mword) - 1) / sizeof(Mword); }
+
+/// Whether the untyped words cover `size` bytes and the message fits the UTCB.
+inline bool
+check_message_size(L4_msg_tag tag, unsigned long size)
 {
-  if (!snd_items.next() || snd_items.get()->b.is_void())
+  return tag.words() * sizeof(Mword) >= size
+         && tag.words() + tag.items() <= Utcb::Max_words;
+}
+
+/**
+ * Resolve the next send item of `items` as a capability to an `OBJ` in
+ * `space`; `*rights` receives the capability's rights.  A missing or void
+ * item, a missing object or one of another type sets `*tag` to -EInval; an
+ * item that is not an object flexpage is an IPC overflow error.  Each
+ * returns null.
+ */
+template<typename OBJ>
+OBJ *
+deref_next(L4_msg_tag *tag, Utcb const *utcb, L4_snd_item_iter &items,
+           Space *space, Rights *rights)
+{
+  if (!items.next() || items.get()->b.is_void()) [[unlikely]]
     {
       *tag = commit_result(-L4_err::EInval);
       return nullptr;
     }
 
-  L4_fpage fp(snd_items.get()->d);
-  if (!fp.is_objpage()) [[unlikely]]
+  L4_fpage const fpage(items.get()->d);
+  if (!fpage.is_objpage()) [[unlikely]]
     {
       *tag = commit_error(utcb, L4_error::Overflow);
       return nullptr;
     }
 
-  OBJ *o = cxx::dyn_cast<OBJ*>(space->lookup_local(fp.obj_index(), rights));
-  if (!o) [[unlikely]]
+  OBJ *obj = cxx::dyn_cast<OBJ *>(space->lookup_local(fpage.obj_index(), rights));
+  if (!obj) [[unlikely]]
+    *tag = commit_result(-L4_err::EInval);
+  return obj;
+}
+
+/// The first send item as a capability to an `OBJ` in the caller's space.
+template<typename OBJ>
+__attribute__((nonnull)) OBJ *
+deref(L4_msg_tag *tag, Utcb const *utcb, Rights *rights)
+{
+  if (tag->items() < 1) [[unlikely]]
     {
       *tag = commit_result(-L4_err::EInval);
       return nullptr;
     }
 
-  return o;
+  L4_snd_item_iter items(utcb, tag->words());
+  return deref_next<OBJ>(tag, utcb, items, ::current()->space(), rights);
 }
 
-/**
- * Helper to dereference exactly the first send message item as capability
- * of type `OBJ`.
- */
-template<typename OBJ> __attribute__((nonnull(3)))
-OBJ *deref(L4_msg_tag *tag, Utcb const *utcb, Rights *rights)
+/// A capability argument of an L4_RPC method, as resolved.
+template<typename OBJ>
+struct Cap
 {
-  L4_snd_item_iter snd_items(utcb, tag->words());
-  if (!tag->items())
-    {
-      *tag = commit_result(-L4_err::EInval);
-      return nullptr;
-    }
-  Space *const space = ::current()->space();
-  if (!space)
-    __builtin_unreachable();
-  return deref_next<OBJ>(tag, utcb, snd_items, space, rights);
-}
-
-/// Helper to calculate the number of message words for given `bytes`.
-constexpr unsigned long message_words(unsigned long bytes)
-{ return (bytes + sizeof(Mword) - 1) / sizeof(Mword); }
-
-/// Helper to check if `tag.words()` contains at least `size` bytes.
-inline bool check_message_size(L4_msg_tag tag, unsigned long size)
-{
-  if (tag.words() < message_words(size))
-    return false;
-  if ((tag.words() + tag.items()) > Utcb::Max_words)
-    return false;
-  return true;
-}
-
-/// A typed capability input parameter for RPC
-template<typename OBJ> struct Cap
-{
-  typedef OBJ Obj_type; ///< Type of the referenced kernel object
-  Obj_type *obj;        ///< Pointer to the kernel object
-  Rights rights;        ///< Rights bits from the capability (only CS | CW)
+  typedef OBJ Obj_type;
+  OBJ *obj;
+  Rights rights;
 };
 
-namespace Detail {
+namespace Rpc_detail {
 
-/// Descriptor for an RPC input data argument
-template<typename T> struct Msg_item;
+enum class Kind { In, Out, Cap };
 
-/// disallow reference arguments by leaving this type incomplete
-template<typename T> struct Msg_item<T&>;
+template<typename T> struct Is_cap : cxx::false_type {};
+template<typename T> struct Is_cap<Cap<T>> : cxx::true_type {};
 
-/// Descriptor for an RPC input data argument
-template<typename T> struct Msg_item
+/// What an argument of type T is, and the size and alignment of its bytes.
+template<typename T>
+struct Arg
 {
-  typedef T Arg_type;
-  enum
-  {
-    in_size   = sizeof(T),
-    in_align  = alignof(T),
-    out_size  = 0,
-    out_align = 1,
-    in_items  = 0,
-    out_items = 0,
-  };
+  static_assert(cxx::is_same<T, cxx::remove_reference_t<T>>::value,
+                "L4_RPC: reference parameters are not supported");
 
-  static bool read_items(Arg_type *, L4_msg_tag *, Utcb const *,
-                         L4_snd_item_iter &, Space *)
-  { return true; }
-
-  static void read_data(Arg_type *arg, char const *in, char *)
-  { *arg = *reinterpret_cast<Arg_type const *>(in); }
+  static constexpr Kind kind = Is_cap<T>::value ? Kind::Cap
+                               : cxx::is_pointer<T>::value ? Kind::Out
+                               : Kind::In;
 };
 
-/// Descriptor for an RPC input capability argument
-template<typename T> struct Msg_item<Cap<T> >
+template<typename T>
+struct Data
 {
-  typedef Cap<T> Arg_type;
-
-  enum
-  {
-    in_size   = 0,
-    in_align  = 1,
-    out_size  = 0,
-    out_align = 1,
-    in_items  = 1,
-    out_items = 0,
-  };
-
-  static bool read_items(Arg_type *arg, L4_msg_tag *tag, Utcb const *in,
-                         L4_snd_item_iter &snd_items, Space *s)
-  {
-    arg->obj = deref_next<T>(tag, in, snd_items, s, &arg->rights);
-    return arg->obj != nullptr;
-  }
-
-  static void read_data(Arg_type *, char const *, char *)
-  {}
+  static constexpr unsigned long size = sizeof(T);
+  static constexpr unsigned long align = alignof(T);
 };
 
-/// Descriptor for an RPC output data argument
-template<typename T> struct Msg_item<T*>
+template<typename T>
+struct Data<T *>
 {
-  typedef T *Arg_type;
-  enum
-  {
-    in_size   = 0,
-    in_align  = 1,
-    out_size  = sizeof(T),
-    out_align = alignof(T),
-    in_items  = 0,
-    out_items = 0,
-  };
-
-  static bool read_items(Arg_type *, L4_msg_tag *, Utcb const *,
-                         L4_snd_item_iter &, Space *)
-  { return true; }
-
-  static void read_data(Arg_type *arg, char const *, char *out)
-  { *arg = reinterpret_cast<Arg_type>(out); }
+  static constexpr unsigned long size = sizeof(T);
+  static constexpr unsigned long align = alignof(T);
 };
 
-/// Align `pos` to `align` bytes use padding if needed
-constexpr unsigned align(unsigned pos, unsigned align)
-{ return (pos + align - 1) & ~(align - 1); }
-
-/// Add an `ITEM` to the message described by `MSG`
-template<typename MSG, typename ITEM>
-struct Add_item
+template<typename T>
+struct Data<Cap<T>>
 {
-  enum
-  {
-    in_pos    = align(MSG::in_size, ITEM::in_align),
-    in_size   = in_pos + ITEM::in_size,
-    out_pos   = align(MSG::out_size, ITEM::out_align),
-    out_size  = out_pos + ITEM::out_size,
-    in_items  = unsigned{MSG::in_items} + unsigned{ITEM::in_items},
-    out_items = unsigned{MSG::out_items} + unsigned{ITEM::out_items},
-  };
+  static constexpr unsigned long size = 0;
+  static constexpr unsigned long align = 1;
 };
 
+constexpr unsigned long
+align_up(unsigned long value, unsigned long align)
+{ return (value + align - 1) & ~(align - 1); }
 
-/// Basic recursive RPC message arguments structure
-template<typename STATE, typename ...ARGS>
-struct R_msg;
-
-template<typename STATE>
-struct R_msg<STATE>
-{
-  // define this element as a terminator
-  typedef void Tail;
-
-  // assign the total sizes in the terminating
-  // element in the recursive message structure
-  enum
-  {
-    in_total_size   = STATE::in_size,
-    out_total_size  = STATE::out_size,
-    in_total_items  = STATE::in_items,
-    out_total_items = STATE::out_items
-  };
-
-  bool read_items(L4_msg_tag *, Utcb const *,
-                  L4_snd_item_iter &, Space *)
-  { return true; }
-
-  void read_data(char const *, char *) {}
-};
-
-template<typename STATE, typename A1, typename ...ARGS>
-struct R_msg<STATE, A1, ARGS...> :
-  R_msg<Add_item<STATE, Msg_item<A1> >, ARGS...>
-{
-  typedef Msg_item<A1> Item_info;
-  typedef R_msg<Add_item<STATE, Item_info>, ARGS...> Tail;
-  typedef typename Item_info::Arg_type Arg_type;
-  typedef Add_item<STATE, Msg_item<A1> > Pos;
-
-  Arg_type arg;
-
-  bool read_items(L4_msg_tag *tag, Utcb const *in,
-                  L4_snd_item_iter &snd_items, Space *s)
-  {
-    if (!Item_info::read_items(&arg, tag, in, snd_items, s))
-      return false;
-    return Tail::read_items(tag, in, snd_items, s);
-  }
-
-  void read_data(char const *in, char *out)
-  {
-    Item_info::read_data(&arg, in + Pos::in_pos, out + Pos::out_pos);
-    Tail::read_data(in, out);
-  }
-};
-
-/// allow per index access to an element in the argument structure
-template<typename M, unsigned index>
-struct Read_msg : Read_msg<typename M::Tail, index - 1> {};
-
-template<typename M>
-struct Read_msg<M, 0>
-{
-  typedef M Msg;
-  typedef typename Msg::Arg_type Arg_type;
-  static Arg_type get(M const *m)
-  { return m->arg; }
-};
-
-/// Call a functor F with all arguments in the message structure `M`
-template<typename M>
-struct Call : Call<typename M::Tail>
-{
-  typedef Call<typename M::Tail> Base;
-  template<typename F, typename ...ARGS> static
-  L4_msg_tag call(M const &m, F &&func, ARGS &&...args)
-  { return Base::call(m, func, cxx::forward<ARGS>(args)..., m.arg); }
-};
-
-template<typename S>
-struct Call<R_msg<S> >
-{
-  template<typename MSG, typename F, typename ...ARGS> static
-  L4_msg_tag call(MSG const &, F &&func, ARGS &&...args)
-  { return func(cxx::forward<ARGS>(args)...); }
-};
-
-
-/// Start state for a message structure (skipping the opcode)
-struct Msg_start_state
-{
-  enum
-  {
-    in_size = sizeof(Mword), // skip the opcode word in the input message
-    out_size = 0,
-    in_items = 0,
-    out_items = 0
-  };
-};
-
-} // namespace Detail
-
-/**
- * A kernel-side RPC message description for a single method call.
- *
- * This type describes a method call with arguments given by `ARGS`.
- * Currently this code supports fixed-size static messages with input and
- * output data parameters, and input capability parameters.
- * NOTE: output capabilities are not supported because they are used by the
- * Factory only.
- *
- * Data value arguments are treated as input data. Pointer arguments are
- * treated as output arguments and `Ko::Cap<>` arguments are input
- * capabilities.  References are not allowed as arguments.
- *
- * An instance of Msg<> provides storage for all input arguments, including
- * resolved capabilities with rights, and for pointers to the output arguments
- * stored in the output-UTCB.
- */
+/// The byte layout of an argument list (one trailing sentinel entry each).
 template<typename ...ARGS>
-struct Msg : Detail::R_msg<Detail::Msg_start_state, ARGS...>
+struct Layout
 {
-  /// The base class type representing the message itself
-  typedef Detail::R_msg<Detail::Msg_start_state, ARGS...> Base;
-  /// The type itself
-  typedef Msg<ARGS...> Self;
+  static constexpr unsigned count = sizeof...(ARGS);
+  static constexpr Kind kinds[] = { Arg<ARGS>::kind..., Kind::Cap };
+  static constexpr unsigned long sizes[] = { Data<ARGS>::size..., 0 };
+  static constexpr unsigned long aligns[] = { Data<ARGS>::align..., 1 };
 
-  /**
-   * check if the message described by tag contains enough input data for this
-   * message.
-   *
-   * NOTE: this does not include checks for the input capabilities, these are
-   * done during `read()`.
-   */
-  static bool check_size(L4_msg_tag tag)
-  { return check_message_size(tag, Base::in_total_size); }
-
-  /**
-   * Read the input arguments and set the pointers for the output arguments to
-   * the output-UTCB.
-   *
-   * The function includes the appropriate size checks.
-   */
-  bool read(L4_msg_tag *tag, Utcb const *in, Utcb *out)
+  /// The offset of argument i in the layout of its kind k, which starts at
+  /// byte `start`; for i == count, the end of that layout.
+  static constexpr unsigned long
+  offset(unsigned i, Kind k, unsigned long start)
   {
-    if (!check_size(*tag) || (Base::in_total_items && !tag->items()))
-      {
-        // message too short
-        *tag = commit_result(-L4_err::EMsgtooshort);
-        return false;
-      }
-
-    if (Base::in_total_items)
-      {
-        L4_snd_item_iter snd_items(in, tag->words());
-        Space *s = ::current()->space();
-
-        if (!Base::read_items(tag, in, snd_items, s))
-          return false;
-      }
-
-    Base::read_data(reinterpret_cast<char const *>(in->values),
-                    reinterpret_cast<char *>(out->values));
-    __asm__ __volatile__ (
-        ""
-        : "=m" (*const_cast<Mword (*)[Utcb::Max_words]>(&in->values))
-    );
-    return true;
+    unsigned long pos = start;
+    for (unsigned j = 0; j < i; ++j)
+      if (kinds[j] == k)
+        pos = align_up(pos, aligns[j]) + sizes[j];
+    return i < count ? align_up(pos, aligns[i]) : pos;
   }
 
-  /// Access arguments using their position
-  template<unsigned arg>
-  typename Detail::Read_msg<Base, arg>::Arg_type get()
-  { return Detail::Read_msg<Base, arg>::get(this); }
+  static constexpr unsigned long in_end = offset(count, Kind::In, sizeof(Mword));
+  static constexpr unsigned long out_end = offset(count, Kind::Out, 0);
+  static constexpr unsigned caps = ((Arg<ARGS>::kind == Kind::Cap) + ... + 0);
+};
 
-  /**
-   * Parse the input message and call the given function with the parsed
-   * arguments.
-   *
-   * This function is to be used in the dispatch demultiplexing code.
-   *
-   * Extra arguments passed to this function are passed to `func` before the
-   * arguments of the message.
-   *
-   * After a successful call to `func` the output message tag is updated to the
-   * correct number of words and items.
-   */
-  template<typename F, typename ...EXTRA> static
-  L4_msg_tag call(L4_msg_tag tag, Utcb const *in, Utcb *out, F &&func,
-                  EXTRA &&...args)
+template<unsigned ...I> struct Indices {};
+template<unsigned N, unsigned ...I>
+struct Make_indices : Make_indices<N - 1, N - 1, I...> {};
+template<unsigned ...I>
+struct Make_indices<0, I...> { typedef Indices<I...> type; };
+
+/// Storage for argument I: the resolved capability, or nothing.
+template<unsigned I, typename T> struct Slot {};
+template<unsigned I, typename T> struct Slot<I, Cap<T>> { Cap<T> value; };
+
+template<typename INDICES, typename ...ARGS> struct Rpc;
+
+template<unsigned ...I, typename ...ARGS>
+struct Rpc<Indices<I...>, ARGS...>
+{
+  typedef Layout<ARGS...> L;
+  struct Caps : Slot<I, ARGS>... {};
+
+  // A tag's flag bits; a rebuilt reply keeps the handler's.
+  static constexpr Mword Reply_flags = Mword{L4_msg_tag::Transfer_fpu}
+                                       | Mword{L4_msg_tag::Schedule}
+                                       | Mword{L4_msg_tag::Propagate}
+                                       | Mword{L4_msg_tag::Error};
+
+  template<unsigned J, typename T>
+  static bool
+  resolve(Caps &caps, L4_msg_tag *tag, Utcb const *in,
+          L4_snd_item_iter &items, Space *space)
   {
-    Self msg;
-    if (!msg.read(&tag, in, out))
-      return tag;
+    if constexpr (Arg<T>::kind == Kind::Cap)
+      {
+        T &cap = static_cast<Slot<J, T> &>(caps).value;
+        cap.obj = deref_next<typename T::Obj_type>(tag, in, items, space,
+                                                   &cap.rights);
+        return cap.obj;
+      }
+    else
+      return true;
+  }
 
-    L4_msg_tag t
-      = Detail::Call<Msg>::call(msg, func, cxx::forward<EXTRA>(args)...);
+  template<unsigned J, typename T>
+  static T
+  argument(Caps &caps, unsigned char const *input, unsigned char *output)
+  {
+    if constexpr (Arg<T>::kind == Kind::Cap)
+      return static_cast<Slot<J, T> &>(caps).value;
+    else if constexpr (Arg<T>::kind == Kind::Out)
+      return reinterpret_cast<T>(output + L::offset(J, Kind::Out, 0));
+    else
+      {
+        struct Bytes { unsigned char b[sizeof(T)]; } bytes;
+        __builtin_memcpy(bytes.b, input + L::offset(J, Kind::In, sizeof(Mword)),
+                         sizeof(T));
+        return __builtin_bit_cast(T, bytes);
+      }
+  }
 
-    // !do_switch means do not send an answer...
-    if (t.has_error() || !t.do_switch()) [[unlikely]]
-      return t;
+  template<typename HANDLER>
+  static L4_msg_tag
+  dispatch(L4_msg_tag tag, Utcb const *in, Utcb *out, HANDLER &&handler)
+  {
+    static_assert(message_words(L::out_end) <= Utcb::Max_words,
+                  "L4_RPC: outputs exceed the message registers");
 
-    if (t.proto() < 0) [[unlikely]]
-      return t;
+    if (!check_message_size(tag, L::in_end) || (L::caps && tag.items() < 1))
+      return commit_result(-L4_err::EMsgtooshort);
 
-    return L4_msg_tag(message_words(msg.out_total_size), msg.out_total_items,
-                      t.flags(), t.proto());
+    // The one read of the inputs.  The empty asm makes the compiler treat
+    // the copy as changed, so it can never re-read the UTCB in its place.
+    Mword snapshot[message_words(L::in_end)];
+    __builtin_memcpy(snapshot, in->values, sizeof(snapshot));
+    asm volatile ("" : "+m" (snapshot));
+
+    Caps caps;
+    if constexpr (L::caps > 0)
+      {
+        L4_snd_item_iter items(in, tag.words());
+        Space *space = ::current()->space();
+        // && folds left to right and stops at the first failure.
+        if (!(resolve<I, ARGS>(caps, &tag, in, items, space) && ...))
+          return tag;
+      }
+
+    auto const *input = reinterpret_cast<unsigned char const *>(snapshot);
+    auto *output = reinterpret_cast<unsigned char *>(out->values);
+    L4_msg_tag const result = handler(argument<I, ARGS>(caps, input, output)...);
+
+    if (result.has_error() || !result.do_switch() || result.proto() < 0)
+      return result;
+
+    return L4_msg_tag(message_words(L::out_end), 0, result.raw() & Reply_flags,
+                      result.proto());
   }
 };
 
-/// RPC Message for the function arguments of the given signature type
+} // namespace Rpc_detail
+
+/// The decoder of a method whose parameters are ARGS.
+template<typename ...ARGS>
+struct Msg
+{
+  template<typename HANDLER>
+  static L4_msg_tag
+  dispatch(L4_msg_tag tag, Utcb const *in, Utcb *out, HANDLER &&handler)
+  {
+    typedef typename Rpc_detail::Make_indices<sizeof...(ARGS)>::type Indices;
+    return Rpc_detail::Rpc<Indices, ARGS...>::dispatch(tag, in, out, handler);
+  }
+};
+
+/// Msg for the parameters of a method signature.
 template<typename SIG> struct Sig_msg;
-template<typename ...ARGS> struct Sig_msg<L4_msg_tag (ARGS...)> : Msg<ARGS...> {};
+template<typename ...ARGS>
+struct Sig_msg<L4_msg_tag (ARGS...)> : Msg<ARGS...> {};
+
+} // namespace Ko
 
 /**
- * Define a message class `Msg_##name` for the given arguments.
+ * Declare method `name` of a kernel object's protocol, with opcode `opcode`
+ * and the parenthesised parameter list `args`.  Msg_<name>::call(o, tag,
+ * in, out, extra...) decodes the message and calls
+ * o->op_<name>(extra..., arguments...).
  */
-#define L4_RPC(opcode, name, ...)                      \
-  struct Msg_##name :                                  \
-    Ko::Sig_msg<L4_msg_tag __VA_ARGS__>                \
-  {                                                    \
-    enum : Mword { Opcode = static_cast<Mword>(opcode) }; \
-    template<typename OBJ> struct Fwd                  \
-    {                                                  \
-      OBJ *o;                                          \
-      constexpr Fwd(OBJ *o) : o(o) {}                  \
-      template<typename ...ARGS>                       \
-      L4_msg_tag operator () (ARGS ...a) const         \
-      { return o->op_##name(a...); }                   \
-    };                                                 \
-    template<typename OBJ, typename ...ARGS>           \
-    static L4_msg_tag call(OBJ *o, L4_msg_tag tag,     \
-                           Utcb const *in, Utcb *out,  \
-                           ARGS &&...args)             \
-    {                                                  \
-      typedef Ko::Sig_msg<L4_msg_tag __VA_ARGS__> Self;\
-      return  Self::call(tag, in, out, Fwd<OBJ>(o),    \
-                         cxx::forward<ARGS>(args)...); \
-    }                                                  \
+#define L4_RPC(opcode, name, args)                                         \
+  struct Msg_##name : Ko::Sig_msg<L4_msg_tag args>                        \
+  {                                                                       \
+    enum : Mword { Opcode = static_cast<Mword>(opcode) };                 \
+                                                                          \
+    template<typename OBJ, typename ...EXTRA>                             \
+    static L4_msg_tag                                                     \
+    call(OBJ *o, L4_msg_tag tag, Utcb const *in, Utcb *out,               \
+         EXTRA &&...extra)                                                \
+    {                                                                     \
+      return Ko::Sig_msg<L4_msg_tag args>::dispatch(tag, in, out,         \
+        [o, &extra...](auto &&...decoded)                                 \
+          {                                                               \
+            return o->op_##name(cxx::forward<EXTRA>(extra)...,            \
+                                cxx::forward<decltype(decoded)>(decoded)...); \
+          });                                                             \
+    }                                                                     \
   }
-}
