@@ -6514,11 +6514,18 @@ to the corpus and follow rc
   core trusts the controller to answer each request once; echoing the step in request and answer would make a
   stray answer stale by construction. A full-speed hub gets hub fields and possibly the MTT flag, which FreeBSD
   sets only at high speed (`controller/xhci.c:2662-2690`).
-* [Medium] USB, the bus core's exploration cost (`test/erlang/erx_usb_bus_core_tests.erl`): with the descriptor
-  steps and the address settle's deadline one eunit run of the module takes about 295 s on the M-series
-  development host (21 s before the steps), and the host test runs it once per seeded fault. Find a sound
-  reduction (the settle's deadline and a device's requests commute with other hubs' work) or move the deeper
-  depth off the landing gate.
+* [Medium] USB, the bus core's exploration reduction (`test/erlang/erx_usb_bus_core_tests.erl`, `taken_alone/2`):
+  the answer choices/1 takes alone is chosen from the model's world, and its independence from every other choice is
+  argued from what `enumerated/6`, `configured/3` and `settle/3` do, not checked. A step that fails a device on a
+  well-formed answer (the refused `bMaxPacketSize0` or malformed-descriptor kinds above) or a deadline on a step after
+  the settle would break the argument silently. Check it instead: in `follow/2`, assert for every answer taken alone
+  that its actions are only the device's next request, its `start` or its new hub's `power_on`, with the deadline
+  unchanged and no detach.
+* [Medium] USB, the bus core's seeded depths (`test/host/erx_usb_bus_core_test.rb`): each exploration seed names a
+  depth that must lie within one of the test module's `?DEPTHS`, and nothing checks that; export the depths and have
+  the host test assert it, so dropping a depth from the module cannot leave a seed caught only by its own run.
+* [Medium] USB, the bus core's over-current changes (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#hubs)):
+  an over-current change is cleared but not logged once per connection nor counted for the port's inspection record.
 * [Medium] USB, the bus core's attempts (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
   the design's bound of 3 enumeration attempts on a port in 60 s is not kept; every connection change starts a
   new attempt, so a device that toggles its connection costs an Enable Slot each time. State stays bounded.

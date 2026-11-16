@@ -35,7 +35,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([states/2]).
+-export([states/2, explored/2]).
 
 -define(T0, (1 bsl 40)).
 %% The depths explored, as connects or disconnects and failed answers the environment
@@ -49,13 +49,15 @@
 %% The exploration.
 
 explored_to_a_fixed_point_test_() ->
-    {timeout, 600, fun() ->
-                           [begin
-                                {ok, Seen} = states(Stimuli, Errors),
-                                io:format(user, "~nerx_usb_bus_core: ~b states, ~b connects or disconnects "
-                                          "and ~b failed answers deep~n", [Seen, Stimuli, Errors])
-                            end || {Stimuli, Errors} <- ?DEPTHS]
-                   end}.
+    [{timeout, 600, fun() -> explored(Stimuli, Errors) end} || {Stimuli, Errors} <- ?DEPTHS].
+
+%% The exploration at one depth, its size printed; the host test runs a seeded fault
+%% at the smallest depth that catches it, every path of which a depth of ?DEPTHS
+%% at least as deep in both counts also takes.
+explored(Stimuli, Errors) ->
+    {ok, Seen} = states(Stimuli, Errors),
+    io:format(user, "~nerx_usb_bus_core: ~b states, ~b connects or disconnects and ~b failed answers deep~n",
+              [Seen, Stimuli, Errors]).
 
 %% The node after the bus's first step: the root hub powering its ports.
 start(Stimuli, Errors) ->
@@ -109,10 +111,62 @@ port0() -> #{thing => none, chg => [], enabled => false, addressed => false, pow
 %% between two deadlines set the same times. What the fixed order would hide, an answer
 %% held back while others overtake it, the interleaved failures, deadlines and
 %% stimuli reach instead.
+%%
+%% Once the environment has spent its connects, disconnects and failures, the first answer,
+%% when it is one
+%% to a device's request after its address settle is taken alone when the device
+%% still sits, enabled, at its place, with no connection change latched there or at
+%% any place above it (a partial-order reduction: the answer is the node's only
+%% choice, and every other choice waits until it is taken). Such an answer is
+%% independent of every other choice the node or any node after it can offer:
+%% * it reads and writes only its device's port, its device and, at the last
+%%   step, the hub it adds under its own reference; it reads no time, since a step
+%%   after the settle has no deadline and the settle check passes at any later
+%%   time; and it neither takes nor releases the turn, so the turn's grant and
+%%   every other hub's next operation and deadline are the same either side of it;
+%% * the choices left are other answers, hub reports and deadlines: a report only
+%%   marks ports to read, a deadline only moves ports that are timed, which a port
+%%   past its settle is not, and a status read of the device's port or of a port
+%%   above it finds nothing that moves the port, since its connection, enable and
+%%   presence agree with the port's state and only a stimulus, now spent, could
+%%   latch a change there;
+%% * no choice can make its answer fail or its device go: that takes a stimulus,
+%%   a failed answer or a latched connection change, and none is left.
+%% So the two orders of the answer and any other choice reach the same node, the
+%% invariants checked at each step do not depend on which step of its walk a
+%% device past its address is at, and a device's walk is finite, so no choice is
+%% postponed forever. While a stimulus or a failure is left, every interleaving of
+%% a device's steps with it is explored.
 choices(Node = {M, _Core}) ->
     {Ready, Failed} = environment(Node),
     {Answers, Reports} = lists:partition(fun({Kind, _}) -> Kind =:= core end, Ready),
-    lists:sublist(Answers, 1) ++ Reports ++ Failed ++ expiry(M) ++ stimuli(M).
+    First = lists:sublist(Answers, 1),
+    case lists:any(fun(A) -> taken_alone(A, Node) end, First) of
+        true -> First;
+        false -> First ++ Reports ++ Failed ++ expiry(M) ++ stimuli(M)
+    end.
+
+%% Whether the first answer is one choices/1 may take alone. Only the first is, so a
+%% node offers a subset of what it offers with more connects or failures to spend.
+taken_alone({core, {Kind, Ref, _Result}}, {M = #{stimuli := 0, errors := 0, things := Things}, Core})
+  when Kind =:= control_done; Kind =:= evaluated; Kind =:= endpoints_configured ->
+    case {maps:find(Ref, erx_usb_bus_core:devices(Core)), maps:find(Ref, Things)} of
+        {{ok, _Device}, {ok, {Place, Thing}}} -> undisturbed(Place, Thing, M);
+        _Gone -> false
+    end;
+taken_alone(_Choice, _Node) ->
+    false.
+
+%% The device Thing sits enabled at Place, and no place from the root to it has a
+%% connection change latched.
+undisturbed(Place, Thing, #{world := World}) ->
+    Above = [lists:sublist(Place, I) || I <- lists:seq(1, length(Place))],
+    case maps:get(Place, World, none) of
+        #{thing := Thing, enabled := true} ->
+            lists:all(fun(P) -> not lists:member(connection, maps:get(chg, maps:get(P, World, port0()))) end,
+                      Above);
+        _ -> false
+    end.
 
 %% What the environment can deliver now, in its fixed order, and the failures it may
 %% deliver instead.
