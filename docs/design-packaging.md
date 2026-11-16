@@ -473,7 +473,9 @@ board's source does not hold and the build record lists:
 * **the `system` rows**: the system domain's grant of the service named
   `system_service` (`abi/manifest.txt`), the `system` tree, `rights ro`,
   and the app template's, `rights rx`, each with the files interface's
-  quantities. The app template's two grants are `rx` because its
+  quantities, in a manifest that holds that service; one without a
+  `system` window holds none (property 19), and so its apps row names no
+  `system` row. The app template's two grants are `rx` because its
   session runs its package's code from `/app`, which is mounted through
   one of them, and an EROFS mount is `rx` only through an `rx` grant,
   which writes nothing
@@ -1086,7 +1088,8 @@ against its table. The boot view checks once, as it reads an untrusted
 manifest, that `app_template` is the session row naming no principal, the
 last, and that each of those facet rows is granted to that template for
 its service, `packages_facet` for the service named `packages_service`
-and `system_facet` for the one named `system_service`, and that the
+and `system_facet` for the one named `system_service`, `0xffffffff`
+exactly when the manifest holds no such service, and that the
 template holds no other facet row, so an app's session
 reaches only the services the `apps` row names.
 `erx_pkg_manifest` reads the indices and searches for nothing, so the
@@ -1132,9 +1135,11 @@ third from the package the entry was registered from:
 * its environment holds its default display, which its planning sets
   ([design-apps.md](design-apps.md#starting-a-session)), and the domain
   service sends it the app's record, in a message of its own after the
-  ready answer: the place of the package's file, its grant and its name
-  there (`NAME.app` on its `packages` grant, or, for a package of the
-  image, on its `system` grant; neither service has a mount point in the
+  ready answer: the place of the package's file, `{Facet, Names}`, the
+  facet whose grant holds it and its names below that facet's tree
+  (`{packages, [NAME.app]}`, at the root of the `packages` grant, or, for
+  a package of the image, `{system, [apps, NAME.app]}` on the `system`
+  grant; neither service has a mount point in the
   session's namespace, and what the session reaches through either
   grant, by `erx:cap/1` or by any entry its code puts in its table, is
   what the grant reaches: the `packages` grant, packages of

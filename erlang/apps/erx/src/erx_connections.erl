@@ -12,14 +12,18 @@
 %% it to, on the connection_up its domain pid writes, finishes and ends it on
 %% connection_down, and tells the domain pid when one ends by itself (records/3); it hands
 %% init the domain's facets, the domain service's answer to init's ready report, and, in
-%% an app's session, answers erx_app with the app's record once it has come (app/0). Each
+%% an app's session, answers erx_app with the app's record once it has come (app/0) and
+%% erx_ns with the record it holds, never waiting (app_held/0). Each
 %% agent counts the messages it drops (dropped/0). The agent and net_kernel live as long
 %% as the runtime: the agent halts it on net_kernel's end other than an ordered stop, and
 %% erx_dist:accept/1 on the agent's.
 -module(erx_connections).
 -moduledoc false.
 
--export([start/2, open_side/2, close_side/2, dropped/0, connection/1, area/1, app/0]).
+-include("generated/erx_abi.hrl").
+
+-export([start/2, open_side/2, close_side/2, dropped/0, connection/1, area/1, app/0,
+         app_held/0]).
 %% A domain's agent past its system connection's hand-over, and the system domain's agent,
 %% which start/2 runs and the host test (test/erlang/erx_connections_tests.erl) runs with
 %% a stand-in opener.
@@ -92,9 +96,19 @@ area(Peer) when is_integer(Peer), Peer > 0 ->
 %% keeps it and answers with it, at once if it holds it and else once it comes, so the
 %% asker finds it whichever comes first. {error, badarg} in the system domain, whose
 %% agent holds none.
--spec app() -> {ok, erx_app:app_record()} | {error, noproc | badarg}.
+-spec app() -> {ok, erx:app_record()} | {error, noproc | badarg}.
 app() ->
     call(app).
+
+%% The app's record if the agent holds it, else {error, enoent}: before it comes, in a
+%% domain that is no app's session, and in the system domain. It never waits for the
+%% record, so erx_ns's process, which mounts /app from it, is never held up by it.
+-spec app_held() -> {ok, erx:app_record()} | {error, enoent}.
+app_held() ->
+    case call(app_held) of
+        {ok, _} = Held -> Held;
+        {error, _} -> {error, enoent}
+    end.
 
 call(Request) ->
     try gen:call(?MODULE, '$gen_call', Request, infinity) of
@@ -368,7 +382,7 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
         {erx_origin, SystemId, {erx_connection_down, Peer, Reason}} when is_integer(Peer) ->
             records(Env, connection_down(Env, Peer, Reason, Held), Dropped);
         {erx_origin, SystemId, {erx_facets, Facets, Granted}} when is_map(Facets) ->
-            Valid = #{Name => Facet || Name := Facet <- Facets, is_atom(Name), is_pid(Facet)},
+            Valid = #{Name => Facet || Name := Facet <- Facets, is_atom(Name), is_facet(Facet)},
             register_facets(Valid),
             %% Kept before init hears of the facets, so the applications init then starts
             %% find the names erx:granted/0 reads.
@@ -377,10 +391,14 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
             records(Env, Held, Dropped);
         {erx_origin, SystemId, {erx_app, App}} when is_map(App), element(1, map_get(app, Env)) =:= waiting ->
             records(app_came(App, Env), Held, Dropped);
-        {erx_origin, SystemId, {erx_facets_install, Tag, Name, Facet}}
-          when is_integer(Tag), is_atom(Name), is_pid(Facet) ->
-            install(Env, Tag, Name, Facet),
-            records(Env, Held, Dropped);
+        {erx_origin, SystemId, {erx_facets_install, Tag, Name, Facet}} when is_integer(Tag), is_atom(Name) ->
+            case is_facet(Facet) of
+                true ->
+                    install(Env, Tag, Name, Facet),
+                    records(Env, Held, Dropped);
+                false ->
+                    records(Env, Held, Dropped + 1)
+            end;
         {erx_connection_inserted, Peer, Port} ->
             records(Env, inserted(Env, Peer, Port, Held), Dropped);
         {{connection_ended, Peer}, Monitor, port, Port, Reason} ->
@@ -409,6 +427,12 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
             records(Env, Held, Dropped);
         {'$gen_call', From, app} ->
             records(app_asked(From, Env), Held, Dropped);
+        {'$gen_call', From, app_held} ->
+            gen:reply(From, case Env of
+                                #{app := {record, App}} -> {ok, App};
+                                #{app := {waiting, _}} -> {error, enoent}
+                            end),
+            records(Env, Held, Dropped);
         {'$gen_call', From, _Request} ->
             gen:reply(From, {error, badarg}),
             records(Env, Held, Dropped);
@@ -426,6 +450,12 @@ install(#{domain_pid := DomainPid}, Tag, Name, Facet) ->
     register_facets(#{Name => Facet}),
     DomainPid ! {erx_facets_installed, Tag},
     ok.
+
+%% A facet as the system domain sends it: a pid, or a files facet's pid with its grant's
+%% rights, which the domain service took from the manifest's facet row
+%% (docs/design-files.md, "Rights beneath an entry"). The registry keeps it as it came.
+is_facet({Pid, Rights}) -> is_pid(Pid) andalso lists:keymember(Rights, 1, ?ERX_FILES_RIGHTS_MEMBERS);
+is_facet(Facet) -> is_pid(Facet).
 
 %% The atoms of List, the ready answer's names of the facets the manifest grants the
 %% domain, ignoring any other element and an improper tail.

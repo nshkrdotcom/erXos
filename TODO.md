@@ -136,15 +136,14 @@ it; git history is the record of completed work.
   package rows (`erx_starter:packages/2`) and their keepers, the only starters of an app's sessions (PK7);
   the app principal's CPU group under an apps group, which the stopgap's flat groups leave out; a `tree
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
-  the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
-  which `erx_app` calls as `{erofs, app}` and `erx_ns` refuses with `einval` until the file-backed
-  EROFS mount of [todo-system-partition.md](docs/todo-system-partition.md) lands, so every Erlang
-  app's session ends with `{mount, einval}`; a native app's start and the record's
+  the plan's PK10 comparison does not cover it; the rest of the file-backed EROFS mount of
+  [todo-system-partition.md](docs/todo-system-partition.md), whose `{erofs, app}` source `erx_app`
+  mounts `/app` with; a native app's start and the record's
   `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
   (`erx_app` ends with `{not_supported, program}` until then).
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
   an image package's place
-  `/pkg/NAME.app`, which becomes `/system/NAME.app`, is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
+  `{system, [apps, NAME.app]}` is written in `erx_principal` beside `erx_pkg_medium`'s `pkg/NAME.app` (one owner wanted); the
   `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
   through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
@@ -2247,9 +2246,12 @@ it; git history is the record of completed work.
   in `default:`, so a new kind is not a build failure where it is unhandled; derive `allowed` from the enum and
   drop the `default:` cases. `Contracts.member_bound`'s enum may hold negative values, which fail safe at the
   view but should be refused at the declaration.
-* [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
-  `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
-  needs an `rx` mount); the mount should take the facet's rights.
+* [Low] `tools/lib/erx/abi_emit_erlang.rb` `enum_members`: an atom enum is emitted only as the list
+  `?ERX_<ENUM>_MEMBERS`, with no guard macro and no `-type`, so code that needs a guard or a type copies the
+  members by hand: `files_rights`'s `ro | rw | rx` in `erx_fs_grant.erl`, `erx_prog_handler_core.erl`, `erx_ns.erl`
+  (`mount_options/3`, `rights()`), `erx.erl` (`facet()`), `erx_file_remote.erl` and `erx_verity.erl`, about a
+  dozen copies that refuse a member the ABI gains while the generated list accepts it. Emit
+  `?ERX_IS_<ENUM>(X)` and a type per atom enum and convert the copies.
 * [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, and the trees named below): the
   grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
   which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live

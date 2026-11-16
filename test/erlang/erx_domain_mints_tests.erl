@@ -108,6 +108,22 @@ minting() ->
 
 %% Named scenarios.
 
+%% A files facet goes to its grantee with its facet row's rights, rw where the row states
+%% none, and a facet of any other service as its pid alone: the rights come from the
+%% manifest's row, which the service holds, never from the server's reply
+%% (docs/design-files.md, "Rights beneath an entry").
+a_files_install_carries_its_rows_rights_test() ->
+    Install = fun(Files, Limits) ->
+                      Config = (config([?G]))#{grants := [{?G, data, ?S, Limits}], files => Files},
+                      {Actions, _} = run([ready(?S, 5, #{data => mint(5)}), ready(?G, 6, #{}), {introduced, 1, ok},
+                                          {minted, 5, 1, {ok, facet(5)}}], erx_domain_mints:new(Config)),
+                      lists:last(Actions)
+              end,
+    ?assertEqual([{install, 1, 6, data, {facet(5), rx}}], Install([data], #{rights => rx})),
+    ?assertEqual([{install, 1, 6, data, {facet(5), ro}}], Install([data], #{rights => ro, max_request => 4096})),
+    ?assertEqual([{install, 1, 6, data, {facet(5), rw}}], Install([data], #{})),
+    ?assertEqual([{install, 1, 6, data, facet(5)}], Install([], #{rights => ro})).
+
 in_order_test() ->
     {Actions, State} = run([ready(?S, 5, #{data => mint(5)}), ready(?G, 6, #{}), {introduced, 1, ok},
                             {minted, 5, 1, {ok, facet(5)}}, {installed, 6, 1}], new()),

@@ -10,7 +10,7 @@ erx_pkg_io calls it.
 * **Installed packages** lie in the data partition's `packages/`
   directory, which the storage domain serves as the files service
   `packages`; the system domain reaches it through its grant, mounted at
-  `/packages` (erx_ns), and every request goes through the system domain's
+  `/packages` (erx_domain_srv), and every request goes through the system domain's
   file client, erx_file_remote, in erx_pkg_io's own process. While the
   grant is not in place the path is the root's and the directory absent,
   which the listing answers as `{error, absent}`.

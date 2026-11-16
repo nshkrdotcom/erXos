@@ -251,7 +251,7 @@ module AbiManifestFixture
   # system domain's windows interface; the facet rows 0 kiosk_display, display granted to
   # template 1, 1 pkg_admin, packages granted to the system domain, and the app template's
   # 2 packages, 3 display and 4 data; an apps row of 1 MiB and max 2 naming template 0
-  # and its packages row 2 and offering display and data, each with the template's row,
+  # and its packages row 2, no system row, since no service is named system, and offering display and data, each with the template's row,
   # whose span claims apps rows, which the reader bounds to 1; the enabled package clock and the package quotes; the
   # signer ops; and the development key of 7s when development is true.
   def packages(flags: 1, apps: 1, development: true)
@@ -292,6 +292,7 @@ module AbiManifestFixture
       integer(bytes, at[:apps], 1_048_576, width: 8)
       integer(bytes, at[:apps] + 8, 2)
       integer(bytes, at[:apps] + 16, 2)
+      integer(bytes, at[:apps] + 20, 0xffffffff)
       span(bytes, at[:apps] + 24, at[:app_services], 2)
     end
   end

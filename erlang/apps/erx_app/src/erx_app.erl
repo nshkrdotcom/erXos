@@ -27,16 +27,7 @@ handler does not offer; its record ends erx_app with `{not_supported, program}`.
 
 -export([start/2, stop/1]).
 -export([run/2, init/1]).
--export_type([app_record/0, effects/0]).
-
--doc """
-The app's record, as the domain service sends it once the session's namespace
-is in place (docs/design-packaging.md, "An app's session"): where the package's file lies in the session's namespace,
-its header's layout, and what it starts, as its header declares it.
-""".
--type app_record() :: #{place := binary(),
-                        layout := erx_verity_tree:layout(),
-                        start := erx_pkg_header:start()}.
+-export_type([effects/0]).
 
 -doc """
 The effects run/2 performs: the mount of `/app`, where the mounted image lies,
@@ -68,7 +59,7 @@ init(Parent) ->
 Mounts the package of `Record` at `/app` and starts what it declares, through
 `Effects`. The first step that fails is the answer.
 """.
--spec run(app_record(), effects()) -> ok | {error, term()}.
+-spec run(erx:app_record(), effects()) -> ok | {error, term()}.
 run(Record, Effects) ->
     try
         start_app(Record, Effects)

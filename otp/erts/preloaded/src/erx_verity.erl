@@ -16,36 +16,52 @@ not whole blocks, whose
 tree does not start on a block at or past the image's end, is not as long
 as `erx_verity_tree` gives for the image, or does not fit the window, and
 returns an opaque handle that holds the pid and the layout, a record named
-for this module. Nothing in the handle's value stops a module from taking
-the window out of it; what keeps every other module off the window is the
-build check `Erx::ErofsReads`, which refuses every naming of this module
-outside it but two:
+for this module.
 
-* the call `open/2` in the one module of a release that opens an image,
-  `erx_storage_system`, on the `system` window with its layout;
+`open_file/3` opens an image that lies in a file rather than a window: it
+takes a file server's grant (`erx_file_remote:grant()`), a fid on it open
+for reading, and the layout, which it checks as `open/2` does against the
+file's length, which a `getattr` gives. The image's blocks are then the
+file's 4 KiB blocks, read by positioned reads on the fid. It is the EROFS
+file mount's open: `erx_ns`'s process walks the file the app's record
+names to a fid it owns and opens it with the record's layout, so its
+handle always has a tree; there is no unchecked file.
+
+Nothing in the handle's value stops a module from taking the window or
+the fid out of it; what keeps every other module off them is the build
+check `Erx::ErofsReads`, which refuses every naming of this module outside
+it but these:
+
+* each mounter's one open: `open/2` in `erx_storage_system`, on the
+  `system` window with its layout, and `open_file/3` in `erx_ns`, for the
+  app mount;
 * the call `read/3` and the type `image()` in the reader, which mounts the
   handle they open, and whose other calls the check keeps to modules that
   reach no state.
 
 `read/3` runs in the calling process, so a slow read delays only its
 caller. It checks the request against the image's size and the per-call
-limit, and sends the window one request for each block it needs, all at
-once: the data blocks asked for and, on each level of the tree, the blocks
-that hold their hashes. Each is a `gen_server` call with an alias of its
-own, so each answer is matched to its block whatever order they come in.
+limit, and asks the source for each block it needs, all at once: the data
+blocks asked for and, on each level of the tree, the blocks that hold their
+hashes. A window is sent a `gen_server` call for each block with an alias
+of its own, so each answer is matched to its block whatever order they
+come in; a file is sent one 9P exchange of positioned reads, whose answers
+come in the order of the reads.
 Each answer must be a whole block, its block the one its alias names; then it checks the
 tree level by level, top first, in `check/2`: the top block against the
 root hash, each lower block against its hash in the level above, and each
 data block against its hash in the lowest level, every hash the SHA-256 of
 the salt and the block. It returns the data blocks only if every one
 matched, each a binary of `ERX_EROFS_BLOCK_SIZE` bytes. Every failure, a
-bad request, a refused, short or late answer, a window that ended and a
-block that does not match its hash included, answers `{error, eio}`. A
-call waits at most `ANSWER_WAIT` for each request; its aliases end with
+bad request, a refused, short or late answer, a window or file server that
+ended and a block that does not match its hash included, answers
+`{error, eio}`. A file's exchange waits as `erx_file_remote` waits, until
+the answers or the server's end, with no deadline of its own. A call to a
+window waits at most `ANSWER_WAIT` for each request; its aliases end with
 it, so an answer that arrives later is dropped by the runtime, and one
 that arrived as it ended is taken out of the mailbox. Like the reader, it
 calls only BIFs and preloaded modules, the SHA-256 built-ins of
-`erx_bytes` and `erx_verity_tree`, since it runs in whatever process reads
+`erx_bytes` and `erx_verity_tree` and the 9P client `erx_file_remote`, since it runs in whatever process reads
 a path, the code server included.
 
 The tree `unchecked` opens a window that has no layout, which no module of
@@ -53,7 +69,7 @@ a release does: only the tests mount images that way, whose blocks pass
 through unchecked.
 """.
 
--export([open/2, read/3]).
+-export([open/2, open_file/3, read/3]).
 -export_type([image/0]).
 
 -include("generated/erx_abi.hrl").
@@ -69,20 +85,24 @@ through unchecked.
 %% answers a device that did not is heard first.
 -define(ANSWER_WAIT, 40000).
 
-%% An open image: its window, the window block that is the image's block 0, the image's
+%% An open image: its source, the source block that is the image's block 0, the image's
 %% size in blocks, and how its blocks are checked: unchecked, or against the tree's salt
 %% (kept as the SHA-256 state after it, made once at open and continued by every block's
 %% hash, since a state is a value), its root hash and the window block where each level
 %% of the tree starts, the lowest first.
--record(erx_verity, {pid :: pid(),
+-record(erx_verity, {source :: source(),
                  base :: non_neg_integer(),
                  blocks :: non_neg_integer(),
                  tree :: unchecked | checking()}).
 
+%% Where an image's blocks come from: the block service's window on it, or a fid open
+%% for reading on a file server's grant, whose blocks are the file's 4 KiB blocks.
+-type source() :: {window, pid()} | {file, {pid(), binary(), ro | rw | rx}, non_neg_integer()}.
+
 %% How an open image's blocks are checked against its tree.
 -type checking() :: #{salted := erx_bytes:sha256_state(), root_hash := <<_:256>>, starts := [non_neg_integer()]}.
 
--doc "An open image: its window, which only this module reads through.".
+-doc "An open image: its window or file, which only this module reads through.".
 -opaque image() :: #erx_verity{}.
 
 -doc """
@@ -110,16 +130,16 @@ not fit it.
 open(Window, Tree) when is_pid(Window) ->
     case call(Window, [info]) of
         {ok, [{ok, #{sectors := Sectors}}]} when is_integer(Sectors), Sectors >= 0 ->
-            opened(Window, Sectors div ?SECTORS, Tree);
+            opened({window, Window}, Sectors div ?SECTORS, Tree);
         _ ->
             {error, eio}
     end;
 open(_, _) ->
     {error, eio}.
 
-opened(Pid, WindowBlocks, unchecked) ->
-    {ok, #erx_verity{pid = Pid, base = 0, blocks = WindowBlocks, tree = unchecked}};
-opened(Pid, WindowBlocks, #{image_offset := Offset, image_length := Length, tree_offset := TreeOffset,
+opened(Source, WindowBlocks, unchecked) ->
+    {ok, #erx_verity{source = Source, base = 0, blocks = WindowBlocks, tree = unchecked}};
+opened(Source, WindowBlocks, #{image_offset := Offset, image_length := Length, tree_offset := TreeOffset,
                             tree_length := TreeLength, salt := Salt, root_hash := <<_:256>> = Root} = Layout)
   when map_size(Layout) =:= 6, is_integer(Offset), Offset >= 0, Offset rem ?BLOCK =:= 0,
        is_integer(Length), Length > 0, Length rem ?BLOCK =:= 0,
@@ -132,13 +152,33 @@ opened(Pid, WindowBlocks, #{image_offset := Offset, image_length := Length, tree
         true ->
             Lengths = erx_verity_tree:levels(Blocks),
             Starts = starts(lists:reverse(Lengths, []), TreeOffset div ?BLOCK, []),
-            {ok, #erx_verity{pid = Pid, base = Offset div ?BLOCK, blocks = Blocks,
+            {ok, #erx_verity{source = Source, base = Offset div ?BLOCK, blocks = Blocks,
                          tree = #{salted => erx_bytes:sha256_update(erx_bytes:sha256_init(), Salt),
                                   root_hash => Root, starts => Starts}}};
         false ->
             {error, eio}
     end;
 opened(_, _, _) ->
+    {error, eio}.
+
+-doc """
+Opens the image the file `Fid` holds under `Layout`, a fid open for reading
+on the grant `Grant` (`erx_file_remote:grant()`): the EROFS file mount's,
+which `erx_ns`'s process walked and owns. The file's length, by a
+`getattr`, bounds the layout as a window's does; every block is checked, so
+there is no unchecked file. `{error, eio}` when the server does not say the
+length or the layout does not fit the file.
+""".
+-spec open_file({pid(), binary(), ro | rw | rx}, non_neg_integer(), erx_verity_tree:layout()) ->
+          {ok, image()} | {error, eio}.
+open_file({Server, _, _} = Grant, Fid, Layout) when is_pid(Server), is_integer(Fid), is_map(Layout) ->
+    case erx_file_remote:exchange(Grant, [{getattr, Fid, ?ERX_P9_GETATTR_MASK_SIZE}]) of
+        [{ok, #{size := Size}}] when is_integer(Size), Size >= 0 ->
+            opened({file, Grant, Fid}, Size div ?BLOCK, Layout);
+        _ ->
+            {error, eio}
+    end;
+open_file(_, _, _) ->
     {error, eio}.
 
 %% The window block where each level starts, the lowest first, from the length of each
@@ -153,18 +193,24 @@ Returns `Count` blocks of the image from block `Block`, 1 to
 `{error, eio}`.
 """.
 -spec read(image(), non_neg_integer(), pos_integer()) -> {ok, [binary()]} | {error, eio}.
-read(#erx_verity{pid = Pid, base = Base, blocks = Blocks, tree = Tree}, Block, Count)
+read(#erx_verity{source = Source, base = Base, blocks = Blocks, tree = Tree}, Block, Count)
   when is_integer(Block), Block >= 0, is_integer(Count),
        Count >= 1, Count =< ?ERX_VERITY_READ_BLOCKS_MAX, Block + Count =< Blocks ->
     Last = Block + Count - 1,
     Spans = [{Base, Block, Last} | path(Tree, Block div ?HASHES, Last div ?HASHES)],
-    Requests = [{read, At * ?SECTORS, ?SECTORS} || Span <- Spans, At <- window_blocks(Span)],
-    case call(Pid, Requests) of
+    case fetched(Source, [At || Span <- Spans, At <- window_blocks(Span)]) of
         {ok, Answers} -> checked(Tree, Spans, Answers);
         error -> {error, eio}
     end;
 read(_, _, _) ->
     {error, eio}.
+
+%% The answers for the source's blocks Ats, in order, each {ok, Block} when it came: a
+%% window is asked by sectors, a file by positioned reads on its fid, all at once.
+fetched({window, Pid}, Ats) ->
+    call(Pid, [{read, At * ?SECTORS, ?SECTORS} || At <- Ats]);
+fetched({file, Grant, Fid}, Ats) ->
+    {ok, erx_file_remote:exchange(Grant, [{read, Fid, At * ?BLOCK, ?BLOCK} || At <- Ats])}.
 
 %% The window blocks a span names, in order.
 -spec window_blocks(span()) -> [non_neg_integer()].

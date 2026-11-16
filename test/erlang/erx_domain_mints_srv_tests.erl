@@ -513,7 +513,7 @@ session_files_grant_test() ->
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
         DomainPid = domain_pid(Id),
-        #{start := Grant} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
+        #{start := {Grant, rw}} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
         ?assertEqual([start], maps:keys(Facets)),
         ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)]),
         %% The grant exports itself to the session, after the session's start.
@@ -742,7 +742,7 @@ app_session_test_() ->
      fun(_) -> {inorder, [fun no_app/0, {timeout, 20, fun app_session/0}]} end}.
 
 -define(APP_MEMORY, 16777216).
--define(APP_RECORD, #{place => <<"/packages/clock.app">>, layout => #{}, start => {applications, [<<"clock">>]}}).
+-define(APP_RECORD, #{place => {packages, [<<"clock.app">>]}, layout => #{}, start => {applications, [<<"clock">>]}}).
 
 app_setup() ->
     persistent_term:put({erx_domain_fake_lib, apps}, #{template => 2, first => 6, max => 4, memory => 4 * ?APP_MEMORY}),

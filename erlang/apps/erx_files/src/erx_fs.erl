@@ -44,7 +44,7 @@ same tree. A callback's answer that is not one of its shapes reaches the
 client as `eio`.
 """.
 
--export([start_link/3, start_link/4]).
+-export([start_link/3, start_link/4, start_mounted/5]).
 -export([init/2, loop/2, drain/1]).
 
 -include("erx_fs_waits.hrl").
@@ -127,6 +127,29 @@ client as `eio`.
           {ok, pid()} | {error, term()}.
 start_link(Module, Args, Rights) ->
     start_link(Module, Args, Rights, #{}).
+
+-doc """
+Serves one grant of `Module`'s tree to the server's own domain, as
+start_link/3 does, and mounts it at `Point` on its tree `Tree` with the
+rights it was started with, `{Pid, Rights}` (erx_ns:mount/3), after
+removing any entry an earlier instance left there. So the entry's rights
+are the grant's, named once (docs/design-files.md, "Rights beneath an
+entry"). A mount that fails ends the grant, which the caller's supervisor
+does not know of, and answers its `{error, Reason}`.
+""".
+-spec start_mounted(module(), term(), erx_fs_grant:rights(), binary(), binary()) ->
+          {ok, pid()} | {error, term()}.
+start_mounted(Module, Args, Rights, Point, Tree) ->
+    {ok, Grant} = start_link(Module, Args, Rights),
+    _ = erx_ns:unmount(Point),
+    case erx_ns:mount({Grant, Rights}, Point, [{tree, Tree}, Rights]) of
+        ok ->
+            {ok, Grant};
+        {error, _} = Error ->
+            unlink(Grant),
+            exit(Grant, kill),
+            Error
+    end.
 
 -doc """
 Serves one grant of `Module`'s tree. `client` names the domain the grant is

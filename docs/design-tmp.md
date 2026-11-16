@@ -430,8 +430,8 @@ system domain included. It starts the tree process with
 the cap, read by `erx_ns:tmp_limit/0` from the `tmp` field of the
 runtime's startup limits ([design-runtime.md](design-runtime.md#starting-a-runtime)),
 then one `erx_fs` grant for the domain itself with rights `rw` and tree
-name `tmp`, and mounts it with `erx_ns:mount(Grant, "/tmp", [{tree,
-<<"tmp">>}, rw])`. Before mounting, it loads every module the tree
+name `tmp`, mounted at `/tmp` with those rights, by
+`erx_fs:start_mounted(erx_ramfs, Name, rw, "/tmp", <<"tmp">>)`. Before mounting, it loads every module the tree
 and the grant can call (T6).
 
 The tree process, the grant and the lock table the grant starts, as a
