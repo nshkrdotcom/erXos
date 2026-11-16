@@ -74,7 +74,7 @@ Decisions every reader of this document needs:
 * **F2FS from a clean room.** erXos implements F2FS, in Erlang, from a
   specification written in its own words, with Linux as the oracle and a
   legal review before any distribution; littlefs
-  is Fiasco.
+  is the stopgap it replaces.
 * **A/B slots with trials, and the record is the whole state.** A slot is
   two partitions, a boot partition and a system partition, which the
   medium layout pairs and nothing records. An update goes to both
@@ -2432,7 +2432,7 @@ is unconfined, with the same driver.
 **littlefs as a NIF in the storage domain.** littlefs's C would run on a
 dirty scheduler of the storage domain's runtime. It loses: in the default
 configuration that runtime also runs the block driver, so a memory bug in
-Fiasco could reach the device and every window on the medium, and a
+littlefs could reach the device and every window on the medium, and a
 crash in it would end every storage service's windows at once. A
 sub-space port confines the C to its channel and data area, by
 construction, and its crash ends one volume's port.

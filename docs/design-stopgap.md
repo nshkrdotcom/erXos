@@ -1,7 +1,7 @@
 # Stopgaps no other design carries
 
 Each component here is a stopgap: the roadmap replaces it, and CLAUDE.md's rule for what a
-stopgap promises binds it. R1 ships littlefs, under [its release contract](#release-contract);
+stopgap promises binds it. R1 ships littlefs, under [its release contract](#release-contract), whatever M13's gate G13 decides;
 a release ships no other stopgap of this document. The kernel the first release runs on,
 Fiasco, and `liberx`'s backend over it are [design-fiasco.md](design-fiasco.md)'s, and the
 sections of that backend named below are there.
@@ -113,10 +113,11 @@ release; the others are [Verification](#verification)'s or the fuzz campaign's.
 
 | Commitment | What a release does | Test, and the seeded failure that proves it ran |
 | --- | --- | --- |
-| **Placement** | littlefs runs only as the storage domain's sub-space port ([design-storage.md](design-storage.md#read-write-storage)): single-threaded C under `liberx` in a sub-space holding its channel and the data area the storage domain maps into it, and nothing else. A release manifest has no NIF form; the NIF form above is a development build's | *new*: the port's sub-space holds no handle but its channel and data area (the driver_domains suite reads the port's space through `/proc`); a port given the storage domain's window as well fails it |
-| **Input** | the partition's bytes are untrusted, read only through littlefs's own bounds checks and checksums, and a mount that fails never writes or formats the partition ([A mount never formats](design-storage.md#read-write-storage)) | `tools/fuzz/lfs_image_fuzz.c` runs at its full `check-fuzz` budget under AddressSanitizer with no open finding before the release; *new*: a seeded bound removed from littlefs's directory-entry read makes it report |
-| **Failure** | a littlefs crash ends only its port, whose owner's supervisor restarts it once the window has answered the port's outstanding requests, and the port mounts the volume afresh; a block failure ends the storage domain, which the domain service restarts within its row's intensity (`restarts 5`, `restart_period_s 600`), and the restarted domain mounts the volume afresh; until then every request answers `{error, eio}`, nothing replays a request, and nothing resets the device in place ([Verification](#verification), [design-storage.md](design-storage.md)'s failure table) | *new*: the port killed under load: `/data` answers `eio`, then a file written earlier is read after the remount; a port restarted before its outstanding requests are answered fails. The block-failure cases of [Verification](#verification) |
-| **Durability** | a file synced before a driver kill or a power cut is present after the reboot; a write not yet synced may be lost | the driver killed under load ([Verification](#verification)); sync skipped loses the file |
+| **Placement** | which form R1 ships is [an open decision](#open-decisions); if R1 ships the port, littlefs runs only as the storage domain's sub-space port ([design-storage.md](design-storage.md#read-write-storage)): single-threaded C under `liberx` in a sub-space holding its channel and the data area the storage domain maps into it, and nothing else, and a release manifest has no NIF form; if R1 ships the NIF form, littlefs runs in the storage domain's runtime, with the further downside the open decision names | if the port: *new*: the port's sub-space holds no handle but its channel and data area (the driver_domains suite reads the port's space through `/proc`); a port given the storage domain's window as well fails it; *new*: the production image's check refuses a release manifest that runs `erx_lfs`'s NIF form; a release manifest with the NIF form fails it |
+| **Input** | the partition's bytes are untrusted, read only through littlefs's own bounds checks and checksums, and a mount that fails never writes or formats the partition ([A mount never formats](design-storage.md#read-write-storage)) | `tools/fuzz/lfs_image_fuzz.c`, *new*: built with the configuration of the form R1 ships (geometry, cache and lookahead sizes, name length), runs at its full `check-fuzz` budget under AddressSanitizer with no open finding before the release; *new*: a seeded bound removed from littlefs's directory-entry read makes it report |
+| **Requests** | what a client sends through its grant (names, sizes, offsets, and the order of its operations) is untrusted; it reaches littlefs's C code only through the decoder of the form R1 ships, which bounds every name, size and offset before littlefs sees it | *new*: a fuzz target drives sequences of operations (open, read, write, seek, truncate, rename, remove, sync, directory reads) through that decoder into littlefs built with the same configuration, over an image the sequence starts from, and runs its full `check-fuzz` budget under AddressSanitizer with no open finding before the release; a seeded bound removed from the decoder's name-length check makes it report |
+| **Failure** | a littlefs crash ends only its port, whose owner's supervisor restarts it once the window has answered the port's outstanding requests, and the port mounts the volume afresh; a block failure ends the storage domain, which the domain service restarts within its row's intensity (`restarts 5`, `restart_period_s 600`), and the restarted domain mounts the volume afresh; until then every request answers `{error, eio}`, nothing replays a request, and nothing resets the device in place ([Verification](#verification), [design-storage.md](design-storage.md)'s failure table) | *new*: the port killed under load: `/data` answers `eio`, then a file written earlier is read after the remount; a port restarted before its outstanding requests are answered fails. *new*: the storage domain ended six times within 600 seconds is restarted five times and then stays down, reported by the domain service; the intensity not applied, so the sixth end is restarted, fails it. The block-failure cases of [Verification](#verification) |
+| **Durability** | a file synced before a driver kill or a power cut is present after the reboot; a write not yet synced may be lost | the driver killed under load ([Verification](#verification)); sync skipped loses the file. The power-cut tests of [M6](plan.md#m6-immutable-code-lasting-data) on QEMU and of [1b-I](plan.md#1b-i-the-raspberry-pi-4-on-fiasco) on the Raspberry Pi 4 |
 | **Grants** | the data service grants each client one tree rooted at its principal's directory, an app's at `apps/NAME/SIGNER/` and the `packages` service's at `packages/` ([design-storage.md](design-storage.md), "The storage services and the FAT server"; [design-packaging.md](design-packaging.md#where-a-package-lies)); the read-write grant over the whole volume to every session of root's principal is a development build's alone | *new*: a session of a second principal opens a file of the first principal's directory and gets `enoent`; a grant minted at the volume's root fails |
 | **Keys** | the vault's files are sealed under keys the storage domain never holds, so a crafted partition or a littlefs defect reveals no key ([design.md](design.md#residual-risks), "littlefs serves the vault's partition") | *new*: the vault's files read raw from the partition hold no key in the clear; a file written unsealed fails ([design-system.md](design-system.md#the-vault)) |
 
@@ -127,14 +128,21 @@ release; the others are [Verification](#verification)'s or the fuzz campaign's.
 * a defect in littlefs can lose files, a vault key file among them, which leaves that principal's vault `unavailable`; no key is
   revealed;
 * any block error, deadline or driver restart ends the storage domain, and `/data` is unavailable until its restart has mounted the
-  volume again.
+  volume again;
+* a memory defect in littlefs that a client's requests can reach would expose every principal's files on the volume, since the
+  code that holds the whole data area runs it: the port's sub-space confines littlefs's code, not the data in it. The request fuzz
+  target running its full budget clean before the release is the defence, and no grant or principal check stands between such a
+  defect and the volume.
 
 ## Open decisions
 
 littlefs's protocol stays here while the system domain's form has a manifest that uses it, and `design-storage.md`, whose
 target text describes the port, states the placement and links to it.
 
-**Which form R1 ships.** The contract above ships the sub-space port, so a memory error in littlefs's C code reaches only the
-port's sub-space. The alternative is to ship the NIF form, which works today, with a further published downside: a littlefs
-memory error corrupts the storage domain's runtime, which holds every grant of the volume. Recommendation: ship the port; the
-port is the target placement, so the work is not throwaway.
+**Which form R1 ships.** If R1 ships the sub-space port, a memory error in littlefs's C code reaches only the port's sub-space
+and the volume it holds. The alternative is to ship the NIF form, which works today, with a further published downside: a
+littlefs memory error corrupts the storage domain's runtime, which holds every grant of the volume and, in the default
+configuration, the block driver and every window on the medium. Recommendation: ship the port; the port is the target
+placement, so the work is not throwaway. Choosing the port adds, before the release, the production image's check that refuses
+a release manifest running `erx_lfs`'s NIF form, with a release manifest that keeps the NIF form as its seeded failure
+([Release contract](#release-contract), Placement).

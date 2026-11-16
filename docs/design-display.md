@@ -5978,15 +5978,17 @@ except the fuzz budgets, which are the milestone gate's.
 
 | Commitment | What a release does | Test, and the seeded failure that proves it ran |
 | --- | --- | --- |
-| **Placement** | `erx-lvgl` is a program of the application's own session, in a sub-space, with a namespace narrowed to nothing, holding its window's buffer's pages and no other page of the pixel area ([The widget server](#the-widget-server), "The **LVGL renderer**") | a store one page past the buffer faults in the program; a session that maps the whole area into it fails |
+| **Placement** | `erx-lvgl` is a program of the application's own session, in a sub-space, with a namespace narrowed to nothing, holding its window's buffer's pages and no other page of the pixel area, and no handle beyond those its start gives every program and its buffer's ([The widget server](#the-widget-server), "The **LVGL renderer**") | a store one page past the buffer faults in the program; a session that maps the whole area into it fails. *new*: the program's space, read through `/proc`, holds no handle beyond those of a program started with no files, and its buffer's; a session that also hands it its own namespace grant fails |
 | **Input** | the program reads only the binary form of `abi/formats/ui.txt` through the generated bounded C reader, never an application's term; `erx_ui_lvgl` reads the program's records through the generated Erlang reader | `tools/fuzz/ui_wire_fuzz.c` (the C reader) and `test/erlang/erx_ui_wire_fuzz.erl` (the Erlang reader) at their full `check-fuzz` budgets with no open finding before the release; a reader without the `damage` report's count check fails its target |
-| **Failure** | a malformed `damage` report, a second report before the first is answered, or a program that leaves its standard input full stops the program, and the application receives `{ui_down, Window, renderer_down}`; the worst a hostile or broken `erx-lvgl` does is confined to its own application's session | each of the first two stops the program and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that presents them fails |
+| **Failure** | a malformed `damage` report, a second report before the first is answered, or a program that leaves its standard input full stops the program, and the application receives `{ui_down, Window, renderer_down}`; the worst a hostile or broken `erx-lvgl` does is confined to its own application's session | each of the first two stops the program and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that presents them fails. *new*: a program that stops reading its standard input until the pipe is full is stopped and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that waits on the full pipe instead fails |
 | **Notices** | the image's notices carry LVGL's MIT license and the OFL-1.1 license of its built-in fonts, which the release check admits as font data only ([design.md](design.md#dependencies), LVGL's row) | `test_ofl_is_admitted_only_for_an_input_that_states_font_data` (`test/host/license_expression_test.rb`): OFL-1.1 refused for an input that does not state font data; and `test/host/production_image_test.rb`, which reads the LVGL archive as `MIT AND OFL-1.1` with font data |
-| **Retirement** | the Erlang renderer replaces LVGL on panels at gate GD ([plan.md](plan.md#decision-gates)); a release after GD ships no LVGL | none: a plan gate |
+| **Retirement** | gate GD decides whether the Erlang renderer replaces LVGL on panels ([plan.md](plan.md#decision-gates)); GD is not among R1's gates, and a release after a GD that retires LVGL ships no LVGL | none: a plan gate |
 
 **Published downsides.** A defect in LVGL's C code can crash or hang its application's interface,
 which the application sees as `{ui_down, Window, renderer_down}` or a stalled frame; it reaches
-nothing outside that session.
+no memory or object outside that session, though, as any program, it can make the root and the
+services it calls spend their own CPU on its requests (FD17, FD31), and it is refused at its
+session's object and mapping limits before its budget is spent (FD14).
 
 ## Alternatives considered
 
