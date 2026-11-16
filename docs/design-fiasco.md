@@ -2297,18 +2297,18 @@ Phase 1 acts on no finer kind.
 
 ### The watchdog
 
-A root thread at priority 255 runs `watchdog.c`'s step machine: sleep one period, step over the pet word, which holds the time of the last pet.
+A root thread at priority 255 runs `watchdog.c`'s step machine: sleep one second, step over the pet word, which holds the time of the last pet. It ticks once a second whatever the period `P` of [the command line](#the-command-line), as erXos's kernel's timer does, so a board's hardware watchdog can be reloaded at each tick.
 In deterministic mode the step is off and the machine page says so. A missed pet takes the end path and resets the machine, as a root fault does ([The end path](#the-end-path)).
 
 **The hardware watchdog.** On a board whose platform record names a hardware watchdog, the Raspberry Pi 4's BCM2711
 power-management watchdog, the same thread stands behind a hang of Fiasco or of the root on every boot. It arms the
 hardware watchdog with the 4 s timeout of [design-platforms.md](design-platforms.md#trial-requests) before its first
-step and reloads it at every step, through a window of the watchdog's block that the platform record names and only the
-root maps, as it reaches the mailbox for the trial request. A hang of Fiasco or of the root stops the steps, and the
+tick and reloads it at every tick, through a window of the watchdog's block that the platform record names and only the
+root maps, as it reaches the mailbox for the trial request. A hang of Fiasco or of the root stops the ticks, and the
 hardware resets the board within the timeout: after a trial boot the firmware's one-shot flag is spent, so the committed
 slot boots, and after any other boot the board boots its slot again. In deterministic mode, where the step is off, the
-thread does not arm it. No end stops it ([The end path](#the-end-path)), so a board halted on request, and an end that
-hangs, reset when it fires. A board stopped in the
+thread does not arm it. At an end the thread reloads no more and nothing stops the hardware ([The end path](#the-end-path)), so a board halted on request, and an end that
+hangs, reset when it fires. An attended development board runs the hardware watchdog too, since the root arms it whatever its `config.txt` sets. A board stopped in the
 kernel debugger, which development builds keep, resets within the timeout. This is a platform item the root stands in
 for, as the trial request is, not a kernel mechanism rebuilt in user mode. It arms the same watchdog as erXos's kernel,
 on every boot only on Fiasco: on erXos's kernel the firmware starts it on an unattended board or the kernel under a

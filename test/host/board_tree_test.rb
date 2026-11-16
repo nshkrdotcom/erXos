@@ -62,6 +62,10 @@ class BoardTreeTest < Minitest::Test
     # its node; the board's leaves it as Linux's source has it, with no status.
     assert_equal 'disabled', fdtget(built.model, '/soc/rng@7e104000', 'status')
     assert_equal [], cells_or_none(built.board, '/soc/rng@7e104000', 'status')
+    # Nor is the model known to count the power-management watchdog down, so its node is off
+    # there too and the root arms it on the board alone.
+    assert_equal 'disabled', fdtget(built.model, '/soc/watchdog@7e100000', 'status')
+    assert_equal [], cells_or_none(built.board, '/soc/watchdog@7e100000', 'status')
     # The board's tree ships as Linux's source compiles it, which the firmware overlays;
     # the model's has config.txt's overlay applied.
     assert_equal 'disabled', fdtget(built.board, '/soc/serial@7e201600', 'status')
@@ -149,6 +153,9 @@ class BoardTreeTest < Minitest::Test
     assert_equal 0x6_0000_0000, Erx::BoardTree.window(genet.merge(reg: [6, 0, 0x1000]), ranges).fetch(:base)
     assert_nil Erx::BoardTree.window(genet.merge(reg: [1, 0x7d580000, 0x10000]), ranges)
     assert_nil Erx::BoardTree.window(genet.merge(reg: [0x7d580000, 0x10000]), ranges)
+    # A node of several ranges, as the power-management block is, gives its first, as erx_dt_registers reads it.
+    assert_equal 0xfd580000, Erx::BoardTree.window(genet.merge(reg: [0, 0x7d580000, 0x10000, 0, 0x7d590000, 0x10]), ranges).fetch(:base)
+    assert_nil Erx::BoardTree.window(genet.merge(reg: [0, 0x7d580000, 0x10000, 0]), ranges)
     assert_nil Erx::BoardTree.window(genet.merge(interrupts: [0, 157, 4, 0]), ranges)
     # A node with no interrupts raises none, and its record's line is 0.
     assert_equal({ base: 0xfd580000, size: 0x10000, line: 0 }, Erx::BoardTree.window(genet.merge(interrupts: []), ranges))

@@ -1112,7 +1112,8 @@ watchdog is started in one of two ways. The firmware starts it from
 `config.txt`'s `kernel_watchdog_timeout`, which is set, with a 4 s
 timeout, only in the `config.txt` of a board that runs unattended; a
 board that is attended, for development, leaves it unset and has no
-hardware watchdog running. Or the kernel starts it under a machine
+hardware watchdog running on erXos's kernel; under Fiasco the root arms it
+on every boot ([design-fiasco.md](design-fiasco.md#the-watchdog)). Or the kernel starts it under a machine
 lease, with a 4 s timeout, as a system update's trial does. Once it
 runs, the platform layer reloads it from the kernel's timer, at least
 once a second, for as long as the kernel runs; it never stops it
@@ -1570,7 +1571,8 @@ with the console, the host link, the manifest and the Erlang drivers this
 document gives it. Fiasco's generic platform takes PSCI from BL31 and its
 devices from the device tree, and its `bootstrap` is built for RAM that
 starts at 0. The kernel's platform items of this document are not there:
-no hardware watchdog backs a hang, no crash region keeps a record across
+the root's watchdog thread, not the firmware, arms the hardware watchdog, so a
+hang before it starts is not covered, no crash region keeps a record across
 a reset, no trial is requested and no device secret is read. The root
 reads the random generator when `/chosen` holds no seed ([Entropy
 sources](#entropy-sources)). The early console's role passes to Fiasco's own
@@ -1683,6 +1685,38 @@ Put the card in the Pi, start logging on the adapter, then power the Pi.
    record which one appears, and a `framebuffer absent` line, `ambiguous`
    included, is a failure of the firmware option to record, since whether
    the pinned firmware honors those options is unverified.
+6. The root's lines hold `erx: root task: board watchdog 4`: the tree
+   confirmed the power-management watchdog's row, and the root's watchdog
+   thread arms it with a 4 s timeout ([The watchdog](#the-watchdog)).
+   `board watchdog none: the tree does not confirm its record` instead
+   means the board runs without it. Then the hardware watchdog's own
+   checks, each timed from the event to BL31's banner of the next boot
+   in the console log:
+   * **A hang of the kernel resets.** Stop the whole machine in the
+     kernel debugger, which development builds keep (how its entry key
+     reaches it over the console is unverified on the board): no thread
+     runs, the watchdog is reloaded no more, and BL31's banner follows
+     within about 4 s.
+   * **Seeded: the arming skipped.** Build the card with the arming
+     skipped, the seeded fault `the arming skipped` of
+     `test/host/pm_wdt_test.rb` applied by hand to `kernel/core/pm_wdt.c`,
+     and stop it in the debugger the same way: the board must stay
+     stopped, with no BL31 banner for at least 30 s. A board that resets
+     anyway is reset by something else, and the first check proved
+     nothing.
+   * **A requested off becomes a reset.** In `erl`, `erlang:halt().` ends
+     with `erx: end off`; the board halts in the firmware and the armed
+     watchdog resets it, so BL31's banner follows within about 5 s.
+     The sources read predict otherwise: BL31's `SYSTEM_OFF` writes the
+     watchdog itself, with 10 ticks and the firmware's halt mark, so its
+     write replaces the 4 s arm and the reset it makes is the halt. A board
+     that stays halted fails the design, not the board; record which.
+
+   QEMU's `raspi4b` model checks none of this: its tree disables the
+   watchdog's node, since the model is not known to count a 4 s timeout
+   down or to take a reload, and the root says `board watchdog none`
+   there. The decision to write and the words written are checked on the
+   host, with seeded faults (`test/host/pm_wdt_test.rb`).
 
 **What the pass settles.** Typing works, so the mini UART raises its
 receive interrupt with bits 3:2 of its interrupt-enable register set, as

@@ -65,6 +65,14 @@ module Erx
     # "The Raspberry Pi 4").
     RNG200_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/rng200.c',
                                         permits: %r{\A(?:#\s*include\s*"erx/hw/rng200\.h"|erx_rng200_\w+)\z})
+    # On the stopgap the root's watchdog thread drives the board's hardware watchdog in the
+    # platform layer's place (docs/design-platforms.md, "The watchdog"): its one device shim
+    # names the watchdog's header and accessors alone, and its pure core only the header, the
+    # field setters and the field values, so no register is read or written outside the shim.
+    PM_WDT_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/pm_wdt.c',
+                                        permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+)\z})
+    PM_WDT_CORE = Chokepoints::Site.new(glob: 'kernel/core/pm_wdt.c',
+                                        permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+_set|ERX_PM_WDT_\w+)\z})
     # The prefix of every name Hardware.owned_symbols makes, so no list can fall behind the SVD files.
     OWNED_REGISTER = /\bERX_DEVICE_OWNED_\w+/
 
@@ -121,22 +129,24 @@ module Erx
         # import check, and a header and a call are all a bypass of erx_device needs.
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-headers',
-          rule: "only the kernel platform layer, the header probe and the root's RNG200 shim on the stopgap include a generated peripheral header",
+          rule: "only the kernel platform layer, the header probe and the root's RNG200 and watchdog shims and the watchdog's core on the stopgap include a generated peripheral header",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,
-          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM],
+          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "#include <erx/hw/pl011.h>\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-accessors',
-          rule: "only the generated peripheral headers, the kernel platform layer, the header probe and the root's RNG200 shim name their accessors",
+          rule: "only the generated peripheral headers, the kernel platform layer, the header probe, the root's RNG200 and watchdog shims and the watchdog core's field setters name their accessors",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: /\b(?:#{PERIPHERAL_SYMBOLS.map { |symbol| Regexp.escape(symbol) }.join('|')})\b/,
           sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } +
-                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM],
-          seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n" }
+                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE],
+          seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n",
+                  # The watchdog's core may name its setters, never a register access.
+                  'kernel/core/pm_wdt.c' => "void f(erx_mmio_t d) { erx_pm_wdt_rstc_write(d, 0); }\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-register-callers',

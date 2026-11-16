@@ -55,8 +55,10 @@ module Erx
     BOARDS = {
       'raspi4b' => Board.new(source: 'arch/arm/boot/dts/broadcom/bcm2711-rpi-4-b.dts', file: 'bcm2711-rpi-4-b.dtb',
                              memory: '/memory@0',
-                             # QEMU's model never completes a read at the RNG200's registers.
-                             unmodelled: ['/soc/rng@7e104000'].freeze,
+                             # QEMU's model never completes a read at the RNG200's registers, and it is
+                             # not known to count the power-management watchdog's timeout down and take its
+                             # reloads (it resets at BL31's ten ticks), so the root arms that on the board alone.
+                             unmodelled: ['/soc/rng@7e104000', '/soc/watchdog@7e100000'].freeze,
                              aliases: { 'serial0' => '/soc/serial@7e215040', 'serial1' => '/soc/serial@7e201000' }.freeze,
                              overlays: { 'uart3' => 'hw/dts/raspi4b-uart3.dtso' }.freeze)
     }.freeze
@@ -162,19 +164,21 @@ module Erx
       end
     end
 
-    # A node's base on the CPU, size and line, or nil when its cells are not one bus
-    # address and size, each in its bus's cells, inside a range, and GIC interrupts or
-    # none. A node with no interrupts, as the RNG200's, raises none, and the record states
+    # A node's base on the CPU, size and line of its first register range, as
+    # erx_dt_registers reads it, or nil when its reg is not whole bus addresses and sizes,
+    # each in its bus's cells, or its first lies in no range, or its interrupts are neither
+    # GIC interrupts nor none. A node with no interrupts, as the RNG200's, raises none, and the record states
     # its line as 0 (docs/design-abi.md, "Devices and partition windows").
     def window(node, ranges)
       reg = node.fetch(:reg)
       address_cells = node.fetch(:address_cells)
       interrupts = node.fetch(:interrupts)
       type, number, = interrupts
-      return nil unless reg.size == address_cells + node.fetch(:size_cells) &&
+      entry = address_cells + node.fetch(:size_cells)
+      return nil unless !reg.empty? && (reg.size % entry).zero? &&
                         (interrupts.empty? || ((interrupts.size % 3).zero? && GIC_FIRST_LINE.key?(type)))
 
-      bus, size = [reg.take(address_cells), reg.drop(address_cells)].map { |cells| number_of(cells) }
+      bus, size = [reg.take(address_cells), reg.take(entry).drop(address_cells)].map { |cells| number_of(cells) }
       range = ranges.find { |first, _, length| bus >= first && bus + size <= first + length }
       line = interrupts.empty? ? 0 : GIC_FIRST_LINE.fetch(type) + number
       range && { base: range[1] + (bus - range[0]), size: size, line: line }

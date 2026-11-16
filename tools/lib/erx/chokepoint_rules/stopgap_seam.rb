@@ -71,6 +71,8 @@ module Erx
         liberx/backend/fiasco/park.c
         liberx/backend/fiasco/park.h
         liberx/backend/fiasco/park_report.c
+        liberx/backend/fiasco/pm_wdt.c
+        liberx/backend/fiasco/pm_wdt.h
         liberx/backend/core/group_report.h
         liberx/backend/core/park_table.c
         liberx/backend/core/park_table.h

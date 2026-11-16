@@ -52,7 +52,7 @@ erx_fiasco_root_main(void)
 		say("erx: watchdog: the argument did not parse FAILED\n");
 		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
-	reason = erx_fiasco_watchdog_start(&config, ERX_WATCHDOG_MODE_NORMAL);
+	reason = erx_fiasco_watchdog_start(&config, ERX_WATCHDOG_MODE_NORMAL, &(const erx_fiasco_pm_wdt_t){ .armed = false });
 	if (reason != NULL) {
 		say(reason);
 		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);

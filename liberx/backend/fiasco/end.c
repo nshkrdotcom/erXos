@@ -43,6 +43,12 @@ end_take(void)
 		erx_fiasco_sleep_forever();
 }
 
+bool
+erx_fiasco_end_taken(void)
+{
+	return (atomic_load_explicit(&end_taken, memory_order_acquire) != 0);
+}
+
 /*
  * The machine's end, which under -no-reboot QEMU turns into its own exit,
  * whichever is asked, so its last line, erx: end off or erx: end reset, is what
