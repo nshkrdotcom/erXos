@@ -643,6 +643,65 @@ check(Event, Actions, M0) ->
                         M
                 end, M1, Actions).
 
+%% Resolve, step 4 of "Starting a program", for an executable file, over the reader's
+%% compact fixture image (erx_erofs_tests) mounted at /app: a/b/c/leaf is a file,
+%% to-small a link to the file small, to-b a link to the directory /a/b.
+resolve_test_() ->
+    {setup, fun mounted/0,
+     fun(Fs) ->
+             Rx = [#{point => [<<"app">>], provider => {erofs, Fs}, root => [], rights => rx}],
+             Ro = [#{point => [<<"app">>], provider => {erofs, Fs}, root => [], rights => ro}],
+             [{"an rx entry resolves to its file",
+               ?_assertEqual({ok, hd(Rx), [<<"a">>, <<"b">>, <<"c">>, <<"leaf">>]},
+                             resolve(<<"/app/a/b/c/leaf">>, Rx))},
+              {"an ro entry is eacces", ?_assertEqual({error, eacces}, resolve(<<"/app/a/b/c/leaf">>, Ro))},
+              {"an unknown path is enoent", ?_assertEqual({error, enoent}, resolve(<<"/app/nope">>, Rx))},
+              {"a path no entry holds is enoent", ?_assertEqual({error, enoent}, resolve(<<"/bin/sh">>, Rx))},
+              {"a directory is eacces", ?_assertEqual({error, eacces}, resolve(<<"/app/a/b">>, Rx))},
+              {"an entry's top is eacces", ?_assertEqual({error, eacces}, resolve(<<"/app">>, Rx))},
+              {"a last link is never followed", ?_assertEqual({error, eacces}, resolve(<<"/app/to-small">>, Rx))},
+              {"a last link after a dot-dot is never followed",
+               ?_assertEqual({error, eacces}, resolve(<<"/app/a/b/../../to-small">>, Rx))},
+              {"a link on the way is never followed",
+               ?_assertEqual({error, eacces}, resolve(<<"/app/to-b/c/leaf">>, Rx))}]
+     end}.
+
+%% A start whose image is an absolute path resolves it first, through the starter's
+%% table, before it reserves anything, so a refusal there has nothing to undo; one that
+%% resolves is enotsup, since the filler that opens it is not built. A release image
+%% starts as before.
+start_resolves_an_absolute_image_test_() ->
+    Files = (files())#{image => <<"/app/bin/x">>},
+    {ok, C0, Actions} = erx_prog_handler_core:new(?PID, [{0, {pipe, r}}], Files),
+    Entry = hd(?TABLE),
+    Narrowing = Files#{within => [{<<"/data">>, ro}]},
+    [?_assertEqual([{resolve, <<"/app/bin/x">>, ?TABLE}], Actions),
+     %% The starter's own table, not the program's narrowed one.
+     ?_assertEqual([{resolve, <<"/app/bin/x">>, ?TABLE}],
+                   element(3, erx_prog_handler_core:new(?PID, [], Narrowing))),
+     ?_assertMatch({ok, _, [holder]}, erx_prog_handler_core:new(?PID, [], (files())#{image => <<"bin/x">>})),
+     [?_assertEqual([{answer, {error, Errno}}], element(2, erx_prog_handler_core:step(C0, {resolved, {error, Errno}})))
+      || Errno <- [enoent, eacces]],
+     ?_assertEqual([{answer, {error, enotsup}}],
+                   element(2, erx_prog_handler_core:step(C0, {resolved, {ok, Entry, [<<"bin">>, <<"x">>]}}))),
+     ?_assertEqual({ended, normal},
+                   erx_prog_handler_core:phase(run(C0, [{resolved, {error, enoent}}]))),
+     %% A resolve answer outside the resolve changes nothing.
+     ?_assertEqual(reserving, erx_prog_handler_core:phase(run(running_after_holder(), [{resolved, {error, enoent}}])))].
+
+running_after_holder() ->
+    {ok, C0, [holder]} = new(?PID, [{0, {pipe, r}}]),
+    run(C0, [{holder, ok}]).
+
+mounted() ->
+    {ok, Image} = erx_erofs_tests:open(erx_erofs_tests:fixture("compact")),
+    {ok, Fs} = erx_erofs:mount(Image, fun(_Line) -> ok end),
+    Fs.
+
+resolve(Path, Table) ->
+    erx_prog_handler_core:resolve_image(Path, Table,
+                                        fun(#{provider := {erofs, Fs}}, Names) -> erx_erofs:walk(Fs, Names) end).
+
 running() ->
     {ok, C0, _} = new(?PID, []),
     run(C0, [{holder, ok}, started]).

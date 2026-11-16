@@ -143,20 +143,28 @@ it; git history is the record of completed work.
   session's default display, the program's end ending the session); see the next item for what it waits on.
 * [High] programs, an executable file as a program's image
   ([design-programs.md](docs/design-programs.md#what-a-program-can-start), "File objects"; plan 1b-D,
-  "`erx_exec` with `rx` grants"): not built. `erx_program:start/1` takes only a program of the session's
-  release (`image => <<"bin/NAME">>`), the handler has no resolve step (step 4 of "Starting a program": the
-  image check of the `rx` grant, the filler's read, the command server's code object), the domain library's
-  `code_object/2` answers `enotsup`, and the loader `erx_exec` does not exist (only `erx_elf_plan` does). So a
-  native app's start of `/app/bin/NAME` is refused `{program, einval}` and the session ends; no installable
-  native package (the Doom demo) runs until this lands. Also needs the stopgap backend's `erx_mem_child`,
-  an eager copy (design-stopgap.md, the call table). The session asks for code objects through the `code_objects` facet
+  "`erx_exec` with `rx` grants"): not built past the resolve. `erx_program:start/1` takes only a program of
+  the session's release (`image => <<"bin/NAME">>`). The handler resolves an absolute image through the
+  starter's namespace and makes the image check of the entry's `rx` (`erx_prog_handler_core:resolve_image/3`),
+  but has no filler to open the file and no code object from the command server (the rest of step 4 of
+  "Starting a program"), the domain library's `code_object/2` answers `enotsup`, and the loader `erx_exec`
+  does not exist (only `erx_elf_plan` does). So a native app's start of `/app/bin/NAME` is refused
+  `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this
+  lands. Also needs the stopgap backend's `erx_mem_child`, an eager copy (design-stopgap.md, the call
+  table). The session asks for code objects through the `code_objects` facet
   (`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which every session gets
   by the domain service's own policy and which is not declared yet; the command server's holds (fill, start,
-  row) decide every drop (design-programs.md, "Holds and drops"). Links are settled: a package mount answers
-  `enotsup` for a link inode, since a package holds no links (design-storage.md, "Reading EROFS images"), so
-  an image `bin/x -> /bin/sh` cannot start a program outside the package; today the reader checks only the
-  header's text (`relative_path`) and only the host packer refuses links, so the mount's refusal is part of
-  this item.
+  row) decide every drop (design-programs.md, "Holds and drops"). Links: a package mount answers `enotsup`
+  for a link inode, since a package holds no links (design-storage.md, "Reading EROFS images"), but today
+  the reader checks only the header's text (`relative_path`) and only the host packer refuses links, so the
+  mount's refusal is part of this item. Meanwhile the resolve refuses every symbolic link on the way
+  (`eacces`), on every mount, where design-programs.md has a resolve follow links as FreeBSD's does.
+  The image check reads the entry's rights alone, which design-files.md (F6) names as the wrong check until
+  every entry's rights are capped by its grant's ("files, the app mount's rights", below). The resolve runs
+  in the program's own handler, after the command server gave the program its id and job row, and waits on
+  the walks of a grant server, where step 4 puts it in the starter's handler before step 5. The filler, when
+  built, must check that the file is regular (a grant's walk answers `other` for devices too) and open it
+  without following a link, since its open walks the path again.
 * [Medium] apps, `erx_app`, a native app's standard streams: design-packaging.md ("Starting an app") starts a
   program without a window with standard input null and its output to the session's log, but
   `erx_prog_handler:start/1` offers only pipe ends and a window's buffer as descriptors, so `erx_app` starts
