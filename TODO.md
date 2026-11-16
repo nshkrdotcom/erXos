@@ -4982,23 +4982,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] runtime, `liberx/backend/core/boot_manifest.c`: the printable rule for `system_args` lives in the reader, so `Manifest.admit` packs a manifest that then fails at boot, and `domains[].args`, the same string class, is not covered. The rule belongs in the `args` class of the ABI generator.
 * [Low] runtime, `tools/fuzz/release_fuzz.c`: does not call `erx_release_check` or compare `erx_release_fs_lookup`'s index with the entry's, and has no seed at the longest path; its `fix_index` is a copy of `pack_fuzz.c`'s.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the `Ctrl-G` menu (`erx_console_menu`) lists, connects and detaches; interrupting and killing a session, lock and log out (`docs/design-live.md`, "Job control") come with logins (M10), and `erx:console_size/2` is not built.
-* [Medium] session, the terminal relay's server and `erx_output`
-  ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol),
-  [design-runtime.md](docs/design-runtime.md#the-console-and-standard-io)): only the relay's pure core, `erx_session_relay_core`, is built. Not built:
-  `erx_session_relay`, the server registered as `erx_tty_owner` that runs the core;
-  `otp/lib/kernel/src/erx_output.erl`, which sends every `tty_write` and `tty_drain` of the runtime's writers;
-  edit 35's trap and edit 42 (`beam/bif.c`), which reach `erx_output`; and the build check of design.md's
-  relay row, that only `erx_cmd` and `erx_console` call `erx_session_relay:open_reader/1` and that the atom
-  `erx_tty_owner` appears only in `erx_session_relay`, `erx_output`, `erx_console` and `erx_log_h`. Two of
-  the modules that check names do not exist, no module uses `erx_tty_owner`, no process holds it, and a session's ttys are `erx_session_tty`'s, raw, with no line
-  discipline. Build them together, the check with design-shell.md's two seeded handler modules in
-  `test/host/chokepoints_test.rb`.
 * [Medium] session, terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`): each tty of the
   session has a relay, which its console reads on demand, but `erx_cmd` does not read through
   `open_reader/2` ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)). The runtime's
   writers' sender, `otp/lib/kernel/src/erx_output.erl`, which the design and the `relay-name` rule name, is
-  not in the tree, so nothing sends `tty_write` or `tty_drain`; and `erx_tty_owner` is missing from
-  `erx_session.app.src`'s `registered` list.
+  not in the tree, so nothing sends `tty_write` or `tty_drain`, nor are edit 35's trap and edit 42
+  (`beam/bif.c`), which reach it; and `erx_tty_owner` is missing from `erx_session.app.src`'s
+  `registered` list.
 * [Medium] session, terminal relay requests (`erlang/apps/erx_session/src/erx_session_relay.erl`): the
   chokepoints keep `erx_tty_owner` and the request for an open made for reading to `erx_session_relay`, and
   an open is opaque, but a module that holds a relay's pid can still build any other request by hand
