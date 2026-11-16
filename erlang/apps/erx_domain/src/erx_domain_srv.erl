@@ -704,7 +704,7 @@ session_rows(Template, #{facet_rows := Rows}) ->
 %% session is, from its plan (erx_domain_core:app_session/4): the library plans the app
 %% template under the app's entry with the record's memory, the session's rows are the
 %% template's packages row and the rows its admission kept, and its record carries the
-%% app's record, which its ready answer hands it once its namespace is in place
+%% app's record, sent after its ready answer, once its namespace is in place
 %% (answer_sessions/2). Only the start service's keepers start one (PK7, erx_domain:start_app/2).
 start_app(_Name, _Start, #{lib := none} = State) ->
     {{error, enotsup}, State};

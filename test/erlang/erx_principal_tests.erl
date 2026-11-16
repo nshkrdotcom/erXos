@@ -94,7 +94,7 @@ without_an_apps_row_nothing_registers_test() ->
     ?assertEqual({error, apps_full},
                  register(<<"clock">>, admitted(image, 8 * ?MIB), erx_principal:new(0))).
 
-%% The record keeps the app's record its sessions' ready answers hand them:
+%% The record keeps the app's record each of its sessions is sent:
 %% the file's place under the session's `packages` grant, the image's for a
 %% system package and the installed tree's for an installed one, with the
 %% header's layout and start; fetch_name/2 answers the name in an entry.

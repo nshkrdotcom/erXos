@@ -59,7 +59,7 @@ state is a bug of the caller and fails with a badmatch.
                     connection := non_neg_integer(),
                     ctl_slots := non_neg_integer(), reader := non_neg_integer(),
                     facets := #{atom() => {pid(), map()}}, start := start(), inspect := pid() | none,
-                    rows := [session_row()], app := map() | none}.
+                    rows := [session_row()], app := erx_app:app_record() | none}.
 %% A session's facet row, decided once as the session is planned (erx_domain_srv): the
 %% service's name, its server, a configured row or system, and the grant's limits; a
 %% domain of no session holds none. An app's session alone carries the app's record.

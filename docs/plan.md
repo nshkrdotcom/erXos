@@ -1988,7 +1988,7 @@ next available item of the plan.
    `abi/formats/package.txt`, `erx_pkg_header:check_file/2` with its fuzz
    target, `erx_app_admit` with its corpus, run on the host by the
    packer; `erx_verity` reading an image from a file; the app's session
-   with its kept rows, `/app` and its record in the ready answer;
+   with its kept rows, `/app` and its record, sent after the ready answer;
    `erx_app`, with `erx_prog_handler`'s `window` option and the monitor
    its start returns; the `apps` row of both development manifests, left
    out of the site manifest; the package process with the image's packages; the `apps`

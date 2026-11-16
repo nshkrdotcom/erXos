@@ -21,9 +21,10 @@ within `max` (PK9). A record holds five things and nothing else: the
 app's entry; its signer; its declared memory, which each of its sessions'
 own budgets holds; the indices of the app template's facet rows its
 admission kept, which each of its sessions is granted
-(erx_domain_core:app_session/4); and the app's record its sessions' ready
-answers hand them, the place of its package's file, its header's layout
-and what it starts (docs/design-packaging.md, "An app's session"), taken
+(erx_domain_core:app_session/4); and the app's record (erx_app:app_record/0)
+each of its sessions is sent once its namespace is in place, the place of
+its package's file, its header's layout and what it starts
+(docs/design-packaging.md, "An app's session"), taken
 from the same committed package, so the record and the rows cannot come
 from two packages. An app principal has no credentials, so no login
 starts a session of one (AP2).
@@ -38,25 +39,7 @@ starts a session of one (AP2).
                  signer := erx_pkg_header:authenticator(),
                  memory := pos_integer(),
                  rows := [non_neg_integer()],
-                 app := app_record()}.
-
--doc """
-The app's record a session's ready answer hands it (erx_app:app_record/0):
-where its package's file lies in the session's namespace, under its
-`packages` grant, its header's layout and what it starts.
-""".
--type app_record() :: #{place := binary(),
-                        layout := erx_pkg_header:layout(),
-                        start := erx_pkg_header:start()}.
-
--doc """
-A package the package process has committed (erx_pkg_plan's published
-package): its name, where it lies, its checked header and its admission.
-""".
--type package() :: #{name := binary(),
-                     place := system | installed,
-                     checked := erx_pkg_header:checked(),
-                     admitted := erx_app_admit:admitted()}.
+                 app := erx_app:app_record()}.
 
 -doc """
 The boot's app principals: `max`, the apps row's, and each registered
@@ -79,7 +62,7 @@ the signer, the declared memory and the kept rows of its admission, the
 entry `erx_app_admit:entry/4` gives the name, and of its place and
 checked header the app's record.
 """.
--spec register_app(package()) -> ok | {error, reason()}.
+-spec register_app(erx_pkg_plan:published()) -> ok | {error, reason()}.
 register_app(Package) ->
     gen_server:call(erx_domain_srv, {register_app, Package}, infinity).
 
@@ -101,7 +84,7 @@ found: a name not yet registered takes the lowest entry no name holds,
 and a registered one writes its record again in its own entry, with its
 own signer only.
 """.
--spec register(package(), apps()) -> {ok, apps()} | {error, reason()}.
+-spec register(erx_pkg_plan:published(), apps()) -> {ok, apps()} | {error, reason()}.
 register(#{name := Name, place := Place, checked := #{header := #{layout := Layout, start := Start}},
            admitted := #{signer := Signer, memory := Memory, rows := Rows}},
          #{max := Max, names := Names} = Apps) ->

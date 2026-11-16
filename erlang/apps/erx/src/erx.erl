@@ -183,11 +183,13 @@ granted() ->
     persistent_term:get({erx, granted}, []).
 
 -doc """
-The app's record that this domain's ready answer brought, when the domain is an
-app's session (docs/design-packaging.md, "An app's session"): its package's
-place, its header's layout and what it starts, which erx_app reads.
-`undefined` in every other domain.
+The app's record, when the domain is an app's session (docs/design-packaging.md,
+"An app's session"): its package's place, its header's layout and what it
+starts, which erx_app reads. The domain service sends it after the ready answer,
+once the session's namespace is in place; the connection agent keeps it, and
+answers at once if it holds it and else once it comes. `{error, badarg}` in the
+system domain; in another domain that is no app's session it never comes.
 """.
--spec app() -> erx_app:app_record() | undefined.
+-spec app() -> {ok, erx_app:app_record()} | {error, noproc | badarg}.
 app() ->
-    persistent_term:get({erx, app}, undefined).
+    erx_connections:app().
