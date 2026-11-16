@@ -135,9 +135,8 @@ it; git history is the record of completed work.
   `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
   `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
   does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
-* [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): the
-  record's `{Ref, app, App}` step and erx_app's registered wait, which design-packaging.md's "An app's
-  session" must name (it still says the ready answer hands the record); `erx_principal:app_record()` and
+* [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
+  `erx_principal:app_record()` and
   `package()` copy `erx_app:app_record()` and `erx_pkg_plan:published()`, and an image package's place
   `/pkg/NAME.app` is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
   `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet

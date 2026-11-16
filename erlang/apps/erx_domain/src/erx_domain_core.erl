@@ -176,7 +176,7 @@ each {Index, Row} by its index in the manifest's facet table:
 
 Nothing of the plan depends on the record's signer, so one header admitted
 as an image package and as an installed one gives one plan (PK10). The
-record is the domain service's own (erx_principal:register/3), written
+record is the domain service's own (erx_principal:register/2), written
 from an admission against the same manifest, so its entry is below Apps'
 max and its rows are the template's.
 """.
