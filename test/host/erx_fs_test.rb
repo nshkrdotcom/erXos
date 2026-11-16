@@ -37,6 +37,7 @@ class ErxFsTest < Minitest::Test
   SERVER = 'erlang/apps/erx_files/src/erx_fs.erl'
   MINT = 'erlang/apps/erx_storage/src/erx_lfs_mint.erl'
   VERSION = 'erlang/apps/erx_files/src/erx_fs_version.erl'
+  WAITS = 'erlang/apps/erx_files/src/erx_fs_waits.erl'
   TABLE = 'abi/protocols/9p.txt'
 
   Fault = Data.define(:name, :file, :from, :to, :caught_by)
@@ -226,7 +227,15 @@ class ErxFsTest < Minitest::Test
     Fault.new(name: 'a file opened is listed by the tree', file: TABLE,
               from: "  operation readdir 40\n    request fid fid directory\n",
               to: "  operation readdir 40\n    request fid fid node\n",
-              caught_by: 'directory_operations_on_a_file_or_a_link_reach_no_tree_test')
+              caught_by: 'directory_operations_on_a_file_or_a_link_reach_no_tree_test'),
+    Fault.new(name: 'an answer/3 that leaves its entry', file: WAITS,
+              from: "erlang:send(Alias, {erx_fs_answer, Alias, Result}),\n            forget(Alias, Entry, Waits);",
+              to: "erlang:send(Alias, {erx_fs_answer, Alias, Result}),\n            _ = Entry,\n            Waits;",
+              caught_by: 'a_keeper_that_answers_a_thousand_reads_holds_nothing_test'),
+    Fault.new(name: 'a set that does not monitor the grant', file: WAITS,
+              from: '#{} -> Grants#{Grant => {erlang:monitor(process, Grant), 1}}',
+              to: '#{} -> Grants#{Grant => {make_ref(), 1}}',
+              caught_by: 'a_grants_end_drops_its_requests_test')
   ].freeze
 
   def test_the_cases_pass
