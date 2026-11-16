@@ -61,8 +61,6 @@ class ImageAppsTest < Minitest::Test
     Erx::ImageApps.read(path, sdk: sdk, runner: runner)
   end
 
-  def raised(source, key, by) = source.sub(/^(  #{key} )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + by}" }
-
   def package(name, memory: 4096) = Erx::ImageApps::Package.new(path: "/p/#{name}.app", name: name, memory: memory, sha256: "\xab".b * 32)
 
   def test_the_dashboard_enters_an_image_as_its_file_and_rows
@@ -80,15 +78,13 @@ class ImageAppsTest < Minitest::Test
 
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
-    arguments = ManifestContextFixture.domain_arguments(codec)
+    arguments = ManifestContextFixture.arguments(codec)
     context = Erx::Manifest::Context.new(**arguments.merge(platform: platform,
                                                            artifacts: arguments.fetch(:artifacts).merge(plan.artifacts),
                                                            development_key: key))
-    # The development manifest with an apps row of one app and the room it takes: a
-    # domain in max_domains and its memory in root_memory (property 4).
+    # The development manifest, whose apps row takes the package.
     board = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
-    source = raised(raised(board, 'max_domains', 1), 'root_memory', dashboard.memory)
-    admitted = Erx::Manifest.admit(source: "#{source}apps\n  memory #{dashboard.memory}\n  max 1\n#{plan.rows}", codec: codec,
+    admitted = Erx::Manifest.admit(source: "#{board}#{plan.rows}", codec: codec,
                                    context: context, planner: PLANS_EVERYTHING)
     assert_equal [{ 'name' => 'dashboard', 'sha256' => dashboard.sha256.unpack1('H*'), 'enabled' => true }],
                  admitted.report.fetch('packages')

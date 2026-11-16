@@ -43,21 +43,19 @@ class ErxPkgManifestTest < Minitest::Test
   DEVELOPMENT_KEY = %q(#{'scope' => 'root', 'fields' => ['development_key', 'count'], 'offset' => 436, ) +
                     %q('size' => 4, 'label' => <<"root.development_key.count">>})
   # The design's seeded faults: each kind of reserved name dropped, which lets an app take a
-  # row's name; the app template found by root's principal rather than the absent one; and
-  # the development key accepted in a release manifest. And a facet row's grantee read
-  # without its kind, which takes the system domain's packages row for the app template's.
+  # row's name; and the development key accepted in a release manifest. And an app_services
+  # row's service and facet fields read for each other, which hands admission the wrong
+  # service and row.
   FAULTS = {
     'principals not reserved' => Fault.new(file: MODULE, from: RESERVED, to: '[domains, services, facets]'),
     'domains not reserved' => Fault.new(file: MODULE, from: RESERVED, to: '[principals, services, facets]'),
     'services not reserved' => Fault.new(file: MODULE, from: RESERVED, to: '[principals, domains, facets]'),
     'facets not reserved' => Fault.new(file: MODULE, from: RESERVED, to: '[principals, domains, services]'),
-    'template by root' => Fault.new(file: MODULE, from: '#{principal := ?ERX_MF_NONE}', to: '#{principal := 0}'),
+    'service and row swapped' => Fault.new(file: MODULE, from: '#{service := Index, facet := Facet}',
+                                           to: '#{service := Facet, facet := Index}'),
     'development key in a release' =>
       Fault.new(file: READER, from: RELEASE_END,
-                to: RELEASE_END.sub("\n#{' ' * 24}}", "},\n#{DEVELOPMENT_KEY}")),
-    'grantee kind ignored' =>
-      Fault.new(file: MODULE, from: '#{grantee_kind := ?ERX_MF_GRANTEE_SESSION, grantee := Grantee,',
-                to: '#{grantee := Grantee,')
+                to: RELEASE_END.sub("\n#{' ' * 24}}", "},\n#{DEVELOPMENT_KEY}"))
   }.freeze
 
   def test_the_reader_answers_what_the_manifest_packs
@@ -82,17 +80,15 @@ class ErxPkgManifestTest < Minitest::Test
       'none' => AbiManifestFixture.valid,
       'release_development' => AbiManifestFixture.packages(flags: 0),
       'two_apps' => AbiManifestFixture.packages(apps: 2),
-      'no_template' => AbiManifestFixture.packages(template: false),
-      'no_packages_grant' => AbiManifestFixture.packages(packages_grant: false),
       'admitted' => admitted }
   end
 
-  # QEMU virt's development manifest with an apps row of 1 MiB and max 2 offering the
-  # system domain's files service shared, the package
-  # quotes and the enabled package clock, the signer ops and a development key of 7s.
+  # QEMU virt's development manifest, whose apps row offers the display and the network,
+  # with the package quotes and the enabled package clock, the signer ops and a
+  # development key of 7s.
   def admitted
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
-    arguments = ManifestContextFixture.domain_arguments(codec)
+    arguments = ManifestContextFixture.arguments(codec)
     packages = %w[clock quotes].to_h do |name|
       ["package-#{name}", { 'kind' => 'package', 'name' => name, 'memory' => 4096, 'sha256' => 'ab' * 32 }]
     end
@@ -100,14 +96,10 @@ class ErxPkgManifestTest < Minitest::Test
                                                       artifacts: arguments.fetch(:artifacts).merge(packages),
                                                       development_key: "\x07".b * 32)
     board = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
-    source = board.sub(/^(  max_domains )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + 2}" }
-                  .sub(/^(  root_memory )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + (1 << 20)}" }
-    rows = "service shared\n  server system\n  interface files\n" \
-           "apps\n  memory #{1 << 20}\n  max 2\n  services shared\n" \
-           "package quotes\n  input @artifact.package-quotes\n" \
+    rows = "package quotes\n  input @artifact.package-quotes\n" \
            "package clock\n  input @artifact.package-clock\n  enable YES\n" \
            "signer ops\n  key hex:#{'cd' * 32}\n"
-    Erx::Manifest.admit(source: source + rows, codec: codec, context: context, planner: PLANS_EVERYTHING).bytes
+    Erx::Manifest.admit(source: board + rows, codec: codec, context: context, planner: PLANS_EVERYTHING).bytes
   end
 
   # Compiles SOURCES, with fault's file replaced by its faulted copy, and runs the cases

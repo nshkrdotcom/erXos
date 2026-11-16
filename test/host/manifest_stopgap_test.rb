@@ -257,6 +257,8 @@ class ManifestStopgapTest < Minitest::Test
   # The development manifest's system_baseline, which the sums below fit against.
   def baseline = Integer(@source[/^  system_baseline (\d+)$/, 1])
   def root_memory = Integer(@source[/^  root_memory (\d+)$/, 1])
+  # The apps row's budget, which property 4 counts within root_memory.
+  def apps_memory = Integer(@source[/^apps\n  memory (\d+)$/, 1])
   # The development manifest with the system principal's budget set to bytes.
   def with_system_memory(bytes) = changed(@source.sub(/^(principal system\n  memory )\d+$/) { "#{Regexp.last_match(1)}#{bytes}" })
 
@@ -276,8 +278,9 @@ class ManifestStopgapTest < Minitest::Test
   # Principal and baseline fit with the devices' reservations exactly, and one page
   # more does not.
   def test_device_memory_counts_against_root_memory
-    assert admit(with_system_memory(root_memory - baseline - device_memory))
-    refused(Erx::Manifest::Invalid, 4, 'principals.memory', with_system_memory(root_memory - baseline - device_memory + 4096))
+    assert admit(with_system_memory(root_memory - baseline - device_memory - apps_memory))
+    refused(Erx::Manifest::Invalid, 4, 'principals.memory',
+            with_system_memory(root_memory - baseline - device_memory - apps_memory + 4096))
   end
 
   def test_a_principal_domain_quota_is_refused
@@ -317,9 +320,9 @@ class ManifestStopgapTest < Minitest::Test
   def test_loadable_segments_and_baseline_over_root_memory_are_refused
     against = context do |arguments|
       image = arguments.fetch(:catalog).last.fetch('image')
-      image['span'] = 335_544_320 + 4096
+      image['span'] = 536_870_912 + 4096
       image.fetch('segments') << { 'file_offset' => 8192, 'mem_offset' => 4096, 'file_size' => 0,
-                                   'mem_size' => 335_544_320, 'prot' => @codec.member('prot', 'r'), 'flags' => 0 }
+                                   'mem_size' => 536_870_912, 'prot' => @codec.member('prot', 'r'), 'flags' => 0 }
     end
     refused(Erx::Manifest::Invalid, 4, 'root_startup', @source, against, message: /loadable/)
   end

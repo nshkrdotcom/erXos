@@ -9,8 +9,9 @@ module Erx
   module Manifest
     # How a harness changes a manifest: a number of a named record read, grown or set, a
     # reference pointed elsewhere, named records taken out (without), the session
-    # templates taken out (without_sessions), or a configured domain taken out with the
-    # records only it uses (without_domain). Each reads the text with the manifest's own
+    # templates taken out (without_sessions), the apps row taken out with the room it took
+    # (without_apps), or a configured domain taken out with the records only it uses
+    # (without_domain). Each reads the text with the manifest's own
     # reader (Frontend.read), changes the records it read, and writes them with its one
     # printer (Frontend.render), so an edit reaches a field only through its record and
     # the result is a manifest the reader takes, but its comments are gone. A record is
@@ -104,6 +105,26 @@ module Erx
                     %w[machine root_memory] => -(budget + dma), %w[machine max_domains] => -1,
                     %w[machine max_connections] => -1 }
         Frontend.render(changed(remaining, changes) { |value, added| value + added })
+      end
+
+      # text without its apps row, as if it had never been written in, or text itself when
+      # it has none (docs/design-packaging.md, "The apps row"). Given back: the row's
+      # memory from root_memory, its max apps from max_domains, each app a principal with
+      # a domains quota of one, and from max_connections each app's system connection, its
+      # packages connection and one for each service of its services, which the manifest
+      # reckons in its comments (TODO.md: property 19's second clause should count them).
+      # The row must state max: what it takes is reckoned from the number written. What
+      # the row's services took of their servers stays: a server's limits are shared
+      # records, and a site that leaves the server out gives its room back with it.
+      def without_apps(text)
+        source = Frontend.read(text)
+        apps = source.records.fetch('apps', []).first or return text
+
+        max = apps.decimal('max')
+        services = apps.properties.fetch('services', []).size
+        changes = { %w[machine root_memory] => -apps.decimal('memory'), %w[machine max_domains] => -max,
+                    %w[machine max_connections] => -max * (2 + services) }
+        Frontend.render(changed(removed(source, [apps]), changes) { |value, added| value + added })
       end
 
       # source with each [record, field] of changes replaced by what the block returns for

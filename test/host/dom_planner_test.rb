@@ -75,7 +75,7 @@ class DomPlannerTest < Minitest::Test
   def setup
     @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     @plain = ManifestContextFixture.sessionless(Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT))
     @source = with_domains('alpha')
     @directory = Dir.mktmpdir('dom-planner-')
@@ -265,18 +265,75 @@ class DomPlannerTest < Minitest::Test
   end
 
   # A template is no configured domain: alpha is the one domain the boot plans.
-  # The view places the apps row's max app entries after the manifest's one principal,
-  # from the app template, the session template naming no principal, and sizes the
-  # principal table for both; a row without the template, or the template without the
-  # row, is refused, so the view holds entries exactly when the manifest has the row.
-  def test_the_view_places_the_app_entries_from_the_apps_row_and_the_app_template
-    assert_equal ['apps template=0 first=2 max=2 memory=1048576 principals=3'],
-                 view_lines(AbiManifestFixture.app_template, 'apps').grep(/^apps /)
-    assert_equal ['refused manifest: an apps row with no app template'],
-                 view_lines(AbiManifestFixture.app_template(principal: 0), 'apps-no-template')
+  # The view places the apps row's max app entries after the manifest's principals, from
+  # the app template the row names, which the check derives from QEMU virt's apps row,
+  # and checks the row's indices once (docs/design-packaging.md, "The template's rows by
+  # index"): an app_template naming root's template, a packages_facet naming the system
+  # domain's packages row, an app_services row whose facet grants the template
+  # another service, a packages_facet naming the template's grant of another service,
+  # a template holding a facet the row does not name and two app_services rows naming
+  # one facet are each refused, and so is a template with no apps row.
+  def test_the_view_places_the_app_entries_from_the_rows_the_apps_row_names
+    bytes = development_manifest
+    apps = bytes.byteslice(400, 4).unpack1('V')
+    app_services = bytes.byteslice(408, 4).unpack1('V')
+    template, packages = bytes.byteslice(apps + 12, 8).unpack('V2')
+    first, count = bytes.byteslice(280, 8).unpack('V2')
+    facets = (0...count).map { |index| bytes.byteslice(first + (index * 80), 80) }
+    refute_nil extra_facet(facets, template), 'no facet row of another template to regrant'
+    system_packages = facets.index do |row|
+      row.byteslice(12, 4) == facets.fetch(packages).byteslice(12, 4) &&
+        row.byteslice(72, 4).unpack1('V') == @codec.member('mf_grantee', 'system')
+    end
+    assert_equal ["apps template=#{template} first=2 max=4 memory=137363456 principals=5"],
+                 view_lines(bytes, 'apps').grep(/^apps /)
+    { 'app-template' => [apps + 12, template - 1,
+                         'an apps row whose app_template is not the session template naming no principal'],
+      'packages-facet' => [apps + 16, system_packages,
+                           "the apps row's packages_facet is not the app template's grant of packages_service"],
+      'packages-display' => [apps + 16, bytes.byteslice(app_services + 4, 4).unpack1('V'),
+                             "the apps row's packages_facet is not the app template's grant of packages_service"],
+      'service-facet' => [app_services + 4, packages,
+                          "an app_services row's facet is not the app template's grant of its service"],
+      'extra-facet' => [first + (extra_facet(facets, template) * 80) + 8, template,
+                        'the app template holds a facet the apps row does not name'] }
+      .each do |name, (at, value, reason)|
+        assert_equal ["refused manifest: #{reason}"], view_lines(replaced_word(bytes, at, value), name)
+      end
+    # The second app_services row repeats the first; the facet it named goes to a grantee without that service.
+    service, facet = bytes.byteslice(app_services, 8).unpack('V2')
+    moved = bytes.byteslice(app_services + 12, 4).unpack1('V')
+    grantee, kind = free_grantee(facets, facets.fetch(moved).byteslice(12, 4))
+    refute_nil grantee, 'no grantee lacks the service the second app_services row names'
+    twice = [[app_services + 8, service], [app_services + 12, facet], [first + (moved * 80) + 8, grantee],
+             [first + (moved * 80) + 72, kind]].reduce(bytes) { |copy, (at, value)| replaced_word(copy, at, value) }
+    assert_equal ["refused manifest: the apps row names one of the app template's facets twice"],
+                 view_lines(twice, 'service-twice')
     assert_equal ['refused manifest: an app template with no apps row'],
-                 view_lines(AbiManifestFixture.app_template(apps: false), 'template-no-apps')
+                 view_lines(AbiManifestFixture.session_template(principal: 0xffffffff), 'template-no-apps')
   end
+
+  # The index of a facet row granted to another session template for a service the app
+  # template holds no facet of: regranted to the app template, it is a grant the apps
+  # row does not name.
+  def extra_facet(facets, template)
+    session = @codec.member('mf_grantee', 'session')
+    held = facets.select { |row| row.unpack('@8V @72V') == [template, session] }.map { |row| row.byteslice(12, 4) }
+    facets.index do |row|
+      row.unpack('@8V @72V') != [template, session] && row.byteslice(72, 4).unpack1('V') == session &&
+        !held.include?(row.byteslice(12, 4))
+    end
+  end
+
+  # A grantee, as [grantee, grantee_kind], of some facet row that holds no facet of
+  # service, the packed service index of a facet row.
+  def free_grantee(facets, service)
+    grantees = facets.map { |row| row.unpack('@8V @72V') }.uniq
+    grantees.find { |pair| facets.none? { |row| row.unpack('@8V @72V') == pair && row.byteslice(12, 4) == service } }
+  end
+
+  # bytes with the little-endian u32 at offset at replaced by value.
+  def replaced_word(bytes, at, value) = bytes.dup.tap { |copy| copy[at, 4] = [value].pack('V') }
 
   def test_session_templates_are_not_configured_domains
     assert_equal 1, admit(with_sessions).report.fetch('child_plan_instances')
@@ -459,7 +516,7 @@ class DomPlannerTest < Minitest::Test
   end
 
   def test_a_runtime_without_an_accepted_image_fails_the_build
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).then do |arguments|
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).then do |arguments|
       arguments.merge(platform: @context.platform,
                       catalog: arguments.fetch(:catalog).map { |row| row.fetch('path') == 'runtimes/emu' ? row.except('image') : row })
     end)
@@ -527,7 +584,7 @@ class DomPlannerTest < Minitest::Test
     block = device_of(platform, 'block')
     device_of(platform, 'net')['base'] = block.fetch('base') - 0x200
     refute_equal block.fetch('line'), device_of(platform, 'net').fetch('line')
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     two = ManifestContextFixture.substitute(@source, /^(unit net\n  placement "net"\n  holder )system$/, '\1@domain.alpha')
     [@source, two].each do |source|
       error = assert_raises(Erx::Manifest::Invalid) { admit(source) }
@@ -544,7 +601,7 @@ class DomPlannerTest < Minitest::Test
     platform = JSON.parse(JSON.generate(@context.platform))
     block = device_of(platform, 'block')
     device_of(platform, 'net')['line'] = block.fetch('line')
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     two = ManifestContextFixture.substitute(@source, /^(unit net\n  placement "net"\n  holder )system$/, '\1@domain.alpha')
     [@source, two].each do |source|
       error = assert_raises(Erx::Manifest::Invalid) { admit(source) }
@@ -562,7 +619,7 @@ class DomPlannerTest < Minitest::Test
     { 'net' => 0x1000, 'spare' => 0x2000 }.each do |key, offset|
       device_of(platform, key).merge!('base' => base + offset, 'line' => 0, 'role' => 'ordinary', 'dma' => 'none', 'dma_memory' => 0)
     end
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     admit("#{@source}unit spare\n  placement \"spare\"\n  holder @domain.alpha\n")
   end
 
@@ -575,7 +632,7 @@ class DomPlannerTest < Minitest::Test
     platform = JSON.parse(JSON.generate(@context.platform))
     net = platform.fetch('units').find { |unit| unit.fetch('key') == 'net' }.fetch('devices')
     net << net.first.merge('path' => '/virtio_mmio@a000e00', 'base' => 0x0a000e00, 'placement_key' => 'net-second')
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     assert_equal 1, admit(@source).report.fetch('child_plan_instances')
     held = ManifestContextFixture.substitute(@source, /^(unit net\n  placement "net"\n  holder )system$/, '\1@domain.alpha')
     assert_equal 1, admit(held).report.fetch('child_plan_instances')
@@ -592,7 +649,7 @@ class DomPlannerTest < Minitest::Test
     net << net.first.merge('path' => '/soc/mmc@a000e00', 'base' => 0x0a000e00, 'role' => 'ordinary',
                            'compatible' => 'brcm,bcm2835-sdhci', 'dma' => 'none', 'dma_memory' => 0,
                            'placement_key' => 'net-second')
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     held = ManifestContextFixture.substitute(@source, /^(unit net\n  placement "net"\n  holder )system$/, '\1@domain.alpha')
     assert_equal 1, admit(held).report.fetch('child_plan_instances')
   end
@@ -609,7 +666,7 @@ class DomPlannerTest < Minitest::Test
     net << net.first.merge('path' => '/soc/spi@a003080', 'base' => net.first.fetch('base') + 0x80, 'size' => 64,
                            'role' => 'ordinary', 'compatible' => 'brcm,bcm2835-aux-spi', 'dma' => 'none',
                            'dma_memory' => 0, 'placement_key' => 'net-second')
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     held = ManifestContextFixture.substitute(@source, /^(unit net\n  placement "net"\n  holder )system$/, '\1@domain.alpha')
     assert_equal 1, admit(held).report.fetch('child_plan_instances')
   end
@@ -623,7 +680,7 @@ class DomPlannerTest < Minitest::Test
     net << net.first.merge('path' => '/soc/mmc@a000e00', 'base' => 0x0a000e00, 'role' => 'ordinary',
                            'compatible' => 'brcm,bcm2835-sdhci', 'dma' => 'unconfined', 'dma_memory' => 0x10000,
                            'placement_key' => 'net-second')
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     held = ManifestContextFixture.substitute(@source, /^(unit net\n  placement "net"\n  holder )system$/, '\1@domain.alpha')
     [@source, held].each { |source| refused(source, 'view', /a device of a kind no runtime drives has DMA memory/) }
   end
@@ -637,7 +694,7 @@ class DomPlannerTest < Minitest::Test
     net = platform.fetch('units').find { |unit| unit.fetch('key') == 'net' }.fetch('devices')
     net << net.first.merge('path' => '/virtio_mmio@a002c00', 'base' => net.first.fetch('base') - 0x200,
                            'line' => net.first.fetch('line') - 1, 'placement_key' => 'net-second')
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     assert_equal 1, admit(@source).report.fetch('child_plan_instances')
     held = ManifestContextFixture.substitute(@source, /^(unit net\n  placement "net"\n  holder )system$/, '\1@domain.alpha')
     assert_equal 1, admit(held).report.fetch('child_plan_instances')
@@ -674,7 +731,7 @@ class DomPlannerTest < Minitest::Test
     framebuffer = pi.fetch('units').find { |unit| unit.fetch('key') == 'framebuffer' }
     framebuffer.fetch('devices').first.merge!('base' => 0x7e00_0000, 'size' => 0x40_0000)
     platform.fetch('units') << framebuffer
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     ManifestContextFixture.substitute(@source, /^unit net\n  placement "net"\n  holder system\n/,
                                       "\\0unit framebuffer\n  placement \"framebuffer\"\n  holder @domain.alpha\n")
   end

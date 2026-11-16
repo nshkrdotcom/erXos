@@ -50,7 +50,7 @@ class ManifestDomainsTest < Minitest::Test
     @plain = ManifestContextFixture.sessionless(Erx::Platform.load(root: root, name: 'qemu-virt').manifest_source(root))
     @platform = JSON.parse(File.read(File.join(root, 'config/platforms/qemu-virt.json')))
     @source = with_domains(self.class.domain('alpha'), self.class.domain('beta', flags: 'rescue'))
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: @platform))
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @platform))
     @planner = RecordingPlanner.new
   end
 
@@ -541,6 +541,26 @@ class ManifestDomainsTest < Minitest::Test
     end
   end
 
+  # A files facet's rights, the files interface's member parameter (abi/services/files.txt):
+  # ro, rw or rx, each packed as its member's value; any other word, rwx among them, a
+  # quoted name or a number is refused.
+  def test_a_files_facet_s_rights_are_one_of_ro_rw_and_rx
+    floor = @codec.constant('files_max_frame_min')
+    granted = lambda do |line|
+      @source + service('f', '@domain.beta').sub('interface 1', 'interface files') +
+        facet('f', '@domain.alpha', '@service.f').sub('max_request 1', "max_request #{floor}") + line
+    end
+    member = @codec.member('mf_parameter_kind', 'member')
+    %w[ro rw rx].each do |rights|
+      view = @codec.open('manifest', admit(granted.call("  parameter rights #{rights}\n")).bytes)
+      assert_equal [[1, member, @codec.member('files_rights', rights)]],
+                   rows(view, 'facet_parameters').map { |row| row.values_at('key', 'kind', 'scalar') }
+    end
+    ['rwx', 'wr', '"ro"', '2'].each do |value|
+      assert_raises(Erx::ABI::SchemaError, value) { admit(granted.call("  parameter rights #{value}\n")) }
+    end
+  end
+
   # Property 16 for inspect: a grantee of an inspect facet, here a session template, and
   # its server, the system domain, each run with max_frame, max_message_heap and
   # funnel_depth at least the interface's floors, as the development manifest's
@@ -787,9 +807,12 @@ class ManifestDomainsTest < Minitest::Test
   # Property 19 (docs/design-packaging.md, "The build's check"): the apps row, its
   # services, the signer rows, and the board's sums counting max apps, each a principal
   # with a domains quota of one holding every service of the row. Each clause has a
-  # seeded violation.
-  def self.apps(memory: 65_536, services: nil, max: nil)
-    "apps\n  memory #{memory}\n#{"  services #{services}\n" if services}#{"  max #{max}\n" if max}"
+  # seeded violation. The row follows the service named packages_service, which the build
+  # grants the system domain and the app template; packages false leaves it out, for a
+  # second row.
+  PACKAGES = "service packages\n  server @domain.beta\n  interface files\n"
+  def self.apps(memory: 65_536, services: nil, max: nil, packages: true)
+    "#{PACKAGES if packages}apps\n  memory #{memory}\n#{"  services #{services}\n" if services}#{"  max #{max}\n" if max}"
   end
 
   # source with max_domains raised by count, the domains max apps take (property 4).
@@ -817,7 +840,7 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_a_manifest_holds_at_most_one_apps_row
-    refused(Erx::Manifest::Invalid, 19, 'apps', with_room(@source + self.class.apps + self.class.apps, 8))
+    refused(Erx::Manifest::Invalid, 19, 'apps', with_room(@source + self.class.apps + self.class.apps(packages: false), 8))
   end
 
   # Seeds: services naming what would let an app command the start table, install
@@ -832,8 +855,10 @@ class ManifestDomainsTest < Minitest::Test
             message: /not the name of one service/)
     refused(Erx::Manifest::Invalid, 19, 'apps.services', with_room(@source + self.class.apps(services: 'data data'), 8),
             message: /twice/)
-    admit(with_room(with_display(grants: [], served: "service b\n  server @domain.beta\n  interface files\n") +
-                    self.class.apps(services: 'b'), 8))
+    # Seed: a files service admitted, whose grant no tree apps roots at the app's directory.
+    refused(Erx::Manifest::Unsupported, 'unsupported', 'apps.services',
+            with_room(with_display(grants: [], served: "service b\n  server @domain.beta\n  interface files\n") +
+                      self.class.apps(services: 'b'), 8), message: /files interface/)
     refused(Erx::Manifest::Invalid, 19, 'apps.services', with_room(with_display(grants: []) + self.class.apps(services: 'b'), 8),
             message: /no ABI file declares/)
     two = with_display(grants: [], served: "service b\n  server @domain.beta\n  interface files\n" \
@@ -854,7 +879,7 @@ class ManifestDomainsTest < Minitest::Test
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(
                                   Erx::ABI::SourceSet.new(declarations: sources.declarations + needy, inputs: sources.inputs)
                                 ))
-    context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(codec).merge(platform: @platform))
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(codec).merge(platform: @platform))
     source = with_room(@source + "service needy\n  server @domain.beta\n  interface needy\n" + self.class.apps(services: 'needy'), 8)
     error = assert_raises(Erx::Manifest::Invalid) do
       Erx::Manifest.admit(source: source, codec: codec, context: context, planner: @planner)
@@ -873,6 +898,73 @@ class ManifestDomainsTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 18, 'apps.max', with_room(roomy.call(with_windows + self.class.apps(services: 'b', max: 2)), 2),
             message: /past its domain's outer budget/)
     admit(with_room(roomy.call(with_windows + self.class.apps(max: 2)), 2))
+  end
+
+  # The rows the build derives from the apps row (docs/design-packaging.md, "The apps
+  # row"): the app template, last among the sessions, naming no principal, of the limits
+  # session record and the app release; the system domain's packages row, rights rw, and
+  # the template's, rights ro; the template's row of each service of services, with its
+  # service's declared quantities; and the apps row naming the template and its rows by
+  # index. The derivation skipped, or the template's packages row granted rw, fails it.
+  def test_the_build_derives_the_app_template_and_its_rows
+    outer = 2 * (4096 + 4096) + @codec.constant('windows_pixels_default') + 4096
+    roomy = with_windows.sub("  memory 4194304\n  outer 1048576\n", "  memory 16777216\n  outer #{outer}\n")
+    view = @codec.open('manifest', admit(with_room(roomy + self.class.apps(services: 'b', max: 1), 1)).bytes)
+    sessions = view.each('sessions').to_a
+    template = sessions.size - 1
+    limits = view.each('limits').map { |row| view.string(row.fetch('name')) }
+    assert_equal [@codec.constant('mf_none'), 'session'], [sessions.last.fetch('principal'), limits.fetch(sessions.last.fetch('limits'))]
+    apps = view.each('apps').first
+    services = view.each('services').map { |row| view.string(row.fetch('name')) }
+    facets = view.each('facets').to_a
+    parameters = view.each('facet_parameters').to_a
+    first = view.header.fetch('facet_parameters').fetch('offset')
+    rights = lambda do |facet|
+      span = facet.fetch('parameters')
+      parameters[(span.fetch('offset') - first) / 32, span.fetch('count')].map { |row| row.fetch('scalar') }
+    end
+    granted = facets.map do |facet|
+      [facet.fetch('grantee_kind'), facet.fetch('grantee'), services.fetch(facet.fetch('service')), rights.call(facet)]
+    end
+    session = @codec.member('mf_grantee', 'session')
+    ro, rw = %w[ro rw].map { |name| @codec.member('files_rights', name) }
+    assert_includes granted, [@codec.member('mf_grantee', 'system'), 0, 'packages', [rw]]
+    assert_equal [session, template, 'packages', [ro]], granted.fetch(apps.fetch('packages_facet'))
+    app_services = view.each('app_services').to_a
+    assert_equal [[session, template, 'b', []]], app_services.map { |row| granted.fetch(row.fetch('facet')) }
+    assert_equal ['b'], app_services.map { |row| services.fetch(row.fetch('service')) }
+    assert_equal template, apps.fetch('app_template')
+    declared = @codec.schema.services.find { |service| service.fetch(:name) == 'windows' }.fetch(:quantities)
+    assert_equal declared, facets.fetch(app_services.first.fetch('facet')).slice(*declared.keys)
+  end
+
+  # Property 19's refusals of what would derive the template wrongly: a source facet
+  # carrying tree apps, which only a derived row may; a source facet naming the template,
+  # which no @session.NAME reaches, since it names no principal; an apps row with no
+  # limits session record, or one that does not enable SPACES; and a service whose ABI
+  # file leaves a quantity out.
+  def test_property_19_refuses_what_would_derive_the_template_wrongly
+    tree = facet('treed', '@domain.alpha', '@service.packages') + "  parameter tree apps\n"
+    refused(Erx::Manifest::Invalid, 19, 'facet.parameter', with_room(@source + self.class.apps + tree, 8), message: /tree apps/)
+    app = facet('app_packages', '@session.app', '@service.packages')
+    assert_raises(Erx::Manifest::Invalid) { admit(with_room(@source + self.class.apps + app, 8)) }
+    session = /^limits session\n(?:  .*\n)*/
+    refused(Erx::Manifest::Invalid, 19, 'apps', with_room(@source.sub(session, '') + self.class.apps, 8), message: /limits session/)
+    flat = @source.sub(session) { |record| record.sub(/^  flags .*$/, '  flags none').sub(/^  spaces .*$/, '  spaces none') }
+    refute_equal @source, flat
+    refused(Erx::Manifest::Invalid, 19, 'apps', with_room(flat + self.class.apps, 8), message: /SPACES/)
+    bare = Erx::ABI::Syntax.parse("service bare 98\n", path: 'abi/services/bare.txt')
+    sources = Erx::ABI::Sources.read(root: File.expand_path('../..', __dir__))
+    codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(
+                                  Erx::ABI::SourceSet.new(declarations: sources.declarations + bare, inputs: sources.inputs)
+                                ))
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(codec).merge(platform: @platform))
+    source = with_room(@source + "service bare\n  server @domain.beta\n  interface bare\n" + self.class.apps(services: 'bare'), 8)
+    error = assert_raises(Erx::Manifest::Invalid) do
+      Erx::Manifest.admit(source: source, codec: codec, context: context, planner: @planner)
+    end
+    assert_equal [19, 'apps.services'], [error.property, error.field], error.message
+    assert_match(/declares no max_request/, error.message)
   end
 
   # Seed: an apps row whose max and the manifest's start rows pass start_rows_max.
@@ -905,7 +997,7 @@ class ManifestDomainsTest < Minitest::Test
   # manifest with no apps row, whose machine takes no packages, packs none.
   def test_the_development_key_comes_from_a_development_build_alone
     refused(Erx::Manifest::Invalid, 19, 'signer.name', @source + "signer development\n  key hex:#{'ab' * 32}\n")
-    arguments = ManifestContextFixture.domain_arguments(@codec).merge(platform: @platform)
+    arguments = ManifestContextFixture.arguments(@codec).merge(platform: @platform)
     error = assert_raises(Erx::Manifest::Invalid) do
       Erx::Manifest::Context.new(**arguments, build_kind: 'release', development_key: "\x01".b * 32)
     end
@@ -922,7 +1014,7 @@ class ManifestDomainsTest < Minitest::Test
   # admitted it; a manifest with none of them packs empty tables.
   def test_the_apps_package_and_signer_rows_are_packed
     with_packages('clock' => 4096, 'quotes' => 4096)
-    arguments = ManifestContextFixture.domain_arguments(@codec)
+    arguments = ManifestContextFixture.arguments(@codec)
     @context = Erx::Manifest::Context.new(**arguments.merge(platform: @platform, artifacts: @context.artifacts,
                                                             development_key: "\x07".b * 32))
     source = with_room(@source + self.class.apps(memory: 1 << 20, max: 2) + self.class.package('quotes') +
@@ -931,7 +1023,7 @@ class ManifestDomainsTest < Minitest::Test
     assert_equal true, admitted.report.fetch('development_key')
     view = @codec.open('manifest', admitted.bytes)
     assert_equal [{ 'memory' => 1 << 20, 'max' => 2, 'reserved' => 0 }],
-                 view.each('apps').map { |row| row.except('services') }
+                 view.each('apps').map { |row| row.except('services', 'app_template', 'packages_facet') }
     assert_equal 0, view.header.fetch('app_services').fetch('count')
     assert_equal [['clock', 1, "\xab".b * 32], ['quotes', 0, "\xab".b * 32]],
                  view.each('packages').map { |row| [view.string(row.fetch('name')), row.fetch('flags'), row.fetch('sha256')] }
@@ -946,7 +1038,7 @@ class ManifestDomainsTest < Minitest::Test
   # The context with a package artifact for each name => declared memory of packages,
   # as Erx::ImageApps names them.
   def with_packages(packages)
-    arguments = ManifestContextFixture.domain_arguments(@codec)
+    arguments = ManifestContextFixture.arguments(@codec)
     artifacts = packages.to_h do |name, memory|
       ["package-#{name}", { 'kind' => 'package', 'name' => name, 'memory' => memory, 'sha256' => 'ab' * 32 }]
     end

@@ -40,14 +40,11 @@ module ManifestContextFixture
 
   # The archive the development manifest names, as both packs carry it: the domain
   # release under domains/erxos/ with the session boot script its session template
-  # names and the display, storage, network and web boot scripts its domain rows name, the domain
-  # runtime images, runtimes/emu and runtimes/jit, and the system release's generated
-  # files and root.
-  def arguments(codec) = archive_arguments(codec, boots: %w[display network session storage web])
-
-  # The same archive with the boot script app beside session, which domain_source's
-  # domains name.
-  def domain_arguments(codec) = archive_arguments(codec, boots: %w[app display network session storage web])
+  # names, the app boot script of the app template the build derives from its apps row
+  # (which domain_source's domains also name), and the display, storage, network and
+  # web boot scripts its domain rows name, the domain runtime images, runtimes/emu and
+  # runtimes/jit, and the system release's generated files and root.
+  def arguments(codec) = archive_arguments(codec, boots: %w[app display network session storage web])
 
   # An archive of the domain release, with a boot script for each of boots and one
   # library file, then runtimes/emu, then system/, the order the archive's sorted paths
@@ -91,7 +88,7 @@ module ManifestContextFixture
   end
 
   # The development manifest's text with two configured domains of the domain
-  # release app and the runtime emu (domain_arguments), alpha and beta, beta started
+  # release app and the runtime emu (arguments), alpha and beta, beta started
   # by the rescue configuration; a service alpha serves, their introduction and the
   # data window held by alpha. The manifest's own session template stays. The system
   # principal's quota covers the domains and one session, and max_domains is that quota.
@@ -111,6 +108,8 @@ module ManifestContextFixture
   # The system principal's session template, its domain quota and max_domains in
   # the development manifest.
   SESSION_TEMPLATE = /^session system\n(?:  .*\n)*/
+  # The development manifest's apps row.
+  APPS_ROW = /^apps\n(?:  .*\n)*/
   SYSTEM_QUOTA = /^(principal system\n(?:  .*\n)*?  domains )\d+$/
   MAX_DOMAINS = /^(  max_domains )\d+$/
 
@@ -157,11 +156,13 @@ module ManifestContextFixture
 
   # source without its configured domains, storage, network, web and display: their rows
   # removed and what they hold but the display unit held by the system domain, as a
-  # manifest that configures no domain holds them. A session facet is removed where the source still has it.
+  # manifest that configures no domain holds them. A session facet is removed where the
+  # source still has it, and so is its apps row, whose services those domains serve.
   def domainless(source)
     raise ArgumentError, 'the manifest has no configured domain holder' unless source.match?(DOMAIN_HOLDER)
 
-    held = SESSION_FACETS.reduce(source.gsub(DOMAIN_HOLDER, '  holder system')) { |text, facet| text.sub(facet, '') }
+    appless = source.sub(APPS_ROW, '')
+    held = SESSION_FACETS.reduce(appless.gsub(DOMAIN_HOLDER, '  holder system')) { |text, facet| text.sub(facet, '') }
     DOMAIN_ROWS.reduce(held) { |text, row| substitute(text, row, '') }
   end
 

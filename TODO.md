@@ -20,41 +20,58 @@ it; git history is the record of completed work.
   design-kernel.md and design-system.md record.
 * [High] apps, the manifest check's property 19
   ([design-packaging.md](docs/design-packaging.md#the-builds-check)), `tools/lib/erx/manifest.rb`: the
-  stopgap check reads the `apps` and `signer` rows, counts `max` apps in property 4's domain and memory sums
-  and in property 18's display costs, checks clauses 1 (refusing an inspect service), 3 and 6, and of clause 5
-  binds each `package` row to the package artifact the build's file check described (`Erx::ImageApps`,
-  `AppPack.describe`), under the row's name, counts the rows within `max` and the enabled ones' declared memory
-  within the `apps` budget, and lists them with their header SHA-256 in the build record. The manifest packs the
-  `apps`, `package` and `signer` rows and the build context's development key as records
-  (`abi/manifest.txt`), which `erx_pkg_manifest:system_config/1` reads. What remains, each with its seeded violation: the rows derived from `apps` (the app
-  template, booting the domain release's `app` script with
-  `-eval ok=application:start(erx_session,permanent),ok=application:start(erx_app,permanent)`, since
-  `erx_app` depends on `erx_session`,
-  its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which wait for the
-  storage service's `tree` parameter for `tree apps` and its rooting, the `apps` service freed
-  its facet rows, the `packages` and `apps` rows), which wait for the
-  storage service's `tree` parameter and its enforcement, a server of `packages`, the `apps` service freed
-  from the start table, and the app session below; clause 4, which needs
-  `app_memory_default` and the derived template for property 12's planner; the rest of clause 5: the enabled packages' session outer budgets in
-  the `apps` budget sum, which wait for the app template's limits, an enabled row meeting property 17's
-  display and planning clauses, and admission on the host: the packer's host check running
-  `erx_pkg_manifest:system_config/1`, which reads admission's facts from the packed records, and
-  `erx_app_admit:admit/3` on the manifest it packs; the derivation names the `packages` service by
-  `packages_service` (`abi/manifest.txt`), the name the reader finds the template's row by
-  (`APP_SERVICES_REFUSED` and `config/manifest/development.txt` still spell it); clause 7, once the `apps` service and `tree` exist; clause 1's inspect
-  scope; clause 2's counts in the principal table, the session-name atoms and each server's connections, which
-  the stopgap check sums for no principal; and the development manifests' `apps` row, with the site manifest
-  leaving it out.
-* [Medium] apps, the app template's rows by index (`erlang/apps/erx_starter/src/erx_pkg_manifest.erl`,
-  `liberx/system/dom_boot_view.c`): the reader finds the app template (the session naming no principal), its
-  `packages` row (by the service's name) and each service's row (by grantee kind and number) by search, and the
-  C boot view decides the template by its own rule (last, and refused without an `apps` row), so the packer's
-  host check can pass a manifest the boot refuses. Since the build derives these rows, it can pack them as
-  indices the generated readers check (`root.app_template`, `apps[].packages_facet`, `app_services[].facet`),
-  proved by property 19, which deletes the name search, the reader's `{apps, _}` refusals and the divergence.
-  Needs a design decision in design-packaging.md. Also: `app_services` naming one service twice, or two
-  services of one name, is accepted by the reader and makes `erx_app_admit:offered/2` raise `case_clause`
-  on a need for it instead of refusing (property 19 or the reader should refuse repeats).
+  stopgap check reads the `apps`, `package` and `signer` rows, derives the app template
+  (`DomainStartup::APP_TEMPLATE`, of the `limits session` record), the `packages` rows and the template's row
+  of each service of the row, packs the template and its rows as indices that the boot view checks, and
+  checks clauses 1, 3, 6 and 7's `tree apps`. QEMU virt's development manifest carries an `apps` row and the
+  site and narrow manifests leave it out. What remains, each with its seeded violation: the `apps` rows of
+  the `apps` service, and clause 7's refusal of a source facet naming it, which wait for that service;
+  clause 4, which needs `app_memory_default` for property 12's planner; the rest of clause 5: the enabled
+  packages' session outer budgets in the `apps` budget sum, an enabled row meeting property 17's display
+  and planning clauses, and admission on the host (`erx_app_admit:admit/3` on the packed manifest);
+  clause 1's inspect scope; clause 2's counts in the principal table, the session-name atoms and each
+  server's connections, which the stopgap check sums for no principal (QEMU virt's manifest reckons the
+  storage, network and display domains' connection quotas and `max_connections` by hand, in its comments,
+  and `Manifest::Edit.without_apps` repeats that reckoning; the check should sum each grant's instances
+  over distinct grantee and server pairs against each server's quota and `max_connections`); and the
+  Raspberry Pi 4's `apps` row, which the design gives the default `max` 8: the display record in
+  `config/manifest/development.txt` holds QEMU virt's four pixel areas (32 MiB of outer budget the Pi pays
+  without using), so the Pi's row needs its own display limits or a derived outer budget.
+* [Medium] apps, a files service on the `apps` row (`tools/lib/erx/manifest.rb`, `check_apps`): refused as
+  unsupported until the storage service's `tree` parameter roots a grant at the app's own directory
+  (`tree apps`, [design-packaging.md](docs/design-packaging.md#where-an-apps-files-lie)); then `data`
+  joins the development manifests' `services`.
+* [Medium] apps, what the boot view guards of an app's authority (`liberx/system/dom_boot_view.c`,
+  `boot_app_grants`): it requires the template's facet rows to be exactly the rows the `apps` row names,
+  each once, but not what the `apps` row itself grants: a manifest the check did not pack could name
+  `start`, `apps` or `etc` among `app_services` (refused by `app_services_refused` in
+  `tools/lib/erx/manifest.rb`), an inspect or files service, parameters on the derived rows (`tree`, an
+  inspect scope, `rights rw` on packages) or inflated quantities, and every app's session would hold them.
+  Decide whether app authority is the build check's alone (property 19; design-system.md trusts the image
+  once the boot validator checked it), and then say so in design-packaging.md, or the view's too; then
+  the by-construction answer is that the manifest packs no template facet rows and the view derives them
+  from the `apps` row (packages `ro`, each service with its derived quantities), which needs the
+  parameter and quantity derivation the packer does today, and a generated name for the files `rights`
+  parameter (the header names only its members, `ERX_FILES_RIGHTS_RO`).
+* [Medium] apps, the app template is identified five ways: the packed `apps[].app_template`, which only
+  `boot_apps` reads and requires to equal its own rule (the last template, naming no principal),
+  `app_template?` and `sessions.size - 1` in `tools/lib/erx/manifest.rb`, and erx_starter's
+  `=/= ?ERX_MF_NONE`. Either drop the field and keep the rule, or make the index the one source.
+* [Medium] apps, whether an interface may go to apps rests on its `quantity` lines
+  (`abi/services/net.txt`, `derived_quantities` in `tools/lib/erx/manifest.rb`): netadmin is kept off the
+  `apps` row only because it declares no quantity, so adding them would let apps administer the network.
+  Make grantability an explicit fact (a mark on the interface the check reads, or a refusal by interface
+  beside inspect and files) and require quantities only of grantable interfaces.
+* [Medium] ABI, the facet quantity fields are copied by hand: `FACET_QUANTITIES`
+  (`tools/lib/erx/abi_contracts.rb`) repeats `erx_mf_facet`'s field names and widths from
+  `abi/manifest.txt`, and `facet_row` in `tools/lib/erx/manifest.rb` the key list; take both from the
+  codec's layout.
+* [Low] apps, the derivation's readability (`tools/lib/erx/manifest.rb`): `app_template` rebuilds the
+  session row and SPACES check `normalize_sessions` writes (one `session_row` for both); `named_artifact`
+  duplicates `artifact`'s kind check; `app_facets` maps positional triples where a small `Data` value
+  would read better; `apps_rows` searches the sorted facets for rows `normalize_facets` just placed; the
+  `tree apps` refusal in `check_apps` runs with no apps row and is redundant while files declares no
+  `tree`; dom_planner_test's apps case hand-codes header offsets the codec can give.
 * [High] apps, the package process at boot
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
   the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
@@ -2093,6 +2110,24 @@ it; git history is the record of completed work.
   tree") says it waits for a record.
 * [Medium] `erlang/apps/erx_display/src/erx_window.erl`: held `ctl` writes and `mouse` and `kbd` readers are bounded
   only by `erx_fs`'s one request per open file; give them a cap of their own.
+* [Medium] facet parameters, the `member` kind (`liberx/system/dom_boot_view.c` `boot_parameter`,
+  `otp/erts/emulator/nifs/erxos/erx_domain_terms.c` `parameter_term`): no test drives a packed member row through the
+  C view and the NIF. Extend `test/host/facet_parameters_test.rb` and `test/erlang/erx_facet_parameters_tests.erl`
+  with a files facet stating `rights ro` (its limits carry `rights := ro`) and forged rows refused (scalar 0 and 4,
+  kind u64 under key 1), with seeds for an off-by-one bound and a dropped `- minimum`, and give
+  `tools/fuzz/manifest_seeds.rb` a files facet with `rights` so the fuzz target reaches the member case.
+* [Medium] `abi/services/files.txt`: the default of `rights` when a row states none, `rw`, is said in the file's
+  comment and applied in `erx_fs_grants:grant_options/1`; a `parameter` line has no way to declare a default, so
+  it is not one generated fact. Add `default MEMBER` to member parameters (checked a member, emitted as a macro),
+  and decide whether a security parameter's default should be `rw`, `ro` or none (a required parameter).
+* [Low] `tools/lib/erx/abi_contracts.rb` `services`: the `allowed` parameter kinds copy `mf_parameter_kind`'s
+  members, and the kind switches of `dom_boot_view.c`, `erx_domain_terms.c` and `tools/fuzz/manifest_fuzz.c` end
+  in `default:`, so a new kind is not a build failure where it is unhandled; derive `allowed` from the enum and
+  drop the `default:` cases. `Contracts.member_bound`'s enum may hold negative values, which fail safe at the
+  view but should be refused at the declaration.
+* [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
+  `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
+  needs an `rx` mount); the mount should take the facet's rights.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grants.erl`: the per-grant `Args` (`start_link/2`, `grant/4`) are not named by
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
@@ -6888,8 +6923,7 @@ to the corpus and follow rc
   installed package at `/data/packages`, past the package process. A changed package fails its header check or,
   from M11, `erx_verity`'s; a removed one is withheld. Closed by rooting each `data` grant at its principal's
   directory, with the test that a session holding `data` finds no `packages/` under its `/data`. The tree has
-  three more gaps: every grant of it is read-write, since no facet row can make an `erx_fs` grant read-only yet,
-  so the app template's derived row needs that before it lands; the owner trusts any path a grant hands it, so
+  two more gaps: the owner trusts any path a grant hands it, so
   the rooting rests on `erx_fs_grant` building nodes only from the callbacks' answers (`erx_lfs` should check
   each path against its grant's root, as `tree apps` will need); and a file at `/packages`, or a directory a
   full volume cannot make, leaves the tree failing its requests without a diagnostic at attach.

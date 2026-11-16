@@ -26,8 +26,12 @@ module Erx
     SESSION_FACET = "facet session_probe\n  grantee @session.system\n  service @service.probe\n  operations none\n" \
                     "  max_request 64\n  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n"
     START_ROW = "start system\n  enable NO\n  restarts 3\n  restart_period_s 60\n"
-    PACKAGE_ROWS = "service shared\n  server system\n  interface files\n" \
-                   "apps\n  memory 1048576\n  max 2\n  services shared\npackage clock\n  input @artifact.package-clock\n  enable YES\n" \
+    # The service named packages_service and a service of the net interface, appnet, which
+    # the apps row offers, so the build derives the app template's packages row and a row
+    # of appnet.
+    PACKAGE_ROWS = "service packages\n  server @domain.beta\n  interface files\n" \
+                   "service appnet\n  server @domain.alpha\n  interface net\n" \
+                   "apps\n  memory 1048576\n  max 2\n  services appnet\npackage clock\n  input @artifact.package-clock\n  enable YES\n" \
                    "package quotes\n  input @artifact.package-quotes\nsigner ops\n  key hex:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\n"
     WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter clipboard yes\n"
 
@@ -49,7 +53,7 @@ module Erx
                           planner: ManifestContextFixture.accepting_planner)
       empty = Manifest.structural_fixture(source: File.binread(File.join(repository, 'test/fixtures/manifest_empty.txt')),
                                           codec: codec, context: Manifest::Context.new(**fixture))
-      domain_context = Manifest::Context.new(**ManifestContextFixture.domain_arguments(codec), platform: platform)
+      domain_context = Manifest::Context.new(**ManifestContextFixture.arguments(codec), platform: platform)
       domains = Manifest.admit(source: ManifestContextFixture.domain_source(source), codec: codec,
                                context: domain_context, planner: ManifestContextFixture.accepting_planner)
       session = Manifest.admit(source: ManifestContextFixture.domain_source(source) + SESSION_FACET, codec: codec,
@@ -79,7 +83,7 @@ module Erx
     # The configured domains' manifest with PACKAGE_ROWS, room for the apps row in
     # max_domains and root_memory, and a development key.
     def packages(source, codec, platform)
-      arguments = ManifestContextFixture.domain_arguments(codec)
+      arguments = ManifestContextFixture.arguments(codec)
       artifacts = %w[clock quotes].to_h do |name|
         ["package-#{name}", { 'kind' => 'package', 'name' => name, 'memory' => 4096, 'sha256' => 'ab' * 32 }]
       end

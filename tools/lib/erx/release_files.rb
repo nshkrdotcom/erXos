@@ -7,9 +7,10 @@ require 'fileutils'
 require 'json'
 require_relative 'asn1_specifications'
 require_relative 'domain_image_apps'
+require_relative 'domain_startup'
 require_relative 'erlang_apps'
 require_relative 'error'
-require_relative 'manifest'
+require_relative 'manifest_frontend'
 require_relative 'oracle'
 require_relative 'runtime'
 
@@ -154,8 +155,9 @@ module Erx
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
                         'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze,
-                        'app' => [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'erx_memdraw', 'erx_win', 'erx_ui',
-                                  'erx_net_client', 'erx_app'].freeze }.freeze
+                        DomainStartup::APP_TEMPLATE.release =>
+                          [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'erx_memdraw', 'erx_win', 'erx_ui',
+                           'erx_net_client', 'erx_app'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime
     # builds that neither the system release (system) nor a script of the release
@@ -167,6 +169,7 @@ module Erx
         unreleased.empty?
     end
     check_released(APPLICATIONS, system: SYSTEM_APPLICATIONS, boots: RELEASE_SCRIPTS)
+
     # Where the one domain release lies: domains/erxos/, which sorts after boot/ and
     # before system/, so it is one run of whole entries that does not split the system
     # run (docs/design-stopgap.md, "The production image").

@@ -117,6 +117,7 @@ enum mf_parameter_kind u32
   value principal 7
   value device 8
   value bytes 9
+  value member 10
 # A name that is an identifier, a domain's or a service's among them
 # (docs/design-system.md, "Identifiers"): 1 to this many bytes.
 limit identifier_max u32 63
@@ -281,16 +282,24 @@ layout erx_mf_display wire_le 4 16
   field idle_dim_s u32 8
   field idle_off_s u32 12
 # The apps row (docs/design-packaging.md, "The apps row"), at most one: the budget all
-# apps share, how many apps a boot holds, and its services, the rows of app_services
-# it owns, each the index of a service an app may name in its needs.
-layout erx_mf_apps wire_le 8 24
+# apps share, how many apps a boot holds, the app template the build derives from it
+# (the session row naming no principal) and that template's packages facet row, and
+# its services, the rows of app_services it owns, each the index of a service an app
+# may name in its needs and of the facet row granted to the template for it. The boot
+# view checks once that the indices name those rows and that the template holds no
+# other facet row, each named once (docs/design-packaging.md, "The template's rows by
+# index").
+layout erx_mf_apps wire_le 8 32
   field memory u64 0
   field max u32 8
-  field reserved u32 12
-  field services erx_mf_span 16
+  field app_template u32 12
+  field packages_facet u32 16
+  field reserved u32 20
+  field services erx_mf_span 24
   zero reserved all
-layout erx_mf_app_service wire_le 4 4
+layout erx_mf_app_service wire_le 4 8
   field service u32 0
+  field facet u32 4
 # A package of the image (docs/design-packaging.md, "Where a package lies"): its app's
 # name, whether its start row is enabled, and the SHA-256 of its header, by which the
 # machine trusts it whoever signed it.
@@ -549,6 +558,7 @@ reader manifest erx_manifest @manifest_bytes_max
     case principal facet_parameters[].index
     case device facet_parameters[].index
     case bytes facet_parameters[].bytes
+    case member facet_parameters[].scalar
   range facet_parameters[].scalar 0 1 when facet_parameters[].kind boolean
   index facet_parameters[].index domains when facet_parameters[].kind domain
   index facet_parameters[].index principals when facet_parameters[].kind principal
@@ -575,6 +585,9 @@ reader manifest erx_manifest @manifest_bytes_max
   range apps[].memory 1 18446744073709551615
   range apps[].max 1 @apps_max_limit
   partition apps[].services.offset apps[].services.count app_services
+  index apps[].app_template sessions
+  index apps[].packages_facet facets
   index app_services[].service services
+  index app_services[].facet facets
   string packages[].name.offset packages[].name.length strings identifier 63 empty no
   string signers[].name.offset signers[].name.length strings identifier 63 empty no

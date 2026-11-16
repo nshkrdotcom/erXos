@@ -2160,10 +2160,12 @@ duplicate scalar key, an unsorted/duplicate set, an excessive bound, or a
 parameter without that checked consumer fails validation.
 
 Within `service NAME NUMBER`, the exact metadata members are
-`operation NAME NUMBER`, `liveness OPERATION_NAME` and `parameter NAME NUMBER KIND CARDINALITY
-BOUND checked_by HELPER`. For integer kinds, BOUND is `range MIN MAX`;
+`operation NAME NUMBER`, `liveness OPERATION_NAME`, `quantity KEY VALUE` and
+`parameter NAME NUMBER KIND CARDINALITY BOUND checked_by HELPER`. For integer kinds, BOUND is `range MIN MAX`;
 for identifier, path or bytes it is `bytes MAX_BYTES`; boolean uses
-`boolean`; a reference kind uses `target TABLE`, with `domains`,
+`boolean`; a member kind uses `member ENUM`, naming an enum the ABI
+declares, not a flag set, whose values run without a gap; a reference
+kind uses `target TABLE`, with `domains`,
 `principals` or `devices` as appropriate. A domain reference additionally
 spells `system yes|no`. The helper is a qualified symbol of the service's
 manifest-grant checker, resolved against its checked consumer inventory;
@@ -2172,18 +2174,32 @@ The service is unusable by the packer unless that checker is available.
 These declarations supply manifest metadata and validation, not request
 execution or a future service's callback implementation.
 The closed KIND tokens are `u64`, `i64`, `boolean`, `identifier`,
-`namespace_path`, `domain`, `principal`, `device` and `bytes`. A liveness
+`namespace_path`, `domain`, `principal`, `device`, `bytes` and `member`. A liveness
 marker names one declared operation. Its request and response signature
 belongs to the service contract and is verified against that service's
 checked consumer descriptor before admission; an absent or incompatible
 descriptor fails. This metadata does not invent a callable signature or
 permit the watchdog to invoke an arbitrary operation by number.
 
+A `quantity KEY VALUE` line gives the value of one of a facet row's
+quantities, KEY one of `max_request`, `in_flight`, `reductions`,
+`period_ns` and `max_heap_size`, VALUE positive and within the field's
+width, at most once each. They are the quantities of the facet rows the
+build derives rather than a source states: an app's rows, which
+[design-packaging.md](design-packaging.md#the-apps-row) derives from
+the `apps` row, take each quantity from their service's declaration,
+and the manifest check refuses an `apps` row naming a service whose
+interface leaves one out. A source's own facet rows state every
+quantity themselves; no declared quantity fills a field a source row
+leaves out.
+
 Parameter kinds are unsigned integer 1, signed integer 2, boolean 3,
 identifier 4, namespace path 5, domain reference 6, principal index 7,
-device index 8 and bounded bytes 9. Integer and boolean values use
-`scalar`; signed values use the declared 64-bit signed representation,
-and booleans are 0 or 1. Text and bounded bytes use `bytes`; references
+device index 8, bounded bytes 9 and enum member 10. Integer, boolean and
+member values use `scalar`; signed values use the declared 64-bit signed
+representation, booleans are 0 or 1, and a member is its enum value,
+which a facet's source spells as the member's bare name and the domain
+service receives as the atom of that name. Text and bounded bytes use `bytes`; references
 use `index`. All inactive fields are zero. A parameter's maximum length,
 range and allowed reference category come from its declaration. Opaque
 bytes are legal only for a field whose service contract defines them as
@@ -2200,11 +2216,12 @@ required before a manifest can name that service. This permits complete
 structural readers without implementing future service callbacks.
 
 `max_request` is a byte ceiling, `in_flight` a count, `reductions` a
-positive share per positive `period_ns`, `max_heap_size` a byte limit
-including off-heap binaries, and `queue` the resolved byte quota. The
+positive share per positive `period_ns`, `max_heap_size` the grant
+process's heap bound in words of the grantee's runtime, as OTP's
+`max_heap_size` process flag counts it, off-heap binaries included, and
+`queue` the resolved byte quota. The
 packer resolves an omitted queue to `system_queue`; no zero sentinel
-changes its meaning at runtime. Conversion to a runtime's heap-word
-limit is checked and rounds down. The manifest checker includes each
+changes its meaning at runtime. The manifest checker includes each
 facet's charge in its grantee's admission reservation. Liveness records
 name services whose interface declares its liveness operation; all use
 the kernel watchdog's period and cannot extend its deadline.
@@ -2220,8 +2237,8 @@ the kernel watchdog's period and cannot extend its deadline.
 | partial-boot program, 16 | `0: name str`; `8: image u32`; `12: reserved u32` |
 | start row, 24 | `0: principal u32`; `4: flags u32` (enabled at bit 0); `8: display u32` (a service index or `mf_none`); `12: restarts u32`; `16: restart_period_s u32` (from 1); `20: reserved u32` |
 | display, 16 | `0: service u32`; `4: policy u32`; `8: idle_dim_s u32`; `12: idle_off_s u32` |
-| apps row, 24 | `0: memory u64` (from 1); `8: max u32` (1 to `apps_max_limit`); `12: reserved u32`; `16: services span` (of `app_services`) |
-| app service, 4 | `0: service u32` (a service index) |
+| apps row, 32 | `0: memory u64` (from 1); `8: max u32` (1 to `apps_max_limit`); `12: app_template u32` (a session index); `16: packages_facet u32` (a facet index); `20: reserved u32`; `24: services span` (of `app_services`) |
+| app service, 8 | `0: service u32` (a service index); `4: facet u32` (a facet index) |
 | package, 44 | `0: name str` (an identifier); `8: flags u32` (enabled at bit 0); `12: sha256 u8[32]`, its header's SHA-256 |
 | signer, 40 | `0: name str` (an identifier); `8: key u8[signer_key_bytes]`, an Ed25519 public key |
 | development key, 32 | `0: key u8[signer_key_bytes]`, an Ed25519 public key |

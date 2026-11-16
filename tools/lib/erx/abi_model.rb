@@ -236,7 +236,7 @@ module Erx
         readers = by_kind.fetch('reader', []).map { |item| validate_reader(item, types, constants) }
         translations = validate_translations(by_kind.fetch('translation', []), types)
         elements = by_kind.fetch('elements', []).map { |item| validate_elements(item, types) }
-        services = validate_services(by_kind.fetch('service', []))
+        services = validate_services(by_kind.fetch('service', []), types)
         projections = validate_projections(by_kind.fetch('projection', []), types)
         protocols = validate_protocols(by_kind.fetch('protocol', []), constants, signals: signals, errnos: errnos)
         inspection = validate_inspection(by_kind, types, rights, objects)
@@ -1190,9 +1190,9 @@ module Erx
         Contracts.translations(declarations, types: types)
       end
 
-      def validate_services(declarations)
+      def validate_services(declarations, types)
         require_relative 'abi_contracts'
-        Contracts.services(declarations)
+        Contracts.services(declarations, types: types)
       end
 
       def validate_protocols(declarations, constants, signals:, errnos:)

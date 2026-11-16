@@ -153,14 +153,17 @@ manifest_table({ok, Manifest}) ->
         Windows = fun(Index) ->
                           maps:get(interface, lists:nth(Index + 1, ServiceRecords)) =:= ?ERX_SERVICE_WINDOWS
                   end,
-        Template = fun(Session) -> Name(maps:get(principal, lists:nth(Session + 1, Sessions))) end,
+        %% The app template names no principal: its grants are the apps',
+        %% which no start row of the manifest takes (docs/design-packaging.md,
+        %% "The start table's rows").
+        TemplatePrincipal = fun(Session) -> maps:get(principal, lists:nth(Session + 1, Sessions)) end,
         Rows = [#{principal => Name(Principal), enable => Flags band ?ERX_MF_START_ENABLED =/= 0,
                   display => display(Display, Service), restarts => Restarts, period => Period}
                 || #{principal := Principal, flags := Flags, display := Display, restarts := Restarts,
                      restart_period_s := Period} <- Starts],
-        Granted = [{Template(Session), Service(Index)}
+        Granted = [{Name(TemplatePrincipal(Session)), Service(Index)}
                    || #{grantee_kind := ?ERX_MF_GRANTEE_SESSION, grantee := Session, service := Index} <- Facets,
-                      Windows(Index)],
+                      TemplatePrincipal(Session) =/= ?ERX_MF_NONE, Windows(Index)],
         {ok, #{rows => Rows,
                grants => maps:groups_from_list(fun({P, _}) -> P end, fun({_, S}) -> S end, Granted),
                principals => #{Principal => Number || {Number, Principal} <- lists:enumerate(Names)},

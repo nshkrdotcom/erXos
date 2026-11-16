@@ -55,23 +55,24 @@ no_records_test() ->
                  erx_pkg_manifest:system_config(manifest("none"))).
 
 %% A release manifest holds no development key, and the apps table holds one
-%% row; an apps row needs one app template, holding one packages row.
+%% row.
 refused_test() ->
     ?assertMatch({error, #{reason := inactive, field := <<"root.development_key.count">>}},
                  erx_pkg_manifest:system_config(manifest("release_development"))),
     ?assertMatch({error, #{reason := extent, field := <<"apps">>}},
                  erx_pkg_manifest:system_config(manifest("two_apps"))),
-    ?assertEqual({error, {apps, {templates, 0}}},
-                 erx_pkg_manifest:system_config(manifest("no_template"))),
-    ?assertEqual({error, {apps, {grants, <<"packages">>, 0}}},
-                 erx_pkg_manifest:system_config(manifest("no_packages_grant"))),
     ?assertMatch({error, _}, erx_pkg_manifest:system_config(<<>>)).
 
-%% The host's check packs the apps, package and signer rows and derives no
-%% app template (TODO.md, "apps, the manifest check's property 19").
+%% The host's check packs QEMU virt's apps row with the app template's rows it
+%% derives: the template's packages row and one row for each of the row's
+%% services, the display and the network, each a row of its own.
 packed_manifest_test() ->
-    ?assertEqual({error, {apps, {templates, 0}}},
-                 erx_pkg_manifest:system_config(manifest("admitted"))).
+    {ok, #{apps := #{memory := 137363456, max := 4, packages_row := Packages,
+                     services := [#{name := <<"display">>, windows := true, row := Display},
+                                  #{name := <<"net">>, windows := false, row := Net}]},
+           packages := [#{name := <<"clock">>, enabled := true}, #{name := <<"quotes">>, enabled := false}],
+           signers := [{<<"ops">>, _}]}} = erx_pkg_manifest:system_config(manifest("admitted")),
+    ?assertEqual(3, length(lists:usort([Packages, Display, Net]))).
 
 library(Max) ->
     {ok, #{template => 0, first => 2, max => Max, memory => ?MIB}}.
@@ -98,4 +99,4 @@ no_config_test() ->
     ?assertEqual(none, erx_pkg:system_config({error, enotsup}, {error, enoent})),
     ?assertEqual(none, erx_pkg:system_config(library(2), {ok, manifest("none")})),
     ?assertEqual(none, erx_pkg:system_config(library(2), {error, enoent})),
-    ?assertEqual(none, erx_pkg:system_config(library(2), {ok, manifest("no_template")})).
+    ?assertEqual(none, erx_pkg:system_config(library(2), {ok, manifest("two_apps")})).
