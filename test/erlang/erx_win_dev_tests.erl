@@ -258,9 +258,11 @@ waiting_kbd_reads_on_two_windows_leave_the_display_grant_free_test() ->
         try
             %% 80 reads, more than the display grant's 64 requests in flight.
             Reads = lists:append([send_reads(Tree, 40) || Tree <- [Tree1, Tree2]]),
-            %% Each connection has taken every read its grant handed it.
-            {ok, _} = erx_draw_conn:ctl(Conn1),
-            {ok, _} = erx_draw_conn:ctl(Conn2),
+            %% A grant serves its frames in order, so a round trip on each has handed
+            %% every read to its connection, and a call to each connection then has
+            %% each read it holds sent on, or held back.
+            [{ok, <<>>} = read(Tree, [<<"dev">>, <<"null">>], 16) || Tree <- [Tree1, Tree2]],
+            [{ok, _} = erx_draw_conn:ctl(Conn) || Conn <- [Conn1, Conn2]],
             ?assertEqual(ok, erx_win:present(Window1, [{0, 0, 1, 1}])),
             ?assertEqual([], [Answer || Read <- Reads, (Answer = replied(Read, 0)) =/= none])
         after
@@ -269,15 +271,30 @@ waiting_kbd_reads_on_two_windows_leave_the_display_grant_free_test() ->
     end).
 
 a_read_flushed_behind_another_never_reaches_the_display_test() ->
-    with_dev(fun(_Fixture, #{tree := Tree}) ->
-        [First, Second, Third] = send_reads(Tree, 3),
+    with_dev(fun(_Fixture, #{tree := Tree, conn := Conn}) ->
+        %% The connection's sends to the display, each told apart by its count.
+        1 = erlang:trace_pattern({erx_win, send_read, 4}, true, []),
+        1 = erlang:trace(Conn, true, [call]),
+        {ok, Kbd} = open(Tree, [<<"dev">>, <<"kbd">>], 0),
+        [First, Second, Third] = [send(Tree, {read, Kbd, 0, Count}) || Count <- [64, 63, 62]],
         ?assertEqual(ok, call(Tree, {flush, Second})),
         ?assertEqual({error, eintr}, replied(Second, 0)),
         ok = erx_winfs:input(<<"kbd">>, {key, down, 30}),
         %% The key down is a k record and the rune it types a c record.
         ?assertMatch({ok, <<"k", _/binary>>}, replied(First, ?WAIT)),
-        ?assertMatch({ok, <<"c", _/binary>>}, replied(Third, ?WAIT))
+        ?assertMatch({ok, <<"c", _/binary>>}, replied(Third, ?WAIT)),
+        _ = erlang:trace(Conn, false, [call]),
+        _ = erlang:trace_pattern({erx_win, send_read, 4}, false, []),
+        Ref = erlang:trace_delivered(Conn),
+        receive {trace_delivered, Conn, Ref} -> ok end,
+        ?assertEqual([64, 62], sent_counts())
     end).
+
+%% The counts of the traced erx_win:send_read/4 calls in this process's mailbox.
+sent_counts() ->
+    receive {trace, _, call, {erx_win, send_read, [_, kbd, _, Count]}} -> [Count | sent_counts()]
+    after 0 -> []
+    end.
 
 the_handler_and_its_dev_end_at_the_connection_s_end_test() ->
     erx_win_tests:with(fun(_Fixture) ->

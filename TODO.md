@@ -2126,6 +2126,15 @@ it; git history is the record of completed work.
   wait for an event left in a callback does now that callbacks run in the grant. `erx_fs_locks`, the tree's lock
   table, does not exist yet (the grant serves no lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants`
   supervises it and its grants' supervisor `rest_for_one`, as design-files.md ("Locks") has it.
+* [Low] display client, a dropped grant's read (`erlang/apps/erx_win/src/erx_draw_conn.erl`, `handle_info/2`'s
+  `dropped` clause): the end of a grant that sent the connection reads forgets them but leaves the one of each file
+  already at the display there, so the next read of that file waits until a record answers the dead one, and that
+  record goes nowhere. Unreachable while the connection has one grant, which shares its life (`start_window/1`'s
+  link); sending the display a flush of each such read makes it hold without the shared life.
+* [Low] display, a session's display grant (design-display.md, "The program's input"): a window takes at most two
+  of the grant's 64 requests in flight for its input, one for a present and one for a relayed `wctl`, `label` or
+  `clipboard` call, so a session whose `windows` quota passes 16 can still fill the grant with ordinary programs and
+  make a present answer `emfile`. State the count per window and bound the quota by it, or record the limit.
 * [Low] session, the relay's writer (docs/design-programs.md:1543, 2400): both name
   `erx_session_relay:open_writer/1`, but `erx_session_relay` exports `open_writer/2` (`open_writer(Relay, Holder)`);
   name the call the module has.

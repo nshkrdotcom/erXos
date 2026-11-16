@@ -1817,8 +1817,8 @@ close of an open whose read the connection holds flushes it there
 (rule 5): a read still waiting at the connection is answered `eintr`
 at once, and of the one sent on the connection sends the display a
 flush, so the window process settles it, with `eintr` or with the
-record it had already taken, and no key goes to a closed open. A read waiting
-on one file thus holds up no other, nor the file's close. A read of
+record it had already taken, and no key goes to a closed open. A read
+waiting on one file thus holds up no other, nor the file's close. A read of
 `wctl` or `label` answers at once at the display
 ([design-display.md](design-display.md#the-window-tree)), so
 the tree relays it within its callback. A write of `draw` runs within
@@ -2126,8 +2126,8 @@ other client's request can come between its parts:
   process answers without waiting for an event, a call to another
   service whose design names its deadline as the bound, or a read or
   write of its medium, which the grant waits for as a call on a local
-  file system waits for its disk. A read or a write that must wait for an event,
-  bytes a device has not sent yet, a key not yet pressed, a driver that
+  file system waits for its disk. A read or a write that must wait for
+  an event, bytes a device has not sent yet, a key not yet pressed, a driver that
   has not yet taken what was written, is handed to the process that owns
   that event, the request's **keeper**, a process of the tree, which
   answers it when the event comes; meanwhile the grant goes on with its
