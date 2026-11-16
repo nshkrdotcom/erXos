@@ -140,8 +140,8 @@ with_facets(Table, Facets) ->
     [case Entry of
          #{provider := {facet, Name, Tree}, rights := Asked} ->
              case Facets of
-                 #{Name := {Pid, Rights}} when is_pid(Pid), (Rights =:= ro orelse Rights =:= rw orelse Rights =:= rx) ->
-                     Entry#{provider := {grant, Pid, Tree}, rights := lesser(Asked, Rights)};
+                 #{Name := {Pid, Rights}} when is_pid(Pid) ->
+                     on_grant(Entry, Pid, Tree, lesser(Asked, Rights));
                  _ ->
                      Entry#{provider := ended}
              end;
@@ -149,10 +149,26 @@ with_facets(Table, Facets) ->
              Entry
      end || Entry <- Table].
 
-%% The lesser of two rights: ro lies below rw and below rx, and rw and rx, which no
-%% grant holds together (F6), meet at ro.
-lesser(Rights, Rights) -> Rights;
-lesser(_Asked, _Rights) -> ro.
+%% A facet's entry on the grant Pid with Rights, or ended for a grant whose rights
+%% lesser/2 does not order.
+on_grant(Entry, _Pid, _Tree, none) -> Entry#{provider := ended};
+on_grant(Entry, Pid, Tree, Rights) -> Entry#{provider := {grant, Pid, Tree}, rights := Rights}.
+
+%% The lesser of the rights an entry asked and its grant's: ro lies below rw and below
+%% rx, and rw and rx, which no grant holds together (F6), meet at ro. Rights outside the
+%% table are none, so a member files_rights gains is never taken for ro; erx_ns_tests
+%% orders every pair of ?ERX_FILES_RIGHTS_MEMBERS, so such a member fails that test
+%% until the table orders it.
+lesser(ro, ro) -> ro;
+lesser(ro, rw) -> ro;
+lesser(ro, rx) -> ro;
+lesser(rw, ro) -> ro;
+lesser(rw, rw) -> rw;
+lesser(rw, rx) -> ro;
+lesser(rx, ro) -> ro;
+lesser(rx, rw) -> ro;
+lesser(rx, rx) -> rx;
+lesser(_Asked, _Granted) -> none.
 
 -doc """
 Reads the text of a working directory as the place it names: `/` alone, or

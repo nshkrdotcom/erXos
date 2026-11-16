@@ -32,7 +32,7 @@ Of a facet row's limits and parameters a grant applies four (grant_options/1):
 
 -behaviour(supervisor).
 
--export([start_link/1, start_link/2, grant/3, grant/4, own/1, own/2, grant_options/1, rights/1]).
+-export([start_link/1, start_link/2, grant/3, grant/4, own/1, own/2, grant_options/1, facet/2]).
 %% The supervisor's callback and its child's start.
 -export([init/1, start_grant/3]).
 
@@ -110,12 +110,17 @@ own(Grants, Args) ->
     supervisor:start_child(Grants, [Args, #{rights => rw}]).
 
 -doc """
-The rights a facet row's Limits give its grant, `rw` where the row states none
-(abi/services/files.txt): the rights the grant serves, which grant_options/1
-checks, and those its facet carries to the grantee (docs/design-files.md,
+The facet of the grant Pid as the grantee's registry holds it (erx:facet/0):
+the pid with the rights of its facet row's Limits, the rights the grant serves
+(grant_options/1), which no reply of the server's sets (docs/design-files.md,
 "Rights beneath an entry").
 """.
--spec rights(map()) -> term().
+-spec facet(pid(), map()) -> erx:facet().
+facet(Pid, Limits) ->
+    {Pid, rights(Limits)}.
+
+%% The rights a facet row's Limits give its grant, rw where the row states none
+%% (abi/services/files.txt).
 rights(Limits) ->
     maps:get(rights, Limits, rw).
 

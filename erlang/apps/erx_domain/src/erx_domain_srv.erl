@@ -1035,7 +1035,7 @@ mint_files(Id, DomainPid, Name, Limits, Grant, Exports) ->
     Binding = #{client => Id, ends_with => DomainPid, exports => Exports},
     case try Grant(Binding) catch exit:Exit -> {error, {exit, Exit}} end of
         {ok, Pid} ->
-            {true, {Pid, erx_fs_grants:rights(Limits)}};
+            {true, erx_fs_grants:facet(Pid, Limits)};
         {error, Reason} ->
             logger:error("erx_domain: domain ~b's files grant ~ts did not start: ~0P", [Id, Name, Reason, 8]),
             false

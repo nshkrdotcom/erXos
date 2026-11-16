@@ -9,6 +9,7 @@
 -module(erx_ns_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -define(RELEASE, #{point => [], provider => release, root => [], rights => ro}).
 
@@ -429,3 +430,15 @@ wait_down(Pid) ->
 
 flush() ->
     receive _ -> flush() after 0 -> ok end.
+
+%% Every pair of the rights files_rights defines is ordered, so a facet entry asked any
+%% of them over a grant of any of them is on the grant, and a member the ABI gains fails
+%% here until erx_path orders it; a grant of rights outside the ABI answers eio.
+every_pair_of_the_abis_rights_is_ordered_test() ->
+    Members = [Rights || {Rights, _} <- ?ERX_FILES_RIGHTS_MEMBERS],
+    Pid = self(),
+    Entry = fun(Asked) -> #{point => [<<"d">>], provider => {facet, data, <<"data">>}, root => [], rights => Asked} end,
+    [?assertMatch([#{provider := {grant, Pid, <<"data">>}}],
+                  erx_path:with_facets([Entry(Asked)], #{data => {Pid, Granted}}))
+     || Asked <- Members, Granted <- Members],
+    ?assertMatch([#{provider := ended}], erx_path:with_facets([Entry(rw)], #{data => {Pid, bogus}})).

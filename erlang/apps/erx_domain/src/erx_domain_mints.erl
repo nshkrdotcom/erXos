@@ -505,7 +505,7 @@ installed_facet(Pid, {_, Name} = Key, #{files := Files} = State) ->
     case lists:member(Name, Files) of
         true ->
             #{limits := Limits} = grant_entry(Key, State),
-            {Pid, erx_fs_grants:rights(Limits)};
+            erx_fs_grants:facet(Pid, Limits);
         false ->
             Pid
     end.

@@ -20,6 +20,8 @@
 -module(erx_connections).
 -moduledoc false.
 
+-include("generated/erx_abi.hrl").
+
 -export([start/2, open_side/2, close_side/2, dropped/0, connection/1, area/1, app/0,
          app_held/0]).
 %% A domain's agent past its system connection's hand-over, and the system domain's agent,
@@ -452,7 +454,7 @@ install(#{domain_pid := DomainPid}, Tag, Name, Facet) ->
 %% A facet as the system domain sends it: a pid, or a files facet's pid with its grant's
 %% rights, which the domain service took from the manifest's facet row
 %% (docs/design-files.md, "Rights beneath an entry"). The registry keeps it as it came.
-is_facet({Pid, Rights}) -> is_pid(Pid) andalso (Rights =:= ro orelse Rights =:= rw orelse Rights =:= rx);
+is_facet({Pid, Rights}) -> is_pid(Pid) andalso lists:keymember(Rights, 1, ?ERX_FILES_RIGHTS_MEMBERS);
 is_facet(Facet) -> is_pid(Facet).
 
 %% The atoms of List, the ready answer's names of the facets the manifest grants the
