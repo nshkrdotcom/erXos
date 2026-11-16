@@ -30,7 +30,7 @@ report through whole, and an `ignore` leaves the event as it was. Each function 
 is total over any term to keep that true.
 """.
 
--export([primary_filters/0, filter/2]).
+-export([primary_filters/0, filter/2, reason_name/1]).
 
 -type summary() :: #{label => atom() | {atom(), atom()}, process => pid(), name => atom(),
                      class => error | exit | throw, reason => atom(),
@@ -127,6 +127,13 @@ reason(Reason, S) ->
         none -> S;
         Atom -> first(reason, Atom, S)
     end.
+
+%% The reason's leading atom, or none: what this filter shows of a reason, and what the
+%% format_status/1 of a system domain process that holds other domains' or the host's
+%% bytes shows of its own, since no filter runs there (docs/design-log.md, "Reports
+%% carry no term").
+-spec reason_name(term()) -> atom().
+reason_name(Reason) -> leading(Reason).
 
 leading(Atom) when is_atom(Atom) -> Atom;
 leading(Tuple) when tuple_size(Tuple) > 0 -> leading(element(1, Tuple));
