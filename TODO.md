@@ -5092,13 +5092,30 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   fixtures give every entry one mode and one time (the manifest's modes 0644 and 0755 and time 0), and only
   `extended.img` varies the owner (uid and gid 70000), so no case checks the mode-bit and mtime offsets
   with other values; fsimg's manifests can write them.
-* [Medium] storage, `erx_f2fs_codec` inode rules by file type: four rules of
-  [design-f2fs.md](docs/design-f2fs.md#reading-the-medium)'s facts depend on `i_mode`'s file type (a
-  directory never has one link, `INLINE_DENTRY` only on a directory, and inline data only on a regular file
-  or symlink, never an encrypted, verity or compressed regular file; [F 42], [F 48]), and the F2FS facts
-  record gives no file-type bits, only "POSIX mode" and the root inode's 0x41ed ([T 22]). The codec leaves
-  them out until a facts record states the bits; meanwhile an inode with `INLINE_DENTRY` answers its
-  inline dentries whatever its mode, ahead of `INLINE_DATA` when both are set.
+* [Medium] test, F2FS listing (`test/erlang/erx_f2fs_listing.erl`): cost grows faster than the tree on
+  hostile shapes. Each entry of an inode with K names carries its K-path link class, so K names cost
+  O(K^2) once the listing is copied or compared (3,000 links to one inode: about 500 MB flattened); a
+  class representative (the least stated path) would make it O(N) but changes the decided form. Each
+  entry holds its whole path, so a directory chain of depth d costs O(d^2) (depth 4,000: about 640 MB);
+  a bound on a path's joined length, refused in the walk, would cap it. A regular file is hashed once
+  per name, not per inode, and no listing bounds the bytes it folds, so a sparse file of F2FS's
+  largest size, or many links to it, ends only at the test's deadline.
+* [Medium] test, F2FS corpora (`test/erlang/erx_f2fs_corpus_tests.erl`): the corpus test checks
+  features and segments per section, not `-a` or `-e cold`. The codec's fuzz target takes its
+  superblock and checkpoint seeds from the corpus images, but not yet their NAT, SIT, summary, inode
+  and dentry blocks, which design-f2fs.md's "Reading the medium" asks for and which wait for stage 2's
+  walk of each image's trees. The corpus seeds add few shapes: every image's packs are header-only
+  and none sets `SB_CHKSUM`, so weighting distinct shapes rather than images would serve better.
+* [Low] test, F2FS corpus reader (`test/erlang/erx_f2fs_corpus.erl`): the zstd context sets no
+  `windowLogMax`, so a hostile frame can make it allocate zstd's 128 MiB window cap; a file's form is
+  derived from its source id's prefix, which a third form would want in its deps.lock row; no case
+  covers bytes after a stream's end; and the fuzz runner, unlike the corpus test, does not check
+  `fetched?` first, so an unfetched corpus fails as `{file, enoent}` without the fetch command.
+* [Low] test, F2FS listing's `file_reader/1`: OTP's file_info holds `st_rdev`, `st_dev` and `st_ino` in
+  32 bits (`otp/erts/emulator/nifs/common/prim_file_nif.h` l.87-89), so a device whose major or minor
+  needs the high bits of a 64-bit `dev_t` decodes to another number, and on a host file system with
+  64-bit inode numbers two inodes equal modulo 2^32 share a link class; trees of F2FS (32-bit nids)
+  and devices with small numbers are not affected. The listing module's lines exceed 80 columns.
 * [Medium] test, F2FS oracle: erXos's F2FS is checked against Linux's, which needs a Linux guest under QEMU
   with a pinned v7.3.4 kernel that has F2FS (Debian's generic arm64 kernel is the candidate to check;
   Ubuntu 26.04's is 7.0.0) and f2fs-tools 1.16.0. Neither the guest nor its pins exist.

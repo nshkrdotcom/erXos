@@ -44,6 +44,21 @@ class DependenciesTest < Minitest::Test
     assert_raises(Erx::Error) { parse([entry.merge('directory' => 'wrong')]) }
   end
 
+  # A file may pin the image it encodes by the decoded bytes' SHA-256 and size, both or
+  # neither, and only a file may.
+  def test_a_file_pins_its_decoded_image_by_hash_and_size_together
+    entry = source.except('directory').merge('kind' => 'file', 'filename' => 'seed')
+    pinned = entry.merge('decoded_sha256' => 'b' * 64, 'decoded_bytes' => 64 << 20)
+    assert_equal 64 << 20, parse([pinned]).first.fetch('decoded_bytes')
+    [pinned.except('decoded_bytes'), pinned.except('decoded_sha256'),
+     pinned.merge('decoded_sha256' => 'B' * 64), pinned.merge('decoded_sha256' => 'b' * 63),
+     pinned.merge('decoded_bytes' => '67108864'), pinned.merge('decoded_bytes' => 0),
+     pinned.merge('decoded_bytes' => (1 << 30) + 1), pinned.merge('decoded_bytes' => 1.5),
+     source.merge('decoded_sha256' => 'b' * 64, 'decoded_bytes' => 1)].each do |bad|
+      assert_raises(Erx::Error, bad.inspect) { parse([bad]) }
+    end
+  end
+
   # A zip is a prebuilt program for the one host it names, and only that host fetches it.
   def test_a_zip_names_its_host_and_another_host_leaves_it_out
     zip = source.merge('kind' => 'zip', 'host' => 'darwin-arm64')

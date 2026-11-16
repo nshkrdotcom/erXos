@@ -105,9 +105,9 @@ structure reaches the design or the implementation. What erXos knows of
 them comes from three facts records, written by separate facts writers
 who read the GPL sources and recorded interface facts in their own words:
 
-* part 1, the on-disk format, 65 facts
-  (`~/erxos-scratch/notes/research-f2fs-format.md`, 2026-11-14, SHA-256
-  `1017752a5590db51b53650ee587eaa06f4be0378c7beb7b315796bf983b5a717`),
+* part 1, the on-disk format, 70 facts
+  (`~/erxos-scratch/notes/research-f2fs-format.md`, 2026-11-15, SHA-256
+  `594e13e7756fc73ece9398c33ea16d764ce98274be7e11810f96e6520c0e1830`),
   cited here as [F n];
 * part 2, writing, checkpoints and recovery, 85 facts and 20 crash states
   (`research-f2fs-recovery.md`, SHA-256
@@ -1352,8 +1352,8 @@ over the block, never by computed offsets; a count read from the medium
 `i_extra_isize`, `cp_pack_total_block_count`, the bitmap sizes) is checked
 against the room it claims before the cursor moves. The codec follows
 the rules Linux enforces on reads ([F 26], [F 32], [F 42], [F 60],
-[T 92]) and adds the bounds Linux leaves out: the version bitmaps' room,
-`i_namelen` against its field, and an inline file's `i_size` against its
+[F 66] to [F 70], [T 92]) and adds the bounds Linux leaves out: the
+version bitmaps' room, `i_namelen` against its field, and an inline file's `i_size` against its
 inline area whatever else the inode holds. A failed decode is one
 module-private `throw` caught at the codec's entry, answered as
 `{error, {Structure, Rule}}`.
@@ -1585,7 +1585,18 @@ and the verdicts.
   model, erXos's mount read-only or read-write, and Linux's mount with
   recovery or `ro,norecovery`. Each name has its kind, mode, link count,
   link class (the names that share an inode), size, symlink target or
-  device numbers, and the SHA-256 of its bytes. A second depth adds the
+  device number, and the SHA-256 of its bytes. A device number is
+  `{Major, Minor}`, which each reader decodes once from its own
+  encoding: the model holds it in that form; erXos's codec decodes the
+  inode's address slot by Linux's old 16-bit and new 32-bit encodings
+  ([F 42]), whose bit layouts the facts records leave open (open
+  question 7 of part 1), so the device nodes of the oracle guest's
+  declared tree are the probe that checks them;
+  and the reader over OTP's `file` module decodes `st_rdev` by the
+  host's own `dev_t` encoding. A link class is the whole set of names
+  found sharing the inode, and a comparison intersects it with the
+  paths both listings state without an error, so an entry in error
+  changes no other entry. A second depth adds the
   owner and the times, which the model does not predict, so only two
   readers of one image are compared on it. Extended attributes are
   compared as bytes, by erXos's codec wherever erXos runs: every inode

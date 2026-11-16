@@ -54,7 +54,15 @@ class ErxF2fsCodecTest < Minitest::Test
     Seed.new(fault: "a long name's run allowed past the last slot",
              anchor: '            require(Run =< 1 + bit_size(Bits), name_run),',
              replacement: '            ok,',
-             failure: /each_dentry_rule_fails_with_its_name[^\n]*failed/)
+             failure: /each_dentry_rule_fails_with_its_name[^\n]*failed/),
+    Seed.new(fault: 'inline dentries allowed on any file type',
+             anchor: "                Type =:= ?ERX_F2FS_MODE_DIR,\n            inline_dentry),",
+             replacement: "                true,\n            inline_dentry),",
+             failure: /each_inode_rule_fails_with_its_name[^\n]*inline_dentry[^\n]*failed/),
+    Seed.new(fault: "inline data's block bound off by one",
+             anchor: '    require(Blocks - 1 =< XattrBlocks andalso',
+             replacement: '    require(Blocks - 1 =< XattrBlocks + 1 andalso',
+             failure: /each_inode_rule_fails_with_its_name[^\n]*inline_data_blocks[^\n]*failed/)
   ].freeze
 
   def test_eunit_cases_pass
