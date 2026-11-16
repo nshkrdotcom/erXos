@@ -8272,7 +8272,7 @@ document's "residual risks accepted" paragraph.
   later as an opt-in scheduler flag.
 * [Medium] desktop, the release of `erx_desk` (`tools/lib/erx/release_files.rb`, `RELEASE_SCRIPTS`):
   design-desktop-programs.md ("Shipping and starting") puts `erx_desk` in the desktop session's release, and
-  `erx_desk_files_core` calls `erx_ui_schema` and `erx_ui_model`, so `erx_desk` names `erx_ui` in its
+  `erx_desk_files_core` calls `erx_ui_schema`, so `erx_desk` names `erx_ui` in its
   `applications`. Only the client script, a domain holding a display's grant, holds `erx_ui`, so `erx_desk` ships
   there and not in the session script, where systools would refuse the boot script. Settle which script a desktop
   session boots: the client script, or the session script with `erx_memdraw`, `erx_win` and `erx_ui` added. Until
@@ -8293,12 +8293,6 @@ document's "residual risks accepted" paragraph.
 * [Medium] desktop, clock's dimmed reading ([design-desktop-programs.md](docs/design-desktop-programs.md#clock),
   the state table and D3): a state that is not `ok` asks for the time and date in the `tertiary` colour, which
   `abi/formats/ui.txt` cannot express; clock shows them in their roles with the status token beside the zone.
-* [Medium] desktop, D1 and the widget schema's bounds (`erx_desk_files_core.erl`, `max_items/0`, `item_max/0`,
-  `caption_max/0`; `test/host/erx_desk_boundary_test.rb`, `KNOWN`): D1 allows `erx_desk` only `sdk/public.txt`'s
-  functions and `erx:inspect/2`, but files' core reads its bounds through `erx_ui_schema:property/1`, which
-  public.txt does not list though design-packaging calls the widget schema public. Either list
-  `erx_ui_schema:property/1` in public.txt or give the bounds another public reader; the check's test then
-  expects no call outside.
 * [Low] desktop, stats (`erlang/apps/erx_desk/src/erx_desk_stats_core.erl`,
   [design-desktop-programs.md](docs/design-desktop-programs.md#what-it-reads)): `abi/inspection.txt` declares no
   `[domains, Id, connections]` path, so the inspector answers it `{error, scope}`, as for a path that names

@@ -21,12 +21,6 @@ class ErxDeskBoundaryTest < Minitest::Test
   DESK = File.join(ROOT, 'erlang/apps/erx_desk/src')
   CLOCK = 'erx_desk_clock_core.erl'
   DEADLINE = '120'
-  # The calls the check finds in the tree as it is: files' core reads the widget schema's
-  # bounds through erx_ui_schema:property/1, which public.txt does not list (TODO.md,
-  # "desktop, D1 and the widget schema's bounds").
-  KNOWN = '[{{erx_desk_files_core,caption_max,0},{erx_ui_schema,property,1}},' \
-          '{{erx_desk_files_core,item_max,0},{erx_ui_schema,property,1}},' \
-          '{{erx_desk_files_core,max_items,0},{erx_ui_schema,property,1}}]'
   # The calls whose callee the check cannot name, each reviewed, as xref names them. The
   # window calls the injected inspector, its one injected effect (fun erx:inspect/2 under
   # erx_desk_sup, a model in tests), in effect/2; its core's init/1, view/1 and step/2 by
@@ -41,7 +35,7 @@ class ErxDeskBoundaryTest < Minitest::Test
              "{{erx_desk_window,worker,4},{'$M_EXPR','$F_EXPR',0}}]"
 
   def test_erx_desk_calls_only_the_public_surface
-    assert_equal "{#{KNOWN},#{VARIABLE}}", outside
+    assert_equal "{[],#{VARIABLE}}", outside
   end
 
   def test_a_call_of_the_inspector_router_fails_the_check
@@ -59,7 +53,7 @@ class ErxDeskBoundaryTest < Minitest::Test
              "\nseeded(Router) -> Router:route(false, undefined, [], 1).\n"
     answer = outside(CLOCK => seeded)
     assert_includes answer, "{{erx_desk_clock_core,seeded,1},{'$M_EXPR',route,4}}"
-    refute_equal "{#{KNOWN},#{VARIABLE}}", answer
+    refute_equal "{[],#{VARIABLE}}", answer
   end
 
   private
