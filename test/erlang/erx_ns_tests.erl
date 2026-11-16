@@ -169,42 +169,43 @@ a_grant_ended_while_the_process_was_down_ends_on_restart() ->
 a_malformed_request_answers_einval_and_changes_nothing() ->
     [?assertEqual({error, einval}, gen_server:call(erx_ns, Request))
      || Request <- [nonsense, {mount, <<"/x">>, self(), bad}, {bind, 1, 2, []}, {unmount, {}},
-                    {mount, <<"/x">>, self(), [{tree, <<"t">>} | tail]},
-                    {mount, <<"/x">>, {erofs, not_a_mount}, []}]],
+                    {mount, <<"/x">>, self(), [{tree, <<"t">>} | tail]}]],
     ?assertEqual(undefined, persistent_term:get(erx_ns, undefined)),
     ?assert(is_process_alive(whereis(erx_ns))).
 
-%% An image mounts from a window, read-only, its entry holding the reader's mount, and
-%% unmounts as any entry does.
+%% An image the caller opened in erx_verity mounts read-only, its entry holding the
+%% reader's mount, and unmounts as any entry does.
 mount_of_an_image_adds_a_read_only_entry() ->
-    Window = erx_erofs_tests:window(erx_erofs_tests:fixture("compact")),
-    ?assertEqual(ok, erx_ns:mount({erofs, Window}, <<"/release/">>, [])),
+    {ok, Image} = erx_erofs_tests:open(erx_erofs_tests:fixture("compact")),
+    ?assertEqual(ok, erx_ns:mount({erofs, Image}, <<"/release/">>, [])),
     [_, #{point := [<<"release">>], provider := {erofs, Fs}, root := [], rights := ro}] = table(),
     ?assertEqual({ok, [<<"b">>]}, erx_erofs:list_dir(Fs, [<<"a">>])),
-    ?assertEqual(ok, erx_ns:mount({erofs, Window}, "/again", [ro])),
+    ?assertEqual(ok, erx_ns:mount({erofs, Image}, "/again", [ro])),
     ?assertEqual(ok, erx_ns:unmount(<<"/release">>)),
     ?assertMatch([#{point := []}, #{point := [<<"again">>]}], table()).
 
-%% A malformed image, a window that ended and anything but ro answer before the table
-%% changes; the mount's diagnostic goes to the log.
+%% A malformed image, anything but an image erx_verity opened and anything but ro answer
+%% before the table changes; the mount's diagnostic goes to the log. A window is not an
+%% image: erx_ns opens none, so a module that holds a window, the block service's
+%% `system` window among them, cannot mount it without its tree through erx_ns.
 image_mount_refusals() ->
     register(erx_ns_log, self()),
     Window = erx_erofs_tests:window(erx_erofs_tests:fixture("compact")),
-    {Gone, Ref} = spawn_monitor(fun() -> ok end),
-    receive {'DOWN', Ref, process, Gone, _} -> ok end,
+    {ok, Image} = erx_erofs_tests:open(erx_erofs_tests:fixture("compact")),
+    {ok, Zeros} = erx_erofs_tests:open(binary:copy(<<0>>, 8192)),
     [?assertEqual({error, Reason}, erx_ns:mount(Source, To, Options))
      || {Reason, Source, To, Options} <-
-            [{eio, {erofs, erx_erofs_tests:window(binary:copy(<<0>>, 8192))}, <<"/x">>, []},
-             {eio, {erofs, Gone}, <<"/x">>, []},
-             {einval, {erofs, not_a_pid}, <<"/x">>, []},
-             {einval, {erofs, Window}, <<"/x">>, [rw]},
-             {einval, {erofs, Window}, <<"/x">>, [rx]},
-             {einval, {erofs, Window}, <<"/x">>, [{tree, <<"t">>}]},
-             {einval, {erofs, Window}, <<"x">>, []},
-             {eexist, {erofs, Window}, <<"/">>, []}]],
+            [{eio, {erofs, Zeros}, <<"/x">>, []},
+             {eio, {erofs, Window}, <<"/x">>, []},
+             {eio, {erofs, not_an_image}, <<"/x">>, []},
+             {einval, {erofs, Image}, <<"/x">>, [rw]},
+             {einval, {erofs, Image}, <<"/x">>, [rx]},
+             {einval, {erofs, Image}, <<"/x">>, [{tree, <<"t">>}]},
+             {einval, {erofs, Image}, <<"x">>, []},
+             {eexist, {erofs, Image}, <<"/">>, []}]],
     ?assertEqual(undefined, persistent_term:get(erx_ns, undefined)),
     unregister(erx_ns_log),
-    ?assertMatch([{log, ["erx_ns: image ", _, ": ", <<"erofs: block 0: no EROFS magic">>]} | _], logged()).
+    ?assertMatch([{log, ["erx_ns: image: ", <<"erofs: block 0: no EROFS magic">>]} | _], logged()).
 
 %% A facet's mount holds the facet's name, not a pid, and a resolution reads the domain's
 %% facet registry, the term {erx, facets}, as it uses the table: each entry of the facet,

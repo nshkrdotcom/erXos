@@ -61,7 +61,7 @@ Every rectangle a policy returns lies within the screen, within/2.
 
 -export([within/2, shown/1, fetch/2, session/1]).
 -export_type([window_id/0, coord/0, rect/0, color/0, window/0, request/0,
-              input/0, route/0, session/0, rune/0, menu_item/0]).
+              input/0, route/0, session/0, rune/0, command/0, menu_item/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -106,8 +106,10 @@ runes of the modifiers held on the display.
 -doc "Where input/5 sends an event.".
 -type route() :: {to, window_id(), input()} | {wm, term()} | {delete, window_id()}
                | {windows, [window()]} | drop.
--doc "A menu item: a command the next press applies, or a hidden window to show.".
--type menu_item() :: resize | move | delete | hide | {show, window_id()}.
+-doc "A command of the window menu, which the next press applies to the window it names.".
+-type command() :: resize | move | delete | hide.
+-doc "A menu item: a command, or a hidden window to show.".
+-type menu_item() :: command() | {show, window_id()}.
 -callback init(Config :: map()) -> State :: term().
 -callback place(request(), window_id(), Windows :: [window()], Screen :: rect(),
                 Session :: session(), State :: term()) ->

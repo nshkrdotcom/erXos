@@ -62,13 +62,13 @@ with badmatch rather than being placed as a widget.
 Places Tree, a tree erx_ui_schema has validated, in a window of
 {Width, Height}, with Measure giving each widget's measured size.
 """.
--spec layout(erx_ui_model:tree(), size(), measure()) -> placed().
+-spec layout(erx_ui_schema:tree(), size(), measure()) -> placed().
 layout(Tree, {Width, Height}, Measure) ->
     place(sized(Tree, Measure), {0, 0, Width, Height}).
 
 %%% The first pass: needs.
 
--spec sized(erx_ui_model:tree(), measure()) -> #sized{}.
+-spec sized(erx_ui_schema:tree(), measure()) -> #sized{}.
 sized({Kind, Props, Children}, Measure) ->
     Sized = [sized(Child, Measure) || Child <- Children],
     {Need, Weight} = footprint(Kind, Props, Sized, Measure),

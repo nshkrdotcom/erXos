@@ -18,6 +18,8 @@ class OriginUnwrapsTest < Minitest::Test
   GEN = 'otp/lib/stdlib/src/gen.erl'
   FILE_REMOTE = 'otp/erts/preloaded/src/erx_file_remote.erl'
   UNWRAP = '{erx_origin, _, {erx_9p, Alias, Reply}} -> {reply, Reply}'
+  # The one place erx_file_remote names the envelope: the macro its takes of a reply use.
+  ENVELOPED = '-define(ENVELOPED(Alias, Reply), {erx_origin, _, {erx_9p, Alias, Reply}}).'
 
   def found(files) = Erx::OriginUnwraps.violations(files).map { |violation| [violation.path, violation.line] }
 
@@ -27,7 +29,7 @@ class OriginUnwrapsTest < Minitest::Test
     assert_empty Erx::OriginUnwraps.violations(files).map(&:to_s)
     assert_match(/^ +\{erx_origin, _, \{\[alias \| Mref\], Reply\}\} ->$/, files.fetch(GEN))
     assert_match(/^\t\{erx_origin, _, \{io_reply, Mref, Reply\}\} ->$/, files.fetch('otp/lib/stdlib/src/io.erl'))
-    assert_equal 2, files.fetch(FILE_REMOTE).scan(UNWRAP).size
+    assert_equal 1, files.fetch(FILE_REMOTE).scan(ENVELOPED).size
   end
 
   # erx_file_remote's unwrap in erx_verity, a preloaded client that owns no protocol

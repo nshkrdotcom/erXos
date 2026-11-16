@@ -109,7 +109,7 @@ module Erx
     CODEC = ABI::Generated::CODEC
     SECTOR_BYTES = CODEC.constant('mbr_sector_size')
     # The first sector after the boot-selection record's partition, in the 3 MiB before
-    # slot A that no partition of abi/medium.txt holds, so the probe's write changes nothing
+    # boot A that no partition of abi/medium.txt holds, so the probe's write changes nothing
     # the boot or a file system reads.
     PROBE_SECTOR = CODEC.constant('medium_record_start') + CODEC.constant('medium_record_sectors')
     # Two blocks, so the write and the read back are multi-block transfers.

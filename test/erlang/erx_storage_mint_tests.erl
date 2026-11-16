@@ -1,9 +1,9 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
--module(erx_lfs_mint_tests).
+-module(erx_storage_mint_tests).
 -moduledoc """
-EUnit for erx_lfs_mint, the mint of storage's `data` files service, on stock's
+EUnit for erx_storage_mint, the mint of storage's `data` files service, on stock's
 emulator: which messages it takes as mint requests, the erx_fs options a facet row's
 limits give a grant, and the grants it starts, each a real erx_fs grant of a test tree
 (erx_fs_test_tree) under the mint's grants supervisor. This module stands in for the
@@ -23,6 +23,7 @@ read them from a trace of the grant's calls of erlang:send/2.
 -define(THIRD, 9).
 -define(WAIT, 5000).
 -define(VERSION, <<"9P2000.L">>).
+-define(O_WRONLY, 1).
 
 %% Mint requests -------------------------------------------------------------
 
@@ -30,7 +31,7 @@ read them from a trace of the grant's calls of erlang:send/2.
 only_the_system_domains_mint_request_is_granted_test() ->
     Request = {erx_facet_mint, 7, data, ?GRANTEE, <<"user">>, #{in_flight => 16}},
     ?assertEqual({grant, 7, ?GRANTEE, #{in_flight => 16}},
-                 erx_lfs_mint:mint_request(?SYSTEM, data, {erx_origin, ?SYSTEM, Request})),
+                 erx_storage_mint:mint_request(?SYSTEM, data, {erx_origin, ?SYSTEM, Request})),
     Dropped = [Request,
                {erx_origin, ?GRANTEE, Request},
                {erx_origin, ?SYSTEM, {erx_origin, ?SYSTEM, Request}},
@@ -38,24 +39,28 @@ only_the_system_domains_mint_request_is_granted_test() ->
                {erx_origin, ?SYSTEM, setelement(2, Request, 0)},
                {erx_origin, ?SYSTEM, setelement(4, Request, 0)},
                {erx_origin, ?SYSTEM, setelement(5, Request, [])}],
-    [?assertEqual(unknown, erx_lfs_mint:mint_request(?SYSTEM, data, Message)) || Message <- Dropped].
+    [?assertEqual(unknown, erx_storage_mint:mint_request(?SYSTEM, data, Message)) || Message <- Dropped].
 
 %% Grant options -------------------------------------------------------------
 
-%% A row's limits become the grant's bounds, capped at erx_fs_grant's; a row below 9P's
-%% least message size, or with a bound that is not positive, is refused.
+%% A row's limits become the grant's bounds, capped at erx_fs_grant's, and its rights the
+%% grant's, rw where it states none; a row below 9P's least message size, with a bound
+%% that is not positive, or with rights other than ro, rw and rx, is refused.
 grant_options_test() ->
-    ?assertEqual({ok, #{in_flight => 64, msize => 65560}}, erx_fs_grants:grant_options(#{})),
-    ?assertEqual({ok, #{in_flight => 16, msize => 65560, max_heap_size => 262144}},
+    ?assertEqual({ok, #{rights => rw, in_flight => 64, msize => 65560}}, erx_fs_grants:grant_options(#{})),
+    ?assertEqual({ok, #{rights => rw, in_flight => 16, msize => 65560, max_heap_size => 262144}},
                  erx_fs_grants:grant_options(#{in_flight => 16, max_request => 65560,
                                               max_heap_size => 262144, reductions => 100})),
-    ?assertEqual({ok, #{in_flight => 64, msize => 65560}},
+    ?assertEqual({ok, #{rights => rw, in_flight => 64, msize => 65560}},
                  erx_fs_grants:grant_options(#{in_flight => 1000, max_request => 131072})),
-    ?assertEqual({ok, #{in_flight => 1, msize => 4096}},
+    ?assertEqual({ok, #{rights => rw, in_flight => 1, msize => 4096}},
                  erx_fs_grants:grant_options(#{in_flight => 1, max_request => 4096})),
+    [?assertEqual({ok, #{rights => Rights, in_flight => 64, msize => 65560}},
+                  erx_fs_grants:grant_options(#{rights => Rights})) || Rights <- [ro, rw, rx]],
     [?assertEqual({error, einval}, erx_fs_grants:grant_options(Limits))
      || Limits <- [#{max_request => 4095}, #{in_flight => 0}, #{max_heap_size => 0}, #{max_heap_size => 100},
-                   #{in_flight => many}, #{max_request => -1}, #{max_heap_size => big}]].
+                   #{in_flight => many}, #{max_request => -1}, #{max_heap_size => big},
+                   #{rights => rwx}, #{rights => <<"ro">>}, #{rights => 1}]].
 
 %% Limits a row would refuse start no grant and export nothing.
 refused_limits_start_no_grant_test() ->
@@ -106,6 +111,23 @@ an_enveloped_exchange_is_served_test() ->
         ?assertEqual({Alias, {erx_9p, Alias, {ok, 8192, ?VERSION}}}, first_send(Grant))
     end).
 
+%% A grant takes its row's rights: through an ro grant the grantee's 9P create, open for
+%% writing and write each answer erofs, as through an rx grant its create and write do,
+%% while an rw grant, the rights of a row that states none, refuses none of them so. The
+%% refusal comes as the request is decoded, before its fid is looked up (F5), so no
+%% attach is needed, and the rw grant answers ebadf for the fid none attached.
+a_grant_serves_its_row_s_rights_test_() ->
+    Create = {lcreate, 1, <<"n">>, 0, 8#644, 0},
+    Refused = fun(Rights, Request) ->
+                      ?assertEqual({error, erofs}, granted_exchange(#{rights => Rights}, Request))
+              end,
+    [{"ro create", fun() -> Refused(ro, Create) end},
+     {"ro open for writing", fun() -> Refused(ro, {lopen, 1, ?O_WRONLY}) end},
+     {"ro write", fun() -> Refused(ro, {write, 1, 0, <<"x">>}) end},
+     {"rx write", fun() -> Refused(rx, {write, 1, 0, <<"x">>}) end},
+     {"rx create", fun() -> Refused(rx, Create) end},
+     {"rw does not refuse", fun() -> ?assertEqual({error, ebadf}, granted_exchange(#{}, Create)) end}].
+
 %% A grant ends with its connection, and the grants supervisor and the mint, here the
 %% test, outlive it. The grantee's next incarnation is a new domain id over a new
 %% connection: its grant takes no frame of the old one, in either domain's envelope.
@@ -122,7 +144,7 @@ the_grant_ends_with_its_connection_test() ->
         dropped(Grants, Grant, ?WAIT),
         Next = ?GRANTEE + 1,
         ok = erx_connections:set(Next, connection()),
-        {ok, NewGrant} = erx_lfs_mint:grant(Grants, ?SYSTEM, Next, #{}, ?MODULE),
+        {ok, NewGrant} = erx_storage_mint:grant(Grants, ?SYSTEM, Next, #{}, ?MODULE),
         Stale = {erx_9p, domain_ref(?GRANTEE), domain_pid(?GRANTEE), {version, 8192, ?VERSION}},
         trace_sends(NewGrant),
         NewGrant ! {erx_origin, ?GRANTEE, Stale},
@@ -136,9 +158,9 @@ the_grant_ends_with_its_connection_test() ->
 %% domain; another grantee with no connection to this domain gets no grant.
 only_the_system_domains_grant_has_no_connection_test() ->
     with_grants(fun(Grants) ->
-        {ok, Grant} = erx_lfs_mint:grant(Grants, ?SYSTEM, ?SYSTEM, #{}, ?MODULE),
+        {ok, Grant} = erx_storage_mint:grant(Grants, ?SYSTEM, ?SYSTEM, #{}, ?MODULE),
         ?assertEqual([Grant], grants(Grants)),
-        ?assertEqual({error, noconnection}, erx_lfs_mint:grant(Grants, ?SYSTEM, ?THIRD, #{}, ?MODULE)),
+        ?assertEqual({error, noconnection}, erx_storage_mint:grant(Grants, ?SYSTEM, ?THIRD, #{}, ?MODULE)),
         ?assertEqual([Grant], grants(Grants))
     end).
 
@@ -162,7 +184,18 @@ with_grants(Fun) ->
 %% The grantee's grant, over Connection, its stand-in's connection to the grantee.
 grant(Grants, Limits, Connection) ->
     ok = erx_connections:set(?GRANTEE, Connection),
-    erx_lfs_mint:grant(Grants, ?SYSTEM, ?GRANTEE, Limits, ?MODULE).
+    erx_storage_mint:grant(Grants, ?SYSTEM, ?GRANTEE, Limits, ?MODULE).
+
+%% The answer to Request, in the grantee's envelope, from the grantee's grant with Limits.
+granted_exchange(Limits, Request) ->
+    with_grants(fun(Grants) ->
+        {ok, Grant} = grant(Grants, Limits, connection()),
+        Alias = domain_ref(?GRANTEE),
+        trace_sends(Grant),
+        Grant ! {erx_origin, ?GRANTEE, {erx_9p, Alias, domain_pid(?GRANTEE), Request}},
+        {Alias, {erx_9p, Alias, Reply}} = first_send(Grant),
+        Reply
+    end).
 
 grants(Grants) ->
     [Pid || {_, Pid, _, _} <- supervisor:which_children(Grants)].

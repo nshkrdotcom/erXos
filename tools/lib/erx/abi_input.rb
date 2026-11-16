@@ -31,6 +31,9 @@ module Erx
       FIELD_NAME = /\A[a-z][a-z0-9]{0,62}\z/.freeze
       # The tag is one byte; 0 is no kind, so a zeroed record is refused.
       TAGS = (1..255).freeze
+      # The scalars a driver's value is clamped to (the codec's rel/1, wheel/1 and axis/3),
+      # each a field's type; an axis's coordinates count from 0, which axis/3 scales to.
+      CLAMPED = %w[input_rel input_wheel input_axis].freeze
 
       module_function
 
@@ -44,6 +47,7 @@ module Erx
         declaration.fail!('expected input') unless declaration.args.empty?
         records = records(declaration.members, types).sort_by(&:tag)
         declaration.fail!('the input declaration has no record') if records.empty?
+        clamped!(declaration, records)
         InputSchema.new(records: records, size: 1 + records.map(&:body_size).max)
       end
 
@@ -68,6 +72,13 @@ module Erx
           distinct!(line, name, words, records)
           records << InputRecord.new(name: name, words: words, tag: tag, fields: fields(children, types))
         end
+      end
+
+      # Every scalar of CLAMPED is some field's type, and input_axis starts at 0.
+      def clamped!(declaration, records)
+        typed = records.flat_map(&:fields).to_h { |field| [field.type.name, field.type] }
+        CLAMPED.each { |name| declaration.fail!("no input field has scalar type #{name}") unless typed[name].is_a?(ScalarType) }
+        declaration.fail!('input_axis must start at 0') unless typed.fetch('input_axis').minimum.zero?
       end
 
       # Kinds that share a name have as many words and differ in them, so their

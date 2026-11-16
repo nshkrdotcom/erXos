@@ -168,7 +168,7 @@ order a PPM holds them (the display suite's reference pictures,
 tools/lib/erx/screen_reference.rb).
 """.
 -spec picture(#{program := file:filename(), ruby := file:filename(), launcher := file:filename()},
-              erx_ui_model:tree(), {pos_integer(), pos_integer()}) -> binary().
+              erx_ui_schema:tree(), {pos_integer(), pos_integer()}) -> binary().
 picture(#{program := Program, ruby := Ruby, launcher := Launcher}, Tree, {Width, Height}) ->
     Buffer = filename:absname("buffer"),
     ok = file:write_file(Buffer, binary:copy(<<0>>, stride(Width, 32) * Height)),
@@ -213,13 +213,10 @@ step(Event, Screen) ->
     Screen1.
 
 step_actions(Event, #{core := Core} = Screen) ->
-    case erx_ui_lvgl_core:step(Event, Core) of
-        {ok, Core1, Actions} ->
-            send(Screen, [Record || {write, Records} <- Actions, Record <- Records]),
-            {Screen#{core := Core1}, Actions};
-        {stop, Reason} ->
-            error({renderer_stopped, Reason})
-    end.
+    {Core1, Actions} = erx_ui_lvgl_core:step(Event, Core),
+    [error({renderer_stopped, Reason}) || {stop, Reason} <- Actions],
+    send(Screen, [Record || {write, Records} <- Actions, Record <- Records]),
+    {Screen#{core := Core1}, Actions}.
 
 send(#{port := Port}, Records) ->
     Present = fun(_Type, _Value) -> error(no_presentations) end,

@@ -11,14 +11,14 @@ module AbiErlangFixture
 
   def devices(owners:, devices:)
     original = AbiManifestFixture.valid
-    strings = original.byteslice(696..-1).dup
-    units_offset = 696
+    strings = original.byteslice(744..-1).dup
+    units_offset = 744
     devices_offset = units_offset + owners * 24
     strings_offset = devices_offset + devices * AbiManifestFixture::DEVICE_ROW
-    body = original.byteslice(0, 696) + "\0".b * (strings_offset - 696)
+    body = original.byteslice(0, 744) + "\0".b * (strings_offset - 744)
     AbiManifestFixture.span(body, 248, units_offset, owners)
     AbiManifestFixture.span(body, 256, devices_offset, devices)
-    [*(264..352).step(8), 384, 392].each { |offset| AbiManifestFixture.span(body, offset, strings_offset, 0) }
+    [*(264..352).step(8), *(384..440).step(8)].each { |offset| AbiManifestFixture.span(body, offset, strings_offset, 0) }
     owners.times do |index|
       offset = units_offset + index * 24
       name = "unit#{index}".b
@@ -50,48 +50,49 @@ module AbiErlangFixture
 
   def parameter(kind:, scalar: 0, index: 0, text: ''.b)
     original = AbiManifestFixture.valid
-    strings = original.byteslice(696..-1) + 'clientserviceaccess'.b + text
-    body = original.byteslice(0, 480) + "\0".b * 64 +
-           original.byteslice(480, 216) + "\0".b * 136
+    strings = original.byteslice(744..-1) + 'clientserviceaccess'.b + text
+    body = original.byteslice(0, 528) + "\0".b * 64 +
+           original.byteslice(528, 216) + "\0".b * 136
     AbiManifestFixture.integer(body, 6, 1, width: 2)
-    AbiManifestFixture.span(body, 216, 480, 1)
-    AbiManifestFixture.span(body, 224, 544, 1)
-    AbiManifestFixture.span(body, 232, 704, 1)
-    (240..264).step(8) { |offset| AbiManifestFixture.span(body, offset, 760, 0) }
-    AbiManifestFixture.span(body, 272, 760, 1)
-    AbiManifestFixture.span(body, 280, 784, 1)
-    AbiManifestFixture.span(body, 288, 864, 0)
-    AbiManifestFixture.span(body, 296, 864, 1)
-    (304..352).step(8) { |offset| AbiManifestFixture.span(body, offset, 896, 0) }
-    AbiManifestFixture.span(body, 360, 896, strings.bytesize)
-    AbiManifestFixture.span(body, 376, 544, 0)
-    AbiManifestFixture.span(body, 384, 896, 0)
-    AbiManifestFixture.span(body, 392, 896, 0)
+    AbiManifestFixture.span(body, 216, 528, 1)
+    AbiManifestFixture.span(body, 224, 592, 1)
+    AbiManifestFixture.span(body, 232, 752, 1)
+    (240..264).step(8) { |offset| AbiManifestFixture.span(body, offset, 808, 0) }
+    AbiManifestFixture.span(body, 272, 808, 1)
+    AbiManifestFixture.span(body, 280, 832, 1)
+    AbiManifestFixture.span(body, 288, 912, 0)
+    AbiManifestFixture.span(body, 296, 912, 1)
+    (304..352).step(8) { |offset| AbiManifestFixture.span(body, offset, 944, 0) }
+    AbiManifestFixture.span(body, 360, 944, strings.bytesize)
+    AbiManifestFixture.span(body, 376, 592, 0)
+    AbiManifestFixture.span(body, 384, 944, 0)
+    AbiManifestFixture.span(body, 392, 944, 0)
+    (400..440).step(8) { |offset| AbiManifestFixture.span(body, offset, 944, 0) }
 
-    AbiManifestFixture.span(body, 480, 34, 6)
-    AbiManifestFixture.integer(body, 492, 1)
-    AbiManifestFixture.integer(body, 500, 2)
-    AbiManifestFixture.integer(body, 504, 2)
-    AbiManifestFixture.integer(body, 508, 1)
-    AbiManifestFixture.integer(body, 524, 10) # the row's boot_timeout_s, from 1
-    AbiManifestFixture.span(body, 528, 40, 0)
-    AbiManifestFixture.span(body, 536, 40, 0)
-    AbiManifestFixture.span(body, 760, 40, 7)
-    AbiManifestFixture.integer(body, 772, 1)
-    AbiManifestFixture.span(body, 784, 47, 6)
-    AbiManifestFixture.span(body, 800, 864, 0)
-    AbiManifestFixture.span(body, 808, 864, 1)
-    AbiManifestFixture.integer(body, 816, 4096)
+    AbiManifestFixture.span(body, 528, 34, 6)
+    AbiManifestFixture.integer(body, 540, 1)
+    AbiManifestFixture.integer(body, 548, 2)
+    AbiManifestFixture.integer(body, 552, 2)
+    AbiManifestFixture.integer(body, 556, 1)
+    AbiManifestFixture.integer(body, 572, 10) # the row's boot_timeout_s, from 1
+    AbiManifestFixture.span(body, 576, 40, 0)
+    AbiManifestFixture.span(body, 584, 40, 0)
+    AbiManifestFixture.span(body, 808, 40, 7)
     AbiManifestFixture.integer(body, 820, 1)
-    AbiManifestFixture.integer(body, 824, 1000, width: 8)
-    AbiManifestFixture.integer(body, 832, 1_000_000, width: 8)
-    AbiManifestFixture.integer(body, 840, 65_536, width: 8)
-    AbiManifestFixture.integer(body, 848, 4096, width: 8)
-    AbiManifestFixture.integer(body, 864, 1)
-    AbiManifestFixture.integer(body, 868, kind)
-    AbiManifestFixture.integer(body, 872, scalar, width: 8)
-    AbiManifestFixture.span(body, 880, 53, text.bytesize) if [4, 5, 9].include?(kind)
-    AbiManifestFixture.integer(body, 888, index)
+    AbiManifestFixture.span(body, 832, 47, 6)
+    AbiManifestFixture.span(body, 848, 912, 0)
+    AbiManifestFixture.span(body, 856, 912, 1)
+    AbiManifestFixture.integer(body, 864, 4096)
+    AbiManifestFixture.integer(body, 868, 1)
+    AbiManifestFixture.integer(body, 872, 1000, width: 8)
+    AbiManifestFixture.integer(body, 880, 1_000_000, width: 8)
+    AbiManifestFixture.integer(body, 888, 65_536, width: 8)
+    AbiManifestFixture.integer(body, 896, 4096, width: 8)
+    AbiManifestFixture.integer(body, 912, 1)
+    AbiManifestFixture.integer(body, 916, kind)
+    AbiManifestFixture.integer(body, 920, scalar, width: 8)
+    AbiManifestFixture.span(body, 928, 53, text.bytesize) if [4, 5, 9].include?(kind)
+    AbiManifestFixture.integer(body, 936, index)
     body << strings
     AbiManifestFixture.integer(body, 8, body.bytesize)
     body

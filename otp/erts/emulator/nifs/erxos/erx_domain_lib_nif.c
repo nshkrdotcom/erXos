@@ -25,8 +25,8 @@
  *
  * The process that registers is the one that hears of every end, and the
  * only one that may change the library: every entry that does (create,
- * configured_create, session_create, start, stop, retire, connect,
- * disconnect) asks
+ * configured_create, session_create, app_session_create, start, stop,
+ * retire, connect, disconnect) asks
  * caller_is_service first, under the lock, and answers {error, erights} to
  * any other caller. So only the process that registered drives the
  * library, and no domain the module made can end with no one to hear of
@@ -591,8 +591,9 @@ end_commit_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 /*
  * The manifest's session templates (property 14 of docs/design-system.md):
  * {ok, Templates} in principal order, one per principal, each
- * #{template, principal}, template its index among them. The boot creates
- * none of them. The view is fixed at boot, so this reads it without the
+ * #{template, principal}, template its index among them. The app template,
+ * which names no principal, is not among them: apps_nif names it. The boot
+ * creates none of them. The view is fixed at boot, so this reads it without the
  * lock.
  */
 static ERL_NIF_TERM
@@ -609,6 +610,8 @@ templates_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	rows = enif_make_list(env, 0);
 	/* Built from the last template back, so the list's head is template 0. */
 	for (index = lib->view.ntemplates; index-- > 0;) {
+		if (lib->view.templates[index].principal == 0)
+			continue;
 		keys[0] = atom(env, "template"), values[0] = enif_make_uint(env, index);
 		keys[1] = atom(env, "principal"), values[1] = enif_make_uint(env, lib->view.templates[index].principal);
 		if (!enif_make_map_from_arrays(env, keys, values, 2, &row))
@@ -616,6 +619,38 @@ templates_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		rows = enif_make_list_cell(env, row, rows);
 	}
 	return (enif_make_tuple2(env, atom(env, "ok"), rows));
+}
+
+/*
+ * The apps row as the view holds it (erx_dom_apps_t): {ok, none} for a
+ * manifest with no apps row, or {ok, #{template, first, max, memory}}, the
+ * app template's index, the first app entry's principal number, the max
+ * entries the boot placed and the apps budget in bytes. The one source of
+ * max for the principal service's registry and for admission
+ * (docs/design-packaging.md, "An app's principal"). The view is fixed at
+ * boot, so this reads it without the lock.
+ */
+static ERL_NIF_TERM
+apps_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	const erx_dom_apps_t *apps;
+	ERL_NIF_TERM keys[4], values[4], row;
+
+	(void)argv;
+	if (argc != 0)
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	apps = &lib->view.apps;
+	if (apps->max == 0)
+		return (enif_make_tuple2(env, atom(env, "ok"), atom(env, "none")));
+	keys[0] = atom(env, "template"), values[0] = enif_make_uint(env, apps->template);
+	keys[1] = atom(env, "first"), values[1] = enif_make_uint(env, apps->first);
+	keys[2] = atom(env, "max"), values[2] = enif_make_uint(env, apps->max);
+	keys[3] = atom(env, "memory"), values[3] = enif_make_uint64(env, apps->memory);
+	if (!enif_make_map_from_arrays(env, keys, values, 4, &row))
+		return (enif_make_badarg(env));
+	return (enif_make_tuple2(env, atom(env, "ok"), row));
 }
 
 /*
@@ -671,6 +706,43 @@ session_create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	enif_mutex_lock(lib_lock);
 	status = caller_is_service(env) ?
 	    erx_dom_lib_session(lib, id, template, (const char *)name.data, (uint32_t)name.size,
+	    (const char *)display.data, (uint32_t)display.size, domain_pid, &created) :
+	    ERX_ERIGHTS;
+	enif_mutex_unlock(lib_lock);
+	if (status != ERX_OK)
+		return (status_error(env, status));
+	return (created_term(env, &created));
+}
+
+/*
+ * An app's session's start: creates a session of the app in app entry
+ * Entry, with Memory, its record's declared memory, under id Id, name Name,
+ * default display Display, a service name or <<>> for none, and domain pid
+ * DomainPid (erx_dom_lib_app_session). The library plans the app template
+ * for an app entry and no other, under an entry it bounds, never a template
+ * a request names; only the domain service may call it.
+ */
+static ERL_NIF_TERM
+app_session_create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	erx_dom_created_t created;
+	erx_dom_pid_t domain_pid;
+	erx_status_t status;
+	ErlNifBinary name, display;
+	ErlNifUInt64 memory;
+	unsigned int id, entry;
+
+	if (argc != 6 || !enif_get_uint(env, argv[0], &id) || !enif_get_uint(env, argv[1], &entry) ||
+	    !enif_get_uint64(env, argv[2], &memory) ||
+	    !enif_inspect_binary(env, argv[3], &name) || name.size == 0 || name.size > ERX_DOM_NAME_MAX ||
+	    !enif_inspect_binary(env, argv[4], &display) || display.size > ERX_DOM_NAME_MAX ||
+	    !domain_pid_from(env, argv[5], &domain_pid))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	enif_mutex_lock(lib_lock);
+	status = caller_is_service(env) ?
+	    erx_dom_lib_app_session(lib, id, entry, memory, (const char *)name.data, (uint32_t)name.size,
 	    (const char *)display.data, (uint32_t)display.size, domain_pid, &created) :
 	    ERX_ERIGHTS;
 	enif_mutex_unlock(lib_lock);
@@ -1135,10 +1207,12 @@ static ErlNifFunc nif_funcs[] = {
 	{ "disconnect_nif", 1, disconnect_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "configured_nif", 0, configured_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "templates_nif", 0, templates_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "apps_nif", 0, apps_nif, 0 },
 	{ "end_commit_nif", 1, end_commit_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "devices_nif", 0, devices_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "configured_create_nif", 3, configured_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "session_create_nif", 5, session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "app_session_create_nif", 6, app_session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 };
 
 ERL_NIF_INIT(erx_domain_lib, nif_funcs, load, NULL, NULL, NULL)

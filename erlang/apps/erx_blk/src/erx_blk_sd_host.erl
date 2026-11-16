@@ -408,23 +408,23 @@ event but start and tick before it is issued, is no request's and gives no
 action, as the design drops an event with no request in flight.
 """.
 %% Any term is taken; one that is not an event() fails an issued transfer.
--spec step(transfer(), term()) -> {[action()], transfer()}.
+-spec step(transfer(), term()) -> {transfer(), [action()]}.
 step(#transfer{phase = done} = T, _Event) ->
-    {[], T};
+    {T, []};
 step(#transfer{phase = waiting, accepted = Accepted} = T, {Offer, Now})
   when (Offer =:= start orelse Offer =:= tick), is_integer(Now),
        Now - Accepted >= ?WAIT_LIMIT_MS ->
     finish(T, {answer, {error, {device, deadline}}});
 step(#transfer{phase = waiting, op = flush} = T, {start, Now}) when is_integer(Now) ->
-    {[{issue, status}], T#transfer{phase = status, issued = Now}};
+    {T#transfer{phase = status, issued = Now}, [{issue, status}]};
 step(#transfer{phase = waiting} = T, {start, Now}) when is_integer(Now) ->
-    {[{issue, transfer}], T#transfer{phase = command, issued = Now}};
+    {T#transfer{phase = command, issued = Now}, [{issue, transfer}]};
 step(#transfer{phase = waiting} = T, _Event) ->
-    {[], T};
+    {T, []};
 step(#transfer{issued = Issued} = T, {tick, Now}) when is_integer(Now) ->
     case Now - Issued >= ?IN_FLIGHT_MS of
         true -> finish(T, {fail, in_flight_bound});
-        false -> {[], T}
+        false -> {T, []}
     end;
 step(T, {error, Name}) ->
     finish(T, {fail, {interrupt, Name}});
@@ -435,21 +435,21 @@ step(T, Event) ->
 %% Auto CMD12's R1, and after a write CMD13's R1.
 issued(#transfer{phase = command} = T, {command_complete, R1}) ->
     case r1_errors(R1) of
-        0 -> {[], T#transfer{phase = data}};
+        0 -> {T#transfer{phase = data}, []};
         _ -> finish(T, {fail, {r1, word(R1)}})
     end;
 issued(#transfer{phase = data, op = read, moved = Moved, count = Count} = T, buffer_read_ready)
   when Moved < Count ->
-    {[read_block], T#transfer{moved = Moved + 1}};
+    {T#transfer{moved = Moved + 1}, [read_block]};
 issued(#transfer{phase = data, op = write, moved = Moved, count = Count} = T, buffer_write_ready)
   when Moved < Count ->
-    {[{write_block, Moved}], T#transfer{moved = Moved + 1}};
+    {T#transfer{moved = Moved + 1}, [{write_block, Moved}]};
 issued(#transfer{phase = data, moved = Count, count = Count} = T, {transfer_complete, AutoR1}) ->
     case auto_cmd12_errors(T, AutoR1) of
         0 when T#transfer.op =:= read ->
             finish(T, {answer, ok});
         0 ->
-            {[{issue, status}], T#transfer{phase = status}};
+            {T#transfer{phase = status}, [{issue, status}]};
         _ ->
             finish(T, {fail, {auto_cmd12, word(AutoR1)}})
     end;
@@ -495,4 +495,4 @@ event_name(Event) when is_tuple(Event), tuple_size(Event) > 0, is_atom(element(1
 event_name(_) -> other.
 
 finish(T, Action) ->
-    {[Action], T#transfer{phase = done}}.
+    {T#transfer{phase = done}, [Action]}.

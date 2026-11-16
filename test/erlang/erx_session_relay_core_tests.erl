@@ -27,10 +27,10 @@
 
 -record(t, {core, inbox = #{} :: #{term() => [term()]}}).
 
-new() -> #t{core = ?CORE:new(console)}.
+new() -> #t{core = ?CORE:new(console, #{master => present})}.
 
 do(Caller, Request, #t{core = Core} = T) ->
-    {Answer, Actions, Core1} = ?CORE:request(Caller, Request, Core),
+    {Core1, [{answer, Answer} | Actions]} = ?CORE:request(Caller, Request, Core),
     {Answer, deliver(Actions, T#t{core = Core1})}.
 
 %% A request that must be answered ok or {ok, _}.
@@ -42,7 +42,7 @@ ok(Caller, Request, T) ->
     end.
 
 ev(Event, #t{core = Core} = T) ->
-    {Actions, Core1} = ?CORE:event(Event, Core),
+    {Core1, Actions} = ?CORE:event(Event, Core),
     deliver(Actions, T#t{core = Core1}).
 
 type(Bytes, T) -> ev({master, {tty_input, Bytes}}, T).
@@ -349,6 +349,15 @@ the_end_of_file_test() ->
     T6 = ev({master, tty_hangup}, T5),
     ?assertMatch({eof, _}, do(pa, {tty_read, ar, 4096, N2}, T6)).
 
+%% A hangup tells the console at once, with no read waiting while a job holds, and
+%% drops the input typed before it, so the job's next read is the end of file.
+a_hangup_tells_the_console_at_once_test() ->
+    {_, T0} = take(console, type(<<"ab\n">>, a_holds())),
+    T1 = ev({master, tty_hangup}, T0),
+    ?assertMatch({[erx_console_eof], _}, take(console, T1)),
+    {_, N, T2} = report(pa, ar, ok(pa, {watch, ar, [{read, 4096}]}, T1)),
+    ?assertMatch({eof, _}, do(pa, {tty_read, ar, 4096, N}, T2)).
+
 %% Two shells keep their own numbers.
 two_shells_test() ->
     T0 = type(?CTRL_C, a_holds()),
@@ -453,6 +462,46 @@ a_drain_waits_for_the_master_test() ->
     {[drained], _} = take(ph, ev({master, {tty_taken, 0}}, T4)),
     T5 = ev({drain, {ph, drained}}, type(<<19>>, T2)),
     {[drained], _} = take(ph, T5).
+
+%% An out wait is reported once the room fits the widest rendering of one
+%% byte, not at one free byte as FreeBSD's poll is, at which a newline
+%% under ONLCR is eagain: with one byte free the watch waits for the
+%% master's take.
+an_out_wait_waits_for_room_for_any_byte_test() ->
+    {{ok, 4095}, T1} = do(pa, {write, aw, binary:copy(<<"x">>, 4095)}, a_holds()),
+    {eagain, T2} = do(pa, {write, aw, <<"\n">>}, T1),
+    T3 = no_report(pa, ok(pa, {watch, aw, [out]}, T2)),
+    {out, _, _} = report(pa, aw, ev({master, {tty_taken, 0}}, T3)).
+
+%% A writer that keeps adding between the master's takes does not hold an
+%% out wait off: after a newline found too little room, the take of output
+%% 0 leaves 2049 bytes free and the take of output 1, after the writer
+%% added 411, 3685, and each reports the watch. A rule that waited, after a
+%% short write, for nine tenths of the 4 KiB free reported neither.
+a_steady_writer_does_not_hold_an_out_wait_off_test() ->
+    T1 = ev({write, {pw, written}, binary:copy(<<"x">>, 2048)}, a_holds()),
+    T2 = ev({write, {pw, written}, binary:copy(<<"x">>, 2047)}, T1),
+    {eagain, T3} = do(pa, {write, aw, <<"\n">>}, T2),
+    T4 = no_report(pa, ok(pa, {watch, aw, [out]}, T3)),
+    {out, _, T5} = report(pa, aw, ev({master, {tty_taken, 0}}, T4)),
+    T6 = ev({master, {tty_taken, 1}}, ev({write, {pw, written}, binary:copy(<<"x">>, 411)}, T5)),
+    {out, _, _} = report(pa, aw, ok(pa, {watch, aw, [out]}, T6)).
+
+%% With no master, nothing is sent and a drain is answered at once, with
+%% bytes held and a writer's message waiting; a message as from a master is
+%% dropped.
+no_master_test() ->
+    T0 = #t{core = ?CORE:new(console, #{master => none})},
+    T1 = ok(pa, {open, console, write, cw}, T0),
+    {{ok, 4096}, T2} = do(pa, {write, cw, binary:copy(<<"x">>, 4096)}, T1),
+    T3 = ev({write, {ph, written}, <<"y">>}, T2),
+    T4 = ev({drain, {ph, drained}}, T3),
+    {[drained], T5} = take(ph, T4),
+    {[], T6} = take(master, T5),
+    T7 = ok(console, {open, console, read, c}, T6),
+    T8 = ok(console, {watch, c, [in]}, T7),
+    T9 = ev({master, {tty_size, 10, 20}}, type(<<"rm\n">>, T8)),
+    {[], _} = take(console, T9).
 
 %%% The exploration
 

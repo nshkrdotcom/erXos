@@ -1238,11 +1238,12 @@ The 5 MiB data area in 512-byte clusters is 10,240 clusters, a FAT16 by
 the cluster count the FAT specification sets
 ([design-storage.md](design-storage.md#references)). The partition
 starts 1 MiB into the medium (`medium_record_start`), so it ends at
-9 MiB, and slot A starts at 12 MiB (`medium_slot_a_start`, sector
+9 MiB, and boot A starts at 12 MiB (`medium_boot_a_start`, sector
 24,576); `abi/medium.txt` holds these values and the later partitions'
 starts. The record has two
-encodings, `medium_record_a` while slot A, the medium's second partition,
-is committed and `medium_record_b` while slot B, its third, is. Each is
+encodings, `medium_record_a` while slot A, whose boot partition is the
+medium's second, is committed and `medium_record_b` while slot B, whose boot
+partition is its third, is. Each is
 followed by zeros to the end of the sector, and both have the same length,
 since a commit rewrites the sector and never the FAT's directory entry
 that records the file's length. Each is the Raspberry Pi firmware's
@@ -1281,9 +1282,15 @@ request its one-shot `tryboot` flag
   writes the other encoding, which names S.
 * Each slot is a boot partition the firmware reads, a FAT partition
   holding the firmware's files and the single bootable file as the
-  kernel file, which carries the boot image inside it, followed in
-  the same partition by the EROFS images, so no domain on the target
-  parses that FAT. The packer refuses a slot image whose firmware predates
+  kernel file, which carries the boot image inside it, and a system
+  partition, the EROFS file system of
+  [design-storage.md](design-storage.md#data-model), which no firmware
+  reads; no domain on the target parses the boot partition's FAT. The
+  bootloader names a boot partition by its number, counted from 1, and
+  boots only a FAT partition, so the boot partitions are the master boot
+  record's entries 2 and 3 and the system partitions lie in its extended
+  partition ([design-storage.md](design-storage.md#references)). The
+  packer refuses a slot image whose firmware predates
   the version that the board's port records as reporting the boot value
   and honouring `tryboot`.
 * `ERX_END_TRIAL` sets the flag as [Trial requests](#trial-requests)
@@ -1327,7 +1334,7 @@ length (`image_size` of the header,
 [design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)). The harness's
 slot parser reads the record's sector and the chosen slot's boot header,
 refuses an unreadable record, a header without its magic, and a length
-shorter than the header or running past the slot's end, since a guest
+shorter than the header or running past the boot partition's end, since a guest
 may have written either, and has a fuzz target. The harness copies that
 many bytes out of the slot into a file of its own for `-kernel`, attaches
 the medium as the guest's raw block device, and writes
@@ -1360,8 +1367,9 @@ machine boots the committed slot
 
 ### Trust in the boot
 
-A boot can be trusted, and with it the console's prompts and the root
-hashes of the EROFS images that its boot image carries
+A boot can be trusted, and with it the console's prompts and the hashes
+by which its boot image pins the packages and releases of the system
+partition
 ([design-storage.md](design-storage.md#system-updates)), only as far as
 the platform checks the boot image before the kernel runs:
 
@@ -1377,8 +1385,8 @@ loads `boot.img` whole into memory; in trial mode (`tryboot_a_b=1`) it
 loads `boot.img` from the trial's partition, as it loads `config.txt` from
 it. Checking `boot.img` costs boot time in proportion to its size, about
 3.5 s for 9 MB on the Pi 4 by Raspberry Pi's figure, almost all of it
-SHA-256, so the boot image stays small and the EROFS images, checked
-through the root hashes it carries, hold the rest. The packer refuses a
+SHA-256, so the boot image stays small and the system partition's
+self-checking files, pinned by the hashes it carries, hold the rest. The packer refuses a
 `boot.img` larger than the board port's limit, which the port derives from
 the checking rate it measures and the firmware watchdog's timeout, less a
 margin, so a signed slot's check never runs the watchdog out before the
@@ -1677,7 +1685,7 @@ tree the firmware made from the partition's tree and `uart3` overlay is
 the one erXos expects. Anything at all after BL31 on this card also means
 the bootloader read `autoboot.txt` from the record's FAT16 in partition 1
 and booted slot A's FAT32 in partition 2, since partition 1 holds no boot
-files (slot A's volume covers only its partition's first 128 MiB); the
+files (boot A's volume is the whole of its partition, 128 MiB); the
 bootloader's version, from its own log or from a running system, goes
 into the board's port as the oldest that honours `autoboot.txt`. A
 board whose bootloader stops before BL31 with this card and boots an
@@ -1790,8 +1798,8 @@ opens in root's session. Type each command as shown and press Enter.
    prints `written on the board`. Two errors mean the write never
    reached littlefs:
    * a read-only file system error (`erofs`): the session holds no
-     `data` grant, so `/data` is the release image's own empty directory,
-     and the release image is a read-only EROFS image;
+     `data` grant, so `/data` is the release slice's own empty directory,
+     and the release slice is read-only;
    * an I/O error (`eio`): the grant is there but no volume is behind it,
      because the storage domain has no card or did not mount it, which
      step 3's lines explain.
@@ -2183,7 +2191,7 @@ running (PL4).
 | The firmware places the device tree over the single file, refuses a kernel file that long, or describes `/chosen` differently than expected | low | the kernel's boot stops with a message | the boot probe confirms each board before anything depends on it |
 | The BCM2712's link drops between the PCIe enumerator's check and a configuration access | low | the PCIe domain ends and is restarted, or an asynchronous abort stops an unrelated thread | the enumerator checks the link before each access; the board port measures whether the abort is synchronous; a restart of the PCIe domain re-reads configuration space and changes no running function |
 | The crash region does not survive `SYSTEM_RESET` on a board, or the firmware clears it | medium | no crash record after a reset on that board; the early console alone | the boot probe checks it; the record's check rejects what the firmware left; the early console carries every record |
-| A damaged record partition, or a slot without valid boot files, lets the bootloader's `PARTITION_WALK` boot another partition than the record names, or leaves the card unbootable | low | the wrong slot boots, or the board needs an installation | the record changes only at a commit and a torn record needs an installation ([design-storage.md](design-storage.md#risks-and-open-questions)); the board pass records the EEPROM's `BOOT_ORDER` and `PARTITION_WALK` and what a card with a damaged record partition boots |
+| A damaged record partition, or a slot without valid boot files, lets the bootloader's `PARTITION_WALK` boot another partition than the record names, or leaves the card unbootable | low | the wrong slot boots, or the board needs an installation | the record changes only at a commit and a torn record needs an installation ([design-storage.md](design-storage.md#risks-and-open-questions)); the board pass records the EEPROM's `BOOT_ORDER` and `PARTITION_WALK`, what a card with a damaged record partition boots, and the partition `/chosen/bootloader/partition` then reports, which must be the one booted, since the slot it names decides which system partition is checked against the booted manifest's root hash ([design-storage.md](design-storage.md#the-system-tree)) |
 | A reset through the power-management watchdog boots `kernel_watchdog_partition` rather than `autoboot.txt`'s slot | low | a reset boots the wrong slot | each slot's `config.txt` leaves the setting unset; the board port checks which slot a watchdog reset boots |
 | The system runtime's first pet comes after the kernel's deadline on a board | medium | a boot loop | the board port measures the time to the first pet and checks that it fits `B` |
 | A firmware version answers the mailbox's read of the key's rows differently, or not at all | low | the board has no device secret, and a vault configured for `device` serves no login | the board port records the firmware version its read needs, as it does for the trial request |

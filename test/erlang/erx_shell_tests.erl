@@ -263,6 +263,46 @@ other_node_pid() ->
     Node = <<"other@nohost">>,
     binary_to_term(<<131, 88, 119, (byte_size(Node)), Node/binary, 1:32, 0:32, 1:32>>).
 
+%% The shell tells the relay who holds the terminal (docs/design-shell.md,
+%% "The foreground rule"): each line takes it under the cooked termios
+%% before it runs and the console takes it back when the line ends, every
+%% request naming the shell's group; Ctrl-C at the prompt counts.
+foreground_follows_lines_test_() ->
+    {timeout, 30,
+     fun() ->
+             Parent = self(),
+             Foreground = fun(Target, Signals) ->
+                                  Parent ! {foreground, Target, Signals},
+                                  {ok, left, element(2, Signals)}
+                          end,
+             {Group, _Shown} = session_group([{line, <<"true\n">>}, interrupted,
+                                              {line, <<"true\n">>}, eof],
+                                             erx_shell_basic_runner, #{foreground => Foreground}),
+             Asked = collect_foreground([]),
+             ?assertMatch([{{L1, cooked}, {Group, 0}}, {console, {Group, 0}},
+                           {{L2, cooked}, {Group, 1}}, {console, {Group, 1}}]
+                            when is_pid(L1) andalso is_pid(L2) andalso L1 =/= L2, Asked)
+     end}.
+
+%% A refused `foreground` ends the shell, its reason carrying the request
+%% and the answer. Seeded: a shell that ignores the answer lives on.
+refused_foreground_ends_the_shell_test_() ->
+    {timeout, 30,
+     fun() ->
+             Refuse = fun(_Target, _Signals) -> {error, einval} end,
+             {_Group, Shown} = session_group([{line, <<"true\n">>}, eof],
+                                             erx_shell_basic_runner, #{foreground => Refuse}),
+             ?assertMatch({exit, {shutdown, {foreground_refused, {_, cooked}, 0, {error, einval}}}},
+                          lists:last(Shown))
+     end}.
+
+collect_foreground(Asked) ->
+    receive
+        {foreground, Target, Signals} -> collect_foreground([{Target, Signals} | Asked])
+    after 0 ->
+        lists:reverse(Asked)
+    end.
+
 %% A burst of size changes reaches the process of the foreground line that
 %% asked for them as one or two messages, and nothing reaches its helper,
 %% which did not ask.
@@ -364,11 +404,15 @@ session(Script, Runner) ->
 
 %% session/2 that also returns the group the shell ran on.
 session_group(Script, Runner) ->
+    session_group(Script, Runner, #{}).
+
+%% session_group/2 with Extra added to the shell's terminal.
+session_group(Script, Runner, Extra) ->
     Parent = self(),
-    Group = spawn_link(fun() -> group(Parent, Script, Runner) end),
+    Group = spawn_link(fun() -> group(Parent, Script, Runner, Extra) end),
     receive {Group, Shown} -> {Group, Shown} end.
 
-group(Parent, Script, Runner) ->
+group(Parent, Script, Runner, Extra) ->
     process_flag(trap_exit, true),
     group_leader(self(), self()),
     Me = self(),
@@ -377,7 +421,7 @@ group(Parent, Script, Runner) ->
                     Me ! {write, self(), Ref, iolist_to_binary(Bytes)},
                     receive Ref -> ok end
             end,
-    Shell = erx_shell:server({Runner, #{write => Write}}),
+    Shell = erx_shell:server({Runner, maps:merge(#{write => Write}, Extra)}),
     link(Shell),
     %% For checks, which run in this process.
     put(shell, Shell),
@@ -417,7 +461,9 @@ serve(Shell, Script, Shown) ->
             [Shell ! {self(), winch} || _ <- lists:seq(1, Count)],
             serve(Shell, Script, Shown);
         {'EXIT', Shell, normal} ->
-            lists:reverse(Shown)
+            lists:reverse(Shown);
+        {'EXIT', Shell, Reason} ->
+            lists:reverse([{exit, Reason} | Shown])
     end.
 
 answer({line, Bytes}) -> unicode:characters_to_list(Bytes);

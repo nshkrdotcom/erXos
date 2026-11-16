@@ -524,14 +524,14 @@ module Erx
     SERVICE_KILL_EXPRESSION = "#{SERVICE_KILL_LIVES},#{SERVICE_KILL_WAIT},#{SERVICE_KILL_ASK},#{SERVICE_KILL_DEATHS}," \
                               "#{SERVICE_KILL_FORGED},#{SERVICE_KILL_WATCH},#{SERVICE_KILL_CALL},#{SERVICE_KILL_BURST}," \
                               'SdL=SdWait(600),' \
-                              "io:format(\"~0p~n\",[{service_kill,SdL,#{SERVICE_KILL_SYSTEM},SdPeers(SdL),SdForged(#{DOMAINS.fetch('erts')},erts@erxos)}])," \
-                              "#{SERVICE_KILL_TABLE},io:format(\"~0p~n\",[{control_table,SdHolding,SdFull,SdPaused()>SdP0,SdStray,SdIntro,SdHeld}])," \
-                              "#{SERVICE_KILL_INTRODUCED},io:format(\"~0p~n\",[{introduced,SdUps,SdNodes,SdServing,SdPong}])," \
-                              "#{SERVICE_KILL_HOSTILE},io:format(\"~0p~n\",[{hostile,SdZr,SdZw,SdZad,SdZdd,SdZx,SdZvs,SdZpong,SdZph}])," \
-                              "#{SERVICE_KILL_DOWN},io:format(\"~0p~n\",[{connection_down,SdKh,SdKbv,SdKcv,SdN1,SdR1,SdMh,SdMfv,SdMwv,SdN2,SdR2,SdStale}])," \
-                              "#{SERVICE_KILL_IGNORED},io:format(\"~0p~n\",[{ignored_down,SdYh,SdYc,SdYp,SdYv,SdYr,SdYn,SdYi}])," \
-                              "#{SERVICE_KILL_ENDS},#{SERVICE_KILL_LATER},io:format(\"~0p~n\",[{later_domain,SdNh,SdLi,SdLv,SdLqr,SdLqv,SdLn}])," \
-                              "#{SERVICE_KILL_HALT},io:format(\"~0p~n\",[{domain_ends,SdE1,SdL1,SdV1,SdG2,SdE2,SdV2,SdB1,SdB2,SdV3,SdV4}])," \
+                              "io:format(\"~0kp~n\",[{service_kill,SdL,#{SERVICE_KILL_SYSTEM},SdPeers(SdL),SdForged(#{DOMAINS.fetch('erts')},erts@erxos)}])," \
+                              "#{SERVICE_KILL_TABLE},io:format(\"~0kp~n\",[{control_table,SdHolding,SdFull,SdPaused()>SdP0,SdStray,SdIntro,SdHeld}])," \
+                              "#{SERVICE_KILL_INTRODUCED},io:format(\"~0kp~n\",[{introduced,SdUps,SdNodes,SdServing,SdPong}])," \
+                              "#{SERVICE_KILL_HOSTILE},io:format(\"~0kp~n\",[{hostile,SdZr,SdZw,SdZad,SdZdd,SdZx,SdZvs,SdZpong,SdZph}])," \
+                              "#{SERVICE_KILL_DOWN},io:format(\"~0kp~n\",[{connection_down,SdKh,SdKbv,SdKcv,SdN1,SdR1,SdMh,SdMfv,SdMwv,SdN2,SdR2,SdStale}])," \
+                              "#{SERVICE_KILL_IGNORED},io:format(\"~0kp~n\",[{ignored_down,SdYh,SdYc,SdYp,SdYv,SdYr,SdYn,SdYi}])," \
+                              "#{SERVICE_KILL_ENDS},#{SERVICE_KILL_LATER},io:format(\"~0kp~n\",[{later_domain,SdNh,SdLi,SdLv,SdLqr,SdLqv,SdLn}])," \
+                              "#{SERVICE_KILL_HALT},io:format(\"~0kp~n\",[{domain_ends,SdE1,SdL1,SdV1,SdG2,SdE2,SdV2,SdB1,SdB2,SdV3,SdV4}])," \
                               'exit(whereis(erx_domain_srv),kill).'
     SERVICE_KILL_ANSWER = begin
       lives = DOMAINS.map { |name, id| "{#{id},#{name}@erxos,ready}" }.join(',')
@@ -546,7 +546,7 @@ module Erx
     ECHO_EXPRESSION = 'SdEcho=fun SdE(0)->none;SdE(SdK)->case maps:get({system,echo},' \
                       'maps:get(grants,gen_server:call(erx_domain_srv,mints)),none) of ' \
                       '{installed,_,SdEf}->SdEf;_->timer:sleep(100),SdE(SdK-1) end end,SdEf=SdEcho(600),' \
-                      'io:format("~0p~n",[{echo_facet,SdEf=:=erx:cap(echo),catch gen_server:call(SdEf,{echo,hi},5000),' \
+                      'io:format("~0kp~n",[{echo_facet,SdEf=:=erx:cap(echo),catch gen_server:call(SdEf,{echo,hi},5000),' \
                       'catch gen_server:call(SdEf,other,5000),maps:get(counts,gen_server:call(erx_domain_srv,mints))}])'
     # erts's facet installed in the system domain, which erx:cap/1 finds, answers the echo
     # and refuses the other request; erts's report had relay refused as a mint it does not
@@ -586,14 +586,13 @@ module Erx
 
     module_function
 
-    # The machine both images boot on: MediumBoot's, 128 MiB larger, with Fiasco's
-    # reserve grown in step (6% of RAM, rounded up as Fiasco rounds it; MediumBoot's
-    # 48 MiB of 768 kept as the same share). The re-grant image (Regrant) holds three
+    # The machine both images boot on: MediumBoot's, 128 MiB larger, of which Fiasco
+    # keeps 54 MiB (Platform.fiasco_reserve). The re-grant image (Regrant) holds three
     # domains' budgets in root_memory and carries the session release beside them, so its
     # archive outgrows the room the medium machine leaves root_memory; such an archive
     # asks for a larger machine, never a smaller root_memory (docs/design-stopgap.md,
     # "The root startup rule").
-    def machine(platform) = MediumBoot.machine(platform).with(memory_mib: 896, fiasco_reserve_mib: 56)
+    def machine(platform) = MediumBoot.machine(platform).with(memory_mib: 896)
 
     # The manifest: MediumBoot's, room for two domains, with ECHO_ROW, PEER_ROW and ECHO_SERVICES for its rows.
     def manifest(source) = MediumBoot.manifest(source, row: ECHO_ROW + PEER_ROW + ECHO_SERVICES)

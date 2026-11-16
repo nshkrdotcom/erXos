@@ -13,11 +13,13 @@
  *
  * One line per catalogue entry, then one per service row, then one per
  * configured row that serves a display, with the display its creation puts
- * in its environment:
+ * in its environment, then, for the configured row whose boot page carries
+ * -erx_record system_image, that record's words after its form:
  *
  *   device INDEX unit=NAME compatible=STRING|none ranges=BASE+SIZE,... lines=LINE,... confined=0|1
  *   service INDEX name=NAME server=ROW|none interface=NUMBER
  *   display ROW name=NAME policy=NUMBER idle_dim_s=SECONDS idle_off_s=SECONDS
+ *   system_image ROW LEN TREE_OFF TREE_LEN SALT ROOT
  *
  * numbers in hexadecimal for ranges and decimal elsewhere. A view the
  * library refuses prints `refused REASON` alone. A malformed input prints
@@ -48,7 +50,9 @@
 #include "erx/abi.h"
 #include "erx/abi_reader.h"
 #include "erx/dom.h"
+#include "erx/boot_words.h"
 #include "erx/dom_lib.h"
+#include "liberx/backend/core/boot_manifest.h"
 #include "input.h"
 
 static void
@@ -122,6 +126,24 @@ print_service(uint32_t index, const erx_dom_service_t *service)
 	printf(" interface=%" PRIu32 "\n", service->interface);
 }
 
+/* The system window holder's -erx_record system_image words, as its creation writes them. */
+static bool
+print_system_image(const erx_dom_lib_t *lib)
+{
+	char words[ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX];
+	size_t used;
+
+	if (lib->system_image_row == ERX_MF_NONE)
+		return (true);
+	if ((used = erx_boot_system_image_words(&lib->system_image, words, sizeof(words))) == 0)
+		return (false);
+	printf("system_image %" PRIu32, lib->system_image_row);
+	for (size_t at = sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("system_image"); at < used; at += strlen(words + at) + 1)
+		printf(" %s", words + at);
+	printf("\n");
+	return (true);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -159,6 +181,9 @@ main(int argc, char **argv)
 		print_device(index, &lib.view.devices[index]);
 	for (uint32_t index = 0; index < lib.view.nservices; index++)
 		print_service(index, &lib.view.services[index]);
+	if (lib.view.apps.max != 0)
+		printf("apps template=%" PRIu32 " first=%" PRIu32 " max=%" PRIu32 " memory=%" PRIu64 " principals=%" PRIu32 "\n",
+		    lib.view.apps.template, lib.view.apps.first, lib.view.apps.max, lib.view.apps.memory, lib.view.nprincipals);
 	for (uint32_t index = 0; index < lib.view.nconfigured; index++) {
 		const erx_dom_display_t *display = &lib.view.configured[index].display;
 
@@ -167,5 +192,7 @@ main(int argc, char **argv)
 			    index, (int)display->name_len, display->name, display->policy, display->idle_dim_s,
 			    display->idle_off_s);
 	}
+	if (!print_system_image(&lib))
+		return (2);
 	return (fflush(stdout) == 0 ? 0 : 2);
 }

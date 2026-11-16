@@ -31,6 +31,10 @@ limit start_ctl_max u32 4096
 # table each refuse a value past them.
 limit start_restarts_max u32 100
 limit start_period_max_s u32 86400
+# The intensity of a start row that states none, a manifest row's or a package's
+# (docs/design-packaging.md, "The declaration"): 5 ends within 600 seconds.
+limit start_restarts_default u32 5
+limit start_period_default_s u32 600
 # The seconds a configured domain's init has to report ready to the domain
 # service: its row's boot_timeout_s, which the manifest source may leave out
 # for the default, and which the reader bounds to 1 .. boot_timeout_max_s, so
@@ -61,6 +65,8 @@ flags mf_domain_flags u32
   bit required 0
   bit rescue 1
 flags mf_start_flags u32
+  bit enabled 0
+flags mf_package_flags u32
   bit enabled 0
 flags mf_limits_flags u32
   bit spaces 0
@@ -93,15 +99,23 @@ enum mf_dma u32
   value unconfined 2
 flags mf_device_flags u32
   bit hostile 0
+# A partition window's role (docs/design-abi.md, "Devices and partition windows"): the
+# slots' boot and system partitions and the two records are the slot writer's; system is
+# the one read-only window on the system partition of the slot the boot value names, and
+# an unknown boot has none (docs/design-storage.md, PW1). verified_image is a window on
+# one EROFS image of the booted slot (docs/todo-system-partition.md, deletions).
 enum mf_window_role u32
-  value slot_a 1
-  value slot_b 2
+  value boot_a 1
+  value boot_b 2
   value boot_selection 3
   value reset_count 4
   value vault 5
   value data 6
   value fat 7
-  value verified_image 8
+  value system 8
+  value system_a 9
+  value system_b 10
+  value verified_image 11
 flags mf_window_rights u32
   bit read 0
   bit write 1
@@ -115,6 +129,7 @@ enum mf_parameter_kind u32
   value principal 7
   value device 8
   value bytes 9
+  value member 10
 # A name that is an identifier, a domain's or a service's among them
 # (docs/design-system.md, "Identifiers"): 1 to this many bytes.
 limit identifier_max u32 63
@@ -142,6 +157,15 @@ bytes display_idle_off_key 18 value 646973706c61795f69646c655f6f66665f73
 # files"): "principal", its principal's number in decimal. A session
 # template's environment may set neither it nor "display".
 bytes principal_key 9 value 7072696e636970616c
+# The name of the service whose facet rows hold the packages
+# (docs/design-packaging.md, "The apps row"): "packages". The app
+# template's row of it is the one every app's session keeps.
+bytes packages_service 8 value 7061636b61676573
+# The name of the service that serves the `system` tree (docs/design-storage.md,
+# "The `system` tree"): "system", an instance of files whose server holds the
+# manifest's `system` window (property 19). The app template's row of it is the one
+# from which an app's session mounts its image package.
+bytes system_service 6 value 73797374656d
 enum mf_image_format u32
   value erofs_verity 1
   value erofs_unchecked 2
@@ -167,7 +191,7 @@ layout erx_share wire_le 8 48
   field ceiling urgency 41
   field flags group_flags 42
   padding 44 4
-layout erx_manifest wire_le 8 400
+layout erx_manifest wire_le 8 448
   field magic u32 0
   field version u16 4
   field flags manifest_flags 6
@@ -216,6 +240,12 @@ layout erx_manifest wire_le 8 400
   field sessions erx_mf_span 376
   field starts erx_mf_span 384
   field displays erx_mf_span 392
+  field apps erx_mf_span 400
+  field app_services erx_mf_span 408
+  field packages erx_mf_span 416
+  field signers erx_mf_span 424
+  field development_key erx_mf_span 432
+  field system_image erx_mf_span 440
 layout erx_mf_principal wire_le 8 80
   field name erx_mf_str 0
   field memory u64 8
@@ -269,6 +299,56 @@ layout erx_mf_display wire_le 4 16
   field policy mf_display_policy 4
   field idle_dim_s u32 8
   field idle_off_s u32 12
+# The apps row (docs/design-packaging.md, "The apps row"), at most one: the budget all
+# apps share, how many apps a boot holds, the app template the build derives from it
+# (the session row naming no principal) and that template's packages facet row, and
+# its services, the rows of app_services it owns, each the index of a service an app
+# may name in its needs and of the facet row granted to the template for it. The boot
+# view checks once that the indices name those rows and that the template holds no
+# other facet row, each named once (docs/design-packaging.md, "The template's rows by
+# index").
+layout erx_mf_apps wire_le 8 32
+  field memory u64 0
+  field max u32 8
+  field app_template u32 12
+  field packages_facet u32 16
+  field reserved u32 20
+  field services erx_mf_span 24
+  zero reserved all
+layout erx_mf_app_service wire_le 4 8
+  field service u32 0
+  field facet u32 4
+# A package of the image (docs/design-packaging.md, "Where a package lies"): its app's
+# name, whether its start row is enabled, and the SHA-256 of its header, by which the
+# machine trusts it whoever signed it.
+layout erx_mf_package wire_le 4 44
+  field name erx_mf_str 0
+  field flags mf_package_flags 8
+  field sha256 u8 12 count 32
+# A signer row: its name and the Ed25519 public key that authenticates the headers of
+# the packages it signs.
+layout erx_mf_signer wire_le 4 40
+  field name erx_mf_str 0
+  field key u8 8 count @signer_key_bytes
+# A development build's trust in its builder's development package key
+# (docs/design-packaging.md, "The SDK"): the key's public half, carried from the build
+# context, never from a signer row, and at most one, in a development manifest only.
+layout erx_mf_development_key wire_le 1 32
+  field key u8 0 count @signer_key_bytes
+# The booted slot's system partition (docs/design-stopgap.md, "The booted slot"): one
+# EROFS image of image_length bytes from the partition's start, and its dm-verity tree,
+# tree_length bytes at tree_offset, under salt (its first salt_length bytes) and
+# root_hash. At most one row, which the domain library writes as `-erx_record
+# system_image` into the arguments of the `system` window's holder alone.
+layout erx_mf_system_image wire_le 8 96
+  field image_length u64 0
+  field tree_offset u64 8
+  field tree_length u64 16
+  field salt_length u32 24
+  field reserved u32 28
+  field salt u8 32 count 32
+  field root_hash u8 64 count 32
+  zero reserved all
 layout erx_mf_limits wire_le 8 160
   field name erx_mf_str 0
   field memory u64 8
@@ -404,14 +484,14 @@ reader manifest erx_manifest @manifest_bytes_max
   extent root.length
   value root.magic @manifest_magic
   value root.version @manifest_version
-  value root.header_size 400
+  value root.header_size 448
   range root.max_domains 0 65536
   range root.max_connections 1 65536
   range root.system_reserve 1 1000
   range domains[].boot_timeout_s 1 @boot_timeout_max_s
-  choice root.flags manifest_mode root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.partial_boot.count
-    case release root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count
-    case development root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count
+  choice root.flags manifest_mode root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count,root.system_image.count,root.partial_boot.count
+    case release root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.system_image.count
+    case development root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count,root.system_image.count
     case partial root.partial_boot.count
   table principals erx_mf_principal root.principals.offset root.principals.count @manifest_records_max 8
   table domains erx_mf_domain root.domains.offset root.domains.count @manifest_records_max 8
@@ -435,8 +515,14 @@ reader manifest erx_manifest @manifest_bytes_max
   table partial_boot erx_mf_partial_boot root.partial_boot.offset root.partial_boot.count @manifest_records_max 8
   table starts erx_mf_start root.starts.offset root.starts.count @start_rows_max 4
   table displays erx_mf_display root.displays.offset root.displays.count @manifest_records_max 4
+  table apps erx_mf_apps root.apps.offset root.apps.count 1 8
+  table app_services erx_mf_app_service root.app_services.offset root.app_services.count @manifest_records_max 4
+  table packages erx_mf_package root.packages.offset root.packages.count @apps_max_limit 4
+  table signers erx_mf_signer root.signers.offset root.signers.count @manifest_records_max 4
+  table development_key erx_mf_development_key root.development_key.offset root.development_key.count 1 1
+  table system_image erx_mf_system_image root.system_image.offset root.system_image.count 1 8
   string_table strings root.strings.offset root.strings.count @manifest_strings_max
-  order principals domains sessions limits runtime_limits lane_classes units devices windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays strings
+  order principals domains sessions limits runtime_limits lane_classes units devices windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays apps app_services packages signers development_key system_image strings
   index root.system_principal principals
   index root.system_runtime_limits runtime_limits
   index root.native_limits limits
@@ -453,7 +539,7 @@ reader manifest erx_manifest @manifest_bytes_max
   string domains[].env.offset domains[].env.length strings env 2048 empty yes
   index domains[].principal principals
   index domains[].limits limits
-  index sessions[].principal principals
+  index sessions[].principal principals absent 0xffffffff
   index sessions[].limits limits
   string sessions[].args.offset sessions[].args.length strings args 2048 empty yes
   string sessions[].env.offset sessions[].env.length strings env 2048 empty yes
@@ -505,6 +591,7 @@ reader manifest erx_manifest @manifest_bytes_max
     case principal facet_parameters[].index
     case device facet_parameters[].index
     case bytes facet_parameters[].bytes
+    case member facet_parameters[].scalar
   range facet_parameters[].scalar 0 1 when facet_parameters[].kind boolean
   index facet_parameters[].index domains when facet_parameters[].kind domain
   index facet_parameters[].index principals when facet_parameters[].kind principal
@@ -519,6 +606,7 @@ reader manifest erx_manifest @manifest_bytes_max
   partition images[].extents.offset images[].extents.count extents
   range images[].extents.count 1 @manifest_records_max
   range images[].salt_length 0 32
+  range system_image[].salt_length 1 32
   index boot_order[].domain domains
   index liveness[].service services
   index shell_principals[].principal principals
@@ -528,3 +616,12 @@ reader manifest erx_manifest @manifest_bytes_max
   range starts[].restarts 0 @start_restarts_max
   range starts[].restart_period_s 1 @start_period_max_s
   index displays[].service services
+  range apps[].memory 1 18446744073709551615
+  range apps[].max 1 @apps_max_limit
+  partition apps[].services.offset apps[].services.count app_services
+  index apps[].app_template sessions
+  index apps[].packages_facet facets
+  index app_services[].service services
+  index app_services[].facet facets
+  string packages[].name.offset packages[].name.length strings identifier 63 empty no
+  string signers[].name.offset signers[].name.length strings identifier 63 empty no

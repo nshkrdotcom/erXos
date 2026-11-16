@@ -205,20 +205,38 @@ development_flag(Flags) ->
 
 -doc """
 Whether build facts, as facts/0 answers them, name a development build: the
-kind of their configuration, `Platform/Kind`. Any domain can take this
-answer for its own release, unlike development/0's, since the image build
-writes the facts into every release from the same build kind as the
-manifest's flag. Facts that are missing, unreadable or `unknown` are a
-release build's. Pure, for its tests.
+kind of their configuration, `Platform/Kind`, is development (kind/1), as
+`development` or a local test image's `development-local`. Any domain can
+take this answer for its own release, unlike development/0's, since the
+image build writes the facts into every release from the same build kind as
+the manifest's flag. Facts that are missing, unreadable or `unknown` are not
+a development build's. Pure, for its tests.
 """.
 -spec development_facts({ok, facts()} | {error, term()}) -> boolean().
 development_facts({ok, #{configuration := Configuration}}) when is_binary(Configuration) ->
     case binary:split(Configuration, <<"/">>) of
-        [_Platform, <<"development">>] -> true;
-        _ -> false
+        [_Platform, Kind] -> kind(Kind) =:= {ok, development};
+        [_] -> false
     end;
 development_facts(_) ->
     false.
+
+%% The build kind a configuration's Kind, the part after its slash, names:
+%% development or release (abi/erx_abi.txt's build_kind_development and
+%% build_kind_release), alone or with a local test image's suffix
+%% (build_kind_local_suffix). No other kind exists, so any other is an error,
+%% never taken for either.
+kind(Kind) ->
+    Local = ?ERX_BUILD_KIND_LOCAL_SUFFIX_BYTES,
+    Cut = byte_size(Kind) - byte_size(Local),
+    case Kind of
+        <<Base:Cut/binary, Local/binary>> when Cut >= 0 -> base_kind(Base);
+        _ -> base_kind(Kind)
+    end.
+
+base_kind(?ERX_BUILD_KIND_DEVELOPMENT_BYTES) -> {ok, development};
+base_kind(?ERX_BUILD_KIND_RELEASE_BYTES) -> {ok, release};
+base_kind(_) -> error.
 
 -doc "The build facts in this runtime's release.".
 -spec facts() -> {ok, facts()} | {error, {atom(), string()}}.
@@ -310,11 +328,10 @@ fact(date, Value) ->
         error -> error
     end;
 fact(configuration, Value) ->
-    Name = fun(C) -> lower(C) orelse digit(C) orelse C =:= $- end,
+    PlatformRest = fun(C) -> lower(C) orelse digit(C) orelse C =:= $- end,
     case binary:split(Value, <<"/">>) of
         [Platform, Kind] ->
-            case {shaped(Platform, 64, fun(C) -> lower(C) orelse digit(C) end, Name),
-                  shaped(Kind, 32, fun lower/1, Name)} of
+            case {shaped(Platform, 64, fun(C) -> lower(C) orelse digit(C) end, PlatformRest), kind(Kind)} of
                 {{ok, _}, {ok, _}} -> {ok, Value};
                 _ -> error
             end;

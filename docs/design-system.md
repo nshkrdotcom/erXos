@@ -347,7 +347,7 @@ native pointer from the file.
 The records cover principals, configured domains, named domain and
 runtime limits, lane classes, units and devices, role-based partition
 windows, displays, services, facets with typed bounded scope parameters,
-introductions, read-only image extents and hash-tree metadata, boot order,
+introductions, read-only images' paths and hash-tree metadata, boot order,
 liveness, system-shell principals, the console lines' `secure`
 attributes and partial-boot programs. A unit owns its devices' one
 holder field. Domain records refer to complete named
@@ -369,7 +369,7 @@ content, so both readers have a fuzz target
 | --- | --- |
 | the root-task entry, in C | `root_memory`, which it compares with the root budget before anything else; the shares of `system` and `users`; the system principal's budget; the sizes of the domain library's tables; a development build's partial boot |
 | the domain service | the configured domains in the boot order, their restart intensities, `required` and rescue marks, facets and introductions; `system_lane`, `system_queue`, `peer_held` and `system_reserve`; the host name; the vault's sealing backend, which it passes to the vault at its creation |
-| the device service | each device's holder, unit and confinement mark, each domain's windows by role, the image records, an unconfined device's memory size, and the console's and the host link's paths |
+| the device service | each device's holder, unit and confinement mark, each domain's windows by role, an unconfined device's memory size, and the console's and the host link's paths |
 | the resource policy | the principals' budgets, shares and quotas; the lane size per class; `system_reserve`, which bounds the service grants it sets |
 | the principal service | the principals, and which of them are system-shell principals, which it tells the console with each login it confirms |
 | the start service | the `start` rows, the principals with a session template, and the `windows` services each template is granted, by which it checks a row's display ([design-apps.md](design-apps.md#the-start-table)) |
@@ -653,7 +653,10 @@ violation fails the build with the property, the record and the field:
     grant of its service costs the display its `pixels`, or
     `windows_pixels_default` of `abi/services/windows.txt` where the
     facet row states none, rounded up to pages, and the side the display
-    reads for it, the display's own `lane` rounded up to pages; no facet
+    reads for it, the display's own `lane` rounded up to pages, and for
+    a grant whose facet row carries `clipboard`, the one copy it may hold
+    while a fid is open for writing, `windows_clipboard_bytes` rounded up
+    to pages; no facet
     row grants a display to the system domain, since its connection to
     the display is made by the display's creation, not by an
     introduction, and so carries no pixel area, which design-display.md
@@ -662,16 +665,22 @@ violation fails the build with the property, the record and the field:
     session template, as many times as its principal's `domains` quota
     lets sessions of it live at once; the costs sum within the display
     domain's outer budget, since the display pays for every pixel area it
-    maps and every side it reads; and no facet row sets the `session`
+    maps and every side it reads; no facet row sets the `session`
     parameter, which the domain service alone sets
-    ([design-display.md](design-display.md#the-pixel-area)). Seeded
+    ([design-display.md](design-display.md#the-pixel-area)); and no
+    facet row turns `clipboard` on for a configured domain on a display
+    whose policy is `single`, which never shows a configured domain's
+    window, so that grant could never hold the window taking the
+    keyboard and use the clipboard
+    ([design-display.md](design-display.md#the-window-process)). Seeded
     violations: a check that counts a template's row once, which admits
     a template whose sessions together pass the budget; a facet row
     that sets `session`; a `windows` service with no `display`
     record, whose grants no sum would count; a check that sums
     each display alone, which admits a domain serving two displays
-    whose grants together pass its budget; and a facet row granting a
-    display to the system domain.
+    whose grants together pass its budget; a facet row granting a
+    display to the system domain; and a configured domain's row with
+    `clipboard` on a `single` display.
 
 Each property has a test that seeds one violation into a manifest and
 expects the build to fail with that property's diagnostic.
@@ -2591,8 +2600,12 @@ manifest's system-shell principals and its development flag
 grant's `session`, the session mark the domain service fixes for the
 display's session and copies into every mint of that grant
 ([design-display.md](design-display.md#the-pixel-area)); and the
-`machine` grant's `principal`, the grantee's principal, which the tree's
-log line names ([A session's request](#a-sessions-request)). A service that
+`machine`, `windows` and `inspect` grants' `principal`, the grantee's
+principal, which the tree's log line names ([A session's request](#a-sessions-request)),
+the display's trusted overlay shows for each window
+([design-display.md](design-display.md#windows-and-the-window-system))
+and the inspector reads to decide who sees a window's tree
+([design-live.md](design-live.md#inspection)). A service that
 needs a value only the domain service knows takes it the same way, never
 through a facet row or a protocol of its own.
 
@@ -3455,20 +3468,24 @@ a requested or session domain or to another row's.
 **Partition windows.** The block driver serves each partition of its
 medium as a window ([design-storage.md](design-storage.md#data-model)).
 Where each partition lies comes only from the medium layout of the ABI
-file. The device service gives the slots, the boot-selection record and
-the reset count to the slot writer alone, derived from that layout, and
+file. The device service gives the slots' boot and system partitions,
+the boot-selection record and the reset count to the slot writer alone,
+derived from that layout, and
 the manifest assigns each data partition by its role in the layout, never
 by sectors, to its storage domain, and each FAT partition likewise to a
-FAT server's domain of its own. A domain whose release lives in an EROFS
-image gets a read-only window on that image's sectors alone, from the
-extents the boot image records, which must lie inside the slot that the
-boot value names; when the boot value is `unknown`, it gets none. A window
-is a grant of the block driver's domain, which the device service
-introduces to the window's holder over a connection once the holder runs;
-it sends the holder's capability registry the window with the image's
-record from the manifest, its extents, root hash, salt and tree layout,
-which the registry hands to the hash-checking reader alone
-([design-runtime.md](design-runtime.md#per-byte-primitives)). The slot
+FAT server's domain of its own. The holder of the manifest's `system`
+window, the storage domain that serves `system`, gets one read-only
+window on the system partition of the slot that the boot value names;
+when the boot value is `unknown`, it gets none
+([design-storage.md](design-storage.md#the-system-tree)). No other domain
+gets a window on a slot: a domain that reads the `system` tree holds a
+read-only grant of it, and an app's session mounts its package with the
+layout the domain service hands it in the app's record, which the file
+check built
+([design-packaging.md](design-packaging.md#an-apps-session)). A
+window is a grant of the block driver's domain, which the device service
+introduces to the window's holder over a connection once the holder
+runs. The slot
 writer and the block driver's domain each get, from the domain library, a
 read-only view of the machine page, so each reads the boot value itself:
 the slot writer never takes it from the update service, and the block
@@ -3634,7 +3651,7 @@ manifest lists: the vault.
 | Service | What it does | Detail |
 | --- | --- | --- |
 | domain service, `erx_domain_srv` | creates the manifest's domains in its boot order and every other domain; introduces, stops and destroys domains through the domain library; keeps domain pids, names, connections and death records; restarts configured domains; runs the ordered end and serves the `machine` tree, through which a session that holds its grant asks for one | [Creating a domain](#creating-a-domain), [Ending a domain](#ending-a-domain), [A session's request](#a-sessions-request) |
-| principal service, `erx_principal` | principals, credentials, sessions and quotas; each session's credentials facet, with `login_keys`, `add_login_key` and `del_login_key` on that session's own principal's SSH login keys | [design-domains.md](design-domains.md#principals-sessions-and-quotas), [design-ssh.md](design-ssh.md#login-keys) |
+| principal service, `erx_principal` | principals, credentials, sessions and quotas, its registry of app principals a value the domain service keeps, which no restart loses within a boot ([design-packaging.md](design-packaging.md#an-apps-principal)); each session's credentials facet, with `login_keys`, `add_login_key` and `del_login_key` on that session's own principal's SSH login keys | [design-domains.md](design-domains.md#principals-sessions-and-quotas), [design-ssh.md](design-ssh.md#login-keys) |
 | facets, `erx_facet` | one process per grant of a service to a domain; admission per client | [design-domains.md](design-domains.md#facets) |
 | resource policy, `erx_policy` | the group tree, grants, capacity, budgets, lane sizes | [Resource policy](#resource-policy) |
 | device service, `erx_devices` | the device catalogue, each device given to the domain the manifest names, `/dev` | [Devices](#devices) |

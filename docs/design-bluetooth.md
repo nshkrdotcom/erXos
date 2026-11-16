@@ -417,7 +417,7 @@ The Bluetooth domain is a configured `service` domain of the manifest,
 named `bt` (node `bt@erxos`), of the principal that owns the machine's
 services, on the BeamAsm image, whose OpenSSL its Security Manager calls
 through OTP's `crypto` ([Stage 4](#stage-4-pairing-and-bonding)). It holds
-no device. Its release ships `kernel`, `stdlib`, `erx`, `erx_files`,
+no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files`,
 `crypto` and `erx_bt`. Its manifest row holds:
 
 * one grant of the `line` interface, which the system domain's line
@@ -1614,6 +1614,15 @@ a radio peer can do:
 The vault cannot keep a bond's key from the Bluetooth domain or the
 controller, which needs it in clear in LE Long Term Key Request Reply;
 what any store gives is sealing at rest and one owner, not containment.
+
+No report of the domain carries a radio peer's or the controller's
+bytes, nor a key: the domain takes the report filter, `erx_report`,
+at boot, before any process of it starts
+([design-log.md](design-log.md#reports-carry-no-term)), so the crash
+of a process with controller bytes in its mailbox or its stack trace's
+arguments (an unknown action, a `function_clause` in a core, the
+`badarg` of a send to a line process that has gone) is logged as names,
+classes and arities.
 
 ### Attack classes
 

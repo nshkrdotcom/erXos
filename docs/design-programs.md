@@ -1167,7 +1167,14 @@ Its key is the file's identity and version, as
 [design-files.md](design-files.md#identity-and-version) defines them, and
 its use, `code` or `data`: the server's domain and the tree, the attach
 name, of the grant the file was read through, the file's qid path, its
-`data_version`, and the use. A code object has an execute ceiling, a data
+`data_version`, and the use. The grant the file was read through is the
+one the entry's own provider names, never a grant beneath it: a file of
+an EROFS mount, which a program reaches through the session's export,
+is keyed by the session's domain, the tree the mount was given, which
+no other mount shares, and the reader's inode number, so two images
+read through one `packages` grant never share a key
+([design-files.md](design-files.md#building-binding-and-mounting)). A
+code object has an execute ceiling, a data
 object none. A domain's id is never reused and no other domain can answer
 for it, so a server names only its own files; a server keeps a qid path
 unique within its tree for the boot, and its domain's runtime never
@@ -1206,9 +1213,15 @@ The filler:
 
 1. **Opens** the file through the program's namespace on every request,
    whatever the cache holds, with `lopen` for reading, after the
-   handler's **image check** for `code`: the grant the path resolved
-   through must carry `rx`. It takes the key from that grant and that
-   fid's `getattr`.
+   handler's **image check** for `code`: the namespace entry the path
+   resolved through and the grant beneath it must both carry `rx`, since
+   an entry's rights only lower its grant's, never raise them
+   ([design-files.md](design-files.md#building-binding-and-mounting),
+   "Rights beneath an entry"). For a program's entry on the session's
+   export, the export's grant carries the rights of the session's own
+   entry it serves, which for an EROFS mount are `rx` only through an
+   `rx` grant. It takes the key from the entry's own provider and the
+   opened fid's `getattr`, as above.
    So the cache never answers for a grant: a
    program whose grant cannot open the file for its use gets the open's
    error, `EACCES` for code through an `ro` grant, even when another
@@ -1540,7 +1553,7 @@ the path into one of four images:
   them and the command domain's connection, the session's one path to
   another domain ([design-domains.md](design-domains.md#connections)).
   Its open of the session's tty is a write-only one, which it asks for
-  with `erx_session_relay:open_writer/1`, as a program's handler does
+  with `erx_session_relay:open_writer/2`, as a program's handler does
   ([The terminal](#the-terminal)). The stream relay belongs to no job, so
   no signal's mark would stop it taking a key typed after the signal;
   its open takes none, and a build check proves that it asks for no open
@@ -2397,7 +2410,7 @@ owns. The session's export names it `/dev/tty`, and a program's standard
 streams that go to the terminal are opens on it. The export serves the name
 alone: the handler that opens it makes a terminal's description
 ([Descriptors and files](#descriptors-and-files)) and asks the relay for an
-open with `erx_session_relay:open_writer/1`, under its program's job,
+open with `erx_session_relay:open_writer/2`, under its program's job,
 which the command server's row gives it, and every read, write, watch and
 control of that open goes to the relay and never through the file
 protocol ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).

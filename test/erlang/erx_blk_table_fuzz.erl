@@ -1,14 +1,14 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% Random partition tables through erx_blk_table:admit/4, the block driver's parse of the
+%% Random partition tables through erx_blk_table:admit/2, the block driver's parse of the
 %% boot medium's master and extended boot records, and random requests through place/3.
 %% Each round starts from the table the layout prescribes for a random data partition on
 %% a medium of random capacity, both clustered at their bounds, and changes none, one or
 %% several things: an entry's field, set to a neighbour of its value, zero, all ones or
-%% another layout value; a byte anywhere in a record; a record's size; or a record that is
-%% not a binary. Whatever arrives, admit/4 answers {ok, Windows} or {error, Reason} with
-%% Reason one of its fixed shapes, never a crash, and agrees with reference/4: a model of
+%% another layout value; a fifth record chained from the data partition's; a byte anywhere
+%% in a record; a record's size; or a record that is not a binary. Whatever arrives,
+%% admit/2 answers {ok, Windows} or {error, Reason} with Reason one of its fixed shapes, never a crash, and agrees with reference/2: a model of
 %% the same rule written from the PC partition table's published format, with its offsets
 %% written out rather than taken from erx_abi.hrl, so a wrong offset in the ABI file or a
 %% check the parser drops shows as a disagreement. Every admitted set of windows lies
@@ -26,6 +26,8 @@
 -define(MIN_ACCEPTED, ?ROUNDS div 20).
 -define(MIN_DATA, ?ERX_MEDIUM_DATA_SECTORS_MIN).
 -define(MIN_MEDIUM, (?ERX_MEDIUM_DATA_START + ?ERX_MEDIUM_DATA_SECTORS_MIN)).
+-define(IS_RECORD(Name), (Name =:= mbr orelse Name =:= system_a_ebr orelse Name =:= system_b_ebr
+                          orelse Name =:= vault_ebr orelse Name =:= data_ebr)).
 
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
@@ -44,10 +46,9 @@ round_of() ->
                  ?MIN_DATA + rand:uniform(1 bsl 20)]) band 16#ffffffff,
     Entries = mutate_entries(good(Data), rand:uniform(4) - 1),
     Records = mutate_records([encode(Entry) || Entry <- Entries], rand:uniform(8) - 6),
-    [Mbr, Vault, DataEbr] = Records,
-    Said = erx_blk_table:admit(Capacity, Mbr, Vault, DataEbr),
+    Said = erx_blk_table:admit(Capacity, Records),
     shape(Said),
-    case {Said, reference(Capacity, Mbr, Vault, DataEbr)} of
+    case {Said, reference(Capacity, Records)} of
         {{ok, Windows}, {ok, Windows}} ->
             disjoint(Capacity, Windows),
             accepted;
@@ -59,33 +60,58 @@ round_of() ->
 
 pick(Choices) -> lists:nth(rand:uniform(length(Choices)), Choices).
 
-%% The good table as three lists of four {Status, Type, Start, Sectors} entries.
+%% The good table as five lists of four {Status, Type, Start, Sectors} entries, the master
+%% boot record and the four extended boot records in medium order, written out from the
+%% format: a logical partition starts from its own record's sector, a link from the
+%% extended partition's start, spanning the next record and its partition.
 good(Data) ->
     End = ?ERX_MEDIUM_DATA_START + Data,
+    Extended = ?ERX_MEDIUM_SYSTEM_A_EBR,
     [[{0, ?ERX_MEDIUM_RECORD_TYPE, ?ERX_MEDIUM_RECORD_START, ?ERX_MEDIUM_RECORD_SECTORS},
-      {0, ?ERX_MEDIUM_SLOT_TYPE, ?ERX_MEDIUM_SLOT_A_START, ?ERX_MEDIUM_SLOT_SECTORS},
-      {0, ?ERX_MEDIUM_SLOT_TYPE, ?ERX_MEDIUM_SLOT_B_START, ?ERX_MEDIUM_SLOT_SECTORS},
-      {0, ?ERX_MEDIUM_EXTENDED_TYPE, ?ERX_MEDIUM_EXTENDED_START, End - ?ERX_MEDIUM_EXTENDED_START}],
-     [{0, ?ERX_MEDIUM_VAULT_TYPE, ?ERX_MEDIUM_VAULT_START - ?ERX_MEDIUM_EXTENDED_START, ?ERX_MEDIUM_VAULT_SECTORS},
-      {0, ?ERX_MEDIUM_LINK_TYPE, ?ERX_MEDIUM_DATA_EBR - ?ERX_MEDIUM_EXTENDED_START, End - ?ERX_MEDIUM_DATA_EBR},
+      {0, ?ERX_MEDIUM_BOOT_TYPE, ?ERX_MEDIUM_BOOT_A_START, ?ERX_MEDIUM_BOOT_SECTORS},
+      {0, ?ERX_MEDIUM_BOOT_TYPE, ?ERX_MEDIUM_BOOT_B_START, ?ERX_MEDIUM_BOOT_SECTORS},
+      {0, ?ERX_MEDIUM_EXTENDED_TYPE, Extended, End - Extended}],
+     [{0, ?ERX_MEDIUM_SYSTEM_TYPE, ?ERX_MEDIUM_SYSTEM_A_START - ?ERX_MEDIUM_SYSTEM_A_EBR, ?ERX_MEDIUM_SYSTEM_SECTORS},
+      {0, ?ERX_MEDIUM_LINK_TYPE, ?ERX_MEDIUM_SYSTEM_B_EBR - Extended,
+       ?ERX_MEDIUM_SYSTEM_B_START + ?ERX_MEDIUM_SYSTEM_SECTORS - ?ERX_MEDIUM_SYSTEM_B_EBR},
+      {0, 0, 0, 0}, {0, 0, 0, 0}],
+     [{0, ?ERX_MEDIUM_SYSTEM_TYPE, ?ERX_MEDIUM_SYSTEM_B_START - ?ERX_MEDIUM_SYSTEM_B_EBR, ?ERX_MEDIUM_SYSTEM_SECTORS},
+      {0, ?ERX_MEDIUM_LINK_TYPE, ?ERX_MEDIUM_VAULT_EBR - Extended,
+       ?ERX_MEDIUM_VAULT_START + ?ERX_MEDIUM_VAULT_SECTORS - ?ERX_MEDIUM_VAULT_EBR},
+      {0, 0, 0, 0}, {0, 0, 0, 0}],
+     [{0, ?ERX_MEDIUM_VAULT_TYPE, ?ERX_MEDIUM_VAULT_START - ?ERX_MEDIUM_VAULT_EBR, ?ERX_MEDIUM_VAULT_SECTORS},
+      {0, ?ERX_MEDIUM_LINK_TYPE, ?ERX_MEDIUM_DATA_EBR - Extended, End - ?ERX_MEDIUM_DATA_EBR},
       {0, 0, 0, 0}, {0, 0, 0, 0}],
      [{0, ?ERX_MEDIUM_DATA_TYPE, ?ERX_MEDIUM_DATA_START - ?ERX_MEDIUM_DATA_EBR, Data},
       {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}]].
 
-
+%% Changes Left fields, or chains a fifth record from the data partition's record: a link
+%% to a sector past the data partition, which the layout does not name.
 mutate_entries(Records, 0) ->
     Records;
 mutate_entries(Records, Left) ->
-    Which = rand:uniform(3),
+    case rand:uniform(8) of
+        1 -> mutate_entries(chain_fifth(Records), Left - 1);
+        _ -> mutate_entries(mutate_field(Records), Left - 1)
+    end.
+
+chain_fifth(Records) ->
+    Data = lists:last(Records),
+    {_, _, _, Sectors} = hd(Data),
+    Fifth = {0, ?ERX_MEDIUM_LINK_TYPE, ?ERX_MEDIUM_DATA_START + Sectors - ?ERX_MEDIUM_SYSTEM_A_EBR, 2048},
+    replace(Records, length(Records), replace(Data, 2, Fifth)).
+
+mutate_field(Records) ->
+    Which = rand:uniform(length(Records)),
     Index = rand:uniform(4),
     Entry = lists:nth(Index, lists:nth(Which, Records)),
     Field = rand:uniform(4),
     Old = element(Field, Entry),
     Width = case Field of 1 -> 16#ff; 2 -> 16#ff; _ -> 16#ffffffff end,
     New = pick([Old + 1, Old - 1, 0, Width, rand:uniform(Width + 1) - 1, ?ERX_MEDIUM_LINK_TYPE,
-                ?ERX_MEDIUM_DATA_EBR, ?ERX_MEDIUM_EXTENDED_START]) band Width,
-    Record = replace(lists:nth(Which, Records), Index, setelement(Field, Entry, New)),
-    mutate_entries(replace(Records, Which, Record), Left - 1).
+                ?ERX_MEDIUM_DATA_EBR, ?ERX_MEDIUM_VAULT_EBR, ?ERX_MEDIUM_SYSTEM_B_EBR, ?ERX_MEDIUM_SYSTEM_A_EBR,
+                ?ERX_MEDIUM_SYSTEM_TYPE]) band Width,
+    replace(Records, Which, replace(lists:nth(Which, Records), Index, setelement(Field, Entry, New))).
 
 replace(List, Index, Value) ->
     lists:sublist(List, Index - 1) ++ [Value] ++ lists:nthtail(Index, List).
@@ -102,7 +128,7 @@ noise(Size) -> << <<(rand:uniform(256) - 1)>> || _ <- lists:seq(1, Size) >>.
 mutate_records(Records, Left) when Left =< 0 ->
     Records;
 mutate_records(Records, Left) ->
-    Which = rand:uniform(3),
+    Which = rand:uniform(length(Records)),
     Record = lists:nth(Which, Records),
     Changed = case rand:uniform(4) of
                   1 -> flip(Record, 446 + rand:uniform(66) - 1);
@@ -126,25 +152,28 @@ resize(Record) when is_binary(Record) ->
 resize(Record) ->
     Record.
 
-%% The rule, from the format: three 512-byte records ending in 55 aa, whose entries at
+%% The rule, from the format: five 512-byte records ending in 55 aa, whose entries at
 %% 446, 462, 478 and 494 (status at +0, type at +4, start and length little-endian at +8
 %% and +12) equal the good table for the data partition's length that the data record's
 %% first entry names, a length from the minimum to the medium's end.
-reference(Capacity, Mbr, Vault, DataEbr) when is_integer(Capacity), Capacity >= ?MIN_MEDIUM ->
-    case [ref_entries(Record) || Record <- [Mbr, Vault, DataEbr]] of
-        [{ok, M}, {ok, V}, {ok, D = [{_, _, _, Data} | _]}] ->
+reference(Capacity, Records) when is_integer(Capacity), Capacity >= ?MIN_MEDIUM ->
+    Read = [ref_entries(Record) || Record <- Records],
+    case lists:all(fun(Entries) -> Entries =/= error end, Read) of
+        true ->
+            Tables = [Entries || {ok, Entries} <- Read],
+            [{_, _, _, Data} | _] = lists:last(Tables),
             Fits = Data >= ?MIN_DATA andalso ?ERX_MEDIUM_DATA_START + Data =< Capacity,
-            case Fits andalso [M, V, D] =:= good(Data) of
+            case Fits andalso Tables =:= good(Data) of
                 true -> {ok, [{record, ?ERX_MEDIUM_RECORD_START, ?ERX_MEDIUM_RECORD_SECTORS},
-                              {slot_a, ?ERX_MEDIUM_SLOT_A_START, ?ERX_MEDIUM_SLOT_SECTORS},
-                              {slot_b, ?ERX_MEDIUM_SLOT_B_START, ?ERX_MEDIUM_SLOT_SECTORS},
+                              {boot_a, ?ERX_MEDIUM_BOOT_A_START, ?ERX_MEDIUM_BOOT_SECTORS},
+                              {boot_b, ?ERX_MEDIUM_BOOT_B_START, ?ERX_MEDIUM_BOOT_SECTORS},
                               {vault, ?ERX_MEDIUM_VAULT_START, ?ERX_MEDIUM_VAULT_SECTORS},
                               {data, ?ERX_MEDIUM_DATA_START, Data}]};
                 false -> error
             end;
-        _ -> error
+        false -> error
     end;
-reference(_Capacity, _Mbr, _Vault, _DataEbr) ->
+reference(_Capacity, _Records) ->
     error.
 
 ref_entries(Record) when is_binary(Record), byte_size(Record) =:= 512 ->
@@ -162,17 +191,17 @@ ref_entries(_Record) ->
 
 shape({ok, Windows}) when is_list(Windows) -> ok;
 shape({error, {capacity, _}}) -> ok;
-shape({error, {Name, What}}) when Name =:= mbr; Name =:= vault_ebr; Name =:= data_ebr ->
+shape({error, {Name, What}}) when ?IS_RECORD(Name) ->
     true = lists:member(What, [size, signature]),
     ok;
-shape({error, {Name, Index, Field}}) when Name =:= mbr; Name =:= vault_ebr; Name =:= data_ebr ->
+shape({error, {Name, Index, Field}}) when ?IS_RECORD(Name) ->
     true = lists:member(Index, [1, 2, 3, 4]) andalso lists:member(Field, [status, type, start, sectors]),
     ok;
 shape(Other) ->
     error({bad_shape, Other}).
 
 %% Admitted windows lie within the medium and share no sector with each other or with
-%% the three records.
+%% the five records.
 disjoint(Capacity, Windows) ->
     Spans = lists:sort([{Start, Start + Sectors} || {_Role, Start, Sectors} <- Windows]
                        ++ [{Sector, Sector + 1} || {_Name, Sector} <- erx_blk_table:records()]),

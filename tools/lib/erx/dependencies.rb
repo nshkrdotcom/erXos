@@ -18,6 +18,12 @@ module Erx
     # source is a prebuilt program for one host (Playwright's Chromium), fetched only
     # on that host.
     HOSTS = { 'darwin-arm64' => /\A(?:arm64|aarch64)-darwin/ }.freeze
+    # A file source may also pin what it encodes, an image inside a test program, by
+    # the decoded bytes' SHA-256 and size, both or neither: the reader that decodes it
+    # checks them, and decompresses no more than decoded_bytes. The fetch step checks
+    # only the file's own sha256.
+    DECODED_FIELDS = %w[decoded_sha256 decoded_bytes].freeze
+    MAX_DECODED_BYTES = 1 << 30
     module_function
 
     def parse(bytes)
@@ -51,7 +57,7 @@ module Erx
         fields = COMMON_FIELDS + %w[url directory commit]
         member = 'directory'
       when 'file'
-        fields = COMMON_FIELDS + %w[url filename]
+        fields = COMMON_FIELDS + %w[url filename] + (DECODED_FIELDS.any? { |field| source.key?(field) } ? DECODED_FIELDS : [])
         member = 'filename'
       when 'oci'
         fields = COMMON_FIELDS + %w[repository platform config_sha256]
@@ -60,7 +66,7 @@ module Erx
         raise Error, 'invalid source kind'
       end
       unless source.keys.sort == fields.sort &&
-             source.values.all? { |value| value.is_a?(String) && !value.empty? }
+             source.except('decoded_bytes').values.all? { |value| value.is_a?(String) && !value.empty? }
         raise Error, 'invalid source fields in deps.lock'
       end
       ['id', member].compact.each do |field|
@@ -73,6 +79,11 @@ module Erx
         raise Error, 'invalid source members'
       end
       raise Error, 'invalid source SHA-256' unless /\A[0-9a-f]{64}\z/.match?(source.fetch('sha256'))
+      if source.key?('decoded_sha256') &&
+         !(/\A[0-9a-f]{64}\z/.match?(source.fetch('decoded_sha256')) &&
+           source.fetch('decoded_bytes').is_a?(Integer) && source.fetch('decoded_bytes').between?(1, MAX_DECODED_BYTES))
+        raise Error, 'invalid decoded image pin'
+      end
       raise Error, 'invalid source commit' if source.fetch('kind') == 'git' && !/\A[0-9a-f]{40}\z/.match?(source.fetch('commit'))
       raise Error, 'invalid dependency status' unless %w[permanent stopgap].include?(source.fetch('status'))
       raise Error, 'invalid source host' if source.fetch('kind') == 'zip' && !HOSTS.key?(source.fetch('host'))
@@ -117,17 +128,28 @@ module Erx
                                              .map(&:freeze)
     end
 
-    # Fetches every source this host uses, or source_id alone.
+    # Fetches every source this host uses, or source_id alone. A cache is
+    # another checkout's build/downloads: the archives come from it, never
+    # from the network, and each is verified against its pin. With a cache an
+    # OCI image is not fetched: the Docker cache holds it, and only its own
+    # fetch contacts a registry; naming one with a cache is refused.
     def fetch(cache: nil, source_id: nil)
-      selected = source_id ? [pinned(source_id)] : sources
-      if cache && selected.any? { |source| source.fetch('kind') == 'oci' }
-        raise Error, 'OCI images use the Docker cache; fetch them explicitly without --cache'
+      if cache && !File.directory?(cache)
+        raise Error, "source cache is not a directory (it is another checkout's build/downloads): #{cache}"
       end
+
+      selected = source_id ? [pinned(source_id)] : sources
+      images = cache ? selected.select { |source| oci?(source) } : []
+      raise Error, 'OCI images use the Docker cache; fetch them explicitly without --cache' if source_id && !images.empty?
+
       # Each source is fetched on its own, so one that fails leaves the others
       # fetched; the failures are reported together at the end, each after its id.
-      failures = selected.filter_map { |source| failure_of(source, cache: cache) }
+      failures = (selected - images).filter_map { |source| failure_of(source, cache: cache) }
       raise Error, failures.join('; ') unless failures.empty?
     end
+
+    # The OCI images among the sources this host uses, which only their own fetch obtains.
+    def images = sources.select { |source| oci?(source) }
 
     # Whether build/third_party/ID holds what fetch published for deps.lock's
     # pin of ID: its provenance record equals the pin's entry.
@@ -148,26 +170,6 @@ module Erx
       raise Error, stale(id) unless File.directory?(tree) && !File.symlink?(tree)
 
       tree
-    end
-
-    # Takes a source archive from another checkout's downloads directory, but
-    # only if its bytes match the pinned SHA-256; nothing unverified is kept.
-    # An archive already present is left alone.
-    def adopt(source_id, from:)
-      source = sources.find { |entry| entry.fetch('id') == source_id }
-      raise Error, "unknown source: #{source_id}" unless source && source.fetch('kind') != 'oci'
-
-      archive = archive_path(source)
-      return archive if File.file?(archive)
-
-      OutputDirectory.prepare(root: @root, path: File.dirname(archive))
-      Dir.mktmpdir('.adopt-', File.dirname(archive)) do |directory|
-        temporary = File.join(directory, 'source')
-        copy_bounded(from, destination: temporary)
-        verify(source, archive: temporary)
-        File.rename(temporary, archive)
-      end
-      archive
     end
 
     # Where fetch keeps source id's verified download, by its kind's file name.
@@ -275,8 +277,8 @@ module Erx
       Dir.mktmpdir('.download-', File.dirname(archive)) do |directory|
         temporary = File.join(directory, 'source.tar.gz')
         if cache
-          cached = File.join(cache, File.basename(URI.parse(source.fetch('url')).path))
-          raise Error, "source not found in explicit cache: #{cached}" unless File.file?(cached)
+          cached = File.join(cache, File.basename(archive))
+          raise Error, "source not found in source cache: #{cached}" unless File.file?(cached)
           copy_bounded(cached, destination: temporary)
         elsif source.fetch('kind') == 'git'
           export_commit(source, directory: directory, archive: temporary)
@@ -336,8 +338,10 @@ module Erx
       "#{source.fetch('id')}: #{e.message}"
     end
 
+    def oci?(source) = source.fetch('kind') == 'oci'
+
     def fetch_source(source, cache:)
-      return fetch_image(source) if source.fetch('kind') == 'oci'
+      return fetch_image(source) if oci?(source)
 
       archive = archive_path(source)
       obtain(source, archive: archive, cache: cache)

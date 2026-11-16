@@ -181,7 +181,7 @@ supervisor starts the keeper again within the row's intensity.
 
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
-| **AP1.** Enabling, disabling or starting a row changes nothing the manifest check proved | a row carries a principal, a flag, a display, an intensity and start flags, and no limit, grant, device, service or code; the start flags are opaque data, bounded printable bytes that reach the session only as the value of one environment variable, `ERX_START_FLAGS`, which no shell, runtime or ERTS option parser reads ([The start table](#the-start-table)); the keeper's session is planned by `erx_dom_plan_session` from its principal's template index as every session is, and its facets pass the domain service's one funnel, which installs only rows of the manifest; so the manifest stays the only source of every domain row, device holder, service, budget, share, quota, limit and grant ([design-system.md](design-system.md#invariants), A10) | a row field that names a grant, a limit or a release; start flags delivered as runtime arguments or in a variable ERTS parses, such as `ERL_FLAGS`; a keeper that creates a domain by any call but `start_session/2` | a source check that `erx_starter` reaches the domain service only through `erx_domain:start_session/2`, `erx_domain:stop/2`, `erx_domain:system_namespace/0` (the wait before its first read of `rc.conf`) and `erx_domain:display_settled/1` (the wait a keeper makes before it asks for a session on a display), both of which change nothing, reading a handle with `erx_domain:id/1` and `erx_domain:pid/1`, which reach nothing, with a seeded call of `erx_domain:create/1` |
+| **AP1.** Enabling, disabling or starting a row changes nothing the manifest check proved | a row carries a principal, a flag, a display, an intensity and start flags, and no limit, grant, device, service or code; the start flags are opaque data, bounded printable bytes that reach the session only as the value of one environment variable, `ERX_START_FLAGS`, which no shell, runtime or ERTS option parser reads ([The start table](#the-start-table)); the keeper's session is planned by `erx_dom_plan_session` from its principal's template index as every session is, and its facets pass the domain service's one funnel, which installs only rows of the manifest; so the manifest stays the only source of every domain row, device holder, service, budget, share, quota, limit and grant ([design-system.md](design-system.md#invariants), A10) | a row field that names a grant, a limit or a release; start flags delivered as runtime arguments or in a variable ERTS parses, such as `ERL_FLAGS`; a keeper that creates a domain by any call but `start_session/2` | a source check that `erx_starter`, the table and its keepers, every module of the start service's application but packaging's own (`erx_pkg*`, which [design-packaging.md](design-packaging.md#invariants) bounds), reaches the domain service only through `erx_domain:start_session/2`, `erx_domain:stop/2`, `erx_domain:system_namespace/0` (the wait before its first read of `rc.conf`) and `erx_domain:display_settled/1` (the wait a keeper makes before it asks for a session on a display), both of which change nothing, reading a handle with `erx_domain:id/1` and `erx_domain:pid/1`, which reach nothing, with a seeded call of `erx_domain:create/1` |
 | **AP2.** A session exists without a person only by a row of the start table | the keepers of `erx_starter` are the only callers of `erx_domain:start_session/2` besides the console and the web login, and a keeper exists only for a row the boot or the row's own `start` or `restart` admitted, or for one `onestart`; a publication of the package set after the boot's admits no row ([When the file is read](#the-start-table)) | another boot-time starter | a source check that only `erx_console`, the web login and `erx_starter_keeper` call `erx_domain:start_session/2`, with a seeded call from another module; the source check of AP1; a QEMU test that boots a manifest with no `start` row and finds no session but the console's |
 | **AP3.** The table names only principals the manifest or an admitted package declares startable | a row exists only for a manifest `start` row or the start row of an admitted package ([design-packaging.md](design-packaging.md#the-start-tables-rows)); an `rc.conf` line or a `ctl` command for a name with no such row is skipped or refused, so the data partition, the `etc` grant and the `start` grant only enable, disable or set the display, intensity and start flags of a declared row | a local line that adds a row | the merge's host test, a line for an unknown name skipped; seeded: a merge that adds a row for a principal with a template but no `start` row |
 | **AP4.** A display's session is the session of the row kept on it, and no other, across a restart of either domain | at most one kept row names each display: a row's supervisor starts only after the one admission ([The start table](#the-start-table)) finds no other kept row on its display, and the table's process admits one row at a time; only a row's keeper names a display with `display`; the domain service fixes the session mark in the record of that session's grant on the display and every mint of the record carries it ([design-system.md](design-system.md#facets-a-configured-domain-serves)) | an admission judged against the rows the file enables rather than the rows kept; a mark set by whichever session opens a window first; a re-mint that drops the mark | the merge's host test with two enabled rows on one display, the second refused; the judgement's test of a `start` on a kept row's display, refused, and on a stopped row's, admitted; the kiosk tests of [Verification and testing](#verification-and-testing), the display domain's restart among them |
@@ -706,7 +706,7 @@ that domain's namespace at the point where a session mounts its grant
 | `service NAME onestart [display=D]`, `onestop`, `onerestart` | writes the `one` form to `ctl`, which acts on a row whether or not it is enabled, and answers its errno as above |
 | `service NAME status`, `onestatus` | shows the row's state and reason from `/proc/apps`, the row as the boot or its own last command applied it, or `installed`; a session `onestart` started belongs to no row and is not shown |
 | `service -e` | prints the configured domains in boot order, then each row of the table whose `NAME_enable` is `YES` in `/etc/rc.conf` as the command reads it, with the table's own parser, or whose declared default is `YES` where the file sets none: the configured state, as FreeBSD's `service -e` loads each script's variable from `rc.conf` itself (`usr.sbin/service/service.sh:148-160`); `/proc/apps` shows the applied state, each row as the boot or its own last command applied it, and what runs |
-| `service NAME purge` | removes the data of a package's app that is not installed, every signer's ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)) |
+| `service NAME purge` | removes the data of a name that no installed package holds, admitted or refused, so a name a refused package holds keeps its data until `rm` removes the package, every signer's but the image's own, `apps/NAME/image`, which no purge removes; for a name of the image's packages, the data of every installed package the name held, shadowed or not: purging a shadowed package's name removes its data while the package itself stays on the data partition until it is removed ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)) |
 
 For a configured domain, `service` answers every request that it is
 configured in the system manifest; its state is at `[domains, Id]`.
@@ -812,9 +812,8 @@ hands the purge to the package process and awaits its answer itself,
 so a purge that waits behind an update waits while the table takes the
 update's publication, and a `ctl` command the same client writes after
 the purge waits for it, as its grant's later requests do. A
-restarted table asks the package process for its set with a message
-and waits for no answer: the package process answers by publishing the
-set, which the table takes in turn like any other publication.
+restarted table asks the package process for nothing: it takes the
+last package set from the records process below.
 
 The keepers are a separate branch of the application's supervision
 tree, so a crash of the table's process restarts it and no session ends.
@@ -826,8 +825,14 @@ The rest is held by one plain process in the branch, the records
 process (`erx_starter_records`): each row's record, the row as the
 boot or its own last command applied it, with its refusal if it was
 refused, each replaced in one step; and the **boot mark**, set in the
-same step as the records of the boot's package set, which says that the
-boot has applied the file to every row of its table. A row a
+same step as the rows' records of the boot's package set, which says
+that the boot has applied the file to every row of its table. It also
+holds the last package set the table took, recorded before the table
+stops a row the set drops, so a table that ends between the two leaves
+a held row its successor has no row for, which it stops, and never a
+dropped row it could start again. A restored set stands until the
+package process publishes again, which it does at once when the
+table's end cut its publication short, since that ends its lifetime. A row a
 publication adds gets no record: `installed` is what a row of an
 admitted package shows while it has none, a label derived from that
 absence, with its package's declared settings, so no flag or copy of
@@ -879,14 +884,15 @@ record. `service NAME enable` and `disable` only edit the file and
 write nothing to `ctl`, so no command both writes the file and changes
 a record.
 
-A restarted table takes its rows from the records process and their
-states from the keepers' branch, and asks the package process for its
-set, which arrives as a publication. A row of the set it holds no
+A restarted table takes its rows and the last package set from the
+records process and their states from the keepers' branch. A row of
+the set it holds no
 record for is either one the boot had yet to apply when the table
 ended, or one a publication added, and the boot mark tells which.
 Without the mark the boot is not done: no publication can have followed
-the boot's package set, so the set the restarted table is sent is that
-set, and the table finishes the boot, reading `rc.conf` and applying it
+the boot's package set, so the set the records process holds is that
+set; if it holds none yet, the boot's set arrives as a publication.
+Either way the table finishes the boot, reading `rc.conf` and applying it
 as the boot does to every row of the manifest and of the set that has
 no record, and sets the mark with the set's records. With the mark, it
 does nothing to such a row, which shows `installed` as it did before
@@ -914,7 +920,7 @@ reported.
 | a purge arrives while the package process carries out an install, update or removal | nothing: it is the order the package process takes them in | the `ctl` write's callback waits in the writer's grant for the purge's answer while the table takes the operation's publication; the purge is carried out after it, and a later `ctl` write of the same client waits for the purge |
 | an edit is lost to a concurrent one | nothing: the last writer wins | the next read takes the last writer's text whole; `/proc/apps` shows which of each row's settings came from the file when it was applied |
 | the display domain restarts under a display's session | the domain service's grant record | the grant is minted again on the new incarnation, with the session mark |
-| the start service crashes | its supervisor | it restarts with the rows the keepers' branch recorded, asks the package process for its set without waiting and takes it as a publication; it reads `rc.conf` only to finish a boot the boot mark says is not done, and leaves any other row with no record `installed`; kept sessions go on, and stopped, down and installed rows stay so |
+| the start service crashes | its supervisor | it restarts with the rows and the last package set the keepers' branch recorded; it reads `rc.conf` only to finish a boot the boot mark says is not done, and leaves any other row with no record `installed`; kept sessions go on, and stopped, down and installed rows stay so |
 | the records process ends, or the keepers' branch passes its intensity | the keepers' branch and the application's top supervisor, each shutting down at its significant child's end | the start service's application ends, and with it the system domain: the machine resets, and the next boot applies `rc.conf` to every row |
 
 Every state above, and every reason the boot finds,
@@ -1171,7 +1177,7 @@ Decisions:
     ([A read that cannot read the file](#the-start-table)).
 11. **The table never waits for the package process**, which waits for
     the table at each publication: a `ctl` write's callback awaits a purge,
-    and a restarted table takes the set as a publication
+    and a restarted table takes the last set from its records process
     ([Concurrency](#concurrency)).
 12. **Publishing an app applies nothing of `rc.conf`**: an install or an
     update only replaces the app's files, and its row is installed until

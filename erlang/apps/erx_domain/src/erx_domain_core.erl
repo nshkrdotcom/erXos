@@ -5,8 +5,9 @@
 -moduledoc """
 The domain service's pure core (docs/design-system.md, "The domain service's
 record"; docs/design-domains.md, "Domain ids, pids and references"): ids,
-names, each domain's life, death records, configured restarts and the scope
-of a domain's inspect facet (inspect_scope/3). It makes
+names, each domain's life, death records, configured restarts, the scope
+of a domain's inspect facet (inspect_scope/3) and the plan of an app's
+session (app_session/4). It makes
 no call; erx_domain_srv does the effects and keeps the state in its own heap.
 
 Ids. The system domain is 4, since a domain's id is its node's creation and
@@ -37,9 +38,10 @@ state is a bug of the caller and fails with a badmatch.
 
 -export([new/1, host/1, admit/4, built/5, running/2, ready/3, stopping/2, failed/2, ended/5,
          restart/5, fetch/2, find_pid/2, deaths/2, domains/1, info/1, session_prefix/3, session_name/3,
-         session_reserved/1, names_quota/0]).
+         session_reserved/1, names_quota/0, app_session/4]).
 -export([inspect_scope/3, inspect_view/2]).
--export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0]).
+-export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0,
+              app_session/1, session_row/0]).
 
 -define(SYSTEM_ID, 4).
 -define(ID_MAX, 16#ffffffff).
@@ -56,7 +58,12 @@ state is a bug of the caller and fails with a badmatch.
                     pid := pid() | undefined, ref := reference() | undefined,
                     connection := non_neg_integer(),
                     ctl_slots := non_neg_integer(), reader := non_neg_integer(),
-                    facets := #{atom() => {pid(), map()}}, start := start(), inspect := pid() | none}.
+                    facets := #{atom() => {pid(), map()}}, start := start(), inspect := pid() | none,
+                    rows := [session_row()], app := erx_app:app_record() | none}.
+%% A session's facet row, decided once as the session is planned (erx_domain_srv): the
+%% service's name, its server, a configured row or system, and the grant's limits; a
+%% domain of no session holds none. An app's session alone carries the app's record.
+-type session_row() :: {atom(), non_neg_integer() | system, map()}.
 %% A session's start beyond its console (erx_domain:start_session/2): the display it is
 %% the session of, or the display it only takes as its default; a domain of no session has
 %% none.
@@ -71,6 +78,12 @@ state is a bug of the caller and fails with a badmatch.
 -type inspect_entry() :: {pos_integer(), pid() | none | ended,
                           #{name := binary(), principal := pos_integer(),
                             state := booting | running | ending} | none}.
+%% The plan of an app's session (app_session/4): the app's entry and principal, the
+%% prefix of the session's name, the session's own memory and the app template's
+%% facet rows the session holds, each as the caller gave it.
+-type app_session(Row) :: #{entry := non_neg_integer(), principal := pos_integer(),
+                            prefix := binary(),
+                            memory := pos_integer(), rows := [Row]}.
 %% A crash's slogan as the domain wrote it, untrusted text, or why its crash area could not be read.
 -type slogan() :: binary() | {unreadable, atom() | {status, integer()}}.
 -opaque state() :: #{host := binary(), next_id := pos_integer(),
@@ -143,6 +156,38 @@ session_prefix(System, System, _Names) -> {ok, ?SYSTEM_PREFIX};
 session_prefix(Principal, _System, Names) -> maps:find(Principal, Names).
 
 -doc """
+The plan of a session of the app Name (docs/design-packaging.md, "An app's
+session"), from App, Name's record in the registry of app principals
+(erx_principal:app/2), Apps, the app entries the domain library placed
+(erx_domain_lib:apps/0), and TemplateRows, the app template's facet rows,
+each {Index, Row} by its index in the manifest's facet table:
+
+* the principal is the app's entry, Apps' first + the record's entry, and
+  every facet's parameters, its inspect scope among them, are computed from
+  it, as any session's are from its principal;
+* the session's names are drawn from the app's own pool, Name_N;
+* the entry is what the library plans the session under: it plans the app
+  template for an app entry and no other (erx_dom_plan_app_session), so the
+  plan names no template, and no grant keyed by the template's whole row
+  set follows from it;
+* the memory is the declared one the record holds, the session's own budget;
+* the rows are those of TemplateRows whose index the record kept, the
+  `packages` row and one for each need, and no other.
+
+Nothing of the plan depends on the record's signer, so one header admitted
+as an image package and as an installed one gives one plan (PK10). The
+record is the domain service's own (erx_principal:register/2), written
+in the entry erx_app_admit:entry/4 gives below the registry's max, Apps'
+count, from an admission against the same manifest, so its rows are the
+template's.
+""".
+-spec app_session(binary(), erx_principal:app(), erx_domain_lib:apps(), [{non_neg_integer(), Row}]) ->
+          app_session(Row).
+app_session(Name, #{entry := Entry, memory := Memory, rows := Kept}, #{first := First}, TemplateRows) ->
+    #{entry => Entry, principal => First + Entry, prefix => Name, memory => Memory,
+      rows => [Row || {Index, Row} <- TemplateRows, lists:member(Index, Kept)]}.
+
+-doc """
 The name Principal's next session takes: Prefix_N for the lowest N from 1 whose
 name Principal may take without a new binding or, if none, the first one no
 principal has bound. A refused or ended session's name is so taken again, and a
@@ -182,7 +227,7 @@ take(Name, #{node := Node} = Binding, Principal, Origin,
      #{next_id := Id, names := Names, domains := Domains} = State) ->
     Domain = #{id => Id, name => Name, node => Node, principal => Principal, origin => Origin,
                state => building, pid => undefined, ref => undefined, connection => 0,
-               ctl_slots => 0, reader => 0, facets => #{}, start => #{}, inspect => none},
+               ctl_slots => 0, reader => 0, facets => #{}, start => #{}, inspect => none, rows => [], app => none},
     Next = State#{next_id := Id + 1, names := Names#{erx_ident:to_binary(Name) => Binding#{holder := Id}},
                   domains := Domains#{Id => Domain}},
     {ok, Domain, Next}.
@@ -200,7 +245,8 @@ ready (erx_domain_srv), and Start, if given, is a session's start beyond its con
 built(Id, #{connection := Connection, ctl_slots := CtlSlots, reader := Reader} = Created, Pid, Ref, State) ->
     update(Id, building, #{state => built, connection => Connection, ctl_slots => CtlSlots, reader => Reader,
                            pid => Pid, ref => Ref, facets => maps:get(facets, Created, #{}),
-                           start => maps:get(start, Created, #{})}, State).
+                           start => maps:get(start, Created, #{}), rows => maps:get(rows, Created, []),
+                           app => maps:get(app, Created, none)}, State).
 
 -doc "Domain Id's first thread started.".
 -spec running(pos_integer(), state()) -> state().

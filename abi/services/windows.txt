@@ -15,12 +15,19 @@
 # each display's pixel areas within its display domain's outer budget, refuses
 # session, and holds windows and clipboard to their declared bounds; erx_winfs
 # enforces windows and clipboard at run time.
+# A facet row the build derives takes the quantities below, the files interface's,
+# since a windows grant is an erx_fs grant served the same way.
 service windows 8
   served_as tree
   parameter windows 1 u64 optional range 1 4096 checked_by windows_grant
   parameter pixels 2 u64 optional range 4096 1099511627776 checked_by windows_grant
   parameter clipboard 3 boolean optional boolean checked_by windows_grant
   parameter session 4 boolean optional boolean checked_by windows_grant
+  quantity max_request 131072
+  quantity in_flight 16
+  quantity reductions 100000
+  quantity period_ns 1000000000
+  quantity max_heap_size 262144
 limit windows_default u32 1
 limit windows_pixels_default u64 8388608
 # The window tree's wire (docs/design-display.md, "The window tree" and "Windows and

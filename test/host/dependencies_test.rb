@@ -9,11 +9,21 @@ require 'zlib'
 require 'socket'
 require_relative '../../tools/lib/erx/dependencies'
 
+# The real runner, which extracts archives, except that it refuses to run docker, which would contact a registry.
+class NoDockerRunner < Erx::Runner
+  def run(argv, **options)
+    raise Erx::Error, "docker must not run: #{argv.join(' ')}" if argv.first == 'docker'
+
+    super
+  end
+end
+
 class DependenciesTest < Minitest::Test
   def setup
     @directory = Dir.mktmpdir('erx-deps-')
-    @cache = File.join(@directory, 'cache')
-    Dir.mkdir(@cache)
+    # Another checkout's downloads directory: the source cache, which holds the archives.
+    @cache = File.join(@directory, 'other/build/downloads')
+    FileUtils.mkdir_p(@cache)
   end
 
   def teardown
@@ -42,6 +52,21 @@ class DependenciesTest < Minitest::Test
                   .merge('kind' => 'file', 'filename' => 'tool.jar')
     assert_equal 'file', parse([entry]).first.fetch('kind')
     assert_raises(Erx::Error) { parse([entry.merge('directory' => 'wrong')]) }
+  end
+
+  # A file may pin the image it encodes by the decoded bytes' SHA-256 and size, both or
+  # neither, and only a file may.
+  def test_a_file_pins_its_decoded_image_by_hash_and_size_together
+    entry = source.except('directory').merge('kind' => 'file', 'filename' => 'seed')
+    pinned = entry.merge('decoded_sha256' => 'b' * 64, 'decoded_bytes' => 64 << 20)
+    assert_equal 64 << 20, parse([pinned]).first.fetch('decoded_bytes')
+    [pinned.except('decoded_bytes'), pinned.except('decoded_sha256'),
+     pinned.merge('decoded_sha256' => 'B' * 64), pinned.merge('decoded_sha256' => 'b' * 63),
+     pinned.merge('decoded_bytes' => '67108864'), pinned.merge('decoded_bytes' => 0),
+     pinned.merge('decoded_bytes' => (1 << 30) + 1), pinned.merge('decoded_bytes' => 1.5),
+     source.merge('decoded_sha256' => 'b' * 64, 'decoded_bytes' => 1)].each do |bad|
+      assert_raises(Erx::Error, bad.inspect) { parse([bad]) }
+    end
   end
 
   # A zip is a prebuilt program for the one host it names, and only that host fetches it.
@@ -157,10 +182,17 @@ class DependenciesTest < Minitest::Test
     entry = source.merge('directory' => 'source-1',
                          'sha256' => Digest::SHA256.file(archive).hexdigest)
     entry['members'] = members if members
+    keep_in_downloads(entry)
     lock = File.join(@directory, 'deps.lock')
     File.write(lock, JSON.generate('version' => 1, 'sources' => [entry]))
     runner = Erx::Runner.new(owner_root: @directory, log_dir: File.join(@directory, 'logs'))
     Erx::Dependencies.new(root: @directory, runner: runner, tar_program: tar_program)
+  end
+
+  # Files the archive in the downloads directory under the name Dependencies looks for.
+  def keep_in_downloads(entry)
+    FileUtils.cp(File.join(@cache, 'source.tar.gz'),
+                 File.join(@cache, "#{entry.fetch('id')}-#{entry.fetch('sha256')}.tar.gz"))
   end
 
   def extracted_file
@@ -218,6 +250,7 @@ class DependenciesTest < Minitest::Test
     prepare_cached_source
     entry = JSON.parse(File.read(File.join(@directory, 'deps.lock'))).fetch('sources').first
     sources = [entry, entry.merge('id' => 'other'), entry.merge('id' => 'bad', 'sha256' => '0' * 64)]
+    sources.drop(1).each { |pinned| keep_in_downloads(pinned) }
     File.write(File.join(@directory, 'deps.lock'), JSON.generate('version' => 1, 'sources' => sources))
     runner = Erx::Runner.new(owner_root: @directory, log_dir: File.join(@directory, 'logs'))
     [Erx::Dependencies.new(root: @directory, runner: runner), entry]
@@ -279,15 +312,49 @@ class DependenciesTest < Minitest::Test
 
   def test_bad_hash_publishes_neither_archive_nor_tree
     dependencies = prepare_cached_source
-    File.write(File.join(@cache, 'source.tar.gz'), 'bad')
+    File.write(Dir.glob(File.join(@cache, 'fixture-*')).first, 'bad')
     assert_raises(Erx::Error) { dependencies.fetch(cache: @cache) }
     refute File.exist?(File.join(@directory, 'build/third_party/fixture'))
     assert_empty Dir.glob(File.join(@directory, 'build/downloads/*.tar.gz'))
   end
 
+  # An OCI image is not in a source cache: fetching every source from a cache
+  # fills the archives and leaves the image to its own fetch, never running docker. Naming the image with a cache is
+  # refused.
+  def test_a_cache_fills_the_archives_and_leaves_an_oci_image_unfetched
+    prepare_cached_source
+    entry = JSON.parse(File.read(File.join(@directory, 'deps.lock'))).fetch('sources').first
+    File.write(File.join(@directory, 'deps.lock'), JSON.generate('version' => 1, 'sources' => [image_source, entry]))
+    runner = NoDockerRunner.new(owner_root: @directory, log_dir: File.join(@directory, 'logs'))
+    dependencies = Erx::Dependencies.new(root: @directory, runner: runner)
+    dependencies.fetch(cache: @cache)
+    assert_equal 'safe', File.read(extracted_file)
+    assert_equal [image_source], dependencies.images
+    error = assert_raises(Erx::Error) { dependencies.fetch(cache: @cache, source_id: 'image') }
+    assert_includes error.message, 'without --cache'
+  end
+
+  # An archive already in this checkout's build/downloads is used as it is; the cache is not read for it.
+  def test_a_cache_fetch_leaves_an_archive_already_in_downloads_alone
+    dependencies = prepare_cached_source
+    dependencies.fetch(cache: @cache)
+    FileUtils.rm(Dir.glob(File.join(@cache, 'fixture-*')))
+    File.unlink(extracted_file)
+    dependencies.fetch(cache: @cache)
+    assert_equal 'safe', File.read(extracted_file)
+  end
+
+  def test_a_cache_that_is_not_a_directory_is_refused_once
+    dependencies = prepare_cached_source
+    ['', File.join(@directory, 'absent')].each do |cache|
+      error = assert_raises(Erx::Error) { dependencies.fetch(cache: cache) }
+      assert_includes error.message, 'not a directory'
+    end
+  end
+
   def test_missing_cache_does_not_fall_back_to_network
     dependencies = prepare_cached_source
-    File.unlink(File.join(@cache, 'source.tar.gz'))
+    FileUtils.rm(Dir.glob(File.join(@cache, 'fixture-*')))
     assert_raises(Erx::Error) { dependencies.fetch(cache: @cache) }
     refute File.exist?(File.join(@directory, 'build/third_party/fixture'))
   end

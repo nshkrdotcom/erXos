@@ -297,19 +297,19 @@ output(#{unread := Unread} = Data) ->
     end.
 
 %% One event through the core: its actions performed and the state it
-%% leaves, or the program stopped and the UI ended.
+%% leaves, or, at a stop, the program stopped and the UI ended.
 step(Event, #{core := Core} = Data) ->
-    case erx_ui_lvgl_core:step(Event, Core) of
-        {ok, Core1, Actions} -> performed(Actions, Data#{core := Core1});
-        {stop, Reason} -> down(Reason, Data)
-    end.
+    {Core1, Actions} = erx_ui_lvgl_core:step(Event, Core),
+    performed(Actions, Data#{core := Core1}).
 
-%% The actions performed in order, or, at a write that failed, the rest
-%% dropped and the core told of the failure.
+%% The actions performed in order; at a write that failed, the rest
+%% dropped and the core told of the failure; at a stop, the program
+%% stopped and the UI ended.
 performed(Actions, Data) ->
     case perform(Actions, Data) of
         ok -> {next_state, state_of(Data), Data};
-        {failed, Event} -> step(Event, Data)
+        {failed, Event} -> step(Event, Data);
+        {stop, Reason} -> down(Reason, Data)
     end.
 
 state_of(#{core := Core}) ->
@@ -320,6 +320,8 @@ state_of(#{core := Core}) ->
 
 perform([], _Data) ->
     ok;
+perform([{stop, Reason}], _Data) ->
+    {stop, Reason};
 perform([Action | Rest], Data) ->
     case perform_one(Action, Data) of
         ok -> perform(Rest, Data);

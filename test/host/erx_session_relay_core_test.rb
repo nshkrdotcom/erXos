@@ -11,14 +11,20 @@ require_relative '../fixtures/erlang_build'
 # exhaustive exploration of the terminal relay's core erx_session_relay_core
 # (docs/design-shell.md, "The terminal relay's protocol"), compiled with
 # warnings as errors on stock's emulator (ERX_ERL and ERX_ERLC, which make
-# check supplies). Each seeded fault is a copy of the core with one rule
-# broken, which must fail the case that guards it.
+# check supplies). Each seeded fault is a copy of the core, or of the link
+# erx_tty_link it holds, with one rule broken, which must fail the case
+# that guards it.
 class ErxSessionRelayCoreTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   SOURCE = 'erlang/apps/erx_session/src/erx_session_relay_core.erl'
   CASES = %w[test/erlang/erx_session_relay_core_tests.erl].freeze
   DEADLINE = '600'
-  Fault = Data.define(:text, :broken, :case_name)
+  LINK = 'erlang/apps/erx_session/src/erx_tty_link.erl'
+  # A broken rule: the text that keeps it in source, what replaces it, and the case that
+  # must then fail.
+  Fault = Data.define(:text, :broken, :case_name, :source) do
+    def initialize(text:, broken:, case_name:, source: SOURCE) = super
+  end
   READ_GATE = 'case may_read(Made, Core) andalso N =:= Signal of'
   FAULTS = {
     # Every wait armed whatever its holder: B is reported before its foreground.
@@ -88,7 +94,7 @@ class ErxSessionRelayCoreTest < Minitest::Test
     mode_ignored: Fault.new(text: "on_open(_Caller, {tty_read, _, _, _}, #open{mode = write}, Core) ->\n    " \
                                   "{{error, ebadf}, [], Core};\n",
                             broken: '', case_name: /the_mode_test/),
-    out_without_room: Fault.new(text: 'andalso Free > 0 of', broken: 'andalso Free >= 0 of',
+    out_without_room: Fault.new(text: 'andalso Free >= erx_tty:widest_rendering() of', broken: 'andalso Free >= 0 of',
                                 case_name: /output_takes_the_links_room_test/),
     # A step sends what is held once, at its end: a send inside it, at
     # each echo or when output starts, puts bytes the step's flush drops
@@ -109,6 +115,15 @@ class ErxSessionRelayCoreTest < Minitest::Test
     never_reconciled: Fault.new(text: '{Reconciled, Core1} = reconcile(Core0),',
                                 broken: '{Reconciled, Core1} = {[], Core0},',
                                 case_name: /input_on_demand_test/),
+    # An out wait reported at one free byte lets a newline under ONLCR find no room.
+    out_at_one_byte: Fault.new(text: 'andalso Free >= erx_tty:widest_rendering() of', broken: 'andalso Free > 0 of',
+                               case_name: /an_out_wait_waits_for_room_for_any_byte_test/),
+    # With no master, held output flows all the same: it is sent, and a drain waits for it.
+    no_master_flows: Fault.new(text: '-> Master =:= present andalso not Stopped.', broken: '-> not Stopped.',
+                               case_name: /no_master_test/, source: LINK),
+    # With no master, a message as from one types input and sets the size.
+    no_master_heard: Fault.new(text: "master(_Message, L = #link{master = none}) ->\n    {[], L};\n",
+                               broken: '', case_name: /no_master_test/, source: LINK),
     flush_keeps_writes: Fault.new(text: '{Linked ++ drop_writes(Core1), Core1#core{writes = queue:new()}}.',
                                   broken: '{Linked, Core1}.', case_name: /a_flush_drops_what_is_held_test/),
     stop_ignored: Fault.new(text: '{[], Core#core{link = erx_tty_link:stop(Link)}};', broken: '{[], Core#core{link = Link}};',
@@ -121,7 +136,7 @@ class ErxSessionRelayCoreTest < Minitest::Test
   }.freeze
 
   def test_the_cases_and_the_exploration_pass
-    output, status = eunit(File.binread(File.join(ROOT, SOURCE)))
+    output, status = eunit({})
     assert status.success?, output
     assert_match(/All \d+ tests passed/, output)
   end
@@ -134,18 +149,18 @@ class ErxSessionRelayCoreTest < Minitest::Test
 
   def assert_fault_fails(name)
     fault = FAULTS.fetch(name)
-    source = File.binread(File.join(ROOT, SOURCE))
-    raise "#{SOURCE} no longer holds #{fault.text.inspect}" unless source.include?(fault.text)
+    source = File.binread(File.join(ROOT, fault.source))
+    raise "#{fault.source} no longer holds #{fault.text.inspect}" unless source.include?(fault.text)
 
-    output, status = eunit(source.sub(fault.text) { fault.broken })
+    output, status = eunit(fault.source => source.sub(fault.text) { fault.broken })
     refute status.success?, output
     assert_match(/#{fault.case_name.source}\S*\.\.\.\*failed\*/, output)
   end
 
-  def eunit(module_text)
+  def eunit(replaced)
     Dir.mktmpdir('erx-session-relay-core-test') do |work|
       ErlangBuild.compile(work, applications: %w[erx erx_session], tests: CASES,
-                                replaced: { SOURCE => module_text })
+                                replaced: replaced)
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
                       'halt(case eunit:test(erx_session_relay_core_tests, [verbose]) of ok -> 0; _ -> 1 end).',
                       chdir: work, stdin_data: '')

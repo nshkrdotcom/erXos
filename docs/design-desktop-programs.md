@@ -42,7 +42,7 @@ Decisions every reader of this document needs:
   `erx_ui`, drawn by the Erlang renderer on the desktop and by LVGL or
   the browser where those are the medium. None opens a draw connection.
   The widget format gains what the four need and states as meaning: a
-  `graph` kind, `icon`, `role`, `area` and `current` properties, icons
+  `graph` kind, `icon`, `role`, `area`, `current` and `name` properties, icons
   on a `list` and activation of a list item ([Widget format
   additions](#widget-format-additions)).
 * **Shipped in the session's release, started by commands.** The four
@@ -130,8 +130,8 @@ and it takes no other system's assets, names or icons.
   `column`, `row`, `grid`, `scroll`, `stack`, `label`, `button`,
   `checkbox`, `slider`, `input`, `list`, `image`, `spacer` and `graph`, and
   four enumerations, `ui_align`, `ui_role`, `ui_area` and `ui_icon`. It
-  carries a text's role, a container's area, icons, a button's `current`
-  and a list's `on_submit`, as [Widget format
+  carries a text's role, a container's area, icons, a button's `current`,
+  a node's `name` and a list's `on_submit`, as [Widget format
   additions](#widget-format-additions) describes.
 * **Drawing.** `display/libmemdraw` is 9front's `libmemdraw`. Its draw
   reads a mask without an alpha channel as grey and uses the grey as
@@ -244,7 +244,7 @@ timer's tick. Effects form a closed set:
 
 | Effect | Performed as | Answer, as an input |
 | --- | --- | --- |
-| `{inspect, Tag, Path}` | a worker calls `erx:inspect(Path, #{timeout => 1000})` | `{inspected, Tag, Result}` |
+| `{inspect, Tag, Path}` | a worker calls `erx:inspect(Path, #{timeout => 1000})`, then reads the wall clock | `{inspected, Tag, Result, Now}`, `Now` the wall clock read after the answer |
 | `{list, Tag, Dir}` | a worker, its heap capped ([Bounds](#bounds)), calls `file:list_dir_all/1` | `{listed, Tag, Result}`, each name a binary |
 | `{stat, Tag, Dir, Names}` | a worker calls `file:read_link_info/2` with `[{time, posix}]` on each of at most 256 names | `{stated, Tag, Results}`, one result per name, in order |
 | `{read, Tag, Path, Bytes}` | a worker opens the file and reads at most `Bytes` | `{read, Tag, Result}`, `file:read/2`'s result; a folder answers `{error, eisdir}` |
@@ -252,6 +252,12 @@ timer's tick. Effects form a closed set:
 | `{snarf, Bytes}` | a write of `/clipboard` through the session's display grant | `{snarfed, ok \| {error, Errno}}` |
 | `{cancel, Tag}` | the worker of `Tag` is unlinked and killed | none |
 | `close` | `erx_ui:close/1`, and the process ends | none |
+
+The window is started with one function, its inspector, which performs
+`{inspect, Tag, Path}`: `erx_desk_sup` passes `fun erx:inspect/2`, and
+the tests pass a model of the inspector. It is the only effect injected;
+the window performs every other effect itself, through stock OTP and
+`erx_ui`.
 
 A worker that ends without answering, killed by its heap cap or by a
 crash, becomes the input `{failed, Tag, Reason}`.
@@ -292,8 +298,10 @@ What follows from this shape:
 * **Idle costs nothing.** The only timers are the core's `tick_after`
   effects. files sets none; month sets one for the next midnight, only
   while it marks a today; clock sets one for the next minute; stats one
-  for the next sample. The renderers have no timer
-  (design-display's G6).
+  for the next sample. A renderer draws only for a change of the tree
+  and for the transitions that change starts, each of which ends with
+  one final present after its deadline ([Motion](#motion);
+  design-display's G6).
 * **The window never waits.** Every read is a worker's, so a file server
   or a domain that does not answer delays only its own answer, and the
   window takes input meanwhile.
@@ -306,7 +314,25 @@ What follows from this shape:
 * **Host testing is the core's.** A core is a pure function of its
   inputs, with time an input, so its tests feed recorded inspector
   records, listings and ticks and compare trees, with no display and no
-  machine.
+  machine. They reach a tree's nodes through `erx_ui_query`, a module of
+  the host tests that finds the one node of a given kind, text, role or
+  `name`, refusing a query that matches none or several, and turns that
+  node's event into the input the widget server would send, such as
+  `{ui, Window, Term, click}` for a button's `on_click`; it refuses an
+  event on a node that is disabled, hidden or under a hidden node, where
+  no renderer reports one, and one the server would drop. So a test reads
+  "click Back, expect the parent folder's listing" and never indexes a
+  tree by position.
+* **A core reloads in place.** In development, `tools/erx load` puts a
+  new `erx_desk_<name>_core` into the session's runtime through the
+  session's code facet
+  ([design-live.md](design-live.md#code-from-the-host)), and
+  `erx_desk:reload(Name)`, called at the session's Erlang shell, has
+  every open window of that program call the new core's `view/1` on the
+  state it holds and hand the tree. The state is kept, since the window
+  holds it and calls its core by module name, which reaches the newest
+  version; a core that cannot read the old state crashes its window,
+  which ends as any crash ends it, and the command opens a fresh one.
 
 ## The visual language
 
@@ -317,8 +343,9 @@ one deep accent used sparingly, hairline separators instead of boxes,
 generous space, and type that carries the hierarchy. Depth is a single
 level: a section lifts off the window by a soft shadow, and nothing
 floats above that. Corners are rounded on controls and sections and
-square on windows. Motion is a graph moving by one sample. Nothing
-glows, blurs or animates for its own sake.
+square on windows. Motion is brief and follows a change: a control
+eases into its new state, a section fades in, a graph moves by one
+sample. Nothing glows, blurs or animates for its own sake.
 
 It is original by construction: the palette, the proportions and the
 icons below are erXos's own, and nothing is taken from another system's
@@ -383,6 +410,9 @@ theme 1
   contrast secondary on window surface sunken 4.5
   contrast on_accent on accent 4.5
   icons display/icons/icons.txt sizes 16 32
+  transition press  120 ease_out                 # ms; a button's down and up
+  transition state  160 ease_out                 # checked, selected, current, value
+  transition reveal 200 ease_out                 # visible from false to true
 ```
 
 The colour values are the starting palette, tuned with the first
@@ -398,7 +428,22 @@ checked constraint, as the spec discipline asks:
 * every `role` names a declared font and weight, and a size and line
   height on the 4-pixel grid where the line height is concerned;
 * every `space` and `radius` value is a whole number of units or
-  pixels, and `radius window` is 0 (see Windows, below).
+  pixels, and `radius window` is 0 (see Windows, below);
+* every member of `ui_transition` has one `transition` row, with a
+  duration of at most 250 ms and a curve of `linear` or `ease_out`; a
+  seeded `transition press 400` fails the build.
+
+**Sizes and the scale.** Every size the theme states, a role's size and
+line, the `unit`, a radius, the hairline and a shadow, is in logical
+pixels, as a tree's `width`, `height` and `pad` are, and a renderer
+draws them at the window's scale, which the window's `ctl` gives
+([design-display.md](design-display.md#the-window-tree)). `erx_mask`
+makes its masks at run time at whatever size it is asked, but the glyph
+step makes glyph and icon sets at build for each scale the image
+carries, and the image carries one, 1: a denser panel brings its 2x set
+when one is a target, and a fractional scale waits for glyphs rasterised
+at run time. So no program states a pixel, and none changes when a scale
+is added.
 
 ### Type
 
@@ -444,7 +489,8 @@ subfont is a subfont like any other, and
 message then draws each glyph with its cache entry as the mask, which
 `libmemdraw` reads as coverage, so text is anti-aliased with no change
 below `erx_font`. The same step writes LVGL's bitmap font form of each
-role from the same coverage, so the two renderers draw the same glyphs,
+role from the same coverage and kerning pairs ([Kerning](#kerning)), so
+the two renderers draw the same glyphs at the same places,
 and the `body` role's glyphs a third time as generated data for the
 window manager's menu, an Erlang module of each glyph's metrics beside
 its raw `k8` rows, which the menu loads with `erx_memdraw:load/3`, so
@@ -473,13 +519,284 @@ metrics in exact arithmetic, rounded half up. A glyph is drawn its
 coverage's offset right of the pen and advances by its advance rounded
 half up to a whole pixel. The step refuses a glyph whose ink leaves the
 line, and a role whose values the subfont format cannot hold (font(7):
-a glyph's column in two bytes, its rows, offset and advance in one), so
-no subfont is cut to fit.
+a glyph's column in two bytes, its rows, offset and advance in one,
+bounds that `abi/formats/subfont.txt` states for the step and for
+`erx_font` alike), so no subfont is cut to fit.
 
 A character outside the theme's ranges has no glyph: the renderer draws
 the replacement box of the role's size. The ranges cover Latin scripts
 and the line escape's tokens, which are ASCII; other scripts are a later
 range of the theme, with a font that covers them.
+
+### Kerning
+
+A subfont's glyph table gives each glyph one advance (font(7)), so two
+glyphs side by side stand the sum of their advances apart. Inter is
+spaced for its kerning, and its kerning is not in a legacy `kern` table,
+which its fonts do not have, but in the `kern` feature of the `GPOS`
+table: three pair adjustment lookups, which the `DFLT` and `latn`
+scripts share, one of them behind an extension lookup, each holding
+subtables of single pairs (format 1) and of glyph classes (format 2),
+every value an advance of the first glyph (value format 4, none for the
+second). Without it, `AV` in the `body` role is 18 pixels wide where the
+font's own spacing puts it at 17.05, and `To` 16 where it puts 15.17.
+
+Read over the theme's ranges with a reader written for this design from
+the OpenType specification ([References](#references)), the pairs whose
+kerned advance differs, by the rounding rule below, from the plain one
+are:
+
+| Role | Font and size | Pairs | Adjustments, in pixels |
+| --- | --- | --- | --- |
+| `body` | Regular, 13 | 7,813 | -2 to 2 |
+| `caption` | Regular, 11 | 5,610 | -2 to 1 |
+| `numeric` | Medium, 13 | 7,254 | -3 to 2 |
+| `heading` | SemiBold, 15 | 8,861 | -3 to 2 |
+| `title` | SemiBold, 20 | 10,315 | -4 to 3 |
+| `display` | SemiBold, 48 | 13,341 | -9 to 7 |
+
+The counts are those of the glyph step's pair sections, from Inter 4.1's
+three fonts with each advance as FreeType gives it in 26.6 pixels
+([Rounding and bounds](#kerning)), over each role's drawn glyphs, the
+tabular roles' tabular digits among them; an advance from `hmtx` in
+exact arithmetic, which differs from FreeType's by at most 1/128 of a
+pixel, rounds the other way for some glyphs and gives other counts.
+Inter's tabular figures,
+`zero.tf` to `nine.tf`, take part in no pair of any of the three fonts,
+while its proportional digits take part in twelve pairs among
+themselves, so the tabular roles kern their letters and their digits
+keep one advance with no rule of the step's. No role is monospace, so
+every role is kerned. The terminal draws from `fixed`, a font of cells
+whose subfonts have no pairs.
+
+**The construction.** A pair is an adjustment, in whole pixels, of the
+first glyph's advance when the second glyph follows it: the pen moves
+from glyph a to the next glyph b by width(a) + kern(a, b), and by
+width(a) where no pair names the two. The glyph step computes each
+role's pairs once, from the font's `GPOS` table, and writes them beside
+the glyphs in each form it writes: the subfont file, the menu's module
+and the LVGL font. Every renderer moves its pen by that one rule. What
+the design needs follows from it:
+
+* the font is the one source: nothing is kerned by hand and no table is
+  checked in; the browser draws type with its own shaper, which kerns
+  from the font it draws with;
+* a kerned advance is an advance: the adjustment is chosen so that
+  width(a) + kern(a, b) is the font's exact kerned advance rounded half
+  up, as width(a) is the exact advance rounded half up, and it lies in
+  the advance's range, 0 to 255, so whatever a reader holds true of
+  advances holds of kerned ones, and the pen never moves backward;
+* pairs name only drawn glyphs: no pair names a glyph of width 0, which
+  a reader takes as missing, so a replacement box never kerns and no
+  renderer asks whether it should;
+* a stock Plan 9 reader still reads a kerned subfont: the pairs follow
+  the glyph table, and plan9port's `readsubfonti` reads the image, the
+  header and the n + 1 entries and stops (plan9port at commit
+  `1f13969`, `src/libdraw/readsubfont.c`, lines 17-31), so it never
+  reads them.
+
+**Where the pairs come from.** `erx-raster` reports, beside each
+glyph's coverage, the font's index of the glyph, and after the glyphs
+the font's `GPOS` and `GDEF` tables as bytes, each empty when the font
+has none, read through FreeType's
+`FT_Load_Sfnt_Table` (`include/freetype/tttables.h`, line 758), and
+whether the font has a legacy `kern` table. `Erx::Gpos`, a reader in
+`tools/lib/erx`, takes the two tables and the role's glyph indices and
+returns, in font units, the kerning of every ordered pair of the role's
+drawn glyphs that is not 0, as the OpenType specification applies it:
+
+* from the default language system of the `latn` script, or of `DFLT`
+  when the font has no `latn` script, every feature tagged `kern`, the
+  language system's required feature among them when it is tagged
+  `kern`, as a client applies a required feature with the rest; a
+  font with neither has no pairs, and a font whose chosen script has no
+  default language system is refused, since the font then kerns no
+  text that names no language and the reader would have to pick one;
+* the union of those features' lookup indices, each lookup applied once
+  however many times the features name it, in the order of the lookup
+  list, each adding its value to the pair's, as a client processes the
+  lookups of the features it applies ("Features and lookups"); Inter's
+  `DFLT` script names its three lookups twice in one `kern` feature
+  (2, 3, 1, 2, 3, 1), and its `latn` script once each;
+* within a lookup, its subtables in order, the first that matches
+  giving the lookup's value ("Lookup table"): a format 1 subtable
+  matches when its coverage holds the first glyph and that glyph's pair
+  set holds the second, and a format 2 subtable when its coverage holds
+  the first glyph, the second glyph's class being 0 when its class
+  definition does not list it;
+* an extension lookup (type 9) read as the pair adjustment it wraps;
+* the lookup flags accepted only where they cannot change a pair of the
+  role's glyphs. A flag chooses glyphs to skip, bases, ligatures or
+  marks by the `GDEF` table's glyph classes, and a skipped glyph is
+  neither half of a pair (common table formats, "Lookup table"). The
+  reader accepts the bits that skip only marks, ignore marks (`0x0008`),
+  use a mark filtering set (`0x0010`) and a mark attachment type
+  (`0xFF00`), and refuses every other bit: right to left, ignore base
+  glyphs, ignore ligatures and the reserved bits. It also reads the
+  glyph class definition of the font's `GDEF` table and refuses a role
+  one of whose drawn glyphs is classed a mark, so the accepted bits skip
+  none of the role's glyphs and leave every pair as it is. The text
+  path kerns adjacent characters, each drawn as one spacing glyph.
+  Inter's three `kern` lookups set `0x0010`, `0x0010` and nothing, in
+  the order of the lookup list, and no code point of the theme's ranges
+  maps to a mark in any of the three fonts.
+
+FreeType has a reader of its own, `TT_CONFIG_OPTION_GPOS_KERNING`, which
+its build leaves off (`include/freetype/config/ftoption.h`, lines
+827-838) and which `FT_Get_Kerning` would use for a font without a
+`kern` table. It takes the first subtable that matches across all the
+`kern` lookups instead of adding the lookups' values
+(`src/sfnt/ttgpos.c`, lines 944-981), and so gives 0 for 529 of Inter
+Regular's pairs over the theme's ranges and 568 of Medium's and of
+SemiBold's whose kerning another lookup gives: `"` followed by `,` is
+-168 units in the font, from the second lookup, and 0 by FreeType's
+rule, the first lookup's class value. It also drops every pair of a font
+one of whose `kern` lookups is not a pair adjustment (lines 677-678).
+So the step reads the table itself, in Ruby, where an offset past the
+table is a typed error and the reader is tested against tables built in
+the test. The font is a third-party source: its recorded hash says the
+bytes are the ones imported, not that they are well formed, so the
+reader is a parser of untrusted input and has a fuzz target
+([Verification](#verification-and-testing)). Every input ends in pairs
+or in an `Erx::Error`, never another exception, and in time bounded by
+the table: each count is matched against the bytes it claims before
+anything it counts is read, each lookup is applied once, and an
+extension never wraps another extension, so the reader follows no
+cycle.
+
+**Rounding and bounds.** With a the glyph's advance as FreeType gives it
+(26.6 pixels, divided by 64) and k the pair's kerning scaled exactly,
+k = units x size / units per em, a pair's adjustment is
+floor(a + k + 1/2) minus floor(a + 1/2), and a pair is kept when that
+is not 0. So `Ty` at 13
+pixels, -0.81 pixels in the font, has no pair: T's advance, 8.39, and
+its kerned advance, 7.58, both round to 8, and the pair's width stays
+15, the nearest whole pixel to the font's 14.89. The step refuses an
+adjustment outside a signed byte and a kerned advance outside 0 to 255,
+so no pair is cut to fit; Inter comes nowhere near either. The pairs
+have no count limit of their own: strict order over n glyphs allows at
+most n x n, and each reader matches the count against the bytes present.
+
+**Whole pixels and the pen.** The rule keeps every glyph's distance
+from the next within half a pixel of the font's, the closest a pen that
+moves by whole pixels can come; it cannot keep a line's length, because
+each advance is rounded on its own and the errors add up. Over the
+first 400 ASCII lines of 8 to 70 characters of the tree's `README.md`
+(at commit `7bec5218c`, about 55 characters a line), with advances from
+`hmtx` in exact arithmetic, which differ from FreeType's 26.6 by at most
+1/128 of a pixel:
+
+| Role | Font and size | Line length by this rule | Distances off by more than half a pixel with an exact pen, each glyph rounded |
+| --- | --- | --- | --- |
+| `caption` | Regular, 11 | 1.2 pixels long on average | 28% |
+| `body` | Regular, 13 | 5.2 pixels long on average | 25% |
+| `heading` | SemiBold, 15 | 1.0 pixel long on average | 24% |
+| `title` | SemiBold, 20 | 4.4 pixels short on average | 19% |
+
+So whole pixels shift each role's tracking by an amount that depends on
+its size, the `body` role about 0.09 pixel a glyph looser than the
+font and the `title` role tighter, while the spacing stays even. A run
+of one narrow glyph shows the drift at its largest: the design's
+external review, with HarfBuzz 15.0.0 and FreeType's unhinted
+advances, set ten `i` of Inter Regular at 26.72 pixels at 11 pixels
+and 31.56 at 13, where this rule sets both at 30, since `i` has no
+pair and its advance, 2.67 and 3.16 pixels, rounds to 3 at either
+size. A pen kept in fractions of a pixel, each glyph's place rounded,
+keeps every line's length within half a pixel but moves a quarter of
+the distances between neighbours by half a pixel to a pixel, which may
+read as uneven spacing at these sizes. Exact length and even spacing
+together need glyphs rasterised at several horizontal phases and
+chosen by the pen's fraction, as current desktop systems draw text: a
+draw message that places each glyph, text subfonts three to four times
+as wide, and LVGL's font code changed to match, since it rounds each
+kerned advance to a whole pixel as this rule does
+(`src/font/fmt_txt/lv_font_fmt_txt.c`, lines 250-256). Which of the
+three a person reads best at these sizes is judged by eye, on
+reference frames; that is [Open decisions](#open-decisions), 3, and the
+verification's line-length check gives it the numbers. The pairs this
+section derives are the same data under each.
+
+**The pair section.** When a role has pairs, its subfont file goes on
+after the glyph table with two fields of the subfont header's form, the
+word `kern` and the pair count k, then k entries of 5 bytes: the first
+glyph's index and the second's, two bytes each, low byte first as a
+glyph's x is, and the adjustment, a signed byte as a glyph's left is.
+The entries ascend strictly by the first index and then the second. A
+subfont without pairs ends at its glyph table, as `fixed` does. The
+body role's section is about 38 KiB and the display role's about 65
+KiB.
+
+`erx_font` checks the section with the rest of the file. Bytes after
+the glyph table whose first field is not the word `kern`, fewer than a
+field's bytes among them, stay `trailing`. Once that field reads
+`kern`, every fault of the section refuses the whole file with the
+reason `kern`, a malformed count field included: the header's number
+reader answers `header` and takes a minus sign, so the section reads its
+count as decimal digits alone, under its own reason. Before it
+reads an entry, it requires the count to be at least 1 and the bytes
+after the count field to be exactly 5 times the count, so a missing
+count, a count of 0 or below, entries short of the count and bytes
+after them are one check; then, entry by entry, an index at or past the
+glyph count, a pair not above the one before it, an adjustment of 0, a
+pair naming a glyph of width 0, and a kerned advance outside 0 to 255.
+It keeps the entries as the file's bytes and finds a pair by halving
+them, so a subfont costs its own size and no more.
+
+**The text path.** The rule has one implementation, `erx_pen`, a pure
+module of `erx_memdraw`, which both sides of the display take:
+`erx_pen:place(Glyphs, Advance, Kern)` returns each glyph's pen offset
+from the line's start and the line's width, adding Kern(A, B) to A's
+advance. Each reader of the pairs calls it:
+
+* `erx_font:width/2` and `erx_font:runs/2` place a line of a subfont's
+  glyph indices. The Erlang renderer measures text with the first, and
+  draws with the second, which cuts the line where an adjustment is not
+  0 into runs, each with its offset; each run is one `s` message at its
+  offset, its source point moved by the same amount. A line without
+  pairs is one run, one message, and the draw server, which advances
+  each glyph by its cache entry's width, applies no kerning and its
+  messages stay Plan 9's. Kerned text is drawn with `s` over the
+  background the renderer has filled, never with `x`, whose background
+  per message would leave a positive adjustment's columns unfilled. A
+  character outside the ranges is a replacement box between two lines of
+  glyphs, and no pair spans it.
+* `erx_menu_glyphs` exports `kern/2`, the adjustment of two characters,
+  0 for any pair the module does not list, one clause a pair, generated
+  from the same subfont value as `glyph/1`; `erx_wm_menu` places a
+  label's glyphs with `erx_pen` and draws each through its mask.
+* The LVGL font of a role, generated C (`Erx::Glyphs::LvglFont`), holds
+  the subfont's drawn glyphs as LVGL's glyphs 1 to n in subfont order,
+  since LVGL keeps glyph 0 for none, their coverage at 8 bits a pixel,
+  and one character map a range that names only drawn glyphs, so LVGL
+  lacks the characters the subfont lacks. It carries the pairs as LVGL's
+  pair table (`lv_font_fmt_txt_kern_pair_t`,
+  `include/lvgl/font/lv_font_fmt_txt.h`, lines 113-126): the glyph ids
+  as 16-bit pairs in the same order, which the numbering keeps, the
+  adjustments as its values, a kern scale of 256 and each advance
+  written as its whole pixels times 16. LVGL adds the value times the
+  scale over 16 to the advance, in sixteenths of a pixel, and rounds to
+  a whole pixel (`src/font/fmt_txt/lv_font_fmt_txt.c`, lines 239-256),
+  which gives width(a) + kern(a, b) exactly, and its pen takes the next
+  character's pair whenever a font's kerning is not
+  `LV_FONT_KERNING_NONE` (`src/font/lv_font.c`, lines 135-141).
+* `theme.ts` carries no pairs: the browser's shaper applies the font's
+  kerning, CSS's `font-kerning` at `normal`.
+
+**What the step refuses.** Beyond the refusals of the glyph step above,
+a role whose font has a legacy `kern` table, whose kerning would then
+have two sources; whose chosen script has no default language system;
+one of whose drawn glyphs `GDEF` classes a mark; or whose `GPOS` table,
+under a `kern` feature, has a lookup that is not a pair adjustment, an
+extension that wraps another extension, a lookup flag other than the
+mark bits above, a pair adjustment of a format other than 1 or 2, value
+formats other than an advance of the first glyph and nothing of the
+second, an offset or count that reaches past the table, a class at or
+past its subtable's class count, a class count of 0, which leaves no
+class for the glyphs a class definition does not list, or a coverage or
+class definition whose glyphs do not ascend without repeating, as the
+specification requires and as reading each glyph by halving needs; and
+a pair whose adjustment or kerned advance leaves its range, as above. Each names the role, and the
+lookup and subtable where there is one.
 
 ### Spacing and layout
 
@@ -576,23 +893,49 @@ not take the keyboard and `accent` for the one that does, one hairline
 wide, and the menu draws its items in the `body` role, on `surface`,
 with the `menu` radius and the section shadow, inside its own image.
 The menu's glyphs are the `body` role's, which the glyph step writes as
-an Erlang module of metrics and raw `k8` rows; `erx_wm_menu` loads them
-into an image of the display domain's own with `erx_memdraw:load/3` and
-draws each label's glyphs through it as masks, so the display release
-holds no font file and no font reader and G9's check is unchanged
+`erx_menu_glyphs`, an Erlang module of metrics and raw `k8` rows;
+`erx_wm_menu` loads them into an image of the display domain's own
+with `erx_memdraw:load/3` and draws each label's glyphs through it as
+masks, so the display release holds no font file and no font reader
+and G9's check is unchanged
 ([design-display.md](design-display.md#windows-and-the-window-system);
 [Decisions](#decisions), 8). The decorations are borders only, with no
 title bar ([Decisions](#decisions), 4).
 
 ### Motion
 
-Motion appears in one place, where it means something: a graph
-advances by one sample when a new sample arrives, so the newest value
-enters at the right and the oldest leaves at the left. Nothing is
-tweened between samples: an interpolated scroll would need a renderer
-timer or a tree many times a second, and an idle window must cost
-nothing (G6). Pressing a control changes it once, as LVGL is already
-configured to do (`lv_conf.h:41`).
+Motion is one concept, the **transition**: a short change from a node's
+old look to its new one, declared in the theme, started only by a
+change of the tree and run by the renderer that owns the node's pixels.
+The theme's `transition` rows name a closed set, `ui_transition`, which
+the theme's grammar fixes ([design-abi.md](design-abi.md#theme)), each
+started by a change of the tree's properties: `press`, a button's down
+and up; `state`, a change of `checked`, `selected`, `current` or
+`value`; `reveal`, a node's `visible` turning true. A transition moves
+colour and opacity only, never a rectangle, so the layout is computed
+once and a transition redraws only the node's own rectangle; a press
+touches a few kilobytes. Its frames interpolate until its deadline, its
+start plus its duration, at most 250 ms, and one final present after
+the deadline draws its end, as soon as the device has answered the
+present before; then the window is idle again (design-display's G6,
+"nothing paints without a change or a transition a change started").
+The Erlang renderer draws a transition's frames at the answers of its
+presents and has no timer
+([design-display.md](design-display.md#the-widget-server)); LVGL takes
+the durations from `erx/theme.h` as its styles' transitions; the
+browser takes them from `theme.ts` as CSS transitions. An application
+never animates: it hands trees, and what moves follows from their
+difference.
+
+A graph advances by one sample when a new sample arrives, so the newest
+value enters at the right and the oldest leaves at the left; nothing is
+tweened between samples, which would be a tree many times a second.
+
+Transitions of windows, a window opening, closing or hiding, are a later
+part of the same concept, run by `erx_screen`, which owns the screen's
+pixels. They wait for a measurement on the Raspberry Pi that shows a
+window can move smoothly there, by copies or by the plane compositor's
+planes ([design-display.md](design-display.md#graphics-hardware)).
 
 ### Icons
 
@@ -619,6 +962,7 @@ additions](#widget-format-additions)): `folder`, `document`, `text`,
 | --- | --- | --- | --- |
 | anti-aliased text | glyphs from `fixed`, 1-bit | Montserrat 14 only | the glyph step: `k8` subfonts and LVGL fonts of every role, from one rasterisation |
 | a type scale | one size | one size | the theme's roles, and the `role` property |
+| kerning | none: a subfont gives one advance a glyph | Montserrat's own classes | the glyph step's pairs from each font's `GPOS`, in every form it writes ([Kerning](#kerning)) |
 | rounded corners, borders | none | yes | `erx_mask`'s corner masks, in the Erlang renderer |
 | soft shadows | none | yes | `erx_mask`'s shadow masks, in the Erlang renderer |
 | graphs | no kind | chart widget | the `graph` kind; `erx_mask`'s stroke and area masks in the Erlang renderer, `lv_chart` in LVGL |
@@ -627,7 +971,7 @@ additions](#widget-format-additions)): `folder`, `document`, `text`,
 
 ## Widget format additions
 
-The four programs need six additions to `abi/formats/ui.txt`. Each
+The four programs need seven additions to `abi/formats/ui.txt`. Each
 states what a node is, not how it looks, so every renderer draws it as
 fits its medium ([design-display.md](design-display.md#widget-trees)),
 and each arrives in the validator, the binary form and the readers of
@@ -640,6 +984,7 @@ all three languages from the one declaration.
 | `icon` | a property of a root `@enum` of type `u8`, the icon set, on `label` and `button` | the item the node stands for, drawn beside its text; a renderer without the icon shows the text alone |
 | `icons` | a list of the same enumeration, on `list`, marked `parallel items` | each item's icon |
 | `current` | a boolean, `false` when absent, on `button` | the button stands for the current one of its set: today in a month, the current folder in a path. A renderer marks it, the Erlang renderer and LVGL with the accent's ring, the browser with `aria-current` |
+| `name` | a text of at most 255 bytes of UTF-8, on every kind | what the node is called where it shows no text of its own, files' back and forward buttons among them; no renderer draws it, and it is how a test, the browser and an assistive reader name the node |
 | kind `graph` | properties `samples`, `min`, `max`, `mark` and `text` | a series of at most 240 numbers, oldest first, each an integer within `min` and `max` or `none`; `mark` an optional reference value within them, such as a grant; `text` the caption, an `attr()` like any text |
 
 `on_submit` on `list`, the existing event with the `selected` index as
@@ -810,10 +1155,19 @@ clock shows the hour and minute in the `display` role, the weekday and
 date in `body`, and the zone in `caption`. erXos has no time zone
 setting, so clock shows UTC and says so ([Decisions](#decisions), 5).
 
-**Reading the time.** At each tick the core reads the wall clock,
-`os:system_time(millisecond)`, which is the time page's wall clock in
-ERTS ([design-time.md](design-time.md#what-erxos-already-has)), and the
-clock's state from the inspector's `[time]` record, `state`:
+**Reading the time.** Each tick asks the inspector for the clock's
+state, the `[time]` record's `state`, and the worker that asks reads
+the wall clock after the answer, `os:system_time(millisecond)`, which
+is the time page's wall clock in ERTS
+([design-time.md](design-time.md#what-erxos-already-has)); clock shows
+that wall reading. The order is what makes a reading safe. The state only
+moves forward within a boot, from `unset` to `boot` to `set`
+([design-time.md](design-time.md#what-proc-shows)), so a wall reading
+taken after a state is at least as trusted as that state says. A clock
+set between the two reads shows "Clock not set" for one more minute;
+the other order would show the time since boot as a `set` date. Where
+the `[time]` worker fails and gives no reading, clock shows the wall
+clock its tick read, under that failure's status token:
 
 | `state` | Shown |
 | --- | --- |
@@ -836,8 +1190,11 @@ across minutes: each delay is recomputed from a fresh reading. A step of
 the wall clock, which `os:system_time/1` shows at once, is not seen
 until the timer set before it fires, so the display is corrected at the
 next tick, at most one minute after the step; a step back makes that
-tick early by the wall clock, and a tick shows the minute it reads,
-since a tick is a reading, not a count. clock wakes once a minute and
+tick early by the wall clock, and a tick shows the minute its reading
+gives, since a tick is a reading, not a count. A tick has two wall
+readings: its own, taken when the timer fires, sets the delay to the
+next tick, and the one its `[time]` answer carries is shown. clock
+wakes once a minute and
 draws one changed label.
 
 The command `clock` takes no arguments.
@@ -872,7 +1229,8 @@ mark of its own, so the format needs no selection state on buttons.
 `erx_desk_month_core` is a function of a year, a month, a selected day
 and today, `none` or a date, built on stock OTP's `calendar`. Today is
 a date only when the clock's state is `set` or `boot`, read from the
-inspector as clock reads it; otherwise no day is marked, and the window
+inspector as clock reads it, and today is the date of the wall reading
+the `[time]` answer carries, never the tick's own; otherwise no day is marked, and the window
 opens on the month the command names or, when it names none, on the
 month of the wall clock with the caption "Clock not set: no today".
 Moving by month crosses years; Today returns to today's month and is
@@ -1142,12 +1500,12 @@ the menu's labels, reads them as data.
 
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
-| **D1.** A program reads only through the session's inspect facet, its namespace and the time page | the effect set is closed, and its performer calls `erx:inspect/2`, `file` and `os:system_time/1` and nothing else; no core performs an effect | a call from `erx_desk` to another erXos module than the public surface, a capability or a facet lookup | a source check over `erx_desk`'s modules: every call into an erXos module is one of `public.txt`'s functions ([design-packaging.md](design-packaging.md#the-sdk)) or `erx:inspect/2`, with a seeded call of `erx_inspector:route/4` failing it |
+| **D1.** A program reads only through the session's inspect facet, its namespace and the time page | the effect set is closed, and its performer calls `erx:inspect/2`, `file` and `os:system_time/1` and nothing else; no core performs an effect | a call from `erx_desk` to another erXos module than the public surface, a capability or a facet lookup | a source check over `erx_desk`'s modules: every call into an erXos module is one of `public.txt`'s functions ([design-packaging.md](design-packaging.md#the-sdk)) or `erx:inspect/2`, with a seeded call of `erx_inspector:route/4` failing it; a call xref sees but whose callee it cannot name, through a variable module or fun, is one of a reviewed list (the injected inspector, the core's `init/1`, `step/2` and `view/1`, which the window calls by module name, and funs a module builds itself), with a seeded call through a variable module failing it |
 | **D2.** No value is shown as other than it came | each derived value carries the worse status of its readings; a status not `ok` reaches the tree as the `attr()` of its text, which the renderer shows as its token (G7); a missing or non-`ok` sample is `none` in `samples`, a gap; a zero denominator is no value | a status dropped on derivation; a gap filled with zero or the last value; a partial sample kept in the ring as a value; a negative rate from a counter that went down; a share of a zero grant shown as 0 or 100 percent | the stats core's status table test over every pair of statuses, with a seeded derivation that keeps `partial` as `ok` failing it; a recorded run with a connections path answering `unsupported`, every row showing the token, with a seeded zero failing it; a counter that goes down, giving a gap, with a seeded subtraction failing it; a partial sample followed by `ok` samples, leaving a gap at the partial point, with a seeded ring that stores partial values failing it; a group of `capacity_mcpu` 0 and a budget of `cap` 0, each giving a gap and its fact, with a seeded division that answers 0 failing it; a session with a scoped facet, see [Verification and testing](#verification-and-testing) |
-| **D3.** A clock never shows an unset clock's reading as the date | the clock and month cores take the state as an input and show a date only for `set` or `boot`, and dimmed with a token when the state is not `ok` | a core that formats the reading without the state | the clock core's test for each state, with a seeded core that ignores `unset` showing `00:12` on 1 January 1970 and failing it |
+| **D3.** A clock never shows an unset clock's reading as the date | the clock and month cores take the state as an input and show a date only for `set` or `boot`, and dimmed with a token when the state is not `ok`; the wall time they show is the one read after the `[time]` answer, and the state only moves forward within a boot | a core that formats the reading without the state | the clock core's test for each state, with a seeded core that ignores `unset` showing `00:12` on 1 January 1970 and failing it, and the row "clock: reading order" with its seeded faults |
 | **D4.** Every action of files reaches the item the person chose | the core acts by index into its own listing of raw names, within the page whose list node is keyed by the listing's generation; the tree holds only shown text | a lookup by shown text; a list key that survives a new listing | a listing whose names `a<U+202E>b`, the eight characters of a token, and a name cut to the same 128 bytes as another, each opened by index and reaching its own file, with a seeded lookup by shown text opening the wrong one; a double click reported on the list of a listing a refresh has replaced, dropped by the widget server, with a seeded key that leaves out the generation opening an item of the new listing |
 | **D5.** Every tree a core builds is valid, whatever the input | names and texts are cut to the schema's bounds at character boundaries, lists to 256 items, previews to 200 lines | a raw name in an `items` entry; a list longer than 256 | a property test over random listings, names of every length to 255 bytes, previews and inspector records, each tree passing `erx_ui_schema`, with a seeded core that skips the cut failing it |
-| **D6.** An idle window costs nothing | the only timers are the core's `tick_after`; the renderers have none (G6) | a periodic redraw; a tick from files, or from month without a today | on the host, an idle files window and a month window without a today, each for a simulated day, issue no tree; a month with a today issues one at midnight; clock issues one a minute; with a seeded once-a-second tick in clock the test fails |
+| **D6.** An idle window costs nothing | the only timers are the core's `tick_after`; a renderer draws only for a tree's change and the transitions it starts (G6) | a periodic redraw; a tick from files, or from month without a today | on the host, an idle files window and a month window without a today, each for a simulated day, issue no tree; a month with a today issues one at midnight; clock issues one a minute; with a seeded once-a-second tick in clock the test fails |
 | **D7.** The palette meets its contrast rules | the generator checks every `contrast` row | a colour edited without the rule | the generator's test with a seeded `secondary` too light, failing the build |
 | **D8.** A listing costs the session bounded memory and work | the listing worker runs under a heap cap, and information is asked for one page of at most 256 names | a worker spawned without the cap; a lookup of every name | files: bounds, below |
 | **D9.** No worker outlives its window, and a cancelled worker sends nothing | workers are linked, the window traps exits, ends with `shutdown` or its crash reason, and unlinks before it kills | a window that ends `normal`; a kill without the unlink | the window's lifetime tests, below |
@@ -1169,7 +1527,8 @@ gate. Each test names the fault that must make it fail.
 | stats: partial history and zero denominators | a partial sample followed by `ok` samples leaves a gap at the partial point; a group of `capacity_mcpu` 0, a budget of `cap` 0 and a machine of `memory_total` 0, all legal records of the schema, each give a gap and the number's fact | a ring that stores partial values; a division by zero answered as 0 |
 | stats: a scoped facet | with an inspector model that answers as design-live's scoped facet does, for two ordinary principals, `[]` and `[cpus, N]` with only their `visible any` attributes and a listing of only each principal's own domains, the four machine panels show the same values for both principals, each window's rows are its own principal's domains, and no count of other domains appears anywhere | a CPU panel that reads `running_thread`, which the scoped record leaves out, and shows a gap |
 | clock: states | each `state` and each non-`ok` status gives its row of the table | the state ignored (D3) |
-| clock: ticks | over recorded readings, including a wall step back and forward and an early tick, each tick shows the minute it read and asks for a `tick_after` of the delay from its reading to the next minute's start; a step is shown by the first tick after it | the next tick set 60 s after the last instead of from the reading |
+| clock: ticks | over recorded readings, including a wall step back and forward and an early tick, each tick shows the minute its reading gives and asks for a `tick_after` of the delay from its reading to the next minute's start; a step is shown by the first tick after it | the next tick set 60 s after the last instead of from the reading |
+| clock: reading order | a clock set between a tick's own reading and its `[time]` answer shows the wall reading taken after the answer, never the time since boot as a `set` date; the window's inspection worker reads the wall clock after the inspector answers | the tick's reading shown instead of the answer's (D3); the worker reading the wall clock before the inspector |
 | month: every month | for every month from 1600 to 2400, the grid's first weekday, length and week numbers equal `calendar`'s | February given 29 days in 1900 |
 | month: arguments | every form of `cal` and every refusal | a `MONTH` of 13 accepted |
 | files: kinds and sorting | the kind table over a corpus of names and modes; byte order of names | a link to a folder listed as a folder without its link mark |
@@ -1210,6 +1569,101 @@ paths in `icons.txt`, a straight stroke of an icon covers each column
 by the stroke's width, and the menu's glyph module loads with
 `erx_memdraw:load/3`; a seeded icon without paths fails the generator.
 
+**Kerning, on the host.** Each test is paired with the seeded fault it
+must catch:
+
+* `Erx::Gpos` over a `GPOS` table the test builds, whose expected
+  values follow from its construction: a `kern` feature of two lookups,
+  the first an extension lookup wrapping a format 1 subtable and a
+  format 2 subtable, the second a format 2 subtable; one pair is given
+  by both lookups and must read as their sum, one is covered by the
+  first lookup's format 1 subtable without its second glyph and must
+  read as the format 2 subtable's class value, and one has a second
+  glyph that no class definition lists and must read as class 0's
+  value. A seeded reader that stops at the first lookup that matches,
+  FreeType's rule, fails the sum, and one that stops at a format 1
+  subtable whose coverage holds the first glyph fails the second case.
+* The same table cut short, with a value format of placement, with a
+  lookup of type 1 under `kern`, with a lookup flag of ignore ligatures,
+  with a `latn` script without a default language system, with a
+  drawn glyph that `GDEF` classes a mark, and a font with a legacy
+  `kern` table, are each refused with the step's typed error; a seeded
+  reader without its bound on offsets fails the first with another
+  error, and one that leaves the flags unread accepts the third. The
+  table with its `kern` feature naming each lookup twice reads as the
+  table that names it once, where a seeded reader that applies a lookup
+  each time it is named doubles the sum.
+* `Erx::Gpos`'s fuzz target, `tools/fuzz/gpos_fuzz.rb`, run by
+  `make check-fuzz`, starts from the `GPOS` and `GDEF` tables of the
+  three Inter fonts, as `erx-raster` reports them, and from the tables
+  the test above builds, and changes, inserts and removes bytes, cuts
+  the tables short and writes offsets and counts near and past their
+  ends; each round passes a random set of up to 64 glyph indices, some
+  past the font's glyph count, so a round stays short. Every input must
+  end in pairs or in an `Erx::Error`: any other exception fails the run
+  with the input, as does a call that outlasts ten times the slowest
+  unmutated seed's time, measured when the target starts. Pairs it
+  returns name only the glyphs given, in order pairs of two, each with
+  a value that is not 0. A seeded reader without its bound on offsets
+  fails it with an exception other than `Erx::Error`, and one that
+  follows an extension wrapping another extension fails it on a table
+  whose extension points at itself.
+* Inter Regular in the `body` role, against the font's kerning: the
+  step's values for `AV`, `To`, `Ty` and `",` are -140, -160, -128 and
+  -168 units, each the one lookup's value or, for `",`, the sum of the
+  first lookup's 0 and the second's -168, as read for this design and
+  confirmed with HarfBuzz 15.0.0 by the design's external review; the
+  width that `erx_font:width/2` gives each two-character string, from
+  `body.subfont` as `erx_font` parses it, equals the one computed from
+  `erx-raster`'s advances and those units by the rounding rule in exact
+  arithmetic, 17, 15, 15 and 9 pixels, so `Ty`'s pair is absent; the
+  same at the `title` role's 20 pixels gives `Ty` a pair. A seeded step
+  that writes the adjustment with the wrong sign, or rounds k on its own
+  rather than the kerned advance, fails these widths.
+* `erx_font` refuses each fault of the pair section with `kern`, an
+  index at the glyph count, a count of -1 with no entries and a count
+  field that is not a number among them, and accepts a section whose
+  last index is one below it; a seeded reader with the bound off by one
+  does not refuse the first with `kern`, and one that reads the count with the header's
+  number reader answers `header` for the third. Its fuzz target
+  (`test/erlang/erx_font_fuzz.erl`) adds `kern` to its closed set of
+  reasons, writes pair sections in one round in four, and checks that
+  every accepted file's pairs ascend, name drawn glyphs and keep every
+  kerned advance in 0 to 255. Its two properties of an accepted file's
+  neighbours follow the section: a byte appended to a file
+  with pairs is refused with `kern`, and to one without them with
+  `trailing`; every prefix of the file is refused, except that a file
+  with pairs cut exactly at the end of its glyph table parses to the same
+  subfont without pairs.
+* The line-length check, over the `caption`, `body`, `heading` and
+  `title` subfonts: ten `i` measure 30 pixels by `erx_font:width/2` in
+  both `caption` and `body`, where the review measured the font's at
+  26.72 and 31.56; and over the tree's `README.md`, its lines chosen as
+  [Whole pixels and the pen](#kerning) chooses them, every line's width
+  by `erx_font:width/2` equals the
+  sum of the rule's rounded kerned advances computed in exact arithmetic
+  from `erx-raster`'s advances and the pairs' units. The test prints,
+  per role, the mean and the largest difference between each line's
+  width and its exact width, and the share of neighbour distances more
+  than half a pixel from the font's under each of the three pens of
+  [Open decisions](#open-decisions), 3, for the session that judges
+  them. A seeded width that adds exact advances and rounds the line once
+  gives the ten `i` 27 and 32 pixels and fails.
+* `erx_pen` places `AV` with V at A's advance plus the pair's
+  adjustment; `erx_font:runs/2` cuts a line with one pair into two runs,
+  and their `s` messages stepped through `erx_draw_core` draw every
+  glyph at the offset `erx_pen` gives it, where a seeded `runs/2` that
+  cuts but does not move the second run fails; a line without pairs is
+  one message.
+* The `numeric` and `display` subfonts hold no pair naming a digit, and
+  the menu module's `kern/2` equals `body.subfont`'s pairs taken to
+  their characters, where a seeded module keyed by glyph index fails.
+* Through LVGL's own font code on the host, the `body` font's `A`
+  before `V` advances by A's width plus the pair's adjustment, where a
+  seeded kern scale of 16 fails.
+* Two runs of the glyph step write byte-identical files, pair sections
+  included.
+
 **The widget format additions.** The validator refuses a `role` on a
 kind that does not take it, `icons` of another length than `items`, a
 sample outside `min` and `max`, and a 241st sample, each with its reason
@@ -1226,6 +1680,16 @@ LVGL, and every record `erx_ui_lvgl` writes is accepted by the C
 reader; a seeded `erx_ui_lvgl` that escapes without cutting fails it.
 
 **The theme.** D7, and a `contrast` row naming an undeclared colour, refused.
+
+**`name`, the query and the reload.** The validator takes `name` on
+every kind and refuses one of 256 bytes, with its reason and path, where
+a seeded bound of 256 accepts it. Each program's core tests find files'
+back button by its `name` alone, so a seeded files core whose back
+button carries none fails them at the query. On the host, a files window
+with two folders of history, its core reloaded with a version whose
+`view/1` adds a label, presents the label with the same folder and
+history, where a seeded `reload` that starts the window again from
+`init` loses the history and fails it.
 
 **On QEMU, the `display_domain` suite.** One test, in the suite's one
 cell, HVF at one CPU: the desktop's session runs `files` on a folder
@@ -1257,8 +1721,8 @@ this part starts:
 
 | Component | Purpose | License | Status |
 | --- | --- | --- | --- |
-| Inter 4.1, Regular, Medium and SemiBold static TrueType fonts | the type of every role of the theme, rasterised by the glyph step into `k8` subfonts and LVGL fonts | OFL-1.1, font data only; the license text at tag `v4.1` names no Reserved Font Name (`LICENSE.txt`, SHA-256 `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a`, fetched from `https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt`) | permanent; the three font files are in the tree at `display/fonts/inter/` with the license and an `ORIGIN.md` recording the release archive, `https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip`, SHA-256 `9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e` |
-| FreeType 2.15.0 | the glyph step's rasteriser of the fonts' glyphs and of the icons' stroked paths, linked into erXos's host program `erx-raster` | FreeType License (FTL) or GPL-2.0-or-later, at the user's choice (`LICENSE.TXT`, SHA-256 `bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b`); erXos uses it under the FTL, a BSD-style license (`docs/FTL.TXT`, SHA-256 `5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f`), whose credit and binary-distribution clauses bind a program that contains FreeType, which no image does; its gzip module, which the `sfnt` module's WOFF and SVG-table readers link, is under the zlib license, compatible with the FTL (`LICENSE.TXT`, lines 35-36) | permanent build tool, never part of an image; `freetype-2.15.0.tar.xz` from `https://download.savannah.gnu.org/releases/freetype/`, SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`, fetched by the explicit fetch step and verified against that hash, compiled out of tree by erXos's own compiler invocations (`Erx::Raster::Build`) |
+| Inter 4.1, Regular, Medium and SemiBold static TrueType fonts | the type of every role of the theme, rasterised by the glyph step into `k8` subfonts and LVGL fonts | OFL-1.1, font data only; the license text at tag `v4.1` names no Reserved Font Name (`LICENSE.txt`, SHA-256 `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a`, fetched from `https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt`); the files the glyph step generates from the fonts, each role's LVGL font (`erx_lvgl_font_ROLE.c`) and the window menu's glyph module (`erx_menu_glyphs.erl`), are font data under the same license: each declares the license `ORIGIN.md` records for its font file, `SPDX-License-Identifier: OFL-1.1`, and a line naming that file, the release and the first line of `LICENSE.txt`, Inter's copyright; the generators stay BSD-2-Clause, and a subfont file, binary, carries the same data without a header (`Erx::Glyphs.font_notice`) | permanent; the three font files are in the tree at `display/fonts/inter/` with the license and an `ORIGIN.md` recording the release archive, `https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip`, SHA-256 `9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e` |
+| FreeType 2.15.0 | the glyph step's rasteriser of the fonts' glyphs and of the icons' stroked paths, and its loader of each glyph's index and of a font's `GPOS` and `GDEF` tables, linked into erXos's host program `erx-raster` | FreeType License (FTL) or GPL-2.0-or-later, at the user's choice (`LICENSE.TXT`, SHA-256 `bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b`); erXos uses it under the FTL, a BSD-style license (`docs/FTL.TXT`, SHA-256 `5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f`), whose credit and binary-distribution clauses bind a program that contains FreeType, which no image does; its gzip module, which the `sfnt` module's WOFF and SVG-table readers link, is under the zlib license, compatible with the FTL (`LICENSE.TXT`, lines 35-36) | permanent build tool, never part of an image; `freetype-2.15.0.tar.xz` from `https://download.savannah.gnu.org/releases/freetype/`, SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`, fetched by the explicit fetch step and verified against that hash, compiled out of tree by erXos's own compiler invocations (`Erx::Raster::Build`) |
 
 The icon set is erXos's own work, rasterised through FreeType with the
 fonts. What an image carries from the glyph step is the coverage of
@@ -1279,20 +1743,30 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 | An icon set under a permissive license | a license and a style to inherit; twenty glyphs drawn for erXos are less work than reconciling a set's style with the theme |
 | Packages under `examples/` | an app is its own principal, so stats and files would see the app's domains and files, not the person's ([Shipping](#shipping-and-starting)) |
 | A tweened graph scroll | a renderer timer or many trees a second, against G6, for motion that adds nothing the step does not show |
+| FreeType's own `GPOS` kerning (`TT_CONFIG_OPTION_GPOS_KERNING`) and `FT_Get_Kerning` | no reader to write, and it reads class pairs as well as single ones (`src/sfnt/ttgpos.c`, lines 908-940), which give 13,701 of Inter Regular's 14,587 kerned pairs over the theme's ranges; but it takes the first matching subtable across the `kern` lookups instead of adding them, and so loses 529 to 568 of Inter's pairs per font ([Kerning](#kerning)) |
+| A pen in fractions of a pixel, each glyph's place rounded | exact line lengths, but a quarter of the distances between neighbours off by half a pixel to a pixel at the text roles' sizes; it is one of the three pens of [Open decisions](#open-decisions), 3, judged by eye |
+| HarfBuzz as a pinned host tool | a full shaper, an independent and widely used implementation of the same rules, but a large C++ dependency whose only use would be the values of single pairs, read back through `hb-shape` and filtered of every other feature it applies |
+| The `GPOS` reader in C inside `erx-raster` | the same rules and the same fuzz target in a language where every offset is a memory-safety question; Ruby makes an offset past the table a typed error, and the step's other decisions, rounding among them, are already Ruby |
+| The pairs in a sibling file beside each subfont | two files a reader must load and keep together, for nothing a stock Plan 9 reader needs: it ignores what follows the glyph table |
+| Kerning in the draw server, a pair table loaded into a font cache | a new message and a new kind of data in the display domain, charged to a connection's quota, to save a few `s` messages per kerned line; the client already knows the pairs |
+| A class table, as `GPOS` and LVGL's class form store kerning | smaller for Inter, but two class maps, a matrix and the exceptions of format 1 folded into extra classes, where a sorted list of pairs is one table that every reader searches the same way |
 
 ## Decisions
 
-1. **The new mechanisms this design names.** Two are new and accepted:
-   the theme, `abi/theme.txt` with its generated module, header and
-   constants, and six additions to `ui.txt` (`role`, `area`, `icon`,
-   `icons`, `current` and `graph`, with list activation as a kind
-   line), with three grammar additions: lists of integers or
+1. **The new mechanisms this design names.** Three are new and
+   accepted: the theme, `abi/theme.txt` with its generated module,
+   header and constants; seven additions to `ui.txt` (`role`, `area`,
+   `icon`, `icons`, `current`, `name` and `graph`, with list activation
+   as a kind line), with three grammar additions: lists of integers or
    enumerations with an optional `none`, `within` applied to each value
-   of a list, and `parallel`. The theme is the one source the look
-   needs, without which every renderer and the decorations would each
-   carry their own copy of the palette; the additions are meaning the
-   tree should state, and each renderer gains them through the one
-   declaration.
+   of a list, and `parallel`; and the transition, declared in the theme
+   and run by each renderer ([Motion](#motion)). The theme is the one
+   source the look needs, without which every renderer and the
+   decorations would each carry their own copy of the palette; the
+   additions are meaning the tree should state, and each renderer gains
+   them through the one declaration; the transition keeps motion out of
+   applications and bounded in time, so the idle window still costs
+   nothing.
 2. **Copy, move, rename and delete are not files'.** The commands do
    them; a window that deletes needs a trash or an undo, confirmation
    and conflict policy, which deserve their own design once there is a
@@ -1340,6 +1814,13 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
     linked only into erXos's host program `erx-raster`, which rasterises
     the fonts' glyphs and strokes and rasterises the icons. Nothing of
     FreeType enters an image.
+12. **Kerning travels with the subfont.** Each role's pairs, read from
+    its font's `GPOS` table by the glyph step's own reader and rounded
+    so that a kerned advance is an advance, follow the glyph table in a
+    section of erXos's that a stock Plan 9 reader never reads, and are
+    written again into the menu's module and the LVGL font; the client
+    applies them, one `s` message per run, so the draw protocol is
+    unchanged ([Kerning](#kerning)).
 
 ## Open decisions
 
@@ -1353,6 +1834,52 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
    property's bound at a whole character or token and ends it with an
    ellipsis, and the parity test carries control-heavy texts of every
    bound; no program cuts for a renderer.
+2. **An independent shaper as the kerning test's oracle.** The values
+   the kerning tests expect of Inter were read for this design by a
+   reader outside the tree, and the reader's rules are pinned by a table
+   the test builds ([Verification](#verification-and-testing)). The
+   design's external review checked the four values the tests name with
+   HarfBuzz 15.0.0 and found them the same (`AV` -140, `To` -160, `Ty`
+   -128, `",` -168 units), but no shaper checks the rest, and a reader
+   and a test table written from one reading of the specification can
+   share a misreading. HarfBuzz, pinned and built out of tree as a
+   test-only tool, would compare every pair of every role, with script
+   and features fixed, at the cost of a C++ dependency used by one test.
+   The review recommends that comparison over all supported pairs when
+   the reader lands, and finds a second font no condition for it.
+   Recommendation: not now; take it when a second font or script enters
+   the theme, where a shaper's rules (script itemisation, marks) begin
+   to matter. The review's recommendation, the comparison when the
+   reader lands, is the other choice.
+3. **Which pen: whole pixels, rounded fractional positions or glyph
+   phases.** The design's pen moves by whole pixels: spacing within half
+   a pixel of the font's at every pair, no change to the draw protocol,
+   the subfonts or LVGL, and each role's tracking off the font's by up
+   to about 0.09 pixel a glyph on ordinary text and more on runs of
+   narrow glyphs, ten `i` at 11 pixels 3.3 pixels long ([Whole pixels
+   and the pen](#kerning)). The second pen keeps each glyph's origin in
+   fractions of a pixel, adding the font's exact kerned advances, and
+   rounds each origin, with one bitmap per glyph: every line's length
+   within half a pixel of the font's, at the cost of the fractional
+   metrics kept beside the whole ones in each form the step writes, a
+   cut of a line into runs wherever a rounded origin is not the last one
+   plus its width, which is the run mechanism kerning already uses but
+   with many more runs, and LVGL's layout path changed to keep fractions,
+   not only its pair scale. The design's external review favours this
+   pen; the design's own measurement found it leaves 19 to 28 percent of
+   the distances between neighbours half a pixel to a pixel off the
+   font's, against none for the whole-pixel pen. The third pen keeps the
+   fractional origins and rasterises each text role's glyphs at three or
+   four horizontal phases: exact line lengths and each glyph placed
+   within a sixth to an eighth of a pixel, the way current desktop
+   systems set text, at the cost of a draw message that places each
+   glyph, text subfonts three to four times as wide (the `display` role
+   keeps one phase) and a change to LVGL's font code. Recommendation:
+   build the whole-pixel pen with 8.12 and 8.13, then compare the three
+   in a type session on the reference frames of clock and month at 11
+   and 13 pixels, the same text set by each pen, with the line-length
+   check's numbers beside them; adopt another pen, as a design of its
+   own in design-display and here, if the frames show it reads better.
 
 ## References
 
@@ -1372,8 +1899,34 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 * `display/libmemdraw/draw.c`, lines 486-500 and 1065
 * LVGL 9.6.0: `include/lvgl/config/lv_conf_internal.h`, lines 674-684
   and 2670-2680; `lv_conf_template.h`, lines 281-284;
-  `src/widgets/chart/lv_chart.c`, line 424
-* Inter 4.1, `LICENSE.txt` at tag `v4.1` (SHA-256 above)
+  `src/widgets/chart/lv_chart.c`, line 424;
+  `include/lvgl/font/lv_font_fmt_txt.h`, lines 33, 40, 113-126 and 174-175
+  (SHA-256
+  `a2f128f0f7311f6e4d9e526f0634ba891b188600fa6479cf7067533b122fa323`);
+  `src/font/fmt_txt/lv_font_fmt_txt.c`, lines 239-256 and 385-441
+  (SHA-256
+  `c2b4ea830a6de5e0e04e52c0c5d46b3e3a12c695861d94f1bfef3b8da74b4207`);
+  `src/font/lv_font.c`, lines 135-141 (SHA-256
+  `508e45e0ae53a28c91f02598ea6beedb6958992a0a2171853d372481705ea7c9`)
+* Inter 4.1, `LICENSE.txt` at tag `v4.1` (SHA-256 above); the kerning
+  figures of [Kerning](#kerning) were read from the three font files of
+  `display/fonts/inter/` on 2026-11-15 with a scratch reader outside the
+  tree that follows the OpenType rules listed there
+* OpenType 1.9.1, Microsoft Learn: "GPOS -- Glyph Positioning Table",
+  `https://learn.microsoft.com/en-us/typography/opentype/spec/gpos`,
+  dated 2024-05-29 (SHA-256 of the page as fetched
+  `c5cf5b88d4c5fda671f0f3e8cc1a82c2400a5748e85a322f5dacf99cffdfa610`):
+  "Lookup type 2 subtable: pair adjustment positioning" and the
+  positioning extension; "OpenType layout common table formats",
+  `https://learn.microsoft.com/en-us/typography/opentype/spec/chapter2`,
+  dated 2024-07-06 (SHA-256
+  `3e595f99262e2c50e23a023e1ce751e0a530c67a70d23d2a907f357d86b86225`):
+  "Features and lookups", where lookups are processed in lookup list
+  order, and "Lookup table", where the first subtable that matches ends
+  a lookup and the lookup flags choose the glyphs to skip
+* plan9port at commit `1f13969`: `src/libdraw/readsubfont.c`, lines
+  17-31 (SHA-256
+  `db1b97824796a9413d491bcc9c742c8528c49b04c686e3a4ad87a09ee93fc55f`)
 * FreeBSD `usr.bin/Makefile` at commit `95719d8a895b`, lines 95 and 189
 * plan9port at commit `1f13969`: `man/man7/font.7` (SHA-256
   `fe1ca23bb73034dbf98d330127f636ce18c7453014fee3554a872790385c5688`)
@@ -1401,4 +1954,13 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
   `include/freetype/ftoutln.h`, line 496 (SHA-256
   `db0585ea338debdb9b721adc5f6d138ec7f88df30ff44cf6fb3cac79a70982f8`);
   `src/smooth/ftgrays.c`, lines 45-48 and 63 (SHA-256
-  `4ed0d154876ae4caf440224a04df9dc3f4bedd82e2b0fbb7e016de1d718c5379`)
+  `4ed0d154876ae4caf440224a04df9dc3f4bedd82e2b0fbb7e016de1d718c5379`);
+  `include/freetype/tttables.h`, line 758 (SHA-256
+  `7fd1ce25de661e802dbff67ad5e9927bcdef1730527a5d453120586f13698280`);
+  `include/freetype/config/ftoption.h`, lines 827-838 (SHA-256
+  `2115ceb051433d1596a63649923ace29441debd9f10de43c4c61259fc7b81384`);
+  `src/sfnt/ttgpos.c`, lines 263-264, 350, 488, 677-678, 908-940 and 944-981
+  (SHA-256
+  `48f0eb6f7e82bcbc5a6028f8deb137c26688b78260ce9404e2fb8ae004ef8009`);
+  `src/truetype/ttdriver.c`, lines 229-240 (SHA-256
+  `af966a77d134481946ec79d157065c4871e0ed62e635d0a5307bfe629e44d1ef`)

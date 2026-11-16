@@ -204,3 +204,9 @@ stop(Pid) ->
 
 flush() ->
     receive _ -> flush() after 0 -> ok end.
+
+%% A crash's reason may hold another domain's log record: the crash report and the terminate report, which
+%% the system domain filters no further, show only the reason's leading atom.
+format_status_hides_the_reason_test() ->
+    ?assertEqual(#{reason => badmatch},
+                 erx_syslog:format_status(#{reason => {badmatch, <<"SECRET">>}})).

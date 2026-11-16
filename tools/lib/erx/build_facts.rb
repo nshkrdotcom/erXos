@@ -3,7 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'error'
-require_relative 'source_revision'
+require_relative 'build_kind'
 
 module Erx
   # The facts of an image's build that `uname -v`, `-i` and `-K` show
@@ -32,11 +32,12 @@ module Erx
     Facts = Data.define(:revision, :date, :configuration, :kernel)
     # What each fact may hold, which erx_build checks the same way when it
     # reads the file: printable ASCII with no space, so a line splits in two
-    # at its first space and the fact needs no escaping to be shown.
+    # at its first space and the fact needs no escaping to be shown. A
+    # configuration's kind is one of BuildKind::ALL, with or without BuildKind::LOCAL_SUFFIX.
     SHAPES = {
       revision: /\A(?:n[1-9][0-9]{0,9}-)?[0-9a-f]{12}(?:-dirty)?\z/,
       date: /\A[0-9]{1,12}\z/,
-      configuration: %r{\A[a-z0-9][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,31}\z},
+      configuration: %r{\A[a-z0-9][a-z0-9-]{0,63}/#{Regexp.union(BuildKind::ALL)}(?:#{Regexp.escape(BuildKind::LOCAL_SUFFIX)})?\z},
       kernel: /\A[a-z0-9][a-z0-9.-]{0,63}\z/
     }.freeze
     UNKNOWN = 'unknown'
@@ -44,28 +45,40 @@ module Erx
     module_function
 
     # The configuration uname -i names: the platform record's name, a slash and
-    # the build kind (development or release), each as it is, so a build of
-    # qemu-virt for development is qemu-virt/development. It follows the
-    # records, not where they lie in the tree.
-    def configuration(platform:, build_kind:) = "#{platform}/#{build_kind}"
+    # the build kind (one of BuildKind::ALL, development or release), each as it is, so a build of
+    # qemu-virt for development is qemu-virt/development. A local test image, one
+    # built to take packages whose license is not permissive (`tools/erx pack --local`),
+    # adds -local to the build kind, qemu-virt/development-local, so uname -i on the
+    # machine says the image may not leave the host that built it. It follows the
+    # records, not where they lie in the tree. Any other kind raises.
+    def configuration(platform:, build_kind:, local: false)
+      "#{platform}/#{BuildKind.fetch(build_kind)}#{BuildKind::LOCAL_SUFFIX if local}"
+    end
 
-    # The facts of an image of the tree at root built for configuration with the
-    # kernel named kernel (Fiasco#kernel_name).
-    def gather(root:, runner:, configuration:, kernel:)
-      revision = SourceRevision.read(root: root, runner: runner)
+    # Whether configuration, a configuration fact, is a local test image's (configuration's local:).
+    def local?(configuration) = configuration.end_with?(BuildKind::LOCAL_SUFFIX)
+
+    # The facts of an image of the source revision revision (SourceRevision.read, nil for a
+    # tree that is no checkout) built for configuration with the kernel named kernel
+    # (Fiasco#kernel_name).
+    def gather(revision:, configuration:, kernel:)
       Facts.new(revision: revision&.to_s, date: revision&.committed_at&.to_i, configuration: configuration, kernel: kernel)
     end
 
-    # The file's text. A fact of the wrong shape raises, so the build never
-    # writes a file erx_build would refuse.
-    def render(facts)
-      facts.to_h.map do |name, value|
+    # Each fact's text by its name, in Facts' order, as the file holds it and the image's
+    # build record names it (ImageRecord). A fact of the wrong shape raises, so the build
+    # never writes a file erx_build would refuse.
+    def texts(facts)
+      facts.to_h.to_h do |name, value| # the Facts as a Hash, then each name to its text
         text = value.nil? ? UNKNOWN : value.to_s
         raise Error, "the build fact #{name} is not one uname can show: #{text.dump}" unless
           text == UNKNOWN || SHAPES.fetch(name).match?(text)
 
-        "#{name} #{text}\n"
-      end.join
+        [name.to_s, text]
+      end
     end
+
+    # The file's text.
+    def render(facts) = texts(facts).map { |name, text| "#{name} #{text}\n" }.join
   end
 end

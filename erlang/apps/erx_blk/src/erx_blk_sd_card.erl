@@ -131,23 +131,23 @@ and the card's integers, never an atom made from its data.
 
 %%% Identification
 
--doc "The first actions and state of identification: CMD0.".
--spec start() -> {[action()], state()}.
+-doc "The first state and actions of identification: CMD0.".
+-spec start() -> {state(), [action()]}.
 start() ->
-    {[{issue, cmd(0, 0)}], #id{}}.
+    {#id{}, [{issue, cmd(0, 0)}]}.
 
 -doc "The phase identification is in, which a refusal and the log name.".
 -spec phase(state()) -> phase().
 phase(#id{phase = Phase}) -> Phase.
 
 -doc """
-One transition: the actions that follow Event in State and the next state.
+One transition: the next state and the actions that follow Event in State.
 A finished identification takes every event with no action.
 """.
 %% Any term is taken; one that is not an event() refuses the card.
--spec step(state(), term()) -> {[action()], state()}.
+-spec step(state(), term()) -> {state(), [action()]}.
 step(#id{phase = finished} = S, _Event) ->
-    {[], S};
+    {S, []};
 step(#id{phase = Phase} = S, timeout) when Phase =:= if_cond_1;
                                            Phase =:= if_cond_2 ->
     cmd8_answer(S, timeout);
@@ -236,8 +236,8 @@ answer(#id{phase = app_bus} = S, {response, R1}) ->
     with_r1(S, R1, fun(S1) -> issue(S1, bus, [], acmd(6, 2)) end);
 answer(#id{phase = bus} = S, {response, R1}) ->
     with_r1(S, R1, fun(S1) ->
-                           {Actions, S2} = app(S1, app_status),
-                           {[{bus_width, 4}, {clock, ?DEFAULT_SPEED_HZ} | Actions], S2}
+                           {S2, Actions} = app(S1, app_status),
+                           {S2, [{bus_width, 4}, {clock, ?DEFAULT_SPEED_HZ} | Actions]}
                    end);
 answer(#id{phase = app_status} = S, {response, R1}) ->
     with_r1(S, R1, fun(S1) -> issue(S1, sd_status, [], acmd(13, 0, {read, 64})) end);
@@ -358,13 +358,13 @@ with_r1(#id{illegal_ok = Excused} = S, R1, Next) ->
 
 identified(#id{fit = Fit, rca = Rca, ocr = Ocr, cid = Cid, csd = Csd, cmd8 = Cmd8} = S, Cache) ->
     Card = Fit#{rca => Rca, ocr => Ocr, cid => Cid, csd => Csd, cmd8 => Cmd8, cache => Cache},
-    {[{identified, Card}], S#id{phase = finished}}.
+    {S#id{phase = finished}, [{identified, Card}]}.
 
 refuse(#id{phase = Phase} = S, Detail) ->
-    {[{refuse, {Phase, Detail}}], S#id{phase = finished}}.
+    {S#id{phase = finished}, [{refuse, {Phase, Detail}}]}.
 
 issue(S, Next, Before, Step) ->
-    {Before ++ [{issue, Step}], S#id{phase = Next}}.
+    {S#id{phase = Next}, Before ++ [{issue, Step}]}.
 
 app(#id{rca = Rca} = S, Next) ->
     issue(S, Next, [], cmd(55, Rca bsl 16)).

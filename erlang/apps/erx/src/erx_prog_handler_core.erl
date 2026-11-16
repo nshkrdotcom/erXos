@@ -186,7 +186,7 @@ session code and the program's own driver.
                 | {make_pipe, [cloexec | nonblock]}
                 | {install_end, hand()}
                 | {forward, tuple()}
-                | {stop, non_neg_integer()}
+                | {end_program, non_neg_integer()}
                 | {open, slot(), binary(), non_neg_integer(), none | non_neg_integer(),
                    erx_path:table(), erx_path:place()}
                 | {read, description(), slot(), pos_integer()}
@@ -241,7 +241,7 @@ session code and the program's own driver.
 
 -define(IS_FD(N), (is_integer(N) andalso N >= 0 andalso N < ?ERX_PROG_FDS_MAX)).
 -define(IS_POS(N), (is_integer(N) andalso N > 0)).
--define(IS_PID(P), (is_integer(P) andalso P >= 2 andalso P =< ?ERX_PROG_PID_MAX)).
+-define(IS_PID(P), (is_integer(P) andalso P >= ?ERX_PROG_PID_MIN andalso P =< ?ERX_PROG_PID_MAX)).
 -define(IS_HAND(H), (tuple_size(H) =:= 3 andalso element(1, H) =:= pipe_hand andalso ?IS_POS(element(2, H)))).
 %% A stop by the session reads as signaled SIGKILL (docs/design-programs.md,
 %% "A program's end").
@@ -257,7 +257,7 @@ session code and the program's own driver.
 -doc """
 A handler for program `Pid` that starts it with the starter's
 descriptors `Fds` and serves its files as `Files` says, and its first
-action; or `{error, einval}` for a `Pid` outside 2..2^31-1, a descriptor
+action; or `{error, einval}` for a `Pid` outside `ERX_PROG_PID_MIN` to `ERX_PROG_PID_MAX`, a descriptor
 of another form, a number named twice, more than one buffer, which the
 program may have only one of, a working directory that is not an
 absolute path of plain names, slots outside 1..`ERX_PROG_DATA_SLOTS_MAX`,
@@ -563,8 +563,8 @@ step(#core{phase = running, pending = Pending} = C, {file_copied, Slot, Result})
 step(C, _Event) ->
     {C, []}.
 
-%% A stop of the program with Status, asked once.
-stop(#core{stopping = false} = C, Status) -> {C#core{stopping = true}, [{stop, Status}]};
+%% A stop of the program with Status, asked once: the action end_program.
+stop(#core{stopping = false} = C, Status) -> {C#core{stopping = true}, [{end_program, Status}]};
 stop(C, _Status) -> {C, []}.
 
 %% A frame from the program, which the grammar accepted.

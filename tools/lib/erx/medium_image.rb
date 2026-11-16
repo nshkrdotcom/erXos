@@ -10,7 +10,7 @@ require_relative 'error'
 module Erx
   # A disk image laid out by the boot medium's layout of the ABI file (abi/medium.txt,
   # docs/design-storage.md, "The boot medium's table"): the master boot record and the
-  # two extended boot records at the sectors the layout fixes, each entry encoded through
+  # four extended boot records at the sectors the layout fixes, each entry encoded through
   # the ABI codec's erx_mbr_entry, and the pieces its caller places inside the windows.
   # Every other sector is a hole in a sparse file, which reads as zeros, so a medium of
   # the layout's full size costs only the blocks its pieces fill.
@@ -30,7 +30,7 @@ module Erx
     DATA_SECTORS = CODEC.constant('medium_data_sectors_min') + 2048
     # A bound on what the suite's checker reads: the layout and 4 GiB of data partition.
     MAX_SECTORS = CODEC.constant('medium_data_start') + (1 << 23)
-    ROLES = %i[record slot_a slot_b vault data].freeze
+    ROLES = %i[record boot_a boot_b vault data].freeze
 
     # One window: its role, its first sector on the medium and its length.
     Window = Data.define(:role, :start, :sectors) do
@@ -41,43 +41,71 @@ module Erx
     # that has changed length since.
     FilePiece = Data.define(:path, :length)
 
+    # The extended partition's logical partitions in medium order, each behind its
+    # extended boot record: the record's sector, then the partition's type, start and
+    # length, for a medium whose data partition has data_sectors sectors.
+    Logical = Data.define(:ebr, :type, :start, :sectors) do
+      def last = start + sectors - 1
+    end
+
     module_function
 
     def constant(name) = CODEC.constant("medium_#{name}")
 
     # The windows of a medium whose data partition has data_sectors sectors, in the
-    # order erx_blk_table admits them.
+    # order erx_blk_table admits them: every partition's but the two system partitions'.
+    # The system window the boot value adds lies on one of those, so it is not listed.
     def windows(data_sectors: DATA_SECTORS)
       [Window.new(role: :record, start: constant('record_start'), sectors: constant('record_sectors')),
-       Window.new(role: :slot_a, start: constant('slot_a_start'), sectors: constant('slot_sectors')),
-       Window.new(role: :slot_b, start: constant('slot_b_start'), sectors: constant('slot_sectors')),
+       Window.new(role: :boot_a, start: constant('boot_a_start'), sectors: constant('boot_sectors')),
+       Window.new(role: :boot_b, start: constant('boot_b_start'), sectors: constant('boot_sectors')),
        Window.new(role: :vault, start: constant('vault_start'), sectors: constant('vault_sectors')),
        Window.new(role: :data, start: constant('data_start'), sectors: data_sectors)].freeze
+    end
+
+    # Every partition a piece may lie in: the windows and the two system partitions.
+    def partitions(data_sectors:)
+      windows(data_sectors: data_sectors) +
+        [Window.new(role: :system_a, start: constant('system_a_start'), sectors: constant('system_sectors')),
+         Window.new(role: :system_b, start: constant('system_b_start'), sectors: constant('system_sectors'))]
     end
 
     # The medium's length in sectors: through the end of the data partition.
     def sectors(data_sectors: DATA_SECTORS) = constant('data_start') + data_sectors
 
-    # The three records, by sector. An extended boot record's first entry starts
-    # relative to its own sector; the vault record's link to the data record starts
-    # relative to the extended partition and spans the data record and its partition.
+    def logicals(data_sectors: DATA_SECTORS)
+      [Logical.new(ebr: constant('system_a_ebr'), type: 'system_type', start: constant('system_a_start'),
+                   sectors: constant('system_sectors')),
+       Logical.new(ebr: constant('system_b_ebr'), type: 'system_type', start: constant('system_b_start'),
+                   sectors: constant('system_sectors')),
+       Logical.new(ebr: constant('vault_ebr'), type: 'vault_type', start: constant('vault_start'),
+                   sectors: constant('vault_sectors')),
+       Logical.new(ebr: constant('data_ebr'), type: 'data_type', start: constant('data_start'),
+                   sectors: data_sectors)].freeze
+    end
+
+    # The five records, by sector. The extended partition starts at the first logical
+    # partition's record and ends with the data partition. An extended boot record's
+    # first entry starts relative to its own sector; its link to the next record starts
+    # relative to the extended partition and spans that record and its partition; the
+    # data partition's record has no link.
     def records(data_sectors: DATA_SECTORS)
-      data_end = sectors(data_sectors: data_sectors)
-      extended = constant('extended_start')
-      data_ebr = constant('data_ebr')
-      { 0 => record([entry('record_type', constant('record_start'), constant('record_sectors')),
-                     entry('slot_type', constant('slot_a_start'), constant('slot_sectors')),
-                     entry('slot_type', constant('slot_b_start'), constant('slot_sectors')),
-                     entry('extended_type', extended, data_end - extended)]),
-        extended => record([entry('vault_type', constant('vault_start') - extended, constant('vault_sectors')),
-                            entry('link_type', data_ebr - extended, data_end - data_ebr)]),
-        data_ebr => record([entry('data_type', constant('data_start') - data_ebr, data_sectors)]) }.freeze
+      chain = logicals(data_sectors: data_sectors)
+      extended = chain.first.ebr
+      mbr = record([entry('record_type', constant('record_start'), constant('record_sectors')),
+                    entry('boot_type', constant('boot_a_start'), constant('boot_sectors')),
+                    entry('boot_type', constant('boot_b_start'), constant('boot_sectors')),
+                    entry('extended_type', extended, sectors(data_sectors: data_sectors) - extended)])
+      links = chain.drop(1).map { |logical| [entry('link_type', logical.ebr - extended, logical.last + 1 - logical.ebr)] }
+      chain.zip(links + [[]]).to_h do |logical, link|
+        [logical.ebr, record([entry(logical.type, logical.start - logical.ebr, logical.sectors), *link])]
+      end.merge(0 => mbr).freeze
     end
 
     # Writes the medium as name in directory, which the caller made with OutputDirectory
     # and owns; an existing name or a link is refused. pieces maps a sector to the bytes
-    # written from it, a string or a FilePiece; each must lie inside one window and
-    # overlap no other. The medium is written under a private name beside it and linked
+    # written from it, a string or a FilePiece; each must lie inside one partition
+    # (partitions) and overlap no other. The medium is written under a private name beside it and linked
     # to name whole, so a failed write leaves nothing at name. Returns its path.
     def create(directory:, name:, pieces:, data_sectors: DATA_SECTORS)
       raise Error, 'a disk image name is a plain file name' unless name.is_a?(String) && BlockImage::NAME.match?(name)
@@ -111,14 +139,14 @@ module Erx
     # one window and to overlap no other piece. Pure: a file piece carries its length.
     def piece_lengths(pieces, data_sectors:)
       lengths = pieces.to_h { |index, piece| [index, piece.is_a?(FilePiece) ? piece.length : piece.bytesize] }
-      areas = windows(data_sectors: data_sectors)
+      areas = partitions(data_sectors: data_sectors)
       lengths.sort.each_cons(2) do |(first, length), (second, _)|
         raise Error, "the pieces at sectors #{first} and #{second} overlap" if first + sectors_of(length) > second
       end
       lengths.each do |index, length|
         last = index + sectors_of(length) - 1
         unless length.is_a?(Integer) && length.positive? && areas.any? { |window| index >= window.start && last <= window.last }
-          raise Error, "the piece at sector #{index} does not lie inside one window"
+          raise Error, "the piece at sector #{index} does not lie inside one partition"
         end
       end
       lengths
@@ -152,6 +180,6 @@ module Erx
       bytes[CODEC.constant('mbr_signature_offset'), 2] = [CODEC.constant('mbr_signature')].pack('v')
       bytes.freeze
     end
-    private_class_method :entry, :record, :piece_lengths, :put, :sectors_of
+    private_class_method :partitions, :logicals, :entry, :record, :piece_lengths, :put, :sectors_of
   end
 end

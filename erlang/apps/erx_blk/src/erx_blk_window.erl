@@ -11,7 +11,7 @@
 %% A request answers {ok, Bytes} for a read and ok for a write or a flush, or {error,
 %% Reason}: einval for a request that names no whole sectors or more than one device
 %% request carries (max_sectors of erx_blk:info/1), erange for one that leaves the window,
-%% erofs for a write to an image window or passed on from the write path, and eio for
+%% erofs for a write to a read-only window or passed on from the write path, and eio for
 %% anything else the device process answered or a device process that did not answer. A
 %% flush is the whole medium's (erx_blk:flush/1). A window answers one request at a time,
 %% in order.
@@ -29,8 +29,9 @@
 %%
 %% Every write goes through erx_blk:write/3 to the driver's one write path, erx_blk_write,
 %% which is where the trial rule (U4) applies to it. A window adds one rule of its own: a
-%% window of role {image, Name}, on an EROFS image (erx_blk_image), is read-only and sends
-%% no write to the device.
+%% window whose role erx_blk_table:read_only/1 names, the system window or one of role
+%% {image, Name} on an EROFS image (erx_blk_image), is read-only and sends no write to the
+%% device.
 
 -module(erx_blk_window).
 -behaviour(gen_server).
@@ -85,14 +86,13 @@ handle_call({read, Sector, Count}, _From, State = #state{window = Window}) ->
                             State);
         Refused -> {reply, Refused, State}
     end;
-%% An image window is read-only: a write to it is the client's erofs, and reaches no device.
-handle_call({write, _Sector, _Bytes}, _From,
-            State = #state{window = {{image, _Name}, _Start, _Sectors}}) ->
-    {reply, {error, erofs}, State};
-handle_call({write, Sector, Bytes}, _From, State = #state{window = Window}) ->
-    Placed = case sectors(Bytes) of
-                 {ok, Count} -> erx_blk_table:place(Window, Sector, Count);
-                 NotSectors -> NotSectors
+%% A read-only window's write (erx_blk_table:read_only/1) is the client's erofs, and
+%% reaches no device.
+handle_call({write, Sector, Bytes}, _From, State = #state{window = Window = {Role, _Start, _Sectors}}) ->
+    Placed = case {erx_blk_table:read_only(Role), sectors(Bytes)} of
+                 {true, _} -> {error, erofs};
+                 {false, {ok, Count}} -> erx_blk_table:place(Window, Sector, Count);
+                 {false, NotSectors} -> NotSectors
              end,
     case Placed of
         {ok, First} ->

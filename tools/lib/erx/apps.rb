@@ -40,7 +40,10 @@ module Erx
   # * disabled: the same row with `enable NO`, the kept boot's seeded fault: no session
   #   of clock starts and the row is disabled (NO_CLOCK).
   # * unlisted: no `start` row: no session but root's console login (AP2), and
-  #   /proc/apps has no clock.
+  #   /proc/apps has no clock. The package process runs (PACKAGES): the development
+  #   manifest's apps row gives the library its app entries, so the start service starts
+  #   erx_pkg, whose recovery publishes the image's packages, none, and the scan of the
+  #   empty packages tree.
   #
   # Then the kept image boots three times from one copy of its medium (CHAIN), so what
   # `service` wrote to rc.conf on /data is what the next boot reads:
@@ -175,7 +178,7 @@ module Erx
                  'CkRun = CkState(running, 600), CkReported = CkLog(600), CkP1 = CkPid(none, 600), ' \
                  'CkHeld = CkGrants(CkP1, 20), exit(CkP1, kill), ' \
                  'CkP2 = CkPid(CkP1, 600), exit(CkP2, kill), ' \
-                 'io:format("~0p~n", [{clock_killed, CkRun, CkReported, CkHeld, is_pid(CkP1), is_pid(CkP2), ' \
+                 'io:format("~0kp~n", [{clock_killed, CkRun, CkReported, CkHeld, is_pid(CkP1), is_pid(CkP2), ' \
                  "CkState(down, 240)}]).\r"
     KILLED = '{clock_killed,running,reported,[{data,installed}],true,true,down}'
     # Every poll of KILL_CLOCK at its limit, 500 ms each, and a minute more, so a step
@@ -193,7 +196,13 @@ module Erx
                "CkRow = case erx_inspector:inspect([apps, <<\"#{PRINCIPAL}\">>]) of " \
                '{ok, #{attrs := #{state := {_, {ok, CkSt}}, local := {_, {ok, CkLo}}}}} -> {CkSt, CkLo}; ' \
                'CkO -> CkO end, ' \
-               "io:format(\"~0p~n\", [{no_clock, lists:sort([CkName || \#{origin := {session, _}, node := CkName} <- CkDoms()]), CkRow}]).\r"
+               "io:format(\"~0kp~n\", [{no_clock, lists:sort([CkName || \#{origin := {session, _}, node := CkName} <- CkDoms()]), CkRow}]).\r"
+    # Typed at the system's Erlang shell: the library's max app entries and what the
+    # package process holds (docs/design-packaging.md, "Boot and recovery"), each caught
+    # so a missing library or process answers its exit in the line.
+    PACKAGES = 'io:format("~0kp~n", [{packages, (catch maps:get(max, element(2, erx_domain_lib:apps()))), ' \
+               "(catch erx_pkg:packages())}]).\r"
+    PACKAGES_ANSWER = '{packages,4,#{packages => #{},scan => {ok,0}}}'
     NO_CLOCK_ANSWER = { disabled: '{no_clock,[root_1@erxos],{disabled,[]}}',
                         reenable: '{no_clock,[root_1@erxos],{disabled,[enable]}}',
                         unlisted: '{no_clock,[root_1@erxos],{error,scope}}' }.freeze
@@ -202,7 +211,7 @@ module Erx
     # manifest alone before any `service` command, by rc.conf once `enable` has written
     # it. CLOCK_UP_POLLS is for a shell where HELPERS is already bound, since binding
     # its variables again to new funs would not match.
-    CLOCK_UP_POLLS = "io:format(\"~0p~n\", [{clock_up, CkState(running, 600), CkLog(600), CkRc()}]).\r"
+    CLOCK_UP_POLLS = "io:format(\"~0kp~n\", [{clock_up, CkState(running, 600), CkLog(600), CkRc()}]).\r"
     CLOCK_UP = "#{HELPERS}#{CLOCK_UP_POLLS}"
     CLOCK_IS_UP = { disable: '{clock_up,running,reported,{true,[]}}',
                     reenable: '{clock_up,running,reported,{true,[enable]}}',
@@ -263,7 +272,9 @@ module Erx
       erlang = ProductionImage::Run::ERLANG_SHELL.merge(name: 'system-erlang-shell').freeze
       steps = case boot
               in :kept then kept_steps(erlang)
-              in :disabled | :unlisted then no_clock_steps(erlang, boot)
+              in :disabled then no_clock_steps(erlang, boot)
+              in :unlisted then [*no_clock_steps(erlang, boot, then_type: PACKAGES),
+                                 { name: 'packages', pattern: answer(PACKAGES_ANSWER), seconds: 60 }.freeze]
               in :disable then disable_steps(erlang)
               in :reenable then reenable_steps(erlang)
               in :enabled then enabled_steps(erlang)

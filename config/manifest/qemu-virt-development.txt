@@ -9,10 +9,11 @@
 # storage, network, web and display, as docs/design-stopgap.md's "The Phase 1 manifest check"
 # admits them, and the system principal's session template, from which the console starts root's
 # session at boot (docs/design-system.md, "Booting"). The storage domain is an
-# interpreter service domain that holds the block unit and its data and release
-# windows and runs the block driver and littlefs at /data (docs/design-stopgap.md,
-# "littlefs in the storage domain"); the slot writer's four windows stay the
-# system domain's (property 8). It serves storage_ctl, its driver-control facet,
+# interpreter service domain that holds the block unit and its data, release and
+# read-only system windows and runs the block driver and littlefs at /data
+# (docs/design-stopgap.md, "littlefs in the storage domain" and "The booted slot"); the
+# slot writer's six windows, both slots' boot and system partitions and the two records,
+# stay the system domain's (property 8). It serves storage_ctl, its driver-control facet,
 # to the system domain alone (property 8; docs/design-system.md, "The holder's
 # driver-control facet"), and data, an erx_fs grant of /data's tree, to the system
 # domain and to root's session (property 16; docs/design-stopgap.md, "littlefs in the
@@ -52,10 +53,10 @@
 # manifest's system baseline and the block driver and littlefs in the system domain);
 # 1,000 more idle processes
 # add about 4 MiB, and the rest of the baseline over ERTS and /tmp, 5.8 MiB, is the
-# margin. The system principal's 156 MiB holds root's one session, whose limits'
+# margin. The system principal's 188 MiB holds root's one session, whose limits'
 # memory is 36 MiB and outer 1 MiB, the storage domain, 30 MiB and outer 1 MiB, the
 # network domain, 36 MiB and outer 1 MiB, the web domain, 24 MiB and outer 1 MiB, the
-# display domain, 24 MiB and outer 1 MiB, and 1 MiB for the outer budget of a domain
+# display domain, 24 MiB and outer 33 MiB (see below), and 1 MiB for the outer budget of a domain
 # that has ended while another still holds a connection to it: that outer budget is the library's until the survivor answers the
 # connection's end (erx_domain_srv ended/3), and a session's next login or a
 # configured domain's restart is admitted before that answer arrives. One such budget
@@ -75,7 +76,9 @@
 # measured. Its grant, the web share, is 150 mcpu. The display domain's 24 MiB is not
 # measured either, though the display_domain suite boots this row with a client; its
 # grant, the display share, is a tenth of one CPU, to be sized from measurement. Its
-# outer budget is the plain 1 MiB because no session is granted the display: a grant
+# outer budget is 1 MiB and the four pixel areas of windows_pixels_default, 8 MiB, with
+# their 4 KiB lanes that the apps row's four apps hold, since no source session is
+# granted the display but the build grants the app template it: a grant
 # adds its pixel area and lane to it (docs/design-system.md, "The manifest", property
 # 18), a connection to the domain's quota and one to max_connections, as the
 # display_domain suite adds them for its client (DisplayDomain.manifest). The two grants are what the
@@ -148,10 +151,11 @@
 #
 # The development machine admits the system domain, root's session and the storage, network,
 # web and display domains. Admission charges budgets, not use: the system baseline, 46 MiB,
-# the system principal's 156 MiB (root's session, 36 MiB and outer 1 MiB, the storage
+# the system principal's 188 MiB (root's session, 36 MiB and outer 1 MiB, the storage
 # domain, 30 MiB and outer 1 MiB, the network domain, 36 MiB and outer 1 MiB, the web
-# and display domains, 24 MiB and outer 1 MiB each, and an ended domain's outer 1 MiB)
-# and the devices' 10.375 MiB promise all of root_memory but its 8 MiB margin. The network
+# domain, 24 MiB and outer 1 MiB, the display domain, 24 MiB and outer 33 MiB, and an
+# ended domain's outer 1 MiB), the apps row's 131 MiB and the devices' 10.375 MiB
+# promise all of root_memory but its 8 MiB margin. The network
 # domain's 36 MiB is its use rounded up to a whole MiB, 34 MiB, and 2 MiB of headroom:
 # 8,603 pool pages, 33.6 MiB, with BeamAsm (more than the interpreter the row runs) and
 # the users share's four schedulers, after
@@ -220,14 +224,24 @@ limits web
   peer_held 4096
   peer_held_total 4096
 principal system
-  memory 163577856
+  memory 197148672
   grant @share.users
   domains 5
   names 64
   default_limits @limits.native
   ceiling_limits @limits.native
+# The apps row (docs/design-packaging.md, "The apps row"): 131 MiB, two apps of the
+# default 64 MiB with their sessions' outer 1 MiB and the outer budget of one that has
+# ended; max 4, which the archive's room beside root_memory bounds; and the display and
+# net, which the build grants the app template. Each app is a principal with a domains
+# quota of one, so max_domains is the system principal's five and the four apps.
+apps
+  memory 137363456
+  max 4
+  services display net
 # The web domain holds its system connection alone, which its quota of one never meets.
-# max_connections, 12, holds the seven rows at rest (the system connections of root's
+# max_connections, 28, holds the sixteen of the four apps' sessions (each its system
+# connection, packages, the display and net) and the seven rows at rest (the system connections of root's
 # session and of the four configured domains, and the session's data and net), the three
 # a replacement session makes beside its predecessor's closing rows, and the two a
 # restarted configured domain makes beside its own.
@@ -237,13 +251,13 @@ machine
   console "/pl011@9000000"
   hostlink "/pl011@9040000"
   platform "qemu-virt"
-  root_memory 231079936
+  root_memory 402014208
   system_baseline 48234496
   system_share @share.system
   users_share @share.users
   system_principal @principal.system
-  max_domains 5
-  max_connections 12
+  max_domains 9
+  max_connections 28
   system_lane 4096
   system_queue 16384
   peer_held 4096
@@ -258,17 +272,31 @@ unit block
 unit display
   placement "display"
   holder @domain.display
-window slot_a
+window boot_a
   holder system
   device "/virtio_mmio@a003e00"
-  role slot_a
+  role boot_a
   partition 0
   rights read,write
   image none
-window slot_b
+window boot_b
   holder system
   device "/virtio_mmio@a003e00"
-  role slot_b
+  role boot_b
+  partition 0
+  rights read,write
+  image none
+window system_a
+  holder system
+  device "/virtio_mmio@a003e00"
+  role system_a
+  partition 0
+  rights read,write
+  image none
+window system_b
+  holder system
+  device "/virtio_mmio@a003e00"
+  role system_b
   partition 0
   rights read,write
   image none
@@ -286,6 +314,13 @@ window reset_count
   partition 0
   rights read,write
   image none
+window system
+  holder @domain.storage
+  device "/virtio_mmio@a003e00"
+  role system
+  partition 0
+  rights read
+  image none
 window data
   holder @domain.storage
   device "/virtio_mmio@a003e00"
@@ -295,6 +330,10 @@ window data
   image none
 image release
   device "/virtio_mmio@a003e00"
+  input @artifact.release
+# The system partition's image and tree, from the release image the packer writes
+# (docs/design-stopgap.md, "The booted slot"), handed to the system window's holder.
+system_image
   input @artifact.release
 window release
   holder @domain.storage

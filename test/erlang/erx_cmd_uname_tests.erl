@@ -178,6 +178,10 @@ parse_facts_test_() ->
                    Replace(<<"qemu-virt/development">>, <<"QEMU-VIRT/DEVELOPMENT">>),
                    Replace(<<"qemu-virt/development">>, <<"qemu-virt">>),
                    Replace(<<"qemu-virt/development">>, <<"qemu/virt/development">>),
+                   %% A kind is development or release, with or without the local suffix.
+                   Replace(<<"/development">>, <<"/debug">>),
+                   Replace(<<"/development">>, <<"/local">>),
+                   Replace(<<"/development">>, <<"/development-local-local">>),
                    Replace(<<"fiasco">>, <<"Fiasco">>),
                    Replace(<<"\nkernel">>, <<"\r\nkernel">>),
                    <<"date 1794160931\nrevision n1234-5e45e725588e\n"

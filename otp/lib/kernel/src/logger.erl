@@ -18,7 +18,8 @@
 %% limitations under the License.
 %%
 %% Modified by erXos: the default handler on a standard device is erx_log_h, the log
-%% sink's handler, in place of logger_std_h.
+%% sink's handler, in place of logger_std_h, and every domain but the system domain
+%% takes the report filter erx_report as its first primary filter.
 %%
 %% %CopyrightEnd%
 %%
@@ -1582,10 +1583,13 @@ internal_init_logger() ->
                                        get_primary_filter_default(Env)),
         ok = logger:set_primary_config(filters, []),
 
+        %% erXos: the report filter comes first in every domain but the system domain,
+        %% before any application starts a process (docs/design-log.md, "Reports carry
+        %% no term"). Each filter added goes to the head of the list, so it is added last.
         [case logger:add_primary_filter(Id, Filter) of
              ok -> ok;
              {error, Reason} -> throw(Reason)
-         end || {Id, Filter} <- get_primary_filters(Env)],
+         end || {Id, Filter} <- get_primary_filters(Env) ++ erx_report:primary_filters()],
 
         [case logger:set_module_level(Modules, Level) of
              ok -> ok;

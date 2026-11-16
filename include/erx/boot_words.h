@@ -66,4 +66,13 @@
 /* -erx_record build ID: the boot image's build identifier as one decimal number. */
 #define ERX_BOOT_BUILD_WORDS_MAX	(sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("build") + ERX_BOOT_NUMBER_WORD_MAX)
 
+/*
+ * -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT, the system window's holder's
+ * (docs/design-stopgap.md, "The booted slot"): three u64s, then the salt, at most the row's
+ * array, and the root hash, each byte two lowercase hex digits.
+ */
+#define ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX	(sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("system_image") + \
+	3u * ERX_BOOT_NUMBER_WORD_MAX + 2u * sizeof(((erx_mf_system_image_t *)0)->salt) + 1u + \
+	2u * sizeof(((erx_mf_system_image_t *)0)->root_hash) + 1u)
+
 #endif /* ERX_BOOT_WORDS_H */

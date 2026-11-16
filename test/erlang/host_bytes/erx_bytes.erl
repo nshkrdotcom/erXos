@@ -18,7 +18,9 @@
 %%     binary and Data iodata of at most 65536 bytes in lists of at most 131072 cells in all.
 %%   * The merge of received TCP segments is erx_tcp_merge_model (beside this file), written
 %%     from docs/design-network-fastpath.md, "The merge": badarg past its limit.
-%%   * SHA-256 is stock's crypto:hash/2: badarg unless Data is a binary.
+%%   * SHA-256 is stock's crypto:hash/2: badarg unless Data is a binary. Its stream calls
+%%     are crypto's hash_init/1, hash_update/2 and hash_final/1, whose state is a value as
+%%     the BIFs' is: badarg unless State is a state of sha256_init/0 and Data a binary.
 %%   * The Ed25519 check is stock's crypto:verify/5: badarg unless Signature is a 64-byte binary,
 %%     Key a 32-byte binary and Message a binary of at most 65536 bytes. OpenSSL's equation is
 %%     cofactorless, so it refuses some signatures by keys of small order that the BIF accepts
@@ -32,6 +34,7 @@
 
 -module(erx_bytes).
 -export([crc32c/2, inet_csum/2, inet_csum_update/3, siphash24/2, tcp_merge/1, tcp_merge_limit/0, sha256/1,
+         sha256_init/0, sha256_update/2, sha256_final/1,
          ed25519_verify/3, entropy/1]).
 
 -define(CALL_MAX, 65536).
@@ -79,6 +82,19 @@ siphash24(_Key, _Data) ->
 sha256(Data) when is_binary(Data) ->
     crypto:hash(sha256, Data);
 sha256(_Data) ->
+    erlang:error(badarg).
+
+sha256_init() ->
+    {sha256, crypto:hash_init(sha256)}.
+
+sha256_update({sha256, State}, Data) when is_binary(Data) ->
+    {sha256, crypto:hash_update(State, Data)};
+sha256_update(_State, _Data) ->
+    erlang:error(badarg).
+
+sha256_final({sha256, State}) ->
+    crypto:hash_final(State);
+sha256_final(_State) ->
     erlang:error(badarg).
 
 -spec ed25519_verify(binary(), binary(), binary()) -> boolean().

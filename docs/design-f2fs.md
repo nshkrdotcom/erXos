@@ -3,7 +3,7 @@
 erXos's main read-write file system is F2FS, Linux's flash file system,
 implemented afresh in Erlang and supported at tier 1. It serves the data
 partition and the vault's partition behind the `erx_fs` interface that
-littlefs serves today, and it writes and reads Linux's on-disk format: an
+littlefs serves, and it writes and reads Linux's on-disk format: an
 image erXos writes passes `fsck.f2fs` and mounts in Linux, Linux replays
 the roll-forward records of the files erXos synced, and erXos mounts what
 Linux and `mkfs.f2fs` write, replaying Linux's records in turn. This
@@ -105,9 +105,9 @@ structure reaches the design or the implementation. What erXos knows of
 them comes from three facts records, written by separate facts writers
 who read the GPL sources and recorded interface facts in their own words:
 
-* part 1, the on-disk format, 65 facts
-  (`~/erxos-scratch/notes/research-f2fs-format.md`, 2026-11-14, SHA-256
-  `1017752a5590db51b53650ee587eaa06f4be0378c7beb7b315796bf983b5a717`),
+* part 1, the on-disk format, 70 facts
+  (`~/erxos-scratch/notes/research-f2fs-format.md`, 2026-11-15, SHA-256
+  `594e13e7756fc73ece9398c33ea16d764ce98274be7e11810f96e6520c0e1830`),
   cited here as [F n];
 * part 2, writing, checkpoints and recovery, 85 facts and 20 crash states
   (`research-f2fs-recovery.md`, SHA-256
@@ -141,23 +141,7 @@ data log's summary, not in a node segment ([F 28]).
 Everything Linux and f2fs-tools are made to do in the oracle guest is
 observed as a black box, and their output is untrusted input to the host.
 
-### What the code does today
-
-littlefs 2.11.3 serves the data partition, as a NIF behind the `erx_fs`
-callback module `erx_lfs` of the `erx_storage` application
-(`erlang/apps/erx_storage/src/erx_lfs.erl`): an owner process takes the
-callbacks' requests one at a time, and a worker runs littlefs's
-operations, whose block callbacks the owner sends to the data window with
-`gen_server:send_request/2`. `fsync` is littlefs's file sync followed by
-the window's flush (`erx_lfs.erl` l.244-262). Any block failure ends the
-owner, and its supervisors, at a restart intensity of 0, end the storage
-domain, whose restart mounts the volume afresh
-(`erx_storage_sup.erl`). The installation formats the volume on the host
-with `tools/host/lfs_format.c` through `Erx::DataVolume`
-(`tools/lib/erx/data_volume.rb`), and the rest of a fresh volume is zeros.
-The durability facet's checkpoint and freeze
-([design-storage.md](design-storage.md#interfaces)) are specified but not
-built in `erx_lfs`.
+### The medium under the volume
 
 The block service's window (`erlang/apps/erx_blk/src/erx_blk_window.erl`)
 takes `{read, Sector, Count}`, `{write, Sector, Bytes}` and `flush` from
@@ -175,9 +159,6 @@ the superblock and 32-bit fields at odd offsets in NAT entries, summary
 entries and dentry slots ([F 1]), and the ABI's layout language states
 them in its packed storage
 ([design-abi.md](design-abi.md#packed-layouts)).
-`abi/formats/f2fs.txt` holds the superblock, the checkpoint header and
-the orphan block, and `erx_f2fs_codec`, in the `erx_f2fs` application,
-reads those three.
 
 ## Requirements
 
@@ -951,8 +932,11 @@ structure and the rule, after writing nothing:
    checksum when `SB_CHKSUM` is set ([F 13]), under erXos's feature sets
    and their dependency, and when its `block_count` and the main area's
    end lie within the partition's window, which bounds every table the
-   mount loads by the partition itself; the first valid copy wins, and a
-   bad copy is logged and left as it is.
+   mount loads by the partition itself, and when its checkpoint area lies
+   after the superblock's two blocks and has the two segments the two
+   packs start ([F 19]), bounds Linux leaves out, so no pack reaches past
+   the area or over a superblock copy; the first valid copy
+   wins, and a bad copy is logged and left as it is.
 2. **The checkpoint pack**: both packs' first and last blocks; a pack is
    valid when both pass their CRC, its total is above 2 and at most 512,
    and both carry the same version; the later version under wrap-around
@@ -1362,8 +1346,8 @@ over the block, never by computed offsets; a count read from the medium
 `i_extra_isize`, `cp_pack_total_block_count`, the bitmap sizes) is checked
 against the room it claims before the cursor moves. The codec follows
 the rules Linux enforces on reads ([F 26], [F 32], [F 42], [F 60],
-[T 92]) and adds the bounds Linux leaves out: the version bitmaps' room,
-`i_namelen` against its field, and an inline file's `i_size` against its
+[F 66] to [F 70], [T 92]) and adds the bounds Linux leaves out: the
+version bitmaps' room, `i_namelen` against its field, and an inline file's `i_size` against its
 inline area whatever else the inode holds. A failed decode is one
 module-private `throw` caught at the codec's entry, answered as
 `{error, {Structure, Rule}}`.
@@ -1473,6 +1457,19 @@ clean room's facts too.
   written, and the walk ends at the zeroed warm node block.
 
 ## Replacing littlefs
+
+Until the replacement, littlefs 2.11.3 serves the data partition, as a NIF behind the `erx_fs`
+callback module `erx_lfs` of the `erx_storage` application
+(`erlang/apps/erx_storage/src/erx_lfs.erl`): an owner process takes the
+callbacks' requests one at a time, and a worker runs littlefs's
+operations, whose block callbacks the owner sends to the data window with
+`gen_server:send_request/2`. `fsync` is littlefs's file sync followed by
+the window's flush (`erx_lfs.erl` l.244-262). Any block failure ends the
+owner, and its supervisors, at a restart intensity of 0, end the storage
+domain, whose restart mounts the volume afresh
+(`erx_storage_sup.erl`). The installation formats the volume on the host
+with `tools/host/lfs_format.c` through `Erx::DataVolume`
+(`tools/lib/erx/data_volume.rb`), and the rest of a fresh volume is zeros.
 
 The seam is the `erx_fs` callback module and the storage domain's
 supervisor: `erx_storage_sup`'s data child changes from `erx_lfs_sup` to
@@ -1595,7 +1592,18 @@ and the verdicts.
   model, erXos's mount read-only or read-write, and Linux's mount with
   recovery or `ro,norecovery`. Each name has its kind, mode, link count,
   link class (the names that share an inode), size, symlink target or
-  device numbers, and the SHA-256 of its bytes. A second depth adds the
+  device number, and the SHA-256 of its bytes. A device number is
+  `{Major, Minor}`, which each reader decodes once from its own
+  encoding: the model holds it in that form; erXos's codec decodes the
+  inode's address slot by Linux's old 16-bit and new 32-bit encodings
+  ([F 42]), whose bit layouts the facts records leave open (open
+  question 7 of part 1), so the device nodes of the oracle guest's
+  declared tree are the probe that checks them;
+  and the reader over OTP's `file` module decodes `st_rdev` by the
+  host's own `dev_t` encoding. A link class is the whole set of names
+  found sharing the inode, and a comparison intersects it with the
+  paths both listings state without an error, so an entry in error
+  changes no other entry. A second depth adds the
   owner and the times, which the model does not predict, so only two
   readers of one image are compared on it. Extended attributes are
   compared as bytes, by erXos's codec wherever erXos runs: every inode

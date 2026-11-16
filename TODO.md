@@ -8,10 +8,22 @@ it; git history is the record of completed work.
 
 ## Major initiatives
 
+* [High] storage and apps, the system partition and the `system` tree
+  ([docs/todo-system-partition.md](docs/todo-system-partition.md),
+  [design-storage.md](docs/design-storage.md#the-system-tree)): each slot
+  becomes a FAT boot partition and a read-only EROFS system partition; the
+  storage domain serves the booted slot's as the `system` tree through a
+  read-only `erx_fs` backend over `erx_erofs`; packages are self-checking
+  files in it, mounted with
+  `erx_ns:mount({erofs, Source}, ...)`; image packages leave
+  the boot image under a packer check of what it may hold; `/apps` is one
+  flat tree; the slot writer and the update write two partitions; image
+  windows, `erx_blk_image`, image extents and the slot's release copy are
+  deleted.
 * [High] apps, [design-packaging.md](docs/design-packaging.md): the packaging design awaits an outside
   review of its update path, its `mount` and its `/etc/rc.conf`; then Track A's parts 2 and 3 build it
   ([plan.md](docs/plan.md#track-a-apps)). An app names its needs, memory and code, and one `apps` row bounds
-  every app; each app is a plain file, `/apps/NAME.app` or `/apps/system/NAME.app`; installing is `cp
+  every app; each app is a plain file, `/apps/NAME.app`, the image's read-only; installing is `cp
   NAME.app /apps/`, whose close checks, admits and publishes the package by one rename, a copy over an
   installed app updates it the same way, the old one running until the new one passes and then stopped until
   its own `service NAME start` or `restart` or the next boot, since no publication applies `rc.conf`, `rm` removes it,
@@ -20,63 +32,132 @@ it; git history is the record of completed work.
   design-kernel.md and design-system.md record.
 * [High] apps, the manifest check's property 19
   ([design-packaging.md](docs/design-packaging.md#the-builds-check)), `tools/lib/erx/manifest.rb`: the
-  stopgap check reads the `apps` and `signer` rows, counts `max` apps in property 4's domain and memory sums
-  and in property 18's display costs, checks clauses 1 (refusing an inspect service), 3 and 6, and refuses every
-  `package` row. What remains, each with its seeded violation: the rows derived from `apps` (the app
-  template, booting the domain release's `app` script with
-  `-eval ok=application:start(erx_session,permanent),ok=application:start(erx_app,permanent)`, since
-  `erx_app` depends on `erx_session`,
-  its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which wait for the
-  storage service's `tree` parameter for `tree apps` and its rooting, the `apps` service freed
-  from the start table, and the app session below; clause 4, which needs
-  `app_memory_default` and the derived template for property 12's planner; clause 5, which needs the
-  package file check and the facts `erx_app_admit:admit/3` takes (the `apps` row with its app template's
-  facet-row indices, the manifest's reserved names and the image's package names) read from the packed
-  records, one reader for the machine and the packer, which then owns the types `erx_app_admit` declares
-  for them; clause 7, once the `apps` service and `tree` exist; clause 1's inspect
-  scope; clause 2's counts in the principal table, the session-name atoms and each server's connections, which
-  the stopgap check sums for no principal; and the development manifests' `apps` row, with the site manifest
-  leaving it out.
+  stopgap check reads the `apps`, `package` and `signer` rows, derives the app template
+  (`DomainStartup::APP_TEMPLATE`, of the `limits session` record), the `packages` rows and the template's row
+  of each service of the row, packs the template and its rows as indices that the boot view checks, and
+  checks clauses 1, 3, 6 and 7's `tree apps`. QEMU virt's development manifest carries an `apps` row and the
+  site and narrow manifests leave it out. What remains, each with its seeded violation: the `apps` rows of
+  the `apps` service, and clause 7's refusal of a source facet naming it, which wait for that service;
+  clause 4, which needs `app_memory_default` for property 12's planner; the rest of clause 5: the enabled
+  packages' session outer budgets in the `apps` budget sum, an enabled row meeting property 17's display
+  and planning clauses, and admission on the host (`erx_app_admit:admit/3` on the packed manifest);
+  clause 1's inspect scope; clause 2's counts in the principal table, the session-name atoms and each
+  server's connections, which the stopgap check sums for no principal (QEMU virt's manifest reckons the
+  storage, network and display domains' connection quotas and `max_connections` by hand, in its comments,
+  and `Manifest::Edit.without_apps` repeats that reckoning; the check should sum each grant's instances
+  over distinct grantee and server pairs against each server's quota and `max_connections`); and the
+  Raspberry Pi 4's `apps` row, which the design gives the default `max` 8: the display record in
+  `config/manifest/development.txt` holds QEMU virt's four pixel areas (32 MiB of outer budget the Pi pays
+  without using), so the Pi's row needs its own display limits or a derived outer budget.
+* [Medium] apps, a files service on the `apps` row (`tools/lib/erx/manifest.rb`, `check_apps`): refused as
+  unsupported until the storage service's `tree` parameter roots a grant at the app's own directory
+  (`tree apps`, [design-packaging.md](docs/design-packaging.md#where-an-apps-files-lie)); then `data`
+  joins the development manifests' `services`.
+* [Medium] apps, what the boot view guards of an app's authority (`liberx/system/dom_boot_view.c`,
+  `boot_app_grants`): it requires the template's facet rows to be exactly the rows the `apps` row names,
+  each once, but not what the `apps` row itself grants: a manifest the check did not pack could name
+  `start`, `apps` or `etc` among `app_services` (refused by `app_services_refused` in
+  `tools/lib/erx/manifest.rb`), an inspect or files service, parameters on the derived rows (`tree`, an
+  inspect scope, `rights rw` on packages) or inflated quantities, and every app's session would hold them.
+  Decide whether app authority is the build check's alone (property 19; design-system.md trusts the image
+  once the boot validator checked it), and then say so in design-packaging.md, or the view's too; then
+  the by-construction answer is that the manifest packs no template facet rows and the view derives them
+  from the `apps` row (packages `ro`, each service with its derived quantities), which needs the
+  parameter and quantity derivation the packer does today, and a generated name for the files `rights`
+  parameter (the header names only its members, `ERX_FILES_RIGHTS_RO`).
+* [Medium] apps, the app template is identified five ways: the packed `apps[].app_template`, which only
+  `boot_apps` reads and requires to equal its own rule (the last template, naming no principal),
+  `app_template?` and `sessions.size - 1` in `tools/lib/erx/manifest.rb`, and erx_starter's
+  `=/= ?ERX_MF_NONE`. Either drop the field and keep the rule, or make the index the one source.
+* [Medium] apps, whether an interface may go to apps rests on its `quantity` lines
+  (`abi/services/net.txt`, `derived_quantities` in `tools/lib/erx/manifest.rb`): netadmin is kept off the
+  `apps` row only because it declares no quantity, so adding them would let apps administer the network.
+  Make grantability an explicit fact (a mark on the interface the check reads, or a refusal by interface
+  beside inspect and files) and require quantities only of grantable interfaces.
+* [Low] ABI, which of `erx_mf_facet`'s fields are quantities is stated in Ruby, not in
+  `abi/manifest.txt`: `FACET_QUANTITIES` (`tools/lib/erx/abi_contracts.rb`) names the five fields, whose
+  widths come from the layout. Mark them in the layout (a quantities sub-layout, or a field mark the
+  reader keeps) so the list is derived.
+* [Low] apps, the derivation's readability (`tools/lib/erx/manifest.rb`): `app_template` rebuilds the
+  session row and SPACES check `normalize_sessions` writes (one `session_row` for both); `named_artifact`
+  duplicates `artifact`'s kind check; `app_facets` maps positional triples where a small `Data` value
+  would read better; `apps_rows` searches the sorted facets for rows `normalize_facets` just placed; the
+  `tree apps` refusal in `check_apps` runs with no apps row and is redundant while files declares no
+  `tree`; dom_planner_test's apps case hand-codes header offsets the codec can give.
 * [High] apps, the package process at boot
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
   the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
   every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
-  the release's `pkg/NAME.app`, and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
-  erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. What remains:
-  the config, `erx_pkg:system_config/0`, answers `none`, since the packed manifest holds no `apps`, `package`
-  or `signer` record (the property 19 item above), so no boot runs the package process; once those records
-  exist it reads them, the development key among the signers in a development build. The principal
-  service's app registry, `erx_principal:register_app/2` and `app_registry/0`, does not exist (no
-  `erx_principal` module is in the tree), nor the domain library's app entries it registers into (the
-  app's session item below); its record takes admission's answer, which carries the declared memory.
-  `erx_starter:packages/2` and the start table's package rows, with the start table's boot waiting for the
-  boot's package set before it applies `rc.conf` (erx_pkg_sup starts before the table, so a publication can
-  otherwise find no table, and a restart of the table restarts no erx_pkg, so the table takes the
-  last set from erx_pkg as it starts rather than waiting for a publication); a retry of the listing once the `packages` grant is in place, which the
-  recovery leaves `unknown` (the first set then holds the image's packages only, and the installed ones come
-  in a later set, with no record, which `rc.conf` does not enable at that boot: a design question); the
+  the release's `pkg/NAME.app`, which the system partition replaces
+  ([docs/todo-system-partition.md](docs/todo-system-partition.md)), and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
+  erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. `erx_pkg:system_config/0` builds
+  the config from the manifest and the library's app entries. QEMU virt's development manifest has the
+  `apps` row and the check derives the app template, so every development boot runs the package process:
+  a boot of the apps suite's unlisted image (HVF, 1 CPU) showed `erx_domain_lib:apps/0`'s max 4, and
+  erx_pkg, 0.33 s into the system domain and before the storage domain had mounted its volume, ran its
+  recovery to the publication and crashed there on `erx_starter:packages/2`, which does not exist (`undef`),
+  four times, until erx_pkg_sup reached its intensity and stopped; the start service and the rest of the
+  boot carried on, and `erx_pkg:packages/0` answers `noproc`. The publication (`erx_starter:packages/2`: the set's rows after the manifest's, kept by keepers of
+  `{app, Name}`, a dropped app's keepers stopped before the answer, the set kept across a restart of the table) and the
+  listing's wait for the system domain's namespace are built, and the apps suite's unlisted boot checks
+  `{packages,4,#{packages => #{},scan => {ok,0}}}`. What remains: a listing that still fails after the wait
+  leaves the scan `unknown`, and nothing lists the installed packages again before the next lifetime (the later
+  set design-packaging.md names, with no record, which `rc.conf` does not enable until the next boot); the
+  `installed` state and the boot mark of a later set, which wait for the table's records (the `/etc/start/ctl`
+  item below), so until then every make of the table applies `rc.conf` to the set's rows too; the
   `apps` tree serving `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]`
   and `[packages, Name]` in `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute
   included; the system_domain QEMU cell; the log lines for a refused package and an entry of no recognized
   form; the lifetime taken from the caller rather than the request; and whether image header reads wait for
-  the `packages` grant. A failed listing (`eio`, a storage domain's answer included) stops the lifetime as
-  a failed change does, so past erx_pkg_sup's intensity the image's packages are never published; a
-  listing failure should leave the scan `unknown` as an absent grant does. `erx_pkg_medium` reads the whole
+  the `packages` grant. `erx_pkg_medium` reads the whole
   directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
   bounded read at a time (Phase 1: the storage domain is trusted).
-* [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
-  and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
-  (`erx_domain_srv:grant_facets/4`). What remains: the domain library's `max` app entries in the principal
-  table, an app principal's elastic budget under the `apps` budget, and `erx_dom_plan_session` taking an
-  app principal with the app template and no other template; `erx_principal:register_app/2`; the session plan
-  in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
-  its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
-  `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
-  `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
-  `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
-  does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
-  `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
-  `{not_supported, program}` until then).
+* [Medium] apps, the package set's publication (`erlang/apps/erx_starter/src/erx_starter.erl`,
+  `publish/2`): the decision which keepers a set drops is made in the effect layer, not in
+  `erx_start_table` beside `reconcile/3`. Until the boot's set arrives, rc.conf's lines for apps are
+  logged as `{undeclared, App}` and shown as skipped.
+* [Medium] apps, chokepoints (`tools/lib/erx/chokepoint_rules/apps.rb`): `starter-reach` covers the start
+  table and its keepers, not packaging's `erx_pkg*`, and design-packaging.md's own checks are not built:
+  that `erx_pkg` and `erx_pkg_io` call no `erx_domain:stop/2`, and that only `erx_pkg` calls
+  `erx_principal:register_app/1` and `erx_starter:packages/2` (docs/design-packaging.md, "Verification and testing"). Add a `pkg-reach` rule
+  allowing `erx_domain:system_namespace/0` and `erx_domain_lib:apps/0`, and a publishers rule.
+* [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
+  `erx_domain_mints_srv_tests:app_session/0` is written and not run: in its fixture the start is answered
+  before the kept row is installed, because configured domain `a` ends after its introduction to the
+  session, for a reason not yet found. Also open: the pixel area of an app session's pairs is still the
+  app template's (`erx_domain_mints:pair_area/3` by template), to be decided from the session's rows.
+* [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`,
+  the `app` script, the boot view's app entries (the check derives the app template from the `apps` row, so
+  QEMU virt's development image boots with four app entries, `erx_domain_lib:apps/0`'s max 4 at the
+  system's Erlang shell under HVF), the session's plan (`erx_domain_core:app_session/4`, with its host test
+  and seeded faults), the library's entry (`erx_domain_lib:app_session/6` over `erx_dom_lib_app_session`)
+  and the domain service's start (`erx_domain:start_app/2`, which sends the app's record as
+  `{Ref, app, App}` once the session's namespace is in place) exist. What remains: the start service's
+  package rows (`erx_starter:packages/2`) and their keepers, the only starters of an app's sessions (PK7);
+  the app principal's CPU group under an apps group, which the stopgap's flat groups leave out; a `tree
+  apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
+  the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
+  which `erx_app` calls as `{erofs, app}` and `erx_ns` refuses with `einval` until the file-backed
+  EROFS mount of [todo-system-partition.md](docs/todo-system-partition.md) lands, so every Erlang
+  app's session ends with `{mount, einval}`; a native app's start and the record's
+  `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
+  (`erx_app` ends with `{not_supported, program}` until then).
+* [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
+  an image package's place
+  `/pkg/NAME.app`, which becomes `/system/NAME.app`, is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
+  `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
+  through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
+  a keeper's stop waits without bound for its session's end.
+* [Low] apps, `erx_starter_keeper`: a session that ends before its keeper takes it ends the keeper with
+  `noproc`, the exit its trapped link brings, so the supervisor reports a crash naming no session where
+  `{shutdown, {ended, Id}}` is meant; `hold/2` can map it, with an `erx_starter_tests` case for the path.
+* [Medium] apps, the domain library (`liberx/system/dom_core.c`, `dom_plan_in`): a request's plan
+  (`erx_dom_plan_request`, `erx_domain_lib:create/1`) under an app entry's principal is not refused, so
+  a domain that is not the app template can take the entry's one domain slot, against "neither entry
+  can pair an app principal with another template" ([design-packaging.md](docs/design-packaging.md#an-apps-session)).
+  Nothing calls `create/1` with one today. Fix by construction in `dom_plan_in`: an app principal
+  exactly when the origin is a session of the app template, with a dom_core test that plans a
+  request under an app principal and expects `ERX_EINVAL`.
 * [Medium] runtime, `docs/design-shared-code.md`: build shared loaded code, one prepared copy of the
   preloaded modules and the applications every domain boots, mapped read-only into every domain that runs
   the interpreter. It is wanted long term. Its trigger, three adopting domains at once, is met: the
@@ -85,6 +166,9 @@ it; git history is the record of completed work.
   system domain still reaches root's shell about 3.2 times sooner under TCG (the measurement and the order
   of work are in [todo-performance.md](docs/todo-performance.md), "every domain loads its own kernel and
   stdlib"; raw logs in ~/erxos-history/boot-slow-2026-11-11 and boot-fast-2026-11-11).
+  Order of work: first measure a session's pages at its prompt, with the funnel's scratch sized by frame,
+  which replaces the design's memory estimates; then build the image if the adopters and that measurement
+  still call for it.
 * [Medium] architecture: evaluate the remaining
   [simplification candidates](docs/todo-simplification.md), recording for
   each the mechanism it removes, its cost and the evidence needed to adopt
@@ -280,6 +364,14 @@ it; git history is the record of completed work.
   Packages 6 and 7 build on the designs of the netmap transport and the socket process, whose
   push carries `{data, [binary()]}`, at most 64 binaries and one piece in all. Package 4 also
   ends the tap helper's items under Bugs by subsystem.
+* [Medium] display, GPU acceleration (OpenGL-class) for the desktop and kiosk apps, design after
+  research ([plan.md](docs/plan.md#track-d-windows-widgets-and-the-web), part 10). A research record
+  first (the Raspberry Pi's V3D and QEMU's virtio-gpu 3D modes, Mesa or what replaces it, how a client's
+  driver reaches a render service), then a design of the render service. The display's side is fixed in
+  [design-display.md](docs/design-display.md#graphics-hardware), "What a render service owes the
+  display": a client presents only a buffer whose jobs have ended, a buffer stays a range of the client's
+  pixel area, the present's answer releases it, and an accepted job keeps its ranges and the area alive
+  until its device can no longer reach them, whoever ends first.
 
 ## Stopgap replacements
 
@@ -458,15 +550,6 @@ it; git history is the record of completed work.
   but code-making does not yet follow from the image.
 * [Low] stopgap, `musl/src/internal/erxos/syscall.c`: `munmap` of part of an object's mapping is `EINVAL` and
   `mprotect` over one `ENOTSUP`, where FreeBSD does both; nothing reaches it until musl maps objects.
-* [Medium] stopgap, `liberx/backend/fiasco/service_task.c` (`erx_fiasco_task_mem_dma_body`) and the contiguous
-  object of `vm.c`: the object does not record `bus - cpu`, so `erx_mem_dma_addr` gives a device the CPU address
-  of its memory, where [design-device-tree.md](docs/design-device-tree.md) ("The `given` record") and
-  [design-device-dma.md](docs/design-device-dma.md) ("Device addresses and reach") have it give the bus address.
-  Until it does, `erx_boot_dma_absent` (`liberx/backend/core/boot_manifest.c`) refuses a device whose DMA range has
-  bus addresses unlike its CPU addresses, with the reason `offset`, and the device gets no DMA memory: the Raspberry
-  Pi 4's EMMC2 (unit `sd`, config/platforms/raspi4b.json), whose bus addresses start at 0xc0000000, gets none of
-  its 1 MiB and moves blocks by programmed I/O. Record
-  the offset in the object the root makes from the tree's range, and drop `offset`.
 * [Low] stopgap, `liberx/backend/fiasco/runtime_entry.c` (`tree_facts`): the root accepts the firmware's tree
   and joins its facts to the catalogue's entries once, before any give, but after step 8 of
   [Boot handoff](docs/design-stopgap.md#boot-handoff) rather than in step 4, because the catalogue is the domain
@@ -685,6 +768,16 @@ it; git history is the record of completed work.
   platform record's register windows and RAM, not against the board tree's every `reg` and `ranges` (the GIC, the
   local peripherals, PCIe windows), which the record does not list; checking it against the board's own tree
   (`board_tree.rb`) would make the window's isolation hold by construction.
+* [Medium] `tools/lib/erx/manifest.rb`, `EmptyNative#check_mode` and `Stopgap#check_mode`'s partial path: each
+  lists the record kinds it refuses, so a record kind the grammar gains is admitted in an empty-native or
+  partial boot until someone adds it to the list (and in an empty-native boot left out of the packed manifest,
+  whose `check_and_place` packs nothing). Make each mode an allowlist of the kinds it takes, every other
+  kind refused, keeping each refused kind's property and reason in one table per mode.
+* [Medium] `tools/lib/erx/release_medium.rb`, `system_partition`: its refusal of an image and tree larger than
+  the system partition has no test, because reaching it takes an image near the partition's 383 MiB
+  (`medium_system_sectors`), which the function reads whole and hashes. Take the partition's size from
+  `MediumImage` once and pass it through `system_partition`, `image_extent` and `image_extents`, which each read
+  it today, and test the refusal on a small partition.
 * [Low] `tools/lib/erx/device_give.rb` and `system_domain.rb`, `ARGS_LINE`, `RESTARTS_LINE`, `CONNECTIONS_LINE`
   and `PEER_ROW`: each harness's row is `MediumBoot::DOMAIN_ROW` changed by regular expressions on its text,
   outside `Manifest::Edit`, which edits only a whole manifest (it needs the machine record). Build the rows from
@@ -1384,12 +1477,9 @@ it; git history is the record of completed work.
   picks without raising, and a cancel keeps the pick, so the keyboard may go to a covered window; Escape while
   the menu is held goes to the current window and leaves the menu open, which the design does not state; the
   menu's rectangles, fixed at its press, can lie off a screen re-attached smaller while it is held, against
-  `erx_wm`'s rule that every rectangle lies within the screen; and the four commands are spelled in
-  `erx_wm:menu_item()`, rio's `command()` and `?COMMANDS`.
-* [Low] `erlang/apps/erx_display/src/erx_input.erl`, `erx_winfs.erl`: `destination/1` ends in a catch-all, so a
-  new route that should give the policy its gesture would silently go nowhere; and the screen has two copies,
-  `erx_winfs`'s `screen_rect` and `erx_input`'s, with different checks: an attach of an empty rectangle is taken
-  by `erx_winfs` and refused by `erx_input`, leaving the policy's input on the old screen.
+  `erx_wm`'s rule that every rectangle lies within the screen.
+* [Low] `erlang/apps/erx_display/src/erx_input.erl`: `destination/1` ends in a catch-all, so a new route that
+  should give the policy its gesture would silently go nowhere.
 * [Medium] `test/host/display_domain_test.rb`: the suite has no cell under `rio`: keys typed at a clicked window
   keep reaching it while a second client makes, raises, hides and shows a window, with a seeded policy that picks
   each new window ([Verification and testing](docs/design-display.md#verification-and-testing), the window
@@ -1974,7 +2064,8 @@ it; git history is the record of completed work.
   gives only the messages' layouts), so it is not shared. Make it a fact of the draw format that `tools/gen_abi.rb`
   gives both `erx_draw_core` and the step, and refuse there. The theme's ranges hold 543 code points. The subfont
   format's own field limits, x in two bytes and rows in one, are written twice the same way (`Erx::Glyphs` `MAX_X`
-  and `ROW`, `erx_font` `?MAX_W` and `?MAX_H`): a spec of the subfont format would give both.
+  and `ROW`, `erx_font` `?MAX_W` and `?MAX_H`), and the pair section's limits (an adjustment in a signed byte, a kerned
+  advance in 0 to 255, design-desktop-programs "Kerning") need both too: a spec of the subfont format would give both.
 * [Medium] display, two splitters of pixels into `y` messages (`erlang/apps/erx_win/src/erx_font.erl` `tiles/3`,
   `erx_draw.erl` `band_rows/2`): `erx_font` cuts an image into tiles of columns and bands of rows of at most 8192
   bytes each, while `erx_draw:load/4` cuts only bands of rows, as many as fit a write (`?ERX_P9_IO_MAX` less the
@@ -1987,6 +2078,17 @@ it; git history is the record of completed work.
 * [Medium] host tools, one build scaffold (`tools/lib/erx/raster.rb`, `rc_oracle.rb`, `fsimg.rb`): `source_record`,
   `locate` and its build record, `source_tree`, `compiler_identity` and `publish` are the same code three times.
   Fold them into one module that takes a source id and an output directory.
+* [Medium] desktop, the window menu's role (`tools/lib/erx/glyphs_menu.rb` `ROLE`, `abi_theme.rb`): only the glyph step
+  requires the theme to have a `body` role, so a theme without one passes `tools/gen_abi.rb` and fails only in
+  `tools/erx build glyphs`, after every role is rasterised. Require the role in `ABI::Theme.validate` and the
+  design-abi theme table. The generated `erx_menu_glyphs:role/0` gives the menu its role, so `erx_wm_menu` never
+  names it.
+* [Medium] desktop, the glyph step's output enters no runtime build (`build/glyphs`, `tools/lib/erx/erlang_apps.rb`):
+  `erx_menu_glyphs.erl` is written beside the subfonts, and nothing compiles it into `erx_display`; the build would
+  then need erx-raster and the FreeType pin. Decide how with `erx_wm_menu` (plan 8.15). Its outputs declare
+  OFL-1.1 (Inter's glyph data); the release packer attributes a generated `build/` source by its SPDX line with
+  erXos's `LICENSE` as the notice and no font-data statement (`tools/lib/erx/pack_provenance.rb` `attribute`), so
+  it refuses them until the build that takes them in states them font data with Inter's `LICENSE.txt` as notice.
 * [Low] desktop, the glyph step's refusals of a glyph offset beyond a byte or an advance beyond 255 have no test
   (`test/host/glyphs_test.rb`).
 * [Medium] liberx, capability calls (`liberx/backend/api.h`, `docs/design-abi.md` "Program protocol"): the program
@@ -2048,19 +2150,17 @@ it; git history is the record of completed work.
   `opendir`, `stat` and `syslog` (file BIOs, the `file:` store loader, `X509_LOOKUP` by directory) and keeps
   `OPENSSLDIR="/usr/local/ssl"`; K5 holds because `no-autoload-config` stops the implicit loads and OTP's `crypto` names
   no file. Give Configure an `--openssldir` of erXos's, so a caller that does name OpenSSL's directory finds erXos's.
-* [High] HTTPS clients, the trust store in the domain release (`config/trust/`, `tools/lib/erx/trust_store.rb`,
-  [design-crypto.md](docs/design-crypto.md#the-trust-store)): the five roots, their record and the reader are in the
-  tree and `pubkey_os_cacerts` has its `{unix, erxos}` row, but no build writes `cacerts.pem` into `public_key`'s
-  `priv` of the domain release, so `public_key:cacerts_get/0` raises `failed_load_cacerts` on erXos and the full
-  kiosk's quotes cannot fetch. The pack's provenance check attributes every receipt source through an import
-  record with a license per file; the roots need no license (public keys and names, facts), so the check takes a
-  recorded `none` for them, and `config/trust` needs a row in the images' imports, before the release names the store. Then: the layout row
-  for `priv/cacerts.pem`, a test image's extra roots, and the design's "store on QEMU" row.
+* [Medium] HTTPS clients, the trust store's remaining checks (`tools/lib/erx/release_files.rb`, `trust_store`,
+  [design-crypto.md](docs/design-crypto.md#the-trust-store)): every release that holds `public_key` carries
+  `priv/cacerts.pem`, built from `config/trust/` and attributed through its inventory, but a test image cannot yet
+  add roots of its own after the tree's, and the design's "store on QEMU" row (`public_key:cacerts_get/0` in a
+  session of the interpreter image) has no suite.
 * [Medium] HTTPS clients, the store by construction (`tools/lib/erx/trust_store.rb`): build it from `config/trust/ORIGIN.md`'s
   rows instead of a `*.pem` glob (which is case-insensitive on macOS and follows links): each recorded file a regular
   file by `lstat`, its bytes matching the recorded SHA-256, one block decoding to exactly one DER certificate (two
   certificates base64ed into one block, or an empty block, pass the form check today), and any other entry of the
-  directory refused. Also assert in `release_files_test.rb` that the session and app scripts load `ssl` and `inets`.
+  directory refused. Build `cacerts.pem` and its receipt's hashes from that one read: `ReleaseFiles#trust_store`
+  reads the roots for the store and again for the receipt, so the two are not bound to the same bytes. Also assert in `release_files_test.rb` that the session and app scripts load `ssl` and `inets`.
 * [Medium] HTTPS clients, the rest of design-crypto's client work: `inets`' `httpc_bound` edit and its tests (CR8),
   and `ssl` in the web domain's script for its listener
   ([design-crypto.md](docs/design-crypto.md#otps-applications)).
@@ -2132,6 +2232,35 @@ it; git history is the record of completed work.
   table and the keeper of blocking locks (design-files.md, "Locks", "Waiting requests"), does not exist yet (the grant
   serves no lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants` supervises it and its grants' supervisor
   `rest_for_one`, as design-files.md ("Locks") has it.
+* [Medium] facet parameters, the `member` kind (`liberx/system/dom_boot_view.c` `boot_parameter`,
+  `otp/erts/emulator/nifs/erxos/erx_domain_terms.c` `parameter_term`): no test drives a packed member row through the
+  C view and the NIF. Extend `test/host/facet_parameters_test.rb` and `test/erlang/erx_facet_parameters_tests.erl`
+  with a files facet stating `rights ro` (its limits carry `rights := ro`) and forged rows refused (scalar 0 and 4,
+  kind u64 under key 1), with seeds for an off-by-one bound and a dropped `- minimum`, and give
+  `tools/fuzz/manifest_seeds.rb` a files facet with `rights` so the fuzz target reaches the member case.
+* [Medium] `abi/services/files.txt`: the default of `rights` when a row states none, `rw`, is said in the file's
+  comment and applied in `erx_fs_grants:grant_options/1`; a `parameter` line has no way to declare a default, so
+  it is not one generated fact. Add `default MEMBER` to member parameters (checked a member, emitted as a macro),
+  and decide whether a security parameter's default should be `rw`, `ro` or none (a required parameter).
+* [Low] `tools/lib/erx/abi_contracts.rb` `services`: the `allowed` parameter kinds copy `mf_parameter_kind`'s
+  members, and the kind switches of `dom_boot_view.c`, `erx_domain_terms.c` and `tools/fuzz/manifest_fuzz.c` end
+  in `default:`, so a new kind is not a build failure where it is unhandled; derive `allowed` from the enum and
+  drop the `default:` cases. `Contracts.member_bound`'s enum may hold negative values, which fail safe at the
+  view but should be refused at the declaration.
+* [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
+  `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
+  needs an `rx` mount); the mount should take the facet's rights.
+* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, and the trees named below): the
+  grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
+  which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
+  aliases, and a grant whose client has ended drains, as design-files.md ("Serving", "Waiting requests", rules 1, 2
+  and 4 to 6, "Bounds") has it; a program's `/dev/kbd` and `/dev/mouse` reads wait at its draw connection, their
+  keeper, which shares one life with the handler. What is left is the one tree that still waits for an event inside
+  a callback, the Bluetooth line service's `pair` file (`erx_line`, design-bluetooth.md, "The controller's line"),
+  which stops its whole grant, every other request, clunk and flush of it included, until the event comes, as each
+  wait for an event left in a callback does now that callbacks run in the grant. `erx_fs_locks`, the tree's lock
+  table, does not exist yet (the grant serves no lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants`
+  supervises it and its grants' supervisor `rest_for_one`, as design-files.md ("Locks") has it.
 * [Low] display client, a dropped grant's read (`erlang/apps/erx_win/src/erx_draw_conn.erl`, `handle_info/2`'s
   `dropped` clause): the end of a grant that sent the connection reads forgets them but leaves the one of each file
   already at the display there, so the next read of that file waits until a record answers the dead one, and that
@@ -2141,9 +2270,6 @@ it; git history is the record of completed work.
   of the grant's 64 requests in flight for its input, one for a present and one for a relayed `wctl`, `label` or
   `clipboard` call, so a session whose `windows` quota passes 16 can still fill the grant with ordinary programs and
   make a present answer `emfile`. State the count per window and bound the quota by it, or record the limit.
-* [Low] session, the relay's writer (docs/design-programs.md:1543, 2400): both name
-  `erx_session_relay:open_writer/1`, but `erx_session_relay` exports `open_writer/2` (`open_writer(Relay, Holder)`);
-  name the call the module has.
 * [Medium] files, the grant's drain (`test/erlang/erx_fs_core_model_tests.erl`, `erx_fs_grant:client_ended/1`):
   design-files.md ("Verification and testing") has the core's model explore the client's end and names the seeded
   fault "a grant that ends at its client's end without its fids' clunks", but `?EVENTS` has no client-end event and
@@ -2375,20 +2501,22 @@ it; git history is the record of completed work.
 * [Medium] Fiasco build on a FreeBSD host, `tools/lib/erx/fiasco.rb`: the Kconfig step now builds with `cc`
   (`HostOs::HOST_CC`) and the users build is given `HOST_CC`/`HOST_CXX`, but `tools/erx build fiasco` has not been
   run through to an image there; run it on the FreeBSD test host and fix what stops it, then delete this item.
-* [Medium] domains, mints (`erx_net_erxos` mint, `erx_driver_ctl` mint, `erx_lfs_mint`; design-system,
+* [Medium] domains, mints (`erx_net_erxos` mint, `erx_driver_ctl` mint, `erx_storage_mint`; design-system,
   "Facets a configured domain serves"): a mint answers its request only after the grant or
   facet is started and exported, and the domain service drops a reply that comes after the
   request's deadline or after it cancelled the request (`erx_domain_mints`). The grant or
   facet minted for a dropped reply stays alive and exported to its grantee until the
-  connection between the two domains ends (the network grant, and a `data` grant of the
-  storage domain to any domain but the system domain) or the serving domain ends (the
+  connection between the two domains ends (the network grant, and a `data` or `system` grant of
+  the storage domain to any domain but the system domain) or the serving domain ends (the
   storage domain's `storage_ctl` facet, which ends only with its mint, and its `data`
-  grant to the system domain), since no
-  message withdraws a mint's answer. Give the domain service a withdrawal it sends the mint
-  for every request it stops waiting on, or have each grant end unless the grantee claims
-  it within the deadline.
-* [Medium] storage, `erx_lfs_mint` loop (`mint/3`): no host test drives the loop itself.
-  `test/erlang/erx_lfs_mint_tests.erl` covers `mint_request/3`, `erx_fs_grants:grant_options/1` and the
+  and `system` grants to the system domain), since no message withdraws a mint's answer.
+  The `system` mint answers no grant until its mount of the tree ends, so a slow
+  `system` window can make its first grants miss the 10 s deadline
+  ([todo-performance.md](docs/todo-performance.md), the `system` mount's boot cost).
+  Give the domain service a withdrawal it sends the mint for every request it stops
+  waiting on, or have each grant end unless the grantee claims it within the deadline.
+* [Medium] storage, `erx_storage_mint` loop (`mint/3`): no host test drives the loop itself.
+  `test/erlang/erx_storage_mint_tests.erl` covers `mint_request/3`, `erx_fs_grants:grant_options/1` and the
   answers `grant/5` gives, refusals included, but not that the loop (`mint/3`,
   `mint_one/3`) sends each through `erx_facet:minted/2`; drive it with a stand-in of
   `erx_facet`, as the network mint's item below asks.
@@ -2560,10 +2688,8 @@ it; git history is the record of completed work.
   `lo0` with `ip4 => dhcp` fails `erx_net_if_core:new/1` with `function_clause`, and a binary name
   `<<"lo0">>` adds a second `lo0`. Take only a static `ip4` and `ingress` from a configured `lo0`,
   refuse the rest at `start_link` with a named error, and test it.
-* [Low] network, `erx_net_driver`: a driver's crash report carries its mailbox (`proc_lib`), so
-  pending frames, on `lo0` local traffic, reach the log; `erx_net_loop:transmit/2` raises on a
-  zone whose bytes are not iodata where its doc says `malformed`. Mark the driver `sensitive` or
-  keep the loop's queue in its state, and drop a bad list as `malformed`.
+* [Low] network, `erx_net_loop:transmit/2`: it raises on a zone whose bytes are not iodata where
+  its doc says `malformed`; drop a bad list as `malformed`.
 * [Low] erx_net TCP ICMP (`erx_tcp_icmp`, `erx_tcp_input:tcp_mss`): an MTU a too-big
   report gives in SYN-SENT lowers the MSS until the SYN-ACK, which recomputes it from the
   path, so the first full-size segment is lost again; FreeBSD keeps it in the host cache
@@ -2739,7 +2865,8 @@ it; git history is the record of completed work.
   `erlang/` (the public applications and `public.txt`) and `host/erlang/ebin`
   only. Not yet written: `sysroot/<arch>` (musl's
   headers, the draw layouts, `libc.a`, `liberx_program.a`, the builtins, the link script), `share/erxos/sdk.mk`,
-  `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, a host `erx-lvgl` and
+  `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, the host build of `erx_elf_plan` the packer plans a
+  program with, which it builds from the tree into `build/app-pack-tools`, a host `erx-lvgl` and
   its descriptor-3 launcher), `erx_ui_host`, `erx-app test`, and `SDK.txt`'s minimum LLVM and `fsimg` version,
   which no source in the tree records yet (docs/design-packaging.md, "The SDK"). `erx_ui_host` takes option A
   of the advisors' review: while it runs it is the node's default display, `erx_ui:open/1` takes a window
@@ -2766,10 +2893,17 @@ it; git history is the record of completed work.
   OTP release `SDK.txt` names, so a beam another release compiled fails only when the app starts; erlc's
   environment is cleared by `Oracle::CLEAN_ERLANG_ENV`'s deny-list, which misses `ERLC_EMULATOR` and
   `ERLC_USE_SERVER` (an allow-list spawn in `Erx::Runner` is the fix by construction); and a compile error
-  shows only as the runner's log path. The image build does not yet carry the public half of its builder's
-  development package key as the `development` signer (docs/design-packaging.md, "Adding an app to an
-  image"), so no development image trusts an installed package yet; it lands with `tools/erx pack --app`.
-  Fix: add each with the SDK package.
+  shows only as the runner's log path. Fix: add each with the SDK package.
+* [High] apps, `tools/erx pack --app` ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image)):
+  the command packs an app directory with the in-tree packer (`AppPack.pack` with an SDK exported into
+  `build/app-sdk`), not the exported SDK's `host/bin/erx-app`, which does not exist yet (the SDK entry above);
+  no build hands the public half of the builder's `Erx::PackageKey` to the manifest check as
+  `Manifest::Context`'s `development_key`, so no image trusts its builder's key yet, where every development
+  build, not only those `pack --app` builds, should; the packer does not yet run the machine's manifest
+  reader (`erx_pkg_manifest:system_config/1`) on the host over the packed manifest, beside
+  `AppPack.describe`; and `tools/erx app run DIR`.
+  Fix: each with its own package.
+* [Medium] apps, package notices (`tools/lib/erx/production_image.rb`, `package_external`): a package is registered with no notice document, so an image carrying a third-party MIT or BSD package names its license in NOTICES but holds neither the license text nor its copyright line, which both licenses ask of a binary distribution. Fix: a declaration field naming the notice file in the package image, which the build cites.
 * [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on
@@ -3067,9 +3201,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   driver case's pid with `erx_command_srv:reserve/1`, the shell's process as its speaker. The
   `program-start` chokepoint keeps every Erlang source but the handler from naming `erx_program`, but the
   suite's driver cases type `erx_program:start/1` at a shell, which no build check reads.
-* [Low] ERTS, `sys/erxos/erx_program_core.h`: `ERX_PROGRAM_PID_MIN` and `ERX_PROGRAM_PID_MAX` are written
-  by hand beside the generated `ERX_PROG_PID_MAX` of `abi/protocols/prog.txt`'s `prog_pid_max`; use the
-  generated limit.
 * [Low] ERTS, `sys/erxos/erx_program_drv.c`: the gate worker's 64 registrations (two a program) bound a
   session to 32 programs at once, each start past that refused with `elimit`.
 * [Low] session, `erx_command_srv`: a row drops at any `{'DOWN', _, process, Speaker, _}` the server takes,
@@ -3166,13 +3297,30 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands
   alone, not the boot image's programs the command namespace lists, so `/bin/rc`, the shell
   `/etc/passwd` names, is missing.
-* [Medium] session, `erx_prog_handler`, `/dev/tty`: the export serves `tty` as a name alone and answers an
-  open of it with `enxio` (design-files.md, "Native clients"), but no program's handler yet makes the
-  terminal's description that design-programs.md ("The terminal", "`/dev/tty`") has it make instead: an
-  open of the terminal relay under the program's job, through which its reads, writes, watches and controls
-  go to the relay, never through the file protocol. Until it does, a program's open of `/dev/tty` fails
-  with `enxio`, and its standard streams reach the terminal only through its starter's pumps (the item
-  under shell, `erx_shell_program`, below).
+* [Medium] shell, `erx_shell` (`above_terminal/1`) and `erx_shell_jobs` (`above/2`): the flag that
+  gives the console the terminal while `erl` runs is a boolean the caller sets back in a `try ... after`,
+  so a stage running `erl` that is killed leaves the line's terminal with the console until the line
+  ends, and two `erl` in one line share the flag. Monitor each caller of `{above, true}` and keep the
+  live callers in the line, so the console holds while the set is not empty.
+* [Medium] shell, a job's leader (`erx_shell.erl`, `leader/1`) passes input requests to the shell's
+  group, and the group answers an interrupt to whichever input request is current, so a job reading
+  through `io:get_line` at the prompt would take a `Ctrl-C` the shell never counts, after which every
+  `foreground` lags the relay's count and later jobs' reads stay parked. No command reads that way
+  yet; have the leader refuse input requests, so the group has one reader by construction.
+* [Low] shell, `erx_shell_jobs`: a key the relay reports for the line just before `erl`'s
+  `{above, true}` stops or ends the line while the Erlang shell, led by its own group, runs on.
+  Every exported step of the table settles on its own; one dispatching entry that always settles
+  would make the rule hold for steps added later. `fg` resumes the job before the relay gives it
+  the terminal.
+* [Medium] programs, a program's `/dev/tty` (`erlang/apps/erx/src/erx_prog_handler.erl`,
+  `erlang/apps/erx_session/src/erx_session_export.erl`): the export serves `tty` as a name alone and answers
+  every open of it `enxio` (design-files.md, "Native clients"), but no program's handler yet makes the
+  terminal's description that design-programs.md ("The terminal", "`/dev/tty`") has it make instead: an open
+  of its tty's relay through `erx_session_relay:open_writer/2` under the program's job, through which its
+  reads, writes, watches and controls go to the relay, never through the file protocol. Until it does, a
+  program's open of `/dev/tty` (musl's `getpass`, a `ctermid` user) fails with `ENXIO`, and its standard
+  streams reach the terminal only through its starter's pumps (the item under shell, `erx_shell_program`,
+  below).
 * [Low] session, `erx_session_export`: its statfs answers devfs's type for a tree that also holds
   `/bin` and `/etc` (`abi/protocols/9p.txt`, `p9_magic`, one type per kind of tree), its files show
   uid 0 where the design's owner of a file its server records none for is `nobody`
@@ -3315,6 +3463,18 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   QEMU tests of hand-offs between domains (docs/design-pipes.md, "Verification and testing"). The programs
   suite's `handler` case runs the handler at root_1's shell; `pipe_hand` and `install` test the driver's
   takes and installs directly.
+* [Low] display, `wctl`'s `current` field (`erlang/apps/erx_display/src/erx_window.erl:101`): the field
+  rio defines as whether the window takes the keyboard is filled from whether the window is shown, so
+  every shown window reads `current`, and a change of the current window gives no window a new `wctl`
+  record. Report the overlapping policy's current window there and send the record on a change;
+  find and act's palette needs both to close when another window is picked
+  ([design-find-act.md](docs/design-find-act.md#changes-to-other-designs)).
+* [Medium] shell, `$home` (`erlang/apps/erx_shell/src/erx_shell.erl:205`, docs/design-shell.md "The
+  language"): design-shell lists `$home` among rc's variables, but no design says what it holds for a
+  session and the interactive shell sets none (scripts get `/` or `/var/empty` from
+  `erx_shell_script`). Find and act reads `$home/lib/act`, and its narrowing rule names the session's
+  home, so the session's starting home needs one definition, read by the shell and by
+  `erx_act_run` alike.
 * [Medium] display client, `erx_pixels` tests: `erx_prog_handler:start/1`'s deadline frees what a
   killed handler reserved through the allocator's handling of a dead owner, which
   `test/erlang/erx_pixels_tests.erl` does not cover: an alloc whose caller has already exited (the
@@ -3936,7 +4096,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the machine's end is only its last step. design-system.md "Shutting down" also has
   `erx_dom_end_begin` with its ending record and absolute deadline, which the fault thread
   enforces; no domain created or restarted once the end has begun; the vault's quiesce and
-  the storage freeze, with the end chosen from their outcomes. The coordinator's one entry,
+  the storage freeze (the durability facet's checkpoint and freeze, which `erx_lfs` does not serve), with
+  the end chosen from their outcomes. The coordinator's one entry,
   `erx_machine:request/2`, takes `reboot` and `halt` from the system shell and from a
   session's `/machine/ctl`, writes the one log line and answers a second request `busy`, but
   it keeps the accepted request in its own state in place of the ending record and then asks
@@ -4607,8 +4768,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `FLAGS` are reused; hash the flags into the rule or delete the objects when they change.
   (3) `setup.rb`: the source steps' `deadline: 300` is never used. (4)
   `leftovers` reads the flavour out of `step.argv`;
-  store it on `Step`. `ERX_SOURCE_CACHE` names `build/third_party` but setup reads the sibling
-  `build/downloads` (`archive_directory`); name the directory actually read.
+  store it on `Step`.
 * [Low] `test/oracle/common_test/test_server_ctrl.erl` (`file:set_cwd` in `run_test_case` and three other sites),
   `tools/lib/erx/oracle_suites.rb` (`ERXOS_LOG_CAP`): on erXos Common Test's logs have a RAM file system of their own
   (`/ct-logs`, 256 MiB), apart from `/tmp` where each `priv_dir` and `data_dir` is, so a suite that fills `/tmp` fails
@@ -4862,24 +5022,62 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   below its own `foreign_atoms`; once `foreign_atoms` is enforced the lowering should be bounded by it.
 * [Medium] runtime, `tools/fuzz/boot_manifest_fuzz.c`: the target compares the page with the reader's own result, so a swapped limit or a wrong host byte in `erx_boot_manifest_read` passes. Compare with `erx_manifest_open` and `erx_manifest_runtime_limits_at` called directly, field by field.
 * [Low] runtime, `liberx/backend/fiasco/runtime_entry.c`: an `erx.arg` word of the kernel command line reaches ERTS's flag diagnostics unchecked, where the reader in `boot_manifest.c` holds `system_args` to printable ASCII. The command line is the operator's own.
-* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl`: `erx.arg` words of the kernel command line can spell `-erx_record device ...` or `-erx_record given ...` and add a device record the manifest never assigned, which a driver opens like the root's own; on the stopgap the command line is the operator's, but the manifest should stay the one source of which domain holds a device. Carry the records in a boot-information field only the root writes, or have the system domain's Erlang select them from the manifest through `erx_manifest`.
+* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl`: `erx.arg` words of the kernel command line can spell `-erx_record device ...` or `-erx_record given ...` and add a device record the manifest never assigned, which a driver opens like the root's own, or `-erx_record system_image ...` and so start the read-only `system` window in the system domain, against `check_system_window`; on the stopgap the command line is the operator's, but the manifest should stay the one source of which domain holds a device. Carry the records in a boot-information field only the root writes, or have the system domain's Erlang select them from the manifest through `erx_manifest`.
 * [Medium] runtime, `erx_prim_file.c`: that a release file's bytes reach a read only after `erx_release_check` rests on `erx_copy_out` being ERTS's one user of `erx_release_addr`, with no build check. One call, `erx_release_open`, returning the bytes after the verdict with the cache inside `liberx`, removes the import and ERTS's flag, and Phase 2 then changes only what is behind it.
 * [Low] runtime, `erx_prim_file.c`: a refused file is hashed and reported again at each open; `docs/design-kernel.md` has later uses fail at once.
 * [Low] runtime, `liberx/backend/core/boot_manifest.c`: the printable rule for `system_args` lives in the reader, so `Manifest.admit` packs a manifest that then fails at boot, and `domains[].args`, the same string class, is not covered. The rule belongs in the `args` class of the ABI generator.
 * [Low] runtime, `tools/fuzz/release_fuzz.c`: does not call `erx_release_check` or compare `erx_release_fs_lookup`'s index with the entry's, and has no seed at the longest path; its `fix_index` is a copy of `pack_fuzz.c`'s.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the `Ctrl-G` menu (`erx_console_menu`) lists, connects and detaches; interrupting and killing a session, lock and log out (`docs/design-live.md`, "Job control") come with logins (M10), and `erx:console_size/2` is not built.
+* [Medium] session, terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`): each tty of the
+  session has a relay, which its console reads on demand, but `erx_cmd` does not read through
+  `open_reader/2` ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)). The runtime's
+  writers' sender, `otp/lib/kernel/src/erx_output.erl`, which the design and the `relay-name` rule name, is
+  not in the tree, so nothing sends `tty_write` or `tty_drain`, nor are edit 35's trap and edit 42
+  (`beam/bif.c`), which reach it; and `erx_tty_owner` is missing from `erx_session.app.src`'s
+  `registered` list.
+* [Medium] session, terminal relay requests (`erlang/apps/erx_session/src/erx_session_relay.erl`): the
+  chokepoints keep `erx_tty_owner` and the request for an open made for reading to `erx_session_relay`, and
+  an open is opaque, but a module that holds a relay's pid can still build any other request by hand
+  (`{tty, Open, ...}`, `{foreground, ...}`, `{console_group, G}`), which nothing checks. Option: one request
+  tag, `{erx_relay, Req}`, that the relay requires of every call, with one atom chokepoint keeping
+  `erx_relay` to `erx_session_relay`, which replaces the `relay-requests` shape rule.
+* [Medium] shell and programs, finding a tty's relay ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)):
+  a relay other than the domain's line's holds no name, and no design names how a program's handler, a
+  command domain's stream relay or `erx_cmd` finds the relay of the tty its job runs on. Suggested home:
+  the shell's `terminal()` map, which already carries the console's terminal functions, gains the relay's
+  pid, and the shell passes it to each job it starts.
+* [Medium] session, a command's output through the console (`erlang/apps/erx/src/erx_console.erl`,
+  `onlcr/1`): an Erlang command writes through the console's write/1, which turns each newline into CR-LF
+  for a cooked tty, and the relay's `OPOST` and `ONLCR`, set while the command's job holds the terminal,
+  turn it again, so the master gets CR CR LF (`test/erlang/erx_session_tty_tests.erl` compares output
+  with carriage returns aside). Commands writing through `erx_cmd`'s opens, whose bytes only the relay
+  processes, remove the console's conversion for a relay's console.
+* [Medium] session, the console's reads of the relay (`erlang/apps/erx/src/erx_console.erl`, `read_for_ask/2`):
+  a process of the session's domain that sets the tty raw with `VMIN` 0 and `VTIME` 0 (an open's
+  `tcsetattr` with SIGTTOU ignored) makes the console's one-byte watch ready at once and its read answer
+  `{ok, <<>>}`, which `read_for_ask/2` has no clause for, so the console crashes and the line's shells
+  end. Watching again would spin; the console should not watch while such a setting holds, or read
+  through a mode of its own.
+* [Medium] session, the console's reads of the relay (`erlang/apps/erx/src/erx_console.erl`, `reader()`):
+  (1) The console-read
+  cases and seeded faults the design's Verification lists beyond the seven in
+  `test/erlang/erx_console_reads_tests.erl` (reads per ask, held bytes across a signal, one held set per
+  group, an interrupt queued before a read, one ask through blink and interrupt, a late event) are not
+  written, and the interrupt case does not pin that the group keeps its ask. (2) The ask, report, read and
+  event decisions are effects in the console; a pure core returning actions would let them be tested
+  without a relay. (3) After the relay gives up its name at a halt, a group's ask makes the console's call
+  exit `noproc`.
 * [Medium] session, terminal relay core (`erlang/apps/erx_session/src/erx_session_relay_core.erl`):
-  (1) An `out` watch is reported at any free byte, though `output/3` never splits a rendering, so a newline
-  under `ONLCR` with 1 byte free is `eagain` and a poll loop spins until the master takes output; report at
-  a low-water mark after reading FreeBSD's `ttydev_poll`. (2) The drain row's "no master is connected" has
-  no state behind it in the core or the link. (3) The exploration checks safety only, and its alphabets
-  leave out close, hangup, `tcsetattr`, timers and output; reports are pooled across receivers.
-  (4) Each owner of `erx_tty_link` must call `send/1` at the end of its step (the relay core's `settle/1`,
-  `erx_session_tty:effects/2`, the tests' models); a driver that forgets sends nothing and nothing fails. A
-  one-event entry that applies the event and then `send/1` would make it hold by construction for every
-  owner but the core. (5) `erx_tty:input/3` returns a room the relay core discards, since it derives the
-  next room from the link; drop it from the result, or use it. (6) `input/3`'s per-call room and output
-  stopped live in the persistent `#tty{}` record, reset by `input/3`; thread them as a call-local value.
+  (1) The exploration checks safety only, and its alphabets leave out close, hangup, `tcsetattr`, timers and
+  output; reports are pooled across receivers.
+  (2) `erx_tty:input/3` returns a room the relay core discards, since it derives the next room from the
+  link; drop it from the result, or use it.
+  (3) `input/3`'s per-call room and output stopped live in the persistent `#tty{}` record, reset by
+  `input/3`; thread them as a call-local value.
+  (4) A writer's message (`{write, Done, Bytes}`) has no size bound and the queue no length bound; with no
+  master it drains only by a flush or a hangup. The writers are synchronous and in the session's own domain.
+  Writers whose messages refill the room exactly as it empties hold `out` waits off for as long as they keep
+  it up, since an `out` wait is reported only while no message waits.
 * [Medium] session, how the console learns a session's tty (`docs/design-live.md`, "Between domains"): the design has the console learn the tty from a `tty` agent in the session domain's ready report, but the relay needs `erx:cap(console)`, which init sets only after that report, so a relay started by the boot script has no master and one started after the report is not in it. Edit 65's `tty` agent, the domain pid's check that every agent is a pid of the domain's node, and a way for the session's creator to read the agents are not built; `erx_console:add_session/2` takes the tty from whoever creates the session. Settle the order when root's session starts at boot.
 * [Low] tests, `test/integration/runtime_console_test.rb` (`make check-runtime-hosted`): the cases that start the Erlang shell wait for `1> ` at the start of a line, but the hosted system domain is a named node and its shell prompts `(system@erxos)1> `, so every `with_erxos` case times out before it begins. Match the prompt with its node name, or make the patterns node-agnostic as the `Ctrl-G` case is.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl`: the names quota is the constant `NAMES_QUOTA`, 64, for every principal; the manifest's per-principal `names` is read by no one. Take each principal's from its row, as the domain quota is.
@@ -4969,13 +5167,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   a native root with these release files. `liberx/backend/core/boot_manifest.c` is the reader to link, and
   `Erx::Release.differences` the comparison `test/integration/runtime_release_test.rb` runs over two hosted packs
   until then.
-* [Medium] runtime, `erx_erofs`: `erx_ns:mount({erofs, Window}, To, [])` mounts an image from a block
-  service window and `prim_file` reads it, but nothing in the running system mounts one: the block
-  service serves no window on an image inside a slot (the slot's images follow the boot image, whose
-  layout the slot parser reads), and the runtime mounts no image at domain creation from the boot
-  image's grants ([design-files.md](docs/design-files.md#building-binding-and-mounting)), so the boot
-  table holds none. `erx_verity:open/2` takes only the tree `unchecked` until the packer writes each
-  image's hash tree and the boot image records its root hash, salt and layout (M11).
 * [Low] runtime, EROFS mounts: `erx_erofs_file` opens no directory (`[directory]` answers `enotsup`) and
   exports no `copy/3` or `ipread_s32bu_p32bu/3`, so `file:copy/3` from an image's open file and
   `disk_log`'s positioned reads of one fail; `set_cwd` on an image checks no search bit; every image
@@ -4983,12 +5174,11 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   image's window, so a window pid the runtime later gives another process would receive the image's
   reads. No test.
 * [Medium] runtime, `erx_ns`: an image's mount reads the image in `erx_ns`'s own process, so a window
-  that does not answer, or any local pid passed as one, holds every mount, bind and unmount of the
+  behind the image it is handed that does not answer holds every mount, bind and unmount of the
   domain for up to 40 s a read (three reads a mount); the mount belongs in a monitored worker whose
   result the process applies once it checks the point again. No test.
-* [Medium] runtime, `erx_verity`: blocks pass through unchecked until the image's hash tree is written and
-  checked in `checked/1` (M11), which takes each level's place from `erx_verity_tree:levels/1`, a module
-  that then moves from `erlang/apps/erx` into the preloaded set beside `erx_verity`; there is no cache, neither of checked blocks nor the reader's ETS table
+* [Medium] runtime, `erx_verity`: it caches no checked tree block, so each read
+  fetches its tree path again, and the reader keeps no ETS table
   of 256 metadata blocks per image ([design-storage.md](docs/design-storage.md#reading-erofs-images)
   step 4), so every lookup reads its inode and directory blocks again; a log of a failed read goes only
   to the reader's mount log function.
@@ -5001,7 +5191,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] runtime, `erx_erofs`: the superblock's CRC-32C is computed bit by bit in Erlang, not by the
   per-byte primitive `erx_bytes:crc32c/2`: the reader's EUnit cases and fuzz target run it on stock
   OTP, which has no `erx_bytes` BIFs, so moving it needs an Erlang stand-in for those runs (at boot
-  only `erx_ns`, in the same `erx` application as the primitive, mounts an image). The reader's form
+  only `erx_storage_system` mounts an image, on erXos's ERTS, which has the primitive). The reader's form
   is Linux's, seeded with all ones and not inverted at the end, so over the covered bytes it is
   `erx_bytes:crc32c(0, Covered) bxor 16#FFFFFFFF`. Device, FIFO and socket inodes answer `enotsup`, which the
   packer's trees never hold.
@@ -5011,13 +5201,30 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   fixtures give every entry one mode and one time (the manifest's modes 0644 and 0755 and time 0), and only
   `extended.img` varies the owner (uid and gid 70000), so no case checks the mode-bit and mtime offsets
   with other values; fsimg's manifests can write them.
-* [Medium] storage, `erx_f2fs_codec` inode rules by file type: four rules of
-  [design-f2fs.md](docs/design-f2fs.md#reading-the-medium)'s facts depend on `i_mode`'s file type (a
-  directory never has one link, `INLINE_DENTRY` only on a directory, and inline data only on a regular file
-  or symlink, never an encrypted, verity or compressed regular file; [F 42], [F 48]), and the F2FS facts
-  record gives no file-type bits, only "POSIX mode" and the root inode's 0x41ed ([T 22]). The codec leaves
-  them out until a facts record states the bits; meanwhile an inode with `INLINE_DENTRY` answers its
-  inline dentries whatever its mode, ahead of `INLINE_DATA` when both are set.
+* [Medium] test, F2FS listing (`test/erlang/erx_f2fs_listing.erl`): cost grows faster than the tree on
+  hostile shapes. Each entry of an inode with K names carries its K-path link class, so K names cost
+  O(K^2) once the listing is copied or compared (3,000 links to one inode: about 500 MB flattened); a
+  class representative (the least stated path) would make it O(N) but changes the decided form. Each
+  entry holds its whole path, so a directory chain of depth d costs O(d^2) (depth 4,000: about 640 MB);
+  a bound on a path's joined length, refused in the walk, would cap it. A regular file is hashed once
+  per name, not per inode, and no listing bounds the bytes it folds, so a sparse file of F2FS's
+  largest size, or many links to it, ends only at the test's deadline.
+* [Medium] test, F2FS corpora (`test/erlang/erx_f2fs_corpus_tests.erl`): the corpus test checks
+  features and segments per section, not `-a` or `-e cold`. The codec's fuzz target takes its
+  superblock and checkpoint seeds from the corpus images, but not yet their NAT, SIT, summary, inode
+  and dentry blocks, which design-f2fs.md's "Reading the medium" asks for and which wait for stage 2's
+  walk of each image's trees. The corpus seeds add few shapes: every image's packs are header-only
+  and none sets `SB_CHKSUM`, so weighting distinct shapes rather than images would serve better.
+* [Low] test, F2FS corpus reader (`test/erlang/erx_f2fs_corpus.erl`): the zstd context sets no
+  `windowLogMax`, so a hostile frame can make it allocate zstd's 128 MiB window cap; a file's form is
+  derived from its source id's prefix, which a third form would want in its deps.lock row; no case
+  covers bytes after a stream's end; and the fuzz runner, unlike the corpus test, does not check
+  `fetched?` first, so an unfetched corpus fails as `{file, enoent}` without the fetch command.
+* [Low] test, F2FS listing's `file_reader/1`: OTP's file_info holds `st_rdev`, `st_dev` and `st_ino` in
+  32 bits (`otp/erts/emulator/nifs/common/prim_file_nif.h` l.87-89), so a device whose major or minor
+  needs the high bits of a 64-bit `dev_t` decodes to another number, and on a host file system with
+  64-bit inode numbers two inodes equal modulo 2^32 share a link class; trees of F2FS (32-bit nids)
+  and devices with small numbers are not affected. The listing module's lines exceed 80 columns.
 * [Medium] test, F2FS oracle: erXos's F2FS is checked against Linux's, which needs a Linux guest under QEMU
   with a pinned v7.3.4 kernel that has F2FS (Debian's generic arm64 kernel is the candidate to check;
   Ubuntu 26.04's is 7.0.0) and f2fs-tools 1.16.0. Neither the guest nor its pins exist.
@@ -6419,6 +6626,13 @@ to the corpus and follow rc
   tree ends with it", and only "no `SIGHUP`" is in the compatibility
   table. List them there as documented differences with tests
   ([design-programs.md](docs/design-programs.md#a-programs-end)).
+* [Medium] system, the principal service (`erlang/apps/erx_domain/src/erx_principal.erl`): only its app half,
+  the registry of app principals, is built. The rest of its role in design-system.md's service table is not:
+  principals, credentials, sessions and quotas, and each session's credentials facet with `login_keys`,
+  `add_login_key` and `del_login_key`. Nor is the `erx_principal:number()` type that design-system.md's
+  domain service record names: a principal is a `pos_integer()` in `erx_domain_core`'s types, and
+  the domain service starts sessions from the system manifest's principals itself. They come with M10 and SSH's fourth stage
+  ([design-ssh.md](docs/design-ssh.md#stages)); then `erx_domain_core` takes the type from `erx_principal`.
 * [Low] system, principals: a principal can be created but never resized
   or removed. Add both to the principal service, with what happens to its
   sessions, domains, overlays and vault files
@@ -6579,17 +6793,6 @@ to the corpus and follow rc
   handed to Fiasco) an entry: today the proof judges only what the
   exported functions reach, so such a callback's frame and callees go
   unchecked.
-* [Medium] build, stack proof: a `switch` that clang lowers to a jump
-  table ends in an indirect branch that stays inside its function, which
-  `kernel/stack_targets.txt` cannot declare (it lists functions, taken as
-  tail jumps), so the first such switch in a core fails the proof or
-  invites a wrong declaration. The choice is between
-  `-fno-jump-tables` for every proven object (the proof's flags in
-  `tools/lib/erx/stack_proof_run.rb`, the archive's in
-  [design-stopgap.md](docs/design-stopgap.md) and
-  [design-arch-aarch64.md](docs/design-arch-aarch64.md#stack-proof)) and
-  teaching `stack_graph.rb` to recognize a jump table's branch whose
-  targets lie in its own function.
 * [Low] build, stack proof: declarations that nothing uses are accepted
   silently: a `kernel/stack_targets.txt` line whose function holds no
   indirect site at either level, and a `leaf` of `kernel/stack_fiasco.txt`
@@ -6905,21 +7108,74 @@ to the corpus and follow rc
   address is still being set. The design's transaction-translator argument wants the turn held until that answer,
   or the controller to order the next Enable Slot after the failed address's cleanup; the controller core's design
   decides which.
-* [Medium] USB, the bus core's hub depth (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
-  `usb_hub_depth_max` is not applied, so a hub more than 5 tiers below the root has its ports powered and its
-  children enumerated with a route of 6 tiers, which the slot context's route string cannot hold. A hub past the
-  limit is to be configured with its ports never powered, with a case that builds the chain.
-* [Medium] USB, the bus core's attempts (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
-  the design's bound of 3 enumeration attempts on a port in 60 s is not kept; every connection change starts a
-  new attempt, so a device that toggles its connection costs an Enable Slot each time. State stays bounded.
+* [Low] USB, the bus core's enumeration (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
+  step 3, the language table and the manufacturer, product and serial strings, is not run, so a device's
+  inspection record has no strings; a failure there fails nothing, so adding it is a step between `device` and
+  `config_head` with the strings kept on the device.
+* [Medium] USB, the bus core's enumeration tests (`test/erlang/erx_usb_bus_core_tests.erl`): no case reaches a
+  multi-TT hub (SET_INTERFACE's setup bytes, `multi_tt => true` in Configure Endpoint, `multi => true` in a
+  child's translator), a refused `bMaxPacketSize0`, a SuperSpeed hub-class device or a malformed descriptor
+  answer; add a multi-TT hub kind and targeted cases, with seeds for the EP0 bound loosened and SET_INTERFACE's
+  fields swapped. A full-speed hub gets hub fields and possibly the MTT flag, which FreeBSD
+  sets only at high speed (`controller/xhci.c:2662-2690`).
+* [Medium] USB, the bus core's exploration reduction (`test/erlang/erx_usb_bus_core_tests.erl`, `taken_alone/2`):
+  the answer choices/1 takes alone is chosen from the model's world, and its independence from every other choice is
+  argued from what `enumerated/6`, `configured/3` and `settle/3` do, not checked. A step that fails a device on a
+  well-formed answer (the refused `bMaxPacketSize0` or malformed-descriptor kinds above) or a deadline on a step after
+  the settle would break the argument silently. Check it instead: in `follow/2`, assert for every answer taken alone
+  that its actions are only the device's next request, its `start` or its new hub's `power_on`, with the deadline
+  unchanged and no detach.
+* [Medium] USB, the bus core's seeded depths (`test/host/erx_usb_bus_core_test.rb`): each exploration seed names a
+  depth that must lie within one of the test module's `?DEPTHS`, and nothing checks that; export the depths and have
+  the host test assert it, so dropping a depth from the module cannot leave a seed caught only by its own run.
 * [Low] USB, the bus core's exploration (`test/erlang/erx_usb_bus_core_tests.erl`): the simulated bus never ends a
   reset with the port disabled, never presents a low-speed device or a root port speed the controller cannot run,
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
   translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
   turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
+* [Low] Erlang edges (docs/style.md, "Functional core"): `erx_tcp_listen` (`:176`), `erx_gen_tcp`
+  (`:443`), `erx_pipe_srv` (`:312`), `erx_prog_handler` (`:264`) and `erx_blk_sd` (`:394`) walk a
+  step's actions with a loop of their own rather than `erx_actions:perform/3`; the first two match a
+  bare `stop` with `[stop | _]`, dropping any action after it where the one loop refuses it. Move
+  each to `{stop, Reason}` and the one loop, then add a source check that no module but
+  `erx_actions` has a clause on a stop at a list's head.
 
 ## Security residuals
 
+* [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
+  system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
+  `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader
+  is on another node before any primary filter runs; OTP's legacy `error_logger` calls
+  (`application_master.erl:407`, `file_server.erl`, `gen.erl:790`) carry no `otp` domain; so do
+  erXos's own events that print a raw term; and in the system domain, which takes no filter, a
+  process that holds another domain's bytes keeps them out of its own reports only through its
+  `format_status/1` (edit 75), so the supervisor's `child_terminated` report still quotes the
+  child's raw exit reason (`supervisor.erl:318-324`, `:1426`), and with `error_logger_format_depth`
+  set `proc_lib`'s `receive_messages/1` (`proc_lib.erl:1046`) takes the mailbox of a process that
+  set `process_flag(sensitive, true)` and has no `format_status/1` into its crash report, which
+  stock OTP does too. Also whole in a process that hides its terms: `gen_server`'s
+  `no_handle_info` warning shows the raw message; `gen_event`'s report of a handler's crash shows
+  the raw stack trace; an exit reason `{Reason, Stack}` keeps its frames' arguments wherever it is
+  quoted, since exit reasons stay raw; process labels and logger metadata pass as they are; and
+  the protection rests on `'$initial_call'` and `'$erx_status_module'` in the process dictionary,
+  which the process itself can erase; and a process whose initial module is not the module
+  `gen_statem:enter_loop` or `gen_server:enter_loop` enters is decided by its initial module in
+  its crash report (no erXos or OTP caller does so: each enters `?MODULE`). The filter is an entry of the primary filter list, so a
+  filter an application adds later (`ssh_app.erl:114`) runs before it and sees the report
+  whole, `logger:reconfigure/0` and `set_primary_config(filters, _)` empty the list for a
+  moment or for good, and with `filter_default => stop` an OTP report no other filter logs is
+  logged as its summary where stock OTP drops it. Make the rewrite a fixed stage of
+  `logger_backend:log_allowed/2` ahead of the list (edit 57), which closes all three, run it
+  before remote forwarding; have the supervisor's report pass the reason through the child's
+  `format_status/1` when the child's module is known, and `receive_messages/1` honour
+  `sensitive`.
+
+* [Medium] session, a window's terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`,
+  `handle_info/2`): a relay whose master is in the session's own domain takes every plain message it
+  does not otherwise know as its master's, and its pid travels in every open, so any process of the
+  domain that holds an open can send it master messages (input, a hangup, a size). Acceptable for Phase
+  1's trusted domains. Fix: the relay names the reference of its monitor of the master in its `tty_open`,
+  and the master tags each message with it, which the relay requires.
 * [Medium] bluetooth, ACL packets on the line at a disconnection (`erlang/apps/erx_bt/src/erx_bt_hci_core.erl`,
   the Disconnection Complete clause of `event/2`; docs/design-bluetooth.md "Commands and data credits"): a
   Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the
@@ -6985,14 +7241,20 @@ to the corpus and follow rc
   task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
   `[only_erx_clock_nif]` imports section and the facet for trusted code; erXos's kernel checks `WRITE` on the
   time page. A Phase 1 residual, not fixed in the stopgap.
-* [Medium] WiFi credentials before the vault, development builds only
-  ([design-wifi.md](docs/design-wifi.md#credentials)): the networks'
-  PMKs and SAE PTs sit unsealed in the `credentials` file of the WiFi
-  domain's own directory on the data partition, readable by any session
-  that holds the data partition's tree and from a copy of the medium.
-  It blocks release. The vault's state slot for `wifi`, shared with the
-  Bluetooth design's bonds, closes it, and the release manifest check
-  refuses the development store.
+* [Medium] WiFi's key holder before its release placement, development
+  builds only ([design-wifi.md](docs/design-wifi.md#where-the-holder-runs)):
+  the holder runs as a process of the WiFi domain, so the networks'
+  PMKs and SAE PTs are in the domain that parses the air, and they sit
+  unsealed in the `keys` file of the WiFi domain's own directory on the
+  data partition, readable by any session that holds the data
+  partition's tree and from a copy of the medium; a break of the WiFi
+  domain can also write that file, so enroll a network, and a `pending`
+  Transition Disable mark is lost with the domain's restart. No
+  passphrase enters the domain: `wlankey` derives in the session. It
+  blocks release. The vault's purpose closes it
+  ([design-wifi.md](docs/design-wifi.md#decisions), 1), and the
+  release manifest check refuses a `wifi` row without `wpa_key` or with
+  `wpa_admin`.
 * [Medium] WiFi, SAE not constant-time throughout
   ([design-wifi.md](docs/design-wifi.md#security)): `crypto:sae_pt/3`,
   `sae_commit/5` and `sae_key/5` multiply in constant time, but their
@@ -7095,8 +7357,7 @@ to the corpus and follow rc
   installed package at `/data/packages`, past the package process. A changed package fails its header check or,
   from M11, `erx_verity`'s; a removed one is withheld. Closed by rooting each `data` grant at its principal's
   directory, with the test that a session holding `data` finds no `packages/` under its `/data`. The tree has
-  three more gaps: every grant of it is read-write, since no facet row can make an `erx_fs` grant read-only yet,
-  so the app template's derived row needs that before it lands; the owner trusts any path a grant hands it, so
+  two more gaps: the owner trusts any path a grant hands it, so
   the rooting rests on `erx_fs_grant` building nodes only from the callbacks' answers (`erx_lfs` should check
   each path against its grant's root, as `tree apps` will need); and a file at `/packages`, or a directory a
   full volume cannot make, leaves the tree failing its requests without a diagnostic at attach.
@@ -7187,14 +7448,18 @@ to the corpus and follow rc
 
 * [Medium] Storage domain's write authority (`erlang/apps/erx_blk/src/erx_blk_service.erl`
   `serve/1`, `config/manifest/qemu-virt-development.txt`): the block driver starts a writable
-  window on every partition role of the layout (record, `slot_a`, `slot_b`, vault, data)
+  window on every partition role of the layout but the system partitions (record,
+  `boot_a`, `boot_b`, vault, data)
   whatever the manifest's window rows say, so the storage domain, which holds the block unit
   and also runs the littlefs NIF over medium data, can rewrite the boot slots and the
   boot-selection record that the manifest gives the system domain (property 8) and the vault
   that PW1 gives only the vault's storage domain. A fault in that domain, say through a crafted
   littlefs image, could persist across reboots. Have the driver serve only the windows the
-  domain library names for its own domain (data and the image), refusing slot, record and
-  vault roles outside the slot writer's domain, with a test that a request for them fails.
+  domain library names for its own domain (data, the image and `system`), refusing boot,
+  record and vault roles outside the slot writer's domain, with a test that a request for
+  them fails. The `system` window is read-only, but the writable `boot_a` and `boot_b`
+  windows show the gap: the slot writer's `system_a` and `system_b` windows are not served
+  until that grant exists, so the driver's domain writes no system partition.
 * [Medium] Forged pids and `erx:owner/1` (erx.erl `owner/1`, erx_dist, the funnel): a pid's creation is a field its maker writes, while ERTS sends to a remote pid over the connection its node names, so a pid with domain A's creation and domain X's node passes an `erx:owner(Pid) =:= A` check and a send to it goes to X's connection, handing every local pid in the frame out to X (external.c's encoder) before X's funnel drops the frame as one to a dead name. erx_facet's caller check and the `erx:owner/1` doc's "a reply sent to a forged name goes to no third domain" rely on the creation alone. erx_domain_mints checks node and creation both. The fix by construction: the funnel refuses, at decode, a pid, reference or port whose node is a domain of this machine and whose creation is not that domain's, so `erx:owner/1` is authoritative for every caller; then the node check in erx_domain_mints can go.
 * [Medium] Session tty input (erx_session_tty, erx_tty_link): each `{tty_input, Bytes}` is checked at 4 KiB, but what waits unread in the shell's group has no bound; a master that types faster than the session reads grows the session's heap. erx_tty's `input/3` bound (docs/design-live.md, "Between domains") closes it when the line discipline lands.
 * [Low] Console line and terminal reports (erx_console.erl, erx_console_keys.erl): a terminal that reports text a session chose, such as xterm's title report where it is allowed, lets the session type anything at the line, `Ctrl-G` included, which no rule over the bytes can tell from typing. The menu drops the rest of the read that opened it and takes only one-byte reads, which stops a reply that arrives in one read; one the line driver splits into single bytes could still choose an entry, the system shell included. Settle it when logins come (M10): the system shell entry asks for the line's login again, or the host tool's console refuses terminal reports the session did not ask for. A terminal that sends 8-bit controls as raw bytes (0x9D, not U+009D written as UTF-8) is not recognized either, since such a byte is a UTF-8 continuation byte; recognizing it needs the rule to track UTF-8 lead bytes.
@@ -7353,30 +7618,7 @@ to the corpus and follow rc
   `write/1`'s callers, before the security closure
   (`erlang/apps/erx/src/erx_console.erl`).
 
-* [Medium] ABI, the manifest's image records (`abi/manifest.txt`): only the
-  packer's Phase 1 check (`tools/lib/erx/manifest.rb`, `normalize_images`)
-  holds an image record's rules; the generated C and Erlang readers check
-  `format` and `hash_algorithm` each alone, so a malformed boot image can
-  pair `erofs_verity` with hash algorithm `none` and zero tree fields, give
-  `erofs_unchecked` a root hash, use format 2 in a release manifest, carry
-  unsorted or overlapping extents, or a window whose `image` disagrees with
-  its role. Express the format's rules as reader rules in
-  `abi/manifest.txt`. The block service checks only what it serves
-  (`erx_blk_image:place/2`): one extent of whole sectors inside the slot,
-  as long as the image's data.
-* [Low] storage, the slot's image area: the packer's extent check bounds an
-  image by the whole slot, so an extent may cover the slot's FAT and
-  bootable file; the images' start (128 MiB) and alignment (1 MiB) live in
-  `ReleaseMedium` and prose, not in `abi/medium.txt`, where both the check
-  and the medium writer should take them. The medium and the manifest also
-  place the release image by two calls of `ReleaseMedium.image_extents`
-  over the same list; keep the placed extents in `ProductionImage::Built`
-  so there is one placement.
 
-* [Medium] storage, `erx_verity` (Phase 1): the EROFS reader reads blocks
-  unchecked until M11 adds the hash check inside `erx_verity:read/3`
-  ([design-storage.md](docs/design-storage.md), E1), so a swapped medium or a
-  flipped bit reaches the parser.
 * [Medium] system domain, the reset count
   ([design-system.md](docs/design-system.md)): any successful login clears the
   count, including a web login, so a machine with a boot fault that lets
@@ -7729,6 +7971,123 @@ document's "residual risks accepted" paragraph.
   returns actions, as `erx_bt_hci_core` is, and explore it. With it: the reset waits for the old driver through the
   link the start makes rather than a monitor it takes, the fresh driver's start blocks the keeper while it programs
   the UART, and the heap bound's slack (`start_link/1`) is a round number, not derived from the grant's largest write.
+* [Low] find and act, rules written by a program given the whole namespace
+  ([design-find-act.md](docs/design-find-act.md#security)): such a program holds the session's files but
+  no right beyond files unless `within -f` names one, yet a binding or route it writes to
+  `$home/lib/act` runs with the session's rights once `erx_act` reads it. A narrowed program cannot
+  write the file. Closing it needs a home for the rules that no program's namespace holds, as
+  crontab(1) keeps a user's table, which no design names; `rc.conf` has the same gap.
+* [Low] find and act, a covered palette ([design-find-act.md](docs/design-find-act.md#security)): a
+  client may raise a window of its own over the current palette with `wctl` `top`, which leaves the
+  keyboard with the palette, so a person typing into what looks like the raised window types into
+  the palette and a Return runs its selected offer. The reserved chord's overlay is the planned way to
+  tell windows apart; a rule that a covered current window takes no Return is the cheaper fix if one is
+  needed first.
+* [Low] network, a crash of a socket core's shell (`erlang/apps/erx_net_client/src/erx_gen_tcp.erl` and
+  `erx_gen_udp.erl`): `format_status/1` redacts the `#data{}`, but a crash's stack trace never passes
+  through it. A shell that ends on an action `perform/3` does not know, on a `{stop, Reason}` that is
+  not the last action, or on a crash inside the core's `step/2`, logs a `function_clause` or `badmatch`
+  whose top frame carries the remaining actions or the event and the whole `#data{}` or core, with the
+  peer's bytes held or in flight: in gen_statem's termination report, whose stack trace it logs
+  outside `format_status/1`, and in proc_lib's crash report, which also logs the mailbox (queued
+  `erx_net` pushes) and the process dictionary. The exit reason `{function_clause, Stacktrace}` also
+  reaches the shell's monitors and a waiting caller. Only a bug of a core reaches it. Fix: a logger
+  filter in the client's domain that rewrites such reports to names, classes and arities, as the WiFi
+  design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
+  takes the same shape.
+
+## Planned features
+
+* [Medium] apps, who may read the start table's row names in a release build ([design-apps.md](docs/design-apps.md),
+  [design-find-act.md](docs/design-find-act.md#decisions), decision 3): `[apps]` is visible only at scope `all`, so a
+  release build's palette lists no apps and `service -e` cannot read `declared_enable`; design-apps decides which
+  sessions see the row names, and the palette follows it.
+* [Medium] WiFi supplicant cores (`erlang/apps/erx_wifi`, `erx_wpa_kdf`, `erx_wpa_key`;
+  [design-wifi.md](docs/design-wifi.md#the-supplicant)), left by the first slice:
+  - the bytes the MIC covers have no independent oracle: a recorded message 3 from hostapd
+    (a capture, or one built by hostapd's own code on the host) checked through `decode`,
+    `mic_input` and `check_mic`, with a seeded fault; wpa_supplicant 2.12's tarball carries
+    no such frame (its hwsim tests are not in it);
+  - `build/4` takes an untyped `map()`: a caller that leaves out a key gets a `function_clause`
+    whose arguments carry the KCK; a map type per message kind lets Dialyzer catch it;
+  - the MIC input ends at the key data, while wpa_supplicant covers the whole EAPOL body
+    (`wpa.c:4005`); a body longer than its key data fails the MIC (safe, but not
+    wpa_supplicant's behavior);
+  - whether a second RSN element in message 3 is allowed is checked against the standard (the
+    codec refuses it);
+  - the codec reads no Transition Disable KDE (the Wi-Fi Alliance's OUI, `wpa_common.h:155`),
+    so `erx_wifi_join` reports no `{transition_disable, SSID}` ("The 4-way handshake"), and
+    Verification's property and seed for it wait with it;
+  - `erx_wifi_join` takes the station's own RSN element and RSNXE in the `join` request; nothing
+    builds them from the candidate's AKM and PMF yet, which wants the RSN element's layout in
+    `abi/formats/ieee80211.txt`;
+  - SAE's secret half is not built: the key holder (`erx_wpa_holder` over `erx_wpa_arith`),
+    `wlankey`'s hashed values (`erx_wpa_secret`) and `crypto`'s `sae_pt/3`, `sae_commit/5`
+    and `sae_key/5` ("OTP's `crypto`: SAE's arithmetic"). `erx_sae`'s tests stand on
+    `test/erlang/erx_sae_peer.erl`, whose arithmetic on Erlang integers matches Annex J.10's
+    vectors; the holder's cases and seeds of Verification (the element not negated,
+    `sae_key/5`'s `badarg` escaping, a keyseed salted with zeros whatever the list, the
+    entropy seam's scalar of 1) and the recorded hostapd exchange wait for them. The call
+    that performs a request to the holder belongs to the station's process;
+  - `erx_sae` takes a password identifier in `new/1`, but `erx_wifi_join` passes none, since
+    the choice's candidate does not carry the identifier the holder's names report;
+  - SAE's `keying` state: no join-level case drives a holder's `bad_element` through
+    `erx_wifi_join`, whose `sae_step/4` keeps the exchange a drop returns (reverting it to
+    `{drop, Check}` fails no test), and the exploration's check that a counted drop changes
+    nothing but `counts` would fail on that answer; and a drop carries no deadline, so a
+    deadline met in `keying` followed by `bad_element` leaves no resend of the commit before
+    the exchange's end, which the station's ordering of the holder's answers keeps from
+    happening;
+  - the join's state holds SAE's KCK while the exchange runs, so the station's process must
+    keep it out of crash reports, `sys` and `/proc`, the first through the report filter
+    `erx_report` its domain takes at boot;
+  - the join's exploration derives an SAE join's PTK from its fixed PMK, not from the
+    exchange's, which `erx_sae_tests` checks the holder and the access point agree on;
+  - `erx_wifi_join`'s review left: the join is one map with `_ => _` whose association
+    fields exist only after `join`, so Dialyzer cannot catch a missing one (a record or a
+    map type per phase would); message 3's checks are spread over `eapol/4`, `message/5`,
+    `protected_key_data/3` and `message_3/5` rather than one named sequence in the design's
+    order; `{disconnect, Ref, Reason}` carries the machine's own reason, which wants one
+    mapping to 802.11 reason codes ("RSN element different"); group message 2 goes out
+    before the install it answers, as message 4 does, which the design's group paragraph
+    does not state; `step/3` fails on an event kind outside the table, a contract the
+    station's process must keep;
+  - the join's exploration: no property says that once the access point has message 4 and
+    every install is confirmed the port is open without another frame (liveness always
+    starts a new handshake); the end of a rekey is not checked against the chip's
+    confirmed slots as the port's opening is; the seed that removes `eapol`'s `open` cell
+    is caught by liveness, not as an edge never taken, since the edge list is read from
+    the seeded table;
+  - hand-copied facts: `-type akm()` repeats the `ieee80211_akm` enum (the generator could
+    emit a type per enum), and the 64- and 48-bit widths of the RSC, IPN and unwrap
+    semiblock are written beside their layout counts.
+
+* [Low] WiFi station's choice (`erx_wifi_choose`;
+  [design-wifi.md](docs/design-wifi.md#choosing-a-network)), left by its first slice:
+  - the BSS record carries no group management cipher, so a PMF BSS that offers
+    BIP-GMAC-256 rather than BIP-CMAC-128 is admitted and then fails its join; admission
+    could refuse it `cipher_unsupported` once the scan's element parser reads that field;
+  - the blocks a view holds must have every key filled in: `erx_wpa_conf` fills a parsed
+    block over `erx_wifi_choose:default_block/0`, the one statement of the defaults, and
+    a block without `priority` or `ieee80211w` is not refused by the choice itself;
+  - the generated-view property counts none of the cases it reaches (picks, `bss` and
+    `secret_failed` holds, SSIDs marked by the names), so a generator change that stops
+    reaching one goes unnoticed.
+
+* [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"):
+  `abi/services/line.txt` declares the interface, but the line service, `erx_line`, is not written, so the
+  controller group runs only over a model line in host tests. It is blocked on the file layer: `erx_fs` runs
+  each open file's requests one at a time in one file process (`erlang/apps/erx_files/src/erx_fs.erl`, the
+  moduledoc's "file process"), so a `data` read that waits for the controller would hold the writer's `data`
+  writes through the same grant, and the bring-up would deadlock; design-files.md's helper reads, which let
+  other operations run while a read waits, are not built (nothing reads `read_mode/0`) and retry a read whose
+  file state changed, which a stream cannot. The design needs a decision on how a tree serves a read that
+  waits beside writes. Behind it: the `line_grant` checker and `device` parameter values in
+  `tools/lib/erx/manifest.rb` (`GRANT_CHECKERS`, `parameter_value`), `erx_ns:place(line)` (the facet-name
+  check refuses it until a manifest publishes `line`), `erx_pl011:program/2` with `init => fresh`,
+  `erx_uart_sup` and its line groups, and the power line's steps of a reset. The writer opens `data` and
+  `ctl` with `[write, binary]`, which the client sends as an `lcreate` with `O_WRONLY|O_TRUNC`, so
+  `erx_line` takes that open through `make/4` and ignores `O_TRUNC`, as `erx_machine_fs`'s `ctl` does.
 * [Medium] bluetooth, `erx_bt_sup`'s restart intensity (`erlang/apps/erx_bt/src/erx_bt_sup.erl`;
   docs/design-bluetooth.md "Concurrency" and "Failure handling"): the design gives none, so OTP's default of
   one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is
@@ -7753,10 +8112,9 @@ document's "residual risks accepted" paragraph.
   for a clock of minutes, so it needs a kiosk whose tree does not change, or a reworded criterion. plan.md
   and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
 
-* [High] `examples/dashboard` full kiosk, `ssl` and `inets` (otp/lib has neither; `tools/lib/erx/release_files.rb`'s
-  `app` script lists `asn1`, `crypto` and `public_key` only) and the trust store (no `cacerts.pem` in
-  `public_key`'s `priv`, no `{unix, erxos}` row in `pubkey_os_cacerts`): the image has neither, which blocks a
-  real fetch of the live quotes on the target ([design-crypto.md](docs/design-crypto.md#https-clients)).
+* [High] `examples/dashboard` full kiosk, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"
+  above), which a real fetch of the live quotes on the target waits for, and no run on the target that fetches
+  through the image's trust store ([design-crypto.md](docs/design-crypto.md#https-clients)).
 
 * [Medium] `examples/dashboard` full kiosk: the live dashboard's reference frame, `dashboard-live` under
   `test/display/reference/` (the dashboard's tree for a fixed time and a fixed live board), is not recorded;
@@ -7817,6 +8175,24 @@ document's "residual risks accepted" paragraph.
   the one source; the theme's generator checks that `shadow`'s offset is at most its blur
   ([design-desktop-programs.md](docs/design-desktop-programs.md#anti-aliasing-corners-and-depth-coverage-masks)).
 
+* [Medium] display and desktop, the UI survey's decisions as designed but not built
+  ([research-ui-synthesis.md](docs/research-ui-synthesis.md), section 8): `ctl`'s read with the scale
+  (`1/1`) and the last present's report with `TAKEN` and `SHOWN` apart, from the drivers' `flushed()`
+  answers and `info/1`'s `period`, and `erx_win:report/1`
+  ([design-display.md](docs/design-display.md#the-window-tree)); the clipboard served only through the
+  keyboard window's grant within `windows_clipboard_ms` of a key or button there, a copy replacing the
+  clipboard whole at its close, and the manifest check's refusal of `clipboard` for a configured domain on a `single` display;
+  `erx_input`'s "seen before pressed" on every gesture's first down, from `erx_screen`'s `{shown, D}`
+  ([design-display.md](docs/design-display.md#the-input-router)); `erx_png` reading the
+  colour-space chunks as sRGB; the theme's sizes as
+  logical pixels at the window's scale. Each is small and lands with the next change to its module.
+  Transitions ([Motion](docs/design-desktop-programs.md#motion)) come after the basic desktop runs,
+  widgets first; window transitions wait for a Raspberry Pi measurement of a moving window. The trusted
+  overlay on the reserved chord and the `windows` grant's `principal` come with the login design, and
+  the window tree's inspection path with its first reader, carrying `erx_ui_model:public/1`'s tree under
+  the visibility class `display`, with the `inspect` grant's `principal` beside its scope
+  ([design-live.md](docs/design-live.md#inspection)).
+
 * [Low] desktop, a dark palette ([design-desktop-programs.md](docs/design-desktop-programs.md#colour),
   `abi/theme.txt`): the theme has one light palette. A dark one adds a second value to every `color` and
   `shadow` row, checked against the same `contrast` rows, and one setting that chooses it. The setting:
@@ -7862,7 +8238,7 @@ document's "residual risks accepted" paragraph.
   ([plan.md](docs/plan.md#track-u-usb)); its design keeps the three rules the USB design records.
   ([plan.md](docs/plan.md#track-u-usb-proposed)); its design keeps the three rules the USB design records.
 * [Low] USB, SuperSpeed hubs ([design-usb.md](docs/design-usb.md#outside-this-design)): the bus core gives up a
-  hub configured at SuperSpeed (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
+  hub at SuperSpeed at its device descriptor (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
   design of its own, with the VL805's bulk-out burst quirk for mass storage behind such a hub that the design lists
   beside it.
 * [Low] apps, [design-packaging.md](docs/design-packaging.md#the-apps-row): a setting for the apps group's
@@ -7993,7 +8369,7 @@ document's "residual risks accepted" paragraph.
   command domain, before the relay's ready report: a program or a narrowed command that a `Ctrl-C` ends could read a
   key typed after it. Design the handshake: each handler and stream relay answers the shell once its program or run
   has taken the signal, and the shell sends `{foreground, Job, current, Signals}` only after every answer; with it
-  the handler and the stream relay open the terminal with `erx_session_relay:open_reader/1` (and join the
+  the handler and the stream relay open the terminal with `erx_session_relay:open_reader/2` (and join the
   chokepoint's list), the stream relay names a terminal stream `{relayed, read_write, tty}` and copies its input, the handler's
   reads pass as "Reading a terminal" describes, and that section's tests run.
 * [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):
@@ -8009,11 +8385,27 @@ document's "residual risks accepted" paragraph.
   later as an opt-in scheduler flag.
 * [Medium] desktop, the release of `erx_desk` (`tools/lib/erx/release_files.rb`, `RELEASE_SCRIPTS`):
   design-desktop-programs.md ("Shipping and starting") puts `erx_desk` in the desktop session's release, and
-  `erx_desk_files_core` calls `erx_ui_schema` and `erx_ui_model`, so `erx_desk` names `erx_ui` in its
+  `erx_desk_files_core` calls `erx_ui_schema`, so `erx_desk` names `erx_ui` in its
   `applications`. Only the client script, a domain holding a display's grant, holds `erx_ui`, so `erx_desk` ships
-  there and not in the session script, where systools would refuse the boot script. When 8.4 adds `erx_desk_sup`
-  and the commands, settle which script a desktop session boots: the client script, or the session script with
-  `erx_memdraw`, `erx_win` and `erx_ui` added.
+  there and not in the session script, where systools would refuse the boot script. Settle which script a desktop
+  session boots: the client script, or the session script with `erx_memdraw`, `erx_win` and `erx_ui` added. Until
+  then the command `clock` (`erx_desk_cmd_clock`) is in no command namespace, since every shell builds its table
+  from `erx_shell` alone (`erx_shell_namespace:from_applications([erx_shell])` in `erx_session_sup`,
+  `erx_shell_runner` and `erx_shell_script`), and it names no `-behaviour(erx_cmd)`, which would make `erx_desk`
+  build after `erx_shell`. 8.4's QEMU cell, `clock` opened in the desktop session, waits on this.
+* [Medium] SDK boundary check (`test/erlang/erx_sdk_boundary.erl`; D1 in
+  [design-desktop-programs.md](docs/design-desktop-programs.md#verification-and-testing), and the SDK's boundary row of
+  [design-packaging.md](docs/design-packaging.md#verification-and-testing)): a call handed to stock OTP as data, a
+  `{Module, Function, Args}` to `proc_lib:spawn/3`, `timer:apply_after/4`, `erpc:call/4`, a child spec's `start`, or
+  `erlang:make_fun/3`, reaches neither of `outside/2`'s lists, since xref resolves such triples only for `apply` and
+  `spawn`; and a pinned variable call is pinned per caller function and callee shape, so a second call of the same
+  shape in that function passes, and a caller may match `{[], _}` and drop the variable half. Close it by
+  construction: refuse a literal atom naming a non-public erXos module and the atom-making BIFs, put each pinned call
+  alone in a one-call function (the window's worker can dispatch its effect through a local function, which removes
+  its `worker/4` pin), and have the check take the reviewed list and answer one list of violations.
+* [Medium] desktop, clock's dimmed reading ([design-desktop-programs.md](docs/design-desktop-programs.md#clock),
+  the state table and D3): a state that is not `ok` asks for the time and date in the `tertiary` colour, which
+  `abi/formats/ui.txt` cannot express; clock shows them in their roles with the status token beside the zone.
 * [Low] desktop, stats (`erlang/apps/erx_desk/src/erx_desk_stats_core.erl`,
   [design-desktop-programs.md](docs/design-desktop-programs.md#what-it-reads)): `abi/inspection.txt` declares no
   `[domains, Id, connections]` path, so the inspector answers it `{error, scope}`, as for a path that names
@@ -8319,40 +8711,21 @@ document's "residual risks accepted" paragraph.
   (https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#PARTITION_WALK), not yet checked. The board pass
   records the board's EEPROM configuration (`BOOT_ORDER`, `PARTITION_WALK`) and what a card with a damaged record
   partition boots.
-* [Low] storage, the release image across domains (`liberx/system/dom_apply.c`,
-  `erlang/apps/erx_blk/src/erx_blk_service.erl`, `erx_blk_image.erl`): with the block
-  unit held by the storage domain, no image window is served
-  ([design-stopgap.md](docs/design-stopgap.md#image-windows)): the storage domain's
-  namespace holds no manifest, and `erx_blk_image` picks only windows the system domain
-  holds. Nothing outside tests reads `/images/release` yet. When a reader appears, have
-  the domain library write each image window's placement (image name, format, extent)
-  into the holder's boot page beside `-erx_record boot`, and have `erx_blk_image` read those
-  words instead of the manifest file.
-* [Low] storage, log lines at every boot (`erlang/apps/erx_blk/src/erx_blk_service.erl`
-  `image_windows/0`, `mount_images/0`): in the storage domain the driver logs that the manifest
-  cannot be read and that no image is served or mounted on every normal boot, which reads as an
-  error. Skip the manifest read outside the system domain, or log it once as information,
-  until the image placement reaches the holder's boot page (the release image item above).
 * [Low] storage, slot windows (`config/manifest/qemu-virt-development.txt`,
-  `tools/lib/erx/manifest.rb` property 8): the four slot-writer windows (`slot_a`,
-  `slot_b`, `boot_selection`, `reset_count`) are held by the system domain, as property
+  `tools/lib/erx/manifest.rb` property 8): the six slot-writer windows (`boot_a`,
+  `boot_b`, `system_a`, `system_b`, `boot_selection`, `reset_count`) are held by the system domain, as property
   8 requires of the slot writer, but their driver runs in the storage domain and no
   grant carries slot writes from the storage domain to the system domain, so the rows
   describe a grant nothing implements. The slot writer needs that grant (a facet of the
   storage domain's driver, or the device service's window grants, PW1) before it writes.
-* [Low] storage, image windows (`erlang/apps/erx_blk/src/erx_blk_service.erl`):
-  a restart of the block service starts new windows, but the image mounts
-  made at boot (`mount_images/0`, a supervisor child that runs once) are not
-  made again, so `/images/NAME` answers `eio` until the next boot.
 * [Medium] storage, window rights (`erlang/apps/erx_blk/src/erx_blk_window.erl`):
-  a window is read-only because its role is `{image, _}`, not because it
-  carries the manifest window's `rights`; the slot windows over the same
-  sectors stay writable for any caller in the system domain. Carry `ro | rw`
+  a window is read-only only by its role, not because it carries the
+  manifest window's `rights`, and the `system` window of
+  [design-storage.md](docs/design-storage.md#the-system-tree) must be
+  read-only while the slot writer's window on the same partition is
+  writable. Carry `ro | rw`
   from the manifest in the window and let a write require `rw`, so read-only
   holds by construction (PW1's grants bring the per-client half).
-* [Low] storage, image names (`erx_blk_image:windows/2`): two images of one
-  name would start two windows of which the service keeps one; refuse the
-  second by name, or let the manifest's reader refuse duplicate image names.
 
 * [Low] storage, the boot-selection record (`abi/medium.txt`): the record and
   the reset count each have a MiB of their own, the layout's alignment taken as
@@ -8762,11 +9135,17 @@ document's "residual risks accepted" paragraph.
   out at its caller and still be posted later, a second way into the timed-out-write item above.
 * [Low] abi/formats/mbr.txt: `erx_mbr_entry` declares alignment 4, but entries lie at 446 + 16i on the medium;
   declare 1 if the generator accepts it, so no C reader casts a sector buffer to the struct.
-* [Low] erx_blk_table: a data partition past 2 TiB, which an MBR cannot describe, is refused as `{mbr, 4, sectors}`
-  rather than as a data length the table cannot hold.
+* [Low] erx_blk_table: a data partition whose extended partition, from system A's record at sector 548,864, would
+  pass 2^32 - 1 sectors (about 2 TiB less 834 MiB), which an MBR cannot describe, is refused as
+  `{mbr, 4, sectors}` rather than as a data length the table cannot hold.
+* [Medium] abi/medium.txt: every partition start and record sector is written down, though each follows from the
+  order, the lengths and the 1 MiB before each extended boot record; only `layout_is_consistent_test` in
+  `test/erlang/erx_blk_table_tests.erl` checks they agree. The ABI generator should derive them (or check those
+  written), and the order of the logical partitions, now listed in both `erx_blk_table` and `MediumImage`, should
+  come from the file.
 * [Low] erx_blk_window: a request for more sectors than one device request carries (`erx_blk_request:max_sectors/0`)
   is refused with `einval` rather than split, so every client splits its own.
-* [Medium] abi/medium.txt: the medium layout's sizes (the record's partition 8 MiB, each slot 512 MiB, the vault's
+* [Medium] abi/medium.txt: the medium layout's sizes (the record's partition 8 MiB, each slot 512 MiB (boot 128 MiB, system 383 MiB), the vault's
   partition 64 MiB, the data partition at least 128 MiB, every boundary on 1 MiB) are settled, but not yet checked
   against the slot images' sizes (the plan's decision gate on uncompressed slots) or the Pi firmware's needs of the
   record's and the slots' FAT partitions; each slot's signature window is not in the layout yet.
@@ -8779,3 +9158,14 @@ document's "residual risks accepted" paragraph.
   intensity the log service stays down and the machine runs on, as without `erx_console`. Revisit at the security
   closure ([plan.md](docs/plan.md#m11-security-closure)), where a release build may prefer ending the machine with
   a crash record.
+
+* [Low] WiFi, a release front end cannot read the verdicts
+  ([design-wifi.md](docs/design-wifi.md#control-and-inspection)): the
+  verdicts, the saved networks and the failure reasons are `visible
+  all`, and in a release build no session has the machine-wide scope
+  ([design-live.md](docs/design-live.md#inspection)), so a front end in
+  root's session offers a passphrase for every protected network and
+  cannot say which are saved or why a join failed; the system shell
+  reads them. An inspection scope for the holder of a service's
+  administrative facet would close it, a change to design-live.md's
+  scopes.

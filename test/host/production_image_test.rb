@@ -100,6 +100,33 @@ class ProductionImageTest < Minitest::Test
     end
   end
 
+  # The Raspberry Pi 4's card is the one the website offers: until a release signer exists
+  # its manifest leaves out the apps row, as the site's does, and it takes no package and
+  # no --local, refused before anything is built. QEMU's medium keeps the row. The Pi's
+  # development manifest has no apps row yet (TODO.md), so the card's edit is shown on
+  # QEMU virt's manifest, which has one.
+  def test_a_card_takes_no_packages
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    apps_row = /^apps$/
+    with_row = PLATFORM.manifest_source(ROOT)
+    assert_match apps_row, with_row
+    refute_match apps_row, Erx::ProductionImage.medium_manifest(pi, with_row)
+    refute_match apps_row, Erx::ProductionImage.medium_manifest(pi, pi.manifest_source(ROOT))
+    assert_match apps_row, Erx::ProductionImage.medium_manifest(PLATFORM, with_row)
+
+    machine = Erx::ProductionImage::Machine.development(pi)
+    image = Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
+                                     runtime: nil, jit_runtime: nil)
+    [Erx::ImageApps.plan([], enable: [], local: true),
+     Erx::ImageApps.plan([Erx::ImageApps::Package.new(path: '/p/clock.app', name: 'clock', memory: 1 << 22,
+                                                     sha256: "\xab".b * 32, license: 'MIT')], enable: [])].each do |apps|
+      error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', apps: apps) }
+      assert_equal 'the raspi4b card is the one the website offers, so it takes no app and no --local', error.message
+    end
+    Erx::ProductionImage.check_card_apps(pi, Erx::ImageApps.none)
+    Erx::ProductionImage.check_card_apps(PLATFORM, Erx::ImageApps.plan([], enable: [], local: true))
+  end
+
   # libbeam.a holds littlefs's objects (lfs.o and lfs_util.o, in the emulator's OS_OBJS), so
   # its attribution names littlefs's license beside OTP's; compiler-rt's builtins carry LLVM's
   # license, and nothing linked is GPL; every notice named is a tree file.
@@ -462,30 +489,30 @@ class ProductionImageTest < Minitest::Test
     source = Erx::ProductionImage.without_sessions(PLATFORM.manifest_source(ROOT)) + row
     assert_raises(Erx::ProductionImage::UnknownRelease) { image.send(:domain_boots, source) }
     echo = Erx::ReleaseFiles.domain_boot('echo', applications: [*Erx::ReleaseFiles::DOMAIN_BASE, 'erx_echo_test'], test: true)
-    assert_equal [echo, *%w[display network storage web].map { |name| Erx::ProductionImage.domain_boot(name) }],
+    assert_equal [echo, *%w[app display network storage web].map { |name| Erx::ProductionImage.domain_boot(name) }],
                  image.send(:domain_boots, source, given: [echo])
     assert_raises(Erx::Error) { image.send(:domain_boots, source, given: [echo, echo]) }
   end
 
   # The production image carries the domain releases its manifest's domain rows and
   # session templates name. The development manifest configures the storage, network,
-  # web and display domains and has a session template, so it carries the display,
-  # network, session, storage and web releases, and all but the session's without the
-  # template; a manifest with domain rows names each release once, and a reference of
+  # web and display domains, has a session template and an apps row, so it carries the
+  # app, display, network, session, storage and web releases, and all but the session's
+  # without the template; a manifest with domain rows names each release once, and a reference of
   # another form names nothing, for the manifest check to refuse.
   def test_the_production_image_carries_the_releases_its_domain_rows_name
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     source = PLATFORM.manifest_source(ROOT)
-    assert_equal %w[display network session storage web], Erx::Manifest.release_names(source: source, codec: codec)
+    assert_equal %w[app display network session storage web], Erx::Manifest.release_names(source: source, codec: codec)
     source = Erx::ProductionImage.without_sessions(source)
-    assert_equal %w[display network storage web], Erx::Manifest.release_names(source: source, codec: codec)
+    assert_equal %w[app display network storage web], Erx::Manifest.release_names(source: source, codec: codec)
     rows = %w[zeta beta zeta].each_with_index.map do |release, index|
       "domain d#{index}\n  principal @principal.system\n  limits @limits.native\n  kind service\n  flags none\n" \
         "  runtime @artifact.emu\n  release @artifact.#{release}\n  restarts 0\n  restart_period_s 0\n"
     end
     quoted = "domain q\n  principal @principal.system\n  limits @limits.native\n  kind service\n  flags none\n" \
              "  runtime @artifact.emu\n  release \"other\"\n  restarts 0\n  restart_period_s 0\n"
-    assert_equal %w[beta display network storage web zeta], Erx::Manifest.release_names(source: source + rows.join + quoted, codec: codec)
+    assert_equal %w[app beta display network storage web zeta], Erx::Manifest.release_names(source: source + rows.join + quoted, codec: codec)
   end
 
   # The widget toolkit's program ships with the toolkit (docs/design-packaging.md, "Where
@@ -554,7 +581,7 @@ class ProductionImageTest < Minitest::Test
     source = frontend.render(frontend.read(Erx::ProductionImage.without_sessions(plain)))
     refute_equal plain, source, 'the development manifest has a session template'
     refute_match(/^session /, source)
-    machine = DEVELOPMENT.with(memory_mib: 2048, fiasco_reserve_mib: 160, system_growth_mib: 1024, tmp_growth_mib: 64, root_mib: 64)
+    machine = DEVELOPMENT.with(memory_mib: 2048, system_growth_mib: 1024, tmp_growth_mib: 64, root_mib: 64)
     grown = machine.manifest(plain)
     { 'root_memory' => 1024, 'system_baseline' => 1024, 'tmp' => 64 }.each do |field, growth|
       assert_equal manifest_number(source, field) + (growth << 20), manifest_number(grown, field)
@@ -563,15 +590,15 @@ class ProductionImageTest < Minitest::Test
     assert_equal %w[root_memory system_baseline tmp], changed.sort
     assert_equal source, DEVELOPMENT.manifest(plain)
     assert_equal PLATFORM.record, DEVELOPMENT.record, 'the development machine is the record'
-    assert_equal(PLATFORM.record.merge('ram_bytes' => 2048 << 20, 'fiasco_reserve' => 160 << 20),
+    assert_equal(PLATFORM.record.merge('ram_bytes' => 2048 << 20, 'fiasco_reserve' => 124 << 20),
                  machine.record)
-    wider = DEVELOPMENT.with(memory_mib: 2048, fiasco_reserve_mib: 160, system_growth_mib: 0, tmp_growth_mib: 64, root_mib: 64)
+    wider = DEVELOPMENT.with(memory_mib: 2048, system_growth_mib: 0, tmp_growth_mib: 64, root_mib: 64)
     assert_raises(Erx::Error) { wider.manifest(source) }
   end
 
   # A manifest without exactly one line of a grown field is refused, never left ungrown.
   def test_a_manifest_without_one_line_of_a_grown_field_is_refused
-    machine = DEVELOPMENT.with(memory_mib: 1024, fiasco_reserve_mib: 96, system_growth_mib: 256, tmp_growth_mib: 0, root_mib: 64)
+    machine = DEVELOPMENT.with(memory_mib: 1024, system_growth_mib: 256, tmp_growth_mib: 0, root_mib: 64)
     ["  root_memory 1\n  system_baseline 1\n", "  system_baseline 1\n  tmp 1\n", "  root_memory 1\n  tmp 1\n",
      "  root_memory 1\n  root_memory 2\n  system_baseline 1\n  tmp 1\n"].each do |source|
       assert_raises(Erx::Error) { machine.manifest(source) }
@@ -667,33 +694,18 @@ class ProductionImageTest < Minitest::Test
     assert_operator root_memory, :<, (machine.memory_mib - machine.fiasco_reserve_mib) << 20
   end
 
-  # Fiasco's kernel memory on this build (64-bit, CONFIG_KMEM_SIZE_AUTO, no -kmemsize):
-  # 6% of the free memory it counts, at most RAM, rounded up to its 2 MiB superpage
-  # (fiasco/kernel/src/kern/config.cpp, Config::kmem_size; arm/kmem_alloc-arm.cpp,
-  # Kmem_alloc::Kmem_alloc, which passes SUPERPAGE_SIZE and takes the top of the highest
-  # free region). A model of Fiasco's rule, not an oracle: the hand-kept fiasco_reserve
-  # figures of the development and site machines are held to it below.
-  FIASCO_KMEM_PER_CENT = 6
-  FIASCO_SUPERPAGE = 2 << 20
-
-  def fiasco_kmem_bound(memory_mib)
-    kmem = (memory_mib << 20) / 100 * FIASCO_KMEM_PER_CENT
-    (kmem + FIASCO_SUPERPAGE - 1) / FIASCO_SUPERPAGE * FIASCO_SUPERPAGE
-  end
-
   # The refusal boot proves root_memory_fits, which the root reaches only once it holds the
   # contiguous pool: one run, aligned to its own size, of up to CONTIGUOUS_POOL_MAX_BYTES.
   # The run is sought only above the root's room: below it lie the archive, which a refusal
-  # image keeps short of the root, and the device tree. Fiasco's kernel memory takes the top of RAM,
-  # so the run must fit between the two. A machine without such a run refuses the boot at
+  # image keeps short of the root, and the device tree. Fiasco's kernel memory
+  # (Platform.fiasco_reserve) takes the top of the highest free region, the top of RAM
+  # (fiasco/kernel/src/kern/arm/kmem_alloc-arm.cpp, Kmem_alloc::Kmem_alloc), so the run
+  # must fit between the two. A machine without such a run refuses the boot at
   # the pool, and the root_memory refusal never shows.
   def test_the_refusal_machine_leaves_the_largest_contiguous_pool_its_run
-    assert_equal DEVELOPMENT.fiasco_reserve_mib << 20, fiasco_kmem_bound(DEVELOPMENT.memory_mib)
-    site = Erx::ProductionImage::Machine.site(PLATFORM)
-    assert_equal site.fiasco_reserve_mib << 20, fiasco_kmem_bound(site.memory_mib)
     pool = Erx::Manifest::RootStartup::CONTIGUOUS_POOL_MAX_BYTES
     memory_mib = Erx::ProductionImage::TOO_LITTLE_MEMORY_MIB
-    kmem_start = PLATFORM.ram_first + (memory_mib << 20) - fiasco_kmem_bound(memory_mib)
+    kmem_start = PLATFORM.ram_first + (memory_mib << 20) - Erx::Platform.fiasco_reserve(memory_mib << 20)
     past_root = DEVELOPMENT.root_address + (Erx::ProductionImage::ROOT_ROOM_MIB << 20)
     run_start = (past_root + pool - 1) / pool * pool
     assert_operator run_start + pool, :<=, kmem_start,
@@ -884,7 +896,7 @@ class ProductionImageTest < Minitest::Test
   LOGGED_IMAGE = 0x4dc000
   LOGGED_DMA_MEMORY = 1_310_720
   # The machine that boot ran on: 256 MiB, of which Fiasco kept 16 MiB.
-  LOGGED_MACHINE = DEVELOPMENT.with(memory_mib: 256, fiasco_reserve_mib: 16)
+  LOGGED_MACHINE = DEVELOPMENT.with(memory_mib: 256)
 
   def kept_verifier(machine)
     Dir.mktmpdir('erx-kept-') do |directory|

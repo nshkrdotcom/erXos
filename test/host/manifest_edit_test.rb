@@ -137,6 +137,25 @@ class ManifestEditTest < Minitest::Test
     assert_equal records(SOURCE).slice(*kept.keys), kept
   end
 
+  # The apps row taken out gives back its memory in root_memory, its max apps in
+  # max_domains and, in max_connections, each app's system connection, its packages
+  # connection and one for each service of the row, and nothing else changes; a
+  # manifest with no apps row is returned as it is, and the site manifest carries none.
+  def test_without_apps_takes_the_row_and_gives_back_its_room
+    gone = Edit.without_apps(SOURCE)
+    assert_equal [%w[apps]], records(SOURCE).keys.map(&:compact) - records(gone).keys.map(&:compact)
+    apps = Frontend.read(SOURCE).records.fetch('apps').first
+    max = apps.decimal('max')
+    { 'root_memory' => -apps.decimal('memory'), 'max_domains' => -max,
+      'max_connections' => -max * (2 + apps.properties.fetch('services').size) }.each do |field, change|
+      assert_equal value(SOURCE, 'machine', field) + change, value(gone, 'machine', field), field
+    end
+    kept = records(gone).reject { |key, _held| key.compact == %w[machine] }
+    assert_equal records(SOURCE).slice(*kept.keys), kept
+    assert_equal gone, Edit.without_apps(gone)
+    refute_match(/^apps$/, VIRT.site_manifest_source(ROOT))
+  end
+
   # A share the machine names stays when the domain's limits name it too: the machine
   # is among the records that keep a definition in use.
   def test_without_domain_keeps_what_the_machine_names

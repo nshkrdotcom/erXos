@@ -5,21 +5,27 @@
 module Erx
   module ChokepointRules
     APPS = 'docs/design-apps.md'
+    PACKAGING = 'docs/design-packaging.md'
     STARTER = 'erlang/apps/erx_starter/**/*'
     # The modules that start a session; the web login joins them when it is built.
-    START_CALLERS = %w[erlang/apps/erx/src/erx_console.erl erlang/apps/erx_starter/src/erx_starter_keeper.erl].freeze
-    # What erx_starter may call of erx_domain: start_session/2 and stop/2;
+    KEEPER = 'erlang/apps/erx_starter/src/erx_starter_keeper.erl'
+    # Packaging's modules, which share the start service's application but not its
+    # table: AP1 bounds the table and its keepers, and design-packaging.md bounds these.
+    PACKAGE_PROCESS = 'erlang/apps/erx_starter/src/erx_pkg*.erl'
+    START_CALLERS = ['erlang/apps/erx/src/erx_console.erl', KEEPER].freeze
+    # What erx_starter may call of erx_domain: start_session/2, start_app/2 and stop/2;
     # system_namespace/0, the wait before the first read of rc.conf, and
     # display_settled/1, the wait before a row that names a display starts,
     # neither of which changes anything; the handle's accessors id/1 and
     # pid/1, which reach nothing; and the handle's types, domain() and
     # spec(), which a -spec names.
-    STARTER_REACHES = %w[start_session stop system_namespace display_settled id pid domain spec].freeze
+    STARTER_REACHES = %w[start_session start_app stop system_namespace display_settled id pid domain spec].freeze
     STARTER_REACH = "#{ErlangText::ATOM.call('erx_domain')}\\s*:\\s*" \
                     "(?:#{STARTER_REACHES.map { |name| ErlangText::ATOM.call(name) }.join('|')})"
     # An atom or a variable in a function's place.
     ERLANG_FUNCTION = "(?:[A-Za-z_][A-Za-z0-9_@]*|'(?:[^'\\\\]|\\\\.)*')"
     START_SESSION = ErlangText::ATOM.call('start_session')
+    START_APP = ErlangText::ATOM.call('start_app')
 
     # The start table's rules (AP1, AP2): who starts a session and who names
     # its display. They read the Erlang sources with strings blanked, since
@@ -37,7 +43,7 @@ module Erx
                                        '(reading a handle with id/1 and pid/1), ' \
                                        'and calls nothing through a variable or ' \
                                        'macro module or apply',
-          design: "#{APPS}#invariants", scope: [STARTER], strings: :blanked,
+          design: "#{APPS}#invariants", scope: [STARTER], sites: [PACKAGE_PROCESS], strings: :blanked,
           allowed: STARTER_REACH,
           pattern: /
               (?<![A-Za-z0-9_@'])'?erx_domain[A-Za-z0-9_@]*'?#{ErlangText::NOT_NAME}
@@ -77,6 +83,27 @@ module Erx
           design: "#{APPS}#verification-and-testing", strings: :blanked, scope: START_CALLERS, sites: [STARTER],
           pattern: /(?<!:)(?:#{%w[display default_display].map { |name| ErlangText::ATOM.call(name) }.join('|')})(?!\s*[(\/])/,
           seed: { START_CALLERS.first => "f(S) -> erx_domain:start_session(S, \#{display => d}).\n" }
+        ),
+        # PK7: the keepers alone start an app's sessions, so a package process
+        # that waits for a package set without the app knows no other starter
+        # runs one. The call in every form start-callers refuses, with
+        # start_app in start_session's place; an import from erx_domain, a
+        # macro whose body is erx_domain and the service's registered name are
+        # refused outside the keeper too, since each reaches start_app/2 by
+        # another spelling.
+        Chokepoints::ErlangForbidden.new(
+          name: 'app-starters', rule: "only erx_starter_keeper calls erx_domain:start_app/2, the start of an app's session",
+          design: "#{PACKAGING}#invariants", strings: :blanked,
+          pattern: /
+              #{ErlangText::ATOM.call('erx_domain')}\s*[:,]\s*#{START_APP}
+            | (?:#{ErlangText::INDIRECT})\s*:\s*#{START_APP}
+            | #{ErlangText::ATOM.call('apply')}\s*\(\s*[^,()]+,\s*#{START_APP}
+            | -\s*import\s*\(\s*#{ErlangText::ATOM.call('erx_domain')}
+            | -\s*define\s*\(\s*[^,()]+(?:\([^()]*\))?\s*,\s*#{ErlangText::ATOM.call('erx_domain')}\s*\)
+            | #{ErlangText::ATOM.call('erx_domain_srv')}
+          /x,
+          sites: [KEEPER, 'erlang/apps/erx_domain/**/*'],
+          seed: { START_CALLERS.first => "f(S) -> erx_domain:start_app(S, \#{}).\n" }
         )
       ]
     )

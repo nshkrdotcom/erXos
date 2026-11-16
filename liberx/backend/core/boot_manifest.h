@@ -360,4 +360,15 @@ size_t	erx_boot_pair_words(uint32_t value, uint32_t slot, char *words, size_t ca
  */
 size_t	erx_boot_build_words(uint64_t build_id, char *words, size_t capacity);
 
+/*
+ * Writes -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT from the manifest's
+ * system_image row into words (docs/design-stopgap.md, "The booted slot"): the image's
+ * length and the tree's offset and length in decimal, the salt's first salt_length bytes
+ * and the root hash in lowercase hex, the words erx_device_record:system_image/1 reads.
+ * Returns their whole length; 0 for a salt_length out of 1 to the salt's array, or words
+ * that do not fit, which ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX bytes always do. The domain
+ * library writes it into the boot page of the system window's holder alone.
+ */
+size_t	erx_boot_system_image_words(const erx_mf_system_image_t *row, char *words, size_t capacity);
+
 #endif /* ERX_BACKEND_BOOT_MANIFEST_H */

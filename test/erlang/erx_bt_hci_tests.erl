@@ -107,76 +107,76 @@ bringup_reaches_ready_with_advertising_test() ->
 
 a_failed_step_stops_with_its_label_and_status_test() ->
     {_, Core} = to_command(16#2002, new(1)),
-    ?assertEqual({stop, {step_failed, buffers, 12}}, answer(Core, complete(16#2002, <<12>>))).
+    ?assertMatch({_, [{stop, {step_failed, buffers, 12}}]}, answer(Core, complete(16#2002, <<12>>))).
 
 an_answer_naming_another_command_stops_test() ->
     {_, Core} = to_command(16#0C03, new(1)),
-    ?assertEqual({stop, {answer_to_other_command, 16#1001}}, answer(Core, complete(16#1001, <<0>>))).
+    ?assertMatch({_, [{stop, {answer_to_other_command, 16#1001}}]}, answer(Core, complete(16#1001, <<0>>))).
 
 opcode_zero_only_updates_the_count_test() ->
     {_, Core} = to_command(16#0C03, new(1)),
-    {ok, [], Same} = answer(Core, {command_complete, 1, 0, <<>>}),
-    ?assertMatch({ok, _, _}, answer(Same, complete(16#0C03, <<0>>))).
+    {Same, []} = answer(Core, {command_complete, 1, 0, <<>>}),
+    going(answer(Same, complete(16#0C03, <<0>>))).
 
 an_unanswered_command_stops_test() ->
     {_, Core} = to_command(16#0C03, new(1)),
     ?assertEqual(5000, erx_bt_hci_core:next_deadline(Core)),
-    ?assertEqual({ok, [], Core}, erx_bt_hci_core:step(expired, 4999, Core)),
-    ?assertEqual({stop, {command_timeout, reset}}, erx_bt_hci_core:step(expired, 5000, Core)),
-    ?assertEqual({stop, {command_timeout, reset}}, erx_bt_hci_core:step(expired, 9000, Core)).
+    ?assertEqual({Core, []}, erx_bt_hci_core:step(expired, 4999, Core)),
+    ?assertMatch({_, [{stop, {command_timeout, reset}}]}, erx_bt_hci_core:step(expired, 5000, Core)),
+    ?assertMatch({_, [{stop, {command_timeout, reset}}]}, erx_bt_hci_core:step(expired, 9000, Core)).
 
 shared_buffers_are_read_with_read_buffer_size_test() ->
     {_, Core} = to_command(16#2002, new(1)),
-    {ok, [], Written} = step(written, Core),
-    {ok, Actions, Next} = answer(Written, complete(16#2002, <<0, 0, 0, 0>>)),
+    {Written, []} = step(written, Core),
+    {Next, Actions} = answer(Written, complete(16#2002, <<0, 0, 0, 0>>)),
     {_, Shared} = drive(16#1005, Actions, Next),
-    {ok, _, Read} = answer(Shared, complete(16#1005, <<0, 27, 0, 0, 6, 0, 0, 0>>)),
+    {Read, _} = going(answer(Shared, complete(16#1005, <<0, 27, 0, 0, 6, 0, 0, 0>>))),
     ?assertMatch(#{free := 6}, erx_bt_hci_core:facts(Read)).
 
 reserved_buffer_lengths_stop_test() ->
     {_, Core} = to_command(16#2002, new(1)),
-    ?assertEqual({stop, {step_failed, buffers, {buffers, 26, 4}}}, answer(Core, complete(16#2002, <<0, 26, 0, 4>>))).
+    ?assertMatch({_, [{stop, {step_failed, buffers, {buffers, 26, 4}}}]}, answer(Core, complete(16#2002, <<0, 26, 0, 4>>))).
 
 a_patch_for_another_controller_stops_test() ->
     Patched = erx_bt_hci_core:new((?READY_CONFIG(1))#{patch => #{manufacturer => 305, records => [{16#FC4C, <<1>>}]}}),
     {_, Core} = to_command(16#1001, Patched),
-    ?assertEqual({stop, {patch_for_other_controller, 15}}, answer(Core, complete(16#1001, version(15)))).
+    ?assertMatch({_, [{stop, {patch_for_other_controller, 15}}]}, answer(Core, complete(16#1001, version(15)))).
 
 disconnection_returns_a_handles_packets_test() ->
     {Link, Core} = linked(1, 16#40),
-    {ok, _, Sent} = step({request, Link, {send, 0, <<1>>}}, Core),
+    {Sent, _} = going(step({request, Link, {send, 0, <<1>>}}, Core)),
     ?assertMatch(#{free := 3, links := #{16#40 := 1}}, erx_bt_hci_core:facts(Sent)),
-    {ok, Actions, Gone} = step({event, {disconnection_complete, 0, 16#40, 16#13}}, Sent),
+    {Gone, Actions} = step({event, {disconnection_complete, 0, 16#40, 16#13}}, Sent),
     ?assert(lists:member({link_down, Link}, Actions)),
     ?assertMatch(#{free := 4, links := #{}}, erx_bt_hci_core:facts(Gone)).
 
 a_forged_completion_stops_test() ->
     {Link, Core} = linked(1, 16#40),
-    {ok, _, Sent} = step({request, Link, {send, 0, <<1>>}}, Core),
-    ?assertEqual({stop, {completion_beyond_in_flight, 16#40, 2}},
+    {Sent, _} = going(step({request, Link, {send, 0, <<1>>}}, Core)),
+    ?assertMatch({_, [{stop, {completion_beyond_in_flight, 16#40, 2}}]},
                  step({event, {number_of_completed_packets, [{16#40, 2}]}}, Sent)),
-    ?assertEqual({stop, {completion_for_dead_handle, 16#41}},
+    ?assertMatch({_, [{stop, {completion_for_dead_handle, 16#41}}]},
                  step({event, {number_of_completed_packets, [{16#41, 1}]}}, Sent)).
 
 a_link_beyond_its_share_is_busy_test() ->
     {Link, Core} = linked(2, 16#40),
-    {ok, _, One} = step({request, Link, {send, 0, <<1>>}}, Core),
-    {ok, _, Two} = step({request, Link, {send, 1, <<2>>}}, One),
-    ?assertMatch({ok, [{busy, Link}], _}, step({request, Link, {send, 1, <<3>>}}, Two)).
+    {One, _} = going(step({request, Link, {send, 0, <<1>>}}, Core)),
+    {Two, _} = going(step({request, Link, {send, 1, <<2>>}}, One)),
+    ?assertMatch({_, [{busy, Link}]}, step({request, Link, {send, 1, <<3>>}}, Two)).
 
 advertising_resumes_after_a_disconnection_test() ->
     {_, Core} = connected(1, 16#40),
     ?assertMatch(#{advertising := false}, erx_bt_hci_core:facts(Core)),
-    {ok, Actions, _} = step({event, {disconnection_complete, 0, 16#40, 16#13}}, Core),
+    {_, Actions} = step({event, {disconnection_complete, 0, 16#40, 16#13}}, Core),
     ?assert(lists:member({write, <<1, 16#0A, 16#20, 1, 1>>}, Actions)).
 
 a_disconnect_answered_by_status_frees_the_slot_test() ->
     {Link, Core} = linked(1, 16#40),
-    {ok, Actions, Asked} = step({request, Link, {disconnect, 16#13}}, Core),
+    {Asked, Actions} = step({request, Link, {disconnect, 16#13}}, Core),
     ?assert(lists:member({write, <<1, 6, 4, 3, 16#40, 0, 16#13>>}, Actions)),
-    {ok, [], Written} = step(written, Asked),
-    {ok, [], Answered} = answer(Written, {command_status, 0, 1, 16#0406}),
-    {ok, More, _} = step({event, {disconnection_complete, 0, 16#40, 16#16}}, Answered),
+    {Written, []} = step(written, Asked),
+    {Answered, []} = answer(Written, {command_status, 0, 1, 16#0406}),
+    {_, More} = step({event, {disconnection_complete, 0, 16#40, 16#16}}, Answered),
     ?assert(lists:member({write, <<1, 16#0A, 16#20, 1, 1>>}, More)).
 
 %% A disconnect asked for while the writer holds a packet waits; when its handle goes
@@ -186,13 +186,13 @@ a_disconnect_never_reaches_a_reused_handle_test() ->
     {Actions, Core} = connected(2, 1),
     Link = link_of(Actions),
     ?assert(lists:member({write, <<1, 16#0A, 16#20, 1, 1>>}, Actions)),
-    {ok, [], Written} = step(written, Core),
-    {ok, [], Advertising} = answer(Written, complete(16#200A, <<0>>)),
-    {ok, [{write, <<2, _/binary>>}], Busy} = step({request, Link, {send, 0, <<1>>}}, Advertising),
-    {ok, [], Asked} = step({request, Link, {disconnect, 16#13}}, Busy),
+    {Written, []} = step(written, Core),
+    {Advertising, []} = answer(Written, complete(16#200A, <<0>>)),
+    {Busy, [{write, <<2, _/binary>>}]} = step({request, Link, {send, 0, <<1>>}}, Advertising),
+    {Asked, []} = step({request, Link, {disconnect, 16#13}}, Busy),
     ?assertEqual(5000, erx_bt_hci_core:next_deadline(Asked)),
-    {ok, _, Gone} = answer(Asked, {disconnection_complete, 0, 1, 16#13}),
-    {ok, _, Reused} = answer(Gone, {le_connection_complete, 0, 1, #{}}),
+    {Gone, _} = going(answer(Asked, {disconnection_complete, 0, 1, 16#13})),
+    {Reused, _} = going(answer(Gone, {le_connection_complete, 0, 1, #{}})),
     ?assertEqual({ok, [{write, <<1, 16#0A, 16#20, 1, 1>>}]},
                  element_pair(step(written, Reused))).
 
@@ -202,18 +202,18 @@ a_disconnect_never_reaches_a_reused_handle_test() ->
 %% packet nor its disconnect reaches the new peer.
 a_gone_links_requests_never_reach_the_handles_next_peer_test() ->
     {Old, Core} = linked(1, 1),
-    {ok, Down, Gone} = answer(Core, {disconnection_complete, 0, 1, 16#13}),
+    {Gone, Down} = answer(Core, {disconnection_complete, 0, 1, 16#13}),
     ?assert(lists:member({link_down, Old}, Down)),
-    {ok, [], Written} = step(written, Gone),
-    {ok, Up, Reused} = answer(Written, {le_connection_complete, 0, 1, #{}}),
+    {Written, []} = step(written, Gone),
+    {Reused, Up} = answer(Written, {le_connection_complete, 0, 1, #{}}),
     New = link_of(Up),
     ?assertNotEqual(Old, New),
-    {ok, [], Settled} = answer(Reused, complete(16#200A, <<0>>)),
-    ?assertEqual({ok, [], Settled}, step({request, Old, {send, 0, <<1>>}}, Settled)),
-    ?assertEqual({ok, [], Settled}, step({request, Old, {disconnect, 16#13}}, Settled)),
-    ?assertMatch({ok, [{write, <<2, 1, 0, 1, 0, 1>>}], _},
+    {Settled, []} = answer(Reused, complete(16#200A, <<0>>)),
+    ?assertEqual({Settled, []}, step({request, Old, {send, 0, <<1>>}}, Settled)),
+    ?assertEqual({Settled, []}, step({request, Old, {disconnect, 16#13}}, Settled)),
+    ?assertMatch({_, [{write, <<2, 1, 0, 1, 0, 1>>}]},
                  step({request, New, {send, 0, <<1>>}}, Settled)),
-    ?assertMatch({ok, [{write, <<1, 6, 4, 3, 1, 0, 16#13>>}], _},
+    ?assertMatch({_, [{write, <<1, 6, 4, 3, 1, 0, 16#13>>}]},
                  step({request, New, {disconnect, 16#13}}, Settled)).
 
 %% A disconnect keeps its mark until Disconnection Complete: a second request is
@@ -221,12 +221,12 @@ a_gone_links_requests_never_reach_the_handles_next_peer_test() ->
 %% already gone, and any other failure stops.
 a_disconnect_is_asked_once_and_its_failure_stops_test() ->
     {Link, Core} = linked(1, 16#40),
-    {ok, _, Asked} = step({request, Link, {disconnect, 16#13}}, Core),
-    {ok, [], Written} = step(written, Asked),
-    {ok, [], Answered} = answer(Written, {command_status, 0, 1, 16#0406}),
-    ?assertMatch({ok, [], _}, step({request, Link, {disconnect, 16#13}}, Answered)),
-    ?assertMatch({ok, [], _}, answer(Written, {command_status, 2, 1, 16#0406})),
-    ?assertEqual({stop, {disconnect_failed, 16#40, {failed, 16#0C}}},
+    {Asked, _} = going(step({request, Link, {disconnect, 16#13}}, Core)),
+    {Written, []} = step(written, Asked),
+    {Answered, []} = answer(Written, {command_status, 0, 1, 16#0406}),
+    ?assertMatch({_, []}, step({request, Link, {disconnect, 16#13}}, Answered)),
+    ?assertMatch({_, []}, answer(Written, {command_status, 2, 1, 16#0406})),
+    ?assertMatch({_, [{stop, {disconnect_failed, 16#40, {failed, 16#0C}}}]},
                  answer(Written, {command_status, 16#0C, 1, 16#0406})).
 
 %% A connection that completes while the advertising enable is written and unanswered
@@ -234,103 +234,103 @@ a_disconnect_is_asked_once_and_its_failure_stops_test() ->
 %% enables it again.
 a_connection_before_the_enable_answer_leaves_advertising_off_test() ->
     {_, Core} = to_command(16#200A, new(1)),
-    {ok, _, Connected} = answer(Core, {le_connection_complete, 0, 1, #{}}),
-    {ok, [], Written} = step(written, Connected),
-    {ok, [], Answered} = answer(Written, complete(16#200A, <<0>>)),
+    {Connected, _} = going(answer(Core, {le_connection_complete, 0, 1, #{}})),
+    {Written, []} = step(written, Connected),
+    {Answered, []} = answer(Written, complete(16#200A, <<0>>)),
     ?assertMatch(#{advertising := false}, erx_bt_hci_core:facts(Answered)),
-    {ok, Actions, _} = answer(Answered, {disconnection_complete, 0, 1, 16#13}),
+    {_, Actions} = answer(Answered, {disconnection_complete, 0, 1, 16#13}),
     ?assert(lists:member({write, <<1, 16#0A, 16#20, 1, 1>>}, Actions)).
 
 %% The line's reset is under a deadline too, which the line's readiness drops for the
 %% first command's.
 a_line_reset_that_never_ends_stops_test() ->
-    {ok, [line_reset], Resetting} = step(start, new(1)),
+    {Resetting, [line_reset]} = step(start, new(1)),
     ?assertEqual(5000, erx_bt_hci_core:next_deadline(Resetting)),
-    ?assertEqual({stop, line_reset_timeout}, erx_bt_hci_core:step(expired, 5000, Resetting)),
-    {ok, [{write, <<1, 3, 16#0C, 0>>}], Ready} = erx_bt_hci_core:step(line_ready, 1000, Resetting),
+    ?assertMatch({_, [{stop, line_reset_timeout}]}, erx_bt_hci_core:step(expired, 5000, Resetting)),
+    {Ready, [{write, <<1, 3, 16#0C, 0>>}]} = erx_bt_hci_core:step(line_ready, 1000, Resetting),
     ?assertEqual(6000, erx_bt_hci_core:next_deadline(Ready)).
 
 %% A disconnect written and unanswered may be carried out on whichever peer holds its
 %% handle when the controller reads it, so a new connection on that handle stops.
 a_connection_on_a_handle_being_disconnected_stops_test() ->
     {Link, Core} = linked(2, 1),
-    {ok, [], Written} = step(written, Core),
-    {ok, [], Advertising} = answer(Written, complete(16#200A, <<0>>)),
-    {ok, [{write, <<1, 6, 4, 3, 1, 0, 16#13>>}], Asked} =
+    {Written, []} = step(written, Core),
+    {Advertising, []} = answer(Written, complete(16#200A, <<0>>)),
+    {Asked, [{write, <<1, 6, 4, 3, 1, 0, 16#13>>}]} =
         step({request, Link, {disconnect, 16#13}}, Advertising),
-    {ok, _, Gone} = answer(Asked, {disconnection_complete, 0, 1, 16#13}),
-    ?assertEqual({stop, {connection_while_disconnecting, 1}}, answer(Gone, {le_connection_complete, 0, 1, #{}})).
+    {Gone, _} = going(answer(Asked, {disconnection_complete, 0, 1, 16#13})),
+    ?assertMatch({_, [{stop, {connection_while_disconnecting, 1}}]}, answer(Gone, {le_connection_complete, 0, 1, #{}})).
 
-element_pair({ok, Actions, _Core}) -> {ok, Actions}.
+element_pair({_Core, Actions}) -> {ok, Actions}.
 
 %% Num_HCI_Command_Packets 0: the next command falls due, unsent, under a deadline from
 %% the moment it falls due, which passes unless an opcode-0 event allows it (Part E,
 %% 4.4).
 a_command_the_controller_never_allows_stops_on_its_deadline_test() ->
     {_, Core} = to_command(16#0C03, new(1)),
-    {ok, [], Written} = step(written, Core),
-    {ok, [], Due} = erx_bt_hci_core:step({event, {command_complete, 0, 16#0C03, <<0>>}}, 1000, Written),
+    {Written, []} = step(written, Core),
+    {Due, []} = erx_bt_hci_core:step({event, {command_complete, 0, 16#0C03, <<0>>}}, 1000, Written),
     ?assertEqual(6000, erx_bt_hci_core:next_deadline(Due)),
-    ?assertEqual({stop, {command_timeout, {first, read_local_version}}}, erx_bt_hci_core:step(expired, 6000, Due)),
-    {ok, [{write, <<1, 1, 16#10, 0>>}], Sent} = erx_bt_hci_core:step({event, {command_complete, 1, 0, <<>>}}, 3000, Due),
+    ?assertMatch({_, [{stop, {command_timeout, {first, read_local_version}}}]}, erx_bt_hci_core:step(expired, 6000, Due)),
+    {Sent, [{write, <<1, 1, 16#10, 0>>}]} = erx_bt_hci_core:step({event, {command_complete, 1, 0, <<>>}}, 3000, Due),
     ?assertEqual(6000, erx_bt_hci_core:next_deadline(Sent)),
-    {ok, Allowed, _} = answer(Due, {command_complete, 1, 0, <<>>}),
+    {_, Allowed} = answer(Due, {command_complete, 1, 0, <<>>}),
     ?assertEqual([{write, <<1, 1, 16#10, 0>>}], Allowed).
 
 %% Number Of Completed Packets passes each live handle's count to its link, named in
 %% full, so the link counts its own share back.
 completions_reach_each_handles_link_test() ->
     {_, Ready} = ready(2),
-    {ok, Up1, One} = answer(Ready, {le_connection_complete, 0, 16#40, #{}}),
-    {ok, _, Advertising} = step(written, One),
-    {ok, _, Enabled} = answer(Advertising, complete(16#200A, <<0>>)),
-    {ok, Up2, Two} = answer(Enabled, {le_connection_complete, 0, 16#41, #{}}),
+    {One, Up1} = answer(Ready, {le_connection_complete, 0, 16#40, #{}}),
+    {Advertising, _} = going(step(written, One)),
+    {Enabled, _} = going(answer(Advertising, complete(16#200A, <<0>>))),
+    {Two, Up2} = answer(Enabled, {le_connection_complete, 0, 16#41, #{}}),
     {A, B} = {link_of(Up1), link_of(Up2)},
-    {ok, [{write, _}], S1} = step({request, A, {send, 0, <<1>>}}, Two),
-    {ok, [], W1} = step(written, S1),
-    {ok, [{write, _}], S2} = step({request, B, {send, 0, <<2>>}}, W1),
-    {ok, [], W2} = step(written, S2),
-    ?assertMatch({ok, [{to_link, A, {completed, 1}}, {to_link, B, {completed, 1}}], _},
+    {S1, [{write, _}]} = step({request, A, {send, 0, <<1>>}}, Two),
+    {W1, []} = step(written, S1),
+    {S2, [{write, _}]} = step({request, B, {send, 0, <<2>>}}, W1),
+    {W2, []} = step(written, S2),
+    ?assertMatch({_, [{to_link, A, {completed, 1}}, {to_link, B, {completed, 1}}]},
                  step({event, {number_of_completed_packets, [{16#40, 1}, {16#41, 1}]}}, W2)),
     %% A count of 0 tells the link nothing; a handle named twice is counted twice.
-    ?assertMatch({ok, [{to_link, B, {completed, 1}}], _},
+    ?assertMatch({_, [{to_link, B, {completed, 1}}]},
                  step({event, {number_of_completed_packets, [{16#40, 0}, {16#41, 1}]}}, W2)),
-    ?assertEqual({stop, {completion_beyond_in_flight, 16#41, 1}},
+    ?assertMatch({_, [{stop, {completion_beyond_in_flight, 16#41, 1}}]},
                  step({event, {number_of_completed_packets, [{16#41, 1}, {16#41, 1}]}}, W2)).
 
 %% A packet still on the writer's list has not reached the controller, so a completion
 %% of it is forged: the list stays within the credits however the line stalls.
 a_completion_of_a_queued_packet_stops_test() ->
     {Link, Core} = linked(1, 16#40),
-    {ok, [{write, _}], One} = step({request, Link, {send, 0, <<1>>}}, Core),
-    {ok, [], Two} = step({request, Link, {send, 0, <<2>>}}, One),
-    ?assertMatch({ok, [{to_link, Link, {completed, 1}}], _},
+    {One, [{write, _}]} = step({request, Link, {send, 0, <<1>>}}, Core),
+    {Two, []} = step({request, Link, {send, 0, <<2>>}}, One),
+    ?assertMatch({_, [{to_link, Link, {completed, 1}}]},
                  step({event, {number_of_completed_packets, [{16#40, 1}]}}, Two)),
-    ?assertEqual({stop, {completion_beyond_in_flight, 16#40, 2}},
+    ?assertMatch({_, [{stop, {completion_beyond_in_flight, 16#40, 2}}]},
                  step({event, {number_of_completed_packets, [{16#40, 2}]}}, Two)).
 
 %% A command is in flight once the writer has it: with the line stalled, an answer to
 %% the next command, due and not yet written, is forged.
 an_answer_to_a_command_not_yet_written_stops_test() ->
     {_, Core} = to_command(16#0C03, new(1)),
-    {ok, [], Due} = answer(Core, complete(16#0C03, <<0>>)),
-    ?assertEqual({stop, {answer_to_other_command, 16#1001}}, answer(Due, complete(16#1001, version(15)))).
+    {Due, []} = answer(Core, complete(16#0C03, <<0>>)),
+    ?assertMatch({_, [{stop, {answer_to_other_command, 16#1001}}]}, answer(Due, complete(16#1001, version(15)))).
 
 fewer_buffers_than_connections_lower_the_limit_test() ->
     {_, Core} = to_command(16#2002, new(2)),
-    {ok, _, Read} = answer(Core, complete(16#2002, <<0, 27, 0, 1>>)),
+    {Read, _} = going(answer(Core, complete(16#2002, <<0, 27, 0, 1>>))),
     ?assertMatch(#{limit := 1, free := 1}, erx_bt_hci_core:facts(Read)).
 
 %% LE Read Buffer Size's length 0 also means shared buffers; Read Buffer Size reserves
 %% no lengths, but a length or count of 0 is outside its range (7.8.2, 7.4.5).
 shared_buffers_take_any_length_from_one_test() ->
     {_, Core} = to_command(16#2002, new(1)),
-    {ok, [], Written} = step(written, Core),
-    {ok, Actions, Next} = answer(Written, complete(16#2002, <<0, 0, 0, 4>>)),
+    {Written, []} = step(written, Core),
+    {Next, Actions} = answer(Written, complete(16#2002, <<0, 0, 0, 4>>)),
     {_, Shared} = drive(16#1005, Actions, Next),
-    {ok, _, Read} = answer(Shared, complete(16#1005, <<0, 8, 0, 0, 3, 0, 0, 0>>)),
+    {Read, _} = going(answer(Shared, complete(16#1005, <<0, 8, 0, 0, 3, 0, 0, 0>>))),
     ?assertMatch(#{free := 3}, erx_bt_hci_core:facts(Read)),
-    ?assertEqual({stop, {step_failed, shared_buffers, {buffers, 0, 3}}},
+    ?assertMatch({_, [{stop, {step_failed, shared_buffers, {buffers, 0, 3}}}]},
                  answer(Shared, complete(16#1005, <<0, 0, 0, 0, 3, 0, 0, 0>>))).
 
 %% The explored case: every state reachable from start, breadth first, until none is
@@ -383,7 +383,7 @@ explored_core_keeps_its_invariants_test_() ->
 
 %% Walks every state of one configuration and returns the reasons it stopped for.
 explore(Config) ->
-    {ok, Actions, Core} = step(start, erx_bt_hci_core:new(Config)),
+    {Core, Actions} = step(start, erx_bt_hci_core:new(Config)),
     Start = observe(Actions, #world{core = Core}),
     {exhausted, Stats} = walk(queue:from_list([Start]), sets:from_list([key(Start)], [{version, 2}]),
                               #{ready => 0, stops => #{}, clocks => #{}, reused => 0}, ?EXPLORE_BUDGET),
@@ -416,11 +416,11 @@ visit(#world{core = Before, now = Now} = World, Input, {Queue, Seen, Stats}) ->
                   _ -> erx_bt_hci_core:step(Input, Now, Before)
               end,
     case Stepped of
-        {stop, Reason} ->
+        {_, [{stop, Reason}]} ->
             ?assertNotMatch({unexpected_input, _}, Reason),
             {Queue, Seen, Stats#{stops := maps:update_with(element(1, tuple(Reason)), fun(N) -> N + 1 end, 1,
                                                           maps:get(stops, Stats))}};
-        {ok, Actions, Core} ->
+        {Core, Actions} ->
             check_deadline_kept(Input, World),
             check_expiry_acts(Input, Before, Core),
             check_completions_passed(Input, World, Actions),
@@ -575,7 +575,8 @@ check(#world{core = Core, patches = Patches}) ->
 %% stepped again a millisecond later, where only a kept deadline is the same.
 check_deadline_kept(Input, #world{core = Before, now = Now}) ->
     case keeps_deadline(Input) andalso erx_bt_hci_core:step(Input, Now + 1, Before) of
-        {ok, _, Later} -> ?assertEqual(erx_bt_hci_core:next_deadline(Before), erx_bt_hci_core:next_deadline(Later));
+        {_, [{stop, _}]} -> ok;
+        {Later, _} -> ?assertEqual(erx_bt_hci_core:next_deadline(Before), erx_bt_hci_core:next_deadline(Later));
         _ -> ok
     end.
 
@@ -599,12 +600,12 @@ check_early_wake_up(#world{core = Core, now = Now}) ->
                 infinity -> Now;
                 Deadline -> Deadline - 1
             end,
-    ?assertEqual({ok, [], Core}, erx_bt_hci_core:step(expired, Early, Core)).
+    ?assertEqual({Core, []}, erx_bt_hci_core:step(expired, Early, Core)).
 
 %% A gone link's requests are refused, whether its handle is live again or not: nothing
 %% changes, so its packet and its disconnect never reach the handle's next peer.
 check_gone_refused(#world{core = Core, now = Now, gone = Gone}) ->
-    [?assertEqual({ok, [], Core}, erx_bt_hci_core:step({request, Link, Request}, Now, Core))
+    [?assertEqual({Core, []}, erx_bt_hci_core:step({request, Link, Request}, Now, Core))
      || Link <- Gone, Request <- [{send, 0, <<0>>}, {disconnect, 16#13}]],
     ok.
 
@@ -651,28 +652,33 @@ version(Company) -> <<0, 9, 0, 0, 9, Company:16/little, 0, 0>>.
 
 answer(Core, Event) -> step({event, Event}, Core).
 
+%% A step's result, which must not stop.
+going({_Core, Actions} = Result) ->
+    ?assertNotMatch([{stop, _}], Actions),
+    Result.
+
 %% Runs the bring-up, answering each command well, until the command Opcode is written;
 %% returns that step's actions and the core waiting for its answer. The bring-up's waits
 %% come only with a patch, after the commands the cases drive to.
 to_command(Opcode, Core0) ->
-    {ok, _, Core1} = step(start, Core0),
-    {ok, Actions, Core2} = step(line_ready, Core1),
+    {Core1, _} = going(step(start, Core0)),
+    {Core2, Actions} = step(line_ready, Core1),
     drive(Opcode, Actions, Core2).
 
 drive(Opcode, Actions, Core) ->
     case [Op || {write, <<1, Op:16/little, _/binary>>} <- Actions] of
         [Opcode] -> {Actions, Core};
         [Other] ->
-            {ok, [], Written} = step(written, Core),
-            {ok, Next, Answered} = answer(Written, complete(Other, good({Other, x}))),
+            {Written, []} = step(written, Core),
+            {Answered, Next} = answer(Written, complete(Other, good({Other, x}))),
             drive(Opcode, Next, Answered)
     end.
 
 %% A ready core whose advertising enable has been written and answered.
 ready(Limit) ->
     {Actions, Core} = to_command(16#200A, new(Limit)),
-    {ok, [], Written} = step(written, Core),
-    {ok, [], Ready} = answer(Written, complete(16#200A, <<0>>)),
+    {Written, []} = step(written, Core),
+    {Ready, []} = answer(Written, complete(16#200A, <<0>>)),
     {Actions, Ready}.
 
 %% The identity link_up gave the one link Actions started.
@@ -688,5 +694,5 @@ linked(Limit, Handle) ->
 %% A ready core with one link on Handle.
 connected(Limit, Handle) ->
     {_, Core} = ready(Limit),
-    {ok, Actions, Linked} = answer(Core, {le_connection_complete, 0, Handle, #{}}),
+    {Linked, Actions} = answer(Core, {le_connection_complete, 0, Handle, #{}}),
     {Actions, Linked}.

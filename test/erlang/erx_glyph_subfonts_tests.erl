@@ -21,6 +21,7 @@ loads(Name) ->
     Connection = erx_draw_core:new(#{r => {0, 0, 640, 480}, chan => ?ARGB32,
                                      quota => #{pixels => 4096 * 1024, side => 16384}}),
     lists:foldl(fun(Message, State) ->
-                        {ok, Next, _} = erx_draw_core:step(State, Message),
+                        {Next, Ops} = erx_draw_core:step(State, Message),
+                        ?assertEqual([], [Op || Op <- Ops, is_tuple(Op), lists:member(element(1, Op), [error, stop])]),
                         Next
                 end, Connection, erx_font:load(Subfont, 1)).

@@ -5,8 +5,8 @@
 -moduledoc """
 The grants of one file tree that a files service hands to other domains: a
 supervisor of temporary erx_fs grants of the tree a callback module serves, each
-read-write and bound to one client domain (erx_fs:start_link/4). A files service
-of a configured domain asks it through its mint (erx_lfs_mint); one the system
+with its facet row's rights and bound to one client domain (erx_fs:start_link/4).
+A files service of a configured domain asks it through its mint (erx_storage_mint); one the system
 domain serves names it with erx_facet:serve/2, and the domain service asks it for
 each grantee's grant in the grantee's ready answer (docs/design-system.md,
 "Facets of the system domain's services").
@@ -14,8 +14,12 @@ each grantee's grant in the grantee's ready answer (docs/design-system.md,
 The grants are temporary children, so the end of a grant, by its client's end or
 by its heap bound, ends nothing else, while the supervisor's end ends every grant.
 
-Of a facet row's limits a grant applies three (grant_options/1):
+Of a facet row's limits and parameters a grant applies four (grant_options/1):
 
+* `rights`, the files interface's parameter (abi/services/files.txt), `ro`, `rw`
+  or `rx`, and `rw` for a row that states none; an `ro` or `rx` grant refuses
+  every writing operation before its callback (docs/design-files.md, F5), and the
+  rights are fixed when the grant starts, so no request widens them;
 * `in_flight`, the most requests it holds at once, at most erx_fs_grant's 64;
 * `max_request`, the largest message size it agrees to at version (advertised,
   not checked against each frame), at most 9P's 65,560; a row below 9P's least,
@@ -31,6 +35,8 @@ Of a facet row's limits a grant applies three (grant_options/1):
 -export([start_link/1, start_link/2, grant/3, grant/4, own/1, own/2, grant_options/1]).
 %% The supervisor's callback and its child's start.
 -export([init/1, start_grant/3]).
+
+-include("generated/erx_abi.hrl").
 
 -define(IN_FLIGHT_MAX, 64).
 -define(MSIZE_MIN, 4096).
@@ -64,7 +70,7 @@ server's own domain.
                                     exports := module()}) -> {ok, pid()} | {error, term()}.
 grant(Grants, Args, Limits, #{client := _, ends_with := _, exports := _} = Binding) ->
     case grant_options(Limits) of
-        {ok, Options} -> supervisor:start_child(Grants, [Args, maps:merge(Options, Binding)]);
+        {ok, Options} -> supervisor:start_child(Grants, [Args, maps:merge(Binding, Options)]);
         {error, _} = Refused -> Refused
     end.
 
@@ -80,7 +86,7 @@ refuse, is the answer and leaves no grant.
 grant(Grants, Limits, #{client := Client, ends_with := _, exports := _} = Binding)
   when is_integer(Client), Client > 0 ->
     case grant_options(Limits) of
-        {ok, Options} -> supervisor:start_child(Grants, [maps:merge(Options, Binding)]);
+        {ok, Options} -> supervisor:start_child(Grants, [maps:merge(Binding, Options)]);
         {error, _} = Refused -> Refused
     end.
 
@@ -93,7 +99,7 @@ restarted when it ends alone (TODO.md).
 """.
 -spec own(pid()) -> {ok, pid()}.
 own(Grants) ->
-    supervisor:start_child(Grants, [#{}]).
+    supervisor:start_child(Grants, [#{rights => rw}]).
 
 -doc """
 As own/1, for a supervisor start_link/1 started, whose grant's tree starts
@@ -101,24 +107,28 @@ from Args.
 """.
 -spec own(pid(), term()) -> {ok, pid()}.
 own(Grants, Args) ->
-    supervisor:start_child(Grants, [Args, #{}]).
+    supervisor:start_child(Grants, [Args, #{rights => rw}]).
 
 -doc """
-The erx_fs options a facet row's Limits give a grant, or `{error, einval}` for a
-row whose `max_request` is below 9P's least message size, whose `in_flight` is not
-positive, or whose `max_heap_size` is below the emulator's least heap. A limit the
-row leaves out keeps erx_fs's bound.
+The grant's rights and the erx_fs options a facet row's Limits give it, or
+`{error, einval}` for a row whose `max_request` is below 9P's least message size,
+whose `in_flight` is not positive, whose `max_heap_size` is below the emulator's
+least heap, or whose `rights` is not `ro`, `rw` or `rx`. A limit the row leaves out
+keeps erx_fs's bound, and rights it leaves out are `rw`.
 """.
 -spec grant_options(map()) -> {ok, map()} | {error, einval}.
 grant_options(Limits) ->
+    Rights = maps:get(rights, Limits, rw),
     InFlight = maps:get(in_flight, Limits, ?IN_FLIGHT_MAX),
     Msize = maps:get(max_request, Limits, ?MSIZE_MAX),
     Heap = maps:get(max_heap_size, Limits, none),
     {min_heap_size, LeastHeap} = erlang:system_info(min_heap_size),
-    case is_integer(InFlight) andalso InFlight > 0 andalso is_integer(Msize) andalso Msize >= ?MSIZE_MIN
+    case lists:keymember(Rights, 1, ?ERX_FILES_RIGHTS_MEMBERS) andalso is_integer(InFlight) andalso InFlight > 0
+        andalso is_integer(Msize) andalso Msize >= ?MSIZE_MIN
         andalso (Heap =:= none orelse is_integer(Heap) andalso Heap >= LeastHeap) of
         true ->
-            Options = #{in_flight => min(InFlight, ?IN_FLIGHT_MAX), msize => min(Msize, ?MSIZE_MAX)},
+            Options = #{rights => Rights, in_flight => min(InFlight, ?IN_FLIGHT_MAX),
+                        msize => min(Msize, ?MSIZE_MAX)},
             {ok, case Heap of
                      none -> Options;
                      _ -> Options#{max_heap_size => Heap}
@@ -143,4 +153,5 @@ grant_spec(Start) ->
 -doc false.
 -spec start_grant(module(), term(), map()) -> {ok, pid()} | {error, term()}.
 start_grant(Module, Args, Options) ->
-    erx_fs:start_link(Module, Args, rw, Options).
+    {Rights, FsOptions} = maps:take(rights, Options),
+    erx_fs:start_link(Module, Args, Rights, FsOptions).

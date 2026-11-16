@@ -17,10 +17,14 @@ module Erx
     # judgement that both permit shipping the modules made from those specifications, with each
     # notice's text carried in the image. Their notice documents are rows for public_key's
     # asn1 directory alone in config/provenance/import-notices.json.
+    # LicenseRef-root-certificate is a root certificate of the trust store (config/trust): a
+    # public key and a name, facts and not a creative work, which no license covers, as
+    # docs/design.md's dependency table records. Its notice document is the store's origin
+    # record, a row for config/trust alone in config/provenance/import-notices.json.
     PERMISSIVE = %w[BSD-2-Clause BSD-3-Clause MIT ISC 0BSD Apache-2.0 Zlib
                     BSL-1.0 Unicode-3.0 Unicode-DFS-2016 LicenseRef-DJB-public-domain
                     LicenseRef-misc-fixed-public-domain
-                    LicenseRef-RSA-PKCS3 LicenseRef-RSA-PKCS5v2-0].freeze
+                    LicenseRef-RSA-PKCS3 LicenseRef-RSA-PKCS5v2-0 LicenseRef-root-certificate].freeze
     # Licenses that cover font data only. A caller that states its input's OFL-1.1 content is
     # font data (font_data: true) has them admitted for that input alone, as grants that are
     # not permissive; every other input, and every other license, is judged by PERMISSIVE and
@@ -29,6 +33,9 @@ module Erx
     FONT_DATA_ONLY = %w[OFL-1.1].freeze
     PRECEDENCE = { 'OR' => 1, 'AND' => 2 }.freeze
     module_function
+
+    # Whether expression has a grant every image may take, as select chooses one.
+    def permissive?(expression) = select(expression, allow_restricted: true).fetch('permissive')
 
     # SPDX grouping is bounded by Attribution's grammar. Postfix evaluation
     # avoids input-controlled recursion, including long unparenthesized chains.

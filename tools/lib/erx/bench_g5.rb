@@ -109,7 +109,7 @@ module Erx
             "{ok,D}->M=monitor(process,erx_domain:pid(D)),receive {'DOWN',M,process,_,R}->R " \
             "after #{plan.wait_seconds * 1000}->erx_domain:stop(D,kill),timeout end;Refused->Refused end end"
       "G5Wait=#{MediumBoot::DOMAIN_LIB_WAIT},G5Configured=G5Wait(600),#{run}," \
-        "io:format(\"G5DONE ~0p~n\",[lists:map(G5Run,[#{names.join(',')}])]).\r"
+        "io:format(\"G5DONE ~0kp~n\",[lists:map(G5Run,[#{names.join(',')}])]).\r"
     end
 
     # MediumBoot's domain arguments in embedded mode, with the workload as the -eval

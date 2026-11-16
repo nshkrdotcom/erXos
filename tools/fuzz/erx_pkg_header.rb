@@ -21,7 +21,7 @@ module ErxPkgHeaderFuzz
   # The generated sources and headers named here are in build/gen.
   Erx::Generated.ensure(root: ROOT)
   DECODER = File.join(ROOT, 'erlang/apps/erx/src/erx_pkg_header.erl')
-  SOURCES = [File.join(ROOT, 'erlang/apps/erx/src/erx_verity_tree.erl'),
+  SOURCES = [File.join(ROOT, 'otp/erts/preloaded/src/erx_verity_tree.erl'),
              File.join(ROOT, 'build/gen/erlang/apps/erx/src/generated/erx_pkg_reader.erl'),
              File.join(ROOT, 'test/erlang/erx_pkg_header_fuzz.erl')].freeze
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')

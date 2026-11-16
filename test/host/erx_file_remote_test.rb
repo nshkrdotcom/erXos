@@ -13,9 +13,10 @@ require_relative '../../tools/lib/erx/generated'
 # generated erx_9p_grammar, which checks every request it sends and every reply, is
 # preloaded and held to the same rule, as is erx_path, the resolver of every path, which
 # calls nothing but BIFs and the callbacks its caller hands it, and so are the EROFS
-# reader, erx_erofs, its open files, erx_erofs_file, and its funnel, erx_verity, which serve paths in the calling process. xref, on stock's emulator (ERX_ERL and ERX_ERLC,
+# reader, erx_erofs, its open files, erx_erofs_file, and its funnel, erx_verity, with the tree's layout,
+# erx_verity_tree, which serve paths in the calling process. xref, on stock's emulator (ERX_ERL and ERX_ERLC,
 # which make check supplies), lists each module's calls to other modules; each must be a
-# BIF or name a module of the preloaded Makefile's list. A seeded call to lists:usort/1
+# BIF, of stock's emulator or of erXos's bif.tab, or name a module of the preloaded Makefile's list. A seeded call to lists:usort/1
 # must be caught.
 class ErxFileRemoteTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
@@ -25,10 +26,12 @@ class ErxFileRemoteTest < Minitest::Test
               'erx_9p_grammar' => 'build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl',
               'erx_path' => 'otp/erts/preloaded/src/erx_path.erl',
               'erx_verity' => 'otp/erts/preloaded/src/erx_verity.erl',
+              'erx_verity_tree' => 'otp/erts/preloaded/src/erx_verity_tree.erl',
               'erx_erofs' => 'otp/erts/preloaded/src/erx_erofs.erl',
               'erx_erofs_file' => 'otp/erts/preloaded/src/erx_erofs_file.erl' }
             .transform_values { |path| File.join(ROOT, path) }.freeze
   PRELOAD_MAKEFILE = File.join(ROOT, 'otp/erts/preloaded/src/Makefile')
+  BIF_TAB = File.join(ROOT, 'otp/erts/emulator/beam/bif.tab')
   INCLUDES = %w[otp/lib/kernel/include build/gen/erlang/apps/erx/include].map { |dir| File.join(ROOT, dir) }.freeze
   FID = "fid() ->\n    prim_file:erx_fid().\n"
   SEEDED_FID = "fid() ->\n    _ = lists:usort([]),\n    prim_file:erx_fid().\n"
@@ -64,6 +67,15 @@ class ErxFileRemoteTest < Minitest::Test
     assert_equal [%w[$M_EXPR $F_EXPR]], calls.map { |call| call.first(2) }.uniq
   end
 
+  # The hash check calls the SHA-256 built-ins, erXos's BIFs, and the tree's layout.
+  def test_the_funnel_and_its_layout_call_only_bifs_and_preloaded_modules
+    calls = external_calls('erx_verity', File.read(SOURCES.fetch('erx_verity')))
+    assert_includes calls.map { |call| call.first(2).join(':') }, 'erx_bytes:sha256_update', 'the calls were listed'
+    assert_includes calls.map(&:first), 'erx_verity_tree', 'the funnel takes the layout from erx_verity_tree'
+    tree = external_calls('erx_verity_tree', File.read(SOURCES.fetch('erx_verity_tree')))
+    [calls, tree].each { |listed| assert_empty forbidden(listed), forbidden(listed).map { it.first(3).join(':') }.join("\n") }
+  end
+
   def test_seeded_call_to_a_module_not_preloaded_is_caught
     source = File.read(SOURCES.fetch('erx_file_remote'))
     assert_equal 1, source.scan(FID).size
@@ -80,10 +92,16 @@ class ErxFileRemoteTest < Minitest::Test
     end
   end
 
+  # erXos's own BIFs, which stock's emulator, where xref runs, lacks: [Module, Function, Arity].
+  def erxos_bifs
+    File.read(BIF_TAB).scan(%r{^bif (erx_\w+):(\w+)/(\d+)$})
+  end
+
   def forbidden(calls)
     # $M_EXPR is a call of a fun value; every fun the client calls is one it made itself.
-    calls.reject do |module_name, _, _, builtin|
-      builtin == 'true' || preloaded.include?(module_name) || module_name == '$M_EXPR'
+    calls.reject do |module_name, function, arity, builtin|
+      builtin == 'true' || erxos_bifs.include?([module_name, function, arity]) ||
+        preloaded.include?(module_name) || module_name == '$M_EXPR'
     end
   end
 

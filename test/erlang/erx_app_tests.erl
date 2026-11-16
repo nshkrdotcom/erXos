@@ -26,10 +26,12 @@ record(Start) ->
       start => Start}.
 
 %% The mount: each case's fixture directory stands for the image at /app, and the
-%% mount records what it was handed. The root is a string, as the session's is.
+%% mount says it ran. It is handed nothing: erx_ns's process takes the package's place
+%% and layout from the record the session's agent keeps. The root is a string, as the
+%% session's is.
 effects(Root) ->
     Self = self(),
-    #{mount => fun(Place, Layout) -> Self ! {mounted, Place, Layout}, ok end,
+    #{mount => fun() -> Self ! mounted, ok end,
       root => filename:join(cases(), Root),
       type => temporary}.
 
@@ -39,9 +41,8 @@ release_on_path() ->
     true = code:add_patha(filename:join([cases(), "release", "ebin"])).
 
 good_app_starts_from_its_mounted_image_test() ->
-    #{place := Place, layout := Layout} = Record = record({applications, [<<"good_app">>]}),
-    ?assertEqual(ok, erx_app:run(Record, effects("good"))),
-    ?assertEqual({mounted, Place, Layout}, receive M -> M after 0 -> none end),
+    ?assertEqual(ok, erx_app:run(record({applications, [<<"good_app">>]}), effects("good"))),
+    ?assertEqual(mounted, receive M -> M after 0 -> none end),
     ?assert(lists:keymember(good_app, 1, application:which_applications())),
     Ebin = filename:join([cases(), "good", "lib", "good_app", "ebin"]),
     %% The app's path comes after every path the release put there.
@@ -60,12 +61,9 @@ clash_fails_only_the_app_test() ->
     ?assertNot(lists:keymember(clash_app, 1, application:which_applications())).
 
 refused_mount_ends_with_its_reason_test() ->
-    Effects = (effects("good"))#{mount := fun(_Place, _Layout) -> {error, eio} end},
+    Effects = (effects("good"))#{mount := fun() -> {error, eio} end},
     ?assertEqual({error, {mount, eio}}, erx_app:run(record({applications, [<<"good_app">>]}), Effects)).
 
 native_app_is_not_supported_test() ->
     ?assertEqual({error, {not_supported, program}},
                  erx_app:run(record({program, <<"bin/tiny">>, []}), effects("good"))).
-
-no_record_test() ->
-    ?assertEqual({error, no_app_record}, erx_app:run(undefined, effects("good"))).

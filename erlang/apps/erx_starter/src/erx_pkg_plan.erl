@@ -18,8 +18,8 @@ The recovery, in order:
    and registers its principal;
 3. reads the listing of `packages/`, at most `ERX_PKG_SCAN_MAX` entries; a
    listing with more is `overflow` and nothing in it is acted on, and a
-   listing not yet readable, before the packages grant is in place, leaves
-   the scan `unknown`;
+   listing not yet readable, before the packages grant is in place, or one
+   that fails leaves the scan `unknown`;
 4. deletes every temporary file, then judges each installed package, in name
    order, as in step 2 but under the trusted signer keys;
 5. publishes the package set: the admitted image packages, then the
@@ -33,7 +33,7 @@ of its bytes; one admission refuses keeps its authenticated header's entry.
 """.
 
 -export([recover/2, listing/3, package_file/1]).
--export_type([config/0, action/0, plan/0, package_record/0, entry/0, scan/0]).
+-export_type([config/0, action/0, plan/0, package_record/0, entry/0, scan/0, published/0]).
 
 -type place() :: system | installed.
 
@@ -54,7 +54,11 @@ serves no byte of it.
 """.
 -type entry() :: {accepted, <<_:256>>, pos_integer(), pos_integer()} | refused.
 
-%% `admitted`'s signer is `checked`'s: admission copies it.
+-doc """
+A package the plan has committed, the one type erx_principal:register_app/1
+registers and the start table publishes: its name, where it lies, its checked
+header and its admission, whose signer is `checked`'s, since admission copies it.
+""".
 -type published() :: #{name := binary(), place := place(),
                        checked := erx_pkg_header:checked(),
                        admitted := erx_app_admit:admitted()}.
@@ -84,7 +88,7 @@ whether that was all of them.
                 | {header, place(), binary()}
                 | {admit, erx_pkg_header:checked()}
                 | {path_entry, place(), binary(), entry()}
-                | {register, binary(), erx_app_admit:admitted()}
+                | {register, published()}
                 | list
                 | {delete, binary()}
                 | {publish, [published()]}
@@ -199,7 +203,7 @@ step({header, Place, File}, {error, Reason}, Plan) ->
 step({admit, Checked}, {ok, Admitted}, #{judged := {Place, File, Checked}} = Plan) ->
     #{header := #{name := Name}} = Checked,
     entry(Place, File, accepted(Checked), authenticated(Place, Checked, admitted, none),
-          [{register, Name, Admitted}],
+          [{register, #{name => Name, place => Place, checked => Checked, admitted => Admitted}}],
           publishing(Place, Checked, Admitted, Plan#{judged := none}));
 step({admit, Checked}, {error, Reason}, #{judged := {Place, File, Checked}} = Plan) ->
     entry(Place, File, accepted(Checked), authenticated(Place, Checked, refused, Reason), [],
@@ -208,7 +212,7 @@ step({path_entry, _, _, _}, ok, #{after_entry := [Register]} = Plan) ->
     emit(Register, Plan#{after_entry := []});
 step({path_entry, _, _, _}, ok, #{after_entry := []} = Plan) ->
     next(Plan);
-step({register, _, _}, ok, Plan) ->
+step({register, _}, ok, Plan) ->
     next(Plan);
 step(list, {ok, Names, More}, #{config := #{max := Max}, tasks := Tasks} = Plan)
   when is_list(Names), is_boolean(More) ->
@@ -220,7 +224,10 @@ step(list, {ok, Names, More}, #{config := #{max := Max}, tasks := Tasks} = Plan)
                    ++ [{installed, Name} || Name <- Packages],
             next(Plan#{scan := {ok, length(Names)}, tasks := Work ++ Tasks})
     end;
-step(list, {error, absent}, Plan) ->
+%% A listing that fails, the grant absent or the storage domain's error, leaves
+%% the scan unknown: the image's packages are published without the installed ones,
+%% as before the grant is in place, rather than the lifetime stopping on it.
+step(list, {error, _}, Plan) ->
     next(Plan);
 step({delete, _}, ok, Plan) ->
     next(Plan);

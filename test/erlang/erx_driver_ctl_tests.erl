@@ -34,14 +34,10 @@ init([]) ->
     {ok, {#{strategy => one_for_one, intensity => 3, period => 60},
           [Child(driver, run), Child(absent, ignore)]}};
 %% erx_blk_sup's own flags and child specs, each start replaced by a stand-in: the device
-%% process, registered as erx_blk, and the partition process run, and the image mounts
-%% start nothing.
+%% process, registered as erx_blk, and the partition process run.
 init(blk) ->
     {ok, {Flags, Children}} = erx_blk_sup:init([]),
-    Stand = fun(#{id := images} = Child) -> Child#{start => {?MODULE, driver, [ignore]}};
-               (Child) -> Child#{start => {?MODULE, driver, [run]}}
-            end,
-    {ok, {Flags, lists:map(Stand, Children)}}.
+    {ok, {Flags, [Child#{start => {?MODULE, driver, [run]}} || Child <- Children]}}.
 
 driver(run) -> {ok, spawn_link(fun() -> receive after infinity -> ok end end)};
 driver(ignore) -> ignore.

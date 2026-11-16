@@ -3,21 +3,28 @@
 
 %% The block driver's partition process (docs/design-storage.md, "The block driver" and
 %% "The boot medium's table"), under erx_blk_sup after the device process. It reads the
-%% three records of the partition table through erx_blk, admits them with
-%% erx_blk_table:admit/4, and starts one window, erx_blk_window, per partition the layout
-%% names: the boot-selection record's, slot A's, slot B's, the vault's and the data
-%% partition's. A table that differs from the layout in anything but the data partition's
-%% length, a medium too small for the layout, a record the device does not return and a
-%% machine without a block device each leave the service with no window and one line in
-%% the kernel log naming why: the driver serves none of such a medium.
+%% five records of the partition table through erx_blk, admits them with
+%% erx_blk_table:admit/2, and starts one window, erx_blk_window, per partition the layout
+%% names: the boot-selection record's, boot A's, boot B's, the vault's and the data
+%% partition's. A table that differs from the layout in anything but
+%% the data partition's length, a medium too small for the layout, a record the device
+%% does not return and a machine without a block device each leave the service with no
+%% window and one line in the kernel log naming why: the driver serves none of such a
+%% medium.
 %%
-%% Once the table is admitted, it also starts a read-only window on each EROFS image of
-%% the booted slot that the release's manifest gives the system domain, of role
-%% {image, Name}, which erx_blk_image places from the root's -erx_record boot words and the
-%% manifest; a boot with no slot serves none, and an image it refuses is one line of the
-%% log. mount_images/0, the supervisor's next child, mounts each at /images/NAME
-%% (docs/design-stopgap.md, "Image windows"). In a storage domain, whose namespace holds
-%% no manifest, the read fails and no image is served, which is one line of the log.
+%% Once the table is admitted, it also starts the windows the boot value decides, which
+%% erx_blk_table:booted/1 derives from the -erx_record boot words the domain library
+%% gives the block device's holder: the read-only system window on the booted slot's
+%% system partition (docs/design-stopgap.md, "The booted slot"), which reads no
+%% manifest and is started only in the holder given a system_image record, and a
+%% read-only window on each EROFS image of the booted slot that the release's manifest
+%% gives the system domain, of role
+%% {image, Name}, which erx_blk_image places from the slot and the manifest. A boot with
+%% no slot, an unknown boot, serves neither; so does a boot value the reader refuses,
+%% which is one line of the log, as is each image refused. Nothing mounts an image
+%% window: only erx_storage_system opens an image on a window, the `system` window with
+%% its layout (Erx::ErofsReads). In a storage domain, whose namespace holds no manifest,
+%% the read fails and no image is served, which is one line of the log.
 %%
 %% The windows are linked to the service, which does not trap exits, so a window that
 %% crashes takes the service and its other windows with it, and so, through erx_blk_sup,
@@ -26,20 +33,17 @@
 %%
 %% window/1 is where a window's pid is handed out, to any caller in the driver's domain and
 %% for any role. It is the seam the device service replaces: that service names each
-%% client's windows by role and hands their pids out as grants, the slot and record windows
-%% to the slot writer alone (PW1).
+%% client's windows by role and hands their pids out as grants, the boot, system A,
+%% system B and record windows to the slot writer alone and the system window to the
+%% manifest's holder of it (PW1).
 
 -module(erx_blk_service).
 -behaviour(gen_server).
 
--export([start_link/0, window/1, mount_images/0]).
+-export([start_link/0, window/1]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2]).
 
 -include("generated/erx_abi.hrl").
-
-%% Where the system domain's images mount, each under its manifest name (docs/design-stopgap.md,
-%% "Image windows").
--define(IMAGES_POINT, "/images/").
 
 %% The table is read after init/1 returns, so the boot does not wait on the device; a
 %% call made before then waits for it: at most the capacity and three reads, each bounded
@@ -61,32 +65,6 @@ window(Role) ->
         Pid -> try gen_server:call(Pid, {window, Role}, ?CALL_TIMEOUT) catch exit:_ -> {error, no_service} end
     end.
 
-%% Mounts each image window at /images/NAME, read-only, and starts no process: the
-%% supervisor's child after the service, which a call reaches once the table is admitted.
-%% A mount that fails is one line of the log; erx_ns has logged the reader's diagnostic.
-%% A mount that exits, as erx_ns's call does when its process ends, is a line of the log
-%% too, so no mount stops the block driver's start and /data.
--spec mount_images() -> ignore.
-mount_images() ->
-    Images = case whereis(?MODULE) of
-                 undefined -> {error, no_service};
-                 Pid -> try gen_server:call(Pid, images, ?CALL_TIMEOUT) catch exit:_ -> {error, no_answer} end
-             end,
-    case Images of
-        {error, Reason} -> log("no image is mounted: ~0p", [Reason]);
-        _ -> lists:foreach(fun mount_image/1, Images)
-    end,
-    ignore.
-
-mount_image({Name, Window}) ->
-    Point = <<?IMAGES_POINT, Name/binary>>,
-    try erx_ns:mount({erofs, Window}, Point, []) of
-        ok -> log("image ~s mounted at ~s", [Name, Point]);
-        {error, Reason} -> log("image ~s is not mounted: ~0p", [Name, Reason])
-    catch
-        exit:_ -> log("image ~s is not mounted: the namespace did not answer", [Name])
-    end.
-
 init([]) ->
     {ok, admitting, {continue, admit}}.
 
@@ -95,8 +73,10 @@ handle_continue(admit, admitting) ->
 
 -spec serve({ok, [erx_blk_table:window()]} | {error, term()}) -> state().
 serve({ok, Windows}) ->
+    {Slot, System} = booted(erx_blk_table:booted(erx_device_record:records())),
+    Booted = System ++ image_windows(Slot),
     Served = maps:from_list([{Role, start_window(Window)}
-                             || Window = {Role, _Start, _Sectors} <- Windows ++ image_windows()]),
+                             || Window = {Role, _Start, _Sectors} <- Windows ++ Booted]),
     log("partition table admitted; ~b windows", [map_size(Served)]),
     {served, Served};
 %% no_device is either a machine without a disk, a configuration that has no line, or a disk
@@ -111,18 +91,23 @@ start_window(Window) ->
     {ok, Pid} = erx_blk_window:start_link(Window),
     Pid.
 
+%% The booted slot and its system window, with a refused boot value's or system_image
+%% record's line in the log.
+booted({Slot, System, ok}) ->
+    {Slot, System};
+booted({Slot, System, {error, bad_boot}}) ->
+    log("no system window or image is served: bad_boot", []),
+    {Slot, System};
+booted({Slot, System, {error, {bad_device_record, Reason}}}) ->
+    log("no system window is served: ~s", [Reason]),
+    {Slot, System}.
+
 %% The windows on the booted slot's images (erx_blk_image). The manifest is read only on a
 %% boot that has a slot.
-image_windows() ->
-    case erx_blk_image:boot_slot(erx_device_record:records()) of
-        {ok, none} ->
-            [];
-        {ok, Slot} ->
-            slot_images(Slot, file:read_file(manifest_path()));
-        {error, Reason} ->
-            log("no image is served: ~0p", [Reason]),
-            []
-    end.
+image_windows(none) ->
+    [];
+image_windows(Slot) ->
+    slot_images(Slot, file:read_file(manifest_path())).
 
 slot_images(Slot, {ok, Manifest}) ->
     case erx_blk_image:windows(Manifest, Slot) of
@@ -151,8 +136,8 @@ admit() ->
     maybe
         {ok, #{capacity := Capacity}} ?= device(catch_exit(fun erx_blk:info/0)),
         ok ?= erx_blk_table:check_capacity(Capacity),
-        {ok, [Mbr, VaultEbr, DataEbr]} ?= read_records(erx_blk_table:records(), []),
-        erx_blk_table:admit(Capacity, Mbr, VaultEbr, DataEbr)
+        {ok, Records} ?= read_records(erx_blk_table:records(), []),
+        erx_blk_table:admit(Capacity, Records)
     end.
 
 read_records([], Read) ->
@@ -177,10 +162,6 @@ handle_call({window, Role}, _From, State = {served, Windows}) ->
     end;
 handle_call({window, _Role}, _From, State = {refused, Reason}) ->
     {reply, {error, {refused, Reason}}, State};
-handle_call(images, _From, State = {served, Windows}) ->
-    {reply, [{Name, Pid} || {{image, Name}, Pid} <- maps:to_list(Windows)], State};
-handle_call(images, _From, State) ->
-    {reply, [], State};
 handle_call(_Other, _From, State) ->
     {reply, {error, badarg}, State}.
 

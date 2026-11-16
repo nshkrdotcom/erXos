@@ -7,7 +7,7 @@ The data partition's littlefs volume (docs/design-stopgap.md#littlefs-in-the-sto
 the volume's owner, `erx_lfs`, on the block service's data window; the grant
 that mounts its `data` tree at `/data` in this domain; and, for each tree of
 the volume (erx_lfs:trees/0), the mint of the files service of the tree's
-name, which hands other domains grants of that tree alone (erx_lfs_mint):
+name, which hands other domains grants of that tree alone (erx_storage_mint):
 `data`, and `packages`, the installed app packages
 (docs/design-packaging.md, "Where a package lies"). The owner starts once
 the volume has mounted, so a mount that fails fails the domain's boot before
@@ -22,7 +22,7 @@ of them.
 
 -behaviour(supervisor).
 
--export([start_link/0, start_grant/1]).
+-export([start_link/0, start_grant/1, start_mint/2]).
 -export([init/1]).
 
 -define(NAME, erx_lfs).
@@ -42,9 +42,9 @@ init([]) ->
     Grant = #{id => grant, start => {?MODULE, start_grant, [?NAME]},
               restart => permanent, shutdown => brutal_kill, type => worker,
               modules => [erx_fs]},
-    Mints = [#{id => {mint, Tree}, start => {erx_lfs_mint, start_link, [Tree, ?NAME]},
+    Mints = [#{id => {mint, Tree}, start => {?MODULE, start_mint, [Tree, ?NAME]},
                restart => permanent, shutdown => brutal_kill, type => worker,
-               modules => [erx_lfs_mint]}
+               modules => [erx_storage_mint]}
              || Tree <- erx_lfs:trees()],
     {ok, {Flags, [Owner, Grant | Mints]}}.
 
@@ -66,4 +66,13 @@ start_grant(Name) ->
                     exit(Grant, kill),
                     Error
             end
+    end.
+
+-doc false.
+-spec start_mint(atom(), atom()) -> {ok, pid()} | ignore.
+start_mint(Tree, Name) ->
+    case whereis(Name) of
+        undefined -> ignore;
+        %% The owner has mounted the volume, so the mint's mount answers its arguments.
+        _Owner -> erx_storage_mint:start_link(Tree, erx_lfs, fun() -> {Name, Tree} end)
     end.

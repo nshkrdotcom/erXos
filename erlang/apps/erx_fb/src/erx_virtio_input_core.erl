@@ -96,9 +96,9 @@ those event/1 dropped, a key's repeat and a position on a device without both ax
 -type counts() :: #{malformed := non_neg_integer(), unused := non_neg_integer(),
                     skipped := non_neg_integer()}.
 
--type rel() :: ?ERX_INPUT_REL_MIN..?ERX_INPUT_REL_MAX.
--type axis() :: 0..?ERX_INPUT_AXIS_MAX.
--type wheel() :: ?ERX_INPUT_WHEEL_MIN..?ERX_INPUT_WHEEL_MAX.
+-type rel() :: erx_input_codec:input_rel().
+-type axis() :: erx_input_codec:input_axis().
+-type wheel() :: erx_input_codec:input_wheel().
 -record(fold, {
     %% The two absolute axes' ranges, or none when the device has not both.
     axes :: {range(), range()} | none,
@@ -247,14 +247,15 @@ step({ok, {key, Code, Edge}}, F) ->
     {Kept, Next} = flush(F),
     {Kept ++ [{key, Edge, Code}], Next};
 step({ok, {rel, wheel, V}}, F) ->
-    wheel(max(?ERX_INPUT_WHEEL_MIN, min(?ERX_INPUT_WHEEL_MAX, V)), F);
+    wheel(erx_input_codec:wheel(V), F);
 step({ok, {rel, x, DX}}, F) -> move({DX, 0}, F);
 step({ok, {rel, y, DY}}, F) -> move({0, DY}, F);
 step({ok, {abs, _, _}}, #fold{axes = none} = F) -> {[], count(unused, F)};
-step({ok, {abs, x, V}}, #fold{axes = {Range, _}, position = {_, Y}} = F) ->
-    {[], F#fold{position = {normalize(V, Range), Y}, moved = true}};
-step({ok, {abs, y, V}}, #fold{axes = {_, Range}, position = {X, _}} = F) ->
-    {[], F#fold{position = {X, normalize(V, Range)}, moved = true}}.
+%% Each axis's range has Min below Max, as new/1 holds every range.
+step({ok, {abs, x, V}}, #fold{axes = {{Min, Max}, _}, position = {_, Y}} = F) ->
+    {[], F#fold{position = {erx_input_codec:axis(V, Min, Max), Y}, moved = true}};
+step({ok, {abs, y, V}}, #fold{axes = {_, {Min, Max}}, position = {X, _}} = F) ->
+    {[], F#fold{position = {X, erx_input_codec:axis(V, Min, Max)}, moved = true}}.
 
 count(Why, #fold{counts = Counts} = F) ->
     #{Why := N} = Counts,
@@ -263,7 +264,7 @@ count(Why, #fold{counts = Counts} = F) ->
 %% The update's relative sum moved by {DX, DY}; when that lies past a record's range,
 %% what the update kept is sent and a new sum starts at the move alone.
 move({DX, DY} = Move, #fold{rel = {SX, SY}} = F) ->
-    case is_rel(SX + DX) andalso is_rel(SY + DY) of
+    case erx_input_codec:is_input_rel(SX + DX) andalso erx_input_codec:is_input_rel(SY + DY) of
         true -> {[], F#fold{rel = {SX + DX, SY + DY}}};
         false ->
             {Kept, Next} = flush(F),
@@ -272,20 +273,12 @@ move({DX, DY} = Move, #fold{rel = {SX, SY}} = F) ->
 
 %% The same for the wheel, with Steps already within a record's range.
 wheel(Steps, #fold{wheel = Sum} = F) ->
-    case is_wheel(Sum + Steps) of
+    case erx_input_codec:is_input_wheel(Sum + Steps) of
         true -> {[], F#fold{wheel = Sum + Steps}};
         false ->
             {Kept, Next} = flush(F),
             {Kept, Next#fold{wheel = Steps}}
     end.
-
-is_rel(V) -> V >= ?ERX_INPUT_REL_MIN andalso V =< ?ERX_INPUT_REL_MAX.
-is_wheel(V) -> V >= ?ERX_INPUT_WHEEL_MIN andalso V =< ?ERX_INPUT_WHEEL_MAX.
-
-%% A value on an axis of range Min..Max, Min below Max as new/1 holds every range, clamped
-%% to the range and scaled to 0..?ERX_INPUT_AXIS_MAX.
-normalize(V, {Min, Max}) ->
-    (max(Min, min(Max, V)) - Min) * ?ERX_INPUT_AXIS_MAX div (Max - Min).
 
 %% What the update kept, to send in its one order, and the update emptied; the position
 %% stays.

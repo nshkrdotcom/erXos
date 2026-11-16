@@ -18,7 +18,9 @@
 %% limitations under the License.
 %%
 %% Modified by erXos: the driver's suspend (Ctrl-Z) and window-size change
-%% (winch) reach the shell.
+%% (winch) reach the shell; the group has one ask for input outstanding at
+%% most (ask/1), which the driver answers with {read, Ref, Chars}; format_status/1
+%% hides the shell history and the input typed or waiting (edit 75).
 %%
 %% %CopyrightEnd%
 %%
@@ -103,7 +105,13 @@
           %% Keeps extra data inbetween input routines
           buf = [] :: unicode:chardata() | eof,
 
-          input = undefined :: #input_state{} | undefined
+          input = undefined :: #input_state{} | undefined,
+
+          %% erXos: the reference of the group's one outstanding ask for
+          %% input, or none (ask/1). It belongs to the group, not to the
+          %% request being read, so a nested request, an interrupt and an
+          %% error leave it outstanding for the next request.
+          ask = none :: none | reference()
         }).
 
 -spec start(pid()) -> pid().
@@ -161,8 +169,38 @@ init([Drv, Shell, Options]) ->
 
     {ok, init, State, {next_event, internal, [Shell, Options]}}.
 
-format_status(#{state := State}) ->
-    State#state{ line_history = undefined }.
+%% erXos, edit 75: what the user typed stays out of the group's reports and of what
+%% format_status/1 gives sys:get_status: the shell history, the line being typed
+%% (the input state of the request in progress and of each request a nested one
+%% pushed, and buf, the keys read ahead of a request) and the driver's input
+%% waiting in the queue or postponed, each such event keeping its shape with its
+%% characters emptied. The
+%% sys log, which holds the same events, is shown empty. The data is beside the
+%% state name, as gen_statem hands it over; stock OTP matches the state name here
+%% and returns a record, which crashes on every call. Any other map, such as
+%% proc_lib's #{reason => Reason}, holds no input.
+format_status(Status) ->
+    maps:map(fun(data, #state{} = Data) -> hidden_input(Data);
+                (Key, Events) when Key =:= queue; Key =:= postponed ->
+                     [hidden_event(Event) || Event <- Events];
+                (log, _Log) -> [];
+                (_Key, Value) -> Value
+             end, Status).
+
+hidden_input(#state{ input = Input, input_queue = Pushed } = Data) ->
+    Data#state{ line_history = undefined, buf = [],
+                input = hidden_input_state(Input),
+                input_queue = queue:from_list([{State, hidden_input_state(PushedInput)}
+                                               || {State, PushedInput} <- queue:to_list(Pushed)]) }.
+
+hidden_input_state(#input_state{} = Input) ->
+    Input#input_state{ cont = hidden, lines = hidden, io_lib_state = hidden };
+hidden_input_state(undefined) ->
+    undefined.
+
+hidden_event({info, {Drv, {data, _Chars}}}) -> {info, {Drv, {data, []}}};
+hidden_event({info, {Drv, {read, Ref, _Chars}}}) -> {info, {Drv, {read, Ref, []}}};
+hidden_event(Event) -> Event.
 
 init(internal, [Shell, Options], State = #state{ dumb = Dumb }) ->
 
@@ -342,12 +380,10 @@ dumb(data, Buf, Data = #state{ input = #input_state{ prompt_bytes = Pbs, encodin
                     io_reply(Data, {error,err_func(io_lib, CollectF, CollectAs)}),
                     pop_state(Data#state{ buf = [] });
                 NewState ->
-                    [Data#state.driver ! {self(), read, io_lib:CollectF(NewState)} || Data#state.shell =:= noshell],
                     dumb(data, RemainBuf, Data#state{ input = InputState#input_state{ cont = undefined, io_lib_state = NewState } })
             end;
         {more_chars, NewCont} ->
-            [Data#state.driver ! {self(), read, 0} || Data#state.shell =:= noshell],
-            {keep_state, Data#state{ input = InputState#input_state{ cont = NewCont } } }
+            {keep_state, ask(Data#state{ input = InputState#input_state{ cont = NewCont } }) }
     end;
 
 dumb(info, {Drv, activate}, #state{ driver = Drv }) ->
@@ -449,9 +485,9 @@ xterm(data, Buf, Data = #state{ input = #input_state{
                     xterm(data, RemainBuf, Data#state{ input = InputState#input_state{ cont = undefined, lines = NewLines} })
             end;
         {blink, NewCont} ->
-            {keep_state, Data#state{ input = InputState#input_state{ cont = NewCont } }, 1000};
+            {keep_state, ask(Data#state{ input = InputState#input_state{ cont = NewCont } }), 1000};
         {more_chars, NewCont} ->
-            {keep_state, Data#state{ input = InputState#input_state{ cont = NewCont } } }
+            {keep_state, ask(Data#state{ input = InputState#input_state{ cont = NewCont } }) }
     end;
 
 xterm(info, {io_request,From,ReplyAs,Req}, State)
@@ -471,7 +507,22 @@ xterm(timeout, 1000, Data) ->
     %% Blink timeout triggered
     xterm(data, [], Data).
 
+%% erXos: the line editor waits for more input. The driver is asked for it
+%% only when no ask of the group's is outstanding, so a driver that reads its
+%% terminal only for an ask never hands the group a byte it did not ask for
+%% (docs/design-shell.md, "The console reads on demand").
+ask(Data = #state{ ask = none, driver = Drv }) ->
+    Ref = make_ref(),
+    Drv ! {self(), read, Ref},
+    Data#state{ ask = Ref };
+ask(Data) ->
+    Data.
+
 %% Handle the info messages that needs to be managed in all states
+handle_info(State, {Drv, {read, Ref, Chars}}, Data = #state{ driver = Drv, ask = Ref })
+  when is_list(Chars); is_binary(Chars) ->
+    %% erXos: the answer to the outstanding ask ends it.
+    ?MODULE:State(data, Chars, Data#state{ ask = none });
 handle_info(State, {Drv, {data, Buf}}, Data = #state{ driver = Drv }) ->
     ?MODULE:State(data, Buf, Data);
 handle_info(State, {Drv, eof}, Data = #state{ driver = Drv }) ->

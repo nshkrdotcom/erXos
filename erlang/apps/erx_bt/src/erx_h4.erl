@@ -27,7 +27,7 @@ read against the bytes there, so nothing reads past the input, and no atom is ma
 
 -doc "A whole packet from the controller: an event's code and parameters, or an ACL packet's 12-bit handle, Packet_Boundary_Flag, Broadcast_Flag and data.".
 -type packet() :: {event, Code :: byte(), Parameters :: binary()}
-                | {acl, Handle :: 0..16#FFF, Boundary :: 0..3, Broadcast :: 0..3, Data :: binary()}.
+                | {acl, Handle :: erx_hci:handle(), Boundary :: 0..3, Broadcast :: 0..3, Data :: binary()}.
 -type error_reason() :: {bad_indicator, byte()} | {acl_too_long, non_neg_integer()}.
 
 -doc "Every whole packet in Bytes, in order, and the bytes of the incomplete one after them.".
@@ -52,7 +52,8 @@ split(<<>>, Packets) ->
 %% The handle is the word's low 12 bits, then Packet_Boundary_Flag in bits 12-13 and
 %% Broadcast_Flag in bits 14-15 (Part E, section 5.4.2).
 acl_packet(Word, Data) ->
-    {acl, Word band 16#FFF, (Word bsr 12) band 3, Word bsr 14, Data}.
+    <<Broadcast:2, Boundary:2, Handle:?ERX_HCI_HANDLE_BITS>> = <<Word:16>>,
+    {acl, Handle, Boundary, Broadcast, Data}.
 
 -doc "A command packet: the indicator, the opcode and the parameters, at most 255 bytes (Part E, section 5.4.1).".
 -spec command(0..16#FFFF, binary()) -> binary().
@@ -60,6 +61,6 @@ command(Opcode, Parameters) when byte_size(Parameters) =< 255 ->
     <<?ERX_H4_INDICATOR_COMMAND, Opcode:16/little, (byte_size(Parameters)), Parameters/binary>>.
 
 -doc "An ACL data packet to the controller on Handle, with Packet_Boundary_Flag Boundary and no broadcast.".
--spec acl(0..16#EFF, 0..3, binary()) -> binary().
+-spec acl(0..?ERX_HCI_HANDLE_MAX, 0..3, binary()) -> binary().
 acl(Handle, Boundary, Data) when Handle =< ?ERX_HCI_HANDLE_MAX, byte_size(Data) =< 16#FFFF ->
-    <<?ERX_H4_INDICATOR_ACL, (Handle bor (Boundary bsl 12)):16/little, (byte_size(Data)):16/little, Data/binary>>.
+    <<?ERX_H4_INDICATOR_ACL, (Handle bor (Boundary bsl ?ERX_HCI_HANDLE_BITS)):16/little, (byte_size(Data)):16/little, Data/binary>>.

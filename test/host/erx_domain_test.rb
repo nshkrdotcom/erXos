@@ -122,14 +122,14 @@ class ErxDomainTest < Minitest::Test
     # A session's template grant of a service the system domain serves, which the
     # service skips: the session finds no inspect facet in its ready answer.
     Fault.new(name: 'a template grant of a system service that the service skips', file: SERVICE,
-              from: 'grantee({session, Template}) -> {template, Template};',
-              to: 'grantee({session, _Template}) -> none;',
+              from: '<- Rows]);',
+              to: '<- Rows, false]);',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'session_inspect'),
     # The grant check of a system domain's service (R3): a ready answer that takes every
     # grantee's grants, so a session whose template holds no start grant gets one.
     Fault.new(name: "a ready answer that ignores whose grant a system service's grant is", file: SERVICE,
-              from: 'end, maps:get(Grantee, Served, []))).',
-              to: 'end, lists:append(maps:values(Served)))).',
+              from: '<- Rows, T =:= Template].',
+              to: '<- Rows, T >= 0, Template >= 0].',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'session_without_files_grant'),
     # A tree grant of a system domain's service bound to another domain than its
     # grantee: the grant exports itself to that domain, not to the session.

@@ -38,16 +38,16 @@ class BootRecordTest < Minitest::Test
   # record", lays it out in MiB regions, so that the reset count and the record each
   # have an erase unit of their own: an 8 MiB FAT16 1 MiB into the medium, the count the
   # first sector of its MiB 1 (the reserved area), the record the first sector of its
-  # MiB 3 (the data area's first cluster), and slot A at 12 MiB.
+  # MiB 3 (the data area's first cluster), and boot A at 12 MiB.
   def test_the_record_partition_is_laid_out_in_the_designs_mib_regions
     mib = (1 << 20) / SECTOR
-    in_mib = %w[record_start record_sectors record_count_start record_select_start slot_a_start].to_h do |name|
+    in_mib = %w[record_start record_sectors record_count_start record_select_start boot_a_start].to_h do |name|
       sectors = CODEC.constant("medium_#{name}")
       assert_equal 0, sectors % mib, "medium_#{name} is not on a MiB boundary"
       [name, sectors / mib]
     end
     assert_equal({ 'record_start' => 1, 'record_sectors' => 8, 'record_count_start' => 1, 'record_select_start' => 3,
-                   'slot_a_start' => 12 }, in_mib)
+                   'boot_a_start' => 12 }, in_mib)
     count, record, sectors = in_mib.values_at('record_count_start', 'record_select_start', 'record_sectors')
     refute_equal count, record, 'the reset count and the record share an erase unit'
     assert_operator [count, record].max, :<, sectors, 'the reset count or the record lies outside its partition'
@@ -65,7 +65,7 @@ class BootRecordTest < Minitest::Test
 
   def test_the_parser_finds_the_committed_slots_file_from_its_header
     file = boot_file(5000)
-    { a: 'medium_slot_a_start', b: 'medium_slot_b_start' }.each do |slot, start|
+    { a: 'medium_boot_a_start', b: 'medium_boot_b_start' }.each do |slot, start|
       choice = Record.choose(record: Record.sector(slot), header: header_of(file))
       offset = (CODEC.constant(start) + CODEC.constant('medium_slot_boot_start')) * SECTOR
       assert_equal Record::Choice.new(slot: slot, offset: offset, length: 5000), choice
@@ -73,7 +73,7 @@ class BootRecordTest < Minitest::Test
   end
 
   def test_a_header_without_magic_too_short_or_with_a_length_outside_the_slot_is_refused
-    room = (CODEC.constant('medium_slot_sectors') - CODEC.constant('medium_slot_boot_start')) * SECTOR
+    room = (CODEC.constant('medium_boot_sectors') - CODEC.constant('medium_slot_boot_start')) * SECTOR
     assert_equal room, Record.choose(record: Record.sector(:a), header: header_of(boot_file(100, image_size: room))).length
     { 'no magic' => [header_of(boot_file(100, magic: false)), /no magic/],
       'short' => [header_of(boot_file(100)).byteslice(0, 63), /boot header is not 64 bytes/],
@@ -92,7 +92,7 @@ class BootRecordTest < Minitest::Test
       other = boot_file(SECTOR + 1)
       boot = CODEC.constant('medium_slot_boot_start')
       pieces = { Record::RECORD_OFFSET / SECTOR => Record.sector(:b),
-                 CODEC.constant('medium_slot_a_start') + boot => other, CODEC.constant('medium_slot_b_start') + boot => file }
+                 CODEC.constant('medium_boot_a_start') + boot => other, CODEC.constant('medium_boot_b_start') + boot => file }
       medium = Erx::MediumImage.create(directory: directory, name: 'medium.img', pieces: pieces)
       choice = Record.read(medium)
       assert_equal [:b, file.bytesize], [choice.slot, choice.length]
@@ -112,7 +112,7 @@ class BootRecordTest < Minitest::Test
       cut = File.join(directory, 'cut.img')
       boot = Record::RECORD_OFFSET + SECTOR
       File.binwrite(cut, Record.sector(:a).rjust(boot, "\0".b))
-      File.open(cut, 'r+b') { |io| io.pwrite(header_of(boot_file(4096)), (CODEC.constant('medium_slot_a_start') + CODEC.constant('medium_slot_boot_start')) * SECTOR) }
+      File.open(cut, 'r+b') { |io| io.pwrite(header_of(boot_file(4096)), (CODEC.constant('medium_boot_a_start') + CODEC.constant('medium_slot_boot_start')) * SECTOR) }
       assert_match(/ends inside/, assert_raises(Erx::Error) { Record.read(cut) }.message)
     end
   end

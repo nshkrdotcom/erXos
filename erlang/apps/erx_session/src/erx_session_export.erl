@@ -27,10 +27,10 @@ program reaches of them.
   from the kernel's generator (erx_bytes:entropy/1) and takes no write; and
   `tty` is a name alone: a walk and a getattr reach it, and an open of it,
   or a create that would open it, answers `enxio` (docs/design-files.md,
-  "Native clients"). The design has the handler that opens the name make
-  a terminal's description on the terminal relay instead
-  (docs/design-programs.md, "The terminal"), so no terminal read or write
-  reaches this tree.
+  "Native clients"). The handler that opens the name makes a terminal's
+  description instead, an open of the terminal relay under the program's
+  job (docs/design-programs.md, "The terminal"), so no terminal read or
+  write reaches this tree.
 * **`/etc`** holds `passwd` and `group`, read-only: the session's principal,
   with its number as uid and gid, and `nobody` (65534).
 * **A create** of an existing device opens it (erx_fs_node:open_by_create/4),
@@ -238,7 +238,11 @@ getattr(Node, #{qids := Qids}) ->
     {Kind, Mode} = file(Node),
     erx_fs_node:attr(map_get(Node, Qids), Kind, Mode).
 
+%% A program's terminal is opened by its handler, never through this tree, so
+%% `tty` answers enxio whatever the mode.
 -doc false.
+open(tty, _Flags, _Fs) ->
+    {error, enxio};
 open(Node, Flags, #{dirs := Dirs} = Fs) ->
     case {access(Flags), Dirs} of
         {error, _} -> {error, einval};
@@ -267,11 +271,9 @@ dirent_type(Node, _Dirs) ->
         {file, _} -> ?ERX_P9_DT_REG
     end.
 
-%% A file opens with Access when its permission bits allow every part of it, but
-%% tty, a name alone, never opens. The clipboard is opened at the display with the
-%% program's flags, on a fid of the open's own.
-opened(tty, _Access, _Flags, _Fs) ->
-    {error, enxio};
+%% A file opens with Access when its permission bits allow every part of it. The
+%% clipboard is opened at the display with the program's flags, on a fid of the
+%% open's own.
 opened(Node, Access, Flags, Fs) ->
     {_Kind, Mode} = file(Node),
     Reads = Mode band 8#444 =/= 0,
@@ -336,7 +338,8 @@ random(Count, Entropy) ->
         error:{entropy, _Status} -> {error, eio}
     end.
 
-%% Only the files whose bits allow it open for writing (file/1).
+%% Only the files whose bits allow it open for writing (file/1); tty opens for
+%% nothing (open/3).
 -doc false.
 write({_Node, read}, _Offset, _Bytes, _Fs) ->
     {error, ebadf};

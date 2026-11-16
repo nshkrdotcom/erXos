@@ -204,7 +204,7 @@ deadline(#shell{armed = Armed} = Shell) ->
 %%% The step, the shell's effects and the checks.
 
 step(Event, #shell{core = Core, tally = Tally} = Shell) ->
-    {Actions, Next} = ?CORE:step(Event, Core),
+    {Next, Actions} = ?CORE:step(Event, Core),
     progressed(Event, ?CORE:grants(Core), Actions, ?CORE:grants(Next), Shell),
     After = lists:foldl(fun(Action, S) -> act(Action, Event, Next, S) end,
                         Shell#shell{core = Next, tally = Tally#{element(1, Event) => maps:get(element(1, Event), Tally, 0) + 1}},

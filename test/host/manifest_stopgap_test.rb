@@ -140,7 +140,7 @@ class ManifestStopgapTest < Minitest::Test
     view = @codec.open('manifest', result.bytes)
     assert_equal 4, view.count('domains')
     assert_equal 12, view.count('devices')
-    assert_equal 6, view.count('windows')
+    assert_equal 9, view.count('windows')
     assert_equal 1, view.count('images')
   end
 
@@ -153,7 +153,7 @@ class ManifestStopgapTest < Minitest::Test
     view = @codec.open('manifest', result.bytes)
     assert_equal 2, view.count('domains')
     assert_equal 4, view.count('devices')
-    assert_equal 6, view.count('windows')
+    assert_equal 9, view.count('windows')
     assert_equal 1, view.count('images')
   end
 
@@ -202,6 +202,10 @@ class ManifestStopgapTest < Minitest::Test
     assert_equal 'stopgap', admit(source).report.fetch('mode')
   end
 
+  def test_a_partial_boot_has_no_system_image
+    refused(Erx::Manifest::Invalid, 8, 'system_image', partial_boot + "system_image\n  input @artifact.release\n")
+  end
+
   def test_a_partial_boot_runs_no_services
     source = partial_boot + SERVICE
     refused(Erx::Manifest::Invalid, 2, 'service', source)
@@ -210,8 +214,8 @@ class ManifestStopgapTest < Minitest::Test
   def test_admitted_services_reach_the_encoded_manifest
     view = @codec.open('manifest', admit(@source + SERVICE).bytes)
     # The development manifest's own, data, display, inspect, log, machine, net,
-    # network_ctl, packages, start, storage_ctl and web, and this one.
-    assert_equal %w[data display inspect log machine net network_ctl packages probe start storage_ctl web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
+    # network_ctl, packages, start, storage_ctl, system and web, and this one.
+    assert_equal %w[data display inspect log machine net network_ctl packages probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
     assert_equal 0, view.count('liveness')
   end
 
@@ -257,6 +261,8 @@ class ManifestStopgapTest < Minitest::Test
   # The development manifest's system_baseline, which the sums below fit against.
   def baseline = Integer(@source[/^  system_baseline (\d+)$/, 1])
   def root_memory = Integer(@source[/^  root_memory (\d+)$/, 1])
+  # The apps row's budget, which property 4 counts within root_memory.
+  def apps_memory = Integer(@source[/^apps\n  memory (\d+)$/, 1])
   # The development manifest with the system principal's budget set to bytes.
   def with_system_memory(bytes) = changed(@source.sub(/^(principal system\n  memory )\d+$/) { "#{Regexp.last_match(1)}#{bytes}" })
 
@@ -276,8 +282,9 @@ class ManifestStopgapTest < Minitest::Test
   # Principal and baseline fit with the devices' reservations exactly, and one page
   # more does not.
   def test_device_memory_counts_against_root_memory
-    assert admit(with_system_memory(root_memory - baseline - device_memory))
-    refused(Erx::Manifest::Invalid, 4, 'principals.memory', with_system_memory(root_memory - baseline - device_memory + 4096))
+    assert admit(with_system_memory(root_memory - baseline - device_memory - apps_memory))
+    refused(Erx::Manifest::Invalid, 4, 'principals.memory',
+            with_system_memory(root_memory - baseline - device_memory - apps_memory + 4096))
   end
 
   def test_a_principal_domain_quota_is_refused
@@ -317,9 +324,9 @@ class ManifestStopgapTest < Minitest::Test
   def test_loadable_segments_and_baseline_over_root_memory_are_refused
     against = context do |arguments|
       image = arguments.fetch(:catalog).last.fetch('image')
-      image['span'] = 335_544_320 + 4096
+      image['span'] = 536_870_912 + 4096
       image.fetch('segments') << { 'file_offset' => 8192, 'mem_offset' => 4096, 'file_size' => 0,
-                                   'mem_size' => 335_544_320, 'prot' => @codec.member('prot', 'r'), 'flags' => 0 }
+                                   'mem_size' => 536_870_912, 'prot' => @codec.member('prot', 'r'), 'flags' => 0 }
     end
     refused(Erx::Manifest::Invalid, 4, 'root_startup', @source, against, message: /loadable/)
   end
@@ -779,7 +786,89 @@ class ManifestStopgapTest < Minitest::Test
   end
 
   def test_a_fixed_role_must_carry_partition_zero
-    refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'slot_a', partition: 2))
+    refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'boot_a', partition: 2))
+  end
+
+  # PW1 as the manifest states it: the slot writer's windows, the boot and system
+  # partitions of both slots and the records, are the system domain's alone.
+  def test_a_slot_writer_window_held_by_a_configured_domain_is_refused
+    %w[boot_a boot_b system_a system_b boot_selection reset_count].each do |role|
+      source = changed(@source.sub(/(window #{role}\n)  holder system/, "\\1  holder @domain.storage"))
+      refused(Erx::Manifest::Invalid, 8, 'window.holder', source)
+    end
+  end
+
+  # The one system window: read-only, on the slot's system partition, held by the
+  # storage domain that holds the block device and so runs the block driver serving it.
+  def test_the_development_manifest_gives_one_read_only_system_window_to_the_storage_domain
+    view = @codec.open('manifest', admit.bytes)
+    windows = (0...view.count('windows')).map { |at| view.fetch('windows', at) }
+    system = windows.select { |row| row.fetch('role') == @codec.member('mf_window_role', 'system') }
+    storage = (0...view.count('domains')).find { |at| view.string(view.fetch('domains', at).fetch('name')) == 'storage' }
+    assert_equal [[storage, @codec.member('mf_window_rights', 'read'), 0]],
+                 system.map { |row| row.values_at('holder', 'rights', 'partition') }
+  end
+
+  def test_a_writable_system_window_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'window.rights',
+            changed(@source.sub(/(window system\n(?:  .*\n)*?)  rights read\n/, "\\1  rights read,write\n")))
+  end
+
+  def test_a_second_system_window_is_refused
+    second = window(role: 'system', partition: 0, holder: '@domain.storage').sub('window seeded', 'window system_again')
+    refused(Erx::Manifest::Invalid, 8, 'window.role', @source + second, message: /at most one/)
+  end
+
+  # Only the block device's holder runs the driver that serves the window, so a system
+  # window named for the system domain or for any other domain would reach no holder.
+  def test_a_system_window_held_by_another_domain_than_the_block_holder_is_refused
+    %w[system @domain.network].each do |holder|
+      source = changed(@source.sub(/(window system\n)  holder @domain.storage/, "\\1  holder #{holder}"))
+      refused(Erx::Manifest::Invalid, 8, 'window.holder', source)
+    end
+  end
+
+  # Property 19's eighth clause: the system tree's service is served by the system
+  # window's holder, and only the derived rows grant it.
+  def test_the_system_service_is_served_by_the_system_window_s_holder
+    source = changed(@source.sub("service system\n  server @domain.storage", "service system\n  server @domain.network"))
+    refused(Erx::Manifest::Invalid, 19, 'service.server', source, message: /holder of the system window/)
+  end
+
+  def test_a_source_facet_row_of_the_system_service_is_refused
+    row = "facet system\n  grantee system\n  service @service.system\n  operations none\n  max_request 131072\n" \
+          "  in_flight 16\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 262144\n"
+    refused(Erx::Manifest::Invalid, 19, 'facet.service', @source + row, message: /only the derived system rows/)
+  end
+
+  def test_a_system_service_of_another_interface_is_refused
+    source = changed(@source.sub("service system\n  server @domain.storage\n  interface files",
+                                 "service system\n  server @domain.storage\n  interface driver_control"))
+    refused(Erx::Manifest::Invalid, 19, 'service.interface', source, message: /of the files interface/)
+  end
+
+  # A second service record whose public name is system, under another label, on
+  # another server, since property 5 refuses two names alike on one server first.
+  def test_a_second_system_service_is_refused
+    second = "service system_again\n  name \"system\"\n  server @domain.network\n  interface files\n"
+    refused(Erx::Manifest::Invalid, 19, 'service.name', @source + second, message: /holds one service named system/)
+  end
+
+  def test_a_system_window_without_the_system_service_is_refused
+    source = changed(@source.sub(/^service system\n(?:  .*\n)*/, ''))
+    refused(Erx::Manifest::Invalid, 19, 'service.name', source, message: /holds one service named system/)
+  end
+
+  # The storage domain mounts the system window through the system_image row's image
+  # length, tree and root hash, so neither comes without the other.
+  def test_a_system_window_without_a_system_image_row_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'window.role', changed(@source.sub("system_image\n  input @artifact.release\n", '')),
+            message: /system_image row/)
+  end
+
+  def test_a_system_image_row_without_a_system_window_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'system_image', changed(@source.sub(/^window system\n(?:  .*\n)*/, '')),
+            message: /system window it describes/)
   end
 
   def test_a_fat_window_must_name_a_primary_partition
@@ -893,6 +982,43 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Unsupported, 'unsupported', 'partial_boot', source, message: /M5/)
   end
 
+  # The system_image row packs the release artifact's image and tree as the fixture
+  # gives them: two blocks from the partition's start and one tree block after them.
+  def test_the_system_image_row_packs_the_release_images_tree
+    view = @codec.open('manifest', admit.bytes)
+    assert_equal 1, view.count('system_image')
+    row = view.fetch('system_image', 0)
+    assert_equal [8192, 8192, 4096, 32], row.values_at('image_length', 'tree_offset', 'tree_length', 'salt_length')
+    assert_equal ["\x5a".b * 32, "\xa5".b * 32], row.values_at('salt', 'root_hash')
+  end
+
+  # A release artifact whose image or tree the system partition cannot hold as the
+  # record describes it is refused.
+  def test_a_system_image_the_record_cannot_describe_is_refused
+    tree = ManifestContextFixture.images.fetch('release').fetch('tree')
+    [{ 'extents' => [{ 'slot_offset' => 4096, 'length' => 8192 }] }, { 'tree' => nil },
+     { 'tree' => tree.merge('offset' => 12_288) }, { 'tree' => tree.merge('length' => 100) },
+     { 'tree' => tree.merge('salt' => 'AB') }, { 'tree' => tree.merge('salt' => '') },
+     { 'tree' => tree.merge('root_hash' => '00') }, { 'tree' => tree.merge('length' => 1_048_576 * 512) }].each do |change|
+      release = ManifestContextFixture.images.fetch('release').merge(change)
+      against = context { |arguments| arguments[:artifacts] = arguments[:artifacts].merge('release' => release) }
+      refused(Erx::Manifest::Invalid, 8, 'system_image.input', @source, against)
+    end
+  end
+
+# With no verified image sharing the release artifact, the system_image record alone
+# reads its extents, and a refusal of them names that record.
+def test_a_system_image_with_no_extents_is_refused_under_its_own_field
+  source = changed(@source.sub(/^image release\n(?:  .*\n)*/, '').sub(/^window release\n(?:  .*\n)*/, ''))
+  release = ManifestContextFixture.images.fetch('release').merge('extents' => [])
+  against = context { |arguments| arguments[:artifacts] = arguments[:artifacts].merge('release' => release) }
+  refused(Erx::Manifest::Invalid, 8, 'system_image.input', source, against, message: /at least one extent/)
+end
+
+  def test_a_second_system_image_row_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'system_image', @source + "system_image\n  input @artifact.release\n")
+  end
+
   # The release image (docs/design-stopgap.md, "The Phase 1 manifest check"): format
   # erofs_unchecked, its extents from the artifact, every tree field zero.
   def test_the_release_image_is_recorded_without_a_tree
@@ -904,7 +1030,7 @@ class ManifestStopgapTest < Minitest::Test
     assert_equal [0, 0, 0, 0, 0, 0], image.values_at('hash_block_size', 'hash_offset', 'hash_bytes', 'salt_length',
                                                      'hash_algorithm', 'salt').map { |value| value.is_a?(String) ? value.sum : value }
     assert_equal 0, image.fetch('root_hash').sum
-    assert_equal [{ 'slot_offset' => 128 << 20, 'length' => 8192 }], (0...view.count('extents')).map { |at| view.fetch('extents', at) }
+    assert_equal [{ 'slot_offset' => 0, 'length' => 8192 }], (0...view.count('extents')).map { |at| view.fetch('extents', at) }
     windows = (0...view.count('windows')).map { |at| view.fetch('windows', at) }
     verified = windows.select { |row| row.fetch('role') == @codec.member('mf_window_role', 'verified_image') }
     assert_equal [[0, @codec.member('mf_window_rights', 'read')]], verified.map { |row| row.values_at('image', 'rights') }

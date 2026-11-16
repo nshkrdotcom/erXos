@@ -4,10 +4,13 @@
 %% "Erlang clients"), run by test/host/erx_font_test.rb on stock's emulator
 %% in a directory that holds the subfonts of display/font/fixed: the shipped
 %% subfonts parse and load into a draw connection, the file's two pixel
-%% forms read alike, and each malformed file is refused for its reason.
+%% forms read alike, and each malformed file is refused for its reason. A
+%% subfont may end with a pair section (docs/design-desktop-programs.md,
+%% "Kerning"): each fault of the section is refused with `kern`, and
+%% width/2 and runs/2 place a line by its pairs through erx_pen.
 -module(erx_font_tests).
 -include_lib("eunit/include/eunit.hrl").
--export([small/0, file/3]).
+-export([small/0, file/3, entries/1]).
 
 -define(K1, 16#31).
 -define(K8, 16#38).
@@ -22,15 +25,25 @@ small() ->
 %% A subfont file of Spec, its pixels as rows, as one compressed block, or
 %% as one compressed block per row. Text replaces the value of any of the
 %% header fields chan, x0, w, h, n, height and ascent with other text or number.
+%% A Spec with pairs, {First, Second, Adjustment} in order, ends with their
+%% pair section.
 file(Spec, Form, Text) ->
     #{chan := Chan, w := W, pixels := Pixels, height := Height, ascent := Ascent, entries := Entries} = Spec,
+    Pairs = maps:get(pairs, Spec, []),
     Line = line(Spec),
     H = byte_size(Pixels) div Line,
     Field = fun(Name, Value) -> field(maps:get(Name, Text, Value)) end,
     Header = [Field(chan, Chan), Field(x0, 0), field(0), Field(w, W), Field(h, H)],
     Table = << <<X:16/little, Top, Bottom, Left:8/signed, Width>> || {X, Top, Bottom, Left, Width} <- Entries >>,
     iolist_to_binary([image(Form, Header, Pixels, W, H, Line),
-                      Field(n, length(Entries) - 1), Field(height, Height), Field(ascent, Ascent), Table]).
+                      Field(n, length(Entries) - 1), Field(height, Height), Field(ascent, Ascent), Table,
+                      [section(length(Pairs), entries(Pairs)) || Pairs =/= []]]).
+
+%% A pair section: the word kern, Count as its count field, then Entries.
+section(Count, Entries) -> iolist_to_binary([field(<<"kern">>), field(Count), Entries]).
+
+%% The entries of Pairs, {First, Second, Adjustment} each, as a section holds them.
+entries(Pairs) -> << <<A:16/little, B:16/little, K:8/signed>> || {A, B, K} <- Pairs >>.
 
 image(rows, Header, Pixels, _W, _H, _Line) ->
     [Header, Pixels];
@@ -82,16 +95,16 @@ shipped_load_test() ->
                                      quota => #{pixels => 1024 * 1024, side => 16384}}),
     Colour = {alloc, 2, 0, 0, ?K8, 1, {0, 0, 1, 1}, {0, 0, 1, 1}, 0},
     Loaded = lists:foldl(fun(Message, State) ->
-                                 {ok, Next, _} = erx_draw_core:step(State, Message),
+                                 {Next, _} = step(State, Message),
                                  Next
                          end, Connection, erx_font:load(Subfont, 1) ++ [Colour]),
-    {ok, _, Draws} = erx_draw_core:step(Loaded, {string, 0, 2, 1, {10, 20}, {0, 0, 640, 480}, {0, 0}, [$o, $k]}),
+    {_, Draws} = step(Loaded, {string, 0, 2, 1, {10, 20}, {0, 0, 640, 480}, {0, 0}, [$o, $k]}),
     ?assertMatch([{draw, 0, _, 2, _, 1, {OX, OTop}, _, _}, {draw, 0, _, 2, _, 1, {KX, KTop}, _, _}], Draws).
 
 %% Rows, one compressed block and a block per row read as the same subfont.
 forms_test() ->
     Expected = #{chan => ?K1, r => {0, 0, 16, 2}, pixels => <<16#F0, 16#0F, 16#AA, 16#55>>,
-                 height => 2, ascent => 1, glyphs => [{0, 8, 0, 2, 0, 8}, {8, 16, 0, 2, -1, 8}]},
+                 height => 2, ascent => 1, glyphs => [{0, 8, 0, 2, 0, 8}, {8, 16, 0, 2, -1, 8}], pairs => <<>>},
     ?assertEqual([Expected, Expected, Expected], [parsed(small(), Form) || Form <- [rows, compressed, per_row]]).
 
 %% load/2 for the small subfont: the image, its one band, the cache and a
@@ -164,7 +177,7 @@ tiles(Chan, W, H) ->
     Connection = erx_draw_core:new(#{r => {0, 0, 640, 480}, chan => ?ARGB32,
                                      quota => #{pixels => 1024 * 1024, side => 32768}}),
     lists:foldl(fun(Message, State) ->
-                        {ok, Next, _} = erx_draw_core:step(State, Message),
+                        {Next, _} = step(State, Message),
                         Next
                 end, Connection, Messages),
     Loads = [{R, P} || {load, 1, R, P} <- Messages],
@@ -219,3 +232,104 @@ glyphs_test_() ->
      ?_assertEqual({error, glyphs}, refused(Small#{entries := [{8, 0, 2, 0, 8}, {0, 0, 2, 0, 8}, {16, 0, 0, 0, 0}]})),
      ?_assertEqual({error, glyphs}, refused(Small#{entries := [{0, 0, 2, 0, 8}, {8, 0, 2, 0, 8}, {17, 0, 0, 0, 0}]})),
      ?_assertEqual({error, glyphs}, refused(Small, #{n => 3}))].
+
+%% The small subfont's image as three glyphs: glyph 0 of advance 200, so a
+%% kerned advance can pass 255; glyph 1 of width 0, which a font reader takes
+%% as missing; and glyph 2, the last, placed one pixel left of the pen.
+kerned() ->
+    Small = small(),
+    Small#{entries := [{0, 0, 2, 0, 200}, {8, 0, 0, 0, 0}, {8, 0, 2, -1, 8}, {16, 0, 0, 0, 0}]}.
+
+%% The kerned subfont's file with Section after its glyph table.
+with_section(Section) -> erx_font:parse(<<(file(kerned(), rows, #{}))/binary, Section/binary>>).
+
+%% A section's entries are kept as the file's bytes, and the file without
+%% them is the same subfont without pairs.
+pairs_test() ->
+    Kerned = kerned(),
+    Pairs = [{0, 2, 55}, {2, 0, 3}, {2, 2, -8}],
+    {ok, #{pairs := Kept} = Subfont} = erx_font:parse(file(Kerned#{pairs => Pairs}, rows, #{})),
+    ?assertEqual(entries(Pairs), Kept),
+    ?assertEqual({ok, Subfont#{pairs := <<>>}}, erx_font:parse(file(Kerned, rows, #{}))).
+
+%% Once the field after the glyph table reads kern, every fault of the
+%% section refuses the file with kern: an index at the glyph count, a count
+%% that is missing, not a number, below 1 or not matched by exactly its
+%% entries, a pair not above the one before it, an adjustment of 0, a pair
+%% naming the glyph of width 0, and a kerned advance outside 0 to 255.
+kern_test_() ->
+    One = fun(A, B, K) -> with_section(section(1, entries([{A, B, K}]))) end,
+    [?_assertMatch({ok, _}, One(0, 2, -1)),
+     ?_assertMatch({ok, _}, One(2, 0, -8)),
+     ?_assertMatch({ok, _}, One(0, 2, 55)),
+     ?_assertEqual({error, kern}, One(0, 3, -1)),
+     ?_assertEqual({error, kern}, One(3, 0, -1)),
+     ?_assertEqual({error, kern}, with_section(field(<<"kern">>))),
+     ?_assertEqual({error, kern}, with_section(section(<<"many">>, <<>>))),
+     ?_assertEqual({error, kern}, with_section(section(-1, <<>>))),
+     ?_assertEqual({error, kern}, with_section(section(0, <<>>))),
+     ?_assertEqual({error, kern}, with_section(section(2, entries([{0, 2, -1}])))),
+     ?_assertEqual({error, kern}, with_section(<<(section(1, entries([{0, 2, -1}])))/binary, 0>>)),
+     ?_assertEqual({error, kern}, with_section(section(2, entries([{0, 2, -1}, {0, 2, 1}])))),
+     ?_assertEqual({error, kern}, with_section(section(2, entries([{2, 0, -1}, {0, 2, 1}])))),
+     ?_assertEqual({error, kern}, One(0, 2, 0)),
+     ?_assertEqual({error, kern}, One(0, 1, -1)),
+     ?_assertEqual({error, kern}, One(1, 0, 1)),
+     ?_assertEqual({error, kern}, One(2, 0, -9)),
+     ?_assertEqual({error, kern}, One(0, 2, 56))].
+
+%% Bytes after the glyph table that do not start with a field reading kern
+%% stay trailing, fewer than a field's bytes among them.
+trailing_section_test_() ->
+    [?_assertEqual({error, trailing}, with_section(<<"kern">>)),
+     ?_assertEqual({error, trailing}, with_section(field(<<"kerx">>))),
+     ?_assertEqual({error, trailing}, with_section(field(<<"ke rn">>))),
+     ?_assertEqual({error, trailing}, with_section(<<(field(<<"pairs">>))/binary, (field(1))/binary>>))].
+
+%% erx_pen moves from each glyph to the next by its advance plus the pair's
+%% adjustment: V at A's advance less 2, o at V's advance after it.
+pen_test() ->
+    Advance = fun($A) -> 9; ($V) -> 8; ($o) -> 7 end,
+    Kern = fun($A, $V) -> -2; (_, _) -> 0 end,
+    ?assertEqual({[0, 7, 15], 22}, erx_pen:place("AVo", Advance, Kern)),
+    ?assertEqual({[0], 9}, erx_pen:place("A", Advance, Kern)),
+    ?assertEqual({[], 0}, erx_pen:place("", Advance, Kern)).
+
+%% A line with one pair is two runs, the second at its kerned offset; a line
+%% without pairs is one run.
+runs_test() ->
+    {ok, Subfont} = erx_font:parse(file((kerned())#{pairs => [{0, 2, -3}]}, rows, #{})),
+    ?assertEqual(221, erx_font:width(Subfont, [2, 0, 2, 2])),
+    ?assertEqual([{0, [2, 0]}, {205, [2, 2]}], erx_font:runs(Subfont, [2, 0, 2, 2])),
+    ?assertEqual(405, erx_font:width(Subfont, [0, 0, 2])),
+    ?assertEqual([{0, [0, 0]}, {397, [2]}], erx_font:runs(Subfont, [0, 0, 2])),
+    ?assertEqual([{0, [2, 2, 0]}], erx_font:runs(Subfont, [2, 2, 0])),
+    ?assertEqual([], erx_font:runs(Subfont, [])),
+    ?assertEqual(0, erx_font:width(Subfont, [])).
+
+%% Each run drawn as one `s` at its offset, its source point moved by the
+%% same amount, draws every glyph where erx_pen puts it: pen 8, 205 and 213
+%% after the first, each glyph its left offset from the pen.
+runs_draw_test() ->
+    {ok, Subfont} = erx_font:parse(file((kerned())#{pairs => [{0, 2, -3}]}, rows, #{})),
+    Connection = erx_draw_core:new(#{r => {0, 0, 640, 480}, chan => ?ARGB32,
+                                     quota => #{pixels => 1024 * 1024, side => 16384}}),
+    Colour = {alloc, 2, 0, 0, ?K8, 1, {0, 0, 1, 1}, {0, 0, 1, 1}, 0},
+    Loaded = lists:foldl(fun(Message, State) ->
+                                 {Next, _} = step(State, Message),
+                                 Next
+                         end, Connection, erx_font:load(Subfont, 1) ++ [Colour]),
+    Draws = lists:append([begin
+                              Message = {string, 0, 2, 1, {10 + X, 20}, {0, 0, 640, 480}, {X, 0}, Glyphs},
+                              {_, Run} = step(Loaded, Message),
+                              Run
+                          end || {X, Glyphs} <- erx_font:runs(Subfont, [2, 0, 2, 2])]),
+    ?assertEqual([10 - 1, 10 + 8, 10 + 205 - 1, 10 + 213 - 1],
+                 [X0 || {draw, 0, {X0, _, _, _}, 2, _, 1, _, _, _} <- Draws]).
+
+%% erx_draw_core:step/2 for a message the case expects the core to take: a
+%% refusal or a stop among its actions fails the case.
+step(State, Message) ->
+    {Next, Ops} = erx_draw_core:step(State, Message),
+    ?assertEqual([], [Op || Op <- Ops, is_tuple(Op), lists:member(element(1, Op), [error, stop])]),
+    {Next, Ops}.

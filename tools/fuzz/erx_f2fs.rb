@@ -9,8 +9,11 @@ require_relative '../lib/erx/generated'
 
 # The fuzz target of erx_f2fs_codec, F2FS's codec (test/erlang/erx_f2fs_fuzz.erl,
 # docs/design-f2fs.md, "Reading the medium"): every reader over mutations of the
-# codec tests' fixtures, the checksums mostly fixed up,
-# fail every malformed block with an error naming the rule, never a crash. Compiled
+# codec tests' fixtures and of the corpus images' superblocks and checkpoint packs,
+# the checksums mostly fixed up, fail every malformed block with an error naming the
+# rule, never a crash. The corpus images are decoded from the files the fetch step put
+# in build/third_party and checked against their deps.lock pins, so the target fails,
+# naming the image, until every corpus source is fetched. Compiled
 # from source with erx_abi_packed, which the ABI generator writes into build/gen, and
 # run on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's). It runs the codec as it
 # is, then each seeded fault the design names for these readers applied to a copy,
@@ -20,7 +23,11 @@ module ErxF2fsFuzz
   Erx::Generated.ensure(root: ROOT)
   CODEC = File.join(ROOT, 'erlang/apps/erx_f2fs/src/erx_f2fs_codec.erl')
   SOURCES = [File.join(Erx::Generated::OUTPUT, 'erlang/apps/erx/src/generated/erx_abi_packed.erl'),
-             *%w[erx_f2fs_codec_tests erx_f2fs_fuzz].map { |name| File.join(ROOT, "test/erlang/#{name}.erl") }].freeze
+             *%w[erx_f2fs_codec_tests erx_f2fs_corpus erx_f2fs_fuzz].map do |name|
+               File.join(ROOT, "test/erlang/#{name}.erl")
+             end].freeze
+  CORPUS = File.join(ROOT, 'build/third_party')
+  LOCK = File.join(ROOT, 'deps.lock')
   INCLUDE = File.join(Erx::Generated::OUTPUT, 'erlang/apps/erx/include')
   # Each run, inside tools/erx check-fuzz's 900 s for the target: the codec's own runs
   # every case, and a seeded fault's ends at its first failure.
@@ -76,7 +83,8 @@ module ErxF2fsFuzz
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
-                      '-run', 'erx_f2fs_fuzz', 'run', seed.to_s, cases.to_s, chdir: work, stdin_data: '')
+                      '-run', 'erx_f2fs_fuzz', 'run', seed.to_s, cases.to_s, CORPUS, LOCK,
+                      chdir: work, stdin_data: '')
     end
   end
 end

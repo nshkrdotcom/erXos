@@ -420,7 +420,7 @@ mapping of the console's page hands nothing over.
 | `erx_irq_line:ack(Handle) -> ok` | direct: `erx_device:irq_ack/2`; shared: `{erx_irq_done, Ref}` to the owner, `Ref` the member's monitor, a message that never waits |
 | `erx_irq_line:start_owner(Dev, Line)` | opens `Dev`, binds `Line` with `irq_bind_owner/2`, runs `erx_irq_line_core` |
 | `erx_irq_line:start_owners([{Driver, [Dev]}]) -> {ok, [pid()]} \| {error, Reason}` | starts the owners `owners/1` names, in order, each linked to the caller |
-| `erx_irq_line_core:step(Event, State) -> {[Action], State}` | pure; events `fire`, `{join, Ref, Pid, Dev}`, `{done, Ref}`, `{down, Ref}`; actions `{notify, Pid, Dev}` and `ack` |
+| `erx_irq_line_core:step(Event, State) -> {State, [Action]}` | pure; events `fire`, `{join, Ref, Pid, Dev}`, `{done, Ref}`, `{down, Ref}`; actions `{notify, Pid, Dev}` and `ack` |
 | `erx_device:irq_bind(Dev, Line)` | binds a direct line; `{error, shared}` on a shared line |
 | `erx_device:irq_bind_owner(Dev, Line)` | binds a shared line for its owner; `{error, direct}` on a direct line |
 | `erx_device:irq_holder(Dev, Line) -> {ok, pid()} \| {error, unbound}` | the process the line is bound to, read from the NIF's binding |

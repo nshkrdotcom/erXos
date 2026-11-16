@@ -331,7 +331,7 @@ module Erx
     # cell fails on its own outcome and never waits out the boot's deadline.
     KILL_POLLS = 240
     KILL_LINE = 'KtDoms = fun() -> erx_domain_core:domains(maps:get(core, sys:get_state(erx_domain_srv))) end, ' \
-                'io:format("~0p~n", [{kiosk_killed, try ' \
+                'io:format("~0kp~n", [{kiosk_killed, try ' \
                 '[#{node := KtN, pid := KtP}] = [KtD || #{origin := {session, _}, node := KtM} = KtD <- KtDoms(), ' \
                 'lists:prefix("client_", atom_to_list(KtM))], ' \
                 'KtWho = fun() -> erpc:call(KtN, erlang, whereis, [erx_kiosk_test], 5000) end, KtK = KtWho(), ' \

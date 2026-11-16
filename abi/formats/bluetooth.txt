@@ -92,7 +92,9 @@ limit hci_status_success u8 0x00
 # Unknown Connection Identifier (Vol 1 Part F, 2.2): a disconnect naming a handle the
 # controller has already let go.
 limit hci_status_unknown_connection u8 0x02
-# A Connection_Handle is 12 bits, from 0x000 to 0xEFF (5.4.2).
+# A Connection_Handle is the low 12 bits of its 16-bit word, below the two bits each of
+# Packet_Boundary_Flag and Broadcast_Flag, and runs from 0x000 to 0xEFF (5.4.2).
+limit hci_handle_bits u8 12
 limit hci_handle_max u16 0x0eff
 # LE Read Buffer Size reserves an LE_ACL_Data_Packet_Length from 0x0001 to 0x001A
 # (7.8.2): every controller takes at least 27 octets of data (5.4.2).

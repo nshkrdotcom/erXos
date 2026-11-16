@@ -15,6 +15,10 @@ module Erx
   # file, and no key or other block reaches it.
   module TrustStore
     DIRECTORY = 'config/trust'
+    # Where a release carries the store: in the application directory of public_key, at
+    # the path pubkey_os_cacerts:erxos_paths/0 reads under code:priv_dir(public_key).
+    APPLICATION = 'public_key'
+    PATH = 'priv/cacerts.pem'
     MAX_ROOT_BYTES = 8 * 1024
     ROOT_FORM = %r{\A\n*-----BEGIN CERTIFICATE-----\n(?:[A-Za-z0-9+/=]*\n)+-----END CERTIFICATE-----\n\n*\z}
 

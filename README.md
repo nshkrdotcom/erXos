@@ -228,6 +228,14 @@ Eshell V17.1.1 (type help(). for help)
   the running system and read its files; `tools/erx web` shows the
   machine's records in a browser.
 * Hosted mode runs the runtime as a macOS process for fast iteration.
+* In every domain but the system domain, `erx_report` filters OTP's crash
+  and logger reports at boot: a report names the process, its registered
+  name, the error's class, the reason's leading atom and the stack's
+  functions, and carries no process state, message, dictionary or call
+  argument. A module's `format_status/1` hides its terms from every
+  `proc_lib`, `gen_server` and `gen_statem` report.
+* The pure Erlang cores return `{State, Actions}`, and one edge loop,
+  `erx_actions:perform/3`, performs a step's actions.
 
 **Shell and commands**
 
@@ -247,9 +255,10 @@ Eshell V17.1.1 (type help(). for help)
   hangs up that tty's shells. The line discipline that will serve them,
   `erx_tty` (cooked editing, signals for the foreground group, `termios`
   modes and timers, after FreeBSD's), is a pure core with host tests, and
-  no tty runs it yet. The terminal relay's decisions (`erx_session_relay_core`,
-  `erx_tty_link`) are pure cores with host tests as well, and nothing runs
-  them yet.
+  no tty runs it yet. The terminal relay (`erx_session_relay`, with its pure cores
+  `erx_session_relay_core` and `erx_tty_link`) is a server with host
+  tests, one relay per tty; `erx_output` and a tty that runs the line
+  discipline are not built.
 * Programs have pipes and a session process can start one. A program's
   `kill` and `kill(pid, 0)` are answered by its handler, and a program
   reaches only itself. The command shell runs a program of the session's
@@ -262,9 +271,12 @@ Eshell V17.1.1 (type help(). for help)
   (`pread`, `pwrite`, `lseek`, `fstat`). A program started with a window
   gets a `/dev` of its own (`draw`, `ctl`, `kbd`, `mouse`, `wctl`, `label`
   and, if its grant carries it, `clipboard`) from its handler; host tests
-  cover it over stand-ins of the window and draw connection, and no QEMU
+  cover it over stand-ins of the window and draw connection (the window and
+  the draw connection each have a keeper of their `kbd` and `mouse` reads),
+  and no QEMU
   cell runs a program that draws. The file tree a program will see (`/bin`, `/dev`
-  with `null`, `zero`, `urandom` and `tty`, and `/etc/passwd` and
+  with `null`, `zero`, `urandom` and `tty`, a name that answers `ENXIO` as
+  a file, and `/etc/passwd` and
   `/etc/group`) is written as a file server that nothing starts yet.
 * musl's errno and signal numbers are FreeBSD's, generated from the ABI's
   tables, and `strerror`'s texts are checked against FreeBSD's.
@@ -275,14 +287,19 @@ Eshell V17.1.1 (type help(). for help)
   file system in Erlang. The storage, apps and machine services mount
   their own trees at `/data`, `/apps` and `/machine`, so one path reaches
   each in every session, the system shell's included.
+* A stream file is one whose read waits for an event: a key, a mouse event
+  or bytes. The file's grant hands such a read to a keeper process, which
+  holds the waiting requests, so a program waiting on `/dev/kbd` does not
+  hold up its other files, their writes, clunks and flushes.
 * A storage domain serves `/data` from littlefs over a virtio block driver
   on QEMU and an SD driver on the Pi 4, and restarts cleanly after a
   failure. A QEMU suite kills the block driver in the middle of a transfer
   and finds each kept file cut at a sync. An EROFS reader mounts read-only
   images.
 * An F2FS codec reads a volume's superblock and checkpoint pack, its node
-  and segment tables, journals, inodes and directory entries. The file
-  system is not built yet.
+  and segment tables, journals, inodes and directory entries, and a mount
+  core picks the superblock copy and checkpoint pack and decides the mount
+  mode. The file system is not built yet.
 * `erx-app pack`, the SDK's packer, compiles an app directory's Erlang
   sources against the SDK and packs it into a `.app` file: a header
   signed by default with a development key the packer makes on the host,
@@ -302,7 +319,8 @@ Eshell V17.1.1 (type help(). for help)
   and root's login there reboots the machine; `tools/erx boot` gives its
   guest no network device yet.
 * OTP's `ssl` and `inets` are in every domain release, with a trust store
-  of five root certificates and its reader. Host tests fetch over HTTPS from
+  of five root certificates, which every release with `public_key` carries
+  as `priv/cacerts.pem` for `public_key:cacerts_get/0`. Host tests fetch over HTTPS from
   loopback `ssl` servers with no internet; no QEMU suite fetches from the
   network yet.
 
@@ -349,6 +367,10 @@ Eshell V17.1.1 (type help(). for help)
   and a fuzz target check them. A real fetch on a target waits on the
   network suite.
 
+* `erx_desk`, the desktop application, runs a window of its own and a
+  `clock` command that reads the clock's state before the wall clock; its
+  pure cores have host tests.
+
 **Web demo and checks**
 
 * The website runs a demo in the browser on an AArch64 emulator, with a
@@ -359,10 +381,11 @@ Eshell V17.1.1 (type help(). for help)
 **Not built yet**
 
 * The rest of erXos's own kernel, terminal input and sockets for programs,
-  drivers for USB and Bluetooth, which have host-tested cores only (a hub
-  and port state machine, descriptor and HID decoders, and a Bluetooth
-  HCI codec and controller core), the rest of the browser client, and
-  the POSIX-lite layer. Each has a design document in [docs/](docs/). The
+  drivers for USB, Bluetooth and WiFi, which have host-tested cores only (a hub
+  and port state machine, descriptor and HID decoders, a Bluetooth
+  HCI codec and a controller process with its line, links and patch
+  reader, and WiFi's join machine, SAE exchange and EAPOL-Key codec), the
+  rest of the browser client, and the POSIX-lite layer. Each has a design document in [docs/](docs/). The
   Pi 4's header (GPIO, SPI, I2C) has register descriptions, a pin table
   and the pure core of a pin's ownership, and no driver yet.
 
@@ -523,7 +546,7 @@ A new checkout or git worktree needs its sources, the stock OTP oracle and
 the native runtime built before `make check` can run. One command does it:
 
 ```sh
-ERX_SOURCE_CACHE=/path/to/other/checkout/build/third_party make setup
+ERX_SOURCE_CACHE=/path/to/other/checkout/build/downloads make setup
 ```
 
 `make setup` (`tools/erx setup --jobs N`) runs, in order: every source
@@ -538,9 +561,12 @@ skipped, so a second run does nothing. Each build runs under a deadline
 with its own log in `build/logs/`.
 
 It never downloads. `ERX_SOURCE_CACHE` names another checkout's
-`build/third_party`; the archives in the `downloads` directory beside it
-are copied only after their SHA-256 matches `deps.lock`. Without it, the
-sources must already be there from `make fetch`. It does not fetch
+`build/downloads`; its archives are copied only after their SHA-256 matches
+`deps.lock`. Without it, the sources must already be there from `make fetch`.
+`tools/erx fetch --cache DIR` does the same for every source at once, with DIR the other checkout's
+`build/downloads`: it fills each source the cache holds, names each it does
+not, and leaves an OCI image (the Docker cache holds those) to
+`tools/erx fetch --source ID`. Setup does not fetch
 `arm-registers`, `tla-tools`, `herdtools7` or the oracle image
 (`Erx::Setup::SKIPPED_SOURCES`): only `tools/erx sysreg refresh` reads
 the first, only `make check-tla` uses the second, only

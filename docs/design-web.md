@@ -445,11 +445,11 @@ WebSocket, and, on the network front end, `POST /login` and
 `erx_web_conn` is a pure state machine, one per browser connection:
 
 ```erlang
--spec step(Input, State) -> {[Action], State}.
+-spec step(Input, State) -> {State, [Action]}.
 %% Input:  {in, Bytes} | {text, Bytes} | {opened, View, Pid} | {update, View, Body}
 %%       | {ended, View, Reason} | tick
 %% Action: {send, Bytes} | {close, Reason} | {open, View, Target} | {next, Pid}
-%%       | {stop, Pid} | {event, Pid, Event}
+%%       | {stop_view, Pid} | {event, Pid, Event}
 ```
 
 `{in, Bytes}` and `{text, Bytes}` are a binary and a text WebSocket

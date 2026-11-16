@@ -3,14 +3,15 @@
 
 %% The fuzz target of erx_usb_desc, the USB descriptor decoder, with the claim property
 %% test of docs/design-usb.md, "Host tests of the cores", run by tools/fuzz/erx_usb_desc.rb.
-%% Each round decodes one input, drawn as a configuration, a hub descriptor, a string or
-%% language table, or a device descriptor: built from descriptors with values around
+%% Each round decodes one input, drawn as a configuration or its length, a hub
+%% descriptor, a string or language table, or a device descriptor or its first 8 bytes:
+%% built from descriptors with values around
 %% every bound, a fixture with bytes flipped, inserted or cut, or random bytes. Every
 %% configuration accepted is then claimed at each speed for a plain device and for hubs
 %% of each protocol. A round fails with a marker the runner looks for: `crash` when a
 %% decoder or the claim raises or answers something outside its shapes, and
 %% `out_of_bounds` when an accepted value breaks a bound the stack relies on: a
-%% wTotalLength past 4096 bytes, an endpoint numbered 0, a hub of more than 15 ports, a
+%% wTotalLength past 4096 bytes or below 9, an endpoint numbered 0, a hub of more than 15 ports, a
 %% string that is not UTF-8, an endpoint address claimed twice, more than 7 pipes, or a
 %% pipe whose packet size, burst, payload or interval exponent is not the one its speed
 %% and type allow, or whose payload does not fit its queue block's buffer.
@@ -32,11 +33,13 @@ run([Seed]) ->
 
 fuzz_round() ->
     case rand:uniform(10) of
-        N when N =< 7 -> decoded(configuration, input(fun built_configuration/0, fixtures()));
+        N when N =< 6 -> decoded(configuration, input(fun built_configuration/0, fixtures()));
+        7 -> decoded(configuration_length, input(fun built_configuration/0, fixtures()));
         8 -> decoded(hub, input(fun built_hub/0, [hub(4, 0, 50)]));
         9 -> decoded(pick([string, languages]),
                      input(fun built_string/0, [string(<<$a, 0, 16#3d, 16#d8, 16#00, 16#de>>)]));
-        10 -> decoded(device, input(fun() -> device(9, 0, rand:uniform(4) - 1) end, [device(0, 0, 0)]))
+        10 -> decoded(pick([device, device_head]),
+                      input(fun() -> device(9, 0, rand:uniform(4) - 1) end, [device(0, 0, 0)]))
     end.
 
 input(Build, Fixtures) ->
@@ -88,6 +91,10 @@ check(languages, Table, Bytes) ->
     sound(lists:all(fun(Id) -> Id >= 0 andalso Id =< 16#ffff end, Table), Bytes, Table);
 check(string, Text, Bytes) ->
     sound(is_binary(unicode:characters_to_binary(Text)), Bytes, Text);
+check(configuration_length, Total, Bytes) ->
+    sound(Total >= 9 andalso Total =< 4096 andalso byte_size(Bytes) >= 9, Bytes, Total);
+check(device_head, MaxPacket0, Bytes) ->
+    sound(byte_size(Bytes) >= 8 andalso MaxPacket0 =:= binary:at(Bytes, 7), Bytes, MaxPacket0);
 check(device, Device, Bytes) ->
     sound(byte_size(Bytes) =:= 18 andalso map_size(Device) =:= 12, Bytes, Device).
 

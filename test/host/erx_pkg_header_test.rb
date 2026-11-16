@@ -11,6 +11,7 @@ require_relative '../../tools/lib/erx/app_pack'
 require_relative '../../tools/lib/erx/generated'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/fuzz/package_seeds'
+require_relative '../fixtures/elf_fixture'
 
 # Runs the EUnit cases of the package decoder, erx_pkg_header, and of the hash tree's
 # layout, erx_verity_tree (test/erlang/erx_pkg_header_tests.erl), and of the packages the
@@ -26,7 +27,7 @@ require_relative '../../tools/fuzz/package_seeds'
 class ErxPkgHeaderTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
-  SOURCES = %w[erlang/apps/erx/src/erx_pkg_header.erl erlang/apps/erx/src/erx_verity_tree.erl
+  SOURCES = %w[erlang/apps/erx/src/erx_pkg_header.erl otp/erts/preloaded/src/erx_verity_tree.erl
                build/gen/erlang/apps/erx/src/generated/erx_pkg_reader.erl
                test/erlang/host_bytes/erx_bytes.erl
                test/erlang/erx_pkg_header_tests.erl test/erlang/erx_app_pack_tests.erl].map { |path| File.join(ROOT, path) }.freeze
@@ -41,7 +42,9 @@ class ErxPkgHeaderTest < Minitest::Test
   # The sample apps: each app's files, app.txt first, and the header fields its package
   # must decode to beside its signer's key. share/data.bin is long enough that the Erlang
   # app's image takes more than 128 blocks, so its tree has two levels, whose order the
-  # check sees; the native app's image is a few blocks, a tree of one level.
+  # check sees; the native app's image is a few blocks, a tree of one level. Its program
+  # is a minimal executable the loader accepts, since the packer plans it as the loader
+  # will and refuses anything else.
   ERLANG_APP = { 'app.txt' => "app hello\n  needs display data\n  applications erx_hello\n" \
                               "  license \"BSD-2-Clause\"\n  version 2\n",
                  'lib/erx_hello/ebin/erx_hello.app' => "{application, erx_hello, [{modules, []}]}.\n",
@@ -49,7 +52,7 @@ class ErxPkgHeaderTest < Minitest::Test
                  'lib/erx_hello/priv/greeting.txt' => "hello\n",
                  'share/data.bin' => (0...540_000).map { |index| (index % 251).chr }.join }.freeze
   NATIVE_APP = { 'app.txt' => "app tiny\n  memory 8388608\n  program \"bin/tiny\" \"-v\" \"\"\n",
-                 'bin/tiny' => "\x7fELF not really".b,
+                 'bin/tiny' => ElfFixture.valid,
                  'share/words' => "one\ntwo\n" * 1500 }.freeze
   PACKED = [['hello.app', ERLANG_APP, { name: 'hello', arch: Seeds::ARCH, needs: %w[display data],
                                         start: Tuple.new([:applications, %w[erx_hello]]), license: 'BSD-2-Clause',

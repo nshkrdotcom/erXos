@@ -826,7 +826,7 @@ class RuntimePrimFileTest < Minitest::Test
 
   def compile_driver(tree)
     client = File.read(File.join(ROOT, CLIENT))
-    includes = [File.join(ROOT, 'otp/lib/kernel/include'), File.join(ROOT, 'build/gen/erlang/apps/erx/include')]
+    includes = %w[otp/lib/kernel/include build/gen/erlang/apps/erx/include erlang/apps/erx/include].map { |dir| File.join(ROOT, dir) }
     erlc(GRANT_SOURCES.map { |source| File.join(ROOT, source) }, "#{tree}/test/ebin", includes)
     SEEDS.each do |name, (passage, fault)|
       assert_equal 1, client.scan(passage).size, "the #{name} seed's passage is in the client once"

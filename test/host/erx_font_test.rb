@@ -14,14 +14,23 @@ require_relative '../fixtures/erlang_build'
 # holding the subfonts of display/font/fixed. Then erx_font without its
 # check for bytes after the glyph table must fail trailing_test, and an
 # erx_font that takes each tile's pixels one pixel left of its rectangle
-# must fail tiles_test.
+# must fail tiles_test. The pair section's seeded faults
+# (docs/design-desktop-programs.md, "Kerning, on the host"): a glyph index
+# bound off by one, and the count read by the header's number reader, must
+# each fail kern_test_; a runs/2 that cuts a line but starts each run where
+# the last one's plain advances end must fail runs_test and runs_draw_test.
 class ErxFontTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   APPLICATIONS = %w[erx_win].freeze
   MODULE_SOURCE = 'erlang/apps/erx_win/src/erx_font.erl'
   TESTS = %w[test/erlang/erx_font_tests.erl].freeze
   FONTS = Dir.glob(File.join(ROOT, 'display/font/fixed/6x13.*')).freeze
-  SEED = ["                    <<_:TableBytes/binary, _/binary>> -> throw(trailing);\n", ''].freeze
+  SEED = ["pairs(<<>>, _Glyphs) ->\n", "pairs(_, _Glyphs) ->\n"].freeze
+  BOUND_SEED = ['drawn_width(Index, Widths) when Index < tuple_size(Widths) ->',
+                'drawn_width(Index, Widths) when Index =< tuple_size(Widths) ->'].freeze
+  COUNT_SEED = ['{digits(text(CountField, kern), kern), E}', '{number(text(CountField, header)), E}'].freeze
+  RUNS_SEED = ["    [{Start, lists:reverse(Run)} | cut(Placed, Advance, X, [Glyph], X + Advance(Glyph))].\n",
+               "    [{Start, lists:reverse(Run)} | cut(Placed, Advance, _End, [Glyph], _End + Advance(Glyph))].\n"].freeze
   TILE_SEED = ["    Start = X0 * Depth div 8,\n", "    Start = max(0, X0 * Depth div 8 - 1),\n"].freeze
   DEADLINE_SECONDS = '300'
 
@@ -41,6 +50,21 @@ class ErxFontTest < Minitest::Test
     output, status = seeded(TILE_SEED, "a tile's first byte")
     refute status.success?, "a loader taking each tile one pixel left passed every case:\n#{output}"
     assert_match(/tiles_test\.\.\.\*failed\*/, output)
+  end
+
+  def test_pair_section_faults_fail_its_cases
+    { BOUND_SEED => 'the glyph index bound', COUNT_SEED => 'the count reader' }.each do |seed, what|
+      output, status = seeded(seed, what)
+      refute status.success?, "a parser with #{what} seeded passed every case:\n#{output}"
+      assert_match(/kern_test_.*\*failed\*/, output, what)
+    end
+  end
+
+  def test_runs_that_cut_without_moving_fail_their_cases
+    output, status = seeded(RUNS_SEED, 'the second clause of the cut')
+    refute status.success?, "runs that cut without moving passed every case:\n#{output}"
+    assert_match(/runs_test\.\.\.\*failed\*/, output)
+    assert_match(/runs_draw_test\.\.\.\*failed\*/, output)
   end
 
   private

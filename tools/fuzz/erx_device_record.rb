@@ -7,8 +7,8 @@ require 'optparse'
 require 'tmpdir'
 require_relative '../lib/erx/generated'
 
-# The fuzz target of erx_device_record:find/3 and framebuffers/1, the parses of the device and
-# framebuffer records that the boot information carries to init's arguments, compiled from source and run alone on stock's
+# The fuzz target of erx_device_record:find/3, framebuffers/1 and system_image/1, the parses
+# of the device, framebuffer and system_image records that the boot information carries to init's arguments, compiled from source and run alone on stock's
 # emulator (ERX_ERL and ERX_ERLC, the oracle's), so it needs no hosted build. It runs the
 # module as it is, then each seeded copy of MUTANTS, which must fail: a physical record that
 # reads its line as 64 bits wide shows the reference holds each field to its width, a
@@ -17,7 +17,9 @@ require_relative '../lib/erx/generated'
 # holds each record to its line's mark, and one that reads a hardware address as 64 bits
 # wide shows it holds MAC to 48. For framebuffers, a reader that takes a stride a byte short
 # of a row, rows past the record's bytes, or r8g8b8 as 16 bits a pixel shows the reference
-# holds a record to the geometry the tree's reader passed.
+# holds a record to the geometry the tree's reader passed. For system_image, a reader that
+# takes a root hash of any length, a salt of no bytes or of 33, or the first of two records
+# shows the reference holds the record to its one shape.
 module ErxDeviceRecordFuzz
   ROOT = File.expand_path('../..', __dir__)
   MODULE_SOURCE = File.join(ROOT, 'erlang/apps/erx/src/erx_device_record.erl')
@@ -32,7 +34,11 @@ module ErxDeviceRecordFuzz
     'taking rows past the bytes' => ['R * Y =< S', 'R * (Y - 1) =< S'],
     'reading r8g8b8 as 16 bits a pixel' => ['{ok, r8g8b8, 24}', '{ok, r8g8b8, 16}'],
     'taking a path a byte over the bound' => ['length(Word) =< ?ERX_DEVICE_PATH_MAX', 'length(Word) =< ?ERX_DEVICE_PATH_MAX + 1'],
-    'taking a space in a path' => ['lists:member(C, ",._+-@/")', 'lists:member(C, ",._+-@/ ")']
+    'taking a space in a path' => ['lists:member(C, ",._+-@/")', 'lists:member(C, ",._+-@/ ")'],
+    'taking a root hash of any length' => ['hex(Root, ?ERX_VERITY_HASH_SIZE, ?ERX_VERITY_HASH_SIZE)', 'hex(Root, 1, 2 * ?ERX_VERITY_HASH_SIZE)'],
+    'taking a salt of no bytes' => ['hex(Salt, 1, ?ERX_VERITY_SALT_SIZE)', 'hex(Salt, 0, ?ERX_VERITY_SALT_SIZE)'],
+    'taking a salt of 33 bytes' => ['hex(Salt, 1, ?ERX_VERITY_SALT_SIZE)', 'hex(Salt, 1, ?ERX_VERITY_SALT_SIZE + 1)'],
+    'taking the first of two system_image records' => ["case [Words || [\"system_image\" | Words] <- Arguments] of", "case lists:sublist([Words || [\"system_image\" | Words] <- Arguments], 1) of"]
   }.freeze
   DEADLINE_SECONDS = '120'
 
@@ -43,12 +49,12 @@ module ErxDeviceRecordFuzz
     MUTANTS.each_value { |from, _to| raise "#{from.inspect} is not in #{MODULE_SOURCE}" unless source.include?(from) }
 
     output, status = fuzz(source, seed: seed)
-    abort(output) unless status.success? && output.match?(/^fuzz: \d+ rounds ok, \d+ accepted, \d+ framebuffers accepted$/)
+    abort(output) unless status.success? && output.match?(/^fuzz: \d+ rounds ok, \d+ accepted, \d+ framebuffers accepted, \d+ system images accepted$/)
     MUTANTS.each do |name, (from, to)|
       output, status = fuzz(source.sub(from, to), seed: seed)
       abort("#{name} passed:\n#{output}") if status.success? || !output.include?('disagrees_with_reference')
     end
-    puts "erx_device_record:find/3 and framebuffers/1 agree with their references, and no seeded copy does (#{MUTANTS.keys.join('; ')})"
+    puts "erx_device_record:find/3, framebuffers/1 and system_image/1 agree with their references, and no seeded copy does (#{MUTANTS.keys.join('; ')})"
   end
 
   # In a directory of its own, which also takes the crash dump of a failed round.

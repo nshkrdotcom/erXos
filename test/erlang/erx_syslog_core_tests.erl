@@ -210,8 +210,8 @@ requester(Pid, Tag) -> {{Pid, Tag}, make_ref()}.
 %% 0 no store's batch is due.
 consumers(Role, State, Backlog) ->
     C0 = erx_syslog_core:consumers(),
-    {[], C1} = case Backlog of
-                   empty -> {[], C0};
+    {C1, []} = case Backlog of
+                   empty -> {C0, []};
                    line -> erx_syslog_core:lines(0, system(), [{messages, <<"old">>}], C0)
                end,
     case State of
@@ -219,7 +219,7 @@ consumers(Role, State, Backlog) ->
             {C1, make_ref()};
         waiting ->
             {_, Monitor} = A = requester(a_pid(), a),
-            {Actions, C2} = erx_syslog_core:ask(Role, A, 0, system(), C1),
+            {C2, Actions} = erx_syslog_core:ask(Role, A, 0, system(), C1),
             ?assertEqual(case {Role, Backlog} of
                              {console, line} -> [{send, a, 1}];
                              _ -> []
@@ -231,7 +231,7 @@ protocol(Role, State, Backlog, Event) ->
     {C, Monitor} = consumers(Role, State, Backlog),
     Waiting = State =:= waiting andalso not (Role =:= console andalso Backlog =:= line),
     Held = Backlog =:= line andalso not (Role =:= console andalso State =:= waiting),
-    {Actions, _Next} =
+    {_Next, Actions} =
         case Event of
             ask_a -> erx_syslog_core:ask(Role, requester(a_pid(), a2), 0, system(), C);
             ask_b -> erx_syslog_core:ask(Role, requester(b_pid(), b), 0, system(), C);

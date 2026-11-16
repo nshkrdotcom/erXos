@@ -4,8 +4,8 @@
 -module(erx_storage_sup).
 -moduledoc """
 The storage domain's supervisor (docs/design-stopgap.md, "littlefs in the storage domain").
-Its children, both permanent under a restart intensity of 0, so the end of
-either ends this supervisor and erx_storage, a permanent application, and so
+Its children, all permanent under a restart intensity of 0, so the end of
+any ends this supervisor and erx_storage, a permanent application, and so
 the node and the storage domain:
 
 * the mint of storage_ctl, the driver-control facet through which the system
@@ -14,7 +14,13 @@ the node and the storage domain:
 * `/data`, littlefs on the block driver's data window (erx_lfs_sup), which
   erx_storage's application starts once erx_blk's has started, so the block
   service holds the windows by then. The domain service's restart mounts
-  `/data` afresh.
+  `/data` afresh;
+* the `system` tree, the booted slot's system partition, served as
+  `system_service` by its mint, which mounts it once on the block service's
+  `system` window in its own process, so this supervisor's start waits for
+  no mount (erx_storage_system:start_mint/0; docs/design-storage.md, "The
+  `system` tree"). A boot whose block service names no `system` window
+  starts no mint. The domain service's restart mounts the tree afresh.
 """.
 -behaviour(supervisor).
 
@@ -41,4 +47,10 @@ init([]) ->
              shutdown => infinity,
              type => supervisor,
              modules => [erx_lfs_sup]},
-    {ok, {#{strategy => one_for_one, intensity => 0, period => 1}, [Control, Data]}}.
+    System = #{id => system,
+               start => {erx_storage_system, start_mint, []},
+               restart => permanent,
+               shutdown => brutal_kill,
+               type => worker,
+               modules => [erx_storage_mint, erx_storage_system]},
+    {ok, {#{strategy => one_for_one, intensity => 0, period => 1}, [Control, Data, System]}}.

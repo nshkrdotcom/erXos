@@ -17,8 +17,7 @@ class StackProofRunTest < Minitest::Test
 
   ROOT = File.expand_path('../..', __dir__)
   FIXTURES = File.expand_path('../fixtures', __dir__)
-  FLAGS = %w[-std=c17 -Wall -Wextra -Werror -pedantic --target=aarch64-none-elf -ffreestanding
-             -mgeneral-regs-only -mno-outline-atomics -fstack-usage -ffunction-sections].freeze
+  FLAGS = [*Erx::CoreArchive::TARGET_FLAGS, '-ffunction-sections'].freeze
   BUDGET = Erx::StackProofInput::Budget.new(block_bytes: 8192, allowances: { 'call' => 2048, 'tick' => 1024 }.freeze,
                                             tick_entries: %w[bounded].freeze,
                                             leaves: { 'erx_fixture_leaf' => 32, 'erx_fixture_external' => 32 }.freeze)

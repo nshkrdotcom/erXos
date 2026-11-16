@@ -145,8 +145,10 @@ module Erx
       # (docs/design-system.md, "Facets a configured domain serves"). A row of the
       # table is the declaration's number, name, kind (an ERX_MF_PARAMETER_* value),
       # whether a facet must state it, and its bound: an integer's range, an i64's as
-      # its two's complement bits, or the byte maximum of a text or bytes kind in
-      # maximum. A set declares many values of one key, which the view's one value per
+      # its two's complement bits, the byte maximum of a text or bytes kind in
+      # maximum, or a member kind's least and greatest value, with its members' names
+      # in value order, so value v is named members[v - minimum]. A set declares many
+      # values of one key, which the view's one value per
       # key cannot carry, so a set fails the generation until the view carries one.
       def service_parameter_table(schema)
         limits = schema.types.fetch(FACET_LAYOUT).fields.map(&:name)
@@ -159,6 +161,14 @@ module Erx
             service_parameter_row(service, key, parameter)
           end
         end
+        names = schema.services.sort_by { |service| service.fetch(:number) }.flat_map do |service|
+          service.fetch(:parameters).sort_by { |_key, parameter| parameter.fetch(:number) }.filter_map do |key, parameter|
+            next unless parameter.fetch(:members)
+
+            "\tstatic const char *const #{members_name(service, key)}[] = { " \
+              "#{parameter.fetch(:members).map { |name| c_string(name) }.join(', ')} };"
+          end
+        end
         most = schema.services.map { |service| service.fetch(:parameters).size }.max || 0
         ['/* The most parameters one interface declares, so the most one facet states. */',
          "#define ERX_SERVICE_PARAMETERS_MAX #{most}", '',
@@ -166,15 +176,18 @@ module Erx
          ' * facet\'s packed parameter row names it, its name, its kind (an',
          ' * ERX_MF_PARAMETER_* value), whether a facet must state it, and its bound:',
          ' * an integer kind\'s range, an i64\'s as two\'s complement bits, or a text',
-         ' * or bytes kind\'s byte maximum in maximum, minimum 0.', ' */',
+         ' * or bytes kind\'s byte maximum in maximum, minimum 0, or a member',
+         ' * kind\'s least and greatest value, its members\' names in value order',
+         ' * in members, so value v is named members[v - minimum]; members is NULL',
+         ' * for every other kind.', ' */',
          'typedef struct erx_service_parameter {', "\tuint32_t\tinterface;", "\tuint32_t\tnumber;",
          "\tconst char\t*name;", "\tuint32_t\tkind;", "\tbool\t\trequired;",
-         "\tuint64_t\tminimum, maximum;", '} erx_service_parameter_t;', '',
+         "\tuint64_t\tminimum, maximum;", "\tconst char *const *members;", '} erx_service_parameter_t;', '',
          '/* The parameters interface declares, in number order: *count rows from the result. */',
          'static inline const erx_service_parameter_t *',
          'erx_service_parameters(uint32_t interface, size_t *count)', '{',
-         "\tstatic const erx_service_parameter_t table[] = {", *rows,
-         "\t\t{ 0, 0, NULL, 0, false, 0, 0 }", "\t};", "\tsize_t first = 0;", '',
+         *names, "\tstatic const erx_service_parameter_t table[] = {", *rows,
+         "\t\t{ 0, 0, NULL, 0, false, 0, 0, NULL }", "\t};", "\tsize_t first = 0;", '',
          "\twhile (table[first].name != NULL && table[first].interface != interface)", "\t\tfirst++;",
          "\tfor (*count = 0; table[first + *count].name != NULL && table[first + *count].interface == interface;)",
          "\t\t(*count)++;", "\treturn (&table[first]);", '}', '']
@@ -184,8 +197,11 @@ module Erx
         minimum, maximum = parameter.values_at(:minimum, :maximum).map { |value| value & ((1 << 64) - 1) }
         "\t\t{ #{constant("service_#{service.fetch(:name)}")}, #{parameter.fetch(:number)}, #{c_string(key)}, " \
           "#{constant("mf_parameter_#{parameter.fetch(:kind)}")}, #{parameter.fetch(:cardinality) == 'one'}, " \
-          "UINT64_C(#{minimum}), UINT64_C(#{maximum}) },"
+          "UINT64_C(#{minimum}), UINT64_C(#{maximum}), " \
+          "#{parameter.fetch(:members) ? members_name(service, key) : 'NULL'} },"
       end
+
+      def members_name(service, key) = "#{service.fetch(:name)}_#{key}_members"
 
       # erx_status_name(status): the ABI file's name of a status, or NULL
       # for a value no status holds. Statuses are 0 and negative, so the

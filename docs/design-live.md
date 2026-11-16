@@ -617,7 +617,9 @@ on the host:
   `ICANON`, `VEOF` or `VEOL` moves what the new mode counts as complete to
   the readable bytes (`tty.c:1803-1812`), and every waiter waits again under
   the new rules.
-* `hangup(Tty)`, for the master's `tty_hangup`, makes every waiter ready and
+* `hangup(Tty)`, for the master's `tty_hangup`, drops the input the tty
+  holds, as FreeBSD's carrier loss flushes both queues
+  (`sys/kern/tty_ttydisc.c:713-714`), makes every waiter ready, and makes
   every later read that finds no bytes an end of file.
 * `size(Rows, Columns, Tty)` takes a new window size, each from 1 to 65,535,
   and refuses any other. It returns `winch` when the size differs from the
@@ -758,9 +760,12 @@ while the tty is connected at a console line, the UART or the host link's
 tier a program that holds a pseudo-terminal's master;
 so a session's `/dev/tty` and a `/dev/pts/N` are one thing with different
 masters ([design-programs.md](design-programs.md#the-terminal)). Each master
-has a tty of its own: the console's is made as the session starts, and a
-master in the session's domain asks the relay for a new one, as
-`posix_openpt` makes a pseudo-terminal.
+has a tty of its own, driven by a terminal relay of its own
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)): the
+console's is made as the session starts, and its relay alone holds the
+name the runtime's writers look for; a master in the session's domain
+asks the session for a new one, as `posix_openpt` makes a
+pseudo-terminal.
 
 The system shell's tty lives in `erx_console` and is simpler. Programs run only
 under a session's domain (V8), so no program opens it and nothing can call
@@ -823,8 +828,10 @@ takes an output only once its line driver has written it, so a session
 has at most one output in the console and the driver together. A master
 in another domain is heard only through the envelope of its own domain
 (D18). Once `tty_hangup` holds, the tty drops what it holds and takes every
-later write at once with nothing sent, and the relay ends every shell on
-the tty and then the tty, as a UNIX session ends with its terminal's
+later write at once with nothing sent, and the relay sends the tty's
+console `erx_console_eof` at once, whether or not a read waits, so the
+console ends every shell on the tty and then the tty ends, as a UNIX
+session ends with its terminal's
 hangup; the session's other ttys run on. A master in the tty's own domain
 is watched, and its end is the tty's hangup, as a pseudo-terminal master's
 close is.
@@ -1480,11 +1487,21 @@ its reporter:
   inspector calls the same collectors in its own runtime.
 
 **Scopes.** Queries arrive through an inspect facet whose scope is `all` or
-a principal's domains. The scope lives only in the facet, in the system
+a principal's domains, and which also carries its grantee's principal.
+Both live only in the facet, in the system
 domain, fixed when the facet is minted ([The inspect
 service](#the-inspect-service)); a holder sends a path and its options and
 nothing else, so no view and no value of the holder's own runtime can
-translate or widen it. In the system domain, whose services are its own,
+translate or widen them. The scope decides every attribute but those of
+the visibility class `display`, a window's tree, which the principal
+decides and no scope reaches, `all` included: the inspector answers
+one only to a caller whose principal is that of the domain that owns
+the path or that of the session of the display the window is on, which
+it resolves at each query from the domain service's records of the
+domain's grants and of each display's session
+([design-display.md](design-display.md#the-widget-server)). To every
+other caller such an attribute is outside the scope, with the answer
+that gives. In the system domain, whose services are its own,
 `erx:i/1`, the shell's commands and `/proc` call the inspector in the same
 runtime at scope `all`. A session's inspect facet has scope over its
 principal's own domains, with one exception: in a development build
@@ -1585,8 +1602,9 @@ grantee's principal, the manifest's system-shell principals and its
 development flag: `all` for a system-shell principal (`root` in a
 development build) in a development build, and otherwise
 `{principal, P}`, the
-principal's domains. The scope is a parameter the domain service
-computes at the mint ([design-system.md](design-system.md#facets-a-configured-domain-serves),
+principal's domains, and with the grantee's principal itself, which a
+facet of scope `all` would otherwise not carry. Both are parameters the
+domain service computes at the mint ([design-system.md](design-system.md#facets-a-configured-domain-serves),
 "Parameters the domain service computes at the mint"). The inspector resolves `{principal, P}` at each
 query from the domain service's records, its death records included,
 so a domain the principal starts later is in scope from its start and
@@ -1614,9 +1632,13 @@ as a UNIX user sees their own processes, and a runtime's own
 between: they start a query worker (below) at scope `all` in the same
 runtime and wait for its answer, so a system-domain query asks other
 domains' agents as a facet's does, and the system shell's calls present
-the system-shell facet besides. In front of the inspector, the facet's
+the system-shell facet besides, whose principal is the caller's; the
+system domain's other calls, the host link's among them, carry no
+principal and so read no attribute of the class `display`. In front of
+the inspector, the facet's
 callback decodes each request with `erx_inspect_query` (Bounds, below),
-hands the path, the options and its own scope to a query worker it starts
+hands the path, the options, its own scope and its grantee's principal
+to a query worker it starts
 for its grantee, and forwards the request to it, up to the grant's limit
 in flight, which the default manifests set to 2, so a query that waits
 on a slow domain holds up no other holder's query and the inspector's work is charged to the

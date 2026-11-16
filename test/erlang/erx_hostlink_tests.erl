@@ -206,3 +206,9 @@ web_facet_ends_with_the_relay_test() ->
     receive {'DOWN', Ref, process, Facet, Reason} -> ?assertEqual(shutdown, Reason)
     after 5000 -> error(facet_outlived_its_relay)
     end.
+
+%% A crash's reason may hold the host's bytes: the crash report and the terminate report, which
+%% the system domain filters no further, show only the reason's leading atom.
+format_status_hides_the_reason_test() ->
+    ?assertEqual(#{reason => badmatch},
+                 erx_hostlink:format_status(#{reason => {badmatch, <<"SECRET">>}})).

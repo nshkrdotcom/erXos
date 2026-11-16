@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require 'fileutils'
 require 'open3'
 require 'optparse'
 require 'tmpdir'
@@ -19,17 +20,21 @@ module ErxDrawCodecFuzz
   SOURCES = %w[erlang/apps/erx_win/src/erx_draw_image.erl erlang/apps/erx_win/src/erx_draw_core.erl
                erlang/apps/erx_memdraw/src/erx_chan.erl test/erlang/erx_draw_codec_tests.erl test/erlang/erx_draw_core_tests.erl
                test/erlang/erx_draw_codec_fuzz.erl].map { |path| File.join(ROOT, path) }.freeze
+  ABI_HEADER = 'erlang/apps/erx/include/generated/erx_abi.hrl'
   DEADLINE_SECONDS = '300'
 
   module_function
 
   def run(seed:)
-    module_text = Erx::ABI::Generator.plan(root: ROOT).files.fetch(Erx::ABI::DrawEmitter::ERLANG_PATH)
+    generated = Erx::ABI::Generator.plan(root: ROOT).files
     Dir.mktmpdir('erx-draw-codec-fuzz') do |work|
       module_path = File.join(work, 'erx_draw_codec.erl')
-      File.binwrite(module_path, module_text)
-      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
-                                       module_path, *SOURCES, stdin_data: '')
+      File.binwrite(module_path, generated.fetch(Erx::ABI::DrawEmitter::ERLANG_PATH))
+      # erx_draw_core includes the ABI header as generated/erx_abi.hrl.
+      FileUtils.mkdir_p(File.join(work, 'generated'))
+      File.binwrite(File.join(work, 'generated/erx_abi.hrl'), generated.fetch(ABI_HEADER))
+      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-I', work,
+                                       '-o', work, module_path, *SOURCES, stdin_data: '')
       abort(output) unless status.success?
 
       output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell',

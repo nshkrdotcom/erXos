@@ -50,7 +50,7 @@ first bit most significant.
 -export([superblock/1, checkpoint/1, checkpoint_copy/1, checkpoint/3,
          orphan_block/1, nat_block/1, nat_journal/1, sit_block/2,
          sit_journal/1, summary_block/1, compact_summaries/2, inode/3,
-         dentry_block/1, crc/2]).
+         dentry_block/1, crc/2, extra_attr_features/0]).
 -export_type([superblock/0, checkpoint/0, nat_entry/0, sit_entry/0,
               summary/0, inode/0, dentries/0, failure/0]).
 
@@ -67,6 +67,11 @@ first bit most significant.
                           ?ERX_F2FS_FEATURE_FLEXIBLE_INLINE_XATTR bor
                           ?ERX_F2FS_FEATURE_INODE_CRTIME bor
                           ?ERX_F2FS_FEATURE_COMPRESSION)).
+%% The seven file types of i_mode ([F 66]).
+-define(FILE_TYPES, [?ERX_F2FS_MODE_FIFO, ?ERX_F2FS_MODE_CHR,
+                     ?ERX_F2FS_MODE_DIR, ?ERX_F2FS_MODE_BLK,
+                     ?ERX_F2FS_MODE_REG, ?ERX_F2FS_MODE_LNK,
+                     ?ERX_F2FS_MODE_SOCK]).
 
 -doc "A superblock copy: erx_abi_packed's map of erx_f2fs_super_block.".
 -type superblock() :: #{atom() => term()}.
@@ -252,6 +257,14 @@ name's run of slots answered once, at its first slot ([F 60]).
 -spec dentry_block(binary()) -> {ok, dentries()} | {error, failure()}.
 dentry_block(Block) ->
     decode(dentry_block, fun() -> require_block(Block), dentries(Block) end).
+
+-doc """
+The features whose inodes Linux reads only with EXTRA_ATTR set ([F 41]),
+as a mask of the feature word: a superblock with one of them needs
+EXTRA_ATTR too.
+""".
+-spec extra_attr_features() -> non_neg_integer().
+extra_attr_features() -> ?NEED_EXTRA_ATTR.
 
 -doc """
 F2FS's CRC-32 of Data continued from Seed ([F 49]): the reflected
@@ -541,6 +554,7 @@ read_inode(Super, Nid, Block) ->
     check_extra_attributes(Super, Extra),
     XattrWords = inline_xattr_words(Super, Inode, Extra),
     check_inode_fields(Super, Nid, Inode),
+    check_file_type(Inode, Nids),
     #{i_name := Name, i_namelen := NameLength} = Inode,
     ExtraSize = case Extra of
                     none -> 0;
@@ -647,6 +661,44 @@ check_inode_fields(#{feature := Feature} = Super, Nid,
                      Inline band ?ERX_F2FS_PIN_FILE =/= 0),
             device_alias),
     require(NameLength =< ?ERX_F2FS_NAME_LEN_MAX, namelen).
+
+%% The rules that turn on the file type, i_mode's S_IFMT bits: it is one of
+%% F2FS's seven ([F 66]), a directory never has exactly one link ([F 69]),
+%% only a directory has inline dentries ([F 68]), and inline data obeys
+%% check_inline_data. So an inode has at most one inline body.
+check_file_type(#{i_mode := Mode, i_links := Links, i_inline := Inline} = Inode, Nids) ->
+    Type = Mode band ?ERX_F2FS_MODE_TYPE_MASK,
+    require(lists:member(Type, ?FILE_TYPES), mode),
+    require(Type =/= ?ERX_F2FS_MODE_DIR orelse Links =/= 1, links),
+    require(Inline band ?ERX_F2FS_INLINE_DENTRY =:= 0 orelse
+                Type =:= ?ERX_F2FS_MODE_DIR,
+            inline_dentry),
+    case Inline band ?ERX_F2FS_INLINE_DATA of
+        0 -> ok;
+        _ -> check_inline_data(Type, Inode, Nids)
+    end.
+
+%% Only a regular file or a symlink has inline data, and then no block but
+%% its inode and its xattr node, which i_blocks counts, and no node; and a
+%% regular file with it is neither encrypted, verity nor compressed, while
+%% a symlink with it may be any of these ([F 67], [F 70], open question 12
+%% of the facts record).
+check_inline_data(Type, #{i_blocks := Blocks, i_xattr_nid := Xattr,
+                          i_advise := Advise, i_flags := Flags}, Nids) ->
+    require(Type =:= ?ERX_F2FS_MODE_REG orelse Type =:= ?ERX_F2FS_MODE_LNK,
+            inline_data_type),
+    XattrBlocks = case Xattr of
+                      0 -> 0;
+                      _ -> 1
+                  end,
+    require(Blocks - 1 =< XattrBlocks andalso
+                lists:all(fun(Node) -> Node =:= 0 end, Nids),
+            inline_data_blocks),
+    require(Type =/= ?ERX_F2FS_MODE_REG orelse
+                (Advise band (?ERX_F2FS_ADVISE_ENCRYPT bor
+                                  ?ERX_F2FS_ADVISE_VERITY) =:= 0 andalso
+                     Flags band ?ERX_F2FS_COMPR_FL =:= 0),
+            inline_data_transformed).
 
 %% The address array is the 923 - E - X words from word E. An inline inode
 %% keeps that array's first word reserved and its content in the rest, up

@@ -249,6 +249,34 @@ Erlang code takes the same shape: pure functions decide, and the
 `gen_server` or `gen_statem` callback performs the effects their result
 names.
 
+Every Erlang core's step returns one shape, `{State, Actions}`: the next
+state, then the list of actions the edge performs in order. A core that
+ends says so with the action `{stop, Reason}`, always the last, and the
+edge performs the actions before it and then stops, never stepping the
+state beside a stop again. No step returns a separate stop or error
+variant, so every edge takes a step's result apart the same way:
+
+```erlang
+-spec step(event(), state()) -> {state(), [action()]}.
+
+%% The edge: its effect performs one action that is not a stop.
+effect({write, Bytes}, S) -> ...
+
+settle({Core, Actions}, S) ->
+    case erx_actions:perform(Actions, fun effect/2, S#s{core = Core}) of
+        {continue, Next} -> {noreply, Next};
+        {stop, Reason, Next} -> {stop, Reason, Next}
+    end.
+```
+
+Every edge performs a step's actions through the one loop,
+`erx_actions:perform/3`, and writes only its effect, never a loop of its
+own. A stop with actions after it is the core's bug, and the loop
+refuses it before performing any action after it. It refuses with
+`error(stop_not_last)`, whose stack trace names the loop's arity and not
+its arguments: a `function_clause` there would put the whole state in
+the stack trace, which `format_status/1` does not filter.
+
 A core with timeouts keeps its deadlines in its state and takes the time
 as an input ([design.md](design.md#drivers-and-dma), "Deadlines in
 state"). Each deadline lives in the variant it guards, so leaving the

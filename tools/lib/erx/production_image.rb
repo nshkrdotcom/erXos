@@ -10,17 +10,21 @@ require_relative 'boot_file'
 require_relative 'boot_partition'
 require_relative 'build_facts'
 require_relative 'build_inputs'
+require_relative 'build_kind'
 require_relative 'build_path'
 require_relative 'compiler_rt'
 require_relative 'crash_frame'
 require_relative 'deterministic_transcript'
 require_relative 'dev_key'
 require_relative 'device_kinds'
+require_relative 'domain_startup'
 require_relative 'dom_planner'
 require_relative 'error'
 require_relative 'fiasco'
 require_relative 'fiasco_provenance'
 require_relative 'generated'
+require_relative 'image_apps'
+require_relative 'image_record'
 require_relative 'files_guest'
 require_relative 'hostlink_guest'
 require_relative 'reload_guest'
@@ -42,6 +46,7 @@ require_relative 'qemu'
 require_relative 'release_files'
 require_relative 'release_medium'
 require_relative 'runner'
+require_relative 'source_revision'
 
 module Erx
   # The image the system boots from: bootstrap as the first stage, and an archive that
@@ -51,7 +56,7 @@ module Erx
   class ProductionImage
     # The kind of build every image is, which the archive header's development bit
     # records and uname -i names (BuildFacts.configuration).
-    BUILD_KIND = 'development'
+    BUILD_KIND = BuildKind::DEVELOPMENT
     # The code that gathers and writes the build-facts file (BuildFacts, SourceRevision,
     # build_facts_file, made_entry and Fiasco#kernel_name), which its receipt names as its sources.
     BUILD_FACTS_SOURCES = %w[tools/lib/erx/build_facts.rb tools/lib/erx/source_revision.rb tools/lib/erx/production_image.rb
@@ -72,12 +77,13 @@ module Erx
     # What a machine keeps for the root's image past its place: the image is about 5 MiB.
     ROOT_ROOM_MIB = 8
     LICENSE = 'LICENSE'
-    # The trees imported into the source tree that the root builds from: BLAKE3 for its
-    # reader of the archive and the entropy generator's mixing, ChaCha20 for that
-    # generator's stream, OTP for the release's beams, libfdt for its device-tree reader,
-    # and musl for the HWCAP_* bits the CPU feature decoder (cpu_features.c) takes from its header.
-    IMPORTS = { 'kernel/crypto/blake3' => 'permanent', 'kernel/crypto/chacha20' => 'permanent', 'otp' => 'permanent',
-                'fiasco/libfdt' => 'permanent', 'musl' => 'permanent' }.freeze
+    # The trees imported into the source tree that the image builds from: BLAKE3 for the
+    # root's reader of the archive and the entropy generator's mixing, ChaCha20 for that
+    # generator's stream, libfdt for its device-tree reader, musl for the HWCAP_* bits the
+    # CPU feature decoder (cpu_features.c) takes from its header, and the releases' own
+    # (ReleaseFiles::IMPORTS): OTP for their beams and the trust store's roots.
+    IMPORTS = { 'kernel/crypto/blake3' => 'permanent', 'kernel/crypto/chacha20' => 'permanent',
+                'fiasco/libfdt' => 'permanent', 'musl' => 'permanent', **ReleaseFiles::IMPORTS }.freeze
 
     # The emulator's archive, which holds littlefs's objects beside ERTS's own
     # (otp/erts/emulator/Makefile.in's OS_OBJS), so its attribution carries
@@ -180,7 +186,7 @@ module Erx
     # artifact name a domain row's runtime takes. It sorts after domains/ and before
     # system/, and carries no system mark, since the root task does not run it.
     DOMAIN_RUNTIME_PATH = 'runtimes/emu'
-    DOMAIN_RUNTIME_ARTIFACT = 'emu'
+    DOMAIN_RUNTIME_ARTIFACT = DomainStartup::RUNTIME_ARTIFACT
     # The BeamAsm image beside it, which ordinary domains run by default: the one entry
     # whose manifest carries ERX_IMAGE_JIT (docs/design-runtime.md, "The build").
     JIT_RUNTIME_PATH = 'runtimes/jit'
@@ -188,9 +194,9 @@ module Erx
     # The C++ runtime archives' notices, in the fetched llvm-project tree.
     LIBCXX_NOTICES = { 'libc++.a' => 'libcxx/LICENSE.TXT', 'libc++abi.a' => 'libcxxabi/LICENSE.TXT' }.freeze
 
-    # The machine an image boots on: its board's platform record (Platform), its RAM, the part of it Fiasco keeps
-    # (fiasco_reserve, which grows with RAM, since Fiasco sizes its kernel memory as
-    # 6% of it), system_growth_mib, which is added to both root_memory and
+    # The machine an image boots on: its board's platform record (Platform), its RAM, from
+    # which the part Fiasco keeps follows (fiasco_reserve_mib, by Platform.fiasco_reserve),
+    # system_growth_mib, which is added to both root_memory and
     # system_baseline of the development manifest, and tmp_growth_mib, which is added
     # to /tmp's cap and is part of the system growth, since /tmp lives in the baseline,
     # and root_mib, the root task's place in MiB from the start of RAM (root_address),
@@ -205,24 +211,27 @@ module Erx
     # larger archive (OracleQemu) names a larger one, and Pack's manifest check proves
     # the grown manifest against the platform record of that machine as it proves the
     # development one.
-    Machine = Data.define(:platform, :memory_mib, :fiasco_reserve_mib, :system_growth_mib, :tmp_growth_mib, :root_mib) do
-      # The record's own machine: its RAM and fiasco_reserve, the root at NativeRoot's
+    Machine = Data.define(:platform, :memory_mib, :system_growth_mib, :tmp_growth_mib, :root_mib) do
+      # The record's own machine: its RAM, the root at NativeRoot's
       # development place.
       def self.development(platform)
-        new(platform: platform, memory_mib: platform.memory_mib, fiasco_reserve_mib: platform.fiasco_reserve_mib,
+        new(platform: platform, memory_mib: platform.memory_mib,
             system_growth_mib: 0, tmp_growth_mib: 0, root_mib: NativeRoot::DEVELOPMENT_ROOT_MIB)
       end
 
       # The machine the website's emulator boots the site image on: the RAM site/terminal.js
-      # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), Fiasco's
-      # part of it at 6%, rounded up, and the root at the development place.
-      def self.site(platform) = development(platform).with(memory_mib: 256, fiasco_reserve_mib: 16)
+      # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), and the root
+      # at the development place.
+      def self.site(platform) = development(platform).with(memory_mib: 256)
 
       def initialize(platform:, **numbers)
         raise Error, 'a machine is on a Platform' unless platform.is_a?(Platform)
 
         super
       end
+
+      # The part of the RAM Fiasco keeps as its kernel memory.
+      def fiasco_reserve_mib = Platform.fiasco_reserve(memory_mib << 20) >> 20
 
       # The root's place, with room for the root's image (about 5 MiB) before RAM ends.
       def root_address
@@ -342,10 +351,13 @@ module Erx
 
     # Packs the image from Fiasco's last build into a directory that must be clean, so a
     # stale file cannot stand in for this build's. The image carries the system release
-    # and nothing else.
-    def build(directory:, manifest_source: @machine.platform.manifest_source(@root))
+    # and the packages of apps (ImageApps::Plan), none by default. record is set only by
+    # the website's image build (InteractiveBoot, `tools/erx boot --without-web`), which
+    # alone writes the image's build record (ImageRecord), so the website takes no other
+    # image.
+    def build(directory:, manifest_source: @machine.platform.manifest_source(@root), apps: ImageApps.none, record: false)
       assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: false,
-               machine: @machine, domains: domain_boots(manifest_source))
+               machine: @machine, domains: domain_boots(manifest_source), apps: apps, record: record)
     end
 
     # Where `tools/erx pack` leaves platform's production image and its medium, replaced
@@ -354,15 +366,17 @@ module Erx
 
     # `tools/erx pack`'s one build: Fiasco for platform (Fiasco#build_for), then the
     # production image of platform's development machine, with its medium when medium
-    # is set, into packed_directory, cleared first. Returns build's or build_medium's
+    # is set, into packed_directory, cleared first, with the packages of apps
+    # (ImageApps::Plan, `tools/erx pack --app`). Returns build's or build_medium's
     # result. The raspi4b suite boots what this leaves.
-    def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4)
+    def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4, apps: ImageApps.none)
+      check_card_apps(platform, apps) if medium
       fiasco = Fiasco.new(root: root, runner: runner, compiler: compiler)
       fiasco.build_for(platform, jobs: jobs)
       directory = clear_directory(root: root, path: File.join(root, packed_directory(platform)))
       image = new(root: root, runner: runner, compiler: compiler, linker: linker, machine: Machine.development(platform),
                   fiasco: fiasco)
-      medium ? image.build_medium(directory: directory) : image.build(directory: directory)
+      medium ? image.build_medium(directory: directory, apps: apps) : image.build(directory: directory, apps: apps)
     end
 
     # The image and the medium that holds it, both in directory, which must be clean: by
@@ -371,10 +385,13 @@ module Erx
     # gets the release medium for QEMU (ReleaseMedium). A boot that creates a domain
     # (MediumBoot) names a larger machine and a manifest with room for it, whose domain
     # row names the release and runtime image the image then carries.
-    def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root))
+    def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none)
       on_own_board(machine)
-      built = assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: false,
-                       machine: machine, domains: domain_boots(manifest_source))
+      self.class.check_card_apps(machine.platform, apps)
+
+      source = self.class.medium_manifest(machine.platform, manifest_source)
+      built = assemble(directory: directory, manifest_source: source, added: NOTHING_ADDED, test_code: false,
+                       machine: machine, domains: domain_boots(source), apps: apps, record: false)
       if BootPartition.boot_partition_medium?(machine.platform)
         return [built, BootPartition.lay_out(root: @root, runner: @runner, platform: machine.platform, build_kind: BUILD_KIND,
                                              bootable: built.single, erofs: built.erofs,
@@ -382,6 +399,24 @@ module Erx
       end
 
       [built, release_medium(built)]
+    end
+
+    # The manifest source a medium of platform is packed from. A card, the medium of a
+    # board the firmware boots from a boot partition, is the one the website offers, so,
+    # until a release signer exists, it leaves out the apps row with the room it took
+    # (Manifest::Edit.without_apps), as the site's manifest does, and takes no package
+    # (build_medium; docs/design-packaging.md, "The shipped manifests"). Every other
+    # medium's is source.
+    def self.medium_manifest(platform, source)
+      BootPartition.boot_partition_medium?(platform) ? Manifest::Edit.without_apps(source) : source
+    end
+
+    # Refuses apps (ImageApps::Plan) for a medium of platform when it is a card, which
+    # takes no package, no signer and no --local (medium_manifest).
+    def self.check_card_apps(platform, apps)
+      return if apps.empty? || !BootPartition.boot_partition_medium?(platform)
+
+      raise Error, "the #{platform.name} card is the one the website offers, so it takes no app and no --local"
     end
 
     # The release medium for QEMU (ReleaseMedium) of built, an image this object packed, in
@@ -412,17 +447,29 @@ module Erx
       source = manifest_source
       carried = domain_boots(source, given: domains)
       assemble(directory: directory, manifest_source: source, added: added, test_code: true, machine: machine,
-               domains: carried)
+               domains: carried, apps: ImageApps.none, record: false)
     end
 
     # Both entry points' one build: the system release, the domain releases with their
-    # runtime image, any additions, and the mark that says whether there are some.
-    def assemble(directory:, manifest_source:, added:, test_code:, machine:, domains:)
+    # runtime image, any additions, and the mark that says whether there are some. The
+    # packages of apps lie in the domain release (docs/design-packaging.md, "Where a
+    # package lies"), so an image with packages carries one, and their rows are appended
+    # to the image's copy of the manifest source, which the board's file never holds.
+    # With record, the image's build record is written beside the checked image.boot.
+    def assemble(directory:, manifest_source:, added:, test_code:, machine:, domains:, apps:, record:)
+      raise Error, 'a test image gets no build record' if record && test_code
       self.class.check_test_scripts(domains, test_code: test_code)
+      raise Error, 'an image takes packages only into its domain release, and its manifest names no domain' if
+        domains.empty? && !apps.packages.empty?
+
+      manifest_source = "#{manifest_source}#{apps.rows}"
       directory = OutputDirectory.prepare(root: @root, path: directory)
       raise Error, 'a production image builds into a clean directory' unless Dir.empty?(directory)
 
       sources = Runtime.source_digest(root: @root)
+      # The source revision the build facts name, read before the builds below; the image's
+      # build record is written only if the tree is still at it once the image is checked.
+      revision = SourceRevision.read(root: @root, runner: @runner)
       erts = @runtime.build
       # Only domains run the BeamAsm image, so an image without them does not build it.
       jit = domains.empty? ? nil : @jit_runtime.build(interpreter: erts)
@@ -436,19 +483,22 @@ module Erx
         sigma0 = assembled_receipt(@fiasco.sigma0_path, name: 'sigma0', directory: directory)
         archive = File.join(directory, 'image.erxpack')
         File.write(self.class.sources_path(archive), sources)
-        made = made_files(directory: directory, platform: machine.platform)
+        facts = build_facts(platform: machine.platform, local: apps.local, revision: revision)
+        made = made_files(directory: directory, facts: facts)
         system_release = ReleaseFiles.new(root: @root, otp: erts.otp, directory: File.join(directory, 'release'), runner: @runner, codec: @codec)
         release = [*system_release.entries, *made_entries(made, release: ReleaseFiles::SYSTEM)]
         erofs, images = ReleaseMedium.image(entries: release, directory: directory, runner: @runner)
         domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, made: made, directory: directory)
-        report = pack(entries: [*entries(root_task, kernel, sigma0), *release, *system_release.directories, *domain.entries, *added.entries],
-                      root_task: root_task, added_archives: [*domain.archives, *added.archives],
+        packages = self.class.package_entries(apps, directory: directory, root: @root, codec: @codec)
+        report = pack(entries: [*entries(root_task, kernel, sigma0), *release, *system_release.directories, *domain.entries,
+                                *packages, *added.entries],
+                      root_task: root_task, added_archives: [*domain.archives, *added.archives], apps: apps,
                       images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
                       imports: IMPORTS.merge(added.imports),
-                      inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root), *made_sources, *domain.inputs,
-                               *added.inputs].uniq,
+                      inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root, otp: erts.otp), *made_sources, *domain.inputs,
+                               *packages.flat_map { |entry| entry.values_at('artifact', 'receipt') }, *added.inputs].uniq,
                       test_code: test_code, machine: machine)
-        single = File.join(directory, 'image.boot')
+        single = File.join(directory, ImageRecord::IMAGE)
         # The single file is written as unchecked and renamed to image.boot only after every
         # check below has passed, so a refused, failed or interrupted build leaves no
         # image.boot, its own or an earlier build's, for a later step (tools/build_site.rb) to take.
@@ -469,12 +519,13 @@ module Erx
           marked = flags.anybits?(@codec.member('pack_flags', 'test_code'))
           raise Error, 'the archive header disagrees with the test-code mark asked for' unless marked == test_code
           raise Error, "the archive header disagrees with the build kind #{BUILD_KIND} the build facts name" unless
-            flags.anybits?(@codec.member('pack_flags', 'development')) == (BUILD_KIND == 'development')
+            flags.anybits?(@codec.member('pack_flags', 'development')) == BuildKind.development?(BUILD_KIND)
 
           File.rename(unchecked, single)
         ensure
           FileUtils.rm_f(unchecked)
         end
+        write_record(single, revision: revision, facts: facts, packages: packages) if record
 
         Built.new(single: single, archive: archive, first_stage: @fiasco.first_stage_path(machine.platform),
                   index_hash: header.fetch('index_hash').unpack1('H*'), build_id: header.fetch('build_id').unpack1('H*'),
@@ -1568,10 +1619,12 @@ module Erx
       # (docs/design-system.md, "The domain library").
       # Two CPUs' system share less its reserve holds one grant of users, not two, so the
       # narrow manifest leaves out the network domain (NARROW_DROPPED), whose net unit the
-      # narrow cells, which boot without a network device, do not use. The manifest check
-      # and the library's planner judge the result whole.
+      # narrow cells, which boot without a network device, do not use, and with it the apps
+      # row (Manifest::Edit.without_apps), whose services name the network's net. The
+      # manifest check and the library's planner judge the result whole.
       def self.narrow_manifest(root, platform:)
-        source = Manifest::Edit.without(ProductionImage.sessionless_manifest(root, platform: platform), NARROW_DROPPED)
+        appless = Manifest::Edit.without_apps(ProductionImage.sessionless_manifest(root, platform: platform))
+        source = Manifest::Edit.without(appless, NARROW_DROPPED)
         shares = Manifest::Frontend.read(source).records.fetch('share', [])
         Manifest::Edit.set(source, shares.map { |share| narrow_share(share) }.reduce({}, :merge))
       end
@@ -1691,7 +1744,7 @@ module Erx
       jit_image = { 'path' => JIT_RUNTIME_PATH, 'kind' => @codec.member('entry_kind', 'image'), 'flags' => 0, 'jit' => true,
                     'id' => 'jit-runtime', 'artifact' => beamasm.fetch(:program), 'receipt' => beamasm.fetch(:receipt) }
       Added.new(entries: [image, jit_image, *releases, *toolkit.entries, *domain_release.directories].freeze,
-                inputs: [*runtime.fetch(:inputs), *beamasm.fetch(:inputs), *ReleaseFiles.inputs_of(releases, root: @root, applications: release.applications),
+                inputs: [*runtime.fetch(:inputs), *beamasm.fetch(:inputs), *ReleaseFiles.inputs_of(releases, root: @root, otp: erts.otp, applications: release.applications),
                          *toolkit.inputs].freeze,
                 imports: {}.freeze, archives: toolkit.archives)
     end
@@ -1707,11 +1760,12 @@ module Erx
 
     # What a manifest's references name in an archive of these sorted paths: the root
     # and the two domain runtime images as executables, images as built EROFS artifacts, and
-    # each domain boot script as the release's run of entries (ReleaseFiles.domain_runs). Two
+    # each domain boot script as the release's run of entries (ReleaseFiles.domain_runs), and
+    # each package of apps (ImageApps::Plan) as its entry in the domain release. Two
     # under one name would leave a reference ambiguous, so that is refused.
-    def self.artifacts(paths, images:)
+    def self.artifacts(paths, images:, apps: ImageApps.none)
       named = [{ 'root' => { 'kind' => 'executable', 'entry' => paths.index(ROOT_ENTRY_PATH) } }, images,
-               ReleaseFiles.domain_runs(paths)]
+               ReleaseFiles.domain_runs(paths), apps.artifacts(paths, prefix: ReleaseFiles::DOMAIN_PREFIX)]
       runtime = paths.index(DOMAIN_RUNTIME_PATH)
       named << { DOMAIN_RUNTIME_ARTIFACT => { 'kind' => 'executable', 'entry' => runtime } } if runtime
       beamasm = paths.index(JIT_RUNTIME_PATH)
@@ -1723,17 +1777,18 @@ module Erx
       named.reduce(:merge)
     end
 
-    def pack(entries:, root_task:, added_archives:, images:, manifest_source:, inputs:, erts:, jit:, output:, imports:, test_code:, machine:)
+    def pack(entries:, root_task:, added_archives:, apps:, images:, manifest_source:, inputs:, erts:, jit:, output:, imports:, test_code:,
+             machine:)
       tools = PackTools.build(root: @root, owner_root: @root, directory: File.join(@root, 'build/production-image-tools'),
                               runner: @runner, compiler: @compiler, sanitizers: [])
-      provenance = PackProvenance.new(root: @root, catalog: catalog(root_task, inputs), external: external(erts, jit, added_archives), runner: @runner,
+      provenance = PackProvenance.new(root: @root, catalog: catalog(root_task, inputs), external: external(erts, jit, added_archives, apps), runner: @runner,
                                       imports: imports, compiler: @compiler)
       paths = (entries.map { |entry| entry.fetch('path') } + [@codec.fixed_bytes('system_manifest_path'), NOTICES_PATH]).map(&:b).sort
       Pack.new(root: @root, output_root: @root, codec: @codec, planner: ElfPlanner.new(helper: tools.fetch('planner'), runner: @runner, codec: @codec),
                checker: tools.fetch('checker'), hasher: tools.fetch('hasher'), runner: @runner, provenance: provenance,
                domain_planner: DomainPlanner.new(helper: tools.fetch('domains'), runner: @runner))
           .build(entries: entries, root_path: ROOT_ENTRY_PATH, build_kind: BUILD_KIND, platform: machine.record,
-                 artifacts: self.class.artifacts(paths, images: images),
+                 artifacts: self.class.artifacts(paths, images: images, apps: apps),
                  manifest_source: manifest_source, output: output, test_code: test_code)
     end
 
@@ -1749,23 +1804,27 @@ module Erx
     end
 
     # The files this build makes for each release of the image, each under the name of
-    # the ABI's path it goes to (made_entry): the build facts, and the login key's file
-    # when the image carries one.
-    def made_files(directory:, platform:)
-      facts = { 'build_facts_path' => build_facts_file(directory: directory, platform: platform) }
-      @login_key ? facts.merge('ssh_authorized_keys_path' => login_key_file(directory: directory)) : facts
+    # the ABI's path it goes to (made_entry): the build facts' file (build_facts), and the
+    # login key's file when the image carries one.
+    def made_files(directory:, facts:)
+      made = { 'build_facts_path' => build_facts_file(directory: directory, facts: facts) }
+      @login_key ? made.merge('ssh_authorized_keys_path' => login_key_file(directory: directory)) : made
     end
 
     def made_entries(made, release:) = made.map { |path_name, file| made_entry(file, path_name: path_name, release: release) }
 
-    # The build-facts file (BuildFacts) and its receipt, from the facts this build
-    # packs: the platform record's name and the build kind, the kernel it packs
-    # (Fiasco#kernel_name, beside kernel_path), and the source revision. Its receipt
-    # attributes it to the code that writes it. Each release of the image carries it
-    # (made_entry), so every domain reads the same facts.
-    def build_facts_file(directory:, platform:)
-      configuration = BuildFacts.configuration(platform: platform.name, build_kind: BUILD_KIND)
-      facts = BuildFacts.gather(root: @root, runner: @runner, configuration: configuration, kernel: @fiasco.kernel_name)
+    # The facts this build packs (BuildFacts): the platform record's name and the build
+    # kind, local for a local test image (ImageApps::Plan), the kernel it packs
+    # (Fiasco#kernel_name, beside kernel_path), and revision, the source revision.
+    def build_facts(platform:, local:, revision:)
+      configuration = BuildFacts.configuration(platform: platform.name, build_kind: BUILD_KIND, local: local)
+      BuildFacts.gather(revision: revision, configuration: configuration, kernel: @fiasco.kernel_name)
+    end
+
+    # The build-facts file of facts and its receipt, which attributes it to the code that
+    # writes it. Each release of the image carries it (made_entry), so every domain reads
+    # the same facts.
+    def build_facts_file(directory:, facts:)
       path = File.join(directory, 'build-facts')
       File.write(path, BuildFacts.render(facts))
       receipt = File.join(directory, 'build-facts.receipt.json')
@@ -1803,13 +1862,53 @@ module Erx
       path
     end
 
-    # The clang that built the root, and the archives its link and the added programs'
-    # take members of: Fiasco's and musl's, and added, the Added archives. jit is the
-    # BeamAsm build when the image carries its runtime image, or nil.
-    def external(erts, jit, added)
+    # The clang that built the root, the archives its link and the added programs'
+    # take members of: Fiasco's and musl's, and added, the Added archives, and the
+    # packages of apps (package_external). jit is the BeamAsm build when the image
+    # carries its runtime image, or nil.
+    def external(erts, jit, added, apps)
       resource = @runner.run([@compiler, '-print-resource-dir'], name: 'clang-resource-directory', deadline: 30)
       ToolchainProvenance.llvm(root: @root, resource_dir: File.read(resource.fetch('log')).strip) +
-        [*archives(erts), *crypto_archives(erts, jit), *jit_archives(jit), *added].map { |archive| external_archive(archive) }
+        [*archives(erts), *crypto_archives(erts, jit), *jit_archives(jit), *added].map { |archive| external_archive(archive) } +
+        apps.packages.map { |package| self.class.package_external(package, root: @root, status: apps.status(package)) }
+    end
+
+    # The build record of image, the checked image.boot, which the website takes it only
+    # with (ImageRecord): revision and facts as the image packs them, and packages, the
+    # entries package_entries made, each by its archive path and its file's SHA-256. A tree
+    # that moved from revision during the build gets no record, since the record would
+    # name a commit the image was not built from.
+    def write_record(image, revision:, facts:, packages:)
+      raise Error, "the tree changed during the build of #{image}, so it gets no build record" unless
+        SourceRevision.read(root: @root, runner: @runner) == revision
+
+      listed = packages.map { |entry| { 'path' => entry.fetch('path'), 'sha256' => Digest::SHA256.file(entry.fetch('artifact')).hexdigest } }
+      ImageRecord.write(image: image, revision: revision, facts: facts, packages: listed)
+    end
+
+    # The domain release's entry of each package of apps (ImageApps::Plan), at its
+    # pkg/NAME.app, with a package receipt in directory, which PackProvenance judges
+    # under the license its registration (package_external) states.
+    def self.package_entries(apps, directory:, root:, codec:)
+      apps.packages.map do |package|
+        file = File.realpath(package.path)
+        receipt = File.join(directory, "#{package.artifact_name}.receipt.json")
+        File.write(receipt, JSON.pretty_generate('version' => 1, 'kind' => 'package', 'artifact' => reference(file, root: root)) + "\n")
+        path = "#{ReleaseFiles::DOMAIN_PREFIX}#{package.entry_path}"
+        { 'path' => path, 'kind' => codec.member('entry_kind', 'file'), 'flags' => 0, 'id' => path, 'artifact' => file,
+          'receipt' => receipt }
+      end
+    end
+
+    # A package's registration, attributed whole as an archive is, under the license its
+    # header declares (NOASSERTION when it names none), with status, its plan's
+    # (ImageApps::Plan#status), which the package receipt judges it under.
+    def self.package_external(package, root:, status:)
+      file = File.realpath(package.path)
+      reference(file, root: root).merge('path' => file, 'label' => "#{ReleaseFiles::DOMAIN_PREFIX}#{package.entry_path}",
+                                        'license' => package.license.empty? ? 'NOASSERTION' : package.license,
+                                        'evidence' => 'the license its package header declares, as the file check of the machine reads it',
+                                        'status' => status, 'font_data' => false, 'notices' => [])
     end
 
     # What the interpreter and BeamAsm images link beyond the system image: each flavour's
@@ -1878,9 +1977,11 @@ module Erx
                                     'notices' => archive.notices.map { |notice| reference(File.join(@root, notice)) })
     end
 
-    def reference(path)
-      { 'path' => path.delete_prefix("#{@root}/"), 'sha256' => Digest::SHA256.file(path).hexdigest }
-    end
+    # A receipt's reference to the file at path: its path, relative when it lies under
+    # root, and its SHA-256.
+    def self.reference(path, root:) = { 'path' => path.delete_prefix("#{root}/"), 'sha256' => Digest::SHA256.file(path).hexdigest }
+
+    def reference(path) = self.class.reference(path, root: @root)
 
     def digests(built, medium)
       { 'archive_sha256' => built.archive, 'single_sha256' => built.single,

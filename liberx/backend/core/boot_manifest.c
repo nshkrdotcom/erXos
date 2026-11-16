@@ -766,6 +766,42 @@ erx_boot_build_words(uint64_t build_id, char *words, size_t capacity)
 	return (0);
 }
 
+/*
+ * length bytes as one word of their lowercase hex digits, two a byte, and a NUL, or false,
+ * writing nothing, when they do not fit.
+ */
+static bool
+hex_word_put(char *words, size_t capacity, size_t *used, const uint8_t *bytes, size_t length)
+{
+	static const char digit[] = "0123456789abcdef";
+
+	if (2 * length >= capacity - *used)
+		return (false);
+	for (size_t at = 0; at < length; at++) {
+		words[(*used)++] = digit[bytes[at] >> 4];
+		words[(*used)++] = digit[bytes[at] & 0xf];
+	}
+	words[(*used)++] = '\0';
+	return (true);
+}
+
+size_t
+erx_boot_system_image_words(const erx_mf_system_image_t *row, char *words, size_t capacity)
+{
+	size_t used = 0;
+
+	if (row->salt_length == 0 || row->salt_length > sizeof(row->salt))
+		return (0);
+	if (word_put(words, capacity, &used, ERX_BOOT_RECORD_FLAG) && word_put(words, capacity, &used, "system_image") &&
+	    number_put(words, capacity, &used, row->image_length) &&
+	    number_put(words, capacity, &used, row->tree_offset) &&
+	    number_put(words, capacity, &used, row->tree_length) &&
+	    hex_word_put(words, capacity, &used, row->salt, row->salt_length) &&
+	    hex_word_put(words, capacity, &used, row->root_hash, sizeof(row->root_hash)))
+		return (used);
+	return (0);
+}
+
 bool
 erx_boot_manifest_dma_total(const erx_manifest_view_t *view, uint64_t *total)
 {

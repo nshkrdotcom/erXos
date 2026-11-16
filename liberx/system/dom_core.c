@@ -113,8 +113,10 @@ static void	dom_spec_configured(const erx_dom_view_t *, uint32_t,
 static void	dom_spec_partial(const erx_dom_view_t *, uint32_t, uint32_t,
 		    erx_dom_spec_t *);
 static bool	dom_session_words(uint32_t, const char *, uint32_t, erx_dom_spec_t *);
-static void	dom_spec_session(const erx_dom_view_t *, uint32_t, uint32_t,
+static void	dom_spec_session(const erx_dom_view_t *, uint32_t, uint32_t, uint32_t, uint64_t,
 		    const char *, uint32_t, const char *, uint32_t, erx_dom_pid_t, erx_dom_spec_t *);
+static bool	dom_apps_hold(const erx_dom_view_t *, uint64_t);
+static bool	dom_display_name(const char *, uint32_t);
 static void	dom_decimal(uint32_t, erx_dom_spec_t *);
 static bool	dom_word_put(char *, size_t, size_t *, const char *, const char *, size_t);
 static bool	dom_number_put(char *, size_t, size_t *, const char *, uint32_t);
@@ -508,7 +510,8 @@ dom_remains_hold(const erx_dom_view_t *view, uint32_t id)
 
 /*
  * Room for the domain: a free record, an id neither a record nor remains
- * hold, the principal's quota, its budget,
+ * hold, the principal's quota, its budget and, for an app entry, the apps
+ * budget beside every app's sessions (dom_apps_hold),
  * and a free connection row for the system connection. Fills the plan's
  * slot and connection.
  */
@@ -516,7 +519,7 @@ static erx_status_t
 dom_check_room(const erx_dom_spec_t *spec, const erx_dom_view_t *view,
     const erx_dom_principal_t *principal, erx_dom_plan_t *plan)
 {
-	uint64_t carved;
+	uint64_t carved, need;
 
 	plan->slot = view->max_domains;
 	if (dom_remains_hold(view, spec->id))
@@ -531,9 +534,10 @@ dom_check_room(const erx_dom_spec_t *spec, const erx_dom_view_t *view,
 	if (plan->slot == view->max_domains ||
 	    principal->domains >= principal->domains_max)
 		return (ERX_ELIMIT);
-	if (!dom_add(principal->carved, spec->memory, &carved) ||
-	    !dom_add(carved, spec->outer, &carved) ||
-	    carved > principal->memory)
+	if (!dom_add(spec->memory, spec->outer, &need) ||
+	    !dom_add(principal->carved, need, &carved) ||
+	    carved > principal->memory ||
+	    (erx_dom_app_principal(view, principal->number) && !dom_apps_hold(view, need)))
 		return (ERX_ENOMEM);
 
 	plan->connection = 0;
@@ -735,10 +739,13 @@ dom_spec_partial(const erx_dom_view_t *view, uint32_t id, uint32_t row,
 }
 
 /*
- * The session constructor: everything but the id, the pid and the name is
- * session template `template`'s and its resolved limits'; the name is the
- * one the domain service chose, and its environment the template's with
- * the session's principal and default display after it
+ * The session constructor: everything but the id, the pid, the name, the
+ * principal and the memory is session template `template`'s and its
+ * resolved limits'; the principal and memory are the template's own or,
+ * for an app's session, its entry's and its record's
+ * (erx_dom_plan_app_session); the name is the one the domain service
+ * chose, and its environment the template's with the session's principal
+ * and default display after it
  * (dom_session_words). The template's arguments and environment, with
  * those words at their longest, fit the spec's strings, which
  * boot_templates checked when it built the view. A name that does not fit
@@ -747,22 +754,22 @@ dom_spec_partial(const erx_dom_view_t *view, uint32_t id, uint32_t row,
  */
 static void
 dom_spec_session(const erx_dom_view_t *view, uint32_t id, uint32_t template,
-    const char *name, uint32_t name_len, const char *display, uint32_t display_len,
-    erx_dom_pid_t domain_pid, erx_dom_spec_t *spec)
+    uint32_t principal, uint64_t memory, const char *name, uint32_t name_len,
+    const char *display, uint32_t display_len, erx_dom_pid_t domain_pid, erx_dom_spec_t *spec)
 {
 	const erx_dom_template_t *source = &view->templates[template];
 
 	memset(spec, 0, sizeof(*spec));
 	spec->version = ERX_DOM_SPEC_VERSION;
 	spec->id = id;
-	spec->principal = source->principal;
+	spec->principal = principal;
 	spec->domain_pid = domain_pid;
 	spec->origin = (erx_dom_origin_t){ ERX_DOM_SESSION, template };
 	spec->flags = source->flags;
 	spec->release = source->release;
 	spec->release_files = source->release_files;
 	spec->runtime = source->runtime;
-	spec->memory = source->memory;
+	spec->memory = memory;
 	spec->outer = source->outer;
 	spec->grant = source->grant;
 	spec->spaces = source->spaces;
@@ -781,7 +788,7 @@ dom_spec_session(const erx_dom_view_t *view, uint32_t id, uint32_t template,
 		memcpy(spec->strings, source->args, source->args_len);
 	if (source->env_len != 0)
 		memcpy(spec->strings + source->args_len, source->env, source->env_len);
-	if (!dom_session_words(source->principal, display, display_len, spec))
+	if (!dom_session_words(principal, display, display_len, spec))
 		spec->name_len = 0;
 }
 
@@ -1040,14 +1047,98 @@ erx_dom_plan_session(const erx_dom_view_t *view, uint32_t id,
     const char *display, uint32_t display_len,
     erx_dom_pid_t domain_pid, erx_dom_plan_t *plan)
 {
+	const erx_dom_template_t *source;
 	erx_dom_spec_t spec;
 
-	/* A NUL in the display's name would end its word and start another. */
-	if (template >= view->ntemplates || display_len > ERX_DOM_NAME_MAX ||
-	    (display_len != 0 && memchr(display, '\0', display_len) != NULL))
+	if (template >= view->ntemplates || !dom_display_name(display, display_len))
 		return (ERX_EINVAL);
-	dom_spec_session(view, id, template, name, name_len, display, display_len, domain_pid, &spec);
+	/* The app template names no principal, so its plan finds none and is refused. */
+	source = &view->templates[template];
+	dom_spec_session(view, id, template, source->principal, source->memory, name, name_len,
+	    display, display_len, domain_pid, &spec);
 	return (dom_plan(&spec, view, plan));
+}
+
+erx_status_t
+erx_dom_plan_app_session(const erx_dom_view_t *view, uint32_t id,
+    uint32_t entry, uint64_t memory, const char *name, uint32_t name_len,
+    const char *display, uint32_t display_len, erx_dom_pid_t domain_pid,
+    erx_dom_plan_t *plan)
+{
+	const erx_dom_apps_t *apps = &view->apps;
+	erx_dom_spec_t spec;
+
+	if (entry >= apps->max || memory > apps->memory ||
+	    !dom_display_name(display, display_len))
+		return (ERX_EINVAL);
+	dom_spec_session(view, id, apps->template, apps->first + entry, memory, name, name_len,
+	    display, display_len, domain_pid, &spec);
+	return (dom_plan(&spec, view, plan));
+}
+
+/*
+ * Whether display_len bytes of display can be a session's display word: at
+ * most a name's length, and no NUL, which would end the word and start
+ * another. A length of 0 is no display.
+ */
+static bool
+dom_display_name(const char *display, uint32_t display_len)
+{
+	return (display_len <= ERX_DOM_NAME_MAX &&
+	    (display_len == 0 || memchr(display, '\0', display_len) == NULL));
+}
+
+erx_status_t
+erx_dom_apps_place(erx_dom_view_t *view, uint32_t template, uint64_t memory,
+    uint32_t max)
+{
+	const uint32_t first = view->nprincipals + 1;
+	const erx_dom_template_t *source;
+	erx_dom_principal_t config;
+
+	if (view->apps.max != 0 || max == 0 || max > ERX_APPS_MAX_LIMIT ||
+	    template >= view->ntemplates || view->templates[template].principal != 0 ||
+	    memory == 0 || !dom_page_aligned(memory))
+		return (ERX_EINVAL);
+	source = &view->templates[template];
+	for (uint32_t entry = 0; entry < max; entry++) {
+		config = (erx_dom_principal_t){ .number = first + entry, .memory = memory,
+		    .domains_max = 1, .share = source->grant,
+		    .default_limits = source->runtime_limits,
+		    .ceiling_limits = source->runtime_limits };
+		if (erx_dom_principal_check(view, &config, &view->principals[first - 1 + entry]) != ERX_OK) {
+			view->nprincipals = first - 1;
+			return (ERX_EINVAL);
+		}
+		/* The next entry's check sees this one's number taken. */
+		view->nprincipals = first + entry;
+	}
+	view->apps = (erx_dom_apps_t){ .template = template, .first = first, .max = max, .memory = memory };
+	return (ERX_OK);
+}
+
+bool
+erx_dom_app_principal(const erx_dom_view_t *view, uint32_t number)
+{
+	return (view->apps.max != 0 && number >= view->apps.first &&
+	    number - view->apps.first < view->apps.max);
+}
+
+/*
+ * Whether the apps budget holds `more` bytes beside what every app entry's
+ * domains carve now: each entry's budget may reach the whole apps budget,
+ * so what the entries carve together is what the apps budget bounds.
+ */
+static bool
+dom_apps_hold(const erx_dom_view_t *view, uint64_t more)
+{
+	const erx_dom_principal_t *entry = &view->principals[view->apps.first - 1];
+	uint64_t carved = more;
+
+	for (uint32_t index = 0; index < view->apps.max; index++)
+		if (!dom_add(carved, entry[index].carved, &carved))
+			return (false);
+	return (carved <= view->apps.memory);
 }
 
 /*

@@ -51,9 +51,13 @@ module Erx
                     'liberx/elf_plan.c', 'liberx/image_plan.c', 'build/gen/liberx/generated/abi_reader.c'].freeze
     BOOT_FLAGS = %w[-mstrict-align].freeze
     BOOT_ARCHIVE = 'erx_boot.a'
-    FLAGS = %w[--no-default-config -std=c17 -Wall -Wextra -Werror -pedantic --target=aarch64-none-elf -ffreestanding
-               -mgeneral-regs-only -mno-outline-atomics -fstack-usage -ffunction-sections
-               -I build/gen -I build/gen/include -I include -I build/gen/kernel/generated -I kernel/crypto].freeze
+    # The language and code the cores compile to, which the stack proof's tests compile
+    # them with too. The proof follows no indirect branch, so a switch is never lowered
+    # to a jump table, whose branch through a register it would refuse.
+    TARGET_FLAGS = %w[-std=c17 -Wall -Wextra -Werror -pedantic --target=aarch64-none-elf -ffreestanding
+                      -mgeneral-regs-only -mno-outline-atomics -fno-jump-tables -fstack-usage].freeze
+    FLAGS = ['--no-default-config', *TARGET_FLAGS, '-ffunction-sections',
+             *%w[-I build/gen -I build/gen/include -I include -I build/gen/kernel/generated -I kernel/crypto]].freeze
     LEVEL = '-O2'
     ARCHIVE = 'erx_cores.a'
     MEMBERS = '.erx-archive-inputs'

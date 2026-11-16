@@ -89,7 +89,7 @@ protocol break counted, the end of the socket process.
                 | {tell, tuple()}
                 | {recv_timer, non_neg_integer() | infinity | cancel}
                 | {count, erx_sock_admit:check()}
-                | stop.
+                | {stop, normal}.
 
 -record(core, {sock :: tuple(),
                kind :: kind(),
@@ -139,16 +139,16 @@ step(recv_timeout, #core{recv = From} = C) when From =/= none ->
 step(recv_timeout, C) ->
     {C, []};
 step(socket_down, C) ->
-    {C, closed_replies(C) ++ [stop]};
+    {C, closed_replies(C) ++ [{stop, normal}]};
 step(owner_down, C) ->
     {N, C1} = number(C),
-    {C1, [{request, N, close}, stop]}.
+    {C1, [{request, N, close}, {stop, normal}]}.
 
 %% --- Calls ---------------------------------------------------------------------------
 
 call(close, From, C) ->
     {N, C1} = number(C),
-    {C1, [{request, N, close}, {reply, From, ok} | closed_replies(C1)] ++ [stop]};
+    {C1, [{request, N, close}, {reply, From, ok} | closed_replies(C1)] ++ [{stop, normal}]};
 call({recv, Timeout}, From, #core{active = false, recv = none} = C) when ?IS_TIMEOUT(Timeout) ->
     start_recv(From, Timeout, C, []);
 call({recv, Timeout}, From, #core{active = false, recvs = Recvs} = C) when ?IS_TIMEOUT(Timeout) ->
@@ -311,7 +311,7 @@ grant(#core{held_bytes = Held, outstanding = Out} = C, Acts) ->
 %% A protocol break: counted, the socket closed, every call held answered closed.
 abort(Check, C) ->
     {N, C1} = number(C),
-    {C1, [{count, Check}, {request, N, close} | closed_replies(C1)] ++ [stop]}.
+    {C1, [{count, Check}, {request, N, close} | closed_replies(C1)] ++ [{stop, normal}]}.
 
 %% Every call the core holds, answered as a closed socket's.
 closed_replies(#core{in_flight = InFlight, waiting = Waiting, recv = Recv, recvs = Recvs}) ->

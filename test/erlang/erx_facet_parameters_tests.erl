@@ -43,13 +43,15 @@ the_grant_s_limits_carry_its_parameters_by_name_test() ->
                              pixels, windows, clipboard]),
                  lists:sort(maps:keys(Limits))).
 
-%% The mint core as the domain service makes it from those terms (erx_domain_srv:booted/1).
+%% The mint core as the domain service makes it from those terms (erx_domain_srv:booted/1),
+%% and a session of the template holding the row its plan gave it.
 the_pixel_charge_follows_the_row_test() ->
-    {Services, Grants, {{template, Template}, Name, Server, _Limits}} = display(),
+    {Services, Grants, {{template, _Template}, Name, Server, Limits}} = display(),
     Mints = erx_domain_mints:new(#{services => [{S, N} || {S, N, _} <- Services, S =/= system],
                                    grants => [G || {_, _, S, _} = G <- Grants, S =/= system],
                                    windows => [Name], owner => fun(_) -> ok end}),
-    ?assertEqual({4194304, 5}, erx_domain_mints:pair_area({5, {configured, Server}}, {6, {session, Template}}, Mints)).
+    ?assertEqual({4194304, 5}, erx_domain_mints:pair_area({5, {configured, Server}},
+                                                         {6, {rows, [{Name, Server, Limits}]}}, Mints)).
 
 the_line_grant_s_uart_is_its_device_row_test() ->
     {ok, Bytes} = file:read_file("line.bin"),

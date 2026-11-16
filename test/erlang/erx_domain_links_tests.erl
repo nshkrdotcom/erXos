@@ -52,31 +52,31 @@ peer_id(C) -> ?A + C.
 
 nothing_goes_before_ready_test() ->
     S0 = core([?A, 11]),
-    {Connected, S1} = erx_domain_links:connect(c1, {?A, up_a}, {11, up_p}, S0),
+    {S1, Connected} = erx_domain_links:connect(c1, {?A, up_a}, {11, up_p}, S0),
     ?assertEqual([], Connected),
     ?assertEqual(up_pending, erx_domain_links:phase(?A, 11, S1)),
-    {Ready, _} = erx_domain_links:ready(?A, S1),
+    {_, Ready} = erx_domain_links:ready(?A, S1),
     ?assertEqual([{send, ?A, 0, {connection_up, 11, ?PEER_NAME, up_a}}], Ready).
 
 %% A later domain of a name reaches A only once A has answered the earlier
 %% connection's connection_down; the earlier connection is deleted first.
 later_incarnation_waits_for_the_earlier_down_test() ->
     S0 = ready_all(core([?A, 11]), [?A, 11]),
-    {_, S1} = erx_domain_links:connect(c1, {?A, up_a1}, {11, up_p1}, S0),
-    {[], S2} = erx_domain_links:answer(?A, {connection_mapped, 11}, S1),
-    {[], S3} = erx_domain_links:answer(11, {connection_mapped, ?A}, S2),
+    {S1, _} = erx_domain_links:connect(c1, {?A, up_a1}, {11, up_p1}, S0),
+    {S2, []} = erx_domain_links:answer(?A, {connection_mapped, 11}, S1),
+    {S3, []} = erx_domain_links:answer(11, {connection_mapped, ?A}, S2),
     ?assertEqual(up, erx_domain_links:phase(?A, 11, S3)),
 
-    {Down, S4} = erx_domain_links:ended(11, crash, S3),
+    {S4, Down} = erx_domain_links:ended(11, crash, S3),
     ?assertEqual([{send, ?A, 0, {connection_down, 11, {domain_down, 11, crash}}}], Down),
     S5 = erx_domain_links:add_party(12, ?PEER_NAME, 4, S4),
-    {Ready, S6} = erx_domain_links:ready(12, S5),
-    {Connected, S7} = erx_domain_links:connect(c2, {?A, up_a2}, {12, up_p2}, S6),
+    {S6, Ready} = erx_domain_links:ready(12, S5),
+    {S7, Connected} = erx_domain_links:connect(c2, {?A, up_a2}, {12, up_p2}, S6),
     ?assertEqual([], Ready),
     ?assertEqual([{send, 12, 0, {connection_up, ?A, ?A_NAME, up_p2}}], Connected),
     ?assertEqual(2, erx_domain_links:held(?A, S7)),
 
-    {Unmapped, S8} = erx_domain_links:answer(?A, {connection_unmapped, 11}, S7),
+    {S8, Unmapped} = erx_domain_links:answer(?A, {connection_unmapped, 11}, S7),
     ?assertEqual([{disconnect, c1}, {send, ?A, 0, {connection_up, 12, ?PEER_NAME, up_a2}}],
                  Unmapped),
     ?assertEqual(none, erx_domain_links:phase(?A, 11, S8)),
@@ -87,33 +87,33 @@ later_incarnation_waits_for_the_earlier_down_test() ->
 %% still holds.
 deleted_connection_counts_until_answered_test() ->
     S0 = ready_all(core([?A, 11]), [?A, 11]),
-    {_, S1} = erx_domain_links:connect(c1, {?A, a}, {11, p}, S0),
-    {_, S2} = erx_domain_links:answer(?A, {connection_mapped, 11}, S1),
-    {_, S3} = erx_domain_links:answer(11, {connection_mapped, ?A}, S2),
-    {_, S4} = erx_domain_links:close(?A, 11, S3),
-    {[], S5} = erx_domain_links:answer(?A, {connection_lost, 11, malformed}, S4),
-    {Deleted, S6} = erx_domain_links:answer(11, {connection_unmapped, ?A}, S5),
+    {S1, _} = erx_domain_links:connect(c1, {?A, a}, {11, p}, S0),
+    {S2, _} = erx_domain_links:answer(?A, {connection_mapped, 11}, S1),
+    {S3, _} = erx_domain_links:answer(11, {connection_mapped, ?A}, S2),
+    {S4, _} = erx_domain_links:close(?A, 11, S3),
+    {S5, []} = erx_domain_links:answer(?A, {connection_lost, 11, malformed}, S4),
+    {S6, Deleted} = erx_domain_links:answer(11, {connection_unmapped, ?A}, S5),
     ?assertEqual([{disconnect, c1}], Deleted),
     ?assertEqual({gone, 1, 0}, {erx_domain_links:phase(?A, 11, S6), erx_domain_links:held(?A, S6),
                                 erx_domain_links:held(11, S6)}),
-    {[], S7} = erx_domain_links:answer(?A, {connection_unmapped, 11}, S6),
+    {S7, []} = erx_domain_links:answer(?A, {connection_unmapped, 11}, S6),
     ?assertEqual({none, 0}, {erx_domain_links:phase(?A, 11, S7), erx_domain_links:held(?A, S7)}).
 
 %% The init's ready report may arrive after the fault gate's end.
 ready_after_end_is_nothing_test() ->
     S0 = core([?A, 11]),
-    {[], S1} = erx_domain_links:ended(11, crash, S0),
-    ?assertEqual({[], S1}, erx_domain_links:ready(11, S1)).
+    {S1, []} = erx_domain_links:ended(11, crash, S0),
+    ?assertEqual({S1, []}, erx_domain_links:ready(11, S1)).
 
 %% A survivor that never answers its connection_down keeps the connection
 %% closing, with its objects, whatever else happens.
 survivor_that_never_answers_keeps_the_connection_test() ->
     S0 = ready_all(core([?A, 11]), [?A, 11]),
-    {_, S1} = erx_domain_links:connect(c1, {?A, a}, {11, p}, S0),
-    {_, S2} = erx_domain_links:answer(?A, {connection_mapped, 11}, S1),
-    {_, S3} = erx_domain_links:answer(11, {connection_mapped, ?A}, S2),
-    {_, S4} = erx_domain_links:ended(11, stopped, S3),
-    {Again, S5} = erx_domain_links:close(?A, 11, S4),
+    {S1, _} = erx_domain_links:connect(c1, {?A, a}, {11, p}, S0),
+    {S2, _} = erx_domain_links:answer(?A, {connection_mapped, 11}, S1),
+    {S3, _} = erx_domain_links:answer(11, {connection_mapped, ?A}, S2),
+    {S4, _} = erx_domain_links:ended(11, stopped, S3),
+    {S5, Again} = erx_domain_links:close(?A, 11, S4),
     ?assertEqual([], Again),
     ?assertEqual(closing, erx_domain_links:phase(?A, 11, S5)).
 
@@ -122,16 +122,16 @@ survivor_that_never_answers_keeps_the_connection_test() ->
 %% or from a party not held change nothing but the count.
 unexpected_answers_are_dropped_and_counted_test() ->
     S0 = ready_all(core([?A, 11]), [?A, 11]),
-    {_, S1} = erx_domain_links:connect(c1, {?A, a}, {11, p}, S0),
+    {S1, _} = erx_domain_links:connect(c1, {?A, a}, {11, p}, S0),
     Stray = [{connection_unmapped, 11}, {connection_mapped, 12}, {connection_mapped, ?A},
              {connection_lost, 11}, {connection_lost, 12, early}, {connection_mapped, 11, extra}, junk,
              {connection_mapped, binary:copy(<<"x">>, 64)}],
-    S2 = lists:foldl(fun(Answer, S) -> {[], Next} = erx_domain_links:answer(?A, Answer, S), Next end,
+    S2 = lists:foldl(fun(Answer, S) -> {Next, []} = erx_domain_links:answer(?A, Answer, S), Next end,
                      S1, Stray),
-    {[], S3} = erx_domain_links:answer(99, {connection_mapped, ?A}, S2),
+    {S3, []} = erx_domain_links:answer(99, {connection_mapped, ?A}, S2),
     ?assertEqual(#{?A => length(Stray), 11 => 0, unknown => 1}, erx_domain_links:dropped(S3)),
     ?assertEqual(up_pending, erx_domain_links:phase(?A, 11, S3)),
-    {[], S4} = erx_domain_links:answer(?A, {connection_mapped, 11}, S3),
+    {S4, []} = erx_domain_links:answer(?A, {connection_mapped, 11}, S3),
     ?assertEqual(#{?A => length(Stray), 11 => 0, unknown => 1}, erx_domain_links:dropped(S4)).
 
 core(Parties) ->
@@ -140,21 +140,21 @@ core(Parties) ->
                 end, erx_domain_links:new(), Parties).
 
 ready_all(S0, Parties) ->
-    lists:foldl(fun(P, S) -> {[], Next} = erx_domain_links:ready(P, S), Next end, S0, Parties).
+    lists:foldl(fun(P, S) -> {Next, []} = erx_domain_links:ready(P, S), Next end, S0, Parties).
 
 %% A party that cannot map its connection_up answers connection_lost alone,
 %% which frees its slot and closes the connection: the peer that mapped is
 %% told connection_down, and the objects go once it has unmapped.
 failed_map_closes_the_connection_test() ->
     S0 = ready_all(core([?A, 11]), [?A, 11]),
-    {[{send, ?A, 0, _}, {send, 11, 0, _}], S1} = erx_domain_links:connect(c1, {?A, up_a}, {11, up_p}, S0),
-    {[], S2} = erx_domain_links:answer(?A, {connection_mapped, 11}, S1),
-    {Lost, S3} = erx_domain_links:answer(11, {connection_lost, ?A, {map, enomem}}, S2),
+    {S1, [{send, ?A, 0, _}, {send, 11, 0, _}]} = erx_domain_links:connect(c1, {?A, up_a}, {11, up_p}, S0),
+    {S2, []} = erx_domain_links:answer(?A, {connection_mapped, 11}, S1),
+    {S3, Lost} = erx_domain_links:answer(11, {connection_lost, ?A, {map, enomem}}, S2),
     ?assertEqual([{send, ?A, 0, {connection_down, 11, noconnection}}], Lost),
     ?assertEqual(closing, erx_domain_links:phase(?A, 11, S3)),
     ?assertEqual(0, erx_domain_links:held(11, S3)),
     ?assertEqual(#{?A => 0, 11 => 0, unknown => 0}, erx_domain_links:dropped(S3)),
-    {Unmapped, S4} = erx_domain_links:answer(?A, {connection_unmapped, 11}, S3),
+    {S4, Unmapped} = erx_domain_links:answer(?A, {connection_unmapped, 11}, S3),
     ?assertEqual([{disconnect, c1}], Unmapped),
     ?assertEqual(none, erx_domain_links:phase(?A, 11, S4)).
 
@@ -298,7 +298,7 @@ answered(Party, #{owed := Owed} = S) ->
 %% Calls into the core, then performs the actions it returned as the
 %% domain service would, checking each.
 call(Fun, #{core := Core} = S) ->
-    {Actions, Next} = Fun(Core),
+    {Next, Actions} = Fun(Core),
     lists:foldl(fun perform/2, S#{core := Next}, Actions).
 
 perform({send, Party, Slot, Record}, S) ->
@@ -620,22 +620,22 @@ control_slots_test() ->
                      erx_domain_links:new(), [{?A, ?A_NAME}, {11, 'p1@erxos'}, {12, 'p2@erxos'},
                                               {13, 'p3@erxos'}]),
     S1 = ready_all(S0, [?A, 11, 12]),
-    {[{send, ?A, 0, _}, {send, 11, 0, _}], S2} = erx_domain_links:connect(c1, {?A, u}, {11, u}, S1),
-    {[{send, ?A, 1, _}, {send, 12, 0, _}], S3} = erx_domain_links:connect(c2, {?A, u}, {12, u}, S2),
+    {S2, [{send, ?A, 0, _}, {send, 11, 0, _}]} = erx_domain_links:connect(c1, {?A, u}, {11, u}, S1),
+    {S3, [{send, ?A, 1, _}, {send, 12, 0, _}]} = erx_domain_links:connect(c2, {?A, u}, {12, u}, S2),
     ?assertNot(erx_domain_links:room(?A, S3)),
     ?assert(erx_domain_links:room(11, S3)),
     ?assertNot(erx_domain_links:room(99, S3)),
-    {[], S4} = erx_domain_links:answer(?A, {connection_mapped, 11}, S3),
-    {[], S5} = erx_domain_links:answer(11, {connection_mapped, ?A}, S4),
+    {S4, []} = erx_domain_links:answer(?A, {connection_mapped, 11}, S3),
+    {S5, []} = erx_domain_links:answer(11, {connection_mapped, ?A}, S4),
     %% A's slot 0 is free, but both its connections still count against it, so
     %% connect/4 refuses a third rather than trust its caller's room/2.
     ?assertError({badmatch, {false, true}}, erx_domain_links:connect(c3, {?A, u}, {13, u}, S5)),
     %% A's slot 0 is free again: the down about 11 takes it while slot 1 still waits.
-    {[{send, ?A, 0, {connection_down, 11, noconnection}}, {send, 11, 0, _}], S6} =
+    {S6, [{send, ?A, 0, {connection_down, 11, noconnection}}, {send, 11, 0, _}]} =
         erx_domain_links:close(?A, 11, S5),
-    {[], S7} = erx_domain_links:answer(?A, {connection_lost, 11, disconnect}, S6),
-    {[], S8} = erx_domain_links:answer(?A, {connection_mapped, 12}, S7),
-    {[], S9} = erx_domain_links:answer(12, {connection_mapped, ?A}, S8),
+    {S7, []} = erx_domain_links:answer(?A, {connection_lost, 11, disconnect}, S6),
+    {S8, []} = erx_domain_links:answer(?A, {connection_mapped, 12}, S7),
+    {S9, []} = erx_domain_links:answer(12, {connection_mapped, ?A}, S8),
     %% Slot 0 still holds the down about 11, so the down about 12 takes slot 1.
-    {[{send, ?A, 1, {connection_down, 12, noconnection}}, {send, 12, 0, _}], _} =
+    {_, [{send, ?A, 1, {connection_down, 12, noconnection}}, {send, 12, 0, _}]} =
         erx_domain_links:close(?A, 12, S9).

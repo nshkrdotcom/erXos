@@ -18,7 +18,9 @@
  * not the boot.
  *
  * Principals are numbered by row from 1, each admitted by
- * erx_dom_principal_check against those before it; each configured row
+ * erx_dom_principal_check against those before it, and the apps row's max
+ * app entries follow them, placed from the app template (boot_apps), so
+ * the principal and held tables have room for both; each configured row
  * takes its limits from its limits record and that record's runtime-limits
  * profile, and the rows stay in the manifest's table order, since a
  * record's origin names its row there. The files are judged one entry at a
@@ -57,8 +59,14 @@
 
 static bool	boot_place(size_t *, size_t, size_t, uint32_t, size_t *);
 static bool	boot_limits(const erx_manifest_view_t *, uint32_t, erx_runtime_limits_t *);
+static uint32_t	boot_apps_max(const erx_manifest_view_t *);
 static const char *boot_principals(erx_dom_lib_t *, const erx_manifest_view_t *,
 		    const erx_dom_boot_tables_t *);
+static const char *boot_apps(erx_dom_lib_t *, const erx_manifest_view_t *);
+static const char *boot_app_grants(const erx_dom_view_t *, const erx_manifest_view_t *);
+static bool	boot_app_grant(const erx_dom_view_t *, uint32_t, uint32_t, uint32_t);
+static bool	boot_app_holds(const erx_dom_view_t *, uint32_t, uint32_t);
+static bool	boot_app_names(const erx_manifest_view_t *, const erx_mf_apps_t *, uint32_t);
 static bool	boot_pages(uint64_t, uint64_t, erx_dom_range_t *);
 static bool	boot_compatible_is(const erx_manifest_view_t *, const erx_mf_device_t *, const char *);
 static bool	boot_reach(const erx_dom_device_entry_t *, erx_dom_range_t *);
@@ -67,14 +75,15 @@ static bool	boot_lines_meet(const erx_dom_device_entry_t *, const erx_dom_device
 static const char *boot_units(const erx_manifest_view_t *, erx_dom_device_entry_t *);
 static const char *boot_devices(erx_dom_view_t *, const erx_manifest_view_t *,
 		    erx_dom_device_entry_t *, erx_dom_device_t *);
-static bool	boot_strings_fit(uint64_t, uint64_t, uint32_t, bool);
+static bool	boot_strings_fit(uint64_t, uint64_t, uint32_t, bool, bool);
 static bool	boot_env_names_display(const char *, uint32_t);
 static bool	boot_env_sets(const char *, uint32_t, const char *);
 static const char *boot_display(const erx_manifest_view_t *, uint32_t, const char *, uint32_t,
 		    erx_dom_display_t *);
 static const char *boot_places(erx_dom_configured_t *, uint32_t, const erx_manifest_view_t *);
+static const char *boot_system_image(erx_dom_lib_t *, const erx_manifest_view_t *);
 static const char *boot_configured(erx_dom_view_t *, const erx_manifest_view_t *,
-		    erx_dom_configured_t *);
+		    erx_dom_configured_t *, uint32_t);
 static const char *boot_templates(erx_dom_view_t *, const erx_manifest_view_t *,
 		    erx_dom_template_t *);
 static const char *boot_services(erx_dom_view_t *, const erx_manifest_view_t *,
@@ -92,13 +101,27 @@ erx_dom_view_sizes(const erx_manifest_view_t *manifest, uint32_t nfiles)
 {
 	return ((erx_dom_boot_sizes_t){ .max_domains = manifest->header.max_domains,
 	    .max_connections = manifest->header.max_connections,
-	    .nprincipals = manifest->header.principals.count,
+	    .nprincipals = manifest->header.principals.count + boot_apps_max(manifest),
 	    .nconfigured = manifest->header.domains.count,
 	    .ntemplates = manifest->header.sessions.count, .nfiles = nfiles,
 	    .ndevices = manifest->header.devices.count,
 	    .nservices = manifest->header.services.count,
 	    .nfacets = manifest->header.facets.count,
 	    .nparameters = manifest->header.facet_parameters.count });
+}
+
+/*
+ * The apps row's max, the app entries the view places after the
+ * principals (boot_apps), or 0 for a manifest with no apps row. The
+ * reader bounds the row's max to apps_max_limit, so the principal table's
+ * size cannot overflow.
+ */
+static uint32_t
+boot_apps_max(const erx_manifest_view_t *manifest)
+{
+	erx_mf_apps_t row;
+
+	return (manifest->header.apps.count == 1 && erx_manifest_apps_at(manifest, 0, &row) ? row.max : 0);
 }
 
 /*
@@ -461,7 +484,8 @@ _Static_assert(ERX_BOOT_FRAMEBUFFER_WORDS_MAX <= ERX_BOOT_GIVEN_WORDS_MAX, "a fr
  * environment beside what the library writes there (docs/design-stopgap.md,
  * "Boot information"): its own node name and the system node's, -erx_record
  * build, a -erx_record given record per device of a kind it holds, and -erx_record boot when it holds a
- * block device of a kind. The reserve takes each at its longest, so a row the view
+ * block device of a kind, and -erx_record system_image when it holds the system
+ * window (system_image). The reserve takes each at its longest, so a row the view
  * admits never fails its creation for its strings: a node name at
  * ERX_DOM_NODE_MAX, though the system node's is at most 71 bytes, and the
  * difference also covers the NUL the page adds to args or env that lack a
@@ -469,11 +493,11 @@ _Static_assert(ERX_BOOT_FRAMEBUFFER_WORDS_MAX <= ERX_BOOT_GIVEN_WORDS_MAX, "a fr
  * constant.
  */
 static bool
-boot_strings_fit(uint64_t args_len, uint64_t env_len, uint32_t records, bool block)
+boot_strings_fit(uint64_t args_len, uint64_t env_len, uint32_t records, bool block, bool system_image)
 {
 	const uint64_t reserve = 2u * (uint64_t)ERX_DOM_NODE_MAX + ERX_BOOT_BUILD_WORDS_MAX +
 	    (uint64_t)records * ERX_BOOT_GIVEN_WORDS_MAX +
-	    (block ? ERX_BOOT_PAIR_WORDS_MAX : 0);
+	    (block ? ERX_BOOT_PAIR_WORDS_MAX : 0) + (system_image ? ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX : 0);
 
 	return (args_len + env_len + reserve <= ERX_BOOT_STRINGS_MAX);
 }
@@ -579,14 +603,50 @@ boot_places(erx_dom_configured_t *configured, uint32_t nconfigured, const erx_ma
 }
 
 /*
+ * Sets lib's system_image_row, the configured row that holds the manifest's
+ * system window, ERX_MF_NONE for a manifest with none, and system_image, the
+ * row its boot page alone carries as -erx_record system_image
+ * (docs/design-stopgap.md, "The booted slot"). The check gives a manifest
+ * at most one system window, held by the configured domain that holds its
+ * block device, and the system_image row with it (property 8). The view
+ * refuses a second window, a holder past the domains table and a window
+ * without the row or the row without it, so the record has one row to name
+ * and one holder or none; that the holder holds the block device is the
+ * check's alone.
+ */
+static const char *
+boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
+{
+	erx_mf_window_t window;
+
+	lib->system_image_row = ERX_MF_NONE;
+	for (uint32_t index = 0; index < manifest->header.windows.count; index++) {
+		if (!erx_manifest_windows_at(manifest, index, &window))
+			return ("manifest: a window the reader cannot read");
+		if (window.role != ERX_MF_WINDOW_ROLE_SYSTEM)
+			continue;
+		if (lib->system_image_row != ERX_MF_NONE || window.holder >= manifest->header.domains.count)
+			return ("manifest: more than one system window, or one held by no configured domain");
+		lib->system_image_row = window.holder;
+	}
+	if ((lib->system_image_row == ERX_MF_NONE) != (manifest->header.system_image.count == 0) ||
+	    (lib->system_image_row != ERX_MF_NONE && !erx_manifest_system_image_at(manifest, 0, &lib->system_image)))
+		return ("manifest: a system window without its system_image row, or the row without the window");
+	return (NULL);
+}
+
+/*
  * Each configured-domain row, its limits resolved from its limits record and
  * its strings judged against the devices the catalogue places on it, so
  * it reads view->devices, which boot_devices builds first. Every device
  * on the row is given; only a driven one (erx_dom_entry_driven) gets a
- * record, -erx_record given or -erx_record framebuffer.
+ * record, -erx_record given or -erx_record framebuffer. The row
+ * system_image_row, the system window's holder, gets -erx_record
+ * system_image too.
  */
 static const char *
-boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_configured_t *configured)
+boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_configured_t *configured,
+    uint32_t system_image_row)
 {
 	erx_mf_domain_t domain;
 	erx_mf_limits_t profile;
@@ -633,7 +693,8 @@ boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_d
 		    &row->display)) != NULL)
 			return (reason);
 		if (!boot_strings_fit(domain.args.length, domain.env.length +
-		    (row->display.name_len != 0 ? ERX_DOM_DISPLAY_WORDS_MAX : 0), records, block))
+		    (row->display.name_len != 0 ? ERX_DOM_DISPLAY_WORDS_MAX : 0), records, block,
+		    index == system_image_row))
 			return ("manifest: a configured domain's arguments and environment leave the boot page's strings "
 			    "no reserve for its node names, device records and display");
 		row->name = strings + domain.name.offset;
@@ -673,13 +734,19 @@ boot_templates(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_do
 	for (uint32_t index = 0; index < manifest->header.sessions.count; index++) {
 		if (!erx_manifest_sessions_at(manifest, index, &session))
 			return ("manifest: a session template the reader cannot read");
-		if (session.principal >= manifest->header.principals.count ||
+		if ((session.principal != ERX_MF_NONE && session.principal >= manifest->header.principals.count) ||
 		    !erx_manifest_limits_at(manifest, session.limits, &profile))
 			return ("manifest: a session template names no principal or limits record");
-		/* The principal's number, from 1, as the view numbers principals. */
-		principal = session.principal + 1;
-		if (index > 0 && principal <= templates[index - 1].principal)
-			return ("manifest: the session templates are not one per principal in principal order");
+		/*
+		 * The principal's number, from 1, as the view numbers principals;
+		 * 0 for the app template, which names none and comes last
+		 * (boot_apps).
+		 */
+		principal = session.principal == ERX_MF_NONE ? 0 : session.principal + 1;
+		if (index > 0 && (templates[index - 1].principal == 0 ||
+		    (principal != 0 && principal <= templates[index - 1].principal)))
+			return ("manifest: the session templates are not one per principal in principal order, "
+			    "with the app template last");
 		/*
 		 * A session's principal and default display are the words its start
 		 * adds after the template's environment (erx_dom_plan_session), which
@@ -690,7 +757,7 @@ boot_templates(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_do
 		if (boot_env_sets(strings + session.env.offset, session.env.length, ERX_PRINCIPAL_KEY_STRING) ||
 		    boot_env_sets(strings + session.env.offset, session.env.length, ERX_DISPLAY_KEY_STRING))
 			return ("manifest: a session template's environment sets a variable its start gives it");
-		if (!boot_strings_fit(session.args.length, session.env.length + ERX_DOM_SESSION_WORDS_MAX, 0, false))
+		if (!boot_strings_fit(session.args.length, session.env.length + ERX_DOM_SESSION_WORDS_MAX, 0, false, false))
 			return ("manifest: a session template's arguments and environment leave the boot page's strings "
 			    "no reserve for its node names, principal and display");
 		templates[index] = (erx_dom_template_t){ .principal = principal,
@@ -706,6 +773,122 @@ boot_templates(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_do
 		view->ntemplates = index + 1;
 	}
 	return (NULL);
+}
+
+/*
+ * The apps row's app entries (docs/design-packaging.md, "An app's
+ * principal"), placed after the manifest's principals by
+ * erx_dom_apps_place from the row's budget and max and the app template,
+ * the session template that names no principal, which boot_templates
+ * keeps last. The row and the template come together: the build derives
+ * the template from the row, so a manifest with one and not the other is
+ * refused, and the view holds app entries exactly when the manifest has
+ * an apps row. Each entry starts with no handle, as a principal does.
+ */
+static const char *
+boot_apps(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
+{
+	erx_dom_view_t *view = &lib->view;
+	const bool has_app_template = view->ntemplates != 0 && view->templates[view->ntemplates - 1].principal == 0;
+	erx_mf_apps_t row;
+
+	if (manifest->header.apps.count == 0)
+		return (has_app_template ? "manifest: an app template with no apps row" : NULL);
+	if (!erx_manifest_apps_at(manifest, 0, &row))
+		return ("manifest: an apps row the reader cannot read");
+	/* boot_templates keeps the one template naming no principal last; the row must name that one. */
+	if (!has_app_template || row.app_template != view->ntemplates - 1)
+		return ("manifest: an apps row whose app_template is not the session template naming no principal");
+	/* The principal and held tables hold boot_apps_max entries past the principals: place those. */
+	if (erx_dom_apps_place(view, row.app_template, row.memory, boot_apps_max(manifest)) != ERX_OK)
+		return ("manifest: the domain library refuses the app entries");
+	for (uint32_t entry = 0; entry < view->apps.max; entry++)
+		lib->held.principals[view->apps.first - 1 + entry] = (erx_dom_principal_held_t){ UINT64_MAX, UINT64_MAX };
+	return (NULL);
+}
+
+/*
+ * The app template's facet rows the apps row names by index
+ * (docs/design-packaging.md, "The template's rows by index"), checked
+ * once here so that every later reader of the indices, erx_pkg_manifest
+ * among them, takes them as the build packed them: packages_facet grants
+ * the template the service named packages_service, and each app_services
+ * row's facet grants the template that row's service; and the template
+ * holds no facet row besides those, each named once, so an app's session
+ * reaches only the services the apps row names and admission sees each of
+ * them once. The reader checked each index against its table; boot_apps
+ * checked app_template.
+ */
+static const char *
+boot_app_grants(const erx_dom_view_t *view, const erx_manifest_view_t *manifest)
+{
+	static const uint8_t packages[] = ERX_PACKAGES_SERVICE_BYTES;
+	const erx_dom_service_t *service;
+	erx_mf_app_service_t granted;
+	erx_mf_apps_t row;
+	uint32_t held;
+
+	if (manifest->header.apps.count == 0)
+		return (NULL);
+	if (!erx_manifest_apps_at(manifest, 0, &row))
+		return ("manifest: an apps row the reader cannot read");
+	service = &view->services[view->facets[row.packages_facet].service];
+	if (!boot_app_grant(view, row.app_template, row.packages_facet, view->facets[row.packages_facet].service) ||
+	    service->name_len != sizeof(packages) || memcmp(service->name, packages, sizeof(packages)) != 0)
+		return ("manifest: the apps row's packages_facet is not the app template's grant of packages_service");
+	/* The one apps row's services span partitions app_services, so it holds every row. */
+	for (uint32_t index = 0; index < manifest->header.app_services.count; index++) {
+		if (!erx_manifest_app_services_at(manifest, index, &granted))
+			return ("manifest: an app_services row the reader cannot read");
+		if (!boot_app_grant(view, row.app_template, granted.facet, granted.service))
+			return ("manifest: an app_services row's facet is not the app template's grant of its service");
+	}
+	/*
+	 * Every app's session holds what the template holds: the named rows and
+	 * nothing else, each named once, so the template holds exactly
+	 * 1 + app_services.count facets.
+	 */
+	held = 0;
+	for (uint32_t facet = 0; facet < view->nfacets; facet++) {
+		if (!boot_app_holds(view, row.app_template, facet))
+			continue;
+		if (!boot_app_names(manifest, &row, facet))
+			return ("manifest: the app template holds a facet the apps row does not name");
+		held++;
+	}
+	if (held != 1 + manifest->header.app_services.count)
+		return ("manifest: the apps row names one of the app template's facets twice");
+	return (NULL);
+}
+
+/* Whether the apps row names facet row facet: its packages_facet or an app_services row's facet. */
+static bool
+boot_app_names(const erx_manifest_view_t *manifest, const erx_mf_apps_t *row, uint32_t facet)
+{
+	erx_mf_app_service_t granted;
+
+	if (row->packages_facet == facet)
+		return (true);
+	for (uint32_t index = 0; index < manifest->header.app_services.count; index++)
+		if (erx_manifest_app_services_at(manifest, index, &granted) && granted.facet == facet)
+			return (true);
+	return (false);
+}
+
+/* Whether facet row facet grants session template template the service service. */
+static bool
+boot_app_grant(const erx_dom_view_t *view, uint32_t template, uint32_t facet, uint32_t service)
+{
+	return (boot_app_holds(view, template, facet) && view->facets[facet].service == service);
+}
+
+/* Whether facet row facet is granted to session template template. */
+static bool
+boot_app_holds(const erx_dom_view_t *view, uint32_t template, uint32_t facet)
+{
+	const erx_dom_facet_t *row = &view->facets[facet];
+
+	return (row->grantee_kind == ERX_MF_GRANTEE_SESSION && row->grantee == template);
 }
 
 /*
@@ -766,8 +949,9 @@ boot_facet_grantee(const erx_dom_view_t *view, const erx_mf_facet_t *facet, cons
 
 /*
  * Why row is not a value of parameter, or NULL with the value in *value:
- * it is of the declared kind and within the declared bound, and text or
- * bytes point into strings, the manifest's string table. A device
+ * it is of the declared kind and within the declared bound, a member
+ * kind's bound being exactly its members (erx_service_parameter_t), and
+ * text or bytes point into strings, the manifest's string table. A device
  * reference is its row's index in the device table, which the reader has
  * checked against that table (abi/manifest.txt), and the view's devices
  * are that table's rows in order. A domain or principal reference, which
@@ -787,6 +971,7 @@ boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *par
 	switch (row->kind) {
 	case ERX_MF_PARAMETER_U64:
 	case ERX_MF_PARAMETER_BOOLEAN:
+	case ERX_MF_PARAMETER_MEMBER:
 		within = row->scalar >= parameter->minimum && row->scalar <= parameter->maximum;
 		break;
 	case ERX_MF_PARAMETER_I64:
@@ -949,9 +1134,12 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	lib->held.principals = tables->held;
 	if ((reason = boot_principals(lib, manifest, tables)) != NULL ||
 	    (reason = boot_devices(&lib->view, manifest, tables->devices, tables->device_records)) != NULL ||
-	    (reason = boot_configured(&lib->view, manifest, tables->configured)) != NULL ||
+	    (reason = boot_system_image(lib, manifest)) != NULL ||
+	    (reason = boot_configured(&lib->view, manifest, tables->configured, lib->system_image_row)) != NULL ||
 	    (reason = boot_templates(&lib->view, manifest, tables->templates)) != NULL ||
-	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->parameters)) != NULL)
+	    (reason = boot_apps(lib, manifest)) != NULL ||
+	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->parameters)) != NULL ||
+	    (reason = boot_app_grants(&lib->view, manifest)) != NULL)
 		return (reason);
 	if (!boot_limits(manifest, header->native_limits, &lib->view.native_limits))
 		return ("manifest: native_limits names no limits record");

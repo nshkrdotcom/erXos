@@ -314,7 +314,7 @@ interrupt() ->
 %% Random answers, good-looking and malformed, until identification ends;
 %% it must end with one terminal action within the bound or keep asking.
 identification() ->
-    {Actions, S} = ?C:start(),
+    {S, Actions} = ?C:start(),
     walk_identification(Actions, S, 60).
 
 walk_identification(Actions, S, Left) ->
@@ -323,7 +323,7 @@ walk_identification(Actions, S, Left) ->
         {refuse, {Phase, _}} when is_atom(Phase) -> refused;
         {issue, _} when Left =:= 0 -> refused;
         {issue, _} ->
-            {Next, S1} = ?C:step(S, identification_event()),
+            {S1, Next} = ?C:step(S, identification_event()),
             Next =/= [] orelse error({no_action, ?C:phase(S)}),
             walk_identification(Next, S1, Left - 1)
     end.
@@ -392,7 +392,7 @@ walk_transfer(T, Left) ->
                 8 -> buffer_read_ready;
                 _ -> {command_complete, 16#900}
             end,
-    {Actions, T1} = ?H:step(T, Event),
+    {T1, Actions} = ?H:step(T, Event),
     lists:foreach(fun transfer_action/1, Actions),
     case [A || A <- Actions, element(1, A) =:= answer orelse element(1, A) =:= fail] of
         [] -> walk_transfer(T1, Left - 1);

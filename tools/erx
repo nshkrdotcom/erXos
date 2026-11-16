@@ -489,6 +489,10 @@ module Erx
                    name: 'fuzz-erx-erofs', deadline: 1800, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_f2fs.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-f2fs', deadline: 900, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_wpa_key.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-wpa-key', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_sae.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-sae', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_pkg_header.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-pkg-header', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_hostlink_frame.rb'), '--seed', options.fetch(:seed).to_s],
@@ -566,7 +570,8 @@ module Erx
     def self.fuzz_ruby(runner:, environment:, seconds:, seed:)
       %w[test/fuzz/abi.rb test/fuzz/qemu_transcript.rb test/fuzz/cli_status.rb tools/fuzz/oracle_results.rb tools/fuzz/crash_frame.rb
          tools/fuzz/boot_record.rb tools/fuzz/fat_volume.rb tools/fuzz/etf.rb tools/fuzz/hostlink_frame.rb
-         tools/fuzz/line_escape.rb tools/fuzz/web_front.rb tools/fuzz/harness_screen.rb tools/fuzz/platform_record.rb].each do |path|
+         tools/fuzz/line_escape.rb tools/fuzz/web_front.rb tools/fuzz/harness_screen.rb tools/fuzz/platform_record.rb
+         tools/fuzz/gpos_fuzz.rb].each do |path|
         runner.run([RbConfig.ruby, File.join(ROOT, path), '--seconds', seconds.to_s, '--seed', seed.to_s],
                    name: "fuzz-#{File.basename(path, '.rb').tr('_', '-')}", deadline: seconds + 30,
                    chdir: ROOT, env: environment)
@@ -590,23 +595,40 @@ module Erx
     # QEMU (ReleaseMedium), or a board's boot partition and SD card image (BootPartition).
     # With --probe header, instead the Raspberry Pi 4's header probe card (HeaderProbe),
     # a card of its own that needs no Fiasco and no image; it is a medium already, so it
-    # takes no --medium.
+    # takes no --medium. Each --app adds an app to the image (image_apps,
+    # docs/design-packaging.md, "Adding an app to an image"), --enable NAME starts it at
+    # boot and --signer FILE trusts a deployer's key for packages installed later.
+    # --local makes it a local test image, which takes a package whose license is not
+    # permissive and never leaves this host (ImageApps::Plan); a board's card, the one the
+    # website offers, takes neither (ProductionImage#build_medium).
     def self.pack(arguments)
       medium = false
+      local = false
       probe = nil
+      sources = []
+      enable = []
+      signers = []
       platform = platform_option(arguments) do |flags|
         flags.on('--medium') { medium = true }
         flags.on('--probe NAME', %w[header]) { |name| probe = name }
+        flags.on('--app PATH') { |path| sources << File.expand_path(path) }
+        flags.on('--enable NAME') { |name| enable << name }
+        flags.on('--signer FILE') { |path| signers << File.expand_path(path) }
+        flags.on('--local') { local = true }
       end
       no_arguments(arguments)
       raise Error, 'pack: --probe packs a card of its own and takes no --medium' if probe && medium
+      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && (local || !(sources + enable + signers).empty?)
 
       require_relative 'lib/erx/production_image'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       environment = host_environment(runner: runner)
       return pack_probe(runner: runner, environment: environment, platform: platform) if probe
+      apps = image_apps(runner: runner, sources: sources, enable: enable, signers: signers, local: local,
+                        compiler: environment.fetch('ERX_CLANG'))
       result = ProductionImage.pack_platform(root: ROOT, runner: runner, compiler: environment.fetch('ERX_CLANG'),
-                                             linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium)
+                                             linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium,
+                                             apps: apps)
       built, written = medium ? result : [result, nil]
       Terminal.puts("production image: #{built.single}; root_startup: #{built.report.fetch('manifest').fetch('root_startup')}")
       case written
@@ -621,6 +643,39 @@ module Erx
         Terminal.puts("release medium: #{written.path}; EROFS image: #{written.erofs}; #{extents.join('; ')}")
       end
       0
+    end
+
+    # The packages pack's --app options add to the image, as an ImageApps::Plan: each app
+    # directory packed with the SDK exported into build/app-sdk and the host's development
+    # package key (Erx::PackageKey), or each package file as given, both staged in
+    # build/app-packages, which the image takes them from; each directory is cleared
+    # first. The key's private half stays in its directory.
+    def self.image_apps(runner:, sources:, enable:, signers:, local:, compiler:)
+      require_relative 'lib/erx/image_apps'
+      return ImageApps.none unless local || !(sources + enable + signers).empty?
+
+      require_relative 'lib/erx/package_key'
+      require_relative 'lib/erx/sdk'
+      key = PackageKey.ensure
+      packages = sources.empty? ? [] : gathered_apps(sources, runner: runner, signer: key, compiler: compiler)
+      ImageApps.plan(packages, enable: enable, signers: signers.map { |path| ImageApps.signer(path) }, local: local)
+    end
+
+    # The packages of sources (ImageApps.gather), packed with an SDK exported into
+    # build/app-sdk and signed by signer, staged in build/app-packages.
+    def self.gathered_apps(sources, runner:, signer:, compiler:)
+      erlc = File.join(File.dirname(Oracle.new(root: ROOT, runner: runner).erl_path(Runtime::HOST_OTP_FLAVOUR)), 'erlc')
+      exported = File.join(empty_build_directory('build/app-sdk'), 'sdk')
+      Sdk.new(root: ROOT, runner: runner, erlc: erlc).export(exported)
+      ImageApps.gather(sources, into: empty_build_directory('build/app-packages'), sdk: AppPack::Sdk.new(root: exported, erlc: erlc),
+                                signer: signer, runner: runner, root: ROOT, compiler: compiler)
+    end
+
+    # The directory relative names under the tree, made empty.
+    def self.empty_build_directory(relative)
+      directory = ProductionImage.clear_directory(root: ROOT, path: File.join(ROOT, relative))
+      FileUtils.mkdir_p(directory)
+      directory
     end
 
     # The header probe card for platform (HeaderProbe.pack).
@@ -812,7 +867,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
       0
     end
 
@@ -852,9 +907,10 @@ module Erx
       RcOracle::Build.new(root: ROOT, runner: runner).call.rc
     end
 
-    # The theme's role subfonts in build/glyphs (Glyphs), through erx-raster,
-    # which is built first from the fetched FreeType pin when it is missing or
-    # stale (Raster::Build); prints only the output directory.
+    # The theme's role subfonts and the menu's glyph module in build/glyphs
+    # (Glyphs), through erx-raster, which is built first from the fetched
+    # FreeType pin when it is missing or stale (Raster::Build); prints only
+    # the output directory.
     def self.build_glyphs
       require_relative 'lib/erx/glyphs'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
@@ -1070,7 +1126,7 @@ module Erx
       source_id = nil
       docker_context = nil
       parser = OptionParser.new do |options|
-        options.on('--cache DIRECTORY', 'Use only this explicit local source cache') { |value| cache = value }
+        options.on('--cache DIRECTORY', "Use only another checkout's build/downloads as the source cache") { |value| cache = value }
         options.on('--source ID', 'Fetch only this pinned source') { |value| source_id = value }
         options.on('--docker-context NAME', 'Use this local Docker context for image fetch') { |value| docker_context = value }
       end
@@ -1079,6 +1135,12 @@ module Erx
 
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       dependencies = Dependencies.new(root: ROOT, runner: runner, docker_context: docker_context)
+      # A source cache holds no OCI image; say so before fetch, which may stop at a source the cache lacks.
+      if cache && source_id.nil?
+        dependencies.images.each do |image|
+          Terminal.puts("#{image.fetch('id')}: an OCI image, not in a source cache; run `tools/erx fetch --source #{image.fetch('id')}`")
+        end
+      end
       dependencies.fetch(cache: cache, source_id: source_id)
       dependencies.elsewhere.each do |source|
         Terminal.puts("#{source.fetch('id')}: a program for #{source.fetch('host')}; not fetched on this host")

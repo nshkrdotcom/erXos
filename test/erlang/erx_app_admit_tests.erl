@@ -57,8 +57,7 @@ manifest(_) ->
       packages => [<<"kiosk">>]}.
 
 %% The boot's app principals: clock and chess, installed by the signer
-%% vendor, in entries 0 and 2, so a new name takes entry 1; and, when full,
-%% every entry held.
+%% vendor, in entries 0 and 2; and, when full, every entry held.
 registry(full) ->
     maps:merge(registry(base),
                #{<<"kiosk">> => #{entry => 1, signer => image},
@@ -66,6 +65,27 @@ registry(full) ->
 registry(_) ->
     #{<<"clock">> => #{entry => 0, signer => <<"vendor">>},
       <<"chess">> => #{entry => 2, signer => <<"vendor">>}}.
+
+%% The entry rule registration takes its entry by: a new name takes the
+%% lowest entry no name holds, below a held one too; a held name keeps its own.
+entry_rule_test_() ->
+    [?_assertEqual({ok, 1}, erx_app_admit:entry(<<"notes">>, development, 4, registry(base))),
+     ?_assertEqual({ok, 2}, erx_app_admit:entry(<<"chess">>, <<"vendor">>, 4, registry(base)))].
+
+%% Check 5 refuses a declared memory that is not a whole number of pages,
+%% which the domain library's plan of the app's session would refuse.
+unaligned_memory_test_() ->
+    Header = #{name => <<"pager">>, abi_version => ?ERX_ABI_VERSION,
+               arch => ?ERX_ARCH_MACHINE_ARCH_BYTES, needs => []},
+    Admit = fun(Memory) ->
+                    erx_app_admit:admit(checked(Header#{memory => Memory}, development),
+                                        manifest(base), registry(base))
+            end,
+    [?_assertEqual({error, {memory, 64 * ?MIB + 1}}, Admit(64 * ?MIB + 1)),
+     ?_assertEqual({error, {memory, 64 * ?MIB + ?ERX_PAGE_SIZE div 2}},
+                   Admit(64 * ?MIB + ?ERX_PAGE_SIZE div 2)),
+     ?_assertMatch({ok, #{memory := Memory}} when Memory =:= 64 * ?MIB + ?ERX_PAGE_SIZE,
+                   Admit(64 * ?MIB + ?ERX_PAGE_SIZE))].
 
 %% Names that are no identifier, each refused by check 3 whatever its
 %% length. The package reader refuses them in a file (its name field is an

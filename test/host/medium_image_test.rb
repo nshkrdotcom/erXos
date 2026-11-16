@@ -29,16 +29,23 @@ class MediumImageTest < Minitest::Test
       assert_equal Medium.sectors * 512, File.size(path)
       windows = Medium.windows.to_h { |window| [window.role, window] }
       data_end = windows[:data].start + windows[:data].sectors
-      extended = CODEC.constant('medium_extended_start')
-      data_ebr = CODEC.constant('medium_data_ebr')
+      c = ->(name) { CODEC.constant("medium_#{name}") }
+      extended = c.call('system_a_ebr')
       assert_equal [[0x0e, windows[:record].start, windows[:record].sectors],
-                    [0x0c, windows[:slot_a].start, windows[:slot_a].sectors],
-                    [0x0c, windows[:slot_b].start, windows[:slot_b].sectors],
+                    [0x0c, windows[:boot_a].start, windows[:boot_a].sectors],
+                    [0x0c, windows[:boot_b].start, windows[:boot_b].sectors],
                     [0x0f, extended, data_end - extended]], entries(path, 0)
-      assert_equal [[0x83, windows[:vault].start - extended, windows[:vault].sectors],
-                    [0x05, data_ebr - extended, data_end - data_ebr], [0, 0, 0], [0, 0, 0]], entries(path, extended)
-      assert_equal [[0x83, windows[:data].start - data_ebr, windows[:data].sectors], [0, 0, 0], [0, 0, 0], [0, 0, 0]],
-                   entries(path, data_ebr)
+      # Each logical partition from its own record, each link from the extended partition's
+      # start through the next partition's end, and no link after the data partition's.
+      chain = [[c.call('system_a_ebr'), c.call('system_a_start'), c.call('system_sectors')],
+               [c.call('system_b_ebr'), c.call('system_b_start'), c.call('system_sectors')],
+               [c.call('vault_ebr'), windows[:vault].start, windows[:vault].sectors],
+               [c.call('data_ebr'), windows[:data].start, windows[:data].sectors]]
+      chain.each_with_index do |(ebr, start, sectors), index|
+        link = chain[index + 1]&.then { |(next_ebr, next_start, next_sectors)| [0x05, next_ebr - extended, next_start + next_sectors - next_ebr] }
+        assert_equal [[0x83, start - ebr, sectors], link || [0, 0, 0], [0, 0, 0], [0, 0, 0]], entries(path, ebr),
+                     "the record at sector #{ebr}"
+      end
       assert_operator Medium::DATA_SECTORS, :>, CODEC.constant('medium_data_sectors_min')
     end
   end

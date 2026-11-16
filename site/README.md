@@ -71,6 +71,21 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   once. The development image of a plain
   `tools/erx boot` builds into `build/production-image/interactive/`, so
   it never replaces the website's.
+* `--image-record` is the image's build record, by default the image's
+  path with `.receipt.json` added, which `tools/erx boot --without-web`
+  alone writes beside `image.boot` (`Erx::ImageRecord`), and only when the
+  tree did not move during the build, so no other image (a development
+  image, a test image, one with a login key) can be published. It names the image's SHA-256, the
+  full commit it was built from and whether the tree had changes, the
+  image's build facts, which `uname` shows on its machine, and the
+  packages it carries. The build refuses an image with no record, or whose
+  record names another SHA-256, a commit other than `--source`'s, a tree
+  with changes, the configuration of a local test image
+  (`qemu-virt/development-local`, which `tools/erx pack --app X --local`
+  builds) or any package, with a card or without. The record is not
+  signed: it keeps a local test image, which may carry a GPL package, off
+  the page by mistake, and whoever publishes the page is trusted not to
+  forge one.
 * The machine's disk is made by the build, not taken: a boot medium laid
   out by `abi/medium.txt` with the data partition at its minimum length
   and every window blank but for the data partition, which holds a fresh
@@ -79,7 +94,7 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   installation: the guest's mount never formats, so the build formats
   `/data`'s volume with the host formatter (`Erx::DataVolume`). The medium
   is 1.2 GiB, since the layout fixes where the data partition starts, but
-  only its partition table's three records and the volume's first blocks
+  only its partition table's five records and the volume's first blocks
   hold bytes, so it is published as `disk-<digest>.bin`, those bytes, and
   `boot.json` lists the extents they fill.
 * `--card CARD` is the Raspberry Pi 4's card, by default
@@ -110,7 +125,7 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   published page always carries a card.
 * `--source REF` is the erXos release tag or full commit the image and
   the card were built from, by default this tree's `HEAD`. Since the
-  card's record names a commit, a tag is refused; the workflow resolves
+  records name a commit, a tag is refused; the workflow resolves
   its tag to the commit before it builds. The image
   carries the stopgap kernel's GPL-2.0 files and the card those and the
   board's GPL-2.0 device tree, so the page links that source on github.com
@@ -139,14 +154,16 @@ and publishes `build/site` to GitHub Pages. It does not build the erXos
 image or the card, which need the whole erXos toolchain; it downloads a
 release's `image.boot` and `sdcard.img.xz` (GitHub refuses a release asset
 of 2 GiB or more, and the card is 2 GiB), each named by its URL and its own
-SHA-256 as the workflow's inputs, and the card's `sdcard.img.receipt.json` by
-its URL and SHA-256 too, and refuses one whose digest differs; each download
+SHA-256 as the workflow's inputs, and their build records,
+`image.boot.receipt.json` and `sdcard.img.receipt.json`, by their URLs and
+SHA-256s too, and refuses one whose digest differs; each download
 is capped in size (the compressed card must stay under 1 GiB). It then
 unpacks the card with `xz`, stopping at 4 GiB (`CARD_MAX_BYTES`), so a
 hostile file cannot fill the runner's disk. The build step computes the
 unpacked card's SHA-256 and refuses a record that does not name it, or does
 not name the commit `image_source` resolves to. So `card_xz_sha256` pins the
-download and the record pins the card inside it.
+download and the record pins the card inside it. The image's record is
+checked the same, and refused as well for a local test image or a package.
 The `image_source` input names the release tag or commit both were built
 from; the page links the commit it resolves to. The build compresses the card
 again for the page, with the same options every time, so the page's download
@@ -156,7 +173,8 @@ overlap; a run waiting there is replaced by a newer dispatch.
 
 To publish: in the repository settings, set Pages to deploy from GitHub
 Actions. Attach to a release an `image.boot` built with
-`tools/erx boot --without-web`, and, from the same commit, the card that
+`tools/erx boot --without-web` from a commit with no changes, its
+`image.boot.receipt.json`, and, from the same commit, the card that
 `make pack PLATFORM=raspi4b` builds, compressed, and its record:
 
 ```
@@ -164,13 +182,15 @@ xz --keep --check=crc64 -9 --threads=1 build/production-image/raspi4b/sdcard.img
 sha256sum build/production-image/raspi4b/sdcard.img.xz
 ```
 
-The assets are `image.boot`, `sdcard.img.xz` and `sdcard.img.receipt.json`;
+The assets are `image.boot`, `image.boot.receipt.json`, `sdcard.img.xz` and
+`sdcard.img.receipt.json`;
 the card is uploaded only compressed. Then run the `site` workflow with the
 assets' URLs and SHA-256s. `card_xz_sha256` is the `sdcard.img.xz` file's, not
 the card's (the record holds that one):
 
 ```
 gh workflow run site.yml -f image_url=URL -f image_sha256=DIGEST -f image_source=TAG \
+  -f image_record_url=URL -f image_record_sha256=DIGEST \
   -f card_xz_url=URL -f card_xz_sha256=DIGEST -f card_record_url=URL -f card_record_sha256=DIGEST
 ```
 

@@ -66,6 +66,9 @@ module ErxTtyFuzz
                                 text: 'merge([{echo, <<A/binary, B/binary>>} | Rest]);',
                                 broken: 'merge([{echo, <<B/binary, A/binary>>} | Rest]);',
                                 property: 'chunked_differs'),
+    'the widest rendering of a byte' => Seed.new(module_file: 'erx_tty.erl', text: 'widest_rendering() -> ?TAB_WIDTH.',
+                                                 broken: 'widest_rendering() -> ?TAB_WIDTH - 1.',
+                                                 property: 'output_none_with_room'),
     "the codec's byte range" => Seed.new(module_file: 'erx_abi_termios.erl', text: 'Value =< 16#ff.',
                                          broken: 'Value =< 16#fff.', property: 'codec_invalid_accepted')
   }.freeze

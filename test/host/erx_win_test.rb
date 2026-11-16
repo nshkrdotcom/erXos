@@ -24,11 +24,12 @@ class ErxWinTest < Minitest::Test
   Erx::Generated.ensure(root: ROOT)
   OTP = File.join(ROOT, 'build/oracle/jit/install/lib/erlang')
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
-  INCLUDES = %w[otp/lib/kernel/include build/gen/erlang/apps/erx/include erlang/apps/erx_files/include].map { |dir| File.join(ROOT, dir) }.freeze
+  INCLUDES = %w[otp/lib/kernel/include build/gen/erlang/apps/erx/include erlang/apps/erx/include].map { |dir| File.join(ROOT, dir) }.freeze
   DISPLAY = %w[erx_display erx_screen erx_screen_core erx_wctl erx_window erx_winctl erx_winfs erx_wm
                erx_wm_single erx_input].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
             %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl]
-  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version erx_fs_waits].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
+  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version].map { |name| "erlang/apps/erx_files/src/#{name}.erl" } +
+          ['erlang/apps/erx/src/erx_fs_waits.erl']
   CONN_SOURCE = 'erlang/apps/erx_win/src/erx_draw_conn.erl'
   CLIENT = %w[erx_win_core erx_win_sup erx_pixels erx_pixels_core erx_draw erx_draw_core
               erx_draw_image].map { |name| "erlang/apps/erx_win/src/#{name}.erl" } + [CONN_SOURCE]
@@ -93,9 +94,9 @@ class ErxWinTest < Minitest::Test
              catching_case: 'a_connection_frees_its_images_when_its_window_ends_test'),
     Seed.new(fault: "a refused write that applies the messages before the refused one, as devdraw's does",
              path: CONN_SOURCE,
-             anchor: "{error, Errno, Offset} ->\n",
-             replacement: "{error, Errno, Offset} ->\n" \
-                          '_ = perform_write(element(3, erx_draw_core:plan(Core, binary:part(Bytes, 0, Offset))), ' \
+             anchor: "{Core, [{error, Errno, Offset}]} ->\n",
+             replacement: "{Core, [{error, Errno, Offset}]} ->\n" \
+                          '_ = perform_write(element(2, erx_draw_core:plan(Core, binary:part(Bytes, 0, Offset))), ' \
                           "Conn),\n",
              suite: 'erx_draw_tests',
              catching_case: 'a_refused_write_applies_nothing_test'),

@@ -776,8 +776,8 @@ set_prop(ui_node_t *node, uint8_t number, const erx_ui_prop_t *prop)
 		break;
 	default:
 		/*
-		 * Events, images and keys change nothing a renderer
-		 * shows; icons and graphs are not drawn here.
+		 * Events, images, keys and names change nothing a
+		 * renderer shows; icons and graphs are not drawn here.
 		 */
 		break;
 	}

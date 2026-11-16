@@ -17,9 +17,9 @@ service refuses, end the keeper, which is started again; more than
 -export([init/1]).
 -export_type([row/0]).
 
-%% What a row's supervisor keeps: the principal's number, the start map its
-%% keeper hands the domain service, and the intensity.
--type row() :: #{principal := pos_integer(), start := map(),
+%% What a row's supervisor keeps: whose session (erx_starter_keeper:who()), the start
+%% map its keeper hands the domain service, and the intensity.
+-type row() :: #{principal := erx_starter_keeper:who(), start := map(),
                  restarts := non_neg_integer(), period := pos_integer()}.
 
 -spec start_link(row()) -> supervisor:startlink_ret().
@@ -28,5 +28,6 @@ start_link(Row) ->
 
 init(#{principal := Principal, start := Start, restarts := Restarts, period := Period}) ->
     Keeper = #{id => keeper, start => {erx_starter_keeper, start_link, [Principal, Start]},
-               restart => permanent, shutdown => 5000},
+               %% The keeper ends only once its session has (erx_starter_keeper).
+               restart => permanent, shutdown => infinity},
     {ok, {#{strategy => one_for_one, intensity => Restarts, period => Period}, [Keeper]}}.

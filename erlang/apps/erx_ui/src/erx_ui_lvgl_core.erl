@@ -8,8 +8,8 @@ shares with the program erx-lvgl (docs/design-display.md, "The widget
 server"): what it writes to the program, when it presents the window's
 buffer, and when the program has broken the protocol. A pure state
 machine: step/2 takes the renderer's state and one event and returns the
-next state and the actions erx_ui_lvgl performs, in order, or a reason to
-stop the program.
+next state and the actions erx_ui_lvgl performs, in order, the last
+`{stop, Reason}` when the program is to be stopped. A stop comes alone.
 
 The program draws a frame into the window's buffer and reports it with
 one `damage` record that names the width and height it drew at and the
@@ -104,13 +104,14 @@ left without room until its deadline.
 -doc """
 What erx_ui_lvgl does: write records to the program's standard input,
 present rectangles of the window's buffer drawn at a width and height,
-answer an apply by its token, or hand the widget server a hit as
-`{ui_hit, Node, Event, Value}`.
+answer an apply by its token, hand the widget server a hit as
+`{ui_hit, Node, Event, Value}`, or stop the program, always the last.
 """.
 -type action() :: {write, [erx_ui_wire:wire_record()]}
                 | {present, 1..65535, 1..65535, [rect(), ...]}
                 | {reply, token()}
-                | {hit, erx_ui_model:node_id(), atom(), term()}.
+                | {hit, erx_ui_model:node_id(), atom(), term()}
+                | {stop, stop_reason()}.
 
 -doc "Why the program is stopped, for the log; the UI ends as `renderer_down`.".
 -type stop_reason() :: report_before_presented | {refused, term()} | {exit, exit_status()}
@@ -155,49 +156,47 @@ input({resized, _X, _Y, _Buttons, _Msec}, _Origin) ->
     [].
 
 -doc """
-`{ok, State, Actions}`, the next state and the actions for `Event`, or
+The next state and the actions for `Event`, in order; the last is
 `{stop, Reason}` when the program broke the protocol or ended.
 """.
--spec step(event(), state()) -> {ok, state(), [action()]} | {stop, stop_reason()}.
+-spec step(event(), state()) -> {state(), [action()]}.
 step({resize, W, H, Chan}, {{EW, EH} = Extent, Phase}) ->
     {Width, Height} = Size = {clipped(W, EW), clipped(H, EH)},
-    {ok, {Extent, resized(Phase, Size)}, [{write, [{screen, Width, Height, Chan}]}]};
+    {{Extent, resized(Phase, Size)}, [{write, [{screen, Width, Height, Chan}]}]};
 step(Event, {Extent, Phase}) ->
-    case phase(Event, Phase) of
-        {ok, Phase1, Actions} -> {ok, {Extent, Phase1}, Actions};
-        {stop, _Reason} = Stop -> Stop
-    end.
+    {Phase1, Actions} = phase(Event, Phase),
+    {{Extent, Phase1}, Actions}.
 
 phase({damage, W, H, Rects}, {idle, {W, H}} = Idle) ->
-    {ok, open(Idle), [{present, W, H, Rects}]};
+    {open(Idle), [{present, W, H, Rects}]};
 phase({damage, _W, _H, _Rects}, {idle, _Size} = Idle) ->
-    {ok, Idle, [{write, [presented]}]};
-phase({damage, _W, _H, _Rects}, {open, _, _, _}) ->
-    {stop, report_before_presented};
+    {Idle, [{write, [presented]}]};
+phase({damage, _W, _H, _Rects}, {open, _, _, _} = Open) ->
+    {Open, [{stop, report_before_presented}]};
 phase(shown, {open, Size, Held, Waiter}) ->
-    {ok, {idle, Size}, [{write, [presented | lists:reverse(Held)]} | reply(Waiter)]};
+    {{idle, Size}, [{write, [presented | lists:reverse(Held)]} | reply(Waiter)]};
 phase(shown, {idle, _Size}) ->
     error(no_present_open);
 phase({apply, Ops, Token}, {idle, _Size} = Idle) ->
-    {ok, Idle, [{write, Ops}, {reply, Token}]};
+    {Idle, [{write, Ops}, {reply, Token}]};
 phase({apply, Ops, Token}, {open, Size, Held, none}) ->
-    {ok, {open, Size, lists:reverse(Ops, Held), Token}, []};
+    {{open, Size, lists:reverse(Ops, Held), Token}, []};
 phase({apply, _Ops, _Token}, {open, _Size, _Held, _Waiter}) ->
     error(apply_in_flight);
 phase({window, Record}, {idle, _Size} = Idle) ->
-    {ok, Idle, [{write, [Record]}]};
+    {Idle, [{write, [Record]}]};
 phase({window, Record}, {open, Size, Held, Waiter}) ->
-    {ok, {open, Size, [Record | Held], Waiter}, []};
+    {{open, Size, [Record | Held], Waiter}, []};
 phase({event, Node, Name, Value}, Phase) ->
-    {ok, Phase, [{hit, Node, Name, Value}]};
-phase({refused, Reason}, _Phase) ->
-    {stop, {refused, Reason}};
-phase({exit, Status}, _Phase) ->
-    {stop, {exit, Status}};
-phase({lost, Reason}, _Phase) ->
-    {stop, {lost, Reason}};
-phase(stalled, _Phase) ->
-    {stop, stalled}.
+    {Phase, [{hit, Node, Name, Value}]};
+phase({refused, Reason}, Phase) ->
+    {Phase, [{stop, {refused, Reason}}]};
+phase({exit, Status}, Phase) ->
+    {Phase, [{stop, {exit, Status}}]};
+phase({lost, Reason}, Phase) ->
+    {Phase, [{stop, {lost, Reason}}]};
+phase(stalled, Phase) ->
+    {Phase, [{stop, stalled}]}.
 
 open({idle, Size}) -> {open, Size, [], none}.
 

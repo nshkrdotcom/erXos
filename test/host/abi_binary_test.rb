@@ -120,16 +120,16 @@ class AbiBinaryTest < Minitest::Test
     end
   end
 
-  # The first device row is at 744: after the header and two 24-byte unit rows.
+  # The first device row is at 792: after the header and two 24-byte unit rows.
   def test_device_selector_refuses_inactive_fields_and_missing_path
     bytes = AbiManifestFixture.unit_partition
-    AbiManifestFixture.integer(bytes, 744 + 32, 1, width: 2)
+    AbiManifestFixture.integer(bytes, 792 + 32, 1, width: 2)
     assert_refused %w[inactive devices[].bus], bytes
     bytes = AbiManifestFixture.unit_partition
-    AbiManifestFixture.span(bytes, 744 + 8, 0, 0)
+    AbiManifestFixture.span(bytes, 792 + 8, 0, 0)
     assert_refused %w[string_range devices[].path.offset], bytes
     bytes = AbiManifestFixture.unit_partition
-    AbiManifestFixture.integer(bytes, 744 + 48, 4096, width: 8)
+    AbiManifestFixture.integer(bytes, 792 + 48, 4096, width: 8)
     assert_refused %w[inactive devices[].dma_memory], bytes
   end
 
@@ -138,6 +138,31 @@ class AbiBinaryTest < Minitest::Test
   def assert_refused((reason, field), bytes)
     error = assert_raises(Erx::ABI::DecodeError) { @codec.open('manifest', bytes) }
     assert_equal [reason, field], [error.reason, error.field], error.message
+  end
+
+  # bytes with one system_image row of salt_length salt, placed before its strings table.
+  def with_system_image(bytes, salt_length:)
+    strings, length = bytes.byteslice(AbiManifestFixture::STRINGS_SPAN, 8).unpack('V2')
+    head = bytes.byteslice(0, strings)
+    head << ("\0".b * (-head.bytesize % 8))
+    row = [4096, 4096, 4096, salt_length, 0].pack('Q<3V2') + ("\x5a".b * 32) + ("\xa5".b * 32)
+    AbiManifestFixture.span(head, 440, head.bytesize, 1)
+    head << row
+    AbiManifestFixture.span(head, AbiManifestFixture::STRINGS_SPAN, head.bytesize, length)
+    head << bytes.byteslice(strings, length)
+    AbiManifestFixture.integer(head, 8, head.bytesize)
+    head
+  end
+
+  # A system_image row's salt is 1 to 32 bytes, and only a release or development
+  # manifest, whose domains hold the system window, carries one.
+  def test_system_image_row_bounds_its_salt_and_its_mode
+    development = AbiManifestFixture.session_template
+    decoded = @codec.open('manifest', with_system_image(development, salt_length: 32))
+    refute_nil decoded
+    assert_refused %w[range system_image[].salt_length], with_system_image(development, salt_length: 0)
+    assert_refused %w[range system_image[].salt_length], with_system_image(development, salt_length: 33)
+    assert_raises(Erx::ABI::DecodeError) { @codec.open('manifest', with_system_image(AbiManifestFixture.valid, salt_length: 8)) }
   end
 
   def test_partial_mode_cannot_carry_configured_domain_tables

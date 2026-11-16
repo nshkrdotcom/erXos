@@ -6,6 +6,7 @@
 %% test/fixtures/erofs/tree.terms declares (ERX_EROFS_FIXTURES names the directory).
 -module(erx_erofs_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -export([fixture/1, window/1, window/2, open/1, open/2, expected/0, contents/2, owner/1, agrees/2]).
 
@@ -34,7 +35,7 @@ window(Bytes, Serve) -> spawn(fun() -> serve(Bytes, Serve) end).
 serve(Bytes, Serve) ->
     receive
         {'$gen_call', From, info} ->
-            gen:reply(From, {ok, #{role => slot_a, sectors => byte_size(Bytes) div ?SECTOR}});
+            gen:reply(From, {ok, #{role => system, sectors => byte_size(Bytes) div ?SECTOR}});
         {'$gen_call', From, {read, Sector, Count}} when Sector rem 8 =:= 0, Count rem 8 =:= 0 ->
             Part = binary:part(Bytes, Sector * ?SECTOR, Count * ?SECTOR),
             gen:reply(From, Serve(Sector div 8, Count div 8, Part))
@@ -55,7 +56,8 @@ expected() ->
 contents(Size, Seed) -> << <<((I * 7 + Seed) band 255)>> || I <- lists:seq(0, Size - 1) >>.
 
 mount(Name) ->
-    {ok, Fs} = erx_erofs:mount(window(fixture(Name)), unchecked, fun(Line) -> self() ! {log, Line} end),
+    {ok, Image} = open(fixture(Name)),
+    {ok, Fs} = erx_erofs:mount(Image, fun(Line) -> self() ! {log, Line} end),
     Fs.
 
 logged() ->
@@ -118,7 +120,8 @@ walks_end_as_the_resolver_reads_them_test() ->
 %% Refusals at mount, each with its diagnostic.
 
 refused(Bytes) ->
-    erx_erofs:mount(window(Bytes), unchecked, fun(_) -> ok end).
+    {ok, Image} = open(Bytes),
+    erx_erofs:mount(Image, fun(_) -> ok end).
 
 compression_is_refused_naming_its_bits_test() ->
     ?assertEqual({error, enotsup, <<"erofs: block 0: incompatible feature bits 0x1 are not implemented">>},
@@ -140,13 +143,13 @@ superblock_test_() ->
 malformed_blocks_fail_the_operation_test() ->
     Bytes = fixture("compact"),
     Gate = atomics:new(1, []),
-    Window = window(Bytes, fun(_, Count, Part) ->
-                                      case atomics:get(Gate, 1) of
-                                          0 -> {ok, Part};
-                                          _ -> {ok, binary:copy(<<255>>, Count * ?BLOCK)}
-                                      end
-                              end),
-    {ok, Fs} = erx_erofs:mount(Window, unchecked, fun(Line) -> self() ! {log, Line} end),
+    {ok, Image} = open(Bytes, fun(_, Count, Part) ->
+                                         case atomics:get(Gate, 1) of
+                                             0 -> {ok, Part};
+                                             _ -> {ok, binary:copy(<<255>>, Count * ?BLOCK)}
+                                         end
+                                 end),
+    {ok, Fs} = erx_erofs:mount(Image, fun(Line) -> self() ! {log, Line} end),
     atomics:put(Gate, 1, 1),
     ?assertEqual({error, eio}, erx_erofs:read_file(Fs, [<<"small">>])),
     <<"erofs: inode 36: unknown format bits 0xFFFF">> = logged(),
@@ -188,8 +191,11 @@ funnel_opens_only_a_window_test() ->
     ?assertEqual({error, eio}, erx_verity:open(not_a_pid, unchecked)),
     Wrong = spawn(fun() -> receive {'$gen_call', From, info} -> gen:reply(From, {ok, #{}}) end end),
     ?assertEqual({error, eio}, erx_verity:open(Wrong, unchecked)),
-    ?assertMatch({error, eio, <<"erofs: the window did not answer its length">>},
-                 erx_erofs:mount(Gone, unchecked, fun(_) -> ok end)),
+    %% The reader mounts only an image the funnel opened: a window or its bytes fail
+    %% at the first read.
+    Compact = fixture("compact"),
+    [?assertEqual({error, eio, <<"erofs: blocks 0+1 failed to read">>}, erx_erofs:mount(NotOpened, fun(_) -> ok end))
+     || NotOpened <- [window(Compact), Compact]],
     %% A window of 20 blocks and 7 sectors is 20 blocks long.
     {ok, Odd} = open(binary:copy(<<1>>, 20 * ?BLOCK + 7 * ?SECTOR)),
     {ok, _} = erx_verity:read(Odd, 19, 1),
@@ -277,3 +283,192 @@ open_file_refusals_test() ->
     #file_info{type = symlink, access = undefined} = erx_erofs:file_info(Fs, [<<"to-small">>]),
     #file_info{type = directory, access = read, mode = Mode} = erx_erofs:file_info(Fs, [<<"a">>]),
     ?assertEqual(8#040000, Mode band 8#170000).
+
+%% The hash check ------------------------------------------------------------------
+
+%% The funnel over a layout, on images and trees the packer's writer,
+%% Erx::AppPackage#verity_tree, made (test/host/erx_erofs_test.rb writes them into the
+%% directory ERX_VERITY_CASES names): "levels", 200 distinct blocks under a tree of a
+%% one-block top and a two-block lowest level, with a block of 0xFF between the image and
+%% the tree; "offset", a package's shape, 130 blocks after a block of 0xEE, as a package's
+%% image lies after its header, and its tree after them; "one", one block and no tree, its
+%% block's hash the root; and "erofs", the compact fixture image. Every block must read as the image holds it, and any changed
+%% byte of a block, of a tree block on its path or of the root answer eio. "deep", a tree
+%% of three levels, is read in parts below.
+
+verity_case(Name) ->
+    Dir = os:getenv("ERX_VERITY_CASES"),
+    {ok, Cases} = file:consult(filename:join(Dir, "verity.terms")),
+    {Name, Layout} = lists:keyfind(Name, 1, Cases),
+    {ok, Bytes} = file:read_file(filename:join(Dir, Name ++ ".img")),
+    {Bytes, Layout}.
+
+%% Every block of the image Layout places in Bytes, read 16 at a time, joined.
+read_image(Bytes, Layout) ->
+    case erx_verity:open(window(Bytes), Layout) of
+        {ok, Image} -> read_blocks(Image, 0, maps:get(image_length, Layout) div ?BLOCK, []);
+        {error, eio} -> {error, eio}
+    end.
+
+read_blocks(_Image, Block, Blocks, Read) when Block >= Blocks ->
+    {ok, iolist_to_binary(lists:reverse(Read))};
+read_blocks(Image, Block, Blocks, Read) ->
+    case erx_verity:read(Image, Block, min(?ERX_VERITY_READ_BLOCKS_MAX, Blocks - Block)) of
+        {ok, Got} -> read_blocks(Image, Block + length(Got), Blocks, [Got | Read]);
+        {error, eio} -> {error, eio}
+    end.
+
+read_one(Bytes, Layout, Block) ->
+    {ok, Image} = erx_verity:open(window(Bytes), Layout),
+    erx_verity:read(Image, Block, 1).
+
+flip_byte(Bytes, Offset) ->
+    <<Before:Offset/binary, Byte, After/binary>> = Bytes,
+    <<Before/binary, (Byte bxor 16#10), After/binary>>.
+
+verity_good_image_reads_test_() ->
+    [{Name, fun() ->
+                    {Bytes, #{image_offset := Offset, image_length := Length} = Layout} = verity_case(Name),
+                    ?assertEqual({ok, binary:part(Bytes, Offset, Length)}, read_image(Bytes, Layout))
+            end} || Name <- ["levels", "offset", "one", "erofs"]].
+
+%% The image's blocks are the window's from image_offset on: block 0 is the block after
+%% the header, the header is no block of the image, and its changed byte changes no read.
+verity_image_offset_test() ->
+    {Bytes, #{image_offset := Offset, image_length := Length} = Layout} = verity_case("offset"),
+    ?assertEqual({ok, [binary:part(Bytes, Offset, ?BLOCK)]}, read_one(Bytes, Layout, 0)),
+    ?assertEqual({ok, [binary:part(Bytes, Offset + 129 * ?BLOCK, ?BLOCK)]}, read_one(Bytes, Layout, 129)),
+    ?assertEqual({error, eio}, read_one(flip_byte(Bytes, Offset + 5), Layout, 0)),
+    ?assertEqual({ok, binary:part(Bytes, Offset, Length)}, read_image(flip_byte(Bytes, 5), Layout)).
+
+verity_flipped_data_block_test() ->
+    {Bytes, Layout} = verity_case("levels"),
+    Flipped = flip_byte(Bytes, 150 * ?BLOCK + 5),
+    ?assertEqual({error, eio}, read_one(Flipped, Layout, 150)),
+    ?assertMatch({ok, [_]}, read_one(Flipped, Layout, 149)),
+    ?assertEqual({error, eio}, read_image(Flipped, Layout)),
+    {One, OneLayout} = verity_case("one"),
+    ?assertEqual({error, eio}, read_one(flip_byte(One, 4095), OneLayout, 0)).
+
+%% The tree lies top first: the top block, then the lowest level's two blocks, the second
+%% holding the hashes of blocks 128 to 199.
+verity_flipped_tree_block_test() ->
+    {Bytes, #{tree_offset := Tree} = Layout} = verity_case("levels"),
+    Lowest = flip_byte(Bytes, Tree + 2 * ?BLOCK + 7),
+    ?assertEqual({error, eio}, read_one(Lowest, Layout, 150)),
+    ?assertMatch({ok, [_]}, read_one(Lowest, Layout, 127)),
+    Top = flip_byte(Bytes, Tree + 4095),
+    ?assertEqual({error, eio}, read_one(Top, Layout, 0)),
+    %% A byte of the gap before the tree is no block of the image or the tree.
+    ?assertMatch({ok, _}, read_image(flip_byte(Bytes, Tree - 1), Layout)).
+
+verity_wrong_root_test_() ->
+    [{Name, fun() ->
+                    {Bytes, #{root_hash := <<First, Rest/binary>>} = Layout} = verity_case(Name),
+                    Wrong = Layout#{root_hash := <<(First bxor 1), Rest/binary>>},
+                    ?assertEqual({error, eio}, read_image(Bytes, Wrong))
+            end} || Name <- ["levels", "offset", "one", "erofs"]].
+
+%% A read stops at the image's last block, though the window holds the tree past it.
+verity_reads_stop_at_the_image_test() ->
+    {Bytes, Layout} = verity_case("levels"),
+    {ok, Image} = erx_verity:open(window(Bytes), Layout),
+    ?assertMatch({ok, [_]}, erx_verity:read(Image, 199, 1)),
+    ?assertEqual({error, eio}, erx_verity:read(Image, 200, 1)),
+    ?assertEqual({error, eio}, erx_verity:read(Image, 199, 2)).
+
+%% A layout whose tree is not where and as long as erx_verity_tree places it, or that
+%% does not fit the window, is refused at open.
+verity_refused_layouts_test_() ->
+    {Bytes, #{image_length := Length, tree_offset := Tree, tree_length := TreeLength} = Layout} =
+        verity_case("levels"),
+    Refused = [Layout#{tree_length := TreeLength - ?BLOCK},
+               Layout#{tree_length := TreeLength + ?BLOCK},
+               Layout#{tree_offset := Tree + ?BLOCK},
+               Layout#{tree_offset := Tree + ?SECTOR},
+               Layout#{tree_offset := Length - ?BLOCK},
+               Layout#{image_length := Length - 1},
+               Layout#{image_length := 0},
+               Layout#{salt := not_a_binary},
+               Layout#{root_hash := <<0:248>>},
+               maps:remove(salt, Layout),
+               maps:remove(image_offset, Layout),
+               Layout#{image_offset := ?SECTOR},
+               Layout#{extra => 0}],
+    %% A package's tree that starts before its image ends.
+    {Package, #{image_offset := Offset, image_length := PackageLength} = PackageLayout} = verity_case("offset"),
+    Overlapping = PackageLayout#{tree_offset := Offset + PackageLength - ?BLOCK},
+    [?_assertEqual({error, eio}, erx_verity:open(window(Bytes), Bad)) || Bad <- Refused]
+        ++ [?_assertEqual({error, eio}, erx_verity:open(window(Package), Overlapping))].
+
+%% The reader over a checked image serves the tree as over the image unchecked.
+verity_checked_mount_test() ->
+    {Bytes, Layout} = verity_case("erofs"),
+    {ok, Image} = erx_verity:open(window(Bytes), Layout),
+    {ok, Fs} = erx_erofs:mount(Image, fun(Line) -> self() ! {log, Line} end),
+    agrees(Fs, owner("compact")).
+
+%% A read whose blocks' hashes lie in both blocks of the lowest level checks each block
+%% against its own parent.
+verity_read_across_two_tree_blocks_test() ->
+    {Bytes, Layout} = verity_case("levels"),
+    {ok, Image} = erx_verity:open(window(Bytes), Layout),
+    {ok, Got} = erx_verity:read(Image, 120, 16),
+    ?assertEqual(binary:part(Bytes, 120 * ?BLOCK, 16 * ?BLOCK), iolist_to_binary(Got)).
+
+%% "deep": 16700 blocks under a tree of three levels, which lie top first: the top at the
+%% tree's block 0, the middle level at 1 and 2, the second holding the hashes of the
+%% lowest level's blocks 128 to 130, and the lowest level at 3 to 133. Only the tree is
+%% stored; the window makes image block I as the writer did, numbered(I).
+-define(DEEP_BLOCKS, 16700).
+
+numbered(Block) -> binary:copy(<<Block:32>>, ?BLOCK div 4).
+
+numbered(First, Count) -> {ok, [numbered(Block) || Block <- lists:seq(First, First + Count - 1)]}.
+
+%% A window over the image Data makes, Data(Block) for each block, with Tree after it.
+deep_window(Tree, Data) -> spawn(fun() -> deep_serve(Tree, Data) end).
+
+deep_serve(Tree, Data) ->
+    receive
+        {'$gen_call', From, info} ->
+            gen:reply(From, {ok, #{role => system, sectors => (?DEEP_BLOCKS * ?BLOCK + byte_size(Tree)) div ?SECTOR}});
+        {'$gen_call', From, {read, Sector, 8}} when Sector rem 8 =:= 0, Sector div 8 < ?DEEP_BLOCKS ->
+            gen:reply(From, {ok, Data(Sector div 8)});
+        {'$gen_call', From, {read, Sector, 8}} when Sector rem 8 =:= 0 ->
+            gen:reply(From, {ok, binary:part(Tree, (Sector div 8 - ?DEEP_BLOCKS) * ?BLOCK, ?BLOCK)})
+    after ?WINDOW_IDLE ->
+        exit(idle)
+    end,
+    deep_serve(Tree, Data).
+
+deep_read(Tree, Data, Block, Count) ->
+    {_, Layout} = verity_case("deep"),
+    {ok, Image} = erx_verity:open(deep_window(Tree, Data), Layout),
+    erx_verity:read(Image, Block, Count).
+
+%% Reads at the start, across a block boundary of both lower levels (data blocks 16376 to
+%% 16391 hash into the lowest level's blocks 127 and 128, whose hashes lie in the middle
+%% level's blocks 0 and 1) and at the end.
+verity_three_levels_read_test_() ->
+    {Tree, _} = verity_case("deep"),
+    [?_assertEqual(numbered(Block, Count), deep_read(Tree, fun numbered/1, Block, Count))
+     || {Block, Count} <- [{0, 16}, {16376, 16}, {16684, 16}, {16699, 1}]].
+
+%% A changed byte on block 16600's path, at each level, answers eio for it. Block 16600 is
+%% slot 88 of the lowest level's block 129, which is slot 1 of the middle level's block 1,
+%% slot 1 of the top. Block 0's path shares only the top block, so it still reads unless
+%% the top changed, which no longer matches the root.
+verity_three_levels_flipped_test_() ->
+    {Tree, _} = verity_case("deep"),
+    Data = fun(16600) -> flip_byte(numbered(16600), 9); (Block) -> numbered(Block) end,
+    Cases = [{"data", Tree, Data, numbered(0, 1)},
+             {"lowest", flip_byte(Tree, (3 + 129) * ?BLOCK + 88 * 32 + 5), fun numbered/1, numbered(0, 1)},
+             {"middle", flip_byte(Tree, 2 * ?BLOCK + 32 + 5), fun numbered/1, numbered(0, 1)},
+             %% Off the read's slot: the middle block's hash of the lowest level's block 130.
+             {"middle block", flip_byte(Tree, 2 * ?BLOCK + 2 * 32 + 5), fun numbered/1, numbered(0, 1)},
+             {"top", flip_byte(Tree, 32 + 5), fun numbered/1, {error, eio}}],
+    [{Name, fun() ->
+                    ?assertEqual({error, eio}, deep_read(Flipped, Serve, 16600, 1)),
+                    ?assertEqual(First, deep_read(Flipped, Serve, 0, 1))
+            end} || {Name, Flipped, Serve, First} <- Cases].

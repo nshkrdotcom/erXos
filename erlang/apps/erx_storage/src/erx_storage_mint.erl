@@ -1,22 +1,26 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
--module(erx_lfs_mint).
+-module(erx_storage_mint).
 -moduledoc """
-The mint of the files service of one tree of a littlefs volume (docs/design-stopgap.md,
-"littlefs in the storage domain"; erx_lfs, "Trees"): `data`, the storage domain's `/data`
-for the system domain and root's session, or `packages`, the installed app packages
-(docs/design-packaging.md, "Where a package lies"). The service and the tree share their
-name, so a mint hands out grants of its own tree alone. It is a child of erx_lfs_sup,
-started after the volume's owner, so it serves the volume already mounted, and it names
-itself the service's mint (erx_facet:provide/2) before the domain's ready report.
+The mint of one files service of the storage domain: of a tree of the data volume
+(docs/design-stopgap.md, "littlefs in the storage domain"; erx_lfs, "Trees"), `data`, the
+storage domain's `/data` for the system domain and root's session, or `packages`, the
+installed app packages (docs/design-packaging.md, "Where a package lies"); or of the
+`system` tree, the booted slot's system partition (docs/design-storage.md, "The `system`
+tree"). Each mint serves one tree, which an erx_fs callback module serves from the
+arguments the mint's mount answers, so a mint hands out grants of its own tree alone.
+It names itself the service's mint (erx_facet:provide/2) and acknowledges its start, both
+before the domain's ready report; only then does it run the mount, in its own process,
+before it takes a request: the supervisor that starts it waits for no mount, and a mint
+request that comes first waits in the mint's queue.
 
 For each mint request in the system domain's envelope (mint_request/3) it starts one
-erx_fs grant of the service's tree, read-write, whose client is the grantee's domain id,
-so the grant takes frames only in that domain's envelope and with that domain's names
-(erx_fs_grant, S9). The grant exports itself to the grantee, with `send` alone, before
-its start returns, so no answer names a grant the grantee cannot reach; a refused export
-is the mint's answer, and no grant is left. A grant for another domain than the system
+erx_fs grant of the service's tree, with the facet row's rights, whose client is the
+grantee's domain id, so the grant takes frames only in that domain's envelope and with
+that domain's names (erx_fs_grant, S9). The grant exports itself to the grantee, with
+`send` alone, before its start returns, so no answer names a grant the grantee cannot
+reach; a refused export is the mint's answer, and no grant is left. A grant for another domain than the system
 domain ends with this domain's connection to the grantee (erx_connections:connection/1):
 a grantee's restart is a new domain id and a new connection, so a frame of the old
 incarnation reaches no grant that would take it. A grant for the system domain lives as
@@ -24,30 +28,27 @@ long as this domain, whose link to the system domain is its own.
 
 The grants run under erx_fs_grants, a supervisor of temporary children that the mint
 starts linked to itself, so the end of a grant ends nothing else, while the mint's end,
-and so the volume's, ends every grant. erx_fs_grants applies the facet row's limits.
+and so the tree's, ends every grant. erx_fs_grants applies the facet row's limits and rights.
 """.
 
--export([start_link/2, mint_request/3, grant/5]).
+-export([start_link/3, mint_request/3, grant/5]).
 %% The mint's process.
 -export([mint_init/2]).
 
 -doc """
-Starts the mint of the files service Service, of the tree of that name, for the volume
-whose owner is registered as Name, linked to the caller, erx_lfs_sup. A machine without
-the volume starts no mint.
+Starts the mint of the files service Service, whose tree the erx_fs callback module
+Module serves from the arguments Mount answers, linked to the caller, the supervisor
+of the tree. The mint runs Mount once, in its own process, after this returns.
 """.
--spec start_link(atom(), atom()) -> {ok, pid()} | ignore.
-start_link(Service, Name) when is_atom(Service), is_atom(Name) ->
-    case whereis(Name) of
-        undefined -> ignore;
-        _Owner -> proc_lib:start_link(?MODULE, mint_init, [self(), {Service, Name}])
-    end.
+-spec start_link(atom(), module(), fun(() -> term())) -> {ok, pid()}.
+start_link(Service, Module, Mount) when is_atom(Service), is_atom(Module), is_function(Mount, 0) ->
+    proc_lib:start_link(?MODULE, mint_init, [self(), {Service, Module, Mount}]).
 
 -doc false.
-mint_init(Parent, {Service, Name}) ->
-    {ok, Grants} = erx_fs_grants:start_link(erx_lfs, {Name, Service}),
+mint_init(Parent, {Service, Module, Mount}) ->
     ok = erx_facet:provide(Service, self()),
     proc_lib:init_ack(Parent, {ok, self()}),
+    {ok, Grants} = erx_fs_grants:start_link(Module, Mount()),
     mint(erx_kernel_records:system_domain(), Service, Grants).
 
 mint(System, Service, Grants) ->

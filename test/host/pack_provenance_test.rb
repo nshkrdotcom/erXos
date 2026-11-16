@@ -5,6 +5,7 @@
 require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/pack_provenance'
+require_relative '../../tools/lib/erx/serving_set'
 
 class PackProvenanceTest < Minitest::Test
   # Each catalog class closes over the caller's record, including instances
@@ -251,6 +252,21 @@ class PackProvenanceTest < Minitest::Test
     assert_equal 'BSD-2-Clause', records.first.fetch('license')
   end
 
+  # The serving module's source is written by a runtime build, whose OTP copy holds the
+  # imported tree's ORIGIN.md as the copy makes it: the receipt of the beam compiled from
+  # it still resolves, as a generated source, since the source is not under that copy.
+  def test_a_compiled_receipt_attributes_the_derived_serving_source_of_an_otp_copy
+    copy = File.join(@root, 'build/runtime/hosted/otp')
+    FileUtils.mkdir_p(copy)
+    File.write(File.join(copy, 'ORIGIN.md'), "# origin\n")
+    source = Erx::ServingSet.source(otp: copy)
+    FileUtils.mkdir_p(File.dirname(source))
+    @produced << source
+    File.write(source, "%% SPDX-License-Identifier: BSD-2-Clause\n-module(erx_ramfs_serving).\n")
+    records = resolve_compiled('sources' => [reference(source)])
+    assert_equal 'BSD-2-Clause', records.first.fetch('license')
+  end
+
   def test_a_compiled_receipt_needs_a_source_it_can_verify
     assert_raises(Erx::Error) { resolve_compiled('sources' => []) }
     assert_raises(Erx::Error) { resolve_compiled('sources' => [reference(@source).merge('sha256' => '0' * 64)]) }
@@ -314,6 +330,41 @@ class PackProvenanceTest < Minitest::Test
                                                      'sources' => [reference(blob)] }))
     resolver.instance_variable_set(:@catalog, build_catalog)
     resolver.resolve(receipt: receipt, artifact: @artifact, build_kind: 'release')
+  end
+
+  # A package an image takes (ImageApps) is attributed whole under the license its header
+  # declares, judged as an archive's but always as permanent, so a development build that
+  # admits a stopgap's restricted license still refuses a package's, and a package that
+  # names no license.
+  def resolve_package(license, status: 'permanent', build_kind: 'development')
+    package = write('clock.app', 'package bytes')
+    external = { 'path' => package, 'sha256' => Digest::SHA256.file(package).hexdigest, 'license' => license,
+                 'label' => 'pkg/clock.app', 'evidence' => 'package header', 'status' => status, 'notices' => [] }
+    resolver = Erx::PackProvenance.new(root: @root, catalog: build_catalog, external: [external])
+    receipt = write('package.json', JSON.generate('version' => 1, 'kind' => 'package', 'artifact' => reference(package)))
+    resolver.instance_variable_set(:@catalog, build_catalog)
+    resolver.resolve(receipt: receipt, artifact: package, build_kind: build_kind)
+  end
+
+  def test_a_package_enters_only_under_a_permissive_license
+    record = resolve_package('BSD-2-Clause').first
+    assert_equal %w[pkg/clock.app BSD-2-Clause permanent], record.values_at('path', 'license', 'status')
+    { 'GPL-2.0-only' => /no permitted grant/, 'NOASSERTION' => /unresolved source license/ }.each do |license, reason|
+      error = assert_raises(Erx::Error) { resolve_package(license) }
+      assert_match(%r{\Athe package pkg/clock\.app cannot enter the image: }, error.message)
+      assert_match(reason, error.message)
+    end
+    error = assert_raises(Erx::Error) { resolve_package('GPL-2.0-only', status: 'stopgap') }
+    assert_match(/a package receipt names a package registered as neither permanent nor package-local/, error.message)
+  end
+
+  # A local test image registers a package that is not permissive as package-local, which a
+  # development build admits under its license and a release build refuses.
+  def test_a_package_local_enters_only_a_development_build
+    record = resolve_package('GPL-2.0-only', status: 'package-local').first
+    assert_equal %w[pkg/clock.app GPL-2.0-only package-local], record.values_at('path', 'license', 'status')
+    error = assert_raises(Erx::Error) { resolve_package('GPL-2.0-only', status: 'package-local', build_kind: 'release') }
+    assert_match(/no permitted grant/, error.message)
   end
 
   def test_release_admits_ofl_for_font_data_and_refuses_it_otherwise

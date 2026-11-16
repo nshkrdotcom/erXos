@@ -6,14 +6,17 @@
 #
 # The erXos image and the Raspberry Pi 4's card need the full erXos toolchain
 # (the cross compilers, the OTP and Fiasco builds), which this job does not
-# set up. It takes each, and the card's build record, from a URL instead,
-# normally a release asset, and checks it against the SHA-256 given with it.
+# set up. It takes each, with its build record, from a URL instead, normally
+# a release asset, and checks it against the SHA-256 given with it.
 # GitHub refuses a release asset of 2 GiB or more, which the card is, so the
 # release holds the card as sdcard.img.xz: the workflow checks the SHA-256 of
 # that file, unpacks it (at most CARD_MAX_BYTES), and tools/build_site.rb
 # then refuses a record that does not name the unpacked card's SHA-256 or
 # the commit image_source resolves to, built with no changes, and publishes
-# the card xz-compressed again (Erx::Site::XZ_ARGUMENTS).
+# the card xz-compressed again (Erx::Site::XZ_ARGUMENTS). It refuses the
+# image unless its record (Erx::ImageRecord) names its SHA-256 and that
+# commit, built with no changes, as a build that is no local test image and
+# carries no package.
 # The image and the card carry GPL-2.0 files, so the page links the erXos
 # source both were built from: the commit image_source, a release tag or a
 # commit, resolves to.
@@ -29,6 +32,12 @@ on:
         required: true
       image_sha256:
         description: SHA-256 of that image.boot
+        required: true
+      image_record_url:
+        description: URL of the image's build record, its image.boot.receipt.json
+        required: true
+      image_record_sha256:
+        description: SHA-256 of that image.boot.receipt.json
         required: true
       image_source:
         description: the erXos release tag or full commit the image and the card were built from; the page links its source
@@ -63,11 +72,14 @@ jobs:
       - name: Check the inputs
         env:
           IMAGE_SHA256: ${{ inputs.image_sha256 }}
+          IMAGE_RECORD_SHA256: ${{ inputs.image_record_sha256 }}
           IMAGE_SOURCE: ${{ inputs.image_source }}
           CARD_XZ_SHA256: ${{ inputs.card_xz_sha256 }}
           CARD_RECORD_SHA256: ${{ inputs.card_record_sha256 }}
         run: |
           [[ "$IMAGE_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "image_sha256 must be 64 lowercase hex digits" >&2; exit 1; }
+          [[ "$IMAGE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+            { echo "image_record_sha256 must be 64 lowercase hex digits" >&2; exit 1; }
           [[ "$CARD_XZ_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "card_xz_sha256 must be 64 lowercase hex digits" >&2; exit 1; }
           [[ "$CARD_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
             { echo "card_record_sha256 must be 64 lowercase hex digits" >&2; exit 1; }
@@ -105,10 +117,15 @@ jobs:
         env:
           IMAGE_URL: ${{ inputs.image_url }}
           IMAGE_SHA256: ${{ inputs.image_sha256 }}
+          IMAGE_RECORD_URL: ${{ inputs.image_record_url }}
+          IMAGE_RECORD_SHA256: ${{ inputs.image_record_sha256 }}
         run: |
           curl --fail --location --proto '=https' --proto-redir '=https' --max-time 300 --max-filesize 1073741824 \
             --output image.boot --url "$IMAGE_URL"
           echo "$IMAGE_SHA256  image.boot" | sha256sum --check --strict
+          curl --fail --location --proto '=https' --proto-redir '=https' --max-time 60 --max-filesize 65536 \
+            --output image.boot.receipt.json --url "$IMAGE_RECORD_URL"
+          echo "$IMAGE_RECORD_SHA256  image.boot.receipt.json" | sha256sum --check --strict
       - name: Download the Raspberry Pi 4's card
         env:
           CARD_XZ_URL: ${{ inputs.card_xz_url }}
@@ -139,7 +156,7 @@ jobs:
           [[ "$(wc -c < sdcard.img)" -le "$CARD_MAX_BYTES" ]] ||
             { echo "sdcard.img.xz unpacks to more than $CARD_MAX_BYTES bytes" >&2; exit 1; }
       - name: Build v64 and assemble the site
-        run: ruby tools/build_site.rb --image image.boot --card sdcard.img --card-record sdcard.img.receipt.json --source "$IMAGE_COMMIT"
+        run: ruby tools/build_site.rb --image image.boot --image-record image.boot.receipt.json --card sdcard.img --card-record sdcard.img.receipt.json --source "$IMAGE_COMMIT"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: build/site

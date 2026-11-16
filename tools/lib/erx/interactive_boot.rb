@@ -132,7 +132,8 @@ module Erx
       image_builder = ProductionImage.new(root: root, runner: runner, compiler: compiler, linker: linker,
                                           machine: machine(platform: platform, without_web: without_web), fiasco: fiasco)
       source = manifest_source(root: root, platform: platform, without_web: without_web)
-      return Boot.new(image: image_builder.build(directory: directory, manifest_source: source).single, link: nil) unless socket
+      # The website's image alone gets its build record, which tools/build_site.rb takes it only with.
+      return Boot.new(image: image_builder.build(directory: directory, manifest_source: source, record: without_web).single, link: nil) unless socket
 
       built, written = image_builder.build_medium(directory: directory, manifest_source: source)
       Boot.new(image: built.single, link: Link.new(socket: socket, medium: written.path))

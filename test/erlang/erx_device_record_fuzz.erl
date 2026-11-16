@@ -1,9 +1,10 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% Random argument lists through erx_device_record:find/3 and framebuffers/1. Whatever
-%% arrives, each returns {ok, Specs} or {error, {bad_device_record, Text}}, and what it says
-%% agrees with reference/1 or framebuffer_reference/1, readers that share no code with it:
+%% Random argument lists through erx_device_record:find/3, framebuffers/1 and system_image/1.
+%% Whatever arrives, each returns {ok, Value} or {error, {bad_device_record, Text}}, and what it
+%% says agrees with reference/1, framebuffer_reference/1 or system_image_reference/1, readers
+%% that share no code with it:
 %% they find records by filtering and numbers by a regular expression, and take a format's
 %% bits from a table of their own. The words come from a small alphabet of record heads,
 %% digits near the field bounds, signs, spaces and other characters, so other roles, short
@@ -30,17 +31,18 @@
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
     Verdicts = [round_of(arguments()) || _ <- lists:seq(1, ?ROUNDS)],
-    Accepted = length([ok || {accepted, _} <- Verdicts]),
-    Framebuffers = length([ok || {_, accepted} <- Verdicts]),
-    case Accepted >= ?MIN_ACCEPTED andalso Framebuffers >= ?MIN_ACCEPTED of
-        true -> io:format("fuzz: ~p rounds ok, ~p accepted, ~p framebuffers accepted~n",
-                          [?ROUNDS, Accepted, Framebuffers]);
-        false -> error({too_few_accepted, Accepted, Framebuffers})
+    Accepted = length([ok || {accepted, _, _} <- Verdicts]),
+    Framebuffers = length([ok || {_, accepted, _} <- Verdicts]),
+    Images = length([ok || {_, _, accepted} <- Verdicts]),
+    case Accepted >= ?MIN_ACCEPTED andalso Framebuffers >= ?MIN_ACCEPTED andalso Images >= ?MIN_ACCEPTED of
+        true -> io:format("fuzz: ~p rounds ok, ~p accepted, ~p framebuffers accepted, ~p system images accepted~n",
+                          [?ROUNDS, Accepted, Framebuffers, Images]);
+        false -> error({too_few_accepted, Accepted, Framebuffers, Images})
     end.
 
-%% The verdicts of both readers on one argument list, each accepted or refused.
+%% The verdicts of the three readers on one argument list, each accepted or refused.
 round_of(Arguments) ->
-    {devices_round(Arguments), framebuffers_round(Arguments)}.
+    {devices_round(Arguments), framebuffers_round(Arguments), system_image_round(Arguments)}.
 
 devices_round(Arguments) ->
     Said = erx_device_record:find(block, virtio_mmio, Arguments),
@@ -63,6 +65,18 @@ framebuffers_round(Arguments) ->
     end,
     case verdict(Said) =:= framebuffer_reference(Arguments) of
         true when Said =:= {ok, []} -> refused;
+        true when element(1, Said) =:= ok -> accepted;
+        true -> refused;
+        false -> error({disagrees_with_reference, Arguments, Said})
+    end.
+
+system_image_round(Arguments) ->
+    Said = erx_device_record:system_image(Arguments),
+    case Said of
+        {ok, Image} when is_map(Image) -> ok;
+        {error, {bad_device_record, Text}} when is_list(Text) -> ok
+    end,
+    case verdict(Said) =:= system_image_reference(Arguments) of
         true when element(1, Said) =:= ok -> accepted;
         true -> refused;
         false -> error({disagrees_with_reference, Arguments, Said})
@@ -150,6 +164,32 @@ framebuffer_spec([Window, Offset, Size, Width, Height, Stride, Format | _]) ->
 framebuffer_spec(_Words) ->
     bad.
 
+%% Exactly one system_image record of five words: three decimals of 64 bits, a salt of 1 to
+%% 32 bytes and a root hash of 32, both in lowercase hex.
+system_image_reference(Arguments) ->
+    case [Words || ["system_image" | Words] <- Arguments] of
+        [[Length, Offset, Tree, Salt, Root]] ->
+            case {[decimal(Word, ?U64) || Word <- [Length, Offset, Tree]], lower_hex(Salt, "{1,32}"),
+                  lower_hex(Root, "{32}")} of
+                {[L, O, T], S, R} when is_integer(L), is_integer(O), is_integer(T), is_binary(S), is_binary(R) ->
+                    {ok, #{image_offset => 0, image_length => L, tree_offset => O, tree_length => T, salt => S, root_hash => R}};
+                _ ->
+                    {error, bad_device_record}
+            end;
+        _ ->
+            {error, bad_device_record}
+    end.
+
+%% Pairs of lowercase hex digits, as many as Count says, as the bytes they spell.
+lower_hex(Word, Count) ->
+    case re:run(Word, "\\A(?:[0-9a-f]{2})" ++ Count ++ "\\z", [unicode, {capture, none}]) of
+        match -> << <<(list_to_integer([A, B], 16))>> || [A, B] <- pairs(Word) >>;
+        nomatch -> bad
+    end.
+
+pairs([A, B | Rest]) -> [[A, B] | pairs(Rest)];
+pairs([]) -> [].
+
 %% A shared line is tagged; a direct one is the bare line.
 marked(Line, "shared") -> {shared, Line};
 marked(Line, "direct") -> Line.
@@ -182,7 +222,8 @@ entry() ->
     Count = #{"device" => {3, 2}, "given" => {4, 5}},
     {Before, After} = maps:get(Form, Count),
     Numbers = fun(N) -> [number() || _ <- lists:seq(1, N)] end,
-    case rand:uniform(5) of
+    case rand:uniform(6) of
+        6 -> system_image_entry();
         5 -> framebuffer_entry(Words);
         1 -> [Form, "block", "virtio_mmio" | Words];
         2 -> [Form, "block", "virtio_mmio", path() | Numbers(Before) ++ [mark() | Numbers(After)] ++ Words];
@@ -221,6 +262,23 @@ framebuffer_entry(Words) ->
         1 -> ["framebuffer" | [number() || _ <- lists:seq(1, 6)] ++ [Format | Words]];
         2 -> ["framebuffer" | lists:sublist(Fields, rand:uniform(7) - 1)];
         _ -> ["framebuffer" | Fields ++ Words]
+    end.
+
+%% A system_image record, most of five words, each nearly always well formed so the
+%% accepting path is reached often, and otherwise at or just past its bound: a salt of no
+%% bytes, of one digit or of 33 bytes, an odd count or an upper-case digit, a root hash a
+%% byte short or long.
+system_image_entry() ->
+    Pick = fun(List) -> lists:nth(rand:uniform(length(List)), List) end,
+    Hex = fun(Bytes) -> [Pick("0123456789abcdef") || _ <- lists:seq(1, 2 * Bytes)] end,
+    Salt = Pick([Hex(1), Hex(32), Hex(rand:uniform(32)), Hex(rand:uniform(32)), Hex(rand:uniform(32)),
+                 "", "a", Hex(33), Hex(2) ++ "a", "A5", "g0"]),
+    Root = Pick([Hex(32), Hex(32), Hex(32), Hex(32), Hex(31), Hex(33), Hex(31) ++ "a", "F" ++ Hex(31) ++ "f", ""]),
+    Fields = [number(), number(), number(), Salt, Root],
+    case rand:uniform(6) of
+        1 -> ["system_image" | lists:sublist(Fields, rand:uniform(5) - 1)];
+        2 -> ["system_image" | Fields ++ [word()]];
+        _ -> ["system_image" | Fields]
     end.
 
 mark() ->

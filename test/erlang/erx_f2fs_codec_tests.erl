@@ -634,6 +634,7 @@ an_inode_without_a_checksum_is_not_checked_test_() ->
 %% Each rule of [F 41] and [F 42] that concerns one inode block.
 each_inode_rule_fails_with_its_name_test_() ->
     Valid = inode_fields(),
+    InlineFile = inline_file(),
     Super = superblock_fields(),
     Read = fun(SuperFields, Nid, Fields) ->
                    erx_f2fs_codec:inode(SuperFields, Nid, inode_block(SuperFields, Fields))
@@ -675,11 +676,69 @@ each_inode_rule_fails_with_its_name_test_() ->
                with_inode(Valid, #{i_flags => ?ERX_F2FS_DEVICE_ALIAS_FL}))},
          {namelen, Read(Super, 4, with_inode(Valid, #{i_namelen => 256}))},
          {inline_data,
-          Read(Super, 4, with_inode(Valid, #{i_inline => ?ERX_F2FS_EXTRA_ATTR bor
-                                                             ?ERX_F2FS_INLINE_DATA,
-                                             i_size => 4 * (923 - 3 - 1) + 1}))}],
+          Read(Super, 4, with_inode(InlineFile, #{i_size => 4 * (923 - 3 - 1) + 1}))}]
+        ++ file_type_cases(fun(Fields) -> Read(Super, 4, Fields) end, Valid, InlineFile),
     [{atom_to_list(Rule), ?_assertEqual({error, {inode, Rule}}, Result)}
      || {Rule, Result} <- Cases].
+
+%% The rules of [F 66] to [F 70] that turn on i_mode's file type, each
+%% broken by an inode Read reads, from the fixture regular file Valid and
+%% the same file with one block of inline data, InlineFile.
+file_type_cases(Read, Valid, InlineFile) ->
+    Inline = fun(Changes) -> Read(with_inode(InlineFile, Changes)) end,
+    InlineDentry = ?ERX_F2FS_EXTRA_ATTR bor ?ERX_F2FS_INLINE_DENTRY,
+    [{mode, Read(with_inode(Valid, #{i_mode => 8#170644}))},
+     {mode, Read(with_inode(Valid, #{i_mode => 8#644}))},
+     {mode, Read(with_inode(Valid, #{i_mode => 8#30644}))},
+     {links, Read(with_inode(Valid, #{i_mode => 8#40755, i_links => 1}))},
+     {inline_dentry, Read(with_inode(Valid, #{i_inline => InlineDentry}))},
+     {inline_dentry, Read(with_inode(Valid, #{i_mode => 8#120777, i_inline => InlineDentry}))},
+     {inline_data_type, Inline(#{i_mode => 8#40755, i_links => 2})},
+     {inline_data_type, Inline(#{i_mode => 8#20644})},
+     {inline_data_type, Inline(#{i_mode => 8#10644})},
+     {inline_data_type, Inline(#{i_mode => 8#140644})},
+     %% Both inline flags: a directory has no inline data, a file no dentries.
+     {inline_data_type,
+      Inline(#{i_mode => 8#40755, i_links => 2,
+               i_inline => ?ERX_F2FS_EXTRA_ATTR bor ?ERX_F2FS_INLINE_DATA bor
+                               ?ERX_F2FS_INLINE_DENTRY})},
+     {inline_dentry,
+      Inline(#{i_inline => ?ERX_F2FS_EXTRA_ATTR bor ?ERX_F2FS_INLINE_DATA bor
+                               ?ERX_F2FS_INLINE_DENTRY})},
+     {inline_data_blocks, Inline(#{i_blocks => 2})},
+     {inline_data_blocks, Inline(#{i_blocks => 3, i_xattr_nid => 9})},
+     {inline_data_blocks, Read((with_inode(InlineFile, #{}))#{i_nid := [0, 0, 0, 0, 7]})},
+     {inline_data_transformed, Inline(#{i_advise => ?ERX_F2FS_ADVISE_ENCRYPT})},
+     {inline_data_transformed, Inline(#{i_advise => ?ERX_F2FS_ADVISE_VERITY})},
+     {inline_data_transformed, Inline(#{i_flags => ?ERX_F2FS_COMPR_FL})}].
+
+%% What the file type rules allow: every one of the seven types, a
+%% directory of two links, inline data on a symlink, with an xattr node's
+%% block counted, and on an encrypted symlink ([F 70]).
+the_file_types_pass_their_rules_test_() ->
+    Super = superblock_fields(),
+    Read = fun(Fields) -> erx_f2fs_codec:inode(Super, 4, inode_block(Super, Fields)) end,
+    Valid = inode_fields(),
+    InlineFile = inline_file(),
+    [?_assertMatch({ok, _}, Read(with_inode(Valid, #{i_mode => Type bor 8#644, i_links => 2})))
+     || Type <- [8#10000, 8#20000, 8#40000, 8#60000, 8#100000, 8#120000, 8#140000]]
+        ++ [?_assertMatch({ok, _}, Read(with_inode(Valid, #{i_mode => 8#40755, i_links => 0}))),
+            %% Without inline data a regular file may be verity or compressed.
+            ?_assertMatch({ok, _}, Read(with_inode(Valid, #{i_advise => ?ERX_F2FS_ADVISE_VERITY,
+                                                            i_flags => ?ERX_F2FS_COMPR_FL}))),
+            ?_assertMatch({ok, #{inline_data := <<"ab">>}},
+                          Read(with_inode(InlineFile, #{i_mode => 8#120777}))),
+            ?_assertMatch({ok, #{inline_data := <<"ab">>}},
+                          Read(with_inode(InlineFile, #{i_blocks => 2, i_xattr_nid => 9}))),
+            ?_assertMatch({ok, #{inline_data := <<"ab">>}},
+                          Read(with_inode(InlineFile, #{i_mode => 8#120777,
+                                                        i_advise => ?ERX_F2FS_ADVISE_ENCRYPT})))].
+
+%% The fixture regular file with two bytes of inline data and only its
+%% inode block counted.
+inline_file() ->
+    inline_inode(<<"ab", 0:16>>, #{i_inline => ?ERX_F2FS_EXTRA_ATTR bor ?ERX_F2FS_INLINE_DATA,
+                                   i_size => 2, i_blocks => 1}, 3).
 
 the_flags_pass_with_their_features_test_() ->
     Valid = inode_fields(),
@@ -720,7 +779,7 @@ layout_cases({E, X, Start, Size, Slots, BitmapBytes, Reserved} = Row) ->
     DataInode = inline_inode(Data,
                              #{i_inline => Extra bor Xattr bor ?ERX_F2FS_INLINE_DATA bor
                                                ?ERX_F2FS_DATA_EXIST,
-                               i_size => Size}, E),
+                               i_size => Size, i_blocks => 1}, E),
     DataBlock = inode_block(Super, DataInode),
     Name = <<"last">>,
     Last = Slots - 1,
@@ -765,7 +824,7 @@ a_flexible_inline_xattr_size_moves_the_inline_area_test() ->
     Fields = (inode_fields())#{i_addr := pad(extra_words(4, 10) ++ [0, 16#64636261],
                                              ?ERX_F2FS_ADDRS_PER_INODE, 0)},
     Data = with_inode(Fields, #{i_inline => ?ERX_F2FS_EXTRA_ATTR bor ?ERX_F2FS_INLINE_DATA,
-                                i_size => 4 * (923 - 1 - 10 - 1)}),
+                                i_size => 4 * (923 - 1 - 10 - 1), i_blocks => 1}),
     {ok, #{inline_data := Bytes, inline_xattr_words := 10}} =
         erx_f2fs_codec:inode(Super, 4, inode_block(Super, Data)),
     ?assertMatch(<<"abcd", 0:(4 * (923 - 1 - 10 - 2) * 8)>>, Bytes),
@@ -823,15 +882,4 @@ an_inline_dentry_past_its_last_slot_fails_the_inode_test() ->
                                     i_inline => ?ERX_F2FS_EXTRA_ATTR bor
                                                     ?ERX_F2FS_INLINE_DENTRY}, 3),
     ?assertEqual({error, {inode, name_run}},
-                 erx_f2fs_codec:inode(Super, 4, inode_block(Super, Fields))).
-
-%% With both inline flags the content is read as dentries, until the file
-%% type rules of TODO.md decide which an inode may have.
-inline_dentries_come_before_inline_data_test() ->
-    Super = superblock_fields(),
-    Area = dentry_area(3476, {23, 37, 37 + 11 * 181}, [{0, <<"a">>, 5}]),
-    Fields = inline_inode(Area, #{i_size => 3476,
-                                  i_inline => ?ERX_F2FS_EXTRA_ATTR bor ?ERX_F2FS_INLINE_DATA
-                                                  bor ?ERX_F2FS_INLINE_DENTRY}, 3),
-    ?assertMatch({ok, #{inline_dentries := #{entries := [#{name := <<"a">>}]}}},
                  erx_f2fs_codec:inode(Super, 4, inode_block(Super, Fields))).

@@ -8847,7 +8847,10 @@ function. So a direct call the proof cannot classify, a branch into the
 middle of a function or an image without its relocations fails the build
 rather than turning a function into a leaf; the binding names the
 instructions, the relocations and the link option
-([design-arch-aarch64.md](design-arch-aarch64.md#stack-proof)).
+([design-arch-aarch64.md](design-arch-aarch64.md#stack-proof)). The
+kernel's C, the C17 cores included, compiles with `-fno-jump-tables`, so
+the compiler never lowers a `switch` to a branch through a register,
+which the proof would refuse as a branch with no listed targets.
 
 | Entry | The stack it runs on |
 | --- | --- |
@@ -9646,7 +9649,7 @@ Fiasco's scheduling:
     compression: the opposite of an image that never changes.
   * *EROFS*, uncompressed with 4 KiB blocks, maps in place and is what
     the system release uses from M6, inside a minimal `ERXPACK` whose
-    files carry the EROFS images' root hashes
+    manifest pins the system partition's self-checking files by hash
     ([design-storage.md](design-storage.md#system-updates)). As the boot
     image itself it would put a file system's inodes, directories and
     extended attributes into the kernel's boot validator, and it has no

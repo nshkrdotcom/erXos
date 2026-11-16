@@ -11,14 +11,15 @@
 %% ends by itself. A domain's agent also maps each connection the system domain introduces
 %% it to, on the connection_up its domain pid writes, finishes and ends it on
 %% connection_down, and tells the domain pid when one ends by itself (records/3); it hands
-%% init the domain's facets, the domain service's answer to init's ready report. Each
+%% init the domain's facets, the domain service's answer to init's ready report, and, in
+%% an app's session, answers erx_app with the app's record once it has come (app/0). Each
 %% agent counts the messages it drops (dropped/0). The agent and net_kernel live as long
 %% as the runtime: the agent halts it on net_kernel's end other than an ordered stop, and
 %% erx_dist:accept/1 on the agent's.
 -module(erx_connections).
 -moduledoc false.
 
--export([start/2, open_side/2, close_side/2, dropped/0, connection/1, area/1]).
+-export([start/2, open_side/2, close_side/2, dropped/0, connection/1, area/1, app/0]).
 %% A domain's agent past its system connection's hand-over, and the system domain's agent,
 %% which start/2 runs and the host test (test/erlang/erx_connections_tests.erl) runs with
 %% a stand-in opener.
@@ -86,6 +87,15 @@ connection(Peer) when is_integer(Peer), Peer > 0 ->
 area(Peer) when is_integer(Peer), Peer > 0 ->
     call({area, Peer}).
 
+%% In an app's session: the app's record (docs/design-packaging.md, "An app's session"),
+%% which the domain service sends once the session's namespace is in place. The agent
+%% keeps it and answers with it, at once if it holds it and else once it comes, so the
+%% asker finds it whichever comes first. {error, badarg} in the system domain, whose
+%% agent holds none.
+-spec app() -> {ok, erx_app:app_record()} | {error, noproc | badarg}.
+app() ->
+    call(app).
+
 call(Request) ->
     try gen:call(?MODULE, '$gen_call', Request, infinity) of
         {ok, Reply} -> Reply
@@ -100,7 +110,8 @@ init(Kernel, System) ->
 
 %% Any process handed this pid can reach it, and what arrives from another domain comes as
 %% {erx_origin, D, Msg} (edit 16): the only such messages either loop acts on are a
-%% domain's records and facets answer from the system domain, so no peer steers it. Both
+%% domain's records, facets answer, installations and app's record from the system
+%% domain, so no peer steers it. Both
 %% loops act on net_kernel's end, which the agent's link brings as 'EXIT'
 %% (kernel_ended/1), answer dropped/0 with the count of what they dropped, and answer any
 %% other call badarg.
@@ -131,7 +142,8 @@ serve(Kernel, {PeerId, PeerNode, DomainPid}) ->
           no_return().
 introduced(Kernel, SystemId, DomainPid, Open, MapArea) ->
     persistent_term:put({erx, domain_pid}, DomainPid),
-    records(#{kernel => Kernel, system => SystemId, domain_pid => DomainPid, open => Open, map_area => MapArea}, #{}, 0).
+    records(#{kernel => Kernel, system => SystemId, domain_pid => DomainPid, open => Open, map_area => MapArea,
+              app => {waiting, []}}, #{}, 0).
 
 %% An introduced connection's port, on the lane driver.
 lane_open(Command) ->
@@ -330,7 +342,9 @@ hand_over(Kernel, #{port := Port} = Connection) ->
 %%   installation of a facet a configured domain minted for this one (install/4);
 %% * erx_dist's word that an introduced connection's entry is up;
 %% * each introduced port's end, and net_kernel's end;
-%% * a pixel area's unmap, and erx_area:open/1's question for a peer's area.
+%% * a pixel area's unmap, and erx_area:open/1's question for a peer's area;
+%% * in an app's session, the app's record, from the system connection once, and
+%%   erx_app's question for it (app/0).
 %% What else arrives is dropped and counted in Dropped, so its queue stays empty
 %% (docs/design-domains.md, "Messages between the domain service and a runtime"). Held is
 %% each introduced connection by the peer's domain id, as {Phase, Port, Monitor, Area}:
@@ -341,7 +355,9 @@ hand_over(Kernel, #{port := Port} = Connection) ->
 %% area is unmapped (let_go/5). The system domain sends one record about a peer at a
 %% time, each once the last is answered, so a connection_up names a peer the agent holds
 %% nothing for; one that does not is dropped.
-%% Env is what the agent works with, as introduced/5 gives it.
+%% Env is what the agent works with, as introduced/5 gives it, with, as app,
+%% {waiting, Askers} until the app's record comes and {record, App} from then on
+%% (app/0); the system domain sends the record once, so a second is dropped.
 records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
     receive
         {erx_origin, SystemId,
@@ -351,15 +367,16 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
             records(Env, connection_up(Env, Peer, PeerNode, Values, Area, Held), Dropped);
         {erx_origin, SystemId, {erx_connection_down, Peer, Reason}} when is_integer(Peer) ->
             records(Env, connection_down(Env, Peer, Reason, Held), Dropped);
-        {erx_origin, SystemId, {erx_facets, Facets, Granted, App}} when is_map(Facets) ->
+        {erx_origin, SystemId, {erx_facets, Facets, Granted}} when is_map(Facets) ->
             Valid = #{Name => Facet || Name := Facet <- Facets, is_atom(Name), is_pid(Facet)},
             register_facets(Valid),
             %% Kept before init hears of the facets, so the applications init then starts
             %% find the names erx:granted/0 reads.
             persistent_term:put({erx, granted}, lists:usort(names(Granted))),
-            put_app(App),
             init ! {erx_facets, Valid},
             records(Env, Held, Dropped);
+        {erx_origin, SystemId, {erx_app, App}} when is_map(App), element(1, map_get(app, Env)) =:= waiting ->
+            records(app_came(App, Env), Held, Dropped);
         {erx_origin, SystemId, {erx_facets_install, Tag, Name, Facet}}
           when is_integer(Tag), is_atom(Name), is_pid(Facet) ->
             install(Env, Tag, Name, Facet),
@@ -390,6 +407,8 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
                                 #{} -> {error, none}
                             end),
             records(Env, Held, Dropped);
+        {'$gen_call', From, app} ->
+            records(app_asked(From, Env), Held, Dropped);
         {'$gen_call', From, _Request} ->
             gen:reply(From, {error, badarg}),
             records(Env, Held, Dropped);
@@ -420,10 +439,19 @@ names(_) -> [].
 register_facets(Facets) ->
     persistent_term:put({erx, facets}, maps:merge(persistent_term:get({erx, facets}, #{}), Facets)).
 
-%% An app's record, which only an app's session receives (erx:app/0); every other
-%% domain's answer carries none.
-put_app(none) -> ok;
-put_app(App) when is_map(App) -> persistent_term:put({erx, app}, App).
+%% The app's record has come: each asker waiting for it is answered, and it is kept for
+%% those who ask later (app/0).
+app_came(App, #{app := {waiting, Askers}} = Env) ->
+    lists:foreach(fun(From) -> gen:reply(From, {ok, App}) end, Askers),
+    Env#{app := {record, App}}.
+
+%% A question for the app's record: answered with it if it has come, else kept until it
+%% does.
+app_asked(From, #{app := {record, App}} = Env) ->
+    gen:reply(From, {ok, App}),
+    Env;
+app_asked(From, #{app := {waiting, Askers}} = Env) ->
+    Env#{app := {waiting, [From | Askers]}}.
 
 %% connection_up: the port opens, on the lane driver (lane_open/1), with the record's
 %% words, "erx_lane Side PeerSide PeerBell Label OutSize InSize Peer PeerNode"

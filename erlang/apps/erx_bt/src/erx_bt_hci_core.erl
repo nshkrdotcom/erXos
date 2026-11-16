@@ -5,8 +5,8 @@
 -moduledoc """
 The pure core of the controller process, `erx_bt_hci` (docs/design-bluetooth.md, "One
 owner, one step", "The bring-up" and "Commands and data credits"). `step/3` takes one
-input, the current time and the state and returns the actions the process performs and the next state, or
-`{stop, Reason}`, after which the process ends and its group's restart resets the line.
+input, the current time and the state and returns the next state and the actions the process performs;
+a stop is the action `{stop, Reason}`, after which the process ends and its group's restart resets the line.
 
 **The bring-up** is a line of steps fixed by `new/1`: reset the line, `HCI_Reset`,
 identify, the patch where the configuration names one (its own reset and identify after
@@ -89,7 +89,7 @@ slice): this core sends what it is given.
 -export_type([time/0]).
 -export_type([config/0, input/0, action/0, core/0, link/0, request/0]).
 
--type handle() :: 0..16#FFF.
+-type handle() :: erx_hci:handle().
 -type link() :: {handle(), pos_integer()}.     % a handle and the serial of the connection on it
 -type config() :: #{connections := 1..?ERX_BT_CONNECTIONS_MAX, address := <<_:48>>,
                     advertising_data := binary(), scan_response_data := binary(),
@@ -101,7 +101,7 @@ slice): this core sends what it is given.
                | {request, link(), request()}.
 -type request() :: {send, 0..3, binary()} | {disconnect, byte()}.
 -type action() :: line_reset | {write, binary()} | {ready, map()} | {link_up, link(), map()} | {link_down, link()}
-                | {to_link, link(), term()} | {busy, link()}.
+                | {to_link, link(), term()} | {busy, link()} | {stop, term()}.
 
 %% A bring-up step: reset the line, send a command under a label, or wait.
 -type step() :: line_reset | {command, term(), erx_hci:command()} | {wait, pos_integer()}.
@@ -173,17 +173,17 @@ facts(#core{facts = Facts, dropped = Dropped, limit = Limit, links = Links, adve
             advertising => Advertising}.
 
 -doc """
-One input at the time `Now`: the actions to perform, in order, and the next state; or
-the reason to stop.
+One input at the time `Now`: the next state and the actions to perform, in order. A stop
+is the one action `{stop, Reason}`, with the state unchanged.
 """.
--spec step(input(), time(), core()) -> {ok, [action()], core()} | {stop, term()}.
+-spec step(input(), time(), core()) -> {core(), [action()]}.
 step(Input, Now, Core) ->
     try
         {Actions, Next} = input(Input, Now, Core),
         {More, Pumped} = pump(Now, Next),
-        {ok, Actions ++ More, Pumped}
+        {Pumped, Actions ++ More}
     catch
-        throw:{stop, Reason} -> {stop, Reason}
+        throw:{stop, Reason} -> {Core, [{stop, Reason}]}
     end.
 
 stop(Reason) -> throw({stop, Reason}).

@@ -97,13 +97,14 @@ start_device(Spec) ->
         {ok, _Features} ?= step(negotiate, erx_device:negotiate(Dev, ?WANTED)),
         {ok, Irq} ?= step(attach, erx_irq_line:attach(Dev, ?IRQ_LINE)),
         State0 = #state{dev = Dev, irq = Irq, queue = Queue},
-        {Action, Setup} = erx_virtio_gpu_core:setup_start(?ERX_MEM_CONTIGUOUS_MAX),
+        {Setup, [Action]} = erx_virtio_gpu_core:setup_start(?ERX_MEM_CONTIGUOUS_MAX),
         {ok, Ready, State1} ?= setup(Action, Setup, State0),
         screen(Ready, State1)
     end.
 
 %% The bring-up's actions performed until it is ready or stops: each request as a frame of
-%% one, the region by the NIF.
+%% one, the region by the NIF. Each of its steps names one action, whose outcome is the
+%% next step's event.
 setup({post, Request}, Setup, State) ->
     case run_frame([Request], State) of
         {ok, [Answer], Next} -> setup_step(Setup, {answer, Answer}, Next);
@@ -120,7 +121,7 @@ setup({stop, Reason}, _Setup, _State) ->
     {error, Reason}.
 
 setup_step(Setup, Event, State) ->
-    {Action, Next} = erx_virtio_gpu_core:setup_next(Setup, Event),
+    {Next, [Action]} = erx_virtio_gpu_core:setup_next(Setup, Event),
     setup(Action, Next, State).
 
 %% The screen image over the region, and the info erx_screen reads.
@@ -187,21 +188,25 @@ run_frame(Requests, State = #state{tag = Tag}) ->
     Deadline = erlang:monotonic_time(millisecond) + ?ANSWER_DEADLINE_MS,
     perform(erx_virtio_gpu_core:frame_step(Frame, next), Deadline, State).
 
-perform({{post, Tag, Segments}, Frame}, Deadline, State = #state{dev = Dev, queue = Queue}) ->
+perform({Frame, [{post, Tag, Segments}]}, Deadline, State = #state{dev = Dev, queue = Queue}) ->
     case erx_device:post(Dev, Queue, Tag, Segments) of
         ok -> perform(erx_virtio_gpu_core:frame_step(Frame, next), Deadline, State);
         {error, full} -> perform(erx_virtio_gpu_core:frame_step(Frame, {full, Tag}), Deadline, State);
         {error, broken} -> {error, broken, State}
     end;
-perform({wait, Frame}, Deadline, State) ->
+perform({Frame, [wait]}, Deadline, State) ->
     case await(Deadline, State) of
         {ok, Completions} -> perform(erx_virtio_gpu_core:frame_step(Frame, {answers, Completions}), Deadline, State);
         {error, Reason} -> {error, Reason, State}
     end;
-perform({{done, Answers, Tag}, _Frame}, _Deadline, State) ->
+perform({_Frame, [{done, Answers, Tag}]}, _Deadline, State) ->
     {ok, Answers, State#state{tag = Tag}};
-perform({{stop, Reason}, _Frame}, _Deadline, State) ->
-    {error, Reason, State}.
+perform({_Frame, [{stop, Reason}]}, _Deadline, State) ->
+    {error, Reason, State};
+%% Any other list is the core's fault, refused with error/1, whose stack trace names
+%% no argument.
+perform({_Frame, _Actions}, _Deadline, _State) ->
+    error(frame_actions).
 
 %% The next delivery of the line before the frame's deadline, then what the device
 %% returned; a delivery may be spurious, which returns nothing, and the frame then waits

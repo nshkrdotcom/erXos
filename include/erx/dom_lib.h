@@ -56,6 +56,10 @@ typedef struct erx_dom_principal_held {
 typedef struct erx_dom_held {
 	erx_dom_principal_held_t *principals;	/* view.nprincipals: principal
 						 * number n at n - 1 */
+	uint64_t	apps;			/* the apps budget, carved from the
+						 * root, which every app entry's
+						 * budget is elastic under; unused
+						 * without an apps row */
 	uint64_t	system_group;		/* the system domain's group: its bells, and
 						 * a configured domain's CPU parent */
 	uint64_t	image;			/* the boot image (SYSTEM): what erx_image_slice
@@ -98,6 +102,12 @@ typedef struct erx_dom_lib {
 	uint32_t	 pack_flags;	/* the boot image's, for each boot page */
 	erx_boot_pair_t	 boot;		/* the handoff's boot pair, for a block
 					 * holder's boot page */
+	uint32_t	 system_image_row; /* the configured row that holds the
+					 * system window, whose boot page alone
+					 * carries -erx_record system_image;
+					 * ERX_MF_NONE for none */
+	erx_mf_system_image_t system_image; /* the manifest's system_image row,
+					 * for that page; unused without one */
 	uint64_t	 build_id;	/* the boot image's build identifier, as
 					 * -erx_record build gives it, for each boot page */
 	uint64_t	 hwcap;		/* the system's boot page's CPU feature words, */
@@ -391,5 +401,20 @@ erx_status_t	erx_dom_lib_configured(erx_dom_lib_t *, uint32_t id, uint32_t row,
 erx_status_t	erx_dom_lib_session(erx_dom_lib_t *, uint32_t id, uint32_t template,
 		    const char *name, uint32_t name_len, const char *display, uint32_t display_len,
 		    erx_dom_pid_t domain_pid, erx_dom_created_t *created) ERX_WARN_UNUSED_RESULT;
+
+/*
+ * An app's session's start (docs/design-packaging.md, "An app's session"):
+ * erx_dom_create of a session of the app in app entry `entry`, from the app
+ * template under the entry's principal, with `memory`, the declared memory
+ * of the app's record, for its own budget, under domain id `id`, domain
+ * pid `domain_pid`, the name_len bytes of `name` the domain service chose
+ * and the display_len bytes of `display`, its default display or none for
+ * 0, planned by erx_dom_plan_app_session and applied as erx_dom_lib_create
+ * applies a request's plan, under the caller's one library lock.
+ */
+erx_status_t	erx_dom_lib_app_session(erx_dom_lib_t *, uint32_t id, uint32_t entry,
+		    uint64_t memory, const char *name, uint32_t name_len, const char *display,
+		    uint32_t display_len, erx_dom_pid_t domain_pid,
+		    erx_dom_created_t *created) ERX_WARN_UNUSED_RESULT;
 
 #endif /* ERX_DOM_LIB_H */

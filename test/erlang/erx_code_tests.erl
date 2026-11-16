@@ -184,3 +184,9 @@ refused_requests_change_nothing() ->
 load_one(Module, Bytes) ->
     {ok, stored} = send(Bytes),
     erx_code:load([{name(Module), hash(Bytes)}]).
+
+%% A crash's reason may hold the host's code: the crash report and the terminate report, which
+%% the system domain filters no further, show only the reason's leading atom.
+format_status_hides_the_reason_test() ->
+    ?assertEqual(#{reason => badmatch},
+                 erx_code:format_status(#{reason => {badmatch, <<"SECRET">>}})).

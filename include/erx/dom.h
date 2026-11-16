@@ -520,6 +520,27 @@ typedef struct erx_dom_facet {
 	uint32_t	nparameters;
 } erx_dom_facet_t;
 
+/*
+ * The apps row as the library holds it (docs/design-packaging.md, "An
+ * app's principal"): the app template, a template of the view that names
+ * no principal, so no session of it is planned but an app's; the apps
+ * budget; and its max app entries, the principals numbered first to
+ * first + max - 1, which are the view's last max principals. Every entry
+ * lives for the whole boot, with a domain quota of 1, the app template's
+ * grant for its share and the template's limits for its defaults and
+ * ceilings, and its budget is elastic under the apps budget, with no
+ * guarantee and the apps budget for its cap. Nothing frees or renumbers
+ * an entry within a boot, so the principal service's registration of an
+ * app into one only names it (PK9). max 0 is a manifest with no apps
+ * row, under which no app session is planned.
+ */
+typedef struct erx_dom_apps {
+	uint32_t	template;	/* the app template's index in templates */
+	uint32_t	first;		/* the first entry's principal number */
+	uint32_t	max;		/* entries; 0 for no apps row */
+	uint64_t	memory;		/* the apps budget, bytes */
+} erx_dom_apps_t;
+
 /* A checked native program row of a partial-boot manifest. */
 typedef struct erx_dom_partial {
 	uint32_t	runtime;	/* the program's image */
@@ -560,6 +581,7 @@ typedef struct erx_dom_view {
 	uint32_t		 nconfigured;
 	const erx_dom_template_t *templates;	/* in principal order */
 	uint32_t		 ntemplates;
+	erx_dom_apps_t		 apps;		/* its entries end principals */
 	const erx_dom_service_t	*services;	/* the manifest's, in its order */
 	uint32_t		 nservices;
 	const erx_dom_facet_t	*facets;	/* the manifest's, in its order */
@@ -896,6 +918,42 @@ erx_status_t	erx_dom_plan_session(const erx_dom_view_t *, uint32_t id,
 		    uint32_t template, const char *name, uint32_t name_len,
 		    const char *display, uint32_t display_len,
 		    erx_dom_pid_t domain_pid, erx_dom_plan_t *plan);
+/*
+ * erx_dom_plan_app_session plans a session of the app in app entry
+ * `entry` (docs/design-packaging.md, "An app's session") as
+ * erx_dom_plan_session plans one of a template's own principal, from the
+ * app template under the entry's principal, with `memory`, the declared
+ * memory of the app's record, for its own budget, and principal=N naming
+ * the entry's principal. The pairing is the function's own: the app
+ * template names no principal, so erx_dom_plan_session refuses it, and
+ * this function plans nothing but it, so no other template is planned for
+ * an app principal and the app template for no other principal. Beside
+ * what planning any session judges, the sessions of all app entries carve
+ * within the apps budget together. ERX_EINVAL for an entry past apps.max,
+ * a memory past the apps budget, or the reasons erx_dom_plan_session
+ * gives; ERX_ELIMIT for an app already running a session; ERX_ENOMEM for
+ * a session the apps budget does not hold beside the others.
+ */
+erx_status_t	erx_dom_plan_app_session(const erx_dom_view_t *, uint32_t id,
+		    uint32_t entry, uint64_t memory, const char *name,
+		    uint32_t name_len, const char *display, uint32_t display_len,
+		    erx_dom_pid_t domain_pid, erx_dom_plan_t *plan);
+/*
+ * Places the apps row's max app entries in the view, after its manifest
+ * principals, from app template `template`, the apps budget `memory` and
+ * `max` (erx_dom_apps_t): entry i is principal nprincipals + 1 + i, each
+ * admitted by erx_dom_principal_check, and the view's apps names them.
+ * The caller gives principals room for max more records, and the library's
+ * held principals (erx_dom_held_t) as many more, unset as boot_principals
+ * leaves its own, before erx_dom_boot_up carves each. ERX_EINVAL, with
+ * the view unchanged, for apps already placed, a max of 0 or past
+ * ERX_APPS_MAX_LIMIT, a template out of range or naming a principal, a
+ * budget zero or not page-aligned, or an entry the check refuses.
+ */
+erx_status_t	erx_dom_apps_place(erx_dom_view_t *, uint32_t template,
+		    uint64_t memory, uint32_t max);
+/* Whether principal `number` is an app entry of the view. */
+bool		erx_dom_app_principal(const erx_dom_view_t *, uint32_t number);
 
 /*
  * Records a creation plan in the view it was planned against, as the

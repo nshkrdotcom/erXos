@@ -7,6 +7,11 @@
  * erx_boot_info_build, erx_boot_info_read, the vector made from a page,
  * erx_boot_args_parse and a holder domain's records from boot_manifest.c, each at its limits
  * and against an independent statement of what it should do. Prints one line and exits 0, or names what broke and exits 1.
+ *
+ *   boot-info [system_image]
+ *
+ * With system_image it prints instead the words of one -erx_record system_image record
+ * (print_system_image_words).
  */
 
 #include <stdbool.h>
@@ -445,6 +450,75 @@ test_build_words(void)
 	CHECK(words[ERX_BOOT_BUILD_WORDS_MAX - 1] == 'x', "build: a refused record wrote past its room");
 }
 
+/*
+ * A system_image row of a three-byte salt whose first byte is zero, and a root hash of the
+ * bytes 0 to 31, so each hex word shows its leading zeros and lowercase digits; the tree
+ * starts a block past the image's end, so no word can stand in for another.
+ */
+static erx_mf_system_image_t
+system_image_row(void)
+{
+	erx_mf_system_image_t row = { .image_length = 16773120, .tree_offset = 16777216, .tree_length = 135168,
+	    .salt_length = 3, .salt = { 0x00, 0xab, 0x7f } };
+
+	for (size_t at = 0; at < sizeof(row.root_hash); at++)
+		row.root_hash[at] = (uint8_t)at;
+	return (row);
+}
+
+/*
+ * -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT, which the domain library writes into
+ * the system window's holder's page (docs/design-stopgap.md, "The booted slot"): the numbers in
+ * decimal, the salt's salt_length bytes and the root hash in lowercase hex. The longest, a
+ * 32-byte salt and numbers of 2^64 - 1, fills ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX, and one byte
+ * less is refused, writing nothing past its room; so is a salt_length out of 1 to 32.
+ */
+static void
+test_system_image_words(void)
+{
+	static const char record[] = ERX_BOOT_RECORD_FLAG "\0system_image\0" "16773120\0" "16777216\0" "135168\0"
+	    "00ab7f\0" "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\0";
+	erx_mf_system_image_t row = system_image_row();
+	char words[ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX + 1];
+	size_t used;
+
+	memset(words, 'x', sizeof(words));
+	used = erx_boot_system_image_words(&row, words, sizeof(words));
+	CHECK(used == sizeof(record) - 1 && memcmp(words, record, used) == 0, "system_image: the record's words");
+	row = (erx_mf_system_image_t){ .image_length = UINT64_MAX, .tree_offset = UINT64_MAX, .tree_length = UINT64_MAX,
+	    .salt_length = sizeof(row.salt) };
+	used = erx_boot_system_image_words(&row, words, sizeof(words));
+	CHECK(used == ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX, "system_image: the longest record is %zu bytes", used);
+	memset(words, 'x', sizeof(words));
+	CHECK(erx_boot_system_image_words(&row, words, ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX - 1) == 0,
+	    "system_image: a record past its room is written");
+	CHECK(words[ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX - 1] == 'x', "system_image: a refused record wrote past its room");
+	row = system_image_row();
+	row.salt_length = 0;
+	CHECK(erx_boot_system_image_words(&row, words, sizeof(words)) == 0, "system_image: an empty salt is written");
+	row.salt_length = sizeof(row.salt) + 1;
+	CHECK(erx_boot_system_image_words(&row, words, sizeof(words)) == 0,
+	    "system_image: a salt past its array is written");
+}
+
+/*
+ * The record of system_image_row on stdout, one word a line after the flag, for
+ * test/host/boot_info_test.rb to hand to erx_device_record:system_image/1.
+ */
+static int
+print_system_image_words(void)
+{
+	const erx_mf_system_image_t row = system_image_row();
+	char words[ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX];
+	size_t used = erx_boot_system_image_words(&row, words, sizeof(words));
+
+	if (used == 0)
+		return (1);
+	for (size_t at = sizeof(ERX_BOOT_RECORD_FLAG); at < used; at += strlen(words + at) + 1)
+		puts(words + at);
+	return (fflush(stdout) == 0 ? 0 : 1);
+}
+
 static void
 check_vector(const char *node, size_t node_len, const char *flag)
 {
@@ -688,8 +762,12 @@ test_framebuffer_record(void)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
+	if (argc == 2 && strcmp(argv[1], "system_image") == 0)
+		return (print_system_image_words());
+	if (argc != 1)
+		return (2);
 	test_framebuffer_record();
 	test_round_trip();
 	test_domain_pid();
@@ -701,6 +779,7 @@ main(void)
 	test_header_corruption();
 	test_holder_records();
 	test_build_words();
+	test_system_image_words();
 	check_vector("system@host", 11, "-sname");
 	check_vector("system@host.example", 19, "-name");
 	check_vector("a.b@host", 8, "-sname");

@@ -382,7 +382,7 @@ image("release") ->
     Show = fun(Case, Result) -> io:format("image ~s\t~0tp~n", [Case, Result]) end,
     Crc = fun({ok, Data}) -> {ok, erlang:crc32(Data)}; (Other) -> Other end,
     {ok, Bytes} = prim_file:read_file(<<"/image.erofs">>),
-    Show("mount", erx_ns:mount({erofs, ram_window(Bytes)}, <<"/img">>, [])),
+    Show("mount", erx_ns:mount({erofs, ram_image(Bytes)}, <<"/img">>, [])),
     Show("read", Crc(prim_file:read_file(<<"/img/big">>))),
     Show("info", info(prim_file:read_file_info(<<"/img/big">>))),
     Show("dir info", info(prim_file:read_file_info(<<"/img/a">>))),
@@ -422,9 +422,14 @@ image("release") ->
     Show("symlink", prim_file:make_symlink(<<"small">>, <<"/img/new">>)),
     Show("symlink existing", prim_file:make_symlink(<<"small">>, <<"/img/to-small">>)),
     Show("link to", prim_file:make_link(<<"/img/small">>, <<"/img/new">>)),
-    Show("bad image", erx_ns:mount({erofs, ram_window(binary:copy(<<0>>, 8192))}, <<"/bad">>, [])),
+    Show("bad image", erx_ns:mount({erofs, ram_image(binary:copy(<<0>>, 8192))}, <<"/bad">>, [])),
     Show("unmount", erx_ns:unmount(<<"/img">>)),
     Show("after", prim_file:read_file_info(<<"/img/big">>)).
+
+%% The image a RAM window over Bytes holds, opened unchecked.
+ram_image(Bytes) ->
+    {ok, Image} = erx_verity:open(ram_window(Bytes), unchecked),
+    Image.
 
 %% A RAM window over Bytes: answers gen_server calls as erx_blk_window does.
 ram_window(Bytes) ->
@@ -433,7 +438,7 @@ ram_window(Bytes) ->
 ram_window_loop(Bytes) ->
     receive
         {'$gen_call', From, info} ->
-            gen:reply(From, {ok, #{role => slot_a, sectors => byte_size(Bytes) div 512}});
+            gen:reply(From, {ok, #{role => system, sectors => byte_size(Bytes) div 512}});
         {'$gen_call', From, {read, Sector, Count}} ->
             gen:reply(From, {ok, binary:part(Bytes, Sector * 512, Count * 512)})
     end,

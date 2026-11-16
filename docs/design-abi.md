@@ -89,7 +89,7 @@ The declaration forms are:
 | `flags NAME TYPE` | indented `bit NAME POSITION` members; every position explicit and distinct |
 | `bytes NAME LENGTH` | a fixed byte count, with an optional `value HEX_BYTES` constraint |
 | `layout NAME STORAGE ALIGN SIZE` | ordered fields; `STORAGE` is `wire_le`, `shared`, `native`, `packed_le` or `packed_be` ([Packed layouts](#packed-layouts)); alignment and fixed prefix size are explicit |
-| `elements NAME STORAGE TAG_ENUM LENGTH_TYPE` | tag, length and body records repeated to the end of their bytes, with indented `element MEMBER REPEAT BODY` members ([Element sequences](#element-sequences)) |
+| `elements NAME STORAGE TAG_ENUM LENGTH_TYPE [end MEMBER]` | tag, length and body records repeated to the end of their bytes or an end marker, with indented `element MEMBER REPEAT BODY` members ([Element sequences](#element-sequences)) |
 | `variant NAME PREFIX TAG_FIELD TAG_ENUM MAX_BYTES` | a fixed prefix containing the tag and indented `case TAG BODY_LAYOUT` members; each body begins after the prefix |
 | `status NAME INTEGER DESCRIPTION` | a signed 32-bit result; zero is success and every error is negative |
 | `signal NAME NUMBER ACTION [alias NAME] "DESCRIPTION"` | a signal of the [signal table](design-programs.md#signal-numbers), in `signals.txt`: its name without `SIG` in lower case, a distinct number 1 through 128, its default action, `terminate`, `ignore`, `stop` or `continue`, or `reserved` for a number the C library keeps, and its description, FreeBSD's `sys_siglist` text, quoted and last, which a reserved one lacks; the generator gives each name and alias the constant `ERX_SIG` and its name in upper case, `erx/abi.h` the lookups `erx_sig_name`, `erx_sig_action`, `erx_sig_valid` and `erx_sig_description`, musl's generated `bits/signum.h` each name and alias as `SIG` and its name in upper case, a reserved one only under `_BSD_SOURCE` or `_GNU_SOURCE`, with `_NSIG` 128, and `erx_abi_signals` the protocol names of the signals a program may name |
@@ -296,7 +296,7 @@ An element sequence is records of a tag, a length and a body of that
 many bytes, repeated to the end of a buffer: IEEE 802.11's information
 elements, and the key data elements of an EAPOL-Key frame
 ([design-wifi.md](design-wifi.md)). `elements NAME STORAGE TAG_ENUM
-LENGTH_TYPE` declares one:
+LENGTH_TYPE [end MEMBER]` declares one:
 
 * `STORAGE` is `packed_le` or `packed_be`, the byte order of the tag and
   the length, and the storage of every layout a body names.
@@ -306,6 +306,14 @@ LENGTH_TYPE` declares one:
   the enumeration's and the spec has one sorted form.
 * `LENGTH_TYPE` is an unsigned base integer, `u8` to `u64`, the length's
   width. The length counts the body's bytes alone.
+* `end MEMBER`, when present, names the end marker: a header of
+  MEMBER's tag with length zero, or MEMBER's tag alone as the last bytes,
+  ends the sequence, and nothing after it is read. It is how a sender
+  pads a sequence to a block size, as the padding of an EAPOL-Key
+  frame's encrypted key data does (0xdd, then zero bytes); the encoder
+  writes no marker, and a sender appends its padding itself. MEMBER's
+  element has a body of at least one byte, which the model checks, so a
+  header of length zero is never also an element.
 
 Each member is `element MEMBER REPEAT LAYOUT` or `element MEMBER REPEAT
 bytes MIN MAX`. `REPEAT` is `once`, for an element that appears at most
@@ -319,7 +327,8 @@ The generated module `erx_abi_packed` gives `decode_elements/2`, a
 sequence's bytes to `{ok, Elements}`, its known elements in order as
 `{Name, Body}`, a body a binary or its layout's map, and
 `encode_elements/2`, such a list back to bytes. The decoder is total
-over any binary. Each step reads one tag and length, refuses
+over any binary. Each step stops at the end marker, if the sequence has
+one, and otherwise reads one tag and length, refuses
 `truncated` when the bytes end inside them and `overrun` when the
 length exceeds the bytes that remain, and only then forms the body; a
 known element's body outside its bounds is `{length, Name}`, and a
@@ -609,8 +618,13 @@ adding one never exposes it by default:
 * `visible`, the inspect facets that see it: `any`, every inspect facet;
   `owner`, a facet whose scope covers the path's owner, which for a path
   the machine owns is a facet of scope `all`; `all`, a facet of scope
-  `all`; or `system_shell`, only a call presenting the system-shell
-  facet;
+  `all`; `system_shell`, only a call presenting the system-shell
+  facet; or `display`, decided by the caller's principal and by no
+  scope, `all` included: a caller whose principal is the path's owning
+  domain's, or that of the session of the display the path's window is
+  on ([design-display.md](design-display.md#the-widget-server)); the
+  generator refuses it on an attribute of a path outside
+  `[domains, Id, uis]`;
 * `build`, `all` or `development`; a release build's inspector omits a
   `development` attribute from the record, as if it were not declared;
 * `projections`, a comma-separated list of `shell`, `host`, `proc` and
@@ -1059,8 +1073,12 @@ Its members, all at two-space indentation, are rows of the families
 below; each family's names have one namespace, and a name is a lower-case
 letter followed by at most 62 lower-case letters, digits or underscores.
 No member takes a quoted token. `unit`, `hairline`,
-`space`, `radius` and `icons` appear exactly once, and `font`, `role`,
-`color` and `shadow` at least once.
+`space`, `radius` and `icons` appear exactly once, `font`, `role`,
+`color` and `shadow` at least once, and `transition` once for each
+member of `ui_transition`. Every length is in logical pixels, which a
+renderer multiplies by the window's scale
+([Sizes and the scale](design-desktop-programs.md#the-theme-one-declaration));
+`PIXELS` below means logical pixels.
 
 | Member | Meaning |
 | --- | --- |
@@ -1075,6 +1093,7 @@ No member takes a quoted token. `unit`, `hairline`,
 | `color NAME RRGGBB` | an sRGB colour, in six upper-case hexadecimal digits |
 | `contrast FOREGROUND on BACKGROUND... RATIO` | the least contrast ratio, one decimal from 1.0 to 21.0, that FOREGROUND has on each BACKGROUND |
 | `icons PATH sizes SIZE...` | the icons' definition file and the pixel sizes they are rasterised at, ascending |
+| `transition NAME MILLISECONDS CURVE` | a transition ([Motion](design-desktop-programs.md#motion)): NAME a member of `ui_transition`, the closed set `press`, `state` and `reveal`, each started by the change Motion names, which the renderers implement; MILLISECONDS its duration, 1 to 250; CURVE `linear` or `ease_out` |
 
 The generator computes each contrast row's ratios by WCAG 2.2's
 definitions of "contrast ratio" and "relative luminance" (W3C
@@ -1082,14 +1101,18 @@ Recommendation 12 December 2024,
 `https://www.w3.org/TR/2024/REC-WCAG22-20241212/`), and a pair below
 its ratio fails generation with both names and the ratio measured.
 
-It emits three files of constants, each with every length in pixels and
-every colour in its target's own form: `erx_theme` in `erx_memdraw`
-(`color/1` as opaque RGBA32, `role/1`, `space/1`, `radius/1`,
-`shadow/1`, `unit/0`, `hairline/0`, and `colors/0` and `roles/0`, the
-names); `erx/theme.h`, the `ERX_THEME_` macros with colours as
-`0xRRGGBB` and `ERX_THEME_ROLES(X)` over the roles; and `theme.ts`,
+It emits three files of constants, each with every length in logical
+pixels, every duration in milliseconds and every colour in its target's
+own form: `erx_theme` in `erx_memdraw` (`color/1` as opaque RGBA32,
+`role/1`, `space/1`, `radius/1`, `shadow/1`, `transition/1` as
+`{Milliseconds, Curve}`, `unit/0`, `hairline/0`, and `colors/0`,
+`roles/0` and `transitions/0`, the names); `erx/theme.h`, the
+`ERX_THEME_` macros with colours as `0xRRGGBB`, each transition as
+`ERX_THEME_TRANSITION_NAME_MS` and `ERX_THEME_TRANSITION_NAME_CURVE`,
+and `ERX_THEME_ROLES(X)` over the roles; and `theme.ts`,
 `THEME_PROPERTIES`, the CSS custom properties `--erx-...`, where a
-role's weight is its CSS numeric weight. Each family is a set: every
+role's weight is its CSS numeric weight and a transition is its CSS
+duration and timing function, `ease_out` as `ease-out`. Each family is a set: every
 output lists it in name order, so the order of the rows changes no
 byte. Fonts, ranges and icons are the glyph step's inputs and contrast
 rows are checks; none is emitted.
@@ -1105,8 +1128,11 @@ name, a path that is not relative beneath the root, a font without its
 range row or a range row of an undeclared font, a range out of order, a
 role with an unknown, repeated or missing key, an undeclared font or
 colour, a weight its font lacks or `figures` other than the two, a line
-height off the unit's grid, a space wider than 4,096 pixels, a `radius
-window` other than 0, icon sizes that do not ascend, a ratio outside
+height off the unit's grid, a space wider than 4,096 logical pixels, a
+`radius window` other than 0, icon sizes that do not ascend, a
+`transition` row whose name is not a member of `ui_transition` or
+repeats one, a member with no row, a duration outside 1 to 250 or a
+curve other than the two, a ratio outside
 1.0 to 21.0 or not written with one decimal and no leading zero, a
 `contrast` row naming an undeclared colour, and a contrast ratio that
 does not hold.
@@ -1153,16 +1179,24 @@ router holds every record to and `encode/1` refuses with `badarg`
 outside; `encode/1`, one record's bytes; `decode/1`, which reads a
 stream's bytes into its records in order, the number it dropped and the
 bytes after the last whole record, fewer than one record, which the
-reader keeps for its next read; and `size/0`. A record whose tag no kind
-has, whose padding is not zero, or whose field is outside its type's
-range or members is dropped and counted, never decoded; the decoder
-makes no atom. Generation fails for a second `input` declaration or one
+reader keeps for its next read; `size/0`; and the clamps a driver
+applies to its device's values before it makes a record: `rel/1` and
+`wheel/1` hold a move and a wheel step to their fields' ranges, and
+`axis/3` clamps a position to a device axis's range, minimum below
+maximum, and spreads it across `input_axis`, which therefore starts at
+0; the module exports those three fields' types and checks
+(`is_input_rel/1` and the others), so no driver restates their bounds.
+A record whose tag no kind has, whose padding is not zero, or whose
+field is outside its type's range or members is dropped and counted,
+never decoded; the decoder makes no atom. Generation fails for a second `input` declaration or one
 outside `formats/input.txt`, an argument to it, a member other than
 `record`, a tag outside 1 to 255 or used twice, two kinds of one name
 with different numbers of words or the same words, a field name that is
 not an identifier without an underscore or is used twice in its kind,
 and a field type that is not a root scalar without an alignment or a
-root enum other than a flags type.
+root enum other than a flags type, and for an `input_rel`, `input_wheel`
+or `input_axis` that no field has or an `input_axis` that does not
+start at 0.
 
 ### Web protocol
 
@@ -1879,12 +1913,12 @@ these exact offsets and sizes.
 
 ### Machine header
 
-The header is 400 bytes with alignment 8. Its fields are:
+The header is 424 bytes with alignment 8. Its fields are:
 
 | Offset | Field | Type and meaning |
 | --- | --- | --- |
 | 0, 4, 6 | `magic`, `version`, `flags` | `u32`, `u16`, `u16`; magic/version above; development at flag bit 0, partial boot at bit 1, the UART console line secure at bit 2 and the host-link line secure at bit 3, all other bits zero |
-| 8, 12 | `length`, `header_size` | `u32`, `u32`; complete file length and exactly 400 |
+| 8, 12 | `length`, `header_size` | `u32`, `u32`; complete file length and exactly 424 |
 | 16, 24, 32, 40 | `host`, `console`, `hostlink`, `platform` | four string references; system identifier, absolute device-tree path, optional device-tree path and platform identifier |
 | 48, 56, 64 | `root_memory`, `system_baseline`, `system_reservation` | three `u64` byte counts; the root assumption, configured baseline and checked admission reservation |
 | 72, 120 | `system_share`, `users_share` | two shares, for `system` and `users` |
@@ -1892,19 +1926,23 @@ The header is 400 bytes with alignment 8. Its fields are:
 | 180, 184, 188 | `system_lane`, `system_queue`, `peer_held` | three `u32` byte limits with their system-contract meanings |
 | 192, 196 | `system_reserve`, `sealing` | two `u32`; unallocated system-rate headroom in thousandths, and none 0, device 1 or TPM 2 |
 | 200, 204 | `system_runtime_limits`, `native_limits` | two `u32` indices; the system runtime's limits and a partial boot's complete native-domain limits |
-| 208 through 360 | table spans | twenty `span` values, in the order below |
-| 368 | `system_args` | string reference; the system runtime's arguments |
-| 376 | `sessions` | `span` of the session templates |
-| 384 | `starts` | `span` of the start rows ([design-apps.md](design-apps.md#the-start-table)), at most `start_rows_max` |
-| 392 | `displays` | `span` of the display records ([design-display.md](design-display.md#a-displays-session)) |
+| 208 through 344 | table spans | eighteen `span` values, in the order below |
+| 352 | `system_args` | string reference; the system runtime's arguments |
+| 360 | `sessions` | `span` of the session templates |
+| 368 | `starts` | `span` of the start rows ([design-apps.md](design-apps.md#the-start-table)), at most `start_rows_max` |
+| 376 | `displays` | `span` of the display records ([design-display.md](design-display.md#a-displays-session)) |
+| 384, 392 | `apps`, `app_services` | `span` of the `apps` row ([design-packaging.md](design-packaging.md#the-apps-row)), at most one, and of the service indices its `services` span partitions |
+| 400, 408 | `packages`, `signers` | `span` of the image's package rows, at most `apps_max_limit`, and of the `signer` rows ([design-packaging.md](design-packaging.md#where-a-package-lies)) |
+| 416 | `development_key` | `span` of the build's development package key ([design-packaging.md](design-packaging.md#the-sdk)), at most one; in a development manifest only |
 
-The spans at 208 through 360 are `principals`, `domains`, `limits`,
+The spans at 208 through 344 are `principals`, `domains`, `limits`,
 `runtime_limits`, `lane_classes`, `units`, `devices`, `windows`,
 `services`, `facets`, `facet_operations`, `facet_parameters`,
-`introductions`, `images`, `extents`, `boot_order`, `liveness`,
+`introductions`, `boot_order`, `liveness`,
 `shell_principals`, `partial_boot` and `strings`, at offsets 208, 216
 and so on. The tables are packed in that order, with `sessions` after
-`domains`, `starts` after `partial_boot` and `displays` after `starts`, each at its first required
+`domains`, `starts` after `partial_boot`, `displays` after `starts`, and `apps`,
+`app_services`, `packages`, `signers` and `development_key` after `displays`, each at its first required
 alignment boundary after the preceding table; `strings` comes last, and its span's count is bytes.
 
 `root_memory` is nonzero and page-aligned. Table capacities are 1 through
@@ -2005,7 +2043,7 @@ learns only its own projected limits through its read-only boot page.
 ### Domain identity and placement
 
 Domain kind 1 is `service` and 2 is `secret`. A session template is no
-domain row: the `sessions` table, which the header's span at offset 376
+domain row: the `sessions` table, which the header's span at offset 360
 names and which follows the domain table, holds one 40-byte record per
 template, in principal order and at most one per principal: its principal
 and limits indices, its runtime, release and release-file count as a
@@ -2041,7 +2079,7 @@ creation request cannot supply origin or parent fields.
 | --- | --- |
 | unit, 24 | `0: name str`; `8: holder u32`; `12: devices span`; `20: reserved u32` |
 | device, 88 | `0: selector u32`; `4: role u32`; `8: path str`; `16: bridge str`; `24: compatible str`; `32: bus u16`; `34: device u8`; `35: function u8`; `36: dma u32`; `40: flags u32`; `44: line u32`; `48: dma_memory u64`; `56: placement_key str`; `64: base u64`; `72: size u64`; `80: clock u32`; `84: reserved u32` |
-| partition window, 32 | `0: holder u32`; `4: device u32`; `8: role u32`; `12: partition u32`; `16: rights u32`; `20: image u32`; `24: reserved u64` |
+| partition window, 32 | `0: holder u32`; `4: device u32`; `8: role u32`; `12: partition u32`; `16: rights u32`; `20: reserved u32`; `24: reserved u64` |
 
 A unit's `holder` is a domain reference. Its device span names a
 nonempty run in the device table. The unit spans cover that table once,
@@ -2103,16 +2141,23 @@ over ([design-device-tree.md](design-device-tree.md),
 [design-device-dma.md](design-device-dma.md#device-addresses-and-reach)). The packed marks do not establish actual confinement:
 the device service still verifies the machine before assigning the unit.
 
-Window roles are slot A 1, slot B 2, boot-selection record 3, reset
-count 4, vault 5, data 6, FAT 7 and verified image 8. Fixed-medium roles
-have `partition = 0`; the ABI medium layout determines their sectors.
+Window roles are boot A 1, boot B 2, boot-selection record 3, reset
+count 4, vault 5, data 6, FAT 7, system 8, system A 9 and system B 10.
+Fixed-medium roles have `partition = 0`; the ABI medium layout
+determines their sectors, and a `system` window's are those of the
+system partition of the slot that the boot value names, so an `unknown`
+boot gives none.
 FAT names a primary partition numbered 1 through 4 on the selected
-removable device. A verified-image window names an image-table index;
-every other role has absent `image`. Rights are read bit 0 and write
-bit 1, at least read; a verified-image window is read-only. No record
+removable device. Rights are read bit 0 and write
+bit 1, at least read; a `system` window is read-only, and a manifest
+has at most one. No record
 contains a caller-selected sector range. Role/holder checks still
-restrict slots and records to the slot writer, and data and FAT to
-their storage holders. These are private grants, not a global device
+restrict boot partitions, system A and B and the records to the slot
+writer, the `system` window to a storage domain, whose holder is the
+storage domain that serves `system` and the server of the service named
+`system_service`
+([design-storage.md](design-storage.md#the-system-tree)), and data and
+FAT to their storage holders. These are private grants, not a global device
 namespace.
 
 ### Services, facets and their parameter schemas
@@ -2158,8 +2203,9 @@ duplicate scalar key, an unsorted/duplicate set, an excessive bound, or a
 parameter without that checked consumer fails validation.
 
 Within `service NAME NUMBER`, the exact metadata members are
-`operation NAME NUMBER`, `liveness OPERATION_NAME`, `served_as message|tree` and `parameter NAME NUMBER KIND CARDINALITY
-BOUND checked_by HELPER`. `served_as` is stated once by every
+`operation NAME NUMBER`, `liveness OPERATION_NAME`, `served_as message|tree`,
+`quantity KEY VALUE` and `parameter NAME NUMBER KIND CARDINALITY BOUND
+checked_by HELPER`. `served_as` is stated once by every
 interface, and its closed set of values is `message` and `tree`, so no
 interface is served one way by omission. `tree` marks an interface whose
 grants are `erx_fs` grants of one tree, which the grantee mounts and speaks
@@ -2172,7 +2218,9 @@ which the domain service serves the system domain's such services as
 every receiver of such a facet to `files_max_frame_min` (property 16 of
 design-system.md). For integer kinds, BOUND is `range MIN MAX`;
 for identifier, path or bytes it is `bytes MAX_BYTES`; boolean uses
-`boolean`; a reference kind uses `target TABLE`, with `domains`,
+`boolean`; a member kind uses `member ENUM`, naming an enum the ABI
+declares, not a flag set, whose values run without a gap; a reference
+kind uses `target TABLE`, with `domains`,
 `principals` or `devices` as appropriate. A domain reference additionally
 spells `system yes|no`. The helper is a qualified symbol of the service's
 manifest-grant checker, resolved against its checked consumer inventory;
@@ -2185,18 +2233,32 @@ it whatever its interface.
 These declarations supply manifest metadata and validation, not request
 execution or a future service's callback implementation.
 The closed KIND tokens are `u64`, `i64`, `boolean`, `identifier`,
-`namespace_path`, `domain`, `principal`, `device` and `bytes`. A liveness
+`namespace_path`, `domain`, `principal`, `device`, `bytes` and `member`. A liveness
 marker names one declared operation. Its request and response signature
 belongs to the service contract and is verified against that service's
 checked consumer descriptor before admission; an absent or incompatible
 descriptor fails. This metadata does not invent a callable signature or
 permit the watchdog to invoke an arbitrary operation by number.
 
+A `quantity KEY VALUE` line gives the value of one of a facet row's
+quantities, KEY one of `max_request`, `in_flight`, `reductions`,
+`period_ns` and `max_heap_size`, VALUE positive and within the field's
+width, at most once each. They are the quantities of the facet rows the
+build derives rather than a source states: an app's rows, which
+[design-packaging.md](design-packaging.md#the-apps-row) derives from
+the `apps` row, take each quantity from their service's declaration,
+and the manifest check refuses an `apps` row naming a service whose
+interface leaves one out. A source's own facet rows state every
+quantity themselves; no declared quantity fills a field a source row
+leaves out.
+
 Parameter kinds are unsigned integer 1, signed integer 2, boolean 3,
 identifier 4, namespace path 5, domain reference 6, principal index 7,
-device index 8 and bounded bytes 9. Integer and boolean values use
-`scalar`; signed values use the declared 64-bit signed representation,
-and booleans are 0 or 1. Text and bounded bytes use `bytes`; references
+device index 8, bounded bytes 9 and enum member 10. Integer, boolean and
+member values use `scalar`; signed values use the declared 64-bit signed
+representation, booleans are 0 or 1, and a member is its enum value,
+which a facet's source spells as the member's bare name and the domain
+service receives as the atom of that name. Text and bounded bytes use `bytes`; references
 use `index`. All inactive fields are zero. A parameter's maximum length,
 range and allowed reference category come from its declaration. Opaque
 bytes are legal only for a field whose service contract defines them as
@@ -2213,48 +2275,30 @@ required before a manifest can name that service. This permits complete
 structural readers without implementing future service callbacks.
 
 `max_request` is a byte ceiling, `in_flight` a count, `reductions` a
-positive share per positive `period_ns`, `max_heap_size` a byte limit
-including off-heap binaries, and `queue` the resolved byte quota. The
+positive share per positive `period_ns`, `max_heap_size` the grant
+process's heap bound in words of the grantee's runtime, as OTP's
+`max_heap_size` process flag counts it, off-heap binaries included, and
+`queue` the resolved byte quota. The
 packer resolves an omitted queue to `system_queue`; no zero sentinel
-changes its meaning at runtime. Conversion to a runtime's heap-word
-limit is checked and rounds down. The manifest checker includes each
+changes its meaning at runtime. The manifest checker includes each
 facet's charge in its grantee's admission reservation. Liveness records
 name services whose interface declares its liveness operation; all use
 the kernel watchdog's period and cannot extend its deadline.
 
-### Read-only images, ordering and partial boots
+### Ordering and partial boots
 
 | Record and size | Fields |
 | --- | --- |
-| image, 136 | `0: name str`; `8: device u32`; `12: format u32`; `16: extents span`; `24: data_bytes u64`; `32: data_block_size u32`; `36: hash_block_size u32`; `40: data_blocks u64`; `48: hash_offset u64`; `56: hash_bytes u64`; `64: salt_length u32`; `68: hash_algorithm u32`; `72: salt bytes[32]`; `104: root_hash bytes[32]` |
-| image extent, 16 | `0: slot_offset u64`; `8: length u64` |
 | boot-order entry, 4 | `0: domain u32` |
 | system-shell principal, 4 | `0: principal u32` |
 | partial-boot program, 16 | `0: name str`; `8: image u32`; `12: reserved u32` |
 | start row, 24 | `0: principal u32`; `4: flags u32` (enabled at bit 0); `8: display u32` (a service index or `mf_none`); `12: restarts u32`; `16: restart_period_s u32` (from 1); `20: reserved u32` |
 | display, 16 | `0: service u32`; `4: policy u32`; `8: idle_dim_s u32`; `12: idle_off_s u32` |
-
-Image format 1 denotes EROFS protected by the storage contract's
-dm-verity version 1 tree; hash algorithm 1 is SHA-256. Salt length is
-0 through 32 and unused salt bytes are zero. Both block sizes are
-positive powers of two accepted by that format. Extents are nonempty,
-sector-aligned, sorted, disjoint byte ranges relative to a slot's start,
-not the medium's start. Concatenating their bytes produces the image
-window: its data starts at zero and its tree starts at `hash_offset`.
-The extents cover that entire window, including the hash tree. All
-size/block-count/tree calculations are checked against the storage
-format, and all slot extents fit the ABI's slot extent. The packer
-derives these fields and hashes from the built image; source text
-cannot supply an unchecked root hash or extent. At boot the device
-service adds the currently named slot's base after checking the boot
-value; `unknown` supplies no such window.
-
-Image format 2, `erofs_unchecked`, is an EROFS image with no tree,
-which only a development manifest admits: its window is its data alone,
-`data_bytes` long, its hash algorithm is 0, none, and every tree field,
-the salt and the root hash are zero, so the hash-checking reader opens it
-`unchecked` and no record claims a check that nothing makes
-([design-stopgap.md](design-stopgap.md#the-phase-1-manifest-check)).
+| apps row, 32 | `0: memory u64` (from 1); `8: max u32` (1 to `apps_max_limit`); `12: app_template u32` (a session index); `16: packages_facet u32` (a facet index); `20: system_facet u32` (a facet index); `24: services span` (of `app_services`) |
+| app service, 8 | `0: service u32` (a service index); `4: facet u32` (a facet index) |
+| package, 44 | `0: name str` (an identifier); `8: flags u32` (enabled at bit 0); `12: sha256 u8[32]`, its header's SHA-256 |
+| signer, 40 | `0: name str` (an identifier); `8: key u8[signer_key_bytes]`, an Ed25519 public key |
+| development key, 32 | `0: key u8[signer_key_bytes]`, an Ed25519 public key |
 
 Boot order is the complete permutation of the configured-domain
 indices, with servers before clients. The packer uses a topological
@@ -2314,7 +2358,7 @@ the native-program mode does not pretend to start the absent services.
 `config/<name>.txt` uses the same ASCII token, comment and quoted-string
 rules as ABI declarations. It begins `manifest 1`; declaration keywords
 are `machine`, `share`, `principal`, `domain`, `limits`, `runtime_limits`,
-`lane_class`, `unit`, `window`, `service`, `facet`, `introduce`, `image`,
+`lane_class`, `unit`, `window`, `service`, `facet`, `introduce`,
 `liveness`, `shell_principal` and `partial_boot`. Named declarations
 have two-space-indented properties whose names and types are their
 record's fields. References use source identifiers, not numeric indices.
@@ -2346,11 +2390,10 @@ field or computed charge is an accepted property.
 | `domain NAME` | `principal`, `limits` references; `kind service\|secret`; `flags` flag list; `runtime`, `release` artifact references; `restarts`, `restart_period_s` integers; `boot_timeout_s` integer, 1 to `boot_timeout_max_s` (3,600), `boot_timeout_default_s` (60) when absent; `args`, `env` vectors |
 | `session PRINCIPAL` | the session template of the principal its name names, so a principal has one; `limits` reference; `runtime`, `release` artifact references; `args`, `env` vectors |
 | `unit NAME` | `placement` string naming a complete checked platform unit; `holder` domain reference or `system` |
-| `window NAME` | `holder` domain reference; `device` checked platform-device string; `role` declared role name; `partition` integer; `rights` flag list; `image` image reference or `none` |
+| `window NAME` | `holder` domain reference; `device` checked platform-device string; `role` declared role name; `partition` integer; `rights` flag list |
 | `service NAME` | `server` domain reference or `system`; `interface` qualified ABI service name |
 | `facet NAME` | `grantee`, `service` references; `operations` list; repeated `parameter KEY VALUE`; `max_request`, `in_flight`, `reductions`, `period_ns`, `max_heap_size`, `queue` integers |
 | `introduce FROM TO` | two domain references on the declaration line; no properties |
-| `image NAME` | `device` checked platform-device string; `input` artifact reference; optional `salt` byte literal, bounded to 32 bytes |
 | `liveness SERVICE` | one service reference on the declaration line; no properties |
 | `shell_principal PRINCIPAL` | one principal reference on the declaration line; no properties |
 | `partial_boot NAME` | `image` artifact reference |
@@ -2504,7 +2547,7 @@ Top-level named tables are sorted by name bytes; service names are
 qualified by their server and facet names by their grantee. Unit devices
 follow their units, in selector order. Facet operations and parameters
 follow their facets, with operation/key/value order inside each facet.
-Image extents follow their images. Windows sort by holder, device,
+Windows sort by holder, device,
 role and partition; introductions by their canonical endpoint pair.
 Auxiliary order lists follow their stated ordering. Strings are appended
 in header/table/record/field traversal order, without deduplication; equal

@@ -30,7 +30,17 @@ class BuildFactsTest < Minitest::Test
 
   def test_the_configuration_is_the_platform_and_the_build_kind
     assert_equal 'qemu-virt/development', BuildFacts.configuration(platform: 'qemu-virt', build_kind: 'development')
+    local = BuildFacts.configuration(platform: 'qemu-virt', build_kind: 'development', local: true)
+    assert_equal 'qemu-virt/development-local', local
+    assert_match BuildFacts::SHAPES.fetch(:configuration), local
     assert_equal 'rpi4/release', BuildFacts.configuration(platform: 'rpi4', build_kind: 'release')
+  end
+
+  # Only the ABI's build kinds are kinds: one that is neither development nor release is
+  # refused, never taken for either.
+  def test_a_build_kind_the_abi_does_not_name_is_refused
+    error = assert_raises(Erx::Error) { BuildFacts.configuration(platform: 'qemu-virt', build_kind: 'debug') }
+    assert_includes error.message, 'debug'
   end
 
   def test_the_kernel_is_fiasco_and_its_recorded_revision
@@ -44,7 +54,9 @@ class BuildFactsTest < Minitest::Test
     [{ revision: 'a b' }, { revision: "evil\e]8;;" }, { revision: '-dash' }, { revision: 'a' * 161 },
      { revision: 'master-n1234-5e45e725588e' }, { revision: 'n0-0123456789ab' }, { revision: '0123456789AB' },
      { date: -1 }, { date: 10**12 }, { configuration: 'QEMU-VIRT/DEVELOPMENT' },
-     { configuration: 'qemu-virt' }, { kernel: 'Fiasco-1' }, { kernel: "fiasco\n" }].each do |changed|
+     { configuration: 'qemu-virt' }, { configuration: 'qemu-virt/debug' },
+     { configuration: 'qemu-virt/local' }, { configuration: 'qemu-virt/development-local-local' },
+     { kernel: 'Fiasco-1' }, { kernel: "fiasco\n" }].each do |changed|
       error = assert_raises(Erx::Error, changed.inspect) { BuildFacts.render(KNOWN.with(**changed)) }
       assert_includes error.message, changed.keys.first.to_s
     end

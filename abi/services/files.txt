@@ -7,6 +7,25 @@
 # files_max_frame_min bytes (property 16): a read reply or a write request of the client's
 # 64 KiB transfer unit and its encoding arrive in one frame (abi/protocols/9p.txt,
 # docs/design-domains.md, "Floors from a protocol").
+# A facet row's rights are its grant's (docs/design-files.md, "Building, binding and
+# mounting"): ro reads, rw also writes and rx also runs what it reads, and no member
+# both writes and runs (F6). A row that states none is rw. The grant refuses every
+# writing operation of an ro or rx grant before its callback (F5), and nothing a client
+# sends widens its rights. files_grant is the manifest check's acceptance of the
+# parameter, whose kind alone bounds it to these members.
+# A facet row the build derives (an app's, docs/design-packaging.md, "The apps row")
+# takes the quantities below: requests of files_max_frame_min bytes, 16 in flight, and a
+# grant process heap of 262144 words (2 MiB), which holds 16 write requests of 64 KiB.
 service files 5
   served_as tree
+  parameter rights 1 member optional member files_rights checked_by files_grant
+  quantity max_request 131072
+  quantity in_flight 16
+  quantity reductions 100000
+  quantity period_ns 1000000000
+  quantity max_heap_size 262144
 limit files_max_frame_min u32 131072
+enum files_rights u8
+  value ro 1
+  value rw 2
+  value rx 3

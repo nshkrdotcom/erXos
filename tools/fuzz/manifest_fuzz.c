@@ -115,6 +115,11 @@ parameters_admitted(const erx_dom_view_t *dom, const erx_dom_facet_t *facet, con
 		case ERX_MF_PARAMETER_BOOLEAN:
 			within = value->scalar >= parameter->minimum && value->scalar <= parameter->maximum;
 			break;
+		case ERX_MF_PARAMETER_MEMBER:
+			/* The NIF names it members[scalar - minimum]. */
+			within = parameter->members != NULL && value->scalar >= parameter->minimum &&
+			    value->scalar <= parameter->maximum;
+			break;
 		case ERX_MF_PARAMETER_I64:
 			within = (int64_t)value->scalar >= (int64_t)parameter->minimum &&
 			    (int64_t)value->scalar <= (int64_t)parameter->maximum;

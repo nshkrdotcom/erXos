@@ -31,14 +31,19 @@ incarnation owns, are kept. Every other entry, and a value that is not a map
 or is larger than the row's declarations, is refused, as a refused action
 that erx_domain_srv logs and counts; the incarnation is ready all the same.
 
-Sessions. A grant to a session template is a grant to every session made
-from it. A session is one incarnation, never restarted, named by its id:
-its ready report, {session_ready, Template, Id, Marked}, adds a grant keyed by
-{session, Id} for each of the template's grants, and its end,
+Sessions. A session is one incarnation, never restarted, named by its id.
+Its rows, the facet rows of configured domains' services it holds, are
+decided once, by the service, when the session is planned: a template's
+session holds every row granted to its template, and an app's session the
+app template's packages row and the rows its admission kept, and no other
+(docs/design-packaging.md, "An app's session"). Its ready report,
+{session_ready, Rows, Id, Marked}, carries them and adds a grant keyed by
+{session, Id} for each, so no session holds a row its plan did not give
+it, whatever else its template is granted; its end,
 {session_ended, Id}, cancels their operations and deletes them, so the
 core holds entries only for live sessions, each its own. The service
-passes a session's report on at most once and before its end, and names
-the template from its own record of the domain, never from the report;
+passes a session's report on at most once and before its end, and takes
+its rows from its own record of the domain, never from the report;
 a second report of a live session is refused as stale, and an end of a
 session the core does not hold changes nothing.
 
@@ -77,11 +82,12 @@ for the system domain as grantee, which every domain is connected to.
 
 The pixel area (docs/design-display.md, "The pixel area"). A pixel area is
 a fact of a pair of domains, not of an introduction: pair_area/3 decides it
-from the two parties' origins and the manifest's grants alone, so every
+from the two parties' origins alone, a configured row's by the manifest's
+grants and a session's by the facet rows its plan gave it, so every
 introduction that makes the pair's connection, a grant's or
 erx_domain:introduce/2's, makes the same area. A pair one of whose parties
-serves a service of the windows interface granted to the other, a
-configured row or a session of a template, has an area read by the server:
+serves a service of the windows interface the other holds, a configured
+row by its grant or a session by its row, has an area read by the server:
 the grant's pixels, or windows_pixels_default where its limits state none,
 rounded up to whole pages. Every other pair has none.
 
@@ -143,7 +149,7 @@ serves the display's service.
 %% untrusted events' fields are any term a domain sent.
 -type event() :: {ready, row(), id(), node(), Provides :: term()}
                | {ended, row(), id()}
-               | {session_ready, template(), id(), marked()}
+               | {session_ready, [{name(), row(), map()}], id(), marked()}
                | {session_ended, id()}
                | {introduced, tag(), ok | {error, term()}}
                | {minted, Origin :: non_neg_integer(), Tag :: term(), Reply :: term()}
@@ -162,25 +168,27 @@ serves the display's service.
                      grants := #{key() => #{server := row(), limits := map(), mark := boolean(),
                                             state := grant()}},
                      rows := #{row() => incarnation()},
-                     templates := #{template() => [{name(), Server :: row(), Limits :: map()}]},
-                     sessions := #{id() => template()},
+                     sessions := sets:set(id()),
                      next_tag := tag(),
                      owner := fun((pid()) -> non_neg_integer()),
                      files := [name()],
                      windows := [name()],
-                     areas := [area()],
+                     areas := #{row() => [area()]},
                      deadline := pos_integer()}.
-%% A party of a pair as the domain service records it: its id and its origin, a
-%% configured row's, a session's template's, or a request's.
--type party() :: {id(), request | {configured, row()} | {session, template()}}.
-%% A windows grant's pixel area: its server row, its grantee and its bytes, whole pages.
--type area() :: {Server :: row(), row() | {template, template()}, Bytes :: pos_integer()}.
+%% A party of a pair as the domain service records it: its id and what it holds, a
+%% configured row's grants by its row, a session's facet rows, those its plan gave it
+%% (the session's record in erx_domain_core), or a request's domain nothing.
+-type party() :: {id(), request | {configured, row()} | {rows, [erx_domain_core:session_row()]}}.
+%% A windows grant's pixel area, as its grantee holds it: its server row and its bytes,
+%% whole pages.
+-type area() :: {Server :: row(), Bytes :: pos_integer()}.
 
 -doc """
 The state of a boot from the manifest's service rows, each a server row and a
 name, and its facet rows served by configured domains, each a grantee, the
 service's name, its server row and the grant's limits. A grantee
-{template, T} grants each session made from template T. Files names the
+{template, T}'s grants are kept nowhere here: each session carries the facet
+rows its plan gave it, in its ready report and as a party. Files names the
 services of the files interface, whose grants a namespace mounts, and
 Windows those of the windows interface, whose grants size their pairs'
 pixel areas (pair_area/3); none of either by default. A grant of a
@@ -201,17 +209,18 @@ new(#{services := Services, grants := Grants, owner := Owner} = Config) when is_
                                       andalso lists:member(Name, maps:get(Server, Declared, []))
                           end, Grants),
     Valid orelse error(badarg),
-    {ForTemplates, ForDomains} = lists:partition(fun({{template, _}, _, _, _}) -> true; (_) -> false end, Grants),
+    %% A template's grants are held by its sessions, each from its own ready report.
     Entries = maps:from_list([{{Grantee, Name}, entry(Server, Limits, false)}
-                              || {Grantee, Name, Server, Limits} <- ForDomains]),
-    Templates = maps:groups_from_list(fun({{template, T}, _, _, _}) -> T end,
-                                      fun({_, Name, Server, Limits}) -> {Name, Server, Limits} end, ForTemplates),
+                              || {Grantee, Name, Server, Limits} <- Grants, not is_template(Grantee)]),
     Windows = maps:get(windows, Config, []),
-    #{declared => Declared, grants => Entries, rows => #{}, templates => Templates, sessions => #{},
+    #{declared => Declared, grants => Entries, rows => #{}, sessions => sets:new([{version, 2}]),
           next_tag => 1, owner => Owner, files => maps:get(files, Config, []), windows => Windows,
           areas => areas(Windows, Grants), deadline => maps:get(deadline, Config, ?DEADLINE)}.
 
 entry(Server, Limits, Mark) -> #{server => Server, limits => Limits, mark => Mark, state => idle}.
+
+is_template({template, _}) -> true;
+is_template(_Grantee) -> false.
 
 -doc "Each grant's state, by its key.".
 -spec grants(state()) -> #{key() => grant()}.
@@ -219,25 +228,23 @@ grants(#{grants := Grants}) ->
     #{Key => Grant || Key := #{state := Grant} <- Grants}.
 
 -doc """
-Whether the manifest grants template Template's sessions the display Name,
-a service of the windows interface of a configured domain: the services a
-session's start may name as its display (erx_domain_srv), so a start names
-only a display its template is granted.
+Whether a session of Rows, the facet rows its plan gave it, holds the
+display Name, a service of the windows interface of a configured domain:
+the services a session's start may name as its display (erx_domain_srv),
+so a start names only a display the session holds.
 """.
--spec granted(template(), term(), state()) -> boolean().
-granted(Template, Name, #{templates := Templates, windows := Windows}) ->
-    lists:member(Name, Windows) andalso lists:keymember(Name, 1, maps:get(Template, Templates, [])).
+-spec granted([erx_domain_core:session_row()], term(), state()) -> boolean().
+granted(Rows, Name, #{windows := Windows}) ->
+    lists:member(Name, Windows) andalso lists:keymember(Name, 1, Rows).
 
 -doc """
 The names of the services of configured domains the manifest grants
-Grantee, sorted: a configured row's, the system domain's, or, for
-{template, T}, those of every session made from template T. Only
+Grantee, sorted: a configured row's or the system domain's; a session's
+are its rows, which the service holds. Only
 Grantee's own grants, so a domain's ready answer, which names them, says
 nothing of another domain's (erx_domain_srv).
 """.
--spec granted_names(row() | system | {template, template()}, state()) -> [name()].
-granted_names({template, Template}, #{templates := Templates}) ->
-    lists:usort([Name || {Name, _Server, _Limits} <- maps:get(Template, Templates, [])]);
+-spec granted_names(row() | system, state()) -> [name()].
 granted_names(Grantee, #{grants := Grants}) ->
     lists:usort([Name || {Holder, Name} <- maps:keys(Grants), Holder =:= Grantee]).
 
@@ -273,8 +280,13 @@ settled(idle, Server, Starting) -> not lists:member(Server, Starting);
 settled(_Pending, _Server, _Starting) -> false.
 
 -doc "The next state and the actions to perform for Event, in order.".
--spec step(event(), state()) -> {[action()], state()}.
-step({ready, Row, Id, Node, Provides}, #{rows := Rows} = State) ->
+-spec step(event(), state()) -> {state(), [action()]}.
+step(Event, State) ->
+    {Actions, Next} = on_event(Event, State),
+    {Next, Actions}.
+
+%% Event's actions and the next state, as the decisions below build them.
+on_event({ready, Row, Id, Node, Provides}, #{rows := Rows} = State) ->
     case Rows of
         #{Row := Newest} when Id =< element(1, Newest) ->
             {[{refused, stale_report, {Row, Id}}], State};
@@ -283,35 +295,34 @@ step({ready, Row, Id, Node, Provides}, #{rows := Rows} = State) ->
             {Actions, Next} = reconcile(State#{rows := Rows#{Row => {Id, ready, Node, Accepted}}}),
             {[{refused, Reason, Detail} || {Reason, Detail} <- Refusals] ++ Actions, Next}
     end;
-step({ended, Row, Id}, #{rows := Rows} = State) ->
+on_event({ended, Row, Id}, #{rows := Rows} = State) ->
     case Rows of
         #{Row := Newest} when Id < element(1, Newest) ->
             {[], State};
         #{} ->
             reconcile(State#{rows := Rows#{Row => {Id, ended}}})
     end;
-step({session_ready, Template, Id, Marked}, #{sessions := Sessions, templates := Templates, grants := Grants} = State) ->
-    case {Sessions, Templates} of
-        {#{Id := _}, _} ->
+on_event({session_ready, Rows, Id, Marked}, #{sessions := Sessions, grants := Grants} = State) ->
+    case sets:is_element(Id, Sessions) of
+        true ->
             {[{refused, stale_report, {session, Id}}], State};
-        {#{}, #{Template := Granted}} ->
+        false ->
             Added = maps:from_list([{{{session, Id}, Name}, entry(Server, Limits, {display, Name} =:= Marked)}
-                                    || {Name, Server, Limits} <- Granted]),
-            reconcile(State#{sessions := Sessions#{Id => Template}, grants := maps:merge(Grants, Added)});
-        {#{}, #{}} ->
-            {[], State}
+                                    || {Name, Server, Limits} <- Rows]),
+            reconcile(State#{sessions := sets:add_element(Id, Sessions), grants := maps:merge(Grants, Added)})
     end;
-step({session_ended, Id}, #{sessions := Sessions} = State) ->
-    case maps:take(Id, Sessions) of
-        {_Template, Rest} ->
+on_event({session_ended, Id}, #{sessions := Sessions} = State) ->
+    case sets:is_element(Id, Sessions) of
+        true ->
             %% With the session gone its grants have no pair, so reconcile cancels
             %% their operations; then nothing of the session is kept.
+            Rest = sets:del_element(Id, Sessions),
             {Actions, #{grants := Grants} = Next} = reconcile(State#{sessions := Rest}),
             {Actions, Next#{grants := maps:filter(fun({Grantee, _}, _) -> Grantee =/= {session, Id} end, Grants)}};
-        error ->
+        false ->
             {[], State}
     end;
-step({introduced, Tag, Result}, State) ->
+on_event({introduced, Tag, Result}, State) ->
     case find(Tag, State) of
         {Key, {introducing, Pair, Tag}} when Result =:= ok ->
             {[mint_request(Key, Pair, Tag, State)], set_grant(Key, {minting, Pair, Tag}, State)};
@@ -320,7 +331,7 @@ step({introduced, Tag, Result}, State) ->
         _ ->
             {[], State}
     end;
-step({minted, Origin, Tag, Reply}, State) ->
+on_event({minted, Origin, Tag, Reply}, State) ->
     case find(Tag, State) of
         {Key, {minting, {Origin, GranteeId} = Pair, Tag}} ->
             case is_owned_reply(Reply, Origin, State) of
@@ -338,7 +349,7 @@ step({minted, Origin, Tag, Reply}, State) ->
         none ->
             drop(unknown_tag, {minted, Origin}, State)
     end;
-step({installed, Origin, Tag}, State) ->
+on_event({installed, Origin, Tag}, State) ->
     case find(Tag, State) of
         {Key, {installing, {_, Origin} = Pair, Tag, Facet}} ->
             {[{disarm, Tag}], set_grant(Key, {installed, Pair, Facet}, State)};
@@ -350,7 +361,7 @@ step({installed, Origin, Tag}, State) ->
             drop(unknown_tag, {installed, Origin}, State)
     end;
 %% A deadline whose operation ended already was disarmed with its message on the way.
-step({deadline, Tag}, State) ->
+on_event({deadline, Tag}, State) ->
     case find(Tag, State) of
         {Key, Pending} ->
             fail_at_deadline(Key, carried_pair(Pending), {deadline, element(1, Pending)}, State);
@@ -425,42 +436,53 @@ start({Grantee, _Name} = Key, {ServerId, GranteeId} = Pair, Cancel,
              set_grant(Key, {introducing, Pair, Tag}, Armed)}
     end.
 
-%% The pixel areas of the grants of the windows services Windows, each the grant's
-%% pixels, or windows_pixels_default, rounded up to whole pages. The manifest's reader
-%% bounds pixels, and property 18 refuses a windows grant to the system domain, whose
-%% connections no introduction makes. They are sorted by server row, so pair_area/3
-%% picks the lower server row's area for a pair two grants join.
+%% The pixel areas each configured row holds, by its grants of the windows services
+%% Windows. A template's grants are its sessions' facet rows, which each session's party
+%% carries as {rows, Rows} (party_areas/2), and property 18 refuses a windows grant to the system domain,
+%% whose connections no introduction makes.
 areas(Windows, Grants) ->
-    lists:sort([{Server, Grantee, pages(maps:get(pixels, Limits, ?ERX_WINDOWS_PIXELS_DEFAULT))}
-                || {Grantee, Name, Server, Limits} <- Grants, Grantee =/= system, lists:member(Name, Windows)]).
+    ByGrantee = maps:groups_from_list(fun({Grantee, _, _, _}) -> Grantee end,
+                                      fun({_, Name, Server, Limits}) -> {Name, Server, Limits} end,
+                                      [Grant || {Grantee, _, _, _} = Grant <- Grants, is_integer(Grantee)]),
+    maps:map(fun(_Grantee, Held) -> windows_areas(Held, Windows) end, ByGrantee).
+
+%% The areas of the facet rows Rows that grant a windows service of Windows: each row's
+%% pixels, or windows_pixels_default where its limits state none, rounded up to whole
+%% pages. The manifest's reader bounds pixels.
+windows_areas(Rows, Windows) ->
+    [{Server, pages(maps:get(pixels, Limits, ?ERX_WINDOWS_PIXELS_DEFAULT))}
+     || {Name, Server, Limits} <- Rows, is_integer(Server), lists:member(Name, Windows)].
 
 pages(Bytes) -> (Bytes + ?ERX_PAGE_SIZE - 1) div ?ERX_PAGE_SIZE * ?ERX_PAGE_SIZE.
 
 -doc """
-The pixel area of the connection between parties A and B, each its id and its
-origin, as {Bytes, ReaderId}: the area of a windows grant whose server is one
-party's row and whose grantee is the other, that row or its session's template,
-read by the server; none for a pair no windows grant joins, a request's domain
-always among them. It reads only the manifest's grants, never which incarnation
-is ready, so every introduction of the pair, made at any time, makes the same
-area. A domain serves at most one display (property 18) and a grantee holds one
-grant of a name, so a pair has at most one area in each direction; for two
-displays granted to each other, the lower server row's is the pair's.
+The pixel area of the connection between parties A and B, each its id and what
+it holds (party()), as {Bytes, ReaderId}: the area of a windows grant whose server is one
+party's row and which the other holds, by the manifest's grants to its row or,
+for a session, by the facet rows its plan gave it, read by the server; none for a
+pair no windows grant joins, a request's domain always among them. It reads
+only those grants and rows, all fixed before either domain is built, never which
+incarnation is ready or which grant is installed, so every introduction of the
+pair, made at any time, makes the same area. A domain serves at most one display
+(property 18) and a grantee holds one grant of a name, so a pair has at most one
+area in each direction; for two displays granted to each other, the lower server
+row's is the pair's.
 """.
 -spec pair_area(party(), party(), state()) -> {Bytes :: pos_integer(), ReaderId :: id()} | none.
-pair_area({IdA, OriginA}, {IdB, OriginB}, #{areas := Areas}) ->
-    Found = [{Bytes, ReaderId} || {Server, Grantee, Bytes} <- Areas,
-                                  {ReaderId, {configured, Row}, Other} <- [{IdA, OriginA, OriginB}, {IdB, OriginB, OriginA}],
-                                  Row =:= Server, reaches(Grantee, Other)],
+pair_area({IdA, HoldsA}, {IdB, HoldsB}, State) ->
+    Found = lists:sort([{Server, Bytes, ReaderId}
+                        || {ReaderId, {configured, Server}, Other} <- [{IdA, HoldsA, HoldsB}, {IdB, HoldsB, HoldsA}],
+                           {AreaServer, Bytes} <- party_areas(Other, State), AreaServer =:= Server]),
     case Found of
-        [Area | _] -> Area;
+        [{_Server, Bytes, ReaderId} | _] -> {Bytes, ReaderId};
         [] -> none
     end.
 
-%% Whether a grant to Grantee reaches a party of origin Origin.
-reaches(Row, {configured, Row}) -> true;
-reaches({template, Template}, {session, Template}) -> true;
-reaches(_Grantee, _Origin) -> false.
+%% The pixel areas a party holds: a configured row's by the manifest's grants, a
+%% session's by its facet rows, and a request's domain none.
+party_areas({configured, Row}, #{areas := Areas}) -> maps:get(Row, Areas, []);
+party_areas({rows, Rows}, #{windows := Windows}) -> windows_areas(Rows, Windows);
+party_areas(request, _State) -> [].
 
 %% The request to the server's mint for the grant Key and its operation Tag, with the
 %% grant's limits as its mark has them (session_limits/2).
@@ -503,9 +525,9 @@ current_pair({Grantee, Name} = Key, #{rows := Rows} = State) ->
 ready_id(system, _State) ->
     ?SYSTEM_ID;
 ready_id({session, Id}, #{sessions := Sessions}) ->
-    case Sessions of
-        #{Id := _} -> Id;
-        #{} -> none
+    case sets:is_element(Id, Sessions) of
+        true -> Id;
+        false -> none
     end;
 ready_id(Row, #{rows := Rows}) ->
     case Rows of

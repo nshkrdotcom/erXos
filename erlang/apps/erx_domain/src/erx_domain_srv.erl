@@ -171,6 +171,7 @@ init(Opts) ->
 state(Lib, Principals, Opts) ->
     Agent = maps:get(agent, Opts, erx_connections),
     Exports = maps:get(exports, Opts, erx_dist),
+    AppEntries = app_entries(Lib),
     %% Whether the runtime is a node, as kernel's start left it, since net_kernel starts
     %% before any application and lives as long as the runtime (close_side/4). Waiting
     %% holds, by domain id, each create or session's start not yet answered (wait_created/4),
@@ -183,9 +184,13 @@ state(Lib, Principals, Opts) ->
     %% principal's ending domains to be retired, with the timer of its bound (start/3).
     %% Mints is erx_domain_mints' state, its pending operations' deadlines by tag in
     %% mint_timers, and mint_counts and mint_log what was refused or dropped (note/4).
-    %% Served holds, by configured row and by {template, T}, the facets of services the
-    %% system domain serves that the manifest grants the row or the template's sessions,
-    %% each its service's name, its kind (served_kind/2) and the grant's limits.
+    %% Served holds, by configured row, the facets of services the system domain serves
+    %% that the manifest grants the row, each its service's name, its kind (served_kind/2)
+    %% and the grant's limits; a session's are its own facet rows (served/3).
+    %% Apps is the boot's registry of app principals (erx_principal), of the apps row's
+    %% max entries, as the library placed them (app_entries/1, the library's apps/0).
+    %% Facet_rows holds every facet row of the manifest by its index in the facet table,
+    %% from which each session's rows are decided once, as it is planned (session_rows/2).
     MintConfig = maps:merge(#{owner => fun erx_dist:owner/1}, maps:with([owner, deadline], maps:get(mints, Opts, #{}))),
     #{lib => Lib, agent => Agent, exports => Exports, node => erlang:is_alive(), core => undefined,
       configured => #{}, templates => #{}, waiting => #{}, system_waiting => [], display_waiting => [],
@@ -196,7 +201,23 @@ state(Lib, Principals, Opts) ->
       mint_timers => #{}, mint_counts => #{}, mint_log => {erlang:monotonic_time(millisecond), 0, 0},
       served => #{}, web_lines => #{},
       facet_names => maps:get(facet_names, Opts, ?ERX_FACET_NAMES),
-      inspect_policy => inspect_policy(Opts), principals => Principals}.
+      inspect_policy => inspect_policy(Opts), principals => Principals,
+      facet_rows => [], trees => [], app_entries => AppEntries,
+      apps => erx_principal:new(apps_max(AppEntries))}.
+
+%% The app entries the library placed at boot (erx_domain_lib:apps/0), none with no
+%% library or no apps row.
+app_entries(none) ->
+    none;
+app_entries(Lib) ->
+    {ok, Entries} = Lib:apps(),
+    Entries.
+
+%% The registry's bound: the apps row's max, as many app entries as the library placed
+%% at boot, the one source of max, so the registry never names an entry the library does
+%% not hold; 0 with no library or no apps row, under which nothing registers.
+apps_max(#{max := Max}) -> Max;
+apps_max(none) -> 0.
 
 %% What every inspect facet's scope is decided from (erx_domain_core:inspect_scope/3): the
 %% system manifest's system-shell principals and its development flag, read once, as the
@@ -273,14 +294,18 @@ booted(#{lib := Lib} = State) ->
                              lists:member(Interface, ?ERX_TREE_SERVICES)],
             Mints = erx_domain_mints:new((maps:get(mint_config, State))#{services => Services,
                                            grants => Minted, files => Files, windows => Windows}),
-            Served = maps:groups_from_list(fun({Grantee, _, _, _}) -> Grantee end,
+            %% Only configured rows, each its index, read Served: a {template, T}
+            %% grant reaches each session through the session's own facet rows, and
+            %% a grant to the system domain is planned by no ready answer.
+            Served = maps:groups_from_list(fun({Row, _, _, _}) -> Row end,
                                            fun({_, Name, _, Limits}) -> {Name, served_kind(Name, Trees), Limits} end,
-                                           System),
+                                           [Grant || {Row, _, _, _} = Grant <- System, is_integer(Row)]),
             %% The system domain's own facets of configured domains: /data only where the
             %% manifest grants the system domain data (docs/design-files.md, "A facet's
             %% mount").
             ok = erx_ns:mount_facets(erx_domain_mints:granted_names(system, Mints)),
             State#{core := erx_domain_core:new(Host), configured := Configured, mints := Mints, served := Served,
+                   facet_rows := lists:enumerate(0, maps:get(grants, Boot, [])), trees := Trees,
                    templates := maps:from_list([{P, T} || #{principal := P} = T <- Templates])};
         {{error, _}, _} ->
             State#{core := erx_domain_core:new(<<>>)};
@@ -299,6 +324,8 @@ handle_call({create, Spec}, From, State) ->
     {noreply, start({create, Spec}, From, State)};
 handle_call({start_session, Principal, Start}, From, State) ->
     {noreply, start({start_session, Principal, Start}, From, State)};
+handle_call({start_app, Name, Start}, From, State) ->
+    {noreply, start({start_app, Name, Start}, From, State)};
 handle_call({info, Id}, From, #{core := Core} = State) ->
     %% The domain pid answers the caller itself, so a flood in its mailbox delays only
     %% this caller, never the service.
@@ -327,6 +354,13 @@ handle_call({display_settled, Name}, From, #{display_waiting := Displays} = Stat
     catch
         error:badarg -> {reply, ok, State}
     end;
+handle_call({register_app, Package}, _From, #{apps := Apps} = State) ->
+    case erx_principal:register(Package, Apps) of
+        {ok, Registered} -> {reply, ok, State#{apps := Registered}};
+        {error, _} = Refused -> {reply, Refused, State}
+    end;
+handle_call(app_registry, _From, #{apps := Apps} = State) ->
+    {reply, erx_principal:registry(Apps), State};
 handle_call(system_principal, _From, #{principals := #{system := System}} = State) ->
     Reply = case System of
                 none -> {error, enotsup};
@@ -364,7 +398,12 @@ start(Start, From, #{held := Held, release_wait := Wait} = State) ->
 
 %% The principal a start is charged to: a create's is the system principal.
 principal({create, _Spec}, #{principals := #{system := System}}) -> System;
-principal({start_session, Principal, _Start}, _State) -> Principal.
+principal({start_session, Principal, _Start}, _State) -> Principal;
+principal({start_app, Name, _Start}, State) ->
+    case app_plan(Name, State) of
+        {ok, #{principal := Principal}} -> Principal;
+        error -> none
+    end.
 
 %% Principal's domains whose domain pid has ended before their end arrived, so the
 %% library has not yet retired them and each still counts against the principal's
@@ -399,7 +438,9 @@ release_timed_out(Principal, Timer, #{held := Held} = State) ->
 run({create, Spec}, From, State) ->
     answer_create(create(Spec, State), From);
 run({start_session, Principal, Start}, From, State) ->
-    answer_create(start_session(Principal, Start, State), From).
+    answer_create(start_session(Principal, Start, State), From);
+run({start_app, Name, Start}, From, State) ->
+    answer_create(start_app(Name, Start, State), From).
 
 %% A create's or a session's start's answer to From, now or once the domain reports or
 %% is retired.
@@ -643,14 +684,15 @@ start_session(Principal, Start, #{templates := Templates, principals := #{system
                                   lib := Lib, core := Core} = State) ->
     maybe
         #{Principal := #{template := Template}} ?= Templates,
-        {ok, #{start := Displays} = Record} ?= session_start(Template, Start, State),
+        Rows = session_rows(Template, State),
+        {ok, #{start := Displays} = Record} ?= session_start(Rows, Start, State),
         {ok, Prefix} ?= erx_domain_core:session_prefix(Principal, System, Names),
         Name = erx_domain_core:session_name(Prefix, Principal, Core),
         Ident = erx_ident:new(Name),
         true ?= Ident =/= {error, bad_identifier},
         Display = default_display(Displays),
         Make = fun(Id, Pid) -> Lib:session(Id, Template, Name, Display, Pid) end,
-        build(Ident, Principal, {session, Template}, Make, Record, ?BOOT_TIMEOUT, State)
+        build(Ident, Principal, {session, Template}, Make, Record#{rows => Rows, app => none}, ?BOOT_TIMEOUT, State)
     else
         #{} -> {{error, no_template}, State};
         {error, _} = Refused -> {Refused, State};
@@ -658,18 +700,63 @@ start_session(Principal, Start, #{templates := Templates, principals := #{system
         false -> {{error, bad_identifier}, State}
     end.
 
+%% The rows of a session of template Template: every facet row granted to the template,
+%% each {Name, Server, Limits}, Server a configured row or system. Decided once, as the
+%% session is planned, and kept in its record, from which its ready answer and its mints
+%% take them (ready/5), so nothing later looks its grants up by template.
+session_rows(Template, #{facet_rows := Rows}) ->
+    [{Name, Server, Limits} || {_Index, {{template, T}, Name, Server, Limits}} <- Rows, T =:= Template].
+
+%% A session of the app Name (docs/design-packaging.md, "An app's session"), made as any
+%% session is, from its plan (erx_domain_core:app_session/4): the library plans the app
+%% template under the app's entry with the record's memory, the session's rows are the
+%% template's packages row and the rows its admission kept, and its record carries the
+%% app's record, sent after its ready answer, once its namespace is in place
+%% (answer_sessions/2). Only the start service's keepers start one (PK7, erx_domain:start_app/2).
+start_app(_Name, _Start, #{lib := none} = State) ->
+    {{error, enotsup}, State};
+start_app(Name, Start, #{lib := Lib, core := Core} = State) ->
+    maybe
+        {ok, #{entry := Entry, principal := Principal, prefix := Prefix, memory := Memory, rows := Rows,
+               app := App}} ?= app_plan(Name, State),
+        {ok, #{start := Displays} = Record} ?= session_start(Rows, Start, State),
+        SessionName = erx_domain_core:session_name(Prefix, Principal, Core),
+        Ident = erx_ident:new(SessionName),
+        true ?= Ident =/= {error, bad_identifier},
+        Display = default_display(Displays),
+        Make = fun(Id, Pid) -> Lib:app_session(Id, Entry, Memory, SessionName, Display, Pid) end,
+        #{app_entries := #{template := Template}} = State,
+        build(Ident, Principal, {session, Template}, Make, Record#{rows => Rows, app => App}, ?BOOT_TIMEOUT, State)
+    else
+        error -> {{error, no_app}, State};
+        {error, _} = Refused -> {Refused, State};
+        false -> {{error, bad_identifier}, State}
+    end.
+
+%% The plan of a session of the app Name from its registry record, with the app's record
+%% the registration kept beside it, or error for a name not registered in this boot.
+app_plan(Name, #{apps := Apps, app_entries := #{template := Template} = Entries, facet_rows := Rows}) ->
+    maybe
+        {ok, #{app := App} = Record} ?= erx_principal:app(Name, Apps),
+        TemplateRows = [{Index, {N, Server, Limits}}
+                        || {Index, {{template, T}, N, Server, Limits}} <- Rows, T =:= Template],
+        {ok, (erx_domain_core:app_session(Name, Record, Entries, TemplateRows))#{app => App}}
+    end;
+app_plan(_Name, #{app_entries := none}) ->
+    error.
+
 %% A session's Start split into what the session's record keeps: its facets, which the
 %% funnel checks as a request's (facets/2), the console the only one it lets through; and
-%% its start, display or default_display, a display the session's template is granted
+%% its start, display or default_display, a display among the session's Rows
 %% (erx_domain_mints:granted/3), one of them at most. Either is the session's default
 %% display (default_display/1); display also makes the session the display's session,
-%% whose grant on it carries the session mark. So a start's display marks only a grant of
-%% its template, and adds none. The checks go in order: the facets, then two displays at
-%% once, then a display the template is not granted.
-session_start(Template, Start, #{mints := Mints} = State) when is_map(Start) ->
+%% whose grant on it carries the session mark. So a start's display marks only a grant
+%% the session holds, and adds none. The checks go in order: the facets, then two
+%% displays at once, then a display the session does not hold.
+session_start(Rows, Start, #{mints := Mints} = State) when is_map(Start) ->
     Displays = maps:with(?START_DISPLAYS, Start),
     Granted = maps:filter(fun(_Key, Display) ->
-                                  is_atom(Display) andalso erx_domain_mints:granted(Template, Display, Mints)
+                                  is_atom(Display) andalso erx_domain_mints:granted(Rows, Display, Mints)
                           end, Displays),
     case {facets(maps:without(?START_DISPLAYS, Start), State), maps:keys(Displays)} of
         {invalid, _} -> {error, {bad_spec, facets}};
@@ -677,7 +764,7 @@ session_start(Template, Start, #{mints := Mints} = State) when is_map(Start) ->
         {_, [Key]} when Granted =/= Displays -> {error, {bad_spec, Key}};
         {Facets, _} -> {ok, #{facets => Facets, start => Displays}}
     end;
-session_start(_Template, _Start, _State) ->
+session_start(_Rows, _Start, _State) ->
     {error, {bad_spec, facets}}.
 
 %% The default display a session's checked start names, or none: a console login's start
@@ -821,14 +908,15 @@ boot_timer(Id, Timeout) -> _ = erlang:start_timer(Timeout, self(), {boot_timeout
 %% report at most once and before its end (unprovide/3).
 ready(Id, Ref, Provides, Inspect, #{core := Core, waiting := Waiting} = State) ->
     case {erx_domain_core:fetch(Id, Core), Waiting} of
-        {{ok, #{ref := Ref, state := running, origin := Origin, node := Node, start := Start}}, _} ->
-            {Actions, Links} = erx_domain_links:ready(Id, maps:get(links, State)),
+        {{ok, #{ref := Ref, state := running, origin := Origin, node := Node, start := Start} = Domain}, _} ->
+            {Links, Actions} = erx_domain_links:ready(Id, maps:get(links, State)),
             Ready = State#{core := erx_domain_core:ready(Id, Inspect, Core), links := Links},
-            Answered = answer_ready(Id, grant_facets(Id, served(Origin, Ready), granted(Origin, Ready), perform(Actions, Ready))),
+            Answered = answer_ready(Id, grant_facets(Id, served(Origin, Domain, Ready), granted(Origin, Domain, Ready),
+                                                     perform(Actions, Ready))),
             case Origin of
                 {configured, Row} -> mints({ready, Row, Id, Node, Provides}, Answered);
-                {session, Template} -> mints({session_ready, Template, Id, marked(Start)},
-                                             keep_web_line(Id, Node, Provides, Answered));
+                {session, _Template} -> mints({session_ready, minted_rows(Domain), Id, marked(Start)},
+                                              keep_web_line(Id, Node, Provides, Answered));
                 request -> Answered
             end;
         {_, #{Id := #{ref := Ref, ended := {running, _Info}}}} ->
@@ -863,9 +951,9 @@ grant_facets(Id, Served, Granted, #{core := Core, exports := Exports} = State) -
     %% A spec never names a service of the table (facet/3), and the manifest grants a
     %% configured domain no spec, so the two never share a name.
     Minted = maps:filtermap(fun(Name, Facet) -> mint(Id, Pid, Name, Facet, Exports) end, maps:merge(Specs, Systems)),
-    %% No session plan takes an app principal (TODO.md, "an app's session"), so no
-    %% answer carries an app's record (docs/design-packaging.md, "An app's session").
-    Pid ! {Ref, facets, Minted, Granted, none},
+    %% An app's record comes later, once the session's namespace is in place
+    %% (answer_sessions/2), so the app's code never starts before its grants exist.
+    Pid ! {Ref, facets, Minted, Granted},
     State.
 
 %% The facet of a service the system domain serves, for a domain of Principal: the
@@ -882,17 +970,27 @@ system_facet(log, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_log_facet, Behind, Limits};
 system_facet(_Name, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_domain_facet, Behind, Limits#{behind => Behind}};
-system_facet(machine, {tree, Grants, Limits}, Principal, #{principals := #{system := System, names := Names}}) ->
+system_facet(machine, {tree, Grants, Limits}, Principal, #{principals := #{system := System}} = State) ->
     %% docs/design-system.md, "A session's request": the grant's own argument is its
     %% grantee's principal, `system` for the system principal (root's template) and the
     %% name otherwise, which the tree's ctl handler passes to the coordinator, so the log
     %% line names whoever the grant was made for and no request names anyone.
-    {tree, Grants, machine_principal(Principal, System, Names), Limits};
+    {tree, Grants, machine_principal(Principal, System, State), Limits};
 system_facet(_Name, {tree, Grants, Limits}, _Principal, _State) ->
     {tree, Grants, Limits}.
 
-machine_principal(System, System, _Names) -> system;
-machine_principal(Principal, _System, Names) -> maps:get(Principal, Names).
+machine_principal(System, System, _State) -> system;
+machine_principal(Principal, _System, State) -> name_of(Principal, State).
+
+%% The name of Principal, the one lookup of every principal's name a grant carries: the
+%% system manifest's for its principals, and the registry's for an app principal, the
+%% app's name (docs/design-packaging.md, "An app's principal"). A domain lives only under
+%% a principal of one or the other, so every grantee has a name.
+name_of(Principal, #{principals := #{names := Names}, apps := Apps, app_entries := Entries}) ->
+    case {Names, Entries} of
+        {#{Principal := Name}, _} -> Name;
+        {#{}, #{first := First}} -> erx_principal:fetch_name(Principal - First, Apps)
+    end.
 
 %% How the system domain serves its service Name to a grantee: tree, an erx_fs grant,
 %% for a service of Trees, those of the interfaces abi/services declares served_as
@@ -945,7 +1043,7 @@ mint_tree(Id, DomainPid, Name, Grant, Exports) ->
     end.
 
 %% The facets of services the system domain serves that the manifest grants a configured
-%% domain's row or a session's template, each {Kind, Behind, Limits} by its service's
+%% domain's row or that a session's own rows hold, each {Kind, Behind, Limits} by its service's
 %% name, and none for a domain a request made: Behind is the process the service
 %% named for it with erx_facet:serve/2, which the system domain's services do as they
 %% start. For a message service Limits are the grant's limits that erx_facet applies,
@@ -955,26 +1053,29 @@ mint_tree(Id, DomainPid, Name, Grant, Exports) ->
 %% the domain finds the name absent,
 %% as it finds any service that is unavailable, until it restarts. Each facet ends with
 %% its process, and nothing grants a new one when the service restarts (TODO.md).
-served(Origin, #{served := Served}) ->
-    served(grantee(Origin), Served, persistent_term:get({erx, serves}, #{})).
+served({configured, Row}, _Domain, #{served := Served}) ->
+    served(Row, maps:get(Row, Served, []));
+served({session, _Template}, #{rows := Rows}, #{trees := Trees}) ->
+    served(session, [{Name, served_kind(Name, Trees), Limits} || {Name, system, Limits} <- Rows]);
+served(request, _Domain, _State) ->
+    #{}.
 
 %% The names of the facets of configured domains the manifest grants a domain of
-%% Origin, its row's or its template's, and no other domain's; none for a domain created
-%% on request, which the manifest grants nothing.
-granted(Origin, #{mints := Mints}) ->
-    case grantee(Origin) of
-        none -> [];
-        Grantee -> erx_domain_mints:granted_names(Grantee, Mints)
-    end.
+%% Origin: its row's, or a session's own rows, and no other domain's; none for a domain
+%% created on request, which the manifest grants nothing.
+granted({configured, Row}, _Domain, #{mints := Mints}) ->
+    erx_domain_mints:granted_names(Row, Mints);
+granted({session, _Template}, Domain, _State) ->
+    lists:usort([Name || {Name, _Server, _Limits} <- minted_rows(Domain)]);
+granted(request, _Domain, _State) ->
+    [].
 
-%% The key of Served an origin's grants are under: its row, or its template's.
-grantee({configured, Row}) -> Row;
-grantee({session, Template}) -> {template, Template};
-grantee(request) -> none.
+%% A session's rows of configured domains' services, which the mint core grants it.
+minted_rows(#{rows := Rows}) ->
+    [Row || {_Name, Server, _Limits} = Row <- Rows, Server =/= system].
 
-served(none, _Served, _Servers) ->
-    #{};
-served(Grantee, Served, Servers) ->
+served(Grantee, Rows) ->
+    Servers = persistent_term:get({erx, serves}, #{}),
     maps:from_list(lists:filtermap(
                      fun({Name, Kind, Limits}) ->
                              Facet = case Servers of
@@ -991,7 +1092,7 @@ served(Grantee, Served, Servers) ->
                                                   [Name, Grantee]),
                                      false
                              end
-                     end, maps:get(Grantee, Served, []))).
+                     end, Rows)).
 
 served_grant(message, Behind, Limits) ->
     case grant({Behind, maps:with([max_request, in_flight], Limits)}) of
@@ -1091,13 +1192,14 @@ open_side(Agent, Id, Pid, Ref, Values) ->
 %% fund its child for the connection, are system_limit too, and its einval for a domain
 %% it has ended before the end reached the service is badarg, as for any ended domain.
 %% The connection carries the pair's pixel area, which the mint core decides from the two
-%% domains' origins alone (erx_domain_mints:pair_area/3), so whichever introduction makes
-%% the connection, a grant's or a request's, makes the same area.
+%% domains' origins alone, a session's with the facet rows its plan gave it
+%% (erx_domain_mints:pair_area/3), so whichever introduction makes the connection, a
+%% grant's or a request's, makes the same area.
 introduce(_A, _B, #{lib := none} = State) ->
     {{error, enotsup}, State};
 introduce(A, B, #{core := Core, links := Links, lib := Lib, mints := Mints} = State) ->
     case {introducible(A, Core), introducible(B, Core)} of
-        {{ok, ReaderA, OriginA}, {ok, ReaderB, OriginB}} when A =/= B ->
+        {{ok, ReaderA, HoldsA}, {ok, ReaderB, HoldsB}} when A =/= B ->
             case erx_domain_links:phase(A, B, Links) of
                 up ->
                     {ok, State};
@@ -1106,7 +1208,7 @@ introduce(A, B, #{core := Core, links := Links, lib := Lib, mints := Mints} = St
                 none ->
                     case erx_domain_links:room(A, Links) andalso erx_domain_links:room(B, Links) of
                         true ->
-                            {Area, AreaReader} = connection_area({A, OriginA}, {B, OriginB}, Mints),
+                            {Area, AreaReader} = connection_area({A, HoldsA}, {B, HoldsB}, Mints),
                             Made = Lib:connect(A, B, ReaderA, ReaderB, Area, AreaReader),
                             connect(Made, A, B, ReaderA, ReaderB, State);
                         false -> {{error, system_limit}, State}
@@ -1126,14 +1228,22 @@ connection_area(PartyA, PartyB, Mints) ->
         {_Bytes, _Reader} = Area -> Area
     end.
 
-%% A domain that can be introduced, with its lane and its origin: one built and not ended.
+%% A domain that can be introduced, with its lane and what it holds as the mint core's
+%% pair_area/3 takes it: one built and not ended.
 introducible(Id, Core) ->
     case erx_domain_core:fetch(Id, Core) of
-        {ok, #{state := Life, reader := Reader, origin := Origin}} when Life =:= built; Life =:= running; Life =:= ready ->
-            {ok, Reader, Origin};
+        {ok, #{state := Life, reader := Reader, origin := Origin, rows := Rows}}
+          when Life =:= built; Life =:= running; Life =:= ready ->
+            {ok, Reader, holds(Origin, Rows)};
         _ ->
             none
     end.
+
+%% A session holds the facet rows its plan gave it, not its template's, so an app's
+%% session holds the pixel areas of the rows its admission kept and no other; any other
+%% domain is named by its origin.
+holds({session, _Template}, Rows) -> {rows, Rows};
+holds(Origin, _Rows) -> Origin.
 
 %% The library's answer to connecting A and B. Each party's connection_up carries the
 %% slots of its own side, its peer's side and its peer's bell, the label of its own bell,
@@ -1142,7 +1252,7 @@ introducible(Id, Core) ->
 connect({ok, #{number := Number, a := PartyA, b := PartyB}}, A, B, ReaderA, ReaderB, #{links := Links} = State) ->
     UpA = up_values(PartyA, ReaderB, ReaderA),
     UpB = up_values(PartyB, ReaderA, ReaderB),
-    {Actions, Next} = erx_domain_links:connect(Number, {A, UpA}, {B, UpB}, Links),
+    {Next, Actions} = erx_domain_links:connect(Number, {A, UpA}, {B, UpB}, Links),
     {wait, perform(Actions, State#{links := Next})};
 connect({error, Limit}, _A, _B, _ReaderA, _ReaderB, State) when Limit =:= elimit; Limit =:= enomem ->
     {{error, system_limit}, State};
@@ -1262,7 +1372,7 @@ answer(Id, Ref, Answer, #{core := Core, links := Links} = State) ->
                 {erx_facet_minted, Tag, Reply} ->
                     mints({minted, Id, Tag, Reply}, State);
                 _ ->
-                    {Actions, Next} = erx_domain_links:answer(Id, unwire(Answer), Links),
+                    {Next, Actions} = erx_domain_links:answer(Id, unwire(Answer), Links),
                     perform(Actions, State#{links := Next})
             end;
         _ ->
@@ -1302,7 +1412,7 @@ ended(Id, End, #{lib := Lib, core := Core, links := Links} = State) ->
             close_side(Id, Connection, {domain_down, Id, Info}, State),
             disconnect(Lib, Connection),
             Pid ! {Ref, domain_down, Info},
-            {Actions, Unlinked} = erx_domain_links:ended(Id, Info, Links),
+            {Unlinked, Actions} = erx_domain_links:ended(Id, Info, Links),
             Told = unprovide(Origin, Id, perform(Actions, State#{core := Ended, links := Unlinked})),
             _ = retire(Lib, Id),
             release(restart(Origin, Id, Info, waiter_ended(Id, Life, Info, Told)))
@@ -1378,7 +1488,7 @@ unprovide(request, _Id, State) -> State.
 %% the core a further event at once (an installation in the system domain's own
 %% registry); the core's state is already the step's next, so that event sees it.
 mints(Event, #{mints := Mints} = State) ->
-    {Actions, Next} = erx_domain_mints:step(Event, Mints),
+    {Next, Actions} = erx_domain_mints:step(Event, Mints),
     answer_in_place(lists:foldl(fun mint_act/2, State#{mints := Next}, Actions)).
 
 %% Each session's start still waiting after its ready report, answered once its
@@ -1401,7 +1511,18 @@ answer_in_place(#{core := Core, mints := Mints} = State) ->
 
 answer_sessions(InPlace, #{waiting := Waiting, core := Core} = State) ->
     Ready = [Id || Id := #{answer_at := in_place, pid := Pid} <- Waiting, Pid =/= gone, is_ready(Id, Core)],
-    lists:foldl(fun answer_ok/2, State, [Id || Id <- Ready, InPlace({session, Id})]).
+    InPlaceIds = [Id || Id <- Ready, InPlace({session, Id})],
+    lists:foreach(fun(Id) -> send_app(Id, Core) end, InPlaceIds),
+    lists:foldl(fun answer_ok/2, State, InPlaceIds).
+
+%% An app's session's record (docs/design-packaging.md, "An app's session"), sent once
+%% its namespace is in place, its packages grant among it, and before its start is
+%% answered; a session of a template has none.
+send_app(Id, Core) ->
+    case erx_domain_core:fetch(Id, Core) of
+        {ok, #{app := none}} -> ok;
+        {ok, #{app := App, pid := Pid, ref := Ref}} -> Pid ! {Ref, app, App}, ok
+    end.
 
 answer_system(_InPlace, #{system_waiting := []} = State) ->
     State;
@@ -1429,11 +1550,11 @@ is_ready(Id, Core) ->
 %% (docs/design-system.md, "Facets a configured domain serves"): the system principal's
 %% for the system domain, and for any other the one its record names, a configured row's
 %% or a session's template's. The core mints only for a grantee that is ready.
-principal_name(?SYSTEM_ID, #{principals := #{system := System, names := Names}}) ->
-    maps:get(System, Names);
-principal_name(GranteeId, #{core := Core, principals := #{names := Names}}) ->
+principal_name(?SYSTEM_ID, #{principals := #{system := System}} = State) ->
+    name_of(System, State);
+principal_name(GranteeId, #{core := Core} = State) ->
     {ok, #{principal := Principal}} = erx_domain_core:fetch(GranteeId, Core),
-    maps:get(Principal, Names).
+    name_of(Principal, State).
 
 %% An introduction that settles at once is answered through the service's own queue as
 %% one that settles later is (reply/2), so the core takes each in the same way.

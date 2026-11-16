@@ -94,7 +94,14 @@ class DomCoreTest < Minitest::Test
     'session origin without the spaces flag' =>
       ["spec->origin.record < view->ntemplates &&\n\t\t    (spec->flags & ERX_DOM_SPACES) != 0 ?",
        'spec->origin.record < view->ntemplates ?'],
-    'session name not copied' => ["\t\tmemcpy(spec->name, name, name_len);\n", '']
+    'session name not copied' => ["\t\tmemcpy(spec->name, name, name_len);\n", ''],
+    'app sessions not held to the apps budget together' =>
+      ["!dom_apps_hold(view, need)", "!dom_apps_hold(view, 0)"],
+    'the apps sum leaves out the last entry' =>
+      ['index < view->apps.max; index++)', 'index + 1 < view->apps.max; index++)'],
+    'an app entry may run two sessions' => [".domains_max = 1, .share = source->grant,", ".domains_max = 2, .share = source->grant,"],
+    'a refused placement keeps its entries' => ["\t\t\tview->nprincipals = first - 1;\n", ""],
+    'an app session takes the template memory' => ["\tspec->memory = memory;\n", "\tspec->memory = memory > 0 ? source->memory : 0;\n"]
   }.freeze
 
   def setup
@@ -255,6 +262,26 @@ class DomCoreTest < Minitest::Test
     end
   end
 
+  # App entries (docs/design-packaging.md, "An app's principal"): placed after the
+  # manifest's principals, each with a domain quota of one, the apps budget for its
+  # memory and the app template's grant for its share, and placed once, whole or not
+  # at all. An app's session is the app template's under the entry's principal with
+  # its record's memory; the app template is planned for no other principal, and
+  # every app's sessions together stay within the apps budget.
+  APPS = [
+    'apps place 0 first=2 max=3 principals=4 last=4,16,1,1',
+    "apps place_twice #{EINVAL} 4",
+    "apps place_refused #{([EINVAL] * 6).join(' ')} 1",
+    "apps place_entry_refused #{EINVAL} 1 0",
+    'apps session 0 principal=4 memory=8 outer=1 origin=4,1 words=principal=4|display=screen|',
+    "apps session_refused #{([EINVAL] * 4).join(' ')}",
+    "apps budget 0 second=#{ELIMIT} over=#{ENOMEM} fits=0 full=#{ENOMEM}"
+  ].freeze
+
+  def test_app_entries_and_app_sessions
+    assert_equal APPS, run_driver(driver, 'apps')
+  end
+
   def test_each_mutant_is_caught
     MUTANTS.each do |name, (from, to)|
       text = File.read(File.join(@root, CORE))
@@ -269,7 +296,7 @@ class DomCoreTest < Minitest::Test
 
   private
 
-  MODES = %w[explore cases seeded principal record gives].freeze
+  MODES = %w[explore cases seeded principal record gives apps].freeze
 
   def clean_lines = @clean_lines ||= MODES.flat_map { |mode| run_driver(driver, mode) }
 

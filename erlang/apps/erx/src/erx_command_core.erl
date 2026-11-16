@@ -53,7 +53,7 @@ Actions: `{spawn_handler, From, Init}`, `{monitor, Speaker}`,
 -export_type([table/0, event/0, action/0, row/0, init/0, starter/0, scope/0,
               to_speaker/0]).
 
--type id() :: 2..?ERX_PROG_PID_MAX.
+-type id() :: ?ERX_PROG_PID_MIN..?ERX_PROG_PID_MAX.
 %% A job's tag, which the table only compares.
 -type tag() :: term().
 -type starter() :: {program, id()} | {process, tag()}.
@@ -94,17 +94,17 @@ Actions: `{spawn_handler, From, Init}`, `{monitor, Speaker}`,
                 awaits = #{} :: #{tag() => [pid()]}}).
 -opaque table() :: #table{}.
 
--doc "An empty table whose first process id is 2.".
+-doc "An empty table whose first process id is the first a program may have, `ERX_PROG_PID_MIN`.".
 -spec new() -> table().
 new() ->
-    new(2).
+    new(?ERX_PROG_PID_MIN).
 
 -doc """
 An empty table whose next process id is `Next`, the tests' seam for the
 ids near `ERX_PROG_PID_MAX`.
 """.
 -spec new(id()) -> table().
-new(Next) when is_integer(Next), Next >= 2, Next =< ?ERX_PROG_PID_MAX ->
+new(Next) when is_integer(Next), Next >= ?ERX_PROG_PID_MIN, Next =< ?ERX_PROG_PID_MAX ->
     #table{next = Next}.
 
 -doc "The table's rows, in process id order.".

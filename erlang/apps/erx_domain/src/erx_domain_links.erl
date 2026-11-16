@@ -7,8 +7,8 @@ The domain service's pure core for the connection protocol
 (docs/design-domains.md, "Connections", "The reserve", and "Introduction and
 connection down"; specs/tla/Connection.tla). It decides which control
 records go to which domain and when a connection's objects are deleted. It
-makes no call: each function returns the actions to perform, in order, and
-the domain service performs them.
+makes no call: each step returns {State, Actions}, the next state and the
+actions to perform, in order, and the domain service performs them.
 
 Parties. A party is a domain, the system domain included, named by its id,
 which no other domain takes within a boot, and known by its node name. The
@@ -148,7 +148,7 @@ add_party(Id, Name, Slots, #{parties := Parties} = State)
 Party Id's init reported ready: the records waiting for it may go. Ready
 again, or for a party that has ended, is nothing.
 """.
--spec ready(party(), state()) -> {[action()], state()}.
+-spec ready(party(), state()) -> {state(), [action()]}.
 ready(Id, #{parties := Parties} = State) ->
     case Parties of
         #{Id := #{ready := false, queues := Queues} = Party} ->
@@ -156,7 +156,7 @@ ready(Id, #{parties := Parties} = State) ->
             finish(lists:foldl(fun(Name, Acc) -> advance(Id, Name, Acc) end,
                                {[], Next}, lists:sort(maps:keys(Queues))));
         #{} ->
-            {[], State}
+            {State, []}
     end.
 
 -doc """
@@ -167,7 +167,7 @@ each with room for one more connection (room/2), the precondition the
 service checks before it asks the library to build the connection.
 """.
 -spec connect(term(), {party(), term()}, {party(), term()}, state()) ->
-          {[action()], state()}.
+          {state(), [action()]}.
 connect(Handle, {A, UpA}, {B, UpB},
         #{parties := Parties, connections := Connections} = State)
   when A =/= B ->
@@ -187,15 +187,15 @@ Party P's answer, as its domain pid delivered it: {connection_mapped, Peer},
 {connection_unmapped, Peer} or {connection_lost, Peer, Reason}. Applied only
 in the state that expects it; anything else is dropped and counted.
 """.
--spec answer(party(), term(), state()) -> {[action()], state()}.
+-spec answer(party(), term(), state()) -> {state(), [action()]}.
 answer(P, Answer, #{parties := Parties, dropped_unknown := Unknown} = State) ->
     case is_map_key(P, Parties) of
         false ->
-            {[], State#{dropped_unknown := Unknown + 1}};
+            {State#{dropped_unknown := Unknown + 1}, []};
         true ->
             case answer_kind(Answer) of
                 {Kind, Peer} -> apply_answer(P, Peer, Kind, State);
-                malformed -> {[], count_dropped(P, State)}
+                malformed -> {count_dropped(P, State), []}
             end
     end.
 
@@ -204,14 +204,14 @@ Policy closes the connection between A and B: each party that knows of it
 is told connection_down with noconnection. A connection already closing or
 gone, or none, is left as it is.
 """.
--spec close(party(), party(), state()) -> {[action()], state()}.
+-spec close(party(), party(), state()) -> {state(), [action()]}.
 close(A, B, #{connections := Connections} = State) ->
     Key = key(A, B),
     case Connections of
         #{Key := #{phase := Phase}} when Phase =:= up_pending; Phase =:= up ->
             finish(settle(Key, {[], start_closing(Key, noconnection, State)}));
         #{} ->
-            {[], State}
+            {State, []}
     end.
 
 -doc """
@@ -219,7 +219,7 @@ Party D's domain ended, with Info for {domain_down, D, Info}: D is removed,
 its sides end, and every peer that knows of a connection with D is told
 connection_down with that reason.
 """.
--spec ended(party(), term(), state()) -> {[action()], state()}.
+-spec ended(party(), term(), state()) -> {state(), [action()]}.
 ended(D, Info, #{parties := Parties, connections := Connections} = State) ->
     #{D := _} = Parties,
     Removed = State#{parties := maps:remove(D, Parties)},
@@ -292,10 +292,10 @@ apply_answer(P, Peer, Kind, #{connections := Connections} = State) ->
                     Next = after_answer(Key, New, set_side(Key, P, New, State)),
                     finish(settle(Key, {[], Next}));
                 unexpected ->
-                    {[], count_dropped(P, State)}
+                    {count_dropped(P, State), []}
             end;
         #{} ->
-            {[], count_dropped(P, State)}
+            {count_dropped(P, State), []}
     end.
 
 %% A connection is up once both sides are mapped; a party that ended a live
@@ -487,5 +487,6 @@ update_connection(Key, Fun, #{connections := Connections} = State) ->
     #{Key := Connection} = Connections,
     State#{connections := Connections#{Key := Fun(Connection)}}.
 
--spec finish(acc()) -> {[action()], state()}.
-finish({Actions, State}) -> {lists:reverse(Actions), State}.
+%% A step's result in the one step shape of docs/style.md, from the accumulator.
+-spec finish(acc()) -> {state(), [action()]}.
+finish({Actions, State}) -> {State, lists:reverse(Actions)}.

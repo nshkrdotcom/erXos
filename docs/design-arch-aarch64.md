@@ -886,6 +886,11 @@ function that must live in a named section (the boot entry's, a vector's)
 is reached only through calls from other sections, which the refusal
 enforces.
 
+Every object the proof reads is also compiled with `-fno-jump-tables`:
+a jump table ends in `br` through a register, an indirect branch that
+stays inside its function and that no declaration can name, so the
+compiler never lowers a `switch` to one.
+
 ### Chokepoints
 
 The AArch64 forms of the generic chokepoint rules

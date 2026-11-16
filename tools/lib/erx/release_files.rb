@@ -7,11 +7,13 @@ require 'fileutils'
 require 'json'
 require_relative 'asn1_specifications'
 require_relative 'domain_image_apps'
+require_relative 'domain_startup'
 require_relative 'erlang_apps'
 require_relative 'error'
-require_relative 'manifest'
+require_relative 'manifest_frontend'
 require_relative 'oracle'
 require_relative 'runtime'
+require_relative 'trust_store'
 
 module Erx
   # The system release's files as entries for Pack#build: the beams, application files
@@ -25,7 +27,8 @@ module Erx
   # is laid out the same way under domains/erxos/, from the same builds, without the
   # system mark: each file of the applications its boot scripts name, once, and a boot
   # script bin/<name>.boot for each name (domain_boot), whose release file lists only
-  # that script's applications.
+  # that script's applications. A release that holds public_key also carries the image's
+  # trust store as its priv/cacerts.pem (TrustStore).
   class ReleaseFiles
     # In the release file's order, each after the applications it depends on.
     APPLICATIONS = [*Runtime::APPLICATIONS, *ErlangApps::APPLICATIONS].freeze
@@ -43,8 +46,10 @@ module Erx
     # (docs/design-runtime.md, edit 65), and the app template's start erx_app, once the
     # ready answer has also brought the app's record (docs/design-packaging.md,
     # "Starting an app"). The system release ships erx_session (SYSTEM_APPLICATIONS)
-    # and not erx_app, which only the app script holds.
-    DOMAIN_ONLY = %w[erx_session erx_app].freeze
+    # and not erx_app, which only the app script holds. erx_wifi, the WiFi domain's
+    # (docs/design-wifi.md, "The WiFi domain"), is only loaded until the domain's
+    # station starts it once it holds its facets.
+    DOMAIN_ONLY = %w[erx_session erx_app erx_wifi].freeze
     raise Error, "DOMAIN_ONLY names what the release does not ship: #{DOMAIN_ONLY - APPLICATIONS}" unless
       (DOMAIN_ONLY - APPLICATIONS).empty?
     # OTP's applications that only the domains' runtime images run (DomainImageApps).
@@ -59,6 +64,10 @@ module Erx
 
     NAME = 'erxos'
     BOOT_DEADLINE = 120
+    # The imported trees the release's files come from, as a pack registers them
+    # (PackProvenance): OTP for the applications, and the trust store's roots for
+    # public_key's cacerts.pem (trust_store).
+    IMPORTS = { 'otp' => 'permanent', TrustStore::DIRECTORY => 'permanent' }.freeze
     # A file of the release: its path in the archive, the built file and what it came from.
     ReleaseFile = Data.define(:path, :artifact, :sources)
 
@@ -131,12 +140,12 @@ module Erx
     #   pixel areas and its widget servers run there and in neither the system domain nor
     #   the display domain (G9, DisplayRelease), and the desktop's programs, erx_desk
     #   (docs/design-desktop-programs.md), which draw through it.
-    #   No manifest names it yet: it is the client side's release, which DisplayRelease
+    #   No manifest names it: it is the client side's release, which DisplayRelease
     #   reads, and a client domain's own script takes the same applications.
     # * ssh, the SSH domain's (docs/design-ssh.md, "The SSH domain"): asn1, crypto,
-    #   public_key and ssh (docs/design-ssh.md lists no more). Only this script, session's and app's
-    #   name crypto, so no other domain has it on its code path. No manifest names it
-    #   yet; the native domain tests boot it (NativeDomain).
+    #   public_key and ssh (docs/design-ssh.md lists no more). Only this script, session's,
+    #   app's and wifi's name crypto, so no other domain has it on its code path. No
+    #   manifest names it; the native domain tests boot it (NativeDomain).
     # * app, an app's session, which the app template boots (docs/design-packaging.md,
     #   "The apps row"): the client side of the display as client's without the desktop's
     #   programs (erx_desk), the network client, asn1, crypto, public_key, ssl and inets,
@@ -147,9 +156,16 @@ module Erx
     #   the session's servers.
     # * usb, the USB domain's (docs/design-usb.md, "Domains and authority"): the USB
     #   stack, erx_usb, so no other domain parses what a USB device writes. No manifest
-    #   names it.
-    # * bt, the Bluetooth domain's (docs/design-bluetooth.md): the Bluetooth stack,
-    #   erx_bt, so no other domain parses what a controller writes. No manifest names it.
+    #   names it; it exists because check_released requires a release for erx_usb.
+    # * bt, the Bluetooth domain's (docs/design-bluetooth.md, "The Bluetooth domain"): the
+    #   Bluetooth stack, erx_bt, so no other domain parses what a controller writes. No
+    #   manifest names it; it exists because check_released requires a release for
+    #   erx_bt. erx_bt holds no Security Manager (stage 4), so the script
+    #   leaves out the crypto the design's release ships.
+    # * wifi, the WiFi domain's (docs/design-wifi.md, "The WiFi domain"): crypto, which
+    #   the supplicant's key arithmetic calls, and erx_wifi (DOMAIN_ONLY), both only
+    #   loaded. No manifest names it; it exists because check_released requires a
+    #   release for erx_wifi.
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
@@ -160,10 +176,12 @@ module Erx
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
                         'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'ssh'].freeze,
-                        'app' => [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', 'erx_memdraw', 'erx_win', 'erx_ui',
-                                  'erx_net_client', 'erx_app'].freeze,
+                        DomainStartup::APP_TEMPLATE.release =>
+                          [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', 'erx_memdraw', 'erx_win', 'erx_ui',
+                           'erx_net_client', 'erx_app'].freeze,
                         'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
-                        'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze }.freeze
+                        'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze,
+                        'wifi' => [*DOMAIN_BASE, 'crypto', 'erx_wifi'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime
     # builds that neither the system release (system) nor a script of the release
@@ -175,6 +193,7 @@ module Erx
         unreleased.empty?
     end
     check_released(APPLICATIONS, system: SYSTEM_APPLICATIONS, boots: RELEASE_SCRIPTS)
+
     # Where the one domain release lies: domains/erxos/, which sorts after boot/ and
     # before system/, so it is one run of whole entries that does not split the system
     # run (docs/design-stopgap.md, "The production image").
@@ -286,16 +305,16 @@ module Erx
     # receipt, and the sources the receipts name in erXos's own applications among
     # applications, the release's, test-only ones included. OTP's sources are in its
     # imported tree's catalog already. An empty directory entry has no artifact.
-    def self.inputs_of(entries, root:, applications: ErlangApps::APPLICATIONS)
+    def self.inputs_of(entries, root:, otp:, applications: ErlangApps::APPLICATIONS)
       own = applications.select { |application| ErlangApps.own?(application) }
       built = entries.select { |entry| entry.key?('artifact') }
-      [*built.flat_map { |entry| [entry.fetch('artifact'), entry.fetch('receipt')] }, *ErlangApps.sources(root: root, applications: own)]
+      [*built.flat_map { |entry| [entry.fetch('artifact'), entry.fetch('receipt')] }, *ErlangApps.sources(root: root, otp: otp, applications: own)]
     end
 
     # What one application ships, as paths under its directory to the files they copy:
     # its beams and .app from the build at otp, no .appup since an update replaces a whole
     # slot, and its headers (headers). The release and the oracle's hosted tree both lay
-    # an application out from here.
+    # an application out from here; only the release adds public_key's trust store.
     def self.application_layout(root:, otp:, application:)
       ebin = File.join(otp, 'lib', application, 'ebin')
       built = Dir.glob('*.{beam,app}', base: ebin).sort.map { |name| ["ebin/#{name}", File.join(ebin, name)] }
@@ -375,14 +394,27 @@ module Erx
     private
 
     # A header is its own source; a built file names the one it is compiled from.
+    # public_key also carries the trust store.
     def application_files
       @release.applications.flat_map do |application|
         directory = "#{@release.prefix}lib/#{application}-#{version(application)}"
-        self.class.application_layout(root: @root, otp: @otp, application: application).map do |path, artifact|
+        files = self.class.application_layout(root: @root, otp: @otp, application: application).map do |path, artifact|
           sources = path.start_with?('include/') ? [artifact] : sources_of(application, File.basename(path))
           ReleaseFile.new(path: "#{directory}/#{path}", artifact: artifact, sources: sources)
         end
+        application == TrustStore::APPLICATION ? [*files, trust_store(prefix: directory)] : files
       end
+    end
+
+    # The image's trust store as a file under prefix, public_key's directory in the archive
+    # (docs/design-crypto.md, "The trust store"): the tree's roots joined in name order,
+    # written beside the receipts, with each root as a source.
+    def trust_store(prefix:)
+      trust_directory = File.join(@root, TrustStore::DIRECTORY)
+      artifact = File.join(@directory, 'trust', File.basename(TrustStore::PATH))
+      FileUtils.mkdir_p(File.dirname(artifact))
+      File.binwrite(artifact, TrustStore.store(trust_directory))
+      ReleaseFile.new(path: "#{prefix}/#{TrustStore::PATH}", artifact: artifact, sources: TrustStore.roots(trust_directory))
     end
 
     # The source a built file is compiled from: for erXos's applications one of the
@@ -401,7 +433,9 @@ module Erx
 
     def erxos_source(application, base)
       module_path = ErlangApps.modules(root: @root, application: application).find { |path| File.basename(path, '.erl') == base }
-      module_path && File.join(@root, module_path)
+      return File.join(@root, module_path) if module_path
+
+      ErlangApps.derived_sources(application, otp: @otp).find { |path| File.basename(path, '.erl') == base }
     end
 
     # An OTP module's source: its Erlang, or the parser or lexer definition yecc or leex

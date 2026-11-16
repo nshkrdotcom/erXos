@@ -66,7 +66,7 @@ sample(Now, World, State) ->
     answer(Effects, World, Started, []).
 
 answer([{inspect, Tag, Path} | Rest], World, State, Others) ->
-    {Next, More} = erx_desk_stats_core:step({inspected, Tag, maps:get(Path, World, {error, scope})},
+    {Next, More} = erx_desk_stats_core:step({inspected, Tag, maps:get(Path, World, {error, scope}), 0},
                                             State),
     answer(Rest ++ More, World, Next, Others);
 answer([Effect | Rest], World, State, Others) ->
@@ -217,7 +217,7 @@ an_answer_of_an_earlier_sample_changes_nothing_test() ->
     {Sampled, _} = sample(0, World, fresh()),
     {Later, _} = erx_desk_stats_core:step({tick, 2000}, Sampled),
     Late = record([], #{memory_total => {ok, 4000}, memory_free => {ok, 0}}),
-    ?assertEqual({Later, []}, erx_desk_stats_core:step({inspected, OldTag, Late}, Later)),
+    ?assertEqual({Later, []}, erx_desk_stats_core:step({inspected, OldTag, Late, 0}, Later)),
     ?assertEqual({Later, []}, erx_desk_stats_core:step({failed, OldTag, killed}, Later)).
 
 %%% Partial history and zero denominators.
@@ -281,11 +281,11 @@ scoped_facet_shows_the_same_machine_test() ->
 no_facet_stops_sampling_test() ->
     {Waiting, [{inspect, First, []}, {inspect, Second, _}, {inspect, Third, _}]} =
         erx_desk_stats_core:step({tick, 0}, fresh()),
-    {Stopped, Effects} = erx_desk_stats_core:step({inspected, First, {error, no_facet}}, Waiting),
+    {Stopped, Effects} = erx_desk_stats_core:step({inspected, First, {error, no_facet}, 0}, Waiting),
     ?assertEqual([{cancel, Second}, {cancel, Third}], Effects),
     ?assertEqual(#{sampling => false}, erx_desk_stats_core:model(Stopped)),
     ?assertEqual({Stopped, []}, erx_desk_stats_core:step({tick, 1000}, Stopped)),
-    ?assertEqual({Stopped, []}, erx_desk_stats_core:step({inspected, Second, {error, no_facet}}, Stopped)).
+    ?assertEqual({Stopped, []}, erx_desk_stats_core:step({inspected, Second, {error, no_facet}, 0}, Stopped)).
 
 scope_ends_a_domain_and_is_an_error_for_the_machine_test() ->
     World = world([], {{ok, 1}, {ok, 0}}, [#{id => 4}, #{id => 7}]),

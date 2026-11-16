@@ -129,7 +129,7 @@ names; the table's order is the order.
 | Track H Hosted mode | the runtime runs as a Mac process under the sanitizers; once the Fiasco backend's rows between tasks have settled, domains and their connections run as Mac processes too, over the same backend rows as the stopgap's | 3,000 lines of C17 | M0 | |
 | M3 The shell is the operating system | `1>` on the serial console, from ERTS in the system domain in user mode, started by the root task | 8,000 lines of C, 1,000 of Erlang | M1, track H | G3 |
 | M4 The machine is an object | save in the editor on the Mac, run in the machine; follow a process to its source; ERTS and backend events on one timeline, the kernel's row unsupported | 10,000 lines of Erlang, 3,000 of Ruby, 2,000 of C | M3 | |
-| M6 Immutable code, lasting data | the shell reads the release's files from an EROFS image on a QEMU disk; a file under `/data` survives a power cut | estimated in the subsystems' design documents | M4 | |
+| M6 Immutable code, lasting data | the shell reads a file of the slot's system partition through the `system` tree on a QEMU disk; a file under `/data` survives a power cut | estimated in the subsystems' design documents | M4 | |
 | Track S The command shell | `ps -m \| grep erx` in a shell with rc's language, printing FreeBSD's text | 6,000 lines of Erlang, 4,000 of C17 for the track, programs included | M4 | |
 | **Phase 1b** | | | | |
 | 1b-A M5 on the stopgap | spawn into a sandbox domain with a link, crash it, get `{domain_down, D, crash}`; kill a domain mid-burst and watch its end arrive after its last messages; kill the system domain and read its crash record after the reset; every guarantee deferred | 9,000 lines of C17, 6,000 of Erlang for M5, its kernel interface carried as backend rows in the Fiasco backend, and in the hosted backend where cheap (2,000 to 4,000 lines of C17, a guess until the first rows land) | Phase 1 | G5, provisionally |
@@ -1275,7 +1275,7 @@ inserts it into the command line; a Raspberry Pi 4 kiosk boots into one
 full-screen application, takes touch input and turns its panel off when
 idle.
 
-**Scope.** Nine parts, each ending in its own exit criteria. The first
+**Scope.** Ten parts, each ending in its own exit criteria. The first
 slice needs no device: a browser on the developer's host over the host
 link, which every QEMU guest already has. The window stack comes next,
 since the kiosk and the desktop are both its clients: a kiosk is the
@@ -1330,7 +1330,7 @@ For the desktop programs:
 * the cores of `stats`, `clock`, `month` and `files`, the theme's
   generator, the glyph step and `erx_mask`.
 
-In this track W1 to W8 name design-web's invariants and G1 to G9
+In this track W1 to W8 name design-web's invariants and G1 to G10
 design-display's, not the plan's gates or E-S1's workloads. Parts that
 land after M11 repeat M11's closure over what they add.
 
@@ -1475,7 +1475,7 @@ land after M11 repeat M11's closure over what they add.
    the desktop session's release, with `erx_desk_window` and the pure
    cores of `stats`, `clock`, `month` and `files`, each an Erlang
    command that opens one window; the widget format's additions,
-   `role`, `area`, `icon`, `icons`, `current`, list activation and the
+   `role`, `area`, `icon`, `icons`, `current`, `name`, list activation and the
    `graph` kind with `none` samples, through the validator, the binary form, the readers
    in Erlang, C and TypeScript, and the Erlang, LVGL and browser
    renderers; `abi/theme.txt` and its generator, writing `erx_theme`,
@@ -1493,6 +1493,15 @@ land after M11 repeat M11's closure over what they add.
    `erx_web_login`, its cookies and a session per login; the manifest
    check's refusal of plain HTTP in a release build
    ([design-web.md](design-web.md#the-network-front-end)).
+10. **GPU acceleration**, OpenGL-class rendering for the desktop and for
+    kiosk apps, after part 8 and after a research record and a design of
+    its own: a render service in the domain that holds the GPU fills
+    clients' buffers in their own pixel areas, and the clients present
+    them as any buffer
+    ([design-display.md](design-display.md#graphics-hardware)). The
+    Raspberry Pi's V3D and QEMU's virtio-gpu 3D modes are the candidate
+    devices. Its packages, exit criteria and gates are written with its
+    design; no other part waits for it.
 
 **Exit criteria, the web over the host link.** Random messages of every
 kind round-trip between the Erlang and the TypeScript codecs, both
@@ -1810,19 +1819,27 @@ What part 8 builds on, outside its packages:
     figures the font lacks is refused; every subfont parses with
     `erx_font` and loads into `erx_draw_core`; a seeded one-pixel shift
     fails the square test. QEMU: none.
-12. **8.12 Icons, LVGL fonts and the menu's glyphs.**
+12. **8.12 Icons, kerning, LVGL fonts and the menu's glyphs.**
     `display/icons/icons.txt`, the twenty icons drawn for erXos and
     stroked through `erx-raster` at 16 and 32 pixels; the icons' SVG
-    path data in `theme.ts`; the LVGL font forms of the roles and the
-    icons; the `body` role's generated menu module. Depends on: 8.11.
+    path data in `theme.ts`; kerning: `erx-raster` reporting glyph
+    indices and the `GPOS` and `GDEF` tables, `Erx::Gpos` with its fuzz
+    target, each role's pairs in its
+    subfont's pair section, `erx_font`'s reading of it with `width/2`
+    and `runs/2`, and `erx_pen` in `erx_memdraw`; the LVGL font forms
+    of the roles, their pairs included, and of the icons; the `body`
+    role's generated menu module with `kern/2`. Start:
+    design-desktop-programs' kerning section. Depends on: 8.11.
     Tests: every icon `ui.txt` names has paths, where a seeded missing
     icon fails the generator; a straight stroke covers each column by
     its width; the menu module loads with `erx_memdraw:load/3` on the
-    host. QEMU: none.
-13. **8.13 The Erlang renderer takes the theme.** Role subfonts, the
-    theme's spacing where the tree gives none, sections with `erx_mask`
-    corners and shadow, icons, the `current` ring and graph masks; clock
-    takes the `display` role; reference frames of clock and month under
+    host; the kerning tests of design-desktop-programs' verification,
+    each with its seed. QEMU: none.
+13. **8.13 The Erlang renderer takes the theme.** Role subfonts, measured
+    and drawn in kerned runs, the theme's spacing where the tree gives
+    none, sections with `erx_mask` corners and shadow, icons, the
+    `current` ring and graph masks; clock takes the `display` role;
+    reference frames of clock and month under
     `test/display/reference/desk/`. Depends on: 8.5, 8.8, 8.10, 8.11,
     8.12, `erx_ui_host`. Tests: each frame equals its reference, where a
     section radius one pixel off fails; the attributed-text corpus
@@ -1964,11 +1981,11 @@ next available item of the plan.
    from `apps`, and property 19; the `apps` budget and app principals'
    elastic budgets under it; the domain library's app entries and
    `erx_dom_plan_session` taking an app principal;
-   `erx_principal:register_app/2`; the package format in
+   `erx_principal:register_app/1`; the package format in
    `abi/formats/package.txt`, `erx_pkg_header:check_file/2` with its fuzz
    target, `erx_app_admit` with its corpus, run on the host by the
    packer; `erx_verity` reading an image from a file; the app's session
-   with its kept rows, `/app` and its record in the ready answer;
+   with its kept rows, `/app` and its record, sent after the ready answer;
    `erx_app`, with `erx_prog_handler`'s `window` option and the monitor
    its start returns; the `apps` row of both development manifests, left
    out of the site manifest; the package process with the image's packages; the `apps`
@@ -1979,8 +1996,10 @@ next available item of the plan.
    with its fuzz target, `erx_ui_host`; `tools/erx pack --app` and
    `tools/erx app run`; `erx-lvgl` beside `erx_ui` in every image's
    domain release; `examples/dashboard` built through the SDK alone, and
-   `examples/doom` as a submodule built only on request. On the stopgap
-   the image's packages lie in the boot image's domain release.
+   `examples/doom` as a submodule built only on request. The image's
+   packages lie in the slot's system partition and are read through the
+   `system` tree, so this part follows M6's `system` tree; the packer
+   refuses a boot image that holds one.
 3. **Installing at run time**, after part 2, M6's data partition and
    1b-E's storage domain. The `packages` tree of the storage service;
    the `apps` tree's installed packages, whose close installs or
@@ -2062,9 +2081,10 @@ block-checking funnel, and one practical store keeps data across power
 cuts, so the system is one a person can use. The funnel passes blocks
 through unchecked until M11 adds the hash check.
 
-**Demo.** A QEMU disk image holds a slot with the release's EROFS images
-and a data partition. Booted from it, the shell reads the release's files
-from the slot's EROFS image; a file written and synced under `/data` survives
+**Demo.** A QEMU disk image holds a slot, its boot and its system
+partition, and a data partition. Booted from it, the shell reads a file
+of the system partition through the storage domain's `system` tree and
+mounts the self-checking image it holds; a file written and synced under `/data` survives
 the guest's power cut and the next boot.
 
 **Scope.**
@@ -2082,20 +2102,24 @@ the guest's power cut and the next boot.
   the stopgap's driver profile, which M9's kernel part replaces with
   virtio-pci behind
   the IOMMU and M11 refuses unless configured; partition windows in the
-  block service, with the partition table, its two extended boot records
+  block service, with the partition table, its four extended boot records
   included, and its fuzz target
   ([design-storage.md](design-storage.md#data-model)).
 * **Immutable code and files.** The block client, a local call in the
   system domain, `erx_verity:read/3` as the one funnel through which the
-  EROFS reader reads blocks, which passes them through unchecked until M11
+  EROFS reader reads blocks, over a mount's fid or over the `system`
+  window, which passes them through unchecked until M11
   adds the hash check inside it, and CRC-32C among the per-byte primitives,
   with its fuzz target
   ([design-runtime.md](design-runtime.md#per-byte-primitives));
-  read-only images in the EROFS format, one per release: the EROFS reader
+  each slot's system partition in the EROFS format, which the storage
+  domain serves as the `system` tree with a read-only `erx_fs` backend
+  over the EROFS reader, and the file-backed EROFS mount,
+  `erx_ns:mount({erofs, Source}, ...)`: the EROFS reader
   in Erlang, preloaded in every runtime image, with its fuzz target;
   fsimg as the packer's host tool, which writes and verifies each image, and
   the packer's disk image for QEMU, laid out by the ABI file's medium
-  layout.
+  layout, with each slot's boot and system partitions.
 * **One practical data store.** littlefs as the stopgap read-write file
   system behind `erx_fs`'s callback module, a NIF of the system domain that
   a worker process calls on a dirty scheduler while the volume's owner
@@ -2108,8 +2132,8 @@ the guest's power cut and the next boot.
   trials: it plays the firmware, reads the record from the disk image with
   its slot parser, which has its fuzz target, boots the slot the record
   names and writes the boot value into `/chosen`, from which the root task
-  builds the machine page, so the device service grants the slot's EROFS
-  windows
+  builds the machine page, so the device service grants the storage
+  domain its read-only window on the booted slot's system partition
   ([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record));
   the harness's trials follow with M12.
 
@@ -2696,8 +2720,8 @@ by side; (f) needs (b) and (c).
   issues a command only through `erx_device:command/2`, which the build
   check holds to `erx_blk_write` as it holds `erx_device:post/4`
   ([design-storage.md](design-storage.md#the-sd-host-controller)). The storage domain holds the SD card, laid out on
-  the host as the ABI file's medium layout, with the release's EROFS
-  image read through its window and littlefs at `/data`. The Pi medium
+  the host as the ABI file's medium layout, with the slot's system
+  partition served as the `system` tree and littlefs at `/data`. The Pi medium
   package brings fsimg's `place` option, which writes the record
   partition's FAT16 and slot A's FAT32 with their placed files
   ([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record)),
@@ -2753,7 +2777,9 @@ by side; (f) needs (b) and (c).
 * **(f) WiFi on the CYW43455.** The Pi's WiFi chip on the legacy SD
   controller, along [design-wifi.md](design-wifi.md): the storage
   domain's SDIO host serves the card through `sdio`, the WiFi domain
-  drives the chip and runs the station and its supplicant, and the
+  drives the chip and runs the station, a choice, a join machine and
+  a failure memory with the supplicant, a key holder answers each
+  join's secret steps, and the
   network domain carries `wlan0` over the medium the WiFi domain lends
   through `ether`. The fetch step pins the Cypress firmware, NVRAM and
   CLM files, and the Pi's image carries them in the WiFi application's
@@ -2767,18 +2793,27 @@ by side; (f) needs (b) and (c).
      back, `ver`, `cap` and the hardware address in the log and at
      `/proc`, and `wlan0` offered to the network domain with its link
      down, through `ether` and `erx_net_ether`.
-  3. **W2, scan.** `ifconfig wlan0 scan` lists the test access point in
-     FreeBSD's columns.
-  4. **W3, an open network.** DHCP, ping, UDP echo and a TCP transfer
+  3. **W2, scan.** The seam to the chip in 802.11's management
+     requests; `ifconfig wlan0 scan` lists the test access point in
+     FreeBSD's columns, and `/proc` shows each BSS with its verdict.
+  4. **W3, an open network.** The choice and the join machine with
+     its transition table; DHCP, ping, UDP echo and a TCP transfer
      over `wlan0`, as (c) runs them over GENET.
-  5. **W4, WPA2-PSK.** The 4-way and group handshakes on the host, each
-     key installed once, a group rekey survived; the network's secret
-     given through `ctl` and kept in the development credential store.
-  6. **W5, WPA3-SAE with PMF.** OTP `crypto`'s three SAE functions, SAE
-     with hash-to-element through the firmware's external
-     authentication, and PMF; it needs the firmware's `sae_ext`
-     capability, which W1 reads, and without it WPA3 is reported
-     unsupported.
+  5. **W4, WPA2-PSK.** The key holder's two interfaces with the
+     development holder behind them; the 4-way and group handshakes on
+     the host, each PTK asked of the holder, each key installed once,
+     a group rekey survived; the network's secret given with root's
+     `wlankey`, which derives in the session; the failure memory, with
+     a wrong passphrase shown as `secret_failed`.
+  6. **W5, WPA3-SAE with PMF.** OTP `crypto`'s three SAE functions
+     behind the holder, SAE with hash-to-element through the
+     firmware's external authentication, PMF, and the Transition
+     Disable mark; it needs the firmware's `sae_ext` capability,
+     which W1 reads, and without it WPA3 is reported unsupported.
+
+  The key holder's release form is a purpose of the vault
+  ([design-wifi.md](design-wifi.md#decisions), 1); W0 to W5 are built
+  on the development holder behind the same two interfaces.
 
 **Dependencies.**
 
@@ -2800,8 +2835,9 @@ by side; (f) needs (b) and (c).
   the board; for W5, the firmware's `sae_ext`, or another licensed
   Cypress build that offers it
   ([design-wifi.md](design-wifi.md#sae-and-protected-management-frames));
-  a test access point, a FreeBSD host's hostapd or a commodity router,
-  offering open, WPA2 and WPA3 networks.
+  a test access point offering open, WPA2 and WPA3 networks: hostapd
+  2.12 started by the harness with the design's profiles on a host
+  with a radio, or until one serves, a commodity router set by hand.
 
 **Testing.**
 
@@ -2859,9 +2895,12 @@ by side; (f) needs (b) and (c).
   checklist with its loopback jumpers, run by hand once per package.
 * **WiFi off the board.** QEMU has no WiFi device. (f)'s cores run on the
   host against recordings, published vectors and wpa_supplicant and
-  hostapd 2.12 on the FreeBSD x86-64 test host; a fake chip behind the
+  hostapd 2.12, WPA2's on the FreeBSD x86-64 test host and SAE's on the
+  Linux test access point, since hostapd's BSD driver carries no SAE
+  frames; a fake chip behind the
   `sdio` interface runs the WiFi domain in hosted mode and on QEMU
   `virt`, where the network stack's suites run over `wlan0` unchanged
+  and the station's scenarios run against a scripted air
   ([design-wifi.md](design-wifi.md#verification)).
 
 **Exit criteria.**
@@ -2909,14 +2948,18 @@ by side; (f) needs (b) and (c).
   passes and the LED and button answer the shell.
 * (f): on the board, W0's and W1's log lines; no scan before a country
   is configured; a scan listing the test access point; DHCP, ping, UDP echo and a TCP transfer on the open, the
-  WPA2 and, given `sae_ext`, the WPA3 network; a wrong passphrase refused
-  with its reason at `/proc`; the WiFi domain killed under load joining
+  WPA2 and, given `sae_ext`, the WPA3 network; a wrong passphrase shown
+  as `secret_failed` at `/proc` and joined once the right one is
+  given; the WiFi domain killed under load joining
   again while `genet0` carries on; a 64 MiB write to `/data` beside a TCP
   transfer over `wlan0`, both completing; (b)'s power-cut checklist
-  passing with WiFi under load. Off the board, the station's exhaustive
-  exploration, retransmitted and replayed key messages among its events,
+  passing with WiFi under load. Off the board, the join machine's
+  exhaustive exploration, which takes every edge of its table and no
+  other, retransmitted and replayed key messages among its events,
+  the choice's properties, the key holder's tests,
   the Annex J and J.10 vectors, the differential against wpa_supplicant's
-  recordings and the network stack's suites over the fake chip pass, each
+  recordings, the scenarios against the scripted air and the network
+  stack's suites over the fake chip pass, each
   failing on its seeded fault; the WiFi parsers run their fuzz budgets
   clean.
 
@@ -3264,7 +3307,10 @@ the sub-spaces of a domain holding `SPACES`, and
 a domain that churns sub-spaces
 ([design-kernel.md](design-kernel.md#security)); the hash check of EROFS
 images: the packer's dm-verity version 1 hash tree for each image and the
-root hash, salt and data-block count in the manifest's `image` records,
+root hash, salt and data-block count in each package's header, the
+system partition's tree, whose image length, tree layout, salt and root
+hash the boot image's manifest records and its `system_image` boot
+record carries,
 and the check inside `erx_verity:read/3`, the funnel M6 built, so the
 reader parses only blocks that passed their image's tree (E1), with the
 hash-checking reader's fuzz target
@@ -3840,7 +3886,8 @@ Each is small, adds its tests, and leaves `make check` green.
 | An MSI translation service in the interrupt controller | QEMU `virt`'s MSI frame serves both accelerators ([design-platforms.md](design-platforms.md#msi-frames)) | with a board that needs it |
 | Unmapping the kernel from user-mode page tables | needed only on cores that Arm lists as affected by rogue data cache loads | with each board port, from Arm's list of affected cores |
 | The release process: who keeps the release signing key and how it is replaced; whether release builds offer a host link | erXos is a prototype and makes no releases | when erXos makes releases |
-| Graphics, audio | not needed for the thesis | not planned |
+| Audio | not needed for the thesis | not planned |
+| GPU acceleration | the desktop and the kiosks run on software rendering first; OpenGL-class rendering needs research and a design of its own | planned, [Track D](#track-d-windows-widgets-and-the-web) part 10 |
 | USB | not needed for the thesis; wanted for keyboards, pointers and USB sticks on QEMU and the Raspberry Pi 4 | [Track U](#track-u-usb), in Phase 1b below the first two apps |
 | Bluetooth's later stages: Wi-Fi provisioning from a phone, HID over GATT, classic Bluetooth | track B's first consumer is a phone talking to a peripheral; provisioning needs 1b-I's WiFi, part (f), and HID over GATT the central role and the USB design's HID cores ([design-bluetooth.md](design-bluetooth.md#later-stages)) | in that order, each when its consumer is named |
 | x86-64 | out of scope | not planned |

@@ -54,7 +54,7 @@ clears the mark before it starts the row.
 """.
 -behaviour(supervisor).
 
--export([start_link/0, start_link/2, start_row/2, clear/1, stop_row/1, start_once/3, stop/1, held/0]).
+-export([start_link/0, start_link/2, start_row/2, clear/1, stop_row/1, start_once/3, stop/1, held/0, keeping/0]).
 -export([init/1]).
 
 -define(KEEPERS, erx_starter_keepers).
@@ -105,10 +105,10 @@ stop_row(Name) ->
     stop(Name).
 
 -doc "Starts one keeper of principal Principal's session with Start, which nothing starts again.".
--spec start_once(binary(), pos_integer(), map()) -> supervisor:startchild_ret().
+-spec start_once(binary(), erx_starter_keeper:who(), map()) -> supervisor:startchild_ret().
 start_once(Name, Principal, Start) ->
     supervisor:start_child(?KEEPERS, #{id => {once, Name}, start => {erx_starter_keeper, start_link, [Principal, Start]},
-                                       restart => temporary, shutdown => 5000}).
+                                       restart => temporary, shutdown => infinity}).
 
 -doc """
 Stops what keeps row Name's sessions, its supervisor and a keeper started
@@ -128,6 +128,15 @@ with, and the names of the rows marked stopped.
 held() ->
     {[{Name, run_state(Pid), row(Id)} || {{row, Name} = Id, Pid, _, _} <- supervisor:which_children(?KEEPERS)],
      erx_starter_records:stopped()}.
+
+-doc """
+The name of every row the keepers' branch holds a keeper or supervisor
+for, running or down, a keeper started once included: what a package set
+compares with its own rows to stop each app it drops (erx_starter).
+""".
+-spec keeping() -> [binary()].
+keeping() ->
+    lists:usort([Name || {{Kind, Name}, _, _, _} <- supervisor:which_children(?KEEPERS), Kind =:= row orelse Kind =:= once]).
 
 remove(Name, Kind) ->
     _ = supervisor:terminate_child(?KEEPERS, {Kind, Name}),

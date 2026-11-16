@@ -25,6 +25,7 @@ include formats/xhci.txt
 include medium.txt
 include formats/erofs.txt
 include formats/f2fs.txt
+include formats/ieee80211.txt
 include kernel.txt
 include signals.txt
 include errno.txt
@@ -34,6 +35,7 @@ include protocols/prog.txt
 include protocols/hostlink.txt
 include formats/ui.txt
 include formats/draw.txt
+include formats/subfont.txt
 include formats/package.txt
 include protocols/web.txt
 include theme.txt
@@ -333,6 +335,15 @@ bytes uname_release 5 value 302e312e30
 # date, the configuration and the packed kernel's name and revision
 # (docs/design-shell.md, "Text commands").
 bytes build_facts_path 20 value 72656c65617365732f6275696c642d6661637473
+# The build kinds an image is built as, "development" and "release", which
+# the configuration build fact names after the platform, as
+# qemu-virt/development. A local test image, one that takes packages whose
+# license is not permissive, adds "-local" to its kind, as
+# qemu-virt/development-local. No other kind exists, so a reader refuses
+# any other kind rather than take it for either.
+bytes build_kind_development 11 value 646576656c6f706d656e74
+bytes build_kind_release 7 value 72656c65617365
+bytes build_kind_local_suffix 6 value 2d6c6f63616c
 # Where each release of a development boot image keeps the public half of the
 # development login key, "releases/ssh/authorized_keys" under the release's root:
 # one line, `ssh-ed25519 BASE64`, with no comment. Pack refuses the path in a

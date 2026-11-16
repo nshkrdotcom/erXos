@@ -11,9 +11,11 @@ module ManifestContextFixture
   module_function
 
   # The release image the development manifest names, as ReleaseMedium.image describes
-  # a built one: two blocks at the slot's images start.
+  # a built one: two blocks at the slot's images start, and their one tree block after
+  # them.
   def images
-    { 'release' => { 'kind' => 'erofs_image', 'extents' => [{ 'slot_offset' => 128 << 20, 'length' => 8192 }] } }
+    { 'release' => { 'kind' => 'erofs_image', 'extents' => [{ 'slot_offset' => 0, 'length' => 8192 }],
+                     'tree' => { 'offset' => 8192, 'length' => 4096, 'salt' => '5a' * 32, 'root_hash' => 'a5' * 32 } } }
   end
 
   # The tree's own device kinds, which the checked context carries.
@@ -40,14 +42,11 @@ module ManifestContextFixture
 
   # The archive the development manifest names, as both packs carry it: the domain
   # release under domains/erxos/ with the session boot script its session template
-  # names and the display, storage, network and web boot scripts its domain rows name, the domain
-  # runtime images, runtimes/emu and runtimes/jit, and the system release's generated
-  # files and root.
-  def arguments(codec) = archive_arguments(codec, boots: %w[display network session storage web])
-
-  # The same archive with the boot script app beside session, which domain_source's
-  # domains name.
-  def domain_arguments(codec) = archive_arguments(codec, boots: %w[app display network session storage web])
+  # names, the app boot script of the app template the build derives from its apps row
+  # (which domain_source's domains also name), and the display, storage, network and
+  # web boot scripts its domain rows name, the domain runtime images, runtimes/emu and
+  # runtimes/jit, and the system release's generated files and root.
+  def arguments(codec) = archive_arguments(codec, boots: %w[app display network session storage web])
 
   # An archive of the domain release, with a boot script for each of boots and one
   # library file, then runtimes/emu, then system/, the order the archive's sorted paths
@@ -91,7 +90,7 @@ module ManifestContextFixture
   end
 
   # The development manifest's text with two configured domains of the domain
-  # release app and the runtime emu (domain_arguments), alpha and beta, beta started
+  # release app and the runtime emu (arguments), alpha and beta, beta started
   # by the rescue configuration; a service alpha serves, their introduction and the
   # data window held by alpha. The manifest's own session template stays. The system
   # principal's quota covers the domains and one session, and max_domains is that quota.
@@ -111,18 +110,23 @@ module ManifestContextFixture
   # The system principal's session template, its domain quota and max_domains in
   # the development manifest.
   SESSION_TEMPLATE = /^session system\n(?:  .*\n)*/
+  # The development manifest's apps row.
+  APPS_ROW = /^apps\n(?:  .*\n)*/
+  SYSTEM_WINDOW = /^window system\n(?:  .*\n)*/
+  SYSTEM_IMAGE = /^system_image\n(?:  .*\n)*/
   SYSTEM_QUOTA = /^(principal system\n(?:  .*\n)*?  domains )\d+$/
   MAX_DOMAINS = /^(  max_domains )\d+$/
 
   # The development manifest's own configured domains, storage, network, web and display,
   # with the profiles and runtime limits only they name, their services (storage's
-  # driver-control, data and packages, network's driver-control and net, web's relay, the display's
+  # driver-control, data, packages and system, network's driver-control and net, web's relay, the display's
   # window tree with its display record) and the system domain's facets of them, and the
   # display unit, which only a display domain holds (docs/design-stopgap.md, "Device
   # records"), so a manifest without one places none.
   DOMAIN_ROWS = [/^runtime_limits storage\n(?:  .*\n)*/, /^limits storage\n(?:  .*\n)*/, /^domain storage\n(?:  .*\n)*/,
                  /^service storage_ctl\n(?:  .*\n)*/, /^facet storage_ctl\n(?:  .*\n)*/,
                  /^service data\n(?:  .*\n)*/, /^facet data\n(?:  .*\n)*/, /^service packages\n(?:  .*\n)*/,
+                 /^service system\n(?:  .*\n)*/,
                  /^runtime_limits network\n(?:  .*\n)*/, /^limits network\n(?:  .*\n)*/, /^domain network\n(?:  .*\n)*/,
                  /^service network_ctl\n(?:  .*\n)*/, /^facet network_ctl\n(?:  .*\n)*/,
                  /^service net\n(?:  .*\n)*/,
@@ -157,11 +161,15 @@ module ManifestContextFixture
 
   # source without its configured domains, storage, network, web and display: their rows
   # removed and what they hold but the display unit held by the system domain, as a
-  # manifest that configures no domain holds them. A session facet is removed where the source still has it.
+  # manifest that configures no domain holds them. A session facet is removed where the
+  # source still has it, and so is its apps row, whose services those domains serve, and
+  # its system window, which only a storage domain holds (property 8), with the
+  # system_image row that names the window's image.
   def domainless(source)
     raise ArgumentError, 'the manifest has no configured domain holder' unless source.match?(DOMAIN_HOLDER)
 
-    held = SESSION_FACETS.reduce(source.gsub(DOMAIN_HOLDER, '  holder system')) { |text, facet| text.sub(facet, '') }
+    appless = source.sub(APPS_ROW, '').sub(SYSTEM_WINDOW, '').sub(SYSTEM_IMAGE, '')
+    held = SESSION_FACETS.reduce(appless.gsub(DOMAIN_HOLDER, '  holder system')) { |text, facet| text.sub(facet, '') }
     DOMAIN_ROWS.reduce(held) { |text, row| substitute(text, row, '') }
   end
 

@@ -131,6 +131,15 @@ additions_test() ->
     ?assertEqual({error, {bad_value, {[], mark}}}, Graph(#{max => 10, mark => 11})),
     ?assertEqual({error, {bad_value, {[], samples}}}, Graph(#{samples => lists:duplicate(241, 1)})).
 
+%% name is taken on every kind, a text of at most 255 bytes, and a longer one
+%% is refused at its node.
+name_test() ->
+    [?assertEqual(ok, v({column, #{}, [{Kind, #{name => <<"Back">>}, []}]})) || Kind <- erx_ui_schema:kinds()],
+    ?assertEqual(ok, v({button, #{name => binary:copy(<<"n">>, 255), on_click => back}, []})),
+    ?assertEqual({error, {bad_value, {[0], name}}},
+                 v({row, #{}, [{button, #{name => binary:copy(<<"n">>, 256)}, []}]})),
+    ?assertEqual({error, {bad_value, {[], name}}}, v({spacer, #{name => <<255>>}, []})).
+
 tables_test() ->
     #{number := 10, state := text, fixed := [secret], takes := Takes} = erx_ui_schema:kind(input),
     ?assert(lists:member(key, Takes)),

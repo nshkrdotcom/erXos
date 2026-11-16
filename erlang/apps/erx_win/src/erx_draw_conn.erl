@@ -201,12 +201,13 @@ init(#{opener := Opener, window := Window} = Spec) ->
 
 -doc false.
 handle_call({write, Bytes}, _From, #conn{core = Core} = Conn) ->
+    %% A refusal is a plan's one action and leaves the core as it was.
     case erx_draw_core:plan(Core, Bytes) of
-        {ok, Planned, Ops} ->
-            perform_write(Ops, Conn#conn{core = Planned});
-        {error, Errno, Offset} ->
+        {Core, [{error, Errno, Offset}]} ->
             log(["write refused: ", atom_to_binary(Errno), " at offset ", integer_to_binary(Offset)]),
-            {reply, {error, Errno}, Conn}
+            {reply, {error, Errno}, Conn};
+        {Planned, Ops} ->
+            perform_write(Ops, Conn#conn{core = Planned})
     end;
 handle_call({read, Count}, _From, #conn{unread = Unread} = Conn) when is_integer(Count), Count >= 0 ->
     {Bytes, Rest} = take(min(Count, ?ERX_P9_IO_MAX), Unread),

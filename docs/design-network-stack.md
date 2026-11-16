@@ -5248,7 +5248,7 @@ The state is the effect shell's; what is presented, granted and replied
 is decided by a pure step, `erx_gen_tcp_core:step(Event, Core) ->
 {Core, [Action]}` and its datagram twin, whose actions are messages to
 the owner, replies to callers, requests and grants to the socket, and
-`stop`, as every stack process decides
+`{stop, normal}`, always the last, as every stack process decides
 ([One owner, one step](#one-owner-one-step)). The core reads no clock;
 the socket process arms a timer for each deadline it holds, a waiting
 recv's, of a connection or of a datagram socket, and each waiting
@@ -6298,7 +6298,11 @@ record the exception and the event, a frame's length and its first 128
 bytes escaped, in the kernel log, and count it. The record keeps the
 stack trace with each frame's arguments replaced by their count, and a
 socket's exit reason is the exception's class and reason alone, so a
-`function_clause` never carries the control block into a log; a
+`function_clause` never carries the control block into a log. OTP's
+own reports of the same exits, which print the mailbox and each frame's
+arguments, pass the report filter, `erx_report`, which the network
+domain takes at boot
+([design-log.md](design-log.md#reports-carry-no-term)). A
 socket's `format_status` likewise leaves out its buffers, its
 reassembly queue and its generator, and a socket process's what it
 holds, so `sys:get_status` shows neither a
