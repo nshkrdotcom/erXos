@@ -9,10 +9,12 @@
 #include <stdlib.h>
 
 #include "erx/elf_plan.h"
+#include "liberx/exec/load_plan.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *, size_t);
 
 static bool erx_fuzz_writable(const erx_elf_plan_t *, uint64_t);
+static void erx_fuzz_layout(const erx_elf_plan_t *);
 
 /* Whether the eight bytes at offset lie inside one writable segment. */
 static bool
@@ -28,6 +30,50 @@ erx_fuzz_writable(const erx_elf_plan_t *plan, uint64_t offset)
 			return (true);
 	}
 	return (false);
+}
+
+/*
+ * erx_exec's layout of an accepted position-independent plan, in a reservation
+ * starting off its alignment: the span fits from an aligned base, every step lies
+ * whole inside it, a shared map is read-only or read-execute, and a zeroing stays
+ * inside the copy mapped just before it.
+ */
+static void
+erx_fuzz_layout(const erx_elf_plan_t *plan)
+{
+	const uint64_t reserved = UINT64_C(0x40000000) + ERX_PAGE_SIZE;
+	const erx_exec_step_t *step, *copy = NULL;
+	erx_exec_layout_t layout;
+	erx_elf_error_t error;
+	uint64_t size;
+
+	if ((plan->flags & ERX_IMAGE_FIXED) != 0) {
+		if (erx_exec_reservation(plan, &size, &error))
+			abort();
+		return;
+	}
+	if (!erx_exec_reservation(plan, &size, &error) ||
+	    !erx_exec_layout(plan, reserved, size, &layout, &error))
+		abort();
+	if (layout.base % plan->base_alignment != 0 || layout.base < reserved ||
+	    layout.base - reserved + plan->span > size ||
+	    layout.entry - layout.base >= plan->span)
+		abort();
+	for (uint32_t index = 0; index < layout.nsteps; index++) {
+		step = &layout.steps[index];
+		if (step->address < layout.base || step->size == 0 ||
+		    step->address - layout.base > plan->span ||
+		    step->size > plan->span - (step->address - layout.base))
+			abort();
+		if (step->kind == ERX_EXEC_MAP &&
+		    step->prot != ERX_PROT_R && step->prot != ERX_PROT_RX)
+			abort();
+		if (step->kind == ERX_EXEC_ZERO && (copy == NULL ||
+		    step->address < copy->address ||
+		    step->address + step->size != copy->address + copy->size))
+			abort();
+		copy = step->kind == ERX_EXEC_CHILD ? step : NULL;
+	}
 }
 
 int
@@ -62,6 +108,7 @@ LLVMFuzzerTestOneInput(const uint8_t *bytes, size_t length)
 			    !erx_fuzz_writable(&plan, relocation.offset))
 				abort();
 		}
+		erx_fuzz_layout(&plan);
 	} else if (plan.nloads != 0 || plan.output_size != 0) {
 		abort();
 	}

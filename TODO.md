@@ -148,7 +148,16 @@ it; git history is the record of completed work.
   starter's namespace and makes the image check of the entry's `rx` (`erx_prog_handler_core:resolve_image/3`),
   but has no filler to open the file and no code object from the command server (the rest of step 4 of
   "Starting a program"), the domain library's `code_object/2` answers `enotsup`, and the loader `erx_exec`
-  does not exist (only `erx_elf_plan` does). So a native app's start of `/app/bin/NAME` is refused
+  is only its load (`liberx/exec/load.c`, `erx_exec_load`: the object viewed and planned, the span
+  reserved, segments mapped, copied and committed by a layout decided whole, relocations written), with no
+  program at `libexec/erx_exec` around it: the design does not yet say how the loader learns the object's
+  size, what block and register carry the startup message and its ranges to the executable, or how the
+  loader's own threads and backend state give way to the executable's `liberx` in the same space. The load trusts its object to be a sealed code object: it checks neither, the
+  stopgap maps a pool object read-execute, and the relocations are read again from the view, so a
+  writer of an unsealed object could move them [Medium, security residual]; the call that gives the size
+  should say sealed code or refuse. `load.c` runs in no test yet: the programs suite gets a guest case
+  with the fixture PIE and a failure part way (a budget too small for a child) when the program lands.
+  So a native app's start of `/app/bin/NAME` is refused
   `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this
   lands. The session asks for code objects through the `code_objects` facet
   (`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which the domain service

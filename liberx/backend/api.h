@@ -325,6 +325,13 @@ int	erx_image_slice(uint64_t budget, uint64_t image, uint64_t first, uint64_t co
 int	erx_mem_copy(uint64_t dst, uint64_t dst_offset, uint64_t src, uint64_t src_offset, uint64_t len)
 	    ERX_WARN_UNUSED_RESULT;
 int	erx_cap_close(erx_cap_t cap) ERX_WARN_UNUSED_RESULT;
+/*
+ * A private copy of size bytes of an immutable parent, a slice or a sealed paged object, from
+ * offset, charged to budget: it maps read and write and never runs. erx_exec maps each writable
+ * segment of an executable so (liberx/exec/load.c); fiasco/service.h gives the stopgap's answers.
+ */
+int	erx_mem_child(uint64_t parent, uint64_t budget, uint64_t offset, uint64_t size, uint64_t *child)
+	    ERX_WARN_UNUSED_RESULT;
 int	erx_object_destroy(uint64_t object) ERX_WARN_UNUSED_RESULT;
 int	erx_budget_create(uint64_t parent, uint32_t kind, uint64_t guarantee, uint64_t cap, uint64_t *budget)
 	    ERX_WARN_UNUSED_RESULT;
