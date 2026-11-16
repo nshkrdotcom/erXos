@@ -2449,7 +2449,17 @@ to `erx_screen` and holds its client's write, as a waiting request it
 keeps ([The window tree](#the-window-tree)), until the answer, so the
 window still takes input while it waits; it then records the buffer as its last present
 and answers the write. A second `ctl` write that arrives while a present
-is in flight is held too, and queues behind it. When `erx_screen` ends
+is in flight is held too, and queues behind it. The write whose present
+is in flight is begun ([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests", rule 3): the screen may already show it, so a flush
+or a clunk of its fid answers it with the present's own answer when
+`erx_screen` gives it, never `EINTR`; a write still queued has begun
+nothing, and a flush or a clunk answers it `EINTR` at once and takes it
+off the queue. The window keeps its held writes and its waiting reads in
+one `erx_fs_waits` set, at most its grant's 64 requests in flight, each
+a `ctl` line of at most 1,024 bytes or a read's count, so its process's
+heap bound, which the display sets, covers them with its pending input
+and its last present. When `erx_screen` ends
 while a present is in flight, the held write is answered `EIO` and the
 last buffer stays as it was. A refused line fails the write with `EINVAL`,
 and the display domain's log records the window and the reason. Input
@@ -4824,7 +4834,21 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   seeded `erx_winfs` whose `read` calls the window and waits for the
   record makes the clunk miss its deadline
   ([design-files.md](design-files.md#verification-and-testing),
-  "Waiting requests").
+  "Waiting requests"). Two fids opened on one window's `kbd`, whose
+  handles are equal, each with a read waiting, through one grant and
+  then through two: clunking one answers its read `EINTR` and leaves the
+  other's waiting for the next key, which it gets; seeded: an owner that
+  keys waiting requests by handle, which answers both reads `EINTR`.
+  Against a screen model that holds its answer, a `ctl` write whose
+  present is in flight and one queued behind it, both flushed: the
+  queued write is answered `EINTR` at once, and the first is answered,
+  after the screen model's answer, with that answer, then its flush;
+  seeded: a window that answers every flushed write `EINTR`, which
+  answers the first before the screen does. A program's `/dev/kbd`
+  read waiting at its relay, then the program's close: the close is
+  answered within 1 s, and the next key reaches the window's next
+  reader; seeded: a relay that does not pass the flush on, whose close
+  misses its deadline.
 * **The window system.** `erx_wm_rio` and `erx_wm_single` are pure and
   tested over sequences of place requests and input events; a property
   test that the single policy shows at most one window and delivers every

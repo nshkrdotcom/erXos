@@ -2554,8 +2554,10 @@ in use, requests and flushes together, at its grants or held; a request
 beyond 32 fails with `emfile`, and a message that would take a 65th tag,
 or one on a tag in use, is discarded and counted. The grants are the system
 domain's own, shared with its processes, and a grant's 64 requests in
-flight cannot be reserved, so a flush the bridge sends may still be
-refused there, and it then waits behind its request. The flushes of one
+flight cannot be reserved, so a request the bridge sends may still be
+refused there; a flush is never refused, since a grant admits one flush
+waiting for each request in flight besides them
+([design-files.md](design-files.md#bounds)). The flushes of one
 request are answered in the order they came, after the request is
 answered or abandoned, with at most one of them at the grant at a time,
 and a flush of a flush joins the flushes of the request it names, so the

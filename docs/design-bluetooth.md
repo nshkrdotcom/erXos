@@ -500,6 +500,20 @@ reader should have. A read waiting at a `reset` answers `eio`, and a
 write that arrives during one waits at the line until the reset
 answers.
 
+A request the line has begun is answered with what it did, flushed or
+not ([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests", rule 3): a `reset` is begun at its first step, since
+stopping the driver already changes the line, and is answered when its
+last step is done, after at most the off and on times of [The power
+line](#the-power-line); a `data` write is begun once its bytes are
+handed to the driver, and is answered with its count when the driver
+has taken them. A read waiting for bytes, and a write waiting behind a
+`reset`, have begun nothing, and a flush or a clunk answers them `eintr`
+at once. The line keeps them in one `erx_fs_waits` set, at most the
+grant's 64 requests in flight, each a read's count or a write's bytes
+of at most 64 KiB, beside its receive buffer, and its process's heap
+bound covers both.
+
 #### A reset
 
 `reset` takes the line through four steps, in this order, each finished
@@ -1553,6 +1567,7 @@ Each passing case is paired with the seeded fault it must catch.
 | the line's `ctl` grammar | `reset` with and without newline accepted; everything else `einval` | a prefix match accepting `resetx` |
 | the line service's reset, over a model driver and a model device service | the four steps run in order; the driver's input during the on time is discarded; a power `{error, _}` answers `eio` before the next step | the driver started before the off notification, so the old FIFO drains into the new controller |
 | the line service through a real `erx_fs` grant over a model driver, the reader and the writer opening one `data` file as the controller group does | a read sent on the empty line, then a command written: the write is answered within 1 s while the read waits, and the model driver's answer to the command reaches the read once; a `reset` during a waiting read answers it `eio`; the reader's clunk during a waiting read is answered within 1 s, and the next reader's read gets the next driver bytes whole | a line whose `read` waits inside its callback, which makes the write miss its deadline; a line that keeps a waiting read after its owner's end, which takes the next reader's bytes |
+| flushes of the line's begun and buffered requests, through the same grant, with a model device service that holds each power notification until the test releases it | a `reset` flushed at each of its four steps is answered only once its last step is done, with the reset's answer, then the flush; a write flushed after the model driver took its bytes is answered with its count; with bytes already in the receive buffer, a read and its flush sent in one batch answer the read with those bytes and then the flush, and a read flushed before bytes arrive answers `eintr`, after which the next read gets those bytes whole | a line that answers a flushed `reset` `eintr` while its steps run, which the first case finds answered before the power notification is released; a line tree that answers `read_mode/0` with `helper`, whose ended helper loses the buffered bytes the third case expects |
 | the identity address | 10,000 addresses all have the static form and parse in Bumble's `Address` as static | the top bits cleared |
 
 ### Fuzz targets
