@@ -144,7 +144,8 @@ module Erx
            "-erx_net_client grant {erx_net_client_erxos,grant,[]} " \
            "-eval {ok,_}=application:ensure_all_started(erx_ntpd,permanent)\"\n" \
            "  env \"ERX_START_FLAGS=#{SERVER}\"\n" \
-           "facet ntpd_net\n  name \"net\"\n  grantee @session.ntpd\n  service @service.net\n  operations none\n" \
+           "facet ntpd_net\n  name \"net\"\n  grantee @session.ntpd\n  service @service.net\n" \
+           "  parameter sockets 2\n  parameter buffers 131072\n  operations none\n" \
            "  max_request 64\n  in_flight 2\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 65536\n" \
            "facet ntpd_clock\n  name \"clock\"\n  grantee @session.ntpd\n  service @service.clock\n" \
            "  operations sample\n  max_request 256\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n" \

@@ -199,6 +199,19 @@ class DomPlannerTest < Minitest::Test
     assert_equal 4, admitted.report.fetch('child_plan_instances')
   end
 
+  # ntpd's net grant holds two sockets (docs/design-time.md, "Who does what") on the
+  # board's manifest and on the net_device suite's copy alike, so the grant refuses a
+  # third open emfile (its limit, erx_net_grant_tests' sockets_limit); a row that leaves sockets out
+  # takes the grant's default of 1,024 (erx_net_grant_core).
+  def test_ntpds_net_grant_holds_two_sockets
+    qemu = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
+    [Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT), Erx::NetDevice.manifest(qemu)].each do |source|
+      facet = Erx::Manifest::Frontend.read(source).records.fetch('facet').find { |row| row.name == 'ntpd_net' }
+      parameters = facet.to_h.fetch(:parameters).to_h { |key, value| [key.value, value.value] }
+      assert_equal %w[2 131072], parameters.values_at('sockets', 'buffers')
+    end
+  end
+
   # Two principals' session templates (property 14), each its principal's, of the
   # profile split; system and guest split users between them, and guest takes a page
   # of system's memory. System's quota holds alpha and root's console session, which

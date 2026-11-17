@@ -12,7 +12,7 @@ flags, or flags that break the server-list rule, fail the start with
 `no_servers` or `bad_flags` after a log line saying so, which ends the
 session; the start table's intensity then leaves the row down. Otherwise it
 performs what erx_ntp_core asks, one action at a time, for as long as the
-session runs: it resolves the names through the session's resolver, makes
+session runs: it resolves each name through the session's resolver, makes
 each exchange over a socket of its own (erx_ntp_exchange:ask/1; a socket that
 cannot be opened is no reply), sends each sample
 to the clock service through the session's `clock` facet, which decides
@@ -91,8 +91,8 @@ loop(Action, State) ->
     {Next, State1} = erx_ntp_core:step(perform(Action, State), State),
     loop(Next, State1).
 
-perform({resolve, Names}, _State) ->
-    {resolved, lists:append([erx_ntp_exchange:addresses(Name) || Name <- Names])};
+perform({resolve, Name}, _State) ->
+    {resolved, erx_ntp_exchange:addresses(Name)};
 perform({exchange, Address, _Kind}, _State) ->
     {exchanged, erx_ntp_exchange:ask(Address)};
 perform({submit, Sample, Address}, _State) ->

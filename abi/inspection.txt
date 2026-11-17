@@ -75,7 +75,8 @@ inspection 1
   # "root" for a set.
   text clock_from 80
   # ntpd's state (docs/design-time.md, "What /proc shows"): its server names,
-  # at most 8, the addresses in use and denied, at most 4 a name, and the
+  # at most 8, the addresses in use, at most 4 a name, and those denied,
+  # which erx_ntp_core remembers only up to this list's bound, and the
   # address that last answered and how, as "192.0.2.7 sample".
   list ntp_servers name 8
   list net_addresses net_address 32

@@ -7265,9 +7265,7 @@ to the corpus and follow rc
   on the forms that read only `/proc`; when every address fails, `ntpctl step HOST` gives no reason per address;
   the name rule passes short IPv4 forms such as `1.2.3` to `inet:getaddrs/3`, which reads them as addresses;
   (7) review findings left: the clock facet call is written in both erx_ntpd and erx_cmd_date; the
-  core is a one-action loop, not the events and `next_deadline/1` shape "Who does what" describes; the bound on
-  `denied` is both erx_ntp_core's `REMEMBERED_MAX` (64) and the schema's `net_addresses` list (32), so 33 to 64
-  denied addresses read `{error, invalid}` (generate one bound); `step_from` names every `set` `root`, which
+  core is a one-action loop, not the events and `next_deadline/1` shape "Who does what" describes; `step_from` names every `set` `root`, which
   holds only while root's template alone holds the clock's `set` (derive the kind from the grant row or name the
   check); the net_device suite's ntpd rows (`NetDevice::NTPD`) copy raspi4b-development.txt's (derive them
   through Manifest::Edit); erx_ntp_records and erx_time_records each map a missed answer to schema statuses

@@ -53,7 +53,7 @@ request_test() ->
 sample(Delay) -> {sample, #{offset => 5, delay => Delay, distance => Delay div 2, stratum => 2}}.
 
 start_resolves_then_bursts_test() ->
-    {{resolve, [<<"pool">>]}, S0} = erx_ntp_core:start([<<"pool">>]),
+    {{resolve, <<"pool">>}, S0} = erx_ntp_core:start([<<"pool">>]),
     {{exchange, ?A, poll}, S1} = erx_ntp_core:step({resolved, [?A, ?B, ?A]}, S0),
     {{wait, 2000}, S2} = erx_ntp_core:step({exchanged, sample(900)}, S1),
     {{exchange, ?A, burst}, S3} = erx_ntp_core:step(woke, S2),
@@ -93,15 +93,16 @@ resolve_backoff_test() ->
     {{resolve, _}, S2} = erx_ntp_core:step(woke, S1),
     {{wait, 30000}, _} = erx_ntp_core:step({resolved, []}, S2).
 
+%% A denied address is gone: the next, never polled, is polled at once, and a
+%% round that finds only denied addresses waits the resolution backoff.
 deny_removes_address_test() ->
     {_, S0} = erx_ntp_core:start([<<"pool">>]),
     {{exchange, ?A, poll}, S1} = erx_ntp_core:step({resolved, [?A, ?B]}, S0),
-    {{wait, ?MIN_POLL_MS}, S2} = erx_ntp_core:step({exchanged, {kiss, <<"DENY">>}}, S1),
-    {{exchange, ?B, poll}, S3} = erx_ntp_core:step(woke, S2),
-    %% A new resolution does not bring the denied address back.
-    {{wait, ?MIN_POLL_MS}, S4} = erx_ntp_core:step({exchanged, {kiss, <<"RSTR">>}}, S3),
-    {{resolve, _}, S5} = erx_ntp_core:step(woke, S4),
-    {{wait, 15000}, _} = erx_ntp_core:step({resolved, [?A, ?B]}, S5).
+    {{exchange, ?B, poll}, S2} = erx_ntp_core:step({exchanged, {kiss, <<"DENY">>}}, S1),
+    {{wait, 15000}, S3} = erx_ntp_core:step({exchanged, {kiss, <<"RSTR">>}}, S2),
+    %% A new resolution does not bring the denied addresses back.
+    {{resolve, <<"pool">>}, S4} = erx_ntp_core:step(woke, S3),
+    {{wait, 30000}, _} = erx_ntp_core:step({resolved, [?A, ?B]}, S4).
 
 rate_doubles_and_other_kiss_is_discarded_test() ->
     {_, S0} = erx_ntp_core:start([<<"10.0.2.100">>]),
@@ -115,15 +116,113 @@ rate_doubles_and_other_kiss_is_discarded_test() ->
     {_, T1} = erx_ntp_core:step({resolved, [?A]}, T0),
     {{wait, 2000}, _} = erx_ntp_core:step({exchanged, {kiss, <<"XFOO">>}}, T1).
 
+%%% Elapsed time (T-R1), and the denied list's bound, over simulated runs
+
+%% A run of the schedule from start(Names) for Steps actions, each answered by
+%% Answer(Action, Resolutions), the resolutions asked so far this one included,
+%% as an event and the milliseconds it took; the actions asked, each with the
+%% simulated time it was asked at.
+simulate(Names, Answer, Steps) ->
+    {Action, State} = erx_ntp_core:start(Names),
+    simulate(Steps, Answer, Action, State, 0, 0, []).
+
+simulate(0, _Answer, _Action, _State, _Now, _Resolutions, Trace) ->
+    lists:reverse(Trace);
+simulate(Steps, Answer, Action, State, Now, Resolutions0, Trace) ->
+    Resolutions = case Action of
+                      {resolve, _} -> Resolutions0 + 1;
+                      _ -> Resolutions0
+                  end,
+    {Event, Ms} = Answer(Action, Resolutions),
+    {Next, State1} = erx_ntp_core:step(Event, State),
+    simulate(Steps - 1, Answer, Next, State1, Now + Ms, Resolutions, [{Now, Action} | Trace]).
+
+%% A silent address costs its four exchanges and their gaps; a responsive one
+%% answers in 10 ms; the clock steps.
+answer({exchange, Address, _}, Silent) ->
+    case lists:member(Address, Silent) of
+        true -> {{exchanged, {error, timeout}}, 2000};
+        false -> {{exchanged, sample(10)}, 10}
+    end;
+answer({submit, _, _}, _Silent) -> {{clock, {ok, {stepped, 1}}}, 10};
+answer({wait, Ms}, _Silent) -> {woke, Ms}.
+
+first_sample(Trace) ->
+    hd([Now || {Now, {submit, _, _}} <- Trace]).
+
+%% A pool whose first address is silent and whose second answers: the second's
+%% first poll follows the first's failed burst at once, so the clock has a
+%% sample within T-R1's minute.
+silent_first_address_test() ->
+    Answer = fun({resolve, _}, _) -> {{resolved, [?A, ?B]}, 100};
+                (Action, _) -> answer(Action, [?A])
+             end,
+    Trace = simulate([<<"pool">>], Answer, 40),
+    ?assertMatch({_, {submit, _, ?B}}, lists:keyfind(first_sample(Trace), 1, Trace)),
+    ?assert(first_sample(Trace) < 60000).
+
+%% A reachable literal before seven names whose resolution times out after 10 s:
+%% the literal's address is polled once it is resolved, not after the others.
+resolution_in_order_test() ->
+    Names = [<<"10.0.2.100">> | [<<"slow", (integer_to_binary(N))/binary, ".example">> || N <- lists:seq(1, 7)]],
+    Resolve = fun(<<"10.0.2.100">>) -> {[?A], 0};
+                 (_Slow) -> {[], 10000}
+              end,
+    Answer = fun({resolve, Asked}, _) ->
+                     {Found, Ms} = Resolve(Asked),
+                     {{resolved, Found}, Ms};
+                (Action, _) -> answer(Action, [])
+             end,
+    Trace = simulate(Names, Answer, 40),
+    ?assert(first_sample(Trace) < 60000).
+
+%% A pool that gives a new address at each resolution, each of which denies,
+%% past the denied list's bound, after two silent addresses polled first: no
+%% denied address is polled again, however many denials the run has had, and
+%% an address polled before is still polled. The last resolutions offer the
+%% first address denied, which a list keeping the latest denials forgets;
+%% the fortieth, past the bound of 32, which the list never held; and ?B,
+%% polled before, which denies once the list is full and so is never held.
+denied_stay_denied_test() ->
+    Denying = [{198, 51, 100, N} || N <- lists:seq(1, 70)],
+    Last = [hd(Denying), lists:nth(40, Denying), ?B, ?A],
+    Answer = fun({resolve, _}, 1) -> {{resolved, [?A, ?B]}, 0};
+                ({resolve, _}, N) when N =< 71 -> {{resolved, [lists:nth(N - 1, Denying)]}, 0};
+                ({resolve, _}, _) -> {{resolved, Last}, 0};
+                ({exchange, ?B, _}, N) when N >= 72 -> {{exchanged, {kiss, <<"DENY">>}}, 10};
+                ({exchange, Address, _}, _) ->
+                     case lists:member(Address, Denying) of
+                         true -> {{exchanged, {kiss, <<"DENY">>}}, 10};
+                         false -> {{exchanged, {error, timeout}}, 2000}
+                     end;
+                (Action, _) -> answer(Action, [])
+             end,
+    Trace = simulate([<<"pool">>], Answer, 600),
+    Exchanged = [Address || {_, {exchange, Address, _}} <- Trace],
+    ?assertEqual([], [D || D <- Denying, length([X || X <- Exchanged, X =:= D]) > 1]),
+    {_, AfterFull} = lists:split(length(lists:takewhile(fun(Action) -> Action =/= {resolve, 72} end,
+                                                        resolutions(Trace))), resolutions(Trace)),
+    ?assertEqual(1, length([B || {exchange, ?B = B, _} <- AfterFull])),
+    ?assertEqual(?A, lists:last(Exchanged)).
+
+%% The actions of a trace, each resolution numbered: {resolve, N} for the Nth.
+resolutions(Trace) ->
+    {Numbered, _} = lists:mapfoldl(fun({_, {resolve, _}}, N) -> {{resolve, N + 1}, N + 1};
+                                      ({_, Action}, N) -> {Action, N}
+                                   end, 0, Trace),
+    Numbered.
+
 %% Over generated runs: no two polls of an address closer than the 64 s
 %% floor, a burst only after an address's first poll and at most three
-%% burst exchanges a poll, and the interval within 64 s to 1024 s.
+%% burst exchanges a poll, and the interval within 64 s to 1024 s. Two names
+%% share the generated addresses, so a round appends a name's addresses to
+%% those already failed.
 schedule_property_test() ->
     rand:seed(exsss, {1, 2, 3}),
     lists:foreach(fun(_) -> run(400) end, lists:seq(1, 200)).
 
 run(Steps) ->
-    {Action, State} = erx_ntp_core:start([<<"pool">>]),
+    {Action, State} = erx_ntp_core:start([<<"pool">>, <<"pool2">>]),
     run(Steps, Action, State, 0, #{}).
 
 run(0, _Action, _State, _Now, _Seen) ->
@@ -136,7 +235,8 @@ run(Steps, Action, State, Now, Seen) ->
     run(Steps - 1, Next, State1, Now + Elapsed, Seen1).
 
 perform({resolve, _Names}, _Now, Seen) ->
-    Found = lists:sublist([?A, ?B, {192, 0, 2, rand:uniform(3)}], rand:uniform(4) - 1),
+    %% A pool of 40 addresses besides, so runs fill the denied list too.
+    Found = lists:sublist([?A, ?B, {192, 0, 2, rand:uniform(3)}, {203, 0, 113, rand:uniform(40)}], rand:uniform(5) - 1),
     {{resolved, Found}, rand:uniform(5000), Seen};
 perform({exchange, Address, poll}, Now, Seen) ->
     case maps:find({poll, Address}, Seen) of
