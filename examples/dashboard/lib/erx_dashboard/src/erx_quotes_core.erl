@@ -25,16 +25,32 @@ belongs to the source, so a source two quotes share is held back for
 both. After a failed round the quote waits its period doubled for each
 failed round in a row, up to 15 minutes, times the jitter, and no less
 than until the earliest of its sources is free again.
+
+A quote whose sources include one with a `history` asks that source for
+a day of 15 min closes at start and then once an hour, answered or not,
+as the action `{history, Quote, Source}`, and never while the source is
+held back; a failed one waits for the next, and one answered with a
+`Retry-After` holds the source back as a round's does (history_failed/5).
+history/3 takes the entries an answer carried and makes them the
+quote's `series`, oldest first,
+the last buckets/0 of them. A live price joins the series by the
+wall-clock second it was read at: in the series' last bucket it replaces
+the close, in a later one it is appended after the skipped buckets, each
+repeating the last close, and in an earlier one it is left out. Until a
+history arrives the series is `none` and the screen draws the samples.
 """.
 
--export([new/2, tick/3, outcome/5, samples/0]).
+-export([new/2, tick/3, outcome/5, history/3, history_failed/5, history_url/2, samples/0,
+         bucket/0, buckets/0]).
 
--export_type([state/0, quote/0, action/0, outcome/0]).
+-export_type([state/0, quote/0, action/0, outcome/0, point/0]).
 
 -type reason() :: erx_quotes_http:reason().
 -type quote() :: #{value := none | {Price :: float(), Change :: none | float(),
                                     Source :: atom(), FetchedAt :: integer()},
                    samples := [float()],
+                   series := none | [point()],
+                   history_at := integer(),
                    failure := none | {reason(), At :: integer()},
                    failed_rounds := non_neg_integer(),
                    next_at := integer(),
@@ -43,8 +59,12 @@ than until the earliest of its sources is free again.
 -type state() :: #{table := erx_quotes_table:table(),
                    quotes := #{atom() => quote()},
                    sources := #{atom() => source()}}.
--type action() :: {fetch, Quote :: atom(), Source :: atom(), Url :: binary()} | render.
--type outcome() :: {value, float(), none | float()}
+-type action() :: {fetch, Quote :: atom(), Source :: atom(), Url :: binary()}
+                | {history, Quote :: atom(), Source :: atom()}
+                | render.
+%% A bucket of the series: its start, a wall-clock second, and its close.
+-type point() :: {Start :: integer(), Close :: float()}.
+-type outcome() :: {value, float(), none | float(), WallSecond :: integer()}
                  | {error, reason(), RetryAfter :: none | pos_integer()}.
 
 -define(MAX_WAIT_MS, 900000).
@@ -53,36 +73,51 @@ than until the earliest of its sources is free again.
 %% Past this many doublings every period of the table (5 s and up) is
 %% beyond the cap already, so the exponent stops growing with the count.
 -define(MAX_DOUBLINGS, 20).
+%% The series' bucket in wall-clock seconds, and the buckets it keeps: a day.
+-define(BUCKET, 900).
+-define(BUCKETS, 96).
+%% Monotonic milliseconds between two history requests of a quote.
+-define(HISTORY_MS, 3600000).
 
 -doc "The most prices a quote keeps in its `samples`.".
 -spec samples() -> pos_integer().
 samples() -> ?SAMPLES.
+
+-doc "The length of a bucket of the series, in seconds.".
+-spec bucket() -> pos_integer().
+bucket() -> ?BUCKET.
+
+-doc "The most buckets a quote keeps in its `series`.".
+-spec buckets() -> pos_integer().
+buckets() -> ?BUCKETS.
 
 -doc "The state at monotonic time `Now`: every quote due, no value, no source held back.".
 -spec new(erx_quotes_table:table(), integer()) -> state().
 new(#{quotes := Quotes, sources := Sources} = Table, Now) ->
     #{table => Table,
       quotes => maps:from_list(
-                  [{Name, #{value => none, samples => [], failure => none, failed_rounds => 0,
-                            next_at => Now, trying => none}}
+                  [{Name, #{value => none, samples => [], series => none, history_at => Now,
+                            failure => none, failed_rounds => 0, next_at => Now,
+                            trying => none}}
                    || {Name, _Row} <- Quotes]),
       sources => maps:map(fun(_Name, _Row) -> #{not_before => Now, held => none} end,
                           Sources)}.
 
 -doc """
-Starts every round that is due at `Now`, in the table's order, and asks
-for a render, since the ages the screen shows have moved.
+Starts every round and every history request that is due at `Now`, in
+the table's order, and asks for a render, since the ages the screen
+shows have moved.
 """.
 -spec tick(state(), integer(), float()) -> {state(), [action()]}.
 tick(#{table := #{quotes := Rows}} = State, Now, Jitter) ->
     {Next, Actions} =
         lists:foldl(fun({Name, _Row}, {S, Acc}) ->
-                            case due(Name, S, Now) of
-                                true ->
-                                    {S2, More} = ask(Name, 1, none, S, Now, Jitter),
-                                    {S2, Acc ++ More};
-                                false -> {S, Acc}
-                            end
+                            {S2, Round} = case due(Name, S, Now) of
+                                              true -> ask(Name, 1, none, S, Now, Jitter);
+                                              false -> {S, []}
+                                          end,
+                            {S3, History} = history_due(Name, S2, Now),
+                            {S3, Acc ++ Round ++ History}
                     end, {State, []}, Rows),
     {Next, [Action || Action <- Actions, Action =/= render] ++ [render]}.
 
@@ -91,6 +126,69 @@ due(Name, #{quotes := Quotes}, Now) ->
         #{Name := #{trying := none, next_at := At}} -> Now >= At;
         #{Name := _InFlight} -> false
     end.
+
+%% A quote's history is asked of the first of its sources that names one,
+%% at start and then every ?HISTORY_MS from the last request, whether or
+%% not it was answered: a failed request waits for the next. A source
+%% held back is not asked until its `not_before`, as by a round. httpc's
+%% timeouts end a request long before the next is due, so at most one
+%% per quote is in flight.
+history_due(Name, #{quotes := Quotes} = State, Now) ->
+    #{history_at := At} = maps:get(Name, Quotes),
+    case history_source(Name, State) of
+        none ->
+            {State, []};
+        Source ->
+            #{not_before := NotBefore} = source_state(Source, State),
+            case Now >= max(At, NotBefore) of
+                true ->
+                    {update_quote(Name, #{history_at => Now + ?HISTORY_MS}, State),
+                     [{history, Name, Source}]};
+                false ->
+                    {State, []}
+            end
+    end.
+
+history_source(Name, #{table := #{sources := Rows}} = State) ->
+    #{sources := Names} = row(Name, State),
+    case [Source || Source <- Names, is_map_key(history, maps:get(Source, Rows))] of
+        [Source | _] -> Source;
+        [] -> none
+    end.
+
+-doc """
+Takes the entries a history answer for `Quote` carried, `{Start, Close}`
+oldest first, each start on bucket/0 steps and later than the one before
+(erx_quotes_extract:history/3), and makes them the quote's series whole:
+joined one by one, so gaps repeat the close before them, and trimmed to
+the last buckets/0.
+""".
+-spec history(state(), atom(), [point(), ...]) -> {state(), [action()]}.
+history(State, Quote, Entries) ->
+    Series = lists:foldl(fun({Start, Close}, Acc) -> join(Acc, Start, Close) end, [], Entries),
+    {update_quote(Quote, #{series => Series}, State), [render]}.
+
+-doc """
+Takes the failure of the history request `Quote` had in flight, at
+monotonic time `Now`. A `RetryAfter` holds its source back from rounds
+and histories alike, for `Reason`, as a round's does; a failure without
+one changes nothing, and the quote asks again at its next hourly
+request.
+""".
+-spec history_failed(state(), atom(), reason(), none | pos_integer(), integer()) ->
+          {state(), [action()]}.
+history_failed(State, Quote, Reason, RetryAfter, Now) ->
+    {hold(history_source(Quote, State), Reason, RetryAfter, State, Now), []}.
+
+-doc """
+The URL that asks `Source`, a source row with a `history`, for the day
+up to the wall-clock second `Wall`: its history URL with `since` the
+start of the bucket a day before `Wall`.
+""".
+-spec history_url(erx_quotes_table:source(), integer()) -> binary().
+history_url(#{history := #{url := Url}}, Wall) ->
+    Since = start_of(Wall - ?BUCKETS * ?BUCKET),
+    <<Url/binary, "&since=", (integer_to_binary(Since))/binary>>.
 
 -doc """
 Takes the outcome of the request a round of `Quote` has in flight. An
@@ -105,12 +203,13 @@ outcome(#{quotes := Quotes} = State, Quote, Outcome, Now, Jitter) ->
             {State, []}
     end.
 
-answered(Quote, Index, _First, {value, Price, Change}, State, Now, _Jitter) ->
+answered(Quote, Index, _First, {value, Price, Change, Wall}, State, Now, _Jitter) ->
     Source = source_name(Quote, Index, State),
     #{period := Period} = row(Quote, State),
-    #{samples := Samples} = maps:get(Quote, maps:get(quotes, State)),
+    #{samples := Samples, series := Series} = maps:get(Quote, maps:get(quotes, State)),
     {update_quote(Quote, #{value => {Price, Change, Source, Now},
-                           samples => last(Samples ++ [Price]), failure => none,
+                           samples => last(Samples ++ [Price]),
+                           series => join(Series, Wall, Price), failure => none,
                            failed_rounds => 0, next_at => Now + Period,
                            trying => none}, State),
      [render]};
@@ -120,6 +219,11 @@ answered(Quote, Index, First, {error, Reason, RetryAfter}, State, Now, Jitter) -
     ask(Quote, Index + 1, first(First, Reason), Held, Now, Jitter).
 
 hold(_Source, _Reason, none, State, _Now) ->
+    State;
+%% A hold only lengthens: a round and a history may both be answered with
+%% a `Retry-After`, and the shorter never ends the longer.
+hold(Source, _Reason, RetryAfter, #{sources := Sources} = State, Now)
+  when map_get(not_before, map_get(Source, Sources)) >= Now + RetryAfter ->
     State;
 hold(Source, Reason, RetryAfter, #{sources := Sources} = State, Now) ->
     State#{sources := Sources#{Source := #{not_before => Now + RetryAfter,
@@ -162,6 +266,38 @@ fail(Quote, Reason, State, Now, Jitter) ->
 %% The last ?SAMPLES of a quote's prices.
 last(Samples) when length(Samples) > ?SAMPLES -> tl(Samples);
 last(Samples) -> Samples.
+
+%% `Series` with `Price`, read at the wall-clock second `Wall`, joined:
+%% in the series' last bucket it replaces the close; in a later one it
+%% is appended after the buckets skipped, each repeating the last close;
+%% in an earlier one, as after the clock stepped back, it is left out.
+%% Only the last ?BUCKETS are kept, so at most that many skipped buckets
+%% are made, the ones just before the new bucket. A series of `none`
+%% stays `none`: only a history starts one.
+join(none, _Wall, _Price) ->
+    none;
+join([], Wall, Price) ->
+    [{start_of(Wall), Price}];
+join(Series, Wall, Price) ->
+    {Last, Close} = lists:last(Series),
+    case start_of(Wall) of
+        Last ->
+            lists:droplast(Series) ++ [{Last, Price}];
+        Start when Start > Last ->
+            From = max(Last + ?BUCKET, Start - (?BUCKETS - 1) * ?BUCKET),
+            Skipped = [{Time, Close} || Time <- lists:seq(From, Start - ?BUCKET, ?BUCKET)],
+            keep(Series ++ Skipped ++ [{Start, Price}]);
+        _Earlier ->
+            Series
+    end.
+
+keep(Series) ->
+    lists:nthtail(max(length(Series) - ?BUCKETS, 0), Series).
+
+%% The start of the bucket that holds the wall-clock second `Wall`,
+%% rounded down, before 1970 too.
+start_of(Wall) ->
+    Wall - (Wall rem ?BUCKET + ?BUCKET) rem ?BUCKET.
 
 update_quote(Quote, Changes, #{quotes := Quotes} = State) ->
     State#{quotes := Quotes#{Quote := maps:merge(maps:get(Quote, Quotes), Changes)}}.

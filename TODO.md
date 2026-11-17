@@ -8766,6 +8766,10 @@ document's "residual risks accepted" paragraph.
 * [Medium] `erx_quotes_core` (`trying`): a round in flight has no deadline, so a request httpc never
   answers (a handler killed without replying) keeps its quote from fetching until the source restarts.
   Fix by construction: a deadline in `trying` that `tick/3` ends as `timeout`, and requests keyed by quote.
+  A history request has the same gap the other way: `history_at` moves on when it is asked, so a
+  history httpc never answers leaves its entry in `erx_quotes`'s `requests` for good, one more each
+  hour, past the six-request bound of design-quotes.md ("Memory"); keying requests by `{Kind, Quote}`
+  makes a new request replace the old one and drop its answer.
 
 * [Medium] `erx_quotes`, `erx_quotes_view`: both take apart `erx_quotes_core:state()` (the table's source
   rows); the `fetch` action should carry the source row and the view take the table, so the core alone

@@ -12,6 +12,8 @@ event sequences. Each case names the seeded failure it catches.
 -include_lib("eunit/include/eunit.hrl").
 
 -define(T0, -5000000).   % monotonic time may be negative
+%% A wall-clock second on a 15 min boundary: 2026-11-17 01:30 UTC.
+-define(WALL, 1794879000).
 
 %% Two quotes over two sources each; `b` is shared, so a hold on it holds
 %% it back for both.
@@ -55,7 +57,7 @@ samples_test() ->
     {S0, _} = start(),
     Max = erx_quotes_core:samples(),
     Answer = fun(Price, {S, Now}) ->
-                     {S1, _} = outcome(S, q, {value, float(Price), none}, Now),
+                     {S1, _} = outcome(S, q, {value, float(Price), none, ?WALL}, Now),
                      {S2, _} = erx_quotes_core:tick(S1, Now + 10000, 1.0),
                      {S2, Now + 10000}
              end,
@@ -74,11 +76,11 @@ rounds_test() ->
     {S0, _} = start(),
     {S1, A1} = outcome(S0, q, {error, timeout, none}, ?T0 + 100),
     ?assertEqual([{q, b}], fetches(A1)),
-    {S2, A2} = outcome(S1, q, {value, 2.5, none}, ?T0 + 200),
+    {S2, A2} = outcome(S1, q, {value, 2.5, none, ?WALL}, ?T0 + 200),
     ?assertEqual([render], A2),
     ?assertMatch(#{value := {2.5, none, b, ?T0 + 200}, failure := none, next_at := ?T0 + 10200},
                  quote(q, S2)),
-    ?assertEqual(<<"B, delayed - 1 s">>, status(S2, <<"q">>, ?T0 + 1200)),
+    ?assertEqual(<<"B, delayed, live - 1 s">>, status(S2, <<"q">>, ?T0 + 1200)),
     {_S3, A3} = erx_quotes_core:tick(S2, ?T0 + 10200, 1.0),
     ?assertEqual([{q, a}], fetches(A3)),
     {S4, _} = outcome(S0, q, {error, timeout, none}, ?T0 + 100),
@@ -94,14 +96,14 @@ held_back_test() ->
     {S0, _} = start(),
     {S1, A1} = outcome(S0, q, {error, {status, 429}, Hour}, ?T0),
     ?assertEqual([{q, b}], fetches(A1)),
-    {S2, _} = outcome(S1, q, {value, 1.0, none}, ?T0),
+    {S2, _} = outcome(S1, q, {value, 1.0, none, ?WALL}, ?T0),
     Asked = asked(S2, q, ?T0 + 10000, ?T0 + Hour - 1),
     ?assertEqual([b], lists:usort(Asked)),
     ?assert(length(Asked) > 300),
     {_S3, A3} = erx_quotes_core:tick(advance(S2, q, ?T0 + Hour), ?T0 + Hour, 1.0),
     ?assertEqual([{q, a}], fetches(A3)),
     %% While held, the source's reason stands for it in the round.
-    {S4, _} = outcome(S2, r, {value, 7.0, none}, ?T0),
+    {S4, _} = outcome(S2, r, {value, 7.0, none, ?WALL}, ?T0),
     {S5, A5} = erx_quotes_core:tick(S4, ?T0 + 60000, 1.0),
     ?assertEqual([{q, b}, {r, b}], fetches(A5)),
     {S6, _} = outcome(S5, r, {error, {status, 503}, 2 * Hour}, ?T0 + 60000),
@@ -123,7 +125,7 @@ asked(State, Quote, From, To) ->
     case [Source || {Q, Source} <- fetches(Actions), Q =:= Quote] of
         [] -> asked(S1, Quote, From + 1000, To);
         [Source] ->
-            {S2, _} = outcome(S1, Quote, {value, 1.0, none}, From),
+            {S2, _} = outcome(S1, Quote, {value, 1.0, none, ?WALL}, From),
             [Source | asked(S2, Quote, From + 1000, To)]
     end.
 
@@ -143,7 +145,7 @@ backoff_test() ->
     {S1, _} = outcome(S0, q, {error, timeout, none}, ?T0),
     {S2, _} = outcome(S1, q, {error, timeout, none}, ?T0),
     {S3, _} = erx_quotes_core:tick(S2, ?T0 + 20000, 1.0),
-    {S4, _} = outcome(S3, q, {value, 1.0, none}, ?T0 + 20000),
+    {S4, _} = outcome(S3, q, {value, 1.0, none, ?WALL}, ?T0 + 20000),
     ?assertMatch(#{failed_rounds := 0, next_at := ?T0 + 30000}, quote(q, S4)),
     {S5, _} = erx_quotes_core:outcome(S1, q, {error, timeout, none}, ?T0, 0.8),
     ?assertMatch(#{next_at := ?T0 + 16000}, quote(q, S5)).
@@ -171,14 +173,14 @@ status(State, Symbol, Now) ->
 staleness_test() ->
     {S0, _} = start(),
     ?assertEqual(<<"waiting">>, status(S0, <<"q">>, ?T0)),
-    {S1, _} = outcome(S0, q, {value, 64412.5, 0.5}, ?T0),
-    ?assertEqual(<<"A - 30 s">>, status(S1, <<"q">>, ?T0 + 30000)),
-    ?assertEqual(<<"stale, 30 s - A">>, status(S1, <<"q">>, ?T0 + 30001)),
+    {S1, _} = outcome(S0, q, {value, 64412.5, 0.5, ?WALL}, ?T0),
+    ?assertEqual(<<"A, live - 30 s">>, status(S1, <<"q">>, ?T0 + 30000)),
+    ?assertEqual(<<"stale, 30 s - A, live">>, status(S1, <<"q">>, ?T0 + 30001)),
     {S2, _} = erx_quotes_core:tick(S1, ?T0 + 10000, 1.0),
     {S3, _} = outcome(S2, q, {error, {status, 503}, none}, ?T0 + 10000),
     {S4, _} = outcome(S3, q, {error, timeout, none}, ?T0 + 10000),
-    ?assertEqual(<<"A - 15 s: HTTP 503">>, status(S4, <<"q">>, ?T0 + 15000)),
-    ?assertEqual(<<"stale, 2 min - A: HTTP 503">>, status(S4, <<"q">>, ?T0 + 120000)),
+    ?assertEqual(<<"A, live - 15 s: HTTP 503">>, status(S4, <<"q">>, ?T0 + 15000)),
+    ?assertEqual(<<"stale, 2 min - A, live: HTTP 503">>, status(S4, <<"q">>, ?T0 + 120000)),
     ?assertMatch([#{symbol := <<"q">>, price := 64412.5, change := 0.5, decimals := 2} | _],
                  quotes(S4, ?T0 + 15000)),
     {S5, _} = outcome(S0, r, {error, {status, 503}, none}, ?T0),
@@ -199,7 +201,7 @@ lines_test() ->
     {S0, _} = start(),
     ?assertEqual([{q, <<"q waiting -- none">>}, {r, <<"r waiting -- none">>}],
                  erx_quotes_view:lines(S0, ?T0)),
-    {S1, _} = outcome(S0, q, {value, 64412.5, 0.5}, ?T0),
+    {S1, _} = outcome(S0, q, {value, 64412.5, 0.5, ?WALL}, ?T0),
     ?assertMatch([{q, <<"q fresh 64,412.50 a">>} | _], erx_quotes_view:lines(S1, ?T0 + 30000)),
     ?assertMatch([{q, <<"q stale 64,412.50 a">>} | _], erx_quotes_view:lines(S1, ?T0 + 30001)),
     {S2, _} = erx_quotes_core:tick(S1, ?T0 + 10000, 1.0),
@@ -212,7 +214,7 @@ lines_test() ->
     {S5, _} = outcome(S0, r, {error, clock_unset, none}, ?T0),
     {S6, _} = outcome(S5, r, {error, clock_unset, none}, ?T0),
     ?assertMatch([_, {r, <<"r no_data -- clock_unset">>}], erx_quotes_view:lines(S6, ?T0)),
-    {S7, _} = outcome(S0, r, {value, 5000.25, none}, ?T0),
+    {S7, _} = outcome(S0, r, {value, 5000.25, none, ?WALL}, ?T0),
     ?assertMatch([_, {r, <<"r fresh 5,000 b">>}], erx_quotes_view:lines(S7, ?T0)).
 
 clock_unset_test() ->
@@ -256,12 +258,12 @@ tl_fetches(Actions) ->
 
 random_outcome() ->
     case rand:uniform(3) of
-        1 -> {value, float(rand:uniform(100000)), none};
+        1 -> {value, float(rand:uniform(100000)), none, ?WALL};
         2 -> {error, timeout, none};
         3 -> {error, {status, 429}, rand:uniform(60000)}
     end.
 
-record(Seen, Quote, Source, {value, Price, _Change}, Now) ->
+record(Seen, Quote, Source, {value, Price, _Change, _Wall}, Now) ->
     Seen#{Quote => [{Price, Source, Now} | maps:get(Quote, Seen, [])]};
 record(Seen, _Quote, _Source, _Error, _Now) ->
     Seen.
@@ -279,3 +281,144 @@ check(State, Now, Seen) ->
              ?assertNotEqual(nomatch, binary:match(Status, Credit)),
              ?assertNotEqual(nomatch, binary:match(Status, erx_quotes_view:age(Now - At)))
      end || Q <- quotes(State, Now)].
+
+%% History
+
+-define(B, 900).
+
+%% One quote over one source that names a history.
+history_table() ->
+    #{quotes => [{h, #{label => <<"H">>, decimals => 2, period => 10000, sources => [k]}}],
+      sources => #{k => #{url => <<"https://k.test/ticker">>, address => {127, 0, 0, 1},
+                          format => json, price => [<<"p">>], change => none,
+                          credit => <<"K">>, note => <<>>,
+                          history => #{url => <<"https://k.test/ohlc?interval=15">>,
+                                       entries => [<<"result">>, <<"K">>]}}}}.
+
+history_start() ->
+    erx_quotes_core:tick(erx_quotes_core:new(history_table(), ?T0), ?T0, 1.0).
+
+histories(Actions) ->
+    [{Quote, Source} || {history, Quote, Source} <- Actions].
+
+series(State) ->
+    maps:get(series, quote(h, State)).
+
+%% `Closes` on consecutive buckets, the last at the wall second `Last`.
+on_buckets(Closes, Last) ->
+    N = length(Closes),
+    lists:zip([Last - (N - I) * ?B || I <- lists:seq(1, N)], Closes).
+
+%% A live price `Price` for `h` read at the wall second `Wall`: a round
+%% started at the monotonic `Now` and answered with it.
+live(State, Price, Wall, Now) ->
+    {S1, _} = erx_quotes_core:tick(State, Now, 1.0),
+    {S2, _} = outcome(S1, h, {value, Price, none, Wall}, Now),
+    S2.
+
+%% A quote whose source names a history asks for it at start and then
+%% once an hour, answered or not; a table without one asks for none.
+%% Seeded failure: scheduling the next request from an answer never asks
+%% again after one that failed.
+history_hourly_test() ->
+    {S0, A0} = history_start(),
+    ?assertEqual([{h, k}], histories(A0)),
+    {S1, A1} = erx_quotes_core:tick(S0, ?T0 + 3599000, 1.0),
+    ?assertEqual([], histories(A1)),
+    {_S2, A2} = erx_quotes_core:tick(S1, ?T0 + 3600000, 1.0),
+    ?assertEqual([{h, k}], histories(A2)),
+    {_, Plain} = start(),
+    ?assertEqual([], histories(Plain)).
+
+%% A history asks its source as a round does (Q-R4): it waits while a
+%% round's Retry-After holds the source back, and one answered with a
+%% Retry-After holds the source back from the rounds. Seeded failure:
+%% asking for a history without looking at the source's hold asks for it
+%% at the hour.
+history_held_back_test() ->
+    {S0, _} = history_start(),
+    {S1, _} = outcome(S0, h, {error, {status, 429}, 3600000}, ?T0 + 1000),
+    {S2, A2} = erx_quotes_core:tick(S1, ?T0 + 3600000, 1.0),
+    ?assertEqual([], histories(A2)),
+    %% A shorter Retry-After never ends the longer hold.
+    {S2b, []} = erx_quotes_core:history_failed(S2, h, {status, 503}, 1000, ?T0 + 3599000),
+    {_, A2b} = erx_quotes_core:tick(S2b, ?T0 + 3600999, 1.0),
+    ?assertEqual([], histories(A2b)),
+    {_S3, A3} = erx_quotes_core:tick(S2, ?T0 + 3601000, 1.0),
+    ?assertEqual([{h, k}], histories(A3)),
+    {H0, _} = history_start(),
+    {H1, _} = outcome(H0, h, {value, 1.0, none, ?WALL}, ?T0),
+    {H2, []} = erx_quotes_core:history_failed(H1, h, {status, 429}, 60000, ?T0),
+    {H3, A4} = erx_quotes_core:tick(H2, ?T0 + 10000, 1.0),
+    ?assertEqual([], fetches(A4)),
+    ?assertMatch(#{failure := {{status, 429}, _}}, quote(h, H3)),
+    {_H4, A5} = erx_quotes_core:tick(H3, ?T0 + 60000, 1.0),
+    ?assertEqual([{h, k}], fetches(A5)),
+    %% A failure without one changes nothing.
+    ?assertEqual({H1, []}, erx_quotes_core:history_failed(H1, h, timeout, none, ?T0)).
+
+%% The request asks for the day before the clock from the start of its
+%% bucket, as docs/design-quotes.md, "Asking for a history", writes it.
+history_url_test() ->
+    #{sources := #{kraken_btc := Btc}} = erx_quotes_table:table(),
+    ?assertEqual(<<"https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=15&since=1794792600">>,
+                 erx_quotes_core:history_url(Btc, ?WALL + 899)),
+    ?assertEqual(?WALL - 86400, 1794792600).
+
+%% Seeded failures: appending a later bucket without the skipped ones
+%% fails the third case; appending an earlier one fails the fourth.
+join_test() ->
+    {S0, _} = history_start(),
+    {S1, R1} = erx_quotes_core:history(S0, h, on_buckets([1.0, 2.0, 3.0], ?WALL)),
+    ?assertEqual([render], R1),
+    ?assertEqual(on_buckets([1.0, 2.0, 3.0], ?WALL), series(S1)),
+    %% A price in the series' last bucket replaces its close.
+    S2 = live(S1, 4.0, ?WALL + ?B - 1, ?T0),
+    ?assertEqual(on_buckets([1.0, 2.0, 4.0], ?WALL), series(S2)),
+    %% One in the next bucket appends a point.
+    S3 = live(S2, 5.0, ?WALL + ?B, ?T0 + 10000),
+    ?assertEqual(on_buckets([1.0, 2.0, 4.0, 5.0], ?WALL + ?B), series(S3)),
+    %% Past skipped buckets, each skipped one repeats the last close.
+    S4 = live(S3, 6.0, ?WALL + 4 * ?B + 1, ?T0 + 20000),
+    ?assertEqual(on_buckets([1.0, 2.0, 4.0, 5.0, 5.0, 5.0, 6.0], ?WALL + 4 * ?B), series(S4)),
+    %% A price of an earlier bucket, as after the clock steps back, is left out.
+    S5 = live(S4, 0.5, ?WALL + 2 * ?B, ?T0 + 30000),
+    ?assertEqual(series(S4), series(S5)),
+    %% The next answer replaces the series whole, its own gaps filled.
+    {S6, _} = erx_quotes_core:history(S5, h, [{?WALL - 2 * ?B, 9.0}, {?WALL, 8.0}]),
+    ?assertEqual(on_buckets([9.0, 9.0, 8.0], ?WALL), series(S6)).
+
+%% The series keeps the last erx_quotes_core:buckets() points, a day of
+%% 15 min buckets. Seeded failure: filling a gap of ten days point by
+%% point before trimming makes ~960 points; filling from the gap's start
+%% gives times that do not end at the new bucket.
+trim_test() ->
+    Max = erx_quotes_core:buckets(),
+    ?assertEqual(96, Max),
+    ?assertEqual(900, erx_quotes_core:bucket()),
+    {S0, _} = history_start(),
+    Day = on_buckets([float(N) || N <- lists:seq(0, Max)], ?WALL),
+    {S1, _} = erx_quotes_core:history(S0, h, Day),
+    ?assertEqual(tl(Day), series(S1)),
+    S2 = live(S1, 7.0, ?WALL + ?B, ?T0),
+    ?assertEqual(tl(tl(Day)) ++ [{?WALL + ?B, 7.0}], series(S2)),
+    Later = ?WALL + 10 * 86400,
+    S3 = live(S2, 8.0, Later + 5, ?T0 + 10000),
+    ?assertEqual(on_buckets(lists:duplicate(Max - 1, 7.0) ++ [8.0], Later), series(S3)).
+
+%% Without a history the card's graph is its live samples and its status
+%% says `live`; with one, the graph is the series' closes and the status
+%% says `24 h`. A quote of a table without history keeps no series.
+%% Seeded failure: a series started from a live price shows `24 h`
+%% before any history arrived.
+fallback_test() ->
+    {S0, _} = history_start(),
+    S1 = live(S0, 3.0, ?WALL, ?T0),
+    ?assertEqual(none, series(S1)),
+    ?assertMatch([#{samples := [3.0], status := <<"K, live - 0 s">>}], quotes(S1, ?T0)),
+    {S2, _} = erx_quotes_core:history(S1, h, on_buckets([1.0, 2.0], ?WALL)),
+    ?assertMatch([#{samples := [1.0, 2.0], status := <<"K, 24 h - 0 s">>}], quotes(S2, ?T0)),
+    S3 = live(S2, 4.0, ?WALL + ?B, ?T0 + 10000),
+    ?assertMatch([#{samples := [1.0, 2.0, 4.0]}], quotes(S3, ?T0 + 10000)),
+    {S4, _} = outcome(element(1, start()), q, {value, 1.0, none, ?WALL}, ?T0),
+    ?assertEqual(none, maps:get(series, quote(q, S4))).
