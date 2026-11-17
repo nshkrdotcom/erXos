@@ -25,16 +25,28 @@ erx_clock_core's decision, applies a step through the setter and answers
 the facet; it keeps the record that decision leaves and logs each applied
 set with the domain that asked for it. kernel_safe_sup starts erx_clock_sup
 before the domain service, which reads the server when it mints.
+
+The collector of `[time]` in this domain asks it for its record (record/1,
+erx_time_records); no facet forwards that question.
 """.
 -behaviour(gen_server).
 
--export([start_link/0]).
+-export([start_link/0, record/1]).
 -export([init/1, handle_call/3, handle_cast/2]).
 
 -doc "Starts the service, registered as erx_clock; erx_clock_sup runs it, in the system domain only.".
 -spec start_link() -> gen_server:start_ret().
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+-doc """
+The service's record, erx_clock_core's, waiting at most Wait milliseconds;
+exits as gen_server:call/3 does when the service is not running or does not
+answer in time.
+""".
+-spec record(pos_integer()) -> {ok, erx_clock_core:clock_record()}.
+record(Wait) ->
+    gen_server:call(?MODULE, record, Wait).
 
 -doc false.
 init([]) ->
@@ -75,6 +87,8 @@ handle_call({set, Source, W}, _From, Record) ->
     request({set, W}, Source, Record);
 handle_call({rtc, Source, Wall}, _From, Record) when is_integer(Wall), Wall >= 0 ->
     request({rtc, Wall}, Source, Record);
+handle_call(record, _From, Record) ->
+    {reply, {ok, Record}, Record};
 handle_call(_Request, _From, Record) ->
     {reply, {error, badarg}, Record}.
 

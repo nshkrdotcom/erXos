@@ -98,13 +98,13 @@ machine
   console "/soc/serial@7e215040"
   hostlink "/soc/serial@7e201600"
   platform "raspi4b"
-  root_memory 288362496
+  root_memory 327159808
   system_baseline 48234496
   system_share @share.system
   users_share @share.users
   system_principal @principal.system
-  max_domains 6
-  max_connections 15
+  max_domains 7
+  max_connections 16
   system_lane 4096
   system_queue 16384
   peer_held 4096
@@ -191,3 +191,50 @@ domain network
   restarts 5
   restart_period_s 600
   args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -erx_net interfaces {erx_genet,interfaces,[]} -erx_net runtime erx_net_erxos"
+# ntpd, the network time client (docs/design-time.md, "Configuration"): the board has no
+# real-time clock, so its wall clock starts at the build's date, and this development
+# image is the one exception to the design's decision 1, no default server: it enables
+# ntpd with pool.ntp.org, whose first sample the clock service steps to from the
+# approximate start. Principal ntpd holds one session of the common part's session
+# limits, its memory and its outer budget, on the users share, so root_memory, max_domains
+# and max_connections each grow by that session (its net connection). The template's
+# release is ntpd's (ReleaseFiles::RELEASE_SCRIPTS), its -eval starts erx_ntpd, and its
+# environment sets ERX_START_FLAGS, standing in for the start row's flags until the start
+# table carries them (TODO.md, "time, ntpd"). ntpd_net grants the network stack with the
+# small limits of two sockets' requests; ntpd_clock grants the clock interface's sample
+# operation alone, so ntpd measures and the clock service decides.
+principal ntpd
+  memory 38797312
+  grant @share.users
+  domains 1
+  names 1
+  default_limits @limits.native
+  ceiling_limits @limits.native
+session ntpd
+  limits @limits.session
+  runtime @artifact.emu
+  release @artifact.ntpd
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -erx_net_client grant {erx_net_client_erxos,grant,[]} -eval {ok,_}=application:ensure_all_started(erx_ntpd,permanent)"
+  env "ERX_START_FLAGS=pool.ntp.org"
+facet ntpd_net
+  name "net"
+  grantee @session.ntpd
+  service @service.net
+  operations none
+  max_request 64
+  in_flight 2
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 65536
+facet ntpd_clock
+  name "clock"
+  grantee @session.ntpd
+  service @service.clock
+  operations sample
+  max_request 256
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192
+start ntpd
+  enable YES

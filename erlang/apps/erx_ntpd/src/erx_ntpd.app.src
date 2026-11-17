@@ -1,0 +1,17 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% ntpd, the network time client (docs/design-time.md, "The client"): its pure
+%% core, erx_ntp_core, and erx_ntpd, the application and its one effect process.
+%% The ntpd session template's -eval starts it, permanent, so its end ends the
+%% session and the start row's keeper starts it again. The packet codec, the checks
+%% of one reply and the exchange are the erx library's, shared with root's ntpctl;
+%% the sockets are erx_net_client's.
+{application, erx_ntpd,
+ [{description, "erXos network time client"},
+  {vsn, "1"},
+  {modules, [erx_ntp_core, erx_ntpd]},
+  {registered, []},
+  {applications, [kernel, stdlib, erx, erx_net_client]},
+  {mod, {erx_ntpd, []}},
+  {env, []}]}.

@@ -7243,11 +7243,39 @@ to the corpus and follow rc
   kernel's device table takes as its real-time clock, and the Raspberry Pi 4 takes a DS3231 module. Name the
   Raspberry Pi 5's clock, or read wall time from the firmware
   ([design-platforms.md](docs/design-platforms.md)).
+* [Medium] time, ntpd (`erlang/apps/erx_ntpd`, [design-time.md](docs/design-time.md#the-client)): the client
+  runs as the design's schedule says, with these left out: (1) the start table carries no row `flags`
+  ([design-apps.md](docs/design-apps.md#start-flags)), so the Raspberry Pi 4 manifest's ntpd session template
+  sets `ERX_START_FLAGS` in its own environment, and the boot view's refusal of such a template waits for the row
+  field; when the start table's settings file carries `flags`, move the value to the row and add the refusal;
+  (2) `/proc/ntp`'s record is built (the schema's `ntp` kind, erx_ntp_records in ntpd's runtime, which
+  asks erx_ntpd:status/1), but nothing routes `[ntp]` to ntpd's session: the system domain's query worker
+  answers it in its own runtime, where no ntpd runs, so every attribute reads unsupported; the worker
+  needs a way to find ntpd's domain and its agent a bound that admits `[ntp]` (erx_inspect_worker route/2,
+  erx_inspect_agent owns/2), which no design names yet, and the start table's `app` record has no `domain` to
+  find it by; until then `ntpctl -s` says `/proc/ntp: unsupported`; (3) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
+  resolver call that answers TTLs lets it wait the shortest TTL instead; (4) the QEMU suites check held then
+  stepped (net_device, against the harness 300 s ahead of a clock the PL031 keeper set) but not the cases
+  restart, kiss and refusals of design-time.md's verification, nor a cold boot's first-sample step, which QEMU
+  virt's real-time clock prevents; (5) ntpd answers `/proc/ntp` only while it waits, so a read during a
+  resolution (up to 10 s), an exchange (2 s, a burst up to 8 s) or its call to the clock service (up to 10 s)
+  outlasts inspect_agent_wait and reads `[timeout]`; answer from a process that does not block on the network
+  or the facet; (6) `ntpctl` (erlang/apps/erx_shell/src/erx_cmd_ntpctl.erl): `-s`'s lines
+  name `/proc/ntp`'s attributes by hand rather than from the schema; `-erx_needs([inspect, net])` asks for `net`
+  on the forms that read only `/proc`; when every address fails, `ntpctl step HOST` gives no reason per address;
+  the name rule passes short IPv4 forms such as `1.2.3` to `inet:getaddrs/3`, which reads them as addresses;
+  (7) review findings left: the clock facet call is written in both erx_ntpd and erx_cmd_date; the
+  core is a one-action loop, not the events and `next_deadline/1` shape "Who does what" describes; the bound on
+  `denied` is both erx_ntp_core's `REMEMBERED_MAX` (64) and the schema's `net_addresses` list (32), so 33 to 64
+  denied addresses read `{error, invalid}` (generate one bound); `step_from` names every `set` `root`, which
+  holds only while root's template alone holds the clock's `set` (derive the kind from the grant row or name the
+  check); the net_device suite's ntpd rows (`NetDevice::NTPD`) copy raspi4b-development.txt's (derive them
+  through Manifest::Edit); erx_ntp_records and erx_time_records each map a missed answer to schema statuses
+  their own way (one helper).
 * [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
   [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
   through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:
-  the service's record is kept but not reported, so `/proc/time/status` shows every attribute but `state` as
-  `unsupported` (`erx_time_records`); a set's log line names the domain, not the grant's principal as the
+  a set's log line names the domain, not the grant's principal as the
   design says; in the system domain's own shell a set answers `eagain`, since that shell holds the service
   itself (`erx_cmd_date:request/2`, `local`); a session of a template without the row is checked for `eperm` on
   the host only, as the development manifest has no other session template. `date`'s `%N` pass runs inside the
@@ -7873,7 +7901,10 @@ to the corpus and follow rc
 * [Medium] network time, unauthenticated ([design-time.md](docs/design-time.md#security)): the NTP server
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
-  checks follow the clock. Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
+  checks follow the clock. Root's `ntpctl step` sets through `set`: the server it takes the time from, or anyone
+  on the path, sets any time, below the floor too when root names the server and past the floor from ntpd's
+  sample, and the set then holds it against ntpd for the boot (design-time.md, decision 7,
+  published). Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
 * [Low] stopgap, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case):
   the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks no right, so any
   task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the

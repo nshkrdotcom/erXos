@@ -17,7 +17,8 @@ applied/3 for the answer and the record.
 
 * A sample, ntpd's `{sample, W, Distance, Stratum, Server}`, takes the
   first row of the Steps table whose condition holds, and every row
-  stores it, its time and its source as the last sample.
+  stores it, its time, monotonic and wall, its source and the row it
+  took, its verdict, as the last sample.
 * A set, the operator's `{set, W}`, steps to W whatever the page's
   coldness, the floor or the distance, and sets `excess` to none, so a
   sample held before it cannot step on one more sample after it; the
@@ -45,7 +46,8 @@ offset beyond 128 ms, and `floor`, the floor the service started with.
 """.
 
 -export([build_floor/1, new/2, state/2, start/2, decide/4, applied/3]).
--export_type([sample/0, facet_request/0, request/0, source/0, clock_record/0, step/0, answer/0, floor/0, state/0]).
+-export_type([sample/0, facet_request/0, request/0, source/0, from/0, clock_record/0, step/0, answer/0, floor/0,
+              state/0, verdict/0]).
 
 -define(NS_PER_S, 1000000000).
 %% Offsets of 128 ms and less are held; offsets of 1000 s and more refused.
@@ -60,7 +62,12 @@ offset beyond 128 ms, and `floor`, the floor the service started with.
 -type request() :: facet_request() | {rtc, Wall :: non_neg_integer()}.
 %% The domain whose facet sent the request, from the facet, never the request.
 -type source() :: pos_integer().
+%% The kind of source of a sample or a step, from the operation that brought it (from/1):
+%% ntpd's sample from its server, the keeper's reading at boot, or root's set.
+-type from() :: {ntp, inet:ip4_address()} | rtc | root.
 -type sign() :: positive | negative.
+%% The row of the Steps table a sample took: a step, a hold, or a refusal.
+-type verdict() :: step | hold | floor | panic.
 %% The floor in nanoseconds since 1970: the build's date, or 0 where the build
 %% did not record it.
 -type floor() :: non_neg_integer().
@@ -68,14 +75,18 @@ offset beyond 128 ms, and `floor`, the floor the service started with.
 -type state() :: unset | boot | approximate | set.
 -type clock_record() :: #{floor := floor(), record_since := non_neg_integer(), excess := none | sign(),
                     sample_at := none | integer(), offset_ns := none | integer(),
+                    sample_wall_offset_ns := none | non_neg_integer(), sample_verdict := none | verdict(),
+                    sample_monotonic_ns := none | non_neg_integer(),
                     distance_ns := none | non_neg_integer(), stratum := none | 1..15,
-                    server := none | inet:ip4_address(), source := none | source(),
+                    server := none | inet:ip4_address(), source := none | source(), sample_from := none | from(),
                     step_at := none | integer(), step_ns := none | integer(), step_source := none | source(),
-                    step_error := none | erx_clock_nif:status(), steps := non_neg_integer(),
+                    step_from := none | from(), step_error := none | erx_clock_nif:status(), steps := non_neg_integer(),
                     refused := non_neg_integer()}.
 %% A step the service applies: the wall offset to store, its size from the page's
-%% offset, the wall time the clock reads once it is applied, and who asked for it.
--type step() :: #{offset := non_neg_integer(), step_ns := integer(), at := integer(), source := source()}.
+%% offset, the wall time the clock reads once it is applied, who asked for it and the
+%% kind of source that asked.
+-type step() :: #{offset := non_neg_integer(), step_ns := integer(), at := integer(), source := source(),
+                  from := from()}.
 -type answer() :: {ok, {stepped, integer()} | held | {refused, floor | panic | boot | set}}
                 | {error, erx_clock_nif:status()}.
 
@@ -95,8 +106,11 @@ nanoseconds, with floor Floor: nothing sampled or stepped yet.
 -spec new(non_neg_integer(), floor()) -> clock_record().
 new(Monotonic, Floor) ->
     #{floor => Floor, record_since => Monotonic div ?NS_PER_S, excess => none,
-      sample_at => none, offset_ns => none, distance_ns => none, stratum => none, server => none, source => none,
-      step_at => none, step_ns => none, step_source => none, step_error => none, steps => 0, refused => 0}.
+      sample_at => none, offset_ns => none, sample_wall_offset_ns => none, sample_verdict => none,
+      sample_monotonic_ns => none, distance_ns => none, stratum => none,
+      server => none, source => none,
+      sample_from => none, step_at => none, step_ns => none, step_source => none, step_from => none,
+      step_error => none, steps => 0, refused => 0}.
 
 -doc """
 The clock's state on Page with floor Floor: `unset` while nothing changed
@@ -128,25 +142,27 @@ arrived: an answer, or a step for the service to apply and give to applied/3.
 """.
 -spec decide(request(), source(), erx_clock_nif:page(), clock_record()) ->
           {answer, answer(), clock_record()} | {step, step(), clock_record()}.
-decide({set, W}, Source, Page, Record) ->
-    {step, step(W, Source, Page), Record#{excess := none}};
-decide({rtc, Wall}, Source, #{monotonic := M} = Page, Record = #{floor := Floor}) ->
+decide({set, W} = Request, Source, Page, Record) ->
+    {step, step(Request, W, Source, Page), Record#{excess := none}};
+decide({rtc, Wall} = Request, Source, #{monotonic := M} = Page, Record = #{floor := Floor}) ->
     case rtc(Wall, M, state(Page, Floor), Floor) of
-        {step, W} -> {step, step(W, Source, Page), Record};
+        {step, W} -> {step, step(Request, W, Source, Page), Record};
         {refuse, Reason} -> {answer, {ok, {refused, Reason}}, Record}
     end;
-decide({sample, W, Distance, Stratum, Server}, Source, #{offset := C, monotonic := M} = Page,
+decide({sample, W, Distance, Stratum, Server} = Request, Source, #{offset := C, monotonic := M} = Page,
        #{floor := Floor} = Record) ->
     D = W - C,
-    Sampled = Record#{sample_at := M + C, offset_ns := D, distance_ns := Distance, stratum := Stratum,
-                      server := Server, source := Source},
     %% Cold: nothing but the boot and the start at the floor has changed the page.
     Cold = state(Page, Floor) =/= set,
-    case row(M + W, Floor, Cold, D, maps:get(excess, Record)) of
+    Row = row(M + W, Floor, Cold, D, maps:get(excess, Record)),
+    Sampled = Record#{sample_at := M + C, sample_monotonic_ns := M, offset_ns := D, sample_wall_offset_ns := W,
+                      distance_ns := Distance, stratum := Stratum, server := Server, source := Source,
+                      sample_from := from(Request), sample_verdict := verdict(Row)},
+    case Row of
         {refuse, Reason} ->
             {answer, {ok, {refused, Reason}}, Sampled#{excess := none, refused := maps:get(refused, Record) + 1}};
         step ->
-            {step, step(W, Source, Page), Sampled#{excess := none}};
+            {step, step(Request, W, Source, Page), Sampled#{excess := none}};
         {hold, Excess} ->
             {answer, {ok, held}, Sampled#{excess := Excess}}
     end.
@@ -157,8 +173,9 @@ erx_clock_nif:set_offset/1 answered for it: an applied step is recorded and
 counted; a refused one is recorded as the last step error.
 """.
 -spec applied(ok | {error, erx_clock_nif:status()}, step(), clock_record()) -> {answer(), clock_record()}.
-applied(ok, #{step_ns := StepNs, at := At, source := Source}, #{steps := Steps} = Record) ->
-    {{ok, {stepped, StepNs}}, Record#{step_at := At, step_ns := StepNs, step_source := Source, steps := Steps + 1}};
+applied(ok, #{step_ns := StepNs, at := At, source := Source, from := From}, #{steps := Steps} = Record) ->
+    {{ok, {stepped, StepNs}}, Record#{step_at := At, step_ns := StepNs, step_source := Source, step_from := From,
+                                      steps := Steps + 1}};
 applied({error, Status}, _Step, Record) ->
     {{error, Status}, Record#{step_error := Status}}.
 
@@ -173,6 +190,11 @@ row(_Wall, _Floor, false, D, Excess) when abs(D) < ?PANIC_NS ->
         Sign -> {hold, Sign}
     end;
 row(_Wall, _Floor, false, _D, _Excess) -> {refuse, panic}.
+
+%% The verdict the record keeps for a row: the row's action, a refusal by its reason.
+verdict({refuse, Reason}) -> Reason;
+verdict(step) -> step;
+verdict({hold, _Excess}) -> hold.
 
 %% The wall offset that makes the clock read Wall, a real-time clock's reading at boot,
 %% at monotonic time M, on a clock in State with floor Floor. Only a clock with no time
@@ -191,6 +213,14 @@ rtc(_Wall, _M, State, _Floor) -> {refuse, State}.
 sign(D) when D > 0 -> positive;
 sign(_D) -> negative.
 
-%% A step to wall offset W from the page's, which reads M + W once it is applied.
-step(W, Source, #{offset := C, monotonic := M}) ->
-    #{offset => W, step_ns => W - C, at => M + W, source => Source}.
+%% A step for Request to wall offset W from the page's, which reads M + W once it is
+%% applied.
+step(Request, W, Source, #{offset := C, monotonic := M}) ->
+    #{offset => W, step_ns => W - C, at => M + W, source => Source, from => from(Request)}.
+
+%% The kind of source of Request, from its operation alone: a sample is ntpd's, from
+%% the server it names; a reading is the keeper's; a set is root's
+%% (docs/design-time.md, "What /proc shows").
+from({sample, _W, _Distance, _Stratum, Server}) -> {ntp, Server};
+from({rtc, _Wall}) -> rtc;
+from({set, _W}) -> root.

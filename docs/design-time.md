@@ -260,7 +260,7 @@ servers from DHCP.
 **A sample is the wall offset the server implies.** The client sends a
 request at monotonic time `m1`, from `os:perf_counter(nanosecond)`, and
 takes the reply at `m4`. It converts the reply's receive and transmit
-timestamps once, at decode, to integer nanoseconds since 1970 by RFC
+timestamps once, when it checks the reply, to integer nanoseconds since 1970 by RFC
 4330's era convention, `t2` and `t3`. Then
 
 ```text
@@ -351,7 +351,10 @@ The special cases this removes:
   deadline answered by `next_deadline/1` ([design.md](design.md#drivers-and-dma), "Deadlines in state"), and a
   thin effect process that reads its start flags, resolves names, opens
   sockets, sends, receives and calls the facet. The packet codec,
-  `erx_ntp_wire`, is pure and the only reader of NTP bytes.
+  `erx_ntp_wire`, is pure and the only reader of NTP bytes; it and the
+  checks of one reply, `erx_ntp_sample`, are modules of the `erx` library
+  application, which root's `ntpctl` calls too
+  ([Setting the clock from a server once](#setting-the-clock-from-a-server-once)).
 * **The clock service**, `erx_clock`, a system service of the system
   domain under its own supervisor, `erx_clock_sup`, is the setting side. For
   each sample it reads the page through `erx_clock_nif:read/0`, runs
@@ -504,8 +507,8 @@ takes the first row whose condition holds:
 | `128 ms < abs(D) < 1000 s`, otherwise | hold | `excess := sign(D)` |
 | `abs(D) >= 1000 s` | refuse `panic` | `excess := none` |
 
-Every row also stores the sample, its time and its source as the last
-sample. A step that the setter refuses stores the refusal as the last
+Every row also stores the sample, its time, wall and monotonic, its
+source and the row it took, its verdict, as the last sample. A step that the setter refuses stores the refusal as the last
 step error and answers it; a step it applies stores its time and size
 and counts it.
 
@@ -692,7 +695,10 @@ starts at the host's time; the Raspberry Pi 4 has none of its own.
 
 The list is an ordered list of at most 8 entries, each a host name (the
 resolver's rule for a search domain: labels of letters, digits and
-hyphens, 1 to 63 bytes each, 253 in all) or an IPv4 literal. A pool name
+hyphens, 1 to 63 bytes each, neither starting nor ending with a hyphen
+as RFC 1123 has it, 253 in all) or an IPv4 literal. The rule is
+`erx_ntp_exchange:servers/1`, which `ntpctl step` applies to its
+operands too, so no flag is taken for a server. A pool name
 resolves to several addresses, used in the order DNS gives them, which
 the pool randomizes. The list is the operator's alone: it is the app's
 start flags, and no manifest ships a default
@@ -721,9 +727,15 @@ deadline, and for the run, the addresses still usable:
   5905 defines it.
 * **No reply.** An exchange waits 2 s for its reply. A poll with no
   valid reply moves to the next address at the next deadline. When every
-  address of every name has failed once in a row, the client resolves the
-  names again, no sooner than the shortest TTL of the last answers, and
-  doubles the interval, up to 1024 s.
+  address of every name has failed once in a row, the client doubles the
+  interval, up to 1024 s, and resolves the names again after it. The
+  session's resolver (`inet:getaddrs/3`) answers no TTL, so the doubled
+  interval, at least 128 s, stands in for the shortest TTL of the last
+  answers; a resolver call that answers TTLs is in `TODO.md`. The run
+  keeps one interval, which moves with the address in use, and the
+  burst's 2 s spacing runs from the end of one exchange to the start of
+  the next. The client remembers the last 64 addresses it polled and
+  denied, so a pool that rotates its addresses cannot grow its state.
 * **Kiss-o'-death.** `DENY` or `RSTR` removes the address for the rest of
   the run. `RATE` doubles that address's interval, up to 1024 s. Any
   other code, `X` codes included, discards the reply. A kiss is believed
@@ -747,8 +759,9 @@ the network stack offers.
 `{error, Reason}`; it reads the first 48 bytes after one length check and
 ignores what follows. It decodes root delay as a signed 16.16 number and
 root dispersion as an unsigned one, so a root delay with the top bit set
-reads as negative rather than as 18 hours. `erx_ntp_core` then checks a
-reply for the outstanding exchange in this order, and drops it at the
+reads as negative rather than as 18 hours. `erx_ntp_sample:check/4`, which
+`erx_ntp_core` and `ntpctl` both call, then checks a reply for the
+outstanding exchange in this order, and drops it at the
 first check that fails, counting the reason:
 
 1. it came from the address and port the request went to; the socket is
@@ -767,10 +780,15 @@ if all of these hold as well:
 5. stratum is 1 to 15;
 6. receive and transmit timestamps are non-zero, convert to times from
    1970 to 2104, and `t3 >= t2`;
-7. the reference timestamp is not later than the transmit timestamp;
+7. the reference timestamp is not later than the transmit timestamp,
+   a zero reference timestamp meaning none;
 8. `delay >= 0`;
 9. the distance `(max(rootdelay, 0) + delay) div 2 + rootdisp` is below
-   `clock_distance_max_ns`, 1 s, RFC 5905's `MAXDIST`.
+   `clock_distance_max_ns`, 1 s, RFC 5905's `MAXDIST`;
+10. the wall offset `W` the timestamps imply is one the time page holds,
+    0 to `time_offset_max`, counted as check 6's drop: a server time
+    earlier than the client's uptime since 1970 implies a negative `W`,
+    which the clock facet would refuse as `badarg`.
 
 The distance clamps root delay at zero before adding the measured delay,
 so a negative root delay cancels neither the delay this client measured
@@ -837,14 +855,28 @@ servers` or `bad flags` in its log and its row's last reason at
 `/proc/apps`, and the start table's intensity leaves it down. Because no
 manifest ships a server, enabling ntpd without naming one does this.
 
+**The Raspberry Pi 4 development image** is the one exception to
+[decision 1](#decisions): the board has no real-time clock, its demo
+shows the time, and its manifest (`config/manifest/raspi4b-development.txt`)
+declares ntpd enabled with `pool.ntp.org`, so the board's wall clock is
+right within one burst of the network coming up. No other manifest names
+a server, and a release image ships none. Until the start table carries
+a row's `flags` ([design-apps.md](design-apps.md#start-flags)), the ntpd
+session template's own environment sets `ERX_START_FLAGS`, which is the
+same variable ntpd reads, so moving the value to the row changes the
+manifest and nothing in ntpd; that stand-in, and the boot view's refusal
+of a template that sets the variable, which it postpones, are recorded
+in `TODO.md`.
+
 ## What /proc shows
 
 `abi/inspection.txt` gains a kind `clock`, visible to every scope, at
-path `time`, so `cat /proc/time/status` reads it. Three attributes are
+path `time`, so `cat /proc/time/status` reads it. Five attributes are
 visible only to the whole-machine scope (`visible all`): `server`, the
 address the client samples, `source`, the id of the domain whose facet
-sent the sample, and `step_source`, the one whose facet sent the last
-step, all facts of another domain, so a scoped caller
+sent the sample, `step_source`, the one whose facet sent the last
+step, and `sample_from` and `step_from` below, which name the server,
+all facts of another domain, so a scoped caller
 reads the record without them. The inspector reads `state` from the page
 through `erx_clock_nif:read/0`, reported by `kernel`, whose object the
 page is; the clock service reports the rest. Each attribute names its
@@ -856,22 +888,66 @@ restart.
 | --- | --- | --- |
 | `state` | page, boot | `unset` while `seq` and the offset are zero, so wall time is uptime counted from 1970-01-01, which a running clock service leaves only on a build without a date; `boot` while `seq` is zero and the offset is not, the boot's real-time clock reading or the hosted backend's host clock; `approximate` while the offset is the floor, as [the approximate start](#the-approximate-start) leaves it, or `unset` or `boot` where the setter refused the start, so wall time is the build's date plus the uptime; `set` once anything else has changed the page this boot |
 | `record_since` | record | monotonic time of the service's start, in seconds |
-| `sample_at` | record | wall time of the last sample, or `none` |
+| `sample_at` | record | wall time of the last sample, or `unknown` |
 | `offset_ns` | record | the last sample's `D`, signed |
+| `sample_wall_offset_ns` | record | the last sample's `W`, the wall offset it gives, which `ntpctl step` sets ([Setting the clock from a server once](#setting-the-clock-from-a-server-once)) |
+| `sample_verdict` | record | the row of [Steps](#steps) the last sample took: `step`, `hold`, or its refusal, `floor` or `panic`; a step the setter then refused is `step`, with the refusal in `step_error` |
+| `sample_monotonic_ns` | record | monotonic time of the last sample, from the page read when it arrived, so its age is known however the clock steps after it |
 | `distance_ns` | record | its distance |
 | `stratum`, `server` | record | its server's stratum and address |
 | `source` | record | the domain whose facet sent it, from the facet, never the request |
-| `step_at`, `step_ns` | record | the last applied step's wall time and size, or `none` |
-| `step_source` | record | the domain whose facet asked for the last applied step, a sample's or a set's, from the facet; or `none` |
-| `step_error` | record | the setter's refusal of the last step it refused, `unsupported`, `limit` or `badarg`, or `none` |
+| `step_at`, `step_ns` | record | the last applied step's wall time and size, or `unknown` |
+| `step_source` | record | the domain whose facet asked for the last applied step, a sample's or a set's, from the facet; or `unknown` |
+| `sample_from`, `step_from` | record | the kind of source of the last sample and of the last applied step, below; or `unknown` |
+| `step_error` | record | the setter's refusal of the last step it refused, `unsupported`, `limit` or `badarg`, or `unknown` |
 | `steps`, `refused` | record | steps applied and samples refused, floor and panic, since `record_since` |
 
 After a restart of the service, `state` is still true, the record's
-attributes are `none` until the next sample, and the counts start from
+attributes are `unknown` until the next sample, and the counts start from
 zero at the new `record_since`, so no count claims more history than the
-service has. The client's own state, its names, addresses, delays and
-kisses, is in its log lines, which the log service escapes; a kiss code
-shown there is one of the known atoms or its four bytes in hex.
+service has.
+
+**Who set the clock.** `/proc/time` is the one place that answers it,
+whatever the source: two attributes, `sample_from` and `step_from`, name
+the kind of source of the last sample and of the last applied step, as
+`ntp ADDRESS` for ntpd's sample from that server, `rtc` for the
+wall-clock keeper's reading at boot and `root` for an operator's set
+(`date` or `ntpctl step`). The kind follows from the operation the facet
+admitted and from the grant, never from a request's content: `sample` is
+ntpd's, `set` is root's, and the keeper's reading reaches the service
+inside the system domain. A later source, PTP, GPS or a DS3231 module
+read by another domain, adds an operation of its own to
+`abi/services/clock.txt`, granted by a facet row of its own, and so a
+kind of its own here; no request carries a kind field. Each such source
+keeps its own state at a node of its own beside `/proc/time`, as ntpd
+does at `/proc/ntp`.
+
+A value the record does not hold yet is `unknown`, which `/proc` writes
+as `[unknown]`: the inspection schema has no `none` value, and an
+unknown attribute is the schema's own way to say that nothing is
+recorded.
+
+**`/proc/ntp`** is ntpd's own state, a kind `ntp` at path `ntp`, visible
+to the whole-machine scope only, since it is another domain's, and
+reported by ntpd's session from `erx_ntp_core:status/1`:
+
+| Attribute | Value |
+| --- | --- |
+| `servers` | the names of the start flags, as the session read them |
+| `addresses` | the addresses in use, the current first; `denied`, the ones `DENY` or `RSTR` removed |
+| `last` | the address that last answered and how: `sample`, a drop reason of [Checks on a reply](#checks-on-a-reply), `deny`, `rate`, `other` for any other kiss, or `no_reply` |
+| `interval_s`, `resolve_wait_s` | the poll interval and the resolution backoff in effect |
+| `samples`, `dropped`, `kisses`, `silent` | replies that gave a sample, replies dropped, kisses, and exchanges with no reply, since the session started |
+
+The counts and `last` start empty with each session, `unknown` before
+the first exchange, and a node read while no ntpd session runs answers
+`unavailable`, so nothing claims more history than the session has. A
+read while ntpd is resolving, exchanging or waiting for the clock
+service's answer waits for its next wait and can time out
+(`TODO.md`). A
+kiss code is shown as one of the known atoms, never as the server's
+bytes. ntpd offers no control file; `ntpctl -s` writes this record
+([Decisions](#decisions), 8).
 
 ## Setting the clock by hand
 
@@ -1059,6 +1135,160 @@ command raise.
 | the clock service ended, or no answer came within 10 s | `{error, failed}`, `eio`'s text; status 1; the set may or may not have been applied, which a reading `date` or `/proc/time/status` shows |
 | standard output cannot be written | the shell's write failure ends the command with its reason as the status, as for every command |
 
+## Setting the clock from a server once
+
+`ntpctl` is root's command for network time beside ntpd: it steps the
+clock once, through the same `set` that `date` sends, and shows ntpd's
+own record. It adds no facet row, template, service or operation. It is
+an Erlang command of the command shell, `erx_cmd_ntpctl`, declared
+`-erx_needs([inspect, net])`. Its name and its `-s` form are those of
+OpenBSD's ntpctl(8), the control program of OpenBSD's ntpd
+(`usr.sbin/ntpd/ntpctl.8`, openbsd/src `master` at
+`09db4a01d52cabae9f4ffbc42eabe9378f87b1b6`, SHA-256
+`9ca4faffad6069925142fba92d0b4849e1f143dfe15acc1c24862d5b23bc50f5`);
+`step` is erXos's own, since OpenBSD's ntpctl sets nothing:
+
+```text
+ntpctl step [server ...]
+ntpctl -s status | peers
+```
+
+The arguments choose the source of a step, and nothing else does
+([Decisions](#decisions), 8):
+
+* **`ntpctl step server ...`** asks the servers named and needs no ntpd.
+  It takes one to 8 operands by ntpd's server-list rule
+  ([Server list](#server-list)), `erx_ntp_exchange:servers/1`; anything
+  else is a usage error. Each is resolved as ntpd resolves its names,
+  by `erx_ntp_exchange:addresses/1`: an IPv4 literal is its address, and
+  a name gives the first four addresses the session's resolver answers,
+  in DNS order. A name with none writes `ntpctl: NAME: no address` and
+  the command goes on; no address at all writes `ntpctl: no address to
+  ask`, status 1. The addresses are asked in order, one SNTPv4 exchange
+  each over a socket of its own, by `erx_ntp_exchange:ask/1`, the
+  exchange ntpd makes: a random port, a 64-bit nonce from
+  `erx_bytes:entropy/1`, 2 s for the reply, and checks 2 to 9 of
+  [Checks on a reply](#checks-on-a-reply) by the same code as ntpd's. A
+  datagram that does not decode or fails checks 2 or 3 is not this
+  exchange's answer: it is dropped and the wait goes on to the same
+  deadline, so a forged datagram cannot cut the exchange short. The
+  first address whose reply passes gives the sample's `W`
+  ([The construction](#the-construction)); a kiss, a dropped reply, no
+  reply in time or a socket that cannot be opened moves to the next
+  address. When none gives one, the command writes `ntpctl: no server
+  gave a sample`, status 1, and sets nothing.
+* **`ntpctl step`** takes ntpd's last sample from the clock service's
+  record at `/proc/time` ([What /proc shows](#what-proc-shows)): its
+  `sample_wall_offset_ns`, the sample's `W`, `sample_from`, which must
+  be `ntp ADDRESS`, `server`, the server that gave it, `sample_verdict`,
+  what the clock service did with it, and `sample_monotonic_ns`, when it
+  came, all from one read of the record. A sample stays true after a step
+  ([The construction](#the-construction)), so setting its `W` sets the
+  time that server gave, less the drift of the clock since. ntpd must be
+  running, as its start-table row says at `/proc/apps/ntpd`; when it is
+  not, or when the record holds no sample of ntpd's, the command writes
+  `ntpctl: ntpd is not running` or `ntpctl: ntpd has no sample`, status
+  1, and sets nothing. A record it cannot read, or an attribute it
+  cannot see or that holds no value, writes its path and that status,
+  as `ntpctl: /proc/time: unavailable` or `ntpctl: /proc/apps/ntpd:
+  state not visible`, status 1, and never claims either. The
+  sample is the last one ntpd sent, and the command applies it whether
+  the clock service stepped to it, held it, or refused it as `panic`: a
+  sample 1000 s or more from a clock set this boot is still the time
+  that server gave, and stepping to it is root's explicit fix, as a set
+  is. A sample refused as `floor`, a time before the build's date, it
+  does not apply: it writes `ntpctl: ntpd's sample of 192.0.2.7 is
+  before the build date (refused as floor); nothing set`, status 1, so
+  a step from ntpd's sample stays within the floor every sample meets.
+  The command only reads `/proc`: it sends ntpd nothing, and ntpd gains
+  no channel and no authority.
+* **Setting.** Either way the command sends the clock facet `{set, W}`,
+  as `date` does, and on `{ok, {stepped, StepNs}}` writes to standard
+  output the step, in seconds with its sign and three decimals, cut
+  toward zero, and what gave it; for ntpd's sample also the clock
+  service's verdict, `accepted` for a step, `held` or `refused as
+  panic`, and the sample's age in whole seconds, from
+  `sample_monotonic_ns` and the monotonic clock the command reads:
+
+  ```text
+  ntpctl: stepped +1234.567 s from ntpd's sample of 192.0.2.7 (refused as panic, 12 s old)
+  ntpctl: stepped -0.004 s from 192.0.2.10
+  ```
+
+  Every set is a step: erXos has no slew ([Decisions](#decisions), 3). A
+  refusal of the facet writes `ntpctl: clock_settime: ` and its text,
+  with `date`'s texts and status 1 ([Failure paths](#failure-paths)),
+  and a session without the grant refuses as `date` does, with `eperm`.
+* **`-s status`** and **`-s peers`** write ntpd's own record,
+  `/proc/ntp` ([What /proc shows](#what-proc-shows)), with erXos's
+  attributes rather than an imitation of OpenBSD's columns, which name
+  values erXos's ntpd does not keep. `status` writes the servers, the
+  last answer, the poll interval and resolution backoff, and the counts:
+
+  ```text
+  servers pool.ntp.org
+  last 192.0.2.7 sample
+  interval 64 s, resolve wait 15 s
+  3 samples, 1 dropped, 0 kisses, 2 silent
+  ```
+
+  `peers` writes one line for each address in use, the current one
+  marked `current`, then one for each denied address, marked `denied`. A
+  value the record does not hold is written as `/proc` writes its
+  status, such as `[unknown]`. When no attribute holds a value the
+  command writes why, status 1: `ntpctl: ntpd is not running` when each
+  answers `unavailable`, and otherwise `ntpctl: /proc/ntp: ` and the
+  status, as `ntpctl: /proc/ntp: unsupported` while nothing routes
+  `/proc/ntp` to ntpd's session (`TODO.md`). OpenBSD's other keywords,
+  `all` and `Sensors`, and its abbreviations are usage errors.
+
+Failures are written to standard error after `ntpctl: `. Every name and
+address written passes the field escape (`erx_text:escape_field/1`).
+
+The decisions are pure: `erx_cmd_ntpctl:parse/1` takes the arguments to
+a request or `{error, usage}`; `ntpd_sample/2` takes the answers of
+`/proc/apps/ntpd` and `/proc/time` to the sample or the line saying why
+there is none; `stepped/2` gives a step's line and `show/2` the lines of
+`-s`; `erx_ntp_wire` encodes the request and decodes a reply; and
+`erx_ntp_sample:check/4` takes a decoded reply, the nonce, `m1` and `m4`
+to a sample, a kiss or the check that dropped it. `run/2` reads the
+inspector, resolves, asks and sets. `erx_ntp_exchange`, `erx_ntp_wire`
+and `erx_ntp_sample` are modules of the `erx` library application,
+which every runtime carries, so ntpd and the command share one
+server-list rule, one resolution and one exchange rather than copies.
+
+**What it changes** is what a set changes
+([What it changes](#what-it-changes)): the page holds `W` at once, the
+boot is no longer cold, and the clock service records and logs a set
+from root's domain, so a later ntpd sample meets the thresholds.
+
+**Security.** The command decodes NTP bytes in root's session, as `host`
+decodes DNS replies there; the decoder is total and bounded, and a
+failure ends only the command. A reply is unauthenticated: for `ntpctl
+step server`, the server root names, or anyone on the path to it,
+chooses the time the command sets, with no floor and no threshold, as
+on FreeBSD, where ntpdate run as root steps the clock to whatever its
+selected server says; for `ntpctl step`, the time of the sample root
+applies was chosen by ntpd's server, or anyone on the path to it, or by
+ntpd itself, whose session sends the samples, past the thresholds the
+clock service held that sample to, but never below the floor: a sample
+it refused as `panic` is still applied, one it refused as `floor` is
+not. The line names the server, the size of the step, the service's
+verdict on the sample and its age, so root sees a refused or stale
+sample in the line that applied it. An off-path host cannot, since it must
+guess the nonce and the random port. That is the residual of
+[Security](#security), wider by the thresholds a sample meets and a set
+does not, and for `ntpctl step server` by the floor as well, and it is
+open only while root runs the command. Since a set ends the cold start, a forged time also outlasts
+the command: a later ntpd sample 1000 s or more from it is refused
+`panic` until root sets the clock again or the machine reboots. ntpctl
+sets through `set`, and this wider residual is published
+([Decisions](#decisions), 7).
+
+No `ntpctl step` runs at boot, as FreeBSD's `ntpdate_enable` would run
+ntpdate: the boot-time path is ntpd's first sample
+([Decisions](#decisions), 6).
+
 ## Concurrency and failure
 
 * **One writer.** Only `erx_clock` calls the NIF, one sample at a time
@@ -1094,7 +1324,9 @@ command raise.
 
 * **The parser runs in the app.** NTP bytes are decoded only by
   `erx_ntp_wire` in the ntpd session, which holds `net`, `clock` and
-  `log`. A fault there ends that session. The system domain decodes a
+  `log`, and in root's session while root runs `ntpctl step`
+  ([Setting the clock from a server once](#setting-the-clock-from-a-server-once)).
+  A fault there ends that session, or the command. The system domain decodes a
   five-element tuple of bounded integers and an address, or a `set` of
   one bounded integer, through
   `erx_clock_facet:decode/1`, at the funnel's limits.
@@ -1103,7 +1335,7 @@ command raise.
   compromised ntpd, nor a bug of the system domain, can publish a wall
   time outside `[0, 2^63)` (T-R7).
 * **Root's `set` is not filtered.** A set skips the floor and both
-  thresholds, as an operator's `date` does on FreeBSD, and only the
+  thresholds, as an operator's `date` and ntpdate do on FreeBSD, and only the
   setter's range bounds it (T-R7). Only rows that grant `set` admit it,
   and the manifest gives that operation to root's template alone, so a
   compromised ntpd still sends only samples
@@ -1206,6 +1438,10 @@ that proves it ran.
 | `date` operands | every even count of 2 to 12 digits, with and without `.SS`, gives its named time from a fixed current time; each field at its bound passes and one past it is refused; a non-digit at each position, a second dot, a one- or three-digit `.SS`, an empty operand, every odd count of 1 to 13 digits and 14 digits are refused; `yy` 68 and 69 fall either side of the pivot; month and day `00`, `0229` and `0230` in a leap and a common year, and second 60 and 61 normalize as `mktime(3)` does; `+format` before and after the operand, `-j` and `-u`, and every flag not offered | a pivot of 70 makes `69` 2069; dropping the month bound accepts `13` |
 | `date` format | each conversion of [The command](#the-command) on fixed times (a leap day, a Sunday, midnight and noon, a year before 2000), each padding flag, an unknown conversion and a `%` at the end | `%e` padded with `0` fails the single-digit day |
 | `date` set | a set answers `{ok, {stepped, _}}` and writes the named time; each error answer of [Failure paths](#failure-paths) gives its text and status 1; a context without `clock` refuses a set and still reads and runs `-j` | a run that looks up the grant before it parses refuses `-j` without one |
+| `ntpctl` forms | `step` alone, `step` with one and with eight servers, `-s status` and `-s peers` parse; nine servers, an empty one, a 254-byte one, one with a space or an escape, `-s all`, `-s Sensors`, an abbreviation and a bare server are refused | accepting a ninth operand passes the nine-server case |
+| `ntpctl step`'s sources | ntpd's sample is `/proc/time`'s `sample_wall_offset_ns` and `server` while `/proc/apps/ntpd` is running; a sample stepped to, held or refused as `panic` is applied and one refused as `floor` is not; a row not running, no row, a record with no sample, one that cannot be read and a verdict or time with no value each give their line and set nothing; each step line names its source, and ntpd's its verdict and age | dropping the running check steps from a stopped ntpd's sample; dropping the floor clause applies the floor sample |
+| `ntpctl -s` | `status` and `peers` write `/proc/ntp`'s values, an unknown one as `[unknown]`; a node whose every attribute is `unsupported`, `unavailable` or timed out writes that plainly, status 1 | a formatter that writes a status as a value prints `unsupported` as ntpd's state |
+| `ntpctl` exchange | `erx_ntp_exchange:classify/4` passes over a datagram that does not decode, answers another nonce or another version, and gives `erx_ntp_sample:check/4`'s sample, drop or kiss for its own answer, as for ntpd | removing the nonce comparison accepts the foreign-nonce reply |
 
 The setter's range has a test of its own on Fiasco, in the native
 guest's time case (`test/guest/native_space/guest.c`): offsets of 0 and
@@ -1274,6 +1510,9 @@ kiss code. The guest's test manifest enables ntpd with
 * **Held and stepped.** The peer moves 500 ms ahead: the first sample is
   held, the next stepped. *Seeded failure:* the decision without the
   two-sample rule steps on the first.
+* **ntpctl.** After ntpd's step, root's `ntpctl step` steps from ntpd's
+  sample of the peer and says so; the peer then answers 2030, `ntpctl
+  step 10.0.2.100` steps from it, and `date` reads 2030 (`net_device`).
 * **Kiss.** The peer answers `RATE`, then `DENY`: the next request comes
   one doubled interval later, then none. *Seeded failure:* a kiss check
   after check 4, with the peer's kiss carrying LI 3, ignores both.
@@ -1349,7 +1588,10 @@ These were open and are settled as stated here:
    RFC 8633 section 3.6 sends vendors to a zone of the NTP Pool of their
    own. erXos has none, so the manifests ship no server, and enabling
    ntpd includes naming one. Network time is off by default either way.
-   An erXos vendor zone, when one exists, is the default to ship.
+   An erXos vendor zone, when one exists, is the default to ship. The
+   Raspberry Pi 4 development image, a demo with no real-time clock, is
+   the one exception: it enables ntpd with `pool.ntp.org`
+   ([Configuration](#configuration)); a release image ships no server.
 2. **The operator's servers are `ntpd_flags`**, a bounded start-row
    field delivered as opaque data ([Configuration](#configuration)),
    rather than a file in the ntpd user's home, which would need a way for
@@ -1381,6 +1623,47 @@ These were open and are settled as stated here:
    tree, if it comes, takes `cold` alone, or becomes a `clock` operation
    the same way.
 
+6. **The boot-time path is ntpd's first sample**, not a boot-time
+   ntpdate. FreeBSD runs ntpdate once at boot when `/etc/rc.conf` sets
+   `ntpdate_enable="YES"` (`libexec/rc/rc.d/ntpdate`), but a start row
+   is not one-shot: its keeper starts a session that ends again
+   ([design-apps.md](design-apps.md#keeping-a-session)). ntpd's session
+   stays up, and its first sample, sent as `sample`, meets
+   [Steps](#steps): free from a cold or approximate start, never below
+   the floor. A network that is not up when the session starts needs no
+   ordering: the resolution or the exchange fails and the
+   [schedule](#schedule) asks again.
+7. **`ntpctl step` keeps `set`**, as FreeBSD's ntpdate run as root steps
+   to whatever its server says. A forged or wrong reply to `ntpctl step
+   server` can move the clock below the floor and, since the boot is then no longer cold,
+   hold it against ntpd for the rest of the boot; that wider residual is
+   published ([Security](#security); `TODO.md`), and root's `date`
+   corrects it.
+8. **One command for network time, its source chosen by its
+   arguments.** Root's manual fixes are `date` and `ntpctl step`. Named
+   servers are asked directly, and no server named takes ntpd's last
+   sample; neither form falls back to the other. A fallback would set a
+   time from a source root did not choose, a silent change of meaning
+   the command's line could only confess after the fact; with the source
+   explicit, the line states what root asked for, and a source with
+   nothing to give fails without changing the clock. `ntpctl step` reads
+   ntpd's sample from the record the clock service already keeps
+   (`sample_wall_offset_ns`, [What /proc shows](#what-proc-shows)) and sets
+   through root's own `set`, so ntpd offers no control file and gains
+   no channel or authority, and boot-time sync stays its first sample.
+   It applies a sample the service held or refused as `panic`, which is
+   the operator's fix for a clock set wrong this boot, but not one it
+   refused as `floor`: ntpd's sample never sets a time before the
+   build's date, by the service or by root's command, and only `date`
+   or a server root names directly can. Its line names the service's
+   verdict and the sample's age, which the record keeps
+   (`sample_verdict`, `sample_monotonic_ns`), so a refused or stale
+   sample is never applied unseen.
+   The command is ntpctl, the control program of an ntpd, as OpenBSD's
+   is, since ntpd is what erXos runs, and one command instead of a
+   separate ntpdate keeps one exchange for both ways of setting. ntpd's
+   state is read at `/proc/ntp`, which `ntpctl -s` writes.
+
 ## Open decisions
 
 1. **Recovering a wrong clock without a reboot.** After the clock has
@@ -1392,7 +1675,8 @@ These were open and are settled as stated here:
    be that command, since an automatic restart takes the same path.
    Recommendation: not now; a reboot is the recovery that already exists,
    and the command can come with the first consumer that cannot reboot.
-   `date` with the right time already recovers the clock without a reboot
+   `date` with the right time, or `ntpctl step` with a server's or with
+   ntpd's last sample, already recovers the clock without a reboot
    ([What it changes](#what-it-changes)); what stays open is handing the
    next correction back to an unrestricted sample.
 2. **The approximate start in a release build.** A release runs
@@ -1402,7 +1686,6 @@ These were open and are settled as stated here:
    validation refuse TLS while `state` is `approximate`, so a release
    needs `ntpd` or a real-time clock for HTTPS; or drop it. It is the
    release's decision, recorded in `TODO.md`.
-
 ## References
 
 * erXos's designs, linked where used: design-kernel.md ("Time"),

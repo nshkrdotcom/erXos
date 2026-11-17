@@ -1309,7 +1309,12 @@ another domain.
   floor date at a cold start and then walks it by up to 1000 s every two
   polls; the step thresholds filter single corrections and bound nothing
   over time, so certificate validity and file and log times follow the
-  server. Network Time Security is the remedy
+  server. Root's `ntpctl step` sets the clock through `set`, so the
+  server it takes the time from, or anyone on the path to it, sets any time, below the floor too when
+  root names the server and past the floor from ntpd's last sample, which
+  then holds against ntpd for the boot
+  ([design-time.md](design-time.md#setting-the-clock-from-a-server-once)).
+  Network Time Security is the remedy
   ([design-time.md](design-time.md#security)).
 
 ## Signature experiences
@@ -1727,7 +1732,7 @@ not offered, since a socket acts for its grant's domain alone
 | The local start table, `/etc/start.conf`, in rc.conf(5)'s assignment syntax: the literal subset of [The file's syntax](design-apps.md#the-start-table), nothing executed | 1 | [design-apps.md](design-apps.md#the-start-table) | `erx_start_conf:read/1` and the settings judgement, `erx_start_settings:judge/2`, bounded and fuzzed, which skip and report each line that is a problem, at every read |
 | App packages: a header with the packed declaration, the image's root hash, signer and signature, then an EROFS image and its dm-verity tree (`abi/formats/package.txt`) | 1, and the `ERX_ABI_VERSION` and architecture the package was built for | [design-packaging.md](design-packaging.md#the-package) | in the system domain, `erx_pkg_header:check_file/2`, the generated reader, bounded and fuzzed, then the signature or the manifest's hash of the header; the image by the reading session's own EROFS reader, the app's or a person's that mounted it, on blocks that passed the hash tree |
 | App declarations, `app.txt`, in the manifest source's syntax | 1 | [design-packaging.md](design-packaging.md#the-declaration) | the packer's parser on the host, bounded and fuzzed; the machine reads only the packed form |
-| NTP packets: SNTPv4 requests and replies | version 4 | [design-time.md](design-time.md#checks-on-a-reply) | `erx_ntp_wire` in the ntpd session, bounded and fuzzed, then the client core's checks on a reply |
+| NTP packets: SNTPv4 requests and replies | version 4 | [design-time.md](design-time.md#checks-on-a-reply) | `erx_ntp_wire` in the ntpd session, and in root's session while root runs `ntpctl step`, bounded and fuzzed, then `erx_ntp_sample`'s checks on a reply |
 | The vault's files: a principal's keys and credential slots, and the machine's file | 1 | [design-system.md](design-system.md#the-vault) | the vault's file decoder, bounded and fuzzed, then the slots' authenticated encryption |
 | TPM 2.0 responses | the TPM 2.0 library specification's | [design-system.md](design-system.md#the-vault) | the vault's TPM client's response decoder, bounded and fuzzed, then the session's HMAC |
 | The boot-selection record: the firmware's `autoboot.txt` on the Raspberry Pi, the same file read by the harness on QEMU; with the firmware's one-shot trial request, two states, `normal(C)` and `trial(S)` | the firmware's | [design-storage.md](design-storage.md#system-updates) | the slot writer, which rewrites it only from one of its two encodings, one per committed slot |

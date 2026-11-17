@@ -20,7 +20,7 @@ class ErxInspectorTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   # The applications the suites exercise, compiled whole (ErlangBuild), and the suites.
   APPLICATIONS = %w[erx erx_shell].freeze
-  TESTS = %w[erx_kernel_records erx_inspector erx_app_records erx_time_records erx_inspect_agent
+  TESTS = %w[erx_kernel_records erx_inspector erx_app_records erx_time_records erx_ntp_records erx_inspect_agent
              erx_inspect_worker erx_inspect_facet].map { |name| "test/erlang/#{name}_tests.erl" }.freeze
   ERX = 'erlang/apps/erx'
 
@@ -137,6 +137,10 @@ class ErxInspectorTest < Minitest::Test
 
   def test_clock_record_cases_pass_under_eunit
     eunit('erx_time_records_tests')
+  end
+
+  def test_ntp_record_cases_pass_under_eunit
+    eunit('erx_ntp_records_tests')
   end
 
   def test_runtime_agent_cases_pass_under_eunit

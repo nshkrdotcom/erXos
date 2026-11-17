@@ -51,17 +51,23 @@ row_case(Cold, D, Excess) ->
     Record = record(Excess),
     {Result, Left} = expected(Cold, D, Excess),
     Decision = erx_clock_core:decide(sample(W), ?SOURCE, page(Cold), Record),
-    Sampled = #{sample_at => ?M + ?C, offset_ns => D, distance_ns => 20 * ?MS, stratum => 2,
-                server => {192, 0, 2, 1}, source => ?SOURCE, excess => Left},
+    Sampled = #{sample_at => ?M + ?C, offset_ns => D, sample_wall_offset_ns => W, distance_ns => 20 * ?MS, stratum => 2,
+                server => {192, 0, 2, 1}, source => ?SOURCE, sample_from => {ntp, {192, 0, 2, 1}}, excess => Left,
+                sample_verdict => verdict(Result), sample_monotonic_ns => ?M},
     case {Result, Decision} of
         {step, {step, Step, Record1}} ->
-            ?assertEqual(#{offset => W, step_ns => D, at => ?M + W, source => ?SOURCE}, Step),
+            ?assertEqual(#{offset => W, step_ns => D, at => ?M + W, source => ?SOURCE, from => {ntp, {192, 0, 2, 1}}}, Step),
             ?assertEqual(maps:merge(Record, Sampled), Record1);
         {held, {answer, {ok, held}, Record1}} ->
             ?assertEqual(maps:merge(Record, Sampled), Record1);
         {{refused, panic}, {answer, {ok, {refused, panic}}, Record1}} ->
             ?assertEqual(maps:merge(Record, Sampled#{refused => 1}), Record1)
     end.
+
+%% The Steps row a sample took, as the record keeps it.
+verdict(step) -> step;
+verdict(held) -> hold;
+verdict({refused, Reason}) -> Reason.
 
 %% A sample before the floor is refused, cold or not and whatever its offset, and a
 %% sample at the floor is not.
@@ -70,7 +76,8 @@ the_floor_test() ->
          Page = #{offset => 0, cold => Cold, monotonic => ?M},
          {answer, {ok, {refused, floor}}, Record1} =
              erx_clock_core:decide(sample(?FLOOR - ?M - 1), ?SOURCE, Page, record(Excess)),
-         ?assertMatch(#{excess := none, refused := 1, source := ?SOURCE, offset_ns := ?FLOOR - ?M - 1}, Record1)
+         ?assertMatch(#{excess := none, refused := 1, source := ?SOURCE, offset_ns := ?FLOOR - ?M - 1,
+                            sample_verdict := floor, sample_monotonic_ns := ?M}, Record1)
      end || Cold <- [true, false], Excess <- [none, positive, negative]],
     ?assertMatch({step, #{offset := ?FLOOR - ?M}, _},
                  erx_clock_core:decide(sample(?FLOOR - ?M), ?SOURCE, #{offset => 0, cold => true, monotonic => ?M},
@@ -88,7 +95,7 @@ the_set_test_() ->
     [fun() ->
              Record = (record(Excess))#{offset_ns := 3, source := ?OTHER},
              {step, Step, Record1} = erx_clock_core:decide({set, W}, ?SOURCE, page(Cold), Record),
-             ?assertEqual(#{offset => W, step_ns => W - ?C, at => ?M + W, source => ?SOURCE}, Step),
+             ?assertEqual(#{offset => W, step_ns => W - ?C, at => ?M + W, source => ?SOURCE, from => root}, Step),
              ?assertEqual(Record#{excess := none}, Record1)
      end || Cold <- [true, false], Excess <- [none, positive, negative],
             W <- [0, ?FLOOR - ?M - 1, ?C, ?C + 1, ?C + 2000 * ?S, 4611686018427387903]].
@@ -107,7 +114,7 @@ applied_test() ->
     {step, Step, Record1} = erx_clock_core:decide({set, ?C + 60 * ?S}, ?SOURCE, page(true), Record),
     {Answer, Applied} = erx_clock_core:applied(ok, Step, Record1),
     ?assertEqual({ok, {stepped, 60 * ?S}}, Answer),
-    ?assertEqual(Record1#{step_at := ?M + ?C + 60 * ?S, step_ns := 60 * ?S, step_source := ?SOURCE, steps := 1},
+    ?assertEqual(Record1#{step_at := ?M + ?C + 60 * ?S, step_ns := 60 * ?S, step_source := ?SOURCE, step_from := root, steps := 1},
                  Applied),
     {_, Twice} = erx_clock_core:applied(ok, Step, Applied),
     ?assertMatch(#{steps := 2}, Twice),
@@ -116,9 +123,9 @@ applied_test() ->
 
 %% A new record has nothing sampled or stepped and counts from its start, in seconds.
 new_test() ->
-    ?assertEqual(#{floor => ?FLOOR, record_since => 5, excess => none, sample_at => none, offset_ns => none, distance_ns => none,
-                   stratum => none, server => none, source => none, step_at => none, step_ns => none,
-                   step_source => none, step_error => none, steps => 0, refused => 0},
+    ?assertEqual(#{floor => ?FLOOR, record_since => 5, excess => none, sample_at => none, offset_ns => none,
+                   sample_wall_offset_ns => none, sample_verdict => none, sample_monotonic_ns => none, distance_ns => none, stratum => none, server => none, source => none, sample_from => none, step_at => none, step_ns => none,
+                   step_source => none, step_from => none, step_error => none, steps => 0, refused => 0},
                  erx_clock_core:new(?M + 1, ?FLOOR)).
 
 %% The floor is the build facts' date in nanoseconds, and 0 where the build did not
@@ -201,3 +208,19 @@ the_real_time_clock_test() ->
                  erx_clock_core:decide({rtc, Wall}, ?SOURCE, page(true), Record)),
     ?assertEqual({answer, {ok, {refused, set}}, Record},
                  erx_clock_core:decide({rtc, Wall}, ?SOURCE, page(false), Record)).
+
+%% Who set the clock: the kind of source follows from the operation decide/4 took, ntp
+%% with its server for a sample, root for a set and rtc for the keeper's reading, for
+%% the last sample and for the step it applied (docs/design-time.md, "What /proc shows").
+sources_follow_the_operation_test() ->
+    Ntp = {ntp, {192, 0, 2, 1}},
+    {step, FromSample, Sampled} = erx_clock_core:decide(sample(?C + 2000 * ?S), ?SOURCE, page(true), record(none)),
+    ?assertMatch(#{sample_from := Ntp, step_from := none}, Sampled),
+    ?assertMatch({_, #{sample_from := Ntp, step_from := Ntp}}, erx_clock_core:applied(ok, FromSample, Sampled)),
+    {step, FromSet, Set} = erx_clock_core:decide({set, ?C}, ?SOURCE, page(false), Sampled),
+    ?assertMatch({_, #{sample_from := Ntp, step_from := root}}, erx_clock_core:applied(ok, FromSet, Set)),
+    Unset = #{offset => 0, cold => true, monotonic => ?M},
+    {step, FromRtc, Read} = erx_clock_core:decide({rtc, ?C}, ?SOURCE, Unset, record(none)),
+    ?assertMatch({_, #{sample_from := none, step_from := rtc}}, erx_clock_core:applied(ok, FromRtc, Read)),
+    %% A refused step leaves the last applied step's source.
+    ?assertMatch({_, #{step_from := none}}, erx_clock_core:applied({error, limit}, FromRtc, Read)).

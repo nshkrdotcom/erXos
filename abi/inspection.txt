@@ -62,11 +62,24 @@ inspection 1
   # state, and the clock service's record of its samples and steps.
   atoms clock_state unset boot approximate set
   atoms clock_refusal unsupported limit badarg
+  # The row of the Steps table the last sample took: stepped to, held, or
+  # refused as before the floor or as 1000 s or more off a clock set this boot.
+  atoms clock_verdict step hold floor panic
   integer seconds 0 0xffffffffffffffff unit s
   integer wall_time 0 0xffffffffffffffff unit ns
   integer signed_duration -0x8000000000000000 0x7fffffffffffffff unit ns
   integer stratum 1 15
   text net_address 64
+  # The kind of source of the clock's last sample or step: "ntp ADDRESS" for
+  # ntpd's sample from that server, "rtc" for the keeper's reading at boot,
+  # "root" for a set.
+  text clock_from 80
+  # ntpd's state (docs/design-time.md, "What /proc shows"): its server names,
+  # at most 8, the addresses in use and denied, at most 4 a name, and the
+  # address that last answered and how, as "192.0.2.7 sample".
+  list ntp_servers name 8
+  list net_addresses net_address 32
+  text ntp_last 80
   list urgency_counts count 64
   list proc_ids proc_id 1000
   tuple location module_name name arity file_name line_number
@@ -184,15 +197,34 @@ inspection 1
     attr record_since seconds reporters service visible any build all projections shell,host,proc,web
     attr sample_at wall_time reporters service visible any build all projections shell,host,proc,web
     attr offset_ns signed_duration reporters service visible any build all projections shell,host,proc,web
+    attr sample_wall_offset_ns wall_time reporters service visible any build all projections shell,host,proc,web
+    attr sample_verdict clock_verdict reporters service visible any build all projections shell,host,proc,web
+    attr sample_monotonic_ns duration reporters service visible any build all projections shell,host,proc,web
     attr distance_ns duration reporters service visible any build all projections shell,host,proc,web
     attr stratum stratum reporters service visible any build all projections shell,host,proc,web
     attr server net_address reporters service visible all build all projections shell,host,proc,web
     attr source domain_id reporters service visible all build all projections shell,host,proc,web
+    attr sample_from clock_from reporters service visible all build all projections shell,host,proc,web
     attr step_at wall_time reporters service visible any build all projections shell,host,proc,web
     attr step_ns signed_duration reporters service visible any build all projections shell,host,proc,web
+    attr step_source domain_id reporters service visible all build all projections shell,host,proc,web
+    attr step_from clock_from reporters service visible all build all projections shell,host,proc,web
     attr step_error clock_refusal reporters service visible any build all projections shell,host,proc,web
     attr steps count reporters service visible any build all projections shell,host,proc,web
     attr refused count reporters service visible any build all projections shell,host,proc,web
+
+  # ntpd's state, reported by its session's runtime, from the session's start.
+  kind ntp
+    attr servers ntp_servers reporters runtime visible all build all projections shell,host,proc,web
+    attr addresses net_addresses reporters runtime visible all build all projections shell,host,proc,web
+    attr denied net_addresses reporters runtime visible all build all projections shell,host,proc,web
+    attr last ntp_last reporters runtime visible all build all projections shell,host,proc,web
+    attr interval_s seconds reporters runtime visible all build all projections shell,host,proc,web
+    attr resolve_wait_s seconds reporters runtime visible all build all projections shell,host,proc,web
+    attr samples count reporters runtime visible all build all projections shell,host,proc,web
+    attr dropped count reporters runtime visible all build all projections shell,host,proc,web
+    attr kisses count reporters runtime visible all build all projections shell,host,proc,web
+    attr silent count reporters runtime visible all build all projections shell,host,proc,web
 
   path machine
   path listing cpus
@@ -224,6 +256,8 @@ inspection 1
     visible all
   path app apps *name
   path clock time
+  path ntp ntp
+    visible all
   path listing kernel
     visible all
   # The kernel log from any sequence number on; its ring holds fewer than
