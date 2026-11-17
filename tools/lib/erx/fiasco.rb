@@ -319,10 +319,11 @@ module Erx
     # documents (user_license_notices) and a document of the copyright notices of its
     # packages' files, written under build/fiasco/notices whole or not at all: staged
     # beside it and renamed into place, so a reader never meets a half-written one.
+    # OutputDirectory makes the directory, and names whatever else holds its place.
     def user_library_notices(name)
       profile = ImportNotices.parse(File.binread(File.join(@root, ImportNotices::PROFILE)))
       directory = File.join(@build, 'notices')
-      FileUtils.mkdir_p(directory)
+      OutputDirectory.prepare(root: @root, path: directory)
       copyrights = File.join(directory, "#{name}.copyright")
       Dir.mktmpdir('.notices-', directory) do |staging|
         staged = File.join(staging, 'copyright')
