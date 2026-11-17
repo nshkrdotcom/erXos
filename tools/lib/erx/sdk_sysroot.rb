@@ -38,9 +38,10 @@ module Erx
     BOOT_CORES = 'libboot_cores.a'
     BLAKE3_NOTICE = 'kernel/crypto/blake3/LICENSE_A2LLVM'
     # Each library of lib/ and its license notices, paths under the tree; compiler-rt's is
-    # in its fetched source (CompilerRt.notice).
+    # in its fetched source (CompilerRt.notice), and L4Re's user libraries ship under the
+    # notices every image ships them under (Fiasco#user_library_notices).
     NOTICES = { PROGRAM_ARCHIVE => ['LICENSE', BLAKE3_NOTICE], 'libc.a' => [Musl::NOTICE, 'LICENSE'],
-                BOOT_CORES => ['LICENSE', BLAKE3_NOTICE], **NativeRoot::LIBRARIES.to_h { [it, [Fiasco::USER_NOTICE]] } }.freeze
+                BOOT_CORES => ['LICENSE', BLAKE3_NOTICE] }.freeze
     LICENSES = 'share/licenses'
 
     def initialize(root:, runner:, compiler:, linker:)
@@ -95,7 +96,9 @@ module Erx
 
     # Each library's notices in licenses/LIB/, by the notice's file name.
     def licenses(directory)
-      notices = NOTICES.merge(CompilerRt::ARCHIVE => [CompilerRt.notice(root: @root, runner: @runner)])
+      fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
+      notices = NOTICES.merge(CompilerRt::ARCHIVE => [CompilerRt.notice(root: @root, runner: @runner)],
+                              **NativeRoot::LIBRARIES.to_h { [it, fiasco.user_library_notices(it)] })
       notices.each do |library, paths|
         FileUtils.mkdir_p(File.join(directory, library))
         paths.each { |path| FileUtils.cp(File.join(@root, path), File.join(directory, library, File.basename(path))) }

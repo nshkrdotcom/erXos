@@ -174,12 +174,20 @@ class SdkTest < Minitest::Test
   end
 
   # Every library the SDK ships carries its license notices in share/licenses/LIB, copies
-  # of the tree's notice files; a seeded SDK with one library's notices dropped is caught.
+  # of the tree's notice files, L4Re's user libraries under the notices the image ships
+  # them under (Fiasco#user_library_notices); a seeded SDK with one library's notices
+  # dropped is caught.
   def test_every_shipped_library_carries_its_notices
     libraries = Dir.children(File.join(sdk, 'sysroot/aarch64/lib')).select { it.end_with?('.a') }.sort
     assert_equal %w[libboot_cores.a libc.a libclang_rt.builtins.a liberx_program.a libl4sys.p.a libsigma0.a], libraries
     assert_empty unattributed(sdk)
     assert_equal File.read(File.join(ROOT, 'musl/COPYRIGHT')), File.read(File.join(sdk, 'share/licenses/libc.a/COPYRIGHT'))
+    fiasco = Erx::Fiasco.new(root: ROOT)
+    Erx::Fiasco::USER_LIBRARIES.each_key do |name|
+      shipped = File.join(sdk, 'share/licenses', name)
+      assert_equal fiasco.user_library_notices(name).to_h { [File.basename(it), File.binread(File.join(ROOT, it))] },
+                   Dir.children(shipped).to_h { [it, File.binread(File.join(shipped, it))] }, "#{name} ships under the image's notices"
+    end
     Dir.mktmpdir('erx-sdk-notices-') do |work|
       FileUtils.cp_r(File.join(sdk, 'sysroot'), work)
       FileUtils.mkdir_p(File.join(work, 'share'))

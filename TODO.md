@@ -3307,13 +3307,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   copies `erx-app`, its handful of library files, those generated files and fsimg into `host/`; until then
   `tools/erx-app`, which finds its SDK at `../..`, runs from no SDK.
 * [Medium] apps, the SDK's and the image's notices (`Erx::SdkSysroot::NOTICES`, `ProductionImage#archives`):
-  each states which notices go with which library, so the mapping exists twice; `Fiasco::USER_NOTICE`,
-  L4Re's `LICENSE.spdx`, holds no MIT permission text or copyright line for `libl4sys.p.a` and
-  `libsigma0.a`, though both ship in the SDK and the image; the SDK copies Fiasco's archives as built, with
-  the builder's uid and gid in their members; and the constant lives in `fiasco.rb`, whose digest keys
-  Fiasco's build, so a notice edit rebuilds Fiasco. Fix: one attribution table, derived from each
-  archive's objects, that both read and the SDK copies `lib/` from; an erXos-written MIT notice naming
-  l4sys's and sigma0's holders, recorded in `ORIGIN.md`; a deterministic re-archive.
+  both take L4Re's user libraries' notices from `Fiasco#user_library_notices`, but each states the other
+  libraries' notices (musl, compiler-rt, the boot cores) itself, so that mapping exists twice; and the SDK
+  copies Fiasco's archives as built, with the builder's uid and gid in their members. Fix: one attribution
+  table, derived from each archive's objects, that both read and the SDK copies `lib/` from; a deterministic
+  re-archive.
 * [Low] apps, `tools/erx sdk export` (`tools/erx`, `Erx::SdkSysroot`): the export takes `ERX_CLANG` and
   `ERX_LLD` from the environment as given, not through `host_environment`, so it skips the minimum-LLVM
   check and the resolved `llvm-ar` beside clang that `pack` gets, and a missing linker is found only after
