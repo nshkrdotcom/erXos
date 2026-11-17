@@ -129,6 +129,8 @@ module Erx
     # a query that sets nothing, a step, and the year date reads after it.
     NTP_QUERY_LINE = "ntpdate -q #{SERVER}\r".freeze
     NTP_SET_LINE = "ntpdate #{SERVER}\r".freeze
+    # The clock's record after ntpd's step (docs/design-time.md, "What /proc shows").
+    TIME_LINE = "cat /proc/time/status\r".freeze
     # ntpd's session (docs/design-time.md, "The client"), with the harness as its one
     # server, as raspi4b-development.txt declares it with pool.ntp.org: its principal,
     # holding one session of the common part's session limits, its memory and its outer
@@ -148,9 +150,12 @@ module Erx
            "  operations sample\n  max_request 256\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n" \
            "  max_heap_size 8192\n" \
            "start ntpd\n  enable YES\n".freeze
-    # ntpd's first poll is a burst at boot, before the harness answers, so its first
-    # sample comes after the doubled interval of 128 s and its second, the step, one
-    # interval later: the step's deadline from the line before it.
+    # The step's deadline from the line before it. ntpd's first sample comes from the
+    # first poll the harness answers, a burst if the harness was up before ntpd's first
+    # poll ended (on HVF it is) or else one after the doubled interval of 128 s, and its
+    # second, the step, one interval, 64 s or 128 s, later. The step line must come after
+    # the resolver checks, which on HVF end 3 s after the harness starts, well inside the
+    # 64 s.
     NTPD_STEP_SECONDS = 600
     # How far ntpd's step may be from NTP_AHEAD: the real-time clock's whole seconds and drift.
     NTPD_STEP_SLACK = 10
@@ -309,15 +314,17 @@ module Erx
     end
 
     # What ntpd's session logs: its step to the harness's time, by NTP_AHEAD seconds give or
-    # take the real-time clock's second and the boot's drift (ntpd_step!). The harness
-    # then fixes its answers at 2030 (fix_ntp_time) and ntpdate's query is typed.
+    # take the real-time clock's second and the boot's drift (ntpd_step!); then /proc/time,
+    # whose record names ntpd's server as the source of the last sample and step, the
+    # second step of the boot after the real-time clock's. The harness then fixes its
+    # answers at 2030 (fix_ntp_time) and ntpdate's query is typed.
     def ntpd_checkpoints(fix_ntp_time:)
-      step = lambda do |line|
-        NetDevice.ntpd_step!(line)
-        fix_ntp_time.call
-      end
+      from = "ntp #{Regexp.escape(SERVER)}"
       [{ name: 'ntpd-step', pattern: /ntpd: stepped by [0-9]+ ns from #{Regexp.escape(SERVER)}\r*\n\z/n,
-         seconds: NTPD_STEP_SECONDS, verify: step, type: NTP_QUERY_LINE }.freeze]
+         seconds: NTPD_STEP_SECONDS, verify: NetDevice.method(:ntpd_step!), type: TIME_LINE }.freeze,
+       shell_point('time-sample-from', "sample_from\t#{from}\tservice"),
+       shell_point('time-step-from', "step_from\t#{from}\tservice"),
+       shell_point('time-steps', "steps\t2\tservice", verify: ->(_line) { fix_ntp_time.call }, type: NTP_QUERY_LINE)]
     end
 
     # Raises unless ntpd's step line says a step of NTP_AHEAD seconds within NTPD_STEP_SLACK.

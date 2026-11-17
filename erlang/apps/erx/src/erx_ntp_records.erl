@@ -4,9 +4,11 @@
 -module(erx_ntp_records).
 -moduledoc """
 The collector of `[ntp]`, ntpd's state (docs/design-time.md, "What /proc
-shows"), which `/proc/ntp/status` shows to the whole-machine scope. It runs
-in the runtime of ntpd's session, whose own state it reports, so every
-attribute is `runtime`'s.
+shows"), which `/proc/ntp/status` shows to the whole-machine scope. It is
+meant to run in the runtime of ntpd's session, whose own state it reports,
+so every attribute is `runtime`'s; until the query worker routes `[ntp]`
+there (TODO.md, "time, ntpd"), the system domain's runtime answers
+record(unsupported) instead (erx_inspector).
 
 * The values are erx_ntp_core:status/1's, as erx_ntpd:status/1 answers
   them: addresses as text, the last answer as its address and how it
@@ -26,7 +28,7 @@ The pure core, record/1, takes ntpd's answer as data.
 -include("generated/erx_abi.hrl").
 
 %% ntpd's answer to the collector, or what stands in for it.
--type answer() :: {ok, map()} | {error, unavailable} | {timeout, pos_integer()}.
+-type answer() :: {ok, map()} | {error, unavailable} | {timeout, pos_integer()} | unsupported.
 
 -doc "ntpd's record from the ntpd of this runtime.".
 -spec collect() -> {ok, erx_schema:record()}.

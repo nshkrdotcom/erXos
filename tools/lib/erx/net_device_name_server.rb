@@ -61,13 +61,14 @@ module Erx
         @link = link
         @stopped = false
         @thread = nil
-        @ntp_fixed = false
+        @ntp_fixed_at = nil
       end
 
-      # From now on every NTP reply says NTP_TIME. The answer thread only reads the flag,
-      # and one assignment needs no lock.
+      # From now on NTP replies say NTP_TIME plus the seconds since this call, so a clock
+      # set from them stays set. The answer thread only reads the time, and one assignment
+      # needs no lock.
       def fix_ntp_time
-        @ntp_fixed = true
+        @ntp_fixed_at = Time.now.to_i
       end
 
       # The thread's value is the error it met, or nil, so stopping it never raises and a
@@ -170,9 +171,12 @@ module Erx
           stamp + request.byteslice(40, 8) + stamp + stamp
       end
 
-      # The NTP seconds the replies say: NTP_TIME once fixed, NTP_AHEAD past the host's
-      # clock until then.
-      def ntp_seconds = @ntp_fixed ? NTP_TIME : Time.now.to_i + NTP_AHEAD + NTP_EPOCH
+      # The NTP seconds the replies say: NTP_AHEAD past the host's clock until the run fixes
+      # them, then NTP_TIME plus the seconds since.
+      def ntp_seconds
+        now = Time.now.to_i
+        @ntp_fixed_at ? NTP_TIME + now - @ntp_fixed_at : now + NTP_AHEAD + NTP_EPOCH
+      end
 
       # The question's name, lowercased, and the offset after it; nil for a compressed or
       # malformed name.

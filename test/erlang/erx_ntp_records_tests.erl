@@ -42,3 +42,10 @@ only_the_whole_machine_reads_it_test() ->
 
 no_ntpd_here_is_unavailable_test() ->
     ?assertMatch({ok, #{attrs := #{last := {runtime, {error, unavailable}}}}}, erx_ntp_records:collect()).
+
+%% The system domain's runtime, which a development host's stands for, collects no
+%% `[ntp]` of its own and nothing routes the question to ntpd's session yet, so every
+%% attribute is unsupported there rather than claiming that no ntpd runs.
+the_system_runtime_reports_ntp_unsupported_test() ->
+    {ok, #{attrs := Attrs}} = erx_inspector:inspect([ntp], all, #{}),
+    ?assertEqual([{runtime, unsupported}], lists:usort(maps:values(Attrs))).

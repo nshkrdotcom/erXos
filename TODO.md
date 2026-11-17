@@ -7237,21 +7237,26 @@ to the corpus and follow rc
   field; when the start table's settings file carries `flags`, move the value to the row and add the refusal;
   (2) `/proc/ntp`'s record is built (the schema's `ntp` kind, erx_ntp_records in ntpd's runtime, which
   asks erx_ntpd:status/1), but nothing routes `[ntp]` to ntpd's session: the system domain's query worker
-  collects it locally, where no ntpd runs, so it reads `[error]` (unavailable) in every attribute; the worker
+  answers it in its own runtime, where no ntpd runs, so every attribute reads unsupported; the worker
   needs a way to find ntpd's domain and its agent a bound that admits `[ntp]` (erx_inspect_worker route/2,
   erx_inspect_agent owns/2), which no design names yet, and the start table's `app` record has no `domain` to
   find it by; (3) `/proc/time`
   shows a value the clock service's record holds as `none` as `[unknown]` (`erx_time_records`), since no type of
   the inspection schema holds `none`, where design-time.md says `none`: give the schema an absent value or
   have the design say `unknown`, as `/proc/ntp`'s does; (4) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
-  resolver call that answers TTLs lets it wait the shortest TTL instead; (5) the QEMU cases restart, held
-  and stepped, kiss and refusals of design-time.md's verification are not written, nor the bootstrap: on QEMU
-  virt the PL031 keeper sets the clock at boot, so the boot is not cold and the link server's 2030 answer is
-  refused `panic`; the case needs an answer within 1000 s of the host's clock (held, then stepped) or a cold
-  boot; (6) review findings left: address resolution, the socket's open and close and the clock facet call are
+  resolver call that answers TTLs lets it wait the shortest TTL instead; (5) the QEMU suites check held then
+  stepped (net_device, against the harness 300 s ahead of a clock the PL031 keeper set) but not the cases
+  restart, kiss and refusals of design-time.md's verification, nor a cold boot's first-sample step, which QEMU
+  virt's real-time clock prevents; (6) review findings left: address resolution, the socket's open and close and the clock facet call are
   written in both erx_ntpd and erx_cmd_ntpdate or erx_cmd_date, and the server-list limits in both cores (fold
-  them into erx_ntp_exchange); a reply with `W < 0` passes erx_ntp_sample and the facet drops it unanswered; the
-  core is a one-action loop, not the events and `next_deadline/1` shape "Who does what" describes.
+  them into erx_ntp_exchange); the
+  core is a one-action loop, not the events and `next_deadline/1` shape "Who does what" describes; the bound on
+  `denied` is both erx_ntp_core's `REMEMBERED_MAX` (64) and the schema's `net_addresses` list (32), so 33 to 64
+  denied addresses read `{error, invalid}` (generate one bound); `step_from` names every `set` `root`, which
+  holds only while root's template alone holds the clock's `set` (derive the kind from the grant row or name the
+  check); the net_device suite's ntpd rows (`NetDevice::NTPD`) copy raspi4b-development.txt's (derive them
+  through Manifest::Edit); erx_ntp_records and erx_time_records each map a missed answer to schema statuses
+  their own way (one helper).
 * [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
   [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
   through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:
