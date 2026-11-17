@@ -146,6 +146,48 @@ class InteractiveBootTest < Minitest::Test
                  Erx::InteractiveBoot.web_command('/my tree/tools/erx', '/my tree/socket')
   end
 
+  # The guest writes its private host key and /data into the disk it boots, so a boot of
+  # a medium a person may publish must leave that file as pack wrote it: the boot takes an
+  # owner-only sparse copy under build/, keeps it, guest writes included, while the medium
+  # is unchanged, and copies again once the medium is written in place, its times put
+  # back, or another one is given, without touching the disk a running guest holds.
+  def test_a_medium_boots_from_a_kept_copy_and_is_never_written
+    Dir.mktmpdir('erx-medium-copy-') do |root|
+      FileUtils.mkdir_p(File.join(root, Erx::InteractiveBoot::MEDIUM_COPY_DIRECTORY), mode: 0o755)
+      medium = File.join(root, 'medium.img')
+      File.binwrite(medium, 'boot'.b + ("\0".b * (40 << 20)) + 'data'.b + ("\0".b * (40 << 20)))
+      written = File.binread(medium)
+
+      first = Erx::InteractiveBoot.medium_copy(root: root, medium: medium)
+      copy = first.path
+      assert first.fresh
+      assert_equal File.join(File.realpath(root), Erx::InteractiveBoot::MEDIUM_COPY_DIRECTORY, 'medium.img'), copy
+      assert_equal written, File.binread(copy), 'a trailing hole keeps the medium\'s length'
+      assert_equal 0o600, File.stat(copy).mode & 0o777
+      assert_equal 0o700, File.stat(File.dirname(copy)).mode & 0o777
+      # APFS leaves a hole only for a gap of tens of MiB; a medium's are hundreds.
+      assert_operator File.stat(copy).blocks * 512, :<, 8 << 20, 'the zero blocks are holes'
+
+      File.open(copy, 'r+b') { |disk| disk.pwrite('host key', 1 << 20) } # the guest's first boot
+      assert_equal Erx::InteractiveBoot::MediumCopy.new(path: copy, fresh: false),
+                   Erx::InteractiveBoot.medium_copy(root: root, medium: medium)
+      assert_equal 'host key', File.binread(copy, 8, 1 << 20), 'a second boot keeps the guest\'s writes'
+      assert_equal written, File.binread(medium)
+
+      kept = File.stat(medium)
+      File.open(medium, 'r+b') { |disk| disk.pwrite('new!', 0) } # written in place, times put back
+      File.utime(kept.atime, kept.mtime, medium)
+      File.open(copy, 'rb') do |running| # a guest still booted from the kept copy
+        assert Erx::InteractiveBoot.medium_copy(root: root, medium: medium).fresh
+        assert_equal 'host key', running.pread(8, 1 << 20), 'the running guest keeps its disk'
+      end
+      assert_equal File.binread(medium), File.binread(copy)
+
+      error = assert_raises(Erx::Error) { Erx::InteractiveBoot.medium_copy(root: root, medium: copy) }
+      assert_match(/is the copy --medium boots/, error.message)
+    end
+  end
+
   def test_run_returns_the_childs_exit_status
     assert_equal 3, Erx::InteractiveBoot.run([RbConfig.ruby, '-e', 'exit 3'])
     assert_equal 0, Erx::InteractiveBoot.run([RbConfig.ruby, '-e', 'exit 0'])

@@ -9392,10 +9392,15 @@ document's "residual risks accepted" paragraph.
   `image.boot` as its QEMU download; it is to offer the QEMU release medium packed from the development
   manifest (`ProductionImage#build_medium`, `published`), with the SSH domain and no `authorized_keys`, and the QEMU
   command line that boots it, while the browser demo keeps its own image. The site takes the medium only with a
-  build record written at pack time that names its SHA-256, as the card's does: `tools/erx boot --medium` boots a
-  medium in place, so a booted pack output holds the guest's SSH host key and `/data`. Plain QEMU has no firmware
+  build record written at pack time that names its SHA-256, as the card's does, so it never takes a medium a
+  guest has booted, which holds the guest's SSH host key and `/data` (`tools/erx boot --medium` boots a copy, but
+  QEMU run by hand on the medium writes it). Plain QEMU has no firmware
   to pick the slot, so the published command needs the device tree naming it (`MediumBoot.firmware_tree`) published
   beside the medium, or a loader on the medium.
+* [Medium] `tools/lib/erx/raspi4b_shell.rb` (`located_inputs`): the raspi4b suite boots the card it packed in
+  `build/production-image/raspi4b/` in place, so a card taken from there after the suite ran may hold what its guest
+  wrote, an SSH host key or `/data` among it (unverified whether that guest writes the card). Boot an owner-only copy,
+  as `tools/erx boot --medium` does (`InteractiveBoot.medium_copy`), or make pack outputs read-only so no boot writes one.
 * [Medium] storage, the reset count's encoding (`abi/medium.txt`, `tools/lib/erx/pi_medium.rb`): no encoding of the
   count is defined, so the Pi card's writer leaves its sector the zeros fsimg writes in the reserved area instead of
   the count's first value (design-platforms.md, "Slots and the boot-selection record"), as the QEMU medium does.

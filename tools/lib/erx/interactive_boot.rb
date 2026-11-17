@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require 'fileutils'
 require 'io/console'
+require 'json'
 require 'optparse'
 require 'shellwords'
 require_relative 'boot_record'
@@ -44,6 +46,23 @@ module Erx
     HOSTLINK_DIRECTORY = 'build/production-image/hostlink'
     # Where --medium leaves the bootable file it takes from the medium's committed slot.
     MEDIUM_DIRECTORY = 'build/production-image/medium-boot'
+    # Where --medium keeps the copy of the medium the guest boots, owner-only. The guest
+    # makes its SSH host key and keeps /data on the disk it boots, so it never boots the
+    # medium given, which `make pack` wrote fresh and a person may publish.
+    MEDIUM_COPY_DIRECTORY = 'build/production-image/medium-copy'
+    MEDIUM_COPY_NAME = 'medium.img'
+    # The unit medium_copy reads in and leaves a hole for when it is all zeros.
+    COPY_BLOCK = 1 << 20
+    # The medium a copy was made from, as the file system describes it: its file (device
+    # and inode) and the times of its last write and status change, which a write in place
+    # moves and no copying tool can set back. The copy is made again when the medium given
+    # differs in any of them.
+    MediumSource = Data.define(:dev, :ino, :size, :mtime_ns, :ctime_ns)
+    # The copy a boot uses, and whether this boot made it, losing what the guest kept.
+    MediumCopy = Data.define(:path, :fresh)
+    # What booting a medium takes: its copy that the guest boots (medium_copy), the bootable
+    # file of the copy's committed slot, and the device tree that names that slot.
+    MediumBootFiles = Data.define(:disk, :fresh, :kernel, :dtb)
     # The host's loopback port forwarded to the guest's SSH port (DevKey::PORT) when a
     # person boots a medium: the same number, so `ssh -p 2222` reaches the guest.
     MEDIUM_SSH_PORT = DevKey::PORT
@@ -125,18 +144,96 @@ module Erx
     end
 
     # What QEMU needs to boot medium as the firmware would (docs/design-platforms.md,
-    # "Slots and the boot-selection record"): the bootable file of the slot the slot
-    # parser chooses (BootRecord.read), and the device tree whose /chosen/bootloader names
-    # that slot (MediumBoot.firmware_tree), both in MEDIUM_DIRECTORY under root, replaced
-    # at each boot. Returns [kernel, dtb].
+    # "Slots and the boot-selection record"): medium's copy (medium_copy), the bootable
+    # file of the slot the slot parser chooses on it (BootRecord.read), and the device tree
+    # whose /chosen/bootloader names that slot (MediumBoot.firmware_tree), the last two in
+    # MEDIUM_DIRECTORY under root, replaced at each boot. Returns MediumBootFiles.
     def medium_boot(root:, runner:, medium:, machine:, cpus:)
+      copy = medium_copy(root: root, medium: medium)
       directory = ProductionImage.clear_directory(root: root, path: File.join(root, MEDIUM_DIRECTORY))
       FileUtils.mkdir_p(directory)
-      choice = BootRecord.read(medium)
-      kernel = BootRecord.extract(medium, choice, output: File.join(directory, 'slot.boot'))
-      [kernel, MediumBoot.firmware_tree(runner: runner, qemu: 'qemu-system-aarch64', machine: machine, image: kernel,
-                                        disks: [QemuPlan::Disk.new(path: medium)], choice: choice, cpus: cpus,
-                                        directory: directory)]
+      choice = BootRecord.read(copy.path)
+      kernel = BootRecord.extract(copy.path, choice, output: File.join(directory, 'slot.boot'))
+      dtb = MediumBoot.firmware_tree(runner: runner, qemu: 'qemu-system-aarch64', machine: machine, image: kernel,
+                                     disks: [QemuPlan::Disk.new(path: copy.path)], choice: choice, cpus: cpus,
+                                     directory: directory)
+      MediumBootFiles.new(disk: copy.path, fresh: copy.fresh, kernel: kernel, dtb: dtb)
+    end
+
+    # The copy of medium a boot uses: MEDIUM_COPY_NAME in MEDIUM_COPY_DIRECTORY under root,
+    # owner-only, since the guest keeps its private host key there. It is kept as the guest
+    # left it while medium is the file it was made from (MediumSource, recorded beside it),
+    # so the person's /data and host key last from boot to boot, which spares ssh a changed
+    # host key at every boot; it is made again, sparse, when medium is another file or was
+    # written since. The record exists only beside a whole copy: it is removed first and
+    # written last, and the new copy is written under another name and renamed into place,
+    # so an interrupted copy leaves no record and a guest still running keeps its own disk.
+    # Returns MediumCopy.
+    def medium_copy(root:, medium:)
+      directory = owner_only_directory(root)
+      copy = File.join(directory, MEDIUM_COPY_NAME)
+      record = "#{copy}.source"
+      source = medium_source(medium)
+      raise Error, "#{medium} is the copy --medium boots; give the medium it was made from" if File.identical?(medium, copy)
+      return MediumCopy.new(path: copy, fresh: false) if File.file?(copy) && recorded_source(record) == source
+
+      FileUtils.rm_f(record)
+      sparse_copy(medium, "#{copy}.new")
+      File.rename("#{copy}.new", copy)
+      File.write(record, "#{JSON.generate(source.to_h)}\n", perm: 0o600)
+      MediumCopy.new(path: copy, fresh: true)
+    rescue SystemCallError => error
+      raise Error, "cannot copy the medium: #{error.message}"
+    end
+
+    # MEDIUM_COPY_DIRECTORY under root, made or put back to owner-only; its parents keep
+    # the tree's own modes.
+    def owner_only_directory(root)
+      path = File.join(root, MEDIUM_COPY_DIRECTORY)
+      OutputDirectory.prepare(root: root, path: File.dirname(path))
+      directory = OutputDirectory.check(root: root, path: path)
+      Dir.mkdir(directory, 0o700) unless File.directory?(directory)
+      File.chmod(0o700, directory) # an existing directory keeps its mode otherwise
+      directory
+    end
+
+    def medium_source(medium)
+      stat = File.stat(medium)
+      raise Error, "#{medium} is not a file" unless stat.file?
+
+      MediumSource.new(dev: stat.dev, ino: stat.ino, size: stat.size, mtime_ns: nanoseconds(stat.mtime),
+                       ctime_ns: nanoseconds(stat.ctime))
+    rescue SystemCallError => error
+      raise Error, "cannot read the medium: #{error.message}"
+    end
+
+    def nanoseconds(time) = (time.to_r * 1_000_000_000).to_i
+
+    # The MediumSource recorded beside a copy, or nil when there is none or it does not parse.
+    def recorded_source(record)
+      MediumSource.new(**JSON.parse(File.read(record), symbolize_names: true))
+    rescue Errno::ENOENT, Errno::EISDIR, JSON::ParserError, ArgumentError, TypeError
+      nil
+    end
+
+    # Copies from to a new owner-only file at to, removing any file an interrupted copy left
+    # there, and leaves a hole wherever a block of from reads as zeros, as most of a medium does.
+    def sparse_copy(from, to)
+      zeros = "\0".b * COPY_BLOCK
+      FileUtils.rm_f(to)
+      File.open(from, 'rb') do |input|
+        File.open(to, File::WRONLY | File::CREAT | File::EXCL | File::NOFOLLOW | File::BINARY, 0o600) do |output|
+          output.chmod(0o600) # whatever the umask
+          while (block = input.read(COPY_BLOCK))
+            if block == zeros
+              output.seek(block.bytesize, IO::SEEK_CUR)
+            else
+              output.write(block)
+            end
+          end
+          output.truncate(input.size)
+        end
+      end
     end
 
     # The command a person runs in another terminal to see the guest's web
@@ -248,6 +345,6 @@ module Erx
     rescue SystemCallError
       nil
     end
-    private_class_method :hostlink_socket, :stop, :restore_mode
+    private_class_method :hostlink_socket, :stop, :restore_mode, :owner_only_directory, :medium_source, :nanoseconds, :recorded_source, :sparse_copy
   end
 end

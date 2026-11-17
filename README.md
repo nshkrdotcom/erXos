@@ -466,11 +466,15 @@ builds the QEMU release medium, the card's system packed for QEMU `virt`
 with the kiosk, and boots it as a person uses it: the display in QEMU's window
 with the virtio keyboard and tablet, user networking that reaches your
 network, your host's port 2222 forwarded to the guest's SSH port, and the
-serial console on your terminal; quit with Ctrl-A then X. The guest keeps
-`/data` in the medium. `tools/erx boot --medium FILE --print` prints the
-plain `qemu-system-aarch64` command instead; its kernel and device tree,
-which names the booted slot as the firmware would, lie in the tree's
-`build/production-image/medium-boot` until the next `--medium`. To log in over SSH, the medium needs your
+serial console on your terminal; quit with Ctrl-A then X. QEMU boots an
+owner-only copy of the medium, `build/production-image/medium-copy/medium.img`,
+where the guest keeps `/data` and makes its SSH host key; the copy is kept
+from boot to boot and made again when the medium changes, so the medium
+itself stays as `make pack` wrote it and can be shared. `tools/erx boot
+--medium FILE --print` prints the plain `qemu-system-aarch64` command
+instead; its kernel and device tree, which names the booted slot as the
+firmware would, lie in the tree's `build/production-image/medium-boot` until
+the next `--medium`, and its disk is the copy. To log in over SSH, the medium needs your
 `authorized_keys` on its first FAT volume, labelled `ERXOS`, as on the card; then
 `ssh -p 2222 root@127.0.0.1`.
 <!-- unverified: a key file a host's FAT driver writes lands beside the record in its erase unit, which the guest's reader refuses (TODO.md, "storage, the record volume's erase unit"), and the website does not offer the medium as a download yet (TODO.md, "site, the QEMU virt download"). -->

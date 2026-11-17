@@ -1101,20 +1101,22 @@ module Erx
     # `tools/erx boot --medium PATH`: the release medium at PATH in QEMU as a person boots
     # it (InteractiveBoot.medium_argv), on the development machine's RAM, which the medium
     # was packed for; with --print, the plain qemu-system-aarch64 command instead, whose
-    # kernel and device tree lie in the tree until the next --medium. The guest writes
-    # its /data into the medium.
+    # kernel, device tree and disk lie in the tree until the next --medium. The guest
+    # boots a copy of the medium (InteractiveBoot.medium_copy), where it keeps its /data
+    # and SSH host key from boot to boot, so the medium at PATH stays as written.
     def self.boot_medium(request, platform:, accel:, runner:)
       machine = ProductionImage::Machine.development(platform)
-      kernel, dtb = InteractiveBoot.medium_boot(root: ROOT, runner: runner, medium: request.medium, machine: machine,
-                                                cpus: request.cpus)
-      argv = InteractiveBoot.medium_argv(platform: platform, accel: accel, cpus: request.cpus, kernel: kernel,
-                                         medium: request.medium, memory_mib: machine.memory_mib, dtb: dtb)
+      files = InteractiveBoot.medium_boot(root: ROOT, runner: runner, medium: request.medium, machine: machine,
+                                          cpus: request.cpus)
+      argv = InteractiveBoot.medium_argv(platform: platform, accel: accel, cpus: request.cpus, kernel: files.kernel,
+                                         medium: files.disk, memory_mib: machine.memory_mib, dtb: files.dtb)
       if request.print
         puts Shellwords.join(argv)
         return 0
       end
 
-      Terminal.puts("booting #{request.medium}: accelerator #{accel}, #{request.cpus} guest CPU(s); " \
+      Terminal.puts("booting #{request.medium} from #{files.fresh ? 'a new' : 'its'} copy #{files.disk}: accelerator " \
+                    "#{accel}, #{request.cpus} guest CPU(s); " \
                     "ssh -p #{InteractiveBoot::MEDIUM_SSH_PORT} root@127.0.0.1; #{InteractiveBoot::QUIT_HINT}")
       InteractiveBoot.run(argv)
     end
