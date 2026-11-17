@@ -2267,6 +2267,11 @@ its code, and the item's work waits on it.
   design-time.md, written first, which names its authority, its
   grammar, its fuzz target and what a set by hand does to the clock
   service's [steps](design-time.md#steps).
+  Root may instead set it from a server with `ntpdate`, FreeBSD's
+  one-shot client, which sends the same `set`
+  ([design-time.md](design-time.md#setting-the-clock-from-a-server-once));
+  running it at boot is an open decision of that document, since a
+  start row is not one-shot and no image ships a server.
 * **Doom on QEMU `virt`**, with keys from QEMU's virtio keyboard, and
   **on the Pi as its demo loop** with no keyboard, since the Pi has no
   keyboard before [track U](#track-u-usb): Doom's

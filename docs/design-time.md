@@ -260,7 +260,7 @@ servers from DHCP.
 **A sample is the wall offset the server implies.** The client sends a
 request at monotonic time `m1`, from `os:perf_counter(nanosecond)`, and
 takes the reply at `m4`. It converts the reply's receive and transmit
-timestamps once, at decode, to integer nanoseconds since 1970 by RFC
+timestamps once, when it checks the reply, to integer nanoseconds since 1970 by RFC
 4330's era convention, `t2` and `t3`. Then
 
 ```text
@@ -351,7 +351,10 @@ The special cases this removes:
   deadline answered by `next_deadline/1` ([design.md](design.md#drivers-and-dma), "Deadlines in state"), and a
   thin effect process that reads its start flags, resolves names, opens
   sockets, sends, receives and calls the facet. The packet codec,
-  `erx_ntp_wire`, is pure and the only reader of NTP bytes.
+  `erx_ntp_wire`, is pure and the only reader of NTP bytes; it and the
+  checks of one reply, `erx_ntp_sample`, are modules of the `erx` library
+  application, which root's `ntpdate` calls too
+  ([Setting the clock from a server once](#setting-the-clock-from-a-server-once)).
 * **The clock service**, `erx_clock`, a system service of the system
   domain under its own supervisor, `erx_clock_sup`, is the setting side. For
   each sample it reads the page through `erx_clock_nif:read/0`, runs
@@ -747,8 +750,9 @@ the network stack offers.
 `{error, Reason}`; it reads the first 48 bytes after one length check and
 ignores what follows. It decodes root delay as a signed 16.16 number and
 root dispersion as an unsigned one, so a root delay with the top bit set
-reads as negative rather than as 18 hours. `erx_ntp_core` then checks a
-reply for the outstanding exchange in this order, and drops it at the
+reads as negative rather than as 18 hours. `erx_ntp_sample:check/4`, which
+`erx_ntp_core` and `ntpdate` both call, then checks a reply for the
+outstanding exchange in this order, and drops it at the
 first check that fails, counting the reason:
 
 1. it came from the address and port the request went to; the socket is
@@ -767,7 +771,8 @@ if all of these hold as well:
 5. stratum is 1 to 15;
 6. receive and transmit timestamps are non-zero, convert to times from
    1970 to 2104, and `t3 >= t2`;
-7. the reference timestamp is not later than the transmit timestamp;
+7. the reference timestamp is not later than the transmit timestamp,
+   a zero reference timestamp meaning none;
 8. `delay >= 0`;
 9. the distance `(max(rootdelay, 0) + delay) div 2 + rootdisp` is below
    `clock_distance_max_ns`, 1 s, RFC 5905's `MAXDIST`.
@@ -1059,6 +1064,114 @@ command raise.
 | the clock service ended, or no answer came within 10 s | `{error, failed}`, `eio`'s text; status 1; the set may or may not have been applied, which a reading `date` or `/proc/time/status` shows |
 | standard output cannot be written | the shell's write failure ends the command with its reason as the status, as for every command |
 
+## Setting the clock from a server once
+
+`ntpdate` is root's one-shot alternative to `date` and to ntpd: it asks
+NTP servers for the time once, as FreeBSD's ntpdate(8) does, and sets
+the clock through the same `set` that `date` sends. It adds no facet
+row, template, service or operation. It is an Erlang command of the
+command shell, `erx_cmd_ntpdate`, declared `-erx_needs([net])`, and
+behaves as FreeBSD releng/15.1's ntpdate does for the forms it offers
+(`usr.sbin/ntp/doc/ntpdate.8`, `contrib/ntp/ntpdate/ntpdate.c`):
+
+```text
+ntpdate [-4bqu] [-t timeout] server ...
+```
+
+* **Servers.** One to 8 operands of 1 to 253 bytes; any other count or
+  length is a usage error. An IPv4 literal is its address; anything else
+  is a name for the session's resolver, `inet:getaddrs/3` for `inet`,
+  which refuses what is not one, and its first four addresses are used
+  in the order DNS gives them. A name that does not resolve writes
+  `ntpdate: Can't find host NAME` and the command goes on with the next
+  operand, as ntpdate's `addserver` does; no address at all writes
+  `ntpdate: no servers can be used, exiting`, status 1.
+* **The exchange.** One SNTPv4 client exchange per address, in order,
+  over a socket of its own connected to the address and port 123, with
+  a random port and a 64-bit nonce from `erx_bytes:entropy/1`, the
+  request [Checks on a reply](#checks-on-a-reply) describes. It waits
+  `timeout` seconds for the reply: 1 by default, as ntpdate's `-t`, and
+  otherwise a number of seconds with at most one decimal, 0.2 to 10.
+  The first address whose reply passes checks 2 to 9 of [Checks on a
+  reply](#checks-on-a-reply), in that order and by the same code as
+  ntpd's, gives the sample and ends the search; a kiss of any code, a
+  reply that fails checks 4 to 9, or no reply in time moves to the next
+  address. A datagram that does not decode or fails checks 2 or 3 is
+  not this exchange's answer: it is dropped and the wait goes on to the
+  same deadline, so a forged datagram cannot cut the exchange short. ntpdate's
+  four samples a server and its clock filter are not offered: the first
+  valid reply decides, as the server in use decides ntpd's
+  ([The client](#the-client)).
+* **The offset.** The sample's `W` is
+  [the construction's](#the-construction), from `m1` and `m4` read with
+  `os:perf_counter(nanosecond)` around the exchange.
+* **Setting.** Unless `-q` is given, the command sends the clock facet
+  `{set, W}`, as `date` does, and on `{ok, {stepped, StepNs}}` writes
+  `ntpdate: step time server ADDRESS offset S sec`, `S` the step in
+  seconds with six decimals, as ntpdate writes its line with `-b`. Every
+  set is a step: erXos has no slew ([Decisions](#decisions), 3), so `-b`
+  changes nothing and `-B` is not offered. A refusal of the facet writes
+  `ntpdate: clock_settime: ` and its text, with `date`'s texts and
+  status 1 ([Failure paths](#failure-paths)), and a session without the
+  grant refuses as `date` does, with `eperm`.
+* **`-q`** sets nothing and needs no grant: it writes `server ADDRESS,
+  stratum N, offset S, delay D`, the offset `W - C` against the clock as
+  it reads at `m4`, with six decimals, and the delay in seconds with
+  five, as ntpdate's `print_server` does, and then the step line with
+  that offset, as ntpdate's `-q` still logs it (`ntpdate.c`,
+  `clock_adjust`).
+* **No sample.** When no address gives one, the command writes
+  `ntpdate: no server suitable for synchronization found`, status 1, and
+  sets nothing. A connect or send that fails counts as no reply from
+  that address; a socket that cannot be opened ends the command with
+  `ntpdate: socket: ` and its reason, status 1, since no later address
+  could be asked either; a failed read of the nonce's entropy ends the
+  command as a crash does, with nothing sent.
+* **Accepted and ignored**: `-4`, since the stack resolves and reaches
+  IPv4 alone, and `-u`, since every port is drawn at random. Every other
+  flag of ntpdate(8) is a usage error.
+
+ntpdate writes its lines through syslog with a date and its pid, or to
+standard output with the same prefix; erXos writes them to standard
+output, the step line with `ntpdate: ` before it and `-q`'s with
+nothing, and the failures to standard error with `ntpdate: `, and a
+negative number with `-`. Whether FreeBSD writes `+` before
+a positive offset is not checked; erXos writes nothing, which the FreeBSD
+oracle settles. Every name and address written passes the field escape
+(`erx_text:escape_field/1`).
+
+The decisions are pure: `erx_cmd_ntpdate:parse/1` takes the arguments
+to `{ok, Options}` or `{error, usage}`; `erx_ntp_wire` encodes the
+request and decodes a reply; `erx_ntp_sample:check/4` takes a decoded
+reply, the nonce, `m1` and `m4` to a sample, a kiss or the check that
+dropped it. `run/2` resolves, opens, sends, receives and asks the facet.
+`erx_ntp_wire` and `erx_ntp_sample` are modules of the `erx` library
+application, which every runtime carries, so ntpd's core calls the same
+checks rather than a copy.
+
+**What it changes** is what a set changes
+([What it changes](#what-it-changes)): the page holds `W` at once, the
+boot is no longer cold, and the clock service records and logs a set
+from root's domain, so a later ntpd sample meets the thresholds.
+
+**Security.** The command decodes NTP bytes in root's session, as `host`
+decodes DNS replies there; the decoder is total and bounded, and a
+failure ends only the command. The reply is unauthenticated: the server
+root names, or anyone on the path to it, chooses the time ntpdate sets,
+with no floor and no threshold, as on FreeBSD, where ntpdate run as
+root steps the clock to whatever its selected server says. An off-path
+host cannot, since it must guess the nonce and the random port. That is
+the residual of [Security](#security), wider by the floor and the
+thresholds a sample meets and a set does not, and it is open only while
+root runs the command. Since a set ends the cold start, a forged time
+also outlasts the command: a later ntpd sample 1000 s or more from it is
+refused `panic` until root sets the clock again or the machine reboots.
+Whether ntpdate sets through `set` or keeps the floor is
+[open](#open-decisions).
+
+Running ntpdate at boot, as FreeBSD's `ntpdate_enable` does, is
+[open](#open-decisions).
+
 ## Concurrency and failure
 
 * **One writer.** Only `erx_clock` calls the NIF, one sample at a time
@@ -1094,7 +1207,9 @@ command raise.
 
 * **The parser runs in the app.** NTP bytes are decoded only by
   `erx_ntp_wire` in the ntpd session, which holds `net`, `clock` and
-  `log`. A fault there ends that session. The system domain decodes a
+  `log`, and in root's session while root runs `ntpdate`
+  ([Setting the clock from a server once](#setting-the-clock-from-a-server-once)).
+  A fault there ends that session, or the command. The system domain decodes a
   five-element tuple of bounded integers and an address, or a `set` of
   one bounded integer, through
   `erx_clock_facet:decode/1`, at the funnel's limits.
@@ -1103,7 +1218,7 @@ command raise.
   compromised ntpd, nor a bug of the system domain, can publish a wall
   time outside `[0, 2^63)` (T-R7).
 * **Root's `set` is not filtered.** A set skips the floor and both
-  thresholds, as an operator's `date` does on FreeBSD, and only the
+  thresholds, as an operator's `date` and `ntpdate` do on FreeBSD, and only the
   setter's range bounds it (T-R7). Only rows that grant `set` admit it,
   and the manifest gives that operation to root's template alone, so a
   compromised ntpd still sends only samples
@@ -1206,6 +1321,8 @@ that proves it ran.
 | `date` operands | every even count of 2 to 12 digits, with and without `.SS`, gives its named time from a fixed current time; each field at its bound passes and one past it is refused; a non-digit at each position, a second dot, a one- or three-digit `.SS`, an empty operand, every odd count of 1 to 13 digits and 14 digits are refused; `yy` 68 and 69 fall either side of the pivot; month and day `00`, `0229` and `0230` in a leap and a common year, and second 60 and 61 normalize as `mktime(3)` does; `+format` before and after the operand, `-j` and `-u`, and every flag not offered | a pivot of 70 makes `69` 2069; dropping the month bound accepts `13` |
 | `date` format | each conversion of [The command](#the-command) on fixed times (a leap day, a Sunday, midnight and noon, a year before 2000), each padding flag, an unknown conversion and a `%` at the end | `%e` padded with `0` fails the single-digit day |
 | `date` set | a set answers `{ok, {stepped, _}}` and writes the named time; each error answer of [Failure paths](#failure-paths) gives its text and status 1; a context without `clock` refuses a set and still reads and runs `-j` | a run that looks up the grant before it parses refuses `-j` without one |
+| `ntpdate` options | every flag offered and each one not, `-t` at 0.2 and 10 and one tenth past either edge, zero and nine operands, an empty one and a 254-byte one are refused | accepting a ninth operand passes the nine-operand case |
+| `ntpdate` exchange | `erx_ntp_sample:check/4` gives the sample of a valid reply with its `W`, and a kiss, a foreign nonce and each of checks 4 to 9 their reasons, as for ntpd | removing the nonce comparison accepts the foreign-nonce reply |
 
 The setter's range has a test of its own on Fiasco, in the native
 guest's time case (`test/guest/native_space/guest.c`): offsets of 0 and
@@ -1402,6 +1519,49 @@ These were open and are settled as stated here:
    validation refuse TLS while `state` is `approximate`, so a release
    needs `ntpd` or a real-time clock for HTTPS; or drop it. It is the
    release's decision, recorded in `TODO.md`.
+3. **ntpdate at boot.** FreeBSD runs ntpdate once at boot when
+   `/etc/rc.conf` sets `ntpdate_enable="YES"`, against `ntpdate_hosts`
+   or the servers of `/etc/ntp.conf`, with `ntpdate_flags="-b"`
+   (`libexec/rc/rc.d/ntpdate`; `libexec/rc/rc.conf`, lines 411-415).
+   erXos has no rc.d scripts: `rc.conf` sets only the fields `enable`,
+   `display`, `restarts`, `period` and `flags` of the start rows the
+   manifest or an admitted package declares, each row a principal with
+   a session template of its own
+   ([design-apps.md](design-apps.md#the-start-table)). So the boot-time
+   form is a start row, `ntpdate_enable="YES"` and
+   `ntpdate_flags="SERVER ..."`, of a principal whose template holds
+   `net` and a `clock` row granting `sample`, as ntpd's does, so the
+   clock service decides the step by [Steps](#steps): free from a cold
+   or approximate start, never below the floor. Two things stand in the
+   way. **A row is not one-shot**: its keeper is a permanent child, "a
+   session that ends, for any reason, is started again", and more ends
+   than `restarts` leave the row down
+   ([design-apps.md](design-apps.md#keeping-a-session));
+   a session that runs one exchange and ends is restarted, and with
+   `restarts 0` it runs once and then shows as down, a failure, after
+   every success. A one-shot kind of row, which ends kept and counts
+   nothing, is a change to design-apps.md, or ntpd itself is the boot
+   path, whose session runs on. **No server ships**: decision 1 above
+   ships none, so a published image that enables it at boot needs an
+   erXos vendor zone of the NTP Pool or an exception to that decision.
+   Recommendation: no boot-time ntpdate; root runs `ntpdate` after boot
+   against a server of the operator's choosing, through root's own
+   `set`, and ntpd's start row with `ntpd_flags` is the boot-time path,
+   as designed.
+4. **What ntpdate's time may be.** Through `set`, a forged or wrong
+   reply moves the clock below the floor and, since the boot is then no
+   longer cold, holds it against ntpd for the rest of the boot
+   ([Setting the clock from a server once](#setting-the-clock-from-a-server-once)).
+   The choices: (a) keep `set`, as FreeBSD's ntpdate run as root steps
+   to whatever its server says, and publish the wider residual; (b)
+   send `sample`, so [Steps](#steps) decides, free from a cold or
+   approximate start and never below the floor, which needs root's
+   `root_clock` row to grant `sample` as well as `set` and changes
+   decision 5; (c) keep `set` and have the command refuse a sample
+   below the floor, read from the build facts the clock service reads.
+   Recommendation: (b); it is one word in a manifest row and keeps T-R8
+   and the floor whole, and a second run within a boot then meets the
+   thresholds as ntpd's samples do, which `date` still overrides.
 
 ## References
 

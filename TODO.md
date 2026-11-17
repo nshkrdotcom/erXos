@@ -7860,7 +7860,9 @@ to the corpus and follow rc
 * [Medium] network time, unauthenticated ([design-time.md](docs/design-time.md#security)): the NTP server
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
-  checks follow the clock. Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
+  checks follow the clock. Root's `ntpdate` sets through `set`: its server, or anyone on the path, sets any
+  time, below the floor too, and the set then holds it against ntpd for the boot (design-time.md, open
+  decision 4). Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
 * [Low] stopgap, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case):
   the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks no right, so any
   task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
