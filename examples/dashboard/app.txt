@@ -1,4 +1,4 @@
 app dashboard
-  needs display
+  needs display net
   applications erx_dashboard
   license "BSD-2-Clause"

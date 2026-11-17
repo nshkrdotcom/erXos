@@ -4,7 +4,7 @@
 -module(erx_dashboard_view).
 -moduledoc """
 The dashboard's screen as a pure function: tree/1 turns the wall clock's
-reading and the last board a source sent into the widget tree erx_ui
+reading and the last board the quotes source sent into the widget tree erx_ui
 draws (docs/design-display.md, "Widget trees"), and the formatters it
 uses write every number the screen shows. Nothing here reads a clock or
 a process, so the same view always gives the same tree, which the host
@@ -19,14 +19,31 @@ symbol when the source gives no status, its price and its change, each
 row's key is its quote's symbol, so a board that reorders its quotes
 moves rows instead of rewriting their text. Before the first board the
 panel says it is waiting.
+
+A board is the source's credit, the line under the panel's title that
+says where the numbers come from, and its quotes in the order the
+screen lists them. A quote's price is in its own currency and its
+change a percent change, each a number or `none`, shown as `--`. Its
+`status`, when given, is the line shown under its name in place of its
+symbol. erx_quotes builds every board from its table, a reviewed
+constant (erx_quotes_table) whose `decimals` lie within 0 to 8, whose
+symbols are unique and whose texts are ASCII within the widget format's
+bounds; the view checks nothing again.
 """.
 
 -export([tree/1, clock/1, date/1, minute/1, price/2, change/1]).
 
--export_type([model/0]).
+-export_type([model/0, board/0, quote/0]).
 
+-type quote() :: #{symbol := binary(),
+                   name := binary(),
+                   price := none | number(),
+                   change := none | number(),
+                   decimals := 0..8,
+                   status => binary()}.
+-type board() :: #{credit := binary(), quotes := [quote()]}.
 -type model() :: #{time := calendar:datetime(),
-                   board := none | erx_dashboard_source:board()}.
+                   board := none | board()}.
 
 -define(MONTHS, {<<"January">>, <<"February">>, <<"March">>, <<"April">>,
                  <<"May">>, <<"June">>, <<"July">>, <<"August">>,

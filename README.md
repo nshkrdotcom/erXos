@@ -373,12 +373,12 @@ Eshell V17.1.1 (type help(). for help)
 * The widget format carries type roles, areas, icons, a current item and a
   graph kind, with coverage masks for corners, shadows and graphs. The
   desktop's file list and statistics have pure cores with host tests.
-* `examples/dashboard`, the basic kiosk's app (a clock, the date and
-  sample quotes), is drawn by `erx-lvgl` and checked on the host against
-  its reference picture. It has no package and no QEMU boot yet; the
-  first boot comes with its package. The full kiosk takes live quotes
-  from `erx_quotes`, a source behind the dashboard's seam with pure cores for
-  the source table, retry holds, body parsing and the board; host tests
+* `examples/dashboard`, the kiosk's app (a clock, the date and live
+  quotes of Bitcoin, Ether and Solana from Kraken), is drawn by
+  `erx-lvgl` and checked on the host against its reference picture. Its
+  package boots on QEMU with no network, each quote showing why it has
+  no data. Its quotes come from `erx_quotes`, with pure cores for
+  retry holds, body parsing and the board; host tests
   and a fuzz target check them. A real fetch on a target waits on the
   network suite.
 

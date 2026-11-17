@@ -9,14 +9,14 @@ it is [design-system.md](design-system.md#the-vault); TLS for the web is
 [design-web.md](design-web.md#the-network-front-end). It also says how a
 session or an app makes HTTPS requests, with `ssl`, `inets`' HTTP client
 and the image's trust store ([HTTPS clients](#https-clients)); the first
-app that does is the full kiosk's live quotes of
+app that does is the kiosk's live quotes of
 [design-quotes.md](design-quotes.md).
 
 ## Context
 
 Four uses need cryptography: the web domain's TLS listener, the vault's
 Argon2id, HKDF and AES-256-GCM, SSH, and HTTPS clients in sessions and
-apps, which fetch data from servers on the internet, the full kiosk's live
+apps, which fetch data from servers on the internet, the kiosk's live
 quotes first ([design-quotes.md](design-quotes.md)). The architecture already
 decides the library: "OTP's `crypto`, `ssl` and `ssh` use OpenSSL 3.5"
 and "a small verifier keeps the full library out of the system domain"
@@ -594,7 +594,7 @@ holds them, and could not run `ssl`: its image has no `crypto` NIF (K1).
 | DigiCert Global Root G3 | FRED: DigiCert Global G3 TLS ECC SHA384 2020 CA1 | DigiCert |
 
 The chains are those the servers sent to a live request
-([design-quotes.md](design-quotes.md#what-the-sources-offer)). Which of
+([design-quotes.md](design-quotes.md#what-the-source-offers)). Which of
 two anchors of one chain OTP's path validation ends at is not relied on:
 the store holds both.
 

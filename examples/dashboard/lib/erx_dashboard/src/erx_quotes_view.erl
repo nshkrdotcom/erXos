@@ -6,7 +6,7 @@
 What the dashboard's quotes panel shows of the live quotes, as a pure
 function (docs/design-quotes.md, "What the screen shows"): board/2 turns
 the core's state and the current monotonic time into the board the
-dashboard draws (erx_dashboard_source), one quote per row of the table,
+dashboard draws (erx_dashboard_view), one quote per row of the table,
 in its order. The rule of Q-R1 and Q-R2 is state/3 alone: a quote
 shows the last value it received, the source that gave it and its age,
 stale once older than three periods, with the reason its last round
@@ -21,7 +21,7 @@ byte of a response reaches the board.
 -define(CREDIT, <<"Live quotes">>).
 
 -doc "The board of the core's `State` at monotonic time `Now`.".
--spec board(erx_quotes_core:state(), integer()) -> erx_dashboard_source:board().
+-spec board(erx_quotes_core:state(), integer()) -> erx_dashboard_view:board().
 board(#{table := #{quotes := Rows, sources := Sources}, quotes := Quotes}, Now) ->
     #{credit => ?CREDIT,
       quotes => [quote(Name, Row, maps:get(Name, Quotes), Sources, Now)
@@ -39,8 +39,8 @@ quote(Name, #{label := Label, decimals := Decimals} = Row, Quote, Sources, Now) 
 %% AGE` while its value is fresh and `stale, AGE - CREDIT[, NOTE]` once
 %% stale, each of the last two followed by `: REASON` when the quote's last
 %% round failed. `Sources` are the table's source rows.
--spec status(erx_quotes_core:quote(), erx_quotes_config:quote(),
-             #{atom() => erx_quotes_config:source()}, integer()) -> binary().
+-spec status(erx_quotes_core:quote(), erx_quotes_table:quote(),
+             #{atom() => erx_quotes_table:source()}, integer()) -> binary().
 status(#{value := Value, failure := Failure} = Quote, Row, Sources, Now) ->
     case {state(Quote, Row, Now), Value, Failure} of
         {waiting, none, none} ->
@@ -60,7 +60,7 @@ status(#{value := Value, failure := Failure} = Quote, Row, Sources, Now) ->
 %% The one rule of Q-R1 and Q-R2: a value is stale once older than three
 %% of its quote's periods, and a quote without one is waiting until its
 %% first round fails.
--spec state(erx_quotes_core:quote(), erx_quotes_config:quote(), integer()) ->
+-spec state(erx_quotes_core:quote(), erx_quotes_table:quote(), integer()) ->
           waiting | no_data | fresh | stale.
 state(#{value := none, failure := none}, _Row, _Now) -> waiting;
 state(#{value := none}, _Row, _Now) -> no_data;

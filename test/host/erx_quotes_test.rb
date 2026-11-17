@@ -8,26 +8,24 @@ require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
-# The full kiosk's live quotes of examples/dashboard on the host (docs/design-quotes.md,
-# "Verification and testing"): the pure modules' EUnit cases, with the shipped source table
-# beside them as quotes.config, and the live source fetching end to end over HTTPS from
-# ssl servers on the loopback, with no internet. The example's modules compile from its own
+# The live quotes of examples/dashboard on the host (docs/design-quotes.md, "Verification
+# and testing"): the pure modules' EUnit cases, and the live source fetching end to end
+# over HTTPS from ssl servers on the loopback, reached by address, with no internet and no
+# name resolved. The example's modules compile from its own
 # directory over erx and erx_ui (ErlangBuild), with warnings as errors, on stock's emulator
 # (ERX_ERL and ERX_ERLC, which make check supplies), whose ssl and inets the fetch uses.
 class ErxQuotesTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   EXAMPLE = 'examples/dashboard/lib/erx_dashboard'
-  TABLE = 'examples/dashboard/live/quotes.config'
   APPLICATIONS = %w[erx erx_ui].freeze
-  SUITES = %w[erx_quotes_config_tests erx_quotes_http_tests erx_quotes_extract_tests
-              erx_quotes_core_tests erx_quotes_fetch_tests].freeze
+  SUITES = %w[erx_quotes_http_tests erx_quotes_extract_tests erx_quotes_core_tests
+              erx_quotes_fetch_tests].freeze
   DEADLINE = '300'
 
   def test_live_quotes_pass_under_eunit
     Dir.mktmpdir('erx-quotes-test') do |work|
       tests = SUITES.map { |suite| "#{EXAMPLE}/test/#{suite}.erl" }
       ErlangBuild.compile(work, applications: APPLICATIONS, tests: example_modules + tests)
-      FileUtils.cp(File.join(ROOT, TABLE), File.join(work, 'quotes.config'))
       output = run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
                     "halt(case eunit:test([#{SUITES.join(', ')}], [verbose]) of ok -> 0; _ -> 1 end).",
                     chdir: work)

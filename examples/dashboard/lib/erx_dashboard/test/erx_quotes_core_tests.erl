@@ -17,16 +17,14 @@ event sequences. Each case names the seeded failure it catches.
 %% it back for both.
 table() ->
     Source = fun(Credit, Note) ->
-                     #{url => <<"https://", Credit/binary, ".test/q">>, format => json,
-                       price => [<<"p">>], change => none, credit => Credit, note => Note}
+                     #{url => <<"https://", Credit/binary, ".test/q">>, address => {127, 0, 0, 1},
+                       format => json, price => [<<"p">>], change => none, credit => Credit,
+                       note => Note}
              end,
-    {ok, Table} = erx_quotes_config:validate(
-                    [{quote, q, #{label => <<"Q">>, decimals => 2, period => 10, sources => [a, b]}},
-                     {quote, r, #{label => <<"R">>, decimals => 0, period => 60, sources => [b, c]}},
-                     {source, a, maps:remove(note, Source(<<"A">>, <<>>))},
-                     {source, b, Source(<<"B">>, <<"delayed">>)},
-                     {source, c, Source(<<"C">>, <<"daily">>)}]),
-    Table.
+    #{quotes => [{q, #{label => <<"Q">>, decimals => 2, period => 10000, sources => [a, b]}},
+                 {r, #{label => <<"R">>, decimals => 0, period => 60000, sources => [b, c]}}],
+      sources => #{a => Source(<<"A">>, <<>>), b => Source(<<"B">>, <<"delayed">>),
+                   c => Source(<<"C">>, <<"daily">>)}}.
 
 start() ->
     erx_quotes_core:tick(erx_quotes_core:new(table(), ?T0), ?T0, 1.0).

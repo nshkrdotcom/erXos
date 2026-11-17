@@ -38,7 +38,7 @@ than until the earliest of its sources is free again.
                    next_at := integer(),
                    trying := none | {Index :: pos_integer(), FirstReason :: none | reason()}}.
 -type source() :: #{not_before := integer(), held := none | reason()}.
--type state() :: #{table := erx_quotes_config:table(),
+-type state() :: #{table := erx_quotes_table:table(),
                    quotes := #{atom() => quote()},
                    sources := #{atom() => source()}}.
 -type action() :: {fetch, Quote :: atom(), Source :: atom(), Url :: binary()} | render.
@@ -51,7 +51,7 @@ than until the earliest of its sources is free again.
 -define(MAX_DOUBLINGS, 20).
 
 -doc "The state at monotonic time `Now`: every quote due, no value, no source held back.".
--spec new(erx_quotes_config:table(), integer()) -> state().
+-spec new(erx_quotes_table:table(), integer()) -> state().
 new(#{quotes := Quotes, sources := Sources} = Table, Now) ->
     #{table => Table,
       quotes => maps:from_list(

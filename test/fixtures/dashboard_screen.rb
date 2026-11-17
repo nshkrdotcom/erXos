@@ -8,8 +8,11 @@ require_relative '../../tools/lib/erx/lvgl'
 require_relative '../../tools/lib/erx/oracle'
 require_relative '../../tools/lib/erx/ppm'
 
-# The kiosk dashboard's screen with the sample board at a given wall-clock minute, as the
-# host's erx-lvgl draws it at the display suite's size: the picture the host test compares
+# The kiosk dashboard's screen at a given wall-clock minute when every quote's first round
+# failed for one reason, as the host's erx-lvgl draws it at the display suite's size: the
+# board comes from the live source's own pure modules (erx_quotes_core on
+# erx_quotes_table's table, then erx_quotes_view), so it is the board the dashboard shows
+# after a boot with no network. It is the picture the host test compares
 # with test/display/reference/dashboard and the kiosk cell (tools/lib/erx/kiosk.rb)
 # compares the guest's screen with. The caller names the dashboard's app directory and an
 # SDK exported from the tree (Erx::AppPack::Sdk); the app's modules compile with the SDK's
@@ -28,14 +31,15 @@ module DashboardScreen
   module_function
 
   # The screen at time, [[year, month, day], [hour, minute, second]], as an Erx::Ppm::Image,
-  # of the dashboard at app over sdk.
-  def picture(time, app:, sdk:, runner:)
+  # of the dashboard at app over sdk, every quote's first round having failed with reason,
+  # a Symbol naming an erx_quotes_http reason such as :no_net.
+  def picture(time, app:, sdk:, runner:, reason:)
     program = Erx::Lvgl::Build.new(root: ROOT, runner: runner).call
     Dir.mktmpdir('erx-dashboard-screen') do |work|
       compile(work, app: app, sdk: sdk, runner: runner, tests: [SCREEN])
       runner.run([sdk.erl, '-noshell', *code_path(work, sdk: sdk), '-eval',
                   "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program)}, " \
-                  "erx_dashboard_view:tree(#{model(time)}), {#{WIDTH}, #{HEIGHT}})), halt(0)"],
+                  "erx_dashboard_view:tree(#{model(time, reason)}), {#{WIDTH}, #{HEIGHT}})), halt(0)"],
                  name: 'dashboard-screen', deadline: DEADLINE, chdir: work, env: Erx::Oracle::CLEAN_ERLANG_ENV)
       Erx::Ppm::Image.new(width: WIDTH, height: HEIGHT, pixels: File.binread(File.join(work, 'picture.rgb')))
     end
@@ -62,11 +66,22 @@ module DashboardScreen
     end
   end
 
-  # The view's model at time with the sample board, as an Erlang term.
-  def model(time)
+  # The view's model at time with the board of failed (below), as an Erlang term.
+  def model(time, reason)
     (year, month, day), (hour, minute, second) = time
     "\#{time => {{#{Integer(year)}, #{Integer(month)}, #{Integer(day)}}, " \
-      "{#{Integer(hour)}, #{Integer(minute)}, #{Integer(second)}}}, board => erx_dashboard_sample:board()}"
+      "{#{Integer(hour)}, #{Integer(minute)}, #{Integer(second)}}}, board => #{failed(reason)}}"
+  end
+
+  # The board erx_quotes sends once every quote of the table has started its first round
+  # and each round failed with reason, as an Erlang expression: the core takes one outcome
+  # per quote, and with one source per quote each outcome ends its round.
+  def failed(reason)
+    "(fun() -> T = erx_quotes_table:table(), " \
+      "{C0, _} = erx_quotes_core:tick(erx_quotes_core:new(T, 0), 0, 1.0), " \
+      "C = lists:foldl(fun({Q, _}, S) -> element(1, erx_quotes_core:outcome(S, Q, {error, #{reason}, none}, 0, 1.0)) end, " \
+      "C0, maps:get(quotes, T)), " \
+      'erx_quotes_view:board(C, 0) end)()'
   end
 
   # The model screen's map of the program and how to start it, as an Erlang term.

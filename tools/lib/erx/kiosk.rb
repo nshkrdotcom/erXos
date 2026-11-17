@@ -24,8 +24,8 @@ module Erx
   #   package (ADMITTED), the app's session mounted /app (MOUNTED), and the dashboard
   #   logged the minute of the first screen it showed (SHOWN);
   # * the screen read through QMP equals the dashboard as the host's erx-lvgl draws it
-  #   with the sample board (DashboardScreen) at that minute or the next, since the
-  #   guest's clock is not pinned and a minute may turn before the screen is read.
+  #   with every quote's first round failed for OFFLINE_REASON (DashboardScreen) at
+  #   that minute or the next, since the guest's clock is not pinned and a minute may turn before the screen is read.
   #
   # The seeded fault, the altered cell, flips a bit of the package header's root_hash, the
   # root of the image's hash tree, and binds the package row to the altered header's
@@ -44,6 +44,11 @@ module Erx
     UNVERIFIED = /erx_ns: image: erofs: blocks 0\+1 failed to read/n
     # How long the altered cell watches after the refusal for a mount or a screen.
     SETTLE_SECONDS = 15
+    # Why each quote's first fetch fails in the kiosk boot, which has no network device,
+    # so the dashboard shows that reason's words beside every quote. httpc's error there
+    # is a shape erx_quotes_http does not name, so it shows the catch-all, failed
+    # (TODO.md, the dashboard's offline reason).
+    OFFLINE_REASON = :failed
     ALTERED = '-altered'
     # The minute Run#call draws before the boots, to build and compile the renderer.
     WARM_MINUTE = [[1970, 1, 1], [0, 0, 0]].freeze
@@ -205,7 +210,7 @@ module Erx
       # is loaded here, when the cell runs, so loading the suite loads no test code.
       def drawing(app:, sdk:)
         require_relative '../../../test/fixtures/dashboard_screen'
-        ->(minute) { DashboardScreen.picture(minute, app: app, sdk: sdk, runner: @runner) }
+        ->(minute) { DashboardScreen.picture(minute, app: app, sdk: sdk, runner: @runner, reason: OFFLINE_REASON) }
       end
     end
   end
