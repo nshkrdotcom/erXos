@@ -150,6 +150,8 @@ struct ui_node {
 	int32_t		 mark;
 	lv_chart_series_t *series;	/* a graph's samples */
 	lv_chart_series_t *mark_series; /* a graph's mark, drawn across */
+	int16_t		 role;		/* its ui_role, -1 when unset */
+	int16_t		 trend;		/* its ui_trend, -1 when unset */
 	uint8_t		 kind;
 	uint8_t		 align;
 	uint8_t		 columns;
@@ -759,33 +761,51 @@ static const struct {
 	{ 48, &lv_font_montserrat_48 },
 };
 
+/* A colour of the window's palette, by its offset in erx_theme_palette_t. */
+static lv_color_t
+palette_color(size_t offset)
+{
+	return (lv_color_hex(*(const uint32_t *)(const void *)
+	    ((const char *)palette + offset)));
+}
+
 /*
- * Shows a node's text in a type role: the smallest face at least the
- * role's size, in its colour. With prop NULL the text takes LVGL's own
- * face and colour again, as a node that never had a role shows.
+ * Shows a node's text as its role and trend say, from the two together so
+ * the order they arrive in does not matter: the face is the smallest at
+ * least the role's size; the colour is the palette's ok for a trend up,
+ * critical for one down, and otherwise the role's. What neither sets takes
+ * LVGL's own face and the window's text colour again, as a node that never
+ * had them shows.
  */
 static void
-set_role(ui_node_t *node, const erx_ui_prop_t *prop)
+text_style(ui_node_t *node)
 {
 	lv_obj_t *text = node->label != NULL ? node->label : node->obj;
 	size_t face = 0;
 
-	if (prop == NULL) {
+	if (node->role >= 0 &&
+	    ((size_t)node->role >= sizeof(roles) / sizeof(roles[0]) ||
+	    roles[node->role].size == 0))
+		fatal("role %d is not one of the theme's", node->role);
+	if (node->role < 0) {
 		lv_obj_remove_local_style_prop(text, LV_STYLE_TEXT_FONT, 0);
-		lv_obj_remove_local_style_prop(text, LV_STYLE_TEXT_COLOR, 0);
-		return;
+	} else {
+		while (faces[face].size < roles[node->role].size)
+			if (++face == sizeof(faces) / sizeof(faces[0]))
+				fatal("no face has the %d pixels of role %d",
+				    roles[node->role].size, node->role);
+		lv_obj_set_style_text_font(text, faces[face].font, 0);
 	}
-	if ((size_t)prop->integer >= sizeof(roles) / sizeof(roles[0]) ||
-	    roles[prop->integer].size == 0)
-		fatal("role %d is not one of the theme's", prop->integer);
-	while (faces[face].size < roles[prop->integer].size)
-		if (++face == sizeof(faces) / sizeof(faces[0]))
-			fatal("no face has the %d pixels of role %d",
-			    roles[prop->integer].size, prop->integer);
-	lv_obj_set_style_text_font(text, faces[face].font, 0);
-	lv_obj_set_style_text_color(text,
-	    lv_color_hex(*(const uint32_t *)(const void *)((const char *)palette +
-	    roles[prop->integer].color)), 0);
+	if (node->trend == ERX_UI_TREND_UP)
+		lv_obj_set_style_text_color(text, lv_color_hex(palette->ok), 0);
+	else if (node->trend == ERX_UI_TREND_DOWN)
+		lv_obj_set_style_text_color(text,
+		    lv_color_hex(palette->critical), 0);
+	else if (node->role >= 0)
+		lv_obj_set_style_text_color(text,
+		    palette_color(roles[node->role].color), 0);
+	else
+		lv_obj_remove_local_style_prop(text, LV_STYLE_TEXT_COLOR, 0);
 }
 
 /* The style properties a section sets, which a plain container leaves unset. */
@@ -910,7 +930,12 @@ set_prop(ui_node_t *node, uint8_t number, const erx_ui_prop_t *prop)
 		lv_dropdown_set_selected(node->obj, (uint32_t)integer);
 		break;
 	case ERX_UI_PROP_ROLE:
-		set_role(node, prop);
+		node->role = cleared ? -1 : (int16_t)integer;
+		text_style(node);
+		break;
+	case ERX_UI_PROP_TREND:
+		node->trend = cleared ? -1 : (int16_t)integer;
+		text_style(node);
 		break;
 	case ERX_UI_PROP_AREA:
 		set_area(node, prop);
@@ -1005,7 +1030,7 @@ insert(const erx_ui_record_t *record)
 	*node = (ui_node_t){
 		.id = record->node, .kind = record->kind, .width = -1,
 		.height = -1, .min = 0, .max = 100, .value = 0,
-		.align = ERX_UI_ALIGN_FILL, .columns = 1,
+		.align = ERX_UI_ALIGN_FILL, .columns = 1, .role = -1, .trend = -1,
 	};
 	node->obj = widget(parent_obj, node);
 	node->own_width = lv_obj_get_style_width(node->obj, 0);

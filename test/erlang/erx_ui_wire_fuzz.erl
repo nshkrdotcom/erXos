@@ -45,7 +45,7 @@ server_record() ->
                                              {samples, [pick([none, 0, 16#7fffffff]) || _ <- lists:seq(1, rand:uniform(240))]},
                                              {icons, [pick([folder, calendar]) || _ <- lists:seq(1, rand:uniform(4))]},
                                              {role, pick([display, caption])}, {area, sidebar}, {icon, clock},
-                                             {current, pick([true, false])}],
+                                             {current, pick([true, false])}, {trend, pick([up, down, flat])}],
                                     rand:uniform(2) =:= 1]),
     pick([{insert, Node, rand:uniform(16#100000000) - 1, u16(), pick([label, button, column, list, graph]), Props},
           {set, Node, Props, pick([[], [width], [width, visible]])},

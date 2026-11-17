@@ -1507,6 +1507,7 @@ are in [Widget format](design-abi.md#widget-format). The properties:
 | `role` | one of the `ui_role` values: `display`, `title`, `heading`, `body`, `numeric`, `caption`; `body` when absent | `label`, `button`, `checkbox`, `input`, `list`, `graph` | how the node's text ranks in its window; a renderer picks the face and size |
 | `area` | one of the `ui_area` values: `section`, `toolbar`, `sidebar`; absent by default | `column`, `row`, `grid`, `scroll` | what the container is, so a renderer can mark it |
 | `icon` | one of the `ui_icon` values, the twenty icons of [Icons](design-desktop-programs.md#icons) | `label`, `button` | the item the node stands for, drawn beside its text; a renderer without the icon shows the text alone |
+| `trend` | one of the `ui_trend` values: `up`, `down`, `flat`; absent by default | `label` | which way the label's value has moved; a renderer draws it as [design-desktop-programs.md](design-desktop-programs.md#widget-format-additions) states |
 | `current` | boolean; `false` when absent | `button` | the button stands for the current one of its set, such as today in a month; a renderer marks it |
 | `samples` | at most 240 integers within `min` and `max`, or `none`, oldest first | `graph` | the series the graph draws; `none` is a sample not taken |
 | `mark` | integer within `min` and `max` | `graph` | a reference value drawn across the series, such as a grant |

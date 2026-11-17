@@ -987,7 +987,9 @@ additions](#widget-format-additions)): `folder`, `document`, `text`,
 
 ## Widget format additions
 
-The four programs need seven additions to `abi/formats/ui.txt`. Each
+The four programs and the dashboard need eight additions to
+`abi/formats/ui.txt`; `trend` is the dashboard's, the sign of each
+quote's change. Each
 states what a node is, not how it looks, so every renderer draws it as
 fits its medium ([design-display.md](design-display.md#widget-trees)),
 and each arrives in the validator, the binary form and the readers of
@@ -999,6 +1001,7 @@ all three languages from the one declaration.
 | `area` | a property of a root `@enum` of type `u8`, absent by default, on `column`, `row`, `grid` and `scroll` | what the container is: `section`, `toolbar` or `sidebar` |
 | `icon` | a property of a root `@enum` of type `u8`, the icon set, on `label` and `button` | the item the node stands for, drawn beside its text; a renderer without the icon shows the text alone |
 | `icons` | a list of the same enumeration, on `list`, marked `parallel items` | each item's icon |
+| `trend` | a property of a root `@enum` of type `u8`, `ui_trend`, absent by default, on `label` | which way the value the label shows has moved: `up` and `down`, drawn in the palette's `ok` and `critical` colours over the role's, and `flat`, drawn in the role's; colour is never the only sign, so the label's text carries the change's sign too |
 | `current` | a boolean, `false` when absent, on `button` | the button stands for the current one of its set: today in a month, the current folder in a path. A renderer marks it, the Erlang renderer and LVGL with the accent's ring, the browser with `aria-current` |
 | `name` | a text of at most 255 bytes of UTF-8, on every kind | what the node is called where it shows no text of its own, files' back and forward buttons among them; no renderer draws it, and it is how a test, the browser and an assistive reader name the node |
 | kind `graph` | properties `samples`, `min`, `max`, `mark` and `text` | a series of at most 240 numbers, oldest first, each an integer within `min` and `max` or `none`; `mark` an optional reference value within them, such as a grant; `text` the caption, an `attr()` like any text |
@@ -1773,8 +1776,8 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 
 1. **The new mechanisms this design names.** Three are new and
    accepted: the theme, `abi/theme.txt` with its generated module,
-   header and constants; seven additions to `ui.txt` (`role`, `area`,
-   `icon`, `icons`, `current`, `name` and `graph`, with list activation
+   header and constants; eight additions to `ui.txt` (`role`, `area`,
+   `icon`, `icons`, `current`, `name`, `trend` and `graph`, with list activation
    as a kind line), with three grammar additions: lists of integers or
    enumerations with an optional `none`, `within` applied to each value
    of a list, and `parallel`; and the transition, declared in the theme

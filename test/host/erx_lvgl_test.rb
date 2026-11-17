@@ -112,6 +112,33 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
     end
   end
 
+  # A label's trend colours its text (abi/formats/ui.txt, ui_trend): up in the
+  # palette's ok, down in its critical, each over the role's own colour, and
+  # flat in the role's; a label drawn up holds the ok colour and none of the
+  # critical one.
+  def test_a_label_s_trend_colours_its_text
+    runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+    program = Erx::Lvgl::Build.new(root: ROOT, runner: runner).call
+    ok = [0x2f, 0x7d, 0x4f].pack('C3')
+    critical = [0xb3, 0x36, 0x2c].pack('C3')
+    Dir.mktmpdir('erx-lvgl-trend') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS)
+      up, down, flat = %w[up down flat].map do |trend|
+        tree = "{column, \#{}, [{label, \#{text => <<\"MMMM 88.8%\">>, role => title, trend => #{trend}}, []}]}"
+        run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
+             "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program)}, #{tree}, {200, 60})), " \
+             'halt(0)', chdir: work)
+        File.binread(File.join(work, 'picture.rgb')).scan(/.../mn)
+      end
+      assert_includes up, ok
+      refute_includes up, critical
+      assert_includes down, critical
+      refute_includes down, ok
+      refute_includes flat, ok
+      refute_includes flat, critical
+    end
+  end
+
   private
 
   # The model screen's map of the program and how to start it, as an Erlang term.

@@ -34,6 +34,14 @@ enum ui_role u8
   value numeric 4
   value caption 5
 
+# Which way the value a label shows has moved (docs/design-desktop-programs.md,
+# "Widget format additions"); a renderer shows up and down in the palette's
+# ok and critical colours and flat in the label's own.
+enum ui_trend u8
+  value up 0
+  value down 1
+  value flat 2
+
 # What a container is: a renderer marks a section, a toolbar or a sidebar.
 enum ui_area u8
   value section 0
@@ -113,6 +121,7 @@ ui 1
   prop samples 33 samples
   prop mark 34 bound
   prop name 35 short common
+  prop trend 36 @ui_trend
   kind column 1 children
     prop area
   kind row 2 children
@@ -127,6 +136,7 @@ ui 1
     prop text
     prop role
     prop icon
+    prop trend
   kind button 7
     prop text
     prop on_click
