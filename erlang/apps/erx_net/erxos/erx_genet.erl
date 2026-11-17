@@ -120,18 +120,33 @@ init(#{record := Spec}) ->
 
 %% The record, open, identify, the address, reset and configure, the two queues,
 %% negotiate, start, attach and the PHY, in that order; each step's refusal stops the
-%% sequence.
+%% sequence. A line in the kernel log names each phase before it runs, and the log is
+%% written synchronously, so when a register access ends the domain by a synchronous fault
+%% the last such line names its phase. An asynchronous error (an SError on AArch64) may be
+%% taken only at a later kernel entry, such as the next phase line, so for one the fault
+%% lies in the last phase named or the one before it.
 start(Spec) ->
     maybe
+        ok = log_phase(open),
         {ok, Dev} ?= step(open, erx_device:open(Spec)),
+        ok = log_phase(identify),
         ok ?= erx_genet_core:identify(erx_device:read_field(Dev, sys_rev_ctrl, major)),
+        ok = log_phase(address),
         Lladdr = erx_genet_core:lladdr(maps:get(mac, Spec, none), controller_mac(Dev),
                                        erx_net_clock:entropy(6)),
-        ok = apply_steps(Dev, erx_genet_core:reset() ++ erx_genet_core:configure(Lladdr)),
+        ok = log_phase(reset),
+        ok = apply_steps(Dev, erx_genet_core:reset()),
+        ok = log_phase(configure),
+        ok = apply_steps(Dev, erx_genet_core:configure(Lladdr)),
+        ok = log_phase(queue_rx),
         {ok, Rx} ?= step(queue_create, erx_device:queue_create(Dev, ?RXQ, ?QUEUE_SIZE, ?BUFFER)),
+        ok = log_phase(queue_tx),
         {ok, Tx} ?= step(queue_create, erx_device:queue_create(Dev, ?TXQ, ?QUEUE_SIZE, ?BUFFER)),
+        ok = log_phase(negotiate),
         ok ?= negotiate(Dev, 1),
+        ok = log_phase(enable),
         ok = apply_steps(Dev, erx_genet_core:start()),
+        ok = log_phase(attach),
         {ok, Irq} ?= step(attach, erx_irq_line:attach(Dev, ?IRQ_LINE)),
         {Phy, Request} = erx_phy_c22:start(),
         self() ! {?MODULE, phy_begin},
@@ -159,6 +174,8 @@ negotiate(Dev, Tries) ->
         {error, Reason} ->
             {error, {negotiate, Reason}}
     end.
+
+log_phase(Name) -> log("phase ~s", [Name]).
 
 step(_Name, ok) -> ok;
 step(_Name, {ok, Value}) -> {ok, Value};
