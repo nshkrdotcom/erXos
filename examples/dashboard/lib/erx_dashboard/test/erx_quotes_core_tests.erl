@@ -179,8 +179,8 @@ staleness_test() ->
     {S2, _} = erx_quotes_core:tick(S1, ?T0 + 10000, 1.0),
     {S3, _} = outcome(S2, q, {error, {status, 503}, none}, ?T0 + 10000),
     {S4, _} = outcome(S3, q, {error, timeout, none}, ?T0 + 10000),
-    ?assertEqual(<<"live chart: HTTP 503">>, status(S4, <<"q">>, ?T0 + 15000)),
-    ?assertEqual(<<"stale, 2 min \x{B7} live chart: HTTP 503"/utf8>>, status(S4, <<"q">>, ?T0 + 120000)),
+    ?assertEqual(<<"live chart \x{B7} HTTP 503"/utf8>>, status(S4, <<"q">>, ?T0 + 15000)),
+    ?assertEqual(<<"stale, 2 min \x{B7} live chart \x{B7} HTTP 503"/utf8>>, status(S4, <<"q">>, ?T0 + 120000)),
     ?assertMatch([#{symbol := <<"q">>, price := 64412.5, change := 0.5, decimals := 2} | _],
                  quotes(S4, ?T0 + 15000)),
     {S5, _} = outcome(S0, r, {error, {status, 503}, none}, ?T0),
@@ -432,7 +432,7 @@ lagging_clock_test() ->
     {S1, _} = erx_quotes_core:history(S0, h, Day),
     S2 = live(S1, 7.5, ?WALL, ?T0),
     ?assertEqual(lists:droplast(Day) ++ [{?WALL + 86400, 7.5}], series(S2)),
-    ?assertMatch([#{status := <<"K, 24 h - 0 s">>}], quotes(S2, ?T0)),
+    ?assertMatch([#{status := <<"24 h chart">>}], quotes(S2, ?T0)),
     S3 = live(S2, 8.5, ?WALL + ?B, ?T0 + 10000),
     ?assertEqual(lists:droplast(Day) ++ [{?WALL + 86400, 8.5}], series(S3)).
 

@@ -98,7 +98,7 @@ range(#{series := none}) -> <<"live">>;
 range(#{}) -> <<"24 h">>.
 
 reason(none) -> [];
-reason({Reason, _At}) -> [": ", erx_quotes_http:word(Reason)].
+reason({Reason, _At}) -> [?DOT, erx_quotes_http:word(Reason)].
 
 -doc """
 The log's view of the board: per quote of the table, in its order, the
