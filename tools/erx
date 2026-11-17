@@ -137,6 +137,8 @@ module Erx
         code_command(command, command_arguments)
       when 'files'
         files_command(command_arguments)
+      when 'netboot'
+        netboot_command(command_arguments)
       when 'web'
         web_command(command_arguments)
       when '--help', '-h', nil
@@ -857,6 +859,42 @@ module Erx
       0
     end
 
+    # tools/erx netboot [--tftp DIR] [--platform NAME]: stages the boot files of the board's
+    # packed card (tools/erx pack --medium --platform NAME) into DIR, the TFTP root its
+    # firmware boots from over the network (Netboot), and prints the build it staged and
+    # the command line that serves DIR over TFTP (docs/design-platforms.md, "Netbooting
+    # from a Mac").
+    def self.netboot_command(arguments)
+      require 'etc'
+      require_relative 'lib/erx/netboot'
+      require_relative 'lib/erx/production_image'
+      tftp = Netboot::DEFAULT_ROOT
+      name = Netboot::PLATFORM
+      OptionParser.new do |flags|
+        flags.on('--tftp DIR') { |value| tftp = value }
+        flags.on('--platform NAME') { |value| name = value }
+      end.parse!(arguments)
+      no_arguments(arguments)
+      platform = Platform.load(root: ROOT, name: name)
+      raise Error, "netboot: #{name}'s firmware boots from no boot partition, so it has no network boot root" unless
+        BootPartition.boot_partition_medium?(platform)
+
+      staged = Netboot.stage(medium: File.join(ROOT, ProductionImage.packed_directory(platform)), root: tftp)
+      tree = case staged.dirty
+             in true then 'with changes'
+             in false then 'unchanged'
+             in nil then 'not a git checkout'
+             end
+      server = Netboot.server_command(root: staged.root, interface: 'INTERFACE', user: Etc.getpwuid(Process.uid).name,
+                                      group: Etc.getgrgid(Process.gid).name)
+      Terminal.puts("netboot: #{staged.root} serves #{name}'s boot files of commit #{staged.commit || 'unknown'} " \
+                    "(tree #{tree}), #{BootPartition::KERNEL} SHA-256 #{staged.kernel}")
+      Terminal.puts("netboot: serve it over TFTP with this line, INTERFACE being the Mac's interface on the cable " \
+                    '(with Internet Sharing on, the bridge ifconfig shows with the shared address, often bridge100):')
+      Terminal.puts("  #{Netboot.shell_line(server)}")
+      0
+    end
+
     # The seconds each call on the web facet may take; past them the host link is taken
     # as down, and every WebSocket closes.
     WEB_CALL_SECONDS = 10
@@ -902,7 +940,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build release-kernel | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build release-kernel | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | netboot [--tftp DIR] [--platform NAME] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N]')
       0
     end
 
