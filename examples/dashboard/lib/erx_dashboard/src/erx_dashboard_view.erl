@@ -11,7 +11,8 @@ a process, so the same view always gives the same tree, which the host
 test draws and compares with its reference picture.
 
 The screen is a row on the theme's window colour. On the left, centred,
-the clock: an analog dial (erx_dashboard_clock) for the hour and minute,
+the clock: the model's `dial`, the picture erx_dashboard_clock:png/1
+draws of the hour and minute, which the dashboard draws once a minute,
 with the date under it and the time, `HH:MM UTC`, under that. On the
 right, the quotes panel: the title `Markets` over the board's credit,
 then one card, a `section`, per quote: its name over its status line,
@@ -47,6 +48,7 @@ bounds; the view checks nothing again.
                    status => binary()}.
 -type board() :: #{credit := binary(), quotes := [quote()]}.
 -type model() :: #{time := calendar:datetime(),
+                   dial := binary(),
                    board := none | board()}.
 
 %% The graph's range: a card's prices are scaled onto it, so no price,
@@ -63,12 +65,12 @@ bounds; the view checks nothing again.
 
 -doc "The widget tree of `Model`.".
 -spec tree(model()) -> erx_ui_model:tree().
-tree(#{time := Time, board := Board}) ->
+tree(#{time := Time, board := Board, dial := Dial}) ->
     Size = erx_dashboard_clock:size(),
     {row, #{pad => 56},
      [{column, #{weight => 1},
        [{spacer, #{weight => 1}, []},
-        centred({image, #{width => Size, height => Size, image => erx_dashboard_clock:png(Time),
+        centred({image, #{width => Size, height => Size, image => Dial,
                           image_type => png, alt => clock(Time)}, []}),
         gap(20),
         centred({label, #{height => 28, role => title, text => date(Time)}, []}),

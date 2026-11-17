@@ -12,8 +12,9 @@
  *   Plan 9's bytesperline for the channels erx-lvgl accepts;
  * - nothing animates: theme transitions take no time, so a pressed button
  *   changes once and an idle program runs no timer;
- * - no operating system layer, no file system, no image decoder, no log:
- *   the program reads only its standard input.
+ * - no operating system layer, no file system and no log: the program reads
+ *   only its standard input, and its one image decoder, lodepng, reads only
+ *   the PNG of an image node that input carries.
  */
 
 #ifndef LV_CONF_H

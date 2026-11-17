@@ -43,6 +43,8 @@ refusals_test() ->
     Bad = [kraken(<<"XETHZUSD">>, <<"1.0">>, <<"1.0">>),       % missing key
            kraken(<<"XXBTZUSD">>, <<"1.0">>, <<"0">>),         % zero reference
            kraken(<<"XXBTZUSD">>, <<"1.0">>, <<"0.0001">>),    % change past 1000 percent
+           %% a fall that rounds to -100 percent, which leaves no opening price
+           kraken(<<"XXBTZUSD">>, <<"0.000000000001">>, <<"100000">>),
            <<"{\"result\": 1">>,                               % truncated
            <<"[1, 2]">>,
            binary:copy(<<" ">>, 65537)],

@@ -142,7 +142,8 @@ bytes({_R, _G, _B, A}) when A =< 0.0 ->
 bytes({R, G, B, A}) ->
     <<(round(R / A)), (round(G / A)), (round(B / A)), (round(A * 255))>>.
 
-%% A PNG of 8-bit RGBA, its pixels the deflated, filtered rows.
+%% A PNG of 8-bit RGBA, its pixels the deflated rows, each led by filter
+%% type 0, none.
 encode(Width, Height, Deflated) ->
     Header = <<Width:32, Height:32, 8, 6, 0, 0, 0>>,
     iolist_to_binary([<<137, "PNG", 13, 10, 26, 10>>,

@@ -69,8 +69,9 @@ module DashboardScreen
   # The view's model at time with the board of failed (below), as an Erlang term.
   def model(time, reason)
     (year, month, day), (hour, minute, second) = time
-    "\#{time => {{#{Integer(year)}, #{Integer(month)}, #{Integer(day)}}, " \
-      "{#{Integer(hour)}, #{Integer(minute)}, #{Integer(second)}}}, board => #{failed(reason)}}"
+    clock = "{{#{Integer(year)}, #{Integer(month)}, #{Integer(day)}}, " \
+            "{#{Integer(hour)}, #{Integer(minute)}, #{Integer(second)}}}"
+    "\#{time => #{clock}, board => #{failed(reason)}, dial => erx_dashboard_clock:png(#{clock})}"
   end
 
   # The board erx_quotes sends once every quote of the table has started its first round

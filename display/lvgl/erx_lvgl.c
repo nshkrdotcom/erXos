@@ -701,6 +701,9 @@ set_graph(ui_node_t *node)
 {
 	uint32_t points = node->nsamples < 2 ? 2 : node->nsamples;
 
+	if (node->max <= node->min)
+		fatal("graph %u has min %d not below max %d", node->id,
+		    node->min, node->max);
 	lv_chart_set_point_count(node->obj, points);
 	lv_chart_set_all_values(node->obj, node->series, LV_CHART_POINT_NONE);
 	for (uint16_t index = 0; index < node->nsamples; index++)

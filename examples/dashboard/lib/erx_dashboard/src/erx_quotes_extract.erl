@@ -14,7 +14,7 @@ keeps its own stack and makes no atom, then walked along the row's
 path. A price is a JSON number or a decimal string of the grammar
 `-?[0-9]{1,15}(\.[0-9]{1,12})?`, at least 10^-12 and below 10^15; a
 change's reference value is checked the same way, and the percentage
-computed from it must lie in [-100, 1000]. Every check throws
+computed from it must lie in (-100, 1000]. Every check throws
 `bad_data`, which value/2 catches once.
 """.
 
@@ -71,9 +71,10 @@ change({from, Path}, Answer, Price) ->
     Reference = price(walk(Answer, Path)),
     percent((Price - Reference) / Reference * 100).
 
-%% A change lies in [-100, 1000] percent; both prices
+%% A change lies in (-100, 1000] percent, so the price it started from is
+%% price / (1 + change / 100), which the screen marks; both prices
 %% lie within [10^-12, 10^15), so the computation cannot overflow.
-percent(Percent) when Percent >= -100, Percent =< 1000 -> float(Percent);
+percent(Percent) when Percent > -100, Percent =< 1000 -> float(Percent);
 percent(_Percent) -> throw(bad_data).
 
 %% A price, a JSON number as a decimal string, lies in [10^-12, 10^15):

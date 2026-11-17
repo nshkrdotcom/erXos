@@ -17,7 +17,8 @@ since the session's display or pixel area may not be ready yet; each
 refusal unlike the one before is logged as `erx_dashboard: refused
 Reason`. Once a minute, on the minute, and whenever a board comes, it
 computes the tree and hands it to the UI if it differs from the one
-shown. The first tree a window takes is logged as `erx_dashboard:
+shown; the dial in it is drawn once a minute and kept. The first tree
+a window takes is logged as `erx_dashboard:
 shown YYYY-MM-DD HH:MM`, the minute of the clock it shows
 (erx_dashboard_view:minute/1). The tree takes no input, so the UI's events are dropped.
 """.
@@ -32,6 +33,7 @@ shown YYYY-MM-DD HH:MM`, the minute of the clock it shows
 -type state() :: #{window := none | erx_ui:window(),
                    board := none | erx_dashboard_view:board(),
                    shown := none | erx_ui_model:tree(),
+                   dial := none | {Minute :: binary(), Png :: binary()},
                    refused := none | term()}.
 
 -doc "Starts the dashboard's process, registered as erx_dashboard.".
@@ -47,7 +49,7 @@ init([]) ->
             {stop, {source, Reason}};
         {ok, _Quotes} ->
             next_tick(),
-            {ok, #{window => none, board => none, shown => none, refused => none},
+            {ok, #{window => none, board => none, shown => none, dial => none, refused => none},
              {continue, open}}
     end.
 
@@ -94,9 +96,10 @@ open(#{refused := Last} = State) ->
 
 render(#{window := none} = State) ->
     {noreply, State};
-render(#{window := Window, board := Board, shown := Shown} = State) ->
+render(#{window := Window, board := Board, shown := Shown} = State0) ->
     Time = calendar:universal_time(),
-    case erx_dashboard_view:tree(#{time => Time, board => Board}) of
+    #{dial := {_Minute, Dial}} = State = dial(Time, State0),
+    case erx_dashboard_view:tree(#{time => Time, board => Board, dial => Dial}) of
         Shown ->
             {noreply, State};
         Tree ->
@@ -110,6 +113,15 @@ render(#{window := Window, board := Board, shown := Shown} = State) ->
                 {error, Reason} ->
                     {stop, {tree, Reason}, State}
             end
+    end.
+
+%% The dial for the minute of Time, drawn once a minute: a board comes
+%% about once a second, and the picture changes only with the minute.
+dial(Time, #{dial := Kept} = State) ->
+    Minute = erx_dashboard_view:minute(Time),
+    case Kept of
+        {Minute, _Png} -> State;
+        _Other -> State#{dial := {Minute, erx_dashboard_clock:png(Time)}}
     end.
 
 %% The next tick, at the start of the next wall-clock minute, when the

@@ -91,7 +91,7 @@ board() ->
                    samples => []}]}.
 
 model(Board) ->
-    #{time => ?TIME, board => Board}.
+    #{time => ?TIME, board => Board, dial => erx_dashboard_clock:png(?TIME)}.
 
 %% Each label's text, depth first.
 texts({label, #{text := Text}, []}) -> [Text];
