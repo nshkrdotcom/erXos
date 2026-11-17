@@ -9367,6 +9367,19 @@ document's "residual risks accepted" paragraph.
   [design-ssh.md](docs/design-ssh.md#verification)): it checks each blob's layout itself, where the design has
   `erx_ssh_wire` accept it; that decoder and `abi/formats/ssh.txt` are on another branch, and when they land the
   target calls it, as `erx_boot_keys` then takes the blob layout's macros from the generated header.
+* [Medium] tooling, fsimg's append mode (`~/projects/fsimg`, pinned in `deps.lock`;
+  [design-ssh.md](docs/design-ssh.md#verification)): fsimg has no mode that adds a file to an existing image
+  (its modes are `c`, `x`, `t`, `W` and `i`, `docs/fsimg.1`), which the downloadable-medium row needs to add
+  `authorized_keys` as a user's computer does. Add an append mode, as tar's `r`, that adds a file to an
+  existing FAT volume, whole or as a partition of an MBR disk, allocating only free clusters and keeping
+  every other byte; tests in fsimg's suite: `fsimg W` accepts the result, a second extraction gives every
+  earlier file unchanged, and an append to a full root directory is refused. Then repin fsimg in `deps.lock`.
+* [Medium] SSH, stage 2's source of root's keys ([design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)):
+  stage 1 reads root's home copy, `/root/.ssh/authorized_keys`, imported from `login_keys`, while the design's
+  stage 2 facet reads `login_keys` from the record volume. The direction is that 0.2's storage domain serves
+  `login_keys` from the home copy, so the SSH domain admits what stage 1 admits; that needs a design: which
+  domain reads the home copy under which facet, where the first-boot import then reads the medium, and the
+  manifest check's binding of `login_keys` to the `record_volume` holder.
 * [Medium] SSH, the QEMU test of a downloadable medium ([design-ssh.md](docs/design-ssh.md#the-ssh-domain)):
   `MediumBoot` packs its medium from `site_manifest_source` (`tools/lib/erx/medium_boot.rb:499`,
   `tools/lib/erx/bench_g5.rb:82`), the browser demo's manifest, which leaves the SSH domain out, so no harness

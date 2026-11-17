@@ -27,7 +27,7 @@ the node and the storage domain:
   start nor the mint waits for the medium (erx_storage_login_keys:start_mint/0;
   docs/design-ssh.md, "Root's login keys on the medium"). A boot whose block
   service names no `record_volume` window starts no mint, and a restart reads
-  the medium again.
+  the medium again when `root` is next asked for.
 """.
 -behaviour(supervisor).
 

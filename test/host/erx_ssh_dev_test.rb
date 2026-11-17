@@ -19,7 +19,8 @@ require_relative '../fixtures/erlang_build'
 # kept, and start/1 refuses stock's release, whose missing build facts name no
 # development build. The module as the build compiles it exports no function that names
 # a keys file. Each seeded fault must fail the cases: a key callback that admits every
-# user name, a home copy imported again or written empty, a medium file of any length
+# user name, a home copy imported again or written empty, the medium's blobs written
+# without being decoded, a medium file of any length
 # taken as blobs, keys files read by OTP's ssh_file, exec run, any build kind taken for
 # a development one, and OTP's encoding of an Ed25519 private key without its public
 # half, which ssh_file cannot read back as a host key.
@@ -36,6 +37,9 @@ class ErxSshDevTest < Minitest::Test
               from: '{ok, _} -> kept;', to: '{ok, _} -> import_keys(Home, Medium());'),
     Fault.new(name: 'an empty home copy written', source: DEV,
               from: '{_Text, 0} ->', to: '{_Text, -1} ->'),
+    Fault.new(name: "the medium's blobs written without being decoded", source: DEV,
+              from: '{ok, Keys, _Findings} = erx_boot_keys:decode(iolist_to_binary(Lines)),',
+              to: 'Keys = [Blob || [_, Encoded, _] <- Lines, Blob <- [base64:decode(Encoded)]],'),
     Fault.new(name: 'a medium file of any length read as blobs', source: DEV,
               from: 'when byte_size(Bytes) rem ?BLOB_SIZE =:= 0,', to: 'when true,'),
     Fault.new(name: 'a keys file read by ssh_file', source: DEV,

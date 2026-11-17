@@ -199,6 +199,14 @@ the_import_writes_the_medium_keys_test() ->
     ?assertEqual({8#700, 8#600}, {Dir band 8#777, File band 8#777}),
     ?assertEqual({ok, ["authorized_keys"]}, file:list_dir(filename:dirname(Home))).
 
+%% Of a medium answer of one key and one blob that is no Ed25519 key, only the key
+%% is written.
+the_import_writes_only_keys_that_decode_test() ->
+    {Home, [One]} = import_case("mixed", 1),
+    Zero = binary:copy(<<0>>, byte_size(One)),
+    ?assertEqual({imported, 1}, erx_ssh_dev:import(Home, fun() -> {ok, <<Zero/binary, One/binary>>} end)),
+    ?assertEqual({ok, <<"ssh-ed25519 ", (base64:encode(One))/binary, "\n">>}, file:read_file(Home)).
+
 %% A home copy that is there is never replaced, and the medium is not read.
 the_import_never_replaces_a_home_copy_test() ->
     {Home, [One]} = import_case("kept", 1),
