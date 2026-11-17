@@ -9324,14 +9324,10 @@ document's "residual risks accepted" paragraph.
   domains boot releases of their own.
 
 * [Medium] storage, the release medium for QEMU (`tools/lib/erx/medium_image.rb`,
-  `tools/erx pack --medium`): its slots and the boot-selection record's
-  partition hold no FAT: the bootable file lies at `medium_slot_boot_start`
+  `tools/erx pack --medium`): its slots hold no FAT: the bootable file lies at `medium_slot_boot_start`
   after 4 MiB of zeros, where
   [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record)
-  places it inside the FAT's file; and the record partition holds the
-  record's sector (`BootRecord.sector`) without the FAT whose
-  `autoboot.txt` file is that sector, which the Raspberry Pi's firmware
-  needs and nothing on QEMU reads. The EROFS image in the slot holds a copy
+  places it inside the FAT's file. The EROFS image in the slot holds a copy
   of the whole system release, its manifest excepted, which no domain
   mounts while the storage domain holds the block unit (next item), and the boot
   image holds the release too, from which the system domain starts, until
@@ -9342,10 +9338,6 @@ document's "residual risks accepted" paragraph.
   `BootRecord.read` and `extract`; `release.erofs` and `data.lfs` are not scanned for the build path (the EROFS
   files are, through `image.boot`); an oversized `kernel8.img` fails in fsimg rather than with a diagnostic;
   `FatVolume::Layout` keeps a root offset and a root cluster for both FAT types where each means something for one.
-* [Medium] SSH stage 2, the QEMU medium's record partition (`tools/lib/erx/release_medium.rb`, `medium`): it
-  writes only the record's sector and leaves the rest of the partition zero, so a QEMU medium has no FAT volume
-  to hold `authorized_keys`; [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium) has it format
-  the partition with `PiMedium::RECORD_VOLUME`, as the card is.
 * [Low] storage, long-name case in `erx_fat_read` (`erlang/apps/erx_storage/src/erx_fat_read.erl`, `upper/1`;
   [design-storage.md](docs/design-storage.md#removable-media-fat)): the read core maps only ASCII letters to upper
   case before comparing long names, where the design compares after mapping every Basic Multilingual Plane code
@@ -9361,19 +9353,19 @@ document's "residual risks accepted" paragraph.
   [design-ssh.md](docs/design-ssh.md#verification)): every case and fuzz seed is a volume of
   `test/fixtures/fat_record_volume.rb`, written from the same reading of the FAT specification as the reader, where
   the design's row reads volumes fsimg writes; a shared misreading would refuse every real card. Add a case over
-  the record volume `PiMedium::RECORD_VOLUME` has fsimg write (`not_found` proves its layout is admitted), and one
+  the record volume `RecordVolume::ARGUMENTS` has fsimg write (`not_found` proves its layout is admitted), and one
   that finds `authorized_keys` once fsimg can place a file past the record's region (the fsimg item below).
 * [Low] SSH, the boot keys' fuzz target (`test/erlang/erx_boot_keys_fuzz.erl`, `key_blob/1`;
   [design-ssh.md](docs/design-ssh.md#verification)): it checks each blob's layout itself, where the design has
   `erx_ssh_wire` accept it; that decoder and `abi/formats/ssh.txt` are on another branch, and when they land the
   target calls it, as `erx_boot_keys` then takes the blob layout's macros from the generated header.
-* [Medium] storage, the record volume's erase unit (`tools/lib/erx/pi_medium.rb`, `RECORD_VOLUME`; fsimg): the
+* [Medium] storage, the record volume's erase unit (`tools/lib/erx/record_volume.rb`, `ARGUMENTS`; fsimg): the
   clusters of MiB 3 after the record's are free, so fsimg, and a user's computer writing `authorized_keys`, put a
   file beside the record in its erase unit;
   [design-storage.md](docs/design-storage.md#removable-media-fat) marks the rest of the record's erase unit bad
-  in both FATs. Work: `RECORD_VOLUME` derives the range after the record's cluster from `abi/medium.txt`'s
+  in both FATs. Work: `RecordVolume::ARGUMENTS` derives the range after the record's cluster from `abi/medium.txt`'s
   `medium_erase_sectors` and passes it as fsimg's
-  `-o bad=FIRST-LAST` (the fsimg item below); `check_volumes` derives the same range and refuses a volume in
+  `-o bad=FIRST-LAST` (the fsimg item below); `RecordVolume.check` derives the same range and refuses a volume in
   which a cluster of it is not marked bad in both FATs, with a `pi_medium_test` case whose volume lacks one mark,
   as `erx_fat_read` derives its region check. No cluster number is written down
   anywhere, and nothing patches fsimg's output.

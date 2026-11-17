@@ -9,6 +9,7 @@ require 'json'
 require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
+require_relative '../../tools/lib/erx/fsimg'
 require_relative '../../tools/lib/erx/manifest'
 require_relative '../../tools/lib/erx/platform'
 require_relative '../../tools/lib/erx/release_medium'
@@ -33,6 +34,8 @@ class ReleaseMediumTest < Minitest::Test
   CODEC = Erx::ABI::Generated::CODEC
   SECTOR = 512
   MIB = 1 << 20
+  # Where a FAT16's boot sector holds the volume label.
+  FAT16_LABEL = 43
 
   # A runner whose --version answers are the given first lines, for the pin's refusals.
   FakeRunner = Struct.new(:lines, :directory) do
@@ -167,12 +170,32 @@ class ReleaseMediumTest < Minitest::Test
         volume = File.binread(first.volume.path)
         assert_equal volume, medium.pread(volume.bytesize, CODEC.constant('medium_data_start') * SECTOR), 'the data volume'
         assert_equal Erx::BootRecord.sector(:a), medium.pread(SECTOR, Erx::BootRecord::RECORD_OFFSET), 'the record commits slot A'
+        record = File.binread(first.record_volume.path)
+        assert_equal record, medium.pread(record.bytesize, CODEC.constant('medium_record_start') * SECTOR), 'the record volume'
         count = (CODEC.constant('medium_record_start') + CODEC.constant('medium_record_count_start')) * SECTOR
         assert_equal "\0".b * SECTOR, medium.pread(SECTOR, count), 'the reset count is zero'
       end
 
       assert_equal files.transform_values { |source| File.binread(source) },
                    extract(first.path, offset: system_a + image.slot_offset, directory: directory)
+    end
+  end
+
+  # The record partition is the card's record volume, labelled ERXOS as users are told,
+  # so they add authorized_keys to it as to a card, and it holds the record alone: the
+  # medium is written with no login key (RecordVolume.check refuses a file beside the
+  # record; pi_medium_test seeds one).
+  def test_the_record_partition_is_the_cards_volume_and_holds_no_key
+    Dir.mktmpdir('erx-release-medium-') do |directory|
+      files = tree(File.join(directory, 'input'))
+      boot = File.join(directory, 'image.boot')
+      File.binwrite(boot, Random.new(7).bytes(MIB))
+      medium, = written(boot, files.map { |at, source| { 'path' => at, 'artifact' => source } }, File.join(directory, 'medium'))
+      partition = File.join(directory, 'record-partition.fat')
+      File.binwrite(partition, File.binread(medium.path, Erx::RecordVolume::BYTES, CODEC.constant('medium_record_start') * SECTOR))
+      Erx::RecordVolume.check(partition)
+      Erx::FatVolume.open(partition) { |volume| assert_equal ['AUTOBOOTTXT'.b], volume.root_entries.map(&:name) }
+      assert_equal 'ERXOS      ', File.binread(partition, 11, FAT16_LABEL), 'the boot sector names the volume ERXOS'
     end
   end
 
@@ -312,7 +335,9 @@ class ReleaseMediumTest < Minitest::Test
     data_sectors = CODEC.constant('medium_data_sectors_min')
     volume = Erx::DataVolume.format(root: ROOT, owner_root: directory, runner: runner(directory), directory: directory,
                                     data_sectors: data_sectors)
-    [Erx::ReleaseMedium.write(built: built, directory: directory, volume: volume, data_sectors: data_sectors), artifacts]
+    [Erx::ReleaseMedium.write(built: built, directory: directory, volume: volume, data_sectors: data_sectors,
+                              runner: runner(directory), fsimg: Erx::Fsimg.checked(root: ROOT, runner: runner(directory))),
+     artifacts]
   end
 
   # The windows erx_blk_table admits from the medium's five records.
@@ -331,7 +356,7 @@ class ReleaseMediumTest < Minitest::Test
   end
 
   # Byte offsets that must read as zeros: the first and last sector of every window but
-  # boot A and of system B, boot A's gaps before and after the bootable file, and system
+  # boot A and of system B, the record's first excepted, boot A's gaps before and after the bootable file, and system
   # A's after the image's tree.
   def zeros(written)
     slot_a = CODEC.constant('medium_boot_a_start') * SECTOR
@@ -343,7 +368,8 @@ class ReleaseMediumTest < Minitest::Test
     gap_start = (boot_end + SECTOR - 1) / SECTOR * SECTOR
     windows = Medium.windows(data_sectors: written.data_sectors).reject { |window| window.role == :boot_a }
     # The data window's first sector holds the fresh volume.
-    starts = windows.reject { |window| window.role == :data }.map(&:start)
+    # The record window's first sector is the record volume's boot sector.
+    starts = windows.reject { |window| %i[data record].include?(window.role) }.map(&:start)
     [*starts.map { |start| start * SECTOR }, *windows.map { |window| window.last * SECTOR },
      slot_a, boot_start - SECTOR, gap_start, slot_a + boot_bytes - SECTOR,
      system_a + tree_end(written), system_a + system_bytes - SECTOR,

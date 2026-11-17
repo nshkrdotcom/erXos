@@ -495,7 +495,7 @@ module Erx
       def machine_end(accel, count, remote, built, written, command:)
         run = "#{accel}-#{count}cpu-#{command}-#{Process.pid}-#{Random.bytes(8).unpack1('H*')}"
         directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(@root, 'build/session-domain', run))
-        medium = ReleaseMedium.medium(written.slot, directory: directory, data_sectors: written.data_sectors, volume: written.volume)
+        medium = written.fresh(directory: directory)
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: count,
                                                          manifest_source: @manifest, memory_mib: @machine.memory_mib)
         report = Qemu.new(root: @root, runner: @runner, program: @qemu)

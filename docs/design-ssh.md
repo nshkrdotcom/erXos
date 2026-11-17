@@ -606,17 +606,18 @@ parses a boot partition's FAT. A computer shows a card's two FAT
 volumes, the record partition and the committed slot's boot partition,
 and users look for their first-boot files on the one named for the
 system, so the record volume is labelled `ERXOS` and the slots' boot
-partitions `ERXSLOTA` and `ERXSLOTB` (`tools/lib/erx/pi_medium.rb`,
+partitions `ERXSLOTA` and `ERXSLOTB` (`tools/lib/erx/record_volume.rb`, `tools/lib/erx/pi_medium.rb`,
 [design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record)),
 and the install guide names `ERXOS` as the volume that takes the file.
 On QEMU the medium's record partition is
 the same FAT16 volume as the card's: the release medium's writer
 (`tools/lib/erx/release_medium.rb`) formats it with the card's
-`PiMedium::RECORD_VOLUME`, whose fsimg arguments mark the region's
+record volume (`tools/lib/erx/record_volume.rb`), whose fsimg arguments mark the region's
 clusters bad at creation (`-o bad=FIRST-LAST`, the range derived from
 `medium_erase_sectors`; [design-storage.md](design-storage.md#removable-media-fat)),
-and adds `authorized_keys` when a harness
-passes the key, so the file lies at the same place on both, and the
+with the record its one file; a harness that passes a key adds
+`authorized_keys` to its own fresh copy of the medium, never to the
+medium as written, so the file lies at the same place on both, and the
 harness, which reads only the record's sector, finds the record where
 it was. A user adds the file to a QEMU
 medium as to a card, by attaching the image on the host and copying the
@@ -1386,8 +1387,8 @@ passes ([design-platforms.md](design-platforms.md#trying-a-card-on-a-board)).
   boots the card. Marking the region's other clusters bad costs 1 MiB of
   the 5 MiB volume; one erase-unit limit in `abi/medium.txt`
   (`medium_erase_sectors`) from which the reader, the image build and
-  `check_volumes` each derive the region; a bad-cluster range option of
-  fsimg's FAT creation, which writes the marks; a `check_volumes`
+  `RecordVolume.check` each derive the region; a bad-cluster range option of
+  fsimg's FAT creation, which writes the marks; a `RecordVolume.check`
   read-back of them; and the reader's range check.
 * **The slot writer reading the file**, since it already holds a window
   on the record partition. Rejected: the domain that writes slots would

@@ -463,14 +463,15 @@ module Erx
     end
 
     # The release medium for QEMU (ReleaseMedium) of built, an image this object packed, in
-    # the image's directory: the image's slot and a new littlefs data volume, so the
-    # storage domain serves /data. Returns a ReleaseMedium::Written: the medium's
+    # the image's directory: the image's slot, the record volume, and a new littlefs data
+    # volume, so the storage domain serves /data. Returns a ReleaseMedium::Written: the medium's
     # path, and the slot plan, data_sectors and volume a fresh copy is made from.
     def release_medium(built)
       directory = built_directory(built)
       data_sectors = MediumImage.constant('data_sectors_min')
       volume = DataVolume.format(root: @root, runner: @runner, compiler: @compiler, directory: directory, data_sectors: data_sectors)
-      ReleaseMedium.write(built: built, directory: directory, volume: volume, data_sectors: data_sectors)
+      ReleaseMedium.write(built: built, directory: directory, volume: volume, data_sectors: data_sectors, runner: @runner,
+                          fsimg: Fsimg.checked(root: @root, runner: @runner))
     end
 
     # The production image with test code added to its system release, marked in its
