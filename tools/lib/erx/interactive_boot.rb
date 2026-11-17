@@ -5,8 +5,11 @@
 require 'io/console'
 require 'optparse'
 require 'shellwords'
+require_relative 'boot_record'
+require_relative 'dev_key'
 require_relative 'error'
 require_relative 'fiasco'
+require_relative 'medium_boot'
 require_relative 'output_directory'
 require_relative 'production_image'
 require_relative 'qemu'
@@ -39,9 +42,16 @@ module Erx
     DEFAULT_JOBS = 4
     # The host link socket's directory, emptied and made owner-only at each boot.
     HOSTLINK_DIRECTORY = 'build/production-image/hostlink'
+    # Where --medium leaves the bootable file it takes from the medium's committed slot.
+    MEDIUM_DIRECTORY = 'build/production-image/medium-boot'
+    # The host's loopback port forwarded to the guest's SSH port (DevKey::PORT) when a
+    # person boots a medium: the same number, so `ssh -p 2222` reaches the guest.
+    MEDIUM_SSH_PORT = DevKey::PORT
 
-    # What the person asked for. A nil accel asks for this host's best.
-    Request = Data.define(:accel, :cpus, :jobs, :hostlink, :without_web)
+    # What the person asked for. A nil accel asks for this host's best. medium is the
+    # absolute path of a release medium to boot instead of building an image, and print
+    # asks for QEMU's command line instead of a boot.
+    Request = Data.define(:accel, :cpus, :jobs, :hostlink, :without_web, :medium, :print)
     # The host link's socket and the medium the guest boots with, both absolute.
     Link = Data.define(:socket, :medium)
     # What a boot runs: the image's boot file, and its Link or nil.
@@ -53,15 +63,24 @@ module Erx
     # errors, which `tools/erx` reports as a usage error, before anything runs.
     def request(arguments)
       arguments = arguments.dup
-      options = { accel: nil, cpus: 1, jobs: DEFAULT_JOBS, hostlink: false, without_web: false }
+      options = { accel: nil, cpus: 1, jobs: DEFAULT_JOBS, hostlink: false, without_web: false, medium: nil, print: false }
       OptionParser.new do |flags|
         flags.on('--accel NAME', %w[tcg hvf], 'Guest accelerator') { |value| options[:accel] = value }
         flags.on('--cpus N', Integer, 'Guest CPUs') { |value| options[:cpus] = value }
         flags.on('--jobs N', Integer, 'Build jobs') { |value| options[:jobs] = value }
         flags.on('--hostlink', 'Host link socket and data medium') { options[:hostlink] = true }
         flags.on('--without-web', 'Build the website\'s image, from its manifest without the web and display domains') { options[:without_web] = true }
+        flags.on('--medium PATH', 'Boot this release medium (make pack PLATFORM=qemu-virt, or the website\'s) with a ' \
+                                  'window, its keyboard and tablet, and SSH on host port 2222') do |path|
+          options[:medium] = File.expand_path(path)
+        end
+        flags.on('--print', 'With --medium, print the qemu-system-aarch64 command line instead of running it') { options[:print] = true }
       end.parse!(arguments)
       raise OptionParser::InvalidArgument, 'unexpected arguments' unless arguments.empty?
+      raise OptionParser::InvalidArgument, '--print goes with --medium' if options.fetch(:print) && !options.fetch(:medium)
+      if options.fetch(:medium) && (options.fetch(:hostlink) || options.fetch(:without_web))
+        raise OptionParser::InvalidArgument, '--medium boots a medium as it is, with no --hostlink or --without-web'
+      end
       if options.fetch(:hostlink) && options.fetch(:without_web)
         raise OptionParser::InvalidArgument, '--without-web leaves out the web domain that --hostlink serves'
       end
@@ -88,6 +107,36 @@ module Erx
       QemuPlan.argv(platform: platform, accel: accel, cpus: cpus, image: image, serial: QemuPlan::CONSOLE,
                     memory_mib: memory_mib, command_line: ProductionImage::Run::COMMAND_LINES[accel],
                     hostlink: link&.socket, disks: link ? [QemuPlan::Disk.new(path: link.medium)] : [])
+    end
+
+    # QEMU's argument vector for a person booting a release medium (README, "Getting
+    # started"): kernel, the bootable file of the medium's committed slot (medium_kernel),
+    # where the firmware would load it; medium as the guest's disk; the display in QEMU's
+    # window with its keyboard and tablet; user networking with the host's loopback port
+    # MEDIUM_SSH_PORT forwarded to the guest's SSH port; and the serial line on this
+    # terminal. tools/erx boot --medium runs it and --print prints it, so the documented
+    # command is this one. dtb is the firmware's device tree that names the booted slot
+    # (medium_boot), which QEMU, having no firmware, cannot make.
+    def medium_argv(platform:, accel:, cpus:, kernel:, medium:, memory_mib:, dtb:)
+      QemuPlan.argv(platform: platform, accel: accel, cpus: cpus, image: kernel, serial: QemuPlan::CONSOLE,
+                    memory_mib: memory_mib, command_line: ProductionImage::Run::COMMAND_LINES[accel], dtb: dtb,
+                    disks: [QemuPlan::Disk.new(path: medium)], display: QemuPlan::Display.window,
+                    nic: QemuPlan::UserNet.new(forward: QemuPlan::Forward.new(host: MEDIUM_SSH_PORT, guest: DevKey::PORT)))
+    end
+
+    # What QEMU needs to boot medium as the firmware would (docs/design-platforms.md,
+    # "Slots and the boot-selection record"): the bootable file of the slot the slot
+    # parser chooses (BootRecord.read), and the device tree whose /chosen/bootloader names
+    # that slot (MediumBoot.firmware_tree), both in MEDIUM_DIRECTORY under root, replaced
+    # at each boot. Returns [kernel, dtb].
+    def medium_boot(root:, runner:, medium:, machine:, cpus:)
+      directory = ProductionImage.clear_directory(root: root, path: File.join(root, MEDIUM_DIRECTORY))
+      FileUtils.mkdir_p(directory)
+      choice = BootRecord.read(medium)
+      kernel = BootRecord.extract(medium, choice, output: File.join(directory, 'slot.boot'))
+      [kernel, MediumBoot.firmware_tree(runner: runner, qemu: 'qemu-system-aarch64', machine: machine, image: kernel,
+                                        disks: [QemuPlan::Disk.new(path: medium)], choice: choice, cpus: cpus,
+                                        directory: directory)]
     end
 
     # The command a person runs in another terminal to see the guest's web

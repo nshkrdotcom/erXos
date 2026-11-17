@@ -9399,7 +9399,11 @@ document's "residual risks accepted" paragraph.
   [design-ssh.md](docs/design-ssh.md#the-ssh-domain)): the page offers the browser demo's gzip-compressed
   `image.boot` as its QEMU download; it is to offer the QEMU release medium packed from the development
   manifest (`ProductionImage.medium_manifest`), with the SSH domain and no `authorized_keys`, and the QEMU
-  command line that boots it, while the browser demo keeps its own image.
+  command line that boots it, while the browser demo keeps its own image. The site takes the medium only with a
+  build record written at pack time that names its SHA-256, as the card's does: `tools/erx boot --medium` boots a
+  medium in place, so a booted pack output holds the guest's SSH host key and `/data`. Plain QEMU has no firmware
+  to pick the slot, so the published command needs the device tree naming it (`MediumBoot.firmware_tree`) published
+  beside the medium, or a loader on the medium; the medium carries no kiosk, which the plan's QEMU demo shows.
 * [Low] Raspberry Pi card labels (`tools/lib/erx/pi_medium.rb`, `RECORD_FORMAT` and `SLOT_FORMAT`): the record
   volume is labelled `ERXREC` and both slots' boot partitions `ERXOS`, where
   [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record) labels the record volume

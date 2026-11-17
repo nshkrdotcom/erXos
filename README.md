@@ -455,23 +455,25 @@ USB-serial adapter gives you the console
    You get `rc`, the command shell. Port 2222, not 22, is where 0.1
    listens. <!-- unverified: how a user finds BOARD-ADDRESS (DHCP lease on the router, or `ifconfig` on the serial console); no document of the tree says which. -->
 
-**QEMU.** From a clone of the repository, `tools/erx boot` builds the
-development image and boots it on your terminal (see
-[Boot erXos](#boot-erxos)); quit with Ctrl-A then X. The website's QEMU
-download boots without a build, with the command line shown beside it.
-For SSH, QEMU needs a network device that forwards a host port to the
-guest's port 2222, and the medium needs your `authorized_keys` as above:
+**QEMU.** From a clone of the repository,
 
 ```sh
 make pack PLATFORM=qemu-virt
+tools/erx boot --medium build/production-image/qemu-virt/medium.img
 ```
 
-builds the QEMU medium, `build/production-image/qemu-virt/medium.img`;
-attach it on the host and copy `authorized_keys` onto its first FAT
-volume, then boot it with a `-netdev user,...,hostfwd=tcp:127.0.0.1:2222-:2222`
-network device and `ssh -p 2222 root@127.0.0.1`.
-<!-- unverified: no document or tool of the tree gives a user's complete QEMU command line for the published medium with the display, the network device and the 2222 forward; tools/erx boot's guest has no network device (README, Networking), and the website's .boot.gz image has no SSH or display domain. The QEMU wording needs the harness's real arguments (tools/lib/erx/qemu.rb, Nic) turned into one command. -->
-<!-- unverified: that the website publishes the QEMU medium (medium.img) as a download; the page offers the .boot.gz image today. -->
+builds the QEMU release medium, the card's system packed for QEMU `virt`
+without the kiosk, and boots it as a person uses it: the display in QEMU's window
+with the virtio keyboard and tablet, user networking that reaches your
+network, your host's port 2222 forwarded to the guest's SSH port, and the
+serial console on your terminal; quit with Ctrl-A then X. The guest keeps
+`/data` in the medium. `tools/erx boot --medium FILE --print` prints the
+plain `qemu-system-aarch64` command instead; its kernel and device tree,
+which names the booted slot as the firmware would, lie in the tree's
+`build/production-image/medium-boot` until the next `--medium`. To log in over SSH, the medium needs your
+`authorized_keys` on its first FAT volume, as on the card; then
+`ssh -p 2222 root@127.0.0.1`.
+<!-- unverified: the QEMU medium's record partition holds no FAT volume yet (TODO.md, "SSH stage 2, the QEMU medium's record partition"), so a key cannot be added to it, and the website does not offer the medium as a download yet (TODO.md, "site, the QEMU virt download"). -->
 
 **What to try.** In the SSH session or on the serial console:
 
@@ -489,8 +491,10 @@ it out. On QEMU you build it from your clone: `tools/erx fetch --example
 doom` fetches its source and Freedoom's data file, and `tools/erx pack
 --app examples/doom/doom --local` builds a local image that holds it
 ([Adding an app to an image](docs/design-packaging.md#adding-an-app-to-an-image)).
-Keys come from QEMU's virtio keyboard. The Pi has no keyboard in 0.1.
-<!-- unverified: the exact pack command line for Doom (the plan names `tools/erx pack --app --local`; the tree has no examples/doom checkout to read its README or run.rb), and the "demo loop on the Pi" the request mentioned: docs/plan.md leaves Doom on the Pi to track U, and nothing in the tree has a demo loop. -->
+Keys come from QEMU's virtio keyboard. The Pi has no keyboard in 0.1;
+Doom's demo loop on a card you build is planned for 0.1, and no card
+build takes Doom yet.
+<!-- unverified: the exact pack command line for Doom (the plan names `tools/erx pack --app --local`; the tree has no examples/doom checkout to read its README or run.rb), and how a card takes Doom: the card build refuses --local and every builder's package (TODO.md, "0.1, Doom's demo loop on the Pi"). -->
 
 ## Correctness and testing
 

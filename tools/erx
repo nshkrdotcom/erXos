@@ -1073,13 +1073,16 @@ module Erx
     # for a person to type at (InteractiveBoot); with --hostlink, also its host
     # link on a socket and a data medium, and the `tools/erx web` line to run
     # next; with --without-web, the website's image, from its own manifest, which has
-    # no web domain.
+    # no web domain; with --medium, a release medium as it is, built by none of these
+    # (boot_medium).
     # The arguments are read whole before anything is built or run.
     def self.boot(arguments, runner_class: Runner)
       request = InteractiveBoot.request(arguments)
       runner = runner_class.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       platform = Platform.development(ROOT)
       accel = request.accel || InteractiveBoot.default_accel(QemuGate.available_accelerators(runner: runner))
+      return boot_medium(request, platform: platform, accel: accel, runner: runner) if request.medium
+
       kind = request.without_web ? 'website' : 'development'
       Terminal.puts("building the #{kind} boot image into #{InteractiveBoot.image_directory(without_web: request.without_web)}")
       boot = InteractiveBoot.build(root: ROOT, runner: runner, jobs: request.jobs, hostlink: request.hostlink,
@@ -1092,6 +1095,27 @@ module Erx
         Terminal.puts("host link on #{boot.link.socket}; once root's session has started, run in another terminal:")
         Terminal.puts("  #{InteractiveBoot.web_command(File.join(ROOT, 'tools/erx'), boot.link.socket)}")
       end
+      InteractiveBoot.run(argv)
+    end
+
+    # `tools/erx boot --medium PATH`: the release medium at PATH in QEMU as a person boots
+    # it (InteractiveBoot.medium_argv), on the development machine's RAM, which the medium
+    # was packed for; with --print, the plain qemu-system-aarch64 command instead, whose
+    # kernel and device tree lie in the tree until the next --medium. The guest writes
+    # its /data into the medium.
+    def self.boot_medium(request, platform:, accel:, runner:)
+      machine = ProductionImage::Machine.development(platform)
+      kernel, dtb = InteractiveBoot.medium_boot(root: ROOT, runner: runner, medium: request.medium, machine: machine,
+                                                cpus: request.cpus)
+      argv = InteractiveBoot.medium_argv(platform: platform, accel: accel, cpus: request.cpus, kernel: kernel,
+                                         medium: request.medium, memory_mib: machine.memory_mib, dtb: dtb)
+      if request.print
+        puts Shellwords.join(argv)
+        return 0
+      end
+
+      Terminal.puts("booting #{request.medium}: accelerator #{accel}, #{request.cpus} guest CPU(s); " \
+                    "ssh -p #{InteractiveBoot::MEDIUM_SSH_PORT} root@127.0.0.1; #{InteractiveBoot::QUIT_HINT}")
       InteractiveBoot.run(argv)
     end
 

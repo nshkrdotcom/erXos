@@ -74,8 +74,9 @@
       watchdog resets a hang of the kernel or the root within about 4
       seconds.</li>
       <li><strong>Doom, built by you.</strong> On QEMU, from a clone of the
-      repository, with the virtio keyboard. Doom is never in the published
-      images.</li>
+      repository, with the virtio keyboard; on the Pi, on a card you build, as
+      its demo loop with no keyboard. Doom is never in the published
+      images. <!-- unverified: no card build takes Doom yet (TODO.md, "0.1, Doom's demo loop on the Pi"). --></li>
     </ul>
     <p>The soak: <!-- unverified: the soak's result; the sentence is the request's wording and no soak record is in the tree (docs/design-platforms.md, The soak, only specifies it). Fill in from the run's record. -->
     the published card soaked a day on the Pi 4 and four hours on QEMU under
@@ -110,8 +111,12 @@
       <li><code>ssh -p 2222 root@HOST</code>, then <code>date</code> to set
       the time.</li>
     </ol>
-    <p>For QEMU, boot the downloaded image with the command beside it, or from
-    a clone run <code>tools/erx boot</code>. <!-- unverified: the QEMU path to SSH (see the README's note); the page offers the .boot.gz image, which has no SSH or display. --></p>
+    <p>For QEMU, from a clone run <code>make pack PLATFORM=qemu-virt</code>,
+    then <code>tools/erx boot --medium build/production-image/qemu-virt/medium.img</code>:
+    QEMU shows the display in its window with the virtio keyboard and tablet,
+    the serial console is on your terminal, and your port 2222 reaches the
+    guest's SSH. Add <code>--print</code> for the plain
+    <code>qemu-system-aarch64</code> command. <!-- unverified: SSH logins on QEMU need authorized_keys on the medium's record partition, which holds no FAT volume yet (TODO.md), and the page does not offer the medium yet. --></p>
   </div>
 </section>
 
@@ -163,8 +168,8 @@
       early loops instead of resetting.</li>
       <li><strong>Updates are by reflashing the card</strong>, which erases
       <code>/data</code>. There is no update service and no trial boot.</li>
-      <li><strong>The Pi has no USB keyboard</strong> in 0.1, so no Doom there,
-      and no WiFi.</li>
+      <li><strong>The Pi has no USB keyboard</strong> in 0.1, so Doom there
+      only runs its demo loop, and no WiFi.</li>
       <li><strong>Left to 0.2 and later.</strong> The release build without the
       development banner, a login on the console, untrusted apps, the vault,
       installing an app at run time (unless it
