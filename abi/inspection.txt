@@ -71,6 +71,12 @@ inspection 1
   # ntpd's sample from that server, "rtc" for the keeper's reading at boot,
   # "root" for a set.
   text clock_from 80
+  # ntpd's state (docs/design-time.md, "What /proc shows"): its server names,
+  # at most 8, the addresses in use and denied, at most 4 a name, and the
+  # address that last answered and how, as "192.0.2.7 sample".
+  list ntp_servers name 8
+  list net_addresses net_address 32
+  text ntp_last 80
   list urgency_counts count 64
   list proc_ids proc_id 1000
   tuple location module_name name arity file_name line_number
@@ -201,6 +207,19 @@ inspection 1
     attr steps count reporters service visible any build all projections shell,host,proc,web
     attr refused count reporters service visible any build all projections shell,host,proc,web
 
+  # ntpd's state, reported by its session's runtime, from the session's start.
+  kind ntp
+    attr servers ntp_servers reporters runtime visible all build all projections shell,host,proc,web
+    attr addresses net_addresses reporters runtime visible all build all projections shell,host,proc,web
+    attr denied net_addresses reporters runtime visible all build all projections shell,host,proc,web
+    attr last ntp_last reporters runtime visible all build all projections shell,host,proc,web
+    attr interval_s seconds reporters runtime visible all build all projections shell,host,proc,web
+    attr resolve_wait_s seconds reporters runtime visible all build all projections shell,host,proc,web
+    attr samples count reporters runtime visible all build all projections shell,host,proc,web
+    attr dropped count reporters runtime visible all build all projections shell,host,proc,web
+    attr kisses count reporters runtime visible all build all projections shell,host,proc,web
+    attr silent count reporters runtime visible all build all projections shell,host,proc,web
+
   path machine
   path listing cpus
   path cpu cpus *cpu_index
@@ -231,6 +250,8 @@ inspection 1
     visible all
   path app apps *name
   path clock time
+  path ntp ntp
+    visible all
   path listing kernel
     visible all
   # The kernel log from any sequence number on; its ring holds fewer than

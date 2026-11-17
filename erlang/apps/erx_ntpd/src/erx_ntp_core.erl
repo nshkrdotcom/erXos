@@ -34,7 +34,7 @@ the run, `RATE` doubles the interval, and any other kiss is discarded.
 """.
 
 -export([servers/1, start/1, step/2, request/2, interval/1, status/1]).
--export_type([state/0, action/0, event/0]).
+-export_type([state/0, action/0, event/0, status/0]).
 
 -define(MAX_SERVERS, 8).
 -define(MAX_NAME, 253).
@@ -69,6 +69,11 @@ the run, `RATE` doubles the interval, and any other kiss is discarded.
                      failures := non_neg_integer(), interval := pos_integer(),
                      resolve_wait := pos_integer(), counts := counts(),
                      last := none | {address(), atom()}}.
+%% What /proc/ntp shows of a run (status/1).
+-type status() :: #{servers := [binary()], addresses := [address()], denied := [address()],
+                    interval_s := pos_integer(), resolve_wait_s := pos_integer(),
+                    last := unknown | {address(), atom()},
+                    samples | dropped | kisses | silent := unknown | non_neg_integer()}.
 -type counts() :: #{samples := non_neg_integer(), dropped := non_neg_integer(),
                     kisses := non_neg_integer(), silent := non_neg_integer()}.
 
@@ -149,13 +154,20 @@ interval(#{interval := Interval}) -> Interval.
 
 -doc """
 What /proc/ntp shows of the run: the names, the addresses in use, the
-address that last answered and how, the interval and the reply counts.
+address that last answered and how, the interval and the resolution
+backoff in seconds, and the reply counts. Before the first exchange the
+counts and the last answer are `unknown`, so nothing claims more history
+than the run has.
 """.
--spec status(state()) -> map().
+-spec status(state()) -> status().
 status(#{names := Names, addresses := Addresses, denied := Denied, interval := Interval,
          resolve_wait := ResolveWait, counts := Counts, last := Last}) ->
-    Counts#{servers => Names, addresses => Addresses, denied => Denied, interval_ms => Interval,
-            resolve_wait_ms => ResolveWait, last => Last}.
+    Exchanged = case Last of
+                    none -> #{Key => unknown || Key := _ <- Counts#{last => none}};
+                    _ -> Counts#{last => Last}
+                end,
+    Exchanged#{servers => Names, addresses => Addresses, denied => Denied, interval_s => Interval div 1000,
+               resolve_wait_s => ResolveWait div 1000}.
 
 %% One exchange's verdict. A kiss ends the poll; anything else that is no
 %% sample counts as dropped or silent and the burst goes on.

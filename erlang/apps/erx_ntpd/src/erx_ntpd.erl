@@ -21,11 +21,16 @@ the resolution or the exchange fails and the schedule's backoff asks again.
 Every answer of the clock service other than a held sample is logged; the
 service itself logs the steps it makes and the samples it refuses. A server
 address is written as integers, so no text of a server reaches the log.
+
+It registers as erx_ntpd and, while it waits, answers status/1, the
+collector of `/proc/ntp` in this runtime (erx_ntp_records), with
+erx_ntp_core:status/1; a question that comes during a resolution, an
+exchange or a sample waits for the next wait.
 """.
 -behaviour(application).
 
 -export([start/2, stop/1]).
--export([init/1]).
+-export([init/1, status/1]).
 
 %% How long one exchange waits for its reply, one resolution for DNS, and one
 %% sample for the clock service's answer.
@@ -45,12 +50,36 @@ stop(_State) ->
 init(Parent) ->
     case erx_ntp_core:servers(flags()) of
         {ok, Names} ->
+            true = register(?MODULE, self()),
             proc_lib:init_ack(Parent, {ok, self()}),
             {Action, State} = erx_ntp_core:start(Names),
             loop(Action, State);
         {error, Reason} ->
             logger:error("ntpd: ~ts", [reason_text(Reason)]),
             proc_lib:init_fail(Parent, {error, Reason}, {exit, normal})
+    end.
+
+-doc """
+ntpd's status, erx_ntp_core:status/1 of its run, waiting at most Wait
+milliseconds: `{error, unavailable}` when no ntpd runs here and `{timeout,
+Wait}` when it does not answer in time.
+""".
+-spec status(pos_integer()) -> {ok, erx_ntp_core:status()} | {error, unavailable} | {timeout, pos_integer()}.
+status(Wait) ->
+    Alias = alias([reply]),
+    try ?MODULE ! {status, Alias} of
+        _ ->
+            receive
+                {Alias, Status} -> {ok, Status}
+            after Wait ->
+                unalias(Alias),
+                receive {Alias, _Late} -> ok after 0 -> ok end,
+                {timeout, Wait}
+            end
+    catch
+        error:badarg ->
+            unalias(Alias),
+            {error, unavailable}
     end.
 
 flags() ->
@@ -63,19 +92,29 @@ reason_text(no_servers) -> "no servers";
 reason_text(bad_flags) -> "bad flags".
 
 loop(Action, State) ->
-    {Next, State1} = erx_ntp_core:step(perform(Action), State),
+    {Next, State1} = erx_ntp_core:step(perform(Action, State), State),
     loop(Next, State1).
 
-perform({resolve, Names}) ->
+perform({resolve, Names}, _State) ->
     {resolved, lists:append([addresses(Name) || Name <- Names])};
-perform({exchange, Address, _Kind}) ->
+perform({exchange, Address, _Kind}, _State) ->
     {exchanged, exchange(Address)};
-perform({submit, Sample, Address}) ->
+perform({submit, Sample, Address}, _State) ->
     Answer = submit(erx_ntp_core:request(Sample, Address)),
     report(Answer, Address),
     {clock, Answer};
-perform({wait, Ms}) ->
-    receive after Ms -> woke end.
+perform({wait, Ms}, State) ->
+    wait(erlang:monotonic_time(millisecond) + Ms, State).
+
+%% Waits until Deadline, answering each status question meanwhile.
+wait(Deadline, State) ->
+    receive
+        {status, Alias} when is_reference(Alias) ->
+            Alias ! {Alias, erx_ntp_core:status(State)},
+            wait(Deadline, State)
+    after max(0, Deadline - erlang:monotonic_time(millisecond)) ->
+        woke
+    end.
 
 addresses(Name) ->
     String = binary_to_list(Name),

@@ -362,6 +362,8 @@ collect([apps | _] = Path, _Scope) ->
     erx_app_records:collect(Path);
 collect([time], _Scope) ->
     erx_time_records:collect();
+collect([ntp], _Scope) ->
+    erx_ntp_records:collect();
 collect(Path, Scope) ->
     listing(Path, enumerate(Path, Scope)).
 

@@ -170,3 +170,16 @@ submitting() ->
     {_, S7} = erx_ntp_core:step(woke, S6),
     {{submit, _, ?A}, S8} = erx_ntp_core:step({exchanged, sample(5)}, S7),
     S8.
+
+%% What /proc/ntp shows (docs/design-time.md, "What /proc shows"): the interval and the
+%% resolution backoff in seconds, and the counts and the last answer unknown before the
+%% first exchange; a kiss is one of the known atoms, never the server's bytes.
+status_test() ->
+    {_, S0} = erx_ntp_core:start([<<"pool">>]),
+    ?assertEqual(#{servers => [<<"pool">>], addresses => [], denied => [], interval_s => 64, resolve_wait_s => 15,
+                   samples => unknown, dropped => unknown, kisses => unknown, silent => unknown, last => unknown},
+                 erx_ntp_core:status(S0)),
+    {_, S1} = erx_ntp_core:step({resolved, [?A, ?B]}, S0),
+    {_, S2} = erx_ntp_core:step({exchanged, {kiss, <<"XYZW">>}}, S1),
+    ?assertMatch(#{addresses := [?A, ?B], samples := 0, kisses := 1, silent := 0, dropped := 0,
+                   last := {?A, other}}, erx_ntp_core:status(S2)).

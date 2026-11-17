@@ -7235,9 +7235,12 @@ to the corpus and follow rc
   ([design-apps.md](docs/design-apps.md#start-flags)), so the Raspberry Pi 4 manifest's ntpd session template
   sets `ERX_START_FLAGS` in its own environment, and the boot view's refusal of such a template waits for the row
   field; when the start table's settings file carries `flags`, move the value to the row and add the refusal;
-  (2) `/proc/ntp` is designed ("What /proc shows") and not reported: `erx_ntp_core:status/1` holds the
-  values, and the inspection schema's `ntp` kind, a collector that asks ntpd's session through its domain's
-  agent, and the rendering of each status (unknown, unavailable, timed out) are to build; (3) `/proc/time`
+  (2) `/proc/ntp`'s record is built (the schema's `ntp` kind, erx_ntp_records in ntpd's runtime, which
+  asks erx_ntpd:status/1), but nothing routes `[ntp]` to ntpd's session: the system domain's query worker
+  collects it locally, where no ntpd runs, so it reads `[error]` (unavailable) in every attribute; the worker
+  needs a way to find ntpd's domain and its agent a bound that admits `[ntp]` (erx_inspect_worker route/2,
+  erx_inspect_agent owns/2), which no design names yet, and the start table's `app` record has no `domain` to
+  find it by; (3) `/proc/time`
   shows a value the clock service's record holds as `none` as `[unknown]` (`erx_time_records`), since no type of
   the inspection schema holds `none`, where design-time.md says `none`: give the schema an absent value or
   have the design say `unknown`, as `/proc/ntp`'s does; (4) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
