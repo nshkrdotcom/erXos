@@ -49,8 +49,10 @@ module Erx
     # reads (Fiasco.kernel_directory). users is whether it also reads what a
     # development image packs beside the kernel: the users' executables, their
     # staged sources and archive record, and the image itself. pinned is
-    # whether the generation profile's hashes hold the generated files and the
-    # host tools and configuration that made them. check is what the audit
+    # whether the audit compares the generated files, and the host tools and
+    # configuration that made them, with the generation profile's hashes. Those
+    # bytes come from the host's tools, so a difference is recorded in the
+    # report (host_generated) rather than refused. check is what the audit
     # must establish (certify): :receipt, the development build's receipt for
     # its image, or :permissive, a release kernel's license gate
     # (check_permissive). distribution is the report's statement of where the
@@ -131,6 +133,7 @@ module Erx
       @bytes = {}
       @archive_listings = {}
       @snapshot_bytes = 0
+      @differences = {}
       @objects = image_objects
     end
 
@@ -162,6 +165,7 @@ module Erx
       @bytes = {}
       @archive_listings = {}
       @snapshot_bytes = 0
+      @differences = {}
       @objects = image_objects
       load_build_inputs
       load_generation_profiles
@@ -194,11 +198,12 @@ module Erx
         'state' => @unresolved.empty? ? 'complete' : 'blocked',
         'build_kind' => @plan.kind, 'distribution' => @plan.distribution,
         'generation_profile' => reference(@generation_profile),
-        'build_inputs' => @inputs && @inputs.reference,
+        'build_inputs' => @inputs && @inputs.reference, 'host_generated' => host_generated,
         'license_notices' => license_notices,
         'tools' => tools, 'image' => image, 'executables' => executables, 'sources' => @sources.values.sort_by { |item| item.fetch('path') },
         'unresolved' => @unresolved.uniq.sort }
       report = report.except('distribution') unless @plan.distribution
+      report = report.except('host_generated') unless @plan.pinned
       report.freeze
       @audit_complete = report.fetch('state') == 'complete'
       report
@@ -515,8 +520,9 @@ module Erx
     end
 
     # The development build's pins: every generated file and compiler record the
-    # profile names is present, and each build input has the recorded bytes. A
-    # release kernel's entries are read only where its link closure reaches them.
+    # profile names is present, and each build input whose bytes differ from the
+    # recorded ones is recorded (record_difference). A release kernel's entries are read only
+    # where its link closure reaches them.
     def check_generation_pins
       @generation.fetch('compile_dependencies').each do |object, dependency|
         project_input('build/fiasco/' + object)
@@ -529,9 +535,19 @@ module Erx
           raise Error, 'literal project marker in a build input' if bytes.include?('${PROJECT_ROOT}'.b)
           bytes = bytes.gsub(@root.b, '${PROJECT_ROOT}'.b)
         end
-        raise Error, "changed fixed generation input: #{relative}" unless Digest::SHA256.hexdigest(bytes) == expected.fetch('sha256')
+        record_difference(relative, pinned: expected.fetch('sha256'), sha256: Digest::SHA256.hexdigest(bytes))
       end
     end
+
+    # Notes a pinned build input or generated file whose bytes on this host are
+    # not the profile's: the host's tools made it, so a development build records
+    # it rather than refusing (docs/design-fiasco.md, "Boot handoff").
+    def record_difference(relative, pinned:, sha256:)
+      @differences[relative] = { 'path' => relative, 'pinned' => pinned, 'sha256' => sha256 } unless pinned == sha256
+    end
+
+    # What differs from the pins, by path. Only a pinned audit's report holds it.
+    def host_generated = @differences.values.sort_by { |difference| difference.fetch('path') }
 
     # The development section's entries for the development kernel's generated
     # files, moved into this plan's kernel directory: every kernel's are made by
@@ -568,9 +584,7 @@ module Erx
       relative = path.delete_prefix(@build + '/')
       profile = @generation && @generation.fetch('profiles')[relative]
       return nil unless profile
-      if @plan.pinned && digest(path) != profile.fetch('output_sha256')
-        raise Error, "unsupported generated output: #{relative}"
-      end
+      record_difference('build/fiasco/' + relative, pinned: profile.fetch('output_sha256'), sha256: digest(path)) if @plan.pinned
       record = reference(path).merge('role' => profile.fetch('role'), 'profile' => reference(@generation_profile))
       # Install the node before following header dependencies; generated layout
       # headers and their compiled type definitions can refer to each other.

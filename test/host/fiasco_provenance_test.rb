@@ -165,10 +165,6 @@ class FiascoProvenanceTest < Minitest::Test
       assert_equal 'configuration', record.fetch('role')
       refute record.key?('license')
       assert_equal 1, record.fetch('tools').size
-      File.write(output, 'unreviewed generated output')
-      other = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil)
-      other.send(:load_generation_profiles)
-      assert_raises(Erx::Error) { other.send(:fixed_generation, output) }
     end
   end
 
@@ -288,10 +284,36 @@ class FiascoProvenanceTest < Minitest::Test
     end
   end
 
-  def test_changed_configuration_is_refused_even_when_generated_bytes_are_unchanged
+  # A development build on a host whose tools make other bytes than the profile
+  # pins (another cross toolchain) passes, and its report names each such build
+  # input and generated file with the pinned hash and the host's.
+  def test_a_development_audit_records_what_differs_from_the_pins
     generation_fixture do |root, auditor, _recipe|
       File.write(File.join(root, 'build/fiasco/kernel/config'), 'CONFIG_FEATURE=n')
-      assert_raises(Erx::Error) { auditor.send(:load_generation_profiles) }
+      output = File.join(root, 'build/fiasco/kernel/header1.h')
+      File.write(output, 'host generated output')
+      auditor.send(:load_generation_profiles)
+      assert_equal 'configuration', auditor.send(:fixed_generation, output).fetch('role')
+      sha = ->(bytes) { Digest::SHA256.hexdigest(bytes) }
+      assert_equal [{ 'path' => 'build/fiasco/kernel/config', 'pinned' => sha.call('CONFIG_FEATURE=y'), 'sha256' => sha.call('CONFIG_FEATURE=n') },
+                    { 'path' => 'build/fiasco/kernel/header1.h', 'pinned' => sha.call('generated configuration'),
+                      'sha256' => sha.call('host generated output') }],
+                   auditor.send(:host_generated)
+    end
+  end
+
+  # A development build whose bytes match the pins records nothing, and a release
+  # audit, which reads no pin, records nothing either, though its bytes differ.
+  def test_only_a_development_audit_compares_with_the_pins
+    generation_fixture do |root, auditor, _recipe|
+      auditor.send(:load_generation_profiles)
+      auditor.send(:fixed_generation, File.join(root, 'build/fiasco/kernel/header1.h'))
+      assert_equal [], auditor.send(:host_generated)
+      release = Erx::FiascoProvenance.new(root: root, runner: nil, kind: Erx::BuildKind::RELEASE)
+      release.instance_variable_set(:@sources, {})
+      release.send(:load_generation_profiles)
+      release.send(:fixed_generation, File.join(root, 'build/fiasco/kernel-release/header1.h'))
+      assert_equal [], release.send(:host_generated)
     end
   end
 
