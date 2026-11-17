@@ -7,10 +7,12 @@ The dashboard's live quotes source (docs/design-quotes.md): the one
 effect process around the pure core. The dashboard starts it linked to
 itself and shows the boards it sends as `{erx_dashboard_board, Board}`.
 
-At start it starts `ssl` and `inets` and starts the core
-(erx_quotes_core) on the source table (erx_quotes_table) with every quote
-due. An application that does not start stops it with the reason, which
-ends the dashboard's start. Once a second it ticks
+Its start returns as soon as the core (erx_quotes_core) holds the source
+table (erx_quotes_table) with every quote due, so starting it never
+waits on anything slow. Only then does it start `ssl` and `inets` and
+read the trust store; an application that does not start, or a store
+that cannot be read, stops it with the reason, which ends the dashboard,
+linked to it. Once a second it ticks
 the core, carries out the actions the core returns and, on `render`,
 sends the dashboard the board of erx_quotes_view when it differs from the
 last one sent. A `fetch` is one httpc request, made exactly as
@@ -26,7 +28,7 @@ changes anything. An answer to a request it does not hold is dropped.
 -behaviour(gen_server).
 
 -export([start_link/1, start_link/2]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+-export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TICK_MS, 1000).
 
@@ -49,8 +51,14 @@ start_link(Dashboard, Table) ->
     gen_server:start_link(?MODULE, {Dashboard, Table}, []).
 
 -doc false.
--spec init({pid(), erx_quotes_table:table()}) -> {ok, state()} | {stop, term()}.
+-spec init({pid(), erx_quotes_table:table()}) -> {ok, state(), {continue, start}}.
 init({Dashboard, Table}) ->
+    {ok, #{dashboard => Dashboard, core => erx_quotes_core:new(Table, now_ms()),
+           requests => #{}, sent => none, logged => #{}},
+     {continue, start}}.
+
+-doc false.
+handle_continue(start, State) ->
     case application:ensure_all_started([ssl, inets]) of
         {ok, _Started} ->
             %% httpc reads the trust store in the caller at the first
@@ -58,11 +66,9 @@ init({Dashboard, Table}) ->
             %% with its reason, instead of at every fetch.
             _ = public_key:cacerts_get(),
             self() ! tick,
-            {ok, #{dashboard => Dashboard,
-                   core => erx_quotes_core:new(Table, now_ms()),
-                   requests => #{}, sent => none, logged => #{}}};
+            {noreply, State};
         {error, Reason} ->
-            {stop, {quotes_start, Reason}}
+            {stop, {quotes_start, Reason}, State}
     end.
 
 -doc false.

@@ -1183,7 +1183,7 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   LVGL's image caches off (`display/lvgl/lv_conf.h`), so every invalidated
   area, the dial once a minute and the quotes on each board, inflates the
   whole picture and expands it to about 8.3 MB of ARGB before drawing.
-  Drawing the ground also takes `erx_dashboard:init/1` about 115 ms on the
-  host under the JIT, unmeasured on the Pi. Measure a redraw's time and peak
-  memory on the Pi; the fixes are a one-entry image cache in erx-lvgl, or a
-  ground that is not a full-screen picture.
+  Drawing the ground also takes the dashboard about 115 ms on the host
+  under the JIT, after its first tree, unmeasured on the Pi. Measure a
+  redraw's time and peak memory on the Pi; the fixes are a one-entry image
+  cache in erx-lvgl, or a ground that is not a full-screen picture.

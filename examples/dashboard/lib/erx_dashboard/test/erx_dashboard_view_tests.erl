@@ -55,6 +55,17 @@ tree_is_valid_test() ->
     [?assertEqual(ok, erx_ui_schema:validate(erx_dashboard_view:tree(Model), 1024))
      || Model <- [model(none), model(board())]].
 
+%% The dashboard's first tree, before either picture is drawn: one the
+%% widget format accepts, with no picture, the panel waiting and the
+%% dial's square kept empty, so the layout stays when the pictures come.
+first_tree_test() ->
+    Tree = erx_dashboard_view:tree((model(none))#{dial := none, ground := none}),
+    Size = erx_dashboard_clock:size(),
+    ?assertEqual(ok, erx_ui_schema:validate(Tree, 1024)),
+    ?assertEqual([], [Image || {image, _Props, _Children} = Image <- descendants(Tree)]),
+    ?assert(lists:member(<<"Waiting for quotes">>, texts(Tree))),
+    ?assert(lists:member({spacer, #{width => Size, height => Size}, []}, descendants(Tree))).
+
 waiting_panel_test() ->
     Texts = texts(erx_dashboard_view:tree(model(none))),
     ?assert(lists:member(<<"Waiting for quotes">>, Texts)),

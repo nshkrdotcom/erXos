@@ -161,9 +161,11 @@ lvgl_opts(#host{width = W, height = H, buffer = Buffer, launch = {Ruby, Program}
     #{width => W, height => H, chan => ?X8R8G8B8, program => {port, Open}, present => Present,
       present_text => fun(_Type, _Value) -> error(enotsup) end}.
 
-%% A copy of the buffer's first W by H pixels at a stride of W pixels.
+%% A copy of the buffer's first W by H pixels at a stride of W pixels,
+%% read `raw`, past the node's file server, so a frame never waits behind
+%% the app's own file requests.
 read_frame(W, H, Buffer) ->
-    {ok, Bytes} = file:read_file(Buffer),
+    {ok, Bytes} = file:read_file(Buffer, [raw]),
     {ok, W, H, binary:part(Bytes, 0, 4 * W * H)}.
 
 is_event({pointer, X, Y, Buttons}) -> is_integer(X) andalso is_integer(Y) andalso is_integer(Buttons);

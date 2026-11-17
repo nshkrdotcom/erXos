@@ -1677,9 +1677,11 @@ Put the card in the Pi, start logging on the adapter, then power the Pi.
    way to the kiosk, the dashboard the card carries
    ([design-packaging.md](design-packaging.md#the-apps-row)), within
    60 seconds of the erXos banner, and the picture stays put but for its
-   clock. Record the seconds from the banner to the dashboard. The
+   clock. Record the seconds from the banner to the dashboard's first
+   tree, and to its ground and dial. The
    serial console shows `packages: admitted dashboard`, `erx_app: mounted
-   /app` and `erx_dashboard: shown` with the minute it drew; a dashboard
+   /app` and `erx_dashboard: shown` with the minute of its first tree,
+   which comes before its pictures and its quotes; a dashboard
    that does not appear with those lines present is a failure of the
    display path, and one whose lines are missing names the step that
    failed. `dmesg`
