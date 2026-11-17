@@ -82,7 +82,7 @@ class ChokepointsDeviceTest < Minitest::Test
   def test_dma_maintenance_outside_erx_device_fails
     maintenance = [rule('device-dma-maintenance')]
     calls = %w[erx_dma_clean erx_dma_clean_inval erx_dma_publish_barrier erx_dma_report_barrier
-               erx_dma_completion_barrier]
+               erx_dma_completion_barrier erx_dma_store_wait]
     calls.each do |call|
       text = "void f(void) { #{call}(); }\n"
       assert_empty evaluate(maintenance, { 'otp/erts/emulator/nifs/erxos/erx_device.c' => text }), call

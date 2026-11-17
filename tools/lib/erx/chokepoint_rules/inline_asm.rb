@@ -47,8 +47,9 @@ module Erx
             Chokepoints::Site.new(glob: 'liberx/backend/fiasco/arch/aarch64/clock.c'),
             # counter_fence.
             Chokepoints::Site.new(glob: 'liberx/backend/hosted/log.c'),
-            # cache_type, erx_dma_clean, erx_dma_clean_inval and the publish, report and
-            # completion barriers (docs/design-device-dma.md, "The architecture layer").
+            # cache_type, erx_dma_clean, erx_dma_clean_inval, the publish, report and
+            # completion barriers and erx_dma_store_wait (docs/design-device-dma.md, "The
+            # architecture layer").
             Chokepoints::Site.new(glob: 'otp/erts/emulator/nifs/erxos/arch/aarch64/erx_dma_arch.c'),
             # The file-scope labels of musl's cancellation points, which name no instruction.
             Chokepoints::Site.new(glob: 'musl/src/thread/erxos/syscall_cp.c'),
