@@ -995,27 +995,13 @@ system_facet(code_objects, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_code_objects_facet, Behind, Limits#{behind => Behind}};
 system_facet(_Name, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_domain_facet, Behind, Limits#{behind => Behind}};
-system_facet(machine, {tree, Grants, Limits}, Principal, #{principals := #{system := System}} = State) ->
+system_facet(machine, {tree, Grants, Limits}, Principal, State) ->
     %% docs/design-system.md, "A session's request": the grant's own argument is its
-    %% grantee's principal, `system` for the system principal (root's template) and the
-    %% name otherwise, which the tree's ctl handler passes to the coordinator, so the log
-    %% line names whoever the grant was made for and no request names anyone.
-    {tree, Grants, machine_principal(Principal, System, State), Limits};
+    %% grantee's user name, which the tree's ctl handler passes to the coordinator, so the
+    %% log line names whoever the grant was made for and no request names anyone.
+    {tree, Grants, user_name(Principal, State), Limits};
 system_facet(_Name, {tree, Grants, Limits}, _Principal, _State) ->
     {tree, Grants, Limits}.
-
-machine_principal(System, System, _State) -> system;
-machine_principal(Principal, _System, State) -> name_of(Principal, State).
-
-%% The name of Principal, the one lookup of every principal's name a grant carries: the
-%% system manifest's for its principals, and the registry's for an app principal, the
-%% app's name (docs/design-packaging.md, "An app's principal"). A domain lives only under
-%% a principal of one or the other, so every grantee has a name.
-name_of(Principal, #{principals := #{names := Names}, apps := Apps, app_entries := Entries}) ->
-    case {Names, Entries} of
-        {#{Principal := Name}, _} -> Name;
-        {#{}, #{first := First}} -> erx_principal:fetch_name(Principal - First, Apps)
-    end.
 
 %% How the system domain serves its service Name to a grantee: tree, an erx_fs grant,
 %% for a service of Trees, those of the interfaces abi/services declares served_as
@@ -1593,21 +1579,26 @@ is_ready(Id, Core) ->
 %% The user name of the principal of grantee GranteeId, which its mint carries
 %% (docs/design-system.md, "Facets a configured domain serves"): the system principal's
 %% for the system domain, and for any other the one its record names, a configured row's
-%% or a session's template's. A user name is the prefix of the principal's sessions,
-%% root for the system principal (erx_domain_core:session_prefix/3), and an app
-%% principal's name otherwise, so a grant rooted at a user's home is rooted where the
-%% user's login name says (docs/design-files.md, "A user's home"). The core mints only
-%% for a grantee that is ready.
+%% or a session's template's. The core mints only for a grantee that is ready.
 principal_name(?SYSTEM_ID, #{principals := #{system := System}} = State) ->
     user_name(System, State);
 principal_name(GranteeId, #{core := Core} = State) ->
     {ok, #{principal := Principal}} = erx_domain_core:fetch(GranteeId, Core),
     user_name(Principal, State).
 
-user_name(Principal, #{principals := #{system := System, names := Names}} = State) ->
-    case erx_domain_core:session_prefix(Principal, System, Names) of
-        {ok, Name} -> Name;
-        error -> name_of(Principal, State)
+%% The user name of Principal, the one name every grant carries, a mint request's and
+%% the machine tree's alike: the prefix of the principal's sessions, root for the
+%% system principal and its manifest name for any other principal of the manifest
+%% (erx_domain_core:session_prefix/3), and the registry's for an app principal, the
+%% app's name (docs/design-packaging.md, "An app's principal"). A domain lives only
+%% under a principal of one or the other, so every grantee has a name, and a grant
+%% rooted at a user's home is rooted where the user's login name says
+%% (docs/design-files.md, "A user's home").
+user_name(Principal, #{principals := #{system := System, names := Names}, apps := Apps,
+                       app_entries := Entries}) ->
+    case {erx_domain_core:session_prefix(Principal, System, Names), Entries} of
+        {{ok, Name}, _} -> Name;
+        {error, #{first := First}} -> erx_principal:fetch_name(Principal - First, Apps)
     end.
 
 %% An introduction that settles at once is answered through the service's own queue as

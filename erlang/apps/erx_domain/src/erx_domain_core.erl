@@ -38,7 +38,7 @@ state is a bug of the caller and fails with a badmatch.
 
 -export([new/1, host/1, admit/4, built/5, running/2, ready/3, stopping/2, failed/2, ended/5,
          restart/5, fetch/2, find_pid/2, deaths/2, domains/1, info/1, session_prefix/3, session_name/3,
-         session_reserved/1, names_quota/0, app_session/4]).
+         session_reserved/1, names_quota/0, system_user/0, app_session/4]).
 -export([inspect_scope/3, inspect_view/2]).
 -export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0,
               app_session/1, session_row/0]).
@@ -142,6 +142,13 @@ is_session(_Origin) -> false.
 -doc "How many names each principal binds, its app principals included.".
 -spec names_quota() -> pos_integer().
 names_quota() -> ?NAMES_QUOTA.
+
+-doc """
+The system principal's user name, root, the prefix of its session names and
+the name its grants carry (docs/design-files.md, "A user's home").
+""".
+-spec system_user() -> binary().
+system_user() -> ?SYSTEM_PREFIX.
 
 -doc """
 The prefix of Principal's session names (docs/design-apps.md, "Starting a

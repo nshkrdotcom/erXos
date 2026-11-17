@@ -6,15 +6,14 @@
 The coordinator of the machine's end (docs/design-system.md, "Shutting
 down" and "A session's request"), a process of the domain service. Every
 request for an end reaches it through its one entry, request/2, with the
-end, `reset` or `off`, and the principal that asked: the name the `machine`
-grant was minted with for a session's request (erx_machine_fs), or
-`system` for the system domain's own callers, the system shell's `reboot`
-and `halt` among them.
+end, `reset` or `off`, and the user that asked: the user name the `machine`
+grant was minted with, root for the system domain's own grant, through
+which the system shell's `reboot` and `halt` ask (erx_machine_fs).
 
 The coordinator takes requests one at a time. The first one it accepts is
 the machine's end: it writes the one log line, at `critical`, `rebooted
 by P` for `reset` or `powered off by P` for `off`, where P is the
-principal's name and `root` for the system principal, answers `ok`, and
+user's name, answers `ok`, and
 asks init to stop. Every later request, whatever its source, is answered
 `busy` and logs nothing. The request it accepted stands in for the
 ending record until erx_dom_end_begin keeps one (TODO.md, the ordered
@@ -32,8 +31,8 @@ are the effects, and a test hands start_link/1 a stand-in for the stop.
 
 -doc "An end a request asks for: a reset or a power-off.".
 -type 'end'() :: reset | off.
--doc "Who asked: the system principal, or the name of a grant's principal.".
--type principal() :: system | binary().
+-doc "Who asked: the user name a grant carries.".
+-type principal() :: binary().
 -doc "The request the coordinator accepted, or none yet.".
 -type ending() :: none | {'end'(), binary()}.
 
@@ -57,8 +56,7 @@ request is accepted and the end has begun, which cannot be undone, or
 has ended exits, as any call to an ended process does.
 """.
 -spec request('end'(), principal()) -> ok | busy.
-request(End, Principal) when (End =:= reset orelse End =:= off),
-                             (Principal =:= system orelse is_binary(Principal)) ->
+request(End, Principal) when (End =:= reset orelse End =:= off), is_binary(Principal) ->
     gen_server:call(?MODULE, {request, End, Principal}, infinity).
 
 -doc """
@@ -70,11 +68,7 @@ otherwise the request to keep and the log line it writes.
 decide({_End, _Name}, _Requested, _Principal) ->
     busy;
 decide(none, End, Principal) ->
-    Name = name(Principal),
-    {accept, {End, Name}, [verb(End), <<" by ">>, Name]}.
-
-name(system) -> <<"root">>;
-name(Name) when is_binary(Name) -> Name.
+    {accept, {End, Principal}, [verb(End), <<" by ">>, Principal]}.
 
 verb(reset) -> <<"rebooted">>;
 verb(off) -> <<"powered off">>.

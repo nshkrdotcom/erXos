@@ -50,14 +50,14 @@ ctl_open_test() ->
     ?assertMatch({ok, [{_, 1, _, <<"ctl">>}]}, erx_machine_fs:readdir(Listing, 0, 8, Fs)),
     ?assertEqual({error, enoent}, erx_machine_fs:walk(root, <<"power">>, Fs)).
 
-%% The first request is accepted and names its principal, the system's as root; every
+%% The first request is accepted and names its user; every
 %% later one is busy.
 decide_test() ->
     {accept, {reset, <<"clock">>} = Ending, Line} = erx_machine:decide(none, reset, <<"clock">>),
     ?assertEqual(<<"rebooted by clock">>, iolist_to_binary(Line)),
-    {accept, _, Off} = erx_machine:decide(none, off, system),
+    {accept, _, Off} = erx_machine:decide(none, off, <<"root">>),
     ?assertEqual(<<"powered off by root">>, iolist_to_binary(Off)),
-    ?assertEqual(busy, erx_machine:decide(Ending, off, system)),
+    ?assertEqual(busy, erx_machine:decide(Ending, off, <<"root">>)),
     ?assertEqual(busy, erx_machine:decide(Ending, reset, <<"clock">>)).
 
 %% The coordinator stops the machine once, for the first request, whoever asks later.
@@ -67,7 +67,7 @@ coordinator_test() ->
     try
         ?assertEqual(ok, erx_machine:request(reset, <<"clock">>)),
         ?assertEqual({stopped, reset}, next()),
-        ?assertEqual(busy, erx_machine:request(off, system)),
+        ?assertEqual(busy, erx_machine:request(off, <<"root">>)),
         ?assertEqual(busy, erx_machine:request(reset, <<"clock">>)),
         ?assertEqual(none, next())
     after
