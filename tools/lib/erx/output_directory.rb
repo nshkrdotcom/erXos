@@ -31,7 +31,7 @@ module Erx
         rescue Errno::ENOENT
           next
         end
-        raise Error, 'output directory has a linked or non-directory ancestor' unless stat.directory?
+        raise Error, "output directory #{destination}: #{refusal(current, stat)}" unless stat.directory?
       end
       destination
     rescue SystemCallError => error
@@ -46,5 +46,16 @@ module Erx
     rescue SystemCallError => error
       raise Error, "cannot prepare output directory: #{error.message}"
     end
+
+    # Why path cannot be on an output path, naming what holds its place. A link is named
+    # as itself: File.realpath would name its target, or fail for a dangling one. Anything
+    # else is named as the file system spells it, since one that ignores case takes a
+    # file build/fiasco/NOTICES for build/fiasco/notices.
+    def refusal(path, stat)
+      return "#{path} is a symbolic link, which an output path may not cross" if stat.symlink?
+
+      "#{File.realpath(path)} (type #{stat.ftype}) is not a directory"
+    end
+    private_class_method :refusal
   end
 end

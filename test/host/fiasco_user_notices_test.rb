@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require 'minitest/autorun'
+require 'tmpdir'
 require_relative '../../tools/lib/erx/fiasco'
 
 # The notices L4Re's user libraries ship under, in every image and in the SDK:
@@ -30,6 +31,32 @@ class FiascoUserNoticesTest < Minitest::Test
     # after a first (__typeinfo.h), are both kept.
     assert_match(/\(c\) 2008-2011 Adam Lackorzynski/, l4sys)
     assert_match(/\(c\) 2010 Alexander Warg/, l4sys)
+  end
+
+  # Fills tree with links to the source tree's entries, with no build directory of its own.
+  def tree_without_build(tree)
+    Dir.children(ROOT).reject { it == 'build' }.each { File.symlink(File.join(ROOT, it), File.join(tree, it)) }
+  end
+
+  # Seeded fault: a file where the notices directory goes. A file system that ignores
+  # case, as macOS's does, takes a file build/fiasco/NOTICES for build/fiasco/notices;
+  # the build stops with a diagnostic naming the file as it is spelled on disk, not
+  # with a bare "File exists" for a path that looks absent. Where case matters, the
+  # file is another name and the notices are written beside it.
+  def test_a_file_where_the_notices_go_is_named
+    Dir.mktmpdir do |tree|
+      tree_without_build(tree)
+      FileUtils.mkdir_p(File.join(tree, 'build/fiasco'))
+      File.write(File.join(tree, 'build/fiasco/NOTICES'), 'kept')
+      fiasco = Erx::Fiasco.new(root: tree)
+      if File.exist?(File.join(tree, 'build/fiasco/notices'))
+        error = assert_raises(Erx::Error) { fiasco.user_library_notices('libsigma0.a') }
+        assert_match(%r{build/fiasco/NOTICES \(type file\) is not a directory}, error.message)
+      else
+        assert_includes fiasco.user_library_notices('libsigma0.a'), 'build/fiasco/notices/libsigma0.a.copyright'
+      end
+      assert_equal 'kept', File.read(File.join(tree, 'build/fiasco/NOTICES'))
+    end
   end
 
   # Seeded fault: a source directory that does not exist, as a typo in USER_LIBRARIES
