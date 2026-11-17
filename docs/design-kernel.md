@@ -8342,7 +8342,7 @@ arithmetic.
 | Key | Meaning | Default |
 | --- | --- | --- |
 | `erx.det=1` | deterministic mode; a release build refuses it and stops | off |
-| `erx.devsync=1` | synchronous device stores: `ERX_BOOT_DEVSYNC` in the root task's boot information, which the domain library passes to every domain, and each store of the device NIF completes before its next access ([design-runtime.md](design-runtime.md#the-device-access-trace)); a release build refuses it and stops | off |
+| `erx.devsync=1` | synchronous device stores: `ERX_BOOT_DEVSYNC` in the root task's boot information, which the domain library passes to every domain, and under it the store wait that follows every store of the device NIF also synchronises the instruction stream before the next access ([design-runtime.md](design-runtime.md#the-device-access-trace)); a release build refuses it and stops | off |
 | `erx.trial_deadline=S` | on a trial boot, seconds until the machine lease resets the machine, from 120 to 3,600, so a trial always leaves the 60 s a commit needs ([design-storage.md](design-storage.md#system-updates)) | 300, an estimate of a boot, the health checks and the commit with margin |
 | `erx.dma_pool=SIZE` | the contiguous pool, from the lowest RAM, for unconfined devices' DMA memory ([DMA and the IOMMU](#dma-and-the-iommu)) | 32M, an estimate that each board port revises |
 | `erx.cpus=N` | start at most `N` CPUs | every CPU in the device tree |

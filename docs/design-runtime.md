@@ -3144,8 +3144,9 @@ other lock is taken. Holding it, the NIF takes `n` from `next`, writes
 entry `n mod 256` with `seq` zero first and `n + 1` last, sets `next` to
 `n + 1`, makes the access (on the hosted stand-in, its model's response
 included), stores the word loaded for a read, sets
-`done`, and lets the lock go. `done` means only that the accessor, and
-under `erx.devsync=1` its barrier, returned. Because the lock covers the
+`done`, and lets the lock go. `done` means only that the accessor and,
+for a store, its store wait (under `erx.devsync=1` the synchronous
+barrier) returned. Because the lock covers the
 access, the sequence numbers order every access of the domain, whichever
 scheduler made it; only the newest entry can lack `done`; and no writer
 ever completes into an entry another has since reused, which a writer
@@ -3173,14 +3174,18 @@ their devices' registers, an estimate on the
 
 **Synchronous stores.** `erx.devsync=1`, which a release build refuses
 as it refuses `erx.det=1`, sets `ERX_BOOT_DEVSYNC` in the root's boot
-information, and the domain library sets it in every domain's. The NIF
-reads it once at load and then follows every store in `store` with the
-architecture layer's store barrier, beside its DMA barriers in
-`erx_dma_arch.c`, before it sets `done`; a load needs none, since its
-value returns only once it completed. The barrier waits until the store
-is acknowledged, so an error it raises is pending before the next access
-is issued; what the acknowledgement covers, and when the CPU takes the
-pending error, are the architecture's
+information, and the domain library sets it in every domain's. With or
+without the flag, every store in `store` is followed by the
+architecture layer's store wait, `erx_dma_store_wait` beside the DMA
+barriers in `erx_dma_arch.c`, which waits until the store is
+acknowledged, so an error it raises is pending before the store's call
+returns. The NIF reads the flag once at load and then uses the
+synchronous store barrier in the wait's place, which also synchronises
+the instruction stream before the NIF sets `done` and issues the next
+access; a load needs neither, since its value returns only once it
+completed. What the
+acknowledgement covers, and when the CPU takes the pending error, are
+the architecture's
 ([design-arch-aarch64.md](design-arch-aarch64.md#asynchronous-errors)).
 The report depends on neither, because it names no access as the cause
 of an end: an error may come from any earlier store, and an end may fall
@@ -3253,9 +3258,10 @@ Its seed is a raw store in `erx_device_command`.
   without `done` as `completion unrecorded`, a read's value as `unknown`
   with it, and names no access as a cause. Seeds: the offset bound
   dropped; a read's value shown without `done`.
-* Under `ERX_BOOT_DEVSYNC` the host architecture layer counts one barrier
-  per store, a plan's register steps included, and none per load or
-  without the flag; a release build refuses `erx.devsync=1`, leaves the
+* The host architecture layer counts one store wait per store, a plan's
+  register steps included, with or without the flag, each of them the
+  synchronous barrier under `ERX_BOOT_DEVSYNC`, and none per load; a
+  release build refuses `erx.devsync=1`, leaves the
   section zero and shows `unsupported` for a section a test fills.
   Seeds: the barrier in `erx_device_write`, which misses the plan's
   steps; the refusal removed; the development flag ignored; the release
