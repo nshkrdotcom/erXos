@@ -618,17 +618,27 @@ boot_places(erx_dom_configured_t *configured, uint32_t nconfigured, const erx_ma
  * refuses a second window, a holder past the domains table and a window
  * without the row or the row without it, so the record has one row to name
  * and one holder or none; that the holder holds the block device is the
- * check's alone.
+ * check's alone. It sets record_volume when the manifest holds a
+ * record_volume window, which the check gives that holder alone and at most
+ * once (docs/design-ssh.md, "Who publishes it"); the view refuses a second
+ * one and one held by any other row, so the record names the window only in
+ * the boot page of the domain that holds it.
  */
 static const char *
 boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
 {
 	erx_mf_window_t window;
+	uint32_t volume_holder = ERX_MF_NONE;
 
 	lib->system_image_row = ERX_MF_NONE;
 	for (uint32_t index = 0; index < manifest->header.windows.count; index++) {
 		if (!erx_manifest_windows_at(manifest, index, &window))
 			return ("manifest: a window the reader cannot read");
+		if (window.role == ERX_MF_WINDOW_ROLE_RECORD_VOLUME) {
+			if (volume_holder != ERX_MF_NONE)
+				return ("manifest: more than one record_volume window");
+			volume_holder = window.holder;
+		}
 		if (window.role != ERX_MF_WINDOW_ROLE_SYSTEM)
 			continue;
 		if (lib->system_image_row != ERX_MF_NONE || window.holder >= manifest->header.domains.count)
@@ -638,6 +648,9 @@ boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
 	if ((lib->system_image_row == ERX_MF_NONE) != (manifest->header.system_image.count == 0) ||
 	    (lib->system_image_row != ERX_MF_NONE && !erx_manifest_system_image_at(manifest, 0, &lib->system_image)))
 		return ("manifest: a system window without its system_image row, or the row without the window");
+	if (volume_holder != ERX_MF_NONE && volume_holder != lib->system_image_row)
+		return ("manifest: a record_volume window not held by the system window's holder");
+	lib->record_volume = volume_holder != ERX_MF_NONE;
 	return (NULL);
 }
 

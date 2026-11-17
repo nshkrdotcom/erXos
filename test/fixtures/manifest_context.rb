@@ -125,6 +125,7 @@ module ManifestContextFixture
   # The development manifest's apps row.
   APPS_ROW = /^apps\n(?:  .*\n)*/
   SYSTEM_WINDOW = /^window system\n(?:  .*\n)*/
+  RECORD_VOLUME_WINDOW = /^window record_volume\n(?:  .*\n)*/
   SYSTEM_IMAGE = /^system_image\n(?:  .*\n)*/
   BLOCK_UNIT = /^(unit block\n(?:  .*\n)*?  holder )system$/
   SYSTEM_QUOTA = /^(principal system\n(?:  .*\n)*?  domains )\d+$/
@@ -132,14 +133,16 @@ module ManifestContextFixture
 
   # The development manifest's own configured domains, storage, network, web and display,
   # with the profiles and runtime limits only they name, their services (storage's
-  # driver-control, data, packages and system, network's driver-control and net, web's relay, the display's
-  # window tree with its display record) and the system domain's facets of them, and the
+  # driver-control, data, packages, system and login_keys, network's driver-control and net, web's relay, the display's
+  # window tree with its display record) and the system domain's facets of them, root's
+  # session's grant of login_keys, which goes with its service, and the
   # display unit, which only a display domain holds (docs/design-stopgap.md, "Device
   # records"), so a manifest without one places none.
   DOMAIN_ROWS = [/^runtime_limits storage\n(?:  .*\n)*/, /^limits storage\n(?:  .*\n)*/, /^domain storage\n(?:  .*\n)*/,
                  /^service storage_ctl\n(?:  .*\n)*/, /^facet storage_ctl\n(?:  .*\n)*/,
                  /^service data\n(?:  .*\n)*/, /^service home\n(?:  .*\n)*/, /^facet data\n(?:  .*\n)*/, /^service packages\n(?:  .*\n)*/,
-                 /^service system\n(?:  .*\n)*/,
+                 /^service system\n(?:  .*\n)*/, /^service login_keys\n(?:  .*\n)*/, /^facet login_keys\n(?:  .*\n)*/,
+                 /^facet login_keys_session\n(?:  .*\n)*/,
                  /^runtime_limits network\n(?:  .*\n)*/, /^limits network\n(?:  .*\n)*/, /^domain network\n(?:  .*\n)*/,
                  /^service network_ctl\n(?:  .*\n)*/, /^facet network_ctl\n(?:  .*\n)*/,
                  /^service net\n(?:  .*\n)*/,
@@ -179,12 +182,12 @@ module ManifestContextFixture
   # removed and what they hold but the display unit held by the system domain, as a
   # manifest that configures no domain holds them. A session facet is removed where the
   # source still has it, and so is its apps row, whose services those domains serve, and
-  # its system window, which only a storage domain holds (property 8), with the
-  # system_image row that names the window's image.
+  # its system and record_volume windows, which only a storage domain holds (property 8),
+  # with the system_image row that names the system window's image.
   def domainless(source)
     raise ArgumentError, 'the manifest has no configured domain holder' unless source.match?(DOMAIN_HOLDER)
 
-    appless = source.sub(APPS_ROW, '').sub(SYSTEM_WINDOW, '').sub(SYSTEM_IMAGE, '')
+    appless = source.sub(APPS_ROW, '').sub(SYSTEM_WINDOW, '').sub(RECORD_VOLUME_WINDOW, '').sub(SYSTEM_IMAGE, '')
     held = SESSION_FACETS.reduce(appless.gsub(DOMAIN_HOLDER, '  holder system')) { |text, facet| text.sub(facet, '') }
     DOMAIN_ROWS.reduce(held) { |text, row| substitute(text, row, '') }
   end

@@ -20,7 +20,14 @@ the node and the storage domain:
   `system` window in its own process, so this supervisor's start waits for
   no mount (erx_storage_system:start_mint/0; docs/design-storage.md, "The
   `system` tree"). A boot whose block service names no `system` window
-  starts no mint. The domain service's restart mounts the tree afresh.
+  starts no mint. The domain service's restart mounts the tree afresh;
+* the `login_keys` tree, root's login keys from the record volume, served as
+  `login_keys_service` by its mint, whose mount only starts the tree's holder,
+  which reads the volume in a reader of its own, so neither this supervisor's
+  start nor the mint waits for the medium (erx_storage_login_keys:start_mint/0;
+  docs/design-ssh.md, "Root's login keys on the medium"). A boot whose block
+  service names no `record_volume` window starts no mint, and a restart reads
+  the medium again.
 """.
 -behaviour(supervisor).
 
@@ -53,4 +60,10 @@ init([]) ->
                shutdown => brutal_kill,
                type => worker,
                modules => [erx_storage_mint, erx_storage_system]},
-    {ok, {#{strategy => one_for_one, intensity => 0, period => 1}, [Control, Data, System]}}.
+    LoginKeys = #{id => login_keys,
+                  start => {erx_storage_login_keys, start_mint, []},
+                  restart => permanent,
+                  shutdown => brutal_kill,
+                  type => worker,
+                  modules => [erx_storage_mint, erx_storage_login_keys]},
+    {ok, {#{strategy => one_for_one, intensity => 0, period => 1}, [Control, Data, System, LoginKeys]}}.

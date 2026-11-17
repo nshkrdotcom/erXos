@@ -67,12 +67,14 @@
 #define ERX_BOOT_BUILD_WORDS_MAX	(sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("build") + ERX_BOOT_NUMBER_WORD_MAX)
 
 /*
- * -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT, the system window's holder's
- * (docs/design-stopgap.md, "The booted slot"): three u64s, then the salt, at most the row's
- * array, and the root hash, each byte two lowercase hex digits.
+ * -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT [record_volume], the system
+ * window's holder's (docs/design-stopgap.md, "The booted slot"): three u64s, then the salt,
+ * at most the row's array, and the root hash, each byte two lowercase hex digits, and the
+ * record_volume window role's name, erx_mf_window_role_name's "record_volume", when the
+ * holder holds that window too.
  */
 #define ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX	(sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("system_image") + \
 	3u * ERX_BOOT_NUMBER_WORD_MAX + 2u * sizeof(((erx_mf_system_image_t *)0)->salt) + 1u + \
-	2u * sizeof(((erx_mf_system_image_t *)0)->root_hash) + 1u)
+	2u * sizeof(((erx_mf_system_image_t *)0)->root_hash) + 1u + sizeof("record_volume"))
 
 #endif /* ERX_BOOT_WORDS_H */

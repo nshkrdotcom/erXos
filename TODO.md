@@ -7578,6 +7578,26 @@ to the corpus and follow rc
   each to `{stop, Reason}` and the one loop, then add a source check that no module but
   `erx_actions` has a clause on a stop at a list's head.
 
+* [Medium] fuzz, `tools/fuzz/erx_device_record.rb`: the target fails on the module as it is, before
+  any mutant runs, with `{too_few_accepted, 159, 648, 482}` at seed 1: its generator
+  (`test/erlang/erx_device_record_fuzz.erl`, `entry/0`) finds an accepted device record in 159 of
+  20000 rounds, under the floor of 200 (`MIN_ACCEPTED`). The generator's well-formed device entries
+  no longer match the record's shape often enough; make them do so, rather than lower the floor.
+* [Medium] domain library, `boot_system_image` (`liberx/system/dom_boot_view.c`): its two `record_volume`
+  refusals, a second window and one held by a row other than the `system` window's holder, have no test;
+  add `dom_planner_test.rb` cases that run the view on such manifest bytes past the check, with each
+  refusal's removal seeded.
+* [Medium] the `record_volume` role's name is spelled by hand in `erx_device_record:image_record/1`
+  (`"record_volume"`) and in `ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX` (`sizeof("record_volume")`, as the pair
+  words' bound spells its names), while the writer takes it from the generated
+  `erx_mf_window_role_name`; only `boot_info_driver.c`'s longest-record check keeps them in step. Take the
+  Erlang word from `?ERX_MF_WINDOW_ROLE_MEMBERS`, as `erx_blk_table:role/1` does, and have the ABI
+  generator emit each enum member's name as a string macro the bounds can size.
+* [Low] boot records, `Erx::Manifest#boot_args` (`tools/lib/erx/manifest.rb`) and
+  `erx_domain_srv:boot_args/2`: a row's `args` may carry `-erx_record`, as they may not carry `-boot`, so
+  a row's own words can read as a record the domain library writes (for `system_image`, the
+  `record_volume` mark, which grants nothing without the block device). Refuse `-erx_record` there.
+
 ## Security residuals
 
 * [Medium] clock, the approximate start in a release build (`erlang/apps/erx/src/erx_clock_core.erl`,
@@ -7632,6 +7652,28 @@ to the corpus and follow rc
   A module the `erx_device` chokepoint admits can therefore stop or reprogram the Pi 4's hardware
   watchdog, or write the rest of the power-management block. Marking both registers `ownedByNif true`
   closes the NIF table route; the physical-window route needs the open checked against the manifest.
+* [Low] SSH, root's login keys on the medium (development builds, before the vault;
+  [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)): the keys are as sound as the
+  storage domain that reads `authorized_keys` and serves them as `login_keys`, and that domain serves
+  `system` to every domain and `data` to every principal, so a flaw in it that a client's requests could steer would be a way to
+  root's login. A storage domain whose only client is the system domain, as the vault's is, would
+  close it; the vault's arrival, after which the file is not read, closes it too.
+* [Medium] SSH, the browser demo's manifest ([design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)):
+  `config/platforms/qemu-virt.json:10`'s `site_leaves_out` gains `ssh` in the same change that puts the SSH
+  domain into the development manifest, or the demo's image holds a domain that no one can give a key.
+  The same change (P7, the SSH domain's package) takes the `record_volume` window, the `login_keys`
+  service and the system domain's `login_keys` facet out of the site manifest
+  (`Erx::Platform#site_manifest_source`), which holds them because it derives from QEMU virt's
+  development manifest, although design-ssh.md's browser-demo bullet and its "each product's SSH domain" test
+  row say the demo holds no `record_volume` window. Until then they are inert there: the demo's
+  storage domain reads a medium with no `authorized_keys`, so `login_keys` serves an empty `root`, and no
+  SSH domain reads it.
+* [Medium] SSH, release builds and the record volume ([design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium),
+  the test row "release builds refuse the development key"): the manifest check does not yet refuse a
+  release-kind manifest that holds a `record_volume` window, since `Stopgap#check_mode`
+  (`tools/lib/erx/manifest.rb`) refuses every manifest that is not of the development kind. When
+  `check_mode` admits release manifests, the release check refuses the window, with its seeded test
+  (the release check skipping the `record_volume` row: the manifest with the window passes).
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
   system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
   `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader
@@ -7717,11 +7759,14 @@ to the corpus and follow rc
 
 * [Medium] SSH before the vault, stages 2 and 3, development builds only
   ([design-ssh.md](docs/design-ssh.md#login-keys)): `erx_ssh_login`'s
-  `login_key` admits root's development key on the SSH domain's own
-  signature check and compares no host key, so a compromised SSH domain
-  logs in as root, and the host key is a file of the SSH domain's directory
-  on the data partition. Stage 4 closes both, with the system domain's
-  Ed25519 verifier and the vault's host key.
+  `login_key` checks the signature itself but compares no host key, and
+  the host key is the file `/data/ssh/ssh_host_ed25519_key`, which the SSH
+  domain reaches through `ssh_state` and whoever reads the data partition
+  reads. So whoever takes the key poses as this machine to clients, and a
+  compromised SSH domain logs in as root whenever a client holding one of
+  root's keys completes an exchange with it, under any host key that
+  client accepts. Stage 4 closes both, with the vault's host key and the
+  facet's comparison of it.
 * [Medium] network time, unauthenticated ([design-time.md](docs/design-time.md#security)): the NTP server
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
@@ -9291,6 +9336,69 @@ document's "residual risks accepted" paragraph.
   `BootRecord.read` and `extract`; `release.erofs` and `data.lfs` are not scanned for the build path (the EROFS
   files are, through `image.boot`); an oversized `kernel8.img` fails in fsimg rather than with a diagnostic;
   `FatVolume::Layout` keeps a root offset and a root cluster for both FAT types where each means something for one.
+* [Medium] SSH stage 2, the QEMU medium's record partition (`tools/lib/erx/release_medium.rb`, `medium`): it
+  writes only the record's sector and leaves the rest of the partition zero, so a QEMU medium has no FAT volume
+  to hold `authorized_keys`; [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium) has it format
+  the partition with `PiMedium::RECORD_VOLUME`, as the card is.
+* [Low] storage, long-name case in `erx_fat_read` (`erlang/apps/erx_storage/src/erx_fat_read.erl`, `upper/1`;
+  [design-storage.md](docs/design-storage.md#removable-media-fat)): the read core maps only ASCII letters to upper
+  case before comparing long names, where the design compares after mapping every Basic Multilingual Plane code
+  unit through a case table generated from Unicode's character database; so a name whose letters differ only by
+  a non-ASCII code unit whose simple uppercase is an ASCII letter (U+0131, U+017F) is not found, which fails safe for
+  `authorized_keys`. The FAT server, which needs the table, generates it and `upper/1` takes it.
+* [Low] storage, FAT's format constants have two copies (`tools/lib/erx/fat_volume.rb`, `FAT16_MIN`, `FAT32_MIN`,
+  the entry markers and attributes; `erlang/apps/erx_storage/src/erx_fat_read.erl`, the same as macros): an
+  `abi/formats/fat.txt` would give both, and the FAT server, one source, as `abi/formats/erofs.txt` does for EROFS.
+  The test fixture (`test/fixtures/fat_record_volume.rb`) and the fuzz target keep their own values on purpose, as
+  oracles independent of the reader.
+* [Medium] storage, `erx_fat_read` over a volume another writer made (`test/host/erx_fat_read_test.rb`;
+  [design-ssh.md](docs/design-ssh.md#verification)): every case and fuzz seed is a volume of
+  `test/fixtures/fat_record_volume.rb`, written from the same reading of the FAT specification as the reader, where
+  the design's row reads volumes fsimg writes; a shared misreading would refuse every real card. Add a case over
+  the record volume `PiMedium::RECORD_VOLUME` has fsimg write (`not_found` proves its layout is admitted), and one
+  that finds `authorized_keys` once fsimg can place a file past the record's region (the fsimg item below).
+* [Low] SSH, the boot keys' fuzz target (`test/erlang/erx_boot_keys_fuzz.erl`, `key_blob/1`;
+  [design-ssh.md](docs/design-ssh.md#verification)): it checks each blob's layout itself, where the design has
+  `erx_ssh_wire` accept it; that decoder and `abi/formats/ssh.txt` are on another branch, and when they land the
+  target calls it, as `erx_boot_keys` then takes the blob layout's macros from the generated header.
+* [Medium] storage, the record volume's erase unit (`tools/lib/erx/pi_medium.rb`, `RECORD_VOLUME`; fsimg): the
+  clusters of MiB 3 after the record's are free, so fsimg, and a user's computer writing `authorized_keys`, put a
+  file beside the record in its erase unit;
+  [design-storage.md](docs/design-storage.md#removable-media-fat) marks the rest of the record's erase unit bad
+  in both FATs. Work: `RECORD_VOLUME` derives the range after the record's cluster from `abi/medium.txt`'s
+  `medium_erase_sectors` and passes it as fsimg's
+  `-o bad=FIRST-LAST` (the fsimg item below); `check_volumes` derives the same range and refuses a volume in
+  which a cluster of it is not marked bad in both FATs, with a `pi_medium_test` case whose volume lacks one mark,
+  as `erx_fat_read` derives its region check. No cluster number is written down
+  anywhere, and nothing patches fsimg's output.
+* [Medium] tooling, fsimg's FAT creation and update (`~/projects/fsimg`, pinned in `deps.lock`;
+  [design-storage.md](docs/design-storage.md#removable-media-fat),
+  [design-ssh.md](docs/design-ssh.md#verification)): fsimg has no way to mark clusters bad and no mode that
+  adds a file to an existing image (its modes are `c`, `x`, `t`, `W` and `i`, `docs/fsimg.1`). Add a FAT
+  creation option `-o bad=FIRST-LAST` that writes the bad-cluster mark for that cluster range in every FAT,
+  refused when the range leaves the data area or holds a placed file's cluster; and an append mode, as tar's
+  `r`, that adds a file to an existing FAT volume, whole or as a partition of an MBR disk, allocating only free
+  clusters and keeping every other byte. Tests in fsimg's own suite: a volume made with `bad=` has exactly
+  those entries marked in both FATs and `fsimg W` accepts it; a range off the data area is refused; an append
+  to such a volume places the file's first cluster past the range, `fsimg W` accepts the result and a
+  second extraction gives every earlier file unchanged; an append to a full root directory is refused. Then
+  repin fsimg in `deps.lock`.
+* [Medium] SSH, the QEMU test of a downloadable medium ([design-ssh.md](docs/design-ssh.md#the-ssh-domain)):
+  `MediumBoot` packs its medium from `site_manifest_source` (`tools/lib/erx/medium_boot.rb:499`,
+  `tools/lib/erx/bench_g5.rb:82`), the browser demo's manifest, which leaves the SSH domain out, so no harness
+  boots the QEMU release medium the website offers. The test needs `MediumBoot` to take its manifest from the
+  caller, `ProductionImage.medium_manifest` of the development manifest for that test and
+  `site_manifest_source` for the medium suite and G5 as now.
+* [Medium] site, the QEMU virt download ([site/README.md](site/README.md),
+  [design-ssh.md](docs/design-ssh.md#the-ssh-domain)): the page offers the browser demo's gzip-compressed
+  `image.boot` as its QEMU download; it is to offer the QEMU release medium packed from the development
+  manifest (`ProductionImage.medium_manifest`), with the SSH domain and no `authorized_keys`, and the QEMU
+  command line that boots it, while the browser demo keeps its own image.
+* [Low] Raspberry Pi card labels (`tools/lib/erx/pi_medium.rb`, `RECORD_FORMAT` and `SLOT_FORMAT`): the record
+  volume is labelled `ERXREC` and both slots' boot partitions `ERXOS`, where
+  [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record) labels the record volume
+  `ERXOS` and the slots `ERXSLOTA` and `ERXSLOTB`, so the volume that takes `authorized_keys` is the one named for
+  the system.
 * [Medium] storage, the reset count's encoding (`abi/medium.txt`, `tools/lib/erx/pi_medium.rb`): no encoding of the
   count is defined, so the Pi card's writer leaves its sector the zeros fsimg writes in the reserved area instead of
   the count's first value (design-platforms.md, "Slots and the boot-selection record"), as the QEMU medium does.
@@ -9557,6 +9665,70 @@ document's "residual risks accepted" paragraph.
   `erx_ssh_dev:start/1`, so the two agree only by the harness's typing
   it. A constant of `abi/erx_abi.txt` that both read would make them one
   fact.
+* [Medium] SSH stage 2, root's session's grant of `login_keys`
+  (`config/manifest/development.txt`, `facet login_keys_session`;
+  `tools/lib/erx/manifest.rb`, `check_login_keys_service`;
+  [design-ssh.md](docs/design-ssh.md#invariants) H8): stage 1's daemon
+  reads the card's keys through a read-only grant to root's session
+  template, which the check admits beside the system domain's. When the
+  SSH domain lands, remove the grant and narrow the check back to the
+  system domain alone, as 0.1's known limitations say.
+* [Medium] SSH stage 2, port 22 ([design-ssh.md](docs/design-ssh.md#stages),
+  `tools/lib/erx/manifest.rb`, `check_net_ports`): stage 1 listens on
+  2222, since a privileged port is only a configured domain's; the SSH
+  domain takes port 22.
+* [Low] SSH, the browser demo's record volume
+  (`tools/lib/erx/platform.rb`, `site_manifest_source`;
+  [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)):
+  the design says the demo's manifest holds no `record_volume` window,
+  but qemu-virt's site manifest leaves out only web and display, so it
+  keeps the window, `login_keys` and both its grants. Harmless, since
+  the demo's medium holds no `authorized_keys`; the site manifest should
+  drop the window as the design says.
+* [Low] SSH stage 1, one lookup of root's session template
+  (`tools/lib/erx/manifest.rb`, `check_login_keys_service` and
+  `planned_sessions`): both find the system principal's template by
+  the same predicate, and the check resolves the system principal from
+  the source again though the header holds it; one helper would serve
+  both.
+* [Low] SSH stage 1, the channel's refusal
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `refuse/2`): it
+  decides that a request wants a reply by the tuple's shape (an integer
+  second element and a boolean third) instead of matching the request
+  shapes OTP's `ssh_connection` delivers, so a request of another shape is
+  silently ignored.
+* [Low] SSH stage 1, copied limits
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`): `MAX_TERM`
+  repeats `erx_ssh_line_core`'s and `MAX_SIDE` repeats `erx_tty`'s and
+  `erx_tty_link`'s; one owner exported or generated would make each one
+  fact.
+* [Low] SSH stage 1, empty output
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `tty_output`):
+  an empty piece of the tty's output is sent as a zero-length channel
+  data message instead of being skipped.
+* [Low] SSH stage 1, channels per connection
+  (`erlang/apps/erx_session/src/erx_ssh_dev.erl`, `daemon/2`): the daemon
+  sets no `max_channels`, so one admitted connection can open a tty per
+  channel without bound.
+* [Low] SSH stage 1, the card read untested
+  (`erlang/apps/erx_session/src/erx_ssh_dev.erl`, `medium_file/0`): the
+  host tests give the key callback a stand-in for the read of
+  `login_keys`; the read through `erx:cap(login_keys)` and
+  `erx_file_remote` runs in no test. A QEMU case whose medium holds
+  `authorized_keys` on its record volume, logging in with that key, would
+  run it.
+* [Low] SSH stage 1, signals
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `ending/3`): the
+  tty's ending maps to SSH's signal names by one clause for `sigint`,
+  while `erx_console:shell_ending/1` reports `{signaled, S}` for every
+  member of the generated `ERX_SSH_LINE_SIGNAL_MEMBERS`. That set
+  (`abi/signals.txt`, `signal_set ssh_line`) holds only `int`, so a
+  signal added to it would crash the channel; the name should come from
+  that table.
+* [Low] SSH stage 1, the release string
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `EXEC_REFUSED`):
+  the exec refusal names release 0.1 in a literal that must change by
+  hand with the release.
 * [Low] SSH stage 1, the chokepoint on login keys
   (`tools/lib/erx/checks.rb`, `LOGIN_KEY_ENTRY`): the check matches the
   keyword `login_key:` only, so `:login_key => key` or a splatted hash

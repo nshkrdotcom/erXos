@@ -35,7 +35,8 @@ module Erx
   # shell a 1 MiB TCP echo through slirp's guest forward. That shell then starts SSH's
   # development daemon (erx_ssh_dev; docs/design-ssh.md, "Stages", stage 1) on
   # DevKey::PORT, which a host forward reaches, in an image that carries the clone's
-  # development login key (DevKey), and the host's ssh logs in through it (check_ssh).
+  # development login key (DevKey), and the host's ssh logs in through it and types ps at
+  # rc on the login's tty (check_ssh).
   # Last, the system's shell kills the network domain's pid and, once the domain is
   # gone, reads the root's pool pages again: each figure (after the lease, after the
   # echo and the logins) minus that last one is the domain's
@@ -47,8 +48,8 @@ module Erx
   #
   # The reboot cell boots the same image again to the lease, starts the daemon the same
   # way, and root, logged in over ssh, ends the machine (check_ssh_reboot): the login's
-  # Erlang shell runs in root_1's session, which holds the machine grant, and writes the
-  # line `reboot` writes to the /machine/ctl the session mounts (docs/design-system.md,
+  # rc runs on a tty of root_1's session, which holds the machine grant, and its reboot
+  # writes the reset line to the /machine/ctl the session mounts (docs/design-system.md,
   # "A session's request"). QEMU's exit under -no-reboot shows the reset, after
   # `rebooted by root` on the console and with no crash frame.
   module NetworkDomain
@@ -96,18 +97,22 @@ module Erx
     # Typed at root's session's Erlang shell: starts the daemon once the session's data
     # grant has arrived, since the daemon keeps its host key under /data.
     SSH_LINE = SessionDomain.with_data("erx_ssh_dev:start(#{DevKey::PORT})").freeze
-    # What root's login runs; OTP's erlang_eval exec prints its value.
-    SSH_EXPRESSION = 'lists:sum([1,2,3]).'
-    SSH_ANSWER = '6'
-    # What root's login runs to end the machine: the line `reboot` writes (erx_cmd_reboot)
-    # to the machine tree root's session mounts. In Ruby's single quotes, \n is the two
-    # bytes of Erlang's escape.
-    SSH_REBOOT = 'file:write_file("/machine/ctl", <<"reset\n">>).'
+    # What root types at rc on the login's tty, ending each line with the CR a terminal
+    # sends: ps, then exit, which ends the shell and so the login. ps's header
+    # (erx_cmd_ps, FreeBSD's default columns) in what the tty sent back shows that rc ran it;
+    # the tty's echo of the typed line holds no such header.
+    SSH_INPUT = "ps\rexit\r"
+    SSH_ANSWER = /PID +TT +STAT +TIME +COMMAND/n
+    # What root types to end the machine: rc's reboot (erx_cmd_reboot).
+    SSH_REBOOT = "reboot\r"
     # The host ssh's line when the daemon turns down every key it offered.
     SSH_REFUSED = 'Permission denied (publickey)'
     SSH_DEADLINE = 60
-    # The cell's ssh asks nothing, on top of what every ssh of DevKey's runs with.
-    SSH_OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30'].freeze
+    # The cell's ssh asks nothing, on top of what every ssh of DevKey's runs with, and asks
+    # for a tty though its input is a file (-tt): the daemon gives only a shell on a tty
+    # and refuses exec (docs/design-ssh.md, "Stages"). -e none keeps every typed byte
+    # the guest's, never an escape of the host's ssh.
+    SSH_OPTIONS = ['-tt', '-e', 'none', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30'].freeze
 
     PROMPT = SessionDomain::PROMPT
 
@@ -132,7 +137,8 @@ module Erx
        run::ERLANG_SHELL.merge(name: 'session-erlang-shell', type: ECHO_LINE).freeze,
        { name: 'tcp-echo', pattern: answer('true'), seconds: 120, type: SSH_LINE }.freeze,
        ssh_daemon(check_ssh).merge(type: run::CTRL_G).freeze,
-       # Its clock starts before check_ssh runs its three logins.
+       # Its seconds also pay for check_ssh's three logins within the run's deadline, the
+       # sum of the checkpoints' seconds; its own clock starts once they returned.
        { name: 'system-menu', pattern: run::CTRL_G_MENU, seconds: (3 * SSH_DEADLINE) + 30, type: 's' }.freeze,
        { name: 'system-again', pattern: menu_left, seconds: 30, type: ECHOED_LINE }.freeze,
        { name: 'echoed', pattern: answer('\{nd_echoed,[0-9]+\}'), seconds: 60, verify: figure.call(:echoed),
@@ -148,7 +154,8 @@ module Erx
       [*leased_session(points, typed: run::ERL_LINE),
        run::ERLANG_SHELL.merge(name: 'session-erlang-shell', type: SSH_LINE).freeze,
        ssh_daemon(login).freeze,
-       # Its clock starts before the login runs.
+       # Its seconds also pay for the login within the run's deadline, the sum of the
+       # checkpoints' seconds; its own clock starts once the login returned.
        SessionDomain.machine_end_point('reboot').merge(seconds: SSH_DEADLINE + 120).freeze]
     end
 
@@ -183,57 +190,57 @@ module Erx
 
     # The host's ssh through the host forward at port, as `tools/erx ssh` runs it but
     # asking nothing, with the boot's known-hosts file in a directory of the cell's own,
-    # since the cell's guest is a boot of its own: root with pair's key runs
-    # SSH_EXPRESSION and gets SSH_ANSWER, while the user daemon with that key and root
-    # with another key are refused. What the guest printed reaches an error only escaped.
+    # since the cell's guest is a boot of its own: root with pair's key types SSH_INPUT on
+    # the login's tty and gets ps's header back, while the user daemon with that key and
+    # root with another key are refused. What the guest printed reaches an error only
+    # escaped.
     def check_ssh(pair:, port:, runner:)
       Dir.mktmpdir('erx-ssh-cell') do |work|
-        ssh = ->(key, user: 'root', command: []) { ssh_argv(key, port: port, work: work, user: user, command: command) }
+        input = input_file(work, SSH_INPUT)
         output = File.join(work, 'answer')
-        runner.run(ssh.call(pair, command: [SSH_EXPRESSION]), name: 'ssh-root', deadline: SSH_DEADLINE, stdout: output)
-        answer = File.binread(output, 256).to_s
-        raise Error, "root ran #{SSH_EXPRESSION} over ssh and got #{answer.dump}, not #{SSH_ANSWER}" unless answer.strip == SSH_ANSWER
+        runner.run(ssh_argv(pair, port: port, work: work), name: 'ssh-root', deadline: SSH_DEADLINE, stdin: input,
+                                                           stdout: output)
+        answer = File.binread(output, 4096).to_s
+        raise Error, "root typed ps at rc over ssh and got #{answer.dump}, with no ps header" unless SSH_ANSWER.match?(answer)
 
         other = DevKey.ensure(directory: File.join(work, 'other-key'), runner: runner)
-        refused(ssh.call(pair, user: 'daemon', command: [SSH_EXPRESSION]), name: 'ssh-other-user', work: work, runner: runner)
-        refused(ssh.call(other, command: [SSH_EXPRESSION]), name: 'ssh-other-key', work: work, runner: runner)
+        refused(ssh_argv(pair, port: port, work: work, user: 'daemon'), name: 'ssh-other-user', input: input, work: work,
+                                                                        runner: runner)
+        refused(ssh_argv(other, port: port, work: work), name: 'ssh-other-key', input: input, work: work, runner: runner)
       end
     end
 
-    # Root with pair's key logs in through the host forward at port and runs SSH_REBOOT.
-    # The guest's end may close the connection before ssh has read the answer, so a
+    # Root with pair's key logs in through the host forward at port and types SSH_REBOOT
+    # at rc. The guest's end closes the connection, or leaves ssh to its deadline, so a
     # failed ssh is no failure of the cell unless the daemon refused the login: the end's
-    # console line and log line decide. An answer that did arrive must be `ok`; what the
-    # guest printed reaches an error only escaped.
+    # console line and log line decide.
     def check_ssh_reboot(pair:, port:, runner:)
       Dir.mktmpdir('erx-ssh-cell') do |work|
-        output = File.join(work, 'answer')
-        begin
-          runner.run(ssh_argv(pair, port: port, work: work, command: [SSH_REBOOT]), name: 'ssh-reboot',
-                                                                                    deadline: SSH_DEADLINE, stdout: output)
-        rescue CommandError => error
-          raise Error, "the guest refused root's login; log: #{error.result.fetch('log')}" if ssh_refused?(error)
-        end
-        answer = File.file?(output) ? File.binread(output, 256).to_s.strip : ''
-        raise Error, "root ran #{SSH_REBOOT} over ssh and got #{answer.dump}, not ok" unless ['', 'ok'].include?(answer)
+        runner.run(ssh_argv(pair, port: port, work: work), name: 'ssh-reboot', deadline: SSH_DEADLINE,
+                                                           stdin: input_file(work, SSH_REBOOT), stdout: File.join(work, 'answer'))
       end
+    rescue CommandError => error
+      raise Error, "the guest refused root's login; log: #{error.result.fetch('log')}" if ssh_refused?(error)
     end
 
-    # The host's ssh as user with pair's key through the host forward at port, running
-    # command, with a known-hosts file in work, a directory of the check's own.
-    def ssh_argv(pair, port:, work:, command:, user: 'root')
+    # The host's ssh as user with pair's key through the host forward at port, on a tty,
+    # with a known-hosts file in work, a directory of the check's own.
+    def ssh_argv(pair, port:, work:, user: 'root')
       DevKey.ssh_argv(pair: pair, port: port, user: user, known_hosts: File.join(work, DevKey::KNOWN_HOSTS),
-                      options: SSH_OPTIONS, command: command)
+                      options: SSH_OPTIONS)
     end
 
-    # Runs argv, which the guest's daemon must refuse with SSH_REFUSED. A login it
-    # admits runs argv's command and ends, and the command's output goes to a file of
-    # work's, so the log holds only what ssh itself printed.
-    def refused(argv, name:, work:, runner:)
-      runner.run(argv, name: name, deadline: SSH_DEADLINE, stdout: File.join(work, name))
+    # Writes text, what a check's ssh types, to a file in work and returns its path.
+    def input_file(work, text) = File.join(work, 'input').tap { |path| File.binwrite(path, text) }
+
+    # Runs argv typing input's bytes, which the guest's daemon must refuse with SSH_REFUSED.
+    # A login it admits runs rc, which exits at input's exit, and the tty's output goes
+    # to a file of work's, so the log holds only what ssh itself printed.
+    def refused(argv, name:, input:, work:, runner:)
+      runner.run(argv, name: name, deadline: SSH_DEADLINE, stdin: input, stdout: File.join(work, name))
       raise Error, "#{name}: the guest admitted a login it must refuse"
     rescue CommandError => error
-      raise Error, "#{name}: ssh failed before the daemon refused its key; log: #{error.result.fetch('log')}" unless
+      raise Error, "#{name}: ssh ended without the daemon's refusal; log: #{error.result.fetch('log')}" unless
         ssh_refused?(error)
     end
 

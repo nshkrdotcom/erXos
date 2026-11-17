@@ -87,16 +87,18 @@ open(Master) when is_pid(Master), node(Master) =:= node() ->
                              modules => [?MODULE, erx_console, erx_session_relay]}).
 
 -doc """
-Opens a tty of the session for Channel, a process of another domain, the
-SSH domain the session's line serves, under the session's supervisor, which
-never restarts it. Tty says what runs on it and its first size (channel());
-Notify gets how what ran ended (erx_console:shell_ending/1) once Channel has
-taken the tty's last output (erx_console's `on_shell_end`). Returns its
-console. The caller has checked that Channel is a process of the domain it
-serves: the relay hears the channel only in that domain's envelope.
+Opens a tty of the session for Channel under the session's supervisor, which
+never restarts it. Channel is a process of the SSH domain the session's line
+serves, or, at SSH's first stage, a channel of the daemon the session runs
+itself (erx_ssh_dev_channel). Tty says what runs on it and its first size
+(channel()); Notify gets how what ran ended (erx_console:shell_ending/1) once
+Channel has taken the tty's last output (erx_console's `on_shell_end`).
+Returns its console. A caller with a channel of another domain has checked
+that it is a process of the domain it serves: the relay hears such a channel
+only in that domain's envelope, and one of this domain plainly.
 """.
 -spec open_channel(pid(), channel(), fun((erx_prog:status()) -> term())) -> {ok, pid()} | {error, term()}.
-open_channel(Channel, Tty, Notify) when is_pid(Channel), node(Channel) =/= node(), is_function(Notify, 1) ->
+open_channel(Channel, Tty, Notify) when is_pid(Channel), is_function(Notify, 1) ->
     supervisor:start_child(erx_session_sup,
                            #{id => {?MODULE, make_ref()},
                              start => {?MODULE, start_channel, [Channel, Tty, Notify]},

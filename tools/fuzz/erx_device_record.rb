@@ -18,8 +18,9 @@ require_relative '../lib/erx/generated'
 # wide shows it holds MAC to 48. For framebuffers, a reader that takes a stride a byte short
 # of a row, rows past the record's bytes, or r8g8b8 as 16 bits a pixel shows the reference
 # holds a record to the geometry the tree's reader passed. For system_image, a reader that
-# takes a root hash of any length, a salt of no bytes or of 33, or the first of two records
-# shows the reference holds the record to its one shape.
+# takes a root hash of any length, a salt of no bytes or of 33, any sixth word as the
+# record_volume window's name, or the first of two records shows the reference holds the
+# record to its one shape.
 module ErxDeviceRecordFuzz
   ROOT = File.expand_path('../..', __dir__)
   MODULE_SOURCE = File.join(ROOT, 'erlang/apps/erx/src/erx_device_record.erl')
@@ -38,6 +39,7 @@ module ErxDeviceRecordFuzz
     'taking a root hash of any length' => ['hex(Root, ?ERX_VERITY_HASH_SIZE, ?ERX_VERITY_HASH_SIZE)', 'hex(Root, 1, 2 * ?ERX_VERITY_HASH_SIZE)'],
     'taking a salt of no bytes' => ['hex(Salt, 1, ?ERX_VERITY_SALT_SIZE)', 'hex(Salt, 0, ?ERX_VERITY_SALT_SIZE)'],
     'taking a salt of 33 bytes' => ['hex(Salt, 1, ?ERX_VERITY_SALT_SIZE)', 'hex(Salt, 1, ?ERX_VERITY_SALT_SIZE + 1)'],
+    'reading any sixth word as the record_volume window' => ['Windows =:= ["record_volume"] ->', 'length(Windows) =:= 1 ->'],
     'taking the first of two system_image records' => ["case [Words || [\"system_image\" | Words] <- Arguments] of", "case lists:sublist([Words || [\"system_image\" | Words] <- Arguments], 1) of"]
   }.freeze
   DEADLINE_SECONDS = '120'

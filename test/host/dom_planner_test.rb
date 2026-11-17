@@ -764,7 +764,8 @@ class DomPlannerTest < Minitest::Test
     # The services, in name order, each with its server's index in boot order (display 0,
     # network 1, storage 2, web 3) or none for the system domain, and its interface.
     services = [%w[clock none clock], %w[data 2 files], %w[display 0 windows], %w[inspect none inspect],
-                %w[log none log], %w[machine none files], %w[net 1 net], %w[network_ctl 1 driver_control],
+                %w[log none log], %w[login_keys 2 files], %w[machine none files], %w[net 1 net],
+                %w[network_ctl 1 driver_control],
                 %w[packages 2 files], %w[start none files], %w[storage_ctl 2 driver_control],
                 %w[system 2 files], %w[web 3 web]]
     assert_equal services.each_with_index.map { |(name, server, kind), index|
@@ -818,12 +819,22 @@ class DomPlannerTest < Minitest::Test
   # with its system window and system_image row taken out.
   def development_source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
 
+  # The source without the record_volume window, and so without the login_keys service its
+  # holder serves from it and the facets of that service, which come and go
+  # with it (docs/design-ssh.md, "Who publishes it").
+  def without_record_volume(source)
+    [/^window record_volume\n(?:  .*\n)*/, /^service login_keys\n(?:  .*\n)*/, /^facet login_keys\n(?:  .*\n)*/,
+     /^facet login_keys_session\n(?:  .*\n)*/]
+      .reduce(source) { |text, record| ManifestContextFixture.substitute(text, record, '') }
+  end
+
   # The source without the system window, and so without the system_image row and the
   # system service its holder serves (property 19), which come and go with it, and
-  # without the apps row, which needs that service, and the room it took.
+  # without the apps row, which needs that service, and the room it took, and without the
+  # record_volume window, which only that holder holds.
   def without_system_image(source)
     [/^window system\n(?:  .*\n)*/, /^system_image\n  input @artifact.release\n/, /^service system\n(?:  .*\n)*/]
-      .reduce(Erx::Manifest::Edit.without_apps(source)) { |text, record| ManifestContextFixture.substitute(text, record, '') }
+      .reduce(without_record_volume(Erx::Manifest::Edit.without_apps(source))) { |text, record| ManifestContextFixture.substitute(text, record, '') }
   end
 
   def admit_development(source)
@@ -834,21 +845,26 @@ class DomPlannerTest < Minitest::Test
   # The domain library writes -erx_record system_image into the boot page of the configured
   # row that holds the system window alone (docs/design-stopgap.md, "The booted slot"):
   # storage, the server of storage_ctl, carries the system_image row's words, and no other
-  # row does; a manifest with no system window gives the record to no row.
+  # row does, with the record_volume window's name after them when it holds that window too
+  # (docs/design-ssh.md, "Who publishes it") and without it when the manifest has none; a
+  # manifest with no system window gives the record to no row.
   def test_only_the_system_window_s_holder_carries_the_system_image_record
     lines = view_lines(admit_development(development_source), 'system-image')
     storage = lines.grep(/\Aservice \d+ name=storage_ctl /).first[/ server=(\d+) /, 1]
     tree = ManifestContextFixture.images.fetch('release').fetch('tree')
-    assert_equal ["system_image #{storage} #{tree.fetch('offset')} #{tree.fetch('offset')} #{tree.fetch('length')} " \
-                  "#{tree.fetch('salt')} #{tree.fetch('root_hash')}"], lines.grep(/\Asystem_image /)
+    record = "system_image #{storage} #{tree.fetch('offset')} #{tree.fetch('offset')} #{tree.fetch('length')} " \
+             "#{tree.fetch('salt')} #{tree.fetch('root_hash')}"
+    assert_equal ["#{record} record_volume"], lines.grep(/\Asystem_image /)
+    assert_equal [record], view_lines(admit_development(without_record_volume(development_source)), 'no-record-volume')
+      .grep(/\Asystem_image /)
     assert_empty view_lines(admit_development(without_system_image(development_source)), 'no-system-image').grep(/\Asystem_image /)
   end
 
   # The view keeps the record's room in the holder's boot page, so a holder whose own
   # arguments leave less than ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX bytes for it, 12 for the flag,
-  # 13 for the form, three numbers of 21 and two hex words of 65, is refused at the view, not
-  # at its creation: the storage row takes 109 fewer two-byte words when it holds the window,
-  # and the web row, which does not, takes as many either way.
+  # 13 for the form, three numbers of 21, two hex words of 65 and 14 for record_volume, is
+  # refused at the view, not at its creation: the storage row takes 116 fewer two-byte words
+  # when it holds the window, and the web row, which does not, takes as many either way.
   def test_the_system_window_s_holder_keeps_room_for_its_record
     room = lambda do |source, domain|
       (0..@codec.constant('boot_strings_max')).bsearch do |count|
@@ -856,7 +872,7 @@ class DomPlannerTest < Minitest::Test
       end
     end
     without = without_system_image(development_source)
-    assert_equal (12 + 13 + (3 * 21) + 65 + 65) / 2, room.call(without, 'storage') - room.call(development_source, 'storage')
+    assert_equal (12 + 13 + (3 * 21) + 65 + 65 + 14) / 2, room.call(without, 'storage') - room.call(development_source, 'storage')
     assert_equal room.call(without, 'web'), room.call(development_source, 'web')
   end
 

@@ -2631,10 +2631,21 @@ backend over `erx_erofs`, as on erXos's kernel
 domain reaches its files through a grant. The driver reads no manifest.
 To that holder alone the domain library adds one record more, from the
 manifest's `system_image` fields, `-erx_record system_image LEN
-TREE_OFF TREE_LEN SALT ROOT`: the image's length and the tree's offset
+TREE_OFF TREE_LEN SALT ROOT [record_volume]`: the image's length and the tree's offset
 and length in bytes, in decimal, and the tree's salt and root hash in
 lowercase hex, with which `erx_storage_system` opens the image in
 `erx_verity` (E1 of [design-storage.md](design-storage.md#invariants)).
+The sixth word, the `record_volume` window role's name, is there exactly
+when the manifest holds a `record_volume` window, which the manifest
+check gives only the `system` window's holder
+([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)) and the
+domain library's view refuses on any other row. It tells that holder's
+block service to start the read-only `record_volume` window on the whole
+record partition (`erx_blk_table:booted/1`), whatever slot the boot
+names, since the record partition belongs to neither, and its storage
+domain to start the `login_keys` mint on it; a record of five words
+starts neither, and the manifest is the record's one source, as for the
+`system` window.
 The packer writes the tree in whole blocks right after the image, under
 the salt a package's image takes, the image's own SHA-256
 ([design-packaging.md](design-packaging.md#building-and-packing)), which
@@ -2642,7 +2653,9 @@ one function, `Erx::AppPackage.image_tree`, picks for both.
 The one reader of the record is `erx_device_record:system_image/1`, a
 pure function over the record words `erx_device_record:records/0`
 holds, with a fuzz target as `find/3` has: it takes exactly one
-`system_image` record of exactly five words, LEN, TREE_OFF and TREE_LEN
+`system_image` record of five words, or of six whose sixth is exactly
+`record_volume`, which `erx_device_record:record_volume/1` answers from
+the same record, LEN, TREE_OFF and TREE_LEN
 each a decimal of at most 20 digits within 64 bits, SALT 2 to 64
 lowercase hex digits, an even count, for a salt of 1 to 32 bytes, as
 the manifest's image salts are bounded, and ROOT exactly 64 lowercase
@@ -2654,10 +2667,13 @@ image packages are absent and nothing reads an unchecked block. The
 manifest check refuses a manifest with a `system` window row and no
 `system_image` fields, or with an empty salt, so a built image never
 takes that path, and refuses `system_image` fields with no `system`
-window row, which would reach no holder. Its host test covers a well-formed record, each word
-malformed in turn, a missing word, an extra word, a second record and
+window row, which would reach no holder. Its host test covers a well-formed record, with
+and without `record_volume`, each word
+malformed in turn, a missing word, an extra word, a sixth word other
+than `record_volume`, a second record and
 none, seeded with a reader that takes ROOT of any length, which the
-short-root case catches.
+short-root case catches, and one that takes any sixth word as the
+window's name, which the other-sixth-word case catches.
 
 ### The console
 

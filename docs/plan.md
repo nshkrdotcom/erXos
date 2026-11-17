@@ -166,7 +166,7 @@ numbers are names; the table's order is the order.
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on Fiasco | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
-| 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's boot partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, built by the user, plays on QEMU with the virtio keyboard | the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
+| 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, built by the user, plays on QEMU with the virtio keyboard | the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
 | 0.2 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and four Fiasco patches (the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, writable or executable, eager FP switching), five if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
 | Fiasco's scheduler stages | status words, deferred preemption, group park and group quotas, in that order, each measured before and after and kept only when its numbers pay; urgency within a band waits for a consumer | 2,000 to 4,050 lines of C++ in the fork, the policy in erXos's C17 cores (unverified estimates, [design-fiasco.md](design-fiasco.md#stages-beyond-bands)) | 0.2 | each stage, after 0.2, by its before-and-after numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9); G8 itself is M8's, on erXos's kernel |
 | **Phase 2** | | | | |
@@ -2282,26 +2282,22 @@ its code, and the item's work waits on it.
   repository are public, so a user clones erXos, builds both images
   with the repository's own steps, and fetches the Doom fork into that
   clone.
-* **SSH to `rc`**: SSH's stages 1 to 3
-  ([design-ssh.md](design-ssh.md#stages)), stage 2, the SSH domain and
-  `rc`, on QEMU in 1b-G, and stage 3 over the Pi's Ethernet in 1b-I's
-  part (c). The host key is made at the first boot in the SSH domain's
-  directory under `/data` and kept across reboots
+* **SSH to `rc`**: SSH's stage 1 ([design-ssh.md](design-ssh.md#stages)),
+  `erx_ssh_dev` running OTP's ssh daemon in root's own session with
+  root's own `net` grant, giving `rc` on a tty of that session, on QEMU
+  in 1b-G and over the Pi's Ethernet in 1b-I's part (c). Its sessions are
+  interactive ttys only; an `exec` request is refused. It listens on
+  port 2222, since a privileged port is only a configured domain's;
+  port 22 comes with the SSH domain. The SSH domain,
+  the login facet and exec jobs, stages 2 and 3, are 0.2's. The host key
+  is made at the first boot in root's `/data/ssh` and kept across reboots
   ([design-ssh.md](design-ssh.md#host-keys)). The published images
   carry no login key (`Checks::LOGIN_KEY_BUILDERS`); root's login key
-  is the user's, read from `authorized_keys` on the card's boot
-  partition. The file is read-only to every domain at run time, so no
-  session, root's included, adds a key to it; whoever can write the card
-  can make themselves root, a known limitation. **No design**:
-  [design-ssh.md](design-ssh.md#login-keys) has the image build write
-  the clone's development key into the image, and nothing on the target
-  reads a file of a boot partition (the FAT server of
-  [design-storage.md](design-storage.md), ST-R6, has no design of its
-  own). design-ssh.md first says where the file lies on the Pi's card
-  and on the QEMU image, who reads it and with which reader, which lands
-  with its fuzz target, how no domain holds a grant that writes it, what
-  a missing or malformed file does, and which keys it admits for
-  `root`.
+  is the user's, read from `authorized_keys` on the card's record
+  partition ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)),
+  which no domain can write at run time, so no session, root's included,
+  adds a key to it; whoever can write the card can make themselves root,
+  a known limitation.
 * **`ps` and `top` over SSH**: the command shell's `ps` and `top` in
   root's SSH session list the session's own process table, its `rc` and
   the programs it runs, as a UNIX user's `ps` lists their own processes
@@ -2394,7 +2390,7 @@ its code, and the item's work waits on it.
   [downsides](design-fiasco.md#downsides-against-erxoss-kernel) or its
   `TODO.md` item rather than copying it: a development build, in which
   nothing enforces isolation between domains; a root `rc` reachable
-  over the network by any key in `authorized_keys`; the DMA handover
+  over the network by any key in `authorized_keys`; SSH's network-facing code, OTP's transport and authentication included, running in root's own session with root's authority, so a flaw in it reached before login is root's session ([design-ssh.md](design-ssh.md#stages), stage 1); root's session holding a read-only grant of the card's login keys (`login_keys`) for that daemon, so the keys are readable in a session beside the system domain, until the SSH domain of 0.2 removes the grant ([design-ssh.md](design-ssh.md#invariants), H8); the DMA handover
   evidence not recorded for the boards; and a host key made on a weak
   seed ([design-ssh.md](design-ssh.md#host-keys)) when a boot's seed is
   the counter alone
@@ -2489,8 +2485,8 @@ track A's part 3 if it has not landed.
 **Dependencies.** Phase 1; 1b-A; 1b-B's session domain, sub-space ports
 and pipes; 1b-E's storage, network and display domains' devices; track
 A's parts 1 and 2; 1b-C's parts 3, 4a and 4b and the kiosk's live quotes of
-track D's part 4; 1b-D's first slice for Doom; 1b-G with SSH's stages 1
-and 2; 1b-I's parts (a) to (d), with SSH's stage 3 in part (c); and the
+track D's part 4; 1b-D's first slice for Doom; 1b-G with SSH's stage 1;
+1b-I's parts (a) to (d), with SSH's stage 1 over Ethernet in part (c); and the
 designs the items above mark.
 
 ## 0.2: The first release, on Fiasco

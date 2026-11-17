@@ -434,6 +434,10 @@ module Erx
                    name: 'fuzz-erx-ssh-wire', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_quotes.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-quotes', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_boot_keys.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-boot-keys', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_fat_read.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-fat-read', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_hci.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-bt-hci', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_machine_ctl.rb'), '--seed', options.fetch(:seed).to_s],
@@ -898,7 +902,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build release-kernel | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build release-kernel | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N]')
       0
     end
 
@@ -1095,21 +1099,23 @@ module Erx
     # started with erx_ssh_dev:start/1, through a host loopback port forwarded to it,
     # --port (by default DevKey::PORT), with the clone's development login key (DevKey)
     # and the interactive boot's known-hosts file, which each boot's build starts afresh
-    # in its directory; any further arguments are the command ssh runs there. ssh
-    # replaces this process, so the terminal is the guest's. `tools/erx boot` forwards
-    # no port to the guest (TODO.md, "SSH from tools/erx boot").
+    # in its directory. It takes no command: the guest's daemon gives root rc on a tty
+    # and refuses exec (docs/design-ssh.md, "Stages"). ssh replaces this process, so
+    # the terminal is the guest's. `tools/erx boot` forwards no port to the guest
+    # (TODO.md, "SSH from tools/erx boot").
     def self.ssh(input_arguments)
       arguments = input_arguments.dup
       port = DevKey::PORT
       OptionParser.new { |flags| flags.on('--port N', Integer, 'Host loopback port of the guest forward') { |value| port = value } }
                   .order!(arguments)
+      raise Error, 'tools/erx ssh takes no command: the guest gives rc on a tty and refuses exec' unless arguments.empty?
+
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       directory = DevKey.directory(root: ROOT, runner: runner)
       raise Error, "no development login key at #{directory}; run tools/erx setup" unless File.exist?(directory)
 
       known_hosts = File.join(ROOT, InteractiveBoot::DIRECTORY, DevKey::KNOWN_HOSTS)
-      exec(*DevKey.ssh_argv(pair: DevKey.read(directory: directory, runner: runner), port: port, known_hosts: known_hosts,
-                            command: arguments))
+      exec(*DevKey.ssh_argv(pair: DevKey.read(directory: directory, runner: runner), port: port, known_hosts: known_hosts))
     end
 
     # One boot of the built kernel image, its serial output in a log: under HVF

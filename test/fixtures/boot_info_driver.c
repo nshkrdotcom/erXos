@@ -469,8 +469,9 @@ system_image_row(void)
 /*
  * -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT, which the domain library writes into
  * the system window's holder's page (docs/design-stopgap.md, "The booted slot"): the numbers in
- * decimal, the salt's salt_length bytes and the root hash in lowercase hex. The longest, a
- * 32-byte salt and numbers of 2^64 - 1, fills ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX, and one byte
+ * decimal, the salt's salt_length bytes and the root hash in lowercase hex, and record_volume
+ * after them for a holder of that window too, and nothing for one without. The longest, a
+ * 32-byte salt, numbers of 2^64 - 1 and the window, fills ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX, and one byte
  * less is refused, writing nothing past its room; so is a salt_length out of 1 to 32.
  */
 static void
@@ -483,26 +484,29 @@ test_system_image_words(void)
 	size_t used;
 
 	memset(words, 'x', sizeof(words));
-	used = erx_boot_system_image_words(&row, words, sizeof(words));
+	used = erx_boot_system_image_words(&row, false, words, sizeof(words));
 	CHECK(used == sizeof(record) - 1 && memcmp(words, record, used) == 0, "system_image: the record's words");
+	used = erx_boot_system_image_words(&row, true, words, sizeof(words));
+	CHECK(used == sizeof(record) - 1 + sizeof("record_volume") && memcmp(words, record, sizeof(record) - 1) == 0 &&
+	    strcmp(words + sizeof(record) - 1, "record_volume") == 0, "system_image: the record_volume window's word");
 	row = (erx_mf_system_image_t){ .image_length = UINT64_MAX, .tree_offset = UINT64_MAX, .tree_length = UINT64_MAX,
 	    .salt_length = sizeof(row.salt) };
-	used = erx_boot_system_image_words(&row, words, sizeof(words));
+	used = erx_boot_system_image_words(&row, true, words, sizeof(words));
 	CHECK(used == ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX, "system_image: the longest record is %zu bytes", used);
 	memset(words, 'x', sizeof(words));
-	CHECK(erx_boot_system_image_words(&row, words, ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX - 1) == 0,
+	CHECK(erx_boot_system_image_words(&row, true, words, ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX - 1) == 0,
 	    "system_image: a record past its room is written");
 	CHECK(words[ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX - 1] == 'x', "system_image: a refused record wrote past its room");
 	row = system_image_row();
 	row.salt_length = 0;
-	CHECK(erx_boot_system_image_words(&row, words, sizeof(words)) == 0, "system_image: an empty salt is written");
+	CHECK(erx_boot_system_image_words(&row, false, words, sizeof(words)) == 0, "system_image: an empty salt is written");
 	row.salt_length = sizeof(row.salt) + 1;
-	CHECK(erx_boot_system_image_words(&row, words, sizeof(words)) == 0,
+	CHECK(erx_boot_system_image_words(&row, false, words, sizeof(words)) == 0,
 	    "system_image: a salt past its array is written");
 }
 
 /*
- * The record of system_image_row on stdout, one word a line after the flag, for
+ * The record of system_image_row, naming the record_volume window, on stdout, one word a line after the flag, for
  * test/host/boot_info_test.rb to hand to erx_device_record:system_image/1.
  */
 static int
@@ -510,7 +514,7 @@ print_system_image_words(void)
 {
 	const erx_mf_system_image_t row = system_image_row();
 	char words[ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX];
-	size_t used = erx_boot_system_image_words(&row, words, sizeof(words));
+	size_t used = erx_boot_system_image_words(&row, true, words, sizeof(words));
 
 	if (used == 0)
 		return (1);

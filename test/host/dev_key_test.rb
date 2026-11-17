@@ -88,8 +88,8 @@ class DevKeyTest < Minitest::Test
     assert_equal ['ssh', '-F', '/dev/null', '-o', 'AddKeysToAgent=no', '-o', 'IdentitiesOnly=yes', '-a',
                   '-o', 'StrictHostKeyChecking=accept-new', '-o', 'GlobalKnownHostsFile=/dev/null',
                   '-o', 'UserKnownHostsFile=/boot/known_hosts', '-o', 'HostKeyAlias=erxos-development',
-                  '-i', '/k/id_ed25519', '-p', '2222', '--', 'root@127.0.0.1', 'node().'],
-                 Erx::DevKey.ssh_argv(pair: pair, port: 2222, known_hosts: '/boot/known_hosts', command: ['node().'])
+                  '-i', '/k/id_ed25519', '-p', '2222', '--', 'root@127.0.0.1'],
+                 Erx::DevKey.ssh_argv(pair: pair, port: 2222, known_hosts: '/boot/known_hosts')
     ['-oProxyCommand=x', 'root@elsewhere', ''].each do |user|
       assert_raises(Erx::Error) { Erx::DevKey.ssh_argv(pair: pair, port: 2222, known_hosts: '/boot/known_hosts', user: user) }
     end

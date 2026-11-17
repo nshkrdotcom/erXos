@@ -218,3 +218,19 @@ place_test_() ->
      ?_assertEqual({error, einval}, erx_blk_table:place(Window, -1, 1)),
      ?_assertEqual({error, einval}, erx_blk_table:place(Window, 0, one)),
      ?_assertEqual({error, einval}, erx_blk_table:place(Window, 1.0, 1))].
+
+%% The record_volume window lies on the whole record partition for the holder whose
+%% system_image record names it, whatever the boot words name, since the record partition
+%% belongs to neither slot; a record without the word, or one the reader refuses, gives
+%% none. The window takes no write: abi/manifest.txt does not mark the role writable.
+-define(VOLUME, {record_volume, ?ERX_MEDIUM_RECORD_START, ?ERX_MEDIUM_RECORD_SECTORS}).
+
+booted_record_volume_test_() ->
+    Named = ?RECORD ++ ["record_volume"],
+    [?_assertEqual({a, [?SYSTEM_A, ?VOLUME], ok}, erx_blk_table:booted([["boot", "normal", "a"], Named])),
+     ?_assertEqual({none, [?VOLUME], ok}, erx_blk_table:booted([["boot", "unknown", "none"], Named])),
+     ?_assertEqual({none, [?VOLUME], ok}, erx_blk_table:booted([Named])),
+     ?_assertEqual({none, [?VOLUME], {error, bad_boot}}, erx_blk_table:booted([["boot", "normal", "c"], Named])),
+     ?_assertEqual({a, [?SYSTEM_A], ok}, erx_blk_table:booted([["boot", "normal", "a"], ?RECORD])),
+     ?_assertMatch({a, [], {error, {bad_device_record, _}}}, erx_blk_table:booted([["boot", "normal", "a"], Named, Named])),
+     ?_assert(erx_blk_table:read_only(record_volume))].
