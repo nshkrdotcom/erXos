@@ -12,9 +12,13 @@ module Erx
     # whose answers no test controls. It answers, from HOST_MAC and HOST_IP, ARP requests
     # for HOST_IP and DNS queries to HOST_IP port 53 from the records in RECORDS:
     # NOERROR with the matching records for a name RECORDS knows, NXDOMAIN for any other.
-    # It is the `ntpdate` command's server too: an SNTP client request to HOST_IP port 123
-    # gets a stratum-1 reply that says the time is NTP_TIME, so the command's step is to a
-    # time the test fixes (docs/design-time.md, "Setting the clock from a server once").
+    # It is the NTP server of ntpd and of the `ntpdate` command too: an SNTP client request
+    # to HOST_IP port 123 gets a stratum-1 reply that says the time is NTP_AHEAD seconds
+    # past the host's clock, until the run fixes it at NTP_TIME (fix_ntp_time). The first
+    # answer is within the clock service's 1000 s panic threshold of a guest whose clock the
+    # real-time clock set at boot, so ntpd's first sample is held and its second steps
+    # (docs/design-time.md, "Steps"); the second makes ntpdate's step one to a time the test
+    # fixes (docs/design-time.md, "Setting the clock from a server once").
     #
     # Every frame comes from the guest, the code under test, so each is parsed with bounds
     # checks and one that is not a well-formed request of these two kinds is skipped. The
@@ -23,8 +27,13 @@ module Erx
     class NameServer
       DNS_PORT = 53
       NTP_PORT = 123
-      # The time every NTP reply gives, 2030-01-01 00:00:00 UTC, as NTP seconds since 1900.
-      NTP_TIME = Time.utc(2030, 1, 1).to_i + 2_208_988_800
+      # Seconds from 1900, NTP's epoch, to 1970.
+      NTP_EPOCH = 2_208_988_800
+      # The time NTP replies give once fixed, 2030-01-01 00:00:00 UTC, as NTP seconds.
+      NTP_TIME = Time.utc(2030, 1, 1).to_i + NTP_EPOCH
+      # How far past the host's clock NTP replies are until then, in seconds: beyond the
+      # 128 ms at which a sample is held and within the 1000 s at which it is refused.
+      NTP_AHEAD = 300
       PROTOCOL_UDP = 17
       TYPE_A = 1
       TYPE_PTR = 12
@@ -52,6 +61,13 @@ module Erx
         @link = link
         @stopped = false
         @thread = nil
+        @ntp_fixed = false
+      end
+
+      # From now on every NTP reply says NTP_TIME. The answer thread only reads the flag,
+      # and one assignment needs no lock.
+      def fix_ntp_time
+        @ntp_fixed = true
       end
 
       # The thread's value is the error it met, or nil, so stopping it never raises and a
@@ -143,15 +159,20 @@ module Erx
       end
 
       # The reply to an SNTPv4 client request (RFC 4330 section 5): version 4, mode 4,
-      # stratum 1, the request's transmit timestamp as its originate, and NTP_TIME as its
-      # reference, receive and transmit times; nil for anything that is not such a request.
+      # stratum 1, the request's transmit timestamp as its originate, and the replies' time
+      # (ntp_seconds) as its reference, receive and transmit times; nil for anything that is
+      # not such a request.
       def ntp_response(request)
         return nil unless request.bytesize >= 48 && request.getbyte(0) & 0x3f == (4 << 3) | 3
 
-        stamp = [NTP_TIME, 0].pack('NN')
+        stamp = [ntp_seconds, 0].pack('NN')
         [(4 << 3) | 4, 1, 6, -20].pack('CCCc') + [0, 0].pack('NN') + 'GPS'.b + "\0".b +
           stamp + request.byteslice(40, 8) + stamp + stamp
       end
+
+      # The NTP seconds the replies say: NTP_TIME once fixed, NTP_AHEAD past the host's
+      # clock until then.
+      def ntp_seconds = @ntp_fixed ? NTP_TIME : Time.now.to_i + NTP_AHEAD + NTP_EPOCH
 
       # The question's name, lowercased, and the offset after it; nil for a compressed or
       # malformed name.

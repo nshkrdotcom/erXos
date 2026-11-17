@@ -5,6 +5,7 @@
 require 'socket'
 require_relative 'error'
 require_relative 'fiasco'
+require_relative 'medium_boot'
 require_relative 'output_directory'
 require_relative 'production_image'
 require_relative 'qemu'
@@ -36,7 +37,10 @@ module Erx
   # FreeBSD's statistics with no loss; `host www HOST_IP`, which must find www in the
   # lease's domain, NIC_DOMAIN, slirp's option 15, with its address and IPv6 address;
   # `host nonexistent HOST_IP`, which must be NXDOMAIN; `host ADDRESS HOST_IP`, which
-  # must give the pointer back; `ntpdate -q HOST_IP` and `ntpdate HOST_IP`, against the
+  # must give the pointer back; ntpd's step, which its session, started at boot with the
+  # harness as its one server (NTPD), logs once the harness's answer, NTP_AHEAD seconds
+  # past the host's clock, has come in two samples in a row; `ntpdate -q HOST_IP` and
+  # `ntpdate HOST_IP`, against the harness answering 2030 from then on, which
   # same harness answering as an NTP server, which must show ntpdate's server line and
   # then its step, and `date`, which must then read the server's year; and, in the Erlang
   # shell, the node, which must be root's
@@ -79,8 +83,9 @@ module Erx
   # no `net` facet: its ifconfig, ping and host must each be refused with `no_facet`. Its
   # Erlang shell, last, probes the network domain over erpc, as the harness and not as a
   # client (system_checkpoints): vtnet0 must have merged the echo's bursts into units at
-  # least once, and the network domain's one grant, the session's, must count that one
-  # refusal and nothing left out, so no call of the steps before was refused or dropped.
+  # least once, and the network domain's grants, root's session's and ntpd's, must count
+  # that one refusal and nothing left out between them, so no call of the steps before was
+  # refused or dropped.
   #
   # The suite boots twice under each accelerator. The stock boot takes the tree QEMU
   # writes, which marks the network device's transport dma-coherent, and the root's line
@@ -124,6 +129,31 @@ module Erx
     # a query that sets nothing, a step, and the year date reads after it.
     NTP_QUERY_LINE = "ntpdate -q #{SERVER}\r".freeze
     NTP_SET_LINE = "ntpdate #{SERVER}\r".freeze
+    # ntpd's session (docs/design-time.md, "The client"), with the harness as its one
+    # server, as raspi4b-development.txt declares it with pool.ntp.org: its principal,
+    # holding one session of the common part's session limits, its memory and its outer
+    # budget, on the users share; its template, whose environment names the server; its
+    # grants of the network stack and of the clock's sample operation; and its start row.
+    NTPD_MEMORY = (36 << 20) + MediumBoot::DOMAIN_OUTER
+    NTPD = "principal ntpd\n  memory #{NTPD_MEMORY}\n  grant @share.users\n  domains 1\n  names 1\n" \
+           "  default_limits @limits.native\n  ceiling_limits @limits.native\n" \
+           "session ntpd\n  limits @limits.session\n  runtime @artifact.emu\n  release @artifact.ntpd\n" \
+           "  args \"-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx " \
+           "-erx_net_client grant {erx_net_client_erxos,grant,[]} " \
+           "-eval {ok,_}=application:ensure_all_started(erx_ntpd,permanent)\"\n" \
+           "  env \"ERX_START_FLAGS=#{SERVER}\"\n" \
+           "facet ntpd_net\n  name \"net\"\n  grantee @session.ntpd\n  service @service.net\n  operations none\n" \
+           "  max_request 64\n  in_flight 2\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 65536\n" \
+           "facet ntpd_clock\n  name \"clock\"\n  grantee @session.ntpd\n  service @service.clock\n" \
+           "  operations sample\n  max_request 256\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n" \
+           "  max_heap_size 8192\n" \
+           "start ntpd\n  enable YES\n".freeze
+    # ntpd's first poll is a burst at boot, before the harness answers, so its first
+    # sample comes after the doubled interval of 128 s and its second, the step, one
+    # interval later: the step's deadline from the line before it.
+    NTPD_STEP_SECONDS = 600
+    # How far ntpd's step may be from NTP_AHEAD: the real-time clock's whole seconds and drift.
+    NTPD_STEP_SLACK = 10
     YEAR_LINE = "date +year=%Y\r"
     SECONDS = '-?[0-9]+\.[0-9]{6}'
     RESOLVER_LINE = "{node(), inet_db:res_option(nameservers), inet_db:res_option(search)}.\r"
@@ -198,16 +228,17 @@ module Erx
     # Typed at the system domain's Erlang shell: in the network domain, whether vtnet0's
     # interface merged any of the bursts the echo came back in, its count of merged units
     # (docs/design-network-fastpath.md, "The merge, before classification"), and the counts
-    # of the domain's one grant, the session's; and the coherent value of each of the
+    # summed over the domain's grants, root's session's and ntpd's; and the coherent value of each of the
     # domain's network records that has DMA memory, the value erx_virtio_net opens the
     # device with: {Merged, Refused, LeftOut, [Coherent]}.
     PROBE_LINE = 'begin [N] = [Nd || #{name := {erx_ident, <<"network">>}, node := Nd} <- ' \
                  'erx_domain_core:domains(maps:get(core, sys:get_state(erx_domain_srv)))], ' \
                  'erpc:call(N, fun() -> {ok, #{pid := If}} = erx_net_tables:interface(vtnet0), ' \
                  '{ok, C} = erx_net_if:admin(If, counters), ' \
-                 '[G] = [P || {_, P, _, _} <- supervisor:which_children(erx_net_grants)], ' \
-                 'Counts = erx_net_grant:counts(G), {ok, Specs} = erx_device_record:find(net, virtio_net), ' \
-                 '{maps:get(units, C, 0) > 0, maps:get(refused, Counts), maps:get(unknown, Counts), ' \
+                 'Counts = [erx_net_grant:counts(P) || {_, P, _, _} <- supervisor:which_children(erx_net_grants)], ' \
+                 '{ok, Specs} = erx_device_record:find(net, virtio_net), ' \
+                 '{maps:get(units, C, 0) > 0, lists:sum([maps:get(refused, K) || K <- Counts]), ' \
+                 'lists:sum([maps:get(unknown, K) || K <- Counts]), ' \
                  "[Co || \#{memory := _, coherent := Co} <- Specs]} end, 10000) end.\r"
     # A tree the suite boots on: its cell's suffix, and whether the network device's
     # record is coherent on it. The coherent tree is QEMU's own; the other is QEMU's with
@@ -238,12 +269,21 @@ module Erx
       { name: 'nic-device-tree', pattern: /\A#{Regexp.escape(line)}\r*\n\z/n, seconds: SHELL_SECONDS }.freeze
     end
 
-    # The development manifest source with its one edit: the network row runs BeamAsm, as
+    # The machine the suite boots: the medium boot's (MediumBoot.machine), whose RAM holds
+    # root_memory grown by ntpd's principal (manifest) beside the image's archive, which
+    # the development machine's does not.
+    def machine(platform) = MediumBoot.machine(platform)
+
+    # The development manifest source with ntpd's session (NTPD), for which root_memory
+    # grows by its principal's memory and max_domains and max_connections by its session
+    # and that session's net connection, and with one edit: the network row runs BeamAsm, as
     # a service domain does by default (docs/design-runtime.md, "BeamAsm"), so the TCP
     # line times the stack on the runtime a throughput figure assumes; the development
     # manifest runs it on the interpreter for a faster boot.
     def manifest(source)
-      Manifest::Edit.repoint(source, record: 'domain network', field: 'runtime', from: '@artifact.emu', to: '@artifact.jit')
+      jit = Manifest::Edit.repoint(source, record: 'domain network', field: 'runtime', from: '@artifact.emu', to: '@artifact.jit')
+      Manifest::Edit.grow(jit, { %w[machine root_memory] => NTPD_MEMORY, %w[machine max_domains] => 1,
+                                 %w[machine max_connections] => 1 }) + NTPD
     end
 
     # What the shell shows after the exchange, whose result mac reads the guest's
@@ -251,7 +291,7 @@ module Erx
     # lease's address, netmask and broadcast; ping's to slirp's gateway, where only the
     # TTLs and times may vary; then the resolver's. Lines between, such as the echo of
     # each typed line, are passed over.
-    def shell_checkpoints(mac)
+    def shell_checkpoints(mac, fix_ntp_time:)
       ether = lambda do |line|
         raise Error, "ifconfig showed #{line.inspect}, not #{mac.call}, which answered ARP" unless line.match?(/\A\tether #{mac.call}\r*\n\z/n)
       end
@@ -265,7 +305,27 @@ module Erx
        shell_point('ping-statistics', Regexp.escape('--- 10.0.2.2 ping statistics ---')),
        shell_point('ping-counts', Regexp.escape('3 packets transmitted, 3 packets received, 0.0% packet loss')),
        shell_point('ping-round-trip', "round-trip min/avg/max/stddev = #{MS}/#{MS}/#{MS}/#{MS} ms", type: HOST_LINE),
-       *resolver_checkpoints].freeze
+       *resolver_checkpoints(fix_ntp_time: fix_ntp_time)].freeze
+    end
+
+    # What ntpd's session logs: its step to the harness's time, by NTP_AHEAD seconds give or
+    # take the real-time clock's second and the boot's drift (ntpd_step!). The harness
+    # then fixes its answers at 2030 (fix_ntp_time) and ntpdate's query is typed.
+    def ntpd_checkpoints(fix_ntp_time:)
+      step = lambda do |line|
+        NetDevice.ntpd_step!(line)
+        fix_ntp_time.call
+      end
+      [{ name: 'ntpd-step', pattern: /ntpd: stepped by [0-9]+ ns from #{Regexp.escape(SERVER)}\r*\n\z/n,
+         seconds: NTPD_STEP_SECONDS, verify: step, type: NTP_QUERY_LINE }.freeze]
+    end
+
+    # Raises unless ntpd's step line says a step of NTP_AHEAD seconds within NTPD_STEP_SLACK.
+    def ntpd_step!(line)
+      seconds = line[/stepped by ([0-9]+) ns/, 1].to_i / 1_000_000_000.0
+      return if (seconds - NameServer::NTP_AHEAD).abs <= NTPD_STEP_SLACK
+
+      raise Error, "ntpd stepped by #{seconds} s, not the harness's #{NameServer::NTP_AHEAD} s: #{line.inspect}"
     end
 
     # What ntpdate shows against the link server: the query's server line, the step to
@@ -281,7 +341,7 @@ module Erx
 
     # What the resolver lines show: each `host` answer, in FreeBSD's lines, and inet_db's
     # resolver settings in the Erlang shell.
-    def resolver_checkpoints
+    def resolver_checkpoints(fix_ntp_time:)
       name = "www.#{QemuPlan::NIC_DOMAIN}"
       [shell_point('host-server', Regexp.escape('Using domain server:')),
        shell_point('host-server-name', Regexp.escape("Name: #{SERVER}")),
@@ -289,8 +349,8 @@ module Erx
        shell_point('host-address', Regexp.escape("#{name} has address 192.0.2.10")),
        shell_point('host-address6', Regexp.escape("#{name} has IPv6 address 2001:db8::10"), type: MISSING_LINE),
        shell_point('host-nxdomain', Regexp.escape('Host nonexistent not found: 3(NXDOMAIN)'), type: POINTER_LINE),
-       shell_point('host-pointer', Regexp.escape("10.2.0.192.in-addr.arpa domain name pointer #{name}."),
-                   type: NTP_QUERY_LINE),
+       shell_point('host-pointer', Regexp.escape("10.2.0.192.in-addr.arpa domain name pointer #{name}.")),
+       *ntpd_checkpoints(fix_ntp_time: fix_ntp_time),
        *ntpdate_checkpoints,
        ProductionImage::Run::ERLANG_SHELL.merge(type: RESOLVER_LINE).freeze,
        erl_point('resolver-config', Regexp.escape(RESOLVER_ANSWER), type: IDS_LINE),
@@ -559,7 +619,7 @@ module Erx
         directory = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/net-device/image'))
         manifest = NetDevice.manifest(@platform.manifest_source(@root))
         image = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker,
-                                    machine: ProductionImage::Machine.development(@platform), fiasco: fiasco)
+                                    machine: NetDevice.machine(@platform), fiasco: fiasco)
                                .build(directory: directory, manifest_source: manifest).single
         accels.product(trees).to_h { |accel, tree| [NetDevice.cell(accel, tree), boot(accel, image, TREES.fetch(tree))] }
       end
@@ -593,13 +653,13 @@ module Erx
           server.start
         end
         session = SessionDomain.session_shell('root_1-shell', IFCONFIG_LINE).merge(verify: exchange).freeze
-        checkpoints = [*Qemu.boot_transcript(memory_mib: @platform.memory_mib), NetDevice.tree_checkpoint(node, coherent: tree.coherent),
+        checkpoints = [*Qemu.boot_transcript(memory_mib: NetDevice.machine(@platform).memory_mib), NetDevice.tree_checkpoint(node, coherent: tree.coherent),
                        ProductionImage::Run::SLOGAN,
                        ProductionImage::Run::RELEASE_SHELL, session,
-                       *NetDevice.shell_checkpoints(-> { answered.fetch(:mac) }),
+                       *NetDevice.shell_checkpoints(-> { answered.fetch(:mac) }, fix_ntp_time: -> { server.fix_ntp_time }),
                        *NetDevice.tcp_checkpoints(refused_port: echo.port, verify_digest: verify_digest, forward_port: forward_port),
                        *NetDevice.system_checkpoints(coherent: tree.coherent)]
-        Qemu.new(root: @root, runner: @runner).run(platform: @platform, accel: accel, image: image, memory_mib: @platform.memory_mib,
+        Qemu.new(root: @root, runner: @runner).run(platform: @platform, accel: accel, image: image, memory_mib: NetDevice.machine(@platform).memory_mib,
                                                    directory: directory, checkpoints: checkpoints, nic: nic, dtb: dtb,
                                                    command_line: command_line)
         failed = server.stop || echo.stop
@@ -630,7 +690,7 @@ module Erx
       # since QEMU's tree lists every virtio-mmio transport whether a device sits on it or not.
       def noncoherent_tree(accel:, image:, node:, command_line:, directory:)
         argv = QemuPlan.argv(platform: @platform, accel: accel, image: File.expand_path(image), serial: '/dev/null',
-                             memory_mib: @platform.memory_mib, command_line: command_line)
+                             memory_mib: NetDevice.machine(@platform).memory_mib, command_line: command_line)
         ProductionImage.seeded_tree(runner: @runner, argv: argv, path: File.join(directory, 'noncoherent.dtb')) do |listing|
           ProductionImage.seed_noncoherent(listing, node: node)
         end

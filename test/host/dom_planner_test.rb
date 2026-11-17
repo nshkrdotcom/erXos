@@ -176,8 +176,10 @@ class DomPlannerTest < Minitest::Test
   end
 
   # The net_device suite's manifest (NetDevice.manifest), the development manifest with
-  # the network row on BeamAsm and the storage row still on the interpreter: the library
-  # plans it on the development machine the suite boots, and only the network row changed.
+  # the network row on BeamAsm and the storage row still on the interpreter, and ntpd's
+  # session added (NetDevice::NTPD) with the machine's limits grown for it: the library
+  # plans it on the development machine the suite boots, and only the network row and the
+  # machine changed.
   def test_the_library_plans_the_net_device_suites_beamasm_network_row
     source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
     edited = Erx::NetDevice.manifest(source)
@@ -185,13 +187,14 @@ class DomPlannerTest < Minitest::Test
       read = Erx::Manifest::Frontend.read(text)
       [read.machine, *read.records.values.flatten].to_h { |record| [record.header, record.to_h.except(:line)] }
     end
-    assert_equal ['domain network'], before.keys.reject { |header| before[header] == after[header] }
-    assert_equal before.keys, after.keys
+    assert_equal ['machine', 'domain network'], before.keys.reject { |header| before[header] == after[header] }
+    assert_equal ['principal ntpd', 'session ntpd', 'facet ntpd_net', 'facet ntpd_clock', 'start ntpd'].sort,
+                 (after.keys - before.keys).sort
     runtimes = Erx::Manifest::Frontend.read(edited).records.fetch('domain').to_h { |row| [row.name, row.reference('runtime')] }
     assert_equal '@artifact.jit', runtimes.fetch('network')
     assert_equal '@artifact.emu', runtimes.fetch('storage')
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec)
-                                                                .merge(platform: Erx::ProductionImage::Machine.development(PLATFORM).record))
+                                                                .merge(platform: Erx::NetDevice.machine(PLATFORM).record))
     admitted = Erx::Manifest.admit(source: edited, codec: @codec, context: context, planner: @planner)
     assert_equal 4, admitted.report.fetch('child_plan_instances')
   end
