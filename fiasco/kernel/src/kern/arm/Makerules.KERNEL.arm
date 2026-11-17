@@ -1,3 +1,4 @@
+# Modified by erXos: the raw bootstrap keeps its dynamic symbols, for llvm-objcopy.
 # -*- makefile -*-
 # vim:se ft=make:
 
@@ -77,13 +78,13 @@ bootstrap.$(KERNEL).pre.o: $(OBJ_BOOTSTRAP) $(bootstrap_lds)
 	$(VERBOSE)$(LD) $(bootstrap_ldflags) $(OBJ_BOOTSTRAP) -o $@
 
 # Make a raw binary. The linker script is already minimal. Only explicitly drop
-# the things that are still unneeded (dynamic symbols) and what is expected to
-# come from fiasco instead (.bootstrap.dropped_info).
+# what is expected to come from fiasco instead (.bootstrap.dropped_info). The
+# dynamic symbols stay: llvm-objcopy refuses to remove .dynsym and .dynstr while
+# .rel.dyn links to them, and they lie inside the loaded range either way, so
+# keeping them changes only those bytes, never the layout.
 bootstrap.$(KERNEL).bin: bootstrap.$(KERNEL).pre.o
 	$(COMP_MESSAGE)
-	$(VERBOSE)$(OBJCOPY) -O binary --remove-section=.bootstrap.dropped_info \
-	                     --remove-section=.dynsym \
-	                     --remove-section=.dynstr $< $@
+	$(VERBOSE)$(OBJCOPY) -O binary --remove-section=.bootstrap.dropped_info $< $@
 
 bootstrap.$(KERNEL).rel: bootstrap.$(KERNEL).bin
 	$(COMP_MESSAGE)

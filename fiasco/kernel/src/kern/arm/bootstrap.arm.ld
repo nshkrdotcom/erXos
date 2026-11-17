@@ -1,3 +1,4 @@
+/* Modified by erXos: the raw bootstrap keeps the dynamic symbols. */
 PHDRS
 {
   phdr PT_PHDR PHDRS;
@@ -33,8 +34,8 @@ SECTIONS {
            "No alternative instruction patching in bootstrap!");
   } :rw
 
-  /* Add dynamic symbol information. It's dropped later but keeps readelf happy
-   * when dumping bootstrap.fiasco.pre.o... */
+  /* Add dynamic symbol information. It keeps readelf happy when dumping
+   * bootstrap.fiasco.pre.o, and the raw bootstrap keeps it too. */
   .dynsym         : { *(.dynsym) }
   .dynstr         : { *(.dynstr) }
 
