@@ -37,6 +37,7 @@
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/thread.h"
+#include "liberx/backend/fiasco/time.h"
 #include "liberx/backend/fiasco/umtx.h"
 #include "liberx/backend/fiasco/vm.h"
 
@@ -214,16 +215,19 @@ ioctl_call(int fd, int request, struct winsize *size)
 	return (0);
 }
 
-/*
- * The one clock runs from boot. CLOCK_REALTIME reads it too: Phase 1 has no wall
- * clock, and what a timed wait needs is a clock that advances.
- */
 static int
 clock_offered(clockid_t clock)
 {
 	return (clock == CLOCK_REALTIME || clock == CLOCK_MONOTONIC);
 }
 
+/*
+ * CLOCK_MONOTONIC is the counter from boot. CLOCK_REALTIME is the time page's wall
+ * clock, the counter plus the offset the clock service sets (docs/design-time.md), so
+ * time(3), and ERTS's calendar, which reads it, agree with os:system_time/1. A timed
+ * wait turns either clock's deadline into a wait from now (__timedwait.c), so a step of
+ * the wall clock does not move a wait already begun.
+ */
 static long
 clock_gettime_call(clockid_t clock, struct timespec *time)
 {
@@ -231,7 +235,10 @@ clock_gettime_call(clockid_t clock, struct timespec *time)
 
 	if (!clock_offered(clock))
 		return (-EINVAL);
-	now = erx_fiasco_clock_ns();
+	if (clock == CLOCK_MONOTONIC)
+		now = erx_fiasco_clock_ns();
+	else if (!erx_time_wall_ns(&now))
+		return (-EOVERFLOW);
 	time->tv_sec = (time_t)(now / (uint64_t)NS_PER_SEC);
 	time->tv_nsec = (long)(now % (uint64_t)NS_PER_SEC);
 	return (0);

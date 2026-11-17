@@ -8,6 +8,7 @@ require_relative 'display_domain'
 require_relative 'image_apps'
 require_relative 'medium_boot'
 require_relative 'screen_reference'
+require_relative 'source_revision'
 
 module Erx
   # The offline kiosk as an image package (docs/design-packaging.md, Verification): the
@@ -21,7 +22,8 @@ module Erx
   #
   # * the storage domain served the system tree (SERVED), the system admitted the
   #   package (ADMITTED), the app's session mounted /app (MOUNTED), and the dashboard
-  #   logged the minute of the first screen it showed (SHOWN);
+  #   logged the minute of the first screen it showed (SHOWN), at or past the build date,
+  #   where the clock service started the clock, so the calendar it reads is the wall clock;
   # * the screen read through QMP equals the dashboard as the host's erx-lvgl draws it
   #   with every quote's first round failed for OFFLINE_REASON (DashboardScreen) at
   #   that minute or the next, since the guest's clock is not pinned and a minute may turn before the screen is read.
@@ -77,22 +79,41 @@ module Erx
     # The wall-clock minute the dashboard's SHOWN line names, last in log, as the
     # [[year, month, day], [hour, minute, 0]] DashboardScreen draws, and the minute after it.
     def shown_minutes(log)
-      fields = log.scan(SHOWN).last
-      raise Error, 'the dashboard logged no shown line' unless fields
-
-      first = Time.utc(*fields.map { |field| Integer(field, 10) })
+      first = shown_time(log)
       [first, first + 60].map { |time| [[time.year, time.month, time.day], [time.hour, time.min, 0]] }
     end
 
+    # The wall-clock minute the dashboard's SHOWN line names, last in log, as a UTC Time.
+    def shown_time(log)
+      fields = log.scan(SHOWN).last
+      raise Error, 'the dashboard logged no shown line' unless fields
+
+      Time.utc(*fields.map { |field| Integer(field, 10) })
+    end
+
+    # Refuses a shown minute before the minute of build_date, the image's commit time: the
+    # clock service starts a clock no device set at that date (docs/design-time.md, "The
+    # approximate start"), so an earlier minute is a calendar that does not read the wall
+    # clock.
+    def check_build_date(log, build_date:)
+      shown = shown_time(log)
+      return if shown >= build_date - build_date.sec
+
+      raise Error, "the dashboard showed #{shown.strftime('%F %R')}, before the build date " \
+                   "#{build_date.strftime('%F %R')}"
+    end
+
     # The checks of the package's boot once the dashboard logged SHOWN, against the serial
-    # log at serial: its lines, then the screen against the dashboard drawn at each minute
-    # shown_minutes names, written as references into directory.
-    def check_shown(serial:, socket:, directory:, draw:)
+    # log at serial: its lines and its minute against build_date, then the screen against
+    # the dashboard drawn at each minute shown_minutes names, written as references into
+    # directory.
+    def check_shown(serial:, socket:, directory:, draw:, build_date:)
       log = DisplayDomain.await_log(serial, wait_seconds: SHOWN_SECONDS) { |text| text.match?(SHOWN) }
       { SERVED => 'the storage domain served no system tree', ADMITTED => 'the system did not admit the package',
         MOUNTED => "the app's session mounted no /app" }.each do |line, failure|
         raise Error, failure unless log.match?(line)
       end
+      check_build_date(log, build_date: build_date)
       names = shown_minutes(log).each_with_index.map do |minute, index|
         "#{NAME}-#{index}".tap { |name| ScreenReference.write(directory, name, draw.call(minute)) }
       end
@@ -189,10 +210,16 @@ module Erx
         raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
         serial = File.join(directory, 'boot', 'serial.log')
+        revision = SourceRevision.read(root: @root, runner: @runner)
+        raise Error, 'the kiosk cell needs a git checkout: its clock check reads the build date' unless revision
+
         check = if cell.end_with?(ALTERED)
                   ->(_text) { Kiosk.check_altered(serial: serial) }
                 else
-                  ->(_text) { Kiosk.check_shown(serial: serial, socket: socket, directory: directory, draw: draw) }
+                  lambda { |_text|
+                    Kiosk.check_shown(serial: serial, socket: socket, directory: directory, draw: draw,
+                                      build_date: revision.committed_at)
+                  }
                 end
         shell = points.last
         [*points[0..at], MediumBoot.boot_value_checkpoint(choice), *points[(at + 1)...-1],

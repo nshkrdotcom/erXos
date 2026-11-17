@@ -5130,8 +5130,9 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   write cache. `erx_blk_window` answers no `flush` and the driver negotiates no
   `VIRTIO_BLK_F_FLUSH`, so a file system cannot order its writes against the medium's cache.
 * [Low] storage, `erx_littlefs_nif.c`: `deadline_after` ignores `clock_gettime`'s result, and
-  the hosted build's `CLOCK_REALTIME` is the wall clock, so a clock step fails a block wait
-  or stretches it. Waiting with `erx_umtx_wait` against an `erx_clock_ns` deadline fixes both
+  `CLOCK_REALTIME` is the wall clock, on the hosted build and on erXos, where the clock service
+  steps it to the build date while the storage domain mounts /data, so a clock step landing
+  between the deadline's read and the wait fails a block wait or stretches it. Waiting with `erx_umtx_wait` against an `erx_clock_ns` deadline fixes both
   and empties `imports.txt`'s `[only_erx_littlefs_nif]`.
 * [Medium] storage, `tools/lib/erx/data_volume.rb` and the medium writers: a data volume and its
   partition's length travel separately (`ReleaseMedium.write`, `Site.fresh_medium`,
