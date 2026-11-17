@@ -2916,10 +2916,13 @@ it; git history is the record of completed work.
   the ABI's reader language gains a count bound on an `args` string and string classes for an OTP
   application name and a relative path of plain names, with a seeded case each.
 * [Medium] apps, the SDK (`tools/lib/erx/sdk.rb`, `tools/erx sdk export`): the export writes `SDK.txt` and
-  `erlang/` (the public applications and `public.txt`) and `host/erlang/ebin`
-  only. Not yet written: `sysroot/<arch>` (musl's
-  headers, the draw layouts, `libc.a`, `liberx_program.a`, the builtins, the link script), `share/erxos/sdk.mk`,
-  `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, the host build of `erx_elf_plan` the packer plans a
+  `erlang/` (the public applications and `public.txt`), `host/erlang/ebin`, and the native half
+  (`tools/lib/erx/sdk_sysroot.rb`): `sysroot/aarch64` and `share/erxos/sdk.mk`. The native half links a
+  fixed-address executable at `task.ld`'s base, as the boot image's programs are, where the design's table
+  names a position-independent one: 0.1 starts a package's program from its fixed link, and the move to a
+  position-independent link and the loader is 0.2's. `liberx_program.a` carries Fiasco's `libl4sys.p.a`,
+  `libsigma0.a` and boot cores flattened in, whose licenses an SDK handed to others must be checked against.
+  Not yet written: `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, the host build of `erx_elf_plan` the packer plans a
   program with, which it builds from the tree into `build/app-pack-tools`, a host `erx-lvgl` and
   its descriptor-3 launcher), `erx_ui_host`, `erx-app test`, and `SDK.txt`'s minimum LLVM and `fsimg` version,
   which no source in the tree records yet (docs/design-packaging.md, "The SDK"). `erx_ui_host` takes option A
@@ -2939,9 +2942,8 @@ it; git history is the record of completed work.
   `tools/erx-app`, which finds its SDK at `../..`, runs from no SDK.
 * [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer
   compiles `lib/APP/src`, signs with the host's development package key by default and runs the file check, but
-  does not yet run `DIR/Makefile`, check the program with `erx_elf_plan`, or write the build record beside
-  `NAME.app` (docs/design-packaging.md, "Building and packing"). Each waits on the SDK (`sdk.mk` and a host
-  `erx_elf_plan`). Safe meanwhile: a missing program is refused, and a prebuilt `bin/`, or the `ebin/` of an
+  does not yet run `DIR/Makefile`, with the exported SDK's `sdk.mk`, or write the build record beside
+  `NAME.app` (docs/design-packaging.md, "Building and packing"). Safe meanwhile: a missing program is refused, and a prebuilt `bin/`, or the `ebin/` of an
   application without `src/`, enters the package as given, with whatever host paths a beam's compile
   information holds. Also open: the packer runs the first `erlc` on PATH without checking that it is the
   OTP release `SDK.txt` names, so a beam another release compiled fails only when the app starts; erlc's
