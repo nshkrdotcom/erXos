@@ -10,6 +10,7 @@ require_relative 'error'
 require_relative 'boot_partition'
 require_relative 'bounded_file'
 require_relative 'json_input'
+require_relative 'no_follow'
 
 module Erx
   # Puts a board's boot files where a TFTP server serves them, so the board's firmware
@@ -152,18 +153,23 @@ module Erx
     end
 
     # Opens from's file name for the block, refusing one that is missing, a symbolic link
-    # or no regular file.
-    def open_listed(from, name, &block)
+    # or no regular file. Only the open's errors are read as the file's; the block's pass.
+    def open_listed(from, name)
       place = "#{BootPartition::PARTITION}/#{name}"
-      File.open(File.join(from, name), File::RDONLY | File::NOFOLLOW) do |input|
+      input = begin
+        NoFollow.open(File.join(from, name), File::RDONLY)
+      rescue Errno::ENOENT
+        raise Error, "netboot: #{place}, which the build record lists, is missing; pack the card again"
+      rescue NoFollow::Link
+        raise Error, "netboot: #{place} is a symbolic link, not the file the card build wrote; pack the card again"
+      end
+      begin
         raise Error, "netboot: #{place} is not a regular file; pack the card again" unless input.stat.file?
 
-        block.call(input)
+        yield input
+      ensure
+        input.close
       end
-    rescue Errno::ENOENT
-      raise Error, "netboot: #{place}, which the build record lists, is missing; pack the card again"
-    rescue Errno::ELOOP
-      raise Error, "netboot: #{place} is a symbolic link, not the file the card build wrote; pack the card again"
     end
 
     # Points link at directory, its sibling, in one rename, over whatever link was.
