@@ -32,6 +32,17 @@ module Erx
   # SHA-256, so admission takes it as the image's own and the build's file check
   # (AppPack.describe) never sees it; the session's /app mount then refuses the image
   # (UNVERIFIED), no /app is mounted and the dashboard shows nothing.
+  #
+  # The quotes cell (docs/design-quotes.md, "The QEMU cell") boots the same package on a
+  # test image whose trust store adds the root of an offline HTTPS fixture
+  # (QuotesFixture, ProductionImage#build_medium's test roots), with a network device on
+  # restricted user networking whose one guest forward, for erx_quotes_table's address
+  # and port 443, relays each connection to the fixture (QemuPlan::Relay). The fixture
+  # answers sol's first request with a body too big for erx_quotes, then every pair
+  # with its price, so the serial line shows `quotes: sol no_data -- too_big`, a bound
+  # only httpc's erXos edit gives on the target, then every quote fresh at the
+  # fixture's price. Seeded: a store that trusts another root than the fixture's
+  # (Run#call's trusted false) must show every quote `no_data -- certificate`.
   module Kiosk
     APP = 'examples/dashboard'
     NAME = 'dashboard'
@@ -50,6 +61,21 @@ module Erx
     # (TODO.md, the dashboard's offline reason).
     OFFLINE_REASON = :failed
     ALTERED = '-altered'
+    QUOTES = '-quotes'
+    # The guest's virtual network, covering erx_quotes_table's address, which the guest
+    # forward takes, and the port its URLs name.
+    QUOTES_NETWORK = '104.16.0.0/16'
+    QUOTES_ADDRESS = '104.16.14.28'
+    QUOTES_PORT = 443
+    # The fixture's answers: sol's first too big, every other its price.
+    QUOTES_ANSWERS = { 'sol' => %i[too_big body] }.freeze
+    QUOTES_TOO_BIG = 'quotes: sol no_data -- too_big'
+    QUOTE_LINE = /quotes: [^\r\n]*/n
+    # How long the harness waits after the command shell for every quote's lines: the
+    # first round, sol's retry after its failure and the TLS handshakes of each.
+    QUOTES_SECONDS = 240
+    # The fixture's source, which writes the test root and so is its receipt's source.
+    FIXTURE = 'test/fixtures/quotes_fixture.rb'
     # The minute Run#call draws before the boots, to build and compile the renderer.
     WARM_MINUTE = [[1970, 1, 1], [0, 0, 0]].freeze
     # How long the harness waits after the command shell for the dashboard's line, and
@@ -101,6 +127,17 @@ module Erx
       DisplayDomain.await_screen(socket: socket, references: directory, names: names)
     end
 
+    # The checks of the quotes cell's boot once the command shell is up: the serial log at
+    # serial shows each of lines (QuotesFixture.fresh_lines and QUOTES_TOO_BIG) within
+    # QUOTES_SECONDS; a failure names the lines missing and the last quotes lines seen.
+    def check_quotes(serial:, lines:)
+      log = DisplayDomain.await_log(serial, wait_seconds: QUOTES_SECONDS) { |text| lines.all? { |line| text.include?(line) } }
+      missing = lines.reject { |line| log.include?(line) }
+      return if missing.empty?
+
+      raise Error, "the quotes showed no #{missing.join('; ')}; last: #{log.scan(QUOTE_LINE).last(6).join('; ')}"
+    end
+
     # The checks of the altered package's boot: admitted by its row, refused at the mount,
     # and nothing of the app ran. An altered image mounted or shown is the failure the cell
     # exists for, a hash check that let a changed image through, and its message says so
@@ -135,10 +172,11 @@ module Erx
 
       # Packs the package once, from a copy of APP in the build tree so the packer's ebin/
       # never lands in the source tree, then an image of it and one of its altered copy,
-      # and boots each at one CPU, the altered cell whatever the first found. Returns
-      # { "hvf-1cpu" => 'passed', "hvf-1cpu-altered" => 'passed' }, a cell that failed
-      # 'failed' with its reason in notes.
-      def call(jobs: 4, build: true)
+      # and boots each at one CPU, the altered cell whatever the first found, then the
+      # quotes cell. Returns { "hvf-1cpu" => 'passed', "hvf-1cpu-altered" => 'passed',
+      # "hvf-1cpu-quotes" => 'passed' }, a cell that failed 'failed' with its reason in
+      # notes. trusted false seeds the quotes cell: its store trusts another root.
+      def call(jobs: 4, build: true, trusted: true)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
         fiasco.build(jobs: jobs) if build
         work = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/kiosk'))
@@ -150,8 +188,10 @@ module Erx
                                            compiler: @compiler)
         draw = drawing(app: app, sdk: sdk)
         draw.call(WARM_MINUTE)
-        { 'hvf-1cpu' => package, "hvf-1cpu#{ALTERED}" => Kiosk.altered(package, directory: altered_directory) }
-          .to_h { |cell, packed| [cell, status(cell) { boot(cell, packed, fiasco, work, draw: draw) }] }
+        shown = { 'hvf-1cpu' => package, "hvf-1cpu#{ALTERED}" => Kiosk.altered(package, directory: altered_directory) }
+                .to_h { |cell, packed| [cell, status(cell) { shown_boot(cell, packed, fiasco, work, draw: draw) }] }
+        quotes = "hvf-1cpu#{QUOTES}"
+        shown.merge(quotes => status(quotes) { quotes_boot(quotes, package, fiasco, work, trusted: trusted) })
       end
 
       private
@@ -165,12 +205,49 @@ module Erx
         'failed'
       end
 
-      def boot(cell, package, fiasco, work, draw:)
+      # The dashboard's boot: its screen, or for the altered cell its refusal.
+      def shown_boot(cell, package, fiasco, work, draw:)
+        boot(cell, package, fiasco, work) do |serial, socket, directory|
+          if cell.end_with?(ALTERED)
+            Kiosk.check_altered(serial: serial)
+          else
+            Kiosk.check_shown(serial: serial, socket: socket, directory: directory, draw: draw)
+          end
+        end
+      end
+
+      # The quotes cell's boot against the fixture, its root in the image's store unless
+      # trusted is false, when the store takes another root in its place. The fixture is
+      # loaded here, when the cell runs, so loading the suite loads no test code.
+      def quotes_boot(cell, package, fiasco, work, trusted:)
+        require_relative File.join('../../..', FIXTURE)
+        roots = FileUtils.mkdir_p(File.join(work, "#{cell}-roots")).first
+        context = QuotesFixture.chain(File.join(roots, 'fixture.pem'))
+        QuotesFixture.chain(File.join(roots, 'other.pem')) unless trusted
+        server = QuotesFixture::Server.new(context: context, answers: QUOTES_ANSWERS)
+        begin
+          relay = QemuPlan::Relay.new(network: QUOTES_NETWORK, address: QUOTES_ADDRESS, port: QUOTES_PORT, relay_port: server.start.port)
+          boot(cell, package, fiasco, work, test_roots: [TrustStore::TestRoot.new(path: File.join(roots, trusted ? 'fixture.pem' : 'other.pem'), source: File.join(@root, FIXTURE))],
+                                            nic: relay) do |serial, _socket, _directory|
+            Kiosk.check_quotes(serial: serial, lines: trusted ? [QUOTES_TOO_BIG, *QuotesFixture.fresh_lines] : QuotesFixture.refused_lines)
+          end
+        rescue Error => e
+          raise Error, "#{e.message} (fixture requests: #{server.requests})"
+        ensure
+          server.stop
+        end
+      end
+
+      # Boots package on the image's release medium at one CPU under HVF, with nic when
+      # given and a trust store adding test_roots, and runs the block's checks at the
+      # command shell with the serial log's path, the QMP socket and the cell's directory.
+      def boot(cell, package, fiasco, work, test_roots: [], nic: nil, &check)
         directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(work, cell))
         built, written = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker,
                                              machine: @machine, fiasco: fiasco)
                                         .build_medium(directory: File.join(directory, 'image'),
-                                                      apps: ImageApps.plan([package], enable: [NAME], signers: [], local: false))
+                                                      apps: ImageApps.plan([package], enable: [NAME], signers: [], local: false),
+                                                      test_roots: test_roots)
         medium = written.fresh(directory: directory)
         choice = BootRecord.read(medium)
         image = BootRecord.extract(medium, choice, output: File.join(directory, 'slot.boot'))
@@ -181,28 +258,24 @@ module Erx
                                         display: display, choice: choice, cpus: 1, directory: directory)
         Qemu.new(root: @root, runner: @runner, program: @qemu)
             .run(platform: @machine.platform, accel: 'hvf', cpus: 1, image: image, memory_mib: @machine.memory_mib,
-                 directory: File.join(directory, 'boot'), display: display, dtb: tree, disks: disks,
-                 checkpoints: checkpoints(built, cell, choice, socket: socket, directory: directory, draw: draw))
+                 directory: File.join(directory, 'boot'), display: display, dtb: tree, disks: disks, nic: nic,
+                 checkpoints: checkpoints(built, choice, test_image: !test_roots.empty?) { check.call(File.join(directory, 'boot', 'serial.log'), socket, directory) })
       end
 
-      # The production checkpoints with the boot value's after the image's identity, and
-      # the cell's checks at the command shell.
-      def checkpoints(built, cell, choice, socket:, directory:, draw:)
+      # The production checkpoints, a test image's when the cell asked for one, with the boot value's
+      # after the image's identity, and the block's checks at the command shell.
+      def checkpoints(built, choice, test_image:, &check)
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: 1,
-                                                  manifest_source: @manifest, memory_mib: @machine.memory_mib)
+                                                  manifest_source: @manifest, memory_mib: @machine.memory_mib,
+                                                  test_image: test_image)
         at = points.index { |point| point.fetch(:name) == 'image-identity' }
         raise Error, 'the production checkpoints name no image-identity' unless at
         raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
-        serial = File.join(directory, 'boot', 'serial.log')
-        check = if cell.end_with?(ALTERED)
-                  ->(_text) { Kiosk.check_altered(serial: serial) }
-                else
-                  ->(_text) { Kiosk.check_shown(serial: serial, socket: socket, directory: directory, draw: draw) }
-                end
         shell = points.last
+        waits = [SHOWN_SECONDS + DRAW_SECONDS + DisplayDomain::WAIT_SECONDS, REFUSED_SECONDS + SETTLE_SECONDS, QUOTES_SECONDS]
         [*points[0..at], MediumBoot.boot_value_checkpoint(choice), *points[(at + 1)...-1],
-         shell.merge(seconds: shell.fetch(:seconds) + [SHOWN_SECONDS + DRAW_SECONDS + DisplayDomain::WAIT_SECONDS, REFUSED_SECONDS + SETTLE_SECONDS].max, verify: check).freeze]
+         shell.merge(seconds: shell.fetch(:seconds) + waits.max, verify: ->(_text) { check.call }).freeze]
       end
 
       # The dashboard at app as a function from a minute to the picture the host's

@@ -212,6 +212,27 @@ class ChecksTest < Minitest::Test
     assert checks.run
   end
 
+  # Only the QEMU cells whose fixture serves HTTPS add a test root, through the trust
+  # store's own path, so no image another builder makes trusts one. Seeded: a test root
+  # passed by the pack or the website's builder is refused.
+  def test_only_the_fixture_cells_add_a_test_root
+    write('tools/lib/erx/production_image.rb', "def build_medium(directory:, test_roots: [])\nend\n")
+    write('tools/lib/erx/release_files.rb', "def initialize(root:, test_roots: [])\nend\n")
+    write('tools/lib/erx/trust_store.rb', "def store(directory, test_roots: [])\nend\n")
+    write('tools/lib/erx/kiosk.rb', "image.build_medium(directory: d,\n  test_roots: [root])\n")
+    assert checks.run
+    { 'tools/build_site.rb' => "image.build_medium(directory: d, test_roots: [root])\n",
+      'tools/lib/erx/production_image_pack.rb' => "build_medium(directory: d,\n    test_roots: roots)\n" }
+      .each do |relative, source|
+        path = write(relative, source)
+        error = assert_raises(Erx::Error) { checks.run }
+        assert_equal "a test root is added only by #{Erx::Checks::TEST_ROOTS_BUILDERS.join(' and ')}: " \
+                     "#{relative}:#{source.lines.size}", error.message
+        File.unlink(path)
+      end
+    assert checks.run
+  end
+
   def test_ignored_files_and_agent_worktrees_are_not_source_inputs
     write('.gitignore', "/build/\n/.claude/\n")
     write('build/fiasco/inputs/uart.h', "/* \xc3\xa9 */\n".b)

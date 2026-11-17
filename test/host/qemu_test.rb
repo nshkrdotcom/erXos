@@ -232,6 +232,26 @@ class QemuTest < Minitest::Test
     assert_raises(Erx::Error) { Erx::QemuPlan::Nic.new(frames_port: 5001, peer_port: 5002, echo_port: 5003, forward: 5004) }
   end
 
+  # A relay is restricted slirp on its own network with one `cmd:` guest forward, for an
+  # address inside that network, to nc at the harness's loopback port, and nothing else:
+  # no frames link and no host forward. An address outside the network, or one that is
+  # not a plain address, is refused before QEMU sees it.
+  def test_a_relay_forwards_one_address_inside_its_network_to_nc_at_loopback
+    relay = Erx::QemuPlan::Relay.new(network: '104.16.0.0/16', address: '104.16.14.28', port: 443, relay_port: 5005)
+    argv = Erx::QemuPlan.argv(platform: PLATFORM, accel: 'hvf', image: 'image', serial: 'serial', nic: relay)
+    netdevs = argv.each_cons(2).select { |flag, _| flag == '-netdev' }.map(&:last)
+    assert_equal ['user,id=nic_user,restrict=on,net=104.16.0.0/16,guestfwd=tcp:104.16.14.28:443-cmd:nc 127.0.0.1 5005',
+                  'hubport,id=nic_hub_user,hubid=0,netdev=nic_user', 'hubport,id=nic_hub_guest,hubid=0'], netdevs
+    assert_includes argv, "virtio-net-device,netdev=nic_hub_guest,bus=virtio-mmio-bus.#{Erx::QemuPlan::NIC_TRANSPORT}"
+    [['104.16.0.0/16', '10.0.2.4', 443, 5005], ['104.16.0.0/16', '104.16.14.28/32', 443, 5005],
+     ['104.16.0.0', '104.16.14.28', 443, 5005], ['104.16.0.0/16', '104.16.14.28', 443, 0],
+     ['104.16.0.0/16,x', '104.16.14.28', 443, 5005]].each do |network, address, port, relay_port|
+      assert_raises(Erx::Error, [network, address].inspect) do
+        Erx::QemuPlan::Relay.new(network: network, address: address, port: port, relay_port: relay_port)
+      end
+    end
+  end
+
   def test_a_disk_path_that_could_change_what_qemu_opens_is_refused
     ['relative.img', 'nbd:host:1', '/a,b', "/a\0b", '', nil, 5].each do |path|
       assert_raises(Erx::Error, path.inspect) { DISK.new(path: path) }

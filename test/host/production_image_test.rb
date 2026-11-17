@@ -490,6 +490,17 @@ class ProductionImageTest < Minitest::Test
     refute(Erx::ReleaseFiles::RELEASE_SCRIPTS.keys.any? { |name| Erx::ProductionImage.domain_boot(name).test })
   end
 
+  # A test root (build_medium's test_roots) makes the image a test image, and the one
+  # build refuses one for an image without the test-code mark, so no production image
+  # trusts a test root.
+  def test_only_a_test_image_adds_a_trust_root
+    root = Erx::TrustStore::TestRoot.new(path: 'build/fixture.pem', source: 'test/fixtures/quotes_fixture.rb')
+    error = assert_raises(Erx::Error) { Erx::ProductionImage.check_test_roots([root], test_code: false) }
+    assert_match(%r{only a test image adds a trust root: build/fixture\.pem}, error.message)
+    Erx::ProductionImage.check_test_roots([root], test_code: true)
+    Erx::ProductionImage.check_test_roots([], test_code: false)
+  end
+
   # A release name the release scripts table does not hold is refused, not booted as the
   # base, so a misspelt `release @artifact.NAME` fails the build.
   def test_a_release_the_table_does_not_hold_is_refused

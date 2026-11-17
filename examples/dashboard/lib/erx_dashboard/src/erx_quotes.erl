@@ -116,7 +116,7 @@ action(render, #{dashboard := Dashboard, core := Core, sent := Sent, logged := L
     end.
 
 %% One log line per change of a quote's line (erx_quotes_view:lines/2),
-%% which the QEMU cell display_domain/quotes reads from the serial line.
+%% which the QEMU cell kiosk/hvf-1cpu-quotes reads from the serial line.
 log_changes(Lines, Logged) ->
     lists:foldl(fun({Name, Line}, Acc) ->
                         case Acc of

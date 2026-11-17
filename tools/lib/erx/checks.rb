@@ -109,6 +109,16 @@ module Erx
     LOGIN_KEY_BUILDERS = %w[tools/lib/erx/network_domain.rb].freeze
     LOGIN_KEY_DEFINER = 'tools/lib/erx/production_image.rb'
     LOGIN_KEY_ENTRY = /\blogin_key:/
+    # Root files a test image adds to its trust store make it a test image
+    # (ProductionImage#build_medium; docs/design-crypto.md, "A test image adds roots").
+    # Only the QEMU cells whose fixture serves HTTPS (TEST_ROOTS_BUILDERS) pass that
+    # keyword, and only the trust store's own path through the build
+    # (TEST_ROOTS_DEFINERS) carries it, so no other image's store holds a test root. The
+    # check reads lines, as the test image one does.
+    TEST_ROOTS_BUILDERS = %w[tools/lib/erx/kiosk.rb].freeze
+    TEST_ROOTS_DEFINERS = %w[tools/lib/erx/production_image.rb tools/lib/erx/release_files.rb
+                             tools/lib/erx/trust_store.rb].freeze
+    TEST_ROOTS_ENTRY = /\btest_roots:/
     # Each rule that only some tools sources may name an entry point: its pattern, the
     # sources allowed to match it and the refusal, which names the place.
     NamedOnly = Data.define(:pattern, :allowed, :refusal)
@@ -116,7 +126,9 @@ module Erx
       NamedOnly.new(pattern: TEST_IMAGE_ENTRY, allowed: [*TEST_IMAGE_BUILDERS, TEST_IMAGE_DEFINER].freeze,
                     refusal: "a test image is built only by #{TEST_IMAGE_BUILDERS.join(' and ')}"),
       NamedOnly.new(pattern: LOGIN_KEY_ENTRY, allowed: [*LOGIN_KEY_BUILDERS, LOGIN_KEY_DEFINER].freeze,
-                    refusal: "a development login key is packed only by #{LOGIN_KEY_BUILDERS.join(' and ')}")
+                    refusal: "a development login key is packed only by #{LOGIN_KEY_BUILDERS.join(' and ')}"),
+      NamedOnly.new(pattern: TEST_ROOTS_ENTRY, allowed: [*TEST_ROOTS_BUILDERS, *TEST_ROOTS_DEFINERS].freeze,
+                    refusal: "a test root is added only by #{TEST_ROOTS_BUILDERS.join(' and ')}")
     ].freeze
 
     # Unsets every GIT_ variable of the caller's environment, for a git child

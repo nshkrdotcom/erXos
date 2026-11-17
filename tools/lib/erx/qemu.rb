@@ -4,6 +4,7 @@
 
 require 'digest'
 require 'fileutils'
+require 'ipaddr'
 require 'set'
 require 'json'
 require_relative 'bootstrap_memory'
@@ -147,6 +148,27 @@ module Erx
         super
       end
     end
+    # A virtio-net device on restricted QEMU user networking whose virtual network,
+    # network (an IPv4 CIDR), covers address, so that slirp takes a guest forward for it
+    # (libslirp 4.9.7 src/slirp.c:1584) and answers the guest's ARP for it (:1241). Its one
+    # guest forward is QEMU's `cmd:` form: each TCP connection the guest opens to address
+    # port port starts `nc 127.0.0.1 relay_port`, with the connection as its standard
+    # input and output and its arguments split without a shell (src/misc.c:212-248), so
+    # the connection reaches the harness's server at that loopback port. Nothing else the
+    # guest sends leaves the host (docs/design-quotes.md, "The QEMU cell").
+    Relay = Data.define(:network, :address, :port, :relay_port) do
+      def initialize(network:, address:, port:, relay_port:)
+        range = IPAddr.new(network)
+        unless range.ipv4? && network.include?('/') && address.match?(/\A[0-9.]+\z/) && range.include?(IPAddr.new(address)) &&
+               [port, relay_port].all? { |number| number.is_a?(Integer) && number.between?(1, 65_535) }
+          raise Error, 'a relay forwards an address inside its IPv4 network and a port to a loopback port'
+        end
+
+        super(network: network.dup.freeze, address: address.dup.freeze, port: port, relay_port: relay_port)
+      rescue IPAddr::Error
+        raise Error, 'a relay names an IPv4 network and an address'
+      end
+    end
     # A display for the guest: a virtio-gpu, a virtio-keyboard and a virtio-tablet device on
     # their own virtio-mmio transports, and QEMU's machine protocol (QMP) on a UNIX socket at
     # qmp_socket, which the harness reads the screen through (Qmp: screendump). QEMU still
@@ -233,7 +255,7 @@ module Erx
       unless disks.is_a?(Array) && disks.size <= MAX_DISKS && disks.all?(Disk)
         raise Error, "disks are up to #{MAX_DISKS} QemuPlan::Disk values"
       end
-      raise Error, 'a network device is a QemuPlan::Nic' unless nic.nil? || nic.is_a?(Nic)
+      raise Error, 'a network device is a QemuPlan::Nic or a QemuPlan::Relay' unless [NilClass, Nic, Relay].include?(nic.class)
       raise Error, 'a display is a QemuPlan::Display' unless display.nil? || display.is_a?(Display)
       devices = placements(disks: disks, nic: nic, display: display)
       check_pages(devices)
@@ -334,10 +356,26 @@ module Erx
       end
     end
 
-    # The network device and its backends (Nic), or nothing.
+    # The network device and its backends (Nic or Relay), or nothing.
     def nic_arguments(nic)
-      return [] if nic.nil?
+      case nic
+      in nil then []
+      in Relay then relay_arguments(nic)
+      in Nic then link_arguments(nic)
+      end
+    end
 
+    # A Relay's user networking, with its one `cmd:` guest forward, on the hub the device
+    # joins.
+    def relay_arguments(relay)
+      ['-netdev', "user,id=nic_user,restrict=on,net=#{relay.network}," \
+                  "guestfwd=tcp:#{relay.address}:#{relay.port}-cmd:nc 127.0.0.1 #{relay.relay_port}",
+       '-netdev', 'hubport,id=nic_hub_user,hubid=0,netdev=nic_user',
+       '-netdev', 'hubport,id=nic_hub_guest,hubid=0']
+    end
+
+    # A Nic's user networking and its frames link to the harness, on one hub.
+    def link_arguments(nic)
       loopback = '127.0.0.1'
       host_forward = nic.forward ? ",hostfwd=tcp:#{loopback}:#{nic.forward.host}-:#{nic.forward.guest}" : ''
       ['-netdev', "user,id=nic_user,restrict=on,domainname=#{NIC_DOMAIN}," \

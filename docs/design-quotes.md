@@ -563,30 +563,36 @@ network device; its reference drawing,
 quote at `no data:` with the reason that boot gives, the one
 `Kiosk::OFFLINE_REASON` names.
 
-**The QEMU cell**, `display_domain/quotes`, checks live quotes against an
-offline HTTPS fixture, with the guest's code as it runs on a board. Its
-test image carries `examples/dashboard`, the package as it ships, on a
-medium and enabled at boot, and a trust store with the fixture's root
-added to the image's, through the extra root files a test image may name
-([design-crypto.md](design-crypto.md#the-trust-store)); the production
-image takes none. Its network device is on restricted QEMU user
-networking, so nothing the guest sends leaves the host, with `net=`
-covering the table's address, 104.16.14.28: libslirp accepts a guest
-forward only for an address inside the virtual network (libslirp 4.9.7,
-`src/slirp.c:1584`). A guest forward for that address and port 443
-names a `cmd:` relay, `nc 127.0.0.1 PORT`, which QEMU starts for each
-connection the guest opens, with the connection as its standard input
-and output and its arguments split without a shell (`src/misc.c:212-248`,
-QEMU 11.1.3 `net/slirp.c:1151`), joining it to the harness's TLS server.
-The socket form of the guest forward does not serve, since it carries
-every guest connection over one stream.
+**The QEMU cell**, `kiosk/hvf-1cpu-quotes`, a cell of the kiosk suite
+(`tools/lib/erx/kiosk.rb`), checks live quotes against an offline HTTPS
+fixture, with the guest's code as it runs on a board. Its image carries
+`examples/dashboard`, the package as it ships, on the release medium and
+enabled at boot, as the kiosk cell's does, and a trust store with the
+fixture's root added after the tree's, through the root files a test
+image may name ([design-crypto.md](design-crypto.md#the-trust-store));
+naming one makes the image a test image, marked as test code, and only
+the cells whose fixture serves HTTPS may name one, which a source check
+holds, so no other image's store holds a test root. Its network device is
+on restricted QEMU user networking, so nothing the guest sends leaves the
+host, with `net=104.16.0.0/16` covering the table's address,
+104.16.14.28: libslirp accepts a guest forward only for an address
+inside the virtual network (libslirp 4.9.7, `src/slirp.c:1584`) and
+answers the guest's ARP for it (`src/slirp.c:1241`). A guest forward for
+that address and port 443 names a `cmd:` relay, `nc 127.0.0.1 PORT`,
+which QEMU starts for each connection the guest opens, with the
+connection as its standard input and output and its arguments split
+without a shell (`src/misc.c:212-248`, QEMU 11.1.3 `net/slirp.c:1151`),
+joining it to the harness's TLS server. The socket form of the guest
+forward does not serve, since it carries every guest connection over one
+stream.
 
-The harness's server answers `/0/public/Ticker?pair=PAIR` for each pair
-of the table with canned bodies in Kraken's shape, from a chain made on
-the host for `api.kraken.com` with an ordinary validity that covers both
-the host's time and the image's build date. The cell depends on no
-clock at boot: if the guest's clock is unset, root's typed `date` sets
-it from the host's time first, and a set clock is left alone.
+The harness's server (`test/fixtures/quotes_fixture.rb`) answers
+`/0/public/Ticker?pair=PAIR` with a `Host` of `api.kraken.com` for each
+pair of the table with canned bodies in Kraken's shape, from an ECDSA
+P-256 chain made on the host for `api.kraken.com`. The chain is valid
+from the epoch to the end of 2049, so the cell depends on no clock: a
+guest whose clock is unset, or set from the image's build date, trusts
+it alike.
 
 `erx_quotes` writes one log line per change of a quote's line,
 `erx_quotes_view:lines/2`, which names the quote, its state (`waiting`,
@@ -595,15 +601,16 @@ price as the screen shows it or `--`, and the reason its last round
 failed or else the source that gave its value (`none` before any), as
 `quotes: btc fresh 64,412.50 kraken_btc` or `quotes: btc no_data --
 certificate`; it carries no age, so it changes only when one of those
-does. The harness reads the lines from the serial line. The cell passes
-when every quote reaches `fresh` with the fixture's prices. *Seeded
-failures:* the image's trust store built without the fixture's root
-makes every quote `no data: certificate rejected`; the fixture
-answering one pair with a body of 70,000 bytes makes that quote
-`no data: answer too big`, which only `httpc`'s erXos edit gives
-([design-crypto.md](design-crypto.md#otps-applications)). That a
-certificate is refused while the clock is unset is the classifier's host
-test, not the cell's.
+does. The harness reads the lines from the serial line. The fixture
+answers sol's first request with a body of 70,000 bytes and its
+`content-length`, and every later request with the pair's price. The
+cell passes when sol shows `quotes: sol no_data -- too_big`, the bound
+`max_body_size` sets on the target, and every quote then reaches `fresh`
+with the fixture's prices. *Seeded failure:* the image's trust store
+taking another root than the fixture's (the harness's `trusted: false`)
+makes every quote `no_data -- certificate`. That a certificate is
+refused while the clock is unset is the classifier's host test, not the
+cell's.
 
 ## Alternatives considered
 
