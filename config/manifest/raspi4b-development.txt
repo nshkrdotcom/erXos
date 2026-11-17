@@ -200,9 +200,12 @@ domain network
 # and max_connections each grow by that session (its net connection). The template's
 # release is ntpd's (ReleaseFiles::RELEASE_SCRIPTS), its -eval starts erx_ntpd, and its
 # environment sets ERX_START_FLAGS, standing in for the start row's flags until the start
-# table carries them (TODO.md, "time, ntpd"). ntpd_net grants the network stack with the
-# small limits of two sockets' requests; ntpd_clock grants the clock interface's sample
-# operation alone, so ntpd measures and the clock service decides.
+# table carries them (TODO.md, "time, ntpd"). ntpd_net grants the network stack with small
+# limits: two sockets (docs/design-time.md, "Who does what"), a lookup's UDP socket and
+# the TCP connection inet_res opens beside it for a truncated answer, while an exchange
+# holds one socket alone; 128 KiB of buffers, the least a row may state and that
+# connection's; and two requests in flight; ntpd_clock grants the clock interface's
+# sample operation alone, so ntpd measures and the clock service decides.
 principal ntpd
   memory 38797312
   grant @share.users
@@ -220,6 +223,8 @@ facet ntpd_net
   name "net"
   grantee @session.ntpd
   service @service.net
+  parameter sockets 2
+  parameter buffers 131072
   operations none
   max_request 64
   in_flight 2
