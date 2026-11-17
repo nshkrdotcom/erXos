@@ -315,18 +315,21 @@ module Erx
 
     # What ntpd's session logs: its step to the harness's time, by NTP_AHEAD seconds give or
     # take the real-time clock's second and the boot's drift (ntpd_step!); then /proc/time,
-    # whose record names ntpd's server as the source of the last sample and step, the
+    # whose record keeps the clock service's verdict on the last sample, a step or a hold,
+    # and names ntpd's server as the source of that sample and of the last step, the
     # second step of the boot after the real-time clock's; then `ntpctl step`, which steps
-    # to ntpd's last sample, a third. The harness then fixes its answers at 2030
-    # (fix_ntp_time) and ntpctl asks it directly.
+    # to ntpd's last sample, a third, and names the verdict and the sample's age. The
+    # harness then fixes its answers at 2030 (fix_ntp_time) and ntpctl asks it directly.
     def ntpd_checkpoints(fix_ntp_time:)
       from = "ntp #{Regexp.escape(SERVER)}"
       [{ name: 'ntpd-step', pattern: /ntpd: stepped by [0-9]+ ns from #{Regexp.escape(SERVER)}\r*\n\z/n,
          seconds: NTPD_STEP_SECONDS, verify: NetDevice.method(:ntpd_step!), type: TIME_LINE }.freeze,
+       shell_point('time-sample-verdict', "sample_verdict\t(?:step|hold)\tservice"),
        shell_point('time-sample-from', "sample_from\t#{from}\tservice"),
        shell_point('time-step-from', "step_from\t#{from}\tservice"),
        shell_point('time-steps', "steps\t2\tservice", type: NTPD_STEP_LINE),
-       shell_point('ntpctl-ntpd', "ntpctl: stepped #{STEP} s from ntpd's sample of #{Regexp.escape(SERVER)}",
+       shell_point('ntpctl-ntpd', "ntpctl: stepped #{STEP} s from ntpd's sample of #{Regexp.escape(SERVER)} " \
+                   "\\((?:accepted|held), [0-9]+ s old\\)",
                    verify: ->(_line) { fix_ntp_time.call }, type: NTP_SET_LINE)]
     end
 

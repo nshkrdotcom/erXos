@@ -62,6 +62,9 @@ inspection 1
   # state, and the clock service's record of its samples and steps.
   atoms clock_state unset boot approximate set
   atoms clock_refusal unsupported limit badarg
+  # The row of the Steps table the last sample took: stepped to, held, or
+  # refused as before the floor or as 1000 s or more off a clock set this boot.
+  atoms clock_verdict step hold floor panic
   integer seconds 0 0xffffffffffffffff unit s
   integer wall_time 0 0xffffffffffffffff unit ns
   integer signed_duration -0x8000000000000000 0x7fffffffffffffff unit ns
@@ -195,6 +198,8 @@ inspection 1
     attr sample_at wall_time reporters service visible any build all projections shell,host,proc,web
     attr offset_ns signed_duration reporters service visible any build all projections shell,host,proc,web
     attr sample_wall_offset_ns wall_time reporters service visible any build all projections shell,host,proc,web
+    attr sample_verdict clock_verdict reporters service visible any build all projections shell,host,proc,web
+    attr sample_monotonic_ns duration reporters service visible any build all projections shell,host,proc,web
     attr distance_ns duration reporters service visible any build all projections shell,host,proc,web
     attr stratum stratum reporters service visible any build all projections shell,host,proc,web
     attr server net_address reporters service visible all build all projections shell,host,proc,web

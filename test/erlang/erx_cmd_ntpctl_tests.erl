@@ -54,13 +54,38 @@ time(Attrs) ->
     {ok, #{path => [time], kind => clock, id => time, children => [],
            attrs => #{Key => {service, Value} || Key := Value <- Attrs}}}.
 
-sampled() ->
+%% The monotonic time ntpctl reads; ntpd's sample in /proc/time is 12.9 s before it.
+-define(NOW, 100_000_000_000).
+
+sampled() -> sampled(hold).
+
+%% ntpd's sample, with the clock service's Verdict.
+sampled(Verdict) ->
     time(#{sample_wall_offset_ns => {ok, 1_794_873_600_000_000_000}, sample_from => {ok, <<"ntp 192.0.2.7">>},
-           server => {ok, <<"192.0.2.7">>}}).
+           server => {ok, <<"192.0.2.7">>}, sample_verdict => {ok, Verdict},
+           sample_monotonic_ns => {ok, ?NOW - 12_900_000_000}}).
+
+with({ok, #{attrs := Attrs} = Record}, Key, Value) -> {ok, Record#{attrs := Attrs#{Key => {service, Value}}}}.
+
+without({ok, #{attrs := Attrs} = Record}, Key) -> {ok, Record#{attrs := maps:remove(Key, Attrs)}}.
 
 ntpd_sample_test_() ->
-    Sample = fun erx_cmd_ntpctl:ntpd_sample/2,
-    [?_assertEqual({ok, 1_794_873_600_000_000_000, <<"192.0.2.7">>}, Sample(app(running), sampled())),
+    Sample = fun(App, Time) -> erx_cmd_ntpctl:ntpd_sample(App, Time, ?NOW) end,
+    Taken = fun(Verdict) -> {ok, 1_794_873_600_000_000_000, {ntpd, <<"192.0.2.7">>, Verdict, 12_900_000_000}} end,
+    [%% A sample the clock service held, stepped to or refused as panic is applied, with
+     %% its verdict and its age.
+     ?_assertEqual(Taken(hold), Sample(app(running), sampled(hold))),
+     ?_assertEqual(Taken(step), Sample(app(running), sampled(step))),
+     ?_assertEqual(Taken(panic), Sample(app(running), sampled(panic))),
+     %% One refused as floor, a time before the build date, is not: setting it would take
+     %% the clock below the floor the service holds ntpd to.
+     ?_assertEqual({error, <<"ntpd's sample of 192.0.2.7 is before the build date (refused as floor); nothing set">>},
+                   Sample(app(running), sampled(floor))),
+     %% The verdict and the sample's time are read as the offset is: one that holds no
+     %% value is written as its status, and the sample is not applied.
+     ?_assertEqual({error, <<"/proc/time: unknown">>}, Sample(app(running), with(sampled(), sample_verdict, unknown))),
+     ?_assertEqual({error, <<"/proc/time: sample_monotonic_ns not visible">>},
+                   Sample(app(running), without(sampled(), sample_monotonic_ns))),
      %% ntpd not running: a row whose state says so.
      ?_assertEqual({error, <<"ntpd is not running">>}, Sample(app(stopped), sampled())),
      ?_assertEqual({error, <<"ntpd is not running">>}, Sample(app(down), sampled())),
@@ -91,8 +116,13 @@ ntpd_sample_test_() ->
 
 stepped_test_() ->
     Line = fun(StepNs, Source) -> iolist_to_binary(erx_cmd_ntpctl:stepped(StepNs, Source)) end,
-    [?_assertEqual(<<"ntpctl: stepped +2.310 s from ntpd's sample of 162.159.200.1\n">>,
-                   Line(2_310_999_999, {ntpd, <<"162.159.200.1">>})),
+    [%% ntpd's sample names the clock service's verdict and its age in whole seconds.
+     ?_assertEqual(<<"ntpctl: stepped +1234.567 s from ntpd's sample of 162.159.200.1 (refused as panic, 12 s old)\n">>,
+                   Line(1_234_567_890_123, {ntpd, <<"162.159.200.1">>, panic, 12_900_000_000})),
+     ?_assertEqual(<<"ntpctl: stepped +2.310 s from ntpd's sample of 162.159.200.1 (held, 0 s old)\n">>,
+                   Line(2_310_999_999, {ntpd, <<"162.159.200.1">>, hold, 999_999_999})),
+     ?_assertEqual(<<"ntpctl: stepped +0.000 s from ntpd's sample of 162.159.200.1 (accepted, 64 s old)\n">>,
+                   Line(0, {ntpd, <<"162.159.200.1">>, step, 64_000_000_000})),
      ?_assertEqual(<<"ntpctl: stepped -0.001 s from 192.0.2.10\n">>, Line(-1_500_000, {server, <<"192.0.2.10">>})),
      ?_assertEqual(<<"ntpctl: stepped +0.000 s from 192.0.2.10\n">>, Line(0, {server, <<"192.0.2.10">>})),
      %% A step that cuts to zero carries no sign of its own.

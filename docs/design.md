@@ -1310,7 +1310,8 @@ another domain.
   polls; the step thresholds filter single corrections and bound nothing
   over time, so certificate validity and file and log times follow the
   server. Root's `ntpctl step` sets the clock through `set`, so the
-  server it takes the time from, or anyone on the path to it, sets any time, below the floor too, which
+  server it takes the time from, or anyone on the path to it, sets any time, below the floor too when
+  root names the server and past the floor from ntpd's last sample, which
   then holds against ntpd for the boot
   ([design-time.md](design-time.md#setting-the-clock-from-a-server-once)).
   Network Time Security is the remedy

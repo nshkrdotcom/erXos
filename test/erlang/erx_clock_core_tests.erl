@@ -52,7 +52,8 @@ row_case(Cold, D, Excess) ->
     {Result, Left} = expected(Cold, D, Excess),
     Decision = erx_clock_core:decide(sample(W), ?SOURCE, page(Cold), Record),
     Sampled = #{sample_at => ?M + ?C, offset_ns => D, sample_wall_offset_ns => W, distance_ns => 20 * ?MS, stratum => 2,
-                server => {192, 0, 2, 1}, source => ?SOURCE, sample_from => {ntp, {192, 0, 2, 1}}, excess => Left},
+                server => {192, 0, 2, 1}, source => ?SOURCE, sample_from => {ntp, {192, 0, 2, 1}}, excess => Left,
+                sample_verdict => verdict(Result), sample_monotonic_ns => ?M},
     case {Result, Decision} of
         {step, {step, Step, Record1}} ->
             ?assertEqual(#{offset => W, step_ns => D, at => ?M + W, source => ?SOURCE, from => {ntp, {192, 0, 2, 1}}}, Step),
@@ -63,6 +64,11 @@ row_case(Cold, D, Excess) ->
             ?assertEqual(maps:merge(Record, Sampled#{refused => 1}), Record1)
     end.
 
+%% The Steps row a sample took, as the record keeps it.
+verdict(step) -> step;
+verdict(held) -> hold;
+verdict({refused, Reason}) -> Reason.
+
 %% A sample before the floor is refused, cold or not and whatever its offset, and a
 %% sample at the floor is not.
 the_floor_test() ->
@@ -70,7 +76,8 @@ the_floor_test() ->
          Page = #{offset => 0, cold => Cold, monotonic => ?M},
          {answer, {ok, {refused, floor}}, Record1} =
              erx_clock_core:decide(sample(?FLOOR - ?M - 1), ?SOURCE, Page, record(Excess)),
-         ?assertMatch(#{excess := none, refused := 1, source := ?SOURCE, offset_ns := ?FLOOR - ?M - 1}, Record1)
+         ?assertMatch(#{excess := none, refused := 1, source := ?SOURCE, offset_ns := ?FLOOR - ?M - 1,
+                            sample_verdict := floor, sample_monotonic_ns := ?M}, Record1)
      end || Cold <- [true, false], Excess <- [none, positive, negative]],
     ?assertMatch({step, #{offset := ?FLOOR - ?M}, _},
                  erx_clock_core:decide(sample(?FLOOR - ?M), ?SOURCE, #{offset => 0, cold => true, monotonic => ?M},
@@ -117,7 +124,7 @@ applied_test() ->
 %% A new record has nothing sampled or stepped and counts from its start, in seconds.
 new_test() ->
     ?assertEqual(#{floor => ?FLOOR, record_since => 5, excess => none, sample_at => none, offset_ns => none,
-                   sample_wall_offset_ns => none, distance_ns => none, stratum => none, server => none, source => none, sample_from => none, step_at => none, step_ns => none,
+                   sample_wall_offset_ns => none, sample_verdict => none, sample_monotonic_ns => none, distance_ns => none, stratum => none, server => none, source => none, sample_from => none, step_at => none, step_ns => none,
                    step_source => none, step_from => none, step_error => none, steps => 0, refused => 0},
                  erx_clock_core:new(?M + 1, ?FLOOR)).
 

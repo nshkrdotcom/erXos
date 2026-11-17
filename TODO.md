@@ -7247,8 +7247,7 @@ to the corpus and follow rc
   virt's real-time clock prevents; (5) ntpd answers `/proc/ntp` only while it waits, so a read during a
   resolution (up to 10 s), an exchange (2 s, a burst up to 8 s) or its call to the clock service (up to 10 s)
   outlasts inspect_agent_wait and reads `[timeout]`; answer from a process that does not block on the network
-  or the facet; (6) `ntpctl step` (erlang/apps/erx_shell/src/erx_cmd_ntpctl.erl) applies ntpd's last sample
-  without saying whether the clock service refused it or how old it is (the record keeps neither); `-s`'s lines
+  or the facet; (6) `ntpctl` (erlang/apps/erx_shell/src/erx_cmd_ntpctl.erl): `-s`'s lines
   name `/proc/ntp`'s attributes by hand rather than from the schema; `-erx_needs([inspect, net])` asks for `net`
   on the forms that read only `/proc`; when every address fails, `ntpctl step HOST` gives no reason per address;
   the name rule passes short IPv4 forms such as `1.2.3` to `inet:getaddrs/3`, which reads them as addresses;
@@ -7890,7 +7889,8 @@ to the corpus and follow rc
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
   checks follow the clock. Root's `ntpctl step` sets through `set`: the server it takes the time from, or anyone
-  on the path, sets any time, below the floor too, and the set then holds it against ntpd for the boot (design-time.md, decision 7,
+  on the path, sets any time, below the floor too when root names the server and past the floor from ntpd's
+  sample, and the set then holds it against ntpd for the boot (design-time.md, decision 7,
   published). Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
 * [Low] stopgap, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case):
   the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks no right, so any
