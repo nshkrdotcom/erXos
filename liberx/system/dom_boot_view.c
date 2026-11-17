@@ -53,9 +53,11 @@
 
 /*
  * Each domain's handle table. The manifest names no size for it; this is
- * what a domain's runtime and its connections use, with room to spare.
+ * what a domain's runtime and its connections use, with room to spare,
+ * and its ERX_CODE_OBJECTS_MAX code objects' copies beside them.
  */
 #define BOOT_CAP_LIMIT	64u
+_Static_assert(ERX_CODE_OBJECTS_MAX <= BOOT_CAP_LIMIT / 4, "a session's code objects leave most of its table");
 
 static bool	boot_place(size_t *, size_t, size_t, uint32_t, size_t *);
 static bool	boot_limits(const erx_manifest_view_t *, uint32_t, erx_runtime_limits_t *);

@@ -248,9 +248,9 @@ suite's `code` case. Not built: the command server's holds (fill, start, row), w
 and its table that reuses one object for every start of the same file (design-programs.md, "Holds and
 drops"); the cap of one eighth of the session's budget on its code objects together; and an accounting
 of their pages beyond the fixed bound of `code_objects_max` objects, so a session can tie up its budget
-in code objects up to its own memory, never another's. On the stopgap a drop of an object the session
-has mapped closes the root's handle but cannot destroy it (Fiasco refuses the destroy of a mapped object),
-so the object lives on, charged to the session's budget, until the session unmaps it or ends [Low]. Links: a package mount answers `enotsup`
+in code objects up to its own memory, never another's. Nor is it measured that an ERTS session's own
+handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`,
+`liberx/system/dom_boot_view.c`): a session short of entries is refused a copy with `elimit` early. Links: a package mount answers `enotsup`
   for a link inode, since a package holds no links (design-storage.md, "Reading EROFS images"), but today
   the reader checks only the header's text (`relative_path`) and only the host packer refuses links, so the
   mount's refusal is part of this item. Meanwhile the resolve refuses every symbolic link on the way

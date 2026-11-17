@@ -1227,7 +1227,7 @@ next exec or its end, at most `code_objects_max` in all. The objects not
 dropped go with the session's budget.
 
 **The table.** The command server keeps a table of code objects for
-reuse, at most `code_objects_max` (256, `abi/services/code_objects.txt`,
+reuse, at most `code_objects_max` (16, `abi/services/code_objects.txt`,
 the library's bound on the session's live code objects) and at most an eighth of
 the session's budget
 ([design-system.md](design-system.md#resource-policy)), shared by every

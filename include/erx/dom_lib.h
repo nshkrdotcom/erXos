@@ -243,7 +243,8 @@ erx_status_t	erx_dom_lib_end_commit(erx_dom_lib_t *, uint32_t how) ERX_WARN_UNUS
  * holds; the backend's refusal otherwise, ERX_ENOMEM for the budget's, with
  * nothing kept. erx_dom_lib_code_drop deletes the domain's object number,
  * which removes the copy and every mapping of it; ERX_EINVAL for a number
- * that names none of its live objects. The objects not dropped go with the
+ * that names none of its live objects, and the backend's refusal of the
+ * destroy, which only a bad handle in the row gives, with the row kept. The objects not dropped go with the
  * domain's own budget, whose teardown closes their handles.
  */
 erx_status_t	erx_dom_lib_code_object(erx_dom_lib_t *, uint32_t id, uint64_t size,

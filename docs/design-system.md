@@ -1807,7 +1807,7 @@ service code_objects 14
   served_as message
   operation create 1
   operation drop 2
-limit code_objects_max u32 256
+limit code_objects_max u32 16
 limit code_objects_max_request u32 1024
 ```
 

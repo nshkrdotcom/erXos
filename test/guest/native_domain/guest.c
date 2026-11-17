@@ -2100,12 +2100,43 @@ code_value_give(uint32_t id, uint64_t value)
 }
 
 /*
+ * A drop whose destroy the backend refuses: row's first value is swapped
+ * for a handle the root holds to a page it has already destroyed, which the
+ * backend answers ERX_ESTALE. The drop answers the refusal and keeps the
+ * row; the live value is put back and the stale handle closed.
+ */
+static bool
+code_drop_refused(uint32_t id, erx_dom_code_t *row)
+{
+	const uint64_t live = row->objects[0];
+	uint64_t gone, stale;
+	erx_status_t status;
+	bool kept;
+
+	if (erx_mem_create(ERX_CAP_NULL, ERX_PAGE_SIZE, 0, &gone) != ERX_OK)
+		return (false);
+	status = erx_cap_dup(gone, &stale);
+	(void)erx_object_destroy(gone);
+	(void)erx_cap_close((erx_cap_t){ .raw = gone });
+	if (status != ERX_OK)
+		return (false);
+	row->objects[0] = stale;
+	status = erx_dom_lib_code_drop(&lib, id, 1);
+	kept = row->objects[0] == stale;
+	row->objects[0] = live;
+	(void)erx_cap_close((erx_cap_t){ .raw = stale });
+	say_count("code_drop_refused", (uint64_t)status);
+	return (status == ERX_ESTALE && kept);
+}
+
+/*
  * A session's code objects (erx_dom_lib_code_object): a size of 0 is
  * refused; ERX_CODE_OBJECTS_MAX are made from the domain's budget and the
  * next answers ERX_ELIMIT; a drop deletes one and a second drop of it, or a
- * number past the table, answers ERX_EINVAL. The domain's program checks
- * the copy of the first (program.c, code_check) and halts; an ended domain
- * gets none. After the retire the root's table row is empty, a duplicate
+ * number past the table, answers ERX_EINVAL, and a drop whose destroy is
+ * refused answers the refusal and keeps the row (code_drop_refused). The
+ * domain's program checks the copy of the first (program.c, code_check)
+ * and halts; an ended domain gets none. After the retire the root's table row is empty, a duplicate
  * the root kept of the first object answers ERX_ESTALE, since the object
  * went with the domain's budget.
  */
@@ -2113,7 +2144,6 @@ static bool
 code_run(uint32_t program)
 {
 	static const char word[] = CODE_WORD "0000000000000000";
-	const uint32_t cap_limit = lib.cap_limit;
 	erx_dom_created_t created;
 	erx_dom_report_t report = { 0 };
 	erx_dom_code_t *row;
@@ -2123,8 +2153,6 @@ code_run(uint32_t program)
 	bool passed;
 
 	_Static_assert(sizeof(word) - sizeof(CODE_WORD) == CODE_DIGITS, "the placeholder is CODE_DIGITS digits");
-	/* Room in the domain's table for every copy beside its grants. */
-	lib.cap_limit = ERX_CODE_OBJECTS_MAX + cap_limit;
 	(void)request_for(word, program, 0);
 	request.memory = 4 * MIB;
 	passed = erx_dom_lib_create(&lib, &request, NULL, 0, &created) == ERX_OK;
@@ -2145,7 +2173,8 @@ code_run(uint32_t program)
 		passed = erx_dom_lib_code_drop(&lib, created.id, drop) == ERX_OK && row->objects[drop - 1] == ERX_CAP_NULL;
 	passed = passed && erx_dom_lib_code_drop(&lib, created.id, 2) == ERX_EINVAL &&
 	    erx_dom_lib_code_drop(&lib, created.id, 0) == ERX_EINVAL &&
-	    erx_dom_lib_code_drop(&lib, created.id, ERX_CODE_OBJECTS_MAX + 1) == ERX_EINVAL;
+	    erx_dom_lib_code_drop(&lib, created.id, ERX_CODE_OBJECTS_MAX + 1) == ERX_EINVAL &&
+	    code_drop_refused(created.id, row);
 	passed = passed && erx_cap_dup(row->objects[0], &kept) == ERX_OK && code_value_give(created.id, first) &&
 	    erx_dom_lib_start(&lib, created.id) == ERX_OK;
 	if (passed) {
@@ -2167,7 +2196,6 @@ code_run(uint32_t program)
 	passed = passed && erx_cap_dup(kept, &scratch) == ERX_ESTALE;
 	if (kept != ERX_CAP_NULL)
 		(void)erx_cap_close((erx_cap_t){ .raw = kept });
-	lib.cap_limit = cap_limit;
 	return (passed);
 }
 
