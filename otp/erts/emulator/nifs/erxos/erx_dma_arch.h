@@ -36,7 +36,10 @@ void	erx_dma_clean_inval(volatile uint8_t *start, uint64_t length, uint32_t step
 void	erx_dma_publish_barrier(bool completes);
 /* After the read of a device's report, before what it allows: orders loads and stores. */
 void	erx_dma_report_barrier(void);
-/* After taking back, before the reads of what came back: completes the maintenance before it. */
+/*
+ * Completes every memory access and cache maintenance before it: after taking back,
+ * before the reads of what came back, and after each register store (erx_device.c).
+ */
 void	erx_dma_completion_barrier(void);
 
 #endif /* ERX_DMA_ARCH_H */

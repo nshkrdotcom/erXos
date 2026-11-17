@@ -129,19 +129,40 @@ identify_takes_only_v5_test() ->
 -define(ENTROPY, <<16#ff, 1, 2, 3, 4, 5>>).
 -define(RANDOM, <<16#fe, 1, 2, 3, 4, 5>>).  % local bit set, group bit clear
 
-controller(Reset, Mac0, Mac1) -> #{flush_reset => Reset, mac0 => Mac0, mac1 => Mac1}.
+%% The fields the address reads (#{Register => Value}) as the firmware leaves them: the
+%% receive buffer's reset clear and its address in MAC0 and MAC1, with Changes over them.
+firmware(Changes) ->
+    maps:merge(#{sys_rbuf_flush_ctrl => 0, umac_mac0 => 16#dca63201, umac_mac1 => 16#0203}, Changes).
+
+%% Runs lladdr/1's steps over the controller's fields and ?ENTROPY, checking each read
+%% against the SVD source, and returns the address and what was read or drawn, in order.
+address(Record, Controller) ->
+    address(erx_genet_core:lladdr(Record), Controller, svd(), []).
+
+address({done, Address}, _Controller, _Svd, Taken) ->
+    {Address, lists:reverse(Taken)};
+address({read, Register, Field, Next}, Controller, Svd, Taken) ->
+    {_Owned, Access, Fields} = lookup(Register, Svd),
+    ?assertEqual({Register, Field, true, true},
+                 {Register, Field, Access =/= "write-only", maps:is_key(Field, Fields)}),
+    address(Next(maps:get(Register, Controller)), Controller, Svd, [Register | Taken]);
+address({entropy, Next}, Controller, Svd, Taken) ->
+    address(Next(?ENTROPY), Controller, Svd, [entropy | Taken]).
 
 the_address_comes_from_the_record_then_the_controller_then_entropy_test() ->
-    Firmware = controller(false, 16#dca63201, 16#0203),
-    Cases = [{16#dca6320a0b0c, Firmware, <<16#dc, 16#a6, 16#32, 16#0a, 16#0b, 16#0c>>},
-             {none, Firmware, <<16#dc, 16#a6, 16#32, 16#01, 16#02, 16#03>>},
-             %% The reset held the registers meaningless.
-             {none, controller(true, 16#dca63201, 16#0203), ?RANDOM},
-             {none, controller(false, 0, 0), ?RANDOM},
+    Words = [sys_rbuf_flush_ctrl, umac_mac0, umac_mac1],
+    Firmware = firmware(#{}),
+    Cases = [%% A usable record reads no register and draws nothing.
+             {16#dca6320a0b0c, Firmware, {<<16#dc, 16#a6, 16#32, 16#0a, 16#0b, 16#0c>>, []}},
+             {none, Firmware, {<<16#dc, 16#a6, 16#32, 16#01, 16#02, 16#03>>, Words}},
+             %% While the receive buffer's reset holds the UniMAC, its address registers
+             %% are not read at all (if_genet.c:465-469).
+             {none, firmware(#{sys_rbuf_flush_ctrl => 1}), {?RANDOM, [sys_rbuf_flush_ctrl, entropy]}},
+             {none, firmware(#{umac_mac0 => 0, umac_mac1 => 0}), {?RANDOM, Words ++ [entropy]}},
              %% A group address from the record or the controller is not used.
-             {16#010000000001, Firmware, <<16#dc, 16#a6, 16#32, 16#01, 16#02, 16#03>>},
-             {none, controller(false, 16#01000000, 1), ?RANDOM}],
-    [?assertEqual({Record, Controller, Want}, {Record, Controller, erx_genet_core:lladdr(Record, Controller, ?ENTROPY)})
+             {16#010000000001, Firmware, {<<16#dc, 16#a6, 16#32, 16#01, 16#02, 16#03>>, Words}},
+             {none, firmware(#{umac_mac0 => 16#01000000, umac_mac1 => 1}), {?RANDOM, Words ++ [entropy]}}],
+    [?assertEqual({Record, Controller, Want}, {Record, Controller, address(Record, Controller)})
      || {Record, Controller, Want} <- Cases].
 
 %% --- negotiate's bound -----------------------------------------------------------------------

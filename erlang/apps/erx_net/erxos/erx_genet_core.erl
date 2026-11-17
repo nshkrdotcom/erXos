@@ -44,9 +44,9 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
    writes nothing, as in FreeBSD.
 """.
 
--export([identify/1, lladdr/3, reset/0, configure/1, start/0, link_up/1]).
+-export([identify/1, lladdr/1, reset/0, configure/1, start/0, link_up/1]).
 -export([negotiate_retry/1, frames/2, pieces/1]).
--export_type([step/0, controller_mac/0]).
+-export_type([step/0, address_step/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -92,11 +92,14 @@ atom, or `{Name, Element}` for one element of an array such as a ring's register
               | {wait_us, pos_integer()}.
 
 -doc """
-The controller's address registers as read before the reset: whether the receive
-buffer's reset bit read set, in which case they mean nothing (`if_genet.c:465-469`),
-and the two words.
+What finding the address does next: `{done, Address}`; `{read, Register, Field, Next}`,
+read that field and pass its value to `Next`; or `{entropy, Next}`, draw six bytes and
+pass them to `Next`. Each `Next` is pure and returns the following step, so the reads
+and the draw happen only where `lladdr/1` asks for them, in its order.
 """.
--type controller_mac() :: #{flush_reset := boolean(), mac0 := 0..16#ffffffff, mac1 := 0..16#ffff}.
+-type address_step() :: {done, <<_:48>>}
+                      | {read, erx_device:register_name(), atom(), fun((non_neg_integer()) -> address_step())}
+                      | {entropy, fun((<<_:48>>) -> address_step())}.
 
 %% --- Identification and the address -----------------------------------------------
 
@@ -106,25 +109,35 @@ identify(?REV_MAJOR_V5) -> ok;
 identify(Major) when is_integer(Major), Major >= 0 -> {error, {revision, Major}}.
 
 -doc """
-The interface's address, in FreeBSD's order (`gen_get_eaddr`, `if_genet.c:446-485`):
-the device tree's, which the device record carries as `mac`; else the one the firmware
-left in the controller, MAC0 holding the first four bytes and MAC1's low half the last
-two, unless the receive buffer's reset was set or both words are 0; else a random
-locally administered unicast address from `Entropy`, six bytes. An address from the
-record or the controller that is a group address or all zeros is not used.
+The interface's address, in FreeBSD's order (`gen_get_eaddr`, `if_genet.c:446-485`),
+as steps: the device tree's, which the device record carries as `mac`; else the one the
+firmware left in the controller, MAC0 holding the first four bytes and MAC1's low half
+the last two, unless both words are 0; else a random locally administered unicast
+address from six bytes of entropy. An address from the record or the controller that is
+a group address or all zeros is not used. The controller's address registers are read
+only when the record gives no address, and only after the receive buffer's reset bit
+(bit 1 of SYS_RBUF_FLUSH_CTRL, the UniMAC's reset) reads clear: while that reset holds
+the UniMAC its registers mean nothing (`if_genet.c:465-469`), and whether a read of one
+raises a bus error is unverified.
 """.
--spec lladdr(none | 1..16#ffffffffffff, controller_mac(), <<_:48>>) -> <<_:48>>.
-lladdr(Record, Controller, <<_:48>> = Entropy) ->
-    Candidates = [<<Mac:48>> || is_integer(Record), Mac <- [Record]]
-                 ++ controller_address(Controller),
-    case [Address || Address <- Candidates, unicast(Address)] of
-        [Address | _] -> Address;
-        [] -> local_unicast(Entropy)
-    end.
+-spec lladdr(none | 1..16#ffffffffffff) -> address_step().
+lladdr(none) -> controller();
+lladdr(Record) -> unicast_or(<<Record:48>>, fun controller/0).
 
-controller_address(#{flush_reset := true}) -> [];
-controller_address(#{flush_reset := false, mac0 := Mac0, mac1 := Mac1}) ->
-    [<<Mac0:32, Mac1:16>>].
+controller() ->
+    {read, sys_rbuf_flush_ctrl, reset, fun(0) -> controller_words(); (_Reset) -> random() end}.
+
+controller_words() ->
+    {read, umac_mac0, addr,
+     fun(Mac0) -> {read, umac_mac1, addr, fun(Mac1) -> unicast_or(<<Mac0:32, Mac1:16>>, fun random/0) end} end}.
+
+random() -> {entropy, fun(Entropy) -> {done, local_unicast(Entropy)} end}.
+
+unicast_or(Address, Else) ->
+    case unicast(Address) of
+        true -> {done, Address};
+        false -> Else()
+    end.
 
 unicast(<<0:48>>) -> false;
 unicast(<<_:7, Group:1, _:40>>) -> Group =:= 0.

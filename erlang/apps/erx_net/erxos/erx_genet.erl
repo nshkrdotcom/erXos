@@ -21,7 +21,7 @@ device is not driven), enable the MAC and the interrupts, and bind the line. The
 starts at the driver's first message to itself, so every PHY result, a failure at the
 reset included, comes through `event/2`.
 
-* **Link information.** The address of erx_genet_core:lladdr/3; an MTU of 1,500; the link
+* **Link information.** The address of erx_genet_core:lladdr/1; an MTU of 1,500; the link
   `down` until the PHY reports it up; the transmit ring's size as `tx_limit`; `finish`
   `none`, since no checksum offload is enabled.
 * **The PHY** is a BCM54213PE at MDIO address 1 (the board's device tree; the board pass
@@ -124,16 +124,16 @@ init(#{record := Spec}) ->
 %% written synchronously, so when a register access ends the domain by a synchronous fault
 %% the last such line names its phase. An asynchronous error (an SError on AArch64) may be
 %% taken only at a later kernel entry, such as the next phase line, so for one the fault
-%% lies in the last phase named or the one before it.
+%% lies in the last phase named or the one before it. Each register read of identify and
+%% the address has a line of its own before it and after it (read_logged/3).
 start(Spec) ->
     maybe
         ok = log_phase(open),
         {ok, Dev} ?= step(open, erx_device:open(Spec)),
         ok = log_phase(identify),
-        ok ?= erx_genet_core:identify(erx_device:read_field(Dev, sys_rev_ctrl, major)),
+        ok ?= erx_genet_core:identify(read_logged(Dev, sys_rev_ctrl, major)),
         ok = log_phase(address),
-        Lladdr = erx_genet_core:lladdr(maps:get(mac, Spec, none), controller_mac(Dev),
-                                       erx_net_clock:entropy(6)),
+        Lladdr = address(Dev, erx_genet_core:lladdr(maps:get(mac, Spec, none))),
         ok = log_phase(reset),
         ok = apply_steps(Dev, erx_genet_core:reset()),
         ok = log_phase(configure),
@@ -155,12 +155,18 @@ start(Spec) ->
                tx_limit => ?QUEUE_SIZE, finish => none}, T}
     end.
 
-%% The address registers, read before the reset, with whether the receive buffer's reset
-%% held them meaningless.
-controller_mac(Dev) ->
-    #{flush_reset => erx_device:read_field(Dev, sys_rbuf_flush_ctrl, reset) =/= 0,
-      mac0 => erx_device:read_field(Dev, umac_mac0, addr),
-      mac1 => erx_device:read_field(Dev, umac_mac1, addr)}.
+%% Carries out erx_genet_core:lladdr/1's steps, before the reset: its reads and its draw.
+address(_Dev, {done, Address}) -> Address;
+address(Dev, {read, Register, Field, Next}) -> address(Dev, Next(read_logged(Dev, Register, Field)));
+address(Dev, {entropy, Next}) -> address(Dev, Next(erx_net_clock:entropy(6))).
+
+%% A read of the start, with a line in the kernel log before it naming the field and one
+%% after it giving the value, so the last line before a fault in the read names its field.
+read_logged(Dev, Register, Field) ->
+    ok = log("read ~s ~s", [Register, Field]),
+    Value = erx_device:read_field(Dev, Register, Field),
+    ok = log("~s ~s = 16#~.16b", [Register, Field, Value]),
+    Value.
 
 negotiate(Dev, Tries) ->
     case erx_device:negotiate(Dev, 0) of

@@ -132,6 +132,13 @@ block a milestone's numbers.
   resolving the name at the driver's start so an access takes an index; a
   loader-specialised instruction in the interpreter and the BeamAsm image that
   performs the access inline.
+* **[Low] drivers, a full barrier after every register store.** `store()` in
+  `otp/erts/emulator/nifs/erxos/erx_device.c` waits for each store to complete
+  (`dsb sy` on AArch64), so a bus error a store raises is taken in its caller. GENET's
+  descriptors are registers, so a frame sent or a buffer given back costs several
+  such waits. Measure: the Pi 4's frame rate over erx_genet with and without the wait,
+  natively; drop the wait from the ring paths (keeping it for the driver's own
+  stores) if it costs a measurable share.
 * **`read_file` copies from the release's pages.** `erx_prim_file.c` serves `prim_file:read_file/1` through
   stock's `read_file` in `prim_file_nif.c`, which allocates a binary and fills it, where the design allows a
   binary over the slice's pages. Settled by timing a boot that loads every module of `kernel` and `stdlib`
