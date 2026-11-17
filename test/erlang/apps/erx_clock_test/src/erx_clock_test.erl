@@ -9,8 +9,9 @@ started the machine (docs/design-apps.md, AP-R2).
 
 report/0 logs `erx_clock_test: started`, waits until erx_session has started,
 which mounts the session's home, /home/clock, and, for a template granted start,
-/etc/start, and the `home` grant has arrived, which the storage domain mints once the session has reported ready,
-and then logs one notice, a record the console prints under the session's name:
+/etc/start, and the `home` grant has arrived, which the storage domain mints once
+the session has reported ready, and then logs one notice, a record the console
+prints under the session's name:
 
     erx_clock_test: {clock_report,Node,Grants,StartCap,StartInfo,HomeListed}
 
@@ -18,9 +19,10 @@ Node is the session's node, Grants the sorted names of every facet it holds
 (erx:caps/0), StartCap whether erx:cap(start) is undefined, StartInfo what
 file:read_file_info/1 of /etc/start answers and HomeListed the first element of
 file:list_dir/1 of the home erx_session_sup:home/0 names, `ok` when the namespace
-serves it, so that
-StartInfo's `{error, enoent}` means the namespace holds no /etc/start rather than no
-namespace at all. A wait that does not end within ?POLLS polls logs `timeout`
+serves it, so that StartInfo's `{error, enoent}` means the namespace holds no
+/etc/start rather than no namespace at all. erx_session is not among the
+application's dependencies, since the template's -eval starts it after boot;
+the wait for it to have started is what makes erx_session_sup:home/0 callable. A wait that does not end within ?POLLS polls logs `timeout`
 in place of the record. The process then waits for ever.
 """.
 
