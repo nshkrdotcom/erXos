@@ -55,7 +55,7 @@ fetch() ->
               sources => #{btc => (Source(GoodPort, "/btc"))#{history => History},
                            eth => Source(OtherPort, "/btc"), big => Source(GoodPort, "/big")}},
     {ok, Pid} = erx_quotes:start_link(self(), Table),
-    Expected = #{<<"btc">> => {64412.5, <<"Local, 24 h - 0 s">>},
+    Expected = #{<<"btc">> => {64412.5, <<"24 h chart">>},
                  <<"eth">> => {none, <<"no data: certificate rejected">>},
                  <<"big">> => {none, <<"no data: answer too big">>}},
     ?assertEqual(Expected, settled(Expected, none, erlang:monotonic_time(millisecond) + ?DEADLINE_MS)),

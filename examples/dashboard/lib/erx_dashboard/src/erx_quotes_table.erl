@@ -63,7 +63,7 @@ kraken(Pair, Key) ->
       format => json,
       price => [<<"result">>, Key, <<"c">>, 0],
       change => {from, [<<"result">>, Key, <<"o">>]},
-      credit => <<"Kraken">>, note => <<"change since 00:00 UTC">>,
+      credit => <<"Kraken">>, note => <<"since 00:00 UTC">>,
       history => #{url => <<"https://api.kraken.com/0/public/OHLC?pair=", Pair/binary,
                             "&interval=", Minutes/binary>>,
                    entries => [<<"result">>, Key]}}.

@@ -47,7 +47,7 @@ Decisions every reader needs:
   header and in TLS's server name, so the certificate is still checked
   against the host's name ([One request](#one-request)).
 * **No byte of a response reaches the screen as text.** The dashboard
-  shows numbers it formats itself, the labels and credits of its own table,
+  shows numbers it formats itself, the labels, credits and notes of its own table,
   and fixed words for its reasons.
 * **HTTPS only, validated as the system validates.** Every row's URL is
   `https`; `erx_quotes` follows a redirect only within the origin it
@@ -60,7 +60,7 @@ Decisions every reader needs:
 * **The graph is a day of closes, or the live samples.** A quote's graph
   is the day of 15 min closes its source's history gave, joined with the
   live prices since; until a history arrives it is the quote's live
-  samples, and its status line says which, `24 h` or `live`. A history
+  samples, and its status line says which, `24 h chart` or `live chart`. A history
   that fails changes no value and no reason, unless it carries a
   `Retry-After`, which holds its source back as a round's does
   ([Asking for a history](#asking-for-a-history)).
@@ -151,10 +151,10 @@ terms bar automated collection (2(d)(ix)).
 ## Requirements
 
 * **Q-R1.** Each quote shows the last value `erx_quotes` received for it,
-  with the source that gave it and how long ago it was fetched, or that
-  it has none.
-* **Q-R2.** A value older than its quote's stale age is shown as stale,
-  with its age, and never as current.
+  or that it has none, and the panel credits every source the table
+  asks.
+* **Q-R2.** A value is shown as current only while it is at most its
+  quote's stale age old; an older one is shown as stale, with its age.
 * **Q-R3.** When a quote's last round failed, the screen says why, in one
   of a closed set of reasons, whether its value is fresh, stale or
   absent, and says "clock not set" when a certificate was refused as
@@ -252,7 +252,7 @@ One source row, as the module writes it:
   format => json,
   price => [<<"result">>, <<"XXBTZUSD">>, <<"c">>, 0],
   change => {from, [<<"result">>, <<"XXBTZUSD">>, <<"o">>]},
-  credit => <<"Kraken">>, note => <<"change since 00:00 UTC">>,
+  credit => <<"Kraken">>, note => <<"since 00:00 UTC">>,
   history => #{url => <<"https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=15">>,
                entries => [<<"result">>, <<"XXBTZUSD">>]}}
 ```
@@ -270,8 +270,8 @@ One source row, as the module writes it:
 | `format` | `json`, the one body format |
 | `price` | the path to the price in the JSON answer: binaries are object keys, integers array indexes from 0 |
 | `change` | `none`, or `{from, Path}`: the percentage from the value at `Path` to the price |
-| `credit` | the source's name on the screen, printable ASCII |
-| `note` | what the value is, beside the credit, printable ASCII |
+| `credit` | the source's name, which the panel's header credits, printable ASCII |
+| `note` | what the value is, on the status line of a quote the source gave its value, printable ASCII |
 | `history` | optional: `url`, the request for 15 min closes, `https` on the row's host, to which the core adds `since`; `entries`, the path to the list of entries in its answer |
 
 The core takes an ordered list of sources per quote, so a fallback
@@ -513,7 +513,7 @@ history starts one. The join is pure and tested with exact times.
 ### What the screen shows
 
 The dashboard's quotes panel, under its header, which carries the board's
-credit, `Kraken`, shows one block per quote in the table's order,
+credit, shows one block per quote in the table's order,
 split by hairlines. Each block has the quote's label, its price with
 `decimals` digits, its change with two digits after an arrow up or down
 and coloured by its direction (a label's `trend`), and a status line that the dashboard shows
@@ -523,24 +523,36 @@ The graph is the closes of the quote's series once a history arrived,
 a day; before, it is the quote's last 180 prices, half an hour of its
 10 s period, its `samples`. A failed round leaves either as it is. The
 day's opening price, derived from the price and its change, is marked
-across the graph. `RANGE` in the status line says what the graph
-spans, `24 h` or `live`, a fixed word:
+across the graph. The board's credit is the `credit` of every source the
+table's quotes ask, each once, in the order they ask them, so it names
+the source of every value the panel can show, `Kraken` for the kiosk's
+table, and a status line does not repeat it. A quote with several
+sources therefore does not say on the screen which of them gave its
+value; its `NOTE`, when the sources' notes differ, and the log line do.
+In the status line `NOTE`
+is the `note` of the source that gave the value, left out with its
+separator when empty, and `RANGE` says what the graph spans, `24 h` or
+`live`, a fixed word; ` · ` is a middle dot (U+00B7) between spaces, a
+character of the theme's `ui` range (`abi/theme.txt`):
 
 | State | Status line |
 | --- | --- |
 | no value, no failure | `waiting` |
 | no value, a failure | `no data: REASON` |
-| a value, age at most `3 * period` | `CREDIT[, NOTE], RANGE - AGE`, and `: REASON` when the last round failed |
-| a value, older | `stale, AGE - CREDIT[, NOTE], RANGE`, and `: REASON` when the last round failed |
+| a value, age at most `3 * period` | `[NOTE · ]RANGE chart`, and `: REASON` when the last round failed |
+| a value, older | `stale, AGE · [NOTE · ]RANGE chart`, and `: REASON` when the last round failed |
 
-`AGE` is `N s` below two minutes, `N min` below two hours, `N h` below
+The kiosk's table gives `since 00:00 UTC · 24 h chart` while a quote is
+fresh and `stale, 3 min · since 00:00 UTC · 24 h chart` three minutes
+after its last value. `AGE` is `N s` below two minutes, `N min` below two hours, `N h` below
 two days and `N d` beyond, rounded down. A quote with no value has price
 and change `none`, which the dashboard shows as `--`. `REASON` is the word
 of the [reasons table](#refusals-and-error-results). `erx_quotes` sends a
 new board only when it differs from the last one it sent, and the
 dashboard hands the toolkit a new tree only when its text changed. The
-board's texts are the table's labels and credits, fixed words and numbers
-`erx_quotes_view` formats, so no byte of a response reaches the screen.
+board's texts are the table's labels, credits and notes, fixed words,
+the middle dot and numbers `erx_quotes_view` formats, so no byte of a
+response reaches the screen.
 
 ## Concurrency and failure
 
@@ -659,12 +671,12 @@ Each test below names the seeded failure that proves it ran.
 
 | Test | Passes when | Seeded failure |
 | --- | --- | --- |
-| rounds (`erx_quotes_core_tests`) | with a test table of two sources for a quote: a first source's failure asks the second at once; a second success shows the second's credit; the next round starts at the first; every source failing sets `failure` to the first's reason | starting the next round at the source that last answered fails the third case |
+| rounds (`erx_quotes_core_tests`) | with a test table of two sources for a quote: a first source's failure asks the second at once; a second success shows the second's note; the next round starts at the first; every source failing sets `failure` to the first's reason | starting the next round at the source that last answered fails the third case |
 | held-back sources (`erx_quotes_core_tests`) | the first source answering 429 with `RetryAfter` 3,600,000 ms while the second answers: the next rounds ask only the second until an hour has passed, then the first again; both held back: no request until the earlier `not_before` | keeping `not_before` per quote instead of per source asks the first source ten seconds later |
 | backoff (`erx_quotes_core_tests`) | waits in milliseconds for periods of 10,000 and 60,000 over eight failed rounds with `Jitter` 1.0 are exact, capped at 900,000; a success resets the count | dropping the cap gives 2,560,000 at the eighth round |
 | staleness and ages (`erx_quotes_core_tests`) | a value shows fresh at `3 * period` after its fetch and stale 1 ms later; a failed round while the value is fresh shows its reason beside the fresh value; ages format at 119 s, 120 s, 7,199 s, 7,200 s and two days | comparing `>=` instead of `>` shows the value stale at exactly `3 * period` |
 | log lines (`erx_quotes_core_tests`) | the lines of a waiting quote, a fresh one, the same stale, fresh and then stale after a failed round with `{status, 503}`, one with no data on `clock_unset` and one with no decimals are exact | naming the source rather than the reason of a failed round turns the stale line's `{status,503}` into the source |
-| no fabrication (`erx_quotes_core_tests`) | over generated event sequences, every price the board carries is the price of some successful outcome for that quote, with that outcome's credit and an age equal to `Now` minus its time | keeping the previous price on a failed round with a new `FetchedAt` breaks the age property |
+| no fabrication (`erx_quotes_core_tests`) | over generated event sequences, every price the board carries is the price of some successful outcome for that quote, whose source the board's credit names, shown stale, with an age equal to `Now` minus its time, exactly when that age passes `3 * period` | keeping the previous price on a failed round with a new `FetchedAt` breaks the age property |
 | classify (`erx_quotes_http_tests`) | each status, redirect and error shape of the reasons table, built as `httpc` and `ssl` answer, maps to its reason; redirects to `http:`, to another host and to another port of the same host are `redirect`; a relative one is followed; a `location` of non-ASCII bytes is `redirect`; a fourth hop is `redirect`; a 200 whose body is not a binary is `failed`; `retry-after` of 0, 1, 3,600, 7,200, 11 digits and a date give none, 1,000, 3,600,000, 3,600,000, none and none; `certificate_expired` with the wall clock at 1970-01-01T00:05 is `clock_unset`, with it in 2026 `certificate`, and `unknown_ca` at 1970 `certificate` | following a redirect without comparing its host turns the other-host case into `follow` |
 | extract (`erx_quotes_extract_tests`) | bodies in the shape of [What the source offers](#what-the-source-offers) for each row of `erx_quotes_table`, generated by the test, give the price and change they carry; a missing key, a wrong type, a 33-byte decimal, `0` and a negative price give `bad_data` | dropping the price's upper bound accepts `1.0e300` |
 | history reader (`erx_quotes_extract_tests`) | a generated day of 97 Kraken OHLC entries gives its entries; 200 entries, times two days either side of the clock and integer items are read; each seeded fault of the answer gives `bad_data`: a body of 65,537 bytes, an entry of 7 or 9 items, a close negative, `NaN`, `Infinity`, `1e5`, `0`, 10^15 or a JSON number, times out of order, repeated, off a 900 s step or past two days, no entries, 201 entries, another pair's key, entries in an object, a string time, a float count, a `null` item, a set `error`, a truncated body | dropping the order check accepts the out-of-order answer |

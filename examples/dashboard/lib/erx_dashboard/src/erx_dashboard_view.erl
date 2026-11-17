@@ -26,7 +26,7 @@ block's key is its quote's symbol, so a board that reorders its quotes
 moves blocks instead of rewriting their text. Before the first board the
 panel says it is waiting.
 
-A board is the source's credit, the line under the panel's title that
+A board is its sources' credit, flush right of the panel's title, which
 says where the numbers come from, and its quotes in the order the
 screen lists them. A quote's price is in its own currency and its
 change a percent change, each a number or `none`, shown as `--`; its
@@ -35,7 +35,8 @@ change a percent change, each a number or `none`, shown as `--`; its
 symbol. erx_quotes builds every board from its table, a reviewed
 constant (erx_quotes_table) whose `decimals` lie within 0 to 8, whose
 symbols are unique and whose texts are ASCII within the widget format's
-bounds; the view checks nothing again.
+bounds, and a status line adds only fixed words, numbers and the middle
+dot; the view checks nothing again.
 """.
 
 -export([tree/1, clock_offset/0, clock/1, date/1, minute/1, price/2, change/1]).
