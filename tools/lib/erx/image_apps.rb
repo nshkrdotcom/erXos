@@ -39,7 +39,7 @@ module Erx
     PARTITION_DIRECTORY = 'apps'
     ARTIFACT_KIND = 'package'
     DEVELOPMENT_SIGNER = 'development'
-    # The kiosk: the app the Raspberry Pi 4's card carries, enabled (ProductionImage#card_apps),
+    # The kiosk: the app the Raspberry Pi 4's card carries, enabled (ProductionImage#published_apps),
     # and the kiosk suite boots on QEMU virt (Kiosk), both as packed_kiosk packs it.
     KIOSK = 'examples/dashboard'
     KEY_BYTES = 32

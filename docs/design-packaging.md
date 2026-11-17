@@ -519,10 +519,14 @@ and the row binds by its header's hash. Until a release signer exists it
 carries no signer row and no development key, so the card trusts that
 one package by its hash and no key, and no downloaded card ever trusts
 its builder's development key: the build refuses a card whose admitted
-manifest trusts a key (`ProductionImage.check_card_trust`), and refuses
+manifest trusts a key (`ProductionImage.check_published_trust`), and refuses
 a package, signer or `--local` of its builder's
 (`ProductionImage.check_card_apps`), so what the card holds follows from
-the tree it was built from. Since a package of the image is
+the tree it was built from. QEMU's release medium, the page's QEMU virt
+download ([design-ssh.md](design-ssh.md#the-ssh-domain)), is the published
+medium too when `tools/erx pack --medium` packs it with no app of its
+builder's: it carries the same kiosk, enabled, and its build refuses the
+same trust. Since a package of the image is
 authenticated by its hash and its signer and signature fields are not
 read ([The package](#the-package)), the kiosk is sealed by the
 *published package key*, an Ed25519 key whose seed is the SHA-256 of a

@@ -116,7 +116,7 @@
     QEMU shows the display in its window with the virtio keyboard and tablet,
     the serial console is on your terminal, and your port 2222 reaches the
     guest's SSH. Add <code>--print</code> for the plain
-    <code>qemu-system-aarch64</code> command. <!-- unverified: SSH logins on QEMU need authorized_keys on the medium's record partition, which holds no FAT volume yet (TODO.md), and the page does not offer the medium yet. --></p>
+    <code>qemu-system-aarch64</code> command. <!-- unverified: a key file a host's FAT driver writes on the ERXOS volume lands in the record's erase unit, which the guest's reader refuses (TODO.md, "storage, the record volume's erase unit"), and the page does not offer the medium yet. --></p>
   </div>
 </section>
 

@@ -3312,8 +3312,7 @@ it; git history is the record of completed work.
   `build/app-sdk`), not the exported SDK's `host/bin/erx-app`, which does not exist yet (the SDK entry above);
   no build hands the public half of the builder's `Erx::PackageKey` to the manifest check as
   `Manifest::Context`'s `development_key`, so no image trusts its builder's key yet, where every development
-  build, not only those `pack --app` builds, should, but for the Raspberry Pi 4's card, the image the website
-  offers, which trusts its kiosk by hash and no key and whose build refuses a manifest that trusts one (`ProductionImage.check_card_trust`; design-packaging.md, "The shipped manifests"); the packer does not yet run the machine's manifest
+  build, not only those `pack --app` builds, should, but for the published media, the Raspberry Pi 4's card and QEMU's medium, which trust its kiosk by hash and no key and whose build refuses a manifest that trusts one (`ProductionImage.check_published_trust`; design-packaging.md, "The shipped manifests"); the packer does not yet run the machine's manifest
   reader (`erx_pkg_manifest:system_config/1`) on the host over the packed manifest, beside
   `AppPack.describe`; and `tools/erx app run DIR`.
   Fix: each with its own package.
@@ -9385,17 +9384,17 @@ document's "residual risks accepted" paragraph.
   `MediumBoot` packs its medium from `site_manifest_source` (`tools/lib/erx/medium_boot.rb:499`,
   `tools/lib/erx/bench_g5.rb:82`), the browser demo's manifest, which leaves the SSH domain out, so no harness
   boots the QEMU release medium the website offers. The test needs `MediumBoot` to take its manifest from the
-  caller, `ProductionImage.medium_manifest` of the development manifest for that test and
+  caller, the published medium of the development manifest for that test and
   `site_manifest_source` for the medium suite and G5 as now.
 * [Medium] site, the QEMU virt download ([site/README.md](site/README.md),
   [design-ssh.md](docs/design-ssh.md#the-ssh-domain)): the page offers the browser demo's gzip-compressed
   `image.boot` as its QEMU download; it is to offer the QEMU release medium packed from the development
-  manifest (`ProductionImage.medium_manifest`), with the SSH domain and no `authorized_keys`, and the QEMU
+  manifest (`ProductionImage#build_medium`, `published`), with the SSH domain and no `authorized_keys`, and the QEMU
   command line that boots it, while the browser demo keeps its own image. The site takes the medium only with a
   build record written at pack time that names its SHA-256, as the card's does: `tools/erx boot --medium` boots a
   medium in place, so a booted pack output holds the guest's SSH host key and `/data`. Plain QEMU has no firmware
   to pick the slot, so the published command needs the device tree naming it (`MediumBoot.firmware_tree`) published
-  beside the medium, or a loader on the medium; the medium carries no kiosk, which the plan's QEMU demo shows.
+  beside the medium, or a loader on the medium.
 * [Medium] storage, the reset count's encoding (`abi/medium.txt`, `tools/lib/erx/pi_medium.rb`): no encoding of the
   count is defined, so the Pi card's writer leaves its sector the zeros fsimg writes in the reserved area instead of
   the count's first value (design-platforms.md, "Slots and the boot-selection record"), as the QEMU medium does.
