@@ -15,7 +15,7 @@ require_relative '../lib/erx/generated'
 # a key that does not decode is then returned as a blob.
 module ErxBootKeysFuzz
   ROOT = File.expand_path('../..', __dir__)
-  CORE = 'erlang/apps/erx_storage/src/erx_boot_keys.erl'
+  CORE = 'erlang/apps/erx/src/erx_boot_keys.erl'
   FUZZ = 'test/erlang/erx_boot_keys_fuzz.erl'
   CHECKED = "blob(<<NameSize:32, Name:NameSize/binary, KeySize:32, _:KeySize/binary>> = Blob)\n  " \
             'when Name =:= ?ERX_SSH_ED25519_NAME_BYTES, KeySize =:= ?ERX_SSH_ED25519_KEY_SIZE ->'

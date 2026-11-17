@@ -2676,7 +2676,7 @@ module Erx
       # exactly one service named login_keys_service, of the files interface, served by the
       # window's holder, and one without holds none; and every facet row of it is read-only,
       # a row that states no rights being rw (abi/services/files.txt), and the system
-      # domain's or the system principal's session template's, whose daemon of SSH's stage 1
+      # domain's or the system principal's session template's, whose import of SSH's stage 1
       # reads root's keys (docs/design-ssh.md, "Invariants", H8).
       # facet_values holds each facet row's resolved parameters, in the rows' order.
       def check_login_keys_service(tables, facet_values)

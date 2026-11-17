@@ -287,7 +287,7 @@ service system
 # authorized_keys, which the storage domain reads through its record_volume window and
 # serves as a files service of one file, root; its name is login_keys_service
 # (abi/manifest.txt). Its grants are read-only: the system domain's, and root's
-# session's, whose daemon of SSH's stage 1 (erx_ssh_dev) reads root's keys from it
+# session's, whose import of SSH's stage 1 (erx_ssh_dev) reads root's keys from it
 # (docs/design-ssh.md, "Who publishes it" and "Stages").
 service login_keys
   server @domain.storage

@@ -1702,8 +1702,9 @@ writes with its verify (`fsimg W`).
 **The record volume's one reader.** One file of the boot medium's
 record partition is read on the target: root's `authorized_keys`
 ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)). The
-storage domain that serves `system` reads it once, at its start, through
-the read-only `record_volume` window, which its block service starts
+storage domain that serves `system` reads it when the tree that serves
+its keys is first read, which root's session does only while it has no
+home copy of them, through the read-only `record_volume` window, which its block service starts
 exactly when the manifest gives the domain that window: on erXos's
 kernel from the device service's derivation (PW1), and on the Phase 1
 stopgap from the sixth word, `record_volume`, of the domain's
@@ -1739,32 +1740,16 @@ with `read failed`, which is not a finding about the file
 ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium) has the
 tree answer it `eio`).
 
-The reader refuses a file with any cluster in the record's region, the
-record's own included, with the one finding `lies in the boot-selection
-record's region`. The region is the erase unit that holds the record's
-sector: `abi/medium.txt`'s `medium_erase_sectors` (2048 sectors, 1 MiB)
-aligned from the partition's start, so with the layout's values it is
-MiB 3 of the volume, clusters 2 to 2049. The record is alone in its erase unit
-([System updates](#system-updates)), and a file there would share the
-unit a commit rewrites. The volume is built so that no FAT writer puts a
-file there: the image build marks every cluster of the region after the
-record's as bad in both FATs
-([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record)),
-and a FAT writer, a user's computer among them, allocates only a
-cluster whose entry is free, which a bad cluster's is not (the FAT
-specification's bad-cluster mark; that the hosts of the Raspberry Pi's
-manual checklist honor it is unverified until that step passes). The refusal is the bound for a volume whose marks a host's
-repair tool has cleared: the file is refused with that finding, and the
-record keeps its unit. The region has one source: every consumer
-derives its clusters from `medium_erase_sectors`,
-`medium_record_select_start` and the one-sector clusters, as the
-generated constants give them, and writes no cluster number down. The
-reader takes the range for its check; the image build passes the
-range after the record's cluster to fsimg's FAT creation as
-`-o bad=FIRST-LAST`, so fsimg writes the marks as it formats and nothing
-patches its output; and `RecordVolume.check`
-(`tools/lib/erx/record_volume.rb`) reads both FATs back through `FatVolume`
-and refuses a volume in which a cluster of that range is not marked bad.
+A file may lie anywhere in the data area, the rest of the record's erase
+unit (`medium_erase_sectors`, aligned from the partition's start)
+included: a host's FAT driver commonly puts a new file right after the
+record, the volume's only other file, and no cluster is marked bad. The
+record's own cluster is the record's file's, so no FAT writer allocates
+it. A host writing beside the record can still tear the record within
+their shared erase unit, a card pulled mid-copy among the ways; the
+card is then written again, a residual in `TODO.md`. Root's keys are
+read from the medium only until the first boot imports them into root's
+home ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)).
 
 The reader runs in a process of its own, spawned and monitored by the
 tree's one holder, a process linked to the `login_keys` mint under

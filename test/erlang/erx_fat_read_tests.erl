@@ -68,9 +68,10 @@ a_directory_or_a_label_of_that_name_is_not_found_test() ->
 a_long_name_whose_checksum_does_not_match_its_short_entry_is_not_found_test() ->
     ?assertEqual({error, not_found}, read("checksum")).
 
-a_chain_into_the_records_region_is_refused_test() ->
-    [?assertEqual({error, in_record_region}, read(Volume))
-     || Volume <- ["region_record", "region_beside", "region_last"]].
+%% A file beside the record, in the erase unit that holds it, is read as any other:
+%% a host's FAT writer may put authorized_keys there.
+a_file_beside_the_record_is_read_test() ->
+    ?assertEqual({ok, contents("beside_the_record")}, read("beside_the_record")).
 
 a_chain_that_leaves_the_data_area_is_refused_test() ->
     [?assertEqual({error, does_not_read}, read(Volume))

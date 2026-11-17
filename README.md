@@ -440,8 +440,10 @@ USB-serial adapter gives you the console
    boot: copy a file named `authorized_keys`, with one `ssh-ed25519` key
    per line, to the root directory of the FAT volume labelled `ERXOS`.
    The published card has no key, so without this file no SSH login
-   works. The file is read once per boot, and nothing running on the
-   board can write it.
+   works. The first boot copies its keys into root's home,
+   `/root/.ssh/authorized_keys`, and from then on SSH reads only that
+   copy: edit it to add or remove a key, or delete it to take the card's
+   file again at the next boot.
 5. Put the card in the Pi, connect the Ethernet cable and the screen,
    and power it. The serial console shows the banner and the shell's
    `%` prompt within a minute; the screen shows the kiosk, a clock with a
@@ -477,7 +479,7 @@ firmware would, lie in the tree's `build/production-image/medium-boot` until
 the next `--medium`, and its disk is the copy. To log in over SSH, the medium needs your
 `authorized_keys` on its first FAT volume, labelled `ERXOS`, as on the card; then
 `ssh -p 2222 root@127.0.0.1`.
-<!-- unverified: a key file a host's FAT driver writes lands beside the record in its erase unit, which the guest's reader refuses (TODO.md, "storage, the record volume's erase unit"), and the website does not offer the medium as a download yet (TODO.md, "site, the QEMU virt download"). -->
+<!-- unverified: the website does not offer the medium as a download yet (TODO.md, "site, the QEMU virt download"). -->
 
 **What to try.** In the SSH session or on the serial console:
 

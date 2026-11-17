@@ -10,8 +10,8 @@ require_relative '../../tools/lib/erx/generated_abi'
 # volume's one reader"). They are written here, from Microsoft's "FAT32 File System
 # Specification", version 1.03, sections 3 (the BPB), 4 (the FAT) and 6 and 7
 # (directory entries and long names), because the cases are volumes no FAT writer
-# makes: chains that loop or leave the data area, files in the record's region, long
-# names whose checksum does not match. Every value of the layout is derived from the
+# makes: chains that loop or leave the data area, long names whose checksum does not
+# match. Every value of the layout is derived from the
 # generated medium constants, so the volumes move with abi/medium.txt.
 #
 # CASES names each volume the EUnit suite reads; FILES holds the bytes the reader must
@@ -167,9 +167,7 @@ module FatRecordVolume
     'directory' => volume(files: [keys(attr: DIRECTORY)]),
     'label' => volume(files: [keys(attr: VOLUME_ID)]),
     'checksum' => volume(files: [keys(checksum_delta: 1)]),
-    'region_record' => one([REGION.first, FREE + 1, FREE + 2]),
-    'region_beside' => one([REGION.first + 1, FREE + 1, FREE + 2]),
-    'region_last' => one([FREE, FREE + 1, REGION.last]),
+    'beside_the_record' => one([REGION.first + 1, FREE + 1, REGION.last]),
     'first_free' => one([FREE, FREE + 1, FREE + 2]),
     'link_past_the_data_area' => one([FREE, FREE + 1], links: { FREE + 1 => LAST + 1 }),
     'link_free' => one([FREE, FREE + 1], links: { FREE + 1 => 0 }),
@@ -194,5 +192,6 @@ module FatRecordVolume
   }.freeze
 
   FILES = { 'found' => KEYS, 'upper' => KEYS, 'slack' => SLACK, 'full' => FULL, 'empty' => '',
-            'first_free' => KEYS, 'straddle' => KEYS, 'last_cluster' => KEYS }.freeze
+            'first_free' => KEYS, 'straddle' => KEYS, 'last_cluster' => KEYS,
+            'beside_the_record' => KEYS }.freeze
 end

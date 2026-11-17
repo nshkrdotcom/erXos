@@ -62,7 +62,8 @@
       root@HOST</code> gives root's command shell, with <code>ps</code> and
       <code>top</code>, and <code>erl</code>'s <code>erx:domains()</code>
       lists every domain of the machine. Your key comes from
-      <code>authorized_keys</code> on the card's <code>ERXOS</code> volume.</li>
+      <code>authorized_keys</code> on the card's <code>ERXOS</code> volume,
+      which the first boot copies into <code>/root/.ssh/authorized_keys</code>.</li>
       <li><strong>The clock.</strong> It starts at the build's date at each
       boot, so HTTPS works at once; root sets the exact time with
       <code>date</code>.</li>
@@ -103,7 +104,9 @@
       <li>Copy your public key, an <code>ssh-ed25519</code> line, to a file
       named <code>authorized_keys</code> in the root of the card's
       <code>ERXOS</code> volume. The published images carry no key, so
-      without this file no login works.</li>
+      without this file no login works. The first boot copies the keys into
+      root's <code>/root/.ssh/authorized_keys</code>, and from then on SSH
+      reads only that copy.</li>
       <li>Put the card in the Pi with an Ethernet cable and a screen on HDMI0,
       and power it. The banner and the <code>%</code> prompt appear on the
       serial console (115200 baud) within a minute, then the kiosk on the
@@ -116,7 +119,7 @@
     QEMU shows the display in its window with the virtio keyboard and tablet,
     the serial console is on your terminal, and your port 2222 reaches the
     guest's SSH. Add <code>--print</code> for the plain
-    <code>qemu-system-aarch64</code> command. <!-- unverified: a key file a host's FAT driver writes on the ERXOS volume lands in the record's erase unit, which the guest's reader refuses (TODO.md, "storage, the record volume's erase unit"), and the page does not offer the medium yet. --></p>
+    <code>qemu-system-aarch64</code> command. <!-- unverified: the page does not offer the medium yet. --></p>
   </div>
 </section>
 
@@ -139,12 +142,18 @@
       SSH domain comes in 0.2
       (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#stages">stages</a>).</li>
       <li><strong>The login keys are readable in root's session.</strong> Root's
-      session holds a read-only grant of the card's keys for that daemon,
+      session holds a read-only grant of the card's keys for its first-boot import,
       until 0.2's SSH domain removes it
       (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#invariants">H8</a>).</li>
-      <li><strong>Whoever can write the card can become root.</strong> They can
-      add their key to the card's <code>authorized_keys</code>. No program on
-      the board can.</li>
+      <li><strong>Whoever can write the card can become root.</strong> Before
+      the first boot they can add their key to the card's
+      <code>authorized_keys</code>, and at any time they can write root's home
+      copy on the data partition.</li>
+      <li><strong>A root login can keep itself.</strong> Root's keys are
+      <code>/root/.ssh/authorized_keys</code>, which root's session can write,
+      so anything running as root, or anyone logged in as root, can add a key
+      that lasts across boots
+      (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#login-keys">login keys</a>).</li>
       <li><strong>The host key may be weak.</strong> When a boot's random seed is
       only a counter, the SSH host key made at first boot comes from a weak seed
       (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#host-keys">host keys</a>).</li>

@@ -25,12 +25,10 @@ no state, and the medium's bytes are untrusted input.
   labels are never the file. No such file is `not_found`.
 * **The read.** A size past MaxBytes is `too_long` before any cluster is read.
   Exactly as many clusters as the size needs are read, each a cluster of the
-  data area, none seen before in the chain and none in the record's region,
-  the erase unit (`medium_erase_sectors`, counted from the partition's start)
-  that holds the record's sector; the chain past them is not read. A link out
-  of the data area, a cluster seen twice and an end of chain before the size's
-  clusters are `does_not_read`; a cluster in the region is
-  `in_record_region`. So whatever the FAT holds, the read is the boot sector,
+  data area and none seen before in the chain; the chain past them is not
+  read. A link out of the data area, a cluster seen twice and an end of chain
+  before the size's clusters are `does_not_read`. So whatever the FAT holds,
+  the read is the boot sector,
   at most 4096 root-directory sectors (RootEntries is 16 bits), and at most
   MaxBytes / 512 data sectors and as many FAT sectors.
 
@@ -64,7 +62,7 @@ else the read function raises or throws propagates.
 -define(LAST_LONG_ENTRY, 16#40).
 
 -type read_sector() :: fun((non_neg_integer()) -> {ok, binary()} | {error, term()}).
--type finding() :: not_its_volume | not_found | too_long | does_not_read | in_record_region | read_failed.
+-type finding() :: not_its_volume | not_found | too_long | does_not_read | read_failed.
 
 %% The volume as the boot sector lays it out, in sectors from the partition's start.
 -record(volume, {read :: read_sector(),
@@ -202,7 +200,6 @@ contents(Volume, First, Size) ->
 chain(Volume = #volume{read = Read, clusters = Clusters}, Cluster, Left, Seen, Data) ->
     Cluster >= 2 andalso Cluster < Clusters + 2 orelse fail(does_not_read),
     lists:member(Cluster, Seen) andalso fail(does_not_read),
-    in_record_region(Cluster) andalso fail(in_record_region),
     Sectors = [sector(Read, data_sector(Cluster)) | Data],
     case Left of
         1 -> lists:reverse(Sectors);
@@ -211,13 +208,6 @@ chain(Volume = #volume{read = Read, clusters = Clusters}, Cluster, Left, Seen, D
 
 %% The admitted volume's data area starts at the record's sector, cluster 2.
 data_sector(Cluster) -> ?ERX_MEDIUM_RECORD_SELECT_START + Cluster - 2.
-
-%% The record's region: the erase unit, counted from the partition's start, that
-%% holds the record's sector.
-in_record_region(Cluster) ->
-    Start = ?ERX_MEDIUM_RECORD_SELECT_START div ?ERX_MEDIUM_ERASE_SECTORS * ?ERX_MEDIUM_ERASE_SECTORS,
-    Sector = data_sector(Cluster),
-    Sector >= Start andalso Sector < Start + ?ERX_MEDIUM_ERASE_SECTORS.
 
 %% Cluster's entry in the first FAT, which the admission keeps inside the FAT for
 %% every cluster of the data area.

@@ -189,7 +189,7 @@ bytes data_service 4 value 64617461
 # The name of the service that serves root's login keys from the medium
 # (docs/design-ssh.md, "Who publishes it"): "login_keys", an instance of files whose
 # server holds the manifest's record_volume window, granted read-only to the system
-# domain alone.
+# domain and to the system principal's session template, whose import reads it.
 bytes login_keys_service 10 value 6c6f67696e5f6b657973
 enum mf_image_format u32
   value erofs_verity 1

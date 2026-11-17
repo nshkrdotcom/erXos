@@ -3,11 +3,12 @@
 
 -module(erx_boot_keys).
 -moduledoc """
-The decoder of root's `authorized_keys` on the medium (docs/design-ssh.md,
-"Root's login keys on the medium"): decode/1 takes the file's bytes, which
-erx_fat_read answered from the record volume, and returns the 51-byte key
-blobs its lines name, in file order, with a finding for each line it skipped,
-or the whole file's refusal.
+The decoder of root's `authorized_keys` (docs/design-ssh.md, "Root's login
+keys on the medium"): decode/1 takes a file's bytes, those erx_fat_read
+answers from the medium's FAT volume or those erx_ssh_dev reads from root's
+home copy and the development key's file, and returns the 51-byte key blobs
+its lines name, in file order, with a finding for each line it skipped, or
+the whole file's refusal.
 
 The file is untrusted input, read as bytes in the subset of sshd(8)'s
 AUTHORIZED_KEYS FILE FORMAT the design accepts:

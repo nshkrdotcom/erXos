@@ -2,14 +2,17 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% erx_ssh_dev's daemon on stock OTP (docs/design-ssh.md, "Stages", stage 1):
-%% root logs in with the development key or a key of the medium's, gets a
+%% root logs in with the development key or a key of root's home copy, gets a
 %% shell on a tty whose size and ending reach the channel, and has exec
 %% refused; another user name with that key and root with another key are
 %% refused, a key in authorized_keys2 beside the file included, an empty or
-%% missing keys file admits no one, a medium file of another length than whole
-%% blobs admits none of its keys, the host key is made once, owner-only and
-%% whole, kept, and a damaged one refuses the start, and start/1 refuses a
-%% runtime whose release is not a development build's. The tty is a stand-in
+%% missing keys file admits no one, a home file whose key line carries options,
+%% or that is past 16 KiB, admits none of its keys, the host key is made once,
+%% owner-only and whole, kept, and a damaged one refuses the start, and start/1
+%% refuses a runtime whose release is not a development build's. The import
+%% writes the medium's keys as the home copy only when there is none and the
+%% medium answers a key, never replaces one, and never writes an empty file.
+%% The tty is a stand-in
 %% (tty/3) that speaks the six messages: it reports its size and TERM as
 %% output, echoes input, ends with the status `exit N` names and with sigint
 %% on Ctrl-C, as the session's line discipline would. The work directory is
@@ -26,8 +29,9 @@ daemon_test_() ->
              [?_test(a_shell_runs_on_a_tty(Context)),
               ?_test(ctrl_c_ends_with_int(Context)),
               ?_test(exec_is_refused(Context)),
-              ?_test(root_logs_in_with_a_card_key(Context)),
-              ?_test(a_card_file_of_another_length_admits_none(Context)),
+              ?_test(root_logs_in_with_a_home_key(Context)),
+              ?_test(a_home_line_with_options_admits_none(Context)),
+              ?_test(a_home_file_past_16_kib_admits_none(Context)),
               ?_test(another_user_is_refused(Context)),
               ?_test(another_key_is_refused(Context)),
               ?_test(the_host_key_is_kept(Context)),
@@ -66,20 +70,19 @@ start() ->
     %% The wrong key sits beside the login key under the second name OpenSSH
     %% reads; the daemon reads exactly the file it was given.
     ok = file:write_file(filename:join(Keys, "authorized_keys2"), client_key(Wrong)),
-    %% The medium's tree holds the card key's blob, as the storage domain serves it.
-    [{CardKey, _}] = ssh_file:decode(client_key(Card), auth_keys),
-    ok = file:write_file(medium(Work), ssh_file:encode(CardKey, ssh2_pubkey)),
+    %% Root's home copy holds the card key's line, as the import writes it.
+    ok = lists:foreach(fun(Dir) -> ok = file:make_dir(Dir) end, [filename:join(Work, "root"), filename:dirname(home(Work))]),
+    ok = file:write_file(home(Work), client_key(Card)),
     {ok, Daemon} = erx_ssh_dev:daemon(0, options(Login, Host)),
     {ok, Info} = ssh:daemon_info(Daemon),
     #{work => Work, daemon => Daemon, port => proplists:get_value(port, Info),
       login => Login, host => Host, client => Client, wrong => Wrong, card => Card}.
 
-%% The daemon's options with the stand-in tty and the medium's file in the work directory.
+%% The daemon's options with the stand-in tty and root's home copy in the work directory.
 options(Login, Host) ->
-    Medium = medium(os:getenv("ERX_SSH_DEV_WORK")),
-    #{keys => Login, host => Host, medium => fun() -> file:read_file(Medium) end, open => fun tty/3}.
+    #{keys => Login, home => home(os:getenv("ERX_SSH_DEV_WORK")), host => Host, open => fun tty/3}.
 
-medium(Work) -> filename:join(Work, "medium_root").
+home(Work) -> filename:join([Work, "root", ".ssh", "authorized_keys"]).
 
 %% The stand-in tty: it names itself to the channel, reports its size and TERM, and
 %% then answers the channel's messages until the channel ends, its hangup.
@@ -156,18 +159,89 @@ exec_is_refused(#{client := Client} = Context) ->
     ?assertEqual({<<"exec is not supported in 0.1\r\n">>, {status, 1}}, ending(Connection, Channel, <<>>, none)),
     ok = ssh:close(Connection).
 
-%% A key of the medium's logs root in, and no other user name; with the medium's file
-%% one byte longer than its blob, none of it does.
-root_logs_in_with_a_card_key(#{card := Card} = Context) ->
+%% A key of root's home copy logs root in, and no other user name.
+root_logs_in_with_a_home_key(#{card := Card} = Context) ->
     {ok, Connection} = connect(Context, "root", Card),
     ok = ssh:close(Connection),
     ?assertMatch({error, _}, connect(Context, "daemon", Card)).
 
-a_card_file_of_another_length_admits_none(#{card := Card, work := Work} = Context) ->
-    {ok, Blob} = file:read_file(medium(Work)),
-    ok = file:write_file(medium(Work), <<Blob/binary, 0>>),
+%% The home file is read as erx_boot_keys decodes it: a line whose key carries
+%% options is no key, where OTP's ssh_file would take it.
+a_home_line_with_options_admits_none(#{card := Card, work := Work} = Context) ->
+    {ok, Line} = file:read_file(home(Work)),
+    ok = file:write_file(home(Work), <<"restrict ", Line/binary>>),
     ?assertMatch({error, _}, connect(Context, "root", Card)),
-    ok = file:write_file(medium(Work), Blob).
+    ok = file:write_file(home(Work), Line).
+
+%% A home file of exactly 16 KiB admits its key; one byte more refuses it whole.
+a_home_file_past_16_kib_admits_none(#{card := Card, work := Work} = Context) ->
+    {ok, Line} = file:read_file(home(Work)),
+    Padded = fun(Size) ->
+                     Comment = Size - byte_size(Line) - 1,
+                     <<Line/binary, "#", (binary:copy(<<"x">>, Comment - 1))/binary, "\n">>
+             end,
+    ok = file:write_file(home(Work), Padded(16384)),
+    {ok, Connection} = connect(Context, "root", Card),
+    ok = ssh:close(Connection),
+    ok = file:write_file(home(Work), Padded(16385)),
+    ?assertMatch({error, _}, connect(Context, "root", Card)),
+    ok = file:write_file(home(Work), Line).
+
+%% The import (docs/design-ssh.md, "Stages"): with no home copy and keys on the
+%% medium, it writes each key as one canonical line, owner-only, and nothing beside.
+the_import_writes_the_medium_keys_test() ->
+    {Home, [One, Two]} = import_case("writes", 2),
+    ?assertEqual({imported, 2}, erx_ssh_dev:import(Home, fun() -> {ok, <<One/binary, Two/binary>>} end)),
+    ?assertEqual({ok, iolist_to_binary([[<<"ssh-ed25519 ">>, base64:encode(Blob), <<"\n">>] || Blob <- [One, Two]])},
+                 file:read_file(Home)),
+    {ok, #file_info{mode = Dir}} = file:read_file_info(filename:dirname(Home)),
+    {ok, #file_info{mode = File}} = file:read_file_info(Home),
+    ?assertEqual({8#700, 8#600}, {Dir band 8#777, File band 8#777}),
+    ?assertEqual({ok, ["authorized_keys"]}, file:list_dir(filename:dirname(Home))).
+
+%% Of a medium answer of one key and one blob that is no Ed25519 key, only the key
+%% is written.
+the_import_writes_only_keys_that_decode_test() ->
+    {Home, [One]} = import_case("mixed", 1),
+    Zero = binary:copy(<<0>>, byte_size(One)),
+    ?assertEqual({imported, 1}, erx_ssh_dev:import(Home, fun() -> {ok, <<Zero/binary, One/binary>>} end)),
+    ?assertEqual({ok, <<"ssh-ed25519 ", (base64:encode(One))/binary, "\n">>}, file:read_file(Home)).
+
+%% A home copy that is there is never replaced, and the medium is not read.
+the_import_never_replaces_a_home_copy_test() ->
+    {Home, [One]} = import_case("kept", 1),
+    ok = file:make_dir(filename:dirname(Home)),
+    ok = file:write_file(Home, <<"# the user's own\n">>),
+    ?assertEqual(kept, erx_ssh_dev:import(Home, fun() -> {ok, One} end)),
+    ?assertEqual({ok, <<"# the user's own\n">>}, file:read_file(Home)).
+
+%% A medium that has not answered, or a session without the grant, writes nothing
+%% and asks to be tried again.
+the_import_waits_for_the_medium_test() ->
+    {Home, _} = import_case("waits", 0),
+    ?assertEqual([{retry, eagain}, {retry, eio}, {retry, no_grant}],
+                 [erx_ssh_dev:import(Home, fun() -> {error, Why} end) || Why <- [eagain, eio, no_grant]]),
+    ?assertEqual({error, enoent}, file:read_file_info(filename:dirname(Home))).
+
+%% A medium that answers no key, a file of no whole number of blobs, or blobs
+%% that are no Ed25519 key, writes no file, empty or not.
+the_import_never_writes_an_empty_file_test() ->
+    {Home, [One]} = import_case("empty", 1),
+    ?assertEqual([no_keys, no_keys, no_keys],
+                 [erx_ssh_dev:import(Home, fun() -> {ok, Bytes} end)
+                  || Bytes <- [<<>>, <<One/binary, 0>>, binary:copy(<<0>>, byte_size(One))]]),
+    ?assertEqual({error, enoent}, file:read_file_info(Home)).
+
+%% A home path of its own under the work directory, with Count blobs of fresh keys.
+import_case(Name, Count) ->
+    Home = filename:join([os:getenv("ERX_SSH_DEV_WORK"), "import_" ++ Name, ".ssh", "authorized_keys"]),
+    ok = file:make_dir(filename:dirname(filename:dirname(Home))),
+    Blobs = [begin
+                 Private = public_key:generate_key({namedCurve, ed25519}),
+                 ssh_file:encode({#'ECPoint'{point = Private#'ECPrivateKey'.publicKey},
+                                  Private#'ECPrivateKey'.parameters}, ssh2_pubkey)
+             end || _ <- lists:seq(1, Count)],
+    {Home, Blobs}.
 
 %% The next data the channel sent on its standard output.
 data(Connection, Channel) ->

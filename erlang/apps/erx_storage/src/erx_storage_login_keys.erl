@@ -12,7 +12,8 @@ read from the record volume's `authorized_keys`, served read-only as one file,
   whose mount starts the holder, a process of this module linked to the mint,
   and answers its pid as the tree, so the mount waits for no read and the mint
   answers mint requests at once. The holder is the one owner of the result. It
-  spawns the reader with a monitor and sends it the monitor's reference, which
+  reads nothing until root is first asked for, so a boot whose session has
+  imported its keys never reads the medium; then it spawns the reader with a monitor and sends it the monitor's reference, which
   tags the reader's one result message, so no other message can be taken for
   it; the first of that message and the `'DOWN'` with the same reference
   decides the answer, and every later message is dropped. The holder reads no
@@ -21,7 +22,7 @@ read from the record volume's `authorized_keys`, served read-only as one file,
   `record_volume` window with erx_fat_read:root_file/3, bounded by
   erx_boot_keys:file_max/0, and decodes the file with erx_boot_keys:decode/1.
   The medium's bytes are untrusted, and both are pure functions over them.
-* **What `root` answers.** While the reader runs, a read answers `eagain`, an
+* **What `root` answers.** Until the reader is done, a read answers `eagain`, an
   error and not an empty file. A result the pure functions decide is the file:
   the blobs, or none when either refuses it. A sector read that fails, a
   reader that raises and one that ends without a result answer `eio`: the
@@ -114,11 +115,28 @@ log(Line) ->
 
 -doc false.
 holder_init(Parent, Read, Log) ->
+    proc_lib:init_ack(Parent, {ok, self()}),
+    idle(Read, Log).
+
+%% Until root is first asked for, no sector is read: the medium is read only for a
+%% session that has not imported its keys. The first query starts the reader and is
+%% answered eagain, as every query is while the reader runs.
+idle(Read, Log) ->
+    receive
+        {?MODULE, root, Alias} when is_reference(Alias) ->
+            Monitor = start_reader(Read),
+            Alias ! {Alias, {error, eagain}},
+            loading(Monitor, Log);
+        _ ->
+            idle(Read, Log)
+    end.
+
+%% The reader, spawned with a monitor and sent the monitor's reference.
+start_reader(Read) ->
     Holder = self(),
     {Reader, Monitor} = spawn_monitor(fun() -> reader(Holder, Read) end),
     Reader ! {start, Monitor},
-    proc_lib:init_ack(Parent, {ok, Holder}),
-    loading(Monitor, Log).
+    Monitor.
 
 %% While the reader runs, root answers eagain; the first of the reader's result and its
 %% end, both under its monitor's reference, decides the answer. Any other message is
@@ -192,7 +210,6 @@ reason(not_found) -> <<"no authorized_keys">>;
 reason(too_long) -> <<"longer than 16 KiB">>;
 reason(too_many_keys) -> <<"more than 16 keys">>;
 reason(not_its_volume) -> <<"the record partition is not its FAT volume">>;
-reason(in_record_region) -> <<"lies in the boot-selection record's region">>;
 reason(does_not_read) -> <<"does not read">>;
 reason(read_failed) -> <<"read failed">>.
 
