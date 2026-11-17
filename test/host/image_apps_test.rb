@@ -205,6 +205,16 @@ class ImageAppsTest < Minitest::Test
                  Erx::ImageApps.plan([], enable: [], signers: [signer]).rows)
   end
 
+  # The published package key, whose private half the tree holds, is trusted by nothing,
+  # so no image takes it as a signer, whatever its file is named.
+  def test_the_published_package_key_is_no_signer
+    work = self.class.scratch('erx-image-apps-published-')
+    published = OpenSSL::PKey.new_raw_public_key('ED25519', Erx::PackageKey.published.public_key)
+    File.write(File.join(work, 'deployer.pem'), published.public_to_pem)
+    assert_equal "--signer #{work}/deployer.pem is the published package key, which nothing trusts",
+                 assert_raises(Erx::Error) { Erx::ImageApps.signer(File.join(work, 'deployer.pem')) }.message
+  end
+
   # The file check refuses a file that is not a package, or one renamed from its app's
   # name, before the image takes it.
   def test_the_file_check_refuses_a_file_that_is_not_its_package

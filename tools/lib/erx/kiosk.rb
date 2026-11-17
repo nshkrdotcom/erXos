@@ -7,18 +7,17 @@ require 'fileutils'
 require_relative 'display_domain'
 require_relative 'image_apps'
 require_relative 'medium_boot'
-require_relative 'package_key'
 require_relative 'screen_reference'
 
 module Erx
   # The offline kiosk as an image package (docs/design-packaging.md, Verification): the
   # production image of the development machine, with the board's own manifest, carries
-  # examples/dashboard packed and signed as `tools/erx pack --app examples/dashboard
-  # --enable dashboard` packs it (the steps of ImageApps.packed_apps), so the package lies at
-  # apps/dashboard.app of the slot's system partition and its `package` row binds its
-  # header's SHA-256. The harness plays the firmware (MediumBoot.firmware_tree, the dump
-  # carrying the boot's virtio-gpu and input devices) and boots the medium with a
-  # display under HVF. Once the command shell is up:
+  # examples/dashboard packed as the Raspberry Pi 4's card packs it
+  # (ImageApps.packed_kiosk), enabled, so the package lies at apps/dashboard.app of the
+  # slot's system partition and its `package` row binds its header's SHA-256. The harness
+  # plays the firmware (MediumBoot.firmware_tree, the dump carrying the boot's virtio-gpu
+  # and input devices) and boots the medium with a display under HVF. Once the command
+  # shell is up:
   #
   # * the storage domain served the system tree (SERVED), the system admitted the
   #   package (ADMITTED), the app's session mounted /app (MOUNTED), and the dashboard
@@ -33,7 +32,6 @@ module Erx
   # (AppPack.describe) never sees it; the session's /app mount then refuses the image
   # (UNVERIFIED), no /app is mounted and the dashboard shows nothing.
   module Kiosk
-    APP = ImageApps::KIOSK
     NAME = 'dashboard'
     SERVED = /erx_storage_system: serving the system tree/n
     ADMITTED = /packages: admitted dashboard\r?\n/n
@@ -128,22 +126,18 @@ module Erx
       # Why each failed cell failed.
       def notes = @notes.dup.freeze
 
-      # Packs the package once, from a copy of APP in the build tree so the packer's ebin/
-      # never lands in the source tree, then an image of it and one of its altered copy,
-      # and boots each at one CPU, the altered cell whatever the first found. Returns
+      # Packs the package once (ImageApps.packed_kiosk), then an image of it and one of its
+      # altered copy, and boots each at one CPU, the altered cell whatever the first found. Returns
       # { "hvf-1cpu" => 'passed', "hvf-1cpu-altered" => 'passed' }, a cell that failed
       # 'failed' with its reason in notes.
       def call(jobs: 4, build: true)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
         fiasco.build(jobs: jobs) if build
         work = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/kiosk'))
-        sdk_directory, packages, altered_directory = %w[app-sdk app-packages altered].map { |name| FileUtils.mkdir_p(File.join(work, name)).first }
-        app = File.join(work, 'app')
-        FileUtils.cp_r(File.join(@root, APP), app)
-        sdk = ImageApps.exported_sdk(sdk_directory, root: @root, runner: @runner)
-        package, = ImageApps.gather([app], into: packages, sdk: sdk, signer: PackageKey.ensure, runner: @runner, root: @root,
-                                           compiler: @compiler)
-        draw = drawing(app: app, sdk: sdk)
+        kiosk_directory, altered_directory = %w[kiosk altered].map { |name| FileUtils.mkdir_p(File.join(work, name)).first }
+        kiosk = ImageApps.packed_kiosk(kiosk_directory, root: @root, runner: @runner, compiler: @compiler)
+        package = kiosk.package
+        draw = drawing(app: kiosk.app, sdk: kiosk.sdk)
         draw.call(WARM_MINUTE)
         { 'hvf-1cpu' => package, "hvf-1cpu#{ALTERED}" => Kiosk.altered(package, directory: altered_directory) }
           .to_h { |cell, packed| [cell, status(cell) { boot(cell, packed, fiasco, work, draw: draw) }] }

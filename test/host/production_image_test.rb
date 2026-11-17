@@ -123,23 +123,55 @@ class ProductionImageTest < Minitest::Test
     Erx::ProductionImage.check_card_apps(PLATFORM, Erx::ImageApps.plan([], enable: [], local: true))
   end
 
-  # The card's own packages: the kiosk, examples/dashboard, packed and signed as the kiosk
-  # suite packs it, and enabled, with no signer row and no --local, so the card trusts the
-  # package by its row's hash and trusts no key.
-  def test_a_card_carries_the_kiosk_enabled_and_trusts_no_key
+  # The card trusts no package key, whatever a build hands its manifest check: a manifest
+  # admitted with a signer row or the builder's development key is refused (the seeded
+  # faults), one admitted with neither passes.
+  def test_a_card_whose_manifest_trusts_a_key_is_refused
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    Erx::ProductionImage.check_card_trust(pi, { 'signers' => [], 'development_key' => false, 'packages' => ['dashboard'] })
+    { [['deployer'], false] => 'signer deployer', [[], true] => 'the development package key',
+      [%w[a b], true] => 'signer a and signer b and the development package key' }.each do |(signers, development), named|
+      error = assert_raises(Erx::Error) do
+        Erx::ProductionImage.check_card_trust(pi, { 'signers' => signers, 'development_key' => development })
+      end
+      assert_equal "the raspi4b card trusts no package key, but its manifest trusts #{named}", error.message
+    end
+  end
+
+  # The card's own packages: the kiosk, examples/dashboard, packed as the kiosk suite packs
+  # it, and enabled, with no signer row and no --local, so the card trusts the package by
+  # its row's hash and trusts no key. Two builders, each with a development package key of
+  # their own (two homes), pack the same bytes, sealed by the published package key, so
+  # two builders' cards of one commit are the same.
+  def test_a_card_carries_the_kiosk_enabled_alike_from_any_builder_and_trusts_no_key
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
     runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
     image = Erx::ProductionImage.new(root: ROOT, runner: runner, compiler: ENV.fetch('ERX_CLANG'), linker: '',
                                      machine: Erx::ProductionImage::Machine.development(pi), fiasco: Object.new,
                                      runtime: nil, jit_runtime: nil)
-    home = Dir.mktmpdir('erx-card-apps-home-')
-    apps = image.card_apps(signer: Erx::PackageKey.ensure(directory: Erx::PackageKey.directory(home: home)))
+    builds = 2.times.map do
+      apps = Dir.mktmpdir('erx-card-apps-home-') { |home| with_home(home) { image.card_apps } }
+      [apps, File.binread(apps.packages.first.path)]
+    end
+    apps, bytes = builds.first
     assert_equal ['dashboard'], apps.packages.map(&:name)
     assert_equal 'BSD-2-Clause', apps.packages.first.license
     refute apps.local
     rows = apps.rows
     assert_match(/^package dashboard\n(?:  .*\n)*  enable YES\n/, rows)
     refute_match(/^signer /, rows)
+    assert_equal Digest::SHA256.hexdigest(bytes), Digest::SHA256.hexdigest(builds.last.last),
+                 "two builders' cards carry different kiosk packages"
+    assert_equal rows, builds.last.first.rows
+  end
+
+  # Runs the block with HOME set to home, the development package key's (Erx::PackageKey).
+  def with_home(home)
+    saved = ENV.fetch('HOME')
+    ENV['HOME'] = home
+    yield
+  ensure
+    ENV['HOME'] = saved
   end
 
   # An image's packages lie in its medium's system partition, so an image built without a

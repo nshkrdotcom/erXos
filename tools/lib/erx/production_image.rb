@@ -25,7 +25,6 @@ require_relative 'fiasco_provenance'
 require_relative 'generated'
 require_relative 'image_apps'
 require_relative 'image_record'
-require_relative 'package_key'
 require_relative 'files_guest'
 require_relative 'hostlink_guest'
 require_relative 'reload_guest'
@@ -407,7 +406,8 @@ module Erx
     # gets the release medium for QEMU (ReleaseMedium). A boot that creates a domain
     # (MediumBoot) names a larger machine and a manifest with room for it, whose domain
     # row names the release and runtime image the image then carries. A card takes no
-    # apps of its builder's (check_card_apps) and carries its own (card_apps).
+    # apps of its builder's (check_card_apps), carries its own (card_apps) and trusts no
+    # key (check_card_trust).
     def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none)
       on_own_board(machine)
       self.class.check_card_apps(machine.platform, apps)
@@ -417,6 +417,7 @@ module Erx
       built = assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: false,
                        machine: machine, domains: domain_boots(manifest_source), apps: apps, record: false)
       if card
+        self.class.check_card_trust(machine.platform, built.report.fetch('manifest'))
         return [built, BootPartition.lay_out(root: @root, runner: @runner, platform: machine.platform, build_kind: BUILD_KIND,
                                              bootable: built.single, erofs: built.erofs,
                                              directory: built_directory(built), compiler: @compiler, linker: @linker)]
@@ -436,21 +437,29 @@ module Erx
                    'app, signer or --local'
     end
 
+    # Refuses a card of platform whose admitted manifest (its report, manifest) trusts a
+    # key for packages installed later, a signer row or the builder's development package
+    # key: the card the website offers trusts its kiosk by its row's hash alone, so no
+    # downloaded card trusts its builder's key, whatever a build hands the manifest check
+    # (docs/design-packaging.md, "The shipped manifests").
+    def self.check_card_trust(platform, manifest)
+      signers, development = manifest.values_at('signers', 'development_key')
+      return if signers.empty? && !development
+
+      trusted = [*signers.map { |name| "signer #{name}" }, *('the development package key' if development)]
+      raise Error, "the #{platform.name} card trusts no package key, but its manifest trusts #{trusted.join(' and ')}"
+    end
+
     # A card's own packages (docs/design-packaging.md, "The shipped manifests"): the kiosk,
-    # ImageApps::KIOSK, enabled, packed as the kiosk suite packs it, from a copy in the
-    # build tree so the packer's ebin/ never lands in the source tree, over an SDK the tree
-    # exports, and signed with signer, the builder's development package key unless a
-    # test names a scratch one. The plan holds no
-    # signer row and is no local image, and the build hands the manifest no development
-    # key, so the card trusts its package by its row's hash and trusts no key.
-    def card_apps(signer: PackageKey.ensure)
+    # ImageApps::KIOSK, enabled, as ImageApps.packed_kiosk packs it for the kiosk suite
+    # too, sealed by the published package key, so two builders' cards of one commit
+    # carry the same bytes. The plan holds no signer row and is no local image, so the
+    # card trusts its package by its row's hash (check_card_trust).
+    def card_apps
       work = self.class.clear_directory(root: @root, path: File.join(@root, CARD_APPS_DIRECTORY))
-      sdk, packages = %w[sdk packages].map { |name| FileUtils.mkdir_p(File.join(work, name)).first }
-      app = File.join(work, 'app')
-      FileUtils.cp_r(File.join(@root, ImageApps::KIOSK), app)
-      kiosk = ImageApps.packed_apps([app], sdk_directory: sdk, packages_directory: packages, root: @root, runner: @runner,
-                                           signer: signer, compiler: @compiler)
-      ImageApps.plan(kiosk, enable: kiosk.map(&:name))
+      FileUtils.mkdir_p(work)
+      kiosk = ImageApps.packed_kiosk(work, root: @root, runner: @runner, compiler: @compiler).package
+      ImageApps.plan([kiosk], enable: [kiosk.name])
     end
 
     # The release medium for QEMU (ReleaseMedium) of built, an image this object packed, in

@@ -3225,7 +3225,7 @@ it; git history is the record of completed work.
   no build hands the public half of the builder's `Erx::PackageKey` to the manifest check as
   `Manifest::Context`'s `development_key`, so no image trusts its builder's key yet, where every development
   build, not only those `pack --app` builds, should, but for the Raspberry Pi 4's card, the image the website
-  offers, which trusts its kiosk by hash and no key (design-packaging.md, "The shipped manifests"); the packer does not yet run the machine's manifest
+  offers, which trusts its kiosk by hash and no key and whose build refuses a manifest that trusts one (`ProductionImage.check_card_trust`; design-packaging.md, "The shipped manifests"); the packer does not yet run the machine's manifest
   reader (`erx_pkg_manifest:system_config/1`) on the host over the packed manifest, beside
   `AppPack.describe`; and `tools/erx app run DIR`.
   Fix: each with its own package.

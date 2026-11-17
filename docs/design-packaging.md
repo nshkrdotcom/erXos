@@ -508,14 +508,24 @@ no room for the row's memory. The Raspberry Pi 4's card, the medium of a
 board the firmware boots from a boot partition, is the other image the
 website offers, and boots to the kiosk: it keeps the board's row and
 carries one package, `examples/dashboard`, enabled, which its own build
-packs from the tree as the kiosk suite does (`ProductionImage#card_apps`)
+packs from the tree as the kiosk suite does (`ImageApps.packed_kiosk`)
 and the row binds by its header's hash. Until a release signer exists it
-carries no signer row and its build hands the manifest no development
-key, so the card trusts that one package by its hash and no key, and no
-downloaded card ever trusts its builder's development key; the build
-refuses a package, signer or `--local` of its builder's
+carries no signer row and no development key, so the card trusts that
+one package by its hash and no key, and no downloaded card ever trusts
+its builder's development key: the build refuses a card whose admitted
+manifest trusts a key (`ProductionImage.check_card_trust`), and refuses
+a package, signer or `--local` of its builder's
 (`ProductionImage.check_card_apps`), so what the card holds follows from
-the tree it was built from. The row's size follows from how the build counts it:
+the tree it was built from. Since a package of the image is
+authenticated by its hash and its signer and signature fields are not
+read ([The package](#the-package)), the kiosk is sealed by the
+*published package key*, an Ed25519 key whose seed is the SHA-256 of a
+phrase in the tree (`Erx::PackageKey.published`), not by its builder's
+development key: anyone may seal with it, and every builder of a commit
+packs the same kiosk bytes, so no builder's key makes two builders'
+cards of one commit differ. Nothing trusts the key: no image carries it,
+and `--signer` refuses it.
+The row's size follows from how the build counts it:
 
 * `max` is reserved in full: property 19 counts the app template as
   `max` principals, each holding every service of `services`, in the
@@ -1771,7 +1781,9 @@ package's seal stands for nothing else. A development image trusts the
 public half of its builder's key ([Adding an app to an
 image](#adding-an-app-to-an-image)), so a third party's packages are
 trusted only by the images that party builds, and the tree packs with the
-same key, since `tools/erx pack --app` runs the exported packer.
+same key, since `tools/erx pack --app` runs the exported packer; only the
+card's kiosk is sealed by the published package key instead
+([The `apps` row](#the-apps-row)).
 
 **What is public, and what a package's compatibility key covers.**
 Admission refuses a package whose `ERX_ABI_VERSION` or target
@@ -2160,7 +2172,10 @@ storage domain; an app's code; an app directory on the build host.
 * **Development builds** trust their builder's development package key,
   which no tool copies off the building host, so a package another developer
   packed is trusted only by the images that developer builds; they run
-  trusted code only, and say so in their banner.
+  trusted code only, and say so in their banner. The Raspberry Pi 4's
+  card, which the website offers, trusts no key, and its kiosk is sealed
+  by the published package key, which nothing trusts
+  ([The `apps` row](#the-apps-row)).
   A release build trusts only its `signer` rows.
 * **An app's durable code is its package**: its principal's overlays stay
   in memory, so a storage domain cannot make an app run code its signer
@@ -2235,14 +2250,15 @@ it guards.
 | the build's check | each clause of property 19 | each seeded violation of [The build's check](#the-builds-check) |
 | `examples/dashboard` through the SDK | its frame through `erx_ui_host` matches its reference, and a click on Pause changes only the status line and buttons | a status line one pixel taller |
 | the SDK's boundary | the example compiles, and xref finds every call it makes into erXos's modules in `public.txt`, by module, function and arity; a call whose callee xref cannot name, through a variable module or fun, is answered apart, and the app's check pins those to a list it has reviewed, empty for the SDK test's probe app | the example calling `erx_ui:start/1`, exported by a public module but not public, which the check refuses; the example calling through a variable module, which the check answers apart |
-| no list names an example | a source check over `tools/lib/erx`, `config/manifest` and the test fixtures finds no path under `examples/` and no example's application, but in the kiosk cell's harness (`tools/lib/erx/kiosk.rb` and its suite), which packs one through the SDK | `erx_dashboard` added to `ErlangApps::APPLICATIONS`; a path under `examples/` in a tools file the list does not hold |
+| no list names an example | a source check over `tools/lib/erx`, `config/manifest` and the test fixtures finds no path under `examples/` and no example's application, but in the kiosk cell's harness (`tools/lib/erx/kiosk.rb` and its suite) and the kiosk's one packing recipe (`tools/lib/erx/image_apps.rb`, `ImageApps.packed_kiosk`), which pack one through the SDK | `erx_dashboard` added to `ErlangApps::APPLICATIONS`; a path under `examples/` in a tools file the list does not hold |
 
 **QEMU tests**, in the suites of the plan's parts that bring them:
 
 * the kiosk cell (`tools/lib/erx/kiosk.rb`, suite `kiosk`): the
   production image of the development machine with `examples/dashboard`
-  packed, signed and enabled as `tools/erx pack --app examples/dashboard
-  --enable dashboard` does it, so the package lies at
+  packed and sealed as the Raspberry Pi 4's card packs it
+  (`ImageApps.packed_kiosk`, [The `apps` row](#the-apps-row)), and
+  enabled, so the package lies at
   `apps/dashboard.app` of the slot's system partition, boots from its
   release medium with a display, the harness playing the firmware. The
   serial log shows the storage domain serving the `system` tree, the
