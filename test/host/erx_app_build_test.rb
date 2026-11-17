@@ -65,12 +65,12 @@ class ErxAppBuildTest < Minitest::Test
       directory = File.join(work, 'dashboard')
       FileUtils.cp_r(DASHBOARD, directory)
       pack(directory, output: work)
-      File.delete(File.join(directory, 'lib/erx_dashboard/src/erx_dashboard_sample.erl'))
+      File.delete(File.join(directory, 'lib/erx_dashboard/src/erx_quotes_extract.erl'))
       pack(directory, output: work)
       ebin = File.join(directory, 'lib/erx_dashboard/ebin')
-      refute File.exist?(File.join(ebin, 'erx_dashboard_sample.beam'))
+      refute File.exist?(File.join(ebin, 'erx_quotes_extract.beam'))
       refute_includes Erx::ErlangApps.modules_of(File.read(File.join(ebin, 'erx_dashboard.app')), label: 'erx_dashboard.app'),
-                      'erx_dashboard_sample'
+                      'erx_quotes_extract'
     end
   end
 

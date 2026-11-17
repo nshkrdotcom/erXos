@@ -4607,9 +4607,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] docs, `docs/design-domains.md` ("connections" quota): it counts the system
   connection in a domain's `connections` quota; the library (`life_connections`) and
   design-system.md do not, and property 12 enforces the library's reading.
-* [Low] docs, `docs/design-fiasco.md` (boot step 4, "take device entries, wall offset, seed ..."): the root
-  takes no wall offset from the system manifest; `abi/manifest.txt` has no such field and the time page starts
-  zeroed (`liberx/backend/fiasco/time_page.c`). Drop "wall offset" from the step, or name the field it reads.
 * [Medium] packer, `tools/lib/erx/production_image.rb` (`build_test_image`): a test
   image's `domains:` is checked against no manifest row, since the test manifest is the
   development one grown. Build test images' domain boot scripts from their manifest's
@@ -4623,8 +4620,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   interface.
 * [Low] time, the clock setter's chokepoint (`tools/lib/erx/chokepoint_rules/clock.rb`): it is a text check of five
   spellings, not the call-graph check [design-time.md](docs/design-time.md) names; a variable function name gets past
-  it. The QEMU "Set by hand" case sets 2026-11-16 12:30 UTC, close to the host time the PL031 seeds, where the design
-  sets 2030.
+  it. The QEMU "Set by hand" case sets 2026-11-16 12:30 UTC, where the design sets 2030, a time no boot reading near the
+  host's date gives on erXos's kernel, whose PL031 starts at the host's time.
 * [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` (`operation/1`): only the clock facet's callback
   exports `operation/1`, so a row naming operations of another system-served service compiles and boots, and only
   its mint refuses it (`unchecked_operations`, logged, no facet), until the generated admission path checks every
@@ -7163,10 +7160,6 @@ to the corpus and follow rc
   kernel's device table takes as its real-time clock, and the Raspberry Pi 4 takes a DS3231 module. Name the
   Raspberry Pi 5's clock, or read wall time from the firmware
   ([design-platforms.md](docs/design-platforms.md)).
-* [Medium] Fiasco backend, the PL031 on QEMU `virt` (`liberx/backend/fiasco/time_page.c`): Fiasco's root reads the
-  PL031 once at boot into the time page and sets the offset, so `state` is `boot` and HTTPS clients can validate
-  certificates ([design-time.md](docs/design-time.md#phase-1), [design-crypto.md](docs/design-crypto.md#time)).
-  Today the page starts zeroed and the wall clock reads 1970-01-01.
 * [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
   [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
   through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:
@@ -8661,7 +8654,7 @@ document's "residual risks accepted" paragraph.
   share one clock module, and where it lives, is an open design question: a shared module is a new
   mechanism and needs a design, and `erx_net` must keep depending only on `kernel` and `stdlib`, since it
   is usable outside erXos.
-* [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
+* [Medium] `examples/dashboard`, the kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
   `examples/dashboard` describes a Pause click and a status line, which this dashboard of a clock, a date
@@ -8670,8 +8663,7 @@ document's "residual risks accepted" paragraph.
   two changes of the tree. The kiosk cell (`tools/lib/erx/kiosk.rb`) boots it as an image package and
   checks its frame; no QEMU test checks G6 yet: the cell's next step counts the driver's
   requests between two of the dashboard's clock ticks, where a seeded timer that repaints with no change
-  fails the count. plan.md
-  and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
+  fails the count.
 
 * [Medium] the kiosk cell (`tools/lib/erx/kiosk.rb`), left from its review: its boot repeats
   MediumBoot::Run's (fresh medium, slot parse, firmware tree, the boot value spliced after the image's
@@ -8683,19 +8675,16 @@ document's "residual risks accepted" paragraph.
   `tools/erx pack --app` leaves in the source tree. `ls /apps` and a dropped `--enable` are not yet
   cases of its boot.
 
-* [High] `examples/dashboard` full kiosk, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"
+* [High] `examples/dashboard` live quotes, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"
   above), which a real fetch of the live quotes on the target waits for, and no run on the target that fetches
   through the image's trust store ([design-crypto.md](docs/design-crypto.md#https-clients)).
 
-* [Medium] `examples/dashboard` full kiosk: the live dashboard's reference frame, `dashboard-live` under
+* [Medium] `examples/dashboard`: the live dashboard's reference frame, `dashboard-live` under
   `test/display/reference/` (the dashboard's tree for a fixed time and a fixed live board), is not recorded;
   design-quotes.md's frame test row names it.
 
 * [Medium] `erx_quotes` (`examples/dashboard/lib/erx_dashboard/src/`): the per-quote state log lines the QEMU
   cell reads (`quotes: btc fresh 64412.50 kraken_btc`, design-quotes.md "The QEMU cell") are not written yet.
-
-* [Low] `erx_quotes_http` (`classify/4`): "no name servers in the grant's answer" maps to `failed`, not `dns` as
-  design-quotes.md's reasons table says, since the shape httpc gives for it was not seen.
 
 * [Medium] `erx_quotes_core` (`trying`): a round in flight has no deadline, so a request httpc never
   answers (a handler killed without replying) keeps its quote from fetching until the source restarts.
@@ -8705,9 +8694,27 @@ document's "residual risks accepted" paragraph.
   rows); the `fetch` action should carry the source row and the view take the table, so the core alone
   owns its representation.
 
-* [Medium] `examples/dashboard` (`erx_dashboard.app.src`): the full kiosk needs `ssl` and `inets`, which
-  `erx_quotes` starts at run time but no `.app` file declares, and `quotes_table` is not in `env`; settle
-  with design-quotes.md's open decision on the full kiosk's package.
+* [Medium] `examples/dashboard` (`erx_dashboard.app.src`): the live quotes need `ssl` and `inets`, which
+  `erx_quotes` starts at run time but no `.app` file declares; settle whether the `.app` names them.
+
+* [Medium] `display_domain/quotes`, the QEMU cell of design-quotes.md ("Verification and testing"), is not
+  built; the harness lacks two pieces it needs: (a) a test image that carries a package on a medium, and
+  (b) the extra test root files design-crypto.md promises ("A test image adds roots", "The trust store").
+  The cell's guest then reaches the harness's TLS server through QEMU user networking whose `net=` covers
+  the table's hardcoded address, with a guest forward for that address and port 443 naming a `cmd:` relay
+  started per connection (unverified until the harness runs it).
+
+* [Low] `examples/dashboard` (`erx_quotes_http`): with no network device, as in the kiosk QEMU
+  boot, every quote shows `no data: failed`: httpc's connect error there is a shape the classifier
+  does not name. Log the term in a boot, then classify it (`no network` or `cannot connect`) and
+  re-record `test/display/reference/dashboard` with Kiosk::OFFLINE_REASON.
+* [Low] `examples/dashboard` (`erx_quotes_table`): Kraken's address, 104.16.14.28 (one of
+  `api.kraken.com`'s Cloudflare addresses), is hardcoded and may change; a change shows
+  `cannot connect` or `certificate rejected` until the row's `address` is updated.
+
+* [Low] `config/trust/` (design-crypto.md "The trust store"): ISRG Root X1, ISRG Root X2 and DigiCert
+  Global Root G3 were added for the Cboe and FRED quote sources, which the dashboard no longer has; they now
+  serve no consumer in the tree. Remove them and their rows, or name the consumer that keeps them.
 
 * [Medium] `erx_quotes` tests: the effect process's own paths (an unknown request dropped, a redirect
   followed within the round, a request httpc refuses at once, the tick) have no test; the HTTPS test

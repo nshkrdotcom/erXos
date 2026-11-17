@@ -896,9 +896,9 @@ both thresholds included, does not apply to it. The answer is `{ok,
   holds a real-time clock it writes a set like any other correction, as
   FreeBSD's `date` writes the hardware clock (`date.1`). A board without
   one, the Raspberry Pi 4 without a clock module, boots at 1970-01-01
-  again, and QEMU `virt`, whose PL031 Fiasco's root only reads,
-  boots at the PL031's time ([Phase 1](#phase-1)); there the operator
-  sets the clock after each boot, which the user documentation says.
+  again, as does QEMU `virt` on Fiasco, whose root does not read the
+  PL031 ([Phase 1](#phase-1)); there the operator sets the clock after
+  each boot, which the user documentation says.
 
 ### Failure paths
 
@@ -1016,10 +1016,12 @@ operations on a row a configured domain serves or a tree grant, since
 nothing there checks them. The range check of
 `erx_time_set_offset` is the body's own and holds on Fiasco as on
 the kernel. The page starts zeroed, `seq` and offset included, so every
-boot is cold. On QEMU `virt` Fiasco's root reads the PL031 once at
-boot and sets the offset from it, so `state` is `boot`. The Raspberry Pi 4
-has no real-time clock of its own: wall time counts from 1970-01-01 until
-the wall-clock keeper sets it from a DS3231 module
+boot is cold. The Fiasco backend puts no real-time clock's reading in
+the page at boot: QEMU `virt`'s PL031 is read only by erXos's kernel,
+and the Raspberry Pi 4 has no clock of its own. So on both `state` is
+`unset` and wall time counts from 1970-01-01 until root's `date` or
+`ntpd` sets the clock, or, on a Pi 4 with a DS3231 module, the
+wall-clock keeper does
 ([design-header-io.md](design-header-io.md#devrtc)). The hosted backend reads
 its offset once from the host's clock and keeps it
 ([design-fiasco.md](design-fiasco.md), "The hosted backend"), so its

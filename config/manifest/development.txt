@@ -76,7 +76,9 @@ runtime_limits system
   processes 4096
 # A session's 2,048 processes leave room beside its own for the 1,000 idle
 # processes of the web measurement's fixture (tools/lib/erx/session_domain.rb),
-# about 4 MiB of its 36 MiB.
+# about 4 MiB of its 36 MiB. Its 32,768 atoms leave room for an HTTPS client: the
+# dashboard's live quotes load ssl, public_key, crypto, asn1 and inets, which take an
+# app's session past 16,384 (docs/design-crypto.md, "HTTPS clients").
 runtime_limits session
   max_frame 524288
   max_message_heap 131072
@@ -84,7 +86,7 @@ runtime_limits session
   exports 256
   tmp 2097152
   overlay 0
-  atoms 16384
+  atoms 32768
   foreign_atoms 1024
   processes 2048
 runtime_limits storage

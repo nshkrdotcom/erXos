@@ -7,18 +7,17 @@ require 'optparse'
 require 'tmpdir'
 
 # The fuzz target of the dashboard's live quotes (examples/dashboard, docs/design-quotes.md,
-# "The fuzz target"): erx_quotes_fuzz drives the body reader, the answer classifier and the
-# table check with untrusted input, beside the shipped table, compiled from source and run
-# alone on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's). It runs the sources as
+# "The fuzz target"): erx_quotes_fuzz drives the body reader, over each source of the table
+# (erx_quotes_table), and the answer classifier with untrusted input, compiled from source
+# and run alone on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's). It runs the sources as
 # they are, then a copy of erx_quotes_extract without the price's upper bound, which must
 # fail: 1.0e300 would then be shown as a price.
 module ErxQuotesFuzz
   ROOT = File.expand_path('../..', __dir__)
   EXAMPLE = 'examples/dashboard/lib/erx_dashboard'
   EXTRACT = "#{EXAMPLE}/src/erx_quotes_extract.erl"
-  SOURCES = %W[#{EXAMPLE}/src/erx_quotes_config.erl #{EXAMPLE}/src/erx_quotes_http.erl
+  SOURCES = %W[#{EXAMPLE}/src/erx_quotes_table.erl #{EXAMPLE}/src/erx_quotes_http.erl
                #{EXAMPLE}/test/erx_quotes_extract_tests.erl #{EXAMPLE}/test/erx_quotes_fuzz.erl].freeze
-  TABLE = 'examples/dashboard/live/quotes.config'
   BOUND = 'Price when Price >= ?MIN_PRICE, Price < ?MAX_PRICE'
   NO_BOUND = 'Price when Price >= ?MIN_PRICE'
   DEADLINE_SECONDS = '300'
@@ -35,7 +34,7 @@ module ErxQuotesFuzz
     abort(output) unless status.success? && output.match?(/^fuzz: \d+ rounds ok, \d+ bodies accepted$/)
     output, status = fuzz(extract.sub(BOUND, NO_BOUND), seed: seed)
     abort("a price past the bound passed:\n#{output}") if status.success? || !output.match?(VERDICT)
-    puts 'the live quotes read every body, answer and table without raising or making an atom, ' \
+    puts 'the live quotes read every body and answer without raising or making an atom, ' \
          'and a price past 10^15 does not pass'
   end
 
@@ -44,7 +43,6 @@ module ErxQuotesFuzz
     Dir.mktmpdir('erx-quotes-fuzz') do |work|
       extract_path = File.join(work, File.basename(EXTRACT))
       File.binwrite(extract_path, extract_text)
-      File.binwrite(File.join(work, 'quotes.config'), File.binread(File.join(ROOT, TABLE)))
       sources = [extract_path, *SOURCES.map { |source| File.join(ROOT, source) }]
       output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', work, *sources, stdin_data: '')
       raise output unless status.success?

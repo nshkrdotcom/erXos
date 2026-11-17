@@ -17,16 +17,14 @@ event sequences. Each case names the seeded failure it catches.
 %% it back for both.
 table() ->
     Source = fun(Credit, Note) ->
-                     #{url => <<"https://", Credit/binary, ".test/q">>, format => json,
-                       price => [<<"p">>], change => none, credit => Credit, note => Note}
+                     #{url => <<"https://", Credit/binary, ".test/q">>, address => {127, 0, 0, 1},
+                       format => json, price => [<<"p">>], change => none, credit => Credit,
+                       note => Note}
              end,
-    {ok, Table} = erx_quotes_config:validate(
-                    [{quote, q, #{label => <<"Q">>, decimals => 2, period => 10, sources => [a, b]}},
-                     {quote, r, #{label => <<"R">>, decimals => 0, period => 60, sources => [b, c]}},
-                     {source, a, maps:remove(note, Source(<<"A">>, <<>>))},
-                     {source, b, Source(<<"B">>, <<"delayed">>)},
-                     {source, c, Source(<<"C">>, <<"daily">>)}]),
-    Table.
+    #{quotes => [{q, #{label => <<"Q">>, decimals => 2, period => 10000, sources => [a, b]}},
+                 {r, #{label => <<"R">>, decimals => 0, period => 60000, sources => [b, c]}}],
+      sources => #{a => Source(<<"A">>, <<>>), b => Source(<<"B">>, <<"delayed">>),
+                   c => Source(<<"C">>, <<"daily">>)}}.
 
 start() ->
     erx_quotes_core:tick(erx_quotes_core:new(table(), ?T0), ?T0, 1.0).
@@ -172,6 +170,29 @@ ages_test() ->
              {7200000, <<"2 h">>}, {172799000, <<"47 h">>}, {172800000, <<"2 d">>},
              {999, <<"0 s">>}, {-5, <<"0 s">>}],
     [?assertEqual(Text, erx_quotes_view:age(Ms)) || {Ms, Text} <- Cases].
+
+%% The log lines the QEMU cell reads, one per quote. Seeded failure:
+%% naming the source rather than the reason of a failed round turns the
+%% stale line's `{status,503}` into `a`.
+lines_test() ->
+    {S0, _} = start(),
+    ?assertEqual([{q, <<"q waiting -- none">>}, {r, <<"r waiting -- none">>}],
+                 erx_quotes_view:lines(S0, ?T0)),
+    {S1, _} = outcome(S0, q, {value, 64412.5, 0.5}, ?T0),
+    ?assertMatch([{q, <<"q fresh 64,412.50 a">>} | _], erx_quotes_view:lines(S1, ?T0 + 30000)),
+    ?assertMatch([{q, <<"q stale 64,412.50 a">>} | _], erx_quotes_view:lines(S1, ?T0 + 30001)),
+    {S2, _} = erx_quotes_core:tick(S1, ?T0 + 10000, 1.0),
+    {S3, _} = outcome(S2, q, {error, {status, 503}, none}, ?T0 + 10000),
+    {S4, _} = outcome(S3, q, {error, timeout, none}, ?T0 + 10000),
+    ?assertMatch([{q, <<"q fresh 64,412.50 {status,503}">>} | _],
+                 erx_quotes_view:lines(S4, ?T0 + 15000)),
+    ?assertMatch([{q, <<"q stale 64,412.50 {status,503}">>} | _],
+                 erx_quotes_view:lines(S4, ?T0 + 120000)),
+    {S5, _} = outcome(S0, r, {error, clock_unset, none}, ?T0),
+    {S6, _} = outcome(S5, r, {error, clock_unset, none}, ?T0),
+    ?assertMatch([_, {r, <<"r no_data -- clock_unset">>}], erx_quotes_view:lines(S6, ?T0)),
+    {S7, _} = outcome(S0, r, {value, 5000.25, none}, ?T0),
+    ?assertMatch([_, {r, <<"r fresh 5,000 b">>}], erx_quotes_view:lines(S7, ?T0)).
 
 clock_unset_test() ->
     {S0, _} = start(),

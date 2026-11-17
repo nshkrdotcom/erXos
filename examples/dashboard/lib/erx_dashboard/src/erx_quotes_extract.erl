@@ -9,14 +9,13 @@ httpc delivered and answers the price and change it carries, or
 `bad_data`.
 
 The body is untrusted network input of at most 64 KiB, the bound httpc
-enforced, and is read by total functions: `json` bodies through
-json:decode/1, which keeps its own stack and makes no atom, then walked
-along the row's path; `{csv, Column}` bodies line by line. A price is a
-JSON number or a decimal string of the grammar
+enforced, and is read by total functions: through json:decode/1, which
+keeps its own stack and makes no atom, then walked along the row's
+path. A price is a JSON number or a decimal string of the grammar
 `-?[0-9]{1,15}(\.[0-9]{1,12})?`, at least 10^-12 and below 10^15; a
-change's reference value is checked the same way, and a percentage,
-given or computed, must lie in [-100, 1000]. Every check throws `bad_data`, which
-value/2 catches once.
+change's reference value is checked the same way, and the percentage
+computed from it must lie in [-100, 1000]. Every check throws
+`bad_data`, which value/2 catches once.
 """.
 
 -export([value/2]).
@@ -29,7 +28,7 @@ value/2 catches once.
 -define(DECIMAL, "\\A-?[0-9]{1,15}(?:\\.[0-9]{1,12})?\\z").
 
 -doc "The price and change `Body` carries for `Source`, or `{error, bad_data}`.".
--spec value(erx_quotes_config:source(), binary()) ->
+-spec value(erx_quotes_table:source(), binary()) ->
           {ok, float(), none | float()} | {error, bad_data}.
 value(Source, Body) when is_binary(Body), byte_size(Body) =< ?MAX_BODY ->
     try read(Source, Body) of
@@ -43,9 +42,7 @@ value(_Source, _Body) ->
 read(#{format := json, price := PricePath, change := Rule}, Body) ->
     Answer = decode(Body),
     Price = price(walk(Answer, PricePath)),
-    {Price, change(Rule, Answer, Price)};
-read(#{format := {csv, Column}, change := none}, Body) ->
-    {price(last_value(Body, Column)), none}.
+    {Price, change(Rule, Answer, Price)}.
 
 decode(Body) ->
     try
@@ -72,11 +69,9 @@ change(none, _Answer, _Price) ->
     none;
 change({from, Path}, Answer, Price) ->
     Reference = price(walk(Answer, Path)),
-    percent((Price - Reference) / Reference * 100);
-change({percent, Path}, Answer, _Price) ->
-    percent(number(walk(Answer, Path))).
+    percent((Price - Reference) / Reference * 100).
 
-%% A change, given or computed, lies in [-100, 1000] percent; both prices
+%% A change lies in [-100, 1000] percent; both prices
 %% lie within [10^-12, 10^15), so the computation cannot overflow.
 percent(Percent) when Percent >= -100, Percent =< 1000 -> float(Percent);
 percent(_Percent) -> throw(bad_data).
@@ -109,28 +104,3 @@ decimal_value(Text) ->
         _Point -> binary_to_float(Text)
     end.
 
-%% Field `Column` of the last line after the header whose field there is a
-%% decimal; a line without that field, or with another value there, is passed.
-last_value(Body, Column) ->
-    [_Header | Lines] = binary:split(Body, <<"\n">>, [global]),
-    Fields = [field(Line, Column) || Line <- lists:reverse(Lines)],
-    case [Field || Field <- Fields, byte_size(Field) =< ?MAX_DECIMAL, decimal(Field)] of
-        [Last | _] -> Last;
-        [] -> throw(bad_data)
-    end.
-
-field(Line, Column) ->
-    case binary:split(trim_cr(Line), <<",">>, [global]) of
-        Fields when length(Fields) >= Column -> lists:nth(Column, Fields);
-        _Short -> <<>>
-    end.
-
-trim_cr(Line) ->
-    case byte_size(Line) of
-        0 -> Line;
-        Size ->
-            case binary:last(Line) of
-                $\r -> binary:part(Line, 0, Size - 1);
-                _Other -> Line
-            end
-    end.

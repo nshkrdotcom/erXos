@@ -24,7 +24,7 @@ lower-case header names, `{error, {failed_connect, [{to_address, _},
 
 -export_type([reason/0, class/0]).
 
--type reason() :: no_net | dns | connect | timeout | certificate | clock_unset
+-type reason() :: no_net | connect | timeout | certificate | clock_unset
                 | tls | {status, 100..999} | redirect | too_big | bad_data | failed.
 -type class() :: {body, binary()} | {follow, binary()}
                | {error, reason(), none | pos_integer()}.
@@ -162,7 +162,6 @@ error_reason({header_too_long, _Max}, _Wall) -> too_big;
 error_reason(_Reason, _Wall) -> failed.
 
 connect_reason(eacces, _Wall) -> no_net;
-connect_reason(nxdomain, _Wall) -> dns;
 connect_reason(Reason, _Wall)
   when Reason =:= econnrefused; Reason =:= ehostunreach;
        Reason =:= enetunreach; Reason =:= timeout ->
@@ -181,7 +180,6 @@ connect_reason(_Reason, _Wall) ->
 -doc "The screen's words for a reason (docs/design-quotes.md, \"Refusals and error results\").".
 -spec word(reason()) -> binary().
 word(no_net) -> <<"no network">>;
-word(dns) -> <<"name not found">>;
 word(connect) -> <<"cannot connect">>;
 word(timeout) -> <<"timed out">>;
 word(certificate) -> <<"certificate rejected">>;

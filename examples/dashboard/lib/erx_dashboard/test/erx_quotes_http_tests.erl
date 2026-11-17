@@ -40,7 +40,7 @@ status_test() ->
 
 error_shapes_test() ->
     Cases = [{failed_connect(eacces), no_net},
-             {failed_connect(nxdomain), dns},
+             {failed_connect(nxdomain), failed},
              {failed_connect(econnrefused), connect},
              {failed_connect(ehostunreach), connect},
              {failed_connect(enetunreach), connect},

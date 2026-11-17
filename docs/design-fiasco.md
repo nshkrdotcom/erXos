@@ -989,7 +989,7 @@ service's bodies directly.
 4. Finds the archive's `system_manifest_path` entry, checks its file hash and reads it through the
    generated C reader, which allocates nothing and whose view stays in the archive, and reads the kernel
    command line from the handoff view's `bootargs` ([The command line](#the-command-line)). Later steps
-   take device entries, wall offset and the system's arguments from the first, and the watchdog's
+   take device entries and the system's arguments from the first, and the watchdog's
    numbers and deterministic mode from the second. Accepts the device tree with `erx_dt_accept`, refusing
    the boot on its reason, reads `/chosen`'s `rng-seed` and `kaslr-seed` from it for step 6 (the root's
    read-only copy of the tree keeps them: a residual in `TODO.md`), and stores

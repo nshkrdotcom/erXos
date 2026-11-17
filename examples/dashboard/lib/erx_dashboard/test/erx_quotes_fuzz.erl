@@ -3,24 +3,20 @@
 
 -module(erx_quotes_fuzz).
 -moduledoc """
-The fuzz target of the live quotes' three readers of untrusted input
-(docs/design-quotes.md, "The fuzz target"), run by tools/fuzz/erx_quotes.rb
-beside the shipped table as `quotes.config`:
+The fuzz target of the live quotes' two readers of untrusted input
+(docs/design-quotes.md, "The fuzz target"), run by tools/fuzz/erx_quotes.rb:
 
 * erx_quotes_extract:value/2 takes bodies of up to 64 KiB for each source
-  of the table: random bytes; generated answers of each shape with a
-  field mutated, truncated or moved to a bound; nesting 10,000 deep;
-  numbers of 400 digits, `e400` and `1.0e300`; CSV with no newline, only
-  a header and `\r` alone. Nothing raises; every accepted price is a
+  of the table (erx_quotes_table): random bytes; generated answers of
+  each source's shape with a field mutated, truncated or moved to a
+  bound; nesting 10,000 deep; numbers of 400 digits, `e400` and
+  `1.0e300`; lines of bare newlines. Nothing raises; every accepted price is a
   float above 0 and below 10^15 and every change none or a float; an
   unmutated answer gives the price it was built with.
 * erx_quotes_http:classify/4 takes httpc-shaped results with random
   status codes, header names and byte values, and random error terms.
   Nothing raises, the answer is a class, and a followed URL keeps the
   origin asked.
-* erx_quotes_config:validate/1 takes the shipped table with a field
-  replaced, dropped or added, a row duplicated or the terms shuffled.
-  Nothing raises, and the answer is a table or a refusal.
 
 None of them may make an atom. The seed comes from make check-fuzz.
 """.
@@ -32,12 +28,14 @@ None of them may make an atom. The seed comes from make check-fuzz.
 
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
-    {ok, Terms} = file:consult("quotes.config"),
-    {ok, #{sources := Sources}} = erx_quotes_config:validate(Terms),
+    %% Every row of the table computes a change, whose bound alone refuses
+    %% most prices past 10^15; `price_only`, Bitcoin's row without its
+    %% change, reaches the price's own bound.
+    #{sources := #{kraken_btc := Btc} = Table} = erx_quotes_table:table(),
+    Sources = Table#{price_only => Btc#{change := none}},
     Rounds = fun(N) ->
                      A = length([ok || _ <- lists:seq(1, N), extract_round(Sources) =:= accepted]),
                      [http_round() || _ <- lists:seq(1, N)],
-                     [config_round(Terms) || _ <- lists:seq(1, N div 4)],
                      A
              end,
     %% A first call of a reader may load modules, which makes atoms, so the
@@ -75,23 +73,17 @@ extract_round(Sources) ->
             refused
     end.
 
-%% An answer in `Name`'s shape whose price is `Value`; `built` is 12345.5.
+%% An answer in `Name`'s shape whose price is `Price`; `built` is 12345.5.
 answer(Name, built) ->
-    answer(Name, {<<"12345.50">>, 12345.5});
-answer(Name, Value) when not is_tuple(Value) ->
-    answer(Name, {Value, Value});
-answer(Name, {Text, Number}) ->
-    case Name of
-        kraken_btc -> erx_quotes_extract_tests:kraken(<<"XXBTZUSD">>, Text, <<"12000.0">>);
-        kraken_eth -> erx_quotes_extract_tests:kraken(<<"XETHZUSD">>, Text, <<"12000.0">>);
-        coinbase_btc -> erx_quotes_extract_tests:coinbase(Text);
-        coinbase_eth -> erx_quotes_extract_tests:coinbase(Text);
-        cboe_spx -> erx_quotes_extract_tests:cboe(Number, 0.5);
-        fred_spx -> erx_quotes_extract_tests:fred([{"2026-11-13", csv_text(Text)}])
-    end.
-
-csv_text(Text) when is_binary(Text) -> Text;
-csv_text(Number) -> io_lib:format("~p", [Number]).
+    answer(Name, <<"12345.50">>);
+answer(Name, Price) ->
+    Key = case Name of
+              kraken_btc -> <<"XXBTZUSD">>;
+              price_only -> <<"XXBTZUSD">>;
+              kraken_eth -> <<"XETHZUSD">>;
+              kraken_sol -> <<"SOLUSD">>
+          end,
+    erx_quotes_extract_tests:kraken(Key, Price, <<"12000.0">>).
 
 bounds() ->
     [<<"0">>, <<"-1">>, <<"999999999999999">>, <<"1000000000000000">>,
@@ -124,8 +116,8 @@ hostile() ->
                                lists:duplicate(10000, $})]);
         4 -> <<"{\"price\": ", (binary:copy(<<"9">>, 400))/binary, "}">>;
         5 -> <<"{\"price\": 1e400}">>;
-        6 -> <<"observation_date,SP500">>;
-        7 -> <<"observation_date,SP500\r2026-11-13,5.0\r">>;
+        6 -> <<"{\"result\": {}}">>;
+        7 -> <<"{\"result\": {\"XXBTZUSD\": {\"c\": [], \"o\": \"1\"}}}">>;
         8 -> binary:copy(<<"\n">>, 65536)
     end.
 
@@ -182,40 +174,6 @@ header_value() ->
         5 -> integer_to_list(rand:uniform(1 bsl 40));
         6 -> lists:duplicate(10240, $9)
     end.
-
-%% config
-
-config_round(Terms) ->
-    Mutated = mutate_table(Terms),
-    case no_raise(fun() -> erx_quotes_config:validate(Mutated) end, Mutated) of
-        {ok, #{quotes := Quotes, sources := Sources}}
-          when length(Quotes) =< 8, map_size(Sources) =< 16 -> ok;
-        {error, {refused, _Row, Field, Why}} when is_atom(Field), is_atom(Why) -> ok;
-        Other -> error({not_a_table, Mutated, Other})
-    end.
-
-mutate_table(Terms) ->
-    Index = rand:uniform(length(Terms)),
-    {Kind, Name, Map} = lists:nth(Index, Terms),
-    Field = pick(maps:keys(Map) ++ [note, extra]),
-    Row = case rand:uniform(3) of
-              1 -> {Kind, Name, Map#{Field => pick(values())}};
-              2 -> {Kind, Name, maps:remove(Field, Map)};
-              3 -> pick([{Kind, Name}, {Kind, <<"name">>, Map}, {Kind, Name, [Map]}, Map])
-          end,
-    Replaced = lists:sublist(Terms, Index - 1) ++ [Row] ++ lists:nthtail(Index, Terms),
-    case rand:uniform(4) of
-        1 -> Replaced ++ [Row];
-        2 -> lists:reverse(Replaced);
-        _ -> Replaced
-    end.
-
-values() ->
-    [0, 4, 5, 86400, 86401, -1, 1 bsl 80, 1.5, <<>>, <<"x">>, binary:copy(<<"x">>, 600),
-     <<"https://a.test/">>, <<"http://a.test/">>, <<"https://">>, <<255, 0>>, "https://a.test/",
-     [], [<<"k">>], [-1], lists:duplicate(9, 0), [[<<"k">>]], json, {csv, 0}, {csv, 2}, {csv, 17},
-     none, {from, [<<"o">>]}, {percent, []}, {from, x}, [btc], [nowhere], [kraken_btc, kraken_btc],
-     #{}, {}, self(), make_ref()].
 
 pick(List) ->
     lists:nth(rand:uniform(length(List)), List).

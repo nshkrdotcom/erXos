@@ -8,6 +8,7 @@ require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/dashboard_screen'
 require_relative '../../tools/lib/erx/app_pack'
+require_relative '../../tools/lib/erx/kiosk'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/screen_reference'
 require_relative '../../tools/lib/erx/sdk'
@@ -48,15 +49,16 @@ class ErxDashboardTest < Minitest::Test
   end
 
   # The dashboard's screen at the display suite's size (test/display/reference/
-  # display-lvgl.ppm.gz), at a fixed time with the sample board, as the host's erx-lvgl
-  # draws it (DashboardScreen), against test/display/reference/dashboard.
+  # display-lvgl.ppm.gz), at a fixed time with every quote's first round failed for want of
+  # a network, as the host's erx-lvgl draws it (DashboardScreen), against test/display/reference/dashboard.
   # ERX_RECORD_REFERENCE=1 writes the reference from the render instead, for a person who
   # has looked at the picture.
   REFERENCE = 'dashboard'
   TIME = [[2026, 11, 15], [9, 41, 0]].freeze
   def test_the_screen_is_the_reference
     references = File.join(ROOT, 'test/display/reference')
-    image = DashboardScreen.picture(TIME, app: DASHBOARD, sdk: self.class.sdk, runner: self.class.runner)
+    image = DashboardScreen.picture(TIME, app: DASHBOARD, sdk: self.class.sdk, runner: self.class.runner,
+                                          reason: Erx::Kiosk::OFFLINE_REASON)
     if ENV['ERX_RECORD_REFERENCE'] == '1'
       digest, picture = Erx::ScreenReference.encode(image)
       File.write(File.join(references, "#{REFERENCE}.sha256"), digest)

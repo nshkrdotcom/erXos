@@ -1444,10 +1444,9 @@ land after M11 repeat M11's closure over what they add.
    [design-display.md](design-display.md#the-screen-and-its-one-path-to-the-device),
    [design-display.md](design-display.md#a-displays-session)).
 4. **A kiosk on QEMU `virt`**, in 1b-C, in two steps. Part 4a, after
-   part 3, draws the basic kiosk, `examples/dashboard`, with `erx-lvgl`
+   part 3, draws the kiosk, `examples/dashboard`, with `erx-lvgl`
    on the host and checks the frame against its reference picture, with
-   sample data and no package; it is offline and never needs the
-   network. Part 4b, after part 4a, parts 2 and 3,
+   a fixed board and no package; it needs no network. Part 4b, after part 4a, parts 2 and 3,
    1b-B's sub-space ports and pipes, the first slice of 1b-D and track
    A's second part, is the first boot of that interface on QEMU `virt`,
    as the kiosk's app, a package added to the image. Part 4b needs LVGL
@@ -1470,13 +1469,11 @@ land after M11 repeat M11's closure over what they add.
    and the session's by the row's keeper. The LVGL program holds its
    pipes and its buffer's pages and nothing else
    ([design-display.md](design-display.md#kiosks-and-glasses)).
-   The kiosk has two milestones. The basic kiosk is the offline LVGL
-   dashboard, `examples/dashboard` with sample data and no remote data,
-   as a package in `/apps` booted on QEMU `virt`: part 4a's host check
-   and part 4b's package and boot. The full kiosk is the same dashboard
-   with live quotes fetched over HTTPS
-   ([design-quotes.md](design-quotes.md)), built on top of the basic
-   kiosk and never required by it, so it also waits for 1b-G's network.
+   The kiosk is one package, `examples/dashboard`, whose quotes are
+   fetched over HTTPS ([design-quotes.md](design-quotes.md)). Part 4a's
+   host check and part 4b's package and boot bring it up on QEMU `virt`
+   with no network device, each quote showing `no data`; its live quotes
+   wait for 1b-G's network.
 5. **Kiosks on boards**, after part 4 and M12's boards. The firmware
    framebuffer driver of the Raspberry Pi comes earlier, with 1b-I's
    stage (d) on Fiasco; this part adds a panel on a serial bus, on
@@ -2001,8 +1998,8 @@ program's own `/dev`
 follows with [track U](#track-u-usb), not as part of the milestone.
 
 **What comes first.** The highest priority is two basic apps, each a
-package added to an image and booted on QEMU `virt`: the kiosk with no
-remote data (`examples/dashboard` with sample data) and Doom with keys
+package added to an image and booted on QEMU `virt`: the kiosk, booted
+offline (`examples/dashboard`, each quote showing `no data`) and Doom with keys
 from QEMU's virtio keyboard. That is track A's second part and what the
 two apps stand on, then the kiosk's and Doom's full milestones. Work
 runs at full parallelism: every worker these items cannot use takes the
@@ -2244,19 +2241,16 @@ its code, and the item's work waits on it.
   [design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)); its
   parts (e), the header with the clock module, and (f), WiFi, are not
   0.1's.
-* **The kiosk with live quotes**: the basic kiosk, track D's parts 3,
-  4a and 4b in 1b-C on track A's parts 1 and 2, and on it the full
-  kiosk of track D's part 4, the same dashboard with live quotes over
-  HTTPS ([design-quotes.md](design-quotes.md)), on 1b-G's network on
+* **The kiosk with live quotes**: track D's parts 3, 4a and 4b in 1b-C
+  on track A's parts 1 and 2, and the kiosk's live quotes over HTTPS of
+  track D's part 4 ([design-quotes.md](design-quotes.md)), on 1b-G's network on
   QEMU and on the Pi's Ethernet, 1b-I's part (c). It draws on QEMU
   `virt`'s virtio-gpu and on the Pi's firmware framebuffer, 1b-I's part
   (d) ([design-display.md](design-display.md#kiosks-and-glasses)). The
-  published images carry `examples/dashboard` packed as the full kiosk
-  with `tools/erx pack --app` and enabled on the display
-  ([design-packaging.md](design-packaging.md#adding-an-app-to-an-image));
-  how its package sets `source` and asks for `net` is
-  [design-quotes.md](design-quotes.md#open-decisions)'s first open
-  decision, taken with the packaging design. Until the clock is set,
+  published images carry `examples/dashboard`, declared `needs display
+  net`, packed with `tools/erx pack --app` and enabled on the display
+  ([design-packaging.md](design-packaging.md#adding-an-app-to-an-image)).
+  Until the clock is set,
   every quote reads `no data: clock not set`
   ([design-quotes.md](design-quotes.md#refusals-and-error-results)).
 * **The clock, set by hand.** With no time source the wall clock reads
@@ -2423,7 +2417,7 @@ its code, and the item's work waits on it.
   of that table, and `erl`'s `erx:domains()` in that session names the
   display's and the kiosk's domains, as each one's
   `/proc/domains/N/status` does; a second boot on the same medium offers the same host key.
-* On QEMU, the full kiosk's cell `display_domain/quotes` of
+* On QEMU, the kiosk's live-quotes cell `display_domain/quotes` of
   [design-quotes.md](design-quotes.md#verification-and-testing) passes
   and fails on its seeds, and the set-time command's tests of its
   design pass, each failing on its seeded fault, with its fuzz target
@@ -2491,7 +2485,7 @@ track A's part 3 if it has not landed.
 
 **Dependencies.** Phase 1; 1b-A; 1b-B's session domain, sub-space ports
 and pipes; 1b-E's storage, network and display domains' devices; track
-A's parts 1 and 2; 1b-C's parts 3, 4a and 4b and the full kiosk of
+A's parts 1 and 2; 1b-C's parts 3, 4a and 4b and the kiosk's live quotes of
 track D's part 4; 1b-D's first slice for Doom; 1b-G with SSH's stages 1
 and 2; 1b-I's parts (a) to (d), with SSH's stage 3 in part (c); and the
 designs the items above mark.
