@@ -11,6 +11,7 @@ require_relative 'bounded_file'
 require_relative 'generated'
 require_relative 'native_root'
 require_relative 'submodule'
+require_relative 'submodules'
 
 module Erx
   # erx-lvgl (docs/design-display.md, "The widget server"): LVGL from the git
@@ -22,7 +23,7 @@ module Erx
   # only what changed. Nothing of the submodule runs: the build compiles its C
   # and nothing else.
   module Lvgl
-    SUBMODULE = 'display/lvgl/lvgl'
+    SUBMODULE = Submodules::TREE.built_in.fetch('lvgl').path
     MAKEFILE = 'display/lvgl/Makefile'
     DEADLINE = 1800
     STATUS_BYTES = 65_536

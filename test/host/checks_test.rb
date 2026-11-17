@@ -33,7 +33,7 @@ class ChecksTest < Minitest::Test
   # GIT_DIR or GIT_INDEX_FILE never points them at a real repository.
   def git_in(directory, *arguments)
     @runner.run(['git', '-C', directory, *arguments], name: 'test-git', deadline: 30,
-                env: Erx::Checks.isolated_git_environment)
+                env: Erx::GitEnvironment.isolated)
   end
 
   # The fixture trees hold none of the tests the Elsewhere rules name, so

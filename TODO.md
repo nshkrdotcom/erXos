@@ -1711,7 +1711,7 @@ it; git history is the record of completed work.
 * [Low] `display/lvgl/Makefile`: `-I$(LVGL)` exposes the whole checkout, so a header at its root could shadow a system
   header.
 * [Low] `display/lvgl/Makefile`: a `.c` file deleted on a fork branch stays in `liblvgl.a`.
-* [Low] `tools/lib/erx/lvgl.rb`: `git` duplicates `Checks.isolated_git_environment` instead of sharing it.
+* [Low] `tools/lib/erx/`: git is run from many call sites, each of which must pass `GitEnvironment.isolated` and `-c core.fsmonitor=false` itself (`checks.rb`, `submodule.rb`, `source_revision.rb` do; `dependencies.rb` `export_commit`, `fiasco.rb` `import_git` and `net_bench_freebsd.rb` `tree_state` do not). One git funnel with a chokepoint check would make the isolation hold by construction.
 * [Low] `tools/lib/erx/lvgl.rb`, `Lvgl::Program::LICENSE`: the archive's license expression is hand-kept against
   `display/lvgl/lv_conf.h` and LVGL's sources, so an option turned on there (an image decoder, another font) or a
   third-party file no option guards (as FrogFS's `decomp_raw.c`, which the Makefile leaves out) is not attributed

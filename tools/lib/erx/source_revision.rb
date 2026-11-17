@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'error'
+require_relative 'git_environment'
 
 module Erx
   # Which source a build is of, as git records it, for what `uname -v` shows
@@ -70,7 +71,7 @@ module Erx
     def read(root:, runner:)
       return nil unless File.exist?(File.join(root, '.git'))
 
-      environment = ENV.keys.grep(/\AGIT_/).to_h { |key| [key, nil] }
+      environment = GitEnvironment.isolated
       ask = lambda do |name, arguments|
         result = runner.run([*GIT, *arguments], name: "source-revision-#{name}", deadline: DEADLINE,
                                                  chdir: root, env: environment)

@@ -5,6 +5,7 @@
 require 'fileutils'
 require 'securerandom'
 require_relative 'error'
+require_relative 'git_environment'
 require_relative 'key_directory'
 require_relative 'source_revision'
 
@@ -99,7 +100,7 @@ module Erx
     def directory(root:, runner:)
       return File.join(root, UNCLONED_DIRECTORY) unless File.exist?(File.join(root, '.git'))
 
-      environment = ENV.keys.grep(/\AGIT_/).to_h { |key| [key, nil] }
+      environment = GitEnvironment.isolated
       result = runner.run([*SourceRevision::GIT, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
                           name: 'dev-key-git-dir', deadline: DEADLINE, chdir: root, env: environment)
       common = File.binread(result.fetch('log')).chomp
