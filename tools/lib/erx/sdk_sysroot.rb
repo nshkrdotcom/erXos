@@ -12,6 +12,7 @@ require_relative 'musl'
 require_relative 'native_root'
 require_relative 'native_runtime'
 require_relative 'platform'
+require_relative 'runtime'
 
 module Erx
   # The SDK's native half (docs/design-packaging.md, "The SDK"): what a third party's C
@@ -30,7 +31,7 @@ module Erx
     ARCH = 'aarch64'
     PROGRAM_ARCHIVE = 'liberx_program.a'
     RECIPE = 'share/erxos/sdk.mk'
-    # Where the program layer's objects are compiled, under the tree.
+    # Where the program layer's objects are compiled, under the tree and the runtime tree's lock.
     OBJECTS = 'build/sdk/program'
     DEADLINE = 120
 
@@ -43,8 +44,18 @@ module Erx
       @linker = linker
     end
 
-    # Writes sysroot/ and share/ into directory, the SDK being made.
+    # Writes sysroot/ and share/ into directory, the SDK being made. Fiasco is built first,
+    # since the program layer compiles against its headers and links its archives; musl's
+    # build and header merge write the runtime's tree, so the rest runs under its lock,
+    # exclusive, as Runtime#build holds it.
     def write(directory)
+      Fiasco.new(root: @root, runner: @runner, compiler: @compiler).build
+      Runtime.hold_tree(@root, mode: :exclusive) { write_locked(directory) }
+    end
+
+    private
+
+    def write_locked(directory)
       sysroot = File.join(directory, 'sysroot', ARCH)
       include = File.join(sysroot, 'include')
       lib = File.join(sysroot, 'lib')
@@ -59,8 +70,6 @@ module Erx
       program_archive(File.join(lib, PROGRAM_ARCHIVE))
       File.write(File.join(directory, RECIPE), recipe)
     end
-
-    private
 
     # The program layer's objects, compiled as the tree compiles them, and the Fiasco
     # archives they call into, flattened into one archive (llvm-ar's L takes an archive's

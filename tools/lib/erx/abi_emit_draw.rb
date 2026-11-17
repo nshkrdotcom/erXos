@@ -423,7 +423,7 @@ module Erx
       end
 
       def c_source(draw)
-        rows =draw.messages.sort_by(&:letter).map do |message|
+        rows = draw.messages.sort_by(&:letter).map do |message|
           fields = message.fields.map { |field| c_field(field) }
           body = fields.empty? ? '{ { 0 } }' : "{\n\t    #{fields.join(",\n\t    ")} }"
           "\t{ #{message.letter.ord}, \"#{message.name}\", #{message.fields.size}, #{body} }"
