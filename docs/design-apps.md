@@ -142,7 +142,9 @@ Outside this design: packages, their format, signatures, installing,
 updating and removing an app at run time, and every per-app mechanism
 they need ([Packaging](#packaging)); prompts that ask a person to
 approve a grant; passing one of a person's files to an app; apps that
-serve facets to other apps; starting an app at a person's login, which
+serve facets to other apps, while an app's own tree, which it serves to
+the sessions that may command it, is
+[design-app-trees.md](design-app-trees.md)'s; starting an app at a person's login, which
 belongs to the login design
 ([design-display.md](design-display.md#risks-and-decisions), 14); and
 drivers, which are processes of a configured domain that holds the
@@ -868,7 +870,7 @@ that domain's namespace at the point where a session mounts its grant
 | `service NAME disable` | writes `disable NAME` to `ctl`, which sets `NAME_enable="NO"` in `/etc/start.conf`, and answers `NAME disabled in /etc/start.conf` (`rc.subr:1456-1459`); a row that runs runs on, kept by its supervisor, until `service NAME stop` or the next boot |
 | `service NAME start`, `stop`, `restart` | writes its line to `ctl` and answers from the write's errno alone, as [How a command is judged](#how-a-command-is-judged) decides it: `enotsup` as rc.subr(8) does, `Cannot 'start' NAME. Set NAME_enable to YES in /etc/start.conf or use 'onestart' instead of 'start'.`, with the command's own name for `stop` and `restart`, and status 0 (`rc.subr:1335-1342`); `ealready` as `NAME already running?` and `esrch` as `NAME not running?`, each with status 1; `enoent` as `NAME is configured in the system manifest` for a configured domain of `/proc/apps`'s boot order, and `NAME does not exist in the system manifest` otherwise. It makes no decision from what `/proc/apps` shows of the row |
 | `service NAME onestart [display=D]`, `onestop`, `onerestart` | writes the `one` form to `ctl`, which acts on a row whether or not it is enabled, and answers its errno as above |
-| `service NAME status`, `onestatus` | shows the row's state and reason from `/proc/apps`, the row as the boot or its own last command applied it, or `installed`; a session `onestart` started belongs to no row and is not shown |
+| `service NAME status`, `onestatus` | shows the row's state and reason from `/proc/apps`, the row as the boot or its own last command applied it, or `installed`; a session `onestart` started belongs to no row and is not shown; then, for a row that runs, the app's own words, the lines of `/svc/NAME/status` its parser accepts, as a FreeBSD script's `status_postcmd` adds its own, read at a deadline ([design-app-trees.md](design-app-trees.md#what-the-commands-show)); the exit status is the row's |
 | `service -e` | prints the configured domains in boot order, then each row of the table whose `NAME_enable` is `YES` in `/etc/start.conf` as the command reads it, judged by `erx_start_settings:judge/2`, or whose declared default is `YES` where the file sets none: the configured state, as FreeBSD's `service -e` loads each script's variable from `rc.conf` itself (`usr.sbin/service/service.sh:148-160`); `/proc/apps` shows the applied state, each row as the boot or its own last command applied it, and what runs |
 | `service -c [FILE]` | judges `/etc/start.conf`, or FILE, prints each problem with its line and the row's own name beside its variable, and exits 1 if there is one and 0 otherwise; it checks row names only where `/proc/apps` lists the rows and says so where it does not ([Checking before it counts](#the-start-table)) |
 | `service NAME purge` | removes the data of a name that no installed package holds, admitted or refused, so a name a refused package holds keeps its data until `rm` removes the package, every signer's but the image's own, `apps/NAME/image`, which no purge removes; for a name of the image's packages, the data of every installed package the name held, shadowed or not: purging a shadowed package's name removes its data while the package itself stays on the data partition until it is removed ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)) |
@@ -926,7 +928,9 @@ reason; and `installed` for a row of an admitted package that has no
 record, one a publication added after the boot's package set, to
 which no boot or command of its own has applied the file yet. A session `onestart` started belongs to no row and is not
 shown. An app's sessions are domains like any other at
-`[domains, Id]`.
+`[domains, Id]`. This is what the system observes of an app; what the
+app says about itself, and the commands it takes, are in its own tree at
+`/svc/NAME` ([design-app-trees.md](design-app-trees.md)).
 
 **Manifest rows**: `start`. Its packed record and the reader's bounds
 are in `abi/manifest.txt`. The start service reads the `start` rows,

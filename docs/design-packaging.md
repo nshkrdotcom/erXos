@@ -721,6 +721,7 @@ app doom
 | `applications` | the OTP applications `erx_app` starts | at most `pkg_applications_max`, 16, names of the form `[a-z][a-z0-9_]*`, 63 bytes each |
 | `program` | a path under `bin/` of the image, then its arguments | the path at most `pkg_program_max`, 255, bytes of plain names; at most `pkg_args_max`, 32, arguments, `pkg_args_bytes_max`, 16 KiB, together |
 | `needs` | the services of the `apps` row it takes | none; at most `pkg_needs_max`, 16, identifiers, none twice |
+| `serves` | `svc`: the app's sessions serve its own tree at `/svc/NAME` ([design-app-trees.md](design-app-trees.md#the-declaration)) | none; `svc` is the field's one value, and only with `applications` |
 | `memory` | what its session's own budget holds, in bytes | `app_memory_default`, 64 MiB; at least `app_memory_min`, 4 MiB |
 | `version` | a decimal number the inspector shows, which decides nothing | 1; 1 to 2^32 - 1 |
 | `flags` | the default start flags of the app's start row, which its session reads from `ERX_START_FLAGS` | empty; a quoted string of at most `start_flags_max`, 1,024, bytes from 0x20 to 0x7e other than `"`, `\`, `$` and `` ` ``, which the packer and the package reader refuse beyond |
@@ -732,7 +733,11 @@ app that needs a native helper starts it itself with
 session's default display whenever the session has one, and otherwise
 without one. A declaration names no facet parameter, quota,
 CPU share, environment or grant, and there is no field through which it
-could: the illegal declaration is one the grammar cannot write. An app
+could: the illegal declaration is one the grammar cannot write. `serves
+svc` grants the app nothing: it lets the sessions that may command the
+start table read and command the app's tree, and the domain service
+derives its grants ([design-system.md](design-system.md#facets-a-configured-domain-serves),
+"A session as provider"). An app
 that wants the LVGL renderer says so where it opens its UI, with
 `erx_ui:open(#{renderer => lvgl})`
 ([design-display.md](design-display.md)).

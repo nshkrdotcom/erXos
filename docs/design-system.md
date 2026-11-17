@@ -2549,6 +2549,20 @@ Every refusal is logged and counted, and leaves the rest of the report,
 the domain's ready state included, as it was. What is accepted is the
 incarnation's providers until it ends.
 
+**A session as provider.** A session provides one service, `svc`, its
+app's own tree ([design-app-trees.md](design-app-trees.md#providing)),
+under the same rules with a session in place of a configured domain's
+incarnation: its principal NAME has a start row, its template declares
+`serves svc`, its mint is a pid it owns, and `svc` is the only name its
+`provides` map holds, or the map is refused whole; NAME's provider is
+its newest live session that provides `svc`, and a report from an older
+one provides nothing. The name the grant is installed under is
+`{svc, NAME}`, from the session's principal, never from the report. No
+manifest row grants `svc`: the domain service grants it by its own
+policy, as it grants `code_objects`, to every live session whose
+template holds the start service's tree, `start`, with rights `rw`, and
+to no other grantee, the system domain included.
+
 **One operation per grant.** For each grant, named by its grantee (a
 configured domain, the system domain or a live session) and its service's
 name, the domain service keeps one record. The
@@ -2581,8 +2595,13 @@ The record moves on these events, and on nothing else:
 
 * **a session's ready report**, which adds a record for each of its
   template's grants, keyed by the session's id, so two sessions of a
-  template never share one, or **the session's end**, which cancels their
-  operations and deletes them. A session is never restarted, so only its
+  template never share one, and, for a template that holds `start`, a
+  record `{svc, NAME}` for each name with a provider; or **the session's
+  end**, which cancels their operations and deletes them.
+* **a provider's ready report** of `svc`, which adds a record
+  `{svc, NAME}` for each live session whose template holds `start`, or
+  **its end**, after which those records have no pair until NAME's next
+  session provides, and leave their state as below. A session is never restarted, so only its
   server's restart makes its grants anew; a failed one stays failed for
   the session's life.
 * **a ready report** of a configured domain, with its accepted providers,

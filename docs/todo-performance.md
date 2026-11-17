@@ -1187,3 +1187,11 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   host under the JIT, unmeasured on the Pi. Measure a redraw's time and peak
   memory on the Pi; the fixes are a one-entry image cache in erx-lvgl, or a
   ground that is not a full-screen picture.
+* [Low] the domain service's `svc` grants ([design-app-trees.md](design-app-trees.md#granting)):
+  every session whose template holds `start` is introduced to every running
+  app that declares `serves svc` when both are ready, one connection each,
+  carved from both sessions' outer budgets, whether or not anyone reads the
+  app's tree. Measure, on the Raspberry Pi 4 image with ntpd and a second
+  app serving trees, the memory and the time a connection adds to a
+  root login; the fix on the table is a grant made at the first walk of
+  `/svc/NAME` ([design-app-trees.md](design-app-trees.md#open-decisions), 4).

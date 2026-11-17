@@ -709,7 +709,7 @@ root's session holds; its forms, conversions and failure paths are
 **`ntpctl step [server ...]`** sets the clock once, with the same
 `clock` grant `date` uses, from the servers named or, with none named,
 from ntpd's last sample, and says which; **`ntpctl -s status|peers`**
-writes ntpd's state from `/proc/ntp`. Its sources, exchange, checks and
+writes ntpd's own words from `/svc/ntpd/status`. Its sources, exchange, checks and
 lines are
 [design-time.md](design-time.md#setting-the-clock-from-a-server-once)'s.
 

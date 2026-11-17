@@ -35,6 +35,21 @@ it; git history is the record of completed work.
   [design.md](docs/design.md#dependencies)). The import also records the
   link closure of L4Re's `bootstrap` and `sigma0`, their `drivers-frst`
   UART support, and the license of each library in it.
+* [Medium] apps, an app's own tree ([design-app-trees.md](docs/design-app-trees.md)): build `/svc/NAME`.
+  `erx_svc` (the SDK's tree server and mint, started before a session's ready report when its template or
+  package declares `serves svc`), `erx_svc_status` (format and parser, with its fuzz target) and
+  `erx_svc_client` (reads and commands at `svc_wait_max`, with the chokepoint source check); the `serves` field
+  in `abi/manifest.txt`'s session template and `abi/formats/package.txt`'s declaration, and the manifest
+  check refusing a facet row of `svc`; the limits `svc_wait_max`, `svc_status_max` and `svc_ctl_max` in
+  `abi/services/files.txt`; the domain service's session providers and derived `svc` grants
+  ([design-system.md](docs/design-system.md#facets-a-configured-domain-serves)); the namespace's
+  `{facets, svc}` provider, the entry field `nosymfollow` with `eacces` in the resolver, the `/svc` point in
+  `erx_ns`'s table and an empty `/svc` in the release slice; `service NAME status` showing the app's words;
+  ntpd serving `/svc/ntpd/status` and `ntpctl -s` reading it; and deleting the `ntp` kind, its path and the
+  types `ntp_servers`, `ntp_last` and `net_addresses` from `abi/inspection.txt` (ntpd's denied-address bound
+  becomes `erx_ntp_core`'s own), `erx_ntp_records`, the inspector's `[ntp]` clause, with the schema
+  generator's check that a `runtime`-reported kind sits only under a domain or process id. The tests are the
+  design's Verification list, each with its seeded fault.
 * [High] apps, [design-packaging.md](docs/design-packaging.md): the packaging design awaits an outside
   review of its update path, its `mount` and its `/etc/rc.conf`; then Track A's parts 2 and 3 build it
   ([plan.md](docs/plan.md#track-a-apps)). An app names its needs, memory and code, and one `apps` row bounds
@@ -7248,23 +7263,15 @@ to the corpus and follow rc
   ([design-apps.md](docs/design-apps.md#start-flags)), so the Raspberry Pi 4 manifest's ntpd session template
   sets `ERX_START_FLAGS` in its own environment, and the boot view's refusal of such a template waits for the row
   field; when the start table's settings file carries `flags`, move the value to the row and add the refusal;
-  (2) `/proc/ntp`'s record is built (the schema's `ntp` kind, erx_ntp_records in ntpd's runtime, which
-  asks erx_ntpd:status/1), but nothing routes `[ntp]` to ntpd's session: the system domain's query worker
-  answers it in its own runtime, where no ntpd runs, so every attribute reads unsupported; the worker
-  needs a way to find ntpd's domain and its agent a bound that admits `[ntp]` (erx_inspect_worker route/2,
-  erx_inspect_agent owns/2), which no design names yet, and the start table's `app` record has no `domain` to
-  find it by; until then `ntpctl -s` says `/proc/ntp: unsupported`; (3) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
-  resolver call that answers TTLs lets it wait the shortest TTL instead; (4) the QEMU suites check held then
+  (2) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
+  resolver call that answers TTLs lets it wait the shortest TTL instead; (3) the QEMU suites check held then
   stepped (net_device, against the harness 300 s ahead of a clock the PL031 keeper set) but not the cases
   restart, kiss and refusals of design-time.md's verification, nor a cold boot's first-sample step, which QEMU
-  virt's real-time clock prevents; (5) ntpd answers `/proc/ntp` only while it waits, so a read during a
-  resolution (up to 10 s), an exchange (2 s, a burst up to 8 s) or its call to the clock service (up to 10 s)
-  outlasts inspect_agent_wait and reads `[timeout]`; answer from a process that does not block on the network
-  or the facet; (6) `ntpctl` (erlang/apps/erx_shell/src/erx_cmd_ntpctl.erl): `-s`'s lines
-  name `/proc/ntp`'s attributes by hand rather than from the schema; `-erx_needs([inspect, net])` asks for `net`
-  on the forms that read only `/proc`; when every address fails, `ntpctl step HOST` gives no reason per address;
+  virt's real-time clock prevents; (4) `ntpctl` (erlang/apps/erx_shell/src/erx_cmd_ntpctl.erl):
+  `-erx_needs([inspect, net])` asks for `net` on the forms that read no network; when every address fails,
+  `ntpctl step HOST` gives no reason per address;
   the name rule passes short IPv4 forms such as `1.2.3` to `inet:getaddrs/3`, which reads them as addresses;
-  (7) review findings left: the clock facet call is written in both erx_ntpd and erx_cmd_date; the
+  (5) review findings left: the clock facet call is written in both erx_ntpd and erx_cmd_date; the
   core is a one-action loop, not the events and `next_deadline/1` shape "Who does what" describes; `step_from` names every `set` `root`, which
   holds only while root's template alone holds the clock's `set` (derive the kind from the grant row or name the
   check); the net_device suite's ntpd rows (`NetDevice::NTPD`) copy raspi4b-development.txt's (derive them

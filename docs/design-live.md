@@ -1999,7 +1999,15 @@ memory and work, charged to it.
 * **What a runtime reports.** An agent's answer whose path, kind or ids
   name another domain is dropped whole, and the processes of another
   domain it lists are dropped, so a lying runtime can describe only its
-  own processes ([The runtime agent](#the-runtime-agent)).
+  own processes ([The runtime agent](#the-runtime-agent)). The schema
+  declares a kind whose reporter is `runtime` only at paths under a
+  domain id or a process id, and its generator refuses any other, so
+  `/proc` holds what the system observes, the kernel's, the system
+  services', the configured domains' and each runtime's about its own
+  processes, and no app's words. An app speaks in a tree of its own, at
+  `/svc/NAME` ([design-app-trees.md](design-app-trees.md)); of an app,
+  `/proc` shows the start table's record at `/proc/apps/NAME` and its
+  session's domain.
 * **Scope.** A path outside the facet's scope answers `enoent`, as a path
   that names nothing does. The inspector decides scope from the path and
   the domain service's record of the domain the path names, before it

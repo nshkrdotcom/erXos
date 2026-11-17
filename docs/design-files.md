@@ -332,9 +332,14 @@ of each slot's system partition
                    provider := provider(),
                    root := [name()],       % for a bind: where in the provider
                                            % or grant the entry starts; else []
-                   rights := rights()}.    % the grant enforces them for the
+                   rights := rights(),     % the grant enforces them for the
                                            % domain, the handler for each
                                            % program
+                   nosymfollow := boolean()}.
+                                           % true: no link in a tree this
+                                           % entry reaches is followed; a
+                                           % bind or a program's table
+                                           % keeps it, nothing clears it
 
 -type provider() :: release                % the domain's release slice,
                                            % read-only
@@ -350,6 +355,10 @@ of each slot's system partition
                                            % name: the grant the domain's
                                            % facet registry holds for it at
                                            % each resolution
+                  | {facets, svc}          % a directory of the registry's
+                                           % svc facets, each name the root
+                                           % of an app's tree (design-app-
+                                           % trees.md), mounted at /svc
                   | ended.                 % a grant that has ended: every
                                            % request answers eio, unsent
 
@@ -1262,7 +1271,12 @@ namespace leads, and a link on a narrowed mount that points above the
 mount's root names whatever the reader's namespace holds there, often
 nothing. Local providers follow links only through the resolver: the EROFS
 reader answers its walks and link reads as a grant does, and the release
-file system holds no links.
+file system holds no links. A link that lies in a tree reached through
+an entry with `nosymfollow` is never followed: where the resolver would
+follow it, it answers `eacces`, as FreeBSD's `vfs_lookup` answers on a
+`nosymfollow` mount, and an operation that acts on the link itself acts
+on it. A session's `/svc` entry, through which a session reaches an app's tree, carries
+it ([design-app-trees.md](design-app-trees.md#links)).
 
 **The last name's link.** A link before a path's last name is always
 followed. Whether a link that is the last name is followed, and what the

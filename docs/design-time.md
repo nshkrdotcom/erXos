@@ -747,9 +747,9 @@ deadline, and for the run, the addresses still usable:
   polled, so a pool that rotates its addresses cannot grow its state.
 * **Kiss-o'-death.** `DENY` or `RSTR` removes the address for the rest of
   the run, and the client moves to the next address as after a poll with
-  no reply. The client remembers as many denied addresses as
-  [`/proc/ntp`](#what-proc-shows) shows, the schema's `net_addresses`
-  bound of 32, which `erx_ntp_core` reads from the schema. Once that
+  no reply. The client remembers at most 32 denied addresses, a bound
+  of `erx_ntp_core`'s own, and [`/svc/ntpd/status`](#what-ntpd-serves)
+  shows them. Once that
   list is full it fails closed: it admits only addresses it has polled,
   which no denial has removed, so a denial past the bound needs no
   record and no denied address is polled again, while the state stays
@@ -757,8 +757,8 @@ deadline, and for the run, the addresses still usable:
   servers deny that often, thereby leaves the run only the addresses it
   has polled, and none once the answers stop naming them; ending the run
   instead would forget the denials at its restart. A resolver can end
-  network time anyway by answering no address, and `/proc/ntp` shows
-  the full `denied` list. `RATE` doubles that address's interval, up to 1024 s. Any
+  network time anyway by answering no address, and `/svc/ntpd/status`
+  shows the full `denied` list. `RATE` doubles that address's interval, up to 1024 s. Any
   other code, `X` codes included, discards the reply. A kiss is believed
   only after the match checks, 1 to 3 below, so an off-path host cannot
   silence a server.
@@ -847,6 +847,7 @@ session ntpd
   runtime @artifact.emu
   release @artifact.ntpd
   args "..."
+  serves svc
 facet ntpd_net
   name "net"
   grantee @session.ntpd
@@ -951,35 +952,43 @@ inside the system domain. A later source, PTP, GPS or a DS3231 module
 read by another domain, adds an operation of its own to
 `abi/services/clock.txt`, granted by a facet row of its own, and so a
 kind of its own here; no request carries a kind field. Each such source
-keeps its own state at a node of its own beside `/proc/time`, as ntpd
-does at `/proc/ntp`.
+keeps its own state where its owner keeps it: a configured domain at a
+path of its own beside `/proc/time`, an app in its own tree, as ntpd
+does at `/svc/ntpd/status` ([What ntpd serves](#what-ntpd-serves)).
 
 A value the record does not hold yet is `unknown`, which `/proc` writes
 as `[unknown]`: the inspection schema has no `none` value, and an
 unknown attribute is the schema's own way to say that nothing is
 recorded.
 
-**`/proc/ntp`** is ntpd's own state, a kind `ntp` at path `ntp`, visible
-to the whole-machine scope only, since it is another domain's, and
-reported by ntpd's session from `erx_ntp_core:status/1`:
+## What ntpd serves
+
+ntpd's own state is its words, not the system's, so it is in ntpd's own
+tree, `/svc/ntpd`, which its template declares that it serves
+([design-app-trees.md](design-app-trees.md)), and not at `/proc`. The tree
+holds one file, `status`, which ntpd sets with `erx_svc:set_status/1`
+from `erx_ntp_core:status/1` after each exchange, resolution and answer
+of the clock service, one attribute a line, a name, a tab and the value
+in the field escape:
 
 | Attribute | Value |
 | --- | --- |
-| `servers` | the names of the start flags, as the session read them |
-| `addresses` | the addresses in use, the current first; `denied`, the ones `DENY` or `RSTR` removed |
-| `last` | the address that last answered and how: `sample`, a drop reason of [Checks on a reply](#checks-on-a-reply), `deny`, `rate`, `other` for any other kiss, or `no_reply` |
-| `interval_s`, `resolve_wait_s` | the poll interval and the resolution backoff in effect |
-| `samples`, `dropped`, `kisses`, `silent` | replies that gave a sample, replies dropped, kisses, and exchanges with no reply, since the session started |
+| `servers` | the names of the start flags, as the session read them, separated by spaces |
+| `addresses` | the addresses in use, the current first, separated by spaces; `denied`, the ones `DENY` or `RSTR` removed |
+| `last` | the address that last answered and how, separated by a space: `sample`, a drop reason of [Checks on a reply](#checks-on-a-reply), `deny`, `rate`, `other` for any other kiss, or `no_reply` |
+| `interval_s`, `resolve_wait_s` | the poll interval and the resolution backoff in effect, in decimal seconds |
+| `samples`, `dropped`, `kisses`, `silent` | replies that gave a sample, replies dropped, kisses, and exchanges with no reply, since the session started, in decimal |
 
-The counts and `last` start empty with each session, `unknown` before
-the first exchange, and a node read while no ntpd session runs answers
-`unavailable`, so nothing claims more history than the session has. A
+The counts and `last` start empty with each session, and an attribute
+with no value yet is left out of the file, so nothing claims more
+history than the session has; while no ntpd session runs there is no
+`/svc/ntpd`. `erx_svc` answers a read from the text ntpd last set, so a
 read while ntpd is resolving, exchanging or waiting for the clock
-service's answer waits for its next wait and can time out
-(`TODO.md`). A
-kiss code is shown as one of the known atoms, never as the server's
-bytes. ntpd offers no control file; `ntpctl -s` writes this record
-([Decisions](#decisions), 8).
+service's answer is answered at once. A kiss code is written as one of
+the known atoms, never as the server's bytes. ntpd's tree has no `ctl`;
+`ntpctl -s` writes this file ([Decisions](#decisions), 8). Only a session
+whose template holds `start` has `/svc`, which is also who reads
+`/proc/apps/ntpd`.
 
 ## Setting the clock by hand
 
@@ -1171,7 +1180,7 @@ command raise.
 
 `ntpctl` is root's command for network time beside ntpd: it steps the
 clock once, through the same `set` that `date` sends, and shows ntpd's
-own record. It adds no facet row, template, service or operation. It is
+own words. It adds no facet row, template, service or operation. It is
 an Erlang command of the command shell, `erx_cmd_ntpctl`, declared
 `-erx_needs([inspect, net])`. Its name and its `-s` form are those of
 OpenBSD's ntpctl(8), the control program of OpenBSD's ntpd
@@ -1251,8 +1260,8 @@ The arguments choose the source of a step, and nothing else does
   refusal of the facet writes `ntpctl: clock_settime: ` and its text,
   with `date`'s texts and status 1 ([Failure paths](#failure-paths)),
   and a session without the grant refuses as `date` does, with `eperm`.
-* **`-s status`** and **`-s peers`** write ntpd's own record,
-  `/proc/ntp` ([What /proc shows](#what-proc-shows)), with erXos's
+* **`-s status`** and **`-s peers`** write ntpd's own words,
+  `/svc/ntpd/status` ([What ntpd serves](#what-ntpd-serves)), with erXos's
   attributes rather than an imitation of OpenBSD's columns, which name
   values erXos's ntpd does not keep. `status` writes the servers, the
   last answer, the poll interval and resolution backoff, and the counts:
@@ -1265,14 +1274,18 @@ The arguments choose the source of a step, and nothing else does
   ```
 
   `peers` writes one line for each address in use, the current one
-  marked `current`, then one for each denied address, marked `denied`. A
-  value the record does not hold is written as `/proc` writes its
-  status, such as `[unknown]`. When no attribute holds a value the
-  command writes why, status 1: `ntpctl: ntpd is not running` when each
-  answers `unavailable`, and otherwise `ntpctl: /proc/ntp: ` and the
-  status, as `ntpctl: /proc/ntp: unsupported` while nothing routes
-  `/proc/ntp` to ntpd's session (`TODO.md`). OpenBSD's other keywords,
-  `all` and `Sensors`, and its abbreviations are usage errors.
+  marked `current`, then one for each denied address, marked `denied`.
+  The command first reads `/proc/apps/ntpd`, and writes `ntpctl: ntpd
+  is not running`, status 1, unless its state is `running`. It then
+  reads the file through `erx_svc_client:read/2` and parses it with
+  `erx_svc_status:parse/1`
+  ([design-app-trees.md](design-app-trees.md#reading-with-a-deadline)):
+  an attribute the file leaves out is written `[unknown]` and one on a
+  line the parser refuses `[invalid]`, each where its value goes, and a
+  read that fails writes `ntpctl: /svc/ntpd/status: ` and the errno's
+  text, or `timed out` at `svc_wait_max`, status 1. A value is written
+  as the file holds it, escaped. OpenBSD's other keywords, `all` and
+  `Sensors`, and its abbreviations are usage errors.
 
 Failures are written to standard error after `ntpctl: `. Every name and
 address written passes the field escape (`erx_text:escape_field/1`).
@@ -1472,7 +1485,7 @@ that proves it ran.
 | `date` set | a set answers `{ok, {stepped, _}}` and writes the named time; each error answer of [Failure paths](#failure-paths) gives its text and status 1; a context without `clock` refuses a set and still reads and runs `-j` | a run that looks up the grant before it parses refuses `-j` without one |
 | `ntpctl` forms | `step` alone, `step` with one and with eight servers, `-s status` and `-s peers` parse; nine servers, an empty one, a 254-byte one, one with a space or an escape, `-s all`, `-s Sensors`, an abbreviation and a bare server are refused | accepting a ninth operand passes the nine-server case |
 | `ntpctl step`'s sources | ntpd's sample is `/proc/time`'s `sample_wall_offset_ns` and `server` while `/proc/apps/ntpd` is running; a sample stepped to, held or refused as `panic` is applied and one refused as `floor` is not; a row not running, no row, a record with no sample, one that cannot be read and a verdict or time with no value each give their line and set nothing; each step line names its source, and ntpd's its verdict and age | dropping the running check steps from a stopped ntpd's sample; dropping the floor clause applies the floor sample |
-| `ntpctl -s` | `status` and `peers` write `/proc/ntp`'s values, an unknown one as `[unknown]`; a node whose every attribute is `unsupported`, `unavailable` or timed out writes that plainly, status 1 | a formatter that writes a status as a value prints `unsupported` as ntpd's state |
+| `ntpctl -s` | `status` and `peers` write `/svc/ntpd/status`'s values, a missing one as `[unknown]` and one on a line the parser refuses as `[invalid]`; a `/proc/apps/ntpd` not `running` writes `ntpd is not running`, and a read past `svc_wait_max` writes `timed out`, each status 1 | a formatter that writes a missing attribute as an empty value prints `servers` with nothing after it |
 | `ntpctl` exchange | `erx_ntp_exchange:classify/4` passes over a datagram that does not decode, answers another nonce or another version, and gives `erx_ntp_sample:check/4`'s sample, drop or kiss for its own answer, as for ntpd | removing the nonce comparison accepts the foreign-nonce reply |
 
 The setter's range has a test of its own on Fiasco, in the native
@@ -1545,6 +1558,11 @@ kiss code. The guest's test manifest enables ntpd with
 * **ntpctl.** After ntpd's step, root's `ntpctl step` steps from ntpd's
   sample of the peer and says so; the peer then answers 2030, `ntpctl
   step 10.0.2.100` steps from it, and `date` reads 2030 (`net_device`).
+* **ntpd's tree.** While the harness's name server delays ntpd's
+  resolution by 8 s, root's `ntpctl -s status` answers at once with
+  `servers` and the counts, and `ls /svc/ntpd` shows `status` alone.
+  *Seeded failure:* `erx_svc`'s read asking ntpd's loop for its status
+  makes the command write `timed out`.
 * **Kiss.** The peer answers `RATE`, then `DENY`: the next request comes
   one doubled interval later, then none. *Seeded failure:* a kiss check
   after check 4, with the peer's kiss carrying LI 3, ignores both.
@@ -1694,7 +1712,8 @@ These were open and are settled as stated here:
    The command is ntpctl, the control program of an ntpd, as OpenBSD's
    is, since ntpd is what erXos runs, and one command instead of a
    separate ntpdate keeps one exchange for both ways of setting. ntpd's
-   state is read at `/proc/ntp`, which `ntpctl -s` writes.
+   state is read at `/svc/ntpd/status`, which `ntpctl -s` writes, and
+   ntpd's tree has no `ctl`.
 
 ## Open decisions
 
