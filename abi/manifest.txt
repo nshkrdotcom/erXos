@@ -89,6 +89,7 @@ enum mf_device_role u32
   value input 9
   value i2c 10
   value spi 11
+  value rtc 12
 enum mf_grantee u32
   value system 0
   value domain 1

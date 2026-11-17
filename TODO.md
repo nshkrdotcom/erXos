@@ -7190,10 +7190,22 @@ to the corpus and follow rc
   operand and format corpus, which settles the `mktime(3)` normalization design-time.md marks unverified.
 * [Medium] time, the wall-clock keeper (`docs/design-header-io.md`, "An I2C real-time clock"): the header design
   says "the system domain's wall-clock keeper, designed with network time, reads `/dev/rtc/time` at boot and writes
-  it after each correction", but [design-time.md](docs/design-time.md) designs no keeper and no use of `/dev/rtc`,
-  so nothing sets the wall clock from the Pi's clock module. HTTPS clients refuse every certificate on an unset
-  clock ([design-crypto.md](docs/design-crypto.md#time)). Design the keeper in design-time.md: how the clock service
+  it after each correction", and [design-time.md](docs/design-time.md#the-real-time-clock-at-boot) designs the keeper
+  for QEMU `virt`'s PL031 (`erx_rtc_pl031`, a reading at boot sent as `{rtc, Source, Wall}`), but not its `/dev/rtc`
+  source, so nothing sets the wall clock from the Pi's clock module. HTTPS clients refuse every certificate on an unset
+  clock ([design-crypto.md](docs/design-crypto.md#time)). Design its `/dev/rtc` source in design-time.md: when the keeper reads it, since the devices domain starts after the system domain; how the clock service
   takes the RTC's reading at boot, how it ranks it against network time, and when it writes the RTC.
+* [Medium] time, the PL031 keeper (`erlang/apps/erx_rtc/src/erx_rtc_pl031.erl`, `erx_clock_core:decide/4`'s `rtc`
+  clause, [design-time.md](docs/design-time.md#the-real-time-clock-at-boot)): a reading leaves the clock `set`, so
+  ntpd refuses a later error of 1000 s or more `panic` and only root's `date` corrects a real-time clock that reads
+  far wrong. A reading should leave the clock `boot`, cold for ntpd's first sample and distinct from root's `date`,
+  but `state` is the time page's (`erx_clock_core:state/2`, which `/proc`'s collector calls in any runtime), and
+  on Fiasco the keeper's step moves the page's `seq` as every set does, so nothing in the page tells it from a set;
+  the page must carry the state its setter wrote, a change to `erx_time_set_offset` and the page's layout, which
+  also tells the approximate start's one write from a set. Also open: the step uses the monotonic time at which erx_clock reads the page, not that of the
+  register read, so a reading that waits in erx_clock's queue lands late by the wait (send the read's monotonic
+  time with it); the keeper reads at boot synchronously in erx_rtc_sup's init, so an erx_clock that hangs delays the boot
+  by up to 10 s.
 * [Low] platforms, panic output: the board port measures whether the
   kernel's polled early-console writes at a panic complete after the
   console driver has reconfigured the UART, on each board

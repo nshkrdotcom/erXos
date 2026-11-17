@@ -284,6 +284,9 @@ machine
 unit block
   placement "block"
   holder @domain.storage
+unit rtc
+  placement "rtc"
+  holder system
 unit display
   placement "display"
   holder @domain.display

@@ -13,7 +13,6 @@ require_relative 'qemu'
 require_relative 'qemu_cells'
 require_relative 'release_medium'
 require_relative 'runner'
-require_relative 'source_revision'
 require_relative 'web_build'
 require_relative 'web_guest'
 
@@ -204,10 +203,11 @@ module Erx
     # `service -e` there: the configured domains in boot order and the enabled rows, read
     # from /proc/apps through the session's inspect facet, with status 0.
     SERVICE_E = "service -e && echo service-listed\r"
-    # The approximate start (docs/design-time.md, "The approximate start"): QEMU on Fiasco
-    # gives no real-time clock, so the clock service started the clock at the build date,
-    # the commit's time, and a reading date at the session writes that hour, or the next
-    # one after the minutes of the boot (date_boot_hours).
+    # The real-time clock at boot (docs/design-time.md, "The real-time clock at boot"): the
+    # system domain's wall-clock keeper read QEMU virt's PL031, which the harness starts at
+    # the host's time (it passes no -rtc outside deterministic mode), so a reading date at
+    # the session writes the hour of the host's clock when the boot began, or the next one
+    # (date_boot_hours).
     DATE_BOOT = "date +%Y%m%d%H\r"
     # Set by hand (docs/design-time.md, "Verification and testing"): root's session sets
     # the wall clock with date through its clock grant, which writes the time it set, and a
@@ -343,16 +343,16 @@ module Erx
       end
     end
 
-    # The lines a reading date (DATE_BOOT) may write at the session on a clock started at
-    # build_date, the image's commit time: its hour, or the next one.
-    def date_boot_hours(build_date)
-      hours = [build_date, build_date + 3600].map { |time| time.utc.strftime('%Y%m%d%H') }
+    # The lines a reading date (DATE_BOOT) may write at the session on a clock the PL031 set
+    # at a boot that began at boot_time on the host's clock: its hour, or the next one.
+    def date_boot_hours(boot_time)
+      hours = [boot_time, boot_time + 3600].map { |time| time.utc.strftime('%Y%m%d%H') }
       /\A(?:#{hours.join('|')})\r*\n\z/n
     end
 
     # The production checkpoints to the system's command shell, then the cell, on an image
-    # whose build date is build_date. points must end at the command shell.
-    def root_session_checkpoints(points, build_date:)
+    # that began at boot_time on the host's clock. points must end at the command shell.
+    def root_session_checkpoints(points, boot_time:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       shell = ProductionImage::Run::ERLANG_SHELL
@@ -375,7 +375,7 @@ module Erx
        { name: 'session-start-listed', pattern: line('start-listed'), seconds: 60, type: START_CTL_REFUSED }.freeze,
        { name: 'session-start-ctl-refused', pattern: line('start-ctl-refused-invalid argument'), seconds: 60, type: SERVICE_E }.freeze,
        { name: 'session-service-e', pattern: line('service-listed'), seconds: 60, type: DATE_BOOT }.freeze,
-       { name: 'session-date-boot', pattern: date_boot_hours(build_date), seconds: 60, type: DATE_SET }.freeze,
+       { name: 'session-date-boot', pattern: date_boot_hours(boot_time), seconds: 60, type: DATE_SET }.freeze,
        { name: 'session-date-set', pattern: line(DATE_SET_LINE), seconds: 60, type: DATE_READ }.freeze,
        { name: 'session-date-read', pattern: line(DATE_SET_LINE), seconds: 60, type: ERL }.freeze,
        shell.merge(name: 'root_1-erlang-shell', type: "node().\r").freeze,
@@ -473,16 +473,13 @@ module Erx
         medium = written.fresh(directory: directory)
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: count,
                                                          manifest_source: @manifest, memory_mib: @machine.memory_mib)
-        # The build date the image's build facts name, its source's commit time.
-        revision = SourceRevision.read(root: @root, runner: @runner)
-        raise Error, 'the session cell needs a git checkout: its date check reads the build date' unless revision
-
-        build_date = revision.committed_at
+        # The host's time as the boot begins, which QEMU's PL031 starts at.
+        boot_time = Time.now
         report = Qemu.new(root: @root, runner: @runner, program: @qemu)
                      .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
                           memory_mib: @machine.memory_mib,
                           disks: [QemuPlan::Disk.new(path: medium)],
-                          checkpoints: SessionDomain.root_session_checkpoints(points, build_date: build_date),
+                          checkpoints: SessionDomain.root_session_checkpoints(points, boot_time: boot_time),
                           **web_check(accel, count, built, directory: File.join(directory, 'boot')))
         SessionDomain.burst_whole!(File.binread(report.fetch('serial_log')))
       end

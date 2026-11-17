@@ -22,6 +22,13 @@ applied/3 for the answer and the record.
   coldness, the floor or the distance, and sets `excess` to none, so a
   sample held before it cannot step on one more sample after it; the
   sample attributes are left as they were.
+* A real-time clock's reading, the wall-clock keeper's `{rtc, Wall}`
+  in the system domain, the wall time the clock read at boot, steps the
+  clock to read Wall while the clock is `unset` or `approximate`; a clock
+  the boot's own reading gave a time (`boot`) or anything set this boot
+  (`set`) keeps it, and a reading before the floor is refused, so it
+  never steps the clock below the floor
+  (docs/design-time.md, "The real-time clock at boot").
 
 The floor is the build's date, build_floor/1 of its build facts: no sample
 sets the clock before it (RFC 8633, section 5.2), and a clock that reads
@@ -38,16 +45,19 @@ offset beyond 128 ms, and `floor`, the floor the service started with.
 """.
 
 -export([build_floor/1, new/2, state/2, start/2, decide/4, applied/3]).
--export_type([request/0, source/0, clock_record/0, step/0, answer/0, floor/0, state/0]).
+-export_type([sample/0, facet_request/0, request/0, source/0, clock_record/0, step/0, answer/0, floor/0, state/0]).
 
 -define(NS_PER_S, 1000000000).
 %% Offsets of 128 ms and less are held; offsets of 1000 s and more refused.
 -define(HOLD_NS, 128000000).
 -define(PANIC_NS, (1000 * ?NS_PER_S)).
 
--type request() :: {sample, W :: non_neg_integer(), Distance :: non_neg_integer(), Stratum :: 1..15,
-                    Server :: inet:ip4_address()}
-                 | {set, W :: non_neg_integer()}.
+-type sample() :: {sample, W :: non_neg_integer(), Distance :: non_neg_integer(), Stratum :: 1..15,
+                   Server :: inet:ip4_address()}.
+%% What a domain's clock facet admits (erx_clock_facet:decode/1).
+-type facet_request() :: sample() | {set, W :: non_neg_integer()}.
+%% A facet's request, or the wall-clock keeper's reading, which no facet admits.
+-type request() :: facet_request() | {rtc, Wall :: non_neg_integer()}.
 %% The domain whose facet sent the request, from the facet, never the request.
 -type source() :: pos_integer().
 -type sign() :: positive | negative.
@@ -66,7 +76,7 @@ offset beyond 128 ms, and `floor`, the floor the service started with.
 %% A step the service applies: the wall offset to store, its size from the page's
 %% offset, the wall time the clock reads once it is applied, and who asked for it.
 -type step() :: #{offset := non_neg_integer(), step_ns := integer(), at := integer(), source := source()}.
--type answer() :: {ok, {stepped, integer()} | held | {refused, floor | panic}}
+-type answer() :: {ok, {stepped, integer()} | held | {refused, floor | panic | boot | set}}
                 | {error, erx_clock_nif:status()}.
 
 -doc """
@@ -120,6 +130,11 @@ arrived: an answer, or a step for the service to apply and give to applied/3.
           {answer, answer(), clock_record()} | {step, step(), clock_record()}.
 decide({set, W}, Source, Page, Record) ->
     {step, step(W, Source, Page), Record#{excess := none}};
+decide({rtc, Wall}, Source, #{monotonic := M} = Page, Record = #{floor := Floor}) ->
+    case rtc(Wall, M, state(Page, Floor), Floor) of
+        {step, W} -> {step, step(W, Source, Page), Record};
+        {refuse, Reason} -> {answer, {ok, {refused, Reason}}, Record}
+    end;
 decide({sample, W, Distance, Stratum, Server}, Source, #{offset := C, monotonic := M} = Page,
        #{floor := Floor} = Record) ->
     D = W - C,
@@ -158,6 +173,20 @@ row(_Wall, _Floor, false, D, Excess) when abs(D) < ?PANIC_NS ->
         Sign -> {hold, Sign}
     end;
 row(_Wall, _Floor, false, _D, _Excess) -> {refuse, panic}.
+
+%% The wall offset that makes the clock read Wall, a real-time clock's reading at boot,
+%% at monotonic time M, on a clock in State with floor Floor. Only a clock with no time
+%% of its own, `unset` or `approximate`, takes a reading: one that already has a time,
+%% a boot's reading (`boot`) or a set (`set`), keeps it, since the reading is a start,
+%% not a correction. A reading before the floor, or before the uptime since 1970 where
+%% no floor is recorded, is no time the clock may read, so the clock never steps below
+%% the floor.
+rtc(Wall, M, State, Floor) when State =:= unset; State =:= approximate ->
+    case Wall >= Floor andalso Wall >= M of
+        true -> {step, Wall - M};
+        false -> {refuse, floor}
+    end;
+rtc(_Wall, _M, State, _Floor) -> {refuse, State}.
 
 sign(D) when D > 0 -> positive;
 sign(_D) -> negative.
