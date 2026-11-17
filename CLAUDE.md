@@ -471,10 +471,13 @@ scripts live in `~/erxos-scratch/tools/`.
   facet, protocol, process kind, registry, flag or special case, find the
   mechanism the design documents already give for the job and use it. A
   domain reaches another only through a facet of a service `abi/services`
-  declares, and a new need goes to one of three homes: state someone reads
-  is an inspection path, shown at `/proc`; bytes someone keeps or a thing
-  someone commands is a file tree its owner serves and the reader mounts,
-  with a `ctl` file for one-shot control; a live conversation is a declared
+  declares, and a new need goes to one of three homes: state the system
+  observes (the kernel, the system services, a configured domain, a
+  runtime about its own processes) is an inspection path declared in
+  `abi/inspection.txt`, shown at `/proc`; what an app says about itself,
+  bytes someone keeps, or a thing someone commands is a file tree its
+  owner serves and the reader mounts, with a `status` file to read and a
+  `ctl` file for one-shot control; a live conversation is a declared
   protocol with its own design. When a change needs
   something the design does not name, stop and bring the question to the
   design (and to me when it is architectural) instead of building it.
