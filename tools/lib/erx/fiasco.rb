@@ -36,9 +36,10 @@ module Erx
     # notices both ship them under from these.
     UserLibrary = Data.define(:license, :sources)
     USER_LIBRARIES = {
-      'libsigma0.a' => UserLibrary.new(license: 'MIT', sources: %w[libsigma0/include libsigma0/lib l4sys/include]
+      'libsigma0.a' => UserLibrary.new(license: 'MIT', sources: %w[libsigma0/include libsigma0/lib l4sys/include cxx/lib/tl/include]
                                          .map { "fiasco/l4re-core/#{it}" }.freeze),
-      'libl4sys.p.a' => UserLibrary.new(license: 'MIT', sources: %w[l4sys/include l4sys/lib].map { "fiasco/l4re-core/#{it}" }.freeze)
+      'libl4sys.p.a' => UserLibrary.new(license: 'MIT', sources: %w[l4sys/include l4sys/lib cxx/lib/tl/include]
+                                          .map { "fiasco/l4re-core/#{it}" }.freeze)
     }.freeze
     KERNEL_COMMIT = '50bbe8a981199e17865e8553a4eb02c387b339cf'
     CORE_COMMIT = 'e2e2d5af9de7aa0e1df2a25ebadee54488fa4a49'
@@ -325,42 +326,56 @@ module Erx
       end
       references.uniq.map do |reference|
         path = reference.fetch('path')
-        raise Error, "#{path} differs from #{ImportNotices::PROFILE}" unless Digest::SHA256.file(File.join(root, path)).hexdigest == reference.fetch('sha256')
+        file = File.join(root, path)
+        raise Error, "#{path} differs from #{ImportNotices::PROFILE}" unless File.file?(file) && Digest::SHA256.file(file).hexdigest == reference.fetch('sha256')
 
         path
       end
     end
 
-    # The copyright notices of user library name's sources: of every file there, its
-    # opening comments up to the one that states a copyright, which name its authors
-    # where that statement says "Author(s)". Each text is the file's own, byte for
-    # byte, given once under the first file that carries it.
+    # The copyright notices of user library name's sources, each file's own text byte
+    # for byte (copyright_comment), given once under the first file that carries it.
     def self.user_copyrights(name, root:)
       sources = USER_LIBRARIES.fetch(name).sources
-      files = sources.flat_map { |source| Dir.glob('**/*', base: File.join(root, source)).sort.map { File.join(source, it) } }
-      notices = files.select { File.file?(File.join(root, it)) }.to_h { [it, copyright_comment(File.binread(File.join(root, it)))] }.compact
-      heading = "Copyright notices of the files #{name} is compiled from (#{sources.join(', ')})\n"
-      notices.group_by { |_file, comment| comment }.map { |comment, carriers| "\n#{carriers.first.first}:\n#{comment}" }
-             .join.then { |body| (heading.b + body).b }
+      carriers = sources.flat_map { |source| source_copyrights(source, root: root) }.group_by(&:last)
+      notices = carriers.map { |comment, files| "\n#{files.first.first}:\n#{comment}" }
+      "Copyright notices of the files #{name} is compiled from (#{sources.join(', ')})\n".b + notices.join.b
     end
 
-    # The comment blocks a C, C++ or assembly file opens with, up to and including the
-    # first that states a copyright; nil when none of them does.
+    # [path, copyright comment] for each file under source, a directory of the tree,
+    # that states a copyright. A directory that is missing or states none fails, since
+    # a user library's notice would then ship without its holders.
+    def self.source_copyrights(source, root:)
+      directory = File.join(root, source)
+      files = Dir.glob('**/*', base: directory).sort.select { |file| File.file?(File.join(directory, file)) }
+      found = files.filter_map do |file|
+        comment = copyright_comment(File.binread(File.join(directory, file)))
+        [File.join(source, file), comment] if comment
+      end
+      raise Error, "#{source} states no copyright, so a user library's notice would lack its holders" if found.empty?
+
+      found
+    end
+
+    # The comment blocks of a C, C++ or assembly file's opening (its comments,
+    # preprocessor and blank lines before the first code) up to and including the last
+    # that states a copyright, so the blocks naming the authors a "(c) Author(s)"
+    # statement refers to come with it; nil when none states one.
     def self.copyright_comment(bytes)
       blocks = []
       lines = bytes.b.lines
       until lines.empty?
-        line = lines.shift
-        stripped = line.lstrip
-        next if stripped.strip.empty?
-        break unless stripped.start_with?('/*', '//')
+        first = lines.shift
+        opening = first.lstrip
+        next if opening.strip.empty? || opening.start_with?('#')
+        break unless opening.start_with?('/*', '//')
 
-        block = [line]
-        block << lines.shift while stripped.start_with?('/*') && !block.last.include?('*/') && !lines.empty?
+        block = [first]
+        block << lines.shift while opening.start_with?('/*') && !block.last.include?('*/') && !lines.empty?
         blocks << block.join
-        return blocks.join if blocks.last.match?(/\(c\)|copyright/i)
       end
-      nil
+      last = blocks.rindex { |block| block.match?(/\(c\)|copyright/i) }
+      last && blocks[0..last].join
     end
 
     def boot_core_archive = File.join(@build, 'boot-cores', CoreArchive::BOOT_ARCHIVE)

@@ -1937,6 +1937,15 @@ it; git history is the record of completed work.
   per-entry test flags in the packer (ORed into the header, checked against the entries by
   `erx_index_check`); every packer then marks its test image, and the lexical
   `test-image-builder` check (`Checks::TEST_IMAGE_BUILDERS`) can go.
+* [Medium] build, `tools/lib/erx/import_notices.rb` and `tools/lib/erx/pack_provenance.rb` (`attribute`): a
+  license grant with no text in `config/provenance/import-notices.json` fails only for L4Re's user libraries
+  (`Fiasco.user_license_notices`); an imported file under a package that lists notices, and every other
+  external archive, passes with the package's notices alone, and an archive's notices are hashed from the live
+  file, not held to the profile's pin. Make "every selected grant has a document" part of `ImportNotices.select`
+  and route archive notices through it. The copyright extraction for the user libraries
+  (`Fiasco.copyright_comment`) is a second leading-comment parser beside `PackProvenance#leading_notice`, and
+  its source directories are listed by hand; one parser, and the file set from the build's dependency files,
+  would keep each fact once.
 * [Medium] Fiasco backend, `tools/lib/erx/production_image.rb`: the root's link attributes `libl4sys.p.a`,
   `libsigma0.a` and the boot cores whole, under a license the recipe states, and its dependency
   files leave out Fiasco's and the compiler's headers. The boot cores are stated as BSD-2-Clause

@@ -261,7 +261,7 @@ class ProductionImageTest < Minitest::Test
   def test_chacha20_files_carry_their_own_dedication
     directory = 'kernel/crypto/chacha20'
     changes = Erx::Origin.new(root: File.join(ROOT, directory)).inventory.fetch('changes')
-    profile = Erx::ImportNotices.parse(File.binread(File.join(ROOT, 'config/provenance/import-notices.json')))
+    profile = Erx::ImportNotices.parse(File.binread(File.join(ROOT, Erx::ImportNotices::PROFILE)))
     license = { 'path' => 'LICENSE', 'sha256' => Digest::SHA256.file(File.join(ROOT, 'LICENSE')).hexdigest }
     %w[chacha.c chacha.h].each do |name|
       source = File.join(directory, name)
