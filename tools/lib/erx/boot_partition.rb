@@ -70,6 +70,9 @@ module Erx
     IMAGE = 'sdcard.img'
     RECORD = 'sdcard.img.receipt.json'
     ENTRIES = [PARTITION, IMAGE, RECORD].freeze
+    # The most bytes a reader takes of a build record, a few kilobytes of names, pins and
+    # digests; anything far larger is not one.
+    RECORD_BYTES = 1024 * 1024
     # The memory the firmware reports: total_mem makes any Pi 4 report the smallest
     # board's 1 GB, of which gpu_mem goes to the VideoCore, so the ARM's RAM is the same
     # on every board and on QEMU's 1 GB model, where the record's ram_bytes and
@@ -244,6 +247,23 @@ module Erx
         'components' => files.sort.map { |name, sha256| { 'path' => "#{PARTITION}/#{name}", 'sha256' => sha256 } } +
                         pieces.sort.map { |name, sha256| { 'path' => name, 'sha256' => sha256 } },
         **record }
+    end
+
+    # The partition's files a parsed receipt lists, each name to its SHA-256: the
+    # components under PARTITION/, as receipt writes them. A name that is not one of the
+    # layout's (NAME) is refused, so a reader that places the files by these names stays
+    # inside the directory it places them in.
+    def listed_files(receipt)
+      files = receipt.fetch('components').filter_map do |component|
+        component.fetch_values('path', 'sha256') => [String => path, String => sha256]
+        [path.delete_prefix("#{PARTITION}/"), sha256] if path.start_with?("#{PARTITION}/")
+      end.to_h
+      odd = files.keys.reject { |name| NAME.match?(name) }
+      raise Error, "the card's build record lists #{odd.first.dump}, which is no file name of the boot partition" unless odd.empty?
+
+      files
+    rescue KeyError, NoMatchingPatternError
+      raise Error, "the card's build record holds no list of the boot partition's files"
     end
 
     # The build record of a layout: the erXos commit the card is of, in full, and whether

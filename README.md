@@ -815,6 +815,13 @@ to expect on a board is in
 and the checklist for the SD card and Ethernet on a board
 [after it](docs/design-platforms.md#the-sd-card-and-ethernet-on-a-board).
 
+To boot each new build without writing a card, a development board can
+netboot from the Mac over an Ethernet cable: `tools/erx netboot` stages
+`boot/` into the Mac's TFTP root and prints the TFTP server's command
+line. The EEPROM setting, Internet Sharing and what a netboot lacks (the
+card's image packages) are in
+[Netbooting from a Mac](docs/design-platforms.md#netbooting-from-a-mac).
+
 ## Guest and stock oracle
 
 ```sh

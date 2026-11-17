@@ -64,8 +64,6 @@ module Erx
     TAG = /\A[A-Za-z0-9][A-Za-z0-9._-]{0,99}\z/
     COMMIT = /\A[0-9a-f]{40}\z/
     SECTOR_BYTES = MediumImage::SECTOR_BYTES
-    # A card's build record is a few kilobytes; anything far larger is not one.
-    MAX_CARD_RECORD = 1024 * 1024
     # How the card is compressed. One fixed preset and one thread, so xz
     # writes one stream of one block, and XZ_ENVIRONMENT unsets the variables
     # xz reads options from before its command line, so the bytes depend only
@@ -169,7 +167,7 @@ module Erx
     # tree that was no checkout, or one that would publish a host's paths, is
     # refused.
     def card_record(bytes, sha256:, commit:)
-      record = JsonInput.parse(bytes, max_bytes: MAX_CARD_RECORD, label: "the card's build record")
+      record = JsonInput.parse(bytes, max_bytes: BootPartition::RECORD_BYTES, label: "the card's build record")
       artifact = { 'path' => BootPartition::IMAGE, 'sha256' => sha256 }
       unless record.is_a?(Hash) && record['artifact'] == artifact
         raise Error, "the card's build record is not of this card, #{BootPartition::IMAGE} with SHA-256 #{sha256}"
@@ -212,7 +210,7 @@ module Erx
       ImageRecord.check(BoundedFile.read(image_record, maximum: ImageRecord::MAX_BYTES), sha256: image_sha256, commit: source.ref)
       disk_sha256 = Digest::SHA256.hexdigest(disk.content)
       card_sha256 = card && digest.(card)
-      record = card && card_record(BoundedFile.read(card_record, maximum: MAX_CARD_RECORD), sha256: card_sha256, commit: source.ref)
+      record = card && card_record(BoundedFile.read(card_record, maximum: BootPartition::RECORD_BYTES), sha256: card_sha256, commit: source.ref)
       names = { 'terminal.js' => digest_name('terminal.js', digest.(page.fetch('terminal.js'))),
                 'image' => "image-#{image_sha256[0, 16]}.boot.gz", 'disk' => "disk-#{disk_sha256[0, 16]}.bin" }
               .merge(card ? { 'card' => "sdcard-#{card_sha256[0, 16]}.img.xz",
