@@ -121,11 +121,6 @@ no_file_is_an_empty_root_with_its_finding_test() ->
     ?assertEqual({ok, <<>>}, settled(Holder)),
     ?assertEqual([<<"authorized_keys: no authorized_keys">>], logs()).
 
-an_entry_in_the_record_s_region_is_an_empty_root_with_its_finding_test() ->
-    {Holder, _} = start(reader("region_beside")),
-    ?assertEqual({ok, <<>>}, settled(Holder)),
-    ?assertEqual([<<"authorized_keys: lies in the boot-selection record's region">>], logs()).
-
 a_skipped_line_is_logged_by_its_number_and_the_other_keys_kept_test() ->
     {Holder, _} = start(reader("skipped_line")),
     ?assertEqual([key(1), key(2)], blobs(element(2, settled(Holder)))),

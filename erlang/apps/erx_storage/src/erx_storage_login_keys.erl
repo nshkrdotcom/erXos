@@ -210,7 +210,6 @@ reason(not_found) -> <<"no authorized_keys">>;
 reason(too_long) -> <<"longer than 16 KiB">>;
 reason(too_many_keys) -> <<"more than 16 keys">>;
 reason(not_its_volume) -> <<"the record partition is not its FAT volume">>;
-reason(in_record_region) -> <<"lies in the boot-selection record's region">>;
 reason(does_not_read) -> <<"does not read">>;
 reason(read_failed) -> <<"read failed">>.
 

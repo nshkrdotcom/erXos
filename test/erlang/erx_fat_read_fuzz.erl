@@ -6,10 +6,9 @@
 %% test/fixtures/fat_record_volume.rb writes into the directory it is given. A round
 %% takes one, mutates its boot sector, FAT entries, root directory entries and data
 %% (bytes flipped, 16-bit fields set to random or telling values: free, bad, end of
-%% chain, the data area's edges, the record's region), and reads authorized_keys from
-%% it. Whatever the volume holds, the reader never raises and makes no atom, reads no
-%% sector outside the record partition, no data sector of the record's region and at
-%% most 32 data sectors, and answers either at most 16 KiB or a finding of the closed
+%% chain, the data area's edges, the record's erase unit), and reads authorized_keys
+%% from it. Whatever the volume holds, the reader never raises and makes no atom, reads
+%% no sector outside the record partition and at most 32 data sectors, and answers either at most 16 KiB or a finding of the closed
 %% set; an unmutated seed answers the bytes the fixture wrote for it. The seed comes
 %% from make check-fuzz.
 
@@ -23,7 +22,7 @@
 -define(SECTOR, 512).
 -define(MAX, 16384).
 -define(NAME, <<"authorized_keys">>).
--define(FINDINGS, [not_its_volume, not_found, too_long, does_not_read, in_record_region, read_failed]).
+-define(FINDINGS, [not_its_volume, not_found, too_long, does_not_read, read_failed]).
 
 run([Seed, Directory]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
@@ -73,13 +72,10 @@ round_of({Seed, File}) ->
         _ -> 0
     end.
 
-%% The window's read, which refuses nothing inside the partition; a read outside it,
-%% or of the record's region's data, raises, since the reader must never ask for one.
+%% The window's read, which refuses nothing inside the partition; a read outside it
+%% raises, since the reader must never ask for one.
 reader(Sectors) ->
-    Region = ?ERX_MEDIUM_RECORD_SELECT_START div ?ERX_MEDIUM_ERASE_SECTORS * ?ERX_MEDIUM_ERASE_SECTORS,
     fun(Index) when Index >= 0, Index < ?ERX_MEDIUM_RECORD_SECTORS ->
-            Index >= Region andalso Index < Region + ?ERX_MEDIUM_ERASE_SECTORS
-                andalso error({region_read, Index}),
             Index >= ?ERX_MEDIUM_RECORD_SELECT_START andalso put(data_reads, get(data_reads) + 1),
             {ok, maps:get(Index, Sectors, <<0:(?SECTOR * 8)>>)};
        (Index) ->
