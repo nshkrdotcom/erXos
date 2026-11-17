@@ -1032,7 +1032,7 @@ reason on refusal, with checked arithmetic on every offset. Each entry only gath
 | Field | The native root | The hosted entry |
 | --- | --- | --- |
 | `version`, `abi_version`, `domain_id`, `seal_addr` | 1, `ERX_ABI_VERSION`, 4, 0 | the same |
-| `flags` | `ERX_BOOT_ROOT`, with `ERX_BOOT_DET` under `erx.det=1` | `ERX_BOOT_ROOT` |
+| `flags` | `ERX_BOOT_ROOT`, with `ERX_BOOT_DET` under `erx.det=1` and `ERX_BOOT_DEVSYNC` under `erx.devsync=1` | `ERX_BOOT_ROOT` |
 | `pack_flags`, `release_addr` | the handoff's flags; its archive start, which `sigma0` maps one to one | the archive header's flags; the address of its `mmap` |
 | `group` | what `erx_group_create` returned | `ERX_CAP_SELF`, which a bind accepts |
 | `time_page` | a handle to the time page's object ([the call table](#the-call-table)), which the domain library passes to each domain; the root's own reads find the page with no handle | `ERX_CAP_NULL`: the hosted clock is the host's |
@@ -1125,9 +1125,9 @@ whatever a file holds. erXos's kernel checks each file at its first slice.
 
 `/chosen/bootargs` reaches the root through `erx_boot_handoff_view_t`'s `bootargs` and `bootargs_len`.
 `erx_boot_args_parse(bytes, length, out)` in `liberx/backend/fiasco/boot_args.c`, a pure function with a
-fuzz target, splits it on spaces and reads five kinds of word: `erx.watchdog=P,D,B`, through the
-existing `erx_watchdog_parse`; `erx.det=1`; `erx.group_report=1`; `erx.hostlink=1`; and `erx.arg=WORD`, at most as many as fit the page's
-strings. Other words are ignored, as a boot loader's may be there. A release build refuses the boot on `erx.det=1` with a
+fuzz target, splits it on spaces and reads six kinds of word: `erx.watchdog=P,D,B`, through the
+existing `erx_watchdog_parse`; `erx.det=1`; `erx.devsync=1`; `erx.group_report=1`; `erx.hostlink=1`; and `erx.arg=WORD`, at most as many as fit the page's
+strings. Other words are ignored, as a boot loader's may be there. A release build refuses the boot on `erx.det=1` or `erx.devsync=1` with a
 fixed reason, as erXos's kernel does ([design-kernel.md](design-kernel.md#configuration)). A malformed `erx.` word, and an `erx.` word of no known kind, refuses the
 boot with a fixed reason. Bootstrap cuts the record at the last whole word, so a parser never sees half
 a word.

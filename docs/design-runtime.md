@@ -856,8 +856,12 @@ exactly is complete, and a dump cut at the area's end says so with
 `ERX_DUMP_TRUNCATED`, never with its length. Whoever reads it treats it
 as untrusted input: the magic and version must match, `flags` may hold no
 other bit and `pad` must be zero, `length` must fit in the area after the
-header, the slogan must hold a NUL within its 232 bytes, and every byte
-reaches a terminal or the log only through that sink's escaping function.
+header and the trace section, the slogan must hold a NUL within its 232
+bytes, and every byte reaches a terminal or the log only through that
+sink's escaping function. The **trace section**, the ABI file's
+`erx_device_trace`, lies between the header and the dump text: the
+device NIF writes it while the domain runs, and the dump starts after it
+([The device access trace](#the-device-access-trace)).
 
 ## Algorithms and behavior
 
@@ -3098,6 +3102,170 @@ on any other module naming them, with seeded drivers that bind or
 acknowledge their line directly; a pass over the driver applications'
 BEAM files with the compiler's call graph is the target
 ([design-shared-devices.md](design-shared-devices.md#invariants), SD3).
+
+### The device access trace
+
+An access that upsets a device on one board only, as GENET's start on a
+Raspberry Pi 4 ends the network domain with an asynchronous error a few
+register accesses in, is reported after the store that caused it, so the
+fault record's program counter is only presumed to be the thread's
+([design-kernel.md](design-kernel.md#interrupts-time-and-entropy)). In a
+development build the device NIF therefore records every register access
+in memory that outlives the domain, so one boot shows the accesses that
+led to the end, and a boot word makes each store complete before the
+next access is issued.
+
+**Where it lives.** The trace is the trace section of the domain's crash
+area ([Data model](#data-model)), so it needs no object, mapping or step
+of its own: the domain writes it as it runs, and after any end, a fault
+included, where the runtime writes nothing, the domain service finds it
+in the copy of the area it already takes
+([design-system.md](design-system.md#ending-a-domain)). The section,
+`erx_device_trace` of the ABI file, is 6,176 bytes in every domain: a
+32-byte header of `magic` (`ERXT`), `version`, `next`, the sequence
+number the next access takes, and for each of the NIF's `ERX_DEVICE_MAX`
+records (a limit of the ABI file, from which the NIF's table takes its
+size too) its peripheral's index in the generated peripheral table plus
+one, zero for a record not opened; then 256 entries of 24 bytes, entry
+`n mod 256` holding access `n`: `seq` (`n + 1`, zero for never written),
+`value` (the word stored, or for a read the word loaded), `offset` in
+the record's window, `device` (the record) and `op` (read or write,
+width, `done`). There is one trace per domain. A domain without a crash
+area keeps none: the vault, so its TPM's data register is never
+recorded, and the system domain, whose UART drivers' fault ends the
+machine with the kernel's crash record.
+
+**One access at a time.** Every access the NIF makes passes `load` or
+`store` in `erx_device.c`: the register BIFs, both halves of a field
+update, `command/2` and each register step of a DMA plan, doorbells
+included. The record is made there alone, under the **trace lock**, a
+mutex of `erx_device.c` that is taken nowhere else and under which no
+other lock is taken. Holding it, the NIF takes `n` from `next`, writes
+entry `n mod 256` with `seq` zero first and `n + 1` last, sets `next` to
+`n + 1`, makes the access (on the hosted stand-in, its model's response
+included), stores the word loaded for a read, sets
+`done`, and lets the lock go. `done` means only that the accessor, and
+under `erx.devsync=1` its barrier, returned. Because the lock covers the
+access, the sequence numbers order every access of the domain, whichever
+scheduler made it; only the newest entry can lack `done`; and no writer
+ever completes into an entry another has since reused, which a writer
+paused between claim and completion would do once others wrap the ring.
+The stores keep program order under a compiler fence, since the domain
+can end between any two instructions: an end leaves each entry whole,
+with `seq` zero, with `seq` above `next`, or without `done`, and the
+decoder reads each of these correctly. A call the NIF refuses
+(`badarg`), such as a write to a register its table marks read-only,
+makes no access and records nothing. Rings, buffers and regions, the
+memory a device reaches by DMA, are never recorded, and neither are the
+hosted stand-in's model's own settings of its registers through
+`store_width`. The 257th access overwrites the oldest.
+
+**Development builds only.** The NIF reads `ERX_PACK_DEVELOPMENT` once
+at load, and a release build takes no lock and writes nothing, its
+section left zero: a register's value can be data the domain holds, such
+as a key typed at a UART, and a release keeps nothing a domain held past
+its end, as the brief crash record keeps nothing of the system domain
+([design-system.md](design-system.md#the-crash-record)). On, it costs
+each access a lock round trip and five stores to cached memory beside an
+uncached device access, and it makes a domain's schedulers take turns at
+their devices' registers, an estimate on the
+[watch list](todo-performance.md); off, one predicted branch.
+
+**Synchronous stores.** `erx.devsync=1`, which a release build refuses
+as it refuses `erx.det=1`, sets `ERX_BOOT_DEVSYNC` in the root's boot
+information, and the domain library sets it in every domain's. The NIF
+reads it once at load and then follows every store in `store` with the
+architecture layer's store barrier, beside its DMA barriers in
+`erx_dma_arch.c`, before it sets `done`; a load needs none, since its
+value returns only once it completed. The barrier waits until the store
+is acknowledged, so an error it raises is pending before the next access
+is issued; what the acknowledgement covers, and when the CPU takes the
+pending error, are the architecture's
+([design-arch-aarch64.md](design-arch-aarch64.md#asynchronous-errors)).
+The report depends on neither, because it names no access as the cause
+of an end: an error may come from any earlier store, and an end may fall
+before, during or after the newest access. An entry without `done` is
+shown as `completion unrecorded`, and a read's value without `done` as
+`unknown`.
+
+**Readers.** Only integers enter the section, and every reader treats
+them as untrusted. One pure decoder, `erx_device_trace_decode` in
+`erx_device_core`, which the device NIF calls for the live snapshot and
+the domain library's NIF for the domain service, checks `magic` and
+`version`, keeps each entry whose `seq` satisfies
+`max(0, next - 256) < seq <= next` and whose slot is `(seq - 1) mod 256`,
+and names it from the system's own generated tables: the peripheral from
+the record's index, the register and element from the offset, which a
+register's offset, stride and count must cover. An index or offset that
+names nothing is shown as its number, marked `unknown`; a missing or
+mismatched entry is a gap in the sequence numbers, as in
+`[kernel, log]`; a value is a number in hexadecimal. No text the domain
+wrote reaches a sink, and a domain can falsify only its own trace, which
+every reader marks as the domain's report. A section that fails the
+checks is `unknown` and leaves the rest of the death record as it is.
+Whether a trace exists is the reader's own build's to say, never the
+section's: a release build shows `unsupported` whatever the section
+holds. Register values are the domain's data, so they are shown only
+where the dump is, to principals that may inspect the domain
+([Security](#security)):
+
+* `[devices, Name, trace]` is a snapshot, the device's entries among the
+  256 newest, which the runtime of the driver's domain copies under the
+  trace lock and decodes at the device service's request, as it reports
+  `registers`, in scope `all` alone
+  ([design-live.md](design-live.md#paths)).
+* `[domains, Id, crash]` shows the trace of the domain's last end from
+  its death record, within the scope that reads the dump.
+* The log line that reports a domain's end
+  ([design-system.md](design-system.md#ending-a-domain)), in a
+  development build and when the trace holds entries, adds the path that
+  shows them, `/proc/domains/Id/crash`, and no entry, since the log is
+  read with `varlog` alone ([design-log.md](design-log.md#the-store)).
+
+The trace rings of [design-live.md](design-live.md#tracing) would not
+serve: they record on request and die with the domain.
+
+**Chokepoints.** `device-register-access` keeps the raw accessors in
+`erx_device.c`; a callers check of the existing kind keeps their calls
+there to `load`, `store_width` and the stand-in's model, and the calls of
+`store_width` to `store` and that model, so no access escapes the record.
+Its seed is a raw store in `erx_device_command`.
+
+**Tests**, each with a seed that must fail it:
+
+* On the hosted stand-in, virtio and GENET, a known sequence of `read/2`,
+  `write/3`, `write_field/4`, `command/2` and a post's doorbell appears in
+  order with names, widths, values and `done`; 300 accesses keep the
+  newest 256, accesses 45 to 300 both included, and show the first 44 as
+  a gap; a refused write records nothing. Seeds: the record made in
+  `erx_device_write` instead of `store`, which loses the doorbell; the
+  record made before the refusal; the window's upper bound written
+  `seq < next`, which loses the newest access.
+* On the host, a test hook of the stand-in's model holds thread A's
+  store inside the access while thread B makes 300 reads; once A is let
+  go and both are done, every entry holds its own access's sequence
+  number, value and `done`. Seed: the lock let go after the entry is
+  written and taken again for the completion, so B wraps the ring and A
+  completes into B's entry.
+* `erx_device_trace_decode`, a fuzz target, gives `unknown` and gaps,
+  never a name, for a bad magic or version, an index or offset that names
+  nothing, a mismatched `seq` and a wrapped `next`; it shows an entry
+  without `done` as `completion unrecorded`, a read's value as `unknown`
+  with it, and names no access as a cause. Seeds: the offset bound
+  dropped; a read's value shown without `done`.
+* Under `ERX_BOOT_DEVSYNC` the host architecture layer counts one barrier
+  per store, a plan's register steps included, and none per load or
+  without the flag; a release build refuses `erx.devsync=1`, leaves the
+  section zero and shows `unsupported` for a section a test fills.
+  Seeds: the barrier in `erx_device_write`, which misses the plan's
+  steps; the refusal removed; the development flag ignored; the release
+  reader decoding the section.
+* Under QEMU with `erx.devsync=1`, the virtio network driver's domain
+  runs its device tests, `/proc/devices/Name/trace` ends in its doorbell,
+  and once the test stops the domain `[domains, Id, crash]` shows the
+  same entries and its end line in `/var/log/messages` names that path
+  and holds no entry. Seeds: the domain service drops the section from
+  the death record; the end line carries the newest entry.
 
 ### Per-byte primitives
 
