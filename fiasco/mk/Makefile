@@ -1,4 +1,5 @@
-# Modified by erXos: images contain no ambient identity or build counter.
+# Modified by erXos: images contain no ambient identity or build counter, and the
+# include cleanup finds dangling links with POSIX find.
 #
 # GLOBAL Makefile for the whole L4 tree
 #
@@ -320,7 +321,7 @@ regen_compile_commands_json:
 .PHONY: cleanup_include_dir
 cleanup_include_dir:
 	$(VERBOSE)$(FIND) $(or $(INSTALLDIR_INC_LOCAL),$(OBJ_BASE)/include) \
-	                  -xtype l | xargs $(RM)
+	                  -type l -exec sh -c 'for l; do [ -e "$$l" ] || $(RM) "$$l" || exit 1; done' sh {} +
 
 # Build a typical sysroot for use with external tooling such as a
 # L4Re-specific cross-compiler

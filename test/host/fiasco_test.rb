@@ -385,9 +385,8 @@ class FiascoTest < Minitest::Test
     # is one, though the caller's PATH names it too), and memo_key names every program in it.
     cross = Erx::CrossToolchain.find
     caller_path = Erx::HostPath.directories(ENV.fetch('PATH'))
-    homes = [*Erx::CrossToolchain::PROBES.map { |probe| cross.program(probe) }, *Erx::Fiasco::PROGRAMS].flat_map do |program|
-      bin = File.dirname(File.realpath(Erx::HostPath.find_program(program, directories: caller_path)))
-      Erx::Fiasco::GNU_NAMED.include?(program) ? [bin, File.expand_path('../libexec/gnubin', bin)] : [bin]
+    homes = [*Erx::CrossToolchain::PROBES.map { |probe| cross.program(probe) }, *Erx::Fiasco::PROGRAMS].map do |program|
+      File.dirname(File.realpath(Erx::HostPath.find_program(program, directories: caller_path)))
     end
     assert_empty packages - homes
     assert_equal Erx::BuildMemo::SYSTEM_DIRECTORIES, path.last(Erx::BuildMemo::SYSTEM_DIRECTORIES.size)

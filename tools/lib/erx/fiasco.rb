@@ -99,18 +99,16 @@ module Erx
     BUILD_RECORD_BYTES = 65_536
     # Beside the cross gcc and binutils (CrossToolchain::PROBES), one program of each
     # package the build runs from outside the operating system: GNU make, gawk (the
-    # inherited Makeconf's AWKP), dtc, perl (Fiasco's preprocessor) and, on macOS, GNU
-    # coreutils, findutils and sed. The directory each really lives in goes on the build's
-    # PATH (program_directories), so the build finds every other program of those
-    # packages beside it, and memo_key names every program in those directories. On
-    # FreeBSD that is /usr/local/bin, a directory every package shares. PROGRAMS also names
-    # the host compilers (HostOs::HOST_CC, HOST_CXX), so a host without them fails before
-    # the build.
-    PROGRAMS = [*%w[gmake gawk dtc perl], *(HostOs::MACOS ? %w[gcp gfind gsed] : []),
-                HostOs::HOST_CC, HostOs::HOST_CXX].freeze
-    # The packages whose plain GNU names (make, cp, find), in their libexec/gnubin, the
-    # inherited build expects ahead of the operating system's programs of those names.
-    GNU_NAMED = %w[gmake gcp gfind].freeze
+    # inherited Makeconf's AWKP), dtc and perl (Fiasco's preprocessor). Every other
+    # program the inherited rules run (cp, find, sed, ln) is the first of its name on the
+    # build's PATH, the operating system's own unless a package directory before it holds
+    # one, and the rules use the forms macOS, FreeBSD and Linux share. The directory each of these really
+    # lives in goes on the build's PATH (program_directories), so the build finds every
+    # other program of those packages beside it, and memo_key names every program in
+    # those directories. On FreeBSD that is /usr/local/bin, a directory every package
+    # shares. PROGRAMS also names the host compilers (HostOs::HOST_CC, HOST_CXX), so a
+    # host without them fails before the build.
+    PROGRAMS = [*%w[gmake gawk dtc perl], HostOs::HOST_CC, HostOs::HOST_CXX].freeze
 
     # compiler is the LLVM clang that builds the C17 cores' archive; the
     # resource headers it compiles with must be those the reviewed LLVM
@@ -728,21 +726,19 @@ module Erx
 
     # The build's PATH: for the programs of cross named in CrossToolchain::PROBES and each
     # of PROGRAMS, found in the absolute directories of this process's PATH, the directory
-    # it really lives in, after its package's GNU names (GNU_NAMED); then the operating
-    # system's directories. A directory of the caller's PATH reaches the build only as the
-    # home of one of those programs, and then the build can run every program in it, which
-    # is why memo_key names every program there. The system directories come last whatever
-    # a program's home: perl at /usr/bin (macOS) must not put the BSD cp and find ahead of
-    # the GNU ones.
+    # it really lives in; then the operating system's directories. A directory of the
+    # caller's PATH reaches the build only as the home of one of those programs, and then
+    # the build can run every program in it, which is why memo_key names every program
+    # there. The system directories come last whatever a program's home (perl's is
+    # /usr/bin on macOS), so a package's program is found ahead of a system program of the
+    # same name.
     def self.program_directories(cross:)
       search = HostPath.directories(ENV.fetch('PATH', ''))
-      found = [*CrossToolchain::PROBES.map { |probe| cross.program(probe) }, *PROGRAMS].flat_map do |program|
+      found = [*CrossToolchain::PROBES.map { |probe| cross.program(probe) }, *PROGRAMS].map do |program|
         executable = HostPath.find_program(program, directories: search)
         raise Error, "missing #{program}; install it (README.md, \"Host setup\")" unless executable
 
-        bin = File.dirname(File.realpath(executable))
-        gnu = File.expand_path('../libexec/gnubin', bin)
-        GNU_NAMED.include?(program) && File.directory?(gnu) ? [gnu, bin] : [bin]
+        File.dirname(File.realpath(executable))
       end
       ((found - BuildMemo::SYSTEM_DIRECTORIES) + BuildMemo::SYSTEM_DIRECTORIES).uniq
     end

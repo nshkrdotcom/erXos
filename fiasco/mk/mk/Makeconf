@@ -1,4 +1,5 @@
-# Modified by erXos: source and debug paths are independent of the host root.
+# Modified by erXos: source and debug paths are independent of the host root, and
+# cp, find, ln and sed are the host's own on every host, in their POSIX forms.
 # -*- Makefile -*-
 # vim:set ft=make:
 #
@@ -70,9 +71,6 @@ ifneq ($(CCXX_VERSION),)
   CCXX_SUFFIX := -$(CCXX_VERSION)
 endif
 
-# Prefix tool with 'g' to get the GNU tool (via Homebrew)
-gnutool          = $(if $(filter darwin,$(HOST_SYSTEM)),g)$(1)
-
 error_on_env_vars = $(if $(filter environment,$(origin $1)), \
                          $(error '$1' specified in environment. \
                          Please use a Makeconf.local file for \
@@ -108,12 +106,12 @@ $(call dv,CPP)   = $(if $(CLANG),$(call \
 $(call dv,ADAC)  = $(CROSS_COMPILE)gnatmake -q
 HOST_ADAC        = gnatmake -q
 
-CP		?= $(call gnutool,cp)
+CP		?= cp
 
 DOXYGEN		?= doxygen
 ECHO		?= echo
 ELF_PATCHER     = $(OBJ_BASE)/tool/elf-patcher/elf-patcher
-FIND            = $(call gnutool,find)
+FIND            = find
 FIXDEP          = $(OBJ_BASE)/scripts/basic/fixdep
 
 GENOFFSETS	= $(L4DIR)/tool/bin/genoffsets.pl
@@ -130,7 +128,7 @@ DTC		?= dtc
 LATEX		= latex
 PDFLATEX	= pdflatex
 GREP		= GREP_OPTIONS= grep
-LN		= $(call gnutool,ln)
+LN		= ln
 MKDIR		= mkdir -p
 NM		?= $(CROSS_COMPILE)nm
 OBJCOPY		?= $(CROSS_COMPILE)objcopy
@@ -139,7 +137,7 @@ RANLIB		?= $(CROSS_COMPILE)ranlib
 $(call dv,RM)   = rm -f
 SCRUB		= $(RM) $(wildcard *.old) $(wildcard *~) $(wildcard *.bak) \
 		        $(wildcard \#*\#)
-SED		= $(call gnutool,sed)
+SED		= sed
 SHELL		= bash
 SIZE		?= $(CROSS_COMPILE)size
 STRIP		?= $(CROSS_COMPILE)strip
@@ -498,10 +496,10 @@ GCCDIR_f = $(GCCDIR_f_$(BID_COMPILER_TYPE_f))
 
 LDVERSION_f     = $(shell $(callld) -v | $(SED) -e \
 		    $(if $(filter LLD,$(shell $(callld) -v)),\
-		     '/.* \([0-9]\+\)\.\([0-9]\+\)\.\([0-9]\+\).*/{s//\1\2\3/;p;q}' -n,\
+		     '/.* \([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/{s//\1\2\3/;p;q;}' -n,\
 		     's/.* \([0-9]\)\.\([^. ]*\).*/\1\2/'))
 LDNOWARNRWX_f   = $(call checkld,--no-warn-rwx-segments)
-GCCSYSLIBDIRS_f = $(shell $(callcc) -print-search-dirs | sed '/^libraries:/{s/^libraries: =\?/-L/;s/:/ -L/g;q;};d')
+GCCSYSLIBDIRS_f = $(shell $(callcc) -print-search-dirs | sed '/^libraries:/{s/^libraries: =\{0,1\}/-L/;s/:/ -L/g;q;};d')
 GCCLIB_file_f   = $(call check_path_absolute,GCCLIB_file_$(1),$(shell $(callcc) -print-file-name=$(1)))
 GCCLIB_HOST_f    = $(if $(CONFIG_COMPILER_RT_USE_TOOLCHAIN_LIBGCC),$(call check_path_absolute,GCCLIB_HOST,$(shell $(callcc) -print-libgcc-file-name)))
 GCCLIB_EH_HOST_f    = $(if $(CONFIG_COMPILER_RT_USE_TOOLCHAIN_LIBGCC),$(call check_path_absolute,GCCLIB_EH_HOST,$(shell $(callcc) -print-file-name=libgcc_eh.a)))

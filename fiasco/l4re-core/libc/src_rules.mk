@@ -1,3 +1,6 @@
+# Modified by erXos: the link farm is made with find, mkdir and ln, which every
+# host has, instead of GNU cp's -s; a later source directory's file replaces an
+# earlier one's of the same name, as cp -f did.
 LIBCSRC_DIR ?= $(SRC_DIR)
 
 include $(LIBCSRC_DIR)/make_vars.mk
@@ -23,7 +26,11 @@ $(LIBC_LINKS_STAMP): $(SRC_DIR)/Makefile $(LIBCSRC_DIR)/../src_rules.mk\
                      $(if $(LIBC_LINKED_GONE),FORCE)
 	$(VERBOSE)$(RM) -r $(LIBC_DST_DIR)
 	$(VERBOSE)$(MKDIR) $(LIBC_DST_DIR)
-	$(VERBOSE)$(CP) -sfr $(LIBC_SRC_DIRS) $(LIBC_DST_DIR)
+	$(VERBOSE)for src in $(LIBC_SRC_DIRS); do \
+	  dst=$(LIBC_DST_DIR)/$${src##*/}; \
+	  find "$$src" -type d -exec sh -c 'src=$$1 dst=$$2; shift 2; for d; do mkdir -p "$$dst$${d#"$$src"}" || exit 1; done' sh "$$src" "$$dst" {} + && \
+	  find "$$src" ! -type d -exec sh -c 'src=$$1 dst=$$2; shift 2; for f; do ln -sf "$$f" "$$dst$${f#"$$src"}" || exit 1; done' sh "$$src" "$$dst" {} + || exit 1; \
+	done
 	$(VERBOSE)find $(LIBC_DST_DIR) -type l -exec realpath {} + >$@.list
 	$(VERBOSE)touch $@
 

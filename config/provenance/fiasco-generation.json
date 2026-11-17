@@ -107,7 +107,7 @@
     "fiasco/l4re-core/libc/musl/target_headers.mk": "f53d7796fb8cc72b2290a76c142be6df44fd8c555c8a958c25f51be53d8eee7f",
     "config/provenance/notices/COPYING.RUNTIME": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74",
     "config/provenance/notices/COPYING3": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
-    "fiasco/mk/Makefile": "4d9b57de770559ba0290ffb6e9a3376fe28cf0b049eaec4c405ffbe3cf3ae7d8",
+    "fiasco/mk/Makefile": "cab69afb3055bff06be0b0bbebd48ec3e04b2cb461cae0f24c9a5b19705dca98",
     "fiasco/mk/mk/binary.inc": "5ede7b24f83d35e9df92f1e62a2148134e375412a560dc727040e50520d7f654",
     "fiasco/mk/mk/install.inc": "592450adbe49b6ba807197162d75326c5bb23c7732baf489c3903784fee23351",
     "fiasco/mk/mk/lib.mk": "2c1f456f30703b2e6959d46c7293713828572922c6a7e983893f78a3968a7e90",
@@ -229,11 +229,11 @@
       },
       "build/fiasco/users/.config": {
         "mode": "text",
-        "sha256": "16b7ac0b6445168cdc68089ec5667d20c813fa4d5200df80762f6bfc65b86442"
+        "sha256": "7ea7956f2fe17e01383f3e7236bbafbda3c6dead98dc5cb19d1d5a16d845e666"
       },
       "build/fiasco/users/.config.all": {
         "mode": "text",
-        "sha256": "34deca32d3d68d5643d9248b1249372ec0fb9c71d37ba6d3b2b2283a404c28bd"
+        "sha256": "0e9adbe7acab3f6ecfba61a0fd81fdaa0f1defce2b11bd006133f292edb986a1"
       },
       "build/fiasco/users/include/generated/autoconf.h": {
         "mode": "text",
