@@ -21,7 +21,7 @@ byte of a response reaches the board.
 
 -export([board/2, lines/2, age/1]).
 
--define(CREDIT, <<"Live quotes">>).
+-define(CREDIT, <<"Kraken">>).
 
 -doc "The board of the core's `State` at monotonic time `Now`.".
 -spec board(erx_quotes_core:state(), integer()) -> erx_dashboard_view:board().

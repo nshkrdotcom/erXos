@@ -8815,8 +8815,8 @@ document's "residual risks accepted" paragraph.
   so the renderer and the part of ErlangBuild it needs belong in tools/lib without that side effect;
   `packages: refused` is logged for admission refusals only, not for a header the file check refuses;
   AppPack builds an app's beams into the app directory's own `ebin/`, which each run of the cell or of
-  `tools/erx pack --app` leaves in the source tree. `ls /apps` and a dropped `--enable` are not yet
-  cases of its boot.
+  `tools/erx pack --app` leaves in the source tree (`examples/.gitignore` ignores it), where the
+  build tree is their place. `ls /apps` and a dropped `--enable` are not yet cases of its boot.
 
 * [High] `examples/dashboard` live quotes, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"
   above), which a real fetch of the live quotes on the target waits for, and no run on the target that fetches
@@ -8841,12 +8841,10 @@ document's "residual risks accepted" paragraph.
 * [Medium] `examples/dashboard` (`erx_dashboard.app.src`): the live quotes need `ssl` and `inets`, which
   `erx_quotes` starts at run time but no `.app` file declares; settle whether the `.app` names them.
 
-* [Medium] `display_domain/quotes`, the QEMU cell of design-quotes.md ("Verification and testing"), is not
-  built; the harness lacks two pieces it needs: (a) a test image that carries a package on a medium, and
-  (b) the extra test root files design-crypto.md promises ("A test image adds roots", "The trust store").
-  The cell's guest then reaches the harness's TLS server through QEMU user networking whose `net=` covers
-  the table's hardcoded address, with a guest forward for that address and port 443 naming a `cmd:` relay
-  started per connection (unverified until the harness runs it).
+* [Medium] `kiosk/hvf-1cpu-quotes` (`test/fixtures/quotes_fixture.rb`, `tools/lib/erx/kiosk.rb`): the
+  fixture answers only Kraken's Ticker requests, not the OHLC history request design-quotes.md ("The
+  QEMU cell") names, so each quote's history fails with a 404 and the cell does not check the
+  `quotes: QUOTE history N entries` lines the design says it passes on.
 
 * [Low] `examples/dashboard` (`erx_quotes_table`): Kraken's address, 104.16.14.28 (one of
   `api.kraken.com`'s Cloudflare addresses), is hardcoded and may change; a change shows

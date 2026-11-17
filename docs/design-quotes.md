@@ -513,7 +513,7 @@ history starts one. The join is pure and tested with exact times.
 ### What the screen shows
 
 The dashboard's quotes panel, under its header, which carries the board's
-credit, `Live quotes`, shows one block per quote in the table's order,
+credit, `Kraken`, shows one block per quote in the table's order,
 split by hairlines. Each block has the quote's label, its price with
 `decimals` digits, its change with two digits after an arrow up or down
 and coloured by its direction (a label's `trend`), and a status line that the dashboard shows

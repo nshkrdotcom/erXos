@@ -1,0 +1,3 @@
+# The beams `erx-app pack` compiles from each application's src/ into its ebin/
+# (tools/lib/erx/app_pack.rb).
+/*/lib/*/ebin/
