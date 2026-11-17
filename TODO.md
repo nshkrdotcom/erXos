@@ -2306,7 +2306,13 @@ it; git history is the record of completed work.
   2048 bytes per descriptor), what receive status bit 15 means, the interrupt mask registers'
   sense (FreeBSD writes all ones to set-mask and then to clear-mask to disable them), and whether
   the firmware leaves GENET's DMA stopped when the Pi netboots, since no domain resets a GENET no
-  manifest places. The PHY's MDIO address, 1, and its RGMII mode are in no record; `erx_genet`
+  manifest places: the bootloader resets the MAC and PHY only when its final boot mode is not the
+  network (rpi-eeprom's release notes, 2020-06-12), and the first netboot from the Mac
+  (docs/design-platforms.md, "Netbooting from a Mac") shows what follows. That netboot also shows,
+  in the console's `erx: boot value` line, which `/chosen/bootloader/partition` value the firmware
+  passes on a network boot; the netboot passage takes it to name no slot, and a stale 2 or 3 would
+  meet the slot's system partition under another root hash, which answers `eio`, not a wrong file.
+  The PHY's MDIO address, 1, and its RGMII mode are in no record; `erx_genet`
   holds them as constants, which the board pass confirms. Also: whether the UniMAC accepts its
   software reset when local loopback is set by one write before it (FreeBSD sets both in one
   write), whether short frames are padded to 60 bytes by the controller, and that the PHY answers

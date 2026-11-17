@@ -1949,6 +1949,121 @@ at each `service` start, stop or restart; they are a symptom of step 3's failure
 not a fault of their own. Name the card's make and size, and for an
 Ethernet step the switch or router the cable goes to.
 
+#### Netbooting from a Mac
+
+While a change to the boot image is iterated on, the board can boot
+each build over an Ethernet cable from the Mac instead of from a newly
+written card. The Pi 4's bootloader, in its EEPROM, fetches the boot
+files over TFTP from `boot/` beside the card, the firmware's network
+boot root ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)).
+**This is a development setup only.** With the network first in the
+boot order, whatever answers DHCP and TFTP on the board's network
+chooses the kernel it runs, and that kernel then reads the card's
+`/data`, the SSH host key among it, and root's `authorized_keys`, so a
+board leaves the desk with the
+bootloader's SD card boot order restored (Imager's *Bootloader > SD Card
+Boot* image, as in [Trying a card on a board](#trying-a-card-on-a-board)).
+
+**What a netboot is.** The card stays in the board and is written once.
+A network boot loads no slot's partition, so the boot is taken to name
+no slot and come up as an unknown boot ([The booted slot](design-fiasco.md#the-booted-slot)),
+which the first netboot is to confirm:
+the block service starts no `system` window, so the `system` tree is
+empty and the image packages the card carries in its system partition,
+the kiosk among them, are absent. `/data` and the `ERXOS` volume, root's
+`authorized_keys` with it, still come from the card, so state and login
+keys persist across netboots. The console's `erx: boot value ... slot ...`
+line shows the boot value and slot the firmware handed over. A/B slots
+and trials are tried only with the card first in the boot order: with
+the network first, a system update's trial reboot boots the staged
+build, not the trial slot.
+
+**You need** the board, console adapter and written card of [Trying a card
+on a board](#trying-a-card-on-a-board), an Ethernet cable from the Pi to
+the Mac (a USB Ethernet adapter on a Mac without a port), and Homebrew's
+`dnsmasq` (`brew install dnsmasq`), which serves TFTP only.
+
+1. **The EEPROM's boot order, once.** Write this `boot.conf`, with
+   `TFTP_IP` the Mac's address on the cable from step 2:
+
+   ```
+   [all]
+   BOOT_UART=1
+   BOOT_ORDER=0xf12
+   DHCP_TIMEOUT=5000
+   TFTP_FILE_TIMEOUT=120000
+   TFTP_IP=192.168.2.1
+   ```
+
+   `BOOT_ORDER` is read right to left: network (2), then the SD card (1),
+   then from the start (f), so a Mac that does not answer costs
+   `DHCP_TIMEOUT`, 5 seconds, its minimum, before the card boots.
+   `TFTP_IP` overrides the TFTP server the DHCP reply names, so Internet
+   Sharing's DHCP server, which knows nothing of TFTP, is taken to be
+   enough; to confirm on the first netboot, since the bootloader matches
+   the reply on its option 43, which Internet Sharing does not send. If
+   its log shows no address, add `CLIENT_IP` (a free address on the
+   cable's subnet) and `SUBNET` (`255.255.255.0`): with those and
+   `TFTP_IP` set the bootloader skips DHCP. `TFTP_FILE_TIMEOUT` gives each
+   file 120 seconds instead of the default 30: a development
+   `kernel8.img` is about 70 MB, and the bootloader's TFTP waits for each
+   block's acknowledgement before the next.
+   `BOOT_UART=1` puts the bootloader's own log, its DHCP and TFTP progress
+   among it, on the console. The default `TFTP_PREFIX` first tries a
+   directory named after the board's serial number, finds no
+   `start4.elf` there and falls back to the TFTP root. Use a bootloader of
+   2025-09-23 or later, whose TFTP lets the block counter roll over for
+   large files. Put the configuration in
+   the EEPROM with a recovery card: from `raspberrypi/rpi-eeprom`'s
+   `firmware-2711/default/`, take `recovery.bin` and the newest
+   `pieeprom-DATE.bin`, then
+
+   ```sh
+   python3 rpi-eeprom-config --config boot.conf --out pieeprom.bin pieeprom-DATE.bin
+   printf '%s\nts: %s\n' "$(shasum -a 256 pieeprom.bin | cut -d' ' -f1)" "$(date -u +%s)" > pieeprom.sig
+   ```
+
+   and copy `recovery.bin`, `pieeprom.bin` and `pieeprom.sig` to a
+   FAT32 card. Boot the Pi from it; a green screen and a rapidly
+   flashing green LED mean the EEPROM is written. Put the erXos card back.
+2. **The Mac's link, each session.** In System Settings > General >
+   Sharing, turn on Internet Sharing from the Mac's internet connection to
+   the adapter the cable is on (`networksetup -listallhardwareports`
+   names it). Internet Sharing gives the bootloader and erXos's DHCP
+   client an address, a route and name servers. `ifconfig` shows the
+   bridge it made, often `bridge100`, with the Mac's address on the
+   cable; check that it is the `TFTP_IP` of step 1.
+3. **Each build.** After `tools/erx pack --medium --platform raspi4b`
+   (`make pack PLATFORM=raspi4b`), run
+
+   ```sh
+   tools/erx netboot
+   ```
+
+   It stages `boot/` into `~/erxos-tftp` (`--tftp DIR` names another),
+   which it keeps as a symbolic link to a directory holding one build:
+   it copies the files the card's build record lists into a new
+   directory beside it, checks each copy against the record's SHA-256,
+   refuses a set with a file missing or changed, and only then moves the
+   link to the new directory in one rename, so a request never meets a
+   copy in progress. A boot that is under way at that moment can still
+   read its first files from the earlier build, so stage while the board
+   is off. It prints the commit the staged build is of, the
+   `kernel8.img` digest, and the `dnsmasq` command line that serves the
+   root, with `INTERFACE` for the bridge of step 2. Run that line in a
+   terminal of its own (it needs `sudo` to bind port 69, then runs as
+   you; Ctrl-C stops it; `sudo` runs Homebrew's binary, which your
+   account can rewrite, as Homebrew's other root-run tools are), once `tools/erx netboot` has made the root;
+   it keeps serving every later build. Power the Pi.
+
+**Expect** the bootloader's DHCP and TFTP lines on the console, then
+the lines of [Trying a card on a board](#trying-a-card-on-a-board) from
+BL31's banner on, with the `erx: boot value` line naming the slot as
+above. `dnsmasq` logs each file it sends, by its full path, which names
+your home directory. Send back the console log and `dnsmasq`'s log of
+the first netboot, with the home directory cut from the paths before
+the log goes anywhere public.
+
 #### The soak
 
 The passes above check that each part works once. The soak checks that
