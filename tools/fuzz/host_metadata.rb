@@ -48,7 +48,7 @@ module Erx
         'origin' => JSON.generate(origin), 'attribution' => "/* SPDX-License-Identifier: MIT OR BSD-2-Clause */\n",
         'dependencies' => JSON.generate('version' => 1, 'sources' => [source]),
         'svd' => File.binread(File.expand_path('../../hw/svd/virtio_mmio/virtio_mmio.svd', __dir__)),
-        'toolchain' => JSON.generate(toolchain), 'arch_terms' => "word EL1\nprefix ICC_\n",
+        'toolchain' => JSON.generate(toolchain), 'arch_terms' => "word EL1\nprefix ICC_\ncase-sensitive word SVC\ninstruction svc\n",
         'sysreg_specification' => File.binread(File.expand_path('../../hw/sysreg/aarch64.json', __dir__)),
         'sysreg_source' => JSON.generate([SysregFixture.record]) }.freeze
     end

@@ -132,8 +132,10 @@ Independent fixtures exercise mask boundaries, side effects and malformed
 inputs; fuzz targets call production readers. Cross-compilation checks
 system-register instruction encodings against independent expected words.
 Architecture terms and hardware instructions stay in their binding layers.
-The vocabulary gate reads literal word and prefix declarations from
-`hw/arch_terms/`. It checks erXos's generic kernel, library and system
+The vocabulary gate reads literal word, prefix and instruction
+declarations from `hw/arch_terms/`. Each matches in any case unless it is
+marked case-sensitive, as a mnemonic that is also an ordinary lower-case
+name is; an instruction matches only with an operand after it. It checks erXos's generic kernel, library and system
 sources and architecture-neutral design documents; architecture, platform
 and hardware binding directories and their binding documents own the
 concrete names. Underscores delimit terms too, so embedding a mode name

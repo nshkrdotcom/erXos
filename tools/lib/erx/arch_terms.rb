@@ -17,17 +17,32 @@ module Erx
       unless bytes.is_a?(String) && bytes.bytesize <= 64 * 1024 && bytes.ascii_only?
         raise Error, 'architecture term policy must be bounded ASCII'
       end
-      entries = bytes.lines.map(&:strip).reject { |line| line.empty? || line.start_with?('#') }
-      raise Error, 'architecture term policy requires 1..4096 unique entries' unless entries.size.between?(1, 4096) && entries.uniq == entries
-      patterns = entries.map do |entry|
-        match = /\A(word|prefix) ([A-Za-z][A-Za-z0-9_-]{0,127})\z/.match(entry)
-        raise Error, 'invalid architecture term policy entry' unless match
-        left = '(?<![A-Za-z0-9])'
-        right = match[1] == 'word' ? '(?![A-Za-z0-9])' : ''
-        Regexp.new(left + Regexp.escape(match[2]) + right, Regexp::IGNORECASE)
+      entries = bytes.lines.map(&:strip).reject { |line| line.empty? || line.start_with?('#') }.map { |line| entry(line) }
+      # A term declared twice in one kind, in any case, would let one line undo the other's case.
+      unless entries.size.between?(1, 4096) && entries.map { |_, kind, term| [kind, term.downcase] }.uniq.size == entries.size
+        raise Error, 'architecture term policy requires 1..4096 unique entries'
       end
-      Regexp.union(patterns).freeze
+      Regexp.union(entries.map { |sensitive, kind, term| term_pattern(sensitive, kind, term) }).freeze
     end
+
+    # One policy line, `[case-sensitive] word|prefix|instruction TERM`, as
+    # [sensitive, kind, term]. A term matches in any case unless the line
+    # says case-sensitive, so a mnemonic such as SVC can stay upper case
+    # while the lower-case name it spells is free.
+    def entry(line)
+      match = /\A(case-sensitive )?(word|prefix|instruction) ([A-Za-z][A-Za-z0-9_-]{0,127})\z/.match(line)
+      raise Error, 'invalid architecture term policy entry' unless match
+      match.captures
+    end
+
+    # Only letters and digits bound a term, so `_` and `/` delimit it. An
+    # instruction is its mnemonic followed by blanks and an operand, `#imm`
+    # or a number, as an assembler takes it.
+    def term_pattern(sensitive, kind, term)
+      right = { 'word' => '(?![A-Za-z0-9])', 'prefix' => '', 'instruction' => '[ \t]+[#0-9]' }.fetch(kind)
+      Regexp.new("(?<![A-Za-z0-9])#{Regexp.escape(term)}#{right}", sensitive ? nil : Regexp::IGNORECASE)
+    end
+    private_class_method :entry, :term_pattern
 
     def binding_path?(relative)
       BINDING_ROOTS.any? { |prefix| relative.start_with?(prefix) } ||

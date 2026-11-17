@@ -55,12 +55,33 @@ class ArchTermsTest < Minitest::Test
   end
 
   def test_policy_is_literal_bounded_and_unique
-    ['', "word EL1\nword EL1\n", "regexp .*\n", "word EL[0-3]\n", "\xff".b].each do |bytes|
+    ['', "word EL1\nword EL1\n", "regexp .*\n", "word EL[0-3]\n", "\xff".b,
+     "case-sensitive regexp SVC\n", "case-insensitive word SVC\n", "word SVC case-sensitive\n",
+     "word svc #\n", "word SVC\ncase-sensitive word SVC\n"].each do |bytes|
       assert_raises(Erx::Error) { Erx::ArchTerms.parse(bytes) }
     end
     pattern = Erx::ArchTerms.parse("word EL1\nprefix ICC_\n")
     assert pattern.match?('erx_el1_state')
     assert pattern.match?('ICC_IAR1')
     refute pattern.match?('fieldEL1value')
+  end
+
+  def test_case_sensitive_word_spares_lower_case_names
+    File.write(File.join(@root, 'hw/arch_terms/aarch64.txt'), "case-sensitive word SVC\ninstruction svc\n")
+    document = File.join(@root, 'docs/design-apps.md')
+    File.write(document, "An app speaks at `/svc/ntpd`, through `erx_svc_open`.\n")
+    assert Erx::ArchTerms.check(root: @root)
+    ['Trap with SVC.', 'Trap with `svc #0`.', 'Trap with `svc 0`.'].each do |text|
+      File.write(document, text)
+      error = assert_raises(Erx::Error) { Erx::ArchTerms.check(root: @root) }
+      assert_includes error.message, 'docs/design-apps.md:1'
+    end
+  end
+
+  def test_checked_in_policy_keeps_svc_upper_case
+    policy = File.expand_path('../../hw/arch_terms/aarch64.txt', __dir__)
+    pattern = Erx::ArchTerms.parse(File.read(policy))
+    ['/svc/ntpd/ctl', 'erx_svc', 'svc_name'].each { |text| refute pattern.match?(text), text }
+    ['SVC', 'svc #0', "svc\t0x10", 'el1', 'EL1'].each { |text| assert pattern.match?(text), text }
   end
 end

@@ -1,6 +1,10 @@
 # Architecture-specific vocabulary kept out of generic code and designs.
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
+#
+# Each line is `[case-sensitive] word|prefix|instruction TERM`. A term
+# matches in any case unless its line says case-sensitive; an instruction
+# matches its mnemonic followed by an operand, `#imm` or a number.
 word EL0
 word EL1
 word EL2
@@ -18,7 +22,9 @@ word SMMUv3
 word MRS
 word MSR
 word ERET
-word SVC
+# The instruction, not the lower-case name /svc: SVC in prose, svc #imm in code.
+case-sensitive word SVC
+instruction svc
 word TLBI
 word LDTR
 word STTR
