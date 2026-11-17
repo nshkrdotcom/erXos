@@ -7230,6 +7230,18 @@ to the corpus and follow rc
   kernel's device table takes as its real-time clock, and the Raspberry Pi 4 takes a DS3231 module. Name the
   Raspberry Pi 5's clock, or read wall time from the firmware
   ([design-platforms.md](docs/design-platforms.md)).
+* [Medium] time, ntpd (`erlang/apps/erx_ntpd`, [design-time.md](docs/design-time.md#the-client)): the client
+  runs as the design's schedule says, with these left out: (1) the start table carries no row `flags`
+  ([design-apps.md](docs/design-apps.md#start-flags)), so the Raspberry Pi 4 manifest's ntpd session template
+  sets `ERX_START_FLAGS` in its own environment, and the boot view's refusal of such a template waits for the row
+  field; when the start table's settings file carries `flags`, move the value to the row and add the refusal;
+  (2) `/proc/ntp` is designed ("What /proc shows") and not reported: `erx_ntp_core:status/1` holds the
+  values, and the inspection schema's `ntp` kind, a collector that asks ntpd's session through its domain's
+  agent, and the rendering of each status (unknown, unavailable, timed out) are to build; (3) `/proc/time`'s
+  `sample_from` and `step_from` are designed and not built, behind the record that is not yet reported (the
+  item below); (4) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
+  resolver call that answers TTLs lets it wait the shortest TTL instead; (5) the QEMU cases restart, held
+  and stepped, kiss and refusals of design-time.md's verification are not written, only the bootstrap.
 * [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
   [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
   through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:
@@ -7861,8 +7873,8 @@ to the corpus and follow rc
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
   checks follow the clock. Root's `ntpdate` sets through `set`: its server, or anyone on the path, sets any
-  time, below the floor too, and the set then holds it against ntpd for the boot (design-time.md, open
-  decision 4). Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
+  time, below the floor too, and the set then holds it against ntpd for the boot (design-time.md, decision 7,
+  published). Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
 * [Low] stopgap, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case):
   the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks no right, so any
   task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the

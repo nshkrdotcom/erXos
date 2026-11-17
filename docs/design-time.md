@@ -724,9 +724,15 @@ deadline, and for the run, the addresses still usable:
   5905 defines it.
 * **No reply.** An exchange waits 2 s for its reply. A poll with no
   valid reply moves to the next address at the next deadline. When every
-  address of every name has failed once in a row, the client resolves the
-  names again, no sooner than the shortest TTL of the last answers, and
-  doubles the interval, up to 1024 s.
+  address of every name has failed once in a row, the client doubles the
+  interval, up to 1024 s, and resolves the names again after it. The
+  session's resolver (`inet:getaddrs/3`) answers no TTL, so the doubled
+  interval, at least 128 s, stands in for the shortest TTL of the last
+  answers; a resolver call that answers TTLs is in `TODO.md`. The run
+  keeps one interval, which moves with the address in use, and the
+  burst's 2 s spacing runs from the end of one exchange to the start of
+  the next. The client remembers the last 64 addresses it polled and
+  denied, so a pool that rotates its addresses cannot grow its state.
 * **Kiss-o'-death.** `DENY` or `RSTR` removes the address for the rest of
   the run. `RATE` doubles that address's interval, up to 1024 s. Any
   other code, `X` codes included, discards the reply. A kiss is believed
@@ -842,6 +848,19 @@ servers` or `bad flags` in its log and its row's last reason at
 `/proc/apps`, and the start table's intensity leaves it down. Because no
 manifest ships a server, enabling ntpd without naming one does this.
 
+**The Raspberry Pi 4 development image** is the one exception to
+[decision 1](#decisions): the board has no real-time clock, its demo
+shows the time, and its manifest (`config/manifest/raspi4b-development.txt`)
+declares ntpd enabled with `pool.ntp.org`, so the board's wall clock is
+right within one burst of the network coming up. No other manifest names
+a server, and a release image ships none. Until the start table carries
+a row's `flags` ([design-apps.md](design-apps.md#start-flags)), the ntpd
+session template's own environment sets `ERX_START_FLAGS`, which is the
+same variable ntpd reads, so moving the value to the row changes the
+manifest and nothing in ntpd; that stand-in, and the boot view's refusal
+of a template that sets the variable, which it postpones, are recorded
+in `TODO.md`.
+
 ## What /proc shows
 
 `abi/inspection.txt` gains a kind `clock`, visible to every scope, at
@@ -874,9 +893,40 @@ restart.
 After a restart of the service, `state` is still true, the record's
 attributes are `none` until the next sample, and the counts start from
 zero at the new `record_since`, so no count claims more history than the
-service has. The client's own state, its names, addresses, delays and
-kisses, is in its log lines, which the log service escapes; a kiss code
-shown there is one of the known atoms or its four bytes in hex.
+service has.
+
+**Who set the clock.** `/proc/time` is the one place that answers it,
+whatever the source: two attributes, `sample_from` and `step_from`, name
+the kind of source of the last sample and of the last applied step, as
+`ntp ADDRESS` for ntpd's sample from that server, `rtc` for the
+wall-clock keeper's reading at boot and `root` for an operator's set
+(`date` or `ntpdate`). The kind follows from the operation the facet
+admitted and from the grant, never from a request's content: `sample` is
+ntpd's, `set` is root's, and the keeper's reading reaches the service
+inside the system domain. A later source, PTP, GPS or a DS3231 module
+read by another domain, adds an operation of its own to
+`abi/services/clock.txt`, granted by a facet row of its own, and so a
+kind of its own here; no request carries a kind field. Each such source
+keeps its own state at a node of its own beside `/proc/time`, as ntpd
+does at `/proc/ntp`.
+
+**`/proc/ntp`** is ntpd's own state, a kind `ntp` at path `ntp`, visible
+to the whole-machine scope only, since it is another domain's, and
+reported by ntpd's session from `erx_ntp_core:status/1`:
+
+| Attribute | Value |
+| --- | --- |
+| `servers` | the names of the start flags, as the session read them |
+| `addresses` | the addresses in use, the current first; `denied`, the ones `DENY` or `RSTR` removed |
+| `last` | the address that last answered and how: `sample`, a drop reason of [Checks on a reply](#checks-on-a-reply), `deny`, `rate`, `other` for any other kiss, or `no_reply` |
+| `interval_s`, `resolve_wait_s` | the poll interval and the resolution backoff in effect |
+| `samples`, `dropped`, `kisses`, `silent` | replies that gave a sample, replies dropped, kisses, and exchanges with no reply, since the session started |
+
+The counts and `last` start empty with each session, `unknown` before
+the first exchange, and a node read while no ntpd session runs answers
+`unavailable`, so nothing claims more history than the session has. A
+kiss code is shown as one of the known atoms, never as the server's
+bytes. ntpd offers no control file ([Decisions](#decisions), 8).
 
 ## Setting the clock by hand
 
@@ -1166,11 +1216,12 @@ thresholds a sample meets and a set does not, and it is open only while
 root runs the command. Since a set ends the cold start, a forged time
 also outlasts the command: a later ntpd sample 1000 s or more from it is
 refused `panic` until root sets the clock again or the machine reboots.
-Whether ntpdate sets through `set` or keeps the floor is
-[open](#open-decisions).
+ntpdate sets through `set`, and this wider residual is published
+([Decisions](#decisions), 7).
 
-Running ntpdate at boot, as FreeBSD's `ntpdate_enable` does, is
-[open](#open-decisions).
+ntpdate does not run at boot, as FreeBSD's `ntpdate_enable` would make
+it: the boot-time path is ntpd's first sample ([Decisions](#decisions),
+6).
 
 ## Concurrency and failure
 
@@ -1466,7 +1517,10 @@ These were open and are settled as stated here:
    RFC 8633 section 3.6 sends vendors to a zone of the NTP Pool of their
    own. erXos has none, so the manifests ship no server, and enabling
    ntpd includes naming one. Network time is off by default either way.
-   An erXos vendor zone, when one exists, is the default to ship.
+   An erXos vendor zone, when one exists, is the default to ship. The
+   Raspberry Pi 4 development image, a demo with no real-time clock, is
+   the one exception: it enables ntpd with `pool.ntp.org`
+   ([Configuration](#configuration)); a release image ships no server.
 2. **The operator's servers are `ntpd_flags`**, a bounded start-row
    field delivered as opaque data ([Configuration](#configuration)),
    rather than a file in the ntpd user's home, which would need a way for
@@ -1498,6 +1552,27 @@ These were open and are settled as stated here:
    tree, if it comes, takes `cold` alone, or becomes a `clock` operation
    the same way.
 
+6. **The boot-time path is ntpd's first sample**, not a boot-time
+   ntpdate. FreeBSD runs ntpdate once at boot when `/etc/rc.conf` sets
+   `ntpdate_enable="YES"` (`libexec/rc/rc.d/ntpdate`), but a start row
+   is not one-shot: its keeper starts a session that ends again
+   ([design-apps.md](design-apps.md#keeping-a-session)). ntpd's session
+   stays up, and its first sample, sent as `sample`, meets
+   [Steps](#steps): free from a cold or approximate start, never below
+   the floor. A network that is not up when the session starts needs no
+   ordering: the resolution or the exchange fails and the
+   [schedule](#schedule) asks again.
+7. **ntpdate keeps `set`**, as FreeBSD's ntpdate run as root steps to
+   whatever its server says. A forged or wrong reply can move the clock
+   below the floor and, since the boot is then no longer cold, hold it
+   against ntpd for the rest of the boot; that wider residual is
+   published ([Security](#security); `TODO.md`), and root's `date`
+   corrects it.
+8. **No control file for network time.** ntpd offers no `ctl` and no
+   step command: boot-time sync is its first sample, and root's `date`
+   and `ntpdate` are the manual fixes. Its state is read at `/proc/ntp`
+   ([What /proc shows](#what-proc-shows)).
+
 ## Open decisions
 
 1. **Recovering a wrong clock without a reboot.** After the clock has
@@ -1519,50 +1594,6 @@ These were open and are settled as stated here:
    validation refuse TLS while `state` is `approximate`, so a release
    needs `ntpd` or a real-time clock for HTTPS; or drop it. It is the
    release's decision, recorded in `TODO.md`.
-3. **ntpdate at boot.** FreeBSD runs ntpdate once at boot when
-   `/etc/rc.conf` sets `ntpdate_enable="YES"`, against `ntpdate_hosts`
-   or the servers of `/etc/ntp.conf`, with `ntpdate_flags="-b"`
-   (`libexec/rc/rc.d/ntpdate`; `libexec/rc/rc.conf`, lines 411-415).
-   erXos has no rc.d scripts: `rc.conf` sets only the fields `enable`,
-   `display`, `restarts`, `period` and `flags` of the start rows the
-   manifest or an admitted package declares, each row a principal with
-   a session template of its own
-   ([design-apps.md](design-apps.md#the-start-table)). So the boot-time
-   form is a start row, `ntpdate_enable="YES"` and
-   `ntpdate_flags="SERVER ..."`, of a principal whose template holds
-   `net` and a `clock` row granting `sample`, as ntpd's does, so the
-   clock service decides the step by [Steps](#steps): free from a cold
-   or approximate start, never below the floor. Two things stand in the
-   way. **A row is not one-shot**: its keeper is a permanent child, "a
-   session that ends, for any reason, is started again", and more ends
-   than `restarts` leave the row down
-   ([design-apps.md](design-apps.md#keeping-a-session));
-   a session that runs one exchange and ends is restarted, and with
-   `restarts 0` it runs once and then shows as down, a failure, after
-   every success. A one-shot kind of row, which ends kept and counts
-   nothing, is a change to design-apps.md, or ntpd itself is the boot
-   path, whose session runs on. **No server ships**: decision 1 above
-   ships none, so a published image that enables it at boot needs an
-   erXos vendor zone of the NTP Pool or an exception to that decision.
-   Recommendation: no boot-time ntpdate; root runs `ntpdate` after boot
-   against a server of the operator's choosing, through root's own
-   `set`, and ntpd's start row with `ntpd_flags` is the boot-time path,
-   as designed.
-4. **What ntpdate's time may be.** Through `set`, a forged or wrong
-   reply moves the clock below the floor and, since the boot is then no
-   longer cold, holds it against ntpd for the rest of the boot
-   ([Setting the clock from a server once](#setting-the-clock-from-a-server-once)).
-   The choices: (a) keep `set`, as FreeBSD's ntpdate run as root steps
-   to whatever its server says, and publish the wider residual; (b)
-   send `sample`, so [Steps](#steps) decides, free from a cold or
-   approximate start and never below the floor, which needs root's
-   `root_clock` row to grant `sample` as well as `set` and changes
-   decision 5; (c) keep `set` and have the command refuse a sample
-   below the floor, read from the build facts the clock service reads.
-   Recommendation: (b); it is one word in a manifest row and keeps T-R8
-   and the floor whole, and a second run within a boot then meets the
-   thresholds as ntpd's samples do, which `date` still overrides.
-
 ## References
 
 * erXos's designs, linked where used: design-kernel.md ("Time"),
