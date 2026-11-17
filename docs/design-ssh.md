@@ -533,18 +533,24 @@ and they go with the file when it is removed
   console or over SSH, so presence at the machine stays the root of
   trust for enrolment.
 
-There is no `~/.ssh/authorized_keys`: a file the principals' storage
-domain serves, which every program of the session can write, would let
+Once the vault keeps the login keys there is no `~/.ssh/authorized_keys`:
+a file the principals' storage domain serves, which every program of the session can write, would let
 anyone who writes the data partition, or anything running in the
 session, add a login. `~/.ssh/known_hosts` and `~/.ssh/config` stay
 ordinary files of the principal, used by clients as on FreeBSD.
 
-**Before the vault** (stages 2 and 3, development builds only), `root`
+**Before the vault** (stages 1 to 3, development builds only), `root`
 is the one principal that logs in, and its login keys are the lines of
-one file that whoever prepares the medium writes onto it before the
-first boot: `authorized_keys`, in the root directory of the medium's
-record partition, the FAT volume that holds the boot-selection record
+root's home copy, `/root/.ssh/authorized_keys`, FreeBSD's place. As on
+Raspberry Pi OS, whoever prepares the medium writes `authorized_keys`
+into the root directory of the medium's record partition, the FAT
+volume that holds the boot-selection record, before the first boot, and
+the first boot imports it into the home copy; from then on only the
+home copy is read
 ([Root's login keys on the medium](#roots-login-keys-on-the-medium)).
+Root's session can write the home copy, so whatever runs in it can add
+a login that lasts: a limitation of the development builds before the
+vault, stated with 0.1's known limitations.
 The host key is made at the first boot ([Host keys](#host-keys)).
 
 The development login key is the clone's Ed25519 pair that
@@ -583,16 +589,38 @@ exists.
 
 ### Root's login keys on the medium
 
-The construction: **the file is read once per boot at the edge, and the
-system domain receives only key blobs.** The storage domain that serves
-`system` reads `authorized_keys` through a read-only window on the
-record partition when it starts, decodes its lines, and serves the keys
+The construction: **the file is read at the edge, only until root's
+home copy exists, and the system domain receives only key blobs.** The
+storage domain that serves `system` reads `authorized_keys` through a
+read-only window on the record partition when the tree's file is first
+read, decodes its lines, and serves the keys
 they name as a read-only tree of one file holding each key's 51-byte
 blob after the other. The login facet reads that file and checks each
 blob with `erx_ssh_wire`, the decoder it already has for the blobs a
 login carries. So the system domain gains no FAT reader, no base64
 decoder and no OpenSSH line parser, and what reaches it from the medium
 is what reaches it from the network: fixed-format key blobs (S3).
+
+**The import.** Root's session imports the keys once, in the process
+of `erx_ssh_dev:boot/1`, after its daemon listens and the session holds
+its `home` facet. Only while `/root/.ssh/authorized_keys` is absent, it
+reads `login_keys`' `root`, at most 817 bytes, and when that answers at
+least one key it writes each as one canonical `ssh-ed25519` line, keeping
+only the keys `erx_boot_keys:decode/1` takes back from those lines, in a
+`.ssh` directory of mode 0700, the file 0600, whole and synced under
+another name and renamed into place, so the home copy is absent or
+whole. `eagain`, which the tree answers while the storage domain's reader
+runs, `eio` and a session without the grant yet write nothing and are
+tried again, every half second for up to ten minutes. An answer of no
+key, of no whole number of blobs within 16, or of blobs that are no
+Ed25519 key writes no file, so no empty home copy shuts the medium's
+keys out. A home copy that is there, whatever it holds, is never read
+for the import or replaced: editing it adds and removes keys afterwards,
+and deleting it imports the medium's keys again at the next boot. A boot
+whose session has its home copy never asks the tree, so the storage
+domain reads no sector of the record volume. At stage 2 the storage
+domain serves `login_keys` from root's home copy, decoded as below, so
+the SSH domain's facet admits the keys the session's daemon admits.
 
 **Where the file lies.** The record partition is the medium's first
 entry, a FAT16 volume that a computer the medium is put into mounts
@@ -612,10 +640,8 @@ and the install guide names `ERXOS` as the volume that takes the file.
 On QEMU the medium's record partition is
 the same FAT16 volume as the card's: the release medium's writer
 (`tools/lib/erx/release_medium.rb`) formats it with the card's
-record volume (`tools/lib/erx/record_volume.rb`), whose fsimg arguments mark the region's
-clusters bad at creation (`-o bad=FIRST-LAST`, the range derived from
-`medium_erase_sectors`; [design-storage.md](design-storage.md#removable-media-fat)),
-with the record its one file; a harness that passes a key adds
+record volume (`tools/lib/erx/record_volume.rb`), with the record its
+one file; a harness that passes a key adds
 `authorized_keys` to its own fresh copy of the medium, never to the
 medium as written, so the file lies at the same place on both, and the
 harness, which reads only the record's sector, finds the record where
@@ -630,8 +656,7 @@ domain's `record_volume` window on the whole partition, which
 `abi/manifest.txt` does not mark writable, so its driver refuses every
 write to it. No window grants a write to any other sector of the
 partition, and the reader refuses a volume whose FATs or root directory
-cover either sector, or whose file's chain enters the record's region, the
-erase unit the record has to itself, the record's own cluster included
+cover either sector
 ([design-storage.md](design-storage.md#removable-media-fat)), so the FAT,
 the root directory and the file are written by no domain, whatever the
 domains do; the one code that could, the block
@@ -684,9 +709,9 @@ which reaches the console, naming the file, the line number and one
 reason of a closed set: `not a plain ssh-ed25519 key`, `key does not
 decode` and `line longer than 1024 bytes` for a skipped line, and for
 the file `no authorized_keys`, `longer than 16 KiB`, `more than 16
-keys`, `the record partition is not its FAT volume`, `lies in the
-boot-selection record's region` ([design-storage.md](design-storage.md#removable-media-fat))
-and `does not read`, each a refusal the pure functions below decide, and
+keys`, `the record partition is not its FAT volume`
+([design-storage.md](design-storage.md#removable-media-fat)) and `does
+not read`, each a refusal the pure functions below decide, and
 `read failed`, when a sector read through the window fails or the reader
 ends without a result.
 No byte of the file is shown, so nothing a user wrote reaches a sink.
@@ -704,7 +729,7 @@ window holds exactly one service of that name, of the files interface,
 whose server is the window's holder, and a manifest without the window
 holds none; every grant of the service is read-only and the system
 domain's or the system principal's session template's (`@session.system` in
-the development manifest), whose daemon of [stage 1](#stages) reads
+the development manifest), whose import of [stage 1](#stages) reads
 root's keys; a manifest holds at most one `record_volume` window; and that
 window lies only on the domain that holds the `system` window. So the domain that serves root's keys is the
 one whose read-only window covers the record partition, and no manifest
@@ -760,8 +785,10 @@ logins:
   (`erlang/apps/erx_storage/src/erx_storage_mint.erl:48-52`), only starts
   the holder, a process of `erx_storage_login_keys` linked to the mint,
   and answers its pid as the tree's arguments; the mount waits for no
-  read. The holder spawns the reader with a monitor and is the one owner
-  of the published result: the reader's result message is tagged with
+  read. The holder reads nothing until `root` is first asked for, so a
+  boot whose session has its home copy reads no sector of the volume;
+  then it spawns the reader with a monitor, answering `eagain` until the
+  reader is done, and is the one owner of the published result: the reader's result message is tagged with
   that monitor's reference, so no other message in the storage domain
   can be taken for it; the first of that message and the `'DOWN'` with
   the same reference decides the result, and every later message is
@@ -811,10 +838,12 @@ logins:
   too.
 
 Nothing is written, so a power cut loses nothing. A key added to the
-medium takes effect at the next boot.
+medium takes effect at the next boot that finds no home copy
+([The import](#roots-login-keys-on-the-medium)); once root has one, keys
+are added to the home copy.
 
 **The code.** The reader is two pure functions over the medium's bytes,
-run in the storage domain at its start: `erx_fat_read:root_file/3`, the
+run in the storage domain when the tree is first read: `erx_fat_read:root_file/3`, the
 FAT format's read core, which finds one file of a FAT volume's root
 directory by its long name and answers exactly the bytes its directory
 entry's size gives, never the slack of its last cluster
@@ -1041,20 +1070,23 @@ identifier.
    key is root's, Ed25519, at `/data/ssh/ssh_host_ed25519_key`, read
    through OTP's `ssh_file`, made when missing and refused when it does
    not decode. It admits `root` alone, by public key alone, with
-   `max_auth_tries` at 6, with root's keys from the medium
-   ([Root's login keys on the medium](#roots-login-keys-on-the-medium)),
-   read at each login as the facet reads them, for at most 817 bytes,
-   from the session's read-only grant of `login_keys`, which the
-   development manifest gives root's session template, when the session
-   holds one, and the development key ([Login keys](#login-keys)),
+   `max_auth_tries` at 6, with root's keys: the lines of root's home
+   copy, `/root/.ssh/authorized_keys`, which the session imports at the
+   first boot from the session's read-only grant of `login_keys`, which
+   the development manifest gives root's session template
+   ([Root's login keys on the medium](#roots-login-keys-on-the-medium),
+   "The import"), and the development key ([Login keys](#login-keys)),
    whose public line, without its comment,
    the image build writes into the system release and every domain
    release at `abi/erx_abi.txt`'s `ssh_authorized_keys_path` for the
    harnesses that log in, and which the packer refuses in any build but a
-   development one. A file of `login_keys` that is no whole number of
-   51-byte blobs within 16 admits no key, and a blob is compared whole
-   with the offered key's encoding, so one that is no Ed25519 key admits
-   nothing. In any other build `start/1` starts nothing,
+   development one. Both files are read at each login, for at most
+   16 KiB and one byte, and decoded by `erx_boot_keys:decode/1`, the
+   decoder of the medium's file, in the `erx` application every domain
+   boots: a line with options or of another key type is no key, a longer
+   file admits none of its keys, a file that does not read admits none
+   and nothing stands in for it, and a blob is compared whole with the
+   offered key's encoding. In any other build `start/1` starts nothing,
    taking the build kind from its release's build facts
    (`erx_build:development_facts/1`); a release image carries no login
    key, and the module exports no entry that names another keys file. A
@@ -1136,7 +1168,7 @@ change.
 | **H5.** The system domain runs no OpenSSL; neither it nor the vault parses an SSH packet, and the vault decodes no SSH structure | the facet's decoder compares two fixed-format blobs against their one layout and takes five length-prefixed strings, each checked against the bytes that remain, in Erlang; the facet hashes the input as given with `erx_bytes:sha256/1` and checks Ed25519 with the update verifier, which alone decodes a key's bytes as a point; the vault sees lookups, passphrases, 32-byte exchange hashes and key blobs the principal service has already decoded |
 | **H6.** The host key never changes silently | it is made only when absent, and a corrupt one stops the daemon |
 | **H7.** A key login names one exchange that began after the facet chose its cookie and that carried this machine's host key | the facet derives the session identifier from the exchange input itself, finds its own outstanding cookie and the host key in that input, and retires the cookie at the login |
-| **H8.** Before the vault, root's login keys are the medium's `authorized_keys` and nothing else, no domain can write that file, and the only grants of `login_keys` are read-only, the system domain's and, for stage 1's daemon, the system principal's session template's, and serve only key blobs | the slot writer's record windows are one sector each, the reader refuses a volume whose FATs or root directory cover either sector or whose file's chain enters the record's region, and the reader's `record_volume` window is not writable; the manifest check makes `login_keys`' server the holder of that window and its grants read-only and the system domain's or root's session template's; the storage domain decodes the lines and serves 51-byte blobs; the facet reads at most 817 bytes of them and checks each with `erx_ssh_wire` |
+| **H8.** Before the vault, root's login keys are the lines of root's home copy, `/root/.ssh/authorized_keys`, and nothing else; the home copy is written from the medium's `authorized_keys` only while it is absent and only with at least one key, and is absent or whole; no domain can write the medium's file; and the only grants of `login_keys` are read-only, the system domain's and, for stage 1's import, the system principal's session template's, and serve only key blobs. Root's session can write the home copy, a development-build limitation | the slot writer's record windows are one sector each, the reader refuses a volume whose FATs or root directory cover either sector, and the reader's `record_volume` window is not writable; the manifest check makes `login_keys`' server the holder of that window and its grants read-only and the system domain's or root's session template's; the storage domain decodes the lines and serves 51-byte blobs; the import looks for the home copy before it reads the tree, writes only lines of blobs `erx_boot_keys` takes back, and writes under another name and renames; the daemon reads at most 16 KiB and one byte of each keys file and decodes it with `erx_boot_keys`, and the facet reads at most 817 bytes of blobs and checks each with `erx_ssh_wire` |
 
 ## Failure handling
 
@@ -1293,7 +1325,7 @@ on the host; the QEMU suite runs the interop and the ends.
 | `erx_boot_keys:decode/1`, host unit tests | a file of two keys with comments, blank lines, `#` lines, leading tabs, CRLF endings and no final line feed gives the two blobs in order; a file of exactly 16 keys and a line of exactly 1024 bytes are taken | `#` lines taken as keys: the comment case gives a finding instead of nothing; the 16-key bound checked with `>=`: the 16-key file is refused |
 | options and other types, host unit tests | `restrict ssh-ed25519 KEY`, `command="ls" ssh-ed25519 KEY`, `ssh-rsa KEY` and `ssh-ed25519` followed by an RSA blob in base64 are each skipped with its reason while the next line's key is taken | the decoder looking for `ssh-ed25519` in any field, as sshd finds a key after its options: the `restrict` line's key is taken |
 | key encoding and bounds, host unit tests | keys of 67 and 69 characters, one ending in `=`, and one holding a character outside the alphabet are skipped as `key does not decode`; a 17-key file and a file of 16 KiB and one byte are refused, and a 1025-byte line is skipped | the length checked as at least 68: the 69-character key is taken; the line bound checked with `>`: the 1025-byte line is taken |
-| `erx_fat_read:root_file/3`, host unit tests over volumes fsimg writes | `authorized_keys` written with a long name is found, and found as `AUTHORIZED_KEYS`; a file of 100 bytes whose last cluster's slack holds a valid key line answers exactly its 100 bytes; a deleted entry of that name, `authorized_keys.pub`, a directory of that name and a long name whose checksum does not match its short entry are not; a chain into any cluster of the record's region, the record's own and the first beside it among them, gives `lies in the boot-selection record's region`; a chain with a link outside the data area, a loop, a cluster seen twice, an end of chain before the size's clusters and a size past 16 KiB give `does not read` or the bound, never a crash; a boot sector whose reserved area ends before the reset count's sector is `not its FAT volume`; a boot sector whose data area does not start at the record's sector is `not its FAT volume` | the range check on a link removed: the out-of-range case raises instead of answering; the deleted-entry marker not checked: the deleted file is found; the region check comparing with the record's cluster alone: the file beside the record is read; the last cluster answered whole: the slack's key line is returned |
+| `erx_fat_read:root_file/3`, host unit tests over volumes fsimg writes | `authorized_keys` written with a long name is found, and found as `AUTHORIZED_KEYS`; a file of 100 bytes whose last cluster's slack holds a valid key line answers exactly its 100 bytes; a deleted entry of that name, `authorized_keys.pub`, a directory of that name and a long name whose checksum does not match its short entry are not; a file beside the record, in the record's erase unit, is found; a chain with a link outside the data area, a loop, a cluster seen twice, an end of chain before the size's clusters and a size past 16 KiB give `does not read` or the bound, never a crash; a boot sector whose reserved area ends before the reset count's sector is `not its FAT volume`; a boot sector whose data area does not start at the record's sector is `not its FAT volume` | the range check on a link removed: the out-of-range case raises instead of answering; the deleted-entry marker not checked: the deleted file is found; the last cluster answered whole: the slack's key line is returned |
 | the fuzz targets of `erx_boot_keys:decode/1` and of the lookup | random and mutated files and volumes never crash either, every blob the decoder returns is 51 bytes that `erx_ssh_wire` accepts, and no lookup reads more than 32 clusters | the range check on a FAT link removed: a mutated link crashes the lookup within the target's budget |
 | the fuzz target of `erx_ssh_login:medium_keys/1` | random and mutated concatenations of blobs, of every length up to 1 KiB, valid blobs and small-order keys among them, never crash it; every list it accepts holds at most 16 keys, each 51 bytes that `erx_ssh_wire` accepts and none of small order, and an input whose length is not a multiple of 51 or is past 816 bytes is refused | the bound taken as 17 keys' length: a 17-key input is accepted, which the target's property catches; the small-order check skipped for the last blob: a mutated list ending in the neutral point is accepted |
 | no domain writes the file, host test of the block table | every window on the record partition but `boot_selection` and `reset_count` refuses a write; those two cover one sector each, and a write through either to any other sector answers `erange` | the table's single window over the whole record partition kept: a write to the root directory's sector succeeds |
@@ -1383,19 +1415,21 @@ passes ([design-platforms.md](design-platforms.md#trying-a-card-on-a-board)).
   decoder and a line parser of text from the medium into the trusted
   base; the second gives the file two forms a user must keep in step,
   and a user writing the card has only the line.
-* **A key file sharing the record's erase unit**, with the record's
-  isolation in [design-storage.md](design-storage.md#system-updates)
-  relaxed to its sector. Rejected: on a volume this empty a FAT writer
-  may well take the first free clusters, the ones beside the record (each
-  host's allocation order is unverified), so a user's file could lie
-  there, and a card pulled while its file is written, or a
-  commit cut short, could take the other with it; the record is what
-  boots the card. Marking the region's other clusters bad costs 1 MiB of
-  the 5 MiB volume; one erase-unit limit in `abi/medium.txt`
-  (`medium_erase_sectors`) from which the reader, the image build and
-  `RecordVolume.check` each derive the region; a bad-cluster range option of
-  fsimg's FAT creation, which writes the marks; a `RecordVolume.check`
-  read-back of them; and the reader's range check.
+* **Bad-cluster marks over the rest of the record's erase unit**, so no
+  FAT writer puts a file beside the record, and a reader that refuses a
+  file there. Rejected: they cost 1 MiB of the 5 MiB volume, a range
+  option of the FAT tool, a read-back of the marks in the image build
+  and a range check in the reader, and a host's repair tool may clear
+  them, after which the reader would refuse the file a user copied. A
+  host writing beside the record can tear the record, a card pulled
+  mid-copy among the ways, and the card is then written again: a residual
+  in `TODO.md`. The keys are read from the medium only until the first
+  boot imports them.
+* **Reading the medium's file at every boot**, with no home copy.
+  Rejected: the record volume would be read and decoded at every boot,
+  a key could be changed only by writing the card on another computer,
+  and Raspberry Pi OS, whose users this follows, imports its first-boot
+  files once.
 * **The slot writer reading the file**, since it already holds a window
   on the record partition. Rejected: the domain that writes slots would
   parse a volume anyone with the card can craft, against ST-R4 of

@@ -52,9 +52,8 @@
 # "boot_partition=2", "[tryboot]", "boot_partition=3", each ended by a line feed, and
 # medium_record_b's swaps the two numbers. The medium's erase unit is medium_erase_sectors
 # sectors (1 MiB), counted from the partition's start; the record's region is the unit that
-# holds the record's sector, which no file of the volume but the record's own may enter
-# (docs/design-storage.md, "Removable media: FAT"), and every consumer derives its
-# clusters from these values.
+# holds the record's sector (docs/design-storage.md, "System updates"), and every consumer
+# derives its clusters from these values.
 limit medium_record_start u32 2048
 limit medium_record_sectors u32 16384
 limit medium_record_type u8 0x0e

@@ -7600,6 +7600,14 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Low] storage, a host writing beside the boot-selection record (`erlang/apps/erx_storage/src/erx_fat_read.erl`;
+  [design-storage.md](docs/design-storage.md#removable-media-fat)): a computer that writes the `ERXOS` volume,
+  copying `authorized_keys` or its own metadata (macOS's `.Trashes`, `._` files, `.fseventsd`), may put clusters
+  beside the record in its erase unit, and a card pulled mid-copy, or a flash erase of that unit, can tear the
+  record, after which the card no longer boots and is written again. Bad-cluster marks over the rest of the unit,
+  or a filler file the image build places there, would keep host writes out of it; neither is made, since the
+  keys are read only until the first boot imports them.
+
 * [Medium] clock, the approximate start in a release build (`erlang/apps/erx/src/erx_clock_core.erl`,
   `start/2`; [design-time.md](docs/design-time.md#the-approximate-start), open decision 2): a clock without
   a reading starts at the build's date, and certificate validation treats it as set, so until the clock
@@ -9354,33 +9362,11 @@ document's "residual risks accepted" paragraph.
   `test/fixtures/fat_record_volume.rb`, written from the same reading of the FAT specification as the reader, where
   the design's row reads volumes fsimg writes; a shared misreading would refuse every real card. Add a case over
   the record volume `RecordVolume::ARGUMENTS` has fsimg write (`not_found` proves its layout is admitted), and one
-  that finds `authorized_keys` once fsimg can place a file past the record's region (the fsimg item below).
+  that finds an `authorized_keys` fsimg placed beside the record.
 * [Low] SSH, the boot keys' fuzz target (`test/erlang/erx_boot_keys_fuzz.erl`, `key_blob/1`;
   [design-ssh.md](docs/design-ssh.md#verification)): it checks each blob's layout itself, where the design has
   `erx_ssh_wire` accept it; that decoder and `abi/formats/ssh.txt` are on another branch, and when they land the
   target calls it, as `erx_boot_keys` then takes the blob layout's macros from the generated header.
-* [Medium] storage, the record volume's erase unit (`tools/lib/erx/record_volume.rb`, `ARGUMENTS`; fsimg): the
-  clusters of MiB 3 after the record's are free, so fsimg, and a user's computer writing `authorized_keys`, put a
-  file beside the record in its erase unit;
-  [design-storage.md](docs/design-storage.md#removable-media-fat) marks the rest of the record's erase unit bad
-  in both FATs. Work: `RecordVolume::ARGUMENTS` derives the range after the record's cluster from `abi/medium.txt`'s
-  `medium_erase_sectors` and passes it as fsimg's
-  `-o bad=FIRST-LAST` (the fsimg item below); `RecordVolume.check` derives the same range and refuses a volume in
-  which a cluster of it is not marked bad in both FATs, with a `pi_medium_test` case whose volume lacks one mark,
-  as `erx_fat_read` derives its region check. No cluster number is written down
-  anywhere, and nothing patches fsimg's output.
-* [Medium] tooling, fsimg's FAT creation and update (`~/projects/fsimg`, pinned in `deps.lock`;
-  [design-storage.md](docs/design-storage.md#removable-media-fat),
-  [design-ssh.md](docs/design-ssh.md#verification)): fsimg has no way to mark clusters bad and no mode that
-  adds a file to an existing image (its modes are `c`, `x`, `t`, `W` and `i`, `docs/fsimg.1`). Add a FAT
-  creation option `-o bad=FIRST-LAST` that writes the bad-cluster mark for that cluster range in every FAT,
-  refused when the range leaves the data area or holds a placed file's cluster; and an append mode, as tar's
-  `r`, that adds a file to an existing FAT volume, whole or as a partition of an MBR disk, allocating only free
-  clusters and keeping every other byte. Tests in fsimg's own suite: a volume made with `bad=` has exactly
-  those entries marked in both FATs and `fsimg W` accepts it; a range off the data area is refused; an append
-  to such a volume places the file's first cluster past the range, `fsimg W` accepts the result and a
-  second extraction gives every earlier file unchanged; an append to a full root directory is refused. Then
-  repin fsimg in `deps.lock`.
 * [Medium] SSH, the QEMU test of a downloadable medium ([design-ssh.md](docs/design-ssh.md#the-ssh-domain)):
   `MediumBoot` packs its medium from `site_manifest_source` (`tools/lib/erx/medium_boot.rb:499`,
   `tools/lib/erx/bench_g5.rb:82`), the browser demo's manifest, which leaves the SSH domain out, so no harness
