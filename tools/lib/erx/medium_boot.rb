@@ -168,16 +168,18 @@ module Erx
       ['DlNotService', "Lib:configured(#{FREE_ID},0,self())", '{error,erights}'],
       ['DlNotStop', "Lib:stop(#{CONFIGURED_ID},0)", '{error,erights}'],
       # The catalogue: block on the storage domain and net on the network domain, rows 2
-      # and 1 after erts by name, each held by its running domain; and the UARTs, which
-      # no runtime drives as a given device.
+      # and 1 after erts by name, each held by its running domain; the UARTs, which no
+      # runtime drives as a given device; and the PL031 clock, which the system domain
+      # holds for its wall-clock keeper.
       ['DlDevices', 'lists:usort([{R,W,H}||#{role:=R,row:=W,holder:=H}<-element(2,Lib:devices())])',
-       "[{block,2,#{STORAGE_ID}},{net,1,#{NETWORK_ID}},{none,system,system}]"],
+       "[{block,2,#{STORAGE_ID}},{net,1,#{NETWORK_ID}},{none,system,system},{rtc,system,system}]"],
       # What /dev shows of each: its unit's name, its kind's compatible string (none for
       # the UARTs), one page range, one interrupt line, and no IOMMU stream.
       ['DlDeviceView', 'lists:usort([{R,N,C,length(Rs),length(Ls),Cf}||#{role:=R,unit_name:=N,compatible:=C,' \
                        'ranges:=Rs,lines:=Ls,confined:=Cf}<-element(2,Lib:devices())])',
        '[{block,<<"block">>,<<"virtio,mmio">>,1,1,false},{net,<<"net">>,<<"virtio,mmio">>,1,1,false},' \
-       '{none,<<"console">>,none,1,1,false},{none,<<"hostlink">>,none,1,1,false}]'],
+       '{none,<<"console">>,none,1,1,false},{none,<<"hostlink">>,none,1,1,false},' \
+       '{rtc,<<"rtc">>,<<"arm,pl031">>,1,1,false}]'],
       # The block device's register window, from config/platforms/qemu-virt.json, and
       # the page that holds it.
       ['DlRegisters', '[{Rg,Rs}||#{unit_name:=<<"block">>,registers:=Rg,ranges:=Rs}<-element(2,Lib:devices())]',

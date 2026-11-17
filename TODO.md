@@ -2503,6 +2503,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   glyph step's `Theme.palettes(root:)` parses `abi/manifest.txt` alone and re-reads the enum's members by hand, so
   moving the enum to another file passes `tools/gen_abi.rb` and fails only in `tools/erx build glyphs`. Give the
   glyph step the palettes through the model's own parse.
+* [Medium] tests, the medium boot's device catalogue (`tools/lib/erx/medium_boot.rb` `DlDevices` and
+  `DlDeviceView`): the expected devices are a hand-written copy of the site manifest's units, so a unit added to the
+  QEMU `virt` platform breaks the `medium_boot` suite at whatever landing next runs it rather than in the change
+  that added it. Derive the expected rows from the manifest compiler's normalized units and holders
+  (`tools/lib/erx/manifest.rb` `unit_devices`, `unit_holder`), keeping literal only the ids and register window the
+  suite sets up.
 * [Medium] desktop, the window menu's role (`tools/lib/erx/glyphs_menu.rb` `ROLE`, `abi_theme.rb`): only the glyph step
   requires the theme to have a `body` role, so a theme without one passes `tools/gen_abi.rb` and fails only in
   `tools/erx build glyphs`, after every role is rasterised. Require the role in `ABI::Theme.validate` and the
