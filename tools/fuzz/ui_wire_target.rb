@@ -39,6 +39,8 @@ activated = record.call([1, 7, 5, 1, kind.call('list'), 2].pack('CVVvCC') + list
 button = record.call([1, 8, 5, 2, kind.call('button'), 4].pack('CVVvCC') + status_text +
                      prop.call('role') + [member.call('role', 'title')].pack('C') +
                      prop.call('icon') + [member.call('icon', 'clock')].pack('C') + prop.call('current') + [1].pack('C'))
+trend = record.call([1, 9, 5, 3, kind.call('label'), 2].pack('CVVvCC') + status_text +
+                    prop.call('trend') + [member.call('trend', 'down')].pack('C'))
 inputs = [[1, 10, 20, 1].pack('CvvC'), [2, 1, 30].pack('CCv') + [0x41].pack('V'), [3, 0xff].pack('CC')]
 stream = insert + set + record.call([4, 5, 1].pack('CVv')) + record.call([5].pack('C')) +
          record.call([7, 640, 480, 0x68081828].pack('CvvV')) + inputs.map { |body| record.call([8].pack('C') + body) }.join +
@@ -48,7 +50,7 @@ Erx::PackFuzz.declare_target(
   sources: ['build/gen/display/generated/erx_ui_wire.c'],
   seeds: {
     'stream' => stream,
-    'additions' => graph + activated + button,
+    'additions' => graph + activated + button + trend,
     'insert-cut' => insert[0, insert.bytesize - 3],
     'damage' => record.call([10, 1, 1, 1, 0, 0, 1, 1].pack('CvvCvvvv'))
   }

@@ -11,7 +11,10 @@ erx_quotes_core:new/2 takes, every period in milliseconds.
 A quote asks its sources in order; a source names the URL it is asked
 at, the address that URL's host is reached at (erx_quotes connects to
 the address and never resolves the name), the JSON path of the price,
-the rule for the change, and the credit and note the screen shows.
+the rule for the change, and the credit and note the screen shows. A
+source may also name a `history`: the URL that asks it for 15 min
+closes, to which erx_quotes_core:history_url/2 adds the start, and the
+JSON path of the entries in its answer.
 """.
 
 -export([table/0]).
@@ -19,12 +22,14 @@ the rule for the change, and the credit and note the screen shows.
 -export_type([table/0, quote/0, source/0, path/0]).
 
 -type path() :: [binary() | non_neg_integer(), ...].
+-type history() :: #{url := binary(), entries := path()}.
 -type quote() :: #{label := binary(), decimals := 0..8,
                    period := pos_integer(), sources := [atom(), ...]}.
 -type source() :: #{url := binary(), address := inet:ip4_address(),
                     format := json, price := path(),
                     change := none | {from, path()},
-                    credit := binary(), note := binary()}.
+                    credit := binary(), note := binary(),
+                    history => history()}.
 -type table() :: #{quotes := [{atom(), quote()}, ...],
                    sources := #{atom() => source()}}.
 
@@ -48,11 +53,17 @@ quote(Name, Label, Source) ->
     {Name, #{label => Label, decimals => 2, period => ?PERIOD_MS, sources => [Source]}}.
 
 %% Kraken's ticker for `Pair`, which answers under `Key`: `c` is the last
-%% trade as [price, volume] and `o` the price at 00:00 UTC.
+%% trade as [price, volume] and `o` the price at 00:00 UTC. Its history is
+%% the OHLC endpoint at the core's bucket, in minutes, answering under the
+%% same key.
 kraken(Pair, Key) ->
+    Minutes = integer_to_binary(erx_quotes_core:bucket() div 60),
     #{url => <<"https://api.kraken.com/0/public/Ticker?pair=", Pair/binary>>,
       address => ?KRAKEN_ADDRESS,
       format => json,
       price => [<<"result">>, Key, <<"c">>, 0],
       change => {from, [<<"result">>, Key, <<"o">>]},
-      credit => <<"Kraken">>, note => <<"change since 00:00 UTC">>}.
+      credit => <<"Kraken">>, note => <<"change since 00:00 UTC">>,
+      history => #{url => <<"https://api.kraken.com/0/public/OHLC?pair=", Pair/binary,
+                            "&interval=", Minutes/binary>>,
+                   entries => [<<"result">>, Key]}}.

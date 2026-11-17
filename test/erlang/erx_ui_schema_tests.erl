@@ -129,7 +129,12 @@ additions_test() ->
     ?assertEqual({error, {bad_value, {[], samples}}}, Graph(#{min => 0, max => 10, samples => [3, none, 11]})),
     ?assertEqual({error, {bad_value, {[], samples}}}, Graph(#{min => 5, samples => [4]})),
     ?assertEqual({error, {bad_value, {[], mark}}}, Graph(#{max => 10, mark => 11})),
-    ?assertEqual({error, {bad_value, {[], samples}}}, Graph(#{samples => lists:duplicate(241, 1)})).
+    ?assertEqual({error, {bad_value, {[], samples}}}, Graph(#{samples => lists:duplicate(241, 1)})),
+    %% trend, a label's alone, one of ui_trend's members.
+    [?assertEqual(ok, v({label, #{text => <<"+1.2%">>, trend => T}, []})) || T <- [up, down, flat]],
+    ?assertEqual({error, {bad_value, {[], trend}}}, v({label, #{trend => sideways}, []})),
+    ?assertEqual({error, {bad_value, {[], trend}}}, v({label, #{trend => 1}, []})),
+    ?assertEqual({error, {unknown_property, {[], trend}}}, v({button, #{trend => up}, []})).
 
 %% name is taken on every kind, a text of at most 255 bytes, and a longer one
 %% is refused at its node.

@@ -340,7 +340,8 @@ facet network_ctl
 # display: the display domain's window tree (docs/design-display.md, "A display's
 # session"), of the windows interface, and its display record. No facet grants it and no
 # start row names it, so the display shows its empty layout's background. The policy is
-# single and the idle times 0, which the display_domain suite boots
+# single, the palette dark, for the kiosk's wall display (docs/design-display.md, ctl),
+# and the idle times 0, which the display_domain suite boots
 # (DisplayDomain.manifest); the domain library passes the idle times to the domain's
 # environment, and nothing in the display domain reads them yet, so 0 has no meaning
 # of its own here.
@@ -349,6 +350,7 @@ service display
   interface windows
 display display
   policy single
+  palette dark
   idle_dim_s 0
   idle_off_s 0
 # log: the system log's write interface (docs/design-log.md, "The log facet"), served by

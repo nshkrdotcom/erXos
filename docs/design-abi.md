@@ -1090,8 +1090,8 @@ renderer multiplies by the window's scale
 | `space NAME UNITS...` | the spacing scale, in whole units |
 | `radius NAME PIXELS...` | corner radii; `window` is declared and 0 |
 | `shadow NAME X Y BLUR PERCENT` | a shadow: its offset and blur in pixels and the opacity of its black in percent |
-| `color NAME RRGGBB` | an sRGB colour, in six upper-case hexadecimal digits |
-| `contrast FOREGROUND on BACKGROUND... RATIO` | the least contrast ratio, one decimal from 1.0 to 21.0, that FOREGROUND has on each BACKGROUND |
+| `color NAME RRGGBB...` | an sRGB colour in each palette, each in six upper-case hexadecimal digits: one value for each member of the manifest's `mf_display_palette`, in value order, `light` then `dark` |
+| `contrast FOREGROUND on BACKGROUND... RATIO` | the least contrast ratio, one decimal from 1.0 to 21.0, that FOREGROUND has on each BACKGROUND, in every palette |
 | `icons PATH sizes SIZE...` | the icons' definition file and the pixel sizes they are rasterised at, ascending |
 | `transition NAME MILLISECONDS CURVE` | a transition ([Motion](design-desktop-programs.md#motion)): NAME a member of `ui_transition`, the closed set `press`, `state` and `reveal`, each started by the change Motion names, which the renderers implement; MILLISECONDS its duration, 1 to 250; CURVE `linear` or `ease_out` |
 
@@ -1103,14 +1103,19 @@ its ratio fails generation with both names and the ratio measured.
 
 It emits three files of constants, each with every length in logical
 pixels, every duration in milliseconds and every colour in its target's
-own form: `erx_theme` in `erx_memdraw` (`color/1` as opaque RGBA32,
+own form: `erx_theme` in `erx_memdraw` (`color/2` of a palette and a
+name as opaque RGBA32, `palettes/0` the palettes' names, the default first,
 `role/1`, `space/1`, `radius/1`, `shadow/1`, `transition/1` as
 `{Milliseconds, Curve}`, `unit/0`, `hairline/0`, and `colors/0`,
 `roles/0` and `transitions/0`, the names); `erx/theme.h`, the
-`ERX_THEME_` macros with colours as `0xRRGGBB`, each transition as
+`ERX_THEME_` macros, `erx_theme_palette_t`, a struct of every colour as
+`0xRRGGBB`, with `ERX_THEME_PALETTE_NAME` the initializer of each palette
+and `ERX_THEME_PALETTES(X)` over the palettes, a role's colour as the
+member it names, each transition as
 `ERX_THEME_TRANSITION_NAME_MS` and `ERX_THEME_TRANSITION_NAME_CURVE`,
 and `ERX_THEME_ROLES(X)` over the roles; and `theme.ts`,
-`THEME_PROPERTIES`, the CSS custom properties `--erx-...`, where a
+`THEME_PROPERTIES`, the CSS custom properties `--erx-...` but the
+colours, and `THEME_PALETTES`, each palette's colour properties, where a
 role's weight is its CSS numeric weight and a transition is its CSS
 duration and timing function, `ease_out` as `ease-out`. Each family is a set: every
 output lists it in name order, so the order of the rows changes no

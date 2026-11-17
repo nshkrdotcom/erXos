@@ -248,7 +248,7 @@ module Erx
         draw = validate_draw(by_kind)
         input_records = validate_input(by_kind, types)
         web = validate_web(by_kind, inspection)
-        theme = validate_theme(by_kind)
+        theme = validate_theme(by_kind, types)
         validate_event_bindings(types, definitions)
         all_constants = constants.dup
         [type_constants(types), right_constants(rights)].each do |addition|
@@ -1359,11 +1359,13 @@ module Erx
         Web.validate(by_kind.fetch('web', []), limits: limits, stopgaps: inspection ? inspection.stopgaps.keys : [])
       end
 
-      # The desktop's theme refers to nothing outside its declaration
+      # The desktop's theme refers to nothing outside its declaration but
+      # the palettes, which a display's manifest entry chooses among
       # (docs/design-abi.md, "Theme").
-      def validate_theme(by_kind)
+      def validate_theme(by_kind, types)
         require_relative 'abi_theme'
-        Theme.validate(by_kind.fetch('theme', []))
+        palettes = types.fetch('mf_display_palette').members.sort_by { |_, value| value }.map(&:first)
+        Theme.validate(by_kind.fetch('theme', []), palettes: palettes)
       end
 
       def validate_projections(declarations, types)

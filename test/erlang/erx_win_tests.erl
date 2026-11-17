@@ -88,7 +88,7 @@ start() ->
     {ok, Winfs} = erx_winfs:start_link(#{service => ?SERVICE, system => ?SYSTEM, exports => ?MODULE,
                                          minted => fun(Tag, Reply) -> Test ! {minted, Tag, Reply} end,
                                          area => fun erx_area:open/1, clients => own, provide => false,
-                                         policy => {erx_wm_single, #{}}}),
+                                         policy => {erx_wm_single, #{}}, palette => dark}),
     {ok, Screen} = erx_screen:start_link({?MODULE, ?DRIVER}),
     {ok, Client} = erx_win_sup:start_link(),
     [true = unlink(P) || P <- [Winfs, Screen, Client]],
@@ -265,8 +265,11 @@ lent_range_test() ->
     with(fun(#{image := Screen}) ->
         Range = lent_range(),
         {ok, Window} = erx_win:open(?SERVICE, #{buffer => none}),
+        %% The window's ctl names the display's channel, the scale 1/1 and the palette
+        %% the window system was started with.
         #{peer := ?SESSION, rect := {0, 0, ?WIDTH, ?HEIGHT}, chan := #{text := <<"x8r8g8b8">>,
-                                                                     code := Code}} =
+                                                                     code := Code},
+          scale := {1, 1}, palette := dark} =
             erx_win:info(Window),
         ?assertEqual({error, none}, erx_win:image(Window)),
         ?assertEqual({error, none}, erx_win:lease(Window, self())),

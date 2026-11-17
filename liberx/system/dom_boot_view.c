@@ -520,7 +520,7 @@ static bool
 boot_env_names_display(const char *env, uint32_t env_len)
 {
 	static const char *const keys[] = { ERX_DISPLAY_KEY_STRING, ERX_DISPLAY_POLICY_KEY_STRING,
-	    ERX_DISPLAY_IDLE_DIM_KEY_STRING, ERX_DISPLAY_IDLE_OFF_KEY_STRING };
+	    ERX_DISPLAY_IDLE_DIM_KEY_STRING, ERX_DISPLAY_IDLE_OFF_KEY_STRING, ERX_DISPLAY_PALETTE_KEY_STRING };
 
 	for (size_t key = 0; key < sizeof(keys) / sizeof(keys[0]); key++) {
 		if (boot_env_sets(env, env_len, keys[key]))
@@ -579,11 +579,14 @@ boot_display(const erx_manifest_view_t *manifest, uint32_t row, const char *env,
 			return ("manifest: a configured domain serves two displays");
 		if (erx_mf_display_policy_name(display.policy) == NULL)
 			return ("manifest: a display's policy is no mf_display_policy member");
+		if (erx_mf_display_palette_name(display.palette) == NULL)
+			return ("manifest: a display's palette is no mf_display_palette member");
 		if (service.name.length == 0 || service.name.length > ERX_DOM_NAME_MAX)
 			return ("manifest: a service's name is not 1 to 63 bytes");
 		*served = (erx_dom_display_t){ .name = strings + service.name.offset,
 		    .name_len = service.name.length, .policy = display.policy,
-		    .idle_dim_s = display.idle_dim_s, .idle_off_s = display.idle_off_s };
+		    .idle_dim_s = display.idle_dim_s, .idle_off_s = display.idle_off_s,
+		    .palette = display.palette };
 	}
 	if (served->name_len != 0 && boot_env_names_display(env, env_len))
 		return ("manifest: a display domain's environment sets a key its display record gives it");

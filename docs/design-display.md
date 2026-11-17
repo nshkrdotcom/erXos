@@ -940,7 +940,7 @@ is, whose operations are the file protocol's own, with the parameters
 client's directory, so the client sees:
 
 ```text
-/N/ctl      read: the display's channel and scale, the last present's report; write: a present
+/N/ctl      read: the display's channel, scale and palette, the last present's report; write: a present
 /N/mouse    read: 49-byte records 'm x y buttons msec' and 'r ...' after a resize
 /N/kbd      read: records 'c' runes typed, 'k' keys down, 'K' keys down after a release
 /N/wctl     read: the window's rectangle and state; write: a geometry command
@@ -1017,7 +1017,7 @@ of the client's pixels. A client re-reads `screen` at an
 presented, a second line, the report of its last answered present:
 
 ```text
-CHAN SCALE
+CHAN SCALE PALETTE
 presented TAKEN SHOWN PERIOD WAY
 ```
 
@@ -1032,6 +1032,14 @@ display does. The display answers only a scale for which the image
 carries glyph and icon sets, and the image carries the sets of one,
 `1/1`; a panel that needs another brings its sets, and the display's
 manifest entry then names its scale, with no change to this file.
+`PALETTE` is the name of the theme's palette the window is drawn in, a
+member of `mf_display_palette`, `light` or `dark`, which the display's
+manifest entry chooses ([A display's session](#a-displays-session)): a
+renderer colours the window's tree from it, and a program that draws
+its own pixels takes its colours from it
+([design-desktop-programs.md](design-desktop-programs.md#colour)). A
+client matches it against the theme's palettes and refuses a read that
+names another, so the read makes no atom.
 
 The report says what became of the present, from the driver's answer to
 the frame that carried it ([The display device](#the-display-device)).
@@ -1496,9 +1504,10 @@ are in [Widget format](design-abi.md#widget-format). The properties:
 | `columns` | integer 1 to 64; 1 when absent | `grid` | children fill the grid row by row |
 | `image`, `image_type` | at most 48 KiB of encoded bytes; one of the image types | `image` | the picture and its encoding |
 | `alt` | at most 255 bytes of UTF-8 | `image` | the picture's text, for a renderer that cannot show it |
-| `role` | one of the `ui_role` values: `display`, `title`, `heading`, `body`, `numeric`, `caption`; `body` when absent | `label`, `button`, `checkbox`, `input`, `list`, `graph` | how the node's text ranks in its window; a renderer picks the face and size |
+| `role` | one of the `ui_role` values: `display`, `headline`, `figure`, `title`, `heading`, `body`, `numeric`, `caption`; `body` when absent | `label`, `button`, `checkbox`, `input`, `list`, `graph` | how the node's text ranks in its window; a renderer picks the face and size |
 | `area` | one of the `ui_area` values: `section`, `toolbar`, `sidebar`; absent by default | `column`, `row`, `grid`, `scroll` | what the container is, so a renderer can mark it |
 | `icon` | one of the `ui_icon` values, the twenty icons of [Icons](design-desktop-programs.md#icons) | `label`, `button` | the item the node stands for, drawn beside its text; a renderer without the icon shows the text alone |
+| `trend` | one of the `ui_trend` values: `up`, `down`, `flat`; absent by default | `label` | which way the label's value has moved; a renderer draws it as [design-desktop-programs.md](design-desktop-programs.md#widget-format-additions) states |
 | `current` | boolean; `false` when absent | `button` | the button stands for the current one of its set, such as today in a month; a renderer marks it |
 | `samples` | at most 240 integers within `min` and `max`, or `none`, oldest first | `graph` | the series the graph draws; `none` is a sample not taken |
 | `mark` | integer within `min` and `max` | `graph` | a reference value drawn across the series, such as a grant |
@@ -3858,7 +3867,9 @@ standard input and output pipes whose other ends `erx_ui_lvgl` holds and
 which the session homes as it homes every pipe
 ([design-pipes.md](design-pipes.md)), with a namespace narrowed to
 nothing, since it opens no file, and with its window's buffer mapped as
-descriptor 3 ([The pixel area](#the-pixel-area)). `erx_ui_lvgl` writes
+descriptor 3 ([The pixel area](#the-pixel-area)). Its one argument is
+the name of the palette its window's `ctl` names, which it colours the
+tree from, and it ends on a name the theme does not give. `erx_ui_lvgl` writes
 the `diff_op()`s to its standard input in the binary form declared in
 `abi/formats/ui.txt`, from which the generator produces the program's
 bounded C reader. That form carries an `on_*` property as the flag that
@@ -4047,7 +4058,9 @@ on a display edits nothing of the board's:
   environment when it creates the domain: `display` is the name of the
   display it serves, `display_policy` its policy,
   `display_idle_dim_s` and `display_idle_off_s` its idle times in
-  seconds, `display_keymap` its layout, `us` unless the entry names
+  seconds, `display_palette` the palette its windows are drawn in, a
+  member of `mf_display_palette`, `light` unless the entry names `dark`
+  in its `palette`, `display_keymap` its layout, `us` unless the entry names
   another the tree has ([Input events](#input-events)), and
   `display_repeat_delay_ms` and `display_repeat_period_ms` the time a
   key is held before it repeats and the time between repeats, each a
@@ -4405,7 +4418,8 @@ written.
 Three properties keep these additions from reaching clients. A buffer is
 described by its width, height and the display's channel, and its rows
 are 32 bits aligned, the layout each of these devices takes. A client
-learns of the display only its channel, its scale and its window's size,
+learns of the display only its channel, its scale, its palette and its
+window's size,
 and of composition only the answer to its present and that present's
 report. And every path falls back
 to the copy path, which needs nothing of the buffer but that the display
@@ -4589,7 +4603,8 @@ serves no other interface to a client.
 `windows` service it describes, whose server is the display domain and
 whose name is the display's everywhere: in every grantee's registry and
 in a start row; its policy, a member of `mf_display_policy`; its idle
-policy; its keyboard's layout and repeat delay and period; the reserved
+policy; its palette, a member of `mf_display_palette`, `light` when it
+names none; its keyboard's layout and repeat delay and period; the reserved
 chord, by evdev code. The entry names no session, no renderer and no
 application.
 
@@ -5958,7 +5973,7 @@ draws attaches as [Graphics hardware](#graphics-hardware) says.
 | --- | --- | --- | --- |
 | Plan 9's `libmemdraw`, from 9front | the per-byte pixel primitives of `erx_memdraw`; its image(6) loader `cloadmemimage` is linked into no release, since the `Y` decoder is the Erlang `erx_draw_image` | MIT (9front's `lib/legal/NOTICE`, whose exceptions cover only fonts) | permanent; 9front at commit 2859ae04, imported as erXos's code into `display/libmemdraw` with an `ORIGIN.md` listing its edits |
 | the 9front build: 9front's `libmemdraw` and the parts of its `libdraw` it links, unmodified | test tool: the oracle of the shapes' pixels, of every `erx_memdraw` operation against the code it was imported from, and through `cloadmemimage` of `erx_draw_image`'s decoding and of the C twin's framing of `Y` (Verification) | MIT | tool, never part of a shipped image; fetched at the commit the import's origin file records, verified against a pinned SHA-256, and built for the host out of tree by erXos's own compiler invocations against plan9port's `lib9`, which is already fetched for rc; 9front's mkfiles never run |
-| LVGL 9 | the native widget renderer for panels, the program `erx-lvgl` of the application's session | MIT; its built-in fonts are OFL-1.1 font data | stopgap, shipped in 0.2 under [its release contract](#lvgls-release-contract) and replaced by the Erlang renderer when the parity test and the panel's frame times admit it; a git submodule from erXos's fork pinned at a recorded commit, built out of tree as a native program, its display and input glue erXos's own |
+| LVGL 9 | the native widget renderer for panels, the program `erx-lvgl` of the application's session | MIT; its built-in fonts are off, and its archive holds the theme's role fonts from the glyph step, Inter's glyphs, OFL-1.1 font data | stopgap, shipped in 0.2 under [its release contract](#lvgls-release-contract) and replaced by the Erlang renderer when the parity test and the panel's frame times admit it; a git submodule from erXos's fork pinned at a recorded commit, built out of tree as a native program, its display and input glue erXos's own |
 | fonts | the glyphs of `erx_term` and of the Erlang renderer, in a session's release, as Plan 9 subfonts, and of the menu, in the display's, as a generated module | plan9port's `fixed` fonts (public domain, converted from X.Org's `misc-fixed` BDF files) for the terminal, of which the 6x13 subfonts of U+0000, U+2000 and U+2500 are imported into `display/font/fixed` with an origin file; Inter 4.1 (OFL-1.1, font data only) for the theme's roles, rasterised at build through FreeType, a host build tool used under the FTL, into 8-bit subfonts and the menu's module ([design-desktop-programs.md](design-desktop-programs.md#type)) | permanent |
 | libvterm 0.3.3 | the differential oracle of `erx_vt` | MIT | test tool, never in an image and never linked into erXos; fetched at its pinned release and SHA-256 and built out of tree for the host with the harness `test/vt/vterm_dump.c` |
 | `vttest`, Thomas Dickey's | the source of the corpus's `vttest` recordings | MIT-style (X11), confirmed at the pin | test tool, never in an image; fetched at a pinned release and SHA-256, built out of tree for the host and run on a host pseudo-terminal |
@@ -5975,9 +5990,9 @@ except the fuzz budgets, which are the milestone gate's.
 | Commitment | What a release does | Test, and the seeded failure that proves it ran |
 | --- | --- | --- |
 | **Placement** | `erx-lvgl` is a program of the application's own session, in a sub-space, with a namespace narrowed to nothing, holding a mapping of its window's buffer's pages and no other page of the pixel area, no capability to the area, and no handle beyond those its start gives every program ([The widget server](#the-widget-server), "The **LVGL renderer**"; "A buffer in a program") | a store one page past the buffer faults in the program; a session that maps the whole area into it fails. *new*: the program's space, read through `/proc` at the program's `capabilities` and `mappings` on a development build of either kernel ([design-fiasco.md](design-fiasco.md#reporting-kernel-objects)), slots and mappings apart, holds no slot beyond those of a program started with no files, none naming the pixel area, and no mapping of the area beyond its buffer's pages; a session that also hands it its own namespace grant fails, and so does one that passes it the area's handle |
-| **Input** | the program reads only the binary form of `abi/formats/ui.txt` through the generated bounded C reader, never an application's term; `erx_ui_lvgl` reads the program's records through the generated Erlang reader | `tools/fuzz/ui_wire_fuzz.c` (the C reader) and `test/erlang/erx_ui_wire_fuzz.erl` (the Erlang reader) at their full `check-fuzz` budgets with no open finding before the release; a reader without the `damage` report's count check fails its target |
+| **Input** | the program reads only the binary form of `abi/formats/ui.txt` through the generated bounded C reader, and an `image` node's PNG through LVGL's lodepng, never an application's term; `erx_ui_lvgl` reads the program's records through the generated Erlang reader | `tools/fuzz/ui_wire_fuzz.c` (the C reader) and `test/erlang/erx_ui_wire_fuzz.erl` (the Erlang reader), and a lodepng target over the PNGs an `image` node carries, within `ui_picture_bytes`, at their full `check-fuzz` budgets with no open finding before the release; a reader without the `damage` report's count check fails its target |
 | **Failure** | a malformed `damage` report, a second report before the first is answered, or a program that leaves its standard input full stops the program, and the application receives `{ui_down, Window, renderer_down}`; the worst a hostile or broken `erx-lvgl` does is confined to its own application's session | each of the first two stops the program and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that presents them fails. *new*: a program that stops reading its standard input until the pipe is full is stopped and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that waits on the full pipe instead fails |
-| **Notices** | the image's notices carry LVGL's MIT license and the OFL-1.1 license of its built-in fonts, which the release check admits as font data only ([design.md](design.md#dependencies), LVGL's row) | `test_ofl_is_admitted_only_for_an_input_that_states_font_data` (`test/host/license_expression_test.rb`): OFL-1.1 refused for an input that does not state font data; and `test/host/production_image_test.rb`, which reads the LVGL archive as `MIT AND OFL-1.1` with font data |
+| **Notices** | the image's notices carry LVGL's MIT license and Inter's OFL-1.1 `LICENSE.txt` for the role fonts its archive holds, which the release check admits as font data only ([design.md](design.md#dependencies), LVGL's row) | `test_ofl_is_admitted_only_for_an_input_that_states_font_data` (`test/host/license_expression_test.rb`): OFL-1.1 refused for an input that does not state font data; and `test/host/production_image_test.rb`, which reads the LVGL archive as `MIT AND OFL-1.1` with font data |
 | **Retirement** | gate GD decides whether the Erlang renderer replaces LVGL on panels ([plan.md](plan.md#decision-gates)); GD is not among 0.2's gates, and a release after a GD that retires LVGL ships no LVGL | none: a plan gate |
 
 **Published downsides.** A defect in LVGL's C code can crash or hang its application's interface,

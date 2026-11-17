@@ -13,7 +13,9 @@
  * back in the same form: an event record for each event on a node and each
  * change of a state value, and one damage report for each refresh.
  * Descriptor 3 is the window's buffer, which the program maps whole and
- * LVGL draws in directly.
+ * LVGL draws in directly. The one argument, when given, names the theme's
+ * palette the window is drawn in, which its ctl names; a name the theme
+ * does not give ends the program, and with none it takes the first.
  *
  * Data flow. The generated erx_ui_read() frames and checks each record;
  * apply_record() turns it into LVGL calls. A node is an LVGL object whose
@@ -48,6 +50,7 @@
  */
 
 #include <errno.h>
+#include <stddef.h>
 #include <limits.h>
 #include <poll.h>
 #include <signal.h>
@@ -139,6 +142,16 @@ struct ui_node {
 	int32_t		 min;
 	int32_t		 max;
 	int32_t		 value;
+	uint8_t		*picture;	/* an image's PNG bytes, or NULL */
+	lv_image_dsc_t	 picture_dsc;	/* the PNG as LVGL's source */
+	int32_t		*samples;	/* a graph's samples, ERX_UI_NONE for none */
+	uint16_t	 nsamples;
+	bool		 has_mark;
+	int32_t		 mark;
+	lv_chart_series_t *series;	/* a graph's samples */
+	lv_chart_series_t *mark_series; /* a graph's mark, drawn across */
+	int16_t		 role;		/* its ui_role, -1 when unset */
+	int16_t		 trend;		/* its ui_trend, -1 when unset */
 	uint8_t		 kind;
 	uint8_t		 align;
 	uint8_t		 columns;
@@ -150,6 +163,21 @@ static size_t table_size;
 static size_t table_count;
 
 static lv_display_t *display;
+
+/*
+ * The theme's palettes (abi/theme.txt), each by its name, the default
+ * first, and the one this window is drawn in, which the program's one
+ * argument names: the palette the window's display chose
+ * (docs/design-display.md, "The window tree", ctl). main() sets it
+ * before any record is read.
+ */
+#define PALETTE(name, NAME) { #name, ERX_THEME_PALETTE_##NAME },
+static const struct {
+	const char *name;
+	erx_theme_palette_t colors;
+} palettes[] = { ERX_THEME_PALETTES(PALETTE) };
+#undef PALETTE
+static const erx_theme_palette_t *palette = &palettes[0].colors;
 static lv_indev_t *pointer, *keypad, *encoder;
 static ui_node_t *root;
 static bool applying;		/* events come from the server's records */
@@ -380,12 +408,19 @@ on_lvgl_delete(lv_event_t *event)
 	table_remove(node->id);
 	if (node == root)
 		root = NULL;
+	free(node->picture);
+	free(node->samples);
 	free(node->text);
 	free(node->present);
 	free(node);
 }
 
 /* Nodes. */
+
+/* The chart's own range, onto which a graph's min and max are scaled. */
+#define GRAPH_SCALE	10000
+/* The opacity of a graph's area at its top, of 255. */
+#define GRAPH_FILL_OPA	80
 
 static bool
 takes_children(uint8_t kind)
@@ -420,6 +455,120 @@ container(lv_obj_t *parent, uint8_t kind)
 	return obj;
 }
 
+/*
+ * The opacity of a graph's area at height y: GRAPH_FILL_OPA at the
+ * graph's top, falling to none at its bottom.
+ */
+static lv_opa_t
+graph_fill_opa(const lv_area_t *coords, lv_value_precise_t y)
+{
+	int32_t height = lv_area_get_height(coords);
+	int32_t below;
+
+	if (height <= 0)
+		return (0);
+	below = LV_CLAMP(0, coords->y2 - (int32_t)y, height);
+
+	return ((lv_opa_t)(GRAPH_FILL_OPA * below / height));
+}
+
+/*
+ * Fills the area under a graph's samples. LVGL's line chart draws no
+ * fill, so as the chart queues the samples' line for drawing, this adds
+ * under each segment of it a triangle down to the segment's lower end
+ * and a rectangle from there to the graph's bottom, in the line's colour
+ * fading as graph_fill_opa() says. The mark's line, in another colour,
+ * gets none.
+ */
+static void
+graph_fill(lv_event_t *event)
+{
+	lv_draw_task_t *task = lv_event_get_draw_task(event);
+	lv_draw_dsc_base_t *base = lv_draw_task_get_draw_dsc(task);
+	lv_obj_t *obj = lv_event_get_target_obj(event);
+	const ui_node_t *node = lv_obj_get_user_data(obj);
+	const lv_draw_line_dsc_t *line;
+	lv_area_t coords;
+
+	if (base->part != LV_PART_ITEMS ||
+	    lv_draw_task_get_type(task) != LV_DRAW_TASK_TYPE_LINE)
+		return;
+	line = lv_draw_task_get_line_dsc(task);
+	if (line->points == NULL || !lv_color_eq(line->color,
+	    lv_chart_get_series_color(obj, node->series)))
+		return;
+	lv_obj_get_coords(obj, &coords);
+	for (int32_t index = 0; index + 1 < line->point_cnt; index++) {
+		lv_point_precise_t a = line->points[index];
+		lv_point_precise_t b = line->points[index + 1];
+		lv_draw_triangle_dsc_t triangle;
+		lv_draw_rect_dsc_t rect;
+		lv_area_t below;
+
+		if (a.y == LV_DRAW_LINE_POINT_NONE ||
+		    b.y == LV_DRAW_LINE_POINT_NONE)
+			continue;
+		lv_draw_triangle_dsc_init(&triangle);
+		triangle.p[0] = a;
+		triangle.p[1] = b;
+		triangle.p[2] = (lv_point_precise_t){ a.y < b.y ? a.x : b.x,
+		    LV_MAX(a.y, b.y) };
+		triangle.grad.dir = LV_GRAD_DIR_VER;
+		triangle.grad.stops_count = 2;
+		triangle.grad.stops[0] = (lv_grad_stop_t){ .color = line->color,
+		    .opa = graph_fill_opa(&coords, LV_MIN(a.y, b.y)), .frac = 0 };
+		triangle.grad.stops[1] = (lv_grad_stop_t){ .color = line->color,
+		    .opa = graph_fill_opa(&coords, LV_MAX(a.y, b.y)), .frac = 255 };
+		lv_draw_triangle(base->layer, &triangle);
+		lv_draw_rect_dsc_init(&rect);
+		rect.bg_grad.dir = LV_GRAD_DIR_VER;
+		rect.bg_grad.stops_count = 2;
+		rect.bg_grad.stops[0] = triangle.grad.stops[1];
+		rect.bg_grad.stops[0].frac = 0;
+		rect.bg_grad.stops[1] = (lv_grad_stop_t){ .color = line->color,
+		    .opa = 0, .frac = 255 };
+		below = (lv_area_t){ (int32_t)a.x, (int32_t)LV_MAX(a.y, b.y),
+		    (int32_t)b.x - 1, coords.y2 };
+		lv_draw_rect(base->layer, &rect, &below);
+	}
+}
+
+/*
+ * A graph: a line chart with no frame, grid or points, its samples in the
+ * theme's accent over its area (graph_fill()) and its mark across them,
+ * dotted, in the tertiary colour.
+ */
+static lv_obj_t *
+graph(lv_obj_t *parent, ui_node_t *node)
+{
+	lv_obj_t *obj = lv_chart_create(parent);
+
+	lv_obj_remove_style_all(obj);
+	lv_chart_set_type(obj, LV_CHART_TYPE_LINE);
+	lv_chart_set_div_line_count(obj, 0, 0);
+	lv_chart_set_axis_range(obj, LV_CHART_AXIS_PRIMARY_Y, 0, GRAPH_SCALE);
+	lv_obj_set_style_line_width(obj, 2, LV_PART_ITEMS);
+	lv_obj_set_style_line_rounded(obj, true, LV_PART_ITEMS);
+	lv_obj_set_style_width(obj, 0, LV_PART_INDICATOR);
+	lv_obj_set_style_height(obj, 0, LV_PART_INDICATOR);
+	node->mark_series = lv_chart_add_series(obj,
+	    lv_color_hex(palette->tertiary), LV_CHART_AXIS_PRIMARY_Y);
+	node->series = lv_chart_add_series(obj,
+	    lv_color_hex(palette->accent), LV_CHART_AXIS_PRIMARY_Y);
+	lv_obj_add_event_cb(obj, graph_fill, LV_EVENT_DRAW_TASK_ADDED, NULL);
+	lv_obj_set_send_draw_task_events(obj, true);
+	lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+	return obj;
+}
+
+/*
+ * The marks LVGL's checkbox and drop-down draw as text, in characters the
+ * theme's range holds (abi/theme.txt), since the roles' fonts have none of
+ * LVGL's symbols: U+2713, a check mark, and U+2193, a downwards arrow.
+ */
+#define CHECK_MARK	"\xe2\x9c\x93"
+#define LIST_ARROW	"\xe2\x86\x93"
+
 static lv_obj_t *
 widget(lv_obj_t *parent, ui_node_t *node)
 {
@@ -427,8 +576,11 @@ widget(lv_obj_t *parent, ui_node_t *node)
 
 	switch (node->kind) {
 	case ERX_UI_KIND_LABEL:
-	case ERX_UI_KIND_IMAGE:
 		return lv_label_create(parent);
+	case ERX_UI_KIND_IMAGE:
+		return lv_image_create(parent);
+	case ERX_UI_KIND_GRAPH:
+		return graph(parent, node);
 	case ERX_UI_KIND_BUTTON:
 		obj = lv_button_create(parent);
 		node->label = lv_label_create(obj);
@@ -438,6 +590,8 @@ widget(lv_obj_t *parent, ui_node_t *node)
 	case ERX_UI_KIND_CHECKBOX:
 		obj = lv_checkbox_create(parent);
 		lv_checkbox_set_text_static(obj, "");
+		lv_obj_set_style_bg_image_src(obj, CHECK_MARK,
+		    LV_PART_INDICATOR | LV_STATE_CHECKED);
 		return obj;
 	case ERX_UI_KIND_SLIDER:
 		return lv_slider_create(parent);
@@ -448,7 +602,9 @@ widget(lv_obj_t *parent, ui_node_t *node)
 		lv_obj_set_style_anim_duration(obj, 0, LV_PART_CURSOR);
 		return obj;
 	case ERX_UI_KIND_LIST:
-		return lv_dropdown_create(parent);
+		obj = lv_dropdown_create(parent);
+		lv_dropdown_set_symbol(obj, LIST_ARROW);
+		return obj;
 	case ERX_UI_KIND_SPACER:
 		return container(parent, ERX_UI_KIND_SPACER);
 	default:
@@ -591,56 +747,150 @@ set_slider(ui_node_t *node)
 }
 
 /*
- * The theme's type roles (abi/theme.txt, generated as erx/theme.h): each
- * role's size and colour, by its ui_role value, which ui.txt and the
- * theme name alike.
+ * An image's PNG, which LVGL's PNG decoder reads each time it draws: the
+ * bytes are copied, since the record's buffer is reused, and lv_conf.h keeps
+ * LVGL's image caches off, so no picture is remembered by the address of
+ * the node's source it replaces.
  */
+static void
+set_picture(ui_node_t *node, const erx_ui_prop_t *prop)
+{
+	uint8_t *picture = NULL;
+
+	if (prop != NULL && prop->bytes.length > 0) {
+		picture = malloc(prop->bytes.length);
+		if (picture == NULL)
+			fatal("out of memory for a picture of %u bytes",
+			    prop->bytes.length);
+		memcpy(picture, prop->bytes.data, prop->bytes.length);
+	}
+	free(node->picture);
+	node->picture = picture;
+	node->picture_dsc = (lv_image_dsc_t){
+		.header = { .magic = LV_IMAGE_HEADER_MAGIC,
+		    .cf = LV_COLOR_FORMAT_RAW },
+		.data_size = picture == NULL ? 0 : prop->bytes.length,
+		.data = picture,
+	};
+	lv_image_set_src(node->obj, picture == NULL ? NULL :
+	    &node->picture_dsc);
+}
+
+/* A graph's samples, kept until set_graph() scales them. */
+static void
+set_samples(ui_node_t *node, const erx_ui_prop_t *prop)
+{
+	uint16_t count = prop == NULL ? 0 : prop->count;
+	int32_t *samples = NULL;
+
+	if (count > 0) {
+		samples = calloc(count, sizeof(*samples));
+		if (samples == NULL)
+			fatal("out of memory for %u samples", count);
+		for (uint16_t index = 0; index < count; index++)
+			if (!erx_ui_list_value(prop, index, &samples[index]))
+				fatal("sample %u of %u unreadable", index, count);
+	}
+	free(node->samples);
+	node->samples = samples;
+	node->nsamples = count;
+}
+
+/* A value within min and max on the chart's scale, in 64 bits. */
+static int32_t
+graph_scaled(const ui_node_t *node, int32_t value)
+{
+	if (value == ERX_UI_NONE)
+		return LV_CHART_POINT_NONE;
+	return (int32_t)(((int64_t)value - node->min) * GRAPH_SCALE /
+	    ((int64_t)node->max - node->min));
+}
+
+/*
+ * Draws a graph's samples and mark against its range, once its record's
+ * properties are all set. A graph without samples shows its mark alone,
+ * across a chart of two points. The mark is dotted: LVGL's chart styles
+ * every series' line alike, so the mark leaves every third point out,
+ * and a line is drawn only between two points that both have a value.
+ */
+static void
+set_graph(ui_node_t *node)
+{
+	uint32_t points = node->nsamples < 2 ? 2 : node->nsamples;
+
+	if (node->max <= node->min)
+		fatal("graph %u has min %d not below max %d", node->id,
+		    node->min, node->max);
+	lv_chart_set_point_count(node->obj, points);
+	lv_chart_set_all_values(node->obj, node->series, LV_CHART_POINT_NONE);
+	for (uint16_t index = 0; index < node->nsamples; index++)
+		lv_chart_set_series_value_by_id(node->obj, node->series, index,
+		    graph_scaled(node, node->samples[index]));
+	for (uint32_t index = 0; index < points; index++)
+		lv_chart_set_series_value_by_id(node->obj, node->mark_series, index,
+		    node->has_mark && (points == 2 || index % 3 != 2) ?
+		    graph_scaled(node, node->mark) : LV_CHART_POINT_NONE);
+	lv_chart_refresh(node->obj);
+}
+
+/*
+ * The theme's type roles (abi/theme.txt, generated as erx/theme.h): each
+ * role's LVGL font, which the glyph step writes from the role's typeface,
+ * size and weight (Erx::Glyphs::LvglFont), and where its colour lies in a
+ * palette, by its ui_role value, which ui.txt and the theme name alike. A
+ * value no role has has no font.
+ */
+#define FONT(name, NAME) LV_FONT_DECLARE(erx_lvgl_font_##name)
+ERX_THEME_ROLES(FONT)
+#undef FONT
 #define ROLE(name, NAME) [ERX_UI_ROLE_##NAME] = \
-	{ ERX_THEME_ROLE_##NAME##_SIZE, ERX_THEME_ROLE_##NAME##_COLOR },
+	{ &erx_lvgl_font_##name, \
+	    offsetof(erx_theme_palette_t, ERX_THEME_ROLE_##NAME##_COLOR) },
 static const struct {
-	int32_t size;
-	uint32_t color;
+	const lv_font_t *font;
+	size_t color;	/* the offset of its colour in erx_theme_palette_t */
 } roles[] = { ERX_THEME_ROLES(ROLE) };
 #undef ROLE
 
-/* LVGL's built-in faces that lv_conf.h compiles, smallest first. */
-static const struct {
-	int32_t size;
-	const lv_font_t *font;
-} faces[] = {
-	{ 12, &lv_font_montserrat_12 },
-	{ 14, &lv_font_montserrat_14 },
-	{ 16, &lv_font_montserrat_16 },
-	{ 20, &lv_font_montserrat_20 },
-	{ 48, &lv_font_montserrat_48 },
-};
+/* A colour of the window's palette, by its offset in erx_theme_palette_t. */
+static lv_color_t
+palette_color(size_t offset)
+{
+	return (lv_color_hex(*(const uint32_t *)(const void *)
+	    ((const char *)palette + offset)));
+}
 
 /*
- * Shows a node's text in a type role: the smallest face at least the
- * role's size, in its colour. With prop NULL the text takes LVGL's own
- * face and colour again, as a node that never had a role shows.
+ * Shows a node's text as its role and trend say, from the two together so
+ * the order they arrive in does not matter: the font is the role's; the
+ * colour is the palette's ok for a trend up, critical for one down, and
+ * otherwise the role's. What neither sets takes LVGL's default font, body's
+ * (lv_conf.h), and the window's text colour again, as a node that never
+ * had them shows.
  */
 static void
-set_role(ui_node_t *node, const erx_ui_prop_t *prop)
+text_style(ui_node_t *node)
 {
 	lv_obj_t *text = node->label != NULL ? node->label : node->obj;
-	size_t face = 0;
 
-	if (prop == NULL) {
+	if (node->role >= 0 &&
+	    ((size_t)node->role >= sizeof(roles) / sizeof(roles[0]) ||
+	    roles[node->role].font == NULL))
+		fatal("role %d is not one of the theme's", node->role);
+	if (node->role < 0)
 		lv_obj_remove_local_style_prop(text, LV_STYLE_TEXT_FONT, 0);
+	else
+		lv_obj_set_style_text_font(text, roles[node->role].font, 0);
+	if (node->trend == ERX_UI_TREND_UP)
+		lv_obj_set_style_text_color(text, lv_color_hex(palette->ok), 0);
+	else if (node->trend == ERX_UI_TREND_DOWN)
+		lv_obj_set_style_text_color(text,
+		    lv_color_hex(palette->critical), 0);
+	else if (node->role >= 0)
+		lv_obj_set_style_text_color(text,
+		    palette_color(roles[node->role].color), 0);
+	else
 		lv_obj_remove_local_style_prop(text, LV_STYLE_TEXT_COLOR, 0);
-		return;
-	}
-	if ((size_t)prop->integer >= sizeof(roles) / sizeof(roles[0]) ||
-	    roles[prop->integer].size == 0)
-		fatal("role %d is not one of the theme's", prop->integer);
-	while (faces[face].size < roles[prop->integer].size)
-		if (++face == sizeof(faces) / sizeof(faces[0]))
-			fatal("no face has the %d pixels of role %d",
-			    roles[prop->integer].size, prop->integer);
-	lv_obj_set_style_text_font(text, faces[face].font, 0);
-	lv_obj_set_style_text_color(text,
-	    lv_color_hex(roles[prop->integer].color), 0);
 }
 
 /* The style properties a section sets, which a plain container leaves unset. */
@@ -667,9 +917,9 @@ set_area(ui_node_t *node, const erx_ui_prop_t *prop)
 		lv_obj_remove_local_style_prop(obj, section_props[index], 0);
 	if (prop == NULL || prop->integer != ERX_UI_AREA_SECTION)
 		return;
-	lv_obj_set_style_bg_color(obj, lv_color_hex(ERX_THEME_COLOR_SURFACE), 0);
+	lv_obj_set_style_bg_color(obj, lv_color_hex(palette->surface), 0);
 	lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_color(obj, lv_color_hex(ERX_THEME_COLOR_LINE), 0);
+	lv_obj_set_style_border_color(obj, lv_color_hex(palette->line), 0);
 	lv_obj_set_style_border_width(obj, ERX_THEME_HAIRLINE, 0);
 	lv_obj_set_style_radius(obj, ERX_THEME_RADIUS_SECTION, 0);
 	lv_obj_set_style_shadow_offset_x(obj, ERX_THEME_SHADOW_SECTION_X, 0);
@@ -765,10 +1015,25 @@ set_prop(ui_node_t *node, uint8_t number, const erx_ui_prop_t *prop)
 		lv_dropdown_set_selected(node->obj, (uint32_t)integer);
 		break;
 	case ERX_UI_PROP_ROLE:
-		set_role(node, prop);
+		node->role = cleared ? -1 : (int16_t)integer;
+		text_style(node);
+		break;
+	case ERX_UI_PROP_TREND:
+		node->trend = cleared ? -1 : (int16_t)integer;
+		text_style(node);
 		break;
 	case ERX_UI_PROP_AREA:
 		set_area(node, prop);
+		break;
+	case ERX_UI_PROP_IMAGE:
+		set_picture(node, prop);
+		break;
+	case ERX_UI_PROP_SAMPLES:
+		set_samples(node, prop);
+		break;
+	case ERX_UI_PROP_MARK:
+		node->has_mark = !cleared;
+		node->mark = integer;
 		break;
 	case ERX_UI_PROP_COLUMNS:
 		node->columns = cleared ? 1 : (uint8_t)integer;
@@ -776,8 +1041,8 @@ set_prop(ui_node_t *node, uint8_t number, const erx_ui_prop_t *prop)
 		break;
 	default:
 		/*
-		 * Events, images, keys and names change nothing a
-		 * renderer shows; icons and graphs are not drawn here.
+		 * Events, image types, keys and names change nothing a
+		 * renderer shows; icons are not drawn here.
 		 */
 		break;
 	}
@@ -806,6 +1071,8 @@ set_props(ui_node_t *node, const erx_ui_record_t *record)
 		set_prop(node, record->removed[index], NULL);
 	if (node->kind == ERX_UI_KIND_SLIDER)
 		set_slider(node);
+	if (node->kind == ERX_UI_KIND_GRAPH)
+		set_graph(node);
 }
 
 static ui_node_t *
@@ -848,7 +1115,7 @@ insert(const erx_ui_record_t *record)
 	*node = (ui_node_t){
 		.id = record->node, .kind = record->kind, .width = -1,
 		.height = -1, .min = 0, .max = 100, .value = 0,
-		.align = ERX_UI_ALIGN_FILL, .columns = 1,
+		.align = ERX_UI_ALIGN_FILL, .columns = 1, .role = -1, .trend = -1,
 	};
 	node->obj = widget(parent_obj, node);
 	node->own_width = lv_obj_get_style_width(node->obj, 0);
@@ -921,6 +1188,11 @@ screen(const erx_ui_record_t *record)
 		lv_indev_set_display(keypad, display);
 		lv_indev_set_display(encoder, display);
 		lv_obj_set_scrollable(lv_screen_active(), false);
+		/* The window's ground and its text, which every node inherits. */
+		lv_obj_set_style_bg_color(lv_screen_active(),
+		    lv_color_hex(palette->window), 0);
+		lv_obj_set_style_text_color(lv_screen_active(),
+		    lv_color_hex(palette->text), 0);
 	}
 	lv_display_set_color_format(display, format);
 	lv_display_set_resolution(display, record->width, record->height);
@@ -1250,7 +1522,7 @@ consume(size_t *have)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
 	struct pollfd in = { .fd = STDIN_FILENO, .events = POLLIN };
 	size_t have = 0;
@@ -1258,6 +1530,16 @@ main(void)
 	uint32_t next;
 	int timeout;
 
+	if (argc > 2)
+		fatal("usage: erx-lvgl [PALETTE]");
+	if (argc == 2) {
+		palette = NULL;
+		for (size_t index = 0; index < sizeof(palettes) / sizeof(palettes[0]); index++)
+			if (strcmp(argv[1], palettes[index].name) == 0)
+				palette = &palettes[index].colors;
+		if (palette == NULL)
+			fatal("no palette is named %s", argv[1]);
+	}
 	signal(SIGPIPE, SIG_IGN);
 	lv_init();
 	lv_tick_set_cb(tick_ms);

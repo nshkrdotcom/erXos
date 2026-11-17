@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # The desktop's theme (docs/design-desktop-programs.md, "The theme: one
 # declaration", and docs/design-abi.md, "Theme"): the type scale, the
-# spacing grid, the radii, the shadows, the one light palette with the
-# contrast it must meet, and the fonts and icons the glyph step
+# spacing grid, the radii, the shadows, the light and dark palettes with
+# the contrast each must meet, and the fonts and icons the glyph step
 # rasterises. tools/gen_abi.rb validates every row and generates
 # erx_theme in erx_memdraw, erx/theme.h and the web client's theme.ts.
 
@@ -15,39 +15,44 @@ theme 1
   # A font: its name, its directory, and the file of each weight it has.
   font ui display/fonts/inter regular Inter-Regular.ttf medium Inter-Medium.ttf semibold Inter-SemiBold.ttf
   # The code points the glyph step rasterises from a font.
-  range ui 0020-007E 00A0-017F 2000-206F 2190-21FF
+  range ui 0020-007E 00A0-017F 2000-206F 2190-21FF 2713-2713
   # Type roles; a renderer never picks a size, a role does. Sizes and line
   # heights are pixels; a role without a colour takes `text`.
-  role display font ui size 48 line 64 weight semibold figures tabular
-  role title   font ui size 20 line 28 weight semibold
-  role heading font ui size 15 line 20 weight semibold
-  role body    font ui size 13 line 20 weight regular
-  role numeric font ui size 13 line 20 weight medium figures tabular
-  role caption font ui size 11 line 16 weight regular color secondary
+  role display  font ui size 48 line 64 weight semibold figures tabular
+  role headline font ui size 26 line 36 weight semibold
+  role figure   font ui size 22 line 28 weight semibold figures tabular
+  role title    font ui size 20 line 28 weight semibold
+  role heading  font ui size 15 line 20 weight semibold
+  role body     font ui size 13 line 20 weight regular
+  role numeric  font ui size 13 line 20 weight medium figures tabular
+  role caption  font ui size 11 line 16 weight regular color secondary
   # The spacing scale, in units.
   space xs 1 s 2 m 3 l 4 xl 6 xxl 8
   # Corner radii, in pixels; windows are square.
   radius control 6 section 10 menu 8 window 0
   # Shadows: x and y offset and blur in pixels, and the opacity of black in percent.
   shadow section 0 2 12 10
-  # The palette, as sRGB RRGGBB.
-  color window     F6F5F2
-  color surface    FFFFFF
-  color sunken     EEEDE9
-  color line       DDDCD7
-  color text       1B1C1E
-  color secondary  5D6066
-  color tertiary   8A8E94
-  color accent     0E7A6B
-  color on_accent  FFFFFF
-  color ok         2F7D4F
-  color warn       9A6A12
-  color critical   B3362C
-  color series_cpu 0E7A6B
-  color series_mem 5B53C6
-  color series_msg B8620B
-  color desktop    D9DAD5
-  # The WCAG 2 contrast ratio each foreground meets on each background named.
+  # The palettes, each colour as sRGB RRGGBB: its light value, then its
+  # dark one. A display's manifest entry chooses the palette its windows
+  # are drawn in (docs/design-display.md, "ctl"); light by default.
+  color window     F6F5F2 0D0F2A
+  color surface    FFFFFF 23253D
+  color sunken     EEEDE9 090B22
+  color line       DDDCD7 2A2C44
+  color text       1B1C1E FFFFFF
+  color secondary  5D6066 9E9FAA
+  color tertiary   8A8E94 6E6F7F
+  color accent     0E7A6B 7FE7F2
+  color on_accent  FFFFFF 0D0F2A
+  color ok         2F7D4F 8BE8B0
+  color warn       9A6A12 FFC46B
+  color critical   B3362C FF9B8A
+  color series_cpu 0E7A6B 7FE7F2
+  color series_mem 5B53C6 A79CFF
+  color series_msg B8620B FFB547
+  color desktop    D9DAD5 0D0F2A
+  # The WCAG 2 contrast ratio each foreground meets on each background
+  # named, in each palette.
   contrast text      on window surface sunken 7.0
   contrast secondary on window surface sunken 4.5
   contrast on_accent on accent 4.5

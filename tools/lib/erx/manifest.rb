@@ -2144,10 +2144,12 @@ module Erx
         rows.sort_by { |row| row.fetch('service') }
       end
 
-      # One display record: its service's index, its policy and its idle times, of
-      # which a nonzero time to turn the panel off comes no sooner than the time to dim it.
+      # One display record: its service's index, its policy, its idle times, of which a
+      # nonzero time to turn the panel off comes no sooner than the time to dim it, and its
+      # palette, the first of mf_display_palette when the record names none.
       def display_row(record, service)
-        row = { 'service' => service, 'policy' => enum(record, 'policy', 'mf_display_policy') }
+        palette = record.properties.key?('palette') ? enum(record, 'palette', 'mf_display_palette') : @codec.schema.types.fetch('mf_display_palette').members.values.min
+        row = { 'service' => service, 'policy' => enum(record, 'policy', 'mf_display_policy'), 'palette' => palette }
         %w[idle_dim_s idle_off_s].each do |key|
           row[key] = number(record, key)
           invalid("a display's #{key} is over #{(1 << 32) - 1}", 18, "display.#{key}") if row.fetch(key) >= (1 << 32)
@@ -2159,7 +2161,7 @@ module Erx
 
       # The environment keys a display domain takes from its display record, which its own
       # row may not set (abi/manifest.txt, display_key and the keys after it).
-      def display_keys = %w[display_key display_policy_key display_idle_dim_key display_idle_off_key]
+      def display_keys = %w[display_key display_policy_key display_idle_dim_key display_idle_off_key display_palette_key]
                          .map { |name| @codec.fixed_bytes(name) }
 
       # Property 18's clauses on one display's grants: its server is a configured

@@ -7,6 +7,7 @@ require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/erlang_build'
+require_relative '../../tools/lib/erx/glyphs'
 require_relative '../../tools/lib/erx/lvgl'
 require_relative '../../tools/lib/erx/origin'
 require_relative '../../tools/lib/erx/ppm'
@@ -59,7 +60,8 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
   # host's erx-lvgl draws of the cell client's tree (erx_kiosk_test:tree/0) on the
   # suite's screen, the reference's own size, so the guest's picture equals the host's
   # render. ERX_RECORD_REFERENCE=1 writes the reference from the render instead, for a
-  # person who has looked at the picture.
+  # person who has looked at the picture. The client is drawn in the dark palette, which
+  # the development manifest's display entry chooses and the display_domain suite boots.
   KIOSK_REFERENCE = 'display-lvgl'
   KIOSK_CLIENT = %w[test/erlang/apps/erx_kiosk_test/src/erx_kiosk_test.erl].freeze
   def test_the_kiosk_reference_is_the_programs_picture
@@ -72,7 +74,7 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
       width = reference.width
       height = reference.height
       run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
-           "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program)}, " \
+           "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program, palette: 'dark')}, " \
            "erx_kiosk_test:tree(), {#{width}, #{height}})), halt(0)",
            chdir: work)
       image = Erx::Ppm::Image.new(width: width, height: height, pixels: File.binread(File.join(work, 'picture.rgb')))
@@ -85,11 +87,105 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
     end
   end
 
+  # The palette the program is started with colours the picture
+  # (abi/theme.txt): the kiosk client drawn in the dark palette is another
+  # picture than in the light one, which the program takes when started
+  # with none, and a palette the theme does not name ends the program.
+  def test_the_palette_argument_colours_the_picture
+    runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+    program = Erx::Lvgl::Build.new(root: ROOT, runner: runner).call
+    Dir.mktmpdir('erx-lvgl-palette') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS + KIOSK_CLIENT)
+      light, named_light, dark = [[], ['light'], ['dark']].map do |args|
+        screen = screen(program).sub(/\}\z/, ", args => #{args.inspect}}")
+        run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
+             "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen}, " \
+             'erx_kiosk_test:tree(), {320, 200})), halt(0)', chdir: work)
+        File.binread(File.join(work, 'picture.rgb'))
+      end
+      assert_equal light, named_light, 'light is the default'
+      # The window's ground, the top left pixel, is each palette's window colour.
+      assert_equal [0xf6, 0xf5, 0xf2], light.unpack('C3'), 'the light window colour'
+      assert_equal [0x0d, 0x0f, 0x2a], dark.unpack('C3'), 'the dark window colour'
+      output, status = Open3.capture2e('gtimeout', '-k', '10', '60', RbConfig.ruby, LAUNCHER,
+                                       File.join(work, 'picture.rgb'), program, 'sepia', stdin_data: '')
+      refute status.success?
+      assert_match(/no palette is named sepia/, output)
+    end
+  end
+
+  # A label's trend colours its text (abi/formats/ui.txt, ui_trend): up in the
+  # palette's ok, down in its critical, each over the role's own colour, and
+  # flat in the role's; a label drawn up holds the ok colour and none of the
+  # critical one.
+  def test_a_label_s_trend_colours_its_text
+    runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+    program = Erx::Lvgl::Build.new(root: ROOT, runner: runner).call
+    ok = [0x2f, 0x7d, 0x4f].pack('C3')
+    critical = [0xb3, 0x36, 0x2c].pack('C3')
+    Dir.mktmpdir('erx-lvgl-trend') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS)
+      up, down, flat = %w[up down flat].map do |trend|
+        tree = "{column, \#{}, [{label, \#{text => <<\"MMMM 88.8%\">>, role => title, trend => #{trend}}, []}]}"
+        run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
+             "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program)}, #{tree}, {200, 60})), " \
+             'halt(0)', chdir: work)
+        File.binread(File.join(work, 'picture.rgb')).scan(/.../mn)
+      end
+      assert_includes up, ok
+      refute_includes up, critical
+      assert_includes down, critical
+      refute_includes down, ok
+      refute_includes flat, ok
+      refute_includes flat, critical
+    end
+  end
+
+  # A role's text is drawn in the theme's font for that role, at its size and
+  # weight (abi/theme.txt), not in a face of another size: the ink of a run
+  # of H, where a pixel nearer the text's colour than the background's is
+  # ink, spans the pen's whole-pixel advances of Inter's H at the role's size
+  # and the columns of one H whose coverage is at least half, as erx-raster
+  # gives them. heading, 15 pixels, is a size no LVGL built-in face has.
+  def test_a_role_s_text_is_drawn_in_its_theme_font
+    runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+    program = Erx::Lvgl::Build.new(root: ROOT, runner: runner).call
+    theme = Erx::Glyphs.theme(root: ROOT)
+    role = theme.roles.fetch('heading')
+    letters = 6
+    h = Erx::Raster.locate(root: ROOT)
+                   .rasterise(font: File.join(ROOT, Erx::Glyphs.font_file(theme, role)), size: role.size,
+                              glyphs: ['U+0048'], runner: runner).glyphs.first
+    inked = h.rows.flat_map { |row| row.bytes.each_index.select { |column| row.getbyte(column) >= 128 } }
+    expected = ((letters - 1) * ((h.advance + 32) >> 6)) + inked.max - inked.min + 1
+    Dir.mktmpdir('erx-lvgl-face') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS)
+      tree = "{column, \#{}, [{label, \#{text => <<\"#{'H' * letters}\">>, role => heading}, []}]}"
+      run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
+           "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program)}, #{tree}, {200, 60})), " \
+           'halt(0)', chdir: work)
+      assert_equal expected, ink_span(File.binread(File.join(work, 'picture.rgb')).bytes.each_slice(3).each_slice(200).to_a)
+    end
+  end
+
   private
 
-  # The model screen's map of the program and how to start it, as an Erlang term.
-  def screen(program)
+  # The columns from the first to the last that hold ink in ROWS of [r, g, b]
+  # pixels: a pixel farther from the background, the commonest colour, than
+  # half the distance of the farthest pixel.
+  def ink_span(rows)
+    background = rows.flatten(1).tally.max_by { |_, count| count }.first
+    distance = ->(pixel) { pixel.zip(background).sum { |a, b| (a - b).abs } }
+    far = rows.flatten(1).map(&distance).max
+    columns = rows.flat_map { |row| row.each_index.select { |column| 2 * distance.call(row[column]) > far } }
+    columns.max - columns.min + 1
+  end
+
+  # The model screen's map of the program and how to start it, as an Erlang term: in
+  # palette, a name of abi/theme.txt's, or erx-lvgl's default, light, with none.
+  def screen(program, palette: nil)
     pairs = { program: program, ruby: RbConfig.ruby, launcher: LAUNCHER }.map { |key, path| "#{key} => #{path.inspect}" }
+    pairs << "args => [#{palette.inspect}]" if palette
     "\#{#{pairs.join(', ')}}"
   end
 
@@ -215,6 +311,11 @@ class LvglProgramTest < Minitest::Test
     def self.ensure(root:) = root
   end
 
+  # Writes no glyphs: the test compiles no font.
+  module Glyphs
+    def self.ensure(root:, runner:) = root
+  end
+
   # Takes NativeRoot#build_task_receipted's arguments and answers as it does.
   class Native
     attr_reader :link
@@ -236,7 +337,7 @@ class LvglProgramTest < Minitest::Test
       native = Native.new
       built = Erx::Lvgl::Program.new(root: root, runner: runner, native: native, compiler: '/llvm/clang', archives: %w[libc.a libclang_rt.builtins.a],
                                directory: File.join(root, 'out'), jobs: 2,
-                                     generated: Generated).call
+                                     generated: Generated, glyphs: Glyphs).call
 
       flags = Erx::Lvgl::Program.library_flags(root)
       assert_equal [*Erx::NativeRoot::CODE_FLAGS, '-isystem', headers, '-D_BSD_SOURCE'].join(' '),
@@ -250,6 +351,7 @@ class LvglProgramTest < Minitest::Test
       assert_includes make, 'CC=/llvm/clang'
       assert_includes make, 'AR=/llvm/llvm-ar'
       assert_includes make, 'SANITIZE='
+      assert_includes make, "GLYPHS=#{root}/build/glyphs"
       assert_equal [*Erx::NativeRoot::PROGRAM, *Erx::Lvgl::Program::SOURCES], native.link.fetch(:sources)
       assert_equal [archive, 'libc.a', 'libclang_rt.builtins.a'], native.link.fetch(:archives)
       refute native.link.key?(:flags)

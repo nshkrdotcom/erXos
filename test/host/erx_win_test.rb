@@ -37,6 +37,7 @@ class ErxWinTest < Minitest::Test
   DEV = %w[erlang/apps/erx_session/src/erx_session_export.erl erlang/apps/erx/src/erx_prog_handler_core.erl].freeze
   TESTS = %w[erx_win_core_tests erx_win_tests erx_draw_tests erx_win_dev_tests].freeze
   MODULES = (%w[erlang/apps/erx_memdraw/src/erx_memdraw.erl erlang/apps/erx_memdraw/src/erx_chan.erl
+                build/gen/erlang/apps/erx_memdraw/src/erx_theme.erl
                 build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl otp/erts/preloaded/src/erx_file_remote.erl
                 erlang/apps/erx/src/erx_facet.erl] + DISPLAY + FILES + CLIENT + DEV +
              TESTS.map { |name| "test/erlang/#{name}.erl" }).freeze

@@ -12,8 +12,9 @@
  *   Plan 9's bytesperline for the channels erx-lvgl accepts;
  * - nothing animates: theme transitions take no time, so a pressed button
  *   changes once and an idle program runs no timer;
- * - no operating system layer, no file system, no image decoder, no log:
- *   the program reads only its standard input.
+ * - no operating system layer, no file system and no log: the program reads
+ *   only its standard input, and its one image decoder, lodepng, reads only
+ *   the PNG of an image node that input carries.
  */
 
 #ifndef LV_CONF_H
@@ -39,19 +40,28 @@
 #define LV_ASSERT_HANDLER		__builtin_trap();
 
 /*
- * The built-in faces erx_lvgl.c offers the theme's type roles (abi/theme.txt),
- * besides LVGL's default of 14 pixels; a role takes the smallest at least its
- * size.
+ * No built-in face: every text takes a font of the theme's type roles
+ * (abi/theme.txt), which the glyph step writes from Inter
+ * (Erx::Glyphs::LvglFont) and display/lvgl/Makefile compiles into liblvgl.a.
+ * What sets no role, LVGL's own widgets and theme among them, takes body's,
+ * the role ui.txt gives a node without one.
  */
-#define LV_FONT_MONTSERRAT_12		1
-#define LV_FONT_MONTSERRAT_16		1
-#define LV_FONT_MONTSERRAT_20		1
-#define LV_FONT_MONTSERRAT_48		1
+#define LV_FONT_MONTSERRAT_14		0
+#define LV_FONT_MONTSERRAT_14_ALIGNED	0
+#define LV_FONT_CUSTOM_DECLARE		LV_FONT_DECLARE(erx_lvgl_font_body)
+#define LV_FONT_DEFAULT			(&erx_lvgl_font_body)
 
 #define LV_THEME_DEFAULT_TRANSITION_TIME 0
 #define LV_TEXTAREA_DEF_PWD_SHOW_TIME	0
 
-#define LV_USE_LODEPNG			0
+/*
+ * An image node's PNG, ui.txt's one image type, decoded by LVGL's lodepng each
+ * time it is drawn. The image caches stay off: erx_lvgl.c reuses a node's source
+ * address for the picture that replaces it, which a cache would not tell apart.
+ */
+#define LV_USE_LODEPNG			1
+#define LV_CACHE_DEF_SIZE		0
+#define LV_IMAGE_HEADER_CACHE_DEF_CNT	0
 #define LV_USE_LIBPNG			0
 #define LV_USE_BMP			0
 #define LV_USE_TJPGD			0

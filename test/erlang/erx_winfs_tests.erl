@@ -334,7 +334,7 @@ click_picks() ->
     {ok, _} = mkdir(Other, <<"b">>),
     Corner = corner(Other, open(Other, 2, <<"b">>, <<"wctl">>, ?O_RDONLY)),
     ok = drain_flushes(),
-    ?assertEqual(rgb(erx_theme:color(line)), pixel(World, Corner)),
+    ?assertEqual(rgb(erx_theme:color(light, line)), pixel(World, Corner)),
     Kbd = open(Other, 3, <<"b">>, <<"kbd">>, ?O_RDONLY),
     Typed = call_async(Other, {read, Kbd, 0, 64}),
     %% No window is current until the user picks one.
@@ -344,7 +344,7 @@ click_picks() ->
     ok = erx_winfs:input(<<"mouse">>, {key, down, ?ERX_EVDEV_BTN_LEFT}),
     ok = erx_winfs:input(<<"mouse">>, {key, up, ?ERX_EVDEV_BTN_LEFT}),
     _ = flushed(),
-    ?assertEqual(rgb(erx_theme:color(accent)), pixel(World, Corner)),
+    ?assertEqual(rgb(erx_theme:color(light, accent)), pixel(World, Corner)),
     ok = type_a(),
     ?assertEqual({ok, <<"ka", 0>>}, answered(Typed)),
     {ok, _} = mkdir(Session, <<"c">>),
@@ -434,7 +434,8 @@ push_counts() ->
     {ok, _} = mkdir(Session, <<"w">>),
     drain_flushes(),
     Ctl = open(Session, 2, <<"w">>, <<"ctl">>, ?O_RDWR),
-    ?assertEqual({ok, <<"x8r8g8b8\n">>}, read(Session, Ctl)),
+    %% The display's channel, the scale and the palette, the first when the options name none.
+    ?assertEqual({ok, <<"x8r8g8b8 1/1 light\n">>}, read(Session, Ctl)),
     {ok, _} = erx_memdraw:load(Buffer, {0, 0, 1, 1}, <<16#11, 16#22, 16#33, 0>>),
     ?assertMatch({ok, _, _}, write(Session, Ctl, <<"present 0 8 4 0 0 1 1\n">>)),
     ?assertEqual([{0, 0, 1, 1}], flushed()),
@@ -493,18 +494,26 @@ a_running_window_system_drops_another_service_s_mint_test() ->
 %% erx_fb_sup starts the window system for the service the display variable names, and
 %% none, refusing, when the variable is unset, empty or longer than a service name.
 the_display_variable_names_the_window_system_s_service_test() ->
-    ?assertMatch([#{id := erx_winfs, start := {erx_winfs, start_link, [screen, {erx_wm_single, #{}}]}}],
-                 erx_fb_sup:winfs("screen", "single")),
-    ?assertEqual([], erx_fb_sup:winfs(false, "single")),
-    ?assertEqual([], erx_fb_sup:winfs("", "single")),
-    ?assertEqual([], erx_fb_sup:winfs(lists:duplicate(64, $a), "single")).
+    ?assertMatch([#{id := erx_winfs, start := {erx_winfs, start_link, [screen, {erx_wm_single, #{}}, light]}}],
+                 erx_fb_sup:winfs("screen", "single", "light")),
+    ?assertEqual([], erx_fb_sup:winfs(false, "single", "light")),
+    ?assertEqual([], erx_fb_sup:winfs("", "single", "light")),
+    ?assertEqual([], erx_fb_sup:winfs(lists:duplicate(64, $a), "single", "light")).
+
+%% The display_palette variable names the palette the windows are drawn in, one of the
+%% theme's, and a name the theme does not give fails the start.
+the_display_palette_variable_names_the_windows_palette_test() ->
+    ?assertMatch([#{start := {erx_winfs, start_link, [screen, _, dark]}}],
+                 erx_fb_sup:winfs("screen", "single", "dark")),
+    ?assertError({badmatch, false}, erx_fb_sup:winfs("screen", "single", "sepia")),
+    ?assertError({badmatch, false}, erx_fb_sup:winfs("screen", "single", false)).
 
 %% erx_fb_sup maps each mf_display_policy member to its window manager and nothing else,
 %% so a policy with no window manager fails its start instead of running another policy's.
 the_window_system_has_no_policy_beyond_its_window_managers_test() ->
-    ?assertMatch([#{start := {erx_winfs, start_link, [screen, {erx_wm_rio, #{}}]}}],
-                 erx_fb_sup:winfs("screen", "rio")),
-    ?assertError(function_clause, erx_fb_sup:winfs("screen", "tiled")).
+    ?assertMatch([#{start := {erx_winfs, start_link, [screen, {erx_wm_rio, #{}}, light]}}],
+                 erx_fb_sup:winfs("screen", "rio", "light")),
+    ?assertError(function_clause, erx_fb_sup:winfs("screen", "tiled", "light")).
 
 %% Started as the display domain's, the window system names itself the mint of the
 %% configured service, the name every mint request of it carries.

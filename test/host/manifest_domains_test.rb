@@ -887,16 +887,21 @@ class ManifestDomainsTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 2, 'display', @plain.sub('flags development', 'flags development,partial_boot') + DISPLAY)
   end
 
-  # Property 18: the display record is packed by its service's index, with its policy
-  # and idle times.
+  # Property 18: the display record is packed by its service's index, with its policy,
+  # idle times and palette, light unless the record names one.
   def test_a_display_record_is_packed_by_its_service
     view = @codec.open('manifest', admit(with_windows).bytes)
-    fields = %w[service policy idle_dim_s idle_off_s]
-    assert_equal [[service_index(view, 'b'), @codec.member('mf_display_policy', 'single'), 60, 600]],
+    fields = %w[service policy idle_dim_s idle_off_s palette]
+    assert_equal [[service_index(view, 'b'), @codec.member('mf_display_policy', 'single'), 60, 600,
+                   @codec.member('mf_display_palette', 'light')]],
                  rows(view, 'displays').map { |row| row.values_at(*fields) }
     never = DISPLAY.sub('idle_off_s 600', 'idle_off_s 0')
     view = @codec.open('manifest', admit(with_windows(record: never)).bytes)
     assert_equal [0], rows(view, 'displays').map { |row| row.fetch('idle_off_s') }
+    dark = DISPLAY.sub('idle_off_s 600', "idle_off_s 600\n  palette dark")
+    view = @codec.open('manifest', admit(with_windows(record: dark)).bytes)
+    assert_equal [@codec.member('mf_display_palette', 'dark')], rows(view, 'displays').map { |row| row.fetch('palette') }
+    assert_raises(Erx::ABI::SchemaError) { admit(with_windows(record: DISPLAY.sub('idle_off_s 600', "idle_off_s 600\n  palette sepia"))) }
   end
 
   # A policy is a member of mf_display_policy, which has one for each window manager the

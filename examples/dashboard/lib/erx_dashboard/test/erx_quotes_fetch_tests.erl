@@ -20,7 +20,9 @@ the address; one
 made for `other.test` gives `certificate rejected`; a 70,000-byte body
 with its `content-length` gives `answer too big`, which max_body_size
 in httpc's fourth argument alone gives (seeded failure: with it moved
-into the third argument the body is taken whole).
+into the third argument the body is taken whole). The first server
+also answers a history request, as Kraken's OHLC endpoint would, with a
+day of entries up to the clock, so the value's status says `24 h`.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -46,11 +48,14 @@ fetch() ->
                        change => none, credit => <<"Local">>, note => <<>>}
              end,
     Quote = fun(S) -> {S, #{label => <<"Q">>, decimals => 2, period => 10000, sources => [S]}} end,
+    History = #{url => iolist_to_binary(["https://quotes.test:", integer_to_list(GoodPort),
+                                         "/ohlc?pair=X&interval=15"]),
+                entries => [<<"result">>, <<"X">>]},
     Table = #{quotes => [Quote(btc), Quote(eth), Quote(big)],
-              sources => #{btc => Source(GoodPort, "/btc"), eth => Source(OtherPort, "/btc"),
-                           big => Source(GoodPort, "/big")}},
+              sources => #{btc => (Source(GoodPort, "/btc"))#{history => History},
+                           eth => Source(OtherPort, "/btc"), big => Source(GoodPort, "/big")}},
     {ok, Pid} = erx_quotes:start_link(self(), Table),
-    Expected = #{<<"btc">> => {64412.5, <<"Local - 0 s">>},
+    Expected = #{<<"btc">> => {64412.5, <<"Local, 24 h - 0 s">>},
                  <<"eth">> => {none, <<"no data: certificate rejected">>},
                  <<"big">> => {none, <<"no data: answer too big">>}},
     ?assertEqual(Expected, settled(Expected, none, erlang:monotonic_time(millisecond) + ?DEADLINE_MS)),
@@ -88,9 +93,10 @@ chain(Host) ->
     {[{cert, proplists:get_value(cert, Config)}, {key, proplists:get_value(key, Config)}],
      lists:last(Cacerts)}.
 
-%% An ssl server on the loopback answering `/btc` with a price and `/big`
-%% with a body of 70,000 bytes and its content-length, each only to a
-%% request whose host header is `quotes.test:Port` and that asks for
+%% An ssl server on the loopback answering `/btc` with a price, `/ohlc`
+%% with a day of OHLC entries up to the clock, and `/big` with a body of
+%% 70,000 bytes and its content-length, each only to a request whose
+%% host header is `quotes.test:Port` and that asks for
 %% `connection: close`; its port.
 serve(Options) ->
     {ok, Listen} = ssl:listen(0, [binary, {active, false}, {ip, {127, 0, 0, 1}},
@@ -117,6 +123,10 @@ answer({ok, Socket}, Host) ->
         {_Head, _At, nomatch} -> ok;
         {<<"GET /btc ", _/binary>>, _At, _Close} -> reply(Socket, <<"{\"price\": \"64412.50\"}">>);
         {<<"GET /big ", _/binary>>, _At, _Close} -> reply(Socket, binary:copy(<<"x">>, 70000));
+        {<<"GET /ohlc?pair=X&interval=15&since=", _/binary>>, _At, _Close} ->
+            Now = os:system_time(second),
+            Day = erx_quotes_extract_tests:day(Now - Now rem 900),
+            reply(Socket, erx_quotes_extract_tests:ohlc(<<"X">>, Day));
         _Other -> ok
     end,
     ssl:close(Socket);

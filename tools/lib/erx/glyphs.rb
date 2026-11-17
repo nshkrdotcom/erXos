@@ -13,6 +13,7 @@ require_relative 'origin'
 require_relative 'bounded_file'
 require_relative 'output_directory'
 require_relative 'raster'
+require_relative 'file_lock'
 require_relative 'glyphs_menu'
 require_relative 'glyphs_lvgl_font'
 
@@ -148,7 +149,8 @@ module Erx
     # The theme of the tree at root.
     def theme(root:)
       source = File.read(File.join(root, ABI::Theme::SOURCE))
-      ABI::Theme.validate(ABI::Syntax.parse(source, path: ABI::Theme::SOURCE).select { |item| item.kind == 'theme' })
+      ABI::Theme.validate(ABI::Syntax.parse(source, path: ABI::Theme::SOURCE).select { |item| item.kind == 'theme' },
+                          palettes: ABI::Theme.palettes(root: root))
     end
 
     # What write wrote: each role's subfont's path and LVGL font's path by
@@ -183,6 +185,26 @@ module Erx
       Written.new(subfonts: subfonts.to_h { |name, _| [name, paths.fetch(subfont_file(name))] },
                   lvgl: subfonts.to_h { |name, _| [name, paths.fetch(LvglFont.file(name))] },
                   menu: paths.fetch(Menu::FILE))
+    end
+
+    # The glyph step as a build runs it (tools/erx build glyphs, and every
+    # build of erx-lvgl, whose fonts it writes): erx-raster, built first from
+    # the fetched FreeType pin when it is missing or stale (Raster::Build),
+    # then write, under the output's lock (FileLock), so two writers take
+    # turns. A make that reads OUTPUT runs after the lock is released; a
+    # writer that changes OUTPUT meanwhile is TODO.md's residual. Returns
+    # write's Written.
+    def ensure(root:, runner:)
+      OutputDirectory.prepare(root: root, path: File.join(root, File.dirname(OUTPUT)))
+      FileLock.hold(File.join(root, "#{OUTPUT}.lock"), what: "the glyph output #{File.join(root, OUTPUT)}",
+                                                       busy: :wait_silently) do
+        program = begin
+          Raster.locate(root: root)
+        rescue Raster::MissingBuild, Raster::StaleBuild
+          Raster::Build.new(root: root, runner: runner).call
+        end
+        write(root: root, program: program, runner: runner)
+      end
     end
 
     # A role's font file, relative to the tree, and a role's subfont's file name.
@@ -227,11 +249,16 @@ module Erx
     end
 
     # FILES, their contents by name, in a new directory beside OUTPUT, which
-    # then replaces it whole; returns each file's final path by name.
+    # then replaces it whole, unless OUTPUT already holds exactly FILES: then
+    # it is left as it is, so a build that compiles from it finds nothing
+    # newer. Returns each file's final path by name.
     def publish(files, output_root:)
       parent = OutputDirectory.prepare(root: output_root, path: File.join(output_root, File.dirname(OUTPUT)))
       destination = File.join(output_root, OUTPUT)
       raise Error, "glyph output is a symbolic link: #{destination}" if File.symlink?(destination)
+
+      paths = files.to_h { |name, _| [name, File.join(destination, name)] }
+      return paths if holds?(destination, files)
 
       Dir.mktmpdir('.glyphs-', parent) do |work|
         fresh = File.join(work, 'glyphs')
@@ -240,7 +267,13 @@ module Erx
         File.rename(destination, File.join(work, 'previous')) if File.exist?(destination)
         File.rename(fresh, destination)
       end
-      files.to_h { |name, _| [name, File.join(destination, name)] }
+      paths
+    end
+
+    # Whether DIRECTORY holds FILES, their contents by name, and nothing else.
+    def holds?(directory, files)
+      File.directory?(directory) && Dir.children(directory).sort == files.keys.sort &&
+        files.all? { |name, contents| File.binread(File.join(directory, name)) == contents.b }
     end
 
     # The code points of a font's ranges, in order: glyph i of its subfonts

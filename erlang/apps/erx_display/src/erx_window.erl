@@ -20,7 +20,10 @@ read, or a write not yet presented, `EINTR`; a write whose present is in
 flight is answered when the present is. The other files' reads and writes
 are calls answered at once.
 
-**ctl.** A read answers the display's channel descriptor. A write is one
+**ctl.** A read answers the display's line, `CHAN SCALE PALETTE`: its
+channel descriptor, the window's scale, `1/1`, the one for which the image
+carries glyph and icon sets, and the name of the palette the display's
+manifest entry chose (docs/design-display.md, "The window tree"). A write is one
 `present` line, read by `erx_winctl:parse/1` and checked against the
 client's pixel area: the offset a multiple of the page size, and the
 buffer's bytes, `erx_chan:bytes(width, height, depth)`, ending at or
@@ -75,6 +78,7 @@ line written whole.
 
 -record(window, {id :: pos_integer(),
                  chan :: binary(),
+                 palette :: erx_theme:palette(),
                  depth :: pos_integer(),
                  area :: none | {term(), pos_integer()},
                  rect = none :: none | erx_wm:rect(),
@@ -105,21 +109,21 @@ line written whole.
 
 -doc """
 Starts window Id's process, linked to the caller, `erx_winfs`: Chan is the
-display's channel descriptor and Depth its bits a pixel, Area the client's
-pixel area and its bytes, or none.
+display's channel descriptor, Depth its bits a pixel and Palette its
+palette, Area the client's pixel area and its bytes, or none.
 """.
 -spec start_link(#{id := pos_integer(), chan := binary(), depth := pos_integer(),
-                   area := none | {term(), pos_integer()}}) -> {ok, pid()}.
+                   palette := erx_theme:palette(), area := none | {term(), pos_integer()}}) -> {ok, pid()}.
 start_link(Args) ->
     gen_server:start_link(?MODULE, Args, []).
 
 -doc false.
-init(#{id := Id, chan := Chan, depth := Depth, area := Area}) ->
-    {ok, #window{id = Id, chan = Chan, depth = Depth, area = Area}}.
+init(#{id := Id, chan := Chan, depth := Depth, palette := Palette, area := Area}) ->
+    {ok, #window{id = Id, chan = Chan, depth = Depth, palette = Palette, area = Area}}.
 
 -doc false.
-handle_call({read, ctl, Offset, Count}, _From, #window{chan = Chan} = W) ->
-    {reply, slice(<<Chan/binary, "\n">>, Offset, Count), W};
+handle_call({read, ctl, Offset, Count}, _From, #window{chan = Chan, palette = Palette} = W) ->
+    {reply, slice(<<Chan/binary, " 1/1 ", (atom_to_binary(Palette))/binary, "\n">>, Offset, Count), W};
 handle_call({read, wctl, Offset, Count}, _From, #window{rect = Rect, state = State} = W) ->
     Text = erx_wctl:format(case Rect of none -> {0, 0, 0, 0}; _ -> Rect end, State =:= shown, State),
     {reply, slice(Text, Offset, Count), W};

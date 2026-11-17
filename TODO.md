@@ -1769,6 +1769,17 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_text:escape_line/1` is generated. Glyph rendering cannot inject terminal controls, but bidirectional overrides
   and invisible format characters still mislead, and LVGL's font draws U+F000-U+F8FF as its built-in icons; the
   simplest fix is for the widget server to escape the canonical text before encoding it.
+* [Medium] `display/lvgl/erx_lvgl.c`, [Widget trees](docs/design-display.md#widget-trees): `align`'s `start`,
+  `center` and `end` are not placed; `node_size()` only tells `fill` from a node's own size, and LVGL's flex
+  layout places every child at the start of the cross axis. `examples/dashboard` centres its clock and right-aligns
+  its prices with weighted spacers meanwhile. Place a non-`fill` child within its slot, as `erx_ui_layout` does.
+* [High] `display/lvgl/erx_lvgl.c` and `display/lvgl/lv_conf.h`, [LVGL's release
+  contract](docs/design-display.md#lvgls-release-contract): an `image` node's PNG is decoded by LVGL's lodepng,
+  which has no fuzz target, and an application may be untrusted; a defect stays in its own session, but every
+  parser of untrusted input has a target, so this blocks the release. Add one that drives `erx-lvgl`'s
+  `set_picture()` path over arbitrary and mutated PNGs within `ui_picture_bytes`. Also refuse, before decoding, a
+  PNG whose header declares a size beyond the screen: lodepng sizes its output from the header, so a 48 KiB
+  picture can make every draw allocate about 1.6 GB (memory exhaustion confined to the session, unmeasured).
 * [Medium] `display/lvgl/erx_lvgl.c`, review findings left open. (1) A slider whose `max - min` exceeds a signed 32-bit
   integer overflows inside LVGL (`lv_bar.c`), which the sanitized build aborts on; scale such a range. (2) `set_slider`
   re-applies the last `value` the server sent on any set of the slider, undoing the user's drag, and `items` alone
@@ -8779,6 +8790,13 @@ document's "residual risks accepted" paragraph.
   share one clock module, and where it lives, is an open design question: a shared module is a new
   mechanism and needs a design, and `erx_net` must keep depending only on `kernel` and `stdlib`, since it
   is usable outside erXos.
+* [Low] `examples/dashboard`: the app draws its dial and ground for the dark palette (`?PALETTE` in
+  `erx_dashboard.erl`) whatever its display chooses, since `erx_ui` does not tell an app its window's palette
+  or size (`erx_win:info/1` has both); on a light display its text is dark on the dark ground. The ground is
+  drawn at the Pi's 1824x984 and centred, so a larger screen shows the window colour round it. The graph's
+  dotted mark leaves every third point out, which at 180 live samples on 520 px is nearly solid; LVGL's
+  line dash on the mark's draw task would be uniform. erx-lvgl's area fill draws nothing for a graph with
+  more samples than pixels (LVGL's crowded mode).
 * [Medium] `examples/dashboard`, the kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
@@ -8811,6 +8829,10 @@ document's "residual risks accepted" paragraph.
 * [Medium] `erx_quotes_core` (`trying`): a round in flight has no deadline, so a request httpc never
   answers (a handler killed without replying) keeps its quote from fetching until the source restarts.
   Fix by construction: a deadline in `trying` that `tick/3` ends as `timeout`, and requests keyed by quote.
+  A history request has the same gap the other way: `history_at` moves on when it is asked, so a
+  history httpc never answers leaves its entry in `erx_quotes`'s `requests` for good, one more each
+  hour, past the six-request bound of design-quotes.md ("Memory"); keying requests by `{Kind, Quote}`
+  makes a new request replace the old one and drop its answer.
 
 * [Medium] `erx_quotes`, `erx_quotes_view`: both take apart `erx_quotes_core:state()` (the table's source
   rows); the `fetch` action should carry the source row and the view take the table, so the core alone
@@ -8838,17 +8860,26 @@ document's "residual risks accepted" paragraph.
   followed within the round, a request httpc refuses at once, the tick) have no test; the HTTPS test
   covers a value, a refused certificate and a body too big.
 
-* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`, `set_role`): a node with no `role` shows LVGL's own face
-  and colour, while ui.txt makes `body` the default, which an explicit `role => body` shows in the theme's
+* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`, `text_style`): a node with no `role` shows body's font (LVGL's
+  default, `lv_conf.h`) but LVGL's own colour, while ui.txt makes `body` the default, which an explicit `role => body` shows in the theme's
   `text` colour; applying `body` to every node that takes a role means re-recording the LVGL references.
 
 * [Low] `examples/dashboard`: the clock shows the wall clock even while `/proc/time`'s `state` is `unset`
   ([design-time.md](docs/design-time.md)), so an unset clock shows a 1970 date as if it were the time; it
   should show the clock as not set.
 
-* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`): a type role takes the smallest of LVGL's built-in Montserrat
-  faces at least its size, not the theme's Inter at its exact size, weight and tabular figures; `icon` and
-  the `graph` kind are not drawn.
+* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`): `icon` is not drawn.
+* [Medium] `erx-lvgl` (`tools/lib/erx/lvgl.rb`, `Lvgl::Program::NOTICES` and `LICENSE`): the archive's font
+  notice (`display/fonts/inter/LICENSE.txt`) and its OFL-1.1 are written by hand, while `abi/theme.txt` names
+  the fonts and their `ORIGIN.md` rows the license (`Glyphs.font_notice` reads both); a theme font in another
+  directory or under another license would ship under Inter's notice. Derive both from the glyph step that
+  built the archive and hand them to `ProductionImage.toolkit_parts` with the program.
+* [Low] glyph step (`Glyphs.ensure`, `display/lvgl/Makefile`): the output's lock covers the write, not the
+  make that compiles the fonts after it, so a writer that changes `build/glyphs` while another build compiles
+  from it can leave an object newer than its new source; hold the lock shared around the make.
+* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`, `CHECK_MARK`, `LIST_ARROW`): the checkbox mark U+2713 and the
+  drop-down arrow U+2193 must lie in the theme's range and in its font, which nothing checks and no test
+  draws; a missing one shows LVGL's placeholder box.
 
 * [Medium] clock record, `abi/inspection.txt` kind `clock`: design-time gives the service's `sample_at`,
   `step_at`, `step_ns`, `offset_ns`, `distance_ns`, `stratum` and `server` the value `none` before a
@@ -8872,8 +8903,7 @@ document's "residual risks accepted" paragraph.
   ([design-desktop-programs.md](docs/design-desktop-programs.md#anti-aliasing-corners-and-depth-coverage-masks)).
 
 * [Medium] display and desktop, the UI survey's decisions as designed but not built
-  ([research-ui-synthesis.md](docs/research-ui-synthesis.md), section 8): `ctl`'s read with the scale
-  (`1/1`) and the last present's report with `TAKEN` and `SHOWN` apart, from the drivers' `flushed()`
+  ([research-ui-synthesis.md](docs/research-ui-synthesis.md), section 8): `ctl`'s read with the last present's report with `TAKEN` and `SHOWN` apart, from the drivers' `flushed()`
   answers and `info/1`'s `period`, and `erx_win:report/1`
   ([design-display.md](docs/design-display.md#the-window-tree)); the clipboard served only through the
   keyboard window's grant within `windows_clipboard_ms` of a key or button there, a copy replacing the
@@ -8889,15 +8919,15 @@ document's "residual risks accepted" paragraph.
   the visibility class `display`, with the `inspect` grant's `principal` beside its scope
   ([design-live.md](docs/design-live.md#inspection)).
 
-* [Low] desktop, a dark palette ([design-desktop-programs.md](docs/design-desktop-programs.md#colour),
-  `abi/theme.txt`): the theme has one light palette. A dark one adds a second value to every `color` and
-  `shadow` row, checked against the same `contrast` rows, and one setting that chooses it. The setting:
-  the display's manifest entry gains `theme` (`light` or `dark`, `light` when
-  absent), which the domain service puts in the display domain's environment as `display_theme`, as it
-  puts `display_keymap`; the decorations, the menu and the background take it there; the display's
-  `screen` file answers it as a third field after the rectangle and the channel, so every renderer on that
-  display takes it; and a session's `ui_theme`, beside `ui_renderer`, overrides it for that session's own
-  windows. Reference frames gain a dark copy per program.
+* [Medium] desktop, the display's palette beyond `erx-lvgl` ([design-desktop-programs.md](docs/design-desktop-programs.md#colour)):
+  a display's manifest entry chooses its palette, which reaches `erx_fb_sup`, every window's `ctl` and
+  `erx-lvgl`, but three drawers keep the light one. `erx_wm_rio`'s borders take `erx_theme:color(light, ...)`
+  and want the palette in the window manager's configuration from `erx_fb_sup`; `erx_screen` fills where no
+  window is with a hard-coded slate blue (`erx_screen.erl` `?BACKGROUND`), not the theme's `desktop` colour
+  of the display's palette; and the dashboard's clock (`examples/dashboard`, `erx_dashboard.erl`
+  `?PALETTE`) draws in the light palette because `erx_ui` does not answer the palette of the window it
+  opened, which `erx_win:info/1` holds. Reference pictures in the dark palette come with the first program
+  that runs in it.
 
 * [Medium] platform (Raspberry Pi 4), hardware watchdog on Fiasco: a board that runs unattended has no
   hardware watchdog behind a hang of Fiasco or of the root's watchdog thread, because the watchdog the

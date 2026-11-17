@@ -41,7 +41,9 @@ class ErxUiHostTest < Minitest::Test
       assert status.success?, output
       assert_match(/before => none/, output)
       assert_match(/clicked => pressed/, output)
-      Erx::ScreenReference.check(image(File.join(work, 'first.xrgb')), directory: REFERENCES, name: REFERENCE)
+      first = image(File.join(work, 'first.xrgb'))
+      Erx::ScreenReference.write(REFERENCES, REFERENCE, first) if ENV['ERX_RECORD_REFERENCE'] == '1'
+      Erx::ScreenReference.check(first, directory: REFERENCES, name: REFERENCE)
     end
   end
 

@@ -43,8 +43,8 @@ takes too.
 **A window over a range it does not own** (docs/design-display.md, "Erlang
 clients"). `open(Display, #{buffer => none})` makes the window and
 allocates nothing, so the window holds no buffer and its end frees none.
-`info/1` answers the window's `peer`, `rect` and `chan`, from which a
-renderer sizes a buffer someone else owns, and `present/3` presents
+`info/1` answers the window's `peer`, `rect`, `chan`, `scale` and
+`palette`, from which a renderer sizes a buffer someone else owns, and `present/3` presents
 rectangles of a named `buffer()`, drawn at its own width and height. The
 display checks such a present against the client's whole pixel area and
 clips the buffer to the window; keeping it inside the range it names is
@@ -95,9 +95,13 @@ height its frame is drawn at (docs/design-display.md, "Windows and buffers").
 -type buffer() :: #{offset := non_neg_integer(), width := 1..?ERX_WINDOWS_SIDE_MAX,
                     height := 1..?ERX_WINDOWS_SIDE_MAX}.
 
--doc "What `info/1` answers: the display's peer, the window's rectangle and the channel.".
+-doc """
+What `info/1` answers: the display's peer, the window's rectangle, the
+display's channel, and the window's scale and palette, as its `ctl` reads.
+""".
 -type info() :: #{peer := non_neg_integer(), rect := erx_win_core:rect(),
-                  chan := erx_win_core:chan()}.
+                  chan := erx_win_core:chan(), scale := {pos_integer(), pos_integer()},
+                  palette := erx_theme:palette()}.
 
 -doc """
 A window, as `open/2` answers it; its fields are this module's. `own` is
@@ -109,6 +113,8 @@ opened with `buffer => none`.
                       name := binary(),
                       fids := #{ctl | mouse | kbd | wctl | label => non_neg_integer()},
                       chan := erx_win_core:chan(),
+                      scale := {pos_integer(), pos_integer()},
+                      palette := erx_theme:palette(),
                       own := none | #{area := term(), buffer := buffer()},
                       rect := erx_win_core:rect()}.
 
@@ -129,10 +135,10 @@ open(Display, Options) when is_atom(Display), is_map(Options) ->
                          allocation(Options))
     end.
 
--doc "The window's display peer, its rectangle as last read and the display's channel.".
+-doc "The window's display peer, its rectangle as last read, the display's channel and the window's scale and palette.".
 -spec info(window()) -> info().
-info(#{peer := Peer, rect := Rect, chan := Chan}) ->
-    #{peer => Peer, rect => Rect, chan => Chan}.
+info(Window) ->
+    maps:with([peer, rect, chan, scale, palette], Window).
 
 -doc """
 An image over the window's buffer at the window's size, clipped to the
@@ -404,10 +410,10 @@ opened_window(Tree, Peer, Name, Root, Allocation) ->
     Answer = maybe
                  ok ?= walked(one(Tree, {walk, Root, Dir, [Name]}), 1),
                  ok ?= open_files(Tree, Dir, Fids),
-                 {ok, Chan} ?= read_with(Files, ctl, ?ERX_WINDOWS_LINE_MAX, fun erx_win_core:ctl/1),
+                 {ok, #{chan := Chan} = Display} ?= read_with(Files, ctl, ?ERX_WINDOWS_LINE_MAX, fun erx_win_core:ctl/1),
                  {ok, #{rect := Rect}} ?= placed(Files),
                  {ok, Own} ?= own(Allocation, Peer, Rect, Chan),
-                 {ok, Files#{chan => Chan, own => Own, rect => Rect}}
+                 {ok, maps:merge(Files, Display#{own => Own, rect => Rect})}
              end,
     case Answer of
         {ok, _} ->

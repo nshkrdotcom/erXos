@@ -9,6 +9,7 @@ require_relative 'error'
 require_relative 'runner'
 require_relative 'bounded_file'
 require_relative 'generated'
+require_relative 'glyphs'
 require_relative 'native_root'
 require_relative 'submodule'
 require_relative 'submodules'
@@ -113,8 +114,9 @@ module Erx
       def call
         tree = Lvgl.source_tree(root: @root, runner: @runner)
         Generated.ensure(root: @root)
+        Glyphs.ensure(root: @root, runner: @runner)
         @runner.run(['gmake', "-j#{@jobs}", '-f', File.join(@root, MAKEFILE), "LVGL=#{tree}",
-                     "GEN=#{File.join(@root, Generated::OUTPUT)}", "OUT=#{output}",
+                     "GEN=#{File.join(@root, Generated::OUTPUT)}", "GLYPHS=#{File.join(@root, Glyphs::OUTPUT)}", "OUT=#{output}",
                      "CC=#{ENV.fetch('ERX_CLANG', 'clang')}", "FLAGS=#{HOST_FLAGS}", "SANITIZE=#{@sanitized ? SANITIZE : ''}"],
                     name: "lvgl-#{@sanitized ? 'sanitized' : 'plain'}", deadline: DEADLINE, chdir: @root)
         File.join(output, 'erx-lvgl')
@@ -145,29 +147,27 @@ module Erx
       SOURCES = %w[display/lvgl/erx_lvgl.c build/gen/display/generated/erx_ui_wire.c].freeze
       LIBRARY = 'build/lvgl/target'
       # What liblvgl.a holds under lv_conf.h: LVGL's own code, under MIT (LICENCE.txt),
-      # and the one font LVGL's defaults turn on, Montserrat 14 (LV_FONT_MONTSERRAT_14
-      # in include/lvgl/config/lv_conf_internal.h), in its two forms (src/font's
-      # lv_font_montserrat_14.c and lv_font_montserrat_14_aligned.c, which is on unless
-      # LV_FONT_MONTSERRAT_14_ALIGNED is 0). Their glyphs are generated from
-      # Montserrat-Medium.ttf and Font Awesome 5's web font (each file's Opts line),
-      # both under the SIL OFL 1.1: Montserrat's OFL.txt, and Font Awesome's LICENSE.txt,
-      # whose OFL covers the icons it packages as web and desktop fonts. LVGL's
-      # src/misc/lv_math.c holds Gaetan Renaudeau's cubic-bezier code under MIT, whose
-      # notice is in that file alone, so the file is a notice. Every other third-party
-      # library COPYRIGHTS.md lists is behind an LV_USE_ option that lv_conf.h or the
-      # defaults leave at 0, and TLSF and printf behind LV_STDLIB_BUILTIN, which lv_conf.h
-      # replaces with the C library's; FrogFS (MPL-2.0), whose decomp_raw.c no option
-      # guards, the Makefile leaves out. These are the archive members that define a
-      # symbol (llvm-nm --defined-only). A change to lv_conf.h that turns one of them on
+      # and the theme's role fonts, the glyph step's erx_lvgl_font_ROLE.c (Glyphs::LvglFont),
+      # glyph data derived from Inter under the SIL OFL 1.1: Inter's LICENSE.txt, the
+      # theme's font directory's (abi/theme.txt, display/fonts/inter/ORIGIN.md), holds the
+      # license and opens with Inter's copyright line (Glyphs.font_notice). lv_conf.h turns off
+      # LVGL's built-in Montserrat 14 in both its forms (LV_FONT_MONTSERRAT_14 and
+      # LV_FONT_MONTSERRAT_14_ALIGNED), so no glyph of Montserrat or Font Awesome is a
+      # member. LVGL's src/misc/lv_math.c holds Gaetan Renaudeau's cubic-bezier code under
+      # MIT, whose notice is in that file alone, so the file is a notice. Every other
+      # third-party library COPYRIGHTS.md lists is behind an LV_USE_ option that lv_conf.h
+      # or the defaults leave at 0, and TLSF and printf behind LV_STDLIB_BUILTIN, which
+      # lv_conf.h replaces with the C library's; FrogFS (MPL-2.0), whose decomp_raw.c no
+      # option guards, the Makefile leaves out. These are the archive members that define
+      # a symbol (llvm-nm --defined-only). A change to lv_conf.h that turns one of them on
       # changes this expression too (TODO.md).
       LICENSE = 'MIT AND OFL-1.1'
-      # The expression's OFL-1.1 covers font data alone (the two fonts above), which the release
-      # check admits for this archive only (LicenseExpression::FONT_DATA_ONLY). OFL-1.1 on any
-      # other member makes this false.
+      # The expression's OFL-1.1 covers font data alone (the role fonts above), which the
+      # release check admits for this archive only (LicenseExpression::FONT_DATA_ONLY).
+      # OFL-1.1 on any other member makes this false.
       FONT_DATA = true
-      NOTICES = %w[LICENCE.txt scripts/generators/built_in_font/font_license/Montserrat/OFL.txt
-                   scripts/generators/built_in_font/font_license/FontAwesome5/LICENSE.txt src/misc/lv_math.c]
-                .map { |notice| File.join(SUBMODULE, notice) }.freeze
+      NOTICES = [*%w[LICENCE.txt src/misc/lv_math.c].map { |notice| File.join(SUBMODULE, notice) },
+                 'display/fonts/inter/LICENSE.txt'].freeze
 
       # LVGL's own compile flags, as one make word: the task code generation and musl's
       # headers, which hold what LVGL's LV_STDLIB_CLIB includes, with _BSD_SOURCE, since
@@ -181,8 +181,10 @@ module Erx
 
       # archives are the libraries the program links over besides LVGL: musl's libc.a
       # and the compiler's runtime. generated makes build/gen, which holds the ui.txt
-      # reader: Generated, or a test's stand-in.
-      def initialize(root:, runner:, native:, compiler:, archives:, directory:, jobs: Etc.nprocessors, generated: Generated)
+      # reader: Generated, or a test's stand-in; glyphs makes build/glyphs, which holds
+      # the theme's fonts: Glyphs, or a test's stand-in.
+      def initialize(root:, runner:, native:, compiler:, archives:, directory:, jobs: Etc.nprocessors, generated: Generated,
+                     glyphs: Glyphs)
         @root = File.expand_path(root)
         @runner = runner
         @native = native
@@ -191,6 +193,7 @@ module Erx
         @directory = directory
         @jobs = jobs
         @generated = generated
+        @glyphs = glyphs
       end
 
       def call
@@ -206,13 +209,15 @@ module Erx
       def make_library
         tree = Lvgl.source_tree(root: @root, runner: @runner)
         @generated.ensure(root: @root)
+        @glyphs.ensure(root: @root, runner: @runner)
         flags = self.class.library_flags(@root)
         output = self.class.library_directory(@root, flags)
         archive = File.join(output, 'liblvgl.a')
         Dir.glob('*', base: File.dirname(output)).reject { |name| name == File.basename(output) }
            .each { |name| FileUtils.rm_rf(File.join(File.dirname(output), name)) }
         @runner.run(['gmake', "-j#{@jobs}", '-f', File.join(@root, MAKEFILE), "LVGL=#{tree}",
-                     "GEN=#{File.join(@root, Generated::OUTPUT)}", "OUT=#{output}", "CC=#{@compiler}",
+                     "GEN=#{File.join(@root, Generated::OUTPUT)}", "GLYPHS=#{File.join(@root, Glyphs::OUTPUT)}",
+                     "OUT=#{output}", "CC=#{@compiler}",
                      "AR=#{File.join(File.dirname(@compiler), 'llvm-ar')}", "FLAGS=#{flags}", 'SANITIZE=', archive],
                     name: 'lvgl-target', deadline: DEADLINE, chdir: @root)
         archive

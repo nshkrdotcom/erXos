@@ -803,7 +803,7 @@ class DomPlannerTest < Minitest::Test
   # the row's own.
   def test_a_display_domain_that_sets_its_display_s_keys_is_refused
     with_env = ->(words) { ->(source) { source.sub("domain display\n", "domain display\n  env \"#{words}\"\n") } }
-    ['display=other', 'LANG=C display_policy=single', 'LANG=C display_idle_off_s=1'].each do |words|
+    ['display=other', 'LANG=C display_policy=single', 'LANG=C display_idle_off_s=1', 'display_palette=dark'].each do |words|
       error = assert_raises(Erx::Manifest::Invalid) { display_manifest(with_env.call(words)) }
       assert_equal [18, 'domain.env'], [error.property, error.field], words
     end

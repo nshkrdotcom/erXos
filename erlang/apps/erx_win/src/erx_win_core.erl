@@ -12,8 +12,11 @@ so each reader takes the bytes of one read, holds them to their format
 whole, and answers `{error, eio}` for anything else; none raises, makes an
 atom or reads past its record. The formats are the window tree's:
 
-* `ctl/1`, a read of `ctl`: the display's channel descriptor and one
-  newline, read by `erx_chan:parse/1`;
+* `ctl/1`, a read of `ctl`: the display's line, `CHAN SCALE PALETTE` and
+  one newline: its channel descriptor, read by `erx_chan:parse/1`; the
+  window's scale `N/D`, two decimal numbers from 1 to 2^31 - 1; and the
+  name of one of the theme's palettes (`erx_theme:palettes/0`), matched
+  against the names, so no read makes an atom;
 * `wctl/1`, a read of `wctl`: rio's 72 bytes, four coordinates and two
   words, each right-aligned in a field of 11 and followed by a space; the
   rectangle must be well formed and at most 16,384 pixels on a side;
@@ -39,10 +42,8 @@ sending the bounding box of more, as Plan 9's `flushimage` does, and
 
 -export([ctl/1, wctl/1, mouse/1, kbd/1]).
 -export([bytes/3, image_rect/2, present/4, add_dirty/2, resize/1]).
--export_type([rect/0, chan/0, placed/0, pointer/0, key/0]).
+-export_type([rect/0, chan/0, display/0, placed/0, pointer/0, key/0]).
 
-%% A channel descriptor of four channels is 8 bytes; its line is 9.
--define(MAX_CTL, 9).
 %% A field and the space after it.
 -define(CELL, (?ERX_WINDOWS_FIELD + 1)).
 %% A mouse record is its kind byte and four cells; the ABI states the sum apart.
@@ -54,6 +55,8 @@ sending the bounding box of more, as Plan 9's `flushimage` does, and
 -type rect() :: {integer(), integer(), integer(), integer()}.
 -doc "The display's channel: its text, its code for erx_memdraw and its depth.".
 -type chan() :: #{text := binary(), code := erx_chan:code(), depth := erx_chan:depth()}.
+-doc "What a read of `ctl` says of the display: its channel, the window's scale and its palette.".
+-type display() :: #{chan := chan(), scale := {pos_integer(), pos_integer()}, palette := erx_theme:palette()}.
 -doc "A window's place, as its `wctl` reads.".
 -type placed() :: #{rect := rect(), current := boolean(), state := shown | hidden}.
 -doc "A `mouse` record: a pointer event, or the resize mark at the last position.".
@@ -64,18 +67,21 @@ sending the bounding box of more, as Plan 9's `flushimage` does, and
 
 %% Readers --------------------------------------------------------------------
 
--doc "The channel a read of `ctl` answers.".
--spec ctl(binary()) -> {ok, chan()} | {error, eio}.
-ctl(Bytes) when is_binary(Bytes), byte_size(Bytes) =< ?MAX_CTL ->
+-doc "The display's channel, the window's scale and its palette a read of `ctl` answers.".
+-spec ctl(binary()) -> {ok, display()} | {error, eio}.
+ctl(Bytes) when is_binary(Bytes), byte_size(Bytes) >= 1 ->
     Size = byte_size(Bytes) - 1,
-    case Bytes of
-        <<Text:Size/binary, $\n>> ->
-            case erx_chan:parse(Text) of
-                {ok, Code, Depth} -> {ok, #{text => Text, code => Code, depth => Depth}};
-                {error, einval} -> {error, eio}
-            end;
-        _ ->
-            {error, eio}
+    maybe
+        <<Line:Size/binary, $\n>> ?= Bytes,
+        [Text, Scale, Palette] ?= binary:split(Line, <<" ">>, [global]),
+        {ok, Code, Depth} ?= erx_chan:parse(Text),
+        [N, D] ?= binary:split(Scale, <<"/">>),
+        [{ok, Numerator}, {ok, Denominator}] ?= [in_range(digits(N), 1, 1), in_range(digits(D), 1, 1)],
+        {value, Named} ?= lists:search(fun(Name) -> atom_to_binary(Name) =:= Palette end, erx_theme:palettes()),
+        {ok, #{chan => #{text => Text, code => Code, depth => Depth},
+               scale => {Numerator, Denominator}, palette => Named}}
+    else
+        _ -> {error, eio}
     end;
 ctl(_) ->
     {error, eio}.

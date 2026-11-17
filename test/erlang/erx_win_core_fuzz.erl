@@ -44,19 +44,24 @@ round_of(Reader, Input, References) ->
     end.
 
 agrees(_, {error, eio}, error) -> true;
-agrees(ctl, {ok, #{text := Text}}, {ok, Text}) -> true;
+agrees(ctl, {ok, #{chan := #{text := Text}, scale := Scale, palette := Palette}}, {ok, {Text, Scale, Palette}}) -> true;
 agrees(_, {ok, Value}, {ok, Value}) -> true;
 agrees(_, _, _) -> false.
 
 %% References -----------------------------------------------------------------
 
 ctl_reference(Bytes) ->
-    case re:run(Bytes, "\\A((?:[rgbkamx][1-8]){1,4})\\n\\z", [{capture, all_but_first, binary}]) of
-        {match, [Text]} ->
+    case re:run(Bytes, "\\A((?:[rgbkamx][1-8]){1,4}) ([0-9]+)/([0-9]+) ([a-z][a-z0-9_]*)\\n\\z",
+                [{capture, all_but_first, binary}]) of
+        {match, [Text, N, D, Name]} ->
             Depth = lists:sum([Bits - $0 || <<_, Bits>> <= Text]),
-            case Depth rem 8 =:= 0 orelse 8 rem Depth =:= 0 of
-                true -> {ok, Text};
-                false -> error
+            [Numerator, Denominator] = [binary_to_integer(Part) || Part <- [N, D]],
+            Palettes = [{atom_to_binary(Palette), Palette} || Palette <- erx_theme:palettes()],
+            case {Depth rem 8 =:= 0 orelse 8 rem Depth =:= 0, lists:keyfind(Name, 1, Palettes)} of
+                {true, {Name, Palette}} when Numerator >= 1, Numerator =< ?MAX, Denominator >= 1, Denominator =< ?MAX ->
+                    {ok, {Text, {Numerator, Denominator}, Palette}};
+                _ ->
+                    error
             end;
         nomatch ->
             error
@@ -127,9 +132,13 @@ in_count(N) -> N >= 0 andalso N =< ?MAX.
 random_bytes() ->
     rand:bytes(rand:uniform(80) - 1).
 
+%% A ctl line names a palette the theme gives or, now and then, one it does not, so the
+%% palette check is reached without a mutation landing on the name.
 valid(ctl) ->
     Channels = [<<(pick("rgbkamx")), (pick("12345678"))>> || _ <- lists:seq(1, rand:uniform(4))],
-    <<(iolist_to_binary(Channels))/binary, "\n">>;
+    Scale = [integer_to_binary(rand:uniform(?MAX + 1) - 1) || _ <- [1, 2]],
+    Palette = pick([atom_to_binary(Name) || Name <- erx_theme:palettes()] ++ [<<"sepia">>]),
+    iolist_to_binary([Channels, " ", lists:join("/", Scale), " ", Palette, "\n"]);
 valid(wctl) ->
     [X0, Y0] = [number() || _ <- [1, 2]],
     Rect = [X0, Y0, X0 + rand:uniform(16400) - 9, Y0 + rand:uniform(16400) - 9],

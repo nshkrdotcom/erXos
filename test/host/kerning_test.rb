@@ -167,7 +167,9 @@ class KerningTest < Minitest::Test
   end
 
   def test_tabular_roles_kern_no_digit
-    %w[numeric display].each do |name|
+    tabular = self.class.roles.select { |_, entry| entry.role.figures == 'tabular' }.keys
+    assert_includes tabular, 'figure'
+    tabular.each do |name|
       entry = role(name)
       digits = entry.subfont.pairs.select { |a, b, _| [a, b].any? { |index| DIGITS.cover?(entry.points[index]) } }
       assert_empty digits, "role #{name}"

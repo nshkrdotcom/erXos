@@ -15,7 +15,8 @@ Plan 9 shaped how they work: everything they show is a file, a `/proc`
 path or a typed record, read through the session's own namespace and
 facets, and nothing they do needs a channel the shell does not have.
 Plan 9 did not shape how they look. They look modern and quiet:
-anti-aliased type on a 4-pixel grid, a restrained light palette,
+anti-aliased type on a 4-pixel grid, a restrained light palette and a
+dark one for a display that chooses it,
 rounded controls and soft depth where they help, and an icon set
 drawn for erXos.
 
@@ -81,11 +82,11 @@ Decisions every reader of this document needs:
   edge and its content, as LVGL's and CSS's padding are, so a padded
   button's background and hit area cover its padding.
 * **One theme, generated.** `abi/theme.txt` declares the type scale,
-  the spacing grid, the radii, the shadows, the palette, and the fonts
-  and icons to rasterise. Its generator writes the
-  Erlang module both sides of the display take, the C header `erx-lvgl`
-  builds with and the web client's constants, and checks every
-  contrast ratio the palette must meet.
+  the spacing grid, the radii, the shadows, the light and dark
+  palettes, and the fonts and icons to rasterise. Its generator writes
+  the Erlang module both sides of the display take, the C header
+  `erx-lvgl` builds with and the web client's constants, and checks
+  every contrast ratio each palette must meet.
 
 ## Context
 
@@ -145,9 +146,12 @@ and it takes no other system's assets, names or icons.
 * **Fonts.** The tree holds no font. design-display's dependency rows
   name plan9port's `fixed` bitmap fonts for the terminal and the first
   widgets, and the anti-aliased fonts these programs bring
-  ([design-display.md](design-display.md#dependencies)). LVGL compiles in Montserrat 14 under OFL-1.1,
-  which the release check admits as font data only
-  (`tools/lib/erx/license_expression.rb:24-36`, `FONT_DATA_ONLY`).
+  ([design-display.md](design-display.md#dependencies)). LVGL compiles in
+  no font of its own: `liblvgl.a` holds each role's LVGL font from the
+  glyph step, Inter's glyphs under OFL-1.1, which the release check
+  admits as font data only (`tools/lib/erx/license_expression.rb`,
+  `FONT_DATA_ONLY`), with Inter's `LICENSE.txt` as the archive's notice
+  (`Erx::Lvgl::Program`).
 * **LVGL** 9.6.0 (`display/lvgl/ORIGIN.md`, commit `80ca777e`) draws
   rounded corners, shadows and anti-aliased arcs in software: its
   configuration sets `LV_DRAW_SW_COMPLEX` to `LV_USE_DRAW_SW` when
@@ -379,8 +383,10 @@ Its grammar, in outline (the full grammar is
 theme 1
   unit 4
   font ui display/fonts/inter regular Inter-Regular.ttf medium Inter-Medium.ttf semibold Inter-SemiBold.ttf
-  range ui 0020-007E 00A0-017F 2000-206F 2190-21FF
+  range ui 0020-007E 00A0-017F 2000-206F 2190-21FF 2713-2713
   role display  font ui size 48 line 64 weight semibold figures tabular
+  role headline font ui size 26 line 36 weight semibold
+  role figure   font ui size 22 line 28 weight semibold figures tabular
   role title    font ui size 20 line 28 weight semibold
   role heading  font ui size 15 line 20 weight semibold
   role body     font ui size 13 line 20 weight regular
@@ -390,22 +396,22 @@ theme 1
   radius control 6  section 10  menu 8  window 0
   hairline 1
   shadow section 0 2 12 10                       # x y blur percent
-  color window     F6F5F2
-  color surface    FFFFFF
-  color sunken     EEEDE9
-  color line       DDDCD7
-  color text       1B1C1E
-  color secondary  5D6066
-  color tertiary   8A8E94
-  color accent     0E7A6B
-  color on_accent  FFFFFF
-  color ok         2F7D4F
-  color warn       9A6A12
-  color critical   B3362C
-  color series_cpu 0E7A6B
-  color series_mem 5B53C6
-  color series_msg B8620B
-  color desktop    D9DAD5
+  color window     F6F5F2 0D0F2A
+  color surface    FFFFFF 23253D
+  color sunken     EEEDE9 090B22
+  color line       DDDCD7 2A2C44
+  color text       1B1C1E FFFFFF
+  color secondary  5D6066 9E9FAA
+  color tertiary   8A8E94 6E6F7F
+  color accent     0E7A6B 7FE7F2
+  color on_accent  FFFFFF 0D0F2A
+  color ok         2F7D4F 8BE8B0
+  color warn       9A6A12 FFC46B
+  color critical   B3362C FF9B8A
+  color series_cpu 0E7A6B 7FE7F2
+  color series_mem 5B53C6 A79CFF
+  color series_msg B8620B FFB547
+  color desktop    D9DAD5 0D0F2A
   contrast text      on window surface sunken 7.0
   contrast secondary on window surface sunken 4.5
   contrast on_accent on accent 4.5
@@ -415,14 +421,16 @@ theme 1
   transition reveal 200 ease_out                 # visible from false to true
 ```
 
-The colour values are the starting palette, tuned with the first
+A `color` row gives the colour's value in each palette: light, then
+dark. The colour values are the starting palettes, tuned with the first
 screenshots; the rules are what the generator enforces. Each is a
 checked constraint, as the spec discipline asks:
 
 * every colour a `role` or a `contrast` row names is declared, once;
 * every `contrast` row holds, by WCAG 2's contrast ratio of relative
   luminances, whose definition the generator cites from the
-  specification it implements: body text at 7:1 against every surface
+  specification it implements, in each palette: body text at 7:1
+  against every surface
   it names, secondary text at 4.5:1, text on the accent at 4.5:1; a
   seeded `secondary` of `B0B0B0` fails the build;
 * every `role` names a declared font and weight, and a size and line
@@ -450,11 +458,15 @@ is added.
 One family serves every role: Inter 4.1, under OFL-1.1
 ([Dependencies](#dependencies)). It was drawn for user interfaces at
 small sizes, its figures can be tabular, and its look is neither
-Plan 9's Lucida-derived faces nor any platform's own system font. Six
+Plan 9's Lucida-derived faces nor any platform's own system font. Eight
 roles make the scale, from `display` (48 px, the clock's digits) to
-`caption` (11 px); a renderer never picks a size, a role does. Numbers
-that change in place, stats' values and the clock, use the tabular
-figures, so digits do not shift as values change.
+`caption` (11 px); a renderer never picks a size, a role does. Between
+`display` and `title` lie the two roles of a screen read from across a
+room, as a kiosk's is: `headline` (26 px semibold), a line that heads
+the screen, such as the dashboard's date line, and `figure` (22 px semibold,
+tabular), the number a block leads with, such as a quote's price.
+Numbers that change in place, stats' values, a `figure`'s number and
+the clock, use the tabular figures, so digits do not shift as values change.
 
 **The glyph step.** A host step, `Erx::Glyphs` in `tools/lib/erx`,
 rasterises every glyph and icon through FreeType, run as a host build
@@ -544,7 +556,7 @@ font's own spacing puts it at 17.05, and `To` 16 where it puts 15.17.
 Read over the theme's ranges with a reader written for this design from
 the OpenType specification ([References](#references)), the pairs whose
 kerned advance differs, by the rounding rule below, from the plain one
-are:
+are, for the six roles measured:
 
 | Role | Font and size | Pairs | Adjustments, in pixels |
 | --- | --- | --- | --- |
@@ -819,16 +831,28 @@ only on its text.
 
 ### Colour
 
-The palette is above: a warm-neutral ground, white surfaces, one teal
-accent for selection, focus and the primary series, and three status
-colours used only for status. Graph series have one colour each, the
-same in every program. The desktop background, which `erx_screen` fills
+The palettes are above. The light one has a warm-neutral ground, white
+surfaces, one teal accent for selection, focus and the primary series,
+and three status colours used only for status; the dark one, for a wall
+display seen across a room, has a deep blue-black ground, raised
+surfaces a step lighter, a cyan accent and status colours light enough
+to read on them. Graph series have one colour each, the same in every
+program of a palette. The desktop background, which `erx_screen` fills
 where no window is
 ([design-display.md](design-display.md#windows-and-the-window-system)),
-is the theme's `desktop` colour. The theme has one palette, so no
-window, session or display chooses between palettes, and the
-decorations, the menu, the background and every renderer read the same
-constants.
+is the theme's `desktop` colour.
+
+A display chooses its palette: its manifest entry's `palette`, a member
+of `mf_display_palette`, `light` when the entry names none
+([design-display.md](design-display.md#a-displays-session)). Each of
+its windows' `ctl` names it, beside the scale
+([design-display.md](design-display.md#the-window-tree)), and a
+renderer colours the window's tree from that palette, as it sizes it
+by that scale; a program that draws its own pixels, a picture in an
+`image` node or a draw client's buffer, takes the palette from the same
+read. No session or program chooses a palette of its own, so every
+window on a display, its decorations, its menu and its background are
+drawn in one palette.
 
 ### Anti-aliasing, corners and depth: coverage masks
 
@@ -961,18 +985,20 @@ additions](#widget-format-additions)): `folder`, `document`, `text`,
 
 | Need | Erlang renderer (`erx_ui_erlang`, part 7) | LVGL (`erx-lvgl`) | Where the gap is closed |
 | --- | --- | --- | --- |
-| anti-aliased text | glyphs from `fixed`, 1-bit | Montserrat 14 only | the glyph step: `k8` subfonts and LVGL fonts of every role, from one rasterisation |
-| a type scale | one size | one size | the theme's roles, and the `role` property |
-| kerning | none: a subfont gives one advance a glyph | Montserrat's own classes | the glyph step's pairs from each font's `GPOS`, in every form it writes ([Kerning](#kerning)) |
+| anti-aliased text | glyphs from `fixed`, 1-bit | each role's LVGL font from the glyph step | the glyph step: `k8` subfonts and LVGL fonts of every role, from one rasterisation |
+| a type scale | one size | the roles' sizes | the theme's roles, and the `role` property |
+| kerning | none: a subfont gives one advance a glyph | the glyph step's pairs | the glyph step's pairs from each font's `GPOS`, in every form it writes ([Kerning](#kerning)) |
 | rounded corners, borders | none | yes | `erx_mask`'s corner masks, in the Erlang renderer |
 | soft shadows | none | yes | `erx_mask`'s shadow masks, in the Erlang renderer |
 | graphs | no kind | chart widget | the `graph` kind; `erx_mask`'s stroke and area masks in the Erlang renderer, `lv_chart` in LVGL |
-| icons | no property | symbol font only | the icon set, the `icon` and `icons` properties |
-| one palette | none | LVGL's default theme | the theme, in both renderers and the decorations |
+| icons | no property | none | the icon set, the `icon` and `icons` properties |
+| light and dark palettes | none | LVGL's default theme | the theme, in both renderers and the decorations, chosen by the display |
 
 ## Widget format additions
 
-The four programs need seven additions to `abi/formats/ui.txt`. Each
+The four programs and the dashboard need eight additions to
+`abi/formats/ui.txt`; `trend` is the dashboard's, the sign of each
+quote's change. Each
 states what a node is, not how it looks, so every renderer draws it as
 fits its medium ([design-display.md](design-display.md#widget-trees)),
 and each arrives in the validator, the binary form and the readers of
@@ -980,10 +1006,11 @@ all three languages from the one declaration.
 
 | Addition | Declared as | Meaning |
 | --- | --- | --- |
-| `role` | a property of a root `@enum` of type `u8`, `body` when absent, on the kinds that show text (`label`, `button`, `checkbox`, `input`, `list`, `graph`) | how the text ranks in the window: `display`, `title`, `heading`, `body`, `numeric` or `caption` |
+| `role` | a property of a root `@enum` of type `u8`, `body` when absent, on the kinds that show text (`label`, `button`, `checkbox`, `input`, `list`, `graph`) | how the text ranks in the window: one of the `ui_role` values of `abi/formats/ui.txt`, each a role of the theme |
 | `area` | a property of a root `@enum` of type `u8`, absent by default, on `column`, `row`, `grid` and `scroll` | what the container is: `section`, `toolbar` or `sidebar` |
 | `icon` | a property of a root `@enum` of type `u8`, the icon set, on `label` and `button` | the item the node stands for, drawn beside its text; a renderer without the icon shows the text alone |
 | `icons` | a list of the same enumeration, on `list`, marked `parallel items` | each item's icon |
+| `trend` | a property of a root `@enum` of type `u8`, `ui_trend`, absent by default, on `label` | which way the value the label shows has moved: `up` and `down`, drawn in the palette's `ok` and `critical` colours over the role's, and `flat`, drawn in the role's; colour is never the only sign, so the label's text carries the change's sign too |
 | `current` | a boolean, `false` when absent, on `button` | the button stands for the current one of its set: today in a month, the current folder in a path. A renderer marks it, the Erlang renderer and LVGL with the accent's ring, the browser with `aria-current` |
 | `name` | a text of at most 255 bytes of UTF-8, on every kind | what the node is called where it shows no text of its own, files' back and forward buttons among them; no renderer draws it, and it is how a test, the browser and an assistive reader name the node |
 | kind `graph` | properties `samples`, `min`, `max`, `mark` and `text` | a series of at most 240 numbers, oldest first, each an integer within `min` and `max` or `none`; `mark` an optional reference value within them, such as a grant; `text` the caption, an `attr()` like any text |
@@ -1510,7 +1537,7 @@ the menu's labels, reads them as data.
 | **D4.** Every action of files reaches the item the person chose | the core acts by index into its own listing of raw names, within the page whose list node is keyed by the listing's generation; the tree holds only shown text | a lookup by shown text; a list key that survives a new listing | a listing whose names `a<U+202E>b`, the eight characters of a token, and a name cut to the same 128 bytes as another, each opened by index and reaching its own file, with a seeded lookup by shown text opening the wrong one; a double click reported on the list of a listing a refresh has replaced, dropped by the widget server, with a seeded key that leaves out the generation opening an item of the new listing |
 | **D5.** Every tree a core builds is valid, whatever the input | names and texts are cut to the schema's bounds at character boundaries, lists to 256 items, previews to 200 lines | a raw name in an `items` entry; a list longer than 256 | a property test over random listings, names of every length to 255 bytes, previews and inspector records, each tree passing `erx_ui_schema`, with a seeded core that skips the cut failing it |
 | **D6.** An idle window costs nothing | the only timers are the core's `tick_after`; a renderer draws only for a tree's change and the transitions it starts (G6) | a periodic redraw; a tick from files, or from month without a today | on the host, an idle files window and a month window without a today, each for a simulated day, issue no tree; a month with a today issues one at midnight; clock issues one a minute; with a seeded once-a-second tick in clock the test fails |
-| **D7.** The palette meets its contrast rules | the generator checks every `contrast` row | a colour edited without the rule | the generator's test with a seeded `secondary` too light, failing the build |
+| **D7.** Each palette meets its contrast rules | the generator checks every `contrast` row | a colour edited without the rule | the generator's test with a seeded `secondary` too light, failing the build |
 | **D8.** A listing costs the session bounded memory and work | the listing worker runs under a heap cap, and information is asked for one page of at most 256 names | a worker spawned without the cap; a lookup of every name | files: bounds, below |
 | **D9.** No worker outlives its window, and a cancelled worker sends nothing | workers are linked, the window traps exits, ends with `shutdown` or its crash reason, and unlinks before it kills | a window that ends `normal`; a kill without the unlink | the window's lifetime tests, below |
 
@@ -1659,7 +1686,7 @@ must catch:
   glyph at the offset `erx_pen` gives it, where a seeded `runs/2` that
   cuts but does not move the second run fails; a line without pairs is
   one message.
-* The `numeric` and `display` subfonts hold no pair naming a digit, and
+* Every tabular role's subfont holds no pair naming a digit, and
   the menu module's `kern/2` equals `body.subfont`'s pairs taken to
   their characters, where a seeded module keyed by glyph index fails.
 * Through LVGL's own font code on the host, the `body` font's `A`
@@ -1743,7 +1770,6 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 | Anti-aliased shapes in `erx_memdraw` | new native primitives over pixels for what masks already do with one existing draw; masks also cover glyphs and icons, so one mechanism serves all |
 | The Go fonts | drawn by the designers of Lucida, Plan 9's face, and so the look this design moves away from; Inter is drawn for interface sizes and has tabular figures |
 | A rasteriser of erXos's own in Ruby | outline decoding, curve flattening, exact coverage and stroking with round joins written and tested anew, for output a mature engine already gives; FreeType at a pinned release keeps the step reproducible as well |
-| A dark palette beside the light one | a second value in every colour row, a setting that chooses between them and a second reference frame per program; the first version has one light palette |
 | An icon set under a permissive license | a license and a style to inherit; twenty glyphs drawn for erXos are less work than reconciling a set's style with the theme |
 | Packages under `examples/` | an app is its own principal, so stats and files would see the app's domains and files, not the person's ([Shipping](#shipping-and-starting)) |
 | A tweened graph scroll | a renderer timer or many trees a second, against G6, for motion that adds nothing the step does not show |
@@ -1759,8 +1785,8 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 
 1. **The new mechanisms this design names.** Three are new and
    accepted: the theme, `abi/theme.txt` with its generated module,
-   header and constants; seven additions to `ui.txt` (`role`, `area`,
-   `icon`, `icons`, `current`, `name` and `graph`, with list activation
+   header and constants; eight additions to `ui.txt` (`role`, `area`,
+   `icon`, `icons`, `current`, `name`, `trend` and `graph`, with list activation
    as a kind line), with three grammar additions: lists of integers or
    enumerations with an optional `none`, `within` applied to each value
    of a list, and `parallel`; and the transition, declared in the theme
@@ -1775,10 +1801,15 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
    them; a window that deletes needs a trash or an undo, confirmation
    and conflict policy, which deserve their own design once there is a
    desktop to use them on.
-3. **One palette, light.** The theme declares one palette, so there is
-   no setting to choose between palettes, in the display's manifest
-   entry, in its `screen` file or in a session's environment. A dark
-   palette is work in `TODO.md`.
+3. **Two palettes, chosen by the display.** The theme declares a light
+   palette and a dark one, and a display's manifest entry chooses
+   between them, because a wall display such as the kiosk's is dark
+   while the desktop stays light. The choice is the display's alone:
+   the window's `ctl` names it as it names the scale, so every renderer
+   and every program drawing on that display reads one answer, and no
+   session environment or program setting can disagree with it. A
+   palette that follows the time of day would change the display's
+   answer, not add a second setting.
 4. **No title bar.** A title bar with the window's label would change
    `decorate/3`, which returns rectangles and colours, to return a label
    too, a change to design-display's overlapping policy that belongs

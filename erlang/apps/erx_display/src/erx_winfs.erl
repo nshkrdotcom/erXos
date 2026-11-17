@@ -78,7 +78,7 @@ applied here, whole or not at all.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/1, start_link/2, attach/2, input/2, mint_request/3]).
+-export([start_link/1, start_link/3, attach/2, input/2, mint_request/3]).
 %% The process.
 -export([winfs_init/2, loop/1]).
 %% The erx_fs callbacks of the tree.
@@ -101,6 +101,7 @@ applied here, whole or not at all.
                      clients := domain | own,
                      provide := boolean(),
                      policy := policy(),
+                     palette => erx_theme:palette(),
                      input => erx_input:config()}.
 
 %% The input router's configuration when the options name none: the layout us,
@@ -138,14 +139,15 @@ applied here, whole or not at all.
 -doc """
 Starts the display domain's window system linked to the caller, started by
 `erx_fb_sup`: the mint of Service, the display's service, under Policy, the
-window manager and its configuration, with the domain's own system id,
-export table, mint answer and pixel areas, and the default input router.
+window manager and its configuration, and Palette, the palette the
+display's windows are drawn in, with the domain's own system id, export
+table, mint answer and pixel areas, and the default input router.
 """.
--spec start_link(atom(), policy()) -> {ok, pid()} | {error, term()}.
-start_link(Service, Policy) when is_atom(Service) ->
+-spec start_link(atom(), policy(), erx_theme:palette()) -> {ok, pid()} | {error, term()}.
+start_link(Service, Policy, Palette) when is_atom(Service) ->
     start_link(#{service => Service, system => erx_kernel_records:system_domain(), exports => erx_dist,
                  minted => fun erx_facet:minted/2, area => fun erx_area:open/1,
-                 clients => domain, provide => true, policy => Policy}).
+                 clients => domain, provide => true, policy => Policy, palette => Palette}).
 
 -doc """
 Starts the window system linked to the caller with Options: `service`, the
@@ -154,7 +156,9 @@ service whose mint requests it grants; `system`, the system domain's id;
 a mint is answered; `area`, how a client's pixel area is opened; `clients`,
 `domain` for grants bound to their grantee's domain, or `own` for a host
 test's grants of this domain; `provide`, whether it names itself the mint;
-`policy`, the window policy and its configuration; and `input`, the input
+`policy`, the window policy and its configuration; `palette`, the palette
+its windows' `ctl` names, the theme's first when the options name none; and
+`input`, the input
 router's configuration (erx_input:new/1). The display domain's router has
 the layout `us`, FreeBSD's `normal` repeat of 500 and 126 milliseconds and
 no reserved chord.
@@ -452,7 +456,9 @@ new_window(Grant, #{client := Client, area := Area}, Name, Owner, State) ->
     #winfs{next_id = Id, chan = Chan, depth = Depth, windows = Windows,
            policy = Policy, policy_state = PolicyState, session = Session} = State,
     Screen = screen_rect(State),
-    {ok, Proc} = erx_window:start_link(#{id => Id, chan => Chan, depth => Depth, area => Area}),
+    Palette = maps:get(palette, State#winfs.options, hd(erx_theme:palettes())),
+    {ok, Proc} = erx_window:start_link(#{id => Id, chan => Chan, depth => Depth, palette => Palette,
+                                         area => Area}),
     Row = #{id => Id, dir => {Client, Name}, holder => Owner, rect => Screen, state => hidden,
             proc => Proc, grant => Grant, monitor => erlang:monitor(process, Owner)},
     Next = State#winfs{next_id = Id + 1},

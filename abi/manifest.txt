@@ -152,17 +152,25 @@ limit identifier_max u32 63
 enum mf_display_policy u32
   value single 1
   value rio 2
+# The palette a display's windows are drawn in (docs/design-display.md,
+# "The window tree", ctl): its members, in value order, are the palettes
+# each colour row of abi/theme.txt gives a value for, the default first.
+enum mf_display_palette u32
+  value light 1
+  value dark 2
 # The keys of the environment a display domain gains from its display
 # record (docs/design-display.md, "A display's session"), each word
 # KEY=VALUE: "display", the display's service name; "display_policy", a
 # member of mf_display_policy; "display_idle_dim_s" and
-# "display_idle_off_s", its idle times in decimal seconds. The display
+# "display_idle_off_s", its idle times in decimal seconds;
+# "display_palette", a member of mf_display_palette. The display
 # domain's own row may set none of them. A client domain's "display" is
 # its default display, the one it was started from ("Choosing a display").
 bytes display_key 7 value 646973706c6179
 bytes display_policy_key 14 value 646973706c61795f706f6c696379
 bytes display_idle_dim_key 18 value 646973706c61795f69646c655f64696d5f73
 bytes display_idle_off_key 18 value 646973706c61795f69646c655f6f66665f73
+bytes display_palette_key 15 value 646973706c61795f70616c65747465
 # The key of the word a session gains at its start, after its template's
 # environment and before its display (docs/design-programs.md, "Users and
 # files"): "principal", its principal's number in decimal. A session
@@ -316,14 +324,15 @@ layout erx_mf_start wire_le 4 24
   zero reserved all
 # A display (docs/design-display.md, "A display's session"): the service of the windows
 # interface it describes, so the display's name is that service's, its window policy,
-# and the idle seconds after which erx_screen dims the panel and turns it off, 0 for
-# never. The windows table above is a medium's partition windows; it has nothing to do
+# the idle seconds after which erx_screen dims the panel and turns it off, 0 for
+# never, and the palette its windows are drawn in. The windows table above is a medium's partition windows; it has nothing to do
 # with the windows interface.
-layout erx_mf_display wire_le 4 16
+layout erx_mf_display wire_le 4 20
   field service u32 0
   field policy mf_display_policy 4
   field idle_dim_s u32 8
   field idle_off_s u32 12
+  field palette mf_display_palette 16
 # The apps row (docs/design-packaging.md, "The apps row"), at most one: the budget all
 # apps share, how many apps a boot holds, the app template the build derives from it
 # (the session row naming no principal) and that template's packages and system facet
