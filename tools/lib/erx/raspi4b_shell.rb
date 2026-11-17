@@ -155,6 +155,10 @@ module Erx
     # how often it is read until then.
     SCREEN_SECONDS = 120
     SCREEN_POLL_SECONDS = 2
+    # The head of the line the domain service logs when configured domain NAME ends, up to
+    # what ended it and what the service does next (erx_domain_srv's log_end). Interpolated
+    # as a Regexp into an /x pattern, it keeps its own flags, so its spaces stay literal.
+    def self.end_line_head(name) = /erx_domain: configured domain #{Regexp.escape(name)} \(domain \d+\) ended, /n
     # The line each configured domain of the Pi's manifest leaves on the model by the time
     # tcg-4cpu halts. tcg-4cpu boots with no card on EMMC2's bus, so the storage domain's SD
     # device process finds no card and logs a record of its space saying so. The model has
@@ -163,12 +167,13 @@ module Erx
     # domain, and the domain service logs its end as a line of the system domain's own and
     # restarts it within its intensity (docs/design-system.md, "Boot failure"). Any other
     # fault kind is a bug and fails the run. The line is not anchored at its start: a
-    # restart's line can follow other output on the same serial line.
+    # restart's line can follow other output on the same serial line. A memory fault's line
+    # names where it struck (erx_domain_core:fault_where/2), its address always a number.
     CONFIGURED_LINES = {
       'storage' => /#{NativeRoot::DOMAIN_RECORD.source}erx_blk: the SD card is not driven: /n,
-      'network' => /\d+\.\d{6}\ notice\ domain\ \d+\ principal\ \S+(?:\ dropped\ \d+)?\ system:
-                    \ erx_domain:\ configured\ domain\ network\ \(domain\ \d+\)\ ended,
-                    \ \{fault,#{ABI::Generated::CODEC.member('fault_kind', 'memory')}\};\ restarting\ it\r*$/nx,
+      'network' => /\d+\.\d{6}\ notice\ domain\ \d+\ principal\ \S+(?:\ dropped\ \d+)?\ system:\ #{end_line_head('network')}
+                    \{fault,#{ABI::Generated::CODEC.member('fault_kind', 'memory')}\}
+                    \ at\ pc\ 0x\h+,\ cause\ 0x\h+,\ addr\ 0x\h+;\ restarting\ it\r*$/nx,
       'display' => /#{NativeRoot::DOMAIN_RECORD.source}#{Regexp.escape(DRIVER_LINE)}\r*$/n
     }.freeze
     # The configured domains whose line a boot logs once, since they start once and never end.
@@ -259,7 +264,7 @@ module Erx
 
         count = serial.scan(pattern).size
         raise Error, "raspi4b: configured domain #{name} logged its line #{count} times" unless count == 1
-        raise Error, "raspi4b: configured domain #{name} ended" if serial.match?(/configured domain #{name} \(domain \d+\) ended/n)
+        raise Error, "raspi4b: configured domain #{name} ended" if serial.match?(self.class.end_line_head(name))
       end
     end
 
@@ -303,7 +308,7 @@ module Erx
     def check_no_screen(serial)
       count = serial.scan(NO_SCREEN).size
       raise Error, "raspi4b: the display domain logged its no-screen line #{count} times, not once" unless count == 1
-      raise Error, 'raspi4b: the display domain ended' if serial.match?(/configured domain display \(domain \d+\) ended/n)
+      raise Error, 'raspi4b: the display domain ended' if serial.match?(self.class.end_line_head('display'))
     end
 
     # The screen as erx_screen fills it with no window: every pixel the background.
