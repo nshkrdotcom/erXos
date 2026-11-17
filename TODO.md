@@ -7519,16 +7519,21 @@ to the corpus and follow rc
   (ERTS's references are counter-based) could end another domain's monitor with a 'DOWN' of its own pid, which the receiver drops (`erx_session_relay` matches pid
   and reference) while ERTS has removed the monitor; the relay's watch of a master in another domain would
   then hang nothing up. Phase 2's kernel checks the monitor's connection.
-* [High] stopgap, the Pi 4's hardware watchdog (`liberx/backend/fiasco/pm_wdt.c`): the root's watchdog
-  thread stops reloading once liberx's end path has taken an end (`erx_fiasco_end_taken`), but an end
-  Fiasco starts itself does not take it. In a kernel without the debugger and console input
-  (`FiascoConfig::RELEASE_UNSET`) a Fiasco panic resets through PSCI on the panicking CPU alone; BL31
-  writes WDOG with 10 ticks, and the watchdog thread on a CPU still running writes 4 s back every
-  second, so the board never resets. Development kernels stop every CPU in the debugger and are not
-  affected. Blocks any release on Fiasco. A fix by construction: read WDOG before each reload and stop
-  for good when it holds far less than a tick after our last write can leave, which needs the fact
-  that a WDOG read returns the time left (unverified in the facts record). A liberx end on another CPU
-  racing a reload can likewise delay its reset by one 4 s timeout, once.
+* [Low] stopgap, the Pi 4's hardware watchdog (`liberx/backend/fiasco/watchdog_thread.c`): a Fiasco panic
+  resets through PSCI's system reset on the panicking CPU alone, and TF-A's BL31 makes it by writing WDOG with
+  10 ticks, about 153 us (`plat/rpi/common/rpi3_pm.c`, `rpi3_watchdog_reset`). The root's watchdog thread, still
+  reloading once a second on another CPU, writes 4 s back if its reload lands inside those 153 us, and then keeps
+  the board up for good: about one panic in 6,500. Likewise a liberx end on another CPU racing a reload can
+  delay its reset by one 4 s timeout, once. Fiasco without JDB has no way to park the other CPUs before the
+  reset: every MP kernel receives the debug IPI, but only JDB sends it and parks the CPUs it stops. A fix
+  in liberx alone: read WDOG before each reload and stop for good when it holds far less than our last
+  write can leave, which needs the fact that a WDOG read returns the time left (unverified in the facts
+  record). Whether 0.2 publishes the race as a downside or fixes it is open.
+* [Low] stopgap kernel, the release kernel's fatal trap (`fiasco/kernel/src/kern/arm/thread-jdb.cpp`,
+  `[arm-!debug]` `call_nested_trap_handler`): a trap inside its own path, in the console's UART or in
+  `platform_reset`'s mapping, enters the handler again without bound until the kernel stack overflows,
+  instead of resetting. JDB guards the same case with `nested_trap_recover`; a flag set on entry that
+  sends a second entry straight to `Psci::system_reset` would close it.
 * [Medium] stopgap, system domain device access: the system domain's ERTS runs in the root task, so
   `erx_device` may open any physical window (`service_task.c` checks only that the caller is the root)
   and the device NIF's table holds `pm_wdt`'s RSTC and WDOG as generic registers (`ownedByNif false`).

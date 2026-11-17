@@ -166,9 +166,11 @@ module Erx
     end
 
     # The kernel again with a test's defines, in its own directory: for a suite
-    # that must hold a window open, which no image but that suite's ever boots.
-    def build_test_kernel(name:, defines:, jobs: 4)
-      build_kernel_beside(directory: File.join(@build, "test-kernel-#{name}"), kind: BuildKind::DEVELOPMENT,
+    # that must hold a window open or seed a fault, which no image but that suite's
+    # ever boots. kind is the configuration it is built from (BuildKind). No test
+    # kernel is audited, since nothing ships one.
+    def build_test_kernel(name:, defines:, kind: BuildKind::DEVELOPMENT, jobs: 4)
+      build_kernel_beside(directory: File.join(@build, "test-kernel-#{name}"), kind: kind,
                           defines: defines, jobs: jobs)
     end
 
