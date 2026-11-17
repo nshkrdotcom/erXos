@@ -224,6 +224,76 @@ class DependenciesTest < Minitest::Test
     assert_equal 'safe', File.read(extracted_file)
   end
 
+  # The real runner, which also records the name of each command it runs.
+  class RecordingRunner < Erx::Runner
+    attr_reader :names
+
+    def initialize(**options)
+      super
+      @names = []
+    end
+
+    def run(argv, name:, **options)
+      @names << name
+      super
+    end
+  end
+
+  # A checkout whose build directory is a copy of this one's, and the
+  # Dependencies of it whose runner records what fetch runs there.
+  def copied_checkout
+    copy = File.join(@directory, 'copy')
+    Dir.mkdir(copy)
+    FileUtils.cp(File.join(@directory, 'deps.lock'), copy)
+    FileUtils.cp_r(File.join(@directory, 'build'), copy)
+    runner = RecordingRunner.new(owner_root: copy, log_dir: File.join(copy, 'logs'))
+    [Erx::Dependencies.new(root: copy, runner: runner), runner, File.join(copy, 'build/third_party/fixture')]
+  end
+
+  # A tree fetch published is kept, not extracted again, wherever its build
+  # directory has been copied or moved, as long as it is the pin's and intact.
+  def test_a_copied_build_directory_is_not_extracted_again
+    prepare_cached_source.fetch(cache: @cache)
+    dependencies, runner, destination = copied_checkout
+    dependencies.fetch(cache: @cache)
+    assert_empty runner.names
+    assert_equal 'safe', File.read(File.join(destination, 'source-1/file'))
+    assert dependencies.fetched?('fixture')
+  end
+
+  # A copied tree whose contents changed, or whose digest of them is missing or
+  # wrong, or that other extraction code wrote, is extracted again; one whose record is missing or names another pin
+  # or recipe is refused.
+  def test_a_copied_tree_that_is_not_intact_is_not_kept
+    prepare_cached_source.fetch(cache: @cache)
+    dependencies, runner, destination = copied_checkout
+    marker = File.join(destination, '.source.json')
+    record = JSON.parse(File.read(marker))
+    digest = File.join(destination, '.tree.sha256')
+    [-> { File.write(File.join(destination, 'source-1/file'), 'tampered') },
+     -> { File.write(File.join(destination, 'source-1/added'), 'added') },
+     -> { File.chmod(0o755, File.join(destination, 'source-1/file')) },
+     -> { File.write(digest, "#{'0' * 64}\n") },
+     -> { File.unlink(digest) },
+     -> { dependencies.define_singleton_method(:extractor_digest) { 'changed extraction code' } }].each do |damage|
+      damage.call
+      dependencies.fetch(cache: @cache)
+      assert_equal ['extract-source'], runner.names
+      assert_equal 'safe', File.read(File.join(destination, 'source-1/file'))
+      refute File.exist?(File.join(destination, 'source-1/added'))
+      runner.names.clear
+    end
+    [record.merge('sha256' => 'b' * 64), record.merge('members' => 'file'), record.merge('directory' => 'other')]
+      .each do |other|
+        File.write(marker, JSON.generate(other))
+        assert_raises(Erx::Error) { dependencies.fetch(cache: @cache) }
+        refute dependencies.fetched?('fixture')
+      end
+    File.unlink(marker)
+    assert_raises(Erx::Error) { dependencies.fetch(cache: @cache) }
+    assert_empty runner.names
+  end
+
   def test_cached_archive_cannot_bypass_a_linked_download_directory
     dependencies = prepare_cached_source
     entry = JSON.parse(File.read(File.join(@directory, 'deps.lock'))).fetch('sources').first

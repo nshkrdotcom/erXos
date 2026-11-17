@@ -1828,9 +1828,11 @@ Homebrew's OTP is a different release and cannot cross-build 29.1.2
 
 `make fetch` is the only step that touches the network: it reads
 `deps.lock`, downloads each source, verifies its SHA-256 and unpacks it
-into its own directory under `build/third_party/`; it also pulls the oracle's
-pinned OCI toolchain image by manifest digest. Every other target runs
-offline. The top-level `Makefile` builds the kernel or Fiasco
+into its own directory under `build/third_party/`, unless that directory
+already holds the pin's tree, unchanged by the digest recorded when the same
+extraction code unpacked it; a copied or moved build directory keeps its
+trees. It also pulls the oracle's pinned OCI toolchain image by manifest
+digest. Every other target runs offline. The top-level `Makefile` builds the kernel or Fiasco
 (through Fiasco's `mk`, behind `tools/erx build fiasco`), `liberx`, the
 runtime image (through OTP's machinery, behind `tools/erx build
 runtime`), toybox, any native shim the driver table lists, and the boot image

@@ -4,6 +4,7 @@
 
 require 'uri'
 require 'digest'
+require 'find'
 require 'tmpdir'
 require_relative 'runner'
 require_relative 'sources'
@@ -113,6 +114,10 @@ module Erx
 
   class Dependencies
     MAX_ARCHIVE_BYTES = Sources::MAX_ARCHIVE_BYTES
+    # The markers fetch writes at the top of build/third_party/ID once the tree
+    # below is extracted: the pin it extracted, and the digest of what it extracted.
+    RECORD = '.source.json'
+    TREE_DIGEST = '.tree.sha256'
     # sources are deps.lock's sources this host uses, which every caller walks;
     # elsewhere the programs it pins for other hosts, which no step here fetches.
     attr_reader :sources, :elsewhere
@@ -162,7 +167,7 @@ module Erx
       source = pinned(id)
       raise Error, "#{id} is a #{source.fetch('kind')} source, not a tree" unless %w[tar zip git].include?(source.fetch('kind'))
 
-      destination = File.join(@root, 'build/third_party', id)
+      destination = destination_of(source)
       raise Error, "source #{id} is not fetched; #{fetch_command(id)}" unless File.exist?(destination) || File.symlink?(destination)
       raise Error, stale(id) unless recorded?(source)
 
@@ -349,20 +354,71 @@ module Erx
       publish(source, archive: archive)
     end
 
+    # The text of the marker fetch wrote at the top of build/third_party/ID,
+    # or nil when there is none, it is a link, or it is not a small file.
+    def marker_text(source, name)
+      destination = destination_of(source)
+      marker = File.join(destination, name)
+      return nil unless File.directory?(destination) && !File.symlink?(destination) &&
+                        File.file?(marker) && !File.symlink?(marker)
+
+      BoundedFile.read(marker, maximum: 65_536)
+    rescue Error
+      nil
+    end
+
     # A record another fetch wrote, of another pin or of an older deps.lock
     # schema, is not this pin's: there is no reading of old records.
     def recorded?(source)
-      destination = File.join(@root, 'build/third_party', source.fetch('id'))
-      marker = File.join(destination, '.source.json')
-      return false unless File.directory?(destination) && !File.symlink?(destination) &&
-                          File.file?(marker) && !File.symlink?(marker)
-
-      JsonInput.parse(BoundedFile.read(marker, maximum: 65_536), max_bytes: 65_536,
-                      label: 'source download record') == source
+      text = marker_text(source, RECORD)
+      !text.nil? && JsonInput.parse(text, max_bytes: 65_536, label: 'source download record') == source
     rescue JsonInput::Unsupported
       raise
     rescue Error
       false
+    end
+
+    # Whether a recorded build/third_party/ID is unchanged since fetch extracted
+    # it, by the code extracting today: what is there now has the digest fetch
+    # wrote beside the record then. The digest is not keyed, so it catches
+    # accidental change and changed extraction code, not a user who rewrites
+    # the tree and the digest together. A tree the walk cannot read is not.
+    def intact?(source)
+      marker_text(source, TREE_DIGEST) == "#{tree_digest(destination_of(source))}\n"
+    rescue SystemCallError
+      false
+    end
+
+    def destination_of(source) = File.join(@root, 'build/third_party', source.fetch('id'))
+
+    # The code that extracts a tree and writes its markers. A change to it
+    # changes every tree's digest, so fetch extracts every tree again by it.
+    def extractor_digest
+      @extractor_digest ||= [Sources.method(:unpack), method(:publish)]
+                            .map { |code| Digest::SHA256.file(code.source_location.first).hexdigest }.join(',')
+    end
+
+    # The SHA-256 of the extracting code and of every entry below top but the
+    # two markers at its top: each entry's path relative to top, its kind, a
+    # file's or directory's permission bits, and a file's contents or a link's
+    # target, in path order. It names no absolute path, inode or time, so a
+    # tree copied or moved elsewhere keeps its digest. Links are read, never
+    # followed, and an entry the walk cannot read fails it.
+    def tree_digest(top)
+      names = Find.find(top, ignore_error: false).drop(1).map { |path| path.delete_prefix("#{top}/") }
+      start = Digest::SHA256.new << "#{extractor_digest}\0"
+      (names - [RECORD, TREE_DIGEST]).sort.each_with_object(start) do |name, digest|
+        path = File.join(top, name)
+        stat = File.lstat(path)
+        bits, content = case stat.ftype
+                        when 'file' then [stat.mode & 0o777, Digest::SHA256.file(path).hexdigest]
+                        when 'directory' then [stat.mode & 0o777, '']
+                        when 'link' then [0, File.readlink(path)]
+                        else [0, '']
+                        end
+        # No field holds a NUL, so ending each with one keeps entries apart.
+        digest << [name, stat.ftype, bits.to_s(8), content].map { |field| "#{field}\0" }.join
+      end.hexdigest
     end
 
     def verify(source, archive:)
@@ -371,12 +427,15 @@ module Erx
       end
     end
 
+    # Extracts the verified archive to build/third_party/ID, unless the tree
+    # there is already the pin's and intact, wherever it was extracted.
     def publish(source, archive:)
-      parent = File.join(@root, 'build/third_party')
+      destination = destination_of(source)
+      parent = File.dirname(destination)
       OutputDirectory.prepare(root: @root, path: parent)
-      destination = File.join(parent, source.fetch('id'))
       raise Error, "source destination is a symlink: #{destination}" if File.symlink?(destination)
       raise Error, stale(source.fetch('id')) if File.exist?(destination) && !recorded?(source)
+      return if intact?(source)
 
       Dir.mktmpdir('.source-', parent) do |temporary|
         extracted = File.join(temporary, 'tree')
@@ -398,11 +457,12 @@ module Erx
           copy_bounded(archive, destination: file)
           verify(source, archive: file)
         end
-        marker = File.join(extracted, '.source.json')
-        if File.exist?(marker) || File.symlink?(marker)
+        markers = [RECORD, TREE_DIGEST].map { |name| File.join(extracted, name) }
+        if markers.any? { |marker| File.exist?(marker) || File.symlink?(marker) }
           raise Error, 'source archive conflicts with its provenance marker'
         end
-        File.write(marker, JSON.pretty_generate(source) + "\n")
+        File.write(File.join(extracted, TREE_DIGEST), "#{tree_digest(extracted)}\n")
+        File.write(File.join(extracted, RECORD), JSON.pretty_generate(source) + "\n")
         # The extraction is disposable derived state. Preserve the previous
         # tree until the replacement is fully prepared; recover on publication
         # failure, and remove the old tree only after successful publication.
