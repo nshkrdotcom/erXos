@@ -13,7 +13,7 @@ require_relative '../fixtures/erlang_build'
 # fault below, where the named case must fail.
 class ErxBootKeysTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  CORE = 'erlang/apps/erx_storage/src/erx_boot_keys.erl'
+  CORE = 'erlang/apps/erx/src/erx_boot_keys.erl'
   APPLICATIONS = %w[erx erx_files erx_blk erx_storage].freeze
   TESTS = %w[test/erlang/erx_boot_keys_tests.erl].freeze
 

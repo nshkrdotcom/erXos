@@ -9,7 +9,7 @@
 {application, erx_storage,
  [{description, "erXos storage domain"},
   {vsn, "1"},
-  {modules, [erx_boot_keys, erx_fat_read, erx_lfs, erx_storage_mint, erx_lfs_sup, erx_littlefs, erx_storage_app, erx_storage_sup, erx_storage_login_keys,
+  {modules, [erx_fat_read, erx_lfs, erx_storage_mint, erx_lfs_sup, erx_littlefs, erx_storage_app, erx_storage_sup, erx_storage_login_keys,
               erx_storage_system]},
   {registered, [erx_storage_sup, erx_lfs]},
   {applications, [kernel, stdlib, erx, erx_files, erx_blk]},

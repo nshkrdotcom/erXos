@@ -37,6 +37,7 @@
              erx_actions,
              erx_app_records,
              erx_area,
+             erx_boot_keys,
              erx_build,
              erx_bytes,
              erx_clock,
