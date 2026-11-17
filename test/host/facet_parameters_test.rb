@@ -52,7 +52,7 @@ class FacetParametersTest < Minitest::Test
   NET_CASE = 'the_net_grant_s_sets_are_lists_test'
 
   # The grant's packed parameter rows are windows (key 1), pixels (2) and clipboard (3), the
-  # manifest's only ones, 32 bytes each: key u32 at 0, kind u32 at 4, scalar u64 at 8.
+  # display facet's only ones, 32 bytes each: key u32 at 0, kind u32 at 4, scalar u64 at 8.
   # Each forgery edits the rows, given as an array of their bytes, and the view must refuse it.
   FORGED = {
     'undeclared' => ->(rows) { rows[2][0, 4] = [5].pack('V') },
@@ -184,12 +184,10 @@ class FacetParametersTest < Minitest::Test
     line_manifest.b.tap { |copy| copy[offset, encoded.bytesize] = encoded }
   end
 
-  # The parameter rows of the one facet of bytes named facet that states any, or with facet
-  # nil the whole table, as their offset and count.
+  # The parameter rows of the one facet of bytes named facet that states any, as their
+  # offset and count.
   def parameter_span(bytes, facet)
     view = codec.open('manifest', bytes)
-    return view.header.fetch('facet_parameters') unless facet
-
     rows = view.count('facets').times.map { |index| view.fetch('facets', index) }
                .select { |row| view.string(row.fetch('name')) == facet && row.fetch('parameters').fetch('count').positive? }
     assert_equal 1, rows.size
@@ -212,7 +210,7 @@ class FacetParametersTest < Minitest::Test
   def run_cases(sources = {})
     Dir.mktmpdir('erx-facet-parameters-') do |work|
       File.binwrite(File.join(work, 'manifest.bin'), manifest)
-      FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(manifest, nil, 3, forge)) }
+      FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(manifest, Erx::DisplayDomain::SERVICE, 3, forge)) }
       NET_FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(net_manifest, 'net', 18, forge)) }
       File.binwrite(File.join(work, 'net.bin'), net_manifest)
       File.binwrite(File.join(work, 'line.bin'), line_manifest)

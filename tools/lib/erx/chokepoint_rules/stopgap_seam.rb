@@ -137,6 +137,8 @@ module Erx
         liberx/backend/fiasco/watchdog_thread.h
         liberx/backend/fiasco/vm.c
         liberx/backend/fiasco/vm.h
+        liberx/backend/fiasco/vm_rules.c
+        liberx/backend/fiasco/vm_rules.h
         liberx/backend/fiasco/object.c
         liberx/backend/fiasco/object.h
         liberx/backend/core/vm_table.c
@@ -397,7 +399,10 @@ module Erx
                   Chokepoints::Site.new(glob: 'liberx/pthread_executor.h'),
                   Chokepoints::Site.new(glob: 'liberx/program/program.c'),
                   Chokepoints::Site.new(glob: 'liberx/backend/hosted/thread.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/hosted_executor_driver.c')],
+                  Chokepoints::Site.new(glob: 'test/fixtures/hosted_executor_driver.c'),
+                  # A link stub that aborts if called: exec_release_test links program.c, which
+                  # names the call, and runs none of it.
+                  Chokepoints::Site.new(glob: 'test/fixtures/exec_release_stubs.c')],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "void f(void) { erx_pthread_create_executor(0, 0, 0, 0); }\n" }
         ),
         Chokepoints::Forbidden.new(

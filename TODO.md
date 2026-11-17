@@ -2418,6 +2418,14 @@ it; git history is the record of completed work.
 
 ## Bugs by subsystem
 
+* [Low] tests, the manifest edits of the domain tests (`test/fixtures/manifest_context.rb`, `DOMAIN_ROWS`
+  and `SESSION_FACETS`; `test/host/manifest_stopgap_test.rb`, `dom_planner_test.rb` and
+  `boot_manifest_test.rb`, their login_keys rows): each test removes the development manifest's
+  configured domains and session grants through its own hand-written list of record patterns, so a new
+  service or grant must be added to every list, and a list that files a row under the wrong kind fails
+  only in the test that feeds it the other kind of source. Derive the removals from the manifest's
+  structure instead, as `Manifest::Edit.without_sessions` already does for session grants: drop a
+  configured domain with the services it serves and every facet granting them.
 * [Low] stopgap Fiasco, bootstrap (`fiasco/bootstrap/server/src/platform/arm_virt.cc`): `init`
   never calls `query_psci_method()`, so `reboot_psci` uses the default `Psci_smc`
   (`platform-arm.h:96`) while QEMU virt's device tree says hvc; bootstrap's own reboot path on
@@ -6806,7 +6814,7 @@ to the corpus and follow rc
 * [Medium] shell, a job's processes are found by group leader, not by
   job tag: until the runtime's job tags exist (docs/design-shell.md,
   "Jobs and their tags"), `erx_shell` runs each line and each `&` job,
-  and `erx_shell_script:command/2` each `rc -c` on a tty, under a group
+  and `erx_shell_script:command/3` each `rc -c` on a tty, under a group
   leader of its own (`erx_shell_leader`) that forwards io to the shell's group;
   stopping a job pauses every process that leader leads with
   `erlang:suspend_process/1`, in passes, and `Ctrl-C`, `kill`, the heap
@@ -7620,7 +7628,7 @@ to the corpus and follow rc
   crash report: a program's handler (`erx_command_srv:perform/2`, `spawn(erx_prog_handler, ...)`,
   with the program's environment), the pumps of a program's pipe ends (`erx_shell_program:pump/2`),
   the pipe's server and its pumps (`erx_shell_pipe:new/0`, `from_binary/1` and `from_file/1`, with the bytes they carry),
-  and the exec's own process (`erx_shell_script:command/2`, a `proc_lib` spawn holding the first
+  and the exec's own process (`erx_shell_script:command/3`, a `proc_lib` spawn holding the first
   variables). None of them evaluates the shell's source; each runs fixed code over what it holds. Fix by giving each
   a fixed-reason end as the funnel has, or by `format_status/1` and `sensitive` where a report is
   the risk.

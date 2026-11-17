@@ -134,15 +134,13 @@ module ManifestContextFixture
   # The development manifest's own configured domains, storage, network, web and display,
   # with the profiles and runtime limits only they name, their services (storage's
   # driver-control, data, packages, system and login_keys, network's driver-control and net, web's relay, the display's
-  # window tree with its display record) and the system domain's facets of them, root's
-  # session's grant of login_keys, which goes with its service, and the
+  # window tree with its display record) and the system domain's facets of them, and the
   # display unit, which only a display domain holds (docs/design-stopgap.md, "Device
   # records"), so a manifest without one places none.
   DOMAIN_ROWS = [/^runtime_limits storage\n(?:  .*\n)*/, /^limits storage\n(?:  .*\n)*/, /^domain storage\n(?:  .*\n)*/,
                  /^service storage_ctl\n(?:  .*\n)*/, /^facet storage_ctl\n(?:  .*\n)*/,
                  /^service data\n(?:  .*\n)*/, /^service home\n(?:  .*\n)*/, /^facet data\n(?:  .*\n)*/, /^service packages\n(?:  .*\n)*/,
                  /^service system\n(?:  .*\n)*/, /^service login_keys\n(?:  .*\n)*/, /^facet login_keys\n(?:  .*\n)*/,
-                 /^facet login_keys_session\n(?:  .*\n)*/,
                  /^runtime_limits network\n(?:  .*\n)*/, /^limits network\n(?:  .*\n)*/, /^domain network\n(?:  .*\n)*/,
                  /^service network_ctl\n(?:  .*\n)*/, /^facet network_ctl\n(?:  .*\n)*/,
                  /^service net\n(?:  .*\n)*/,
@@ -150,11 +148,11 @@ module ManifestContextFixture
                  /^service web\n(?:  .*\n)*/, /^facet web\n(?:  .*\n)*/,
                  /^runtime_limits display\n(?:  .*\n)*/, /^limits display\n(?:  .*\n)*/, /^domain display\n(?:  .*\n)*/,
                  /^service display\n(?:  .*\n)*/, /^display display\n(?:  .*\n)*/, /^unit display\n(?:  .*\n)*/].freeze
-  # Root's session template's facets, of data, net, inspect, start and machine, which a
-  # sessionless source (ProductionImage.without_sessions) does not hold.
+  # Root's session template's facets, of data, net, inspect, start, machine, the clock and
+  # login_keys, which a sessionless source (ProductionImage.without_sessions) does not hold.
   SESSION_FACETS = [/^facet data_session\n(?:  .*\n)*/, /^facet net\n(?:  .*\n)*/, /^facet inspect\n(?:  .*\n)*/,
                     /^facet start\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/,
-                    /^facet root_clock\n(?:  .*\n)*/].freeze
+                    /^facet root_clock\n(?:  .*\n)*/, /^facet login_keys_session\n(?:  .*\n)*/].freeze
   # A service the system domain serves (inspect, start, machine and clock, to session templates
   # alone; log and code_objects, which no facet row grants), by its server line, so a new
   # one goes with the rest.

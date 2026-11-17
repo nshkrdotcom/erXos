@@ -18,7 +18,7 @@ module Erx
     EVALUATOR_SPAWNS = [
       'spawn_opt\(fun\(\)\s*->\s*exit\(evaluated\(Body\)\)\s*end',
       'spawn\(fun\(\)\s*->\s*forward\(',
-      'proc_lib\s*:\s*spawn_link\(fun\(\)\s*->\s*exec\(Command,\s*Vars\)\s*end\)'
+      'proc_lib\s*:\s*spawn_link\(fun\(\)\s*->\s*exec\(Command,\s*Vars,\s*Cwd\)\s*end\)'
     ].join('|').freeze
 
     # The shell's one funnel for evaluator code (design-shell.md, "Failure
