@@ -799,6 +799,21 @@ is each board's contract to say
 until its board's error-injection test shows what it reports
 ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy)).
 
+**Synchronous device stores.** Under `erx.devsync=1` the device NIF's
+store barrier is `DSB SY` then `ISB`, the exit window's sequence run at
+EL0, so a store has been acknowledged and the instruction stream
+synchronised before the next access is issued
+([design-runtime.md](design-runtime.md#the-device-access-trace)). The
+acknowledgement is the device's own only under device-nGnRnE; under
+device-nGnRE an interconnect may give it first, and an error the device
+reports later still arrives late. Which type each board's register
+windows take is the platform's, and on Fiasco the fork's, and is
+unverified for the Pi 4; so is whether the Cortex-A72 takes a pending
+SError at the `ISB` rather than some instructions later. The first board
+run under `erx.devsync=1` settles both. The trace's `done` says only that
+the accessor and its barrier returned, and the trace names no access as
+the cause of an error, so its report holds either way.
+
 ### Optional hardening
 
 Pointer authentication is enabled with per-space keys (`EnIA` and `EnIB`

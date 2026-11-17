@@ -1972,11 +1972,18 @@ The domain service, on `{domain_ended, Id, End, Record}`:
 2. **Ends the domain pid** with `{domain_down, Id, Info}`, so every
    process that linked to or monitored the domain sees its end, wherever
    it runs ([design-domains.md](design-domains.md#links-monitors-and-exits)).
-3. **Records the death**, the last 16 per principal, with the record and,
-   for a crash, the crash header's slogan, which it reads by copying the
+3. **Records the death**, the last 16 per principal, with the record,
+   for a crash the crash header's slogan, and for every end the device
+   access trace, decoded
+   ([design-runtime.md](design-runtime.md#the-device-access-trace)),
+   which it reads by copying the
    crash area into an object of its own with `erx_mem_copy`, never through
    a mapping, so a deleted source fails with `ERX_ESTALE` and never
-   faults.
+   faults. In a development build the log line that reports the end
+   adds, when the trace holds entries, the path that shows them,
+   `/proc/domains/Id/crash`, and no entry: register values are the
+   domain's data, shown only to principals that may inspect the domain,
+   and the log is read with `varlog` alone.
 4. **Retires the domain** with `erx_dom_retire` once the crash area is
    read and the system connection disconnected, without waiting for any
    other connection: the library frees the record, gives the principal
@@ -4478,7 +4485,7 @@ partition, as a fresh installation does.
 | A trial fails: its lease passes, or the system domain ends | the kernel's lease; the kernel | the machine | none | the machine resets and boots the committed slot; the update service records the failed trial |
 | The coordinator or a service fails, or preparation misses its deadline, during an ordered end | the ending record's deadline, checked by the fault thread; the coordinator's outcomes | completed checkpoints and incomplete preparation | a normal reset, never a restart or a thaw | incomplete durability and the failed phase, where logging remains available |
 | A driver process crashes, or a device misbehaves | the driver's supervisor; the driver's own checks of what the device wrote | the device's state, unknown | the supervisor restarts the driver, which resets the device | a log line; a client's request fails or is retried |
-| A register access aborts on the bus, inside the device NIF | the fault gate: the fault ends the domain | the domain's stopped space until its destroy | the domain service restarts the configured domain; its drivers reset their devices | a log line; the domain's clients see `noconnection` and reconnect |
+| A register access aborts on the bus, inside the device NIF | the fault gate: the fault ends the domain | the domain's stopped space until its destroy | the domain service restarts the configured domain; its drivers reset their devices | a log line, in a development build naming where the domain's device access trace is shown ([design-runtime.md](design-runtime.md#the-device-access-trace)); the domain's clients see `noconnection` and reconnect |
 | A device's domain ends | the fault gate | an unconfined device's memory, the device's for the boot, given again to the restarted holder | the library deletes the device's other objects at the exit record; the domain service restarts the configured domain; the new driver resets the device before the NIF posts anything | the domain's clients see `noconnection` and reconnect |
 | The vault's partition does not mount, or its sealing backend does not answer | the vault's open of its tree, or the backend's answer | the keys of sessions already open, while the vault runs | the operator, who repairs the medium or the backend; nothing re-creates the partition on its own | every login and enrolment answered `unavailable`, and the console says why ([The vault](#the-vault)) |
 | The manifest violates a property | the packer's check | no boot image | the developer | the build fails, naming the property, the record and the field |
