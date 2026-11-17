@@ -22,7 +22,8 @@ with its `content-length` gives `answer too big`, which max_body_size
 in httpc's fourth argument alone gives (seeded failure: with it moved
 into the third argument the body is taken whole). The first server
 also answers a history request, as Kraken's OHLC endpoint would, with a
-day of entries up to the clock, so the value's status says `24 h`.
+day of entries that ends a day after the clock, as Kraken answers a
+kiosk whose clock lags, so the value's status says `24 h`.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -125,7 +126,7 @@ answer({ok, Socket}, Host) ->
         {<<"GET /big ", _/binary>>, _At, _Close} -> reply(Socket, binary:copy(<<"x">>, 70000));
         {<<"GET /ohlc?pair=X&interval=15&since=", _/binary>>, _At, _Close} ->
             Now = os:system_time(second),
-            Day = erx_quotes_extract_tests:day(Now - Now rem 900),
+            Day = erx_quotes_extract_tests:day(Now - Now rem 900 + 86400),
             reply(Socket, erx_quotes_extract_tests:ohlc(<<"X">>, Day));
         _Other -> ok
     end,

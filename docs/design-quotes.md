@@ -429,11 +429,20 @@ holds when. A source held back by a `Retry-After` is not asked until its
 server name, limits and classifier, for the row's history URL with
 `&since=T` added (`erx_quotes_core:history_url/2`): `T` is the wall
 clock less a day, rounded down to the start of its 15 min bucket, so
-the answer is about 97 entries, about 10 KB. `httpc`'s timeouts end a
+the answer is about 97 entries, about 10 KB. A wall clock behind the
+source's, as on a board with no network time, whose clock starts at
+the image's build date, makes `T` older than needed: the answer then
+holds one more entry for each 15 min of lag, up to Kraken's 720, and
+one of more than 200, a lag past 25 h 45 min, is refused as
+`bad_data` ([Reading a history](#reading-a-history)), so the graph
+stays `live`. Kraken's whole answer of 720 entries was 59,110 bytes
+for `XBTUSD`, 59,200 for `ETHUSD` and 52,642 for `SOLUSD` on
+2026-11-17, within the 64 KiB body cap but too near it to drop
+`since`. `httpc`'s timeouts end a
 request long before the next hour, so at most one history per quote is
 in flight.
 
-A history's body goes to `erx_quotes_extract:history/3`, and its
+A history's body goes to `erx_quotes_extract:history/2`, and its
 entries to `erx_quotes_core:history/3`, which makes them the quote's
 series whole. Its failure, any reason of the
 [reasons table](#refusals-and-error-results), is logged as `quotes: btc
@@ -463,7 +472,7 @@ answers `{error, bad_data}`.
 
 ### Reading a history
 
-`erx_quotes_extract:history(Source, Bytes, WallSeconds)` reads a
+`erx_quotes_extract:history(Source, Bytes)` reads a
 history's body of at most 65,536 bytes through the same decoder, path
 walk and price grammar, and answers `{ok, Entries}`, each `{Start,
 Close}` oldest first, or `{error, bad_data}`:
@@ -472,29 +481,33 @@ Close}` oldest first, or `{error, bad_data}`:
 * the row's `entries` path names a list of 1 to 200 entries, each a
   list of exactly 8 items, destructured after that length is matched;
 * each `time` is an integer, a multiple of 900, later than the one
-  before, at most two days before the wall clock and no later than the
-  bucket after the clock's own, so no entry lies in a future the clock
-  has not reached;
+  before, and an unsigned 32-bit Unix time, below 2^32, a bound of the
+  format that keeps a hostile answer from carrying bignum times; no
+  clock bounds it, since the kiosk's wall clock may lag the source's by
+  days, and a time only places a close in the series;
 * each `close` is a price given as a decimal string, by the grammar and
   bounds of [Reading a body](#reading-a-body);
 * every other item is a string or an integer.
 
 One failure path, as for a body: every check throws `bad_data`, which
-`history/3` catches once.
+`history/2` catches once.
 
 ### Joining live prices
 
 A series is a list of 15 min buckets on 900 s steps, strictly
 increasing, of at most 96, a day. `history/3` builds it from a
-history's entries by joining them one by one from an empty list, and a
-live price read at wall-clock second `W` joins it the same way:
+history's entries by joining them one by one from an empty list, so it
+keeps the source's times, and a live price read at wall-clock second
+`W` joins it by `W`'s bucket:
 
-* in the series' last bucket it replaces that bucket's close;
-* in a later bucket it is appended, after one point for each bucket
-  skipped, each repeating the last close; only the 96 before the new
-  bucket are made, so a long gap costs no more than a day;
-* in an earlier bucket, as after the clock stepped back, it is left
-  out.
+* in a bucket after the series' last it is appended, after one point
+  for each bucket skipped, each repeating the last close; only the 96
+  before the new bucket are made, so a long gap costs no more than a
+  day;
+* in the series' last bucket, or in an earlier one, as when the
+  kiosk's clock lags the source's or stepped back, it replaces the last
+  bucket's close, so the line ends at the live price whatever the clock
+  reads.
 
 A bucket a history leaves out had no trades, so its close is the one
 before, and a history's own gaps are filled whatever their length. A
@@ -507,8 +520,12 @@ would otherwise leave holes in the line, and the graph keeps `24 h`.
 
 The series is then trimmed to its last 96. Each history answer replaces
 the series whole, so a price joined across a wrong clock lasts at most
-an hour. A quote with no history keeps `series` at `none`: only a
-history starts one. The join is pure and tested with exact times.
+an hour while histories are answered. With a clock that lags by `L`,
+every live price moves the last close, and the gap rule applies only
+once the clock passes the series' last bucket, about `L` after the last
+history answered: while histories fail for less than that, the status
+keeps `24 h` and the last point keeps the live price. A quote with no
+history keeps `series` at `none`: only a history starts one. The join is pure and tested with exact times.
 
 ### What the screen shows
 
@@ -667,13 +684,14 @@ Each test below names the seeded failure that proves it ran.
 | no fabrication (`erx_quotes_core_tests`) | over generated event sequences, every price the board carries is the price of some successful outcome for that quote, with that outcome's credit and an age equal to `Now` minus its time | keeping the previous price on a failed round with a new `FetchedAt` breaks the age property |
 | classify (`erx_quotes_http_tests`) | each status, redirect and error shape of the reasons table, built as `httpc` and `ssl` answer, maps to its reason; redirects to `http:`, to another host and to another port of the same host are `redirect`; a relative one is followed; a `location` of non-ASCII bytes is `redirect`; a fourth hop is `redirect`; a 200 whose body is not a binary is `failed`; `retry-after` of 0, 1, 3,600, 7,200, 11 digits and a date give none, 1,000, 3,600,000, 3,600,000, none and none; `certificate_expired` with the wall clock at 1970-01-01T00:05 is `clock_unset`, with it in 2026 `certificate`, and `unknown_ca` at 1970 `certificate` | following a redirect without comparing its host turns the other-host case into `follow` |
 | extract (`erx_quotes_extract_tests`) | bodies in the shape of [What the source offers](#what-the-source-offers) for each row of `erx_quotes_table`, generated by the test, give the price and change they carry; a missing key, a wrong type, a 33-byte decimal, `0` and a negative price give `bad_data` | dropping the price's upper bound accepts `1.0e300` |
-| history reader (`erx_quotes_extract_tests`) | a generated day of 97 Kraken OHLC entries gives its entries; 200 entries, times two days either side of the clock and integer items are read; each seeded fault of the answer gives `bad_data`: a body of 65,537 bytes, an entry of 7 or 9 items, a close negative, `NaN`, `Infinity`, `1e5`, `0`, 10^15 or a JSON number, times out of order, repeated, off a 900 s step or past two days, no entries, 201 entries, another pair's key, entries in an object, a string time, a float count, a `null` item, a set `error`, a truncated body | dropping the order check accepts the out-of-order answer |
+| history reader (`erx_quotes_extract_tests`) | a generated day of 97 Kraken OHLC entries gives its entries; 200 entries, a day that ends a day after the test's clock, times a week apart and integer items are read, since no clock bounds a time; each seeded fault of the answer gives `bad_data`: a body of 65,537 bytes, an entry of 7 or 9 items, a close negative, `NaN`, `Infinity`, `1e5`, `0`, 10^15 or a JSON number, times out of order, repeated, off a 900 s step, negative or at 2^32 and past it, no entries, 201 entries, another pair's key, entries in an object, a string time, a float count, a `null` item, a set `error`, a truncated body | dropping the order check accepts the out-of-order answer |
 | history requests (`erx_quotes_core_tests`) | a quote whose source names a history asks for it at start, not at 3,599 s and again at 3,600 s, and a table without one asks for none; a round's 429 with an hour's `Retry-After` holds the history back until that hour has passed, and a history's 429 holds back the rounds; the URL's `since` is the start of the bucket a day before the clock | scheduling the next request from an answer never asks again after a failed one |
-| join and trim (`erx_quotes_core_tests`) | a live price in the last bucket replaces its close, one in a later bucket is appended after skipped buckets repeating the last close, one in an earlier bucket is left out, and a new history replaces the series whole, its own gap of 9 buckets filled; the series keeps 96 points | dropping the trim of a join keeps all 97 entries of the day |
+| join and trim (`erx_quotes_core_tests`) | a live price in the last bucket replaces its close, one in a later bucket is appended after skipped buckets repeating the last close, one in an earlier bucket replaces the last close, and a new history replaces the series whole, its own gap of 9 buckets filled; the series keeps 96 points | dropping the trim of a join keeps all 97 entries of the day |
+| lagging clock (`erx_quotes_core_tests`) | a history whose day ends a day after the clock is drawn with `24 h`, and live prices read in earlier buckets each move its last close, its times unchanged | leaving out a price of an earlier bucket keeps the history's last close |
 | gap (`erx_quotes_core_tests`) | a live price after 4 skipped buckets repeats the last close in them and keeps `24 h`; one after 5 makes the series `none` and the status `live`, a later live price leaves it `none`, and the next history brings back `24 h` | filling every gap shows `24 h` across five invented buckets |
 | fallback (`erx_quotes_core_tests`) | before a history the graph is the samples and the status says `live`; after one, the series' closes and `24 h`; a table without history keeps no series | starting a series from a live price shows `24 h` before any history |
 | frame | `erx_ui_host` with the Erlang renderer draws the dashboard's tree for a fixed time and a fixed live board, one quote of each row of the screen table, `clock not set` among them, equal to the reference picture `dashboard-live` under `test/display/reference/` | showing a stale value without `stale` changes the frame |
-| HTTPS on the host (`erx_quotes_fetch_tests`) | the first server also answers the history request with a day of entries, so its quote's status says `24 h`; `erx_quotes`, the effect process, with `public_key`'s `cacerts_path` naming a test root (stock OTP's override, `pubkey_os_cacerts.erl:46`) and a test table whose rows have the address `{127, 0, 0, 1}` and the host `quotes.test`, a name that does not resolve, fetches from an `ssl` server the test runs on the host's loopback with an ECDSA P-256 chain from `public_key:pkix_test_data/1` for `quotes.test`, with the request expression of [One request](#one-request) unchanged, and shows its value; the server answers only a `Host` of `quotes.test` and a request asking for `connection: close` | the server's certificate made for `other.test` shows `certificate rejected`; a 70,000-byte body with its `content-length` shows `answer too big`, and with `max_body_size` moved into the third argument is taken whole; without `connection: close` every quote fails |
+| HTTPS on the host (`erx_quotes_fetch_tests`) | the first server also answers the history request with a day of entries that ends a day after the clock, as Kraken answers a kiosk whose clock lags, so its quote's status says `24 h`; `erx_quotes`, the effect process, with `public_key`'s `cacerts_path` naming a test root (stock OTP's override, `pubkey_os_cacerts.erl:46`) and a test table whose rows have the address `{127, 0, 0, 1}` and the host `quotes.test`, a name that does not resolve, fetches from an `ssl` server the test runs on the host's loopback with an ECDSA P-256 chain from `public_key:pkix_test_data/1` for `quotes.test`, with the request expression of [One request](#one-request) unchanged, and shows its value; the server answers only a `Host` of `quotes.test` and a request asking for `connection: close` | the server's certificate made for `other.test` shows `certificate rejected`; a 70,000-byte body with its `content-length` shows `answer too big`, and with `max_body_size` moved into the third argument is taken whole; without `connection: close` every quote fails |
 
 **The fuzz target.** `erx_quotes_fuzz`, in
 `examples/dashboard/lib/erx_dashboard/test/`, is run by
@@ -689,21 +707,23 @@ covers the readers of untrusted input of this document and the join:
   10^15; an unmutated generated answer gives the price it was built
   with. *Seeded failure:* accepting a JSON number without the bound check
   lets `1.0e300` through and fails the bounds property.
-* **history:** `erx_quotes_extract:history/3` over bodies of up to
-  64 KiB for Bitcoin's row, read at a clock near a random bucket:
-  random bytes and the hostile bodies of extract; generated days of
-  OHLC entries with one field mutated, truncated or moved to a bound.
-  Properties: nothing raises; every accepted list holds 1 to 200
-  entries on 900 s steps, strictly increasing, from two days before
-  the clock to the bucket after its own, each close above 0 and below
-  10^15; an unmutated day gives the entries it was built with. Each
-  accepted list then becomes Bitcoin's series and is joined with live
-  prices read at random seconds within two hours or two days either
-  side: the series stays `none` or 1 to 96 points on 900 s steps,
-  strictly increasing, and holds no close that was neither an entry's
-  nor a live price. *Seeded failures:* the price bound's removal
-  fails the history's bounds property too; dropping the trim of a join
-  fails the series property.
+* **history:** `erx_quotes_extract:history/2` over bodies of up to
+  64 KiB for Bitcoin's row: random bytes and the hostile bodies of
+  extract; generated days of OHLC entries ending at a random bucket,
+  with one field mutated, truncated or moved to a bound. Properties:
+  nothing raises; every accepted list holds 1 to 200 entries on 900 s
+  steps, strictly increasing, each time in [0, 2^32) and each close
+  above 0 and below 10^15; an unmutated day gives the entries it was built with. Each accepted
+  list then becomes Bitcoin's series and is joined with live prices
+  read by a clock up to two days either side of the day's end, at
+  random seconds within two hours or two days of it: the series stays
+  `none` or 1 to 96 points on 900 s steps, strictly increasing, never
+  ending before the last entry's bucket, and holds no close that was
+  neither an entry's nor a live price; after a live price it ends at
+  that price. *Seeded failures:* the price bound's removal fails the
+  history's bounds property too; dropping the trim of a join fails the
+  series property; leaving out a live price of an earlier bucket fails
+  the last property.
 * **classify:** `erx_quotes_http:classify/4` over arbitrary terms and
   header lists, redirects included. Property: it raises on nothing and
   answers one of its three shapes.

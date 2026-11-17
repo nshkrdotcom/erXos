@@ -17,17 +17,19 @@ The fuzz target of the live quotes' readers of untrusted input
   status codes, header names and byte values, and random error terms.
   Nothing raises, the answer is a class, and a followed URL keeps the
   origin asked.
-* erx_quotes_extract:history/3 takes bodies for Bitcoin's history read
-  at a clock near a random bucket: random bytes and the hostile bodies
-  above; generated days of OHLC entries with a field mutated, truncated
-  or moved to a bound. Nothing raises; every accepted list holds 1 to
-  200 entries on bucket steps, strictly increasing, from two days
-  before the clock to the bucket after its own, each close a float above 0 and below 10^15; an unmutated
-  day gives the entries it was built with. Each accepted list becomes
-  Bitcoin's series (erx_quotes_core:history/3) and is joined with live
-  prices read at random wall-clock seconds around it: the series stays
-  `none` or 1 to 96 points on bucket steps, strictly increasing, and holds no
-  close that was neither an entry's nor a live price.
+* erx_quotes_extract:history/2 takes bodies for Bitcoin's history:
+  random bytes and the hostile bodies above; generated days of OHLC
+  entries ending at a random bucket, with a field mutated, truncated or
+  moved to a bound. Nothing raises; every accepted list holds 1 to 200
+  entries on bucket steps, strictly increasing, each time in
+  [0, 2^32) and each close a float above 0 and below 10^15; an unmutated day gives the entries it was
+  built with. Each accepted list becomes Bitcoin's series
+  (erx_quotes_core:history/3) and is joined with live prices read by a
+  kiosk clock up to two days either side of the day's end, at random
+  wall-clock seconds around it: the series stays `none` or 1 to 96
+  points on bucket steps, strictly increasing, never ending before the
+  last entry's bucket, and holds no close that was neither an entry's
+  nor a live price; after a live price it ends at that price.
 
 None of them may make an atom. The seed comes from make check-fuzz.
 """.
@@ -36,8 +38,8 @@ None of them may make an atom. The seed comes from make check-fuzz.
 
 -define(ROUNDS, 4000).
 -define(URL, <<"https://quotes.test/api">>).
-%% A wall-clock second on a bucket, 2026-11-17 01:30 UTC, and how far an
-%% entry's time may lie from the clock.
+%% A wall-clock second on a bucket, 2026-11-17 01:30 UTC, and how far the
+%% kiosk's clock lies from the source's at most in a round: two days.
 -define(WALL, 1794879000).
 -define(SKEW, 172800).
 
@@ -152,16 +154,18 @@ random_bytes(N) ->
 history_round(#{sources := #{kraken_btc := Btc}} = Table) ->
     Wall = ?WALL + (rand:uniform(2001) - 1001) * erx_quotes_core:bucket(),
     Day = erx_quotes_extract_tests:day(Wall),
-    {Body, Read, Expect} =
+    {Body, Expect} =
         case rand:uniform(4) of
-            1 -> {ohlc(Day), Wall + rand:uniform(erx_quotes_core:bucket()) - 1, built};
-            2 -> {mutate_history(ohlc(Day)), Wall + rand:uniform(2 * ?SKEW) - ?SKEW, any};
-            3 -> {ohlc(moved(Day)), Wall, any};
-            4 -> {hostile(), Wall, any}
+            1 -> {ohlc(Day), built};
+            2 -> {mutate_history(ohlc(Day)), any};
+            3 -> {ohlc(moved(Day)), any};
+            4 -> {hostile(), any}
         end,
-    case no_raise(fun() -> erx_quotes_extract:history(Btc, Body, Read) end, Body) of
+    %% The kiosk's clock, which may lag or lead the source's by two days.
+    Read = Wall + rand:uniform(2 * ?SKEW) - ?SKEW,
+    case no_raise(fun() -> erx_quotes_extract:history(Btc, Body) end, Body) of
         {ok, Entries} ->
-            entries_ok(Entries, Read) orelse error({bad_entries, Body, Read, Entries}),
+            entries_ok(Entries) orelse error({bad_entries, Body, Entries}),
             Expect =:= any orelse Entries =:= [{Time, binary_to_float(Close)} || {Time, Close} <- Day]
                 orelse error({wrong_entries, Body, Entries}),
             join_round(Table, Entries, Read),
@@ -180,7 +184,7 @@ moved(Day) ->
     Moved = case rand:uniform(2) of
                 1 -> {Time, pick(bounds())};
                 2 -> {pick([Time + 1, Time - 900, Time + 900, Time + ?SKEW + 900, -Time, 0,
-                            1 bsl 70, float(Time), integer_to_binary(Time)]), Close}
+                            1 bsl 70, 900 bsl 70, float(Time), integer_to_binary(Time)]), Close}
             end,
     Before ++ [Moved | After].
 
@@ -193,12 +197,11 @@ mutate_history(Body) ->
         _ -> mutate_bytes(Body)
     end.
 
-entries_ok(Entries, Read) ->
+entries_ok(Entries) ->
     Entries =/= [] andalso length(Entries) =< 200
         andalso lists:all(fun({Time, Close}) ->
-                                  is_integer(Time) andalso Time rem erx_quotes_core:bucket() =:= 0
-                                      andalso Time >= Read - ?SKEW
-                                      andalso Time - erx_quotes_core:bucket() =< Read
+                                  is_integer(Time) andalso Time >= 0 andalso Time < 1 bsl 32
+                                      andalso Time rem erx_quotes_core:bucket() =:= 0
                                       andalso price_ok(Close)
                           end, Entries)
         andalso increasing([Time || {Time, _Close} <- Entries]).
@@ -213,6 +216,9 @@ increasing(_Short) -> true.
 %% prices read at random seconds, within two hours of `Read` or within
 %% two days, a round each, an hour apart; the series is checked after
 %% every step, and may have fallen back to `none` after a live price.
+%% It never ends before the last entry's bucket, and after a live price
+%% it ends at that price: one of an earlier bucket moves the last close,
+%% never the source's times.
 join_round(Table, Entries, Read) ->
     {S0, _} = erx_quotes_core:tick(erx_quotes_core:new(Table, 0), 0, 1.0),
     {S1, _} = erx_quotes_core:history(S0, btc, Entries),
@@ -220,27 +226,35 @@ join_round(Table, Entries, Read) ->
     Lives = [{rand:uniform(100000) / 4, Read + rand:uniform(2 * Span) - Span}
              || _ <- lists:seq(1, rand:uniform(4)), Span <- [pick([7200, ?SKEW])]],
     Closes = [Close || {_Start, Close} <- Entries] ++ [Price || {Price, _Wall} <- Lives],
+    {End, _Close} = lists:last(Entries),
     Check = fun(State) ->
-                    series_ok(State, Closes) orelse error({bad_series, Entries, Lives, State})
+                    series_ok(State, Closes, End) orelse error({bad_series, Entries, Lives, State})
             end,
     Check(S1),
     lists:foldl(fun({Price, Wall}, {State, Now}) ->
                         {S2, _} = erx_quotes_core:tick(State, Now, 1.0),
                         {S3, _} = erx_quotes_core:outcome(S2, btc, {value, Price, none, Wall}, Now, 1.0),
                         Check(S3),
+                        ends_at(S3, Price) orelse error({not_live, Entries, Lives, S3}),
                         {S3, Now + 3600000}
                 end, {S1, 0}, Lives).
 
-series_ok(#{quotes := #{btc := #{series := [_ | _] = Series}}}, Closes) ->
+series_ok(#{quotes := #{btc := #{series := [_ | _] = Series}}}, Closes, End) ->
     length(Series) =< erx_quotes_core:buckets()
+        andalso element(1, lists:last(Series)) >= End
         andalso lists:all(fun({Start, Close}) ->
                                   Start rem erx_quotes_core:bucket() =:= 0 andalso lists:member(Close, Closes)
                           end, Series)
         andalso increasing([Start || {Start, _Close} <- Series]);
-series_ok(#{quotes := #{btc := #{series := none}}}, _Closes) ->
+series_ok(#{quotes := #{btc := #{series := none}}}, _Closes, _End) ->
     true;
-series_ok(_State, _Closes) ->
+series_ok(_State, _Closes, _End) ->
     false.
+
+ends_at(#{quotes := #{btc := #{series := none}}}, _Price) ->
+    true;
+ends_at(#{quotes := #{btc := #{series := Series}}}, Price) ->
+    element(2, lists:last(Series)) =:= Price.
 
 %% http
 
