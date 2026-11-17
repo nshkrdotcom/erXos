@@ -818,6 +818,8 @@ typedef struct erx_dom {
 	erx_dom_end_t	stop;		/* the stop the library made: FAULT with the
 					 * kind, or STOPPED; NONE until it stops
 					 * the space */
+	erx_fault_t	fault;		/* the fault record a FAULT stop came from;
+					 * zero for any other stop */
 	erx_dom_end_t	end;		/* classified end, once ERX_DOM_ENDED */
 	erx_fault_t	record;		/* the record that ended it */
 } erx_dom_t;
@@ -1133,7 +1135,12 @@ intensity the manifest gives, as a supervisor restarts a child; beyond it,
 a domain the manifest marks `required` ends the machine the same way, with
 the reason in the log, and any other is left down and shown so in the
 inspector, since a machine without its network is still a machine an
-operator can repair at the console.
+operator can repair at the console. Each end of a configured domain is one
+log line, and a fault's line names where it struck from the kernel's fault
+record: its program counter, cause and address, the address shown as
+unknown for a fault that names none. An asynchronous error is taken at a
+later return to user mode on whatever thread runs then, so its line says
+the location is presumed: that thread may not be its source.
 
 **The watchdog.** The kernel keeps one watchdog on the system domain's
 pet, configured by `erx.watchdog=P,D,B`, its period, its deadline after a
@@ -1895,7 +1902,10 @@ with the domain's id:
 
 1. **A fault record** (any kind but `exit`): the library stops the space
    with `erx_space_stop(space, status)` and notes the end as `FAULT` with
-   the fault's kind.
+   the fault's kind, keeping the record beside it; the first stop is the
+   one noted, and the report of a `FAULT` end carries that record, the
+   kernel's own account of where the fault struck, as `fault` in its
+   `Record`.
 2. **An exit record** arrives once no thread of the space runs or can run
    again ([design-kernel.md](design-kernel.md#threads-and-faults)). If its
    stopper's space is the system domain's, whose fault thread and NIFs alone

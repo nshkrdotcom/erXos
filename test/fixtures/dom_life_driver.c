@@ -495,6 +495,10 @@ action_case(const char *name, erx_status_t status,
 		printf(" teardown=%d,%u,%llu", action->teardown.kind,
 		    action->teardown.index,
 		    (unsigned long long)action->teardown.destroy[0].raw);
+	if (action->fault.kind != 0)
+		printf(" fault=%u,%#x,%#llx,%#llx", action->fault.kind,
+		    action->fault.cause, (unsigned long long)action->fault.addr,
+		    (unsigned long long)action->fault.pc);
 	printf("\n");
 }
 
@@ -509,6 +513,36 @@ record_case(const char *name, uint64_t label, uint32_t kind, uint64_t space,
 
 	erx_dom_record_step(&view, label, &record, &action);
 	action_case(name, ERX_OK, &action);
+}
+
+/*
+ * A fault record with a location stops 5, the stop noted as the library
+ * notes it; a second fault record changes nothing; then the exit record of
+ * that stop: its end carries the fault record the stop came from, location
+ * and all; an end the domain made itself carries none.
+ */
+static void
+fault_location_cases(void)
+{
+	const erx_fault_t fault = { .kind = ERX_FAULT_ASYNC_ERROR,
+	    .cause = 0xbf000002, .addr = 0, .pc = UINT64_C(0x40002cd4c4),
+	    .space = 77 };
+	const erx_fault_t again = { .kind = ERX_FAULT_MEMORY, .pc = 1,
+	    .space = 77 };
+	const erx_fault_t exit = { .kind = ERX_FAULT_EXIT,
+	    .space = SYSTEM_SPACE, .status = ERX_EXIT_CRASH };
+	erx_dom_action_t action;
+
+	domains[0].stop = (erx_dom_end_t){ .kind = ERX_DOM_END_NONE };
+	erx_dom_record_step(&view, 5, &fault, &action);
+	action_case("fault_located", ERX_OK, &action);
+	domains[0].stop = action.end;
+	domains[0].fault = action.fault;
+	erx_dom_record_step(&view, 5, &again, &action);
+	action_case("fault_located_again", ERX_OK, &action);
+	erx_dom_record_step(&view, 5, &exit, &action);
+	action_case("exit_fault_located", ERX_OK, &action);
+	record_case("exit_halt_after_fault", 5, ERX_FAULT_EXIT, 77, 2);
 }
 
 static void
@@ -624,6 +658,7 @@ end_cases(void)
 	    SYSTEM_SPACE, ERX_EXIT_CRASH);
 	record_case("exit_halt_first", 5, ERX_FAULT_EXIT, 77, 2);
 	record_case("exit_crash_first", 6, ERX_FAULT_EXIT, 77, ERX_EXIT_CRASH);
+	fault_location_cases();
 }
 
 /*

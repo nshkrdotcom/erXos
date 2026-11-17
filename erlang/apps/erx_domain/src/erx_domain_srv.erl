@@ -482,8 +482,8 @@ answer_create(Built, From) ->
 handle_cast(_Request, State) ->
     {noreply, State}.
 
-handle_info({domain_ended, Id, End, _Record}, State) ->
-    {noreply, ended(Id, End, State)};
+handle_info({domain_ended, Id, End, Record}, State) ->
+    {noreply, ended(Id, End, erx_domain_core:fault_where(End, Record), State)};
 handle_info({domain_ready, Ref, Id, Provides, Inspect}, State) ->
     {noreply, ready(Id, Ref, Provides, Inspect, State)};
 handle_info({mint_introduced, Tag, Result}, State) ->
@@ -1448,7 +1448,7 @@ stop(Id, #{lib := Lib}) ->
 %% such a connection's objects go once the peer has answered. The domain is retired at
 %% once, before its restart, and only the outer budget such a connection's child is
 %% carved from outlives it, as the library's remains, until that disconnect.
-ended(Id, End, #{lib := Lib, core := Core, links := Links} = State) ->
+ended(Id, End, Where, #{lib := Lib, core := Core, links := Links} = State) ->
     case erx_domain_core:ended(Id, End, slogan(Lib, Id, End), erlang:system_time(second), Core) of
         none ->
             State;
@@ -1459,7 +1459,7 @@ ended(Id, End, #{lib := Lib, core := Core, links := Links} = State) ->
             {Unlinked, Actions} = erx_domain_links:ended(Id, Info, Links),
             Told = unprovide(Origin, Id, perform(Actions, State#{core := Ended, links := Unlinked})),
             _ = retire(Lib, Id),
-            release(restart(Origin, Id, Info, waiter_ended(Id, Life, Info, Told)))
+            release(restart(Origin, Id, Info, Where, waiter_ended(Id, Life, Info, Told)))
     end.
 
 %% A crash's slogan, from its crash area, which goes at the retire after it.
@@ -1494,26 +1494,28 @@ disconnect(Lib, Connection) ->
     end.
 
 %% A configured domain's end is one log line (docs/design-system.md, "Boot failure" and
-%% the failure table): the domain's name and id, Info as in {domain_down, Id, Info}, and
-%% whether the service starts it again or, its restart intensity spent, leaves it down,
-%% which is a warning, since nothing starts it again.
-restart(request, _Id, _Info, State) ->
+%% the failure table): the domain's name and id, Info as in {domain_down, Id, Info}, for a
+%% fault where it struck (Where, erx_domain_core:fault_where/2), and whether the service
+%% starts it again or, its restart intensity spent, leaves it down, which is a warning,
+%% since nothing starts it again. The restart intensity bounds the lines.
+restart(request, _Id, _Info, _Where, State) ->
     State;
-restart({session, _Template}, _Id, _Info, State) ->
+restart({session, _Template}, _Id, _Info, _Where, State) ->
     State;
-restart({configured, Row}, Id, Info, #{core := Core, configured := Configured} = State) ->
+restart({configured, Row}, Id, Info, Where, #{core := Core, configured := Configured} = State) ->
     #{Row := #{name := Name, restarts := Restarts, restart_period_s := Period} = Entry} = Configured,
     case erx_domain_core:restart(Row, Restarts, Period, erlang:monotonic_time(second), Core) of
         {yes, Next} ->
-            log_end(notice, Name, Id, Info, "restarting it"),
+            log_end(notice, Name, Id, Info, Where, "restarting it"),
             start_configured(Entry, State#{core := Next});
         {no, Next} ->
-            log_end(warning, Name, Id, Info, "left down"),
+            log_end(warning, Name, Id, Info, Where, "left down"),
             State#{core := Next}
     end.
 
-log_end(Level, Name, Id, Info, Then) ->
-    logger:log(Level, "erx_domain: configured domain ~ts (domain ~b) ended, ~0p; ~s", [Name, Id, Info, Then]).
+log_end(Level, Name, Id, Info, Where, Then) ->
+    logger:log(Level, "erx_domain: configured domain ~ts (domain ~b) ended, ~0p~s; ~s",
+               [Name, Id, Info, Where, Then]).
 
 %% A configured domain's end, which the mint core hears before any restart: every
 %% operation of its incarnation is cancelled, and a session waiting for its grant is

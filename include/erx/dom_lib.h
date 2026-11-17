@@ -155,11 +155,16 @@ typedef struct erx_dom_created {
 	erx_dom_pid_t	domain_pid;	/* the one process that writes it */
 } erx_dom_created_t;
 
-/* An end the fault thread reports as {domain_ended, Id, End, Record}. */
+/*
+ * An end the fault thread reports as {domain_ended, Id, End, Record}:
+ * record is the exit record, and fault, for a FAULT end, the fault record
+ * of the stop it came from (zero for any other end).
+ */
 typedef struct erx_dom_report {
 	uint32_t	id;
 	erx_dom_end_t	end;
 	erx_fault_t	record;
+	erx_fault_t	fault;
 } erx_dom_report_t;
 
 /*

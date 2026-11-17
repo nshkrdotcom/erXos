@@ -1303,6 +1303,7 @@ erx_dom_plan_record(erx_dom_view_t *view, const erx_dom_plan_t *plan)
 	dom->grant = spec->grant;
 	dom->labels = connected ? ERX_DOM_SYSTEM_LABEL : 0;
 	dom->stop = (erx_dom_end_t){ .kind = ERX_DOM_END_NONE };
+	memset(&dom->fault, 0, sizeof(dom->fault));
 	dom->end = (erx_dom_end_t){ .kind = ERX_DOM_END_NONE };
 	memset(&dom->record, 0, sizeof(dom->record));
 	/* The sum above was checked, so its two terms cannot wrap. */

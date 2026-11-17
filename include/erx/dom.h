@@ -178,6 +178,9 @@ typedef struct erx_dom {
 	erx_dom_end_t	stop;		/* the stop the library made: FAULT with
 					 * the kind, or STOPPED; NONE until it
 					 * stops the space */
+	erx_fault_t	fault;		/* the fault record a FAULT stop came
+					 * from, the kernel's own; zero for any
+					 * other stop */
 	erx_dom_end_t	end;		/* classified end, once ERX_DOM_ENDED */
 	erx_fault_t	record;		/* the record that ended it */
 } erx_dom_t;
@@ -1175,6 +1178,9 @@ typedef struct erx_dom_action {
 	int64_t		status;		/* STOP: the stop's status */
 	erx_dom_end_t	end;		/* STOP: the noted stop; END: the end */
 	erx_dom_teardown_t teardown;	/* END: the destroy of its own budget */
+	erx_fault_t	fault;		/* STOP for a fault, and its FAULT END: the
+					 * fault record the stop came from; zero
+					 * otherwise */
 } erx_dom_action_t;
 
 /*

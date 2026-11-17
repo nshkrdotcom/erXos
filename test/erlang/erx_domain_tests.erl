@@ -129,6 +129,30 @@ life_test() ->
     [?assertEqual(Info, erx_domain_core:info(End))
      || {End, Info} <- [{{halt, 1}, {halt, 1}}, {{crash, 5}, crash}, {{fault, 2}, {fault, 2}}, {{stopped, 0}, stopped}]].
 
+%% A fault's end names where it struck, from the fault record of the stop that ended it,
+%% which the exit record carries under fault: its pc, cause (the syndrome on AArch64) and
+%% address. Only a memory, deleted or alignment fault names an address; any other reads
+%% unknown, never a number, and an asynchronous error's thread is only presumed its source.
+%% Every other end, and a fault whose record lacks the fault, says no more than the end does.
+fault_where_test() ->
+    Exit = #{kind => 9, cause => 0, addr => 0, pc => 0, thread => 0, space => 4, status => -1},
+    Memory = Exit#{fault => #{kind => 1, cause => 16#2, addr => 16#3e000400, pc => 16#40002cd4c4,
+                              thread => 0, space => 6, status => 0}},
+    Async = Exit#{fault => #{kind => 7, cause => 16#bf000002, addr => 0, pc => 16#40002cd4c4,
+                             thread => 0, space => 6, status => 0}},
+    ?assertEqual(" at pc 0x40002cd4c4, cause 0x2, addr 0x3e000400",
+                 lists:flatten(erx_domain_core:fault_where({fault, 1}, Memory))),
+    ?assertEqual(" presumed at pc 0x40002cd4c4, cause 0xbf000002, addr unknown",
+                 lists:flatten(erx_domain_core:fault_where({fault, 7}, Async))),
+    Undefined = Exit#{fault => #{kind => 3, cause => 16#2000000, addr => 0, pc => 16#40002cd4c4,
+                                 thread => 0, space => 6, status => 0}},
+    ?assertEqual(" at pc 0x40002cd4c4, cause 0x2000000, addr unknown",
+                 lists:flatten(erx_domain_core:fault_where({fault, 3}, Undefined))),
+    ?assertEqual("", lists:flatten(erx_domain_core:fault_where({fault, 7}, Exit))),
+    ?assertEqual("", lists:flatten(erx_domain_core:fault_where({fault, 7}, #{}))),
+    ?assertEqual("", lists:flatten(erx_domain_core:fault_where({halt, 1}, Async))),
+    ?assertEqual("", lists:flatten(erx_domain_core:fault_where({crash, 5}, Async))).
+
 %% A crash's death keeps the slogan the service read, or why it could not;
 %% no other end keeps one.
 crash_death_test() ->

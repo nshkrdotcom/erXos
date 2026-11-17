@@ -1033,9 +1033,12 @@ lib_stop(erx_dom_lib_t *lib, const erx_dom_action_t *action)
 	erx_status_t status;
 
 	dom->stop = action->end;
+	dom->fault = action->fault;
 	status = erx_space_stop(dom->space.raw, action->status);
-	if (status != ERX_OK)
+	if (status != ERX_OK) {
 		dom->stop = (erx_dom_end_t){ .kind = ERX_DOM_END_NONE };
+		dom->fault = (erx_fault_t){ 0 };
+	}
 	return (status);
 }
 
@@ -1455,7 +1458,8 @@ erx_dom_lib_record(erx_dom_lib_t *lib, uint64_t label, const erx_fault_t *record
 		dom->end = action.end;
 		dom->record = *record;
 		dom->state = ERX_DOM_ENDED;
-		*report = (erx_dom_report_t){ .id = dom->id, .end = action.end, .record = *record };
+		*report = (erx_dom_report_t){ .id = dom->id, .end = action.end, .record = *record,
+		    .fault = action.fault };
 		return (true);
 	case ERX_DOM_ACT_DROP:
 	default:
