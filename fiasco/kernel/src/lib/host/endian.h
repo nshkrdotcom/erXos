@@ -1,9 +1,19 @@
+/* Modified by erXos: defines nothing where the host's <sys/types.h> already does. */
 /* This are parts of endian.h from musl libc */
 
 #ifndef _ENDIAN_H
 #define _ENDIAN_H
 
 #include <inttypes.h>
+#include <sys/types.h>
+
+/*
+ * This file is found before the host's own <endian.h>. Where the host's
+ * <sys/types.h> already supplies the conversions (FreeBSD's, through
+ * <sys/_endian.h>, as macros, with __bswap16 and its kin), define nothing, or
+ * the definitions below would clash with them; macOS's supplies none.
+ */
+#ifndef htole64
 
 static __inline uint16_t __bswap16(uint16_t __x)
 {
@@ -65,5 +75,7 @@ static __inline uint64_t __bswap64(uint64_t __x)
 #define letoh64(x) __bswap64(x)
 #endif
 #endif
+
+#endif /* !htole64 */
 
 #endif
