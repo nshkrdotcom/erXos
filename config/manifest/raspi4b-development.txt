@@ -42,7 +42,7 @@
 # display device"): the root reads the framebuffer the firmware set up, prints its line
 # (docs/design-device-tree.md, "The lines") and writes the display domain its record, so a
 # screen on HDMI 0 shows the display's windows, the dashboard's on the card, which carries
-# examples/dashboard enabled (the apps row below). A boot whose firmware set up no
+# the kiosk enabled (the apps row below). A boot whose firmware set up no
 # framebuffer, QEMU's raspi4b model without the raspi4b suite's stand-in for the firmware
 # among them, gives the domain no framebuffer record, and the domain runs without a
 # screen. Its 40 MiB is QEMU virt's 24 MiB, which holds no screen image there, the gpu's

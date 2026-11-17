@@ -8,7 +8,7 @@ module Erx
   # of the build's tools, the board manifests or the host tests' build fixtures (where
   # ErlangBuild lists the applications tests compile) names a path under examples/ or an
   # example's application, a directory examples/*/lib/APP. The files of EXEMPT may: the
-  # harnesses the design names that pack an example through the SDK, and this file, which
+  # harnesses and the recipe the design names that pack an example through the SDK, and this file, which
   # names the directory to say what it scans for. Checks runs it over the tree's listing.
   module ExampleLists
     DIRECTORY = 'examples/'
@@ -16,6 +16,7 @@ module Erx
     # Each file that may name an example, with the design text that names it.
     EXEMPT = {
       'tools/lib/erx/example_lists.rb' => 'this check, which names the directory it scans for',
+      'tools/lib/erx/image_apps.rb' => "docs/design-packaging.md#the-apps-row, the card's kiosk (ImageApps.packed_kiosk)",
       'tools/lib/erx/kiosk.rb' => 'docs/design-packaging.md#verification-and-testing, the kiosk cell',
       'tools/lib/erx/qemu_suites/kiosk.rb' => 'docs/design-packaging.md#verification-and-testing, the kiosk cell'
     }.freeze

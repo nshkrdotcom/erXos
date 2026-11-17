@@ -8,6 +8,7 @@ require_relative 'build_kind'
 require_relative 'device_kinds'
 require_relative 'generated_abi'
 require_relative 'manifest_frontend'
+require_relative 'package_key'
 require_relative 'domain_startup'
 
 module Erx
@@ -1648,7 +1649,8 @@ module Erx
       # signer row holds an Ed25519 public key of signer_key_bytes, written hex: and its
       # digits, never quoted, and none is named development, the name the machine gives
       # the build's development package key (development_key_rows), so no source row
-      # stands in for it. The frontend keeps the rows' names unique.
+      # stands in for it, and none holds the published package key (PackageKey.published?), which
+      # is never a trust root. The frontend keeps the rows' names unique.
       def signer_rows
         size = @codec.constant('signer_key_bytes')
         records('signer').sort_by { |record| record.name.b }.map do |record|
@@ -1657,6 +1659,8 @@ module Erx
           record.line.fail!('key requires hexadecimal bytes, hex:...') if one(record, 'key').quoted
           key = text(record, 'key')
           invalid("signer #{record.name}'s key is not #{size} bytes", 19, 'signer.key') unless key.bytesize == size
+          invalid("signer #{record.name}'s key is the published package key, which nothing trusts", 19, 'signer.key') if
+            PackageKey.published?(key)
           { 'name' => record.name, 'key' => key.bytes }
         end
       end
@@ -1665,16 +1669,20 @@ module Erx
       # development manifest holds (docs/design-packaging.md, "The SDK"; Context admits
       # it only in a development build): none when the build context carries none or the
       # manifest has no apps row, whose machine takes no packages and so trusts no key, and
-      # refused when it is not an Ed25519 public key of signer_key_bytes. A build therefore
-      # hands every development check its key, whatever the manifest's mode.
+      # refused when it is not an Ed25519 public key of signer_key_bytes or is the published
+      # package key (PackageKey.published?). A build therefore hands every development check its
+      # key, whatever the manifest's mode.
       def development_key_rows
         key = @context.development_key
         return [] if key.nil? || @apps == NO_APPS
 
         size = @codec.constant('signer_key_bytes')
         invalid("the development package key is not #{size} bytes", 19, 'context.development_key') unless key.bytesize == size
+        invalid('the development package key is the published package key, which nothing trusts', 19,
+                'context.development_key') if PackageKey.published?(key)
         [{ 'key' => key.bytes }]
       end
+
 
       # The booted slot's system partition (docs/design-stopgap.md, "The booted slot"),
       # packed as its one system_image record from the erofs_image artifact the nameless

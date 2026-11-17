@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require 'fileutils'
 require 'openssl'
 require_relative 'abi_source'
 require_relative 'app_pack'
@@ -10,6 +11,7 @@ require_relative 'error'
 require_relative 'license_expression'
 require_relative 'manifest_frontend'
 require_relative 'oracle'
+require_relative 'package_key'
 require_relative 'pack_provenance'
 require_relative 'runtime'
 require_relative 'sdk'
@@ -38,7 +40,7 @@ module Erx
     ARTIFACT_KIND = 'package'
     DEVELOPMENT_SIGNER = 'development'
     # The kiosk: the app the Raspberry Pi 4's card carries, enabled (ProductionImage#card_apps),
-    # and the kiosk suite boots on QEMU virt (Kiosk).
+    # and the kiosk suite boots on QEMU virt (Kiosk), both as packed_kiosk packs it.
     KIOSK = 'examples/dashboard'
     KEY_BYTES = 32
     # The most bytes of a signer's key file; a PEM Ed25519 public key takes about 115.
@@ -103,6 +105,10 @@ module Erx
       end
     end
 
+    # The kiosk as packed_kiosk packs it: its Package, the copy of KIOSK it was packed
+    # from, and the AppPack::Sdk it was packed over.
+    PackedKiosk = Data.define(:package, :app, :sdk)
+
     module_function
 
     # The packages of sources, each an app directory, which AppPack.pack packs with sdk
@@ -133,6 +139,23 @@ module Erx
                       signer: signer, runner: runner, root: root, compiler: compiler)
     end
 
+    # The kiosk (KIOSK) of the tree at root as the card and the kiosk suite take it, a
+    # PackedKiosk, in the empty directory work: a copy of KIOSK at work/app, so the
+    # packer's ebin/ never lands in the source tree, packed over the SDK the tree exports
+    # under work/sdk (exported_sdk) into work/packages, and sealed by the published package
+    # key (PackageKey.published), so no builder's own key enters the bytes: every builder
+    # of one clean tree packs the same package (the copy takes KIOSK as it lies on disk).
+    def packed_kiosk(work, root:, runner:, compiler:)
+      raise Error, "#{work} is not an empty directory" unless Dir.exist?(work) && Dir.empty?(work)
+
+      app = File.join(work, 'app')
+      FileUtils.cp_r(File.join(root, KIOSK), app)
+      sdk = exported_sdk(FileUtils.mkdir_p(File.join(work, 'sdk')).first, root: root, runner: runner)
+      package, = gather([app], into: FileUtils.mkdir_p(File.join(work, 'packages')).first, sdk: sdk,
+                               signer: PackageKey.published, runner: runner, root: root, compiler: compiler)
+      PackedKiosk.new(package: package, app: app, sdk: sdk)
+    end
+
     # The SDK the tree at root exports with stock's compiler into directory/sdk, as the
     # AppPack::Sdk the packer runs from.
     def exported_sdk(directory, root:, runner:)
@@ -152,7 +175,8 @@ module Erx
     # The signer whose public key is the PEM file at path, named by the file's name
     # without its extension; a private key is refused, so none is read for a row, and
     # no passphrase is asked for. development is the builder's own key's name, which only
-    # the build gives.
+    # the build gives, and the published package key, whose private half anyone holds,
+    # is trusted by nothing (PackageKey.published).
     def signer(path)
       name = File.basename(path, '.*')
       raise Error, "--signer #{path}: #{DEVELOPMENT_SIGNER} names the builder's own key" if name == DEVELOPMENT_SIGNER
@@ -162,6 +186,9 @@ module Erx
 
       key = OpenSSL::PKey.read(pem, '')
       raise Error, "--signer #{path} is not an Ed25519 public key" unless key.oid == 'ED25519'
+
+      raise Error, "--signer #{path} is the published package key, which nothing trusts" if
+        PackageKey.published?(key.raw_public_key)
 
       Signer.new(name: name, key: key.raw_public_key)
     rescue OpenSSL::PKey::PKeyError
