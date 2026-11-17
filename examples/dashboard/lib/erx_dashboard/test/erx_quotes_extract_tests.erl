@@ -115,12 +115,12 @@ history_test() ->
     ?assertEqual(97, length(Entries)),
     ?assertEqual({?WALL - 86400, 64000.5}, hd(Entries)),
     ?assertEqual({?WALL, 64096.5}, lists:last(Entries)),
-    %% The bounds: 200 entries, times two days either side of the clock,
-    %% and every other item a string or an integer.
-    Most = [{?WALL - 90000 + I * 900, <<"1.0">>} || I <- lists:seq(0, 199)],
+    %% The bounds: every bucket from two days before the clock to the one
+    %% after its own, 194 entries, and every other item a string or an integer.
+    Most = [{?WALL - 172800 + I * 900, <<"1.0">>} || I <- lists:seq(0, 193)],
     ?assertMatch({ok, [_ | _]}, history(ohlc(?PAIR, Most))),
-    ?assertMatch({ok, [{?WALL - 172800, 1.0}, {?WALL + 172800, 2.0}]},
-                 history(ohlc(?PAIR, [{?WALL - 172800, <<"1.0">>}, {?WALL + 172800, <<"2.0">>}]))),
+    ?assertMatch({ok, [{?WALL - 172800, 1.0}, {?WALL + 900, 2.0}]},
+                 history(ohlc(?PAIR, [{?WALL - 172800, <<"1.0">>}, {?WALL + 900, <<"2.0">>}]))),
     ?assertMatch({ok, [{?WALL, 1.0}]},
                  history(raw(?PAIR, [[?WALL, 1, 2, 3, <<"1.0">>, 4, <<"5">>, 6]]))).
 
@@ -143,6 +143,7 @@ history_refusals_test() ->
            {repeated, ohlc(?PAIR, [{?WALL, <<"1.0">>}, {?WALL, <<"1.0">>}])},
            {off_step, ohlc(?PAIR, [{?WALL + 60, <<"1.0">>}])},
            {too_old, ohlc(?PAIR, [{?WALL - 172800 - 900, <<"1.0">>}])},
+           {future, ohlc(?PAIR, [{?WALL + 1800, <<"1.0">>}])},
            {too_new, ohlc(?PAIR, [{?WALL + 172800 + 900, <<"1.0">>}])},
            {no_entries, ohlc(?PAIR, [])},
            {too_many, ohlc(?PAIR, [{?WALL - 90000 + I * 900, <<"1.0">>} || I <- lists:seq(0, 200)])},

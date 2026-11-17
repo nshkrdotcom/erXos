@@ -36,8 +36,10 @@ quote's `series`, oldest first,
 the last buckets/0 of them. A live price joins the series by the
 wall-clock second it was read at: in the series' last bucket it replaces
 the close, in a later one it is appended after the skipped buckets, each
-repeating the last close, and in an earlier one it is left out. Until a
-history arrives the series is `none` and the screen draws the samples.
+repeating the last close, unless it skipped more than an hour of them,
+which makes the series `none` until the next history; in an earlier one
+it is left out. Until a history arrives the series is `none` and the
+screen draws the samples.
 """.
 
 -export([new/2, tick/3, outcome/5, history/3, history_failed/5, history_url/2, samples/0,
@@ -78,6 +80,9 @@ history arrives the series is `none` and the screen draws the samples.
 -define(BUCKETS, 96).
 %% Monotonic milliseconds between two history requests of a quote.
 -define(HISTORY_MS, 3600000).
+%% The most buckets a live price may skip and still join the series: an
+%% hour. A longer gap on our side drops the series until the next history.
+-define(MAX_GAP, 4).
 
 -doc "The most prices a quote keeps in its `samples`.".
 -spec samples() -> pos_integer().
@@ -165,7 +170,8 @@ the last buckets/0.
 """.
 -spec history(state(), atom(), [point(), ...]) -> {state(), [action()]}.
 history(State, Quote, Entries) ->
-    Series = lists:foldl(fun({Start, Close}, Acc) -> join(Acc, Start, Close) end, [], Entries),
+    Series = lists:foldl(fun({Start, Close}, Acc) -> join(Acc, Start, Close, infinity) end,
+                         [], Entries),
     {update_quote(Quote, #{series => Series}, State), [render]}.
 
 -doc """
@@ -209,7 +215,7 @@ answered(Quote, Index, _First, {value, Price, Change, Wall}, State, Now, _Jitter
     #{samples := Samples, series := Series} = maps:get(Quote, maps:get(quotes, State)),
     {update_quote(Quote, #{value => {Price, Change, Source, Now},
                            samples => last(Samples ++ [Price]),
-                           series => join(Series, Wall, Price), failure => none,
+                           series => join(Series, Wall, Price, ?MAX_GAP), failure => none,
                            failed_rounds => 0, next_at => Now + Period,
                            trying => none}, State),
      [render]};
@@ -269,20 +275,26 @@ last(Samples) -> Samples.
 
 %% `Series` with `Price`, read at the wall-clock second `Wall`, joined:
 %% in the series' last bucket it replaces the close; in a later one it
-%% is appended after the buckets skipped, each repeating the last close;
+%% is appended after the buckets skipped, each repeating the last close,
+%% unless more than `MaxGap` were skipped, which makes the series `none`;
 %% in an earlier one, as after the clock stepped back, it is left out.
+%% A history's entries join with a `MaxGap` of `infinity`, since a bucket
+%% the source left out had no trades; a live price with ?MAX_GAP, since
+%% a longer gap on our side is time nothing was known about.
 %% Only the last ?BUCKETS are kept, so at most that many skipped buckets
 %% are made, the ones just before the new bucket. A series of `none`
 %% stays `none`: only a history starts one.
-join(none, _Wall, _Price) ->
+join(none, _Wall, _Price, _MaxGap) ->
     none;
-join([], Wall, Price) ->
+join([], Wall, Price, _MaxGap) ->
     [{start_of(Wall), Price}];
-join(Series, Wall, Price) ->
+join(Series, Wall, Price, MaxGap) ->
     {Last, Close} = lists:last(Series),
     case start_of(Wall) of
         Last ->
             lists:droplast(Series) ++ [{Last, Price}];
+        Start when (Start - Last) div ?BUCKET - 1 > MaxGap ->
+            none;
         Start when Start > Last ->
             From = max(Last + ?BUCKET, Start - (?BUCKETS - 1) * ?BUCKET),
             Skipped = [{Time, Close} || Time <- lists:seq(From, Start - ?BUCKET, ?BUCKET)],

@@ -21,12 +21,12 @@ The fuzz target of the live quotes' readers of untrusted input
   at a clock near a random bucket: random bytes and the hostile bodies
   above; generated days of OHLC entries with a field mutated, truncated
   or moved to a bound. Nothing raises; every accepted list holds 1 to
-  200 entries on bucket steps, strictly increasing, within two days of
-  the clock, each close a float above 0 and below 10^15; an unmutated
+  200 entries on bucket steps, strictly increasing, from two days
+  before the clock to the bucket after its own, each close a float above 0 and below 10^15; an unmutated
   day gives the entries it was built with. Each accepted list becomes
   Bitcoin's series (erx_quotes_core:history/3) and is joined with live
   prices read at random wall-clock seconds around it: the series stays
-  1 to 96 points on bucket steps, strictly increasing, and holds no
+  `none` or 1 to 96 points on bucket steps, strictly increasing, and holds no
   close that was neither an entry's nor a live price.
 
 None of them may make an atom. The seed comes from make check-fuzz.
@@ -197,7 +197,9 @@ entries_ok(Entries, Read) ->
     Entries =/= [] andalso length(Entries) =< 200
         andalso lists:all(fun({Time, Close}) ->
                                   is_integer(Time) andalso Time rem erx_quotes_core:bucket() =:= 0
-                                      andalso abs(Time - Read) =< ?SKEW andalso price_ok(Close)
+                                      andalso Time >= Read - ?SKEW
+                                      andalso Time - erx_quotes_core:bucket() =< Read
+                                      andalso price_ok(Close)
                           end, Entries)
         andalso increasing([Time || {Time, _Close} <- Entries]).
 
@@ -208,13 +210,15 @@ increasing([A, B | Rest]) -> A < B andalso increasing([B | Rest]);
 increasing(_Short) -> true.
 
 %% `Entries` made Bitcoin's series, then joined with up to four live
-%% prices read at random seconds within four days of `Read`, a round
-%% each, an hour apart; the series is checked after every step.
+%% prices read at random seconds, within two hours of `Read` or within
+%% two days, a round each, an hour apart; the series is checked after
+%% every step, and may have fallen back to `none` after a live price.
 join_round(Table, Entries, Read) ->
     {S0, _} = erx_quotes_core:tick(erx_quotes_core:new(Table, 0), 0, 1.0),
     {S1, _} = erx_quotes_core:history(S0, btc, Entries),
-    Lives = [{rand:uniform(100000) / 4, Read + rand:uniform(4 * ?SKEW) - 2 * ?SKEW}
-             || _ <- lists:seq(1, rand:uniform(4))],
+    #{quotes := #{btc := #{series := [_ | _]}}} = S1,
+    Lives = [{rand:uniform(100000) / 4, Read + rand:uniform(2 * Span) - Span}
+             || _ <- lists:seq(1, rand:uniform(4)), Span <- [pick([7200, ?SKEW])]],
     Closes = [Close || {_Start, Close} <- Entries] ++ [Price || {Price, _Wall} <- Lives],
     Check = fun(State) ->
                     series_ok(State, Closes) orelse error({bad_series, Entries, Lives, State})
@@ -233,6 +237,8 @@ series_ok(#{quotes := #{btc := #{series := [_ | _] = Series}}}, Closes) ->
                                   Start rem erx_quotes_core:bucket() =:= 0 andalso lists:member(Close, Closes)
                           end, Series)
         andalso increasing([Start || {Start, _Close} <- Series]);
+series_ok(#{quotes := #{btc := #{series := none}}}, _Closes) ->
+    true;
 series_ok(_State, _Closes) ->
     false.
 

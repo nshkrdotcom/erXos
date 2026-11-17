@@ -389,9 +389,9 @@ join_test() ->
     ?assertEqual(on_buckets([9.0, 9.0, 8.0], ?WALL), series(S6)).
 
 %% The series keeps the last erx_quotes_core:buckets() points, a day of
-%% 15 min buckets. Seeded failure: filling a gap of ten days point by
-%% point before trimming makes ~960 points; filling from the gap's start
-%% gives times that do not end at the new bucket.
+%% 15 min buckets, and a history's own gaps are filled whatever their
+%% length. Seeded failure: dropping the trim of a join keeps all 97
+%% entries of the day.
 trim_test() ->
     Max = erx_quotes_core:buckets(),
     ?assertEqual(96, Max),
@@ -402,9 +402,28 @@ trim_test() ->
     ?assertEqual(tl(Day), series(S1)),
     S2 = live(S1, 7.0, ?WALL + ?B, ?T0),
     ?assertEqual(tl(tl(Day)) ++ [{?WALL + ?B, 7.0}], series(S2)),
-    Later = ?WALL + 10 * 86400,
-    S3 = live(S2, 8.0, Later + 5, ?T0 + 10000),
-    ?assertEqual(on_buckets(lists:duplicate(Max - 1, 7.0) ++ [8.0], Later), series(S3)).
+    %% A history's own gaps are filled whatever their length.
+    {S3, _} = erx_quotes_core:history(S2, h, [{?WALL - 10 * ?B, 9.0}, {?WALL, 8.0}]),
+    ?assertEqual(on_buckets(lists:duplicate(10, 9.0) ++ [8.0], ?WALL), series(S3)).
+
+%% A gap on our side of up to 4 buckets, an hour, repeats the last close
+%% and keeps `24 h`; a longer one drops the series back to `live` until
+%% the next history, so no hour the source did not give is drawn as
+%% flat. Seeded failure: filling every gap shows `24 h` across five
+%% invented buckets.
+gap_test() ->
+    {S0, _} = history_start(),
+    {S1, _} = erx_quotes_core:history(S0, h, on_buckets([1.0, 2.0], ?WALL)),
+    S2 = live(S1, 3.0, ?WALL + 5 * ?B, ?T0),
+    ?assertEqual(on_buckets([1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0], ?WALL + 5 * ?B), series(S2)),
+    ?assertMatch([#{status := <<"K, 24 h - 0 s">>}], quotes(S2, ?T0)),
+    S3 = live(S2, 4.0, ?WALL + 11 * ?B, ?T0 + 10000),
+    ?assertEqual(none, series(S3)),
+    ?assertMatch([#{status := <<"K, live - 0 s">>}], quotes(S3, ?T0 + 10000)),
+    S4 = live(S3, 5.0, ?WALL + 12 * ?B, ?T0 + 20000),
+    ?assertEqual(none, series(S4)),
+    {S5, _} = erx_quotes_core:history(S4, h, on_buckets([6.0], ?WALL + 12 * ?B)),
+    ?assertMatch([#{status := <<"K, 24 h - 0 s">>}], quotes(S5, ?T0 + 20000)).
 
 %% Without a history the card's graph is its live samples and its status
 %% says `live`; with one, the graph is the series' closes and the status

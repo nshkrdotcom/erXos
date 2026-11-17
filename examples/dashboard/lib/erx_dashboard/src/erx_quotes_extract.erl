@@ -20,9 +20,11 @@ computed from it must lie in (-100, 1000]. A history's answer has an
 empty `error` and, at the row's path, 1 to 200 entries of exactly 8
 items, `[time, open, high, low, close, vwap, volume, count]`: each time
 an integer on erx_quotes_core:bucket/0 steps, later than the one
-before and within two days of the clock, each close a price given as a
-decimal string, each other item a string or an integer. Every check
-throws `bad_data`, which value/2 and history/3 each catch once.
+before, at most two days before the clock and no later than the bucket
+after the clock's (`Time - Step =< Wall`, since `Time` is on a step),
+each close a price given as a decimal string, each other item a
+string or an integer. Every check throws `bad_data`, which value/2 and
+history/3 each catch once.
 """.
 
 -export([value/2, history/3]).
@@ -83,7 +85,7 @@ entries(Answer, Path, Wall) ->
 %% An entry after the one that started at `Previous` (`none` for the
 %% first), destructured after its length is matched.
 entry([Time, _Open, _High, _Low, Close, _Vwap, _Volume, _Count] = Items, Previous, Step, Wall)
-  when is_integer(Time), Time rem Step =:= 0, abs(Time - Wall) =< ?MAX_SKEW,
+  when is_integer(Time), Time rem Step =:= 0, Time >= Wall - ?MAX_SKEW, Time - Step =< Wall,
        (Previous =:= none orelse Time > Previous), is_binary(Close) ->
     lists:all(fun(Item) -> is_binary(Item) orelse is_integer(Item) end, Items)
         orelse throw(bad_data),
