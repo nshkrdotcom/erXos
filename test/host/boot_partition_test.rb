@@ -23,7 +23,8 @@ class BootPartitionTest < Minitest::Test
   def test_config_txt_comes_from_the_record
     assert_equal %w[arm_64bit=1 kernel=kernel8.img kernel_address=0x200000 armstub=bl31.bin enable_uart=1
                     init_uart_clock=48000000 total_mem=1024 gpu_mem=76 framebuffer_depth=32
-                    framebuffer_ignore_alpha=1 max_framebuffers=1 core_freq=500 core_freq_fixed=1
+                    framebuffer_ignore_alpha=1 max_framebuffers=1 disable_overscan=1
+                    core_freq=500 core_freq_fixed=1
                     uart_2ndstage=1 enable_jtag_gpio=1 dtoverlay=uart3
                     gpio=2-3=a0,pn gpio=4=a4,pn gpio=5=a4,pu gpio=7-11=a0,pn gpio=14-15=a5,pn],
                  settings('development')

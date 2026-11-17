@@ -64,14 +64,18 @@ Linux 6.18's `arch/arm/boot/dts/broadcom/` has a `simple-framebuffer`
 node, so a framebuffer node can come only from the firmware, and whether
 it adds one is unverified. Raspberry Pi's legacy video options for
 `config.txt` name several framebuffer options, and the card's `config.txt`
-sets three of them. `framebuffer_depth=32` asks for 32 bits per pixel
+sets four of them. `framebuffer_depth=32` asks for 32 bits per pixel
 instead of the default 16; at 32 the source says it "may need to be used
 in conjunction with" `framebuffer_ignore_alpha=1`, which disables the
 alpha channel (`legacy_config_txt/video.adoc:1696-1722`).
 `max_framebuffers=1` allows one framebuffer, where the Raspberry Pi 4
 default is 2, "as it has two HDMI ports"; a framebuffer is made only for
 a display the firmware detects (`:1749-1755`), so the root sees at most
-one `simple-framebuffer` node. Whether those options still apply to the
+one `simple-framebuffer` node. `disable_overscan=1` turns off the
+firmware's default overscan, 48 pixels on each edge for an HD CEA mode
+(`:1648-1652`), which the framebuffer's size leaves out (`:1684-1690`):
+without it a 1920x1080 screen gets a 1824x984 framebuffer inside a black
+border, and with it the framebuffer fills the screen. Whether those options still apply to the
 pinned firmware, which format name it writes for 32 bits (the root drives
 `x8r8g8b8` if the alpha byte is unused and the order is RGB, and the
 other 32-bit names the binding lists as well), which display gets the one

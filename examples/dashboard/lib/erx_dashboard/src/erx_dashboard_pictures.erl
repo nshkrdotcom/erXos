@@ -12,7 +12,8 @@ ground/1 is the screen's ground, the Dusk look: a diagonal gradient from
 indigo at the top left through plum to petrol at the bottom right, with
 a soft plum glow behind the clock. erx-lvgl does not scale a picture and
 the dashboard does not learn its window's size, so the ground is drawn
-at GROUND_WIDTH by GROUND_HEIGHT, the Raspberry Pi 4's screen, and the
+at GROUND_WIDTH by GROUND_HEIGHT, a 1920x1080 screen, which the Raspberry
+Pi 4's card drives whole (its config.txt turns overscan off), and the
 renderer centres it in the window and clips it: a smaller screen, QEMU's
 1280x800, shows its middle. The glow is placed by its offset from the
 centre, which the view's layout keeps the same at every width
@@ -22,8 +23,8 @@ Every colour of the ground lies on one path, indigo to plum to petrol,
 and the glow pulls a pixel's place on that path towards plum rather than
 adding a second colour; so the picture has one palette of at most 256
 colours, the path's colours in order, and is an indexed PNG of a byte a
-pixel whose rows deflate to about 41 KB. A truecolour PNG of the same
-ground is over the 48 KiB cap.
+pixel that stays within the 48 KiB cap, with little room to spare; a
+truecolour PNG of the same ground is over it.
 
 rule/1 is a hairline: one row of white at 12 percent, which separates the
 quotes panel's blocks in place of a card's edge.
@@ -31,8 +32,8 @@ quotes panel's blocks in place of a card's edge.
 
 -export([ground/1, rule/1, rgba/3]).
 
--define(GROUND_WIDTH, 1824).
--define(GROUND_HEIGHT, 984).
+-define(GROUND_WIDTH, 1920).
+-define(GROUND_HEIGHT, 1080).
 %% The glow's radius, in pixels, and how far it pulls towards plum at its
 %% centre, as a fraction of the way.
 -define(GLOW_RADIUS, 560).

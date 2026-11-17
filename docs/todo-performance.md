@@ -1179,10 +1179,10 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
 * **[Low] The glyph step on every erx-lvgl build** (`Glyphs.ensure`, [design-desktop-programs.md](design-desktop-programs.md#type)): each build of erx-lvgl, host or target, rasterises every role again and compares the result with `build/glyphs` before make runs, where `Generated` checks a stamp. Settled by timing `Glyphs.ensure` on an unchanged tree against a build of erx-lvgl that compiles nothing; a stamp of the theme, the font files, the generators and erx-raster's build record is the fix if it shows.
 
 * **The dashboard's ground is decoded on every redraw.** `examples/dashboard`'s
-  ground is a 1824x984 indexed PNG under the whole window, and erx-lvgl keeps
+  ground is a 1920x1080 indexed PNG under the whole window, and erx-lvgl keeps
   LVGL's image caches off (`display/lvgl/lv_conf.h`), so every invalidated
   area, the dial once a minute and the quotes on each board, inflates the
-  whole picture and expands it to about 7.2 MB of ARGB before drawing.
+  whole picture and expands it to about 8.3 MB of ARGB before drawing.
   Drawing the ground also takes `erx_dashboard:init/1` about 115 ms on the
   host under the JIT, unmeasured on the Pi. Measure a redraw's time and peak
   memory on the Pi; the fixes are a one-entry image cache in erx-lvgl, or a
