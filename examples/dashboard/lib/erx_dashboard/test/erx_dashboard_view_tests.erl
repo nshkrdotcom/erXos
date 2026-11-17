@@ -91,7 +91,7 @@ board() ->
                    samples => []}]}.
 
 model(Board) ->
-    #{time => ?TIME, board => Board, dial => erx_dashboard_clock:png(?TIME)}.
+    #{time => ?TIME, board => Board, dial => erx_dashboard_clock:png(light, ?TIME)}.
 
 %% Each label's text, depth first.
 texts({label, #{text := Text}, []}) -> [Text];
@@ -116,11 +116,11 @@ graph_test() ->
 %% with the minute. Seeded failure: a dial that ignores the minute
 %% fails the last assertion.
 clock_picture_test() ->
-    Png = erx_dashboard_clock:png(?TIME),
+    Png = erx_dashboard_clock:png(light, ?TIME),
     ?assertMatch(<<137, "PNG", 13, 10, 26, 10, _/binary>>, Png),
     ?assert(byte_size(Png) =< 49152),
     {Date, {Hour, Minute, Second}} = ?TIME,
-    ?assertNotEqual(Png, erx_dashboard_clock:png({Date, {Hour, Minute + 1, Second}})).
+    ?assertNotEqual(Png, erx_dashboard_clock:png(light, {Date, {Hour, Minute + 1, Second}})).
 
 %% Each graph's properties, depth first.
 graphs({graph, Props, []}) -> [Props];

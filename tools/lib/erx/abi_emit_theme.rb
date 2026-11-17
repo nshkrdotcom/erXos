@@ -14,8 +14,8 @@ module Erx
     # file for each side that draws: erx_theme, the Erlang module both sides
     # of the display take; erx/theme.h, the C header erx-lvgl builds its role
     # styles from; and theme.ts, the web client's CSS custom properties. Each
-    # writes every length in pixels and every colour in its target's own
-    # form, so no consumer converts one; the contrast rules are checked by
+    # writes every length in pixels and every colour of every palette in its
+    # target's own form, so no consumer converts one; the contrast rules are checked by
     # the reader and emitted nowhere.
     module ThemeEmitter
       ERLANG_PATH = 'erlang/apps/erx_memdraw/src/erx_theme.erl'
@@ -49,14 +49,16 @@ end
           The desktop's theme (docs/design-desktop-programs.md, "The theme: one
           declaration"): constants, read by both sides of the display. Lengths
           are pixels, and colours opaque RGBA32, 16#RRGGBBAA, as erx_memdraw
-          takes them. A name the theme does not declare fails with
-          function_clause.
+          takes them, each in the palette its display chose (erx_win:palette/1).
+          A name the theme does not declare fails with function_clause.
           """.
 
-          -export([version/0, unit/0, hairline/0, colors/0, color/1, roles/0, role/1,
+          -export([version/0, unit/0, hairline/0, palettes/0, colors/0, color/2, roles/0, role/1,
                    space/1, radius/1, shadow/1]).
-          -export_type([color_name/0, role_name/0, role/0, space_name/0, radius_name/0,
+          -export_type([palette/0, color_name/0, role_name/0, role/0, space_name/0, radius_name/0,
                         shadow_name/0, shadow/0]).
+
+          -type palette() :: #{theme.palettes.map { |name| atom(name) }.join(' | ')}.
 
           #{erlang_union('color_name', theme.colors)}
           #{erlang_union('role_name', theme.roles)}
@@ -82,13 +84,17 @@ end
           -spec hairline() -> pos_integer().
           hairline() -> #{theme.hairline}.
 
+          -doc "Every palette, the one a display that names none takes first.".
+          -spec palettes() -> [palette()].
+          palettes() -> [#{theme.palettes.map { |name| atom(name) }.join(', ')}].
+
           -doc "Every colour's name, in name order.".
           -spec colors() -> [color_name()].
           #{erlang_names('colors', theme.colors)}
 
-          -doc "A colour, as RGBA32.".
-          -spec color(color_name()) -> 0..16#ffffffff.
-          #{erlang_clauses('color', theme.colors.transform_values { |rgb| format('16#%06xff', rgb) })}
+          -doc "A colour in a palette, as RGBA32.".
+          -spec color(palette(), color_name()) -> 0..16#ffffffff.
+          #{erlang_color_clauses(theme)}
           -doc "Every role's name, in name order.".
           -spec roles() -> [role_name()].
           #{erlang_names('roles', theme.roles)}
@@ -111,13 +117,18 @@ end
       def c_header(theme)
         defines = [['ERX_THEME_VERSION', "#{theme.version}u"], ['ERX_THEME_UNIT', theme.unit],
                    ['ERX_THEME_HAIRLINE', theme.hairline]]
-        colors = theme.colors.map { |name, rgb| ["ERX_THEME_COLOR_#{name.upcase}", format('0x%06xu', rgb)] }
+        palettes = theme.palettes.map do |palette|
+          values = theme.palette(palette).map { |name, rgb| ".#{name} = #{format('0x%06xu', rgb)}" }
+          ["ERX_THEME_PALETTE_#{palette.upcase}", "{ \\\n\t#{values.join(", \\\n\t")} }"]
+        end
+        members = theme.colors.keys.map { |name| "\tuint32_t\t#{name};\n" }.join
+        palette_list = theme.palettes.map { |name| " \\\n\tX(#{name}, #{name.upcase})" }.join
         roles = theme.roles.values.flat_map do |role|
           prefix = "ERX_THEME_ROLE_#{role.name.upcase}"
           [["#{prefix}_SIZE", role.size], ["#{prefix}_LINE", role.line],
            ["#{prefix}_WEIGHT", Theme::WEIGHTS.fetch(role.weight)],
            ["#{prefix}_TABULAR", role.figures == 'tabular' ? 1 : 0],
-           ["#{prefix}_COLOR", "ERX_THEME_COLOR_#{role.color.upcase}"]]
+           ["#{prefix}_COLOR", role.color]]
         end
         spaces = theme.spaces.keys.map { |name| ["ERX_THEME_SPACE_#{name.upcase}", theme.space_pixels(name)] }
         radii = theme.radii.map { |name, pixels| ["ERX_THEME_RADIUS_#{name.upcase}", pixels] }
@@ -138,15 +149,29 @@ end
            * The desktop's theme (docs/design-desktop-programs.md, "The theme: one
            * declaration") as C constants, from which erx-lvgl builds one style
            * per role. Lengths are pixels; a colour is 0xRRGGBB, as lv_color_hex
-           * takes it; a role's weight is its CSS numeric weight and its TABULAR
-           * 1 when its figures are tabular.
+           * takes it; a role's weight is its CSS numeric weight, its TABULAR 1
+           * when its figures are tabular and its COLOR the member of
+           * erx_theme_palette_t it is drawn in.
            */
 
           #ifndef ERX_THEME_H
           #define ERX_THEME_H
 
+          #include <stdint.h>
+
           #{block.call(defines)}
-          #{block.call(colors)}
+          /* A palette: every colour of the theme, by name. */
+          typedef struct erx_theme_palette {
+          #{members}} erx_theme_palette_t;
+
+          /*
+           * ERX_THEME_PALETTES(X) applies X(name, NAME) to every palette, the one a
+           * display that names none takes first; ERX_THEME_PALETTE_NAME is its
+           * initializer.
+           */
+          #define ERX_THEME_PALETTES(X)#{palette_list}
+
+          #{block.call(palettes)}
           /* ERX_THEME_ROLES(X) applies X(name, NAME) to every role, in name order. */
           #define ERX_THEME_ROLES(X)#{role_list}
 
@@ -160,7 +185,6 @@ end
 
       def typescript(theme)
         properties = [['--erx-unit', px(theme.unit)], ['--erx-hairline', px(theme.hairline)]]
-        properties += theme.colors.map { |name, rgb| ["--erx-color-#{css(name)}", format('#%06x', rgb)] }
         theme.roles.each_value do |role|
           prefix = "--erx-role-#{css(role.name)}"
           properties += [["#{prefix}-font-size", px(role.size)], ["#{prefix}-line-height", px(role.line)],
@@ -174,11 +198,16 @@ end
           ["--erx-shadow-#{css(shadow.name)}",
            "#{px(shadow.x)} #{px(shadow.y)} #{px(shadow.blur)} rgb(0 0 0 / #{shadow.percent}%)"]
         end
-        entries = properties.sort.map { |name, value| "  [#{TypeScript.string(name)}, #{TypeScript.string(value)}],\n" }
+        entries = ts_entries(properties, indent: '  ')
+        palettes = theme.palettes.map do |palette|
+          colors = theme.palette(palette).map { |name, rgb| ["--erx-color-#{css(name)}", format('#%06x', rgb)] }
+          "  [#{TypeScript.string(palette)}, new Map([\n#{ts_entries(colors, indent: '    ').join}  ])],\n"
+        end
         TypeScript.header(source: 'abi/theme.txt', summary: <<~SUMMARY) + <<~TS
           The desktop's theme (docs/design-desktop-programs.md, "The theme: one
           declaration") as CSS custom properties, by name, in name order. Lengths
-          are CSS pixels; a role's colour refers to its colour's property.
+          are CSS pixels; a role's colour refers to its colour's property, which
+          the palette its display chose gives.
         SUMMARY
 
           /** The theme's version. */
@@ -188,12 +217,29 @@ end
           export const THEME_PROPERTIES: ReadonlyMap<string, string> = new Map([
           #{entries.join.chomp}
           ]);
+
+          /** Each palette's colour properties, the one a display that names none takes first. */
+          export const THEME_PALETTES: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map([
+          #{palettes.join.chomp}
+          ]);
         TS
       end
 
 # One clause a name: FUNCTION(Name) -> Value.
 def erlang_clauses(function, values)
   values.map { |name, value| "#{function}(#{atom(name)}) -> #{value}" }.join(";\n") + ".\n"
+end
+
+# One clause a palette and colour: color(Palette, Name) -> RGBA32.
+def erlang_color_clauses(theme)
+  theme.palettes.flat_map do |palette|
+    theme.palette(palette).map { |name, rgb| "color(#{atom(palette)}, #{atom(name)}) -> #{format('16#%06xff', rgb)}" }
+  end.join(";\n") + ".\n"
+end
+
+# Each [NAME, VALUE] as a line of a TypeScript map, in name order.
+def ts_entries(pairs, indent:)
+  pairs.sort.map { |name, value| "#{indent}[#{TypeScript.string(name)}, #{TypeScript.string(value)}],\n" }
 end
 
 # One clause a name whose value, given as its lines, starts on the

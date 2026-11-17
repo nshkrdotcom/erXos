@@ -246,7 +246,7 @@ check(Act, #{table := Table, state := State, pick := Pick, mode := Mode, pressed
         {drop, _} when Expected =:= none -> ok;
         Other -> error({key_not_to_the_pick, Act, Expected, Other})
     end,
-    Accent = erx_theme:color(accent),
+    Accent = erx_theme:color(light, accent),
     Marked = lists:usort([Id || {Id, Sides} <- erx_wm_rio:decorate(Table, ?SCREEN, State),
                                 {_, Colour} <- Sides, Colour =:= Accent]),
     Marked =:= [Expected || Expected =/= none] orelse error({border_not_on_the_pick, Act, Expected, Marked}),

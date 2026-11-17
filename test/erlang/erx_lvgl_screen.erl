@@ -92,9 +92,9 @@ running `launcher` (test/fixtures/erx_lvgl_buffer.rb), on a screen of
 channel `x8r8g8b8` or `r5g6b5`. The buffer is the file `buffer` in the
 current directory.
 """.
--spec run(#{program := file:filename(), ruby := file:filename(), launcher := file:filename()},
+-spec run(#{program := file:filename(), ruby := file:filename(), launcher := file:filename(), args => [string()]},
           x8r8g8b8 | r5g6b5) -> map().
-run(#{program := Program, ruby := Ruby, launcher := Launcher}, Channel) ->
+run(#{program := Program, ruby := Ruby, launcher := Launcher} = Spec, Channel) ->
     {Chan, Depth} = case Channel of
                         x8r8g8b8 -> {?X8R8G8B8, 32};
                         r5g6b5 -> {?R5G6B5, 16}
@@ -102,7 +102,7 @@ run(#{program := Program, ruby := Ruby, launcher := Launcher}, Channel) ->
     Buffer = filename:absname("buffer"),
     ok = file:write_file(Buffer, binary:copy(<<0>>, stride(?WIDTH, Depth) * ?HEIGHT)),
     Port = open_port({spawn_executable, Ruby},
-                     [binary, stream, use_stdio, exit_status, {args, [Launcher, Buffer, Program]}]),
+                     [binary, stream, use_stdio, exit_status, {args, [Launcher, Buffer, Program | maps:get(args, Spec, [])]}]),
     {Core, Start} = erx_ui_lvgl_core:start(?WIDTH, ?HEIGHT, Chan),
     Screen0 = #{port => Port, buffer => Buffer, depth => Depth, chan => Chan, core => Core},
     send(Screen0, [Record || {write, Records} <- Start, Record <- Records]),
@@ -144,14 +144,14 @@ case it must refuse: `short_buffer`, a buffer one row short of the screen
 record sent, or `stray_presented`, a presented record sent with the screen
 record, before any report.
 """.
--spec refused(#{program := file:filename(), ruby := file:filename(), launcher := file:filename()},
+-spec refused(#{program := file:filename(), ruby := file:filename(), launcher := file:filename(), args => [string()]},
               short_buffer | stray_presented) -> non_neg_integer().
-refused(#{program := Program, ruby := Ruby, launcher := Launcher}, Case) ->
+refused(#{program := Program, ruby := Ruby, launcher := Launcher} = Spec, Case) ->
     Rows = case Case of short_buffer -> ?HEIGHT - 1; stray_presented -> ?HEIGHT end,
     Buffer = filename:absname("buffer"),
     ok = file:write_file(Buffer, binary:copy(<<0>>, stride(?WIDTH, 32) * Rows)),
     Port = open_port({spawn_executable, Ruby},
-                     [binary, stream, use_stdio, exit_status, {args, [Launcher, Buffer, Program]}]),
+                     [binary, stream, use_stdio, exit_status, {args, [Launcher, Buffer, Program | maps:get(args, Spec, [])]}]),
     Records = [{screen, ?WIDTH, ?HEIGHT, ?X8R8G8B8} | [presented || Case =:= stray_presented]],
     send(#{port => Port}, Records),
     exit_status(Port, erlang:monotonic_time(millisecond) + ?SETTLE_MS).
@@ -172,13 +172,13 @@ and returns the buffer's pixels as rows of 8-bit red, green and blue, the
 order a PPM holds them (the display suite's reference pictures,
 tools/lib/erx/screen_reference.rb).
 """.
--spec picture(#{program := file:filename(), ruby := file:filename(), launcher := file:filename()},
+-spec picture(#{program := file:filename(), ruby := file:filename(), launcher := file:filename(), args => [string()]},
               erx_ui_schema:tree(), {pos_integer(), pos_integer()}) -> binary().
-picture(#{program := Program, ruby := Ruby, launcher := Launcher}, Tree, {Width, Height}) ->
+picture(#{program := Program, ruby := Ruby, launcher := Launcher} = Spec, Tree, {Width, Height}) ->
     Buffer = filename:absname("buffer"),
     ok = file:write_file(Buffer, binary:copy(<<0>>, stride(Width, 32) * Height)),
     Port = open_port({spawn_executable, Ruby},
-                     [binary, stream, use_stdio, exit_status, {args, [Launcher, Buffer, Program]}]),
+                     [binary, stream, use_stdio, exit_status, {args, [Launcher, Buffer, Program | maps:get(args, Spec, [])]}]),
     {Core, Start} = erx_ui_lvgl_core:start(Width, Height, ?X8R8G8B8),
     Screen0 = #{port => Port, buffer => Buffer, depth => 32, chan => ?X8R8G8B8, core => Core},
     send(Screen0, [Record || {write, Records} <- Start, Record <- Records]),

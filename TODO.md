@@ -8827,8 +8827,7 @@ document's "residual risks accepted" paragraph.
   ([design-desktop-programs.md](docs/design-desktop-programs.md#anti-aliasing-corners-and-depth-coverage-masks)).
 
 * [Medium] display and desktop, the UI survey's decisions as designed but not built
-  ([research-ui-synthesis.md](docs/research-ui-synthesis.md), section 8): `ctl`'s read with the scale
-  (`1/1`) and the last present's report with `TAKEN` and `SHOWN` apart, from the drivers' `flushed()`
+  ([research-ui-synthesis.md](docs/research-ui-synthesis.md), section 8): `ctl`'s read with the last present's report with `TAKEN` and `SHOWN` apart, from the drivers' `flushed()`
   answers and `info/1`'s `period`, and `erx_win:report/1`
   ([design-display.md](docs/design-display.md#the-window-tree)); the clipboard served only through the
   keyboard window's grant within `windows_clipboard_ms` of a key or button there, a copy replacing the
@@ -8844,15 +8843,15 @@ document's "residual risks accepted" paragraph.
   the visibility class `display`, with the `inspect` grant's `principal` beside its scope
   ([design-live.md](docs/design-live.md#inspection)).
 
-* [Low] desktop, a dark palette ([design-desktop-programs.md](docs/design-desktop-programs.md#colour),
-  `abi/theme.txt`): the theme has one light palette. A dark one adds a second value to every `color` and
-  `shadow` row, checked against the same `contrast` rows, and one setting that chooses it. The setting:
-  the display's manifest entry gains `theme` (`light` or `dark`, `light` when
-  absent), which the domain service puts in the display domain's environment as `display_theme`, as it
-  puts `display_keymap`; the decorations, the menu and the background take it there; the display's
-  `screen` file answers it as a third field after the rectangle and the channel, so every renderer on that
-  display takes it; and a session's `ui_theme`, beside `ui_renderer`, overrides it for that session's own
-  windows. Reference frames gain a dark copy per program.
+* [Medium] desktop, the display's palette beyond `erx-lvgl` ([design-desktop-programs.md](docs/design-desktop-programs.md#colour)):
+  a display's manifest entry chooses its palette, which reaches `erx_fb_sup`, every window's `ctl` and
+  `erx-lvgl`, but three drawers keep the light one. `erx_wm_rio`'s borders take `erx_theme:color(light, ...)`
+  and want the palette in the window manager's configuration from `erx_fb_sup`; `erx_screen` fills where no
+  window is with a hard-coded slate blue (`erx_screen.erl` `?BACKGROUND`), not the theme's `desktop` colour
+  of the display's palette; and the dashboard's clock (`examples/dashboard`, `erx_dashboard.erl`
+  `?PALETTE`) draws in the light palette because `erx_ui` does not answer the palette of the window it
+  opened, which `erx_win:info/1` holds. Reference pictures in the dark palette come with the first program
+  that runs in it.
 
 * [Medium] platform (Raspberry Pi 4), hardware watchdog on Fiasco: a board that runs unattended has no
   hardware watchdog behind a hang of Fiasco or of the root's watchdog thread, because the watchdog the

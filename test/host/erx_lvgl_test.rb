@@ -85,6 +85,33 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
     end
   end
 
+  # The palette the program is started with colours the picture
+  # (abi/theme.txt): the kiosk client drawn in the dark palette is another
+  # picture than in the light one, which the program takes when started
+  # with none, and a palette the theme does not name ends the program.
+  def test_the_palette_argument_colours_the_picture
+    runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+    program = Erx::Lvgl::Build.new(root: ROOT, runner: runner).call
+    Dir.mktmpdir('erx-lvgl-palette') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS + KIOSK_CLIENT)
+      light, named_light, dark = [[], ['light'], ['dark']].map do |args|
+        screen = screen(program).sub(/\}\z/, ", args => #{args.inspect}}")
+        run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
+             "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen}, " \
+             'erx_kiosk_test:tree(), {320, 200})), halt(0)', chdir: work)
+        File.binread(File.join(work, 'picture.rgb'))
+      end
+      assert_equal light, named_light, 'light is the default'
+      # The window's ground, the top left pixel, is each palette's window colour.
+      assert_equal [0xf6, 0xf5, 0xf2], light.unpack('C3'), 'the light window colour'
+      assert_equal [0x0d, 0x0f, 0x2a], dark.unpack('C3'), 'the dark window colour'
+      output, status = Open3.capture2e('gtimeout', '-k', '10', '60', RbConfig.ruby, LAUNCHER,
+                                       File.join(work, 'picture.rgb'), program, 'sepia', stdin_data: '')
+      refute status.success?
+      assert_match(/no palette is named sepia/, output)
+    end
+  end
+
   private
 
   # The model screen's map of the program and how to start it, as an Erlang term.

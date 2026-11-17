@@ -49,17 +49,19 @@
  * The environment a display domain gains from its display record
  * (docs/design-display.md, "A display's session"): one word per key of
  * abi/manifest.txt's display keys, KEY=VALUE with its NUL, the display's
- * name, its policy's member name and its idle times in decimal seconds.
- * ERX_DOM_DISPLAY_WORDS_MAX is the four at their longest, the name at
- * ERX_DOM_NAME_MAX bytes, the policy at ERX_MF_DISPLAY_POLICY_NAME_MAX and
- * each time at ten digits; each sizeof counts its key's '=' and the word's
+ * name, its policy's member name, its idle times in decimal seconds and
+ * its palette's member name. ERX_DOM_DISPLAY_WORDS_MAX is the five at their
+ * longest, the name at ERX_DOM_NAME_MAX bytes, the policy at
+ * ERX_MF_DISPLAY_POLICY_NAME_MAX, each time at ten digits and the palette at
+ * ERX_MF_DISPLAY_PALETTE_NAME_MAX; each sizeof counts its key's '=' and the word's
  * NUL.
  */
 #define ERX_DOM_DISPLAY_WORDS_MAX					\
 	(sizeof(ERX_DISPLAY_KEY_STRING "=") + ERX_DOM_NAME_MAX +		\
 	    sizeof(ERX_DISPLAY_POLICY_KEY_STRING "=") + ERX_MF_DISPLAY_POLICY_NAME_MAX +	\
 	    sizeof(ERX_DISPLAY_IDLE_DIM_KEY_STRING "=4294967295") +	\
-	    sizeof(ERX_DISPLAY_IDLE_OFF_KEY_STRING "=4294967295"))
+	    sizeof(ERX_DISPLAY_IDLE_OFF_KEY_STRING "=4294967295") +	\
+	    sizeof(ERX_DISPLAY_PALETTE_KEY_STRING "=") + ERX_MF_DISPLAY_PALETTE_NAME_MAX)
 
 /*
  * The environment words a session gains at its start, after its
@@ -419,6 +421,7 @@ typedef struct erx_dom_display {
 	uint32_t	policy;		/* ERX_MF_DISPLAY_POLICY_SINGLE or _RIO */
 	uint32_t	idle_dim_s;	/* seconds idle before the panel dims, 0 never */
 	uint32_t	idle_off_s;	/* and before it turns off, 0 never */
+	uint32_t	palette;	/* ERX_MF_DISPLAY_PALETTE_LIGHT or _DARK */
 } erx_dom_display_t;
 
 /* A checked configured-domain row of the system manifest. */

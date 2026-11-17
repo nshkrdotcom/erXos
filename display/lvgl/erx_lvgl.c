@@ -13,7 +13,9 @@
  * back in the same form: an event record for each event on a node and each
  * change of a state value, and one damage report for each refresh.
  * Descriptor 3 is the window's buffer, which the program maps whole and
- * LVGL draws in directly.
+ * LVGL draws in directly. The one argument, when given, names the theme's
+ * palette the window is drawn in, which its ctl names; a name the theme
+ * does not give ends the program, and with none it takes the first.
  *
  * Data flow. The generated erx_ui_read() frames and checks each record;
  * apply_record() turns it into LVGL calls. A node is an LVGL object whose
@@ -48,6 +50,7 @@
  */
 
 #include <errno.h>
+#include <stddef.h>
 #include <limits.h>
 #include <poll.h>
 #include <signal.h>
@@ -158,6 +161,21 @@ static size_t table_size;
 static size_t table_count;
 
 static lv_display_t *display;
+
+/*
+ * The theme's palettes (abi/theme.txt), each by its name, the default
+ * first, and the one this window is drawn in, which the program's one
+ * argument names: the palette the window's display chose
+ * (docs/design-display.md, "The window tree", ctl). main() sets it
+ * before any record is read.
+ */
+#define PALETTE(name, NAME) { #name, ERX_THEME_PALETTE_##NAME },
+static const struct {
+	const char *name;
+	erx_theme_palette_t colors;
+} palettes[] = { ERX_THEME_PALETTES(PALETTE) };
+#undef PALETTE
+static const erx_theme_palette_t *palette = &palettes[0].colors;
 static lv_indev_t *pointer, *keypad, *encoder;
 static ui_node_t *root;
 static bool applying;		/* events come from the server's records */
@@ -451,9 +469,9 @@ graph(lv_obj_t *parent, ui_node_t *node)
 	lv_obj_set_style_width(obj, 0, LV_PART_INDICATOR);
 	lv_obj_set_style_height(obj, 0, LV_PART_INDICATOR);
 	node->mark_series = lv_chart_add_series(obj,
-	    lv_color_hex(ERX_THEME_COLOR_LINE), LV_CHART_AXIS_PRIMARY_Y);
+	    lv_color_hex(palette->line), LV_CHART_AXIS_PRIMARY_Y);
 	node->series = lv_chart_add_series(obj,
-	    lv_color_hex(ERX_THEME_COLOR_ACCENT), LV_CHART_AXIS_PRIMARY_Y);
+	    lv_color_hex(palette->accent), LV_CHART_AXIS_PRIMARY_Y);
 	lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 	return obj;
 }
@@ -717,14 +735,15 @@ set_graph(ui_node_t *node)
 
 /*
  * The theme's type roles (abi/theme.txt, generated as erx/theme.h): each
- * role's size and colour, by its ui_role value, which ui.txt and the
- * theme name alike.
+ * role's size and where its colour lies in a palette, by its ui_role
+ * value, which ui.txt and the theme name alike.
  */
 #define ROLE(name, NAME) [ERX_UI_ROLE_##NAME] = \
-	{ ERX_THEME_ROLE_##NAME##_SIZE, ERX_THEME_ROLE_##NAME##_COLOR },
+	{ ERX_THEME_ROLE_##NAME##_SIZE, \
+	    offsetof(erx_theme_palette_t, ERX_THEME_ROLE_##NAME##_COLOR) },
 static const struct {
 	int32_t size;
-	uint32_t color;
+	size_t color;	/* the offset of its colour in erx_theme_palette_t */
 } roles[] = { ERX_THEME_ROLES(ROLE) };
 #undef ROLE
 
@@ -765,7 +784,8 @@ set_role(ui_node_t *node, const erx_ui_prop_t *prop)
 			    roles[prop->integer].size, prop->integer);
 	lv_obj_set_style_text_font(text, faces[face].font, 0);
 	lv_obj_set_style_text_color(text,
-	    lv_color_hex(roles[prop->integer].color), 0);
+	    lv_color_hex(*(const uint32_t *)(const void *)((const char *)palette +
+	    roles[prop->integer].color)), 0);
 }
 
 /* The style properties a section sets, which a plain container leaves unset. */
@@ -792,9 +812,9 @@ set_area(ui_node_t *node, const erx_ui_prop_t *prop)
 		lv_obj_remove_local_style_prop(obj, section_props[index], 0);
 	if (prop == NULL || prop->integer != ERX_UI_AREA_SECTION)
 		return;
-	lv_obj_set_style_bg_color(obj, lv_color_hex(ERX_THEME_COLOR_SURFACE), 0);
+	lv_obj_set_style_bg_color(obj, lv_color_hex(palette->surface), 0);
 	lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_color(obj, lv_color_hex(ERX_THEME_COLOR_LINE), 0);
+	lv_obj_set_style_border_color(obj, lv_color_hex(palette->line), 0);
 	lv_obj_set_style_border_width(obj, ERX_THEME_HAIRLINE, 0);
 	lv_obj_set_style_radius(obj, ERX_THEME_RADIUS_SECTION, 0);
 	lv_obj_set_style_shadow_offset_x(obj, ERX_THEME_SHADOW_SECTION_X, 0);
@@ -1058,6 +1078,11 @@ screen(const erx_ui_record_t *record)
 		lv_indev_set_display(keypad, display);
 		lv_indev_set_display(encoder, display);
 		lv_obj_set_scrollable(lv_screen_active(), false);
+		/* The window's ground and its text, which every node inherits. */
+		lv_obj_set_style_bg_color(lv_screen_active(),
+		    lv_color_hex(palette->window), 0);
+		lv_obj_set_style_text_color(lv_screen_active(),
+		    lv_color_hex(palette->text), 0);
 	}
 	lv_display_set_color_format(display, format);
 	lv_display_set_resolution(display, record->width, record->height);
@@ -1387,7 +1412,7 @@ consume(size_t *have)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
 	struct pollfd in = { .fd = STDIN_FILENO, .events = POLLIN };
 	size_t have = 0;
@@ -1395,6 +1420,16 @@ main(void)
 	uint32_t next;
 	int timeout;
 
+	if (argc > 2)
+		fatal("usage: erx-lvgl [PALETTE]");
+	if (argc == 2) {
+		palette = NULL;
+		for (size_t index = 0; index < sizeof(palettes) / sizeof(palettes[0]); index++)
+			if (strcmp(argv[1], palettes[index].name) == 0)
+				palette = &palettes[index].colors;
+		if (palette == NULL)
+			fatal("no palette is named %s", argv[1]);
+	}
 	signal(SIGPIPE, SIG_IGN);
 	lv_init();
 	lv_tick_set_cb(tick_ms);

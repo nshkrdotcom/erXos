@@ -29,6 +29,9 @@ shown YYYY-MM-DD HH:MM`, the minute of the clock it shows
          handle_info/2]).
 
 -define(RETRY_MS, 1000).
+%% The palette the clock is drawn in: the light one, since erx_ui does not answer the
+%% palette of the window it opened.
+-define(PALETTE, light).
 
 -type state() :: #{window := none | erx_ui:window(),
                    board := none | erx_dashboard_view:board(),
@@ -121,7 +124,7 @@ dial(Time, #{dial := Kept} = State) ->
     Minute = erx_dashboard_view:minute(Time),
     case Kept of
         {Minute, _Png} -> State;
-        _Other -> State#{dial := {Minute, erx_dashboard_clock:png(Time)}}
+        _Other -> State#{dial := {Minute, erx_dashboard_clock:png(?PALETTE, Time)}}
     end.
 
 %% The next tick, at the start of the next wall-clock minute, when the

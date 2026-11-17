@@ -11,7 +11,7 @@ a process, so the same view always gives the same tree, which the host
 test draws and compares with its reference picture.
 
 The screen is a row on the theme's window colour. On the left, centred,
-the clock: the model's `dial`, the picture erx_dashboard_clock:png/1
+the clock: the model's `dial`, the picture erx_dashboard_clock:png/2
 draws of the hour and minute, which the dashboard draws once a minute,
 with the date under it and the time, `HH:MM UTC`, under that. On the
 right, the quotes panel: the title `Markets` over the board's credit,

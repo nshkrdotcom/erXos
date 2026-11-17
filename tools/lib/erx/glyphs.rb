@@ -148,7 +148,8 @@ module Erx
     # The theme of the tree at root.
     def theme(root:)
       source = File.read(File.join(root, ABI::Theme::SOURCE))
-      ABI::Theme.validate(ABI::Syntax.parse(source, path: ABI::Theme::SOURCE).select { |item| item.kind == 'theme' })
+      ABI::Theme.validate(ABI::Syntax.parse(source, path: ABI::Theme::SOURCE).select { |item| item.kind == 'theme' },
+                          palettes: ABI::Theme.palettes(root: root))
     end
 
     # What write wrote: each role's subfont's path and LVGL font's path by

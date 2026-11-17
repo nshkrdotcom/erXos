@@ -13,7 +13,10 @@
 %% runs the window manager of the policy the domain's display_policy variable names, a
 %% member of mf_display_policy, which the manifest check holds it to; policy/1 maps each
 %% member to its window manager and has no clause for anything else, so a member with no
-%% window manager fails this supervisor's start. Then the display
+%% window manager fails this supervisor's start. Its windows are drawn in the palette the
+%% display_palette variable names, a member of mf_display_palette, which the domain
+%% service always sets; palette/1 finds it among the theme's palettes and fails the start
+%% on a name the theme does not give. Then the display
 %% driver, registered as erx_fb, then erx_screen over it: erx_virtio_gpu over the domain's
 %% `gpu virtio_mmio` device record (QEMU virt), or erx_firmware_fb over its framebuffer
 %% record, the framebuffer a board's firmware set up (the Raspberry Pi). A driver's end
@@ -41,7 +44,7 @@
 
 -export([start_link/0, init/1]).
 %% For the host test of the window system's start (test/erlang/erx_winfs_tests.erl).
--export([winfs/2]).
+-export([winfs/3]).
 
 -include("generated/erx_abi.hrl").
 
@@ -57,35 +60,41 @@ start_link() ->
 init([]) ->
     Display = display(erx_device_record:find(gpu, virtio_mmio), erx_device_record:framebuffers()),
     Winfs = winfs(os:getenv(binary_to_list(?ERX_DISPLAY_KEY_BYTES)),
-                  os:getenv(binary_to_list(?ERX_DISPLAY_POLICY_KEY_BYTES))),
+                  os:getenv(binary_to_list(?ERX_DISPLAY_POLICY_KEY_BYTES)),
+                  os:getenv(binary_to_list(?ERX_DISPLAY_PALETTE_KEY_BYTES))),
     Inputs = inputs(erx_device_record:find(input, virtio_input)),
     {ok, {#{strategy => rest_for_one, intensity => ?INTENSITY, period => ?PERIOD_S,
             auto_shutdown => any_significant}, Winfs ++ Display ++ Inputs}}.
 
-%% The window system's child for Display and Policy, the values of the domain's display
-%% and display_policy variables: the mint of the service Display names under Policy's
-%% window manager, or none, with a debug line, when Display names no service. The
+%% The window system's child for Display, Policy and Palette, the values of the domain's
+%% display, display_policy and display_palette variables: the mint of the service Display
+%% names under Policy's window manager, its windows in Palette, or none, with a debug line, when Display names no service. The
 %% display variable comes from the trusted manifest, an identifier of at most
 %% ERX_IDENTIFIER_MAX bytes, and is made an atom with list_to_atom/1, one atom per start
 %% of the domain: the service's atom need not exist in the display domain before, so
 %% list_to_existing_atom/1 would refuse a real display's name.
--spec winfs(string() | false, string() | false) -> [supervisor:child_spec()].
-winfs(Display, Policy) when is_list(Display), Display =/= [], length(Display) =< ?ERX_IDENTIFIER_MAX ->
+-spec winfs(string() | false, string() | false, string() | false) -> [supervisor:child_spec()].
+winfs(Display, Policy, Palette) when is_list(Display), Display =/= [], length(Display) =< ?ERX_IDENTIFIER_MAX ->
     {Wm, _} = Manager = policy(Policy),
     [#{id => erx_winfs,
-       start => {erx_winfs, start_link, [list_to_atom(Display), Manager]},
+       start => {erx_winfs, start_link, [list_to_atom(Display), Manager, palette(Palette)]},
        restart => temporary,
        significant => true,
        shutdown => 2000,
        type => worker,
        modules => [erx_winfs, erx_window, Wm]}];
-winfs(_Display, _Policy) ->
+winfs(_Display, _Policy, _Palette) ->
     _ = erx_log:debug(["erx_fb: no display variable names the display's service; no window system"]),
     [].
 
 %% The window manager and its configuration of each mf_display_policy member, by its name.
 policy("single") -> {erx_wm_single, #{}};
 policy("rio") -> {erx_wm_rio, #{}}.
+
+%% The theme's palette of a mf_display_palette member, by its name.
+palette(Name) ->
+    {value, Palette} = lists:search(fun(Palette) -> atom_to_list(Palette) =:= Name end, erx_theme:palettes()),
+    Palette.
 
 %% The driver and screen of the domain's display record, the virtio-gpu's or the firmware
 %% framebuffer's, or none, with a line saying why.

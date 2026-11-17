@@ -8,6 +8,6 @@
 # (docs/design-display.md, "The widget server"). The model screen
 # test/erlang/erx_lvgl_screen.erl starts erx-lvgl through it, since an Erlang
 # port hands a program only its standard input and output.
-abort 'usage: erx_lvgl_buffer.rb BUFFER PROGRAM' unless ARGV.size == 2
-buffer, program = ARGV
-exec([program, program], 3 => File.open(buffer, File::RDWR))
+abort 'usage: erx_lvgl_buffer.rb BUFFER PROGRAM [ARGUMENT...]' unless ARGV.size >= 2
+buffer, program, *arguments = ARGV
+exec([program, program], *arguments, 3 => File.open(buffer, File::RDWR))

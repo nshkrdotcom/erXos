@@ -9,12 +9,20 @@
 -include_lib("eunit/include/eunit.hrl").
 
 ctl_test() ->
-    ?assertMatch({ok, #{text := <<"x8r8g8b8">>, code := 16#68081828, depth := 32}},
-                 erx_win_core:ctl(<<"x8r8g8b8\n">>)),
-    ?assertMatch({ok, #{depth := 16}}, erx_win_core:ctl(<<"r5g6b5\n">>)),
+    ?assertMatch({ok, #{chan := #{text := <<"x8r8g8b8">>, code := 16#68081828, depth := 32},
+                        scale := {1, 1}, palette := light}},
+                 erx_win_core:ctl(<<"x8r8g8b8 1/1 light\n">>)),
+    ?assertMatch({ok, #{chan := #{depth := 16}, scale := {3, 2}, palette := dark}},
+                 erx_win_core:ctl(<<"r5g6b5 3/2 dark\n">>)),
+    %% A line cut short or doubled, a channel, scale or palette out of its form, and a
+    %% palette the theme does not give.
     [?assertEqual({error, eio}, erx_win_core:ctl(Bad))
-     || Bad <- [<<>>, <<"\n">>, <<"x8r8g8b8">>, <<"x8r8g8b8\n\n">>, <<"q8\n">>,
-                <<"x8r8g8b8a8\n">>, <<"r3\n">>, not_a_binary]].
+     || Bad <- [<<>>, <<"\n">>, <<"x8r8g8b8 1/1 light">>, <<"x8r8g8b8 1/1 light\n\n">>,
+                <<"x8r8g8b8\n">>, <<"q8 1/1 light\n">>, <<"x8r8g8b8a8 1/1 light\n">>,
+                <<"x8r8g8b8 0/1 light\n">>, <<"x8r8g8b8 1/-1 light\n">>, <<"x8r8g8b8 1 light\n">>,
+                <<"x8r8g8b8 1/1/1 light\n">>, <<"x8r8g8b8 1/2147483648 light\n">>,
+                <<"x8r8g8b8 1/1  light\n">>, <<"x8r8g8b8 1/1 sepia\n">>, <<"x8r8g8b8 1/1 Light\n">>,
+                not_a_binary]].
 
 wctl_test() ->
     Read = erx_wctl:format({-5, 0, 1920, 1080}, true, shown),

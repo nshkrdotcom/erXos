@@ -71,7 +71,7 @@ module DashboardScreen
     (year, month, day), (hour, minute, second) = time
     clock = "{{#{Integer(year)}, #{Integer(month)}, #{Integer(day)}}, " \
             "{#{Integer(hour)}, #{Integer(minute)}, #{Integer(second)}}}"
-    "\#{time => #{clock}, board => #{failed(reason)}, dial => erx_dashboard_clock:png(#{clock})}"
+    "\#{time => #{clock}, board => #{failed(reason)}, dial => erx_dashboard_clock:png(light, #{clock})}"
   end
 
   # The board erx_quotes sends once every quote of the table has started its first round

@@ -15,7 +15,8 @@ Plan 9 shaped how they work: everything they show is a file, a `/proc`
 path or a typed record, read through the session's own namespace and
 facets, and nothing they do needs a channel the shell does not have.
 Plan 9 did not shape how they look. They look modern and quiet:
-anti-aliased type on a 4-pixel grid, a restrained light palette,
+anti-aliased type on a 4-pixel grid, a restrained light palette and a
+dark one for a display that chooses it,
 rounded controls and soft depth where they help, and an icon set
 drawn for erXos.
 
@@ -81,11 +82,11 @@ Decisions every reader of this document needs:
   edge and its content, as LVGL's and CSS's padding are, so a padded
   button's background and hit area cover its padding.
 * **One theme, generated.** `abi/theme.txt` declares the type scale,
-  the spacing grid, the radii, the shadows, the palette, and the fonts
-  and icons to rasterise. Its generator writes the
-  Erlang module both sides of the display take, the C header `erx-lvgl`
-  builds with and the web client's constants, and checks every
-  contrast ratio the palette must meet.
+  the spacing grid, the radii, the shadows, the light and dark
+  palettes, and the fonts and icons to rasterise. Its generator writes
+  the Erlang module both sides of the display take, the C header
+  `erx-lvgl` builds with and the web client's constants, and checks
+  every contrast ratio each palette must meet.
 
 ## Context
 
@@ -390,22 +391,22 @@ theme 1
   radius control 6  section 10  menu 8  window 0
   hairline 1
   shadow section 0 2 12 10                       # x y blur percent
-  color window     F6F5F2
-  color surface    FFFFFF
-  color sunken     EEEDE9
-  color line       DDDCD7
-  color text       1B1C1E
-  color secondary  5D6066
-  color tertiary   8A8E94
-  color accent     0E7A6B
-  color on_accent  FFFFFF
-  color ok         2F7D4F
-  color warn       9A6A12
-  color critical   B3362C
-  color series_cpu 0E7A6B
-  color series_mem 5B53C6
-  color series_msg B8620B
-  color desktop    D9DAD5
+  color window     F6F5F2 0D0F2A
+  color surface    FFFFFF 23253D
+  color sunken     EEEDE9 090B22
+  color line       DDDCD7 2A2C44
+  color text       1B1C1E FFFFFF
+  color secondary  5D6066 9E9FAA
+  color tertiary   8A8E94 6E6F7F
+  color accent     0E7A6B 7FE7F2
+  color on_accent  FFFFFF 0D0F2A
+  color ok         2F7D4F 8BE8B0
+  color warn       9A6A12 FFC46B
+  color critical   B3362C FF9B8A
+  color series_cpu 0E7A6B 7FE7F2
+  color series_mem 5B53C6 A79CFF
+  color series_msg B8620B FFB547
+  color desktop    D9DAD5 0D0F2A
   contrast text      on window surface sunken 7.0
   contrast secondary on window surface sunken 4.5
   contrast on_accent on accent 4.5
@@ -415,14 +416,16 @@ theme 1
   transition reveal 200 ease_out                 # visible from false to true
 ```
 
-The colour values are the starting palette, tuned with the first
+A `color` row gives the colour's value in each palette: light, then
+dark. The colour values are the starting palettes, tuned with the first
 screenshots; the rules are what the generator enforces. Each is a
 checked constraint, as the spec discipline asks:
 
 * every colour a `role` or a `contrast` row names is declared, once;
 * every `contrast` row holds, by WCAG 2's contrast ratio of relative
   luminances, whose definition the generator cites from the
-  specification it implements: body text at 7:1 against every surface
+  specification it implements, in each palette: body text at 7:1
+  against every surface
   it names, secondary text at 4.5:1, text on the accent at 4.5:1; a
   seeded `secondary` of `B0B0B0` fails the build;
 * every `role` names a declared font and weight, and a size and line
@@ -819,16 +822,28 @@ only on its text.
 
 ### Colour
 
-The palette is above: a warm-neutral ground, white surfaces, one teal
-accent for selection, focus and the primary series, and three status
-colours used only for status. Graph series have one colour each, the
-same in every program. The desktop background, which `erx_screen` fills
+The palettes are above. The light one has a warm-neutral ground, white
+surfaces, one teal accent for selection, focus and the primary series,
+and three status colours used only for status; the dark one, for a wall
+display seen across a room, has a deep blue-black ground, raised
+surfaces a step lighter, a cyan accent and status colours light enough
+to read on them. Graph series have one colour each, the same in every
+program of a palette. The desktop background, which `erx_screen` fills
 where no window is
 ([design-display.md](design-display.md#windows-and-the-window-system)),
-is the theme's `desktop` colour. The theme has one palette, so no
-window, session or display chooses between palettes, and the
-decorations, the menu, the background and every renderer read the same
-constants.
+is the theme's `desktop` colour.
+
+A display chooses its palette: its manifest entry's `palette`, a member
+of `mf_display_palette`, `light` when the entry names none
+([design-display.md](design-display.md#a-displays-session)). Each of
+its windows' `ctl` names it, beside the scale
+([design-display.md](design-display.md#the-window-tree)), and a
+renderer colours the window's tree from that palette, as it sizes it
+by that scale; a program that draws its own pixels, a picture in an
+`image` node or a draw client's buffer, takes the palette from the same
+read. No session or program chooses a palette of its own, so every
+window on a display, its decorations, its menu and its background are
+drawn in one palette.
 
 ### Anti-aliasing, corners and depth: coverage masks
 
@@ -968,7 +983,7 @@ additions](#widget-format-additions)): `folder`, `document`, `text`,
 | soft shadows | none | yes | `erx_mask`'s shadow masks, in the Erlang renderer |
 | graphs | no kind | chart widget | the `graph` kind; `erx_mask`'s stroke and area masks in the Erlang renderer, `lv_chart` in LVGL |
 | icons | no property | symbol font only | the icon set, the `icon` and `icons` properties |
-| one palette | none | LVGL's default theme | the theme, in both renderers and the decorations |
+| light and dark palettes | none | LVGL's default theme | the theme, in both renderers and the decorations, chosen by the display |
 
 ## Widget format additions
 
@@ -1510,7 +1525,7 @@ the menu's labels, reads them as data.
 | **D4.** Every action of files reaches the item the person chose | the core acts by index into its own listing of raw names, within the page whose list node is keyed by the listing's generation; the tree holds only shown text | a lookup by shown text; a list key that survives a new listing | a listing whose names `a<U+202E>b`, the eight characters of a token, and a name cut to the same 128 bytes as another, each opened by index and reaching its own file, with a seeded lookup by shown text opening the wrong one; a double click reported on the list of a listing a refresh has replaced, dropped by the widget server, with a seeded key that leaves out the generation opening an item of the new listing |
 | **D5.** Every tree a core builds is valid, whatever the input | names and texts are cut to the schema's bounds at character boundaries, lists to 256 items, previews to 200 lines | a raw name in an `items` entry; a list longer than 256 | a property test over random listings, names of every length to 255 bytes, previews and inspector records, each tree passing `erx_ui_schema`, with a seeded core that skips the cut failing it |
 | **D6.** An idle window costs nothing | the only timers are the core's `tick_after`; a renderer draws only for a tree's change and the transitions it starts (G6) | a periodic redraw; a tick from files, or from month without a today | on the host, an idle files window and a month window without a today, each for a simulated day, issue no tree; a month with a today issues one at midnight; clock issues one a minute; with a seeded once-a-second tick in clock the test fails |
-| **D7.** The palette meets its contrast rules | the generator checks every `contrast` row | a colour edited without the rule | the generator's test with a seeded `secondary` too light, failing the build |
+| **D7.** Each palette meets its contrast rules | the generator checks every `contrast` row | a colour edited without the rule | the generator's test with a seeded `secondary` too light, failing the build |
 | **D8.** A listing costs the session bounded memory and work | the listing worker runs under a heap cap, and information is asked for one page of at most 256 names | a worker spawned without the cap; a lookup of every name | files: bounds, below |
 | **D9.** No worker outlives its window, and a cancelled worker sends nothing | workers are linked, the window traps exits, ends with `shutdown` or its crash reason, and unlinks before it kills | a window that ends `normal`; a kill without the unlink | the window's lifetime tests, below |
 
@@ -1743,7 +1758,6 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 | Anti-aliased shapes in `erx_memdraw` | new native primitives over pixels for what masks already do with one existing draw; masks also cover glyphs and icons, so one mechanism serves all |
 | The Go fonts | drawn by the designers of Lucida, Plan 9's face, and so the look this design moves away from; Inter is drawn for interface sizes and has tabular figures |
 | A rasteriser of erXos's own in Ruby | outline decoding, curve flattening, exact coverage and stroking with round joins written and tested anew, for output a mature engine already gives; FreeType at a pinned release keeps the step reproducible as well |
-| A dark palette beside the light one | a second value in every colour row, a setting that chooses between them and a second reference frame per program; the first version has one light palette |
 | An icon set under a permissive license | a license and a style to inherit; twenty glyphs drawn for erXos are less work than reconciling a set's style with the theme |
 | Packages under `examples/` | an app is its own principal, so stats and files would see the app's domains and files, not the person's ([Shipping](#shipping-and-starting)) |
 | A tweened graph scroll | a renderer timer or many trees a second, against G6, for motion that adds nothing the step does not show |
@@ -1775,10 +1789,15 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
    them; a window that deletes needs a trash or an undo, confirmation
    and conflict policy, which deserve their own design once there is a
    desktop to use them on.
-3. **One palette, light.** The theme declares one palette, so there is
-   no setting to choose between palettes, in the display's manifest
-   entry, in its `screen` file or in a session's environment. A dark
-   palette is work in `TODO.md`.
+3. **Two palettes, chosen by the display.** The theme declares a light
+   palette and a dark one, and a display's manifest entry chooses
+   between them, because a wall display such as the kiosk's is dark
+   while the desktop stays light. The choice is the display's alone:
+   the window's `ctl` names it as it names the scale, so every renderer
+   and every program drawing on that display reads one answer, and no
+   session environment or program setting can disagree with it. A
+   palette that follows the time of day would change the display's
+   answer, not add a second setting.
 4. **No title bar.** A title bar with the window's label would change
    `decorate/3`, which returns rectangles and colours, to return a label
    too, a change to design-display's overlapping policy that belongs

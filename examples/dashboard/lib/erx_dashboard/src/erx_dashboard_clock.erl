@@ -3,11 +3,11 @@
 
 -module(erx_dashboard_clock).
 -moduledoc """
-The dashboard's analog clock as a picture: png/1 draws the dial for a
-wall-clock reading as a PNG, which the view shows in an `image` node
+The dashboard's analog clock as a picture: png/2 draws the dial for a
+wall-clock reading as a PNG in one of the theme's palettes, which the view shows in an `image` node
 (docs/design-display.md, "Widget trees"), since no widget kind draws a
-dial. It is a pure function of the hour and minute, so the same minute
-always gives the same bytes.
+dial. It is a pure function of the palette, the hour and the minute, so
+the same minute always gives the same bytes.
 
 The picture is SIZE pixels square and transparent around the dial, so
 it lies on whatever the renderer paints behind it: a white face with a soft shadow under it, sixty minute ticks, the twelve hour
@@ -19,7 +19,7 @@ another with premultiplied alpha. Rows are written unfiltered and deflated
 by zlib, which keeps the picture well within the widget format's 48 KiB.
 """.
 
--export([png/1, size/0]).
+-export([png/2, size/0]).
 
 -define(SIZE, 440).
 -define(CENTRE, 220.0).
@@ -28,13 +28,6 @@ by zlib, which keeps the picture well within the widget format's 48 KiB.
 -define(SHADOW_BLUR, 16.0).
 -define(SHADOW_OPACITY, 0.10).
 
-%% The theme's palette (abi/theme.txt): surface, line, text,
-%% tertiary and accent.
--define(FACE, {16#FF, 16#FF, 16#FF}).
--define(RIM, {16#DD, 16#DC, 16#D7}).
--define(INK, {16#1B, 16#1C, 16#1E}).
--define(MINUTE_TICK, {16#8A, 16#8E, 16#94}).
--define(ACCENT, {16#0E, 16#7A, 16#6B}).
 -define(SHADOW, {0, 0, 0}).
 %% Nothing: a premultiplied colour of no opacity.
 -define(CLEAR, {0.0, 0.0, 0.0, 0.0}).
@@ -43,50 +36,63 @@ by zlib, which keeps the picture well within the widget format's 48 KiB.
 -spec size() -> pos_integer().
 size() -> ?SIZE.
 
--doc "The dial showing the hour and minute of `Time`, as a PNG.".
--spec png(calendar:datetime()) -> binary().
-png({_Date, {Hour, Minute, _Second}}) ->
-    Hands = hands(Hour, Minute),
-    Rows = [<<0, (row(Y, Hands))/binary>> || Y <- lists:seq(0, ?SIZE - 1)],
+-doc "The dial showing the hour and minute of `Time` in `Palette`, as a PNG.".
+-spec png(erx_theme:palette(), calendar:datetime()) -> binary().
+png(Palette, {_Date, {Hour, Minute, _Second}}) ->
+    Paint = paint(Palette),
+    Hands = hands(Hour, Minute, Paint),
+    Rows = [<<0, (row(Y, Hands, Paint))/binary>> || Y <- lists:seq(0, ?SIZE - 1)],
     encode(?SIZE, ?SIZE, zlib:compress(Rows)).
 
 %% A hand: the unit vector it points along, how far it reaches past the
 %% centre, how far its tail reaches behind it, its half width and colour.
 -record(hand, {ux, uy, reach, tail, half, colour}).
 
-hands(Hour, Minute) ->
+%% The dial's colours, from the theme's (abi/theme.txt): the face is the
+%% surface, the rim the line, the hands and hour ticks the text, the minute
+%% ticks the tertiary and the cap the accent, each {R, G, B}.
+paint(Palette) ->
+    maps:from_list([{Part, rgb(erx_theme:color(Palette, Name))}
+                    || {Part, Name} <- [{face, surface}, {rim, line}, {ink, text},
+                                        {minute_tick, tertiary}, {accent, accent}]]).
+
+rgb(Rgba) ->
+    <<R, G, B, _A>> = <<Rgba:32>>,
+    {R, G, B}.
+
+hands(Hour, Minute, #{ink := Ink}) ->
     HourTurn = ((Hour rem 12) + Minute / 60) / 12,
     MinuteTurn = Minute / 60,
-    [hand(HourTurn, 0.50 * ?RADIUS, 4.5),
-     hand(MinuteTurn, 0.80 * ?RADIUS, 3.0)].
+    [hand(HourTurn, 0.50 * ?RADIUS, 4.5, Ink),
+     hand(MinuteTurn, 0.80 * ?RADIUS, 3.0, Ink)].
 
-hand(Turn, Reach, Half) ->
+hand(Turn, Reach, Half, Ink) ->
     Angle = 2 * math:pi() * Turn,
     #hand{ux = math:sin(Angle), uy = -math:cos(Angle), reach = Reach,
-          tail = 0.10 * ?RADIUS, half = Half, colour = ?INK}.
+          tail = 0.10 * ?RADIUS, half = Half, colour = Ink}.
 
-row(Y, Hands) ->
-    << <<(pixel(X + 0.5 - ?CENTRE, Y + 0.5 - ?CENTRE, Hands))/binary>>
+row(Y, Hands, Paint) ->
+    << <<(pixel(X + 0.5 - ?CENTRE, Y + 0.5 - ?CENTRE, Hands, Paint))/binary>>
        || X <- lists:seq(0, ?SIZE - 1) >>.
 
 %% One pixel at offset (Dx, Dy) from the centre, y downwards: the layers
 %% composed bottom to top. Beyond the shadow's reach it is transparent.
-pixel(Dx, Dy, Hands) ->
+pixel(Dx, Dy, Hands, Paint) ->
     R = math:sqrt(Dx * Dx + Dy * Dy),
     Colour = case R > ?RADIUS + ?SHADOW_DROP + ?SHADOW_BLUR of
                  true -> ?CLEAR;
-                 false -> dial(Dx, Dy, R, Hands)
+                 false -> dial(Dx, Dy, R, Hands, Paint)
              end,
     bytes(Colour).
 
-dial(Dx, Dy, R, Hands) ->
+dial(Dx, Dy, R, Hands, #{face := Face, rim := Rim, accent := Accent} = Paint) ->
     Layers = [fun(C) -> shadow(C, Dx, Dy) end,
-              fun(C) -> blend(C, ?FACE, cover(?RADIUS - R)) end,
-              fun(C) -> blend(C, ?RIM, cover(0.5 - abs(R - ?RADIUS + 0.5))) end,
-              fun(C) -> tick(C, Dx, Dy, R) end
+              fun(C) -> blend(C, Face, cover(?RADIUS - R)) end,
+              fun(C) -> blend(C, Rim, cover(0.5 - abs(R - ?RADIUS + 0.5))) end,
+              fun(C) -> tick(C, Dx, Dy, R, Paint) end
               | [fun(C) -> draw_hand(C, Dx, Dy, Hand) end || Hand <- Hands]]
-        ++ [fun(C) -> blend(C, ?ACCENT, cover(7.0 - R)) end,
-            fun(C) -> blend(C, ?FACE, cover(2.5 - R)) end],
+        ++ [fun(C) -> blend(C, Accent, cover(7.0 - R)) end,
+            fun(C) -> blend(C, Face, cover(2.5 - R)) end],
     lists:foldl(fun(Layer, C) -> Layer(C) end, ?CLEAR, Layers).
 
 %% The face's shadow: black falling off with the square of the distance
@@ -98,14 +104,14 @@ shadow(Colour, Dx, Dy) ->
 
 %% The tick nearest the pixel's angle, of the sixty: every fifth an hour
 %% tick, longer, wider and darker.
-tick(Colour, _Dx, _Dy, R) when R < ?RADIUS - 40; R > ?RADIUS - 8 ->
+tick(Colour, _Dx, _Dy, R, _Paint) when R < ?RADIUS - 40; R > ?RADIUS - 8 ->
     Colour;
-tick(Colour, Dx, Dy, _R) ->
+tick(Colour, Dx, Dy, _R, #{ink := HourInk, minute_tick := MinuteInk}) ->
     Index = round(math:atan2(Dx, -Dy) * 30 / math:pi()),
     Angle = Index * math:pi() / 30,
     {Inner, Half, Ink} = case Index rem 5 of
-                             0 -> {?RADIUS - 36, 2.0, ?INK};
-                             _ -> {?RADIUS - 22, 0.8, ?MINUTE_TICK}
+                             0 -> {?RADIUS - 36, 2.0, HourInk};
+                             _ -> {?RADIUS - 22, 0.8, MinuteInk}
                          end,
     Ux = math:sin(Angle),
     Uy = -math:cos(Angle),

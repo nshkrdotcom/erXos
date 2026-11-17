@@ -287,6 +287,7 @@ class GlyphsTest < Minitest::Test
   end
 
   def theme_of(text)
-    Erx::ABI::Theme.validate(Erx::ABI::Syntax.parse(text, path: 'abi/theme.txt').select { |item| item.kind == 'theme' })
+    Erx::ABI::Theme.validate(Erx::ABI::Syntax.parse(text, path: 'abi/theme.txt').select { |item| item.kind == 'theme' },
+                             palettes: Erx::ABI::Theme.palettes(root: ROOT))
   end
 end

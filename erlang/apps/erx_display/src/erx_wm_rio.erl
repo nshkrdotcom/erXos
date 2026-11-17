@@ -274,8 +274,8 @@ border({X0, Y0, X1, Y1}) ->
                                                {X1 - B, Y0 + B, X1, Y1 - B}],
             SX0 < SX1, SY0 < SY1].
 
-color(Id, Id) -> erx_theme:color(accent);
-color(_Id, _Current) -> erx_theme:color(line).
+color(Id, Id) -> erx_theme:color(light, accent);
+color(_Id, _Current) -> erx_theme:color(light, line).
 
 %% Input ----------------------------------------------------------------------
 

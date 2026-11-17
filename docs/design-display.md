@@ -940,7 +940,7 @@ is, whose operations are the file protocol's own, with the parameters
 client's directory, so the client sees:
 
 ```text
-/N/ctl      read: the display's channel and scale, the last present's report; write: a present
+/N/ctl      read: the display's channel, scale and palette, the last present's report; write: a present
 /N/mouse    read: 49-byte records 'm x y buttons msec' and 'r ...' after a resize
 /N/kbd      read: records 'c' runes typed, 'k' keys down, 'K' keys down after a release
 /N/wctl     read: the window's rectangle and state; write: a geometry command
@@ -1017,7 +1017,7 @@ of the client's pixels. A client re-reads `screen` at an
 presented, a second line, the report of its last answered present:
 
 ```text
-CHAN SCALE
+CHAN SCALE PALETTE
 presented TAKEN SHOWN PERIOD WAY
 ```
 
@@ -1032,6 +1032,14 @@ display does. The display answers only a scale for which the image
 carries glyph and icon sets, and the image carries the sets of one,
 `1/1`; a panel that needs another brings its sets, and the display's
 manifest entry then names its scale, with no change to this file.
+`PALETTE` is the name of the theme's palette the window is drawn in, a
+member of `mf_display_palette`, `light` or `dark`, which the display's
+manifest entry chooses ([A display's session](#a-displays-session)): a
+renderer colours the window's tree from it, and a program that draws
+its own pixels takes its colours from it
+([design-desktop-programs.md](design-desktop-programs.md#colour)). A
+client matches it against the theme's palettes and refuses a read that
+names another, so the read makes no atom.
 
 The report says what became of the present, from the driver's answer to
 the frame that carried it ([The display device](#the-display-device)).
@@ -3858,7 +3866,9 @@ standard input and output pipes whose other ends `erx_ui_lvgl` holds and
 which the session homes as it homes every pipe
 ([design-pipes.md](design-pipes.md)), with a namespace narrowed to
 nothing, since it opens no file, and with its window's buffer mapped as
-descriptor 3 ([The pixel area](#the-pixel-area)). `erx_ui_lvgl` writes
+descriptor 3 ([The pixel area](#the-pixel-area)). Its one argument is
+the name of the palette its window's `ctl` names, which it colours the
+tree from, and it ends on a name the theme does not give. `erx_ui_lvgl` writes
 the `diff_op()`s to its standard input in the binary form declared in
 `abi/formats/ui.txt`, from which the generator produces the program's
 bounded C reader. That form carries an `on_*` property as the flag that
@@ -4047,7 +4057,9 @@ on a display edits nothing of the board's:
   environment when it creates the domain: `display` is the name of the
   display it serves, `display_policy` its policy,
   `display_idle_dim_s` and `display_idle_off_s` its idle times in
-  seconds, `display_keymap` its layout, `us` unless the entry names
+  seconds, `display_palette` the palette its windows are drawn in, a
+  member of `mf_display_palette`, `light` unless the entry names `dark`
+  in its `palette`, `display_keymap` its layout, `us` unless the entry names
   another the tree has ([Input events](#input-events)), and
   `display_repeat_delay_ms` and `display_repeat_period_ms` the time a
   key is held before it repeats and the time between repeats, each a
@@ -4410,7 +4422,8 @@ written.
 Three properties keep these additions from reaching clients. A buffer is
 described by its width, height and the display's channel, and its rows
 are 32 bits aligned, the layout each of these devices takes. A client
-learns of the display only its channel, its scale and its window's size,
+learns of the display only its channel, its scale, its palette and its
+window's size,
 and of composition only the answer to its present and that present's
 report. And every path falls back
 to the copy path, which needs nothing of the buffer but that the display
@@ -4594,7 +4607,8 @@ serves no other interface to a client.
 `windows` service it describes, whose server is the display domain and
 whose name is the display's everywhere: in every grantee's registry and
 in a start row; its policy, a member of `mf_display_policy`; its idle
-policy; its keyboard's layout and repeat delay and period; the reserved
+policy; its palette, a member of `mf_display_palette`, `light` when it
+names none; its keyboard's layout and repeat delay and period; the reserved
 chord, by evdev code. The entry names no session, no renderer and no
 application.
 

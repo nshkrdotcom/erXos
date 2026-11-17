@@ -20,7 +20,8 @@ through the line escape, so the program shows no text raw (G5).
 **On a window.** start/3 over `{window, Window}`, an erx_win window the
 widget server opened with no buffer of its own (docs/design-display.md,
 "Erlang clients"), with no options, binds the renderer to it: the
-window's size and channel come from erx_win:info/1, the program's buffer
+window's size, channel and palette come from erx_win:info/1, the palette
+as the program's one argument, the program's buffer
 is lent at that size from the display's pixel area, each present is
 erx_win:present/3 of that buffer, and a present's text is
 erx_present:text/2.
@@ -140,13 +141,14 @@ over the options.
 start(_Target, Server, #{program := _} = Opts) ->
     shell(Server, Opts);
 start({window, Window}, Server, Options) when map_size(Options) =:= 0 ->
-    #{peer := Peer, rect := {X0, Y0, X1, Y1}, chan := #{code := Code, depth := Depth}} = erx_win:info(Window),
+    #{peer := Peer, rect := {X0, Y0, X1, Y1}, chan := #{code := Code, depth := Depth}, palette := Palette} =
+        erx_win:info(Window),
     %% The buffer is lent at the size the core's extent is: one width and
     %% height for both, so no screen record passes the buffer.
     {Width, Height} = {X1 - X0, Y1 - Y0},
     {ok, Bytes} = erx_win_core:bytes(Width, Height, Depth),
     shell(Server, #{width => Width, height => Height, chan => Code,
-                    program => {handler, program_spec(), Peer, Bytes},
+                    program => {handler, program_spec(Palette), Peer, Bytes},
                     window => Window, present_text => fun erx_present:text/2}).
 
 shell(Server, Opts) ->
@@ -378,9 +380,10 @@ run({handler, Spec, Peer, Bytes}) ->
 
 %% The window ------------------------------------------------------------------
 
-%% The spec of the program's start, but for its descriptors.
-program_spec() ->
-    #{image => <<"bin/erx-lvgl">>, argv => [<<"erx-lvgl">>],
+%% The spec of the program's start, but for its descriptors: its one argument is the
+%% palette the window's ctl names.
+program_spec(Palette) ->
+    #{image => <<"bin/erx-lvgl">>, argv => [<<"erx-lvgl">>, atom_to_binary(Palette)],
       env => [], cwd => <<"/">>, spawn => false, sigmask => [], sigignore => [], umask => 8#022}.
 
 %% Ends the window's readers and stops the program, at each end of this

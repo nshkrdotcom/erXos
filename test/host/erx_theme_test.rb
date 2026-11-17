@@ -38,10 +38,12 @@ class ErxThemeTest < Minitest::Test
     [{ '  shadow section 0 2 12 10' => '' }, /the theme needs a shadow row/],
     [{ '  unit 4' => '  unit 0' }, /unit must lie in 1\.\./],
     [{ '  unit 4' => '  unit 4 px' }, /expected unit PIXELS/],
-    [{ 'color window     F6F5F2' => "color window     F6F5F2\n  color Wall       F6F5F2" }, /invalid theme name "Wall"/],
-    [{ 'color desktop    D9DAD5' => "color desktop    D9DAD5\n  color desktop    D9DAD6" }, /color desktop is declared twice/],
+    [{ 'color window     F6F5F2' => "color window     F6F5F2 0D0F2A\n  color Wall       F6F5F2" }, /invalid theme name "Wall"/],
+    [{ 'color desktop    D9DAD5' => "color desktop    D9DAD5 0D0F2A\n  color desktop    D9DAD6" }, /color desktop is declared twice/],
     [{ 'color desktop    D9DAD5' => 'color desktop    d9dad5' }, /not six upper-case hexadecimal digits/],
-    [{ 'color desktop    D9DAD5' => 'color desktop    D9DAD5 00' }, /expected color NAME RRGGBB/],
+    [{ 'color desktop    D9DAD5 0D0F2A' => 'color desktop    D9DAD5 0D0F2A 00' }, /expected color NAME LIGHT_RRGGBB DARK_RRGGBB/],
+    [{ 'color desktop    D9DAD5 0D0F2A' => 'color desktop    D9DAD5' }, /expected color NAME LIGHT_RRGGBB DARK_RRGGBB/],
+    [{ 'color desktop    D9DAD5 0D0F2A' => 'color desktop    D9DAD5 0d0f2a' }, /not six upper-case hexadecimal digits/],
     [{ 'semibold Inter-SemiBold.ttf' => 'semibold Inter-SemiBold.ttf light Inter-Light.ttf' },
      /font weight light is not one of/],
     [{ 'semibold Inter-SemiBold.ttf' => 'semibold Inter-SemiBold.ttf medium Inter-Book.ttf' },
@@ -113,7 +115,17 @@ class ErxThemeTest < Minitest::Test
     error = assert_raises(Erx::ABI::SchemaError) do
       theme_of(seeded('color secondary  5D6066' => 'color secondary  B0B0B0'))
     end
-    assert_match(/abi\/theme\.txt:\d+: contrast secondary on window is 1\.99, below 4\.5/, error.message)
+    assert_match(/abi\/theme\.txt:\d+: contrast secondary on window is 1\.99 in the light palette, below 4\.5/,
+                 error.message)
+  end
+
+  # D7 in the dark palette: a dark `secondary` too dim for its surfaces
+  # fails generation, though its light value meets the rule.
+  def test_d7_a_dark_secondary_too_dim_fails
+    error = assert_raises(Erx::ABI::SchemaError) do
+      theme_of(seeded('color secondary  5D6066 9E9FAA' => 'color secondary  5D6066 4A4B58'))
+    end
+    assert_match(/contrast secondary on window is \d\.\d\d in the dark palette, below 4\.5/, error.message)
   end
 
   def test_each_rule_refuses_its_seed
@@ -125,7 +137,7 @@ class ErxThemeTest < Minitest::Test
 
   def test_the_theme_belongs_in_its_own_file
     declarations = Erx::ABI::Syntax.parse(SOURCE, path: 'abi/formats/theme.txt').select { |item| item.kind == 'theme' }
-    error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Theme.validate(declarations) }
+    error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Theme.validate(declarations, palettes: Erx::ABI::Theme.palettes(root: ROOT)) }
     assert_match(/belongs in abi\/theme\.txt/, error.message)
   end
 
@@ -153,7 +165,9 @@ class ErxThemeTest < Minitest::Test
       # A failed match ends the run with status 1 and what failed, not in a shell.
       script = <<~ERLANG
         try
-          16#1b1c1eff = erx_theme:color(text),
+          16#1b1c1eff = erx_theme:color(light, text),
+          16#ffffffff = erx_theme:color(dark, text),
+          [light, dark] = erx_theme:palettes(),
           #{SOURCE.scan(/^  color /).size} = length(erx_theme:colors()),
           \#{size := 11, line := 16, weight := regular, figures := proportional, color := secondary} =
             erx_theme:role(caption),
@@ -162,7 +176,7 @@ class ErxThemeTest < Minitest::Test
           0 = erx_theme:radius(window),
           \#{x := 0, y := 2, blur := 12, percent := 10} = erx_theme:shadow(section),
           {4, 1, 1} = {erx_theme:unit(), erx_theme:hairline(), erx_theme:version()},
-          undeclared = try erx_theme:color(lavender) catch error:function_clause -> undeclared end,
+          undeclared = try erx_theme:color(light, lavender) catch error:function_clause -> undeclared end,
           halt(0)
         catch Class:Reason -> io:format("~p:~p~n", [Class, Reason]), halt(1)
         end.
@@ -177,8 +191,15 @@ class ErxThemeTest < Minitest::Test
       File.write(source, <<~C)
         #include <erx/theme.h>
 
-        _Static_assert(ERX_THEME_COLOR_TEXT == 0x1b1c1eu, "text");
-        _Static_assert(ERX_THEME_ROLE_CAPTION_COLOR == ERX_THEME_COLOR_SECONDARY, "caption colour");
+        #define INDEX(name, NAME) ERX_PALETTE_##NAME,
+        enum { ERX_THEME_PALETTES(INDEX) };
+        #define PALETTE(name, NAME) [ERX_PALETTE_##NAME] = ERX_THEME_PALETTE_##NAME,
+        static const erx_theme_palette_t palettes[] = { ERX_THEME_PALETTES(PALETTE) };
+
+        _Static_assert(sizeof(palettes) / sizeof(palettes[0]) == 2 && ERX_PALETTE_LIGHT == 0, "light first");
+        _Static_assert(sizeof(erx_theme_palette_t) == #{SOURCE.scan(/^  color /).size} * sizeof(uint32_t), "every colour");
+        const uint32_t *text(void) { return (&palettes[ERX_PALETTE_DARK].text); }
+        const uint32_t *caption(void) { return (&palettes[ERX_PALETTE_LIGHT].ERX_THEME_ROLE_CAPTION_COLOR); }
         _Static_assert(ERX_THEME_ROLE_DISPLAY_TABULAR == 1 && ERX_THEME_ROLE_BODY_TABULAR == 0, "figures");
         _Static_assert(ERX_THEME_ROLE_NUMERIC_WEIGHT == 500, "weight");
         _Static_assert(ERX_THEME_SPACE_XXL == 32 && ERX_THEME_RADIUS_WINDOW == 0, "lengths");
@@ -195,14 +216,20 @@ class ErxThemeTest < Minitest::Test
   def test_the_typescript_constants_say_what_the_source_says
     module_path = File.join(GENERATED, Erx::ABI::ThemeEmitter::TS_PATH)
     script = <<~JS
-      const { THEME_VERSION, THEME_PROPERTIES } = await import(#{module_path.dump});
-      console.log(JSON.stringify([THEME_VERSION, ...THEME_PROPERTIES]));
+      const { THEME_VERSION, THEME_PROPERTIES, THEME_PALETTES } = await import(#{module_path.dump});
+      const palettes = [...THEME_PALETTES].map(([name, colors]) => [name, Object.fromEntries(colors)]);
+      console.log(JSON.stringify([THEME_VERSION, palettes, ...THEME_PROPERTIES]));
     JS
     properties = JSON.parse(run!(*Erx::WebStage::NODE, '--input-type=module', '-e', script, chdir: ROOT))
     version = properties.shift
+    palettes = properties.shift.to_h
     properties = properties.to_h
     assert_equal 1, version
-    assert_equal '#1b1c1e', properties.fetch('--erx-color-text')
+    assert_equal %w[light dark], palettes.keys
+    assert_equal '#1b1c1e', palettes.fetch('light').fetch('--erx-color-text')
+    assert_equal '#ffffff', palettes.fetch('dark').fetch('--erx-color-text')
+    assert_equal palettes.fetch('light').keys, palettes.fetch('dark').keys
+    refute properties.key?('--erx-color-text')
     assert_equal 'var(--erx-color-secondary)', properties.fetch('--erx-role-caption-color')
     assert_equal 'tabular-nums', properties.fetch('--erx-role-display-font-variant-numeric')
     assert_equal '600', properties.fetch('--erx-role-title-font-weight')
@@ -215,7 +242,7 @@ class ErxThemeTest < Minitest::Test
 
   def theme_of(text)
     declarations = Erx::ABI::Syntax.parse(text, path: 'abi/theme.txt').select { |item| item.kind == 'theme' }
-    Erx::ABI::Theme.validate(declarations)
+    Erx::ABI::Theme.validate(declarations, palettes: Erx::ABI::Theme.palettes(root: ROOT))
   end
 
   # abi/theme.txt with the one occurrence of each key of REPLACEMENTS

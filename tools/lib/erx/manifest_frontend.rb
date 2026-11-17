@@ -71,7 +71,7 @@ module Erx
         'image' => %w[device input salt],
         'partial_boot' => %w[image],
         'start' => %w[enable display restarts restart_period_s],
-        'display' => %w[policy idle_dim_s idle_off_s],
+        'display' => %w[policy idle_dim_s idle_off_s palette],
         'apps' => %w[memory services max],
         'package' => %w[input enable],
         'signer' => %w[key],
@@ -80,7 +80,7 @@ module Erx
       OPTIONAL = { 'machine' => %w[system_args], 'domain' => %w[boot_timeout_s args env], 'session' => %w[args env], 'service' => %w[name],
                    'facet' => %w[name queue], 'image' => %w[salt],
                    'start' => %w[enable display restarts restart_period_s],
-                   'apps' => %w[services max], 'package' => %w[enable] }.freeze
+                   'apps' => %w[services max], 'package' => %w[enable], 'display' => %w[palette] }.freeze
       # The declarations that carry no source alias: the one machine, the one apps row
       # (docs/design-packaging.md, "The apps row") and the one system_image row
       # (docs/design-stopgap.md, "The booted slot").

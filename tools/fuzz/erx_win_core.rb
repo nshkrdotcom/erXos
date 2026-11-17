@@ -7,23 +7,25 @@ require 'optparse'
 require 'tmpdir'
 
 # The fuzz target of erx_win_core's readers of what a client reads back from a display:
-# the ctl read's channel, the wctl read's rectangle and state, and the mouse and kbd records
+# the ctl read's channel, scale and palette, the wctl read's rectangle and state, and the mouse and kbd records
 # (docs/design-display.md, "Verification and testing", Windows). It is compiled from source
 # with erx_chan and run alone on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's), as
 # the module is and then as copies that each drop one check, which must fail: without the
 # mouse record's length, without the wctl read's length, without the right alignment of a
-# field, without the rectangle's form, without its 16,384-pixel side, without the sign
+# field, without the palette's name, without the rectangle's form, without its 16,384-pixel side, without the sign
 # check of the buttons, and without the refusal of a NUL among a kbd record's runes. That
 # shows the reference and the inputs reach each check.
 module ErxWinCoreFuzz
   ROOT = File.expand_path('../..', __dir__)
   MODULE_SOURCE = File.join(ROOT, 'erlang/apps/erx_win/src/erx_win_core.erl')
   CHAN_SOURCE = File.join(ROOT, 'erlang/apps/erx_memdraw/src/erx_chan.erl')
+  THEME_SOURCE = File.join(ROOT, 'build/gen/erlang/apps/erx_memdraw/src/erx_theme.erl')
   TARGET_SOURCE = File.join(ROOT, 'test/erlang/erx_win_core_fuzz.erl')
   ABI_INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
   SEEDED = {
     "the mouse record's length" => ['Msec:?CELL/binary>>)', 'Msec:?CELL/binary, _/binary>>)'],
     "the wctl read's length" => ['F:?CELL/binary>>)', 'F:?CELL/binary, _/binary>>)'],
+    "the palette's name" => ['atom_to_binary(Name) =:= Palette', 'true'],
     "a field's alignment" => ['byte_size(Token), byte_size(Token)) =:= Token', 'byte_size(Token), 0) =:= <<>>'],
     "the rectangle's form" => ['X0 =< X1, Y0 =< Y1, X1 - X0', 'X1 - X0'],
     'the 16,384-pixel side' => ['X1 - X0 =< ?ERX_WINDOWS_SIDE_MAX', 'X1 - X0 =< 2 * ?ERX_WINDOWS_SIDE_MAX'],
@@ -53,7 +55,7 @@ module ErxWinCoreFuzz
       module_path = File.join(work, 'erx_win_core.erl')
       File.binwrite(module_path, module_text)
       output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-I', ABI_INCLUDE, '-o', work,
-                                       module_path, CHAN_SOURCE, TARGET_SOURCE, stdin_data: '')
+                                       module_path, CHAN_SOURCE, THEME_SOURCE, TARGET_SOURCE, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

@@ -21,14 +21,17 @@ module Erx
     ThemeContrast = Data.define(:foreground, :backgrounds, :ratio)
     # The icons' definition file and the pixel sizes, ascending.
     ThemeIcons = Data.define(:path, :sizes)
-    # The validated theme. UNIT and HAIRLINE are pixels; FONTS, ROLES,
-    # SHADOWS and COLORS (each an Integer 0xRRGGBB) are frozen hashes by
-    # name, and SPACES (in units) and RADII (in pixels) frozen hashes of
-    # integers by name, each sorted by name, so no output depends on the
-    # order of the rows; CONTRASTS keep the declared order.
-    ThemeSchema = Data.define(:version, :unit, :hairline, :fonts, :roles, :spaces, :radii, :shadows,
+    # The validated theme. UNIT and HAIRLINE are pixels; PALETTES the
+    # palettes' names, the default first; FONTS, ROLES, SHADOWS and COLORS
+    # (each a frozen hash from every palette to an Integer 0xRRGGBB) are
+    # frozen hashes by name, and SPACES (in units) and RADII (in pixels)
+    # frozen hashes of integers by name, each sorted by name, so no output
+    # depends on the order of the rows; CONTRASTS keep the declared order.
+    ThemeSchema = Data.define(:version, :unit, :hairline, :palettes, :fonts, :roles, :spaces, :radii, :shadows,
                               :colors, :contrasts, :icons) do
       def space_pixels(name) = spaces.fetch(name) * unit
+      # Every colour's value in the palette NAME, by colour name.
+      def palette(name) = colors.transform_values { |values| values.fetch(name) }
     end
 
     # The reader of the one `theme VERSION` declaration (docs/design-abi.md,
@@ -37,6 +40,9 @@ module Erx
     # resolved.
     module Theme
       SOURCE = 'abi/theme.txt'
+      # Where the palettes are declared: the enum a display's manifest entry chooses from.
+      PALETTE_SOURCE = 'abi/manifest.txt'
+      PALETTE_ENUM = 'mf_display_palette'
       NAME = /\A[a-z][a-z0-9_]{0,62}\z/.freeze
       # A relative path beneath the root: no segment starts with a dot, so
       # none is `..`.
@@ -68,7 +74,20 @@ module Erx
 
       module_function
 
-      def validate(declarations)
+      # The palettes' names of the tree at ROOT, the default first: the members
+      # of abi/manifest.txt's mf_display_palette in value order, which the ABI
+      # model validates. For a reader of the theme alone, such as the glyph step.
+      def palettes(root:)
+        manifest = Syntax.parse(File.read(File.join(root, PALETTE_SOURCE)), path: PALETTE_SOURCE)
+        enum = manifest.find { |item| item.kind == 'enum' && item.args.first == PALETTE_ENUM } or
+          raise SchemaError, "#{PALETTE_SOURCE} declares no enum #{PALETTE_ENUM}"
+        enum.members.map { |line| [line.words.fetch(1), Integer(line.words.fetch(2))] }.sort_by(&:last).map(&:first)
+      end
+
+      # PALETTES are the names of the palettes, in the order a colour row
+      # gives its values, the default first: the members of the manifest's
+      # mf_display_palette in value order (ABI::Model#validate_theme).
+      def validate(declarations, palettes:)
         return nil if declarations.empty?
 
         declarations.drop(1).first&.fail!('exactly one theme declaration is allowed')
@@ -77,7 +96,7 @@ module Erx
         declaration.fail!('expected theme VERSION') unless declaration.line.tokens.size == 2
         version = Syntax.integer(declaration.args.first, line: declaration.line)
         declaration.fail!('theme version must be positive and fit 32 bits') unless version.between?(1, 0xffffffff)
-        Reader.new(declaration).schema(version)
+        Reader.new(declaration, palettes: palettes).schema(version)
       end
 
       # WCAG 2's contrast ratio of two sRGB colours, each 0xRRGGBB:
@@ -103,7 +122,8 @@ module Erx
       # the ones it refers to, failing at the first refusal with the row's
       # place.
       class Reader
-        def initialize(declaration)
+        def initialize(declaration, palettes:)
+          @palettes = palettes
           declaration.members.each do |line|
             line.fail!('a theme member takes two-space indentation') unless line.indent == 2
             line.fail!("unknown theme member #{line.words.first}") unless MEMBERS.include?(line.words.first)
@@ -123,7 +143,7 @@ module Erx
           colors = declare_each('color') { |line| color(line) }
           fonts = fonts_with_ranges
           ThemeSchema.new(
-            version: version, unit: unit, hairline: hairline, fonts: fonts,
+            version: version, unit: unit, hairline: hairline, palettes: @palettes, fonts: fonts,
             roles: declare_each('role') { |line| role(line, fonts: fonts, colors: colors, unit: unit) },
             spaces: scale(single('space'), 1..(PIXELS.max / unit), 'space'),
             radii: radii, shadows: declare_each('shadow') { |line| shadow(line) },
@@ -165,10 +185,14 @@ module Erx
           value
         end
 
+        # A colour's value in each palette, in their order.
         def color(line)
-          line.fail!('expected color NAME RRGGBB') unless line.words.size == 3
-          line.fail!("colour #{line.words[1]} is not six upper-case hexadecimal digits") unless line.words[2].match?(COLOR)
-          line.words[2].to_i(16)
+          line.fail!("expected color NAME #{@palettes.map { |name| "#{name.upcase}_RRGGBB" }.join(' ')}") unless
+            line.words.size == 2 + @palettes.size
+          @palettes.zip(line.words.drop(2)).to_h do |palette, value|
+            line.fail!("colour #{line.words[1]} is not six upper-case hexadecimal digits") unless value.match?(COLOR)
+            [palette, value.to_i(16)]
+          end.freeze
         end
 
         # The fonts, each with the one range row that names it.
@@ -273,7 +297,7 @@ end
         end
 
         # A contrast row, checked: the foreground meets the ratio on every
-        # background it names.
+        # background it names, in every palette.
         def contrast(line, colors)
           foreground, on, *backgrounds, ratio_text = line.words.drop(1)
           line.fail!('expected contrast FOREGROUND on BACKGROUND... RATIO') unless on == 'on' && backgrounds.any?
@@ -281,12 +305,12 @@ end
           [foreground, *backgrounds].each do |name|
             line.fail!("contrast names an undeclared colour #{name}") unless colors.key?(name)
           end
-          backgrounds.each do |background|
-            measured = Theme.contrast_ratio(colors.fetch(foreground), colors.fetch(background))
+          @palettes.product(backgrounds).each do |palette, background|
+            measured = Theme.contrast_ratio(colors.fetch(foreground).fetch(palette), colors.fetch(background).fetch(palette))
             next if measured >= ratio
 
-            line.fail!(format('contrast %<fg>s on %<bg>s is %<measured>.2f, below %<ratio>s',
-                              fg: foreground, bg: background, measured: measured, ratio: ratio_text))
+            line.fail!(format('contrast %<fg>s on %<bg>s is %<measured>.2f in the %<palette>s palette, below %<ratio>s',
+                              fg: foreground, bg: background, measured: measured, palette: palette, ratio: ratio_text))
           end
           ThemeContrast.new(foreground: foreground, backgrounds: backgrounds.freeze, ratio: ratio)
         end

@@ -8,5 +8,5 @@
              erx_dashboard_view, erx_quotes, erx_quotes_core, erx_quotes_extract,
              erx_quotes_http, erx_quotes_table, erx_quotes_view]},
   {registered, [erx_dashboard, erx_dashboard_sup]},
-  {applications, [kernel, stdlib, erx_ui]},
+  {applications, [kernel, stdlib, erx_memdraw, erx_ui]},
   {mod, {erx_dashboard_app, []}}]}.
