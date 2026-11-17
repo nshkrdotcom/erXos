@@ -9404,11 +9404,6 @@ document's "residual risks accepted" paragraph.
   medium in place, so a booted pack output holds the guest's SSH host key and `/data`. Plain QEMU has no firmware
   to pick the slot, so the published command needs the device tree naming it (`MediumBoot.firmware_tree`) published
   beside the medium, or a loader on the medium; the medium carries no kiosk, which the plan's QEMU demo shows.
-* [Low] Raspberry Pi card labels (`tools/lib/erx/pi_medium.rb`, `RECORD_FORMAT` and `SLOT_FORMAT`): the record
-  volume is labelled `ERXREC` and both slots' boot partitions `ERXOS`, where
-  [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record) labels the record volume
-  `ERXOS` and the slots `ERXSLOTA` and `ERXSLOTB`, so the volume that takes `authorized_keys` is the one named for
-  the system.
 * [Medium] storage, the reset count's encoding (`abi/medium.txt`, `tools/lib/erx/pi_medium.rb`): no encoding of the
   count is defined, so the Pi card's writer leaves its sector the zeros fsimg writes in the reserved area instead of
   the count's first value (design-platforms.md, "Slots and the boot-selection record"), as the QEMU medium does.

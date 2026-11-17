@@ -18,6 +18,11 @@ class PiMediumTest < Minitest::Test
   PI = Erx::PiMedium
   # A kernel8.img of several clusters whose last is partly filled.
   KERNEL = Random.new(7).bytes((5 * 1024) + 100)
+  # Where a FAT16's and a FAT32's boot sector hold the volume label, and the attribute
+  # that marks a root directory entry as the label.
+  FAT16_LABEL = 43
+  FAT32_LABEL = 71
+  VOLUME_LABEL = 0x08
 
   # The card is a power of two long and holds the layout's minimum data partition.
   def test_the_card_is_a_power_of_two
@@ -34,6 +39,22 @@ class PiMediumTest < Minitest::Test
       Erx::FatVolume.open(slot) { |volume| assert_equal :fat32, volume.layout.kind.name }
       assert_equal KERNEL, File.binread(slot, KERNEL.bytesize, PI::BOOT_PLACE)
       assert_equal Erx::BootRecord.sector(:a), File.binread(record, 512, PI::RECORD_PLACE)
+    end
+  end
+
+  # The record volume carries the label users are told to copy authorized_keys to
+  # (README.md, "Getting started"; docs/design-ssh.md, "Where the file lies"), in its
+  # boot sector and as its root directory's label entry, which is what a host shows;
+  # slot A's boot partition is labelled for its slot, so a host shows the two apart.
+  def test_the_record_volume_carries_the_label_users_are_told_to_use
+    volumes do |record, slot|
+      assert_equal 'ERXOS      ', File.binread(record, 11, FAT16_LABEL)
+      Erx::FatVolume.open(record) do |volume|
+        root = volume.read(volume.layout.root_offset, volume.layout.root_bytes)
+        labels = root.scan(/.{32}/mn).select { |entry| entry.getbyte(11) == VOLUME_LABEL }.map { |entry| entry[0, 11] }
+        assert_equal ['ERXOS      '], labels
+      end
+      assert_equal 'ERXSLOTA   ', File.binread(slot, 11, FAT32_LABEL)
     end
   end
 
