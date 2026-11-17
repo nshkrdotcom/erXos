@@ -482,7 +482,7 @@ module Erx
     def published_apps
       work = self.class.clear_directory(root: @root, path: File.join(@root, PUBLISHED_APPS_DIRECTORY, @machine.platform.name))
       FileUtils.mkdir_p(work)
-      kiosk = ImageApps.packed_kiosk(work, root: @root, runner: @runner, compiler: @compiler).package
+      kiosk = ImageApps.packed_kiosk(work, root: @root, runner: @runner, compiler: @compiler, linker: @linker).package
       ImageApps.plan([kiosk], enable: [kiosk.name])
     end
 

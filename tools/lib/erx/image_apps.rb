@@ -134,8 +134,8 @@ module Erx
     # the SDK exported into sdk_directory (exported_sdk), then each directory packed over
     # it and signed by signer into packages_directory (gather). Both directories must
     # exist and be empty.
-    def packed_apps(sources, sdk_directory:, packages_directory:, root:, runner:, signer:, compiler:)
-      gather(sources, into: packages_directory, sdk: exported_sdk(sdk_directory, root: root, runner: runner),
+    def packed_apps(sources, sdk_directory:, packages_directory:, root:, runner:, signer:, compiler:, linker:)
+      gather(sources, into: packages_directory, sdk: exported_sdk(sdk_directory, root: root, runner: runner, compiler: compiler, linker: linker),
                       signer: signer, runner: runner, root: root, compiler: compiler)
     end
 
@@ -145,23 +145,25 @@ module Erx
     # under work/sdk (exported_sdk) into work/packages, and sealed by the published package
     # key (PackageKey.published), so no builder's own key enters the bytes: every builder
     # of one clean tree packs the same package (the copy takes KIOSK as it lies on disk).
-    def packed_kiosk(work, root:, runner:, compiler:)
+    def packed_kiosk(work, root:, runner:, compiler:, linker:)
       raise Error, "#{work} is not an empty directory" unless Dir.exist?(work) && Dir.empty?(work)
 
       app = File.join(work, 'app')
       FileUtils.cp_r(File.join(root, KIOSK), app)
-      sdk = exported_sdk(FileUtils.mkdir_p(File.join(work, 'sdk')).first, root: root, runner: runner)
+      sdk = exported_sdk(FileUtils.mkdir_p(File.join(work, 'sdk')).first, root: root, runner: runner, compiler: compiler,
+                                                                   linker: linker)
       package, = gather([app], into: FileUtils.mkdir_p(File.join(work, 'packages')).first, sdk: sdk,
                                signer: PackageKey.published, runner: runner, root: root, compiler: compiler)
       PackedKiosk.new(package: package, app: app, sdk: sdk)
     end
 
-    # The SDK the tree at root exports with stock's compiler into directory/sdk, as the
-    # AppPack::Sdk the packer runs from.
-    def exported_sdk(directory, root:, runner:)
+    # The SDK the tree at root exports with stock's compiler into directory/sdk, its native
+    # half built with the LLVM compiler and linker (SdkSysroot), as the AppPack::Sdk the
+    # packer runs from.
+    def exported_sdk(directory, root:, runner:, compiler:, linker:)
       erlc = File.join(File.dirname(Oracle.new(root: root, runner: runner).erl_path(Runtime::HOST_OTP_FLAVOUR)), 'erlc')
       exported = File.join(directory, 'sdk')
-      Sdk.new(root: root, runner: runner, erlc: erlc).export(exported)
+      Sdk.new(root: root, runner: runner, erlc: erlc, compiler: compiler, linker: linker).export(exported)
       AppPack::Sdk.new(root: exported, erlc: erlc)
     end
 

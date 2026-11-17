@@ -165,10 +165,13 @@ class KeymapTest < Minitest::Test
 
   private
 
-  # A copy of tools/lib with the seed applied, and this file's catching case run in a
-  # child against it.
+  # A copy of tools/lib, at tools/lib beside a copy of .gitmodules as in the tree (the
+  # library reads the submodule table at load, Erx::Submodules::TREE), with the seed
+  # applied, and this file's catching case run in a child against it.
   def run_case_against_seed(seed)
-    Dir.mktmpdir('erx-keymap-seed') do |work|
+    Dir.mktmpdir('erx-keymap-seed') do |root|
+      FileUtils.cp(File.join(ROOT, '.gitmodules'), root)
+      work = FileUtils.mkdir_p(File.join(root, 'tools')).first
       FileUtils.cp_r(File.join(ROOT, 'tools/lib'), work)
       generator = File.join(work, 'lib/erx/keymap.rb')
       source = File.read(generator)

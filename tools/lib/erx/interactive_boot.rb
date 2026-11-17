@@ -11,6 +11,7 @@ require_relative 'boot_record'
 require_relative 'dev_key'
 require_relative 'error'
 require_relative 'fiasco'
+require_relative 'json_input'
 require_relative 'medium_boot'
 require_relative 'output_directory'
 require_relative 'production_image'
@@ -211,8 +212,9 @@ module Erx
 
     # The MediumSource recorded beside a copy, or nil when there is none or it does not parse.
     def recorded_source(record)
-      MediumSource.new(**JSON.parse(File.read(record), symbolize_names: true))
-    rescue Errno::ENOENT, Errno::EISDIR, JSON::ParserError, ArgumentError, TypeError
+      fields = JsonInput.parse(File.binread(record), label: 'the medium copy record')
+      fields.is_a?(Hash) ? MediumSource.new(**fields.transform_keys(&:to_sym)) : nil
+    rescue Errno::ENOENT, Errno::EISDIR, Error, ArgumentError
       nil
     end
 

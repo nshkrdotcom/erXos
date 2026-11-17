@@ -198,7 +198,7 @@ module Erx
         fiasco.build(jobs: jobs) if build
         work = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/kiosk'))
         kiosk_directory, altered_directory = %w[kiosk altered].map { |name| FileUtils.mkdir_p(File.join(work, name)).first }
-        kiosk = ImageApps.packed_kiosk(kiosk_directory, root: @root, runner: @runner, compiler: @compiler)
+        kiosk = ImageApps.packed_kiosk(kiosk_directory, root: @root, runner: @runner, compiler: @compiler, linker: @linker)
         package = kiosk.package
         draw = drawing(app: kiosk.app, sdk: kiosk.sdk)
         draw.call(WARM_MINUTE)

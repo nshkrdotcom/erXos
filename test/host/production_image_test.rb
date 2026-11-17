@@ -188,7 +188,7 @@ class ProductionImageTest < Minitest::Test
   def test_a_card_carries_the_kiosk_enabled_alike_from_any_builder_and_trusts_no_key
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
     runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
-    image = Erx::ProductionImage.new(root: ROOT, runner: runner, compiler: ENV.fetch('ERX_CLANG'), linker: '',
+    image = Erx::ProductionImage.new(root: ROOT, runner: runner, compiler: ENV.fetch('ERX_CLANG'), linker: ENV.fetch('ERX_LLD'),
                                      machine: Erx::ProductionImage::Machine.development(pi), fiasco: Object.new,
                                      runtime: nil, jit_runtime: nil)
     builds = 2.times.map do
@@ -860,10 +860,11 @@ class ProductionImageTest < Minitest::Test
   def test_the_erts_line_must_count_the_manifests_arguments_and_the_command_lines
     system_args = PLATFORM.manifest_source(ROOT)[/^\s*system_args "(.*)"$/, 1].split.size
     refute_equal 0, system_args
-    # The system domain holds the host link's unit, the storage domain the block unit and
-    # the network domain the net unit, so the root adds one device record to the system's:
-    # the host link's physical one.
-    always = Erx::ProductionImage::Run.arguments_always(ROOT) + Erx::ProductionImage::Run::DEVICE_RECORD_WORDS
+    # The system domain holds the host link's unit and the RTC unit, the storage domain the
+    # block unit and the network domain the net unit, so the root adds two device records to
+    # the system's: the host link's physical one and the PL031's given one.
+    always = Erx::ProductionImage::Run.arguments_always(ROOT) + Erx::ProductionImage::Run::DEVICE_RECORD_WORDS +
+             Erx::ProductionImage::Run::GIVEN_RECORD_WORDS
     checkpoint_verifier('erts-start').call("erx: erts: erl_start runs, #{always + system_args} arguments\n")
     checkpoint_verifier('erts-start', extra_arguments: 1).call("erx: erts: erl_start runs, #{always + system_args + 1} arguments\n")
     assert_raises(Erx::Error) { checkpoint_verifier('erts-start').call("erx: erts: erl_start runs, #{always} arguments\n") }
@@ -885,8 +886,9 @@ class ProductionImageTest < Minitest::Test
     kinds = Erx::DeviceKinds.given(ROOT).map { |kind| [kind.role, kind.compatible] }
     given = display.count { |device| kinds.include?(device.values_at('role', 'compatible')) }
     refute_equal 0, given
+    # The display's records come beside the host link's and the RTC's (the test above).
     words = Erx::ProductionImage::Run.arguments_always(ROOT) + Erx::ProductionImage::Run::DEVICE_RECORD_WORDS +
-            (given * Erx::ProductionImage::Run::GIVEN_RECORD_WORDS) + system_args
+            ((given + 1) * Erx::ProductionImage::Run::GIVEN_RECORD_WORDS) + system_args
     checkpoint_verifier('erts-start', manifest_source: source).call("erx: erts: erl_start runs, #{words} arguments\n")
     assert_raises(Erx::Error) do
       checkpoint_verifier('erts-start', manifest_source: source)

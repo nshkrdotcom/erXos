@@ -51,7 +51,7 @@ end
 
 # One submodule: its section is named by its path, the path is a relative one
 # without `.` or `..`, and it is an example (`update = none`) exactly when it lies
-# under examples/, the directory ExampleLists keeps tree code from naming.
+# under EXAMPLES_DIRECTORY, the directory ExampleLists keeps tree code from naming.
 def self.entry(file, section)
   missing = %i[path url].reject { |key| section.key?(key) }
   raise Error, "#{file}: submodule #{section[:name]} lacks its #{missing.join(' and ')}" unless missing.empty?
