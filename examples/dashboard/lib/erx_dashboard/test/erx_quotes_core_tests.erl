@@ -47,6 +47,27 @@ first_tick_test() ->
     {_S2, Again} = erx_quotes_core:tick(S, ?T0 + 60000, 1.0),
     ?assertEqual([render], Again).
 
+%% A quote keeps the prices it received, oldest first, the last
+%% erx_quotes_core:samples() of them; a failed round adds none, and the
+%% board hands them to the view. Seeded failure: a ring that keeps the
+%% first prices instead of the last fails the second assertion.
+samples_test() ->
+    {S0, _} = start(),
+    Max = erx_quotes_core:samples(),
+    Answer = fun(Price, {S, Now}) ->
+                     {S1, _} = outcome(S, q, {value, float(Price), none}, Now),
+                     {S2, _} = erx_quotes_core:tick(S1, Now + 10000, 1.0),
+                     {S2, Now + 10000}
+             end,
+    {S3, Now3} = lists:foldl(Answer, {S0, ?T0}, [1, 2, 3]),
+    ?assertMatch(#{samples := [1.0, 2.0, 3.0]}, quote(q, S3)),
+    {S4, Now4} = lists:foldl(Answer, {S3, Now3}, lists:seq(4, Max + 5)),
+    ?assertEqual([float(N) || N <- lists:seq(6, Max + 5)], maps:get(samples, quote(q, S4))),
+    {S5, _} = outcome(S4, q, {error, timeout, none}, Now4),
+    ?assertEqual(maps:get(samples, quote(q, S4)), maps:get(samples, quote(q, S5))),
+    #{quotes := [Q | _]} = erx_quotes_view:board(S5, Now4),
+    ?assertEqual(maps:get(samples, quote(q, S5)), maps:get(samples, Q)).
+
 %% Seeded failure: starting the next round at the source that last
 %% answered fails the third case.
 rounds_test() ->

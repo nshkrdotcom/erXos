@@ -393,11 +393,15 @@ answers `{error, bad_data}`.
 ### What the screen shows
 
 The dashboard's quotes panel, under its header, which carries the board's
-credit, `Live quotes`, lists one row per quote in the table's order. Each
-row has the quote's label, its price with `decimals` digits, its change
+credit, `Live quotes`, shows one card per quote in the table's order. Each
+card has the quote's label, its price with `decimals` digits, its change
 with a sign and two digits, and a status line that the dashboard shows
 under the label in place of the quote's symbol, as the board's quote
-carries it (`status` in `erx_dashboard_view`):
+carries it (`status` in `erx_dashboard_view`), and under them a graph of
+the quote's last 180 prices, half an hour of its 10 s period, which the
+core keeps as the quote's `samples`, oldest first, and which a failed
+round leaves as they are; the day's opening price, derived from the
+price and its change, is marked across the graph:
 
 | State | Status line |
 | --- | --- |

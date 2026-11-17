@@ -13,7 +13,8 @@ process draws, so the core reads no clock and no generator.
 
 A quote's `value` is the last price it received, paired with its change,
 the source that gave it and the time it was fetched; only a value
-replaces it. `failure` is the reason the last round failed, the first
+replaces it. Its `samples` are the last samples/0 prices it received,
+oldest first, which the screen draws as a graph. `failure` is the reason the last round failed, the first
 source's, and goes when a round succeeds. `trying` is the round in
 flight: the index of the source asked and the first source's reason if
 it failed or was passed. A round is due when `next_at` has passed and
@@ -26,13 +27,14 @@ failed round in a row, up to 15 minutes, times the jitter, and no less
 than until the earliest of its sources is free again.
 """.
 
--export([new/2, tick/3, outcome/5]).
+-export([new/2, tick/3, outcome/5, samples/0]).
 
 -export_type([state/0, quote/0, action/0, outcome/0]).
 
 -type reason() :: erx_quotes_http:reason().
 -type quote() :: #{value := none | {Price :: float(), Change :: none | float(),
                                     Source :: atom(), FetchedAt :: integer()},
+                   samples := [float()],
                    failure := none | {reason(), At :: integer()},
                    failed_rounds := non_neg_integer(),
                    next_at := integer(),
@@ -46,16 +48,22 @@ than until the earliest of its sources is free again.
                  | {error, reason(), RetryAfter :: none | pos_integer()}.
 
 -define(MAX_WAIT_MS, 900000).
+%% The prices a quote keeps: half an hour of the table's 10 s period.
+-define(SAMPLES, 180).
 %% Past this many doublings every period of the table (5 s and up) is
 %% beyond the cap already, so the exponent stops growing with the count.
 -define(MAX_DOUBLINGS, 20).
+
+-doc "The most prices a quote keeps in its `samples`.".
+-spec samples() -> pos_integer().
+samples() -> ?SAMPLES.
 
 -doc "The state at monotonic time `Now`: every quote due, no value, no source held back.".
 -spec new(erx_quotes_table:table(), integer()) -> state().
 new(#{quotes := Quotes, sources := Sources} = Table, Now) ->
     #{table => Table,
       quotes => maps:from_list(
-                  [{Name, #{value => none, failure => none, failed_rounds => 0,
+                  [{Name, #{value => none, samples => [], failure => none, failed_rounds => 0,
                             next_at => Now, trying => none}}
                    || {Name, _Row} <- Quotes]),
       sources => maps:map(fun(_Name, _Row) -> #{not_before => Now, held => none} end,
@@ -100,7 +108,9 @@ outcome(#{quotes := Quotes} = State, Quote, Outcome, Now, Jitter) ->
 answered(Quote, Index, _First, {value, Price, Change}, State, Now, _Jitter) ->
     Source = source_name(Quote, Index, State),
     #{period := Period} = row(Quote, State),
-    {update_quote(Quote, #{value => {Price, Change, Source, Now}, failure => none,
+    #{samples := Samples} = maps:get(Quote, maps:get(quotes, State)),
+    {update_quote(Quote, #{value => {Price, Change, Source, Now},
+                           samples => last(Samples ++ [Price]), failure => none,
                            failed_rounds => 0, next_at => Now + Period,
                            trying => none}, State),
      [render]};
@@ -148,6 +158,10 @@ fail(Quote, Reason, State, Now, Jitter) ->
     {update_quote(Quote, #{failure => {Reason, Now}, failed_rounds => Rounds,
                            next_at => max(Now + Wait, Free), trying => none}, State),
      [render]}.
+
+%% The last ?SAMPLES of a quote's prices.
+last(Samples) when length(Samples) > ?SAMPLES -> tl(Samples);
+last(Samples) -> Samples.
 
 update_quote(Quote, Changes, #{quotes := Quotes} = State) ->
     State#{quotes := Quotes#{Quote := maps:merge(maps:get(Quote, Quotes), Changes)}}.

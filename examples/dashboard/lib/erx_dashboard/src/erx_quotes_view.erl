@@ -33,6 +33,7 @@ quote(Name, #{label := Label, decimals := Decimals} = Row, Quote, Sources, Now) 
                           #{value := none} -> {none, none}
                       end,
     #{symbol => atom_to_binary(Name), name => Label, price => Price, change => Change,
+      samples => maps:get(samples, Quote),
       decimals => Decimals, status => status(Quote, Row, Sources, Now)}.
 
 %% A quote's status line: `waiting`, `no data: REASON`, `CREDIT[, NOTE] -

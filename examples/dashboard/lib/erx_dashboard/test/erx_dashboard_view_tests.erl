@@ -58,7 +58,7 @@ tree_is_valid_test() ->
 waiting_panel_test() ->
     Texts = texts(erx_dashboard_view:tree(model(none))),
     ?assert(lists:member(<<"Waiting for quotes">>, Texts)),
-    ?assert(lists:member(<<"09:41">>, Texts)),
+    ?assert(lists:member(<<"09:41 UTC">>, Texts)),
     ?assert(lists:member(<<"Sunday, 15 November 2026">>, Texts)).
 
 board_panel_test() ->
@@ -81,11 +81,14 @@ same_model_same_tree_test() ->
 board() ->
     #{credit => <<"Sample data, not live prices">>,
       quotes => [#{symbol => <<"BTC">>, name => <<"Bitcoin">>,
-                   price => 64000.0, change => 1.25, decimals => 2},
+                   price => 64000.0, change => 1.25, decimals => 2,
+                   samples => [63200.0, 63500.0, 63350.0, 63800.0, 64000.0]},
                  #{symbol => <<"ETH">>, name => <<"Ether">>,
-                   price => 3200.0, change => -0.5, decimals => 2},
+                   price => 3200.0, change => -0.5, decimals => 2,
+                   samples => [3216.0, 3208.0, 3200.0]},
                  #{symbol => <<"SPX">>, name => <<"S&P 500">>,
-                   price => 5600.0, change => 0.0, decimals => 2}]}.
+                   price => 5600.0, change => 0.0, decimals => 2,
+                   samples => []}]}.
 
 model(Board) ->
     #{time => ?TIME, board => Board}.
@@ -97,3 +100,30 @@ texts({_Kind, _Props, Children}) -> lists:flatmap(fun texts/1, Children).
 %% Each node's key, depth first.
 keys({_Kind, Props, Children}) ->
     [Key || #{key := Key} <- [Props]] ++ lists:flatmap(fun keys/1, Children).
+
+%% Each card's graph spans its prices and the day's opening price, with a
+%% tenth of the range free above and below. Seeded failure: scaling
+%% without the opening price puts Ether's mark outside the range.
+graph_test() ->
+    Graphs = graphs(erx_dashboard_view:tree(model(board()))),
+    ?assertMatch([#{samples := [100, _, _, _, 900], mark := _},
+                  #{samples := [_, _, _], mark := _},
+                  #{samples := [], mark := 500}], Graphs),
+    [#{mark := BtcOpen}, #{samples := EthSamples, mark := EthOpen}, _] = Graphs,
+    ?assertEqual(110, BtcOpen),
+    ?assertEqual(900, EthOpen),
+    ?assertEqual(lists:reverse(lists:sort(EthSamples)), EthSamples).
+
+%% The clock is a PNG within the widget format's 48 KiB, and changes
+%% with the minute. Seeded failure: a dial that ignores the minute
+%% fails the last assertion.
+clock_picture_test() ->
+    Png = erx_dashboard_clock:png(?TIME),
+    ?assertMatch(<<137, "PNG", 13, 10, 26, 10, _/binary>>, Png),
+    ?assert(byte_size(Png) =< 49152),
+    {Date, {Hour, Minute, Second}} = ?TIME,
+    ?assertNotEqual(Png, erx_dashboard_clock:png({Date, {Hour, Minute + 1, Second}})).
+
+%% Each graph's properties, depth first.
+graphs({graph, Props, []}) -> [Props];
+graphs({_Kind, _Props, Children}) -> lists:flatmap(fun graphs/1, Children).

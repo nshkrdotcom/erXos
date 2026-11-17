@@ -139,6 +139,14 @@ struct ui_node {
 	int32_t		 min;
 	int32_t		 max;
 	int32_t		 value;
+	uint8_t		*picture;	/* an image's PNG bytes, or NULL */
+	lv_image_dsc_t	 picture_dsc;	/* the PNG as LVGL's source */
+	int32_t		*samples;	/* a graph's samples, ERX_UI_NONE for none */
+	uint16_t	 nsamples;
+	bool		 has_mark;
+	int32_t		 mark;
+	lv_chart_series_t *series;	/* a graph's samples */
+	lv_chart_series_t *mark_series; /* a graph's mark, drawn across */
 	uint8_t		 kind;
 	uint8_t		 align;
 	uint8_t		 columns;
@@ -380,12 +388,17 @@ on_lvgl_delete(lv_event_t *event)
 	table_remove(node->id);
 	if (node == root)
 		root = NULL;
+	free(node->picture);
+	free(node->samples);
 	free(node->text);
 	free(node->present);
 	free(node);
 }
 
 /* Nodes. */
+
+/* The chart's own range, onto which a graph's min and max are scaled. */
+#define GRAPH_SCALE	10000
 
 static bool
 takes_children(uint8_t kind)
@@ -420,6 +433,31 @@ container(lv_obj_t *parent, uint8_t kind)
 	return obj;
 }
 
+/*
+ * A graph: a line chart with no frame, grid or points, its samples in the
+ * theme's accent and its mark across them in the line colour.
+ */
+static lv_obj_t *
+graph(lv_obj_t *parent, ui_node_t *node)
+{
+	lv_obj_t *obj = lv_chart_create(parent);
+
+	lv_obj_remove_style_all(obj);
+	lv_chart_set_type(obj, LV_CHART_TYPE_LINE);
+	lv_chart_set_div_line_count(obj, 0, 0);
+	lv_chart_set_axis_range(obj, LV_CHART_AXIS_PRIMARY_Y, 0, GRAPH_SCALE);
+	lv_obj_set_style_line_width(obj, 2, LV_PART_ITEMS);
+	lv_obj_set_style_line_rounded(obj, true, LV_PART_ITEMS);
+	lv_obj_set_style_width(obj, 0, LV_PART_INDICATOR);
+	lv_obj_set_style_height(obj, 0, LV_PART_INDICATOR);
+	node->mark_series = lv_chart_add_series(obj,
+	    lv_color_hex(ERX_THEME_COLOR_LINE), LV_CHART_AXIS_PRIMARY_Y);
+	node->series = lv_chart_add_series(obj,
+	    lv_color_hex(ERX_THEME_COLOR_ACCENT), LV_CHART_AXIS_PRIMARY_Y);
+	lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+	return obj;
+}
+
 static lv_obj_t *
 widget(lv_obj_t *parent, ui_node_t *node)
 {
@@ -427,8 +465,11 @@ widget(lv_obj_t *parent, ui_node_t *node)
 
 	switch (node->kind) {
 	case ERX_UI_KIND_LABEL:
-	case ERX_UI_KIND_IMAGE:
 		return lv_label_create(parent);
+	case ERX_UI_KIND_IMAGE:
+		return lv_image_create(parent);
+	case ERX_UI_KIND_GRAPH:
+		return graph(parent, node);
 	case ERX_UI_KIND_BUTTON:
 		obj = lv_button_create(parent);
 		node->label = lv_label_create(obj);
@@ -588,6 +629,87 @@ set_slider(ui_node_t *node)
 {
 	lv_slider_set_range(node->obj, node->min, node->max);
 	lv_slider_set_value(node->obj, node->value, LV_ANIM_OFF);
+}
+
+/*
+ * An image's PNG, which LVGL's PNG decoder reads each time it draws: the
+ * bytes are copied, since the record's buffer is reused, and lv_conf.h keeps
+ * LVGL's image caches off, so no picture is remembered by the address of
+ * the node's source it replaces.
+ */
+static void
+set_picture(ui_node_t *node, const erx_ui_prop_t *prop)
+{
+	uint8_t *picture = NULL;
+
+	if (prop != NULL && prop->bytes.length > 0) {
+		picture = malloc(prop->bytes.length);
+		if (picture == NULL)
+			fatal("out of memory for a picture of %u bytes",
+			    prop->bytes.length);
+		memcpy(picture, prop->bytes.data, prop->bytes.length);
+	}
+	free(node->picture);
+	node->picture = picture;
+	node->picture_dsc = (lv_image_dsc_t){
+		.header = { .magic = LV_IMAGE_HEADER_MAGIC,
+		    .cf = LV_COLOR_FORMAT_RAW },
+		.data_size = picture == NULL ? 0 : prop->bytes.length,
+		.data = picture,
+	};
+	lv_image_set_src(node->obj, picture == NULL ? NULL :
+	    &node->picture_dsc);
+}
+
+/* A graph's samples, kept until set_graph() scales them. */
+static void
+set_samples(ui_node_t *node, const erx_ui_prop_t *prop)
+{
+	uint16_t count = prop == NULL ? 0 : prop->count;
+	int32_t *samples = NULL;
+
+	if (count > 0) {
+		samples = calloc(count, sizeof(*samples));
+		if (samples == NULL)
+			fatal("out of memory for %u samples", count);
+		for (uint16_t index = 0; index < count; index++)
+			if (!erx_ui_list_value(prop, index, &samples[index]))
+				fatal("sample %u of %u unreadable", index, count);
+	}
+	free(node->samples);
+	node->samples = samples;
+	node->nsamples = count;
+}
+
+/* A value within min and max on the chart's scale, in 64 bits. */
+static int32_t
+graph_scaled(const ui_node_t *node, int32_t value)
+{
+	if (value == ERX_UI_NONE)
+		return LV_CHART_POINT_NONE;
+	return (int32_t)(((int64_t)value - node->min) * GRAPH_SCALE /
+	    ((int64_t)node->max - node->min));
+}
+
+/*
+ * Draws a graph's samples and mark against its range, once its record's
+ * properties are all set. A graph without samples shows its mark alone,
+ * across a chart of two points.
+ */
+static void
+set_graph(ui_node_t *node)
+{
+	uint32_t points = node->nsamples < 2 ? 2 : node->nsamples;
+
+	lv_chart_set_point_count(node->obj, points);
+	lv_chart_set_all_values(node->obj, node->series, LV_CHART_POINT_NONE);
+	for (uint16_t index = 0; index < node->nsamples; index++)
+		lv_chart_set_series_value_by_id(node->obj, node->series, index,
+		    graph_scaled(node, node->samples[index]));
+	lv_chart_set_all_values(node->obj, node->mark_series,
+	    node->has_mark ? graph_scaled(node, node->mark) :
+	    LV_CHART_POINT_NONE);
+	lv_chart_refresh(node->obj);
 }
 
 /*
@@ -770,14 +892,24 @@ set_prop(ui_node_t *node, uint8_t number, const erx_ui_prop_t *prop)
 	case ERX_UI_PROP_AREA:
 		set_area(node, prop);
 		break;
+	case ERX_UI_PROP_IMAGE:
+		set_picture(node, prop);
+		break;
+	case ERX_UI_PROP_SAMPLES:
+		set_samples(node, prop);
+		break;
+	case ERX_UI_PROP_MARK:
+		node->has_mark = !cleared;
+		node->mark = integer;
+		break;
 	case ERX_UI_PROP_COLUMNS:
 		node->columns = cleared ? 1 : (uint8_t)integer;
 		children_size(node);
 		break;
 	default:
 		/*
-		 * Events, images, keys and names change nothing a
-		 * renderer shows; icons and graphs are not drawn here.
+		 * Events, image types, keys and names change nothing a
+		 * renderer shows; icons are not drawn here.
 		 */
 		break;
 	}
@@ -806,6 +938,8 @@ set_props(ui_node_t *node, const erx_ui_record_t *record)
 		set_prop(node, record->removed[index], NULL);
 	if (node->kind == ERX_UI_KIND_SLIDER)
 		set_slider(node);
+	if (node->kind == ERX_UI_KIND_GRAPH)
+		set_graph(node);
 }
 
 static ui_node_t *

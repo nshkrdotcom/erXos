@@ -1761,6 +1761,15 @@ it; git history is the record of completed work.
   `erx_text:escape_line/1` is generated. Glyph rendering cannot inject terminal controls, but bidirectional overrides
   and invisible format characters still mislead, and LVGL's font draws U+F000-U+F8FF as its built-in icons; the
   simplest fix is for the widget server to escape the canonical text before encoding it.
+* [Medium] `display/lvgl/erx_lvgl.c`, [Widget trees](docs/design-display.md#widget-trees): `align`'s `start`,
+  `center` and `end` are not placed; `node_size()` only tells `fill` from a node's own size, and LVGL's flex
+  layout places every child at the start of the cross axis. `examples/dashboard` centres its clock and right-aligns
+  its prices with weighted spacers meanwhile. Place a non-`fill` child within its slot, as `erx_ui_layout` does.
+* [Low] `display/lvgl/erx_lvgl.c` and `display/lvgl/lv_conf.h`: an `image` node's PNG is decoded by LVGL's
+  lodepng, which has no fuzz target. The bytes come from the session's own application and a defect stays in its
+  session ([LVGL's release contract](docs/design-display.md#lvgls-release-contract)), but every parser of
+  untrusted input has one: add a target that drives `erx-lvgl`'s `set_picture()` path over arbitrary and mutated
+  PNGs within `ui_picture_bytes`.
 * [Medium] `display/lvgl/erx_lvgl.c`, review findings left open. (1) A slider whose `max - min` exceeds a signed 32-bit
   integer overflows inside LVGL (`lv_bar.c`), which the sanitized build aborts on; scale such a range. (2) `set_slider`
   re-applies the last `value` the server sent on any set of the slider, undoing the user's drag, and `items` alone

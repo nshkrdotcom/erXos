@@ -51,7 +51,14 @@
 #define LV_THEME_DEFAULT_TRANSITION_TIME 0
 #define LV_TEXTAREA_DEF_PWD_SHOW_TIME	0
 
-#define LV_USE_LODEPNG			0
+/*
+ * An image node's PNG, ui.txt's one image type, decoded by LVGL's lodepng each
+ * time it is drawn. The image caches stay off: erx_lvgl.c reuses a node's source
+ * address for the picture that replaces it, which a cache would not tell apart.
+ */
+#define LV_USE_LODEPNG			1
+#define LV_CACHE_DEF_SIZE		0
+#define LV_IMAGE_HEADER_CACHE_DEF_CNT	0
 #define LV_USE_LIBPNG			0
 #define LV_USE_BMP			0
 #define LV_USE_TJPGD			0
