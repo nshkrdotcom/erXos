@@ -36,7 +36,10 @@ module Erx
   # FreeBSD's statistics with no loss; `host www HOST_IP`, which must find www in the
   # lease's domain, NIC_DOMAIN, slirp's option 15, with its address and IPv6 address;
   # `host nonexistent HOST_IP`, which must be NXDOMAIN; `host ADDRESS HOST_IP`, which
-  # must give the pointer back; and, in the Erlang shell, the node, which must be root's
+  # must give the pointer back; `ntpdate -q HOST_IP` and `ntpdate HOST_IP`, against the
+  # same harness answering as an NTP server, which must show ntpdate's server line and
+  # then its step, and `date`, which must then read the server's year; and, in the Erlang
+  # shell, the node, which must be root's
   # session's, and inet_db's name servers and
   # search list, which must be the lease's: none, since slirp in restricted mode, which
   # keeps the guest's traffic on the host, leaves the router and name server options out
@@ -117,6 +120,12 @@ module Erx
     HOST_LINE = "host www #{SERVER}\r".freeze
     MISSING_LINE = "host nonexistent #{SERVER}\r".freeze
     POINTER_LINE = "host 192.0.2.10 #{SERVER}\r".freeze
+    # ntpdate against the link server, whose replies say 2030-01-01 (NameServer::NTP_TIME):
+    # a query that sets nothing, a step, and the year date reads after it.
+    NTP_QUERY_LINE = "ntpdate -q #{SERVER}\r".freeze
+    NTP_SET_LINE = "ntpdate #{SERVER}\r".freeze
+    YEAR_LINE = "date +year=%Y\r"
+    SECONDS = '-?[0-9]+\.[0-9]{6}'
     RESOLVER_LINE = "{node(), inet_db:res_option(nameservers), inet_db:res_option(search)}.\r"
     # The shell's node, root's session's, and what inet_db holds once the lease is loaded:
     # no name server, which a restricted slirp does not offer, and NIC_DOMAIN.
@@ -259,6 +268,17 @@ module Erx
        *resolver_checkpoints].freeze
     end
 
+    # What ntpdate shows against the link server: the query's server line, the step to
+    # 2030, and the year `date` then reads. The offsets are how far the guest's clock was
+    # from 2030, so only their form is fixed.
+    def ntpdate_checkpoints
+      server = Regexp.escape(SERVER)
+      [shell_point('ntpdate-query', "server #{server}, stratum 1, offset #{SECONDS}, delay [0-9]+\\.[0-9]{5}",
+                   type: NTP_SET_LINE),
+       shell_point('ntpdate-step', "ntpdate: step time server #{server} offset #{SECONDS} sec", type: YEAR_LINE),
+       shell_point('ntpdate-year', Regexp.escape('year=2030'), type: ProductionImage::Run::ERL_LINE)]
+    end
+
     # What the resolver lines show: each `host` answer, in FreeBSD's lines, and inet_db's
     # resolver settings in the Erlang shell.
     def resolver_checkpoints
@@ -270,7 +290,8 @@ module Erx
        shell_point('host-address6', Regexp.escape("#{name} has IPv6 address 2001:db8::10"), type: MISSING_LINE),
        shell_point('host-nxdomain', Regexp.escape('Host nonexistent not found: 3(NXDOMAIN)'), type: POINTER_LINE),
        shell_point('host-pointer', Regexp.escape("10.2.0.192.in-addr.arpa domain name pointer #{name}."),
-                   type: ProductionImage::Run::ERL_LINE),
+                   type: NTP_QUERY_LINE),
+       *ntpdate_checkpoints,
        ProductionImage::Run::ERLANG_SHELL.merge(type: RESOLVER_LINE).freeze,
        erl_point('resolver-config', Regexp.escape(RESOLVER_ANSWER), type: IDS_LINE),
        erl_point('query-ids', '\{[0-9]+,[0-9]+,[0-9]+,[0-9]+\}', verify: method(:random_ids!), type: CONNECT_LINE)]

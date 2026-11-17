@@ -12,6 +12,9 @@ module Erx
     # whose answers no test controls. It answers, from HOST_MAC and HOST_IP, ARP requests
     # for HOST_IP and DNS queries to HOST_IP port 53 from the records in RECORDS:
     # NOERROR with the matching records for a name RECORDS knows, NXDOMAIN for any other.
+    # It is the `ntpdate` command's server too: an SNTP client request to HOST_IP port 123
+    # gets a stratum-1 reply that says the time is NTP_TIME, so the command's step is to a
+    # time the test fixes (docs/design-time.md, "Setting the clock from a server once").
     #
     # Every frame comes from the guest, the code under test, so each is parsed with bounds
     # checks and one that is not a well-formed request of these two kinds is skipped. The
@@ -19,6 +22,9 @@ module Erx
     # checkpoints read the serial line.
     class NameServer
       DNS_PORT = 53
+      NTP_PORT = 123
+      # The time every NTP reply gives, 2030-01-01 00:00:00 UTC, as NTP seconds since 1900.
+      NTP_TIME = Time.utc(2030, 1, 1).to_i + 2_208_988_800
       PROTOCOL_UDP = 17
       TYPE_A = 1
       TYPE_PTR = 12
@@ -71,7 +77,7 @@ module Erx
       # Sends the answer to frame, if it is one this server answers, and returns nil so the
       # link's await goes on reading.
       def answer(frame)
-        reply = arp_reply(frame) || dns_reply(frame)
+        reply = arp_reply(frame) || udp_reply(frame)
         @link.send(reply) if reply
         nil
       end
@@ -88,15 +94,18 @@ module Erx
                            sender + sender_ip)
       end
 
-      def dns_reply(frame)
+      def udp_reply(frame)
         datagram = udp_to_server(frame)
         return nil unless datagram
 
-        response = dns_response(datagram.fetch(:payload))
+        response = case datagram.fetch(:to_port)
+                   when DNS_PORT then dns_response(datagram.fetch(:payload))
+                   when NTP_PORT then ntp_response(datagram.fetch(:payload))
+                   end
         response && udp_frame(datagram, response)
       end
 
-      # The source and payload of a UDP datagram to HOST_IP port 53, or nil.
+      # The source, destination port and payload of a UDP datagram to HOST_IP, or nil.
       def udp_to_server(frame)
         return nil unless frame.bytesize >= 34 && frame.unpack1('@12n') == ETHERTYPE_IP
 
@@ -107,9 +116,10 @@ module Erx
 
         udp = frame.byteslice(14 + header, total - header)
         source_port, destination_port, length = udp.unpack('nnn')
-        return nil unless destination_port == DNS_PORT && length >= 8 && length <= udp.bytesize
+        return nil unless length >= 8 && length <= udp.bytesize
 
-        { mac: frame.byteslice(6, 6), ip: source, port: source_port, payload: udp.byteslice(8, length - 8) }
+        { mac: frame.byteslice(6, 6), ip: source, port: source_port, to_port: destination_port,
+          payload: udp.byteslice(8, length - 8) }
       end
 
       # The response to a standard query of one question, or nil for anything else.
@@ -132,6 +142,17 @@ module Erx
           answers.map { |data| [0xc00c, type, CLASS_IN, TTL, data.bytesize].pack('nnnNn') + data }.join
       end
 
+      # The reply to an SNTPv4 client request (RFC 4330 section 5): version 4, mode 4,
+      # stratum 1, the request's transmit timestamp as its originate, and NTP_TIME as its
+      # reference, receive and transmit times; nil for anything that is not such a request.
+      def ntp_response(request)
+        return nil unless request.bytesize >= 48 && request.getbyte(0) & 0x3f == (4 << 3) | 3
+
+        stamp = [NTP_TIME, 0].pack('NN')
+        [(4 << 3) | 4, 1, 6, -20].pack('CCCc') + [0, 0].pack('NN') + 'GPS'.b + "\0".b +
+          stamp + request.byteslice(40, 8) + stamp + stamp
+      end
+
       # The question's name, lowercased, and the offset after it; nil for a compressed or
       # malformed name.
       def question_name(query, offset)
@@ -151,7 +172,7 @@ module Erx
       def udp_frame(datagram, payload)
         length = 8 + payload.bytesize
         pseudo = NetDevice.bytes(HOST_IP) + datagram.fetch(:ip) + [0, PROTOCOL_UDP, length].pack('CCn')
-        udp = [DNS_PORT, datagram.fetch(:port), length, 0].pack('nnnn') + payload
+        udp = [datagram.fetch(:to_port), datagram.fetch(:port), length, 0].pack('nnnn') + payload
         udp = NetDevice.with_checksum(pseudo + udp, at: pseudo.bytesize + 6).byteslice(pseudo.bytesize..)
         # A sum of zero goes as all ones, since zero means no checksum (RFC 768).
         udp[6, 2] = "\xff\xff".b if udp.unpack1('@6n').zero?

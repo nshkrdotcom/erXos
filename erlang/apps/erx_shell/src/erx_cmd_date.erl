@@ -33,7 +33,7 @@ does in the C locale (lib/libc/stdtime/strftime.c), with date's own
 -erx_usage("date [-jnu] [[[[[cc]yy]mm]dd]HH]MM[.SS] [+format]").
 
 -export([run/2]).
--export([parse/1, target/2, format/2]).
+-export([parse/1, target/2, format/2, set_clock/2]).
 -export_type([request/0, operand/0]).
 
 -doc """
@@ -363,12 +363,27 @@ write_time(Ctx, Format, Time) ->
 %% A set reads the monotonic clock and the wall time at one moment, and
 %% sends the offset that makes the clock read the named time T at M.
 set(Ctx, Operand, Format) ->
+    Monotonic = os:perf_counter(nanosecond),
+    Time = target(Operand, os:system_time(nanosecond)),
+    case set_clock(Ctx, Time - Monotonic) of
+        {ok, _StepNs} -> write_time(Ctx, Format, Time);
+        {error, _} = Refused -> Refused
+    end.
+
+-doc """
+Asks the session's clock facet to set the wall offset to W, the one
+route by which a command sets the clock: the step
+the clock service made, in nanoseconds, or, once
+`NAME: clock_settime: REASON` is written, the status 1. A session
+without the `clock` grant refuses with `eperm`, as FreeBSD refuses a
+user other than the superuser.
+""".
+-spec set_clock(erx_cmd:ctx(), integer()) -> {ok, integer()} | {error, {reported, binary()}}.
+set_clock(Ctx, W) ->
     case erx_cmd:facet(Ctx, clock) of
         {ok, Facet} ->
-            Monotonic = os:perf_counter(nanosecond),
-            Time = target(Operand, os:system_time(nanosecond)),
-            case request(Facet, {set, Time - Monotonic}) of
-                {ok, {stepped, _StepNs}} -> write_time(Ctx, Format, Time);
+            case request(Facet, {set, W}) of
+                {ok, {stepped, StepNs}} -> {ok, StepNs};
                 {error, Reason} -> refused(Ctx, errno(Reason))
             end;
         {error, no_facet} ->
