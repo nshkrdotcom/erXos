@@ -2055,8 +2055,8 @@ next available item of the plan.
    recovery with its fuzz target; `erx_pkg_plan` with its crash and
    failure tests over reordered writes. One check of
    design-packaging.md's Phase 1 table lands later: `purge` with the
-   storage service's `remove_app` and directories named by signer, with
-   principals' directories at M10.
+   storage service's `remove_app` and directories named by signer, at
+   M10.
 
 **Exit criteria, the start table.** The merge's host tests and their
 seeded faults (a row added for an undeclared principal, the display
@@ -2544,8 +2544,8 @@ neighbour answering. The release notes carry the downsides table.
   space copy (`erx_mem_child`, `erx_mem_dirty`, `erx_space_copy`) are
   refused on Fiasco (FD9).
 * **Two stopgaps, under release contracts.** littlefs, as a NIF in the
-  storage domain, with every grant of the data service rooted at its
-  client's principal's directory
+  storage domain, with every grant of the data partition's services
+  rooted at its client's home, its app's directory or its service's
   ([design-stopgap.md](design-stopgap.md#release-contract)),
   and LVGL, as a program of its application's session
   ([design-display.md](design-display.md#lvgls-release-contract)). 0.2
@@ -3517,7 +3517,7 @@ at a secure line and holds itself
 ([design-live.md](design-live.md#the-console)); the host link's configured
 facet sets; supervised domains and their code overlays, kept per principal
 as manifests in the code store, each principal's hot store and overlays in
-the principal's own directory on the data partition that M6 brings, none
+its user's home on the data partition, an app's in its own directory, none
 for the boot image's manifest, with the code service's
 decoder of what it reads back and its fuzz target
 ([design-live.md](design-live.md#the-code-store)); per-principal quotas on

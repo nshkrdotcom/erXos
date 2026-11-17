@@ -518,9 +518,10 @@ start table ([design-apps.md](design-apps.md#the-start-table), "Where
 the file is"). The writers are held to those who already hold the
 session's authority over its files:
 
-* **The person's own sessions.** The data partition's service roots a
-  principal's grant at that principal's directory
-  ([design-storage.md](design-storage.md#interfaces)), and a principal
+* **The person's own sessions.** The data partition's `home` service
+  roots each session's grant at its user's home
+  ([design-files.md](design-files.md#building-binding-and-mounting),
+  "A user's home"), and a principal
   has one session template
   ([design-system.md](design-system.md#the-manifest), property 14), so
   every session that can write the file holds the capabilities of the

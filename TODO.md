@@ -582,10 +582,11 @@ it; git history is the record of completed work.
   `tools/fuzz/lfs_image_target.rb` and a host test, whose seeded failure leaves the check out of `lfs_dir_find`.
   Blocks 0.2 ([design-stopgap.md](docs/design-stopgap.md#release-contract), Failure).
 * [High] 0.2, littlefs, the data service's grants (`erlang/apps/erx_storage/src/erx_lfs_mint.erl`, `erx_lfs.erl`):
-  root every `data` grant at its client's principal's directory, an app's at `apps/NAME/SIGNER/`, with the
-  owner checking each path against its grant's root, and the release case: a session of a second principal
-  opens a file of the first principal's directory and gets `enoent`; a grant minted at the volume's root fails
-  it ([design-stopgap.md](docs/design-stopgap.md#release-contract), Grants). It closes the `data` items under
+  root an app's `data` grant at `apps/NAME/SIGNER/`, with the owner checking each path against its grant's
+  root, keep the whole-volume grant out of a release's manifest, so a user's session holds only its home, and
+  the release case: a session of a second user opens a file of the first user's home and gets `enoent`; a
+  grant minted at the volume's root fails it ([design-stopgap.md](docs/design-stopgap.md#release-contract),
+  Grants). It closes the `data` items under
   Security residuals (`rc.conf`, packages, the log's store) and gives `tree apps` its root.
 * [High] 0.2, littlefs, the restart-intensity test: the storage domain ended six times within 600 seconds is restarted
   five times and then stays down, reported by the domain service; the intensity not applied, so the sixth end is
@@ -2423,24 +2424,28 @@ it; git history is the record of completed work.
   (`platform-arm.h:96`) while QEMU virt's device tree says hvc; bootstrap's own reboot path on
   virt would issue SMC through the wrong conduit. The fix is one call in `init`, with a test.
 
-* [Medium] files, a user's home ([design-files.md](docs/design-files.md#building-binding-and-mounting),
-  "A user's home") and the principal's directory: the design keeps two per-principal places on the data
-  volume. design-files.md ("Building, binding and mounting", a session's `/data`), design-storage.md
-  ("Interfaces", each grant "rooted at a principal's directory") and the littlefs release contract
-  ([design-stopgap.md](docs/design-stopgap.md#release-contract), its Grants row and its test of a second
-  principal's enoent) describe a `/data` rooted at the principal's directory, while the home is a `home`
-  grant at `/root` or `/home/NAME` and root's `data` is the whole volume. Fold one into the other and
-  change the three passages and the contract's test row together; the contract's Grants row also needs
-  every non-app session's `home` grant as littlefs input.
-* [Medium] domains, the system principal's name in grants (`erlang/apps/erx_domain/src/erx_domain_srv.erl`,
-  `principal_name/2`, `machine_principal`, `name_of/2`): a mint names the system principal `root`, its user
-  name, while the machine tree's grant names it `system`, and `name_of`'s comment still calls itself the
-  one lookup of a grant's principal name. One function should give the name every grant carries.
-* [Medium] manifest, the home rows (`tools/lib/erx/manifest.rb`, `home_facets`): the rows skip the app
-  template by its place, last among the sessions, instead of by `app_template?`, and no manifest test
-  checks that the app template has no `home` row and every other template one with `rw` and `tree home`;
-  a seeded `users = sessions.size` passes every test. Also refuse a source facet row of `home_service`,
-  which today passes the check and fails only when the grant starts (`erx_lfs:tree_root/1` has no `home`).
+* [Medium] files, the whole-volume `data` grant (`tools/lib/erx/manifest.rb`, `normalize_facets`): with a
+  user's one place on the data volume its home ([design-files.md](docs/design-files.md#building-binding-and-mounting),
+  "A user's home"), only root's sessions and the system domain may hold `data`, and only in a development
+  build ([design-stopgap.md](docs/design-stopgap.md#release-contract), Grants), but no manifest property
+  refuses a `data` row granted to another session template or to any session in a release manifest; add one,
+  with a seeded violation for each. Until then the development manifest's rows are the only guard.
+* [Medium] docs, leftovers of the per-principal data directory the home replaced: design-apps.md ("The facet
+  rows", whose `clock` example's `clock_data` source row is a whole-volume grant, since no source row carries
+  `tree apps`; a manifest app's files belong in its home), design-log.md ("each principal's data grant is
+  rooted at its own directory", twice), the `etc` item under Security residuals here ("rooted by principal"),
+  design-apps.md, design-packaging.md and plan.md ("once `data` grants are rooted by principal"),
+  design-packaging.md ("the directories of the manifest's principals"), plan.md ("no directory of a manifest
+  principal"), design-time.md (the ntpd principal's data directory), and design-bluetooth.md and
+  design-wifi.md (a domain's `data` grant "rooted at its own directory", which no mechanism gives a
+  configured domain). Restate each in terms of homes, apps' directories and service trees.
+* [Medium] manifest, property 19's clause list ([design-packaging.md](docs/design-packaging.md), property 19,
+  clause 7 and its seeded violations; design-files.md, "A user's home", "The row"): the check refuses a source
+  facet row of the `home_service` service (`manifest.rb`, `normalize_facets`), which neither the clause list
+  nor "The row" states; add it to clause 7 with its seed.
+* [Low] manifest, the app template's index (`tools/lib/erx/manifest.rb`): `apps_rows` still finds it as the
+  last session while `app_facets` and `home_facets` use `app_session?`; one helper should give it, and the
+  comment above `normalize_facets` that says "last among the sessions" belongs to `apps_rows`.
 
 * [Medium] storage and images, the development boot image is 68 MB (`kernel8.img` on the Pi 4 boot
   partition, 68,202,496 bytes) and stays in RAM for the whole boot; it also weighs on the Pi 4 secure-boot
@@ -6484,7 +6489,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   breaks their preconditions (a kernel bug, never a domain's input); make
   that an assertion in host and debug builds as well.
 
-
 * [High] storage and platforms, the Pi 4's boot image: the Pi 4's secure
   boot checks `boot.img` at about 2.6 MB/s under a firmware watchdog fixed
   at 4 s, and the boot image holds the kernel, the runtime image and the
@@ -7900,8 +7904,8 @@ to the corpus and follow rc
   grant to `root`'s sessions covers the whole of `/data`, read-write, so those sessions reach the log's store at
   `/data/log` past `erx_logfs`: they can rewrite, truncate or forge either family, the kernel's included, so the
   store's one writer and its attribution hold only for what no such session touched. Development builds run
-  trusted code alone. Closed by rooting each `data` grant at its principal's directory, with the test that a
-  session holding `data` finds no `log`; it blocks 0.2, whose littlefs release contract roots every grant
+  trusted code alone. Closed by a release's manifest granting no session the whole volume, so each holds only
+  its home, with the test that root's session finds no `log`; it blocks 0.2, whose littlefs release contract roots every grant
   ([design-stopgap.md](docs/design-stopgap.md#release-contract)).
 * [Medium] erx_logfs ([design-log.md](docs/design-log.md#security)): `/var/log` serves the store's bytes as stored.
   The log service stores only lines that passed the line escape, but a storage domain, or a holder of write access
@@ -8203,7 +8207,6 @@ to the corpus and follow rc
   `write/1`'s callers, before the security closure
   (`erlang/apps/erx/src/erx_console.erl`).
 
-
 * [Medium] system domain, the reset count
   ([design-system.md](docs/design-system.md)): any successful login clears the
   count, including a web login, so a machine with a boot fault that lets
@@ -8213,7 +8216,6 @@ to the corpus and follow rc
   rescue texts' "the operator can inspect the crash record"
   (design-system.md, design-platforms.md) holds only when the manifest names
   a system-shell principal; state that there.
-
 
 * [Medium] display, layout work in `erx_screen`
   ([G3](docs/design-display.md#the-screen-and-its-one-path-to-the-device)):

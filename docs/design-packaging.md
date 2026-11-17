@@ -2212,7 +2212,7 @@ what rests on parts that arrive later, reporting each as it is:
 | Deferred | Until | Meanwhile |
 | --- | --- | --- |
 | isolation between apps' domains, and budgets and quotas as limits | erXos's kernel | as for every domain ([design-apps.md](design-apps.md#phase-1)) |
-| rooting `data` grants by principal, `apps/`, `tree apps` and the signer in an app's directory | principals' directories (M10) | apps can reach each other's directories, the residual design-apps.md records; the directory half of PK4's test waits, its `/proc` half runs |
+| rooting an app's `data` grant, `apps/`, `tree apps` and the signer in an app's directory | the apps' directories (M10) | apps can reach each other's directories, the residual design-apps.md records; the directory half of PK4's test waits, its `/proc` half runs |
 | `purge` with `remove_app` | the same | `service NAME purge` answers `enotsup` |
 
 ## Verification and testing

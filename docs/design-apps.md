@@ -238,7 +238,8 @@ facet clock_data
   by a row of that display's `windows` service, with the grant's quotas
   as the row's parameters, the network by a row of `net`, and files of
   its own by a row of `data`, which the storage service roots at the
-  principal's directory.
+  app's own directory, `apps/NAME/SIGNER/`
+  ([design-storage.md](design-storage.md#interfaces)).
 
 An app's principal is an ordinary principal, so the principal service
 knows it as it knows every principal of the manifest, and its sessions'
@@ -775,7 +776,7 @@ in every session a row or a `onestart` starts.
 | Subsystem | Interaction |
 | --- | --- |
 | the domain service | makes a row's session from its principal's template; fixes the session mark in the record of the grant on the display a keeper's start names, and carries it in every mint of that record |
-| the storage service | serves the `etc` tree, which holds `rc.conf`, read-only to the system domain and read-write to the templates that hold `start`; roots every `data` grant at its principal's directory |
+| the storage service | serves the `etc` tree, which holds `rc.conf`, read-only to the system domain and read-write to the templates that hold `start`; roots an app's `data` grant at the app's own directory and a session's `home` grant at its user's home |
 | the display | serves every session that holds its grant, and under the single policy shows the windows of the display's session alone ([design-display.md](design-display.md#a-displays-session)) |
 
 ## Concurrency
@@ -986,7 +987,7 @@ later, and reports each as it is:
 
 | Deferred | Until | Meanwhile |
 | --- | --- | --- |
-| rooting `data` grants by principal | facet parameters and principals' directories | each grant covers the whole tree, so every domain holding `data` reaches the `etc` tree, can rewrite `rc.conf`, and reaches every app's directory: a security residual in `TODO.md` |
+| rooting an app's `data` grant at its own directory | facet parameters and the apps' directories | each grant covers the whole tree, so every domain holding `data` reaches the `etc` tree, can rewrite `rc.conf`, and reaches every app's directory: a security residual in `TODO.md` |
 | budgets and quotas as limits | erXos's kernel | they are records the build checked |
 
 ## Verification and testing

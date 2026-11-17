@@ -1982,7 +1982,7 @@ reported as a durable checkpoint.
   issues an SD command, with `erx_device:command/2` (U4).
 * **The storage services and the FAT server** implement 9P2000.L's
   operations through `erx_fs` and facets, one grant per client, rooted at
-  a principal's directory or a service's
+  its user's home or a service's directory
   ([design-files.md](design-files.md#the-file-protocol)); a grant whose
   facet row carries `tree apps` is rooted at `apps/NAME/SIGNER/`, the
   app's name and its signer as the mint names them, among the app
