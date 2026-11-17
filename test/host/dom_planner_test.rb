@@ -763,7 +763,8 @@ class DomPlannerTest < Minitest::Test
     interface = ->(name) { @codec.schema.services.find { |service| service.fetch(:name) == name }.fetch(:number) }
     # The services, in name order, each with its server's index in boot order (display 0,
     # network 1, storage 2, web 3) or none for the system domain, and its interface.
-    services = [%w[clock none clock], %w[data 2 files], %w[display 0 windows], %w[inspect none inspect],
+    services = [%w[clock none clock], %w[code_objects none code_objects], %w[data 2 files],
+                %w[display 0 windows], %w[home 2 files], %w[inspect none inspect],
                 %w[log none log], %w[login_keys 2 files], %w[machine none files], %w[net 1 net],
                 %w[network_ctl 1 driver_control],
                 %w[packages 2 files], %w[start none files], %w[storage_ctl 2 driver_control],

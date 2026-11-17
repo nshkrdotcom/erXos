@@ -1803,7 +1803,8 @@ the interface a session reaches the domain service's code objects
 through:
 
 ```text
-service code_objects 11
+service code_objects 14
+  served_as message
   operation create 1
   operation drop 2
 limit code_objects_max u32 256

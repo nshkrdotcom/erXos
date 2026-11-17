@@ -226,7 +226,7 @@ class ManifestDomainsTest < Minitest::Test
   # itself, with its own limits.
   def test_a_code_objects_facet_row_is_refused
     objects = service('code_objects', 'system').sub('interface 1', 'interface code_objects')
-    assert_equal [11], rows(@codec.open('manifest', admit(@source + objects).bytes), 'services').map { |row| row.fetch('interface') }
+    assert_equal [14], rows(@codec.open('manifest', admit(@source + objects).bytes), 'services').map { |row| row.fetch('interface') }
     { @source => '@domain.alpha', with_session(self.class.session) => '@session.system' }.each do |source, grantee|
       refused(Erx::Manifest::Invalid, 8, 'facet.service', source + objects + facet('objects', grantee, '@service.code_objects'))
     end
