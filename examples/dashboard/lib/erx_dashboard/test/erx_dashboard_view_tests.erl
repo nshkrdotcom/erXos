@@ -101,18 +101,16 @@ texts({_Kind, _Props, Children}) -> lists:flatmap(fun texts/1, Children).
 keys({_Kind, Props, Children}) ->
     [Key || #{key := Key} <- [Props]] ++ lists:flatmap(fun keys/1, Children).
 
-%% Each card's graph spans its prices and the day's opening price, with a
-%% tenth of the range free above and below. Seeded failure: scaling
-%% without the opening price puts Ether's mark outside the range.
+%% Each card's graph spans its prices, with a tenth of the range free
+%% above and below, and marks the day's opening price only within that
+%% range. Seeded failure: marking an opening price outside the prices'
+%% range puts Ether's mark outside the graph, which the schema refuses.
 graph_test() ->
     Graphs = graphs(erx_dashboard_view:tree(model(board()))),
-    ?assertMatch([#{samples := [100, _, _, _, 900], mark := _},
-                  #{samples := [_, _, _], mark := _},
+    ?assertMatch([#{samples := [100, _, _, _, 900], mark := 110},
+                  #{samples := [900, 500, 100]},
                   #{samples := [], mark := 500}], Graphs),
-    [#{mark := BtcOpen}, #{samples := EthSamples, mark := EthOpen}, _] = Graphs,
-    ?assertEqual(110, BtcOpen),
-    ?assertEqual(900, EthOpen),
-    ?assertEqual(lists:reverse(lists:sort(EthSamples)), EthSamples).
+    ?assertNot(maps:is_key(mark, lists:nth(2, Graphs))).
 
 %% The clock is a PNG within the widget format's 48 KiB, and changes
 %% with the minute. Seeded failure: a dial that ignores the minute

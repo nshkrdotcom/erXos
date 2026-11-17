@@ -112,7 +112,7 @@ card(#{symbol := Symbol, name := Name, price := Price, change := Change,
          [{label, #{height => 28, role => title, text => Name}, []},
           {label, #{height => 20, role => caption,
                     text => maps:get(status, Quote, Symbol)}, []}]},
-        {column, #{width => 180},
+        {column, #{width => 140},
          [flush_right({label, #{height => 28, role => title,
                                 text => or_none(Price, fun(P) -> price(P, Decimals) end)}, []}),
           flush_right({label, #{height => 20, role => numeric,
@@ -121,14 +121,15 @@ card(#{symbol := Symbol, name := Name, price := Price, change := Change,
       graph(Quote)]}.
 
 %% A quote's recent prices, scaled onto 0 to ?GRAPH_SCALE between the
-%% lowest and highest of them and the day's opening price, which the
-%% graph marks across them when the quote has a change to derive it from.
+%% lowest and highest of them, so the line uses the graph's height. The
+%% day's opening price, when the quote has a change to derive it from, is
+%% marked across them if it lies within their range, and alone in the
+%% middle before the first price.
 graph(#{samples := Samples} = Quote) ->
-    Open = open(Quote),
-    Values = Samples ++ [Open || Open =/= none],
-    Props = case Values of
-                [] -> #{samples => []};
-                _ -> scaled(Samples, Open, lists:min(Values), lists:max(Values))
+    Props = case {Samples, open(Quote)} of
+                {[], none} -> #{samples => []};
+                {[], Open} -> scaled([], Open, Open, Open);
+                {_, Open} -> scaled(Samples, Open, lists:min(Samples), lists:max(Samples))
             end,
     {graph, Props#{height => 76, min => 0, max => ?GRAPH_SCALE}, []}.
 
@@ -146,7 +147,7 @@ scaled(Samples, Open, Low, High) ->
                (Value) -> round(?GRAPH_SCALE * (0.1 + 0.8 * (Value - Low) / Span))
             end,
     Mark = case Open of
-               none -> #{};
+               _ when Open =:= none; Open < Low; Open > High -> #{};
                _ -> #{mark => Scale(Open)}
            end,
     Mark#{samples => [Scale(Sample) || Sample <- Samples]}.
