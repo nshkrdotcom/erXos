@@ -5,7 +5,10 @@
 %% client" and "Verification and testing"): the start flags' server list, the
 %% schedule over generated event sequences, and the clock facet request a
 %% checked sample gives. Seeded faults: accepting a ninth entry passes the
-%% nine-entry case; a poll floor of 8 s fails the spacing property.
+%% nine-entry case; a poll floor of 8 s fails the spacing property; and a
+%% wait of the 2 s burst gap after a clock answer, in place of the interval,
+%% which leaves the interval itself within bounds, fails the property at its
+%% spacing assertion (perform/3's poll clause).
 -module(erx_ntp_core_tests).
 
 -include_lib("eunit/include/eunit.hrl").

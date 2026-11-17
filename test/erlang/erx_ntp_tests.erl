@@ -97,6 +97,14 @@ checks_test_() ->
      ?_assertEqual({drop, delay}, Check(Reply#{transmit_time := timestamp(T + 540000000)})),
      ?_assertEqual({drop, distance}, Check(Reply#{root_dispersion := 65536}))].
 
+%% A server time earlier than the uptime since 1970 implies a wall offset W below zero,
+%% which no time page holds and the clock facet refuses, so it is no sample: a reply
+%% that says 1970-01-01 00:00:01 to a client up for 5 s.
+negative_offset_test() ->
+    {Reply, M1, M4, _T} = exchange(),
+    Early = Reply#{reference_time := 0, receive_time := timestamp(?NS), transmit_time := timestamp(?NS)},
+    ?assertEqual({drop, timestamps}, erx_ntp_sample:check(Early, ?NONCE, M1, M4)).
+
 %% A kiss is believed only after the nonce and mode checks, and nothing else of it is
 %% read: not its leap indicator, nor its undefined timestamps.
 kiss_test_() ->

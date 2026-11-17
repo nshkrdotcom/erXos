@@ -781,7 +781,11 @@ if all of these hold as well:
    a zero reference timestamp meaning none;
 8. `delay >= 0`;
 9. the distance `(max(rootdelay, 0) + delay) div 2 + rootdisp` is below
-   `clock_distance_max_ns`, 1 s, RFC 5905's `MAXDIST`.
+   `clock_distance_max_ns`, 1 s, RFC 5905's `MAXDIST`;
+10. the wall offset `W` the timestamps imply is one the time page holds,
+    0 to `time_offset_max`, counted as check 6's drop: a server time
+    earlier than the client's uptime since 1970 implies a negative `W`,
+    which the clock facet would refuse as `badarg`.
 
 The distance clamps root delay at zero before adding the measured delay,
 so a negative root delay cancels neither the delay this client measured

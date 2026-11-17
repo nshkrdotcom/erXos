@@ -28,7 +28,10 @@ sample only if
 7. its reference timestamp, unless it is zero, which means none, is not later than its
    transmit timestamp, `{drop, reference}`;
 8. the delay is not negative, `{drop, delay}`;
-9. its distance is below `clock_distance_max_ns`, `{drop, distance}`.
+9. its distance is below `clock_distance_max_ns`, `{drop, distance}`;
+10. the wall offset `W` its timestamps imply is one the time page holds,
+    0 to `time_offset_max`, `{drop, timestamps}`: a server time earlier
+    than the client's uptime since 1970 implies a negative one.
 
 The sample is the wall offset `W` the server implies against the
 monotonic clock, exactly the time page's `wall_offset_ns`, with the
@@ -94,8 +97,9 @@ sample(#{leap := Leap, stratum := Stratum, reference_time := Reference, receive_
     Distance = (max(erx_ntp_wire:short_ns(RootDelay), 0) + Delay) div 2
         + erx_ntp_wire:short_ns(RootDispersion),
     require(Distance < ?ERX_CLOCK_DISTANCE_MAX_NS, distance),
-    #{offset => ((T2 - M1) + (T3 - M4)) div 2, delay => Delay, distance => Distance,
-      stratum => Stratum}.
+    W = ((T2 - M1) + (T3 - M4)) div 2,
+    require(W >= 0 andalso W =< ?ERX_TIME_OFFSET_MAX, timestamps),
+    #{offset => W, delay => Delay, distance => Distance, stratum => Stratum}.
 
 require(true, _Reason) -> ok;
 require(false, Reason) -> throw({drop, Reason}).
