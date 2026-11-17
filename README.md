@@ -407,6 +407,91 @@ Eshell V17.1.1 (type help(). for help)
   Pi 4's header (GPIO, SPI, I2C) has register descriptions, a pin table
   and the pure core of a pin's ownership, and no driver yet.
 
+## Getting started
+
+0.1 is a development preview ([plan](docs/plan.md#01-the-preview),
+[release notes](site/release-notes.html)): it prints `development build:
+trusted code only` at boot and must run trusted code only. It runs on
+QEMU `virt` and on a Raspberry Pi 4. Read the release notes' known
+limitations before you put it on a network.
+
+**Raspberry Pi 4.** You need a Pi 4, a microSD card of at least 4 GB,
+an Ethernet cable and, for the kiosk, a screen on the HDMI0 port. A 3.3 V
+USB-serial adapter gives you the console
+([the wiring](docs/design-platforms.md#trying-a-card-on-a-board)).
+
+1. Download the card image from the website, or build it with
+   `make pack PLATFORM=raspi4b` (see
+   [Raspberry Pi 4 SD card](#raspberry-pi-4-sd-card)). Check its SHA-256
+   against the build record beside it.
+2. The Pi's bootloader must be from 2022-12-01 or later; the steps to
+   update it are in
+   [Trying a card on a board](docs/design-platforms.md#trying-a-card-on-a-board).
+3. Write the card. On macOS, with `diskN` the card in `diskutil list`
+   (everything on it is erased, so check the size twice):
+
+   ```sh
+   diskutil unmountDisk /dev/diskN
+   xz -dc erxos-card.img.xz | sudo dd of=/dev/rdiskN bs=4m
+   diskutil eject /dev/diskN
+   ```
+
+4. To log in over SSH, put your public key on the card before the first
+   boot: copy a file named `authorized_keys`, with one `ssh-ed25519` key
+   per line, to the root directory of the FAT volume labelled `ERXOS`.
+   The published card has no key, so without this file no SSH login
+   works. The file is read once per boot, and nothing running on the
+   board can write it.
+5. Put the card in the Pi, connect the Ethernet cable and the screen,
+   and power it. The serial console shows the banner and the shell's
+   `%` prompt within a minute; the screen shows the kiosk, a clock with a
+   quotes panel.
+6. From another machine on the same network:
+
+   ```sh
+   ssh -p 2222 root@BOARD-ADDRESS
+   ```
+
+   You get `rc`, the command shell. Port 2222, not 22, is where 0.1
+   listens. <!-- unverified: how a user finds BOARD-ADDRESS (DHCP lease on the router, or `ifconfig` on the serial console); no document of the tree says which. -->
+
+**QEMU.** From a clone of the repository, `tools/erx boot` builds the
+development image and boots it on your terminal (see
+[Boot erXos](#boot-erxos)); quit with Ctrl-A then X. The website's QEMU
+download boots without a build, with the command line shown beside it.
+For SSH, QEMU needs a network device that forwards a host port to the
+guest's port 2222, and the medium needs your `authorized_keys` as above:
+
+```sh
+make pack PLATFORM=qemu-virt
+```
+
+builds the QEMU medium, `build/production-image/qemu-virt/medium.img`;
+attach it on the host and copy `authorized_keys` onto its first FAT
+volume, then boot it with a `-netdev user,...,hostfwd=tcp:127.0.0.1:2222-:2222`
+network device and `ssh -p 2222 root@127.0.0.1`.
+<!-- unverified: no document or tool of the tree gives a user's complete QEMU command line for the published medium with the display, the network device and the 2222 forward; tools/erx boot's guest has no network device (README, Networking), and the website's .boot.gz image has no SSH or display domain. The QEMU wording needs the harness's real arguments (tools/lib/erx/qemu.rb, Nic) turned into one command. -->
+<!-- unverified: that the website publishes the QEMU medium (medium.img) as a download; the page offers the .boot.gz image today. -->
+
+**What to try.** In the SSH session or on the serial console:
+
+* `date` shows the clock, which starts at the build's date at every boot;
+  set it with FreeBSD's syntax, `date [[[[[cc]yy]mm]dd]HH]MM[.SS]`, for
+  example `date 202611161530`. It is not kept across a reboot.
+* `ps` and `top` list your session's processes; `erl` starts an Erlang
+  shell where `erx:domains()` lists every domain of the machine.
+* Your home directory is `/root` for root, and `/home/NAME` for other
+  users. Files under `/data` and in the home directories survive a power
+  cut once they are synced.
+
+**Doom.** Doom is not in the published images, because its license keeps
+it out. On QEMU you build it from your clone: `tools/erx fetch --example
+doom` fetches its source and Freedoom's data file, and `tools/erx pack
+--app examples/doom/doom --local` builds a local image that holds it
+([Adding an app to an image](docs/design-packaging.md#adding-an-app-to-an-image)).
+Keys come from QEMU's virtio keyboard. The Pi has no keyboard in 0.1.
+<!-- unverified: the exact pack command line for Doom (the plan names `tools/erx pack --app --local`; the tree has no examples/doom checkout to read its README or run.rb), and the "demo loop on the Pi" the request mentioned: docs/plan.md leaves Doom on the Pi to track U, and nothing in the tree has a demo loop. -->
+
 ## Correctness and testing
 
 erXos checks its code against answers that do not come from the code
