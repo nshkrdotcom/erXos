@@ -60,7 +60,11 @@ module Erx
   #
   # The report lines of clock's sessions arrive whenever their sessions get their
   # grants, interleaved with root's login, so they are read from the whole serial log
-  # once a boot has ended (reports!) rather than as checkpoints.
+  # once a boot has ended (reports!) rather than as checkpoints. The console prints a
+  # kernel log record some time after /proc/kernel/log holds it, so a boot may end before
+  # the console's copy; the shell therefore prints the records it read from
+  # /proc/kernel/log ahead of each answer that waited on them (CkLog, NO_CLOCK), and the
+  # serial log holds them once the answer's checkpoint has passed.
   module Apps
     # The app's principal, its sessions' name prefix, and the boot script of its
     # template's release: what every session boots (ReleaseFiles::SESSION_BASE), whose
@@ -128,9 +132,12 @@ module Erx
     # CkDoms is the domain service's domains; CkPid(Old, N) polls until a domain of
     # clock's sessions has a pid other than Old and answers it, `timeout` after N polls
     # 500 ms apart; CkState(Want, N) polls the same way until /proc/apps's row clock is
-    # in state Want; CkLog(N) polls the kernel log the same way until a report of clock's
-    # sessions is in it; CkRc() is whether the row is enabled and which of its fields
-    # rc.conf set, rather than the manifest's start row.
+    # in state Want; CkKlog(Pats) is the lines of /proc/kernel/log holding any of the
+    # binaries Pats, and exits naming the error when the log cannot be read; CkLog(N)
+    # polls the kernel log the same way until a report of clock's sessions is in it,
+    # prints the lines holding one and answers `reported`; CkRc() is whether the row is
+    # enabled and which of its fields rc.conf set, rather than the manifest's start row.
+    # The report pattern is split so that the echo of the typed line holds no report.
     HELPERS = 'CkDoms = fun() -> erx_domain_core:domains(maps:get(core, sys:get_state(erx_domain_srv))) end, ' \
               'CkPid = fun CkF(_, 0) -> timeout; CkF(CkOld, CkN) -> ' \
               'case [CkP || #{origin := {session, _}, node := CkNode, pid := CkP} <- CkDoms(), is_pid(CkP), ' \
@@ -140,9 +147,12 @@ module Erx
               "case erx_inspector:inspect([apps, <<\"#{PRINCIPAL}\">>]) of " \
               '{ok, #{attrs := #{state := {_, {ok, CkWant}}}}} -> CkWant; ' \
               '_ -> timer:sleep(500), CkS(CkWant, CkN - 1) end end, ' \
-              'CkLog = fun CkL(0) -> timeout; CkL(CkN) -> case file:read_file("/proc/kernel/log") of {ok, CkB} -> ' \
-              'case binary:match(CkB, <<"erx_clock_test: {clock_", "report,">>) of ' \
-              'nomatch -> timer:sleep(500), CkL(CkN - 1); _ -> reported end; CkE -> CkE end end, ' \
+              'CkKlog = fun(CkPats) -> case file:read_file("/proc/kernel/log") of {ok, CkB} -> ' \
+              '[CkLn || CkLn <- binary:split(CkB, <<"\n">>, [global]), binary:match(CkLn, CkPats) =/= nomatch]; ' \
+              'CkE -> exit({kernel_log, CkE}) end end, ' \
+              'CkLog = fun CkL(0) -> timeout; CkL(CkN) -> case CkKlog([<<"erx_clock_test: {clock_", "report,">>]) of ' \
+              '[] -> timer:sleep(500), CkL(CkN - 1); CkRs -> ' \
+              '[io:put_chars([CkR, "\n"]) || CkR <- CkRs], reported end end, ' \
               "CkRc = fun() -> case erx_inspector:inspect([apps, <<\"#{PRINCIPAL}\">>]) of " \
               '{ok, #{attrs := #{enabled := {_, {ok, CkEn}}, local := {_, {ok, CkLo}}}}} -> {CkEn, CkLo}; ' \
               'CkO -> CkO end end, '
@@ -181,13 +191,15 @@ module Erx
     # of clock's row: for a row left off, the state disabled and the fields rc.conf set,
     # and the error scope where no row exists. It waits for rc.conf to be read, not only
     # for the table to be made: while rc.conf cannot be read the table holds the
-    # manifest's rows alone, which would start a row that rc.conf disables.
+    # manifest's rows alone, which would start a row that rc.conf disables. Ahead of the
+    # answer it prints the lines of /proc/kernel/log that may be clock's, for reports!.
     NO_CLOCK = "#{HELPERS}CkRead = fun CkM(0) -> timeout; CkM(CkN) -> case erx_inspector:inspect([apps]) of " \
                '{ok, #{attrs := #{rc_conf := {_, {ok, read}}}}} -> read; _ -> timer:sleep(500), CkM(CkN - 1) end end, ' \
                'CkRead(240) =:= read orelse exit(unread), timer:sleep(20000), ' \
                "CkRow = case erx_inspector:inspect([apps, <<\"#{PRINCIPAL}\">>]) of " \
                '{ok, #{attrs := #{state := {_, {ok, CkSt}}, local := {_, {ok, CkLo}}}}} -> {CkSt, CkLo}; ' \
                'CkO -> CkO end, ' \
+               "[io:put_chars([CkR, \"\\n\"]) || CkR <- CkKlog([<<\"erx_clock_test: \">>, <<\"#{PRINCIPAL}_\">>])], " \
                "io:format(\"~0kp~n\", [{no_clock, lists:sort([CkName || \#{origin := {session, _}, node := CkName} <- CkDoms()]), CkRow}]).\r"
     # Typed at the system's Erlang shell: the library's max app entries and what the
     # package process holds (docs/design-packaging.md, "Boot and recovery"), each caught
