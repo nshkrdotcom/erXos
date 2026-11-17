@@ -222,7 +222,9 @@ read for this design.
 
 * **T-R1.** With network time enabled, and the network and a server
   reachable when the client starts, wall time agrees with the server's
-  within a minute; when they become reachable later, within the retry
+  within a minute, provided a reachable server is among the first four
+  addresses its names give and no name whose resolution times out comes
+  before it ([the schedule](#schedule) prices what comes before); when they become reachable later, within the retry
   wait then in effect, which [the schedule](#schedule) bounds at 1024 s,
   plus that minute. "Agrees" means within the error [Steps](#steps)
   states: the stepping sample's distance, below 1 s and in practice tens
@@ -774,9 +776,10 @@ most 10 s. So with the default `pool.ntp.org`, whose answer the client
 cuts to 4 addresses, the first sample comes within the minute even when
 the first three addresses are silent: 42 s of silent bursts after at
 most 10 s of resolution, then the reachable address's own burst, whose
-last exchange starts 6 s after its first, about 58 s in all. More silent addresses or slow names ahead of the
-reachable server delay it past the minute, since the client asks one
-address at a time ([Server list](#server-list)). One that becomes
+last exchange starts 6 s after its first, about 58 s in all. A reachable server later than the fourth address,
+or a name whose resolution times out ahead of it, delays it past the
+minute, since the client asks one address at a time
+([Server list](#server-list)). One that becomes
 reachable later is found within the wait then in effect, at most
 1024 s. The client watches
 for no network event; a later design may connect the schedule to one
