@@ -133,7 +133,7 @@ class ErxStarterTest < Minitest::Test
   ].freeze
 
   # A windows service of the web domain, with its display record, granted to the apps
-  # suite's template: the one display clock may name beside its data grant.
+  # suite's template: the one display clock may name beside its home grant.
   SCREEN = <<~ROWS
     service screen
       server @domain.web
@@ -181,8 +181,8 @@ class ErxStarterTest < Minitest::Test
 
   # The apps QEMU suite's manifest (Erx::Apps.manifest, its kept boot) with SCREEN,
   # admitted against the machine that suite boots and a fixture archive, for
-  # erx_starter:manifest_table/1's case: clock's template is granted data, a files
-  # service, and screen, a windows service. Packed once, since every run reads it.
+  # erx_starter:manifest_table/1's case: clock's template is granted home, a files
+  # service the build derives, and screen, a windows service. Packed once, since every run reads it.
   def self.packed_manifest
     @packed_manifest ||= begin
       codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))

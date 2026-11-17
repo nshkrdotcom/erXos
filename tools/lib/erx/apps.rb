@@ -20,8 +20,9 @@ require_relative 'session_domain'
 module Erx
   # The start table on the development machine (docs/design-apps.md, "Verification and
   # testing"): an app is a principal, clock, with a session template whose release boots
-  # the test-only application erx_clock_test, a `data` grant, and a `start` row, so its
-  # session starts at boot with no login and is started again when it ends.
+  # the test-only application erx_clock_test, the `home` grant the build derives, and a
+  # `start` row, so its session starts at boot with no login and is started again when it
+  # ends.
   #
   # Each cell boots three test images (ProductionImage#build_test_image, with a release
   # medium so the storage domain serves /data and the start service reads rc.conf), each
@@ -30,11 +31,12 @@ module Erx
   #
   # * kept: the row enabled with an intensity of one end in ten minutes. clock_1 boots
   #   with no login and erx_clock_test logs what its session holds (CLOCK_REPORT): its
-  #   template's one grant, `data`, and nothing of root's, no `start` among them, so
-  #   erx:cap(start) is undefined and /etc/start does not exist where /data lists. At root_1's
-  #   command shell `service ghost enable` is refused, ghost having no manifest row. At
-  #   the system's Erlang shell the row is running; clock's session is killed, a new one
-  #   takes its place, that one is killed too, and the row is then down (KILL_CLOCK).
+  #   template's one grant, `home`, and nothing of root's, no `start` among them, so
+  #   erx:cap(start) is undefined and /etc/start does not exist where /home/clock lists. At
+  #   root_1's command shell `service ghost enable` is refused, ghost having no manifest
+  #   row. At the system's Erlang shell the row is running; clock's session is killed, a
+  #   new one takes its place, that one is killed too, and the row is then down
+  #   (KILL_CLOCK).
   #   Back at root_1, `service clock status` says the row is down, and so does
   #   /proc/apps/clock/status, and `service -e` still lists the row, which is enabled.
   # * disabled: the same row with `enable NO`, the kept boot's seeded fault: no session
@@ -73,7 +75,7 @@ module Erx
     # successor is admitted while its predecessor's domain is still being taken down,
     # and 1 MiB of slack, as the system principal keeps. The machine's root_memory grows
     # by the principal's memory, max_domains by its two domains, and max_connections by
-    # the system connection and data grant of a session and of its successor.
+    # the system connection and home grant of a session and of its successor.
     LIMITS_MEMORY = 37_748_736
     LIMITS_OUTER = 1_048_576
     SESSION_MEMORY = LIMITS_MEMORY + LIMITS_OUTER
@@ -107,16 +109,6 @@ module Erx
         runtime @artifact.emu
         release @artifact.#{BOOT.name}
         args "#{TEMPLATE_ARGS}"
-      facet clock_data
-        name "data"
-        grantee @session.#{PRINCIPAL}
-        service @service.data
-        operations none
-        max_request 131072
-        in_flight 16
-        reductions 100000
-        period_ns 1000000000
-        max_heap_size 262144
     ROWS
     # The start rows of the three boots: the intensity one end in ten minutes, so the
     # second kill leaves the row down.
@@ -163,10 +155,10 @@ module Erx
     # down: one end more than its intensity allows.
     #
     # The session's own report sees the grants of its ready answer, which arrive before
-    # its applications start, but a configured domain's grant may arrive after data. The
+    # its applications start, but a configured domain's grant may arrive after home. The
     # domain service enters every grant of the session's template at once when the
     # session reports ready (erx_domain_mints, session_ready), so the grants read here
-    # are all there will be, and data alone, installed, says no other is coming. A
+    # are all there will be, and home alone, installed, says no other is coming. A
     # second look at erx:caps() later would only shrink that window, not close it.
     KILL_CLOCK = "#{HELPERS}CkGrants = fun CkGr(_, 0) -> timeout; CkGr(CkPd, CkN) -> " \
                  '#{grants := CkG} = gen_server:call(erx_domain_srv, mints), ' \
@@ -180,7 +172,7 @@ module Erx
                  'CkP2 = CkPid(CkP1, 600), exit(CkP2, kill), ' \
                  'io:format("~0kp~n", [{clock_killed, CkRun, CkReported, CkHeld, is_pid(CkP1), is_pid(CkP2), ' \
                  "CkState(down, 240)}]).\r"
-    KILLED = '{clock_killed,running,reported,[{data,installed}],true,true,down}'
+    KILLED = '{clock_killed,running,reported,[{home,installed}],true,true,down}'
     # Every poll of KILL_CLOCK at its limit, 500 ms each, and a minute more, so a step
     # that times out answers `timeout` in the line rather than the checkpoint expiring.
     KILL_SECONDS = (((4 * 600) + 20 + 240) / 2) + 60
@@ -234,11 +226,10 @@ module Erx
     # among them, with status 0.
     SERVICE_E = "service -e && echo service-listed\r"
     # What every report line of clock's sessions says (erx_clock_test:report/0): a
-    # session of clock holding the code_objects facet every session gets and the data grant,
-    # erx:cap(start) undefined, no /etc/start,
-    # and /data listed.
+    # session of clock holding the code_objects facet every session gets and its home grant,
+    # erx:cap(start) undefined, no /etc/start, and its home, /home/clock, listed.
     # Each anchored at the kernel log record's own prefix, which no echo of a typed line has.
-    CLOCK_REPORT = /space [0-9]+: notice: erx_clock_test: \{clock_report,#{PRINCIPAL}_[0-9]+@erxos,\[code_objects,data\],true,\{error,enoent\},ok\}/n
+    CLOCK_REPORT = /space [0-9]+: notice: erx_clock_test: \{clock_report,#{PRINCIPAL}_[0-9]+@erxos,\[code_objects,home\],true,\{error,enoent\},ok\}/n
     ANY_REPORT = /space [0-9]+: notice: erx_clock_test: \{clock_report,/n
     TIMED_OUT = /space [0-9]+: notice: erx_clock_test: \{clock_report,[^,]+,timeout\}/n
     # Any line of the app's, its start's among them, or any line naming a node of
@@ -255,8 +246,8 @@ module Erx
     # PROC_GREP's answer for a row in state, then its reporter's label.
     def proc_state(state) = /\Astate\t#{Regexp.escape(state)}\t[^\t\r\n]+\r*\n\z/n
 
-    # The development manifest source with clock's principal, template and data grant,
-    # the start row of boot (START), and the machine grown to hold clock's sessions.
+    # The development manifest source with clock's principal and template, whose home grant
+    # the build derives, the start row of boot (START), and the machine grown to hold clock's sessions.
     def manifest(source, boot:)
       Manifest::Edit.grow(source, GROWTH) + APP + START.fetch(boot)
     end
@@ -371,7 +362,7 @@ module Erx
       raise Error, 'no session of clock reported what it holds' if reports.empty?
 
       waited = reports.grep(TIMED_OUT)
-      raise Error, "a session of clock never got its data grant: #{waited.first.inspect}" unless waited.empty?
+      raise Error, "a session of clock never got its home grant: #{waited.first.inspect}" unless waited.empty?
 
       wrong = reports.grep_v(CLOCK_REPORT)
       raise Error, "a session of clock holds what its template does not grant: #{wrong.first.inspect}" unless wrong.empty?

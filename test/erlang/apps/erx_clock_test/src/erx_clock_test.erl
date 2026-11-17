@@ -8,16 +8,17 @@ row keeps, which holds its template's grants and nothing of the person who
 started the machine (docs/design-apps.md, AP-R2).
 
 report/0 logs `erx_clock_test: started`, waits until erx_session has started,
-which mounts /data and, for a template granted start, /etc/start, and the `data` grant
-has arrived, which the storage domain mints once the session has reported ready,
+which mounts the session's home, /home/clock, and, for a template granted start,
+/etc/start, and the `home` grant has arrived, which the storage domain mints once the session has reported ready,
 and then logs one notice, a record the console prints under the session's name:
 
-    erx_clock_test: {clock_report,Node,Grants,StartCap,StartInfo,DataListed}
+    erx_clock_test: {clock_report,Node,Grants,StartCap,StartInfo,HomeListed}
 
 Node is the session's node, Grants the sorted names of every facet it holds
 (erx:caps/0), StartCap whether erx:cap(start) is undefined, StartInfo what
-file:read_file_info/1 of /etc/start answers and DataListed the first element of
-file:list_dir/1 of /data, `ok` when the namespace serves /data, so that
+file:read_file_info/1 of /etc/start answers and HomeListed the first element of
+file:list_dir/1 of the home erx_session_sup:home/0 names, `ok` when the namespace
+serves it, so that
 StartInfo's `{error, enoent}` means the namespace holds no /etc/start rather than no
 namespace at all. A wait that does not end within ?POLLS polls logs `timeout`
 in place of the record. The process then waits for ever.
@@ -34,7 +35,7 @@ report() ->
     Report = case wait(?POLLS) of
                  ready ->
                      {clock_report, node(), lists:sort(maps:keys(erx:caps())), erx:cap(start) =:= undefined,
-                      file:read_file_info("/etc/start"), element(1, file:list_dir("/data"))};
+                      file:read_file_info("/etc/start"), element(1, file:list_dir(home()))};
                  timeout ->
                      {clock_report, node(), timeout}
              end,
@@ -46,7 +47,12 @@ wait(0) ->
     timeout;
 wait(N) ->
     Started = lists:keymember(erx_session, 1, application:which_applications()),
-    case Started andalso is_pid(erx:cap(data)) of
+    case Started andalso is_pid(erx:cap(home)) of
         true -> ready;
         false -> timer:sleep(?POLL_MS), wait(N - 1)
     end.
+
+%% The session's home: its grant has arrived, so its template grants it.
+home() ->
+    {ok, {Home, _}} = erx_session_sup:home(),
+    Home.
