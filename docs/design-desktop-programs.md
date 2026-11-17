@@ -385,6 +385,8 @@ theme 1
   font ui display/fonts/inter regular Inter-Regular.ttf medium Inter-Medium.ttf semibold Inter-SemiBold.ttf
   range ui 0020-007E 00A0-017F 2000-206F 2190-21FF 2713-2713
   role display  font ui size 48 line 64 weight semibold figures tabular
+  role headline font ui size 26 line 36 weight semibold
+  role figure   font ui size 22 line 28 weight semibold figures tabular
   role title    font ui size 20 line 28 weight semibold
   role heading  font ui size 15 line 20 weight semibold
   role body     font ui size 13 line 20 weight regular
@@ -456,11 +458,15 @@ is added.
 One family serves every role: Inter 4.1, under OFL-1.1
 ([Dependencies](#dependencies)). It was drawn for user interfaces at
 small sizes, its figures can be tabular, and its look is neither
-Plan 9's Lucida-derived faces nor any platform's own system font. Six
+Plan 9's Lucida-derived faces nor any platform's own system font. Eight
 roles make the scale, from `display` (48 px, the clock's digits) to
-`caption` (11 px); a renderer never picks a size, a role does. Numbers
-that change in place, stats' values and the clock, use the tabular
-figures, so digits do not shift as values change.
+`caption` (11 px); a renderer never picks a size, a role does. Between
+`display` and `title` lie the two roles of a screen read from across a
+room, as a kiosk's is: `headline` (26 px semibold), a line that heads
+the screen, such as the dashboard's date line, and `figure` (22 px semibold,
+tabular), the number a block leads with, such as a quote's price.
+Numbers that change in place, stats' values, a `figure`'s number and
+the clock, use the tabular figures, so digits do not shift as values change.
 
 **The glyph step.** A host step, `Erx::Glyphs` in `tools/lib/erx`,
 rasterises every glyph and icon through FreeType, run as a host build
@@ -550,7 +556,7 @@ font's own spacing puts it at 17.05, and `To` 16 where it puts 15.17.
 Read over the theme's ranges with a reader written for this design from
 the OpenType specification ([References](#references)), the pairs whose
 kerned advance differs, by the rounding rule below, from the plain one
-are:
+are, for the six roles measured:
 
 | Role | Font and size | Pairs | Adjustments, in pixels |
 | --- | --- | --- | --- |
@@ -1000,7 +1006,7 @@ all three languages from the one declaration.
 
 | Addition | Declared as | Meaning |
 | --- | --- | --- |
-| `role` | a property of a root `@enum` of type `u8`, `body` when absent, on the kinds that show text (`label`, `button`, `checkbox`, `input`, `list`, `graph`) | how the text ranks in the window: `display`, `title`, `heading`, `body`, `numeric` or `caption` |
+| `role` | a property of a root `@enum` of type `u8`, `body` when absent, on the kinds that show text (`label`, `button`, `checkbox`, `input`, `list`, `graph`) | how the text ranks in the window: one of the `ui_role` values of `abi/formats/ui.txt`, each a role of the theme |
 | `area` | a property of a root `@enum` of type `u8`, absent by default, on `column`, `row`, `grid` and `scroll` | what the container is: `section`, `toolbar` or `sidebar` |
 | `icon` | a property of a root `@enum` of type `u8`, the icon set, on `label` and `button` | the item the node stands for, drawn beside its text; a renderer without the icon shows the text alone |
 | `icons` | a list of the same enumeration, on `list`, marked `parallel items` | each item's icon |
@@ -1680,7 +1686,7 @@ must catch:
   glyph at the offset `erx_pen` gives it, where a seeded `runs/2` that
   cuts but does not move the second run fails; a line without pairs is
   one message.
-* The `numeric` and `display` subfonts hold no pair naming a digit, and
+* Every tabular role's subfont holds no pair naming a digit, and
   the menu module's `kern/2` equals `body.subfont`'s pairs taken to
   their characters, where a seeded module keyed by glyph index fails.
 * Through LVGL's own font code on the host, the `body` font's `A`

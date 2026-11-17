@@ -1504,7 +1504,7 @@ are in [Widget format](design-abi.md#widget-format). The properties:
 | `columns` | integer 1 to 64; 1 when absent | `grid` | children fill the grid row by row |
 | `image`, `image_type` | at most 48 KiB of encoded bytes; one of the image types | `image` | the picture and its encoding |
 | `alt` | at most 255 bytes of UTF-8 | `image` | the picture's text, for a renderer that cannot show it |
-| `role` | one of the `ui_role` values: `display`, `title`, `heading`, `body`, `numeric`, `caption`; `body` when absent | `label`, `button`, `checkbox`, `input`, `list`, `graph` | how the node's text ranks in its window; a renderer picks the face and size |
+| `role` | one of the `ui_role` values: `display`, `headline`, `figure`, `title`, `heading`, `body`, `numeric`, `caption`; `body` when absent | `label`, `button`, `checkbox`, `input`, `list`, `graph` | how the node's text ranks in its window; a renderer picks the face and size |
 | `area` | one of the `ui_area` values: `section`, `toolbar`, `sidebar`; absent by default | `column`, `row`, `grid`, `scroll` | what the container is, so a renderer can mark it |
 | `icon` | one of the `ui_icon` values, the twenty icons of [Icons](design-desktop-programs.md#icons) | `label`, `button` | the item the node stands for, drawn beside its text; a renderer without the icon shows the text alone |
 | `trend` | one of the `ui_trend` values: `up`, `down`, `flat`; absent by default | `label` | which way the label's value has moved; a renderer draws it as [design-desktop-programs.md](design-desktop-programs.md#widget-format-additions) states |

@@ -58,13 +58,13 @@ class ErxThemeTest < Minitest::Test
     [{ '2190-21FF' => '21FF-2190' }, /21FF-2190 is empty/],
     [{ '2190-21FF' => '2190-21FF 10FFFE-110000' }, /10FFFE-110000 is empty or beyond U\+10FFFF/],
     [{ '2190-21FF' => '2190-21ff' }, /not LOW-HIGH in upper-case hexadecimal/],
-    [{ 'role title   font ui' => 'role title   face ui font ui' }, /role key face is not one of/],
+    [{ 'role title    font ui' => 'role title    face ui font ui' }, /role key face is not one of/],
     [{ 'size 20 line 28' => 'size 20 line 28 size 21' }, /role key size is given twice/],
-    [{ 'weight semibold figures tabular' => 'weight semibold figures tabular bold' },
+    [{ 'size 48 line 64 weight semibold figures tabular' => 'size 48 line 64 weight semibold figures tabular bold' },
      /expected role NAME KEY VALUE/],
-    [{ 'role title   font ui size 20 line 28 weight semibold' => 'role title   font ui size 20 weight semibold' },
+    [{ 'role title    font ui size 20 line 28 weight semibold' => 'role title    font ui size 20 weight semibold' },
      /role needs line/],
-    [{ 'role title   font ui' => 'role title   font uj' }, /role names an undeclared font uj/],
+    [{ 'role title    font ui' => 'role title    font uj' }, /role names an undeclared font uj/],
     [{ ' semibold Inter-SemiBold.ttf' => '' }, /font ui has no weight semibold/],
     [{ 'size 15 line 20' => 'size 15 line 18' }, /line 18 is not a multiple of the unit 4/],
     [{ 'size 13 line 20 weight regular' => 'size 13 line 20 weight regular figures oldstyle' },
@@ -93,7 +93,7 @@ class ErxThemeTest < Minitest::Test
 
   def test_the_source_meets_its_own_rules
     theme = theme_of(SOURCE)
-    assert_equal %w[body caption display heading numeric title], theme.roles.keys
+    assert_equal %w[body caption display figure heading headline numeric title], theme.roles.keys
     assert_equal 3, theme.contrasts.size
     assert_equal 'secondary', theme.roles.fetch('caption').color
     assert_equal 'text', theme.roles.fetch('body').color
@@ -206,7 +206,7 @@ class ErxThemeTest < Minitest::Test
         _Static_assert(ERX_THEME_SHADOW_SECTION_BLUR == 12, "shadow");
 
         #define SIZE(name, NAME) + ERX_THEME_ROLE_##NAME##_SIZE
-        _Static_assert(0 ERX_THEME_ROLES(SIZE) == 48 + 20 + 15 + 13 + 13 + 11, "every role");
+        _Static_assert(0 ERX_THEME_ROLES(SIZE) == 48 + 26 + 22 + 20 + 15 + 13 + 13 + 11, "every role");
       C
       run!(ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-fsyntax-only',
            '-I', File.join(GENERATED, 'include'), source, chdir: work)

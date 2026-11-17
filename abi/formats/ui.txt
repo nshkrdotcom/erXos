@@ -33,6 +33,8 @@ enum ui_role u8
   value body 3
   value numeric 4
   value caption 5
+  value headline 6
+  value figure 7
 
 # Which way the value a label shows has moved (docs/design-desktop-programs.md,
 # "Widget format additions"); a renderer shows up and down in the palette's
