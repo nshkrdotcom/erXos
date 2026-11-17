@@ -3211,6 +3211,11 @@ it; git history is the record of completed work.
   terminal tables, which the export copies, `Erx::ErofsImage` takes the fsimg path it runs, and the export
   copies `erx-app`, its handful of library files, those generated files and fsimg into `host/`; until then
   `tools/erx-app`, which finds its SDK at `../..`, runs from no SDK.
+* [Low] examples, the Doom fork (`examples/doom/doom`) builds with its own `run.rb` over erXos's internal
+  build library and keeps `app.txt` in `app/`, where docs/design-packaging.md ("Examples") has a `Makefile`
+  over the SDK's `sdk.mk` and `app.txt` at the fork's root, so `tools/erx app run examples/doom/doom` finds
+  no app. Waits on the SDK (`sdk.mk`) and `tools/erx app run`; then the fork moves to the design in commits
+  of its own and the gitlink is re-pinned.
 * [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer
   compiles `lib/APP/src`, signs with the host's development package key by default and runs the file check, but
   does not yet run `DIR/Makefile`, check the program with `erx_elf_plan`, or write the build record beside

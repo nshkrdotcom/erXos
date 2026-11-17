@@ -1,24 +1,28 @@
 # Source origin
 
 The Doom demo ([design-packaging.md](../../docs/design-packaging.md#examples)) is
-the git submodule `doom/` beside this file: doomgeneric, under GPL-2.0, with erXos's
-glue, its `app.txt` and a `Makefile` over the SDK's `sdk.mk`. No part of it is
-erXos's tree, and it never ships: its license keeps it out of every image erXos
+the git submodule `doom/` beside this file: erXos's fork of doomgeneric, under
+GPL-2.0-or-later. erXos's commits on top of upstream's hold the platform layer,
+in `doomgeneric/` beside upstream's own platform layers; the app's `app.txt`; its
+build; and `deps.lock`, which pins Freedoom's WAD. No part of it is erXos's
+tree, and it never ships: its license keeps it out of every image erXos
 distributes.
 
 | | |
 | --- | --- |
 | Upstream repository | `https://github.com/ozkl/doomgeneric` |
+| Upstream commit | `e257a09527062bfb986b6e5e0780839b6cbd5b71`, the fork's base |
+| Upstream archive SHA-256 | `26f8f60daa6c6e4d3c01e5eac9fb700d592dede803d13ac848154ff356b2a2e7`, of `https://codeload.github.com/ozkl/doomgeneric/tar.gz/e257a09527062bfb986b6e5e0780839b6cbd5b71`, whose tree the base commit's matches |
 | erXos's fork | `https://github.com/stass/erxos-doom` |
 | Fork commit | the superproject's gitlink (`git ls-tree HEAD examples/doom/doom`) |
 | Download | Freedoom, its release and SHA-256 pinned in the submodule's `deps.lock` |
 
 The superproject's gitlink records the commit the submodule is checked out at:
-that commit is the pin, and this file names no commit, so it cannot disagree
-with it. The fork's history records which upstream commit it imported. The fork's
-`deps.lock` pins Freedoom's release archive (BSD-3-Clause) and its SHA-256,
-the value the release's signed checksum file lists for it; the archive's
-`freedoom1.wad` is the demo's WAD.
+that commit is the pin, and this file does not name it, so it cannot disagree
+with it. The fork's history is upstream's up to the commit it was imported
+from, with erXos's commits on top. The fork's `deps.lock` pins Freedoom's
+release archive (BSD-3-Clause) and its SHA-256, the value the release's signed
+checksum file lists for it; the archive's `freedoom1.wad` is the demo's WAD.
 
 `git clone` does not check the submodule out, and no gate, build or check reads it.
 `tools/erx fetch --example doom` clones it at the recorded commit, with no

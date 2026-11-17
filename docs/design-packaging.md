@@ -1381,7 +1381,7 @@ deployer's own key for packages installed later. The board's manifest
 source is unchanged: the rows are the build's, recorded in the image's
 build record with each package's SHA-256. `tools/erx app run DIR` builds
 a development image with the app added and enabled, boots it under QEMU
-with a display, and saves screendumps, as Doom's `run.rb boot` did.
+with a display, and saves screendumps, as Doom's `run.rb boot` does.
 
 ### Starting an app
 
@@ -1840,9 +1840,11 @@ only as a third party would build it, through the SDK.
 * **`examples/doom/`**, the Doom demo, structured as a separate app:
   `ORIGIN.md` beside `doom/`, a git submodule pinned by its gitlink, as
   `display/lvgl/lvgl` is ([design.md](design.md#dependencies)). The
-  submodule's repository holds doomgeneric, under GPL-2.0, the erXos
-  glue, its `app.txt` and a `Makefile` over the SDK's `sdk.mk`, and a
-  list of pinned downloads in `deps.lock`'s form, for Freedoom's WAD.
+  submodule's repository is erXos's fork of doomgeneric, under
+  GPL-2.0-or-later: upstream's history, then erXos's commits. They hold
+  the platform layer, in `doomgeneric/` beside upstream's own platform
+  layers; the app's `app.txt`; a `Makefile` over the SDK's `sdk.mk`; and
+  a list of pinned downloads in `deps.lock`'s form, for Freedoom's WAD.
   erXos's tree holds only the gitlink, a commit id, so no GPL code
   enters the tree. `git clone` does not check it out, and `tools/erx
   fetch` fetches it, and its downloads against their SHA-256, only with
