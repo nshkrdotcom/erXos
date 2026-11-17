@@ -26,6 +26,8 @@ require_relative 'origin'
 module Erx
   class Fiasco
     IMPLEMENTATION_SHA256 = Digest::SHA256.file(__FILE__).hexdigest.freeze
+    # The license notice of L4Re's user libraries (user_library).
+    USER_NOTICE = 'fiasco/l4re-core/LICENSE.spdx'
     KERNEL_COMMIT = '50bbe8a981199e17865e8553a4eb02c387b339cf'
     CORE_COMMIT = 'e2e2d5af9de7aa0e1df2a25ebadee54488fa4a49'
     # SHA-256 of git archives with no prefix, at the full commits above.

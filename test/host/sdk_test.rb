@@ -160,6 +160,22 @@ class SdkTest < Minitest::Test
     end
   end
 
+  # Every library the SDK ships carries its license notices in share/licenses/LIB, copies
+  # of the tree's notice files; a seeded SDK with one library's notices dropped is caught.
+  def test_every_shipped_library_carries_its_notices
+    libraries = Dir.children(File.join(sdk, 'sysroot/aarch64/lib')).select { it.end_with?('.a') }.sort
+    assert_equal %w[libboot_cores.a libc.a libclang_rt.builtins.a liberx_program.a libl4sys.p.a libsigma0.a], libraries
+    assert_empty unattributed(sdk)
+    assert_equal File.read(File.join(ROOT, 'musl/COPYRIGHT')), File.read(File.join(sdk, 'share/licenses/libc.a/COPYRIGHT'))
+    Dir.mktmpdir('erx-sdk-notices-') do |work|
+      FileUtils.cp_r(File.join(sdk, 'sysroot'), work)
+      FileUtils.mkdir_p(File.join(work, 'share'))
+      FileUtils.cp_r(File.join(sdk, 'share/licenses'), File.join(work, 'share'))
+      FileUtils.rm_rf(File.join(work, 'share/licenses/libsigma0.a'))
+      assert_equal ['libsigma0.a'], unattributed(work)
+    end
+  end
+
   # Seeded faults: the program made position-independent, an ET_DYN at the task script's
   # base, and with its code segment made writable, are each refused before a package is
   # made. (The recipe cannot link a PIE: task.ld names no dynamic section, and the link
@@ -208,6 +224,15 @@ class SdkTest < Minitest::Test
 
   # The virtual address of an executable's first program header, a load.
   def first_load(program) = program.unpack1('Q<', offset: program.unpack1('Q<', offset: 32) + 16)
+
+  # The libraries of an SDK's lib/ with no non-empty notice in share/licenses/LIB.
+  def unattributed(directory)
+    Dir.children(File.join(directory, 'sysroot/aarch64/lib')).select { it.end_with?('.a') }.sort.reject do |library|
+      notices = File.join(directory, 'share/licenses', library)
+      File.directory?(notices) && !Dir.children(notices).empty? &&
+        Dir.children(notices).all? { File.size(File.join(notices, it)).positive? }
+    end
+  end
 
   # The packer's refusal of the app in directory.
   def refusal(directory)

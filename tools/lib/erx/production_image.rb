@@ -1903,9 +1903,9 @@ module Erx
     end
 
     def archives(erts)
-      spdx = 'fiasco/l4re-core/LICENSE.spdx'
+      spdx = Fiasco::USER_NOTICE
       [*otp_archives([erts.system_table, *erts.otp_archives], flavour: 'emu'),
-       Archive.new(path: erts.libc, label: 'musl libc', license: 'MIT', status: 'permanent', notices: ['musl/COPYRIGHT']),
+       Archive.new(path: erts.libc, label: 'musl libc', license: 'MIT', status: 'permanent', notices: [Musl::NOTICE]),
        Archive.new(path: erts.builtins, label: 'llvm compiler-rt builtins', license: CompilerRt::LICENSE,
                    status: 'permanent', notices: [CompilerRt.notice(root: @root, runner: @runner)]),
        Archive.new(path: @fiasco.user_library('libl4sys.p.a'), label: 'fiasco/l4re-core libl4sys',

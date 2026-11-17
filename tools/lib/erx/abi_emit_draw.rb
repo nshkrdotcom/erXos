@@ -380,7 +380,8 @@ module Erx
            * is x and y, and a rectangle min.x, min.y, max.x and max.y, each four
            * bytes. ERX_DRAW_<MESSAGE> is the letter, ERX_DRAW_<MESSAGE>_<FIELD>
            * the field's offset, and ERX_DRAW_<MESSAGE>_SIZE the bytes of a
-           * message with no variable field.
+           * message with no variable field. erxdraw_put16 and erxdraw_put32
+           * store a field; they are public, as no erx_* function is.
            */
 
           #ifndef ERX_DRAW_H
@@ -392,17 +393,17 @@ module Erx
 
           #{layouts}
           static inline void
-          erx_draw_put16(uint8_t *at, uint16_t value)
+          erxdraw_put16(uint8_t *at, uint16_t value)
           {
           	at[0] = (uint8_t)value;
           	at[1] = (uint8_t)(value >> 8);
           }
 
           static inline void
-          erx_draw_put32(uint8_t *at, uint32_t value)
+          erxdraw_put32(uint8_t *at, uint32_t value)
           {
-          	erx_draw_put16(at, (uint16_t)value);
-          	erx_draw_put16(at + 2, (uint16_t)(value >> 16));
+          	erxdraw_put16(at, (uint16_t)value);
+          	erxdraw_put16(at + 2, (uint16_t)(value >> 16));
           }
 
           #endif /* ERX_DRAW_H */

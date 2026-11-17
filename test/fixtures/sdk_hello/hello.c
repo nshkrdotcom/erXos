@@ -26,10 +26,10 @@
 static void
 put_rect(uint8_t *at, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
 {
-	erx_draw_put32(at, (uint32_t)x0);
-	erx_draw_put32(at + 4, (uint32_t)y0);
-	erx_draw_put32(at + 8, (uint32_t)x1);
-	erx_draw_put32(at + 12, (uint32_t)y1);
+	erxdraw_put32(at, (uint32_t)x0);
+	erxdraw_put32(at + 4, (uint32_t)y0);
+	erxdraw_put32(at + 8, (uint32_t)x1);
+	erxdraw_put32(at + 12, (uint32_t)y1);
 }
 
 int
@@ -42,19 +42,19 @@ main(void)
 
 	memset(alloc, 0, sizeof(alloc));
 	alloc[0] = ERX_DRAW_ALLOC;
-	erx_draw_put32(alloc + ERX_DRAW_ALLOC_ID, FILL_ID);
-	erx_draw_put32(alloc + ERX_DRAW_ALLOC_CHAN, RGB24);
+	erxdraw_put32(alloc + ERX_DRAW_ALLOC_ID, FILL_ID);
+	erxdraw_put32(alloc + ERX_DRAW_ALLOC_CHAN, RGB24);
 	alloc[ERX_DRAW_ALLOC_REPL] = 1;
 	put_rect(alloc + ERX_DRAW_ALLOC_R, 0, 0, 1, 1);
 	put_rect(alloc + ERX_DRAW_ALLOC_CLIPR, -0x3fffffff, -0x3fffffff,
 	    0x3fffffff, 0x3fffffff);
-	erx_draw_put32(alloc + ERX_DRAW_ALLOC_COLOR, COLOR);
+	erxdraw_put32(alloc + ERX_DRAW_ALLOC_COLOR, COLOR);
 
 	memset(draw, 0, sizeof(draw));
 	draw[0] = ERX_DRAW_DRAW;
-	erx_draw_put32(draw + ERX_DRAW_DRAW_DST, 0);
-	erx_draw_put32(draw + ERX_DRAW_DRAW_SRC, FILL_ID);
-	erx_draw_put32(draw + ERX_DRAW_DRAW_MASK, FILL_ID);
+	erxdraw_put32(draw + ERX_DRAW_DRAW_DST, 0);
+	erxdraw_put32(draw + ERX_DRAW_DRAW_SRC, FILL_ID);
+	erxdraw_put32(draw + ERX_DRAW_DRAW_MASK, FILL_ID);
 	put_rect(draw + ERX_DRAW_DRAW_R, 16, 16, 112, 80);
 
 	flush[0] = ERX_DRAW_FLUSH;

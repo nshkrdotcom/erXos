@@ -22,11 +22,12 @@ module Erx
   # sysroot/aarch64/include holds musl's headers as the runtime's build merges them and
   # erx/draw.h, the draw protocol's layouts generated from abi/formats/draw.txt;
   # sysroot/aarch64/lib holds musl's libc.a, compiler-rt's builtins, task.ld and
-  # liberx_program.a, liberx's program layer and task entry (NativeRoot::PROGRAM) with the
-  # Fiasco libraries and boot cores the entry calls, one archive so a link names it once.
-  # share/erxos/sdk.mk is the recipe: the compile flags of every task's C
-  # (NativeRoot::CODE_FLAGS) and the task link's flags and libraries, so an SDK's program
-  # is compiled and linked as the tree's own are.
+  # liberx_program.a, liberx's program layer and task entry (NativeRoot::PROGRAM), with the
+  # Fiasco libraries and boot cores the entry calls beside it. share/erxos/sdk.mk is the
+  # recipe: the compile flags of every task's C (NativeRoot::CODE_FLAGS) and the task link
+  # NativeRoot.link_options and archive_group state, with liberx_program.a linked whole, so
+  # an SDK's program links every object the tree's own programs link. share/licenses/LIB/
+  # holds the license notices of each library of lib/ (NOTICES).
   class SdkSysroot
     ARCH = 'aarch64'
     PROGRAM_ARCHIVE = 'liberx_program.a'
@@ -34,6 +35,12 @@ module Erx
     # Where the program layer's objects are compiled, under the tree and the runtime tree's lock.
     OBJECTS = 'build/sdk/program'
     DEADLINE = 120
+    BOOT_CORES = 'libboot_cores.a'
+    # Each library of lib/ and its license notices, paths under the tree; compiler-rt's is
+    # in its fetched source (CompilerRt.notice).
+    NOTICES = { PROGRAM_ARCHIVE => ['LICENSE', 'kernel/crypto/blake3/LICENSE_A2LLVM'], 'libc.a' => [Musl::NOTICE],
+                BOOT_CORES => ['LICENSE'], **NativeRoot::LIBRARIES.to_h { [it, [Fiasco::USER_NOTICE]] } }.freeze
+    LICENSES = 'share/licenses'
 
     def initialize(root:, runner:, compiler:, linker:)
       raise Error, 'set ERX_CLANG to the installed LLVM clang' if compiler.to_s.empty?
@@ -67,29 +74,44 @@ module Erx
       FileUtils.cp(File.join(@root, Generated::OUTPUT, ABI::DrawEmitter::C_PROGRAM_HEADER_PATH), File.join(include, 'erx'))
       FileUtils.cp([libc, CompilerRt.archive(root: @root, runner: @runner, compiler: @compiler),
                     File.join(@root, NativeRoot::TASK_LINK_SCRIPT)], lib)
-      program_archive(File.join(lib, PROGRAM_ARCHIVE))
+      program_archive(lib)
+      licenses(File.join(directory, LICENSES))
       File.write(File.join(directory, RECIPE), recipe)
     end
 
-    # The program layer's objects, compiled as the tree compiles them, and the Fiasco
-    # archives they call into, flattened into one archive (llvm-ar's L takes an archive's
-    # members).
-    def program_archive(path)
+    # The program layer's objects, compiled as the tree compiles them, as liberx_program.a,
+    # and the Fiasco archives they call into beside it.
+    def program_archive(lib)
       native = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker,
                               platform: Platform.development(@root))
       fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
       objects = native.compile_all(sources: NativeRoot::PROGRAM, directory: File.join(@root, OBJECTS))
-      archives = [fiasco.boot_core_archive, *NativeRoot::LIBRARIES.map { fiasco.user_library(it) }]
-      @runner.run([File.join(File.dirname(@compiler), 'llvm-ar'), 'qcsL', path, *objects, *archives],
+      FileUtils.cp(fiasco.boot_core_archive, File.join(lib, BOOT_CORES))
+      FileUtils.cp(NativeRoot::LIBRARIES.map { fiasco.user_library(it) }, lib)
+      @runner.run([File.join(File.dirname(@compiler), 'llvm-ar'), 'qcs', File.join(lib, PROGRAM_ARCHIVE), *objects],
                   name: 'sdk-program-archive', deadline: DEADLINE)
+    end
+
+    # Each library's notices in licenses/LIB/, by the notice's file name.
+    def licenses(directory)
+      notices = NOTICES.merge(CompilerRt::ARCHIVE => [CompilerRt.notice(root: @root, runner: @runner)])
+      notices.each do |library, paths|
+        FileUtils.mkdir_p(File.join(directory, library))
+        paths.each { |path| FileUtils.cp(File.join(@root, path), File.join(directory, library, File.basename(path))) }
+      end
     end
 
     # share/erxos/sdk.mk: make variables naming the SDK's own files from where the
     # fragment lies, so the SDK can be moved; ERX_CC and ERX_LD are the host's LLVM.
     def recipe
       lib = '$(ERX_SYSROOT)/lib'
+      ldflags = NativeRoot.link_options(script: "#{lib}/#{File.basename(NativeRoot::TASK_LINK_SCRIPT)}",
+                                        flags: NativeRoot::TASK_LINK_FLAGS, strip_debug: true)
+      libs = ['--whole-archive', "#{lib}/#{PROGRAM_ARCHIVE}", '--no-whole-archive',
+              *NativeRoot.archive_group(["#{lib}/libc.a", "#{lib}/#{CompilerRt::ARCHIVE}"], boot_core: "#{lib}/#{BOOT_CORES}",
+                                                                                       libraries: NativeRoot::LIBRARIES.map { "#{lib}/#{it}" })]
       <<~MAKE
-        # Generated by tools/erx sdk export (docs/design-packaging.md, "The SDK").
+        # Generated by tools/erx sdk export (docs/design-packaging.md, "The SDK"), for GNU make.
         # A program's object: $(ERX_CC) $(ERX_CFLAGS) -c FILE.c -o FILE.o
         # Its executable: $(ERX_LD) $(ERX_LDFLAGS) -o PROGRAM OBJECTS $(ERX_LIBS)
         ERX_SDK := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))../..)
@@ -97,8 +119,8 @@ module Erx
         ERX_CC ?= clang
         ERX_LD ?= ld.lld
         ERX_CFLAGS := #{NativeRoot::CODE_FLAGS.join(' ')} -isystem $(ERX_SYSROOT)/include
-        ERX_LDFLAGS := -T #{lib}/#{File.basename(NativeRoot::TASK_LINK_SCRIPT)} #{[*NativeRoot::TASK_LINK_FLAGS, *NativeRoot::ROOT_LINK_FLAGS].join(' ')} --strip-debug
-        ERX_LIBS := --start-group #{lib}/#{PROGRAM_ARCHIVE} #{lib}/libc.a #{lib}/#{CompilerRt::ARCHIVE} --end-group
+        ERX_LDFLAGS := #{ldflags.join(' ')}
+        ERX_LIBS := #{libs.join(' ')}
       MAKE
     end
   end
