@@ -8,10 +8,11 @@ require 'optparse'
 require 'tmpdir'
 require_relative '../lib/erx/fsimg'
 require_relative '../lib/erx/pi_medium'
+require_relative '../lib/erx/record_volume'
 
 # The packer's FAT reader (Erx::FatVolume) over mutated volumes: the Pi card's record
 # volume and slot A's volume as the pinned fsimg writes them with the card's own
-# arguments (Erx::PiMedium), with bytes changed in the boot sector, the first FAT, the
+# arguments (Erx::RecordVolume, Erx::PiMedium), with bytes changed in the boot sector, the first FAT, the
 # root directory and the placed file, and cut short. Each input either raises
 # Erx::Error and nothing else, or passes the placement check, and then the file read
 # along its cluster chain, as a reader that knows nothing of placement reads it, is the
@@ -40,8 +41,8 @@ module Erx
     def seeds
       fsimg = Fsimg.locate(root: ROOT)
       Dir.mktmpdir('erx-fat-fuzz-') do |work|
-        [seed(fsimg, work, 'record', MEDIUM::RECORD_VOLUME, MEDIUM::RECORD_FILE, BootRecord::SLOTS.fetch(:a).text,
-              kind: :fat16, offset: MEDIUM::RECORD_PLACE),
+        [seed(fsimg, work, 'record', RecordVolume::ARGUMENTS, RecordVolume::FILE, BootRecord::SLOTS.fetch(:a).text,
+              kind: :fat16, offset: RecordVolume::PLACE),
          seed(fsimg, work, 'slot', MEDIUM::SLOT_VOLUME, MEDIUM::BOOT_FILE, KERNEL, kind: :fat32, offset: MEDIUM::BOOT_PLACE)]
       end
     end

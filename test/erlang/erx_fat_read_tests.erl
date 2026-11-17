@@ -106,7 +106,7 @@ the_answer_is_its_own_copy_test() ->
     {ok, Bytes} = read("slack"),
     ?assertEqual(100, binary:referenced_byte_size(Bytes)).
 
-%% The record volume the medium build has fsimg write (Erx::PiMedium::RECORD_VOLUME) is
+%% The record volume the medium build has fsimg write (Erx::RecordVolume::ARGUMENTS) is
 %% admitted as its FAT volume and holds no authorized_keys.
 the_record_volume_fsimg_writes_holds_no_authorized_keys_test() ->
     ?assertEqual({error, not_found}, read("fsimg_record")).

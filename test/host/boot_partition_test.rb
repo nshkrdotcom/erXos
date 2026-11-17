@@ -124,7 +124,7 @@ class BootPartitionTest < Minitest::Test
       sector = Erx::MediumImage::SECTOR_BYTES
       slot_start = Erx::MediumImage.constant('boot_a_start') * sector
       system_start = Erx::MediumImage.constant('system_a_start') * sector
-      record_volume = cut(image, root, 'record.fat', Erx::MediumImage.constant('record_start') * sector, Erx::PiMedium::RECORD_BYTES)
+      record_volume = cut(image, root, 'record.fat', Erx::MediumImage.constant('record_start') * sector, Erx::RecordVolume::BYTES)
       slot_volume = cut(image, root, 'slot.fat', slot_start, Erx::PiMedium::SLOT_FAT_BYTES)
       fsimg('Wd', '-f', record_volume)
       assert_equal Erx::BootRecord::SLOTS.fetch(:a).text, fsimg('x', '-O', '-f', record_volume, 'autoboot.txt')

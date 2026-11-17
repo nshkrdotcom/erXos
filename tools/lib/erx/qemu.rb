@@ -169,11 +169,25 @@ module Erx
         raise Error, 'a relay names an IPv4 network and an address'
       end
     end
+    # A virtio-net device on QEMU's user networking as a person boots a medium (README,
+    # "Getting started"): unrestricted, so the guest reaches the host's network through slirp
+    # as any QEMU guest does, with one host forward (Forward) from a loopback port to the
+    # guest's, and nothing of Nic's echo server or frame link.
+    UserNet = Data.define(:forward) do
+      def initialize(forward:)
+        raise Error, 'a user network forwards through a QemuPlan::Forward' unless forward.is_a?(Forward)
+
+        super
+      end
+    end
+    # A Display's qmp_socket for a display in QEMU's window, which has no QMP socket.
+    WINDOW = :window
     # A display for the guest: a virtio-gpu, a virtio-keyboard and a virtio-tablet device on
-    # their own virtio-mmio transports, and QEMU's machine protocol (QMP) on a UNIX socket at
-    # qmp_socket, which the harness reads the screen through (Qmp: screendump). QEMU still
-    # shows no window (-display none): its graphics console keeps the guest's picture for
-    # screendump. The socket's directory must be the caller's own and owner-only (mode 0700,
+    # their own virtio-mmio transports, and either QEMU's machine protocol (QMP) on a UNIX
+    # socket at qmp_socket, which the harness reads the screen through (Qmp: screendump),
+    # with no window (-display none), its graphics console keeping the guest's picture for
+    # screendump; or, with qmp_socket WINDOW (Display.window), QEMU's own window on the host
+    # (-display default), for a person at the screen. The socket's directory must be the caller's own and owner-only (mode 0700,
     # as OutputDirectory makes it), which the plan checks before QEMU starts, because QMP
     # gives whoever connects the developer's own power over the machine and the host files
     # it writes; QEMU makes the socket itself. The transports are buses
@@ -185,13 +199,18 @@ module Erx
         unless buses.all? { |bus| bus.is_a?(Integer) && bus.between?(0, LAST_TRANSPORT) } && buses.uniq.size == buses.size
           raise Error, "display transports are three distinct buses of virtio-mmio-bus.0 to .#{LAST_TRANSPORT}"
         end
-        unless qmp_socket.is_a?(String) && qmp_socket.start_with?('/') && qmp_socket.bytesize <= SOCKET_PATH_MAX &&
-               !qmp_socket.match?(/[\0,]/)
+        unless qmp_socket == WINDOW || (qmp_socket.is_a?(String) && qmp_socket.start_with?('/') &&
+                                        qmp_socket.bytesize <= SOCKET_PATH_MAX && !qmp_socket.match?(/[\0,]/))
           raise Error, 'invalid QMP socket path'
         end
 
-        super(qmp_socket: qmp_socket.dup.freeze, gpu: gpu, keyboard: keyboard, tablet: tablet)
+        super(qmp_socket: qmp_socket == WINDOW ? WINDOW : qmp_socket.dup.freeze, gpu: gpu, keyboard: keyboard, tablet: tablet)
       end
+
+      # The display in QEMU's own window, with no QMP socket.
+      def self.window = new(qmp_socket: WINDOW)
+
+      def window? = qmp_socket == WINDOW
 
       # The display's three devices on their transports, all of the unit :display.
       def placements
@@ -255,12 +274,12 @@ module Erx
       unless disks.is_a?(Array) && disks.size <= MAX_DISKS && disks.all?(Disk)
         raise Error, "disks are up to #{MAX_DISKS} QemuPlan::Disk values"
       end
-      raise Error, 'a network device is a QemuPlan::Nic or a QemuPlan::Relay' unless [NilClass, Nic, Relay].include?(nic.class)
+      raise Error, 'a network device is a QemuPlan::Nic, Relay or UserNet' unless [NilClass, Nic, Relay, UserNet].include?(nic.class)
       raise Error, 'a display is a QemuPlan::Display' unless display.nil? || display.is_a?(Display)
       devices = placements(disks: disks, nic: nic, display: display)
       check_pages(devices)
       # QEMU listens on the socket as soon as it starts, so its directory is checked before.
-      Qmp.check_directory(display.qmp_socket) if display
+      Qmp.check_directory(display.qmp_socket) if display && !display.window?
       words = command_line.to_s.split(/ /)
       raise Error, "the plan adds #{HOSTLINK_WORD} with the host link's serial line" if words.include?(HOSTLINK_WORD)
 
@@ -279,7 +298,7 @@ module Erx
       [program, '-machine', machine, '-accel', accel,
        '-cpu', accel == 'hvf' ? 'host' : 'cortex-a76',
        '-smp', cpus.to_s, *(deterministic ? DETERMINISTIC_ARGUMENTS : []), '-m', memory_mib.to_s,
-       '-display', 'none', '-monitor', 'none', '-nic', 'none',
+       '-display', display&.window? ? 'default' : 'none', '-monitor', 'none', '-nic', 'none',
        *(devices.empty? ? [] : DISK_TRANSPORT_ARGUMENTS), *disk_arguments(disks), *nic_arguments(nic),
        *device_arguments(devices), *qmp_arguments(display),
        '-no-reboot', *serial_arguments(serial, serial_input), *hostlink_arguments(hostlink),
@@ -356,11 +375,12 @@ module Erx
       end
     end
 
-    # The network device and its backends (Nic or Relay), or nothing.
+    # The network device's backends (Nic, Relay or UserNet), or nothing.
     def nic_arguments(nic)
       case nic
       in nil then []
       in Relay then relay_arguments(nic)
+      in UserNet then ['-netdev', "user,id=nic_user,hostfwd=tcp:127.0.0.1:#{nic.forward.host}-:#{nic.forward.guest}"]
       in Nic then link_arguments(nic)
       end
     end
@@ -387,9 +407,12 @@ module Erx
        '-netdev', 'hubport,id=nic_hub_guest,hubid=0']
     end
 
-    # QMP on the display's socket, or nothing.
+    # The backend the guest's network device joins: Nic's hub port, or UserNet's user network itself.
+    def nic_guest_netdev(nic) = nic.is_a?(UserNet) ? 'nic_user' : 'nic_hub_guest'
+
+    # QMP on the display's socket, or nothing (no display, or one in a window).
     def qmp_arguments(display)
-      display ? ['-qmp', "unix:#{display.qmp_socket},server=on,wait=off"] : []
+      display && !display.window? ? ['-qmp', "unix:#{display.qmp_socket},server=on,wait=off"] : []
     end
 
     # Every virtio device of a plan on its transport: the disks from bus .31 down, the
@@ -399,7 +422,7 @@ module Erx
       [*disks.each_index.map do |index|
          Placement.new(unit: :disks, bus: LAST_TRANSPORT - index, device: "virtio-blk-device,drive=disk#{index}")
        end,
-       *(nic ? [Placement.new(unit: :nic, bus: NIC_TRANSPORT, device: 'virtio-net-device,netdev=nic_hub_guest')] : []),
+       *(nic ? [Placement.new(unit: :nic, bus: NIC_TRANSPORT, device: "virtio-net-device,netdev=#{nic_guest_netdev(nic)}")] : []),
        *(display ? display.placements : [])]
     end
 

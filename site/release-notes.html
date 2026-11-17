@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>erXos 0.1 release notes</title>
+<meta name="description" content="Release notes for erXos 0.1, a development preview for the Raspberry Pi 4 and QEMU: what works, how to start, and what it leaves out.">
+<meta name="color-scheme" content="light dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="frame">
+
+<header class="bar">
+  <span class="label"><b>&#9632;</b> <span class="name">erXos</span> &middot; release notes</span>
+  <nav class="label" aria-label="Sections">
+    <a href="index.html">Home</a>
+    <a href="#works">What works</a>
+    <a href="#start">Getting started</a>
+    <a href="#limits">Known limitations</a>
+    <a href="#licenses">Licenses</a>
+    <a class="nav-download" href="index.html#downloads">Download</a>
+  </nav>
+</header>
+
+<main id="main">
+
+<section class="section" aria-labelledby="what-title">
+  <header>
+    <span class="label"><b>01</b> / 0.1</span>
+    <h2 id="what-title">erXos 0.1, a preview.</h2>
+  </header>
+  <div class="prose">
+    <p class="big">0.1 is a development preview for the Raspberry Pi 4 and
+    for QEMU <code>virt</code>. It is not a release for use.</p>
+    <p>Every boot prints <code>development build: trusted code only</code>.
+    Run only code you trust on it, on a network you trust. Nothing in a
+    development build enforces isolation between its domains, and the
+    limitations below say what else a user of 0.1 is exposed to.</p>
+    <p>The downloads, and the build record beside each, name the commit they
+    were built from and the SHA-256 of every file.</p>
+  </div>
+</section>
+
+<section class="section" id="works" aria-labelledby="works-title">
+  <header>
+    <span class="label"><b>02</b> / Works</span>
+    <h2 id="works-title">What works.</h2>
+  </header>
+  <div class="prose">
+    <ul>
+      <li><strong>The kiosk.</strong> The screen shows a clock and a panel of
+      live quotes fetched over HTTPS, on QEMU's virtio-gpu and on the Pi's
+      HDMI0 through the firmware's framebuffer.</li>
+      <li><strong>SSH to <code>rc</code>.</strong> <code>ssh -p 2222
+      root@HOST</code> gives root's command shell, with <code>ps</code> and
+      <code>top</code>, and <code>erl</code>'s <code>erx:domains()</code>
+      lists every domain of the machine. Your key comes from
+      <code>authorized_keys</code> on the card's <code>ERXOS</code> volume.</li>
+      <li><strong>The clock.</strong> It starts at the build's date at each
+      boot, so HTTPS works at once; root sets the exact time with
+      <code>date</code>.</li>
+      <li><strong>Files that survive.</strong> <code>/data</code> is a
+      littlefs volume on the card: a file you synced survives a power cut.
+      Home directories are <code>/root</code> and <code>/home/NAME</code>.</li>
+      <li><strong>Recovery.</strong> A fault of the system domain resets the
+      board, which boots back to the kiosk. On the Pi 4 the hardware
+      watchdog resets a hang of the kernel or the root within about 4
+      seconds.</li>
+      <li><strong>Doom, built by you.</strong> On QEMU, from a clone of the
+      repository, with the virtio keyboard; on the Pi, on a card you build, as
+      its demo loop with no keyboard. Doom is never in the published
+      images. <!-- unverified: no card build takes Doom yet (TODO.md, "0.1, Doom's demo loop on the Pi"). --></li>
+    </ul>
+    <p>The soak: <!-- unverified: the soak's result; the sentence is the request's wording and no soak record is in the tree (docs/design-platforms.md, The soak, only specifies it). Fill in from the run's record. -->
+    the published card soaked a day on the Pi 4 and four hours on QEMU under
+    this workload (the kiosk with its quotes, SSH sessions running
+    <code>ps</code> and <code>top</code>, files written under
+    <code>/data</code>), with no reset.</p>
+  </div>
+</section>
+
+<section class="section" id="start" aria-labelledby="start-title">
+  <header>
+    <span class="label"><b>03</b> / Start</span>
+    <h2 id="start-title">Getting started.</h2>
+  </header>
+  <div class="prose">
+    <p>The steps are in the README's
+    <a href="https://github.com/stass/erXos#getting-started">Getting started</a>.
+    In short:</p>
+    <ol>
+      <li>Download the Raspberry Pi 4 card, check its SHA-256, and write it to
+      a microSD card of at least 4 GB (<code>xz -dc card.img.xz | sudo dd
+      of=/dev/rdiskN bs=4m</code> on macOS). The Pi's bootloader must be from
+      2022-12-01 or later.</li>
+      <li>Copy your public key, an <code>ssh-ed25519</code> line, to a file
+      named <code>authorized_keys</code> in the root of the card's
+      <code>ERXOS</code> volume. The published images carry no key, so
+      without this file no login works.</li>
+      <li>Put the card in the Pi with an Ethernet cable and a screen on HDMI0,
+      and power it. The banner and the <code>%</code> prompt appear on the
+      serial console (115200 baud) within a minute, then the kiosk on the
+      screen.</li>
+      <li><code>ssh -p 2222 root@HOST</code>, then <code>date</code> to set
+      the time.</li>
+    </ol>
+    <p>For QEMU, from a clone run <code>make pack PLATFORM=qemu-virt</code>,
+    then <code>tools/erx boot --medium build/production-image/qemu-virt/medium.img</code>:
+    QEMU shows the display in its window with the virtio keyboard and tablet,
+    the serial console is on your terminal, and your port 2222 reaches the
+    guest's SSH. Add <code>--print</code> for the plain
+    <code>qemu-system-aarch64</code> command. <!-- unverified: a key file a host's FAT driver writes on the ERXOS volume lands in the record's erase unit, which the guest's reader refuses (TODO.md, "storage, the record volume's erase unit"), and the page does not offer the medium yet. --></p>
+  </div>
+</section>
+
+<section class="section" id="limits" aria-labelledby="limits-title">
+  <header>
+    <span class="label"><b>04</b> / Limits</span>
+    <h2 id="limits-title">Known limitations.</h2>
+  </header>
+  <div class="prose">
+    <p>Security. Each item names where the project records it.</p>
+    <ul>
+      <li><strong>Trusted code only.</strong> A development build enforces no
+      isolation between domains
+      (<a href="https://github.com/stass/erXos/blob/master/docs/design-fiasco.md#downsides-against-erxoss-kernel">the downsides of Fiasco</a>).</li>
+      <li><strong>Any key in <code>authorized_keys</code> is root.</strong> The
+      key opens root's <code>rc</code> over the network.</li>
+      <li><strong>SSH runs in root's session.</strong> OTP's SSH daemon, its
+      transport and authentication included, runs with root's authority, so a
+      flaw in it that is reached before login is root's session. A separate
+      SSH domain comes in 0.2
+      (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#stages">stages</a>).</li>
+      <li><strong>The login keys are readable in root's session.</strong> Root's
+      session holds a read-only grant of the card's keys for that daemon,
+      until 0.2's SSH domain removes it
+      (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#invariants">H8</a>).</li>
+      <li><strong>Whoever can write the card can become root.</strong> They can
+      add their key to the card's <code>authorized_keys</code>. No program on
+      the board can.</li>
+      <li><strong>The host key may be weak.</strong> When a boot's random seed is
+      only a counter, the SSH host key made at first boot comes from a weak seed
+      (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#host-keys">host keys</a>).</li>
+      <li><strong>DMA.</strong> The evidence of how each board's firmware leaves
+      its DMA-capable devices at handover is not recorded. <!-- unverified: the TODO.md item this points to; the plan names it as "DMA handover evidence not recorded for the boards" without a TODO line. --></li>
+    </ul>
+    <p>Behavior.</p>
+    <ul>
+      <li><strong>The clock is approximate.</strong> It starts at the build's
+      date at each boot and no network time sets it. Until root runs
+      <code>date</code>, a certificate that expired after the build is
+      still accepted, and you set the time again after every boot.</li>
+      <li><strong>SSH is on port 2222</strong>, not 22, and gives an
+      interactive session only: a command given to <code>ssh</code> is
+      refused.</li>
+      <li><strong>Requested power-off.</strong> On the Pi a requested power-off
+      halts the board in the firmware and the watchdog restarts it about 4
+      seconds later. Only cutting the power turns it off.</li>
+      <li><strong>Recovery gaps.</strong> A hang before the root's watchdog
+      starts stays hung until the power is cycled, and a kernel panic that
+      early loops instead of resetting.</li>
+      <li><strong>Updates are by reflashing the card</strong>, which erases
+      <code>/data</code>. There is no update service and no trial boot.</li>
+      <li><strong>The Pi has no USB keyboard</strong> in 0.1, so Doom there
+      only runs its demo loop, and no WiFi.</li>
+      <li><strong>Left to 0.2 and later.</strong> The release build without the
+      development banner, a login on the console, untrusted apps, the vault,
+      installing an app at run time (unless it
+      lands first), network time, the desktop and toybox's applets.
+      <!-- unverified: "the desktop" is 1b-F in plan.md's "Left to 0.2" list, worded loosely. --></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="licenses" aria-labelledby="licenses-title">
+  <header>
+    <span class="label"><b>05</b> / Licenses</span>
+    <h2 id="licenses-title">Licenses.</h2>
+  </header>
+  <div class="prose">
+    <p>erXos's own code is BSD-2-Clause. Every image carries a
+    <code>NOTICES</code> file with the third-party notices, and the file sits
+    beside each downloaded image. The Pi 4's device tree is GPL-2.0, shipped with
+    its source; the Raspberry Pi firmware is under
+    Broadcom's license. The browser demo's notices are in
+    <a href="v64/NOTICES.txt">v64/NOTICES.txt</a>. Imported source trees
+    in the repository each keep their notices and an <code>ORIGIN.md</code>
+    with where they came from. Doom, which is GPL-2.0, is never in an image.
+    <!-- unverified: that NOTICES is published beside each download and that the card's source offer is on the page; design.md says so for the boot image and the GPL-2.0 files, but this page's download links are not built yet. --></p>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div></div>
+  <div>
+    <ul class="label">
+      <li><a href="index.html">erXos</a></li>
+      <li><a href="https://github.com/stass/erXos">Source</a></li>
+      <li><a href="https://github.com/stass/erXos/blob/master/docs/plan.md#01-the-preview">The 0.1 plan</a></li>
+    </ul>
+    <p>erXos is early work, and it runs trusted code only.</p>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>

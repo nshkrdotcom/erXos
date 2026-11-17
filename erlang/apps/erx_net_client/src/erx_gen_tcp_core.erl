@@ -255,9 +255,9 @@ option({packet_size, N}, Own) when is_integer(N), N >= 0, N =< ?MAX_PACKET_SIZE 
 %% stock keeps a buffer of at least one byte; the socket process holds at most 64 MiB.
 option({buffer, N}, Own) when is_integer(N) -> keep(buffer, min(max(N, 1), ?MAX_RECV), Own);
 option(inet, Own) -> {own, Own};
-%% A header of N delivers a packet's first N bytes as a list, so stock's default of 0
-%% changes nothing. ssl adds it to its transport's connect, listen and handshake setopts
-%% (tls_socket:internal_inet_values/1); another header is not offered.
+%% `{header, 0}`, no list header, is stock's default and changes no delivery; ssl sets it
+%% (tls_socket:internal_inet_values/1), on a datagram socket too. A header of N bytes is not
+%% presented, so any other length is refused.
 option({header, 0}, Own) -> {own, Own};
 option({nodelay, B}, _Own) when is_boolean(B) -> {fwd, {nodelay, B}};
 option(_, _) -> error.
@@ -401,9 +401,11 @@ set_own(#{mode := Mode, active := Active, packet := Packet, packet_size := Size,
     C#core{mode = Mode, active = Active, packet = Packet, packet_size = Size, buffer = Buffer, wait = Wait}.
 
 %% The values of the named options Known holds, in the order asked, as stock shows them:
-%% no packet framing is `{packet, 0}`, and the header is the 0 that is the only one taken.
+%% no packet framing is `{packet, 0}`.
+%% `header` is always 0, the only length option/2 takes.
 values(Names, Known) ->
-    [{Name, shown(Name, Value)} || Name <- Names, {ok, Value} <- [maps:find(Name, Known#{header => 0})]].
+    Shown = Known#{header => 0},
+    [{Name, shown(Name, Value)} || Name <- Names, {ok, Value} <- [maps:find(Name, Shown)]].
 
 shown(packet, raw) -> 0;
 shown(_Name, Value) -> Value.

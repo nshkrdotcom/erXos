@@ -123,7 +123,7 @@ kiosk, and its third, installing packages at run time.
 0.1, the preview, is erXos's first public preview and the target the
 work is ordered towards: a development build of part of that system on
 the Raspberry Pi 4 and QEMU `virt`, with the kiosk, SSH to `rc` and
-Doom on QEMU for whoever builds it
+Doom for whoever builds it
 ([0.1](#01-the-preview)).
 0.2, the first full release, ships that system on Fiasco with every user
 feature, the backend on Fiasco's own mechanisms and the security
@@ -166,7 +166,7 @@ numbers are names; the table's order is the order.
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on Fiasco | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
-| 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, built by the user, plays on QEMU with the virtio keyboard | the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
+| 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, built by the user, plays on QEMU with the virtio keyboard and runs its demo loop on the Pi | the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
 | 0.2 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and four Fiasco patches (the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, writable or executable, eager FP switching), five if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
 | Fiasco's scheduler stages | status words, deferred preemption, group park and group quotas, in that order, each measured before and after and kept only when its numbers pay; urgency within a band waits for a consumer | 2,000 to 4,050 lines of C++ in the fork, the policy in erXos's C17 cores (unverified estimates, [design-fiasco.md](design-fiasco.md#stages-beyond-bands)) | 0.2 | each stage, after 0.2, by its before-and-after numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9); G8 itself is M8's, on erXos's kernel |
 | **Phase 2** | | | | |
@@ -2202,8 +2202,8 @@ as the baseline G6 compares against.
 **Goal.** 0.1, erXos's first public preview: a development build that a
 person can download or build and use on a Raspberry Pi 4 or on QEMU
 `virt`, with the kiosk and its live quotes on the screen, `rc` over SSH,
-files that survive a power cut, and Doom on QEMU for whoever builds it.
-Its banner says `development build: trusted code only`, and it runs
+files that survive a power cut, and Doom for whoever builds it, played
+on QEMU and running its demo loop on the Pi. Its banner says `development build: trusted code only`, and it runs
 trusted code only. It is the target the work is ordered towards: its
 items come first, and every worker they cannot use takes the next item
 of the plan, as track A's "What comes first" has it. 0.2, the first full
@@ -2218,7 +2218,7 @@ framebuffer. The panel shows live quotes fetched over HTTPS from boot,
 since the clock starts at the build's date and the published image is
 younger than the sources' certificates
 ([design-time.md](design-time.md#the-approximate-start)). From another machine, `ssh root@` the board, with the
-public key its user put in `authorized_keys` on the card's boot
+public key its user put in `authorized_keys` on the card's record
 partition, reaches `rc`. There root sets the exact time by hand. In the same
 session `ps` and `top` show the session's `rc` and the programs it
 runs, and `erl`'s `erx:domains()` lists every domain of the machine,
@@ -2228,7 +2228,8 @@ the kiosk; so does a hang of the root, through the board's hardware
 watchdog. The QEMU image of the same build boots on QEMU `virt` with
 the same kiosk on its display and SSH through a host port forward. On
 QEMU, Doom, built with the repository's own steps from the user's
-clone, plays with keys from QEMU's virtio keyboard. The website's
+clone, plays with keys from QEMU's virtio keyboard, and on the Pi a card
+the user builds with Doom runs its demo loop with no keyboard. The website's
 browser demo runs 0.1's image.
 
 **Scope.** Each item names the design that owns it. An item marked
@@ -2266,8 +2267,9 @@ its code, and the item's work waits on it.
   design-time.md, written first, which names its authority, its
   grammar, its fuzz target and what a set by hand does to the clock
   service's [steps](design-time.md#steps).
-* **Doom on QEMU `virt`**, with keys from QEMU's virtio keyboard alone,
-  since the Pi has no keyboard before [track U](#track-u-usb): Doom's
+* **Doom on QEMU `virt`**, with keys from QEMU's virtio keyboard, and
+  **on the Pi as its demo loop** with no keyboard, since the Pi has no
+  keyboard before [track U](#track-u-usb): Doom's
   full milestone of [track A](#track-a-apps), a package built from
   `examples/doom` on request, on 1b-D's first slice (`erx_exec` and
   the program protocol's 64-bit file calls) and on the program's own
@@ -2446,7 +2448,7 @@ its code, and the item's work waits on it.
   the [SD card and Ethernet pass](design-platforms.md#the-sd-card-and-ethernet-on-a-board);
   1b-I's power-cut checklist; 1b-I's part (d), the kiosk's frame and a
   display driver's restart; `ssh root@` the board with the key on the
-  boot partition reaching `rc`, `ps` and `top` there, and a 1 MiB
+  record partition reaching `rc`, `ps` and `top` there, and a 1 MiB
   `ssh -T board cat` passing unchanged; the quotes panel showing live
   quotes from boot, on the clock started at the build's date; the same host key after a reboot; a fault of the system domain
   resetting the board, which boots back to the kiosk; and the soak, as
@@ -2476,8 +2478,8 @@ Fiasco build (the writable-or-executable patch, the eager FP switch,
 FD32's hardening, the system-call fuzz campaign and the upstream
 watch); M9's kernel part's devices, the rest of track P, M10's users,
 M12's updates and trial boots, track D's parts 5 and 9, and M11's
-closure on Fiasco, all as 0.2 takes them. Also after 0.1: Doom on the
-Pi, which needs [track U](#track-u-usb)'s keyboard; network time
+closure on Fiasco, all as 0.2 takes them. Also after 0.1: playing Doom
+on the Pi, which needs [track U](#track-u-usb)'s USB keyboard; network time
 ([design-time.md](design-time.md)); 1b-I's parts (e) and (f); the
 desktop of 1b-F; toybox's applets, the rest of 1b-B; 1b-H; track B; and
 track A's part 3 if it has not landed.
@@ -4227,7 +4229,7 @@ Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm besid
 
 0.1:       its dependencies (see 0.1)
              --> the clean-room header and the kernel without jdb_object, the end path's reset, the hardware watchdog,
-                 the set-time command, the login key on the boot partition
+                 the set-time command, the login key on the record partition
              --> the preview's images, the Pi's manual passes and soak
 
 0.2:       0.1, Phase 1b and track A --> the backend on Fiasco's mechanisms, the release's Fiasco build, the closure on Fiasco

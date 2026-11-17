@@ -62,7 +62,8 @@ module Erx
     # so a path is passed only when it is absolute and holds none of those.
     PLAIN_PATH = %r{\A/[[:graph:]&&[^%$~"'\\]]*\z}
 
-    # The port a development guest's daemon listens on, erx_ssh_dev:start(PORT), which a
+    # The port a development guest's daemon listens on, the development manifest's
+    # erx_ssh_dev:boot(PORT) for root's session, which a
     # host loopback port forwarded to the guest reaches (docs/design-ssh.md, "Stages").
     PORT = 2222
     # What every ssh of DevKey's runs with: no configuration file, so nothing of the

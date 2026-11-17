@@ -32,11 +32,11 @@ module Erx
   # device tree into the device's catalogue entry (docs/design-device-tree.md, "Facts into
   # records"). Root's session then runs
   # ifconfig, which shows the lease, ping -c 3 to slirp's gateway, and from its Erlang
-  # shell a 1 MiB TCP echo through slirp's guest forward. That shell then starts SSH's
-  # development daemon (erx_ssh_dev; docs/design-ssh.md, "Stages", stage 1) on
-  # DevKey::PORT, which a host forward reaches, in an image that carries the clone's
-  # development login key (DevKey), and the host's ssh logs in through it and types ps at
-  # rc on the login's tty (check_ssh).
+  # shell a 1 MiB TCP echo through slirp's guest forward. That shell then finds SSH's
+  # development daemon (erx_ssh_dev; docs/design-ssh.md, "Stages", stage 1), which root's
+  # session started at boot on DevKey::PORT, which a host forward reaches, in an image
+  # that carries the clone's development login key (DevKey), and the host's ssh logs in
+  # through it and types ps at rc on the login's tty (check_ssh).
   # Last, the system's shell kills the network domain's pid and, once the domain is
   # gone, reads the root's pool pages again: each figure (after the lease, after the
   # echo and the logins) minus that last one is the domain's
@@ -94,9 +94,11 @@ module Erx
       '{nd_ended, NdEnded, NdUsed()}'
     ].join(', ') + ".\r"
 
-    # Typed at root's session's Erlang shell: starts the daemon once the session's data
-    # grant has arrived, since the daemon keeps its host key under /data.
-    SSH_LINE = SessionDomain.with_data("erx_ssh_dev:start(#{DevKey::PORT})").freeze
+    # Typed at root's session's Erlang shell: waits for the daemon the session started at
+    # boot (erx_ssh_dev:boot/1), registered as erx_ssh_dev once it listens, and answers
+    # {ok, Daemon}; `timeout` after 240 polls 500 ms apart.
+    SSH_LINE = '(fun Wait(0) -> timeout; Wait(N) -> case whereis(erx_ssh_dev) of ' \
+               "undefined -> timer:sleep(500), Wait(N - 1); Daemon -> {ok, Daemon} end end)(240).\r"
     # What root types at rc on the login's tty, ending each line with the CR a terminal
     # sends: ps, then exit, which ends the shell and so the login. ps's header
     # (erx_cmd_ps, FreeBSD's default columns) in what the tty sent back shows that rc ran it;
@@ -147,7 +149,7 @@ module Erx
     end
 
     # The reboot cell's checkpoints: the production checkpoints to the system's command
-    # shell, the lease, root_1's Erlang shell starting the daemon, and, once the login
+    # shell, the lease, root_1's Erlang shell finding the daemon, and, once the login
     # (check_ssh_reboot) has ended the machine, the end's console line.
     def reboot_checkpoints(points, login:)
       run = ProductionImage::Run
@@ -179,10 +181,9 @@ module Erx
        { name: 'session-shell', pattern: menu_left, seconds: 30, type: typed }.freeze]
     end
 
-    # The checkpoint of the daemon's start answered at root_1's Erlang shell (SSH_LINE),
+    # The checkpoint of the boot's daemon answered at root_1's Erlang shell (SSH_LINE),
     # whose verify runs logins, the host's login or logins. Its time covers SSH_LINE's
-    # wait for the data grant, at most 240 polls 500 ms apart, as the session suite's
-    # with_data points do.
+    # wait, at most 240 polls 500 ms apart.
     def ssh_daemon(logins)
       { name: 'ssh-daemon', pattern: answer('\{ok,<[0-9]+\.[0-9]+\.[0-9]+>\}'), seconds: 180,
         verify: ->(_line) { logins.call } }

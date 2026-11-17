@@ -33,8 +33,8 @@ monitors its owner, whose exit closes the socket, and its socket. It is started 
 Only IPv4 is taken: `inet6` and `local` are refused with `eafnosupport`. Port -1, OTP's
 private request for a port drawn more randomly than an ephemeral one, is an ephemeral
 port here, since the stack draws every ephemeral port at random (erx_net_bind). The
-options taken are the socket process's own, `binary`, `list`, `mode` and `active`, and
-the local address `ip` (or `ifaddr`); any other is refused with `einval`.
+options taken are the socket process's own, `binary`, `list`, `mode`, `active` and
+`header` 0, and the local address `ip` (or `ifaddr`); any other is refused with `einval`.
 `controlling_process/2` is not offered and answers `enotsup`.
 """.
 

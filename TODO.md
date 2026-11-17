@@ -2975,6 +2975,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [High] network, `erx_net_client` (`erx_gen_tcp`; design-network-stack, "The socket
   process"): the TCP socket process lacks parts of the design.
   Still missing:
+  `monitor/1`, which `inet:monitor/1` calls, so `ssl:listen` ends in `undef` (its session cache and ticket
+  tracker monitor the listening socket; traced from source, not run);
   the packet modes `http`, `http_bin`, `httph`, `httph_bin`, `asn1`, `cdr`, `sunrm`, `fcgi` and
   `tpkt` (erx_net_packet frames 1, 2, 4 and `line`; the http modes need the core to keep
   whether the request line was read, as gen_tcp_socket's `recv_httph`), `line_delimiter`, and the
@@ -3336,8 +3338,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `build/app-sdk`), not the exported SDK's `host/bin/erx-app`, which does not exist yet (the SDK entry above);
   no build hands the public half of the builder's `Erx::PackageKey` to the manifest check as
   `Manifest::Context`'s `development_key`, so no image trusts its builder's key yet, where every development
-  build, not only those `pack --app` builds, should, but for the Raspberry Pi 4's card, the image the website
-  offers, which trusts its kiosk by hash and no key and whose build refuses a manifest that trusts one (`ProductionImage.check_card_trust`; design-packaging.md, "The shipped manifests"); the packer does not yet run the machine's manifest
+  build, not only those `pack --app` builds, should, but for the published media, the Raspberry Pi 4's card and QEMU's medium, which trust its kiosk by hash and no key and whose build refuses a manifest that trusts one (`ProductionImage.check_published_trust`; design-packaging.md, "The shipped manifests"); the packer does not yet run the machine's manifest
   reader (`erx_pkg_manifest:system_config/1`) on the host over the packed manifest, beside
   `AppPack.describe`; and `tools/erx app run DIR`.
   Fix: each with its own package.
@@ -5155,8 +5156,9 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   write cache. `erx_blk_window` answers no `flush` and the driver negotiates no
   `VIRTIO_BLK_F_FLUSH`, so a file system cannot order its writes against the medium's cache.
 * [Low] storage, `erx_littlefs_nif.c`: `deadline_after` ignores `clock_gettime`'s result, and
-  the hosted build's `CLOCK_REALTIME` is the wall clock, so a clock step fails a block wait
-  or stretches it. Waiting with `erx_umtx_wait` against an `erx_clock_ns` deadline fixes both
+  `CLOCK_REALTIME` is the wall clock, on the hosted build and on erXos, where the clock service
+  steps it to the build date while the storage domain mounts /data, so a clock step landing
+  between the deadline's read and the wait fails a block wait or stretches it. Waiting with `erx_umtx_wait` against an `erx_clock_ns` deadline fixes both
   and empties `imports.txt`'s `[only_erx_littlefs_nif]`.
 * [Medium] storage, `tools/lib/erx/data_volume.rb` and the medium writers: a data volume and its
   partition's length travel separately (`ReleaseMedium.write`, `Site.fresh_medium`,
@@ -8533,6 +8535,12 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [High] 0.1, Doom's demo loop on the Pi ([plan.md](docs/plan.md#01-the-preview)): no card can hold Doom, since
+  Doom reaches an image only through `tools/erx pack --app --local` and the card build refuses `--local` and every
+  package of its builder's ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image),
+  `ProductionImage.check_card_apps`). A user-built local card (its configuration, how the card build takes Doom
+  without the published card ever doing so, and which app the firmware framebuffer shows) needs a design section
+  first, with the plan's exit criterion for it.
 * [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the line tree,
   `erx_line_fs`, and its keeper, `erx_line`, run in their UART's line group under `erx_uart_sup`, which starts the
   keeper on the root's `line` record with the rate and flow of the grant of the system domain's service named
@@ -8779,6 +8787,13 @@ document's "residual risks accepted" paragraph.
 
 * [Medium] `examples/dashboard` (`erx_dashboard.app.src`): the live quotes need `ssl` and `inets`, which
   `erx_quotes` starts at run time but no `.app` file declares; settle whether the `.app` names them.
+
+* [Medium] `display_domain/quotes`, the QEMU cell of design-quotes.md ("Verification and testing"), is not
+  built; the harness lacks two pieces it needs: (a) a test image that carries a package on a medium, and
+  (b) the extra test root files design-crypto.md promises ("A test image adds roots", "The trust store").
+  The cell's guest then reaches the harness's TLS server through QEMU user networking whose `net=` covers
+  the table's hardcoded address, with a guest forward for that address and port 443 naming a `cmd:` relay
+  started per connection (unverified until the harness runs it).
 
 * [Low] `examples/dashboard` (`erx_quotes_table`): Kraken's address, 104.16.14.28 (one of
   `api.kraken.com`'s Cloudflare addresses), is hardcoded and may change; a change shows
@@ -9332,14 +9347,10 @@ document's "residual risks accepted" paragraph.
   domains boot releases of their own.
 
 * [Medium] storage, the release medium for QEMU (`tools/lib/erx/medium_image.rb`,
-  `tools/erx pack --medium`): its slots and the boot-selection record's
-  partition hold no FAT: the bootable file lies at `medium_slot_boot_start`
+  `tools/erx pack --medium`): its slots hold no FAT: the bootable file lies at `medium_slot_boot_start`
   after 4 MiB of zeros, where
   [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record)
-  places it inside the FAT's file; and the record partition holds the
-  record's sector (`BootRecord.sector`) without the FAT whose
-  `autoboot.txt` file is that sector, which the Raspberry Pi's firmware
-  needs and nothing on QEMU reads. The EROFS image in the slot holds a copy
+  places it inside the FAT's file. The EROFS image in the slot holds a copy
   of the whole system release, its manifest excepted, which no domain
   mounts while the storage domain holds the block unit (next item), and the boot
   image holds the release too, from which the system domain starts, until
@@ -9350,10 +9361,6 @@ document's "residual risks accepted" paragraph.
   `BootRecord.read` and `extract`; `release.erofs` and `data.lfs` are not scanned for the build path (the EROFS
   files are, through `image.boot`); an oversized `kernel8.img` fails in fsimg rather than with a diagnostic;
   `FatVolume::Layout` keeps a root offset and a root cluster for both FAT types where each means something for one.
-* [Medium] SSH stage 2, the QEMU medium's record partition (`tools/lib/erx/release_medium.rb`, `medium`): it
-  writes only the record's sector and leaves the rest of the partition zero, so a QEMU medium has no FAT volume
-  to hold `authorized_keys`; [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium) has it format
-  the partition with `PiMedium::RECORD_VOLUME`, as the card is.
 * [Low] storage, long-name case in `erx_fat_read` (`erlang/apps/erx_storage/src/erx_fat_read.erl`, `upper/1`;
   [design-storage.md](docs/design-storage.md#removable-media-fat)): the read core maps only ASCII letters to upper
   case before comparing long names, where the design compares after mapping every Basic Multilingual Plane code
@@ -9369,19 +9376,19 @@ document's "residual risks accepted" paragraph.
   [design-ssh.md](docs/design-ssh.md#verification)): every case and fuzz seed is a volume of
   `test/fixtures/fat_record_volume.rb`, written from the same reading of the FAT specification as the reader, where
   the design's row reads volumes fsimg writes; a shared misreading would refuse every real card. Add a case over
-  the record volume `PiMedium::RECORD_VOLUME` has fsimg write (`not_found` proves its layout is admitted), and one
+  the record volume `RecordVolume::ARGUMENTS` has fsimg write (`not_found` proves its layout is admitted), and one
   that finds `authorized_keys` once fsimg can place a file past the record's region (the fsimg item below).
 * [Low] SSH, the boot keys' fuzz target (`test/erlang/erx_boot_keys_fuzz.erl`, `key_blob/1`;
   [design-ssh.md](docs/design-ssh.md#verification)): it checks each blob's layout itself, where the design has
   `erx_ssh_wire` accept it; that decoder and `abi/formats/ssh.txt` are on another branch, and when they land the
   target calls it, as `erx_boot_keys` then takes the blob layout's macros from the generated header.
-* [Medium] storage, the record volume's erase unit (`tools/lib/erx/pi_medium.rb`, `RECORD_VOLUME`; fsimg): the
+* [Medium] storage, the record volume's erase unit (`tools/lib/erx/record_volume.rb`, `ARGUMENTS`; fsimg): the
   clusters of MiB 3 after the record's are free, so fsimg, and a user's computer writing `authorized_keys`, put a
   file beside the record in its erase unit;
   [design-storage.md](docs/design-storage.md#removable-media-fat) marks the rest of the record's erase unit bad
-  in both FATs. Work: `RECORD_VOLUME` derives the range after the record's cluster from `abi/medium.txt`'s
+  in both FATs. Work: `RecordVolume::ARGUMENTS` derives the range after the record's cluster from `abi/medium.txt`'s
   `medium_erase_sectors` and passes it as fsimg's
-  `-o bad=FIRST-LAST` (the fsimg item below); `check_volumes` derives the same range and refuses a volume in
+  `-o bad=FIRST-LAST` (the fsimg item below); `RecordVolume.check` derives the same range and refuses a volume in
   which a cluster of it is not marked bad in both FATs, with a `pi_medium_test` case whose volume lacks one mark,
   as `erx_fat_read` derives its region check. No cluster number is written down
   anywhere, and nothing patches fsimg's output.
@@ -9401,18 +9408,22 @@ document's "residual risks accepted" paragraph.
   `MediumBoot` packs its medium from `site_manifest_source` (`tools/lib/erx/medium_boot.rb:499`,
   `tools/lib/erx/bench_g5.rb:82`), the browser demo's manifest, which leaves the SSH domain out, so no harness
   boots the QEMU release medium the website offers. The test needs `MediumBoot` to take its manifest from the
-  caller, `ProductionImage.medium_manifest` of the development manifest for that test and
+  caller, the published medium of the development manifest for that test and
   `site_manifest_source` for the medium suite and G5 as now.
 * [Medium] site, the QEMU virt download ([site/README.md](site/README.md),
   [design-ssh.md](docs/design-ssh.md#the-ssh-domain)): the page offers the browser demo's gzip-compressed
   `image.boot` as its QEMU download; it is to offer the QEMU release medium packed from the development
-  manifest (`ProductionImage.medium_manifest`), with the SSH domain and no `authorized_keys`, and the QEMU
-  command line that boots it, while the browser demo keeps its own image.
-* [Low] Raspberry Pi card labels (`tools/lib/erx/pi_medium.rb`, `RECORD_FORMAT` and `SLOT_FORMAT`): the record
-  volume is labelled `ERXREC` and both slots' boot partitions `ERXOS`, where
-  [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record) labels the record volume
-  `ERXOS` and the slots `ERXSLOTA` and `ERXSLOTB`, so the volume that takes `authorized_keys` is the one named for
-  the system.
+  manifest (`ProductionImage#build_medium`, `published`), with the SSH domain and no `authorized_keys`, and the QEMU
+  command line that boots it, while the browser demo keeps its own image. The site takes the medium only with a
+  build record written at pack time that names its SHA-256, as the card's does, so it never takes a medium a
+  guest has booted, which holds the guest's SSH host key and `/data` (`tools/erx boot --medium` boots a copy, but
+  QEMU run by hand on the medium writes it). Plain QEMU has no firmware
+  to pick the slot, so the published command needs the device tree naming it (`MediumBoot.firmware_tree`) published
+  beside the medium, or a loader on the medium.
+* [Medium] `tools/lib/erx/raspi4b_shell.rb` (`located_inputs`): the raspi4b suite boots the card it packed in
+  `build/production-image/raspi4b/` in place, so a card taken from there after the suite ran may hold what its guest
+  wrote, an SSH host key or `/data` among it (unverified whether that guest writes the card). Boot an owner-only copy,
+  as `tools/erx boot --medium` does (`InteractiveBoot.medium_copy`), or make pack outputs read-only so no boot writes one.
 * [Medium] storage, the reset count's encoding (`abi/medium.txt`, `tools/lib/erx/pi_medium.rb`): no encoding of the
   count is defined, so the Pi card's writer leaves its sector the zeros fsimg writes in the reserved area instead of
   the count's first value (design-platforms.md, "Slots and the boot-selection record"), as the QEMU medium does.
@@ -9675,9 +9686,9 @@ document's "residual risks accepted" paragraph.
   `ProductionImage::Machine.site`.
 * [Low] SSH stage 1, the port (`tools/lib/erx/dev_key.rb`,
   `erlang/apps/erx_session/src/erx_ssh_dev.erl`): `DevKey::PORT` is a
-  Ruby constant while the guest's port is the argument root types to
-  `erx_ssh_dev:start/1`, so the two agree only by the harness's typing
-  it. A constant of `abi/erx_abi.txt` that both read would make them one
+  Ruby constant while the guest's port is the argument of the development
+  manifest's `-eval ok=erx_ssh_dev:boot(2222)` for root's session, so the
+  two agree only by being written alike. A constant of `abi/erx_abi.txt` that both read would make them one
   fact.
 * [Medium] SSH stage 2, root's session's grant of `login_keys`
   (`config/manifest/development.txt`, `facet login_keys_session`;

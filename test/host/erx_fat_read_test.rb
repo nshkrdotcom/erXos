@@ -9,7 +9,7 @@ require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 require_relative '../fixtures/fat_record_volume'
 require_relative '../../tools/lib/erx/fsimg'
-require_relative '../../tools/lib/erx/pi_medium'
+require_relative '../../tools/lib/erx/record_volume'
 require_relative '../../tools/lib/erx/boot_record'
 
 # The record volume's reader (docs/design-ssh.md, "Verification"):
@@ -17,7 +17,7 @@ require_relative '../../tools/lib/erx/boot_record'
 # which make check supplies) over the volumes FatRecordVolume writes, against
 # erx_fat_read as it is and against each seeded fault below, where the named case must
 # fail. One more volume is the record volume as fsimg writes it for the medium,
-# Erx::PiMedium::RECORD_VOLUME, which holds the boot-selection record and no
+# Erx::RecordVolume::ARGUMENTS, which holds the boot-selection record and no
 # authorized_keys.
 class ErxFatReadTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
@@ -71,8 +71,8 @@ class ErxFatReadTest < Minitest::Test
 # The record volume the medium build formats, its record file in place.
 def self.write_fsimg_record(path)
   Dir.mktmpdir('erx-fsimg-record') do |files|
-    File.binwrite(File.join(files, Erx::PiMedium::RECORD_FILE), Erx::BootRecord::SLOTS.fetch(:a).text)
-    output, status = Open3.capture2e(Erx::Fsimg.locate(root: ROOT), 'cW', '-f', path, *Erx::PiMedium::RECORD_VOLUME,
+    File.binwrite(File.join(files, Erx::RecordVolume::FILE), Erx::BootRecord::SLOTS.fetch(:a).text)
+    output, status = Open3.capture2e(Erx::Fsimg.locate(root: ROOT), 'cW', '-f', path, *Erx::RecordVolume::ARGUMENTS,
                                      '-C', files, '.', stdin_data: '')
     raise "fsimg failed: #{output}" unless status.success?
   end

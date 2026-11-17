@@ -362,6 +362,19 @@ pieces_joined() ->
 
 %% --- Options, a listening socket and a transfer's hold ----------------------------------
 
+%% ssl connects and sets its socket with these values (tls_socket:internal_inet_values/1),
+%% `{header, 0}` among them, which is stock's default, so a TLS client's connect must take
+%% them all; a header of any other length stays refused.
+ssl_socket_options_test() ->
+    Inet = tls_socket:internal_inet_values(gen_tcp),
+    ?assert(lists:member({header, 0}, Inet)),
+    ?assertMatch({ok, #{mode := binary, active := false, packet := raw, packet_size := 0}, []},
+                 erx_gen_tcp_core:options([inet | Inet])),
+    ?assertEqual({error, einval}, erx_gen_tcp_core:options([{header, 2}])),
+    %% ssl's upgrade of a connected socket reads it back (ssl_config:emulated_options/4).
+    ?assertEqual([{reply, f1, {ok, [{header, 0}, {packet, 0}]}}],
+                 element(2, call(f1, {getopts, [header, packet]}, new(#{})))).
+
 %% An option given twice is forwarded once, the last value: the socket admits one `nodelay`
 %% in a `setopts`, and refuses a request of two without an answer.
 options_forwarded_once_test() ->

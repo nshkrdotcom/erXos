@@ -64,9 +64,10 @@ Only IPv4 is taken: a host name given to `connect/4` resolves through inet's own
 (inet_db's lookup methods, the hosts file and then DNS) to its IPv4 addresses, which are
 tried in order within the one timeout, each by a socket process of its own. The options
 taken are the socket process's own (`binary`, `list`, `mode`, `active`, `packet` raw, 0,
-1, 2, 4 or `line`, `packet_size` and `buffer`, framed by erx_gen_tcp_core, and a `header`
-of 0, which changes nothing) and the connection's `nodelay`; `listen/2` also takes the local address (`ip` or
-`ifaddr`) and the listener's `backlog`, `reuseaddr` and `reuseport`. `listen/2` and
+1, 2, 4 or `line`, `packet_size` and `buffer`, framed by erx_gen_tcp_core, and `header`
+0, stock's default, which ssl sets) and the connection's `nodelay`; `listen/2` also
+takes the local address (`ip` or `ifaddr`) and the listener's `backlog`, `reuseaddr`
+and `reuseport`. `listen/2` and
 `connect/4` first check the options as stock's gen_tcp does, with inet's own parser, so an
 option stock does not know, or a value it does not take, raises `badarg` as on stock; one
 stock takes and this backend does not is answered `{error, einval}`. What the backend

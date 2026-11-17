@@ -1762,8 +1762,8 @@ generated constants give them, and writes no cluster number down. The
 reader takes the range for its check; the image build passes the
 range after the record's cluster to fsimg's FAT creation as
 `-o bad=FIRST-LAST`, so fsimg writes the marks as it formats and nothing
-patches its output; and `check_volumes`
-(`tools/lib/erx/pi_medium.rb`) reads both FATs back through `FatVolume`
+patches its output; and `RecordVolume.check`
+(`tools/lib/erx/record_volume.rb`) reads both FATs back through `FatVolume`
 and refuses a volume in which a cluster of that range is not marked bad.
 
 The reader runs in a process of its own, spawned and monitored by the

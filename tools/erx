@@ -1074,13 +1074,16 @@ module Erx
     # for a person to type at (InteractiveBoot); with --hostlink, also its host
     # link on a socket and a data medium, and the `tools/erx web` line to run
     # next; with --without-web, the website's image, from its own manifest, which has
-    # no web domain.
+    # no web domain; with --medium, a release medium as it is, built by none of these
+    # (boot_medium).
     # The arguments are read whole before anything is built or run.
     def self.boot(arguments, runner_class: Runner)
       request = InteractiveBoot.request(arguments)
       runner = runner_class.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       platform = Platform.development(ROOT)
       accel = request.accel || InteractiveBoot.default_accel(QemuGate.available_accelerators(runner: runner))
+      return boot_medium(request, platform: platform, accel: accel, runner: runner) if request.medium
+
       kind = request.without_web ? 'website' : 'development'
       Terminal.puts("building the #{kind} boot image into #{InteractiveBoot.image_directory(without_web: request.without_web)}")
       boot = InteractiveBoot.build(root: ROOT, runner: runner, jobs: request.jobs, hostlink: request.hostlink,
@@ -1096,8 +1099,31 @@ module Erx
       InteractiveBoot.run(argv)
     end
 
+    # `tools/erx boot --medium PATH`: the release medium at PATH in QEMU as a person boots
+    # it (InteractiveBoot.medium_argv), on the development machine's RAM, which the medium
+    # was packed for; with --print, the plain qemu-system-aarch64 command instead, whose
+    # kernel, device tree and disk lie in the tree until the next --medium. The guest
+    # boots a copy of the medium (InteractiveBoot.medium_copy), where it keeps its /data
+    # and SSH host key from boot to boot, so the medium at PATH stays as written.
+    def self.boot_medium(request, platform:, accel:, runner:)
+      machine = ProductionImage::Machine.development(platform)
+      files = InteractiveBoot.medium_boot(root: ROOT, runner: runner, medium: request.medium, machine: machine,
+                                          cpus: request.cpus)
+      argv = InteractiveBoot.medium_argv(platform: platform, accel: accel, cpus: request.cpus, kernel: files.kernel,
+                                         medium: files.disk, memory_mib: machine.memory_mib, dtb: files.dtb)
+      if request.print
+        puts Shellwords.join(argv)
+        return 0
+      end
+
+      Terminal.puts("booting #{request.medium} from #{files.fresh ? 'a new' : 'its'} copy #{files.disk}: accelerator " \
+                    "#{accel}, #{request.cpus} guest CPU(s); " \
+                    "ssh -p #{InteractiveBoot::MEDIUM_SSH_PORT} root@127.0.0.1; #{InteractiveBoot::QUIT_HINT}")
+      InteractiveBoot.run(argv)
+    end
+
     # The host's ssh as root into a development guest whose daemon root's session
-    # started with erx_ssh_dev:start/1, through a host loopback port forwarded to it,
+    # started at boot (erx_ssh_dev:boot/1), through a host loopback port forwarded to it,
     # --port (by default DevKey::PORT), with the clone's development login key (DevKey)
     # and the interactive boot's known-hosts file, which each boot's build starts afresh
     # in its directory. It takes no command: the guest's daemon gives root rc on a tty

@@ -5,19 +5,28 @@ require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/fsimg'
 require_relative '../../tools/lib/erx/pi_medium'
+require_relative '../../tools/lib/erx/record_volume'
 
-# The Raspberry Pi card's volumes (Erx::PiMedium) as fsimg writes them with the card's
-# own arguments, and the packer's check of each placed file (Erx::FatVolume.check_placed):
-# it accepts what fsimg wrote, and refuses each way a placement can go wrong, seeded
-# into the volume: a kernel8.img whose chain jumps once, ends early or runs on, an entry
-# that starts elsewhere or records another length, other bytes at the placement, a
-# record sector that is not medium_record_a, and a reset count sector that is not zero.
+# The Raspberry Pi card's volumes, the record volume (Erx::RecordVolume) and slot A's
+# (Erx::PiMedium), as fsimg writes them with the card's own arguments, and the packer's
+# check of each placed file (Erx::FatVolume.check_placed): it accepts what fsimg wrote,
+# and refuses each way a placement can go wrong, seeded into the volume: a kernel8.img
+# whose chain jumps once, ends early or runs on, an entry that starts elsewhere or
+# records another length, other bytes at the placement, a record sector that is not
+# medium_record_a, a reset count sector that is not zero, and a record volume holding a
+# file beside the record.
 class PiMediumTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   FSIMG = Erx::Fsimg.locate(root: ROOT)
   PI = Erx::PiMedium
+  RECORD = Erx::RecordVolume
   # A kernel8.img of several clusters whose last is partly filled.
   KERNEL = Random.new(7).bytes((5 * 1024) + 100)
+  # Where a FAT16's and a FAT32's boot sector hold the volume label, and the attribute
+  # that marks a root directory entry as the label.
+  FAT16_LABEL = 43
+  FAT32_LABEL = 71
+  VOLUME_LABEL = 0x08
 
   # The card is a power of two long and holds the layout's minimum data partition.
   def test_the_card_is_a_power_of_two
@@ -29,11 +38,28 @@ class PiMediumTest < Minitest::Test
 
   def test_accepts_the_volumes_fsimg_writes
     volumes do |record, slot|
-      PI.check_volumes(record: record, slot: slot, boot: KERNEL, names: [PI::BOOT_FILE, 'config.txt'])
+      Erx::RecordVolume.check(record)
+      PI.check_slot(slot, boot: KERNEL, names: [PI::BOOT_FILE, 'config.txt'])
       Erx::FatVolume.open(record) { |volume| assert_equal :fat16, volume.layout.kind.name }
       Erx::FatVolume.open(slot) { |volume| assert_equal :fat32, volume.layout.kind.name }
       assert_equal KERNEL, File.binread(slot, KERNEL.bytesize, PI::BOOT_PLACE)
-      assert_equal Erx::BootRecord.sector(:a), File.binread(record, 512, PI::RECORD_PLACE)
+      assert_equal Erx::BootRecord.sector(:a), File.binread(record, 512, RECORD::PLACE)
+    end
+  end
+
+  # The record volume carries the label users are told to copy authorized_keys to
+  # (README.md, "Getting started"; docs/design-ssh.md, "Where the file lies"), in its
+  # boot sector and as its root directory's label entry, which is what a host shows;
+  # slot A's boot partition is labelled for its slot, so a host shows the two apart.
+  def test_the_record_volume_carries_the_label_users_are_told_to_use
+    volumes do |record, slot|
+      assert_equal 'ERXOS      ', File.binread(record, 11, FAT16_LABEL)
+      Erx::FatVolume.open(record) do |volume|
+        root = volume.read(volume.layout.root_offset, volume.layout.root_bytes)
+        labels = root.scan(/.{32}/mn).select { |entry| entry.getbyte(11) == VOLUME_LABEL }.map { |entry| entry[0, 11] }
+        assert_equal ['ERXOS      '], labels
+      end
+      assert_equal 'ERXSLOTA   ', File.binread(slot, 11, FAT32_LABEL)
     end
   end
 
@@ -52,7 +78,7 @@ class PiMediumTest < Minitest::Test
       }.each do |fault, (offset, bytes, reason)|
         patched(slot, offset, bytes) do
           error = assert_raises(Erx::Error, fault) do
-            PI.check_volumes(record: record, slot: slot, boot: KERNEL, names: [PI::BOOT_FILE])
+            PI.check_slot(slot, boot: KERNEL, names: [PI::BOOT_FILE])
           end
           assert_match reason, error.message, fault
         end
@@ -63,27 +89,38 @@ class PiMediumTest < Minitest::Test
   # Seeded faults in the record volume.
   def test_refuses_a_bad_record_volume
     volumes do |record, slot|
-      check = -> { PI.check_volumes(record: record, slot: slot, boot: KERNEL, names: [PI::BOOT_FILE]) }
-      patched(record, PI::RECORD_PLACE + 100, "x") do
+      check = -> { Erx::RecordVolume.check(record) }
+      patched(record, RECORD::PLACE + 100, "x") do
         assert_match(/record's sector is not medium_record_a/, assert_raises(Erx::Error, &check).message)
       end
-      patched(record, PI::RECORD_PLACE + 20, "3") do
+      patched(record, RECORD::PLACE + 20, "3") do
         assert_match(/does not hold .* contents/, assert_raises(Erx::Error, &check).message)
       end
-      patched(record, PI::COUNT_OFFSET, "\x01") do
+      patched(record, RECORD::COUNT_OFFSET, "\x01") do
         assert_match(/reset count's sector is not zero/, assert_raises(Erx::Error, &check).message)
       end
+    end
+  end
+
+  # A record volume holding a file beside the record, a login key a medium was written
+  # with, is refused: whoever writes a medium adds authorized_keys afterwards.
+  def test_refuses_a_record_volume_holding_a_key
+    volumes(record_files: { 'authorized_keys' => "ssh-ed25519 AAAA key\n" }) do |record, _slot|
+      error = assert_raises(Erx::Error) { Erx::RecordVolume.check(record) }
+      assert_match(/root holds a file beside the record/, error.message)
     end
   end
 
   # A volume of the wrong kind, a truncated one and one with no placed file are refused.
   def test_refuses_the_wrong_volume
     volumes do |record, slot|
-      error = assert_raises(Erx::Error) { PI.check_volumes(record: slot, slot: record, boot: KERNEL, names: []) }
+      error = assert_raises(Erx::Error) { Erx::RecordVolume.check(slot) }
       assert_match(/is fat32, not fat16/, error.message)
+      error = assert_raises(Erx::Error) { PI.check_slot(record, boot: KERNEL, names: []) }
+      assert_match(/is fat16, not fat32/, error.message)
       Erx::FatVolume.open(record) do |volume|
         error = assert_raises(Erx::Error) do
-          Erx::FatVolume.check_placed(volume, kind: :fat16, short: 'KERNEL8 IMG'.b, offset: PI::RECORD_PLACE, contents: 'x')
+          Erx::FatVolume.check_placed(volume, kind: :fat16, short: 'KERNEL8 IMG'.b, offset: RECORD::PLACE, contents: 'x')
         end
         assert_match(/has no root entry/, error.message)
       end
@@ -94,19 +131,20 @@ class PiMediumTest < Minitest::Test
 
   private
 
-  # Writes the record and slot volumes with the card's arguments into a fresh directory
-  # and yields their paths.
-  def volumes
+  # Writes the record and slot volumes with the card's arguments into a fresh directory,
+  # the record volume with record_files beside the record, and yields their paths.
+  def volumes(record_files: {})
     Dir.mktmpdir do |root|
-      record_files = File.join(root, 'record-files')
+      staged = File.join(root, 'record-files')
       slot_files = File.join(root, 'slot-files')
-      [record_files, slot_files].each { |path| Dir.mkdir(path) }
-      File.binwrite(File.join(record_files, PI::RECORD_FILE), Erx::BootRecord::SLOTS.fetch(:a).text)
+      [staged, slot_files].each { |path| Dir.mkdir(path) }
+      { RECORD::FILE => Erx::BootRecord::SLOTS.fetch(:a).text, **record_files }
+        .each { |name, bytes| File.binwrite(File.join(staged, name), bytes) }
       File.binwrite(File.join(slot_files, PI::BOOT_FILE), KERNEL)
       File.write(File.join(slot_files, 'config.txt'), "arm_64bit=1\n")
       record = File.join(root, 'record.fat')
       slot = File.join(root, 'slot.fat')
-      fsimg('cW', '-f', record, *PI::RECORD_VOLUME, '-C', record_files, '.')
+      fsimg('cW', '-f', record, *RECORD::ARGUMENTS, '-C', staged, '.')
       fsimg('cW', '-f', slot, *PI::SLOT_VOLUME, '-C', slot_files, '.')
       yield record, slot
     end

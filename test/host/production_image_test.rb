@@ -123,45 +123,61 @@ class ProductionImageTest < Minitest::Test
     Erx::ProductionImage.check_card_apps(PLATFORM, Erx::ImageApps.plan([], enable: [], local: true))
   end
 
-  # The card trusts no package key, whatever a build hands its manifest check: a manifest
-  # admitted with a signer row or the builder's development key is refused (the seeded
-  # faults), one admitted with neither passes.
-  def test_a_card_whose_manifest_trusts_a_key_is_refused
+  # A published medium trusts no package key, whatever a build hands its manifest check:
+  # a manifest admitted with a signer row or the builder's development key is refused (the
+  # seeded faults), one admitted with neither passes.
+  def test_a_published_medium_whose_manifest_trusts_a_key_is_refused
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    Erx::ProductionImage.check_card_trust(pi, { 'signers' => [], 'development_key' => false, 'packages' => ['dashboard'] })
+    Erx::ProductionImage.check_published_trust(pi, { 'signers' => [], 'development_key' => false, 'packages' => ['dashboard'] })
     { [['deployer'], false] => 'signer deployer', [[], true] => 'the development package key',
       [%w[a b], true] => 'signer a and signer b and the development package key' }.each do |(signers, development), named|
       error = assert_raises(Erx::Error) do
-        Erx::ProductionImage.check_card_trust(pi, { 'signers' => signers, 'development_key' => development })
+        Erx::ProductionImage.check_published_trust(pi, { 'signers' => signers, 'development_key' => development })
       end
-      assert_equal "the raspi4b card trusts no package key, but its manifest trusts #{named}", error.message
+      assert_equal "the published raspi4b medium trusts no package key, but its manifest trusts #{named}", error.message
     end
   end
 
-  # A card build whose assembled image's manifest trusts a key: build_medium itself
-  # refuses it before it lays out the card. The image builder stands in for the steps
-  # around the check (CardTrustProbe), so the test fails if build_medium stops calling
-  # check_card_trust.
-  def test_a_card_build_refuses_a_manifest_that_trusts_a_key
-    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    image = CardTrustProbe.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: Erx::ProductionImage::Machine.development(pi),
-                               fiasco: Object.new, runtime: nil, jit_runtime: nil)
-    error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent') }
-    assert_equal 'the raspi4b card trusts no package key, but its manifest trusts signer deployer', error.message
+  # A published medium's build whose assembled image's manifest trusts a key: build_medium
+  # itself refuses it before it writes the medium, for the card, which is always the
+  # published medium, and for QEMU's when `tools/erx pack` asks for the published one. The
+  # image builder stands in for the steps around the check (PublishedTrustProbe), so the test
+  # fails if build_medium stops calling check_published_trust or packing its own apps.
+  def test_a_published_medium_build_refuses_a_manifest_that_trusts_a_key
+    { 'raspi4b' => {}, 'qemu-virt' => { published: true } }.each do |name, published|
+      platform = Erx::Platform.load(root: ROOT, name: name)
+      image = PublishedTrustProbe.new(root: ROOT, runner: nil, compiler: '', linker: '',
+                                 machine: Erx::ProductionImage::Machine.development(platform), fiasco: Object.new,
+                                 runtime: nil, jit_runtime: nil)
+      error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', **published) }
+      assert_equal "the published #{name} medium trusts no package key, but its manifest trusts signer deployer", error.message
+      assert_equal [:published_apps, :assemble_published], image.calls, name
+    end
   end
 
-  # A card's image builder whose own packages are none and whose assembled image's
-  # manifest trusts a signer row, and which lays out no card.
-  class CardTrustProbe < Erx::ProductionImage
+  # A published medium's image builder whose own packages are none, which notes that it
+  # was asked for them, and whose assembled image's manifest trusts a signer row, and
+  # which writes no medium.
+  class PublishedTrustProbe < Erx::ProductionImage
     Assembled = Data.define(:report)
 
-    def card_apps = Erx::ImageApps.none
+    def calls = (@calls ||= [])
+
+    PUBLISHED = Erx::ImageApps.plan([], enable: [], local: false)
+
+    def published_apps
+      calls << :published_apps
+      PUBLISHED
+    end
 
     private
 
     def domain_boots(_manifest_source, given: []) = given
 
-    def assemble(**) = Assembled.new(report: { 'manifest' => { 'signers' => ['deployer'], 'development_key' => false } })
+    def assemble(apps:, **)
+      calls << :assemble_published if apps.equal?(PUBLISHED)
+      Assembled.new(report: { 'manifest' => { 'signers' => ['deployer'], 'development_key' => false } })
+    end
   end
 
   # The card's own packages: the kiosk, examples/dashboard, packed as the kiosk suite packs
@@ -176,7 +192,7 @@ class ProductionImageTest < Minitest::Test
                                      machine: Erx::ProductionImage::Machine.development(pi), fiasco: Object.new,
                                      runtime: nil, jit_runtime: nil)
     builds = 2.times.map do
-      apps = Dir.mktmpdir('erx-card-apps-home-') { |home| with_home(home) { image.card_apps } }
+      apps = Dir.mktmpdir('erx-card-apps-home-') { |home| with_home(home) { image.published_apps } }
       [apps, File.binread(apps.packages.first.path)]
     end
     apps, bytes = builds.first

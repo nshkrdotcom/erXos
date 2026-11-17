@@ -388,14 +388,17 @@ module Erx
     # whole on every pack.
     def self.packed_directory(platform) = "build/production-image/#{platform.name}"
 
-    # Where card_apps packs a card's own packages, replaced whole on every build.
-    CARD_APPS_DIRECTORY = 'build/card-apps'
+    # Where published_apps packs a published medium's own packages, one directory per
+    # platform, replaced whole on every build of it.
+    PUBLISHED_APPS_DIRECTORY = 'build/published-apps'
 
     # `tools/erx pack`'s one build: Fiasco for platform (Fiasco#build_for), then the
     # production image of platform's development machine, with its medium when medium
     # is set, into packed_directory, cleared first, with the packages of apps
-    # (ImageApps::Plan, `tools/erx pack --app`). Returns build's or build_medium's
-    # result. The raspi4b suite boots what this leaves.
+    # (ImageApps::Plan, `tools/erx pack --app`). A medium packed with no app of its
+    # builder's is the published one, the kind the website offers (build_medium); nothing
+    # on disk tells it from a builder's medium yet (TODO.md, "site, the QEMU virt download"). Returns
+    # build's or build_medium's result. The raspi4b suite boots what this leaves.
     def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4, apps: ImageApps.none)
       check_card_apps(platform, apps) if medium
       fiasco = Fiasco.new(root: root, runner: runner, compiler: compiler)
@@ -403,7 +406,9 @@ module Erx
       directory = clear_directory(root: root, path: File.join(root, packed_directory(platform)))
       image = new(root: root, runner: runner, compiler: compiler, linker: linker, machine: Machine.development(platform),
                   fiasco: fiasco)
-      medium ? image.build_medium(directory: directory, apps: apps) : image.build(directory: directory, apps: apps)
+      return image.build(directory: directory, apps: apps) unless medium
+
+      image.build_medium(directory: directory, apps: apps, published: apps.empty?)
     end
 
     # The image and the medium that holds it, both in directory, which must be clean: by
@@ -411,9 +416,10 @@ module Erx
     # (BootPartition.boot_partition_medium?) gets that partition's files and the card, the ABI's medium for the board (PiMedium); any other
     # gets the release medium for QEMU (ReleaseMedium). A boot that creates a domain
     # (MediumBoot) names a larger machine and a manifest with room for it, whose domain
-    # row names the release and runtime image the image then carries. A card takes no
-    # apps of its builder's (check_card_apps), carries its own (card_apps) and trusts no
-    # key (check_card_trust).
+    # row names the release and runtime image the image then carries. When published, the
+    # medium is the one the website offers, as a card always is: it carries its own apps
+    # (published_apps) and trusts no key (check_published_trust). A card takes no apps of
+    # its builder's (check_card_apps).
     #
     # test_roots (TrustStore::TestRoot) are root files the trust store takes after the
     # tree's (TrustStore.store;
@@ -423,17 +429,18 @@ module Erx
     # boots it; the source check lets only the test harnesses name them
     # (Checks::TEST_ROOTS_ENTRY), and every other image's store is the tree's alone.
     def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none,
-                     test_roots: [])
+                     published: false, test_roots: [])
       on_own_board(machine)
       self.class.check_card_apps(machine.platform, apps)
 
       card = BootPartition.boot_partition_medium?(machine.platform)
-      apps = card_apps if card
+      publish = published || card
+      apps = published_apps if publish
       built = assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: !test_roots.empty?,
                        machine: machine, domains: domain_boots(manifest_source), apps: apps, record: false,
                        test_roots: test_roots)
+      self.class.check_published_trust(machine.platform, built.report.fetch('manifest')) if publish
       if card
-        self.class.check_card_trust(machine.platform, built.report.fetch('manifest'))
         return [built, BootPartition.lay_out(root: @root, runner: @runner, platform: machine.platform, build_kind: BUILD_KIND,
                                              bootable: built.single, erofs: built.erofs,
                                              directory: built_directory(built), compiler: @compiler, linker: @linker)]
@@ -444,7 +451,7 @@ module Erx
 
     # Refuses apps (ImageApps::Plan) of a builder's for a medium of platform when it is a
     # card, the medium of a board the firmware boots from a boot partition, which the
-    # website offers: it carries the kiosk alone (card_apps), and no package, signer or
+    # website offers: it carries the kiosk alone (published_apps), and no package, signer or
     # --local of its builder's (docs/design-packaging.md, "The shipped manifests").
     def self.check_card_apps(platform, apps)
       return if apps.empty? || !BootPartition.boot_partition_medium?(platform)
@@ -453,40 +460,42 @@ module Erx
                    'app, signer or --local'
     end
 
-    # Refuses a card of platform whose admitted manifest (its report, manifest) trusts a
-    # key for packages installed later, a signer row or the builder's development package
-    # key: the card the website offers trusts its kiosk by its row's hash alone, so no
-    # downloaded card trusts its builder's key, whatever a build hands the manifest check
-    # (docs/design-packaging.md, "The shipped manifests").
-    def self.check_card_trust(platform, manifest)
+    # Refuses a published medium of platform, the card or QEMU's medium the website offers,
+    # whose admitted manifest (its report, manifest) trusts a key for packages installed
+    # later, a signer row or the builder's development package key: the medium trusts its
+    # kiosk by its row's hash alone, so no downloaded medium trusts its builder's key,
+    # whatever a build hands the manifest check (docs/design-packaging.md, "The shipped
+    # manifests").
+    def self.check_published_trust(platform, manifest)
       signers, development = manifest.values_at('signers', 'development_key')
       return if signers.empty? && !development
 
       trusted = [*signers.map { |name| "signer #{name}" }, *('the development package key' if development)]
-      raise Error, "the #{platform.name} card trusts no package key, but its manifest trusts #{trusted.join(' and ')}"
+      raise Error, "the published #{platform.name} medium trusts no package key, but its manifest trusts #{trusted.join(' and ')}"
     end
 
-    # A card's own packages (docs/design-packaging.md, "The shipped manifests"): the kiosk,
-    # ImageApps::KIOSK, enabled, as ImageApps.packed_kiosk packs it for the kiosk suite
-    # too, sealed by the published package key, so two builders' cards of one commit
-    # carry the same bytes. The plan holds no signer row and is no local image, so the
-    # card trusts its package by its row's hash (check_card_trust).
-    def card_apps
-      work = self.class.clear_directory(root: @root, path: File.join(@root, CARD_APPS_DIRECTORY))
+    # A published medium's own packages (docs/design-packaging.md, "The shipped
+    # manifests"): the kiosk, ImageApps::KIOSK, enabled, as ImageApps.packed_kiosk packs it
+    # for the kiosk suite too, sealed by the published package key, so two builders' media
+    # of one commit carry the same bytes. The plan holds no signer row and is no local image, so the
+    # medium trusts its package by its row's hash (check_published_trust).
+    def published_apps
+      work = self.class.clear_directory(root: @root, path: File.join(@root, PUBLISHED_APPS_DIRECTORY, @machine.platform.name))
       FileUtils.mkdir_p(work)
       kiosk = ImageApps.packed_kiosk(work, root: @root, runner: @runner, compiler: @compiler).package
       ImageApps.plan([kiosk], enable: [kiosk.name])
     end
 
     # The release medium for QEMU (ReleaseMedium) of built, an image this object packed, in
-    # the image's directory: the image's slot and a new littlefs data volume, so the
-    # storage domain serves /data. Returns a ReleaseMedium::Written: the medium's
+    # the image's directory: the image's slot, the record volume, and a new littlefs data
+    # volume, so the storage domain serves /data. Returns a ReleaseMedium::Written: the medium's
     # path, and the slot plan, data_sectors and volume a fresh copy is made from.
     def release_medium(built)
       directory = built_directory(built)
       data_sectors = MediumImage.constant('data_sectors_min')
       volume = DataVolume.format(root: @root, runner: @runner, compiler: @compiler, directory: directory, data_sectors: data_sectors)
-      ReleaseMedium.write(built: built, directory: directory, volume: volume, data_sectors: data_sectors)
+      ReleaseMedium.write(built: built, directory: directory, volume: volume, data_sectors: data_sectors, runner: @runner,
+                          fsimg: Fsimg.checked(root: @root, runner: @runner))
     end
 
     # The production image with test code added to its system release, marked in its
@@ -635,7 +644,7 @@ module Erx
       (first, first_medium), (second, second_medium) = %w[first second].map do |name|
         @runtime.clean
         Bl31.clean(root: @root) if BootPartition.boot_partition_medium?(@machine.platform)
-        build_medium(directory: File.join(directory, name))
+        build_medium(directory: File.join(directory, name), published: true)
       end
       raise Error, 'build/gen was regenerated during the reproducibility check; run it again' unless generated_stamp == compared
 

@@ -49,14 +49,14 @@ class ErxSshDevTest < Minitest::Test
     end
   end
 
-  # The module as the build compiles it offers start/1 and the key callback alone, so
-  # no entry of a shipped image names a keys file or a host-key directory.
+  # The module as the build compiles it offers boot/1, start/1 and the key callback
+  # alone, so no entry of a shipped image names a keys file or a host-key directory.
   def test_the_shipped_module_names_no_keys_file
     Dir.mktmpdir('erx-ssh-dev-shipped') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS)
       output, status = erl(work, 'io:format("~w~n", [lists:sort(erx_ssh_dev:module_info(exports))]), halt().')
       assert status.success?, output
-      assert_equal '[{host_key,2},{is_auth_key,3},{module_info,0},{module_info,1},{start,1}]', output.strip
+      assert_equal '[{boot,1},{host_key,2},{is_auth_key,3},{module_info,0},{module_info,1},{start,1}]', output.strip
     end
   end
 

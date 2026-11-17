@@ -62,7 +62,7 @@ module Erx
     NAME = %r{\A(?:overlays/)?[A-Za-z0-9][A-Za-z0-9_.,+-]*\z}
     # No file is larger than the partition that holds it, so the partition's size bounds each
     # read. What fits in all, with the FATs and directories, is for fsimg to refuse when the
-    # volume fills; PiMedium.check_volumes reads the result back.
+    # volume fills; PiMedium.check_slot reads the result back.
     MAX_FILE = PiMedium::SLOT_FAT_BYTES
     # The medium's three entries beside the image: the partition's files, the card's disk
     # image, and their build record.
