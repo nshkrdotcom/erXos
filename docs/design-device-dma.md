@@ -790,8 +790,9 @@ and `erx_dma_clean_inval`, each over an address range and a step, which
 issue one instruction at each multiple of the step from the range's start;
 the sequencer gives every range with the step `L`, so the choice of step
 is made once, in the pure core its host tests cover; the publish barrier, the report
-barrier and the completion barrier; and `erx_dma_granule` and
-`erx_dma_line`. Each architecture provides them in its layer
+barrier and the completion barrier; `erx_dma_store_wait`, which follows
+every register store ([design-arch-aarch64.md](design-arch-aarch64.md#asynchronous-errors));
+and `erx_dma_granule` and `erx_dma_line`. Each architecture provides them in its layer
 ([design-arch-aarch64.md](design-arch-aarch64.md#cache-maintenance)); the
 hosted build provides the model below. Only `erx_device` calls them in a
 runtime, which the `device-dma-maintenance` chokepoint rule checks, and their inline assembly is a listed site of the `inline-asm` rule.

@@ -115,10 +115,10 @@ firmware left in the controller, MAC0 holding the first four bytes and MAC1's lo
 the last two, unless both words are 0; else a random locally administered unicast
 address from six bytes of entropy. An address from the record or the controller that is
 a group address or all zeros is not used. The controller's address registers are read
-only when the record gives no address, and only after the receive buffer's reset bit
-(bit 1 of SYS_RBUF_FLUSH_CTRL, the UniMAC's reset) reads clear: while that reset holds
-the UniMAC its registers mean nothing (`if_genet.c:465-469`), and whether a read of one
-raises a bus error is unverified.
+only when the record gives no usable address, and only after the receive buffer's reset
+bit (bit 1 of SYS_RBUF_FLUSH_CTRL) reads clear, as FreeBSD reads them
+(`if_genet.c:465-469`); FreeBSD gives no reason, and what a read of them returns, or
+whether it raises a bus error, while that bit is set is unverified.
 """.
 -spec lladdr(none | 1..16#ffffffffffff) -> address_step().
 lladdr(none) -> controller();

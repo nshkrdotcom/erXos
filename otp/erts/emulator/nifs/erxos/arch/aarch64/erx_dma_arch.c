@@ -88,3 +88,9 @@ erx_dma_completion_barrier(void)
 {
 	__asm__ volatile("dsb sy" ::: "memory");
 }
+
+void
+erx_dma_store_wait(void)
+{
+	__asm__ volatile("dsb sy" ::: "memory");
+}

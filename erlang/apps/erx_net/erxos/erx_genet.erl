@@ -163,9 +163,9 @@ address(Dev, {entropy, Next}) -> address(Dev, Next(erx_net_clock:entropy(6))).
 %% A read of the start, with a line in the kernel log before it naming the field and one
 %% after it giving the value, so the last line before a fault in the read names its field.
 read_logged(Dev, Register, Field) ->
-    ok = log("read ~s ~s", [Register, Field]),
+    ok = log("read ~w ~s", [Register, Field]),
     Value = erx_device:read_field(Dev, Register, Field),
-    ok = log("~s ~s = 16#~.16b", [Register, Field, Value]),
+    ok = log("~w ~s = 16#~.16b", [Register, Field, Value]),
     Value.
 
 negotiate(Dev, Tries) ->
