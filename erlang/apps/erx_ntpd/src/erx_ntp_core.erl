@@ -15,21 +15,33 @@ result, so the order of the steps is the core's alone:
 
 | Action | Result handed to step/2 |
 | --- | --- |
-| `{resolve, Names}` | `{resolved, Addresses}`, the names' addresses in DNS order |
+| `{resolve, Name}` | `{resolved, Addresses}`, the name's addresses in DNS order |
 | `{exchange, Address, poll \\| burst}` | `{exchanged, Outcome}`: a sample, a kiss, a drop or `{error, _}` |
 | `{submit, Sample, Address}` | `{clock, Answer}`, the clock facet's answer |
 | `{wait, Ms}` | `woke` |
 
-The first poll of an address is a burst of up to four exchanges 2 s apart,
-whose sample is the valid reply of least delay; a later poll is one
-exchange. After a sample the wait is the poll interval, 64 s at first and
-doubling after each answered sample up to 1024 s; an `{error, _}` answer
-of the clock facet leaves the interval as it was. A poll with no sample
-moves to the next address after the interval; when every address has
-failed once in a row the interval doubles and the names are resolved again
-after it. A resolution with no usable address is retried after 15 s,
-doubling to 1024 s. `DENY` and `RSTR` remove the address for the rest of
-the run, `RATE` doubles the interval, and any other kiss is discarded.
+A round resolves the names one at a time, in order, and polls the
+addresses of each before it resolves the next, so the first usable
+address is polled as soon as its name is resolved. The first poll of an
+address is a burst of up to four exchanges 2 s apart, whose sample is the
+valid reply of least delay; a later poll is one exchange. After a sample
+the wait is the poll interval, 64 s at first and doubling after each
+answered sample up to 1024 s; an `{error, _}` answer of the clock facet
+leaves the interval as it was. A poll with no sample moves to the next
+address, at once when that address has not been polled, else after the
+interval; once every address resolved so far has failed in a row, the
+next name is resolved at once, and once every name has been, the interval
+doubles and a new round starts after it. A round that ends with no usable
+address, none found or every one denied, starts again after 15 s,
+doubling to 1024 s. `DENY` and `RSTR`
+remove the address for the rest of the run, `RATE` doubles the interval,
+and any other kiss is discarded.
+
+The run remembers at most as many denied addresses as /proc/ntp's
+`denied` shows (abi/inspection.txt's `net_addresses`). Once that list is
+full, only an address the run has polled, which no denial has removed, is
+admitted, so a denial past the bound needs no record: no denied address
+is polled again, and the state stays bounded.
 """.
 
 -export([servers/1, start/1, step/2, request/2, interval/1, status/1]).
@@ -40,12 +52,12 @@ the run, `RATE` doubles the interval, and any other kiss is discarded.
 -define(RESOLVE_MIN_MS, 15000).
 -define(BURST, 4).
 -define(BURST_GAP_MS, 2000).
-%% The addresses a run remembers as polled, and as denied: a bound, so a run
-%% of rotating pool addresses cannot grow the state without limit.
--define(REMEMBERED_MAX, 64).
+%% The addresses a run remembers as polled: a bound, so a run of rotating
+%% pool addresses cannot grow the state without limit.
+-define(POLLED_MAX, 64).
 
 -type address() :: inet:ip4_address().
--type action() :: {resolve, [binary(), ...]}
+-type action() :: {resolve, binary()}
                 | {exchange, address(), poll | burst}
                 | {submit, erx_ntp_sample:sample(), address()}
                 | {wait, pos_integer()}.
@@ -59,8 +71,13 @@ the run, `RATE` doubles the interval, and any other kiss is discarded.
                | {exchanging, address(), Left :: non_neg_integer(), Best :: none | erx_ntp_sample:sample()}
                | {submitting, address()}
                | {waiting, then()}.
--type then() :: resolve | poll | {burst, address(), non_neg_integer(), none | erx_ntp_sample:sample()}.
--opaque state() :: #{names := [binary(), ...], stage := stage(),
+-type then() :: new_round | poll | {burst, address(), non_neg_integer(), none | erx_ntp_sample:sample()}.
+%% unresolved: the names this round has still to resolve. addresses: those
+%% the round has resolved and not denied, the one in use first. failures:
+%% the polls without a sample in a row since the last sample or the round's
+%% start. denied never shrinks, so once it is full admitted/2 admits only
+%% polled addresses for the rest of the run.
+-opaque state() :: #{names := [binary(), ...], unresolved := [binary()], stage := stage(),
                      addresses := [address()], polled := [address()], denied := [address()],
                      failures := non_neg_integer(), interval := pos_integer(),
                      resolve_wait := pos_integer(), counts := counts(),
@@ -93,19 +110,21 @@ servers(Flags) when is_binary(Flags) ->
 
 %%% The schedule
 
--doc "The first action of a run over Names, and its state: the names are resolved at once.".
+-doc "The first action of a run over Names, and its state: the first name is resolved at once.".
 -spec start([binary(), ...]) -> {action(), state()}.
 start([_ | _] = Names) ->
-    resolve(#{names => Names, stage => resolving, addresses => [], polled => [], denied => [],
-              failures => 0, interval => ?POLL_MIN_MS, resolve_wait => ?RESOLVE_MIN_MS,
-              counts => #{samples => 0, dropped => 0, kisses => 0, silent => 0}, last => none}).
+    new_round(#{names => Names, unresolved => Names, stage => resolving, addresses => [], polled => [],
+            denied => [], failures => 0, interval => ?POLL_MIN_MS, resolve_wait => ?RESOLVE_MIN_MS,
+            counts => #{samples => 0, dropped => 0, kisses => 0, silent => 0}, last => none}).
 
 -doc "The next action once the last one's result is Event, and the state to hand back with its result.".
 -spec step(event(), state()) -> {action(), state()}.
-step({resolved, Found}, #{stage := resolving, denied := Denied, resolve_wait := Wait} = State) ->
-    case usable(Found, Denied) of
-        [] -> wait(Wait, resolve, State#{resolve_wait := double(Wait)});
-        Addresses -> poll(State#{addresses := Addresses, failures := 0, resolve_wait := ?RESOLVE_MIN_MS})
+step({resolved, Found}, #{stage := resolving, addresses := Addresses} = State) ->
+    %% A name's new addresses go first, so its first is polled now; the
+    %% addresses before them have all failed in a row, or none was resolved.
+    case usable(Found, State) of
+        [] -> exhausted(State);
+        New -> poll(State#{addresses := New ++ Addresses, resolve_wait := ?RESOLVE_MIN_MS})
     end;
 step({exchanged, Verdict}, #{stage := {exchanging, Address, Left, Best}} = State) ->
     exchanged(Verdict, Address, Left, Best, State);
@@ -115,8 +134,8 @@ step({clock, Answer}, #{stage := {submitting, _Address}, interval := Interval} =
                {error, _} -> Interval
            end,
     wait(Interval, poll, State#{interval := Next, failures := 0});
-step(woke, #{stage := {waiting, resolve}} = State) ->
-    resolve(State);
+step(woke, #{stage := {waiting, new_round}} = State) ->
+    new_round(State);
 step(woke, #{stage := {waiting, poll}} = State) ->
     poll(State);
 step(woke, #{stage := {waiting, {burst, Address, Left, Best}}} = State) ->
@@ -179,47 +198,92 @@ finish(Address, Best, State) when is_map(Best) ->
 finish(Address, none, #{addresses := [Address | Rest]} = State) ->
     failed(State#{addresses := Rest ++ [Address]}).
 
-%% A poll without a sample: the next address after the interval, or, once
-%% every address has failed in a row, a doubled interval and a new resolution.
-failed(#{addresses := Addresses, failures := Failures, interval := Interval} = State)
-  when Failures + 1 >= length(Addresses) ->
-    wait(double(Interval), resolve, State#{interval := double(Interval), failures := 0});
-failed(#{failures := Failures, interval := Interval} = State) ->
-    wait(Interval, poll, State#{failures := Failures + 1}).
+%% A poll without a sample counts as failed; a denied address is gone rather
+%% than failed. Either way the next address, or, once every address left has
+%% failed in a row, the round goes on.
+failed(#{failures := Failures} = State) ->
+    next(State#{failures := Failures + 1}).
 
-%% A denied address is gone rather than failed: the next address after the
-%% interval, or a new resolution once none is left.
-denied(#{addresses := [], interval := Interval} = State) ->
-    wait(Interval, resolve, State#{failures := 0});
-denied(#{interval := Interval} = State) ->
-    wait(Interval, poll, State).
+denied(State) ->
+    next(State).
 
-resolve(#{names := Names} = State) ->
-    {{resolve, Names}, State#{stage := resolving}}.
+next(#{addresses := Addresses, failures := Failures} = State) when Failures >= length(Addresses) ->
+    exhausted(State);
+next(#{addresses := [Address | _], interval := Interval} = State) ->
+    %% An address never polled has never been asked, so its first poll, the
+    %% burst, needs no wait; an address polled before waits the interval.
+    case polled(Address, State) of
+        true -> wait(Interval, poll, State);
+        false -> poll(State)
+    end.
+
+%% Every address resolved so far has failed in a row: the next name at once;
+%% once every name has been resolved, a new round after the doubled interval,
+%% or after the resolution backoff when the round ends with no usable
+%% address, none found or every one denied.
+exhausted(#{unresolved := [_ | _]} = State) ->
+    resolve(State);
+exhausted(#{addresses := [], resolve_wait := Wait} = State) ->
+    wait(Wait, new_round, State#{resolve_wait := double(Wait)});
+exhausted(#{interval := Interval} = State) ->
+    wait(double(Interval), new_round, State#{interval := double(Interval)}).
+
+new_round(#{names := Names} = State) ->
+    resolve(State#{unresolved := Names, addresses := [], failures := 0}).
+
+resolve(#{unresolved := [Name | Rest]} = State) ->
+    {{resolve, Name}, State#{stage := resolving, unresolved := Rest}}.
 
 poll(#{addresses := [Address | _], polled := Polled} = State) ->
-    case lists:member(Address, Polled) of
+    case polled(Address, State) of
         true -> {{exchange, Address, poll}, State#{stage := {exchanging, Address, 0, none}}};
         false -> {{exchange, Address, poll},
                   State#{stage := {exchanging, Address, ?BURST - 1, none},
-                         polled := lists:sublist([Address | Polled], ?REMEMBERED_MAX)}}
+                         polled := lists:sublist([Address | Polled], ?POLLED_MAX)}}
     end.
 
 wait(Ms, Then, State) ->
     {{wait, Ms}, State#{stage := {waiting, Then}}}.
 
-remove(Address, #{addresses := Addresses, polled := Polled, denied := Denied} = State) ->
-    State#{addresses := lists:delete(Address, Addresses), polled := lists:delete(Address, Polled),
-           denied := lists:sublist([Address | lists:delete(Address, Denied)], ?REMEMBERED_MAX)}.
+%% Whether the run has polled Address, so its next poll is one exchange.
+polled(Address, #{polled := Polled}) ->
+    lists:member(Address, Polled).
 
-%% The addresses of a resolution in DNS order, once each, without the denied.
-usable(Found, Denied) ->
+%% A denied address leaves the addresses and the polled for good, and is
+%% remembered while the denied list has room; past it, admitted/2 admits
+%% only polled addresses, so it is never polled again either way.
+remove(Address, #{addresses := Addresses, polled := Polled, denied := Denied} = State) ->
+    Remembered = case length(Denied) < denied_max() of
+                     true -> [Address | Denied];
+                     false -> Denied
+                 end,
+    State#{addresses := lists:delete(Address, Addresses), polled := lists:delete(Address, Polled),
+           denied := Remembered}.
+
+%% A resolution's addresses in DNS order, once each, leaving out those the
+%% round already has and those the run does not admit.
+usable(Found, #{addresses := Addresses} = State) ->
     lists:reverse(lists:foldl(fun(A, Seen) ->
-                                      case lists:member(A, Seen) orelse lists:member(A, Denied) of
+                                      case lists:member(A, Seen) orelse lists:member(A, Addresses)
+                                          orelse not admitted(A, State) of
                                           true -> Seen;
                                           false -> [A | Seen]
                                       end
                               end, [], Found)).
+
+%% Whether the run may poll Address: never a denied one, and once the denied
+%% list is full, only one it has polled, since a denial past the bound is not
+%% remembered.
+admitted(Address, #{denied := Denied, polled := Polled}) ->
+    case length(Denied) < denied_max() of
+        true -> not lists:member(Address, Denied);
+        false -> lists:member(Address, Polled)
+    end.
+
+%% The denied list's bound, the most addresses /proc/ntp's `denied` shows.
+denied_max() ->
+    {ok, {list, _Element, Max}} = erx_schema:type(net_addresses),
+    Max.
 
 least_delay(Sample, none) -> Sample;
 least_delay(#{delay := D} = Sample, #{delay := Best}) when D < Best -> Sample;
