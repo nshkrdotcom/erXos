@@ -166,6 +166,10 @@ module Erx
     #   the supplicant's key arithmetic calls, and erx_wifi (DOMAIN_ONLY), both only
     #   loaded. No manifest names it; it exists because check_released requires a
     #   release for erx_wifi.
+    # * ntpd, the network time client's session (docs/design-time.md, "Who does what"):
+    #   the network client, for its sockets and resolver, and erx_ntpd, which the ntpd
+    #   template's -eval starts. It takes no shell and no erx_session: the session has no
+    #   console and reaches its facets through erx:cap/1.
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
@@ -181,6 +185,7 @@ module Erx
                            'erx_net_client', 'erx_app'].freeze,
                         'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
                         'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze,
+                        'ntpd' => [*DOMAIN_BASE, 'erx_net_client', 'erx_ntpd'].freeze,
                         'wifi' => [*DOMAIN_BASE, 'crypto', 'erx_wifi'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime

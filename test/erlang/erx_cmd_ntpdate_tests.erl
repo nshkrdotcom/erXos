@@ -56,7 +56,7 @@ classify_test_() ->
     Reply = #{leap => 0, version => 4, mode => 4, stratum => 2, poll => 6, precision => -20,
               root_delay => 0, root_dispersion => 0, reference_id => <<"GPS", 0>>,
               reference_time => 0, originate_time => Nonce, receive_time => T, transmit_time => T},
-    Classify = fun(Packet) -> erx_cmd_ntpdate:classify(Packet, Nonce, 5000000000, 5020000000) end,
+    Classify = fun(Packet) -> erx_ntp_exchange:classify(Packet, Nonce, 5000000000, 5020000000) end,
     [?_assertEqual(foreign, Classify(<<0:47/unit:8>>)),
      ?_assertEqual(foreign, Classify(erx_ntp_wire:encode(Reply#{originate_time := Nonce + 1}))),
      ?_assertEqual(foreign, Classify(erx_ntp_wire:encode(Reply#{version := 3}))),

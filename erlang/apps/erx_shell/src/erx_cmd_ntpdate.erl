@@ -43,20 +43,18 @@ arguments; run/2 resolves, exchanges, sets and writes.
 -erx_needs([net]).
 
 -export([run/2]).
--export([parse/1, seconds/2, classify/4]).
+-export([parse/1, seconds/2]).
 -export_type([options/0]).
 
 -doc "A parsed command line: whether only to query, the wait for each reply, the servers.".
 -type options() :: #{query := boolean(), timeout_ms := 200..10000, servers := [binary(), ...]}.
 
--define(NTP_PORT, 123).
 -define(MAX_SERVERS, 8).
 -define(MAX_NAME, 253).
 %% The addresses of one name that are asked, as DNS orders them.
 -define(ADDRESSES_PER_NAME, 4).
 -define(DEFAULT_TENTHS, 10).
 -define(NS, 1000000000).
--define(NONCE_BYTES, 8).
 -define(RESOLVE_MS, 10000).
 
 -doc false.
@@ -122,30 +120,7 @@ seconds(Ns, Places) ->
 pow10(0) -> 1;
 pow10(N) -> 10 * pow10(N - 1).
 
--doc """
-What one datagram on an exchange's socket is: `foreign` when it does not
-decode or fails the nonce or mode check, so it is not this exchange's
-answer and the wait goes on; otherwise erx_ntp_sample's verdict on it.
-""".
--spec classify(binary(), erx_ntp_wire:timestamp(), integer(), integer()) ->
-          foreign | erx_ntp_sample:verdict().
-classify(Bytes, Nonce, M1, M4) ->
-    case erx_ntp_wire:decode(Bytes) of
-        {ok, Reply} ->
-            case erx_ntp_sample:check(Reply, Nonce, M1, M4) of
-                {foreign, _} -> foreign;
-                Verdict -> Verdict
-            end;
-        {error, short} ->
-            foreign
-    end.
-
 %%% Effects
-
-%% What one exchange with an address ends in: its sample with the clock's wall offset
-%% read when the reply came, a reply that is no sample, or no reply.
--type outcome() :: {sample, erx_ntp_sample:sample(), integer()}
-                 | {kiss, <<_:32>>} | {drop, erx_ntp_sample:drop()} | {error, term()}.
 
 ntpdate(#{servers := Servers} = Options, Ctx) ->
     case lists:append([addresses(Server, Ctx) || Server <- Servers]) of
@@ -173,7 +148,7 @@ first_sample([], _Options, Ctx) ->
 first_sample([Address | Rest], #{timeout_ms := Timeout} = Options, Ctx) ->
     case gen_udp:open(0, [binary, {active, false}]) of
         {ok, Socket} ->
-            Outcome = try exchange(Socket, Address, Timeout) after gen_udp:close(Socket) end,
+            Outcome = try erx_ntp_exchange:exchange(Socket, Address, Timeout) after gen_udp:close(Socket) end,
             case Outcome of
                 {sample, Sample, WallOffset} -> report_or_set(Address, Sample, WallOffset, Options, Ctx);
                 _NoSample -> first_sample(Rest, Options, Ctx)
@@ -181,39 +156,6 @@ first_sample([Address | Rest], #{timeout_ms := Timeout} = Options, Ctx) ->
         {error, Reason} ->
             erx_cmd:report(Ctx, <<"socket">>, Reason),
             {error, {reported, <<"1">>}}
-    end.
-
-%% One exchange over Socket, which is the exchange's own: a connect or send that fails
-%% is no reply.
--spec exchange(gen_udp:socket(), inet:ip4_address(), pos_integer()) -> outcome().
-exchange(Socket, Address, Timeout) ->
-    Nonce = binary:decode_unsigned(erx_bytes:entropy(?NONCE_BYTES)),
-    maybe
-        ok ?= gen_udp:connect(Socket, Address, ?NTP_PORT),
-        M1 = os:perf_counter(nanosecond),
-        ok ?= gen_udp:send(Socket, erx_ntp_wire:request(Nonce)),
-        await(Socket, Nonce, M1, M1 + Timeout * 1000000)
-    end.
-
-%% The exchange's answer: foreign datagrams are passed over, and the wait never goes
-%% past Deadline, however many arrive.
-await(Socket, Nonce, M1, Deadline) ->
-    case Deadline - os:perf_counter(nanosecond) of
-        Left when Left =< 0 ->
-            {error, timeout};
-        Left ->
-            case gen_udp:recv(Socket, 0, Left div 1000000) of
-                {ok, {_Address, _Port, Bytes}} ->
-                    M4 = os:perf_counter(nanosecond),
-                    WallOffset = os:system_time(nanosecond) - os:perf_counter(nanosecond),
-                    case classify(Bytes, Nonce, M1, M4) of
-                        foreign -> await(Socket, Nonce, M1, Deadline);
-                        {sample, Sample} -> {sample, Sample, WallOffset};
-                        NoSample -> NoSample
-                    end;
-                {error, _} = Error ->
-                    Error
-            end
     end.
 
 %% Under -q, ntpdate's server line and then its step line with the offset from the

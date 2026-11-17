@@ -7241,7 +7241,13 @@ to the corpus and follow rc
   `sample_from` and `step_from` are designed and not built, behind the record that is not yet reported (the
   item below); (4) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
   resolver call that answers TTLs lets it wait the shortest TTL instead; (5) the QEMU cases restart, held
-  and stepped, kiss and refusals of design-time.md's verification are not written, only the bootstrap.
+  and stepped, kiss and refusals of design-time.md's verification are not written, nor the bootstrap: on QEMU
+  virt the PL031 keeper sets the clock at boot, so the boot is not cold and the link server's 2030 answer is
+  refused `panic`; the case needs an answer within 1000 s of the host's clock (held, then stepped) or a cold
+  boot; (6) review findings left: address resolution, the socket's open and close and the clock facet call are
+  written in both erx_ntpd and erx_cmd_ntpdate or erx_cmd_date, and the server-list limits in both cores (fold
+  them into erx_ntp_exchange); a reply with `W < 0` passes erx_ntp_sample and the facet drops it unanswered; the
+  core is a one-action loop, not the events and `next_deadline/1` shape "Who does what" describes.
 * [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
   [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
   through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:
