@@ -31,12 +31,15 @@ shown YYYY-MM-DD HH:MM`, the minute of the clock it shows
 -define(RETRY_MS, 1000).
 %% The palette the clock is drawn in: the light one, since erx_ui does not answer the
 %% palette of the window it opened.
--define(PALETTE, light).
+%% The kiosk's display is drawn in the dark palette (its manifest display
+%% entry), and the dial is drawn in the same one.
+-define(PALETTE, dark).
 
 -type state() :: #{window := none | erx_ui:window(),
                    board := none | erx_dashboard_view:board(),
                    shown := none | erx_ui_model:tree(),
                    dial := none | {Minute :: binary(), Png :: binary()},
+                   ground := binary(),
                    refused := none | term()}.
 
 -doc "Starts the dashboard's process, registered as erx_dashboard.".
@@ -52,7 +55,9 @@ init([]) ->
             {stop, {source, Reason}};
         {ok, _Quotes} ->
             next_tick(),
-            {ok, #{window => none, board => none, shown => none, dial => none, refused => none},
+            Ground = erx_dashboard_pictures:ground(erx_dashboard_view:clock_offset()),
+            {ok, #{window => none, board => none, shown => none, dial => none, ground => Ground,
+                   refused => none},
              {continue, open}}
     end.
 
@@ -99,10 +104,10 @@ open(#{refused := Last} = State) ->
 
 render(#{window := none} = State) ->
     {noreply, State};
-render(#{window := Window, board := Board, shown := Shown} = State0) ->
+render(#{window := Window, board := Board, shown := Shown, ground := Ground} = State0) ->
     Time = calendar:universal_time(),
     #{dial := {_Minute, Dial}} = State = dial(Time, State0),
-    case erx_dashboard_view:tree(#{time => Time, board => Board, dial => Dial}) of
+    case erx_dashboard_view:tree(#{time => Time, board => Board, dial => Dial, ground => Ground}) of
         Shown ->
             {noreply, State};
         Tree ->

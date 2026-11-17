@@ -419,6 +419,8 @@ on_lvgl_delete(lv_event_t *event)
 
 /* The chart's own range, onto which a graph's min and max are scaled. */
 #define GRAPH_SCALE	10000
+/* The opacity of a graph's area at its top, of 255. */
+#define GRAPH_FILL_OPA	80
 
 static bool
 takes_children(uint8_t kind)
@@ -454,8 +456,87 @@ container(lv_obj_t *parent, uint8_t kind)
 }
 
 /*
+ * The opacity of a graph's area at height y: GRAPH_FILL_OPA at the
+ * graph's top, falling to none at its bottom.
+ */
+static lv_opa_t
+graph_fill_opa(const lv_area_t *coords, lv_value_precise_t y)
+{
+	int32_t height = lv_area_get_height(coords);
+	int32_t below;
+
+	if (height <= 0)
+		return (0);
+	below = LV_CLAMP(0, coords->y2 - (int32_t)y, height);
+
+	return ((lv_opa_t)(GRAPH_FILL_OPA * below / height));
+}
+
+/*
+ * Fills the area under a graph's samples. LVGL's line chart draws no
+ * fill, so as the chart queues the samples' line for drawing, this adds
+ * under each segment of it a triangle down to the segment's lower end
+ * and a rectangle from there to the graph's bottom, in the line's colour
+ * fading as graph_fill_opa() says. The mark's line, in another colour,
+ * gets none.
+ */
+static void
+graph_fill(lv_event_t *event)
+{
+	lv_draw_task_t *task = lv_event_get_draw_task(event);
+	lv_draw_dsc_base_t *base = lv_draw_task_get_draw_dsc(task);
+	lv_obj_t *obj = lv_event_get_target_obj(event);
+	const ui_node_t *node = lv_obj_get_user_data(obj);
+	const lv_draw_line_dsc_t *line;
+	lv_area_t coords;
+
+	if (base->part != LV_PART_ITEMS ||
+	    lv_draw_task_get_type(task) != LV_DRAW_TASK_TYPE_LINE)
+		return;
+	line = lv_draw_task_get_line_dsc(task);
+	if (line->points == NULL || !lv_color_eq(line->color,
+	    lv_chart_get_series_color(obj, node->series)))
+		return;
+	lv_obj_get_coords(obj, &coords);
+	for (int32_t index = 0; index + 1 < line->point_cnt; index++) {
+		lv_point_precise_t a = line->points[index];
+		lv_point_precise_t b = line->points[index + 1];
+		lv_draw_triangle_dsc_t triangle;
+		lv_draw_rect_dsc_t rect;
+		lv_area_t below;
+
+		if (a.y == LV_DRAW_LINE_POINT_NONE ||
+		    b.y == LV_DRAW_LINE_POINT_NONE)
+			continue;
+		lv_draw_triangle_dsc_init(&triangle);
+		triangle.p[0] = a;
+		triangle.p[1] = b;
+		triangle.p[2] = (lv_point_precise_t){ a.y < b.y ? a.x : b.x,
+		    LV_MAX(a.y, b.y) };
+		triangle.grad.dir = LV_GRAD_DIR_VER;
+		triangle.grad.stops_count = 2;
+		triangle.grad.stops[0] = (lv_grad_stop_t){ .color = line->color,
+		    .opa = graph_fill_opa(&coords, LV_MIN(a.y, b.y)), .frac = 0 };
+		triangle.grad.stops[1] = (lv_grad_stop_t){ .color = line->color,
+		    .opa = graph_fill_opa(&coords, LV_MAX(a.y, b.y)), .frac = 255 };
+		lv_draw_triangle(base->layer, &triangle);
+		lv_draw_rect_dsc_init(&rect);
+		rect.bg_grad.dir = LV_GRAD_DIR_VER;
+		rect.bg_grad.stops_count = 2;
+		rect.bg_grad.stops[0] = triangle.grad.stops[1];
+		rect.bg_grad.stops[0].frac = 0;
+		rect.bg_grad.stops[1] = (lv_grad_stop_t){ .color = line->color,
+		    .opa = 0, .frac = 255 };
+		below = (lv_area_t){ (int32_t)a.x, (int32_t)LV_MAX(a.y, b.y),
+		    (int32_t)b.x - 1, coords.y2 };
+		lv_draw_rect(base->layer, &rect, &below);
+	}
+}
+
+/*
  * A graph: a line chart with no frame, grid or points, its samples in the
- * theme's accent and its mark across them in the line colour.
+ * theme's accent over its area (graph_fill()) and its mark across them,
+ * dotted, in the tertiary colour.
  */
 static lv_obj_t *
 graph(lv_obj_t *parent, ui_node_t *node)
@@ -471,9 +552,11 @@ graph(lv_obj_t *parent, ui_node_t *node)
 	lv_obj_set_style_width(obj, 0, LV_PART_INDICATOR);
 	lv_obj_set_style_height(obj, 0, LV_PART_INDICATOR);
 	node->mark_series = lv_chart_add_series(obj,
-	    lv_color_hex(palette->line), LV_CHART_AXIS_PRIMARY_Y);
+	    lv_color_hex(palette->tertiary), LV_CHART_AXIS_PRIMARY_Y);
 	node->series = lv_chart_add_series(obj,
 	    lv_color_hex(palette->accent), LV_CHART_AXIS_PRIMARY_Y);
+	lv_obj_add_event_cb(obj, graph_fill, LV_EVENT_DRAW_TASK_ADDED, NULL);
+	lv_obj_set_send_draw_task_events(obj, true);
 	lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 	return obj;
 }
@@ -726,7 +809,9 @@ graph_scaled(const ui_node_t *node, int32_t value)
 /*
  * Draws a graph's samples and mark against its range, once its record's
  * properties are all set. A graph without samples shows its mark alone,
- * across a chart of two points.
+ * across a chart of two points. The mark is dotted: LVGL's chart styles
+ * every series' line alike, so the mark leaves every third point out,
+ * and a line is drawn only between two points that both have a value.
  */
 static void
 set_graph(ui_node_t *node)
@@ -741,9 +826,10 @@ set_graph(ui_node_t *node)
 	for (uint16_t index = 0; index < node->nsamples; index++)
 		lv_chart_set_series_value_by_id(node->obj, node->series, index,
 		    graph_scaled(node, node->samples[index]));
-	lv_chart_set_all_values(node->obj, node->mark_series,
-	    node->has_mark ? graph_scaled(node, node->mark) :
-	    LV_CHART_POINT_NONE);
+	for (uint32_t index = 0; index < points; index++)
+		lv_chart_set_series_value_by_id(node->obj, node->mark_series, index,
+		    node->has_mark && (points == 2 || index % 3 != 2) ?
+		    graph_scaled(node, node->mark) : LV_CHART_POINT_NONE);
 	lv_chart_refresh(node->obj);
 }
 

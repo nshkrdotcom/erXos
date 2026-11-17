@@ -4,7 +4,7 @@
 {application, erx_dashboard,
  [{description, "erXos example: a kiosk dashboard of the time, the date and quotes"},
   {vsn, "1"},
-  {modules, [erx_dashboard, erx_dashboard_app, erx_dashboard_clock, erx_dashboard_sup,
+  {modules, [erx_dashboard, erx_dashboard_app, erx_dashboard_clock, erx_dashboard_pictures, erx_dashboard_sup,
              erx_dashboard_view, erx_quotes, erx_quotes_core, erx_quotes_extract,
              erx_quotes_http, erx_quotes_table, erx_quotes_view]},
   {registered, [erx_dashboard, erx_dashboard_sup]},

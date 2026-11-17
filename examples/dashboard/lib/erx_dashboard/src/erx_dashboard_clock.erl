@@ -4,19 +4,24 @@
 -module(erx_dashboard_clock).
 -moduledoc """
 The dashboard's analog clock as a picture: png/2 draws the dial for a
-wall-clock reading as a PNG in one of the theme's palettes, which the view shows in an `image` node
-(docs/design-display.md, "Widget trees"), since no widget kind draws a
-dial. It is a pure function of the palette, the hour and the minute, so
-the same minute always gives the same bytes.
+wall-clock reading as a PNG in one of the theme's palettes, which the
+view shows in an `image` node (docs/design-display.md, "Widget trees"),
+since no widget kind draws a dial. It is a pure function of the palette,
+the hour and the minute, so the same minute always gives the same bytes.
 
-The picture is SIZE pixels square and transparent around the dial, so
-it lies on whatever the renderer paints behind it: a white face with a soft shadow under it, sixty minute ticks, the twelve hour
-ticks longer and darker, the hour and minute hands in the text colour
-and a cap in the accent colour. Each shape is drawn by its distance from
-the pixel's centre, a pixel covered in part blending its colour in that
-part, so every edge is smooth; the layers are composed over one
-another with premultiplied alpha. Rows are written unfiltered and deflated
-by zlib, which keeps the picture well within the widget format's 48 KiB.
+The picture is SIZE pixels square and transparent but for the dial, so
+it lies on whatever the renderer paints behind it, the dashboard's
+ground. The dial has no face: a faint ring in the text colour, the
+twelve hour ticks, an arc in the accent colour along the ring from
+twelve to the minute hand, the hour's progress, with a soft glow of the
+same colour around it, the hour and minute hands in the text colour
+over a soft shadow, and an amber cap with a dot of the window colour.
+The cap's amber is the dashboard's own constant, as the theme has no
+amber of that meaning. Each shape is drawn by its distance from the
+pixel's centre, a pixel covered in part blending its colour in that
+part, so every edge is smooth; the layers are composed over one another
+with premultiplied alpha. Rows are written unfiltered and deflated by
+zlib, which keeps the picture well within the widget format's 48 KiB.
 """.
 
 -export([png/2, size/0]).
@@ -24,9 +29,14 @@ by zlib, which keeps the picture well within the widget format's 48 KiB.
 -define(SIZE, 440).
 -define(CENTRE, 220.0).
 -define(RADIUS, 200.0).
--define(SHADOW_DROP, 4.0).
--define(SHADOW_BLUR, 16.0).
--define(SHADOW_OPACITY, 0.10).
+-define(RING_OPACITY, 0.16).
+-define(ARC_HALF, 2.0).
+-define(GLOW_REACH, 10.0).
+-define(GLOW_OPACITY, 0.30).
+-define(SHADOW_DROP, 3.0).
+-define(SHADOW_BLUR, 6.0).
+-define(SHADOW_OPACITY, 0.30).
+-define(CAP, {16#FF, 16#B5, 16#47}).
 
 -define(SHADOW, {0, 0, 0}).
 %% Nothing: a premultiplied colour of no opacity.
@@ -40,87 +50,107 @@ size() -> ?SIZE.
 -spec png(erx_theme:palette(), calendar:datetime()) -> binary().
 png(Palette, {_Date, {Hour, Minute, _Second}}) ->
     Paint = paint(Palette),
-    Hands = hands(Hour, Minute, Paint),
-    Rows = [<<0, (row(Y, Hands, Paint))/binary>> || Y <- lists:seq(0, ?SIZE - 1)],
-    encode(?SIZE, ?SIZE, zlib:compress(Rows)).
+    Hands = hands(Hour, Minute),
+    Arc = 2 * math:pi() * Minute / 60,
+    Rows = [<<0, (row(Y, Hands, Arc, Paint))/binary>> || Y <- lists:seq(0, ?SIZE - 1)],
+    erx_dashboard_pictures:rgba(?SIZE, ?SIZE, zlib:compress(Rows)).
 
 %% A hand: the unit vector it points along, how far it reaches past the
-%% centre, how far its tail reaches behind it, its half width and colour.
--record(hand, {ux, uy, reach, tail, half, colour}).
+%% centre, how far its tail reaches behind it, and its half width.
+-record(hand, {ux, uy, reach, tail, half}).
 
-%% The dial's colours, from the theme's (abi/theme.txt): the face is the
-%% surface, the rim the line, the hands and hour ticks the text, the minute
-%% ticks the tertiary and the cap the accent, each {R, G, B}.
+%% The dial's colours, from the theme's (abi/theme.txt): the ring, ticks
+%% and hands the text, the arc the accent, the cap's dot the window; each
+%% {R, G, B}.
 paint(Palette) ->
     maps:from_list([{Part, rgb(erx_theme:color(Palette, Name))}
-                    || {Part, Name} <- [{face, surface}, {rim, line}, {ink, text},
-                                        {minute_tick, tertiary}, {accent, accent}]]).
+                    || {Part, Name} <- [{ink, text}, {accent, accent}, {dot, window}]]).
 
 rgb(Rgba) ->
     <<R, G, B, _A>> = <<Rgba:32>>,
     {R, G, B}.
 
-hands(Hour, Minute, #{ink := Ink}) ->
-    HourTurn = ((Hour rem 12) + Minute / 60) / 12,
-    MinuteTurn = Minute / 60,
-    [hand(HourTurn, 0.50 * ?RADIUS, 4.5, Ink),
-     hand(MinuteTurn, 0.80 * ?RADIUS, 3.0, Ink)].
+hands(Hour, Minute) ->
+    [hand(((Hour rem 12) + Minute / 60) / 12, 0.50 * ?RADIUS, 5.0),
+     hand(Minute / 60, 0.80 * ?RADIUS, 3.0)].
 
-hand(Turn, Reach, Half, Ink) ->
+hand(Turn, Reach, Half) ->
     Angle = 2 * math:pi() * Turn,
     #hand{ux = math:sin(Angle), uy = -math:cos(Angle), reach = Reach,
-          tail = 0.10 * ?RADIUS, half = Half, colour = Ink}.
+          tail = 0.10 * ?RADIUS, half = Half}.
 
-row(Y, Hands, Paint) ->
-    << <<(pixel(X + 0.5 - ?CENTRE, Y + 0.5 - ?CENTRE, Hands, Paint))/binary>>
+row(Y, Hands, Arc, Paint) ->
+    << <<(pixel(X + 0.5 - ?CENTRE, Y + 0.5 - ?CENTRE, Hands, Arc, Paint))/binary>>
        || X <- lists:seq(0, ?SIZE - 1) >>.
 
 %% One pixel at offset (Dx, Dy) from the centre, y downwards: the layers
-%% composed bottom to top. Beyond the shadow's reach it is transparent.
-pixel(Dx, Dy, Hands, Paint) ->
+%% composed bottom to top. Beyond the arc's glow it is transparent.
+pixel(Dx, Dy, Hands, Arc, Paint) ->
     R = math:sqrt(Dx * Dx + Dy * Dy),
-    Colour = case R > ?RADIUS + ?SHADOW_DROP + ?SHADOW_BLUR of
+    Colour = case R > ?RADIUS + ?ARC_HALF + ?GLOW_REACH of
                  true -> ?CLEAR;
-                 false -> dial(Dx, Dy, R, Hands, Paint)
+                 false -> dial(Dx, Dy, R, Hands, Arc, Paint)
              end,
     bytes(Colour).
 
-dial(Dx, Dy, R, Hands, #{face := Face, rim := Rim, accent := Accent} = Paint) ->
-    Layers = [fun(C) -> shadow(C, Dx, Dy) end,
-              fun(C) -> blend(C, Face, cover(?RADIUS - R)) end,
-              fun(C) -> blend(C, Rim, cover(0.5 - abs(R - ?RADIUS + 0.5))) end,
-              fun(C) -> tick(C, Dx, Dy, R, Paint) end
-              | [fun(C) -> draw_hand(C, Dx, Dy, Hand) end || Hand <- Hands]]
-        ++ [fun(C) -> blend(C, Accent, cover(7.0 - R)) end,
-            fun(C) -> blend(C, Face, cover(2.5 - R)) end],
+dial(Dx, Dy, R, Hands, Arc, #{ink := Ink, accent := Accent, dot := Dot}) ->
+    ArcDistance = arc_distance(Dx, Dy, R, Arc),
+    Layers = [fun(C) -> blend(C, Ink, ?RING_OPACITY * cover(0.75 - abs(R - ?RADIUS))) end,
+              fun(C) -> glow(C, Accent, ArcDistance) end,
+              fun(C) -> blend(C, Accent, cover(?ARC_HALF - ArcDistance)) end,
+              fun(C) -> tick(C, Dx, Dy, R, Ink) end]
+        ++ [fun(C) -> shadow(C, Dx, Dy, Hand) end || Hand <- Hands]
+        ++ [fun(C) -> blend(C, Ink, cover(Hand#hand.half - hand_distance(Dx, Dy, Hand))) end
+            || Hand <- Hands]
+        ++ [fun(C) -> blend(C, ?CAP, cover(8.0 - R)) end,
+            fun(C) -> blend(C, Dot, cover(3.0 - R)) end],
     lists:foldl(fun(Layer, C) -> Layer(C) end, ?CLEAR, Layers).
 
-%% The face's shadow: black falling off with the square of the distance
-%% past the edge of a face dropped a few pixels down.
-shadow(Colour, Dx, Dy) ->
-    Past = math:sqrt(Dx * Dx + (Dy - ?SHADOW_DROP) * (Dy - ?SHADOW_DROP)) - ?RADIUS,
+%% The distance from the pixel to the arc along the ring from twelve,
+%% clockwise, through Arc radians; its ends are round. At minute 0 there
+%% is no arc, and every pixel lies beyond its glow.
+arc_distance(_Dx, _Dy, _R, Arc) when Arc == 0 ->
+    ?RADIUS;
+arc_distance(Dx, Dy, R, Arc) ->
+    Angle = case math:atan2(Dx, -Dy) of
+                A when A < 0 -> A + 2 * math:pi();
+                A -> A
+            end,
+    case Angle =< Arc of
+        true ->
+            abs(R - ?RADIUS);
+        false ->
+            min(point_distance(Dx, Dy, 0.0), point_distance(Dx, Dy, Arc))
+    end.
+
+point_distance(Dx, Dy, Angle) ->
+    Ex = Dx - ?RADIUS * math:sin(Angle),
+    Ey = Dy + ?RADIUS * math:cos(Angle),
+    math:sqrt(Ex * Ex + Ey * Ey).
+
+%% The arc's glow: its colour falling off with the square of the distance
+%% past its stroke.
+glow(Colour, Accent, Distance) ->
+    Fall = max(0.0, 1 - max(Distance - ?ARC_HALF, 0.0) / ?GLOW_REACH),
+    blend(Colour, Accent, ?GLOW_OPACITY * Fall * Fall).
+
+%% The hour tick nearest the pixel's angle, of the twelve.
+tick(Colour, _Dx, _Dy, R, _Ink) when R < ?RADIUS - 44; R > ?RADIUS - 10 ->
+    Colour;
+tick(Colour, Dx, Dy, _R, Ink) ->
+    Angle = round(math:atan2(Dx, -Dy) * 6 / math:pi()) * math:pi() / 6,
+    Distance = segment(Dx, Dy, math:sin(Angle), -math:cos(Angle), ?RADIUS - 40, ?RADIUS - 16),
+    blend(Colour, Ink, cover(2.0 - Distance)).
+
+%% A hand's shadow: black falling off over the blur past the edge of the
+%% hand dropped a few pixels down.
+shadow(Colour, Dx, Dy, #hand{half = Half} = Hand) ->
+    Past = hand_distance(Dx, Dy - ?SHADOW_DROP, Hand) - Half,
     Fall = max(0.0, 1 - max(Past, 0.0) / ?SHADOW_BLUR),
     blend(Colour, ?SHADOW, ?SHADOW_OPACITY * Fall * Fall).
 
-%% The tick nearest the pixel's angle, of the sixty: every fifth an hour
-%% tick, longer, wider and darker.
-tick(Colour, _Dx, _Dy, R, _Paint) when R < ?RADIUS - 40; R > ?RADIUS - 8 ->
-    Colour;
-tick(Colour, Dx, Dy, _R, #{ink := HourInk, minute_tick := MinuteInk}) ->
-    Index = round(math:atan2(Dx, -Dy) * 30 / math:pi()),
-    Angle = Index * math:pi() / 30,
-    {Inner, Half, Ink} = case Index rem 5 of
-                             0 -> {?RADIUS - 36, 2.0, HourInk};
-                             _ -> {?RADIUS - 22, 0.8, MinuteInk}
-                         end,
-    Ux = math:sin(Angle),
-    Uy = -math:cos(Angle),
-    Distance = segment(Dx, Dy, Ux, Uy, Inner, ?RADIUS - 14),
-    blend(Colour, Ink, cover(Half - Distance)).
-
-draw_hand(Colour, Dx, Dy, #hand{ux = Ux, uy = Uy, reach = Reach, tail = Tail,
-                                half = Half, colour = Ink}) ->
-    blend(Colour, Ink, cover(Half - segment(Dx, Dy, Ux, Uy, -Tail, Reach))).
+hand_distance(Dx, Dy, #hand{ux = Ux, uy = Uy, reach = Reach, tail = Tail}) ->
+    segment(Dx, Dy, Ux, Uy, -Tail, Reach).
 
 %% The distance from (Dx, Dy) to the segment along the unit vector
 %% (Ux, Uy) from From to To past the centre.
@@ -147,15 +177,3 @@ bytes({_R, _G, _B, A}) when A =< 0.0 ->
     <<0, 0, 0, 0>>;
 bytes({R, G, B, A}) ->
     <<(round(R / A)), (round(G / A)), (round(B / A)), (round(A * 255))>>.
-
-%% A PNG of 8-bit RGBA, its pixels the deflated rows, each led by filter
-%% type 0, none.
-encode(Width, Height, Deflated) ->
-    Header = <<Width:32, Height:32, 8, 6, 0, 0, 0>>,
-    iolist_to_binary([<<137, "PNG", 13, 10, 26, 10>>,
-                      chunk(<<"IHDR">>, Header), chunk(<<"IDAT">>, Deflated),
-                      chunk(<<"IEND">>, <<>>)]).
-
-chunk(Type, Data) ->
-    [<<(byte_size(Data)):32>>, Type, Data,
-     <<(erlang:crc32([Type, Data])):32>>].

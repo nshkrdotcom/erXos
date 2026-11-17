@@ -505,9 +505,10 @@ history starts one. The join is pure and tested with exact times.
 ### What the screen shows
 
 The dashboard's quotes panel, under its header, which carries the board's
-credit, `Live quotes`, shows one card per quote in the table's order. Each
-card has the quote's label, its price with `decimals` digits, its change
-with a sign and two digits, and a status line that the dashboard shows
+credit, `Live quotes`, shows one block per quote in the table's order,
+split by hairlines. Each block has the quote's label, its price with
+`decimals` digits, its change with two digits after an arrow up or down
+and coloured by its direction (a label's `trend`), and a status line that the dashboard shows
 under the label in place of the quote's symbol, as the board's quote
 carries it (`status` in `erx_dashboard_view`), and under them a graph.
 The graph is the closes of the quote's series once a history arrived,

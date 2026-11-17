@@ -8731,6 +8731,13 @@ document's "residual risks accepted" paragraph.
   share one clock module, and where it lives, is an open design question: a shared module is a new
   mechanism and needs a design, and `erx_net` must keep depending only on `kernel` and `stdlib`, since it
   is usable outside erXos.
+* [Low] `examples/dashboard`: the app draws its dial and ground for the dark palette (`?PALETTE` in
+  `erx_dashboard.erl`) whatever its display chooses, since `erx_ui` does not tell an app its window's palette
+  or size (`erx_win:info/1` has both); on a light display its text is dark on the dark ground. The ground is
+  drawn at the Pi's 1824x984 and centred, so a larger screen shows the window colour round it. The graph's
+  dotted mark leaves every third point out, which at 180 live samples on 520 px is nearly solid; LVGL's
+  line dash on the mark's draw task would be uniform. erx-lvgl's area fill draws nothing for a graph with
+  more samples than pixels (LVGL's crowded mode).
 * [Medium] `examples/dashboard`, the kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for

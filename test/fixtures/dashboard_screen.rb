@@ -71,7 +71,7 @@ module DashboardScreen
     (year, month, day), (hour, minute, second) = time
     clock = "{{#{Integer(year)}, #{Integer(month)}, #{Integer(day)}}, " \
             "{#{Integer(hour)}, #{Integer(minute)}, #{Integer(second)}}}"
-    "\#{time => #{clock}, board => #{failed(reason)}, dial => erx_dashboard_clock:png(light, #{clock})}"
+    "\#{time => #{clock}, board => #{failed(reason)}, dial => erx_dashboard_clock:png(dark, #{clock}), ground => erx_dashboard_pictures:ground(erx_dashboard_view:clock_offset())}"
   end
 
   # The board erx_quotes sends once every quote of the table has started its first round
@@ -85,9 +85,10 @@ module DashboardScreen
       'erx_quotes_view:board(C, 0) end)()'
   end
 
-  # The model screen's map of the program and how to start it, as an Erlang term.
+  # The model screen's map of the program and how to start it, as an Erlang term: in the
+  # dark palette, which the kiosk's display entry chooses (config/manifest/development.txt).
   def screen(program)
     pairs = { program: program, ruby: RbConfig.ruby, launcher: LAUNCHER }.map { |key, path| "#{key} => #{path.inspect}" }
-    "\#{#{pairs.join(', ')}}"
+    "\#{#{pairs.join(', ')}, args => [\"dark\"]}"
   end
 end

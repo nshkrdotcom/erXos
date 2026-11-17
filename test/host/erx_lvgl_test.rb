@@ -60,7 +60,8 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
   # host's erx-lvgl draws of the cell client's tree (erx_kiosk_test:tree/0) on the
   # suite's screen, the reference's own size, so the guest's picture equals the host's
   # render. ERX_RECORD_REFERENCE=1 writes the reference from the render instead, for a
-  # person who has looked at the picture.
+  # person who has looked at the picture. The client is drawn in the dark palette, which
+  # the development manifest's display entry chooses and the display_domain suite boots.
   KIOSK_REFERENCE = 'display-lvgl'
   KIOSK_CLIENT = %w[test/erlang/apps/erx_kiosk_test/src/erx_kiosk_test.erl].freeze
   def test_the_kiosk_reference_is_the_programs_picture
@@ -73,7 +74,7 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
       width = reference.width
       height = reference.height
       run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
-           "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program)}, " \
+           "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program, palette: 'dark')}, " \
            "erx_kiosk_test:tree(), {#{width}, #{height}})), halt(0)",
            chdir: work)
       image = Erx::Ppm::Image.new(width: width, height: height, pixels: File.binread(File.join(work, 'picture.rgb')))
@@ -180,9 +181,11 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
     columns.max - columns.min + 1
   end
 
-  # The model screen's map of the program and how to start it, as an Erlang term.
-  def screen(program)
+  # The model screen's map of the program and how to start it, as an Erlang term: in
+  # palette, a name of abi/theme.txt's, or erx-lvgl's default, light, with none.
+  def screen(program, palette: nil)
     pairs = { program: program, ruby: RbConfig.ruby, launcher: LAUNCHER }.map { |key, path| "#{key} => #{path.inspect}" }
+    pairs << "args => [#{palette.inspect}]" if palette
     "\#{#{pairs.join(', ')}}"
   end
 

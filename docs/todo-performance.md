@@ -1169,3 +1169,13 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
 * **[Low] 0.2 on Fiasco, the urgency-change rate** (ERTS's schedulers, [design-fiasco.md](design-fiasco.md#stages-beyond-bands)): on Fiasco an executor's priority is fixed by its domain's band, and urgency within a band (the scheduler's stage 3) is built only if bands alone cost latency. Settled by counting how often ERTS would change an executor's urgency under the G5 workloads, with each change's cause, against the interactive latency the band test records.
 * **[Medium] 0.2 on Fiasco, threads started with no mask share one CPU** (`liberx/backend/fiasco`, [design-fiasco.md](design-fiasco.md#scheduling)): Fiasco places a thread on one CPU of its mask, its home CPU or the starter's if the mask holds it (`scheduler.cpp:96-103`), and moves it no more, so a domain whose ERTS starts its schedulers with no affinity runs them all on one CPU of its CPU set. Settled by a `tools/erx bench` workload that runs a CPU-bound load across every scheduler of a domain whose set holds four CPUs and records each CPU's busy time; the fixes on the table are the root spreading a no-mask thread over its domain's set at start (round robin within the narrowing function), or ERTS binding its schedulers.
 * **[Low] The glyph step on every erx-lvgl build** (`Glyphs.ensure`, [design-desktop-programs.md](design-desktop-programs.md#type)): each build of erx-lvgl, host or target, rasterises every role again and compares the result with `build/glyphs` before make runs, where `Generated` checks a stamp. Settled by timing `Glyphs.ensure` on an unchanged tree against a build of erx-lvgl that compiles nothing; a stamp of the theme, the font files, the generators and erx-raster's build record is the fix if it shows.
+
+* **The dashboard's ground is decoded on every redraw.** `examples/dashboard`'s
+  ground is a 1824x984 indexed PNG under the whole window, and erx-lvgl keeps
+  LVGL's image caches off (`display/lvgl/lv_conf.h`), so every invalidated
+  area, the dial once a minute and the quotes on each board, inflates the
+  whole picture and expands it to about 7.2 MB of ARGB before drawing.
+  Drawing the ground also takes `erx_dashboard:init/1` about 115 ms on the
+  host under the JIT, unmeasured on the Pi. Measure a redraw's time and peak
+  memory on the Pi; the fixes are a one-entry image cache in erx-lvgl, or a
+  ground that is not a full-screen picture.

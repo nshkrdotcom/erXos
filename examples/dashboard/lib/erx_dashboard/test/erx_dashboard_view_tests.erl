@@ -22,8 +22,8 @@ minute_test() ->
     ?assertEqual(<<"1970-01-01 00:00">>, erx_dashboard_view:minute({{1970, 1, 1}, {0, 0, 59}})).
 
 date_test() ->
-    ?assertEqual(<<"Sunday, 15 November 2026">>, erx_dashboard_view:date(?TIME)),
-    ?assertEqual(<<"Thursday, 1 January 1970">>,
+    ?assertEqual(<<"Sunday, 15 November">>, erx_dashboard_view:date(?TIME)),
+    ?assertEqual(<<"Thursday, 1 January">>,
                  erx_dashboard_view:date({{1970, 1, 1}, {0, 0, 0}})).
 
 price_test() ->
@@ -40,13 +40,13 @@ price_test() ->
      || {Price, Decimals, Text} <- Cases].
 
 change_test() ->
-    Cases = [{1.25, <<"+1.25%">>},
-             {-0.5, <<"-0.50%">>},
+    Cases = [{1.25, <<16#2191/utf8, " 1.25%">>},
+             {-0.5, <<16#2193/utf8, " 0.50%">>},
              {0, <<"0.00%">>},
              {-0.004, <<"0.00%">>},
-             {0.005, <<"+0.01%">>},
-             {-12.345, <<"-12.35%">>},
-             {1234.5, <<"+1,234.50%">>}],
+             {0.005, <<16#2191/utf8, " 0.01%">>},
+             {-12.345, <<16#2193/utf8, " 12.35%">>},
+             {1234.5, <<16#2191/utf8, " 1,234.50%">>}],
     [?assertEqual(Text, erx_dashboard_view:change(Percent))
      || {Percent, Text} <- Cases].
 
@@ -59,7 +59,7 @@ waiting_panel_test() ->
     Texts = texts(erx_dashboard_view:tree(model(none))),
     ?assert(lists:member(<<"Waiting for quotes">>, Texts)),
     ?assert(lists:member(<<"09:41 UTC">>, Texts)),
-    ?assert(lists:member(<<"Sunday, 15 November 2026">>, Texts)).
+    ?assert(lists:member(<<"Sunday, 15 November">>, Texts)).
 
 board_panel_test() ->
     Board = board(),
@@ -68,9 +68,10 @@ board_panel_test() ->
     ?assert(lists:member(<<"Sample data, not live prices">>, Texts)),
     ?assertNot(lists:member(<<"Waiting for quotes">>, Texts)),
     [?assert(lists:member(Text, Texts))
-     || Text <- [<<"Bitcoin">>, <<"BTC">>, <<"64,000.00">>, <<"+1.25%">>,
-                 <<"Ether">>, <<"-0.50%">>, <<"S&P 500">>, <<"0.00%">>]],
-    ?assertEqual([<<"BTC">>, <<"ETH">>, <<"SPX">>], keys(Tree)).
+     || Text <- [<<"Bitcoin">>, <<"BTC">>, <<"64,000.00">>, <<16#2191/utf8, " 1.25%">>,
+                 <<"Ether">>, <<16#2193/utf8, " 0.50%">>, <<"S&P 500">>, <<"0.00%">>]],
+    ?assertEqual([<<"BTC">>, <<"ETH">>, <<"SPX">>], keys(Tree)),
+    ?assertEqual([up, down, flat], [Trend || {label, #{trend := Trend}, []} <- descendants(Tree)]).
 
 %% The view is a function of its model alone.
 same_model_same_tree_test() ->
@@ -91,7 +92,7 @@ board() ->
                    samples => []}]}.
 
 model(Board) ->
-    #{time => ?TIME, board => Board, dial => erx_dashboard_clock:png(light, ?TIME)}.
+    #{time => ?TIME, board => Board, dial => erx_dashboard_clock:png(dark, ?TIME), ground => <<"ground">>}.
 
 %% Each label's text, depth first.
 texts({label, #{text := Text}, []}) -> [Text];
@@ -116,11 +117,23 @@ graph_test() ->
 %% with the minute. Seeded failure: a dial that ignores the minute
 %% fails the last assertion.
 clock_picture_test() ->
-    Png = erx_dashboard_clock:png(light, ?TIME),
+    Png = erx_dashboard_clock:png(dark, ?TIME),
     ?assertMatch(<<137, "PNG", 13, 10, 26, 10, _/binary>>, Png),
     ?assert(byte_size(Png) =< 49152),
     {Date, {Hour, Minute, Second}} = ?TIME,
-    ?assertNotEqual(Png, erx_dashboard_clock:png(light, {Date, {Hour, Minute + 1, Second}})).
+    ?assertNotEqual(Png, erx_dashboard_clock:png(dark, {Date, {Hour, Minute + 1, Second}})).
+
+%% The ground is an indexed PNG within the widget format's 48 KiB, which a
+%% truecolour picture of it is not. Seeded failure: a glow that adds a
+%% second colour instead of pulling along the path overflows the palette.
+ground_picture_test() ->
+    Png = erx_dashboard_pictures:ground(erx_dashboard_view:clock_offset()),
+    ?assertMatch(<<137, "PNG", 13, 10, 26, 10, 13:32, "IHDR", 1824:32, 984:32, 8, 3, _/binary>>, Png),
+    ?assert(byte_size(Png) =< 49152),
+    ?assertEqual({-284, -42}, erx_dashboard_view:clock_offset()).
+
+%% Every node, depth first.
+descendants({_Kind, _Props, Children} = Node) -> [Node | lists:flatmap(fun descendants/1, Children)].
 
 %% Each graph's properties, depth first.
 graphs({graph, Props, []}) -> [Props];
