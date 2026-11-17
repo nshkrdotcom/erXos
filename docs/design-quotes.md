@@ -590,9 +590,11 @@ The harness's server (`test/fixtures/quotes_fixture.rb`) answers
 `/0/public/Ticker?pair=PAIR` with a `Host` of `api.kraken.com` for each
 pair of the table with canned bodies in Kraken's shape, from an ECDSA
 P-256 chain made on the host for `api.kraken.com`. The chain is valid
-from the epoch to the end of 2049, so the cell depends on no clock: a
-guest whose clock is unset, or set from the image's build date, trusts
-it alike.
+from the epoch to the end of 9999, its end a GeneralizedTime, so the
+cell depends on no clock: a guest whose clock is unset, or set from the
+image's build date, trusts it alike. A UTCTime end would not do: OTP's
+`public_key` reads a UTCTime `notAfter`'s two-digit year in a window
+around the current year, so a clock reading 1970 takes 2049 for 1949.
 
 `erx_quotes` writes one log line per change of a quote's line,
 `erx_quotes_view:lines/2`, which names the quote, its state (`waiting`,

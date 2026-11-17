@@ -8603,18 +8603,6 @@ document's "residual risks accepted" paragraph.
 * [Medium] `examples/dashboard` (`erx_dashboard.app.src`): the live quotes need `ssl` and `inets`, which
   `erx_quotes` starts at run time but no `.app` file declares; settle whether the `.app` names them.
 
-* [High] `kiosk/hvf-1cpu-quotes`, the quotes QEMU cell of design-quotes.md (`tools/lib/erx/kiosk.rb`), fails:
-  its image builds with the fixture's root, boots with the relay device (`erx_virtio_net: ... link up`),
-  but every request from the dashboard's session fails at connect with httpc's
-  `{error,{failed_connect,[{to_address,{"104.16.14.28",443}},{inet,[inet],einval}]}}` (logged by a
-  temporary line in `erx_quotes:answered/3`), every round, so the fixture sees no connection. Find which
-  connect option or step of the session's TCP path (the `net` facet) answers `einval`, fix it, and
-  classify that shape (the Low item below). Also: the seed (`Run#call(trusted: false)`) has not run.
-
-* [Low] `examples/dashboard` (`erx_quotes_http`): with no network device, as in the kiosk QEMU
-  boot, every quote shows `no data: failed`: httpc's connect error there is a shape the classifier
-  does not name. Log the term in a boot, then classify it (`no network` or `cannot connect`) and
-  re-record `test/display/reference/dashboard` with Kiosk::OFFLINE_REASON.
 * [Low] `examples/dashboard` (`erx_quotes_table`): Kraken's address, 104.16.14.28 (one of
   `api.kraken.com`'s Cloudflare addresses), is hardcoded and may change; a change shows
   `cannot connect` or `certificate rejected` until the row's `address` is updated.

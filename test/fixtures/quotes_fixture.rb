@@ -24,9 +24,12 @@ module QuotesFixture
   # content-length, so httpc refuses it and the quote shows `answer too big`.
   TOO_BIG = 70_000
   # The chain's validity: from the epoch, so a guest whose clock is unset trusts it, to
-  # the end of 2049, the last year an X.509 UTCTime writes.
+  # the end of 9999 (RFC 5280's no well-defined expiration), which X.509 writes as a
+  # GeneralizedTime. A UTCTime end would not do: public_key reads its two-digit year in a
+  # window around the reader's own year (pubkey_cert:sliding_year_window/1), so a guest
+  # whose clock reads 1970 takes 2049 for 1949 and refuses the chain as expired.
   NOT_BEFORE = Time.at(0).utc
-  NOT_AFTER = Time.utc(2049, 12, 31, 23, 59, 59)
+  NOT_AFTER = Time.utc(9999, 12, 31, 23, 59, 59)
   # The longest request head the server reads before it gives up on a connection.
   MAX_HEAD = 8 * 1024
 

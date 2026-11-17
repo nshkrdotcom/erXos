@@ -56,10 +56,10 @@ module Erx
     # How long the altered cell watches after the refusal for a mount or a screen.
     SETTLE_SECONDS = 15
     # Why each quote's first fetch fails in the kiosk boot, which has no network device,
-    # so the dashboard shows that reason's words beside every quote. httpc's error there
-    # is a shape erx_quotes_http does not name, so it shows the catch-all, failed
-    # (TODO.md, the dashboard's offline reason).
-    OFFLINE_REASON = :failed
+    # so the dashboard shows that reason's words beside every quote: with no interface
+    # the stack finds no path (erx_net_frame's enetunreach), which erx_quotes_http names
+    # connect, `cannot connect`.
+    OFFLINE_REASON = :connect
     ALTERED = '-altered'
     QUOTES = '-quotes'
     # The guest's virtual network, covering erx_quotes_table's address, which the guest
