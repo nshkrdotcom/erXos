@@ -606,7 +606,8 @@ apply_args(apply_t *apply, erx_boot_words_t *words)
 			return (0);
 		words[count++] = (erx_boot_words_t){ apply->pair_words, length };
 	}
-	if (erx_dom_from_row(&spec->origin, apply->lib->system_image_row)) {
+	if (apply->lib->system_image_holder != 0 &&
+	    erx_dom_from_row(&spec->origin, apply->lib->system_image_holder - 1)) {
 		length = erx_boot_system_image_words(&apply->lib->system_image,
 		    apply->lib->record_volume, apply->system_image_words,
 		    sizeof(apply->system_image_words));

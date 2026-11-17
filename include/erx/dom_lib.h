@@ -102,10 +102,12 @@ typedef struct erx_dom_lib {
 	uint32_t	 pack_flags;	/* the boot image's, for each boot page */
 	erx_boot_pair_t	 boot;		/* the handoff's boot pair, for a block
 					 * holder's boot page */
-	uint32_t	 system_image_row; /* the configured row that holds the
-					 * system window, whose boot page alone
-					 * carries -erx_record system_image;
-					 * ERX_MF_NONE for none */
+	uint32_t	 system_image_holder; /* the system window's holder, a
+					 * configured row, plus one; 0 for none,
+					 * so a library not built from a
+					 * manifest names no row. That row's
+					 * boot page alone carries -erx_record
+					 * system_image */
 	erx_mf_system_image_t system_image; /* the manifest's system_image row,
 					 * for that page; unused without one */
 	bool		 record_volume;	/* that row also holds the manifest's

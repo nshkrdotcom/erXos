@@ -609,9 +609,10 @@ boot_places(erx_dom_configured_t *configured, uint32_t nconfigured, const erx_ma
 }
 
 /*
- * Sets lib's system_image_row, the configured row that holds the manifest's
- * system window, ERX_MF_NONE for a manifest with none, and system_image, the
- * row its boot page alone carries as -erx_record system_image
+ * Sets lib's system_image_holder, the configured row that holds the
+ * manifest's system window, plus one, or 0 for a manifest with none; and
+ * system_image, the manifest's row that the holder's boot page alone
+ * carries as -erx_record system_image
  * (docs/design-stopgap.md, "The booted slot"). The check gives a manifest
  * at most one system window, held by the configured domain that holds its
  * block device, and the system_image row with it (property 8). The view
@@ -628,9 +629,8 @@ static const char *
 boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
 {
 	erx_mf_window_t window;
-	uint32_t volume_holder = ERX_MF_NONE;
+	uint32_t row = ERX_MF_NONE, volume_holder = ERX_MF_NONE;
 
-	lib->system_image_row = ERX_MF_NONE;
 	for (uint32_t index = 0; index < manifest->header.windows.count; index++) {
 		if (!erx_manifest_windows_at(manifest, index, &window))
 			return ("manifest: a window the reader cannot read");
@@ -641,15 +641,16 @@ boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
 		}
 		if (window.role != ERX_MF_WINDOW_ROLE_SYSTEM)
 			continue;
-		if (lib->system_image_row != ERX_MF_NONE || window.holder >= manifest->header.domains.count)
+		if (row != ERX_MF_NONE || window.holder >= manifest->header.domains.count)
 			return ("manifest: more than one system window, or one held by no configured domain");
-		lib->system_image_row = window.holder;
+		row = window.holder;
 	}
-	if ((lib->system_image_row == ERX_MF_NONE) != (manifest->header.system_image.count == 0) ||
-	    (lib->system_image_row != ERX_MF_NONE && !erx_manifest_system_image_at(manifest, 0, &lib->system_image)))
+	if ((row == ERX_MF_NONE) != (manifest->header.system_image.count == 0) ||
+	    (row != ERX_MF_NONE && !erx_manifest_system_image_at(manifest, 0, &lib->system_image)))
 		return ("manifest: a system window without its system_image row, or the row without the window");
-	if (volume_holder != ERX_MF_NONE && volume_holder != lib->system_image_row)
+	if (volume_holder != ERX_MF_NONE && volume_holder != row)
 		return ("manifest: a record_volume window not held by the system window's holder");
+	lib->system_image_holder = row == ERX_MF_NONE ? 0 : row + 1;
 	lib->record_volume = volume_holder != ERX_MF_NONE;
 	return (NULL);
 }
@@ -660,12 +661,12 @@ boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
  * it reads view->devices, which boot_devices builds first. Every device
  * on the row is given; only a driven one (erx_dom_entry_driven) gets a
  * record, -erx_record given or -erx_record framebuffer. The row
- * system_image_row, the system window's holder, gets -erx_record
+ * system_image_holder names, the system window's holder, gets -erx_record
  * system_image too.
  */
 static const char *
 boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_configured_t *configured,
-    uint32_t system_image_row)
+    uint32_t system_image_holder)
 {
 	erx_mf_domain_t domain;
 	erx_mf_limits_t profile;
@@ -713,7 +714,7 @@ boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_d
 			return (reason);
 		if (!boot_strings_fit(domain.args.length, domain.env.length +
 		    (row->display.name_len != 0 ? ERX_DOM_DISPLAY_WORDS_MAX : 0), records, block,
-		    index == system_image_row))
+		    index + 1 == system_image_holder))
 			return ("manifest: a configured domain's arguments and environment leave the boot page's strings "
 			    "no reserve for its node names, device records and display");
 		row->name = strings + domain.name.offset;
@@ -1214,7 +1215,7 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	if ((reason = boot_principals(lib, manifest, tables)) != NULL ||
 	    (reason = boot_devices(&lib->view, manifest, tables->devices, tables->device_records)) != NULL ||
 	    (reason = boot_system_image(lib, manifest)) != NULL ||
-	    (reason = boot_configured(&lib->view, manifest, tables->configured, lib->system_image_row)) != NULL ||
+	    (reason = boot_configured(&lib->view, manifest, tables->configured, lib->system_image_holder)) != NULL ||
 	    (reason = boot_templates(&lib->view, manifest, tables->templates)) != NULL ||
 	    (reason = boot_apps(lib, manifest)) != NULL ||
 	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->operations,
