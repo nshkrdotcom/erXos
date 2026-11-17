@@ -17,7 +17,7 @@ class FiascoTest < Minitest::Test
                   "CONFIG_PERFORMANCE=y\nCONFIG_PERF_CNT_USER=y\n"
 
   def test_build_environment_supplies_the_host_temporary_directory
-    assert_equal File.realpath(Dir.tmpdir), Erx::Fiasco.build_environment(cross: Erx::CrossToolchain.find).fetch('TMPDIR')
+    assert_equal File.realpath(Dir.tmpdir), Erx::Fiasco.build_environment.fetch('TMPDIR')
   end
   # These tests exercise orchestration with a recording runner. Native build
   # integration exercises the real provenance/replay boundary.
@@ -91,7 +91,7 @@ class FiascoTest < Minitest::Test
   def setup
     @directory = Dir.mktmpdir('erx-fiasco-')
     @runner = RecordingRunner.new
-    @fiasco = FixtureBuild.new(root: @directory, runner: @runner, compiler: '/fixture/clang')
+    @fiasco = FixtureBuild.new(root: @directory, runner: @runner, compiler: '/fixture/clang', linker: '/fixture/ld.lld')
     %w[kernel mk l4re-core bootstrap libfdt drivers-frst].each do |name|
       FileUtils.mkdir_p(File.join(@directory, 'fiasco', name))
     end
@@ -130,7 +130,7 @@ class FiascoTest < Minitest::Test
     cores = File.join(@directory, 'build/fiasco/cores')
     assert_includes kernel.fetch(:argv), "ERX_CORE_ARCHIVE=#{cores}/erx_cores.a"
     assert_includes kernel.fetch(:argv), "ERX_CORE_INCLUDE=#{cores}/seam"
-    assert_includes users.fetch(:argv), "CROSS_COMPILE=#{Erx::CrossToolchain.find.prefix}"
+    assert_includes users.fetch(:argv), "CROSS_COMPILE=#{Erx::FiascoToolchain::CROSS_COMPILE}"
     Erx::Fiasco.host_variables.each { |variable| assert_includes users.fetch(:argv), variable }
     %w[HOSTCC HOST_CC HOST_CXX].each { |name| assert(users.fetch(:argv).any? { |argument| argument.start_with?("#{name}=") }) }
   end
@@ -237,7 +237,7 @@ class FiascoTest < Minitest::Test
   # release rules and stops before the kernel make.
   def test_release_kernel_whose_resolved_configuration_has_input_stops_the_build
     runner = SelectingRunner.new
-    fiasco = FixtureBuild.new(root: @directory, runner: runner, compiler: '/fixture/clang')
+    fiasco = FixtureBuild.new(root: @directory, runner: runner, compiler: '/fixture/clang', linker: '/fixture/ld.lld')
     error = assert_raises(Erx::FiascoConfig::Violation) { fiasco.build_release_kernel }
     assert_includes error.message, 'CONFIG_INPUT must be unset'
     refute(runner.commands.any? { |command| command.fetch(:options).fetch(:name) == 'fiasco-kernel-release-build' })
@@ -320,7 +320,7 @@ class FiascoTest < Minitest::Test
   end
 
   def test_every_program_on_the_build_path_is_an_input
-    fiasco = PathBuild.new(root: @directory, runner: @runner, compiler: '/fixture/clang')
+    fiasco = PathBuild.new(root: @directory, runner: @runner, compiler: '/fixture/clang', linker: '/fixture/ld.lld')
     fiasco.programs = File.join(@directory, 'programs')
     FileUtils.mkdir_p(fiasco.programs)
     tool = File.join(fiasco.programs, 'tool')
@@ -336,34 +336,60 @@ class FiascoTest < Minitest::Test
     assert commands_of_a_build(fiasco).positive?, 'a program added beside the others builds again'
   end
 
-  # The prefix is an input: a build under the other one, installed in a
-  # directory ahead on PATH, runs again, naming that prefix to every inherited
-  # make and in the users' Makeconf.local, with that directory on its PATH.
-  def test_another_cross_prefix_builds_again_with_that_prefix
+  # The toolchain is an input: a build with another LLVM runs again, and both
+  # build directories' Makeconf.local name its programs, since a CC on the make
+  # command line would drop the target flag the inherited make systems add.
+  def test_another_toolchain_builds_again_with_that_toolchain
     assert commands_of_a_build.positive?
     assert_second_build
-    other = (Erx::CrossToolchain::PREFIXES - [Erx::CrossToolchain.find.prefix]).first
-    programs = File.join(File.realpath(@directory), 'other-toolchain')
-    FileUtils.mkdir_p(programs)
-    Erx::CrossToolchain::PROBES.each do |probe|
-      File.write(File.join(programs, other + probe), "#!/bin/sh\n")
-      File.chmod(0o755, File.join(programs, other + probe))
-    end
-    path = ENV.fetch('PATH')
-    ENV['PATH'] = [programs, path].join(File::PATH_SEPARATOR)
-    fiasco = FixtureBuild.new(root: @directory, runner: @runner, compiler: '/fixture/clang',
-                              cross: Erx::CrossToolchain::Toolchain.new(prefix: other))
-    before = @runner.commands.size
+    local = File.join(@directory, 'build/fiasco/source/Makeconf.local')
+    File.utime(Time.at(0), Time.at(0), local)
+    assert_second_build
+    assert_equal Time.at(0), File.mtime(local), 'unchanged settings keep their time, which mk rebuilds everything after'
+    # A board's L4Re directory reads the same settings, so it goes with the main one.
+    board = File.join(@directory, 'build/fiasco/users-raspi4b')
+    FileUtils.mkdir_p(board)
+    fiasco = FixtureBuild.new(root: @directory, runner: @runner, compiler: '/other/llvm/bin/clang',
+                              linker: '/other/lld/bin/ld.lld')
     assert commands_of_a_build(fiasco).positive?
-    makes = @runner.commands.drop(before).select { |command| command.fetch(:argv).first == 'gmake' }
-    refute_empty makes
-    assert makes.all? { |command| command.fetch(:argv).include?("CROSS_COMPILE=#{other}") }
-    assert makes.all? { |command| command.fetch(:options).fetch(:env).fetch('PATH').split(File::PATH_SEPARATOR).include?(programs) }
-    local = File.read(File.join(@directory, 'build/fiasco/users/Makeconf.local'))
-    assert_includes local, "CROSS_COMPILE := #{other}\n"
-    assert_includes local, "HOST_CC := #{Erx::HostOs::HOST_CC}\nHOST_CXX := #{Erx::HostOs::HOST_CXX}\n"
-  ensure
-    ENV['PATH'] = path if path
+    kernel = File.read(File.join(@directory, 'build/fiasco/kernel/Makeconf.local'))
+    assert_includes kernel, "CC = /other/llvm/bin/clang\nCXX = /other/llvm/bin/clang++\nCPP = /other/llvm/bin/clang-cpp\n"
+    assert_includes kernel, "LD = /other/lld/bin/ld.lld\n"
+    assert_includes kernel, "OBJCOPY = /other/llvm/bin/llvm-objcopy\n"
+    # llvm-ar reads the inherited crsUT as a thin archive, which the link audit refuses.
+    assert_includes kernel, "ARFLAGS = crsU\n"
+    refute File.exist?(board), 'a toolchain change discards the board build directories'
+    users = File.read(File.join(@directory, 'build/fiasco/source/Makeconf.local'))
+    assert_includes users, "CROSS_COMPILE := #{Erx::FiascoToolchain::CROSS_COMPILE}\n"
+    assert_includes users, "HOST_CC := #{Erx::HostOs::HOST_CC}\nHOST_CXX := #{Erx::HostOs::HOST_CXX}\n"
+    assert_includes users, "CLANG = /other/llvm/bin/\nLD = /other/lld/bin/ld.lld -m $(LD_EMULATION)\n"
+    refute_includes users, 'LIBGCC'
+    makes = @runner.commands.select { |command| command.fetch(:argv).first == 'gmake' }
+    refute(makes.any? { |command| command.fetch(:argv).any? { |argument| argument.start_with?('CC=', 'LD=', 'CLANG=') } })
+  end
+
+  # However the environment spells it, the toolchain names the installed programs, and
+  # ld.lld keeps the name the multi-call lld acts on.
+  def test_a_toolchain_names_its_installed_programs
+    Dir.mktmpdir do |temporary|
+      root = File.realpath(temporary)
+      FileUtils.mkdir_p(%w[llvm/bin lld/bin links].map { |path| File.join(root, path) })
+      File.write(File.join(root, 'llvm/bin/clang-23'), "")
+      File.write(File.join(root, 'lld/bin/lld'), "")
+      File.symlink('lld', File.join(root, 'lld/bin/ld.lld'))
+      File.symlink(File.join(root, 'llvm/bin/clang-23'), File.join(root, 'links/clang'))
+      File.symlink(File.join(root, 'lld/bin/ld.lld'), File.join(root, 'links/ld.lld'))
+      linked = Erx::FiascoToolchain.new(compiler: File.join(root, 'links/clang'), linker: File.join(root, 'links/ld.lld'))
+      real = Erx::FiascoToolchain.new(compiler: File.join(root, 'llvm/bin/clang-23'), linker: File.join(root, 'lld/bin/ld.lld'))
+      assert_equal real, linked
+      assert_equal File.join(root, 'lld/bin/ld.lld'), linked.linker
+      assert_equal File.join(root, 'llvm/bin/llvm-nm'), linked.program('nm')
+    end
+  end
+
+  def test_a_toolchain_needs_clang_and_lld
+    error = assert_raises(Erx::Error) { Erx::FiascoToolchain.new(compiler: '/llvm/bin/clang', linker: '') }
+    assert_includes error.message, 'ERX_LLD'
   end
 
   def test_the_user_headers_are_outputs_of_the_build
@@ -378,14 +404,13 @@ class FiascoTest < Minitest::Test
   end
 
   def test_the_build_path_holds_only_program_directories_and_the_system
-    path = Erx::Fiasco.build_environment(cross: Erx::CrossToolchain.find).fetch('PATH').split(File::PATH_SEPARATOR)
+    path = Erx::Fiasco.build_environment.fetch('PATH').split(File::PATH_SEPARATOR)
     packages = path - Erx::BuildMemo::SYSTEM_DIRECTORIES
     assert packages.all? { |directory| directory == File.realpath(directory) }, packages.inspect
     # Each directory is the real home of a program the build names (FreeBSD's /usr/local/bin
     # is one, though the caller's PATH names it too), and memo_key names every program in it.
-    cross = Erx::CrossToolchain.find
     caller_path = Erx::HostPath.directories(ENV.fetch('PATH'))
-    homes = [*Erx::CrossToolchain::PROBES.map { |probe| cross.program(probe) }, *Erx::Fiasco::PROGRAMS].map do |program|
+    homes = Erx::Fiasco::PROGRAMS.map do |program|
       File.dirname(File.realpath(Erx::HostPath.find_program(program, directories: caller_path)))
     end
     assert_empty packages - homes
@@ -401,7 +426,7 @@ class FiascoTest < Minitest::Test
     original = ENV.fetch('PATH')
     begin
       ENV['PATH'] = [directory, original].join(File::PATH_SEPARATOR)
-      [directory, Erx::Fiasco.build_environment(cross: Erx::CrossToolchain.find).fetch('PATH').split(File::PATH_SEPARATOR)]
+      [directory, Erx::Fiasco.build_environment.fetch('PATH').split(File::PATH_SEPARATOR)]
     ensure
       ENV['PATH'] = original
     end

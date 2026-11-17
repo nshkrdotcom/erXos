@@ -20,7 +20,7 @@ require_relative 'build_kind'
 require_relative 'core_archive'
 require_relative 'stack_proof_run'
 require_relative 'glue_imports'
-require_relative 'cross_toolchain'
+require_relative 'fiasco_toolchain'
 require_relative 'host_path'
 require_relative 'file_lock'
 require_relative 'output_directory'
@@ -99,7 +99,8 @@ module Erx
     BOOTSTRAP_OBJECTS = 'pkg/bootstrap/server/src/OBJ-arm64_armv8a-nofpu-plain'
     # Upper bound of a record this tool writes into the build tree.
     BUILD_RECORD_BYTES = 65_536
-    # Beside the cross gcc and binutils (CrossToolchain::PROBES), one program of each
+    # Beside the LLVM toolchain (FiascoToolchain), which the build runs by absolute
+    # path, one program of each
     # package the build runs from outside the operating system: GNU make, gawk (the
     # inherited Makeconf's AWKP), dtc and perl (Fiasco's preprocessor). Every other
     # program the inherited rules run (cp, find, sed, ln) is the first of its name on the
@@ -122,15 +123,14 @@ module Erx
 
     # compiler is the LLVM clang that builds the C17 cores' archive; the
     # resource headers it compiles with must be those the reviewed LLVM
-    # profile admits (ToolchainProvenance.llvm). cross is the cross gcc and binutils
-    # (CrossToolchain) the build runs; by default CrossToolchain.find picks them when the
-    # build first needs them.
+    # profile admits (ToolchainProvenance.llvm). With linker, LLVM's ld.lld, it is also the
+    # toolchain that builds Fiasco and L4Re (FiascoToolchain).
     def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
-                   compiler: ENV.fetch('ERX_CLANG', ''), cross: nil)
+                   compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''))
       @root = File.expand_path(root)
-      @cross_toolchain = cross
       @runner = runner
       @compiler = compiler
+      @linker = linker
       @source = File.join(@root, 'fiasco')
       @build = File.join(@root, 'build/fiasco')
     end
@@ -412,16 +412,16 @@ module Erx
     end
 
     # What the build reads: every captured input by content (FiascoInputs' record), the
-    # Ruby that drives it, the compiler, the cross prefix, and the environment it runs
-    # in. The build finds programs only on that environment's PATH, which holds the
-    # operating system's directories, named by its release, and directories every
-    # program of which the key names by identity.
+    # Ruby that drives it, every program of the LLVM toolchain, and the environment it
+    # runs in. Beside that toolchain the build finds programs only on that environment's
+    # PATH, which holds the operating system's directories, named by its release, and
+    # directories every program of which the key names by identity.
     def memo_key
       environment = build_environment.compact
       programs = environment.fetch('PATH').split(File::PATH_SEPARATOR).reject { |directory| BuildMemo::SYSTEM_DIRECTORIES.include?(directory) }
                             .to_h { |directory| [directory, BuildMemo.directory_identities(directory)] }
       BuildMemo.key('inputs' => @captured.fetch('sha256'), 'tools' => BuildMemo.tools_digest(root: @root),
-                    'compiler' => BuildMemo.program_identity(@compiler), 'cross_compile' => cross_toolchain.prefix,
+                    'toolchain' => toolchain.programs.map { |program| BuildMemo.program_identity(program) },
                     'programs' => programs,
                     'system' => BuildMemo.system_release, 'environment' => environment)
     end
@@ -440,22 +440,21 @@ module Erx
     def provenance_auditor(kind:)
       require_relative 'fiasco_provenance'
       FiascoProvenance.new(root: @root, runner: @runner, kind: kind,
-                           external: FiascoProvenance.external_registry(root: @root, compiler: @compiler,
-                                                                        runner: @runner, cross: cross_toolchain),
-                           compiler: @compiler, cross: cross_toolchain)
+                           external: FiascoProvenance.llvm_registry(root: @root, compiler: @compiler, runner: @runner),
+                           toolchain: toolchain)
     end
 
     # Inherited dependency stamps do not cover every generator's code or the
-    # cross compiler. A source or cross prefix change therefore discards that
+    # toolchain. A source or toolchain change therefore discards that
     # component's derived outputs; ordinary incremental work is reused only
-    # for the same source bytes and prefix.
+    # for the same source bytes and toolchain installation.
     def prepare_source_cache
       @inputs = FiascoInputs.new(root: @root)
       captured = @captured = @inputs.prepare
       expected = {
-        'kernel' => Digest::SHA256.hexdigest(IMPLEMENTATION_SHA256 + CoreArchive::IMPLEMENTATION_SHA256 + cross_toolchain.prefix +
+        'kernel' => Digest::SHA256.hexdigest(IMPLEMENTATION_SHA256 + CoreArchive::IMPLEMENTATION_SHA256 + toolchain_identity(toolchain.kernel_settings) +
                                              @inputs.component_id(captured, component: 'kernel')),
-        'users' => Digest::SHA256.hexdigest(IMPLEMENTATION_SHA256 + cross_toolchain.prefix + @inputs.component_id(captured, component: 'users'))
+        'users' => Digest::SHA256.hexdigest(IMPLEMENTATION_SHA256 + toolchain_identity(toolchain.user_settings) + @inputs.component_id(captured, component: 'users'))
       }
       marker = File.join(@build, '.erx-inputs.json')
       previous = {}
@@ -469,7 +468,9 @@ module Erx
         raise Error, 'invalid Fiasco source record; recreate the build directory'
       end
       changed = expected.keys.select { |name| previous[name] != expected.fetch(name) }
-      changed.each do |name|
+      # The users' inputs build every L4Re directory: the main one and each board's.
+      discarded = changed.flat_map { |name| name == 'users' ? ['users', *BOARD_BOOTSTRAPS.keys.map { |board| "users-#{board}" }] : [name] }
+      discarded.each do |name|
         path = File.join(@build, name)
         FileUtils.remove_entry(path) if File.exist?(path)
       end
@@ -571,12 +572,14 @@ module Erx
       # defconfig leaves unset.
       FiascoConfig.check(File.join(directory, 'globalconfig.out'), kind: kind)
       # The kernel's Makeconf reads this file from its build directory.
-      File.write(File.join(directory, 'Makeconf.local'), "CPPFLAGS += #{defines.join(' ')}\n") unless defines.empty?
+      settings = self.class.make_settings(toolchain.kernel_settings)
+      settings += "CPPFLAGS += #{defines.join(' ')}\n" unless defines.empty?
+      File.write(File.join(directory, 'Makeconf.local'), settings)
       @runner.run(['gmake', '-C', directory, "-j#{jobs}", *toolchain_variables,
                    "ERX_CORE_ARCHIVE=#{cores.archive}", "ERX_CORE_INCLUDE=#{cores.seam}"],
                   name: "fiasco-#{File.basename(directory)}-build", deadline: 600, env: build_environment)
       GlueImports.check(source: @inputs.part('kernel'), allowlist: File.join(@source, GlueImports::ALLOWLIST),
-                        objects: directory, nm: cross_toolchain.program('nm'), runner: @runner, env: build_environment)
+                        objects: directory, nm: toolchain.program('nm'), runner: @runner, env: build_environment)
       directory
     end
 
@@ -609,6 +612,7 @@ module Erx
         Dir.glob(File.join(staged, '**/*'), File::FNM_DOTMATCH).each do |path|
           File.chmod(File.stat(path).mode | 0o200, path) if File.file?(path) && !File.symlink?(path)
         end
+        write_user_settings(File.join(staged, 'Makeconf.local'), previous: File.join(directory, 'Makeconf.local'))
         record = { 'owner' => 'erx-fiasco', 'source' => @source }
         File.write(File.join(staged, '.erx-source.json'), JSON.pretty_generate(record) + "\n")
         previous = File.join(temporary, 'previous')
@@ -621,6 +625,22 @@ module Erx
         end
       end
       directory
+    end
+
+    # The settings every L4Re build directory reads, from the source's Makeconf.local
+    # (mk includes it before the directory's own): the target, the toolchain and the host
+    # compilers. They are in place before a directory is created, when mk already checks
+    # for its compilers, and image tools, which clear MAKEFLAGS, read them too. The
+    # compiler's own freestanding headers (stdbool.h, stdarg.h, ...) come from clang's
+    # resource directory, and no libgcc is linked. mk rebuilds everything when this file
+    # is newer than its outputs, so unchanged settings keep the previous file's time.
+    def write_user_settings(path, previous:)
+      settings = "# Generated by erXos.\nCROSS_COMPILE := #{FiascoToolchain::CROSS_COMPILE}\nHOST_CC := #{HostOs::HOST_CC}\nHOST_CXX := #{HostOs::HOST_CXX}\nBOOTSTRAP_CMDLINE := #{KERNEL_OPTIONS}\n" +
+                 self.class.make_settings(toolchain.user_settings)
+      File.write(path, settings)
+      return unless File.file?(previous) && File.read(previous) == settings
+
+      File.utime(File.atime(previous), File.mtime(previous), path)
     end
 
     def validate_user_source(directory)
@@ -645,14 +665,6 @@ module Erx
       configure(source: source, directory: directory,
                 input: @inputs.configuration(config),
                 output: '.kconfig', name: "fiasco-#{File.basename(directory)}-config")
-      # Image tools clear MAKEFLAGS when querying the configuration. Keep the
-      # compiler prefix and the host compilers in the build's own configuration as well as argv.
-      local = File.join(directory, 'Makeconf.local')
-      # No libgcc package is built, so the compiler's own freestanding headers
-      # (stdbool.h, stdarg.h, ...) come from the cross compiler's include
-      # directory, which this variable puts on the include path.
-      settings = "# Generated by erXos.\nCROSS_COMPILE := #{cross_toolchain.prefix}\nHOST_CC := #{HostOs::HOST_CC}\nHOST_CXX := #{HostOs::HOST_CXX}\nBOOTSTRAP_CMDLINE := #{KERNEL_OPTIONS}\nCOMPILER_RT_USE_TOOLCHAIN_LIBGCC := y\n"
-      File.write(local, settings) unless File.file?(local) && File.read(local) == settings
       @runner.run(['gmake', '-C', directory, "-j#{jobs}", *toolchain_variables,
                    "ERX_BOOT_ARCHIVE=#{boot_cores.archive}", "ERX_BOOT_INCLUDE=#{boot_cores.seam}"],
                   name: "fiasco-#{File.basename(directory)}-build", deadline: 600, env: build_environment)
@@ -723,17 +735,26 @@ module Erx
       output
     end
 
-    def build_environment
-      self.class.build_environment(cross: cross_toolchain)
+    def build_environment = self.class.build_environment
+
+    # The LLVM toolchain this build runs: one value for every command and record.
+    def toolchain
+      @toolchain ||= FiascoToolchain.new(compiler: @compiler, linker: @linker)
     end
 
-    # The cross gcc and binutils this build runs: one value for every command and record.
-    def cross_toolchain
-      @cross_toolchain ||= CrossToolchain.find
+    # The toolchain as a build directory sees it: the identities of every program it runs,
+    # which name their installed releases, and the settings that directory reads.
+    def toolchain_identity(settings)
+      toolchain.programs.map { |program| BuildMemo.program_identity(program) }.join("\n") +
+        self.class.make_settings(settings)
     end
 
-    # The inherited make system's arguments naming the cross prefix and the host compilers.
-    def toolchain_variables = ["CROSS_COMPILE=#{cross_toolchain.prefix}", *self.class.host_variables]
+    # The inherited make system's arguments naming the target and the host compilers.
+    def toolchain_variables = ["CROSS_COMPILE=#{FiascoToolchain::CROSS_COMPILE}", *self.class.host_variables]
+
+    # Makeconf.local lines setting each of settings, recursively expanded, so a value
+    # may name a variable of the inherited make system ($(LD_EMULATION)).
+    def self.make_settings(settings) = settings.map { |name, value| "#{name} = #{value}\n" }.join
 
     # The arguments that name the compilers of the build's host tools, which the inherited
     # rules otherwise take to be `gcc` and `g++` (HostOs::HOST_CC).
@@ -741,26 +762,24 @@ module Erx
       ["HOSTCC=#{HostOs::HOST_CC}", "HOST_CC=#{HostOs::HOST_CC}", "HOST_CXX=#{HostOs::HOST_CXX}"]
     end
 
-    # The build's whole environment, for the cross gcc and binutils cross: every variable
-    # of this process's unset but these.
-    def self.build_environment(cross:)
-      ENV.keys.to_h { |name| [name, nil] }.merge('PATH' => program_directories(cross: cross).join(File::PATH_SEPARATOR),
+    # The build's whole environment: every variable of this process's unset but these.
+    def self.build_environment
+      ENV.keys.to_h { |name| [name, nil] }.merge('PATH' => program_directories.join(File::PATH_SEPARATOR),
                                                 'SOURCE_DATE_EPOCH' => '0',
                                                 'LC_ALL' => 'C', 'TZ' => 'UTC',
                                                 'TMPDIR' => File.realpath(Dir.tmpdir))
     end
 
-    # The build's PATH: for the programs of cross named in CrossToolchain::PROBES and each
-    # of PROGRAMS, found in the absolute directories of this process's PATH, the directory
+    # The build's PATH: for each of PROGRAMS, found in the absolute directories of this process's PATH, the directory
     # it really lives in; then the operating system's directories. A directory of the
     # caller's PATH reaches the build only as the home of one of those programs, and then
     # the build can run every program in it, which is why memo_key names every program
     # there. The system directories come last whatever a program's home (perl's is
     # /usr/bin on macOS), so a package's program is found ahead of a system program of the
     # same name.
-    def self.program_directories(cross:)
+    def self.program_directories
       search = HostPath.directories(ENV.fetch('PATH', ''))
-      found = [*CrossToolchain::PROBES.map { |probe| cross.program(probe) }, *PROGRAMS].map do |program|
+      found = PROGRAMS.map do |program|
         executable = HostPath.find_program(program, directories: search)
         raise Error, "missing #{program}; install it (README.md, \"Host setup\")" unless executable
 

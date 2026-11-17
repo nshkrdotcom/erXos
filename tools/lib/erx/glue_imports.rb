@@ -55,9 +55,9 @@ module Erx
     end
 
     # The effect: every source in the glue directory is glue and is built, so
-    # this reads each one's object with nm, the cross binutils'
-    # (CrossToolchain), refuses a source with no object, and refuses the
-    # objects' imports the allowlist does not hold.
+    # this reads each one's object with nm, LLVM's llvm-nm (FiascoToolchain),
+    # refuses a source with no object, and refuses the objects' imports the
+    # allowlist does not hold.
     def check(source:, allowlist:, objects:, nm:, runner:, env: {})
       entries = parse(BoundedFile.read(allowlist, maximum: MAX_ALLOWLIST_BYTES))
       undefined = Dir.glob('*.cpp', base: File.join(source, GLUE)).sort.to_h do |name|

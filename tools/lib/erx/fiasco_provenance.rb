@@ -15,7 +15,7 @@ require_relative 'archive_member'
 require_relative 'fiasco_inputs'
 require_relative 'build_inputs'
 require_relative 'core_archive'
-require_relative 'cross_toolchain'
+require_relative 'fiasco_toolchain'
 require_relative 'host_path'
 require_relative 'build_kind'
 require_relative 'license_check'
@@ -112,22 +112,19 @@ module Erx
         record.values_at('objects', 'components').compact.flatten.flat_map { |object| ancestry(object) }
     end
 
-    # compiler, when the build compiled the C17 cores, is the clang that
-    # did; the audit records its identity and that of its llvm-ar. cross is
-    # the cross gcc and binutils (CrossToolchain) the audit runs and records,
-    # the build's own when Fiasco passes it, else CrossToolchain.find's when
-    # first needed; their ar reads the archives unless archive_program names
-    # another.
+    # toolchain is the LLVM toolchain (FiascoToolchain) the build ran, which
+    # the audit runs and records: the build's own when Fiasco passes it, else
+    # the environment's when first needed; its llvm-ar reads the archives
+    # unless archive_program names another.
     # kind is the build kind (BuildKind) whose kernel the audit reads; its
     # Plan says how.
-    def initialize(root:, runner:, kind:, external: [], archive_program: nil, compiler: nil, cross: nil)
+    def initialize(root:, runner:, kind:, external: [], archive_program: nil, toolchain: nil)
       @root = File.realpath(root)
       @build = File.join(@root, 'build/fiasco')
       @plan = self.class.plan(root: @root, kind: BuildKind.fetch(kind))
       @kernel = @plan.kernel
       @runner = runner
-      @compiler = compiler
-      @cross = cross
+      @toolchain = toolchain
       @archive_program = archive_program
       @archive_requested = archive_program
       @external = external.to_h { |entry| [File.realpath(entry.fetch('path')), entry] }
@@ -173,7 +170,7 @@ module Erx
       @objects = image_objects
       load_build_inputs
       load_generation_profiles
-      archive_tool = tool_identity(@archive_requested || cross_toolchain.program('ar'), role: 'archive')
+      archive_tool = tool_identity(@archive_requested || toolchain.program('ar'), role: 'archive')
       @archive_program = archive_tool.fetch('path')
       executables = executable_maps.map do |name, (artifact, map)|
         audit_executable(name, artifact, map)
@@ -181,14 +178,10 @@ module Erx
       tools = [archive_tool]
       image = nil
       if @unresolved.empty?
-        tools.concat(['gmake', *%w[gcc g++ objcopy].map { |name| cross_toolchain.program(name) }, 'perl'].map { |program| tool_identity(program) })
-        if @compiler
-          llvm = File.dirname(File.realpath(@compiler))
-          tools << tool_identity(File.realpath(@compiler), role: 'clang')
-          tools << tool_identity(File.join(llvm, 'llvm-ar'), role: 'llvm-ar')
-        end
+        tools.concat(%w[gmake perl].map { |program| tool_identity(program) })
+        tools.concat(toolchain.programs.map { |program| tool_identity(program, role: File.basename(program)) })
         programs = tools.to_h { |tool| [tool.fetch('program'), tool.fetch('path')] }
-        @image_objcopy = programs.fetch(cross_toolchain.program('objcopy'))
+        @image_objcopy = programs.fetch(File.basename(toolchain.program('objcopy')))
         @image_perl = programs.fetch('perl')
         image = audit_image(executables) if @plan.users
         @bytes.each do |path, snapshot|
@@ -249,7 +242,7 @@ module Erx
       environment = command_environment
       kernel = @kernel
       emit = lambda do |directory, output, variable, arguments|
-        @runner.run(['gmake', '-C', directory, *arguments, "CROSS_COMPILE=#{cross_toolchain.prefix}", *Fiasco.host_variables,
+        @runner.run(['gmake', '-C', directory, *arguments, "CROSS_COMPILE=#{FiascoToolchain::CROSS_COMPILE}", *Fiasco.host_variables,
                      '--eval=.PHONY: erx-provenance',
                      "--eval=erx-provenance: ; $(file >#{output},$(#{variable}))", 'erx-provenance'],
                     name: 'fiasco-construction', deadline: 45, env: environment)
@@ -265,52 +258,15 @@ module Erx
                 '.erx-archive-inputs', 'OBJS_libc_minimal_l4re.a', [])
     end
 
-    # The toolchain files a build may compile from: GCC's, and, when the
-    # C17 cores were built with clang (compiler), LLVM's resource headers,
-    # which runner asks that clang to locate; GCC's of the cross gcc that
-    # cross names. Each must be one its reviewed profile admits.
-    def self.external_registry(root:, cross:, compiler: nil, runner: nil)
-      gcc_registry(root: root, cross: cross) + llvm_registry(root: root, compiler: compiler, runner: runner)
-    end
-
+    # The toolchain files a build may compile from: the resource headers of
+    # the clang compiler, which runner asks that clang to locate. Each must
+    # be one the reviewed LLVM profile admits.
     def self.llvm_registry(root:, compiler:, runner:)
       return [] unless compiler
       raise Error, "locating the C17 cores' clang resource headers needs a runner" unless runner
 
       resource = runner.run([compiler, '-print-resource-dir'], name: 'fiasco-clang-resource', deadline: 30)
       ToolchainProvenance.llvm(root: root, resource_dir: BoundedFile.read(resource.fetch('log'), maximum: 4096).strip)
-    end
-
-    # The GCC headers Fiasco's build includes, from whatever release of the
-    # cross gcc (CrossToolchain) is first on PATH, each recorded with its
-    # release and the hash of its bytes. The build takes them from the cross
-    # gcc's own include directory. Their notices are the tree's copies of GCC's
-    # license texts, which do not vary between GCC releases.
-    GCC_NOTICES = %w[COPYING3 COPYING.RUNTIME].map { |name| "config/provenance/notices/#{name}" }.freeze
-
-    def self.gcc_registry(root:, cross:)
-      gcc = cross.program('gcc')
-      compiler = HostPath.find_program(gcc, directories: HostPath.directories(ENV.fetch('PATH', '')))
-      raise Error, "missing #{gcc}" unless compiler
-      installation = File.realpath(File.expand_path('..', File.dirname(File.realpath(compiler))))
-      # GCC installs its headers in lib/gcc/<target>/<release>/include.
-      directories = Dir.glob("lib/gcc/#{cross.target}/*/include", base: installation)
-      raise Error, "cannot find one include directory of #{gcc} under #{installation}" unless directories.size == 1
-      release = directories.first.split('/').fetch(3)
-      raise Error, "unexpected #{gcc} release directory: #{release}" unless /\A#{LicenseCheck::GCC_RELEASE}\z/.match?(release)
-      notices = GCC_NOTICES.map do |relative|
-        path = File.join(root, relative)
-        { 'path' => path, 'sha256' => Digest::SHA256.hexdigest(BoundedFile.read(path, maximum: 1024 * 1024)) }.freeze
-      end.freeze
-      LicenseCheck::GCC_HEADERS.map do |name|
-        header = File.realpath(File.join(installation, directories.first, name))
-        raise Error, "#{gcc}'s #{name} leaves its installation" unless header.start_with?(installation + '/')
-        { 'path' => header, 'sha256' => Digest::SHA256.hexdigest(BoundedFile.read(header, maximum: 1024 * 1024)),
-          'label' => LicenseCheck.gcc_label(header), 'license' => LicenseCheck::GCC_LICENSE,
-          'status' => DependencyStatus::RELEASE,
-          'evidence' => "#{name}'s own GPL version 3 or later grant with GCC Runtime Library Exception 3.1",
-          'notices' => notices }.freeze
-      end.freeze
     end
 
     def self.canonical_report(report)
@@ -446,7 +402,7 @@ module Erx
         linked = File.join(directory, 'bootstrap.elf')
         replayed = File.join(directory, 'bootstrap.raw')
         File.binwrite(linked, read(File.join(@root, inputs.fetch('bootstrap').fetch('path'))))
-        @runner.run([@image_objcopy || cross_toolchain.program('objcopy'), '-O', 'binary', linked, replayed],
+        @runner.run([@image_objcopy || toolchain.program('objcopy'), '-O', 'binary', linked, replayed],
                     name: 'fiasco-image-proof', deadline: 30, env: command_environment)
         unless BoundedFile.read(replayed, maximum: PackProvenance::MAX_METADATA) == original
           raise Error, 'final Fiasco image differs from its fixed construction replay'
@@ -615,15 +571,17 @@ module Erx
     end
 
     def tool_identity(program, role: program)
-      path = if program.include?('/')
-               File.realpath(program)
-             else
-               HostPath.find_program(program, directories: HostPath.directories(command_environment.fetch('PATH')))
-             end
-      raise Error, "missing build audit tool: #{program}" unless path
-      path = File.realpath(path)
+      # The name the build runs it by answers --version: a multi-call program such as
+      # ld.lld, a link to lld, tells its personality by that name.
+      invoked = if program.include?('/')
+                  program
+                else
+                  HostPath.find_program(program, directories: HostPath.directories(command_environment.fetch('PATH')))
+                end
+      raise Error, "missing build audit tool: #{program}" unless invoked
+      path = File.realpath(invoked)
       bytes = BoundedFile.read(path, maximum: PackProvenance::MAX_METADATA)
-      result = @runner.run([path, '--version'], name: 'fiasco-audit-tool', deadline: 30, env: command_environment)
+      result = @runner.run([invoked, '--version'], name: 'fiasco-audit-tool', deadline: 30, env: command_environment)
       { 'program' => role, 'path' => path, 'sha256' => Digest::SHA256.hexdigest(bytes),
         'version' => BoundedFile.read(result.fetch('log'), maximum: 1024 * 1024).lines.map(&:strip).find { |line| !line.empty? }.to_s,
         'role' => 'external build tool; no linked contribution' }
@@ -632,16 +590,16 @@ module Erx
     # The environment the build ran its commands in, which the audit runs its own in.
     def command_environment
       require_relative 'fiasco'
-      Fiasco.build_environment(cross: cross_toolchain)
+      Fiasco.build_environment
     end
 
-    def cross_toolchain
-      @cross ||= CrossToolchain.find
+    def toolchain
+      @toolchain ||= FiascoToolchain.from_environment
     end
 
     def audit_executable(name, artifact, map)
       directory = File.dirname(map)
-      contributions = PackProvenance.contributors(read(map), format: 'gnu').map do |input|
+      contributions = PackProvenance.contributors(read(map), format: 'lld').map do |input|
         archive, member = input.match(/\A(.+)\(([^()]+)\)\z/)&.captures
         if archive
           archive_path = File.realpath(File.expand_path(archive, directory))

@@ -11,9 +11,9 @@ require_relative 'license_check'
 require_relative 'build_inputs'
 require_relative 'build_kind'
 require_relative 'import_notices'
-require_relative 'cross_toolchain'
 require_relative 'dependency_status'
 require_relative 'fiasco_parts'
+require_relative 'fiasco_toolchain'
 
 module Erx
   # A receipt binds the actual output, link map and compiler dependency files.
@@ -339,10 +339,10 @@ module Erx
       # One audit answers every receipt of this resolver: it reads the whole of Fiasco's
       # build, and an image names that build once per entry and again at its snapshot.
       @fiasco_audit ||= begin
-        cross = CrossToolchain.find
-        external = FiascoProvenance.external_registry(root: @root, cross: cross, compiler: @compiler, runner: @runner)
+        toolchain = FiascoToolchain.new(compiler: @compiler.to_s, linker: ENV.fetch('ERX_LLD', ''))
+        external = FiascoProvenance.llvm_registry(root: @root, compiler: @compiler, runner: @runner)
         auditor = FiascoProvenance.new(root: @root, runner: @runner, kind: BuildKind::DEVELOPMENT, external: external,
-                                        compiler: @compiler, cross: cross)
+                                        toolchain: toolchain)
         fresh = auditor.audit
         [external, fresh, auditor.input_catalog].freeze
       end
