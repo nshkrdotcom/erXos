@@ -25,6 +25,7 @@ require_relative 'fiasco_provenance'
 require_relative 'generated'
 require_relative 'image_apps'
 require_relative 'image_record'
+require_relative 'package_key'
 require_relative 'files_guest'
 require_relative 'hostlink_guest'
 require_relative 'reload_guest'
@@ -66,14 +67,6 @@ module Erx
     LOGIN_KEY_SOURCES = %w[tools/lib/erx/dev_key.rb tools/lib/erx/production_image.rb].freeze
     ROOT_ENTRY_PATH = 'system/root'
     NOTICES_PATH = 'system/NOTICES'
-    # No more RAM than root_memory, of which Fiasco and the archive take their part first,
-    # so the root's page pool falls short and the root must refuse the boot. The development machine's
-    # root, 64 MiB into RAM, ends inside it, and QEMU's device tree, at half of RAM below
-    # 256 MiB, lies below the root there, so the root, not bootstrap, refuses. Between the
-    # root's room and the kernel memory Fiasco keeps at the top of RAM there is still a run
-    # for the largest contiguous pool, which the root takes before it counts root_memory,
-    # so the refusal is root_memory's (test/host/production_image_test.rb holds this).
-    TOO_LITTLE_MEMORY_MIB = 112
     # What a machine keeps for the root's image past its place: the image is about 5 MiB.
     ROOT_ROOM_MIB = 8
     LICENSE = 'LICENSE'
@@ -233,6 +226,27 @@ module Erx
       # The part of the RAM Fiasco keeps as its kernel memory.
       def fiasco_reserve_mib = Platform.fiasco_reserve(memory_mib << 20) >> 20
 
+      # The lowest place, in MiB into RAM, where QEMU virt puts the device tree: half of
+      # RAM, at most 128 MiB into it; a single file ending higher moves the tree behind
+      # it (docs/design-platforms.md, "Boot handoff").
+      def tree_floor_mib = [memory_mib / 2, 128].min
+
+      # The machine of the refusal boot: this one with no more RAM than the image's
+      # root_memory, of which Fiasco and the archive take their part first, so the root's
+      # page pool falls short and the root refuses the boot. Its tree must lie past the
+      # root's room, as the development machine's does, so the tree never lands on the
+      # root whatever the file's length, and bootstrap does not refuse with place_overlap
+      # before the root runs. Room for a moved archive behind the tree is not checked
+      # here: the boot shows its absence as archive_no_room. A root_memory too small for
+      # the tree's place is refused here.
+      def refusal(root_memory:)
+        machine = with(memory_mib: root_memory >> 20)
+        return machine if machine.tree_floor_mib >= root_mib + ROOT_ROOM_MIB
+
+        raise Error, "a refusal machine of root_memory's #{machine.memory_mib} MiB puts QEMU's device tree " \
+                     "on the root's place, #{root_mib} MiB into RAM"
+      end
+
       # The root's place, with room for the root's image (about 5 MiB) before RAM ends.
       def root_address
         raise Error, "the root's place, #{root_mib} MiB into RAM, leaves no room for it in #{memory_mib} MiB" if
@@ -350,12 +364,17 @@ module Erx
     end
 
     # Packs the image from Fiasco's last build into a directory that must be clean, so a
-    # stale file cannot stand in for this build's. The image carries the system release
-    # and the packages of apps (ImageApps::Plan), none by default. record is set only by
+    # stale file cannot stand in for this build's. The image carries the system release;
+    # apps (ImageApps::Plan) may set --local and signers but name no package, since an image's packages
+    # lie in the system partition of its medium, which only build_medium writes (`tools/erx
+    # pack --medium`), and an image alone would silently drop them. record is set only by
     # the website's image build (InteractiveBoot, `tools/erx boot --without-web`), which
     # alone writes the image's build record (ImageRecord), so the website takes no other
     # image.
     def build(directory:, manifest_source: @machine.platform.manifest_source(@root), apps: ImageApps.none, record: false)
+      raise Error, 'an image takes packages only into its medium\'s system partition: pack them with --medium' unless
+        apps.packages.empty?
+
       assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: false,
                machine: @machine, domains: domain_boots(manifest_source), apps: apps, record: record)
     end
@@ -363,6 +382,9 @@ module Erx
     # Where `tools/erx pack` leaves platform's production image and its medium, replaced
     # whole on every pack.
     def self.packed_directory(platform) = "build/production-image/#{platform.name}"
+
+    # Where card_apps packs a card's own packages, replaced whole on every build.
+    CARD_APPS_DIRECTORY = 'build/card-apps'
 
     # `tools/erx pack`'s one build: Fiasco for platform (Fiasco#build_for), then the
     # production image of platform's development machine, with its medium when medium
@@ -384,15 +406,17 @@ module Erx
     # (BootPartition.boot_partition_medium?) gets that partition's files and the card, the ABI's medium for the board (PiMedium); any other
     # gets the release medium for QEMU (ReleaseMedium). A boot that creates a domain
     # (MediumBoot) names a larger machine and a manifest with room for it, whose domain
-    # row names the release and runtime image the image then carries.
+    # row names the release and runtime image the image then carries. A card takes no
+    # apps of its builder's (check_card_apps) and carries its own (card_apps).
     def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none)
       on_own_board(machine)
       self.class.check_card_apps(machine.platform, apps)
 
-      source = self.class.medium_manifest(machine.platform, manifest_source)
-      built = assemble(directory: directory, manifest_source: source, added: NOTHING_ADDED, test_code: false,
-                       machine: machine, domains: domain_boots(source), apps: apps, record: false)
-      if BootPartition.boot_partition_medium?(machine.platform)
+      card = BootPartition.boot_partition_medium?(machine.platform)
+      apps = card_apps if card
+      built = assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: false,
+                       machine: machine, domains: domain_boots(manifest_source), apps: apps, record: false)
+      if card
         return [built, BootPartition.lay_out(root: @root, runner: @runner, platform: machine.platform, build_kind: BUILD_KIND,
                                              bootable: built.single, erofs: built.erofs,
                                              directory: built_directory(built), compiler: @compiler, linker: @linker)]
@@ -401,22 +425,32 @@ module Erx
       [built, release_medium(built)]
     end
 
-    # The manifest source a medium of platform is packed from. A card, the medium of a
-    # board the firmware boots from a boot partition, is the one the website offers, so,
-    # until a release signer exists, it leaves out the apps row with the room it took
-    # (Manifest::Edit.without_apps), as the site's manifest does, and takes no package
-    # (build_medium; docs/design-packaging.md, "The shipped manifests"). Every other
-    # medium's is source.
-    def self.medium_manifest(platform, source)
-      BootPartition.boot_partition_medium?(platform) ? Manifest::Edit.without_apps(source) : source
-    end
-
-    # Refuses apps (ImageApps::Plan) for a medium of platform when it is a card, which
-    # takes no package, no signer and no --local (medium_manifest).
+    # Refuses apps (ImageApps::Plan) of a builder's for a medium of platform when it is a
+    # card, the medium of a board the firmware boots from a boot partition, which the
+    # website offers: it carries the kiosk alone (card_apps), and no package, signer or
+    # --local of its builder's (docs/design-packaging.md, "The shipped manifests").
     def self.check_card_apps(platform, apps)
       return if apps.empty? || !BootPartition.boot_partition_medium?(platform)
 
-      raise Error, "the #{platform.name} card is the one the website offers, so it takes no app and no --local"
+      raise Error, "the #{platform.name} card is the one the website offers: it carries the kiosk alone and takes no " \
+                   'app, signer or --local'
+    end
+
+    # A card's own packages (docs/design-packaging.md, "The shipped manifests"): the kiosk,
+    # ImageApps::KIOSK, enabled, packed as the kiosk suite packs it, from a copy in the
+    # build tree so the packer's ebin/ never lands in the source tree, over an SDK the tree
+    # exports, and signed with signer, the builder's development package key unless a
+    # test names a scratch one. The plan holds no
+    # signer row and is no local image, and the build hands the manifest no development
+    # key, so the card trusts its package by its row's hash and trusts no key.
+    def card_apps(signer: PackageKey.ensure)
+      work = self.class.clear_directory(root: @root, path: File.join(@root, CARD_APPS_DIRECTORY))
+      sdk, packages = %w[sdk packages].map { |name| FileUtils.mkdir_p(File.join(work, name)).first }
+      app = File.join(work, 'app')
+      FileUtils.cp_r(File.join(@root, ImageApps::KIOSK), app)
+      kiosk = ImageApps.packed_apps([app], sdk_directory: sdk, packages_directory: packages, root: @root, runner: @runner,
+                                           signer: signer, compiler: @compiler)
+      ImageApps.plan(kiosk, enable: kiosk.map(&:name))
     end
 
     # The release medium for QEMU (ReleaseMedium) of built, an image this object packed, in
@@ -452,15 +486,13 @@ module Erx
 
     # Both entry points' one build: the system release, the domain releases with their
     # runtime image, any additions, and the mark that says whether there are some. The
-    # packages of apps lie in the domain release (docs/design-packaging.md, "Where a
-    # package lies"), so an image with packages carries one, and their rows are appended
-    # to the image's copy of the manifest source, which the board's file never holds.
+    # packages of apps lie in the system partition's apps/ (docs/design-packaging.md,
+    # "Where a package lies"), never in the archive, and their rows are appended to the
+    # image's copy of the manifest source, which the board's file never holds.
     # With record, the image's build record is written beside the checked image.boot.
     def assemble(directory:, manifest_source:, added:, test_code:, machine:, domains:, apps:, record:)
       raise Error, 'a test image gets no build record' if record && test_code
       self.class.check_test_scripts(domains, test_code: test_code)
-      raise Error, 'an image takes packages only into its domain release, and its manifest names no domain' if
-        domains.empty? && !apps.packages.empty?
 
       manifest_source = "#{manifest_source}#{apps.rows}"
       directory = OutputDirectory.prepare(root: @root, path: directory)
@@ -487,11 +519,14 @@ module Erx
         made = made_files(directory: directory, facts: facts)
         system_release = ReleaseFiles.new(root: @root, otp: erts.otp, directory: File.join(directory, 'release'), runner: @runner, codec: @codec)
         release = [*system_release.entries, *made_entries(made, release: ReleaseFiles::SYSTEM)]
-        erofs, images = ReleaseMedium.image(entries: release, directory: directory, runner: @runner)
+        # The image's packages lie in the system partition alone, never in the archive;
+        # the pack judges their receipts as it judges its entries'.
+        erofs, images = ReleaseMedium.image(entries: release, apps: apps, directory: directory, runner: @runner)
         domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, made: made, directory: directory)
-        packages = self.class.package_entries(apps, directory: directory, root: @root, codec: @codec)
+        packages = self.class.package_entries(apps, directory: directory, root: @root)
         report = pack(entries: [*entries(root_task, kernel, sigma0), *release, *system_release.directories, *domain.entries,
-                                *packages, *added.entries],
+                                *added.entries],
+                      partition: packages,
                       root_task: root_task, added_archives: [*domain.archives, *added.archives], apps: apps,
                       images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
                       imports: IMPORTS.merge(added.imports),
@@ -511,8 +546,13 @@ module Erx
           # image.boot holds every file of the image, the release's included, as packed, so
           # one look at it finds a file that names the tree (BuildPath). A test image, which
           # never leaves the build host, is not looked at.
-          host = test_code ? nil : BuildPath.find_in(File.binread(unchecked), root: @root)
-          raise Error, "production image: #{File.basename(single)} holds the build's path #{host}" if host
+          # The system partition's image ships on the medium beside it, the image's
+          # packages included, so it is looked at too.
+          leak = test_code ? nil : [unchecked, erofs].lazy.filter_map do |file|
+            host = BuildPath.find_in(File.binread(file), root: @root)
+            [file == unchecked ? single : file, host] if host
+          end.first
+          raise Error, "production image: #{File.basename(leak[0])} holds the build's path #{leak[1]}" if leak
 
           header = @codec.decode_layout('erx_pack_header', File.binread(archive, @codec.layout_size('erx_pack_header')))
           flags = header.fetch('flags')
@@ -828,34 +868,55 @@ module Erx
       def self.arguments_always(root) = ARGUMENTS_FIXED + allocator_words(root).size
       # The words of -erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
       # MEM_SIZE CLOCK COHERENT MAC, which the root adds for each device of a kind in a unit the system
-      # domain holds, and of -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK, the host
-      # link's UART's physical record (docs/design-stopgap.md, "Device records"; record_words).
+      # domain holds, and of -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX, the
+      # host link's and the line grant's UART's physical record (docs/design-stopgap.md, "Device
+      # records"; held_record_words).
       GIVEN_RECORD_WORDS = 15
-      DEVICE_RECORD_WORDS = 10
-      # The words of the records the root adds to the system domain's arguments: for each unit
-      # the manifest gives the system domain, each device of its placement in the platform
-      # record that is of a kind (DeviceKinds.given) gives a -erx_record given record, and the host link's
-      # UART, the UART at machine.hostlink's path, a -erx_record device record when the boot asks for
-      # the host link (liberx/backend/core/boot_manifest.c, devices_read). A framebuffer row
-      # the system domain holds is not counted: its record depends on whether the firmware's
-      # tree placed the framebuffer, which the manifest does not say (TODO.md).
+      DEVICE_RECORD_WORDS = 11
+      # The words of the records the root adds to the system domain's arguments, for the
+      # manifest at source on its platform (held_record_words).
       def self.record_words(root, source, hostlink:)
         manifest = Manifest::Frontend.read(source)
         platform = Platform.load(root: root, name: manifest.machine.string('platform'))
+        held_record_words(root, manifest, platform.record.fetch('units'), hostlink: hostlink)
+      end
+
+      # The words of the records the root adds for manifest, a Manifest::Frontend view, over
+      # the platform record's units: for each unit the manifest gives the system domain, each
+      # device of its placement that is of a kind (DeviceKinds.given) gives a -erx_record given
+      # record, and each PL011 the root drives physically (physical_paths) a -erx_record device
+      # record (liberx/backend/core/boot_manifest.c, devices_read and device_kind). A
+      # framebuffer row the system domain holds is not counted: its record depends on whether
+      # the firmware's tree placed the framebuffer, which the manifest does not say (TODO.md).
+      def self.held_record_words(root, manifest, units, hostlink:)
         kinds = DeviceKinds.given(root).map { |kind| [kind.role, kind.compatible] }
-        hostlink_path = hostlink ? manifest.machine.string('hostlink') : nil
+        physical = physical_paths(manifest, hostlink: hostlink)
+        pl011 = ['uart', DeviceKinds.uart_compatible(DeviceKinds::PL011, root: root)]
         placements = manifest.records.fetch('unit', []).filter_map do |unit|
           unit.string('placement') if unit.reference('holder') == 'system'
         end
-        platform.record.fetch('units').select { |unit| placements.include?(unit.fetch('key')) }
-                .flat_map { |unit| unit.fetch('devices') }
-                .sum do |device|
-                  if kinds.include?(device.values_at('role', 'compatible')) then GIVEN_RECORD_WORDS
-                  elsif hostlink_path && device.fetch('role') == 'uart' && device.fetch('path') == hostlink_path
-                    DEVICE_RECORD_WORDS
-                  else 0
-                  end
-                end
+        units.select { |unit| placements.include?(unit.fetch('key')) }
+             .flat_map { |unit| unit.fetch('devices') }
+             .sum do |device|
+               if kinds.include?(device.values_at('role', 'compatible')) then GIVEN_RECORD_WORDS
+               elsif device.values_at('role', 'compatible') == pl011 && physical.include?(device.fetch('path'))
+                 DEVICE_RECORD_WORDS
+               else 0
+               end
+             end
+      end
+
+      # The paths of the UARTs whose records the root writes physical, one for each of its
+      # physical kinds (boot_manifest.c, hostlink_kind and line_kind): machine.hostlink's
+      # when the boot asks for the host link, and the uart of each facet of a service whose
+      # interface is line, which the manifest check keeps to one grant on a UART that is
+      # neither the console's nor the host link's.
+      def self.physical_paths(manifest, hostlink:)
+        lines = manifest.records.fetch('service', []).select { |service| service.reference('interface') == 'line' }
+                        .map { |service| "@service.#{service.name}" }
+        uarts = manifest.records.fetch('facet', []).select { |facet| lines.include?(facet.reference('service')) }
+                        .flat_map { |facet| facet.parameters.filter_map { |key, value| value.value if key.value == 'uart' } }
+        (hostlink ? [manifest.machine.string('hostlink')] : []) + uarts
       end
       # What a plain erx.arg word used to break: it joins the last flag's arguments.
       CONSOLE_PLAIN_WORD = 'erx.arg=plainword'
@@ -1259,10 +1320,10 @@ module Erx
          { name: 'past-the-deadlines', pattern: /\A(?:% )?past_the_deadlines\r*\n\z/n, seconds: seconds + 60 }.freeze].freeze
       end
 
-      # A machine with no more RAM than root_memory: the same image boots to the root, which
+      # The refusal machine (Machine#refusal): the same image boots to the root, which
       # says so and ends the machine before anything would start.
-      def self.refusal_checkpoints
-        [*Qemu.boot_transcript(memory_mib: TOO_LITTLE_MEMORY_MIB),
+      def self.refusal_checkpoints(machine:)
+        [*Qemu.boot_transcript(memory_mib: machine.memory_mib),
          { name: 'root-refusal', pattern: /\Aerx: root task refused the boot: manifest: root_memory is more than/n, seconds: 30 }.freeze].freeze
       end
 
@@ -1328,7 +1389,7 @@ module Erx
 
       # SMOKE_CELLS under TCG: the plain boot to the command shell at one CPU, then the transcript.
       # The plain boot is of the website's machine, one UART, the console's: one serial line and
-      # no erx.hostlink=1, so the root hands no host link record and erx_hostlink starts nothing
+      # no erx.hostlink=1, so the root hands no host link record and no line group starts erx_hostlink
       # (docs/design-stopgap.md, "The command line"). A record for the absent UART faults the
       # root task under TCG at erx_pl011's first read, as on the website; under HVF the same read
       # does not fault, so only this boot shows it. HVF's boots keep the host link.
@@ -1370,7 +1431,8 @@ module Erx
           idle_boot(accel, count, built)
           kernel_records_boot(accel, count, built)
           # This boot's transcript is its whole result: it raises if the refusal is missing.
-          boot(accel, count, built, memory_mib: TOO_LITTLE_MEMORY_MIB, points: Run.refusal_checkpoints, machine_end: true)
+          refusal = @machine.refusal(root_memory: built.report.fetch('archive_room').fetch('root_memory'))
+          boot(accel, count, built, memory_mib: refusal.memory_mib, points: Run.refusal_checkpoints(machine: refusal), machine_end: true)
           ["#{accel}-#{count}cpu", { serial: full.fetch('serial_log'), seconds: full.fetch('elapsed_seconds') }.freeze]
         end
       end
@@ -1740,11 +1802,12 @@ module Erx
     # What a manifest's references name in an archive of these sorted paths: the root
     # and the two domain runtime images as executables, images as built EROFS artifacts, and
     # each domain boot script as the release's run of entries (ReleaseFiles.domain_runs), and
-    # each package of apps (ImageApps::Plan) as its entry in the domain release. Two
-    # under one name would leave a reference ambiguous, so that is refused.
+    # each package of apps (ImageApps::Plan) by its header's hash, which names no entry
+    # of the archive. Two under one name would leave a reference ambiguous, so that is
+    # refused.
     def self.artifacts(paths, images:, apps: ImageApps.none)
       named = [{ 'root' => { 'kind' => 'executable', 'entry' => paths.index(ROOT_ENTRY_PATH) } }, images,
-               ReleaseFiles.domain_runs(paths), apps.artifacts(paths, prefix: ReleaseFiles::DOMAIN_PREFIX)]
+               ReleaseFiles.domain_runs(paths), apps.artifacts]
       runtime = paths.index(DOMAIN_RUNTIME_PATH)
       named << { DOMAIN_RUNTIME_ARTIFACT => { 'kind' => 'executable', 'entry' => runtime } } if runtime
       beamasm = paths.index(JIT_RUNTIME_PATH)
@@ -1756,8 +1819,8 @@ module Erx
       named.reduce(:merge)
     end
 
-    def pack(entries:, root_task:, added_archives:, apps:, images:, manifest_source:, inputs:, erts:, jit:, output:, imports:, test_code:,
-             machine:)
+    def pack(entries:, partition:, root_task:, added_archives:, apps:, images:, manifest_source:, inputs:, erts:, jit:, output:,
+             imports:, test_code:, machine:)
       tools = PackTools.build(root: @root, owner_root: @root, directory: File.join(@root, 'build/production-image-tools'),
                               runner: @runner, compiler: @compiler, sanitizers: [])
       provenance = PackProvenance.new(root: @root, catalog: catalog(root_task, inputs), external: external(erts, jit, added_archives, apps), runner: @runner,
@@ -1768,7 +1831,7 @@ module Erx
                domain_planner: DomainPlanner.new(helper: tools.fetch('domains'), runner: @runner))
           .build(entries: entries, root_path: ROOT_ENTRY_PATH, build_kind: BUILD_KIND, platform: machine.record,
                  artifacts: self.class.artifacts(paths, images: images, apps: apps),
-                 manifest_source: manifest_source, output: output, test_code: test_code)
+                 manifest_source: manifest_source, output: output, test_code: test_code, partition: partition)
     end
 
     def catalog(root_task, inputs)
@@ -1854,9 +1917,9 @@ module Erx
 
     # The build record of image, the checked image.boot, which the website takes it only
     # with (ImageRecord): revision and facts as the image packs them, and packages, the
-    # entries package_entries made, each by its archive path and its file's SHA-256. A tree
-    # that moved from revision during the build gets no record, since the record would
-    # name a commit the image was not built from.
+    # entries package_entries made, each by its system partition path and its file's
+    # SHA-256. A tree that moved from revision during the build gets no record, since the
+    # record would name a commit the image was not built from.
     def write_record(image, revision:, facts:, packages:)
       raise Error, "the tree changed during the build of #{image}, so it gets no build record" unless
         SourceRevision.read(root: @root, runner: @runner) == revision
@@ -1865,17 +1928,16 @@ module Erx
       ImageRecord.write(image: image, revision: revision, facts: facts, packages: listed)
     end
 
-    # The domain release's entry of each package of apps (ImageApps::Plan), at its
-    # pkg/NAME.app, with a package receipt in directory, which PackProvenance judges
-    # under the license its registration (package_external) states.
-    def self.package_entries(apps, directory:, root:, codec:)
-      apps.packages.map do |package|
-        file = File.realpath(package.path)
-        receipt = File.join(directory, "#{package.artifact_name}.receipt.json")
+    # The system partition's file of each package of apps, from the one map ReleaseMedium
+    # writes the partition's apps/ from (ImageApps::Plan#entries), with a package receipt
+    # in directory, which PackProvenance judges under the license its registration
+    # (package_external) states. The archive holds none of them (Pack#build's partition).
+    def self.package_entries(apps, directory:, root:)
+      apps.entries.map do |path, source|
+        file = File.realpath(source)
+        receipt = File.join(directory, "#{File.basename(path)}.receipt.json")
         File.write(receipt, JSON.pretty_generate('version' => 1, 'kind' => 'package', 'artifact' => reference(file, root: root)) + "\n")
-        path = "#{ReleaseFiles::DOMAIN_PREFIX}#{package.entry_path}"
-        { 'path' => path, 'kind' => codec.member('entry_kind', 'file'), 'flags' => 0, 'id' => path, 'artifact' => file,
-          'receipt' => receipt }
+        { 'path' => path, 'artifact' => file, 'receipt' => receipt }
       end
     end
 
@@ -1884,7 +1946,7 @@ module Erx
     # (ImageApps::Plan#status), which the package receipt judges it under.
     def self.package_external(package, root:, status:)
       file = File.realpath(package.path)
-      reference(file, root: root).merge('path' => file, 'label' => "#{ReleaseFiles::DOMAIN_PREFIX}#{package.entry_path}",
+      reference(file, root: root).merge('path' => file, 'label' => package.entry_path,
                                         'license' => package.license.empty? ? 'NOASSERTION' : package.license,
                                         'evidence' => 'the license its package header declares, as the file check of the machine reads it',
                                         'status' => status, 'font_data' => false, 'notices' => [])

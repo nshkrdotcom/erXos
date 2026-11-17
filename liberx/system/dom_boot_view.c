@@ -67,6 +67,7 @@ static const char *boot_app_grants(const erx_dom_view_t *, const erx_manifest_vi
 static bool	boot_app_grant(const erx_dom_view_t *, uint32_t, uint32_t, uint32_t);
 static bool	boot_app_holds(const erx_dom_view_t *, uint32_t, uint32_t);
 static bool	boot_app_names(const erx_manifest_view_t *, const erx_mf_apps_t *, uint32_t);
+static bool	boot_app_tree_grant(const erx_dom_view_t *, uint32_t, uint32_t, const uint8_t *, size_t);
 static bool	boot_pages(uint64_t, uint64_t, erx_dom_range_t *);
 static bool	boot_compatible_is(const erx_manifest_view_t *, const erx_mf_device_t *, const char *);
 static bool	boot_reach(const erx_dom_device_entry_t *, erx_dom_range_t *);
@@ -87,7 +88,10 @@ static const char *boot_configured(erx_dom_view_t *, const erx_manifest_view_t *
 static const char *boot_templates(erx_dom_view_t *, const erx_manifest_view_t *,
 		    erx_dom_template_t *);
 static const char *boot_services(erx_dom_view_t *, const erx_manifest_view_t *,
-		    erx_dom_service_t *, erx_dom_facet_t *, erx_dom_parameter_t *);
+		    erx_dom_service_t *, erx_dom_facet_t *, const erx_service_operation_t **,
+		    erx_dom_parameter_t *);
+static const char *boot_facet_operations(const erx_manifest_view_t *, uint32_t first, uint32_t count,
+		    const erx_dom_service_t *, const erx_service_operation_t **);
 static const char *boot_parameter(const erx_mf_parameter_t *, const erx_service_parameter_t *,
 		    const uint8_t *, erx_dom_parameter_t *);
 static const char *boot_facet_parameters(const erx_manifest_view_t *, uint32_t first, uint32_t count,
@@ -107,6 +111,7 @@ erx_dom_view_sizes(const erx_manifest_view_t *manifest, uint32_t nfiles)
 	    .ndevices = manifest->header.devices.count,
 	    .nservices = manifest->header.services.count,
 	    .nfacets = manifest->header.facets.count,
+	    .noperations = manifest->header.facet_operations.count,
 	    .nparameters = manifest->header.facet_parameters.count });
 }
 
@@ -165,6 +170,7 @@ erx_dom_boot_layout(const erx_dom_boot_sizes_t *sizes, uintptr_t base, erx_dom_b
 	    !BOOT_PLACE(device_records, sizes->ndevices) ||
 	    !BOOT_PLACE(services, sizes->nservices) ||
 	    !BOOT_PLACE(facets, sizes->nfacets) ||
+	    !BOOT_PLACE(operations, sizes->noperations) ||
 	    !BOOT_PLACE(parameters, sizes->nparameters))
 		return (false);
 #undef BOOT_PLACE
@@ -613,17 +619,27 @@ boot_places(erx_dom_configured_t *configured, uint32_t nconfigured, const erx_ma
  * refuses a second window, a holder past the domains table and a window
  * without the row or the row without it, so the record has one row to name
  * and one holder or none; that the holder holds the block device is the
- * check's alone.
+ * check's alone. It sets record_volume when the manifest holds a
+ * record_volume window, which the check gives that holder alone and at most
+ * once (docs/design-ssh.md, "Who publishes it"); the view refuses a second
+ * one and one held by any other row, so the record names the window only in
+ * the boot page of the domain that holds it.
  */
 static const char *
 boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
 {
 	erx_mf_window_t window;
+	uint32_t volume_holder = ERX_MF_NONE;
 
 	lib->system_image_row = ERX_MF_NONE;
 	for (uint32_t index = 0; index < manifest->header.windows.count; index++) {
 		if (!erx_manifest_windows_at(manifest, index, &window))
 			return ("manifest: a window the reader cannot read");
+		if (window.role == ERX_MF_WINDOW_ROLE_RECORD_VOLUME) {
+			if (volume_holder != ERX_MF_NONE)
+				return ("manifest: more than one record_volume window");
+			volume_holder = window.holder;
+		}
 		if (window.role != ERX_MF_WINDOW_ROLE_SYSTEM)
 			continue;
 		if (lib->system_image_row != ERX_MF_NONE || window.holder >= manifest->header.domains.count)
@@ -633,6 +649,9 @@ boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
 	if ((lib->system_image_row == ERX_MF_NONE) != (manifest->header.system_image.count == 0) ||
 	    (lib->system_image_row != ERX_MF_NONE && !erx_manifest_system_image_at(manifest, 0, &lib->system_image)))
 		return ("manifest: a system window without its system_image row, or the row without the window");
+	if (volume_holder != ERX_MF_NONE && volume_holder != lib->system_image_row)
+		return ("manifest: a record_volume window not held by the system window's holder");
+	lib->record_volume = volume_holder != ERX_MF_NONE;
 	return (NULL);
 }
 
@@ -813,8 +832,9 @@ boot_apps(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
  * (docs/design-packaging.md, "The template's rows by index"), checked
  * once here so that every later reader of the indices, erx_pkg_manifest
  * among them, takes them as the build packed them: packages_facet grants
- * the template the service named packages_service, and each app_services
- * row's facet grants the template that row's service; and the template
+ * the template the service named packages_service; system_facet grants it
+ * the service named system_service; each app_services row's facet grants
+ * the template that row's service; and the template
  * holds no facet row besides those, each named once, so an app's session
  * reaches only the services the apps row names and admission sees each of
  * them once. The reader checked each index against its table; boot_apps
@@ -824,7 +844,7 @@ static const char *
 boot_app_grants(const erx_dom_view_t *view, const erx_manifest_view_t *manifest)
 {
 	static const uint8_t packages[] = ERX_PACKAGES_SERVICE_BYTES;
-	const erx_dom_service_t *service;
+	static const uint8_t system[] = ERX_SYSTEM_SERVICE_BYTES;
 	erx_mf_app_service_t granted;
 	erx_mf_apps_t row;
 	uint32_t held;
@@ -833,10 +853,10 @@ boot_app_grants(const erx_dom_view_t *view, const erx_manifest_view_t *manifest)
 		return (NULL);
 	if (!erx_manifest_apps_at(manifest, 0, &row))
 		return ("manifest: an apps row the reader cannot read");
-	service = &view->services[view->facets[row.packages_facet].service];
-	if (!boot_app_grant(view, row.app_template, row.packages_facet, view->facets[row.packages_facet].service) ||
-	    service->name_len != sizeof(packages) || memcmp(service->name, packages, sizeof(packages)) != 0)
+	if (!boot_app_tree_grant(view, row.app_template, row.packages_facet, packages, sizeof(packages)))
 		return ("manifest: the apps row's packages_facet is not the app template's grant of packages_service");
+	if (!boot_app_tree_grant(view, row.app_template, row.system_facet, system, sizeof(system)))
+		return ("manifest: the apps row's system_facet is not the app template's grant of system_service");
 	/* The one apps row's services span partitions app_services, so it holds every row. */
 	for (uint32_t index = 0; index < manifest->header.app_services.count; index++) {
 		if (!erx_manifest_app_services_at(manifest, index, &granted))
@@ -846,8 +866,8 @@ boot_app_grants(const erx_dom_view_t *view, const erx_manifest_view_t *manifest)
 	}
 	/*
 	 * Every app's session holds what the template holds: the named rows and
-	 * nothing else, each named once, so the template holds exactly
-	 * 1 + app_services.count facets.
+	 * nothing else, each named once, so the template holds exactly its
+	 * packages row, its system row and app_services.count facets.
 	 */
 	held = 0;
 	for (uint32_t facet = 0; facet < view->nfacets; facet++) {
@@ -857,23 +877,38 @@ boot_app_grants(const erx_dom_view_t *view, const erx_manifest_view_t *manifest)
 			return ("manifest: the app template holds a facet the apps row does not name");
 		held++;
 	}
-	if (held != 1 + manifest->header.app_services.count)
+	if (held != 2 + manifest->header.app_services.count)
 		return ("manifest: the apps row names one of the app template's facets twice");
 	return (NULL);
 }
 
-/* Whether the apps row names facet row facet: its packages_facet or an app_services row's facet. */
+/*
+ * Whether the apps row names facet row facet: its packages_facet, its
+ * system_facet or an app_services row's facet.
+ */
 static bool
 boot_app_names(const erx_manifest_view_t *manifest, const erx_mf_apps_t *row, uint32_t facet)
 {
 	erx_mf_app_service_t granted;
 
-	if (row->packages_facet == facet)
+	if (row->packages_facet == facet || row->system_facet == facet)
 		return (true);
 	for (uint32_t index = 0; index < manifest->header.app_services.count; index++)
 		if (erx_manifest_app_services_at(manifest, index, &granted) && granted.facet == facet)
 			return (true);
 	return (false);
+}
+
+/*
+ * Whether facet row facet grants session template template the service
+ * of the name name, len bytes.
+ */
+static bool
+boot_app_tree_grant(const erx_dom_view_t *view, uint32_t template, uint32_t facet, const uint8_t *name, size_t len)
+{
+	const erx_dom_service_t *service = &view->services[view->facets[facet].service];
+
+	return (boot_app_holds(view, template, facet) && service->name_len == len && memcmp(service->name, name, len) == 0);
 }
 
 /* Whether facet row facet grants session template template the service service. */
@@ -951,11 +986,14 @@ boot_facet_grantee(const erx_dom_view_t *view, const erx_mf_facet_t *facet, cons
 /*
  * Why row is not a value of parameter, or NULL with the value in *value:
  * it is of the declared kind and within the declared bound, a member
- * kind's bound being exactly its members (erx_service_parameter_t), and text or
- * bytes point into strings, the manifest's string table. A
- * reference kind, which nothing carries to the domain service, is refused,
- * as the packer refuses one. The reader has checked a boolean's value and
- * each string against the string table.
+ * kind's bound being exactly its members (erx_service_parameter_t), and
+ * text or bytes point into strings, the manifest's string table. A device
+ * reference is its row's index in the device table, which the reader has
+ * checked against that table (abi/manifest.txt), and the view's devices
+ * are that table's rows in order. A domain or principal reference, which
+ * nothing carries to the domain service, is refused, as the packer
+ * refuses one. The reader has checked a boolean's value and each string
+ * against the string table.
  */
 static const char *
 boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *parameter, const uint8_t *strings,
@@ -983,6 +1021,10 @@ boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *par
 		value->bytes = strings + row->bytes.offset;
 		value->bytes_len = row->bytes.length;
 		break;
+	case ERX_MF_PARAMETER_DEVICE:
+		within = true;
+		value->index = row->index;
+		break;
 	default:
 		return ("manifest: a facet parameter is a reference, which the boot does not carry");
 	}
@@ -990,15 +1032,53 @@ boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *par
 }
 
 /*
+ * Checks a facet's count operation rows, from row first of the manifest's
+ * operation table, into operations[0] to operations[count - 1], against
+ * what its service's interface declares (erx_service_operations); the
+ * reason it refuses them, or NULL. The rows are strictly ascending, as the
+ * packer writes them, so one walk over the declarations, with a cursor on
+ * the first row not yet matched, matches each row to its declaration and
+ * leaves over only a row that is undeclared, repeated or out of order. On
+ * the stopgap only the system domain's erx_facet checks a grant's
+ * operations (docs/design-time.md, "Phase 1"), so a facet of a service a
+ * configured domain serves names none; a tree's interface declares none
+ * (abi_contracts.rb).
+ */
+static const char *
+boot_facet_operations(const erx_manifest_view_t *manifest, uint32_t first, uint32_t count,
+    const erx_dom_service_t *service, const erx_service_operation_t **operations)
+{
+	const erx_service_operation_t *declared;
+	erx_mf_operation_t row;
+	size_t ndeclared;
+	uint32_t matched = 0;
+
+	if (count != 0 && service->server != ERX_MF_NONE)
+		return ("manifest: a facet names operations of a service a configured domain serves");
+	declared = erx_service_operations(service->interface, &ndeclared);
+	for (size_t at = 0; at < ndeclared && matched < count; at++) {
+		if (!erx_manifest_facet_operations_at(manifest, first + matched, &row))
+			return ("manifest: a facet operation row the reader cannot read");
+		if (row.operation == declared[at].number)
+			operations[matched++] = &declared[at];
+	}
+	if (matched != count)
+		return ("manifest: a facet operation is undeclared, stated twice or out of order");
+	return (NULL);
+}
+
+/*
  * Checks a facet's count parameter rows, from row first of the manifest's
  * parameter table, into parameters[0] to parameters[count - 1], against
  * what its service's interface declares (erx_service_parameters); the
  * reason it refuses them, or NULL. The rows follow the declarations'
- * number order, at most one row a declaration, as the packer writes
- * them: one walk over the declarations, with a cursor on the first row
- * not yet matched, checks each row against the declaration of its key
- * (boot_parameter), refuses a required declaration with no row, and
- * leaves over only a row that is undeclared, repeated or out of order.
+ * number order, at most most rows a declaration, a set's elements in
+ * strictly ascending order of their values, as the packer writes them:
+ * one walk over the declarations, with a cursor on the first row not yet
+ * matched, checks each row of a declaration's key against it
+ * (boot_parameter) and against the row before it, refuses a required
+ * declaration with no row, and leaves over only a row that is
+ * undeclared, past its declaration's most, repeated or out of order.
  */
 static const char *
 boot_facet_parameters(const erx_manifest_view_t *manifest, uint32_t first, uint32_t count, uint32_t interface,
@@ -1009,20 +1089,23 @@ boot_facet_parameters(const erx_manifest_view_t *manifest, uint32_t first, uint3
 	erx_mf_parameter_t row;
 	const char *reason;
 	size_t ndeclared;
-	uint32_t matched = 0;
+	uint32_t matched = 0, of;
 
 	declared = erx_service_parameters(interface, &ndeclared);
 	for (size_t at = 0; at < ndeclared; at++) {
-		if (matched < count && !erx_manifest_facet_parameters_at(manifest, first + matched, &row))
-			return ("manifest: a facet parameter row the reader cannot read");
-		if (matched == count || row.key != declared[at].number) {
-			if (declared[at].required)
-				return ("manifest: a facet leaves out a parameter its service requires");
-			continue;
+		for (of = 0; of < declared[at].most && matched < count; of++, matched++) {
+			if (!erx_manifest_facet_parameters_at(manifest, first + matched, &row))
+				return ("manifest: a facet parameter row the reader cannot read");
+			if (row.key != declared[at].number)
+				break;
+			if ((reason = boot_parameter(&row, &declared[at], strings, &parameters[matched])) != NULL)
+				return (reason);
+			/* A set's elements; boot_parameter has checked each is a u64. */
+			if (of > 0 && row.scalar <= parameters[matched - 1].scalar)
+				return ("manifest: a facet parameter set is unsorted or repeats a value");
 		}
-		if ((reason = boot_parameter(&row, &declared[at], strings, &parameters[matched])) != NULL)
-			return (reason);
-		matched++;
+		if (of == 0 && declared[at].required)
+			return ("manifest: a facet leaves out a parameter its service requires");
 	}
 	if (matched != count)
 		return ("manifest: a facet parameter is undeclared, stated twice or out of order");
@@ -1035,18 +1118,18 @@ boot_facet_parameters(const erx_manifest_view_t *manifest, uint32_t first, uint3
  * boot_configured and boot_templates set first. A server is a configured
  * row or ERX_MF_NONE, and a grantee the system domain, a configured row or
  * a session template; a facet is never granted to its service's own
- * server, a grantee takes one facet of a service name, a facet names no
- * operation (erx_dom_facet_t), and its parameters are its service's
- * (boot_facet_parameters). The reader has checked every index and string
+ * server, a grantee takes one facet of a service name, and its operations
+ * (boot_facet_operations) and parameters (boot_facet_parameters) are its
+ * service's. The reader has checked every index and string
  * against its table.
  */
 static const char *
 boot_services(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_service_t *services,
-    erx_dom_facet_t *facets, erx_dom_parameter_t *parameters)
+    erx_dom_facet_t *facets, const erx_service_operation_t **operations, erx_dom_parameter_t *parameters)
 {
 	erx_mf_service_t service;
 	erx_mf_facet_t facet;
-	uint32_t first;
+	uint32_t first, named;
 	const char *strings, *reason;
 
 	view->services = services;
@@ -1074,9 +1157,11 @@ boot_services(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom
 			return ("manifest: a facet names no service");
 		if ((reason = boot_facet_grantee(view, &facet, &services[facet.service])) != NULL)
 			return (reason);
-		if (facet.operations.count != 0)
-			return ("manifest: a facet names operations, which the boot cannot check");
 		/* A span's offset is in bytes; the reader checked that the spans partition the table. */
+		named = (facet.operations.offset - manifest->header.facet_operations.offset) / ERX_MF_OPERATION_SIZE;
+		if ((reason = boot_facet_operations(manifest, named, facet.operations.count,
+		    &services[facet.service], &operations[named])) != NULL)
+			return (reason);
 		first = (facet.parameters.offset - manifest->header.facet_parameters.offset) / ERX_MF_PARAMETER_SIZE;
 		if ((reason = boot_facet_parameters(manifest, first, facet.parameters.count,
 		    services[facet.service].interface, &parameters[first])) != NULL)
@@ -1086,6 +1171,7 @@ boot_services(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom
 		    .max_request = facet.max_request, .in_flight = facet.in_flight,
 		    .reductions = facet.reductions, .period_ns = facet.period_ns,
 		    .max_heap_size = facet.max_heap_size, .queue = facet.queue,
+		    .operations = &operations[named], .noperations = facet.operations.count,
 		    .parameters = &parameters[first], .nparameters = facet.parameters.count };
 		if (boot_facet_repeats(view, facets, index))
 			return ("manifest: a grantee takes two facets of one service name");
@@ -1136,7 +1222,8 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	    (reason = boot_configured(&lib->view, manifest, tables->configured, lib->system_image_row)) != NULL ||
 	    (reason = boot_templates(&lib->view, manifest, tables->templates)) != NULL ||
 	    (reason = boot_apps(lib, manifest)) != NULL ||
-	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->parameters)) != NULL ||
+	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->operations,
+	    tables->parameters)) != NULL ||
 	    (reason = boot_app_grants(&lib->view, manifest)) != NULL)
 		return (reason);
 	if (!boot_limits(manifest, header->native_limits, &lib->view.native_limits))

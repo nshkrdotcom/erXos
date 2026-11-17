@@ -4,21 +4,22 @@
 -module(erx_dashboard).
 -moduledoc """
 The dashboard's one effect process: it owns the window and feeds the
-pure view (erx_dashboard_view) the wall clock and the last board its
-quotes source sent (erx_dashboard_source). It is a kiosk's application
+pure view (erx_dashboard_view) the wall clock and the last board the
+live quotes source (erx_quotes) sent. It is a kiosk's application
 in the sense of docs/design-display.md, "Kiosks and glasses": it opens
 its UI with `erx_ui:open(#{renderer => lvgl})`, and when the UI ends its
 supervisor starts it again, with a new window.
 
-At start it starts the source the application's `source` value names,
-stopping with its reason if it refuses, and asks for its window. A
+At start it starts erx_quotes, linked to it, stopping with its reason
+if it refuses, and asks for its window. A
 refused open is asked again every ?RETRY_MS,
 since the session's display or pixel area may not be ready yet; each
 refusal unlike the one before is logged as `erx_dashboard: refused
 Reason`. Once a minute, on the minute, and whenever a board comes, it
 computes the tree and hands it to the UI if it differs from the one
 shown. The first tree a window takes is logged as `erx_dashboard:
-shown`. The tree takes no input, so the UI's events are dropped.
+shown YYYY-MM-DD HH:MM`, the minute of the clock it shows
+(erx_dashboard_view:minute/1). The tree takes no input, so the UI's events are dropped.
 """.
 -behaviour(gen_server).
 
@@ -29,7 +30,7 @@ shown`. The tree takes no input, so the UI's events are dropped.
 -define(RETRY_MS, 1000).
 
 -type state() :: #{window := none | erx_ui:window(),
-                   board := none | erx_dashboard_source:board(),
+                   board := none | erx_dashboard_view:board(),
                    shown := none | erx_ui_model:tree(),
                    refused := none | term()}.
 
@@ -41,11 +42,10 @@ start_link() ->
 -doc false.
 -spec init([]) -> {ok, state(), {continue, open}} | {stop, term()}.
 init([]) ->
-    {ok, Source} = application:get_env(erx_dashboard, source),
-    case Source:start_link(self()) of
+    case erx_quotes:start_link(self()) of
         {error, Reason} ->
             {stop, {source, Reason}};
-        _Started ->
+        {ok, _Quotes} ->
             next_tick(),
             {ok, #{window => none, board => none, shown => none, refused => none},
              {continue, open}}
@@ -95,15 +95,15 @@ open(#{refused := Last} = State) ->
 render(#{window := none} = State) ->
     {noreply, State};
 render(#{window := Window, board := Board, shown := Shown} = State) ->
-    Model = #{time => calendar:universal_time(), board => Board},
-    case erx_dashboard_view:tree(Model) of
+    Time = calendar:universal_time(),
+    case erx_dashboard_view:tree(#{time => Time, board => Board}) of
         Shown ->
             {noreply, State};
         Tree ->
             case erx_ui:tree(Window, Tree) of
                 ok ->
                     case Shown of
-                        none -> logger:notice("erx_dashboard: shown");
+                        none -> logger:notice("erx_dashboard: shown ~ts", [erx_dashboard_view:minute(Time)]);
                         _Before -> ok
                     end,
                     {noreply, State#{shown := Tree}};

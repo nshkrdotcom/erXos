@@ -486,25 +486,29 @@ typedef struct erx_dom_service {
  * declares (erx_service_parameters, erx/abi.h), of the declared kind and
  * within the declared bound. An integer or boolean is in scalar, a
  * boolean 0 or 1 and an i64 as its two's complement bits; text and bytes
- * lie in the manifest's strings, which outlive the view.
+ * lie in the manifest's strings, which outlive the view; a device
+ * reference is the index of its row in the view's devices.
  */
 typedef struct erx_dom_parameter {
 	const erx_service_parameter_t *declared;	/* its name, kind and bound */
 	uint64_t	scalar;
 	const uint8_t	*bytes;		/* text or bytes kinds; NULL otherwise */
 	uint32_t	bytes_len;
+	uint32_t	index;		/* a device reference; 0 otherwise */
 } erx_dom_parameter_t;
 
 /*
  * A checked facet row: a grant of a service to its grantee, the system
  * domain, a configured row or a session template, never the service's own
- * server, with the grant's limits and its parameters, each stated once, in
- * number order. A session template takes facets only of configured
- * domains' services, which their servers grant each session made from it.
- * It names no operation: operations resolve against the service's
- * generated declarations, which nothing on the boot path reads, so the
- * view refuses a row that names any rather than have the domain service
- * grant every operation.
+ * server, with the grant's limits and its parameters in number order: each
+ * declared parameter once, except a set, whose elements are consecutive
+ * entries in ascending order. A session template takes facets of configured domains'
+ * services, which their servers grant each session made from it, and of
+ * the system domain's, which the domain service grants each such session
+ * in its ready answer (property 14). Its operations are declarations of
+ * the service's interface, in ascending number order, each once; only a
+ * service the system domain serves has any, since only its erx_facet
+ * checks them on the stopgap (docs/design-time.md, "Phase 1").
  */
 typedef struct erx_dom_facet {
 	uint32_t	grantee_kind;	/* ERX_MF_GRANTEE_SYSTEM, _DOMAIN or _SESSION */
@@ -513,6 +517,8 @@ typedef struct erx_dom_facet {
 	uint32_t	max_request;	/* the largest request, in encoded bytes */
 	uint32_t	in_flight;	/* forwards outstanding at once */
 	uint64_t	reductions, period_ns, max_heap_size, queue;
+	const erx_service_operation_t *const *operations; /* noperations, in the view's table */
+	uint32_t	noperations;
 	const erx_dom_parameter_t *parameters;	/* nparameters, in the view's table */
 	uint32_t	nparameters;
 } erx_dom_facet_t;

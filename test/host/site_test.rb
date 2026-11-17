@@ -98,7 +98,7 @@ class SiteTest < Minitest::Test
       { 'no record' => [-> { File.delete(record) }, /site input missing: .*image\.boot\.receipt\.json/],
         'another image' => [-> { File.binwrite(image, 'another image') }, /not of this image/],
         'a local test image' => [-> { write_image_record(image, local: true) }, /development-local.*local test image/],
-        'a package' => [-> { write_image_record(image, packages: [{ 'path' => 'domain/pkg/doom.app', 'sha256' => 'd' * 64 }]) },
+        'a package' => [-> { write_image_record(image, packages: [{ 'path' => 'apps/doom.app', 'sha256' => 'd' * 64 }]) },
                         /package/] }.each do |fault, (seed, message)|
         seed.call
         [{}, { card: nil, card_record: nil }].each do |card|

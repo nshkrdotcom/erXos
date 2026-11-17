@@ -12,6 +12,7 @@ require_relative '../fixtures/manifest_context'
 require_relative '../../tools/lib/erx/abi'
 require_relative '../../tools/lib/erx/manifest'
 require_relative '../fixtures/generated_tree'
+require_relative '../../tools/fuzz/manifest_seeds'
 
 # erx-gate: sanitizers
 
@@ -125,7 +126,7 @@ class BootManifestTest < Minitest::Test
     assert_includes output, "console_uart pl011 150994944 4096 33 direct 24000000\n"
     assert_includes output, "devices 1\n"
     assert_includes output, "device hostlink pl011 151257088 4096 40 direct 0 24000000 " \
-                            "words-erx_record device hostlink pl011 /pl011@9040000 151257088 4096 40 direct 24000000 exact 1 short 0\n"
+                            "words-erx_record device hostlink pl011 /pl011@9040000 151257088 4096 40 direct 24000000 10 exact 1 short 0\n"
     refute_match(/^device (?:block|net) /, output)
   end
 
@@ -226,11 +227,31 @@ class BootManifestTest < Minitest::Test
     assert_equal asked.lines.grep(/^device net /), plain.lines.grep(/^device net /)
   end
 
-  # A missing disk is a normal state: a manifest with no block unit, and so no windows and
-  # no system_image row, reads, and has no record.
+  # The line grant's UART (docs/design-bluetooth.md, "The controller's line"): the one PL011
+  # the grant's uart names, by its device row's index, gives the record of role line, whose
+  # last word is that index, by which the line service matches its grant to it. The other
+  # UART of a unit the system domain holds, line_b, which no grant names, gives none.
+  def test_the_root_writes_the_line_s_record_for_its_uart_only
+    bytes = Erx::ManifestSeeds.line_grant(ROOT, @codec)
+    view = @codec.open('manifest', bytes)
+    paths = view.count('devices').times.map { |index| view.string(view.fetch('devices', index).fetch('path')) }
+    output, status = read(bytes)
+    assert status.success?, output
+    records = output.lines.grep(/^device line /)
+    assert_equal 1, records.size, output
+    words = "words-erx_record device line pl011 /pl011@9050000 #{0x9050000} 4096 41 direct 24000000 " \
+            "#{paths.index('/pl011@9050000')} exact"
+    assert_includes records.first, words
+    refute_includes output, '/pl011@9060000'
+  end
+
+  # A missing disk is a normal state: a manifest with no block unit, and so no windows, no
+  # system_image row, none of the services the windows' holder serves from them, and no
+  # apps row, which needs the system tree (property 19), reads, and has no record.
   def test_a_manifest_without_the_block_unit_has_no_device_record
-    source = @source.sub(/^unit block\n(?:  .*\n)*/, '').gsub(/^(?:window|image) \w+\n(?:  .*\n)*|^system_image\n(?:  .*\n)*/, '')
-                    .sub(/^service system\n(?:  .*\n)*/, '')
+    source = Erx::Manifest::Edit.without_apps(@source).sub(/^unit block\n(?:  .*\n)*/, '')
+                                                      .gsub(/^(?:window|image) \w+\n(?:  .*\n)*|^system_image\n(?:  .*\n)*/, '')
+                                                      .gsub(/^(?:service system|service login_keys|facet login_keys|facet login_keys_session)\n(?:  .*\n)*/, '')
     refute_equal @source, source
     output, status = read(admitted(source))
     assert status.success?, output
@@ -454,13 +475,13 @@ class BootManifestTest < Minitest::Test
     assert status.success?, output
     assert_includes output, "console_uart pl011 150994944 4096 33 direct 24000000\n"
     assert_includes output, "console_words-erx_record console pl011 150994944 4096 33 direct 24000000 exact 1 short 0\n"
-    assert_match(/^device hostlink pl011 \d+ \d+ 40 direct .*words-erx_record device hostlink pl011 \/pl011@9040000 \d+ \d+ 40 direct \d+ exact 1/, output)
+    assert_match(/^device hostlink pl011 \d+ \d+ 40 direct .*words-erx_record device hostlink pl011 \/pl011@9040000 \d+ \d+ 40 direct \d+ \d+ exact 1/, output)
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
     output, status = read(admitted(pi, platform: 'raspi4b'), stdout_path: '/soc/serial@7e215040')
     assert status.success?, output
     assert_match(/^console_uart mini_uart #{0xfe215040} 64 125 shared \d+\n/, output)
     assert_match(/^console_words-erx_record console mini_uart #{0xfe215040} 64 125 shared \d+ exact 1 short 0\n/, output)
-    assert_match(/^device hostlink pl011 \d+ \d+ 153 shared .*words-erx_record device hostlink pl011 \/\S+ \d+ \d+ 153 shared \d+ exact 1/,
+    assert_match(/^device hostlink pl011 \d+ \d+ 153 shared .*words-erx_record device hostlink pl011 \/\S+ \d+ \d+ 153 shared \d+ \d+ exact 1/,
                  output)
   end
 

@@ -34,7 +34,11 @@
 %% system, read-only, on the system partition of the slot that `-erx_record boot VALUE
 %% SLOT` names, for the holder the domain library gave the slot's `-erx_record
 %% system_image` record, and none on a boot that names no slot, an unknown boot, on boot
-%% words it refuses, or for a holder given no record or one the record's reader refuses.
+%% words it refuses, or for a holder given no record or one the record's reader refuses;
+%% and record_volume, read-only, on the whole record partition, for the holder whose
+%% record names it, whatever the boot words name (docs/design-storage.md, "Removable
+%% media: FAT").
+%%
 %% read_only/1 is which roles take no write.
 
 -module(erx_blk_table).
@@ -47,7 +51,7 @@
 
 %% A name of abi/manifest.txt's mf_window_role (role/1), the record partition's record,
 %% or {image, Name}, a window on one of the booted slot's EROFS images (erx_blk_image).
--type role() :: record | atom() | {image, binary()}.
+-type role() :: record | erx_abi_enums:mf_window_role() | {image, binary()}.
 %% A slot as the boot value's words name it.
 -type slot() :: a | b.
 %% A window: its role, its first sector on the medium and its length in sectors.
@@ -108,15 +112,24 @@ admit(Capacity, Sectors) when is_list(Sectors) ->
 %% of the manifest's system window row, the one domain the domain library gives a
 %% system_image record: a holder whose record erx_device_record:system_image/1 does not
 %% take gets no system window, the refusal is returned for the log, and the slot is kept
-%% for the images erx_blk_image places on it.
+%% for the images erx_blk_image places on it. The same holder's record names the
+%% record_volume window when the domain library gave the domain the manifest's
+%% record_volume window too (erx_device_record:record_volume/1); that window lies on the
+%% record partition, which belongs to neither slot, so it follows the record alone.
 -spec booted(term()) -> {slot() | none, [window()],
                          ok | {error, bad_boot | {bad_device_record, string()}}}.
 booted(Arguments) ->
-    case boot_slot(Arguments) of
-        {ok, none} -> {none, [], ok};
-        {ok, Slot} -> system_window(Slot, erx_device_record:system_image(Arguments));
-        Refused -> {none, [], Refused}
-    end.
+    {Slot, System, Status} = case boot_slot(Arguments) of
+                                 {ok, none} -> {none, [], ok};
+                                 {ok, Booted} -> system_window(Booted, erx_device_record:system_image(Arguments));
+                                 Refused -> {none, [], Refused}
+                             end,
+    {Slot, System ++ record_volume_window(erx_device_record:record_volume(Arguments)), Status}.
+
+record_volume_window(true) ->
+    [{role(?ERX_MF_WINDOW_ROLE_RECORD_VOLUME), ?ERX_MEDIUM_RECORD_START, ?ERX_MEDIUM_RECORD_SECTORS}];
+record_volume_window(false) ->
+    [].
 
 system_window(Slot, {ok, _Layout}) -> {Slot, system_window(Slot), ok};
 system_window(Slot, {error, _} = Refused) -> {Slot, [], Refused}.
@@ -146,10 +159,13 @@ system_window(Slot) ->
 system_partition(a) -> {?ERX_MEDIUM_SYSTEM_A_START, ?ERX_MEDIUM_SYSTEM_SECTORS};
 system_partition(b) -> {?ERX_MEDIUM_SYSTEM_B_START, ?ERX_MEDIUM_SYSTEM_SECTORS}.
 
-%% Whether a window of Role takes no write: the system window and an image window.
+%% Whether a window of Role takes no write: a role abi/manifest.txt does not mark
+%% writable. An image window is a verified_image window, and the record window, which
+%% holds the boot_selection and reset_count records, is read-only if either of them is.
 -spec read_only(role()) -> boolean().
-read_only({image, _Name}) -> true;
-read_only(Role) -> Role =:= role(?ERX_MF_WINDOW_ROLE_SYSTEM).
+read_only({image, _Name}) -> read_only(verified_image);
+read_only(record) -> read_only(boot_selection) orelse read_only(reset_count);
+read_only(Role) -> not erx_abi_enums:mf_window_role_writable(Role).
 
 %% The medium's first sector of a request for Count sectors from Sector of Window: einval
 %% for a request that names no sectors, erange for one that leaves the window.

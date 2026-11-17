@@ -5,6 +5,7 @@
 # or restart the unit's driver process. The manifest grants a facet of this interface
 # to the system domain alone (property 8).
 service driver_control 2
+  served_as message
   operation stop 1
   operation start 2
   operation restart 3

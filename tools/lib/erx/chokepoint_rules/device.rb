@@ -14,9 +14,14 @@ module Erx
     # (?ERX_FIASCO_CALL_MEMBERS): it defines the calls and calls none, so it
     # is a site of the line-call rule.
     ERX_ABI_HEADER = 'erlang/apps/erx/include/generated/erx_abi.hrl'
+    # The ABI's generated enum module lists every member by name, calls included.
+    ERX_ABI_ENUMS = 'erlang/apps/erx/src/generated/erx_abi_enums.erl'
     BLK_WRITE = 'erlang/apps/erx_blk/src/erx_blk_write.erl'
-    # The applications whose modules drive a device class.
-    DRIVER_APPLICATIONS = %w[erx_blk erx_fb erx_uart].freeze
+    # The applications whose modules drive a device class, and the UART drivers, the
+    # device shims of erx_uart: its other modules, the host link and the line trees,
+    # parse the bytes the drivers carry and touch no UART's registers themselves.
+    DRIVER_APPLICATIONS = %w[erx_blk erx_fb].freeze
+    UART_DRIVERS = %w[erx_pl011 erx_mini_uart].freeze
 
     # A call of erx_device's issuing function name: erx_device followed by
     # the name after a colon (a remote call or fun) or a comma (an apply),
@@ -60,6 +65,14 @@ module Erx
     # "The Raspberry Pi 4").
     RNG200_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/rng200.c',
                                         permits: %r{\A(?:#\s*include\s*"erx/hw/rng200\.h"|erx_rng200_\w+)\z})
+    # On the stopgap the root's watchdog thread drives the board's hardware watchdog in the
+    # platform layer's place (docs/design-platforms.md, "The watchdog"): its one device shim
+    # names the watchdog's header and accessors alone, and its pure core only the header, the
+    # field setters and the field values, so no register is read or written outside the shim.
+    PM_WDT_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/pm_wdt.c',
+                                        permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+)\z})
+    PM_WDT_CORE = Chokepoints::Site.new(glob: 'kernel/core/pm_wdt.c',
+                                        permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+_set|ERX_PM_WDT_\w+)\z})
     # The prefix of every name Hardware.owned_symbols makes, so no list can fall behind the SVD files.
     OWNED_REGISTER = /\bERX_DEVICE_OWNED_\w+/
 
@@ -116,22 +129,24 @@ module Erx
         # import check, and a header and a call are all a bypass of erx_device needs.
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-headers',
-          rule: "only the kernel platform layer, the header probe and the root's RNG200 shim on the stopgap include a generated peripheral header",
+          rule: "only the kernel platform layer, the header probe and the root's RNG200 and watchdog shims and the watchdog's core on the stopgap include a generated peripheral header",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,
-          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM],
+          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "#include <erx/hw/pl011.h>\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-accessors',
-          rule: "only the generated peripheral headers, the kernel platform layer, the header probe and the root's RNG200 shim name their accessors",
+          rule: "only the generated peripheral headers, the kernel platform layer, the header probe, the root's RNG200 and watchdog shims and the watchdog core's field setters name their accessors",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: /\b(?:#{PERIPHERAL_SYMBOLS.map { |symbol| Regexp.escape(symbol) }.join('|')})\b/,
           sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } +
-                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM],
-          seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n" }
+                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE],
+          seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n",
+                  # The watchdog's core may name its setters, never a register access.
+                  'kernel/core/pm_wdt.c' => "void f(erx_mmio_t d) { erx_pm_wdt_rstc_write(d, 0); }\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-register-callers',
@@ -206,20 +221,23 @@ module Erx
         # Erlang reaches a device only by naming erx_device. Only erx_device,
         # erx_irq_line, which binds and acknowledges lines for drivers
         # (docs/design-shared-devices.md, "Lines inside a domain"), and the
-        # driver applications, one per device class, name it: as a call, an
-        # apply's module literal, a quoted atom or a string. What keeps a device
+        # driver applications, one per device class, name it, and of erx_uart only
+        # its UART drivers: as a call, an apply's module literal, a quoted atom or
+        # a string. What keeps a device
         # from other domains is that its capability is installed only in its
         # driver's domain.
         Chokepoints::ErlangForbidden.new(
-          name: 'device-callers', rule: 'only erx_device, erx_irq_line and the driver applications name erx_device, ' \
-                                        'whose NIF and BIFs reach a device',
+          name: 'device-callers', rule: 'only erx_device, erx_irq_line, the driver applications and the UART drivers ' \
+                                        'name erx_device, whose NIF and BIFs reach a device',
           design: DEVICE_DESIGN, pattern: /(?<![A-Za-z0-9_@])erx_device(?![A-Za-z0-9_@])/,
           sites: [ERX_DEVICE, ERX_IRQ_LINE, *DRIVER_APPLICATIONS.map { |application| "erlang/apps/#{application}/**/*" },
+                  *UART_DRIVERS.map { |driver| "erlang/apps/erx_uart/src/#{driver}.erl" },
                   # erXos's own directory of the network stack, whose other modules name nothing of erXos's
                   # (docs/design-network-stack.md, "Two places, four seams").
                   'erlang/apps/erx_net/erxos/**/*'],
           seed: { 'otp/lib/stdlib/src/seeded.erl' => "f(D) -> erx_device:read(D, dr).\n",
-                  'erlang/apps/erx_files/src/seeded.erl' => "f() -> \"erx_device\".\n" }
+                  'erlang/apps/erx_files/src/seeded.erl' => "f() -> \"erx_device\".\n",
+                  'erlang/apps/erx_uart/src/erx_hostlink_seeded.erl' => "f(D) -> erx_device:read(D, dr).\n" }
         ),
         # No driver binds a shared line and takes its deliveries from the drivers
         # joined to its owner, nor binds or acknowledges a line past erx_irq_line
@@ -229,8 +247,8 @@ module Erx
                                            'a driver attaches and acknowledges its lines through erx_irq_line',
           design: 'docs/design-shared-devices.md#lines-inside-a-domain',
           pattern: /(?<![A-Za-z0-9_@])irq_(?:bind|bind_owner|ack)(?![A-Za-z0-9_@])/,
-          sites: [ERX_DEVICE, ERX_IRQ_LINE, ERX_ABI_HEADER],
-          seed: { 'erlang/apps/erx_uart/src/seeded.erl' => "f(D) -> erx_device:irq_bind_owner(D, 0).\n" }
+          sites: [ERX_DEVICE, ERX_IRQ_LINE, ERX_ABI_HEADER, ERX_ABI_ENUMS],
+          seed: { 'erlang/apps/erx_blk/src/seeded.erl' => "f(D) -> erx_device:irq_bind_owner(D, 0).\n" }
         ),
         # A block device reads or writes the medium only for a request a driver
         # posts, and erx_blk_write is the one block module that posts: it builds

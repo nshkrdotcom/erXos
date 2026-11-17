@@ -11,9 +11,10 @@
 %%   the system domain holds, the transport's offset and size in the window object, the
 %%   memory's bytes, 0 for a device that does no DMA, and the firmware tree's coherence mark
 %%   and hardware address;
-%% - `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK`, the system domain's physical record
-%%   of its host link's UART, which does no DMA, built by liberx/backend/core/boot_manifest.c
-%%   from the system manifest.
+%% - `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, the system domain's physical record
+%%   of its host link's UART or its line's, which do no DMA, built by
+%%   liberx/backend/core/boot_manifest.c from the system manifest; INDEX is the device's
+%%   row in the manifest's device table, which a line grant's uart names.
 %%
 %% A domain that holds a framebuffer finds a third form, `-erx_record framebuffer WINDOW_H OFFSET
 %% SIZE WIDTH HEIGHT STRIDE FORMAT`, read by framebuffers/0 (docs/design-device-tree.md,
@@ -22,7 +23,8 @@
 %% the firmware's device tree. The root writes it only for a framebuffer the tree placed in
 %% its row's window, so a domain whose firmware set none up finds `{ok, []}`. The storage
 %% domain that serves `system` finds a fourth, `-erx_record system_image`, read by
-%% system_image/0: the layout and root hash of the booted slot's system partition.
+%% system_image/0: the layout and root hash of the booted slot's system partition, and
+%% whether the domain holds the manifest's record_volume window too (record_volume/1).
 %%
 %% In both device forms PATH is the device's device-tree path from its manifest row, its name
 %% (docs/design-system.md, "Devices"): a node path of the characters a device tree allows in
@@ -47,7 +49,8 @@
 
 -include("generated/erx_abi.hrl").
 
--export([records/0, find/2, find/3, framebuffers/0, framebuffers/1, system_image/0, system_image/1]).
+-export([records/0, find/2, find/3, framebuffers/0, framebuffers/1, system_image/0, system_image/1,
+         record_volume/1]).
 -export_type([spec/0, framebuffer/0, format/0, system_image/0]).
 
 %% What erx_device:open/1 takes: a given device's objects, or a physical device's window and
@@ -58,7 +61,8 @@
                   memory => {object, non_neg_integer(), pos_integer()}, clock := non_neg_integer(),
                   coherent := boolean(), mac => 1..16#ffffffffffff}
               | #{peripheral := atom(), path := binary(), window := {physical, non_neg_integer(), non_neg_integer()},
-                  lines := [non_neg_integer() | {shared, non_neg_integer()}], clock := non_neg_integer()}.
+                  lines := [non_neg_integer() | {shared, non_neg_integer()}], clock := non_neg_integer(),
+                  index := non_neg_integer()}.
 
 %% A framebuffer record as its display driver takes it: the window object and the
 %% framebuffer's offset and bytes in it, as a given record's window, and its geometry.
@@ -98,19 +102,41 @@ system_image() ->
 %% Pure, as find/3 is. The record is the booted slot's system partition as its storage
 %% domain opens it in erx_verity (docs/design-stopgap.md, "The booted slot"), a layout
 %% whose image starts at the partition's byte 0. The domain library writes it,
-%% `-erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT`, only to the storage domain
-%% that serves `system`, so exactly one record of exactly five words is taken: LEN,
-%% TREE_OFF and TREE_LEN decimals within 64 bits, SALT 2 to 64 lowercase hex digits, an
-%% even count, and ROOT exactly 64. Any other shape, a second record and none are refused
-%% with the reason, and the caller then opens no image.
+%% `-erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT [record_volume]`, only to
+%% the storage domain that serves `system`, so exactly one record is taken, of five
+%% words or of six whose sixth is `record_volume` (record_volume/1): LEN, TREE_OFF and
+%% TREE_LEN decimals within 64 bits, SALT 2 to 64 lowercase hex digits, an even count,
+%% and ROOT exactly 64. Any other shape, a second record and none are refused with the
+%% reason, and the caller then opens no image.
 -spec system_image([[string()]]) -> system_image().
 system_image(Arguments) ->
+    case image_record(Arguments) of
+        {ok, Layout, _RecordVolume} -> {ok, Layout};
+        Refused -> Refused
+    end.
+
+%% Pure. True when Arguments hold the one system_image record system_image/1 takes and its
+%% sixth word is the name abi/manifest.txt gives the record_volume window role, which the
+%% domain library adds for the holder of the manifest's record_volume window, the domain
+%% the record goes to; false for any other record and for one system_image/1 refuses.
+-spec record_volume([[string()]]) -> boolean().
+record_volume(Arguments) ->
+    case image_record(Arguments) of
+        {ok, _Layout, RecordVolume} -> RecordVolume;
+        {error, _} -> false
+    end.
+
+%% The one system_image record of Arguments as {ok, Layout, NamesRecordVolume}, or the
+%% refusal system_image/1 answers.
+image_record(Arguments) when not is_list(Arguments) ->
+    bad("the boot records are not a list");
+image_record(Arguments) ->
     case [Words || ["system_image" | Words] <- Arguments] of
-        [[Length, TreeOffset, TreeLength, Salt, Root]] ->
+        [[Length, TreeOffset, TreeLength, Salt, Root | Windows]] when Windows =:= []; Windows =:= ["record_volume"] ->
             case {numbers([Length, TreeOffset, TreeLength]), hex(Salt, 1, ?ERX_VERITY_SALT_SIZE), hex(Root, ?ERX_VERITY_HASH_SIZE, ?ERX_VERITY_HASH_SIZE)} of
                 {{ok, [L, O, T]}, {ok, S}, {ok, R}} ->
                     {ok, #{image_offset => 0, image_length => L, tree_offset => O, tree_length => T, salt => S,
-                           root_hash => R}};
+                           root_hash => R}, Windows =/= []};
                 {error, _, _} ->
                     bad("a system_image record's length, tree offset or tree length is not a decimal number "
                         "of 64 bits");
@@ -122,7 +148,8 @@ system_image(Arguments) ->
                         ++ " bytes in lowercase hex")
             end;
         [_] ->
-            bad("a system_image record is not five words: a length, a tree offset and length, a salt and a root hash");
+            bad("a system_image record is not five words, a length, a tree offset and length, a salt and a root "
+                "hash, then at most record_volume");
         [] ->
             bad("no system_image record");
         [_, _ | _] ->
@@ -215,21 +242,21 @@ spec(Peripheral, {"given", [Path, Window, Offset, Size, Line, Mark, Memory, Memo
     end;
 spec(_Peripheral, {"given", _}) ->
     bad("a given device record has fewer than a path, nine numbers and a line mark");
-spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock | _]}) ->
-    case {number(Base, 64), number(Size, 64), number(Line, 32), number(Clock, 32), mark(Mark), path(Path)} of
-        {{ok, B}, {ok, S}, {ok, L}, {ok, C}, {ok, Sharing}, {ok, P}} ->
+spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock, Index | _]}) ->
+    case {number(Base, 64), number(Size, 64), number(Line, 32), {number(Clock, 32), number(Index, 32)}, mark(Mark), path(Path)} of
+        {{ok, B}, {ok, S}, {ok, L}, {{ok, C}, {ok, I}}, {ok, Sharing}, {ok, P}} ->
             {ok, #{peripheral => Peripheral, path => P, window => {physical, B, S}, lines => [marked(Sharing, L)],
-                   clock => C}};
-        {{ok, _}, {ok, _}, {ok, _}, {ok, _}, {ok, _}, error} ->
+                   clock => C, index => I}};
+        {{ok, _}, {ok, _}, {ok, _}, {{ok, _}, {ok, _}}, {ok, _}, error} ->
             bad("a device record's path is not a node path of at most "
                 ++ integer_to_list(?ERX_DEVICE_PATH_MAX) ++ " bytes");
-        {{ok, _}, {ok, _}, {ok, _}, {ok, _}, error, _} ->
+        {{ok, _}, {ok, _}, {ok, _}, {{ok, _}, {ok, _}}, error, _} ->
             bad("a device record's line mark is neither direct nor shared");
         _ ->
-            bad("a device record's base, size, line or clock is not a decimal number of its field's width")
+            bad("a device record's base, size, line, clock or index is not a decimal number of its field's width")
     end;
 spec(_Peripheral, {"device", _}) ->
-    bad("a device record has fewer than a path, four numbers and a line mark").
+    bad("a device record has fewer than a path, five numbers and a line mark").
 
 %% A device record's PATH as erx_boot_device_path_valid admits it: `/` and the characters a
 %% device tree allows in names, at most ERX_DEVICE_PATH_MAX bytes, so with its NUL it fits

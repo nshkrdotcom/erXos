@@ -23,17 +23,17 @@ key(Byte) ->
 
 %% The apps row of AbiManifestFixture.packages with max Max: the app
 %% template's packages row is facet 2, not facet 1, granted to the system
-%% domain, and its display and data rows are 3 and 4, not facet 0, which
-%% grants display to the other template.
+%% domain, its display and data rows are 3 and 4, not facet 0, which grants
+%% display to the other template, and its system row is 5.
 apps(Max) ->
-    #{memory => ?MIB, max => Max, packages_row => 2,
+    #{memory => ?MIB, max => Max, packages_row => 2, system_row => 5,
       services => [#{name => <<"display">>, windows => true, row => 3},
                    #{name => <<"data">>, windows => false, row => 4}]}.
 
 %% The names of its principal, domain, services and facet rows, sorted.
 reserved() ->
     [<<"data">>, <<"display">>, <<"kiosk_display">>, <<"packages">>, <<"pkg_admin">>,
-     <<"root">>, <<"spare">>, <<"storage">>].
+     <<"root">>, <<"spare">>, <<"storage">>, <<"system">>].
 
 packages() ->
     [#{name => <<"clock">>, sha256 => key(16#ab), enabled => true},
@@ -64,15 +64,15 @@ refused_test() ->
     ?assertMatch({error, _}, erx_pkg_manifest:system_config(<<>>)).
 
 %% The host's check packs QEMU virt's apps row with the app template's rows it
-%% derives: the template's packages row and one row for each of the row's
-%% services, the display and the network, each a row of its own.
+%% derives: the template's packages and system rows and one row for each of the
+%% row's services, the display and the network, each a row of its own.
 packed_manifest_test() ->
-    {ok, #{apps := #{memory := 137363456, max := 4, packages_row := Packages,
+    {ok, #{apps := #{memory := 137363456, max := 4, packages_row := Packages, system_row := System,
                      services := [#{name := <<"display">>, windows := true, row := Display},
                                   #{name := <<"net">>, windows := false, row := Net}]},
            packages := [#{name := <<"clock">>, enabled := true}, #{name := <<"quotes">>, enabled := false}],
            signers := [{<<"ops">>, _}]}} = erx_pkg_manifest:system_config(manifest("admitted")),
-    ?assertEqual(3, length(lists:usort([Packages, Display, Net]))).
+    ?assertEqual(4, length(lists:usort([Packages, System, Display, Net]))).
 
 library(Max) ->
     {ok, #{template => 0, first => 2, max => Max, memory => ?MIB}}.

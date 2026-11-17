@@ -90,6 +90,15 @@ erx_time_offset(int64_t *offset_ns, bool *cold)
 	return (true);
 }
 
+/* The host's clock is the host's to set (docs/design-time.md, "Phase 1"). */
+int
+erx_time_set_offset(erx_cap_t time_page, uint64_t offset_ns)
+{
+	(void)time_page;
+	(void)offset_ns;
+	return (ERX_ENOTSUP);
+}
+
 /* Read once, as the time page's offset is natively: a later step of the host's clock stays out. */
 static void
 wall_offset_init(void)

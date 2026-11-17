@@ -234,9 +234,12 @@ and the facet rows, each
 its grantee, a configured row, system, or {template, Template} for the
 sessions made from session template Template, the service's name, its server, a
 configured row or system, and the grant's limits: the facet row's
-max_request, in_flight, reductions, period_ns, max_heap_size and queue, and
+max_request, in_flight, reductions, period_ns, max_heap_size and queue, its
+operations as the list of their abi/services names in number order, empty for
+a row of `operations none`, and
 each parameter the row states under its abi/services name, an integer as an
-integer, a boolean as true or false, and text or bytes as a binary
+integer, a boolean as true or false, text or bytes as a binary, and a device
+reference as the index of its row in the manifest's device table
 (docs/design-system.md, "Facets a configured domain serves").
 """.
 -spec configured() -> {ok, #{host := binary(), domains := [configured()],

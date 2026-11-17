@@ -1,7 +1,7 @@
 # TF-A's Raspberry Pi 4 BL31 on QEMU's raspi4b model
 
 A point-in-time record of the experiment of stage (a), package 1 of
-[plan.md](plan.md#1b-i-the-raspberry-pi-4-on-the-stopgap), "BL31 on the
+[plan.md](plan.md#1b-i-the-raspberry-pi-4-on-fiasco), "BL31 on the
 model". It was run on 2026-11-12 on an Apple Silicon macOS host with QEMU
 11.1.3 under TCG, TF-A v2.15.0 (the tag commit `da738d5e`) and Homebrew's
 LLVM (clang and lld) as the compiler, with Homebrew's GNU sed, `dtc` and

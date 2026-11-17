@@ -336,7 +336,8 @@ module Erx
       @fiasco_audit ||= begin
         cross = CrossToolchain.find
         external = FiascoProvenance.external_registry(root: @root, cross: cross, compiler: @compiler, runner: @runner)
-        auditor = FiascoProvenance.new(root: @root, runner: @runner, external: external, compiler: @compiler, cross: cross)
+        auditor = FiascoProvenance.new(root: @root, runner: @runner, kind: BuildKind::DEVELOPMENT, external: external,
+                                        compiler: @compiler, cross: cross)
         fresh = auditor.audit
         [external, fresh, auditor.input_catalog].freeze
       end

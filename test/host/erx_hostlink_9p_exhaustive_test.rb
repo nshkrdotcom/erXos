@@ -18,9 +18,9 @@ class ErxHostlink9pExhaustiveTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   # The application holding the core, compiled whole (ErlangBuild), the generated grammar
   # (in build/gen, outside the applications) and the enumeration.
-  APPLICATIONS = %w[erx erx_hostlink].freeze
+  APPLICATIONS = %w[erx erx_uart].freeze
   TESTS = %w[build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl test/erlang/erx_hostlink_9p_exhaustive.erl].freeze
-  CORE = 'erlang/apps/erx_hostlink/src/erx_hostlink_9p.erl'
+  CORE = 'erlang/apps/erx_uart/src/erx_hostlink_9p.erl'
   DEADLINE_SECONDS = '600'
 
   # Each fault: the property it must break, as the failures that report it, the text of the

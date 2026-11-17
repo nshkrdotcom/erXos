@@ -21,13 +21,20 @@ require_relative '../fixtures/erlang_build'
 # without its public half, which ssh_file cannot read back as a host key.
 class ErxSshDevTest < Minitest::Test
   SSH = File.join(ErlangBuild::ROOT, 'otp/lib/ssh/src')
-  APPLICATIONS = %w[erx erx_shell erx_session].freeze
+  APPLICATIONS = %w[erx erx_shell erx_ssh_line erx_session].freeze
   TESTS = %w[test/erlang/erx_ssh_dev_tests.erl].freeze
   DEV = 'erlang/apps/erx_session/src/erx_ssh_dev.erl'
   Fault = Data.define(:name, :source, :from, :to)
   FAULTS = [
     Fault.new(name: 'a callback for every user name', source: DEV,
               from: 'is_auth_key(Key, ?USER, Options) ->', to: 'is_auth_key(Key, _, Options) ->'),
+    Fault.new(name: 'a key not on the card accepted', source: DEV,
+              from: 'lists:member(ssh_file:encode(Key, ssh2_pubkey), medium_keys(Medium()))',
+              to: '(medium_keys(Medium()) =/= [])'),
+    Fault.new(name: 'a card file of any length read as blobs', source: DEV,
+              from: 'when byte_size(Bytes) rem ?BLOB_SIZE =:= 0,', to: 'when true,'),
+    Fault.new(name: 'exec run', source: DEV,
+              from: '{ssh_cli, {erx_ssh_dev_channel, [Open]}},', to: '{exec, erlang_eval},'),
     Fault.new(name: 'any build kind taken for a development one', source: 'erlang/apps/erx/src/erx_build.erl',
               from: '[_Platform, Kind] -> kind(Kind) =:= {ok, development};', to: '[_Platform, _Kind] -> true;'),
     Fault.new(name: 'an Ed25519 private key without its public half', source: 'otp/lib/ssh/src/ssh_message.erl',

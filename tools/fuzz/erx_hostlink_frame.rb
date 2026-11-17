@@ -21,7 +21,7 @@ module ErxHostlinkFrameFuzz
   ROOT = File.expand_path('../..', __dir__)
   # The generated sources and headers named here are in build/gen.
   Erx::Generated.ensure(root: ROOT)
-  SOURCE_DIR = File.join(ROOT, 'erlang/apps/erx_hostlink/src')
+  SOURCE_DIR = File.join(ROOT, 'erlang/apps/erx_uart/src')
   FRAME_SOURCE = File.join(SOURCE_DIR, 'erx_hostlink_frame.erl')
   STREAM_SOURCE = File.join(SOURCE_DIR, 'erx_hostlink_stream.erl')
   SOURCES = [File.join(ROOT, 'test/erlang/host_bytes/erx_bytes.erl'), File.join(SOURCE_DIR, 'erx_hostlink_payload.erl'),

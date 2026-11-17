@@ -572,6 +572,11 @@ module Erx
       # Service interfaces have a namespace of their own, as their constants'
       # service_ prefix says, so an interface may share its name with a right
       # or a type (the inspect interface and the inspect right).
+      # How a service's grants are served, which every interface states: message, a facet
+      # in front of the service's process, or tree, an erx_fs grant of one tree
+      # (docs/design-abi.md, "Services, facets and their parameter schemas").
+      SERVED_AS = %w[message tree].freeze
+
       def services(declarations, types:)
         seen_numbers = {}
         seen_names = {}
@@ -588,6 +593,7 @@ module Erx
           parameters = {}
           quantities = {}
           liveness = nil
+          served_as = nil
           declaration.members.each do |line|
             keyword, *words = line.words
             case keyword
@@ -601,6 +607,11 @@ module Erx
               Model.arity(line, 2)
               line.fail!('duplicate liveness marker') if liveness
               liveness = words[0]
+            when 'served_as'
+              Model.arity(line, 2)
+              line.fail!('duplicate served_as') if served_as
+              line.fail!("served_as must be #{SERVED_AS.join(' or ')}") unless SERVED_AS.include?(words[0])
+              served_as = words[0]
             when 'parameter'
               key, id, kind, cardinality, *bound = words
               allowed = %w[u64 i64 boolean identifier namespace_path domain principal device bytes member]
@@ -608,6 +619,12 @@ module Erx
               Syntax.identifier(key, line: line)
               count = cardinality == 'set' ? Model.positive(bound.shift, line, maximum: 65536) : 1
               line.fail!('unknown parameter cardinality') unless %w[one optional set].include?(cardinality)
+              # A set's elements are packed in ascending order, which only an unsigned scalar has as
+              # its packed value, so a set is of u64 alone until a consumer needs another kind.
+              line.fail!('a parameter set is of u64') if cardinality == 'set' && kind != 'u64'
+              # MAX_COUNT 1 would be optional spelled another way; a set's most is above 1, which
+              # tells a set from a single value wherever only the most is at hand (erx_service_parameters).
+              line.fail!('a parameter set holds at least two values') if cardinality == 'set' && count < 2
               marker = bound.index('checked_by')
               line.fail!('parameter requires one checked_by helper') unless marker && marker == bound.size - 2
               helper = Syntax.identifier(bound.last, line: line)
@@ -627,11 +644,17 @@ module Erx
             end
           end
           declaration.fail!('liveness must name a declared operation') if liveness && !operations.key?(liveness)
+          declaration.fail!('service must state served_as') unless served_as
+          # A tree's operations are its protocol's own messages, which no facet row names
+          # (abi/services/files.txt), so the boot view never checks a tree grant's.
+          declaration.fail!('a service served as a tree declares no operation') if served_as == 'tree' && operations.any?
+          checkers = parameters.values.map { |parameter| parameter.fetch(:helper) }.uniq
+          declaration.fail!('a service\'s parameters name one checked_by helper') if checkers.size > 1
           Model.unique_values(operations, label: 'operation', line: declaration.line)
           Model.unique_values(parameters.transform_values { |value| value.fetch(:number) }, label: 'parameter', line: declaration.line)
           { name: name, number: number,
             operations: operations.freeze, parameters: parameters.freeze, quantities: quantities.freeze,
-            liveness: liveness }.freeze
+            liveness: liveness, served_as: served_as, checked_by: checkers.first }.freeze
         end.freeze
       end
 

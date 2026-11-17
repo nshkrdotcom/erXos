@@ -4,20 +4,20 @@
 -module(erx_starter).
 -moduledoc """
 A stub of the start service's `packages/2` for erx_pkg's tests: each
-publication is logged in erx_pkg_medium's table under `published`, and
+publication is logged in the case's public ETS table erx_pkg_stubs under `published`, and
 answered `{error, eio}` while `fail_publish` is set.
 """.
 -export([packages/2]).
 
 packages(Lifetime, Set) ->
-    case ets:lookup(erx_pkg_medium, fail_publish) of
+    case ets:lookup(erx_pkg_stubs, fail_publish) of
         [{fail_publish, true}] ->
             {error, eio};
         _ ->
-            Log = case ets:lookup(erx_pkg_medium, published) of
+            Log = case ets:lookup(erx_pkg_stubs, published) of
                       [{published, Sets}] -> Sets;
                       [] -> []
                   end,
-            ets:insert(erx_pkg_medium, {published, Log ++ [{Lifetime, Set}]}),
+            ets:insert(erx_pkg_stubs, {published, Log ++ [{Lifetime, Set}]}),
             ok
     end.

@@ -118,6 +118,9 @@ typedef struct erx_dom_lib {
 					 * ERX_MF_NONE for none */
 	erx_mf_system_image_t system_image; /* the manifest's system_image row,
 					 * for that page; unused without one */
+	bool		 record_volume;	/* that row also holds the manifest's
+					 * record_volume window, which its
+					 * -erx_record system_image names */
 	uint64_t	 build_id;	/* the boot image's build identifier, as
 					 * -erx_record build gives it, for each boot page */
 	uint64_t	 hwcap;		/* the system's boot page's CPU feature words, */
@@ -319,6 +322,7 @@ typedef struct erx_dom_boot_sizes {
 	uint32_t	ndevices;	/* the manifest's device rows */
 	uint32_t	nservices;	/* its service rows */
 	uint32_t	nfacets;	/* its facet rows */
+	uint32_t	noperations;	/* its facets' operation rows */
 	uint32_t	nparameters;	/* its facets' parameter rows */
 } erx_dom_boot_sizes_t;
 
@@ -339,6 +343,7 @@ typedef struct erx_dom_boot_tables {
 	erx_dom_device_t	*device_records; /* ndevices, entry for entry */
 	erx_dom_service_t	*services;	/* nservices */
 	erx_dom_facet_t		*facets;	/* nfacets */
+	const erx_service_operation_t **operations; /* noperations */
 	erx_dom_parameter_t	*parameters;	/* nparameters */
 } erx_dom_boot_tables_t;
 

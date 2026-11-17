@@ -4,8 +4,8 @@
 -module(erx_dashboard_view_tests).
 -moduledoc """
 EUnit cases of the dashboard's pure parts: the formatters of
-erx_dashboard_view, the tree it builds before and after a board, which
-the widget format must accept, and the sample source's one board.
+erx_dashboard_view, and the tree it builds before and after a board,
+which the widget format must accept.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -16,6 +16,10 @@ clock_test() ->
     ?assertEqual(<<"09:41">>, erx_dashboard_view:clock(?TIME)),
     ?assertEqual(<<"00:00">>, erx_dashboard_view:clock({{1970, 1, 1}, {0, 0, 59}})),
     ?assertEqual(<<"23:59">>, erx_dashboard_view:clock({{2026, 1, 1}, {23, 59, 0}})).
+
+minute_test() ->
+    ?assertEqual(<<"2026-11-15 09:41">>, erx_dashboard_view:minute({{2026, 11, 15}, {9, 41, 7}})),
+    ?assertEqual(<<"1970-01-01 00:00">>, erx_dashboard_view:minute({{1970, 1, 1}, {0, 0, 59}})).
 
 date_test() ->
     ?assertEqual(<<"Sunday, 15 November 2026">>, erx_dashboard_view:date(?TIME)),
@@ -49,7 +53,7 @@ change_test() ->
 %% Every tree the view builds is one the widget format accepts.
 tree_is_valid_test() ->
     [?assertEqual(ok, erx_ui_schema:validate(erx_dashboard_view:tree(Model), 1024))
-     || Model <- [model(none), model(erx_dashboard_sample:board())]].
+     || Model <- [model(none), model(board())]].
 
 waiting_panel_test() ->
     Texts = texts(erx_dashboard_view:tree(model(none))),
@@ -58,7 +62,7 @@ waiting_panel_test() ->
     ?assert(lists:member(<<"Sunday, 15 November 2026">>, Texts)).
 
 board_panel_test() ->
-    Board = erx_dashboard_sample:board(),
+    Board = board(),
     Tree = erx_dashboard_view:tree(model(Board)),
     Texts = texts(Tree),
     ?assert(lists:member(<<"Sample data, not live prices">>, Texts)),
@@ -70,16 +74,18 @@ board_panel_test() ->
 
 %% The view is a function of its model alone.
 same_model_same_tree_test() ->
-    Model = model(erx_dashboard_sample:board()),
+    Model = model(board()),
     ?assertEqual(erx_dashboard_view:tree(Model), erx_dashboard_view:tree(Model)).
 
-sample_sends_its_board_once_test() ->
-    ?assertEqual(ignore, erx_dashboard_sample:start_link(self())),
-    Board = erx_dashboard_sample:board(),
-    receive {erx_dashboard_board, Sent} -> ?assertEqual(Board, Sent)
-    after 0 -> ?assert(false)
-    end,
-    receive Extra -> ?assertEqual(none, Extra) after 0 -> ok end.
+%% A board of round, made-up prices.
+board() ->
+    #{credit => <<"Sample data, not live prices">>,
+      quotes => [#{symbol => <<"BTC">>, name => <<"Bitcoin">>,
+                   price => 64000.0, change => 1.25, decimals => 2},
+                 #{symbol => <<"ETH">>, name => <<"Ether">>,
+                   price => 3200.0, change => -0.5, decimals => 2},
+                 #{symbol => <<"SPX">>, name => <<"S&P 500">>,
+                   price => 5600.0, change => 0.0, decimals => 2}]}.
 
 model(Board) ->
     #{time => ?TIME, board => Board}.

@@ -17,6 +17,7 @@
 #include "erx/core/dt.h"
 #include "erx/release.h"
 #include "erx/watchdog.h"
+#include "liberx/backend/fiasco/end_how.h"
 #include "liberx/backend/fiasco/entropy.h"
 
 /*
@@ -186,11 +187,14 @@ int	erx_machine_end(uint64_t res, uint32_t how);
 
 /*
  * The end path (docs/design-stopgap.md, "The end path"): the first caller wins
- * and the rest sleep. With a fault it first prints the crash frame. Takes no lock.
+ * and the rest sleep. With a fault, the root's, it first prints the crash frame; the
+ * cause decides how the machine ends (erx_fiasco_end_how). Takes no lock.
  */
-_Noreturn void	erx_fiasco_end(const erx_crash_fault_t *fault, uint32_t how);
+_Noreturn void	erx_fiasco_end(erx_fiasco_end_cause_t cause, const erx_crash_fault_t *fault);
 /* The same for a missed pet, on the watchdog's own thread. */
 _Noreturn void	erx_fiasco_end_watchdog(const erx_watchdog_end_t *end);
+/* Whether an end has been taken, after which the board's watchdog is written no more (erx_fiasco_pm_wdt_step). */
+bool	erx_fiasco_end_taken(void);
 /* A task's fault: its crash frame on the console, with the machine going on. Only the service calls it. */
 void	erx_fiasco_task_crash_write(const erx_crash_fault_t *fault);
 

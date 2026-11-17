@@ -18,6 +18,7 @@
 # A facet row the build derives takes the quantities below, the files interface's,
 # since a windows grant is an erx_fs grant served the same way.
 service windows 8
+  served_as tree
   parameter windows 1 u64 optional range 1 4096 checked_by windows_grant
   parameter pixels 2 u64 optional range 4096 1099511627776 checked_by windows_grant
   parameter clipboard 3 boolean optional boolean checked_by windows_grant

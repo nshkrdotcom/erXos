@@ -22,6 +22,7 @@
 #include "liberx/backend/api.h"
 #include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/vm.h"
+#include "liberx/backend/runtime_entry.h"
 
 int
 erx_object_info(uint64_t object, uint32_t topic, uint64_t index, void *window, uint64_t size)
@@ -38,6 +39,15 @@ int
 erx_group_info(uint64_t group)
 {
 	(void)group;
+	return (ERX_ENOTSUP);
+}
+
+/* The wall clock is the system domain's to set, and no other's (docs/design-time.md, "Phase 1"). */
+int
+erx_time_set_offset(erx_cap_t time_page, uint64_t offset_ns)
+{
+	(void)time_page;
+	(void)offset_ns;
 	return (ERX_ENOTSUP);
 }
 

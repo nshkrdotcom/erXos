@@ -25,7 +25,7 @@ module Erx
     START = 'spawn(fun()->P=filename:join([[47],tmp,files_probe]),' \
             'ok=file:write_file(P,[(N*7)rem(256)||N<-lists:seq(1,100000)]),{ok,R}=file:read_file(P),' \
             'io:put_chars([atom_to_list(files_probe_md5),32,binary:encode_hex(erlang:md5(R)),10])end).'
-    ARGUMENTS = ['-eval', START, '-erx_hostlink', 'files_trees', '[tmp]'].freeze
+    ARGUMENTS = ['-eval', START, '-erx_uart', 'files_trees', '[tmp]'].freeze
     PROBED = /files_probe_md5 (\h{32})/
 
     module_function

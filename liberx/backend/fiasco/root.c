@@ -27,6 +27,7 @@
 #include "erx/abi_reader.h"
 #include "erx/core/boot_handoff.h"
 #include "erx/core/dt.h"
+#include "erx/core/pm_wdt.h"
 #include "erx/explicit_bzero.h"
 #include "erx/pack.h"
 #include "liberx/backend/core/manifest_dma.h"
@@ -75,7 +76,7 @@ static bool root_memory_fits(uint64_t, uint64_t, uint64_t);
 static _Noreturn void root_refuse(const char *);
 static void root_report(const erx_boot_handoff_view_t *, uint32_t);
 static void root_report_manifest(const erx_manifest_view_t *, uint64_t);
-static void root_report_watchdog(const erx_watchdog_config_t *, erx_watchdog_mode_t);
+static void root_report_watchdog(const erx_watchdog_config_t *, erx_watchdog_mode_t, erx_fiasco_board_wdt_t);
 
 void
 erx_fiasco_root_main(void)
@@ -128,13 +129,18 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	const erx_watchdog_config_t config = boot_args->have_watchdog ? boot_args->watchdog :
 	    erx_watchdog_config_default();
 	const erx_watchdog_mode_t mode = boot_args->det ? ERX_WATCHDOG_MODE_DETERMINISTIC : ERX_WATCHDOG_MODE_NORMAL;
+	erx_fiasco_pm_wdt_t board;
+	erx_fiasco_board_wdt_t board_status;
 
-	reason = erx_fiasco_watchdog_start(&config, mode);
+	reason = erx_fiasco_program_watchdog(&root_tree, manifest, &board, &board_status);
+	if (reason != NULL)
+		return (reason);
+	reason = erx_fiasco_watchdog_start(&config, mode, &board);
 	if (reason != NULL)
 		return (reason);
 	root_report(handoff, root_pack.header.nentries);
 	root_report_manifest(manifest, free_pages);
-	root_report_watchdog(&config, mode);
+	root_report_watchdog(&config, mode, board_status);
 	return (NULL);
 }
 
@@ -236,9 +242,14 @@ root_report_manifest(const erx_manifest_view_t *manifest, uint64_t free_pages)
 	erx_fiasco_console_write(line, used);
 }
 
-/* What the watchdog runs with. In deterministic mode the step machine keeps it off, whatever the numbers say. */
+/*
+ * What the watchdog runs with. In deterministic mode the step machine keeps it off, whatever the numbers say.
+ * A manifest that gives the system domain the board's hardware watchdog has a second line: the timeout the
+ * watchdog thread arms it with, off in deterministic mode, or the tree's refusal of its row, after which
+ * the board has none.
+ */
 static void
-root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode)
+root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode, erx_fiasco_board_wdt_t board)
 {
 	char line[ERX_ROOT_LINE_MAX];
 	size_t used = 0;
@@ -255,6 +266,18 @@ root_report_watchdog(const erx_watchdog_config_t *config, erx_watchdog_mode_t mo
 	}
 	root_append(line, &used, "\n");
 	erx_fiasco_console_write(line, used);
+	if (board == ERX_FIASCO_BOARD_WDT_ABSENT)
+		return;
+	used = 0;
+	root_append(line, &used, "erx: root task: board watchdog ");
+	if (mode == ERX_WATCHDOG_MODE_DETERMINISTIC)
+		root_append(line, &used, "off");
+	else if (board == ERX_FIASCO_BOARD_WDT_READY)
+		root_append_decimal(line, &used, ERX_PM_WDT_TIMEOUT_S);
+	else
+		root_append(line, &used, "none: the tree does not confirm its record");
+	root_append(line, &used, "\n");
+	erx_fiasco_console_write(line, used);
 }
 
 static _Noreturn void
@@ -267,5 +290,5 @@ root_refuse(const char *reason)
 	root_append(line, &used, reason);
 	root_append(line, &used, "\n");
 	erx_fiasco_console_write(line, used);
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 }

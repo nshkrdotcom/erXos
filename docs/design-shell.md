@@ -188,7 +188,9 @@ what a terminal needs added:
   with `fn`; here documents with `<<`; redirection by descriptor number
   (`>`, `>>`, `<`, `>[2]file`, `>[2=1]`) and pipes of any descriptor
   (`|`, `|[2]`); `&` for a background job; globbing over the session's
-  namespace; `$status`, `$*`, `$home`, `$prompt`, and `$pid` and `$apid`,
+  namespace; `$status`, `$*`, `$home`, the session's home, where an
+  interactive shell starts ([design-files.md](design-files.md#building-binding-and-mounting),
+  "A user's home"), `$prompt`, and `$pid` and `$apid`,
   the process ids of the shell, which is the command server's 1, and of
   the last program of its last background job, empty when that job
   started none ([design-programs.md](design-programs.md)).
@@ -338,7 +340,7 @@ shell and for `erx:` functions that run commands:
    implements the `erx_cmd` behaviour and declares its name
    (`-erx_command(ps)`): the UNIX utilities `ps`, `echo`, `cat`, `ls`,
    `pwd`, `mkdir`, `rm`, `mv`, `cp`, `grep`, `sort`, `wc`, `uname`,
-   `dmesg`, `true` and `false`, which follow FreeBSD's utilities of the same names
+   `date`, `dmesg`, `true` and `false`, which follow FreeBSD's utilities of the same names
    ([Text commands](#text-commands)), so toybox's applets of those names
    are never built; the screen editor `vi`, which behaves like FreeBSD's
    nvi in its basics ([design-vi.md](design-vi.md)), so toybox's `vi` is
@@ -405,7 +407,9 @@ An Erlang command receives its arguments as binaries, its environment and
 working directory, its three standard streams, each the terminal, a
 file, a pipe end or a neighbouring Erlang stage, and its capabilities: the
 grants of its namespace and its facets. It returns `ok`, a usage error or
-another error; a crash is an error whose reason goes to standard error. A
+another error; a crash is an error whose diagnostic and status say only
+`crashed`, or `killed` past its heap limit, since its reason may carry
+the shell's variables. A
 command declares the facets it uses (`-erx_needs([inspect])`), so one run
 without them fails with `no_facet` before it starts, and its help says
 what it needs. The shell reads the session's facets for each command,
@@ -695,6 +699,12 @@ variables that override a field. The values are erXos's own, so the
 FreeBSD oracle has
 no `uname` case; its tests pin the order, the layout and the values.
 
+**`date [-jnu] [[[[[cc]yy]mm]dd]HH]MM[.SS] [+format]`** writes the wall
+time through a strftime(3) format, or sets it, as FreeBSD's `date` does,
+in UTC, the only zone erXos has. Setting needs the `clock` grant, which
+root's session holds; its forms, conversions and failure paths are
+[design-time.md](design-time.md#setting-the-clock-by-hand)'s.
+
 **`host name [server]`** looks a name or an address up in the DNS, as
 FreeBSD's `host` does, through `inet_res` and the domain's name servers
 ([design-network-stack.md](design-network-stack.md#name-resolution)), or
@@ -772,6 +782,15 @@ the runtime image running this shell's release in program mode
   status, a signal's name ending it as if by that signal, and anything
   else, an error's text among them, exit 1. A script it cannot parse
   writes the parser's diagnostic to its standard error and exits 1.
+
+* **On a tty.** `rc -c` on a tty's channel (an SSH exec) runs its command
+  as one job, started as the command shell starts a job's evaluator, so
+  every process the command starts, `&` jobs included, ends with it: at
+  Ctrl-C, which ends it by `SIGINT`, as FreeBSD's `sh -c` dies of the
+  signal, so the client hears SSH's `exit-signal`, not status 130
+  ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)), at the
+  tty's hangup, and when the command ends, as a UNIX session's processes
+  end with its terminal.
 
 A command for `system` is rc, not sh. The common translations:
 
@@ -981,7 +1000,7 @@ other processes stay stopped
 ([design-programs.md](design-programs.md#job-control)). So `fg` and
 `bg` do the same whatever the entry shows: clearing a mark that is not
 set and lifting a cause a program does not hold change nothing, and the
-table needs no state for a job that is partly held. On the stopgap,
+table needs no state for a job that is partly held. On Fiasco,
 which pauses no space, stopping a job stops only its Erlang commands: the
 shell reports those stopped and names the job's programs, which run on, so
 the job table never shows a running program as stopped
@@ -2327,6 +2346,17 @@ program's table is built from its starter's
 `kill` ([Commands](#commands)); `rc` as a program has rc's builtins and
 `within` ([rc as a program](#rc-as-a-program)).
 
+**The shell's first variables.** The terminal a shell starts on may carry
+`vars`, variables in the evaluator's own form, each name with a list of
+words of at most 256 bytes together (`erx_shell_script:first_vars/1`, which
+checks them once as they arrive). The shell sets them once, as it starts,
+over its own defaults (`$prompt`, `$*`), and never reads `vars` again;
+`rc -c` on a tty takes the same map through the same check. The code that builds the
+terminal chooses every value: a tty of an SSH channel sets only `TERM`,
+to a name `abi/terminal.txt` lists, `vt100` for any other the client
+asked for ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)), so
+no byte a peer sends becomes a variable.
+
 **Interaction with other subsystems.** The console carries the bytes of
 the session's tty
 ([design-live.md](design-live.md#the-tty)); each program's handler
@@ -2397,7 +2427,18 @@ the tree, never adapted ([design.md](design.md#compatibility)).
 
 **Diagnostics.** `jobs` lists each job's stages, programs and state; the
 inspector shows the session's processes and its programs as ports under
-the session; a stage's crash reason, cut at 256 bytes, is its `$status`.
+the session. A crashed stage's `$status` is `crashed`, and one its heap
+limit or its job's end killed is `killed`, never the crash's reason: a
+reason and its stack carry the shell's variables, which must not reach a
+status, a diagnostic or a log. Every process that evaluates the shell's
+source or runs what it calls, a line, a job, a stage, a subshell, a
+backquote, an `&` block, an Erlang command or a program's starter, starts
+through one funnel, `erx_shell_runner:spawn_evaluator/3`, which sets its
+heap limit with no report, ends a crash with a fixed reason, and reads
+any other end, the exit of a linked pump included, as `crashed`, or
+`killed` when the end was a kill; the
+chokepoint check `evaluator-spawns` refuses any other spawn in the
+evaluator's modules.
 
 ## Security
 
@@ -2463,7 +2504,7 @@ remain independent of catalog generation.
 * **Interaction:** line editing, history and completion through a scripted
   terminal; `Ctrl-Z`, `fg`, `bg`, `Ctrl-C` and `kill %N` on a job of
   Erlang commands, of programs, of both, and of programs three generations
-  deep; on the stopgap, `Ctrl-Z` on a job of both, after which the job
+  deep; on Fiasco, `Ctrl-Z` on a job of both, after which the job
   table shows its Erlang commands stopped and its programs running; an
   Erlang command whose helper process the job's stop holds; a stage that
   spawns helpers in a loop while `Ctrl-Z` and then `kill %N` arrive, none

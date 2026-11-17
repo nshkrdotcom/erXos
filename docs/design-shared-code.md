@@ -388,7 +388,7 @@ of what is shared.
 build host, with TCG in deterministic mode (`erx.det=1`) and QEMU's
 semihosting enabled for user mode
 (`-semihosting-config enable=on,target=native,userspace=on`). The image
-holds the stopgap kernel; a small native **build root** that links
+holds the Fiasco kernel; a small native **build root** that links
 `liberx`'s domain library, as the `native_domain` suite's root does
 (`tools/lib/erx/native_domain.rb`, `test/guest/native_domain/guest.c`);
 the `runtimes/emu` file the boot image will carry; and a release of
@@ -410,7 +410,7 @@ naming the offset, the part of the image it lies in and, in a code chunk
 or literal area, the module, which it reads from the written image's
 lists.
 
-**Assumption: semihosting from user mode under the stopgap.** It is not
+**Assumption: semihosting from user mode under Fiasco.** It is not
 verified that the build root, a user-mode task on Fiasco, can make a
 semihosting call. The design assumes that, with `userspace=on`, QEMU's
 TCG translator turns the semihosting instruction into a host call at any
@@ -497,7 +497,7 @@ lies and in every input a domain may vary.
 
 * **Placement.** `liberx` places a space's private mappings, those
   without a fixed address, from a **placement start** that space creation
-  takes. On the stopgap it is where `liberx`'s lowest-free search begins
+  takes. On Fiasco it is where `liberx`'s lowest-free search begins
   (`find_free_range`, `liberx/backend/core/vm_table.c:504-525`); on erXos's
   kernel it is the space's placement base, below which the kernel places
   at the highest free range
@@ -820,8 +820,8 @@ the function a return address lies in, as a stack trace does, which reads
 the function table inside a module's code, and nothing rules that out
 during a swap. On erXos's kernel such a read is harmless, since the swap
 is one mapping call that replaces the image's pages with a copy of the
-same bytes and never leaves the range unmapped. On the stopgap it joins
-the residual of [Phase 1](#phase-1-on-the-stopgap). The purge's release
+same bytes and never leaves the range unmapped. On Fiasco it joins
+the residual of [Phase 1](#phase-1-on-fiasco). The purge's release
 of an image instance runs under code modification permission, after the
 purge has established that no process runs the instance, as stock OTP's
 `erts_free` of the same code does.
@@ -868,7 +868,7 @@ breakpoint BIFs, `{error, {load_failed, Text}}` from `load_nif/2`. On the
 stopgap only, a refusal after the image's pages are released and before
 the copy is in place, or a read of the module's code by a thread that
 blocking thread progress does not stop, ends the domain with a diagnostic
-([Phase 1](#phase-1-on-the-stopgap)). The purge of an image instance
+([Phase 1](#phase-1-on-fiasco)). The purge of an image instance
 reports as usual.
 
 ## Security
@@ -887,7 +887,7 @@ domain's trusted base.
 
 **The build run's semihosting.** Semihosting gives the guest's code the
 host's files with QEMU's own rights. Only the build run enables it, and
-its guest runs only code the same build made from the tree: the stopgap
+its guest runs only code the same build made from the tree: Fiasco
 kernel, the build root, `runtimes/emu` and the installed files of
 `DOMAIN_BASE`. QEMU runs it in a working directory of its own under the
 build tree, and the build root opens one relative name there. No boot
@@ -1000,15 +1000,15 @@ build host, the build run's duration. Adoption's cost, privatising's cost
 and the per-domain cells belong on the performance watch list until it
 runs.
 
-## Phase 1, on the stopgap
+## Phase 1, on Fiasco
 
-The stopgap backend has what the image needs. `erx_vm_map` of a slice
+The Fiasco backend has what the image needs. `erx_vm_map` of a slice
 maps the archive's own pages read-only with `l4_task_map` from the root
-(`docs/design-stopgap.md:519`), so every domain that maps the image shares
-its frames, and the physical saving is real on the stopgap.
+(`docs/design-fiasco.md:519`), so every domain that maps the image shares
+its frames, and the physical saving is real on Fiasco.
 
-**One mapping per module is the stopgap's shape.** The stopgap cannot map
-over a mapping or cut one (`docs/design-stopgap.md:517`), so the domain
+**One mapping per module is Fiasco's shape.** Fiasco cannot map
+over a mapping or cut one (`docs/design-fiasco.md:517`), so the domain
 library maps the header and lists with one mapping, each module's code
 chunk with one mapping of its own, and the literal part with one: about
 250 mapping records for the image, well under the 65,536 a space allows
@@ -1021,12 +1021,13 @@ of the prepared copy over the module's page range, which replaces the
 image's pages there or fails and leaves them, since a range call is
 planned whole, its allocations made and its charge taken before anything
 changes ([design-kernel.md](design-kernel.md#overview), the row for range
-calls). On the stopgap the copy is a memory object of the domain's
+calls). On Fiasco the copy is a memory object of the domain's
 budget, created and filled through a scratch mapping before the swap, so
 it is funded before anything is released; the swap then releases the
 module's mapping, reserves its range again and maps the object there.
 Between the release and the new mapping the module's code is unmapped,
-and that window is a residual of the stopgap, recorded and not worked
+and that window is a published downside of Fiasco (FD34 of
+[design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)), not worked
 around, with two ways to end the domain: a refusal at either of the last
 two steps, which cannot be undone in user mode, so the runtime ends the
 domain with a diagnostic naming the module; and a read of the module's
@@ -1035,11 +1036,11 @@ scheduler or an async thread, which faults ([Concurrency](#concurrency)).
 erXos's kernel has no step between.
 
 **Purging.** Releasing an image instance's page range is releasing the
-module's whole mapping on the stopgap, and a range release on erXos's
+module's whole mapping on Fiasco, and a range release on erXos's
 kernel.
 
-The stopgap's pool reports a domain's use as partial, with its reporter
-named, and the inspector shows it so.
+The Fiasco backend's pool reports a domain's use as partial, with its
+backend reporter named, and the inspector shows it so.
 
 ## The executable's own pages
 
@@ -1049,7 +1050,7 @@ maps the read-only and read-execute segments from the boot archive's own
 pages, through one slice per entry that the root keeps, charged to the
 root, and copies only the writable segments into each space, as the
 `erx_image_slice` and `erx_image_map` row of
-[design-stopgap.md](design-stopgap.md) says. Every domain that runs
+[design-fiasco.md](design-fiasco.md) says. Every domain that runs
 `runtimes/emu` holds one physical copy of its text and read-only data.
 
 The two fit together without touching:
@@ -1187,8 +1188,8 @@ its seeds stay local.
   the other keeps running. Seeded fault: the domain library maps the image
   with read and execute; the inspector then shows execute and the test
   fails. That a slice is never writable is the slice calls' own property
-  on both kernels (on the stopgap, a write right on a slice is
-  `ERX_ERIGHTS`, `docs/design-stopgap.md:519`), tested with them, not
+  on both kernels (on Fiasco, a write right on a slice is
+  `ERX_ERIGHTS`, `docs/design-fiasco.md:519`), tested with them, not
   here.
 * **Tracing is private and stock.** Domain A sets a local trace pattern on
   a function of an imaged module that a looping process in A calls
@@ -1216,9 +1217,9 @@ its seeds stay local.
   modules prepared before the refusal are then set and the test fails.
 * **A failed swap.** A test hook refuses the swap's mapping. On erXos's
   kernel `trace_pattern` raises `system_limit` and the module stays
-  read-only and runs; on the stopgap the domain ends with the diagnostic
+  read-only and runs; on Fiasco the domain ends with the diagnostic
   naming the module, and B runs on. Seeded fault: the runtime returning
-  `system_limit` and resuming on the stopgap; the next call into the
+  `system_limit` and resuming on Fiasco; the next call into the
   module then faults without the diagnostic and the test fails.
 * **Hot loading is private.** A probe module of `DOMAIN_BASE`'s test build
   returns 1; A loads a version returning 2, B still gets 1. Seeded fault:
@@ -1400,7 +1401,7 @@ collector.
   of its runtime limits.
 * [design-kernel.md](design-kernel.md): the boot image and its slices,
   virtual memory and placement, copy-on-write children, K4 and K8.
-* [design-stopgap.md](design-stopgap.md): the call table of Phase 1, and
+* [design-fiasco.md](design-fiasco.md): the call table of Phase 1, and
   `erx_image_map`, which shares the executable's read-only segments.
 * [design-live.md](design-live.md): the host link, its transports and
   their estimated throughput.

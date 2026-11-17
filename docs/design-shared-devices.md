@@ -378,12 +378,13 @@ under `erx_uart_sup`, `one_for_one`, of **line groups**, one for each
 interrupt line their UARTs use, each a `rest_for_one` supervisor as the
 supervision rule above has it: the line's owner first when the line is
 shared, which `erx_irq_line:owners/1` computes from the records of the
-UARTs on it, then the host link if its UART is on the line, then each
-line tree on it, each starting its own driver, which joins the owner. So
-the host link's and the line trees' UARTs may share a line, a line has
-one binder whichever services drive it, an owner's end restarts exactly
-the services on its line, and a failure on one line restarts nothing on
-another. The manifest check refuses a console UART that shares a line
+UARTs on it, then the line's services, a `one_for_one` supervisor of the
+host link if its UART is on the line and each line tree on it, each
+starting its own driver, which joins the owner. So the host link's and
+the line trees' UARTs may share a line, a line has one binder whichever
+services drive it, an owner's end restarts exactly the services on its
+line, one service's end restarts no other, and a failure on one line
+restarts nothing on another. The manifest check refuses a console UART that shares a line
 with any other UART of the system domain (property 8 of
 [design-system.md](design-system.md#the-manifest)): the console would
 start a second owner of the line, whose bind would fail. On the
@@ -405,9 +406,9 @@ mapping of its own, during boot and at a panic or an end, and uses no
 interrupt ([design-platforms.md](design-platforms.md#uarts)), so neither
 a shared page nor a shared line reaches it.
 
-On the stopgap the root hands the kernel log to the console when the
+On Fiasco the root hands the kernel log to the console when the
 console service first takes it, not when a page is first mapped
-([design-stopgap.md](design-stopgap.md#the-console)), so a sibling's
+([design-fiasco.md](design-fiasco.md#the-console)), so a sibling's
 mapping of the console's page hands nothing over.
 
 ## Interfaces

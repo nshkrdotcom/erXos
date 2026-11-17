@@ -6,6 +6,7 @@ require 'fileutils'
 require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/native_irq'
+require_relative '../../tools/lib/erx/native_kernel_trap'
 require_relative '../../tools/lib/erx/native_semaphore_race'
 require_relative '../../tools/lib/erx/native_threads'
 require_relative '../../tools/lib/erx/native_task'
@@ -29,6 +30,7 @@ class NativeSeedsTest < Minitest::Test
   SERVICE = 'liberx/backend/fiasco/service.c'
   WATCHDOG = 'liberx/backend/fiasco/watchdog_thread.c'
   TASK = 'liberx/backend/fiasco/service_task.c'
+  END_PATH = 'liberx/backend/fiasco/end.c'
   PARK = 'liberx/backend/core/park_table.c'
   IRQ = 'liberx/backend/fiasco/irq.c'
   DISPATCHER = 'liberx/backend/fiasco/park.c'
@@ -57,6 +59,8 @@ class NativeSeedsTest < Minitest::Test
                                                    suite: :threads, cpus: 1, expected: /failed_start FAILED/),
     'the watchdog never ends the machine' => Seed.new(file: WATCHDOG, from: "\t\tif (step.action == ERX_WATCHDOG_END)\n\t\t\terx_fiasco_end_watchdog(&step.end);\n", to: '',
                                                       suite: :watchdog, cpus: 1, expected: /UNCAUGHT/),
+    'a missed pet powers off' => Seed.new(file: END_PATH, from: 'machine_end(ERX_FIASCO_END_PET);',
+                                          to: 'machine_end(ERX_FIASCO_END_ASKED_OFF);', suite: :watchdog, cpus: 1, expected: /did not end by a reset/),
     'the read-write alias mapped read-execute' => Seed.new(file: 'liberx/backend/core/vm_table.c', from: 'addr + done, prot);', to: 'addr + done, ERX_PROT_RX);',
                                                            suite: :task, cpus: 1, expected: /service FAILED/),
     'the thread deletion skipped' => Seed.new(file: TASK, from: "\t\t\ttask_delete(erx_fiasco_task_thread_cap(task, index));\n", to: "\t\t\tcontinue;\n",
@@ -99,6 +103,15 @@ class NativeSeedsTest < Minitest::Test
   def test_an_up_held_across_a_timed_down
     ran = Erx::NativeSemaphoreRace::Run.new(root: ROOT).call(accels: %w[hvf], cpus: [4], build: true)
     assert_equal %w[hvf-4cpu], ran.keys
+  end
+
+  # A seed of the kernel's own: a release-configuration kernel that loads from an
+  # unmapped address in kernel mode must panic once and end the machine through PSCI,
+  # which a kernel that kills the faulting thread and returns never does.
+  def test_a_kernel_trap_ends_a_release_kernel
+    serial = File.binread(Erx::NativeKernelTrap::Run.new(root: ROOT).call(accel: 'hvf', build: true))
+    assert_equal({ trap_dumps: 1, panics: 1 },
+                 { trap_dumps: serial.scan('EXCEPTION:').size, panics: serial.scan('Panic: kernel trap').size })
   end
 
   SEEDS.each do |name, seed|

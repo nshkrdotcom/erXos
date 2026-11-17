@@ -156,9 +156,9 @@ Decisions every reader of this document needs:
   fault costs that session and no other. Native code of unknown
   provenance, LVGL among it, runs in a sub-space of the session that
   uses it.
-* **Nothing paints without a change or a transition a change started.**
-  Every byte that reaches a panel follows from a client's present of a
-  changed rectangle or from a change of the windows' geometry, and a
+* **Nothing paints between two changes, except the frames of a transition a change started.**
+  A change is a client's present of a changed rectangle or a change of
+  the windows' geometry: every byte that reaches a panel follows from one, and a
   renderer presents only for a change of its tree or for the frames of a
   transition that change started, which interpolates until its deadline,
   within the theme's bound, and ends with one final present
@@ -269,7 +269,8 @@ is not driven by this design, which says where each attaches
     check.
 12. Drivers are Erlang processes over the device shim; the pixel work is
     per-byte C; nothing else of the display stack is native, apart from
-    LVGL as a stopgap renderer.
+    LVGL as a stopgap renderer, which a release ships under
+    [its release contract](#lvgls-release-contract).
 13. An application chooses by name which of its displays a UI opens on,
     with a default its session sets; with no display it gets a stated
     error at once, and when a display goes away each UI on it reports its
@@ -434,7 +435,7 @@ that one module that one name and refuses it in any other.
 | **G3.** What a client makes the display domain spend is bounded by its grant | memory: the grant's `pixels` is the size of the client's pixel area, charged when the connection is made and never grown, and its `windows` bounds the client's window processes, each of which holds one present, at most 16 rectangles, a label and at most 4 KiB of pending `mouse` and of pending `kbd`, and a grant that carries `clipboard` has at most one copy of at most `windows_clipboard_bytes` while a fid is open for writing; the display holds no image, font or tree of a client; a write carries at most the file protocol's 64 KiB, and a `ctl` or `wctl` line at most 1,024 bytes; `erx_screen` never waits on the driver, so its mailbox drains while a frame is with the device, and what it holds meanwhile is state, not a queue: the newest layout, which replaces the one before, and at most one waiting present for each live window, dropped when the window ends ([The screen](#the-screen-and-its-one-path-to-the-device)). CPU: a window has one present in flight; `erx_screen` gathers the presents that arrive while the device is busy into one frame and copies for each window at most its present's 16 rectangles, each clipped to the window's visible region, once a frame, so a client that presents as fast as it is answered costs one such copy for each frame of the device and delays no other window by more | a buffer the display allocates for a client; a window with two presents composed in one frame; a second copy for one grant; an unbounded queue; a layout kept for each change instead of the newest; a waiting present kept after its window's end; a call to the driver that blocks `erx_screen`; a layout change that asks a client for work | a client that makes windows past its quota, refused with `EDQUOT`, with the domain's memory unchanged; against a driver model that never answers, a client that writes 100,000 `wctl` moves and makes and removes 100,000 windows leaves `erx_screen`'s message queue empty between messages and its heap within the bound computed from the windows quota, where a seeded `erx_screen` that calls the driver synchronously, or that keeps every layout, fails the bound; a client that floods presents from one window while another window's one present is answered within two frames, where a seeded window process that sends its next present before the last is answered fails it; the queue bounds of the data model |
 | **G4.** A presentation grants nothing | a presentation is a type and a canonical text; the terminal emulator's only actions on one are to insert its text as keyboard input and to highlight the presentations of the types an input context names; a widget's only action is the `{select, Type, Value}` event to its application; neither carries a facet, a grant or a capability, and the command that then runs is checked by the shell's facets as any typed command is ([Authority](design.md#authority)) | a terminal that calls a service for a clicked link; a widget server that performs the action a presentation names | a session without an inspect facet clicks a pid presentation and the inserted `i` command fails with `no_facet`; the link parser's fuzz target; a source check that `erx_term` and `erx_ui_server` call no facet |
 | **G5.** Attributed text in a window is displayed only through the line escape, and a program's output reaches its terminal window unchanged | a window's label, a widget's `present` text and a widget's text drawn from a record value are escaped by the displayer with `erx_text:escape_line/1` ([Attributed text](design-live.md#attributed-text)): the menu in the display domain, a renderer in the session; the terminal emulator takes its bytes from a tty, which changes nothing but what `termios` says (V1), and interprets them as a terminal does | a label drawn raw; a terminal emulator that filters a program's bytes | the attributed-text test corpus of design-live sent as a label, as a `present` text and as a record value in a widget; V1's byte test with a terminal window in place of the serial line |
-| **G6.** Nothing paints without a change or a transition a change started | the only path to the device is `erx_screen`, which composes on a window's present and on a change of the layout, and repaints from the buffers it already maps when the driver restarts or the panel wakes; the driver pushes only the rectangles it is given; no process of the display domain has a redraw timer; a renderer draws only for a change of its tree and for the frames of a transition that change started, each declared in the theme with a duration the generator bounds ([Motion](design-desktop-programs.md#motion)): the Erlang renderer has no timer and draws a transition's next frame at the answer of its last present, interpolating up to the transition's deadline, its start plus its duration, and ends it with one final present of its end state at the first answer at or after the deadline, and the LVGL program, whose only animations are the theme's transitions, blocks on its standard input until a record arrives or its next LVGL timer is due, which is only until a transition's deadline | a periodic repaint; a push of the whole screen for a small change; a transition that restarts at its end, or presents again after its final present; an LVGL timer that fires with no change and no transition before its deadline | an idle display for one minute makes no device request, counted at the driver, on the desktop and on a kiosk under LVGL, where a seeded animation in the LVGL build fails it; a press on a button under each renderer, against a window model that answers each present at once, at irregular times, or 300 ms late, makes presents only up to the first answer at or after the `press` deadline, the last of them drawing the end state, and none after, where a seeded transition that starts again at its end fails it, and a seeded renderer that stops at the deadline without a final present leaves the node short of its end state; a one-pixel change makes exactly one push of one rectangle; moving a window pushes exactly the area whose content changed |
+| **G6.** Nothing paints between two changes, except the frames of a transition a change started | the only path to the device is `erx_screen`, which composes on a window's present and on a change of the layout, and repaints from the buffers it already maps when the driver restarts or the panel wakes; the driver pushes only the rectangles it is given; no process of the display domain has a redraw timer; a renderer draws only for a change of its tree and for the frames of a transition that change started, each declared in the theme with a duration the generator bounds ([Motion](design-desktop-programs.md#motion)): the Erlang renderer has no timer and draws a transition's next frame at the answer of its last present, interpolating up to the transition's deadline, its start plus its duration, and ends it with one final present of its end state at the first answer at or after the deadline, and the LVGL program, whose only animations are the theme's transitions, blocks on its standard input until a record arrives or its next LVGL timer is due, which is only until a transition's deadline | a periodic repaint; a push of the whole screen for a small change; a transition that restarts at its end, or presents again after its final present; an LVGL timer that fires with no change and no transition before its deadline | between two changes the display makes no device request, counted at the driver, on the desktop and on a kiosk under LVGL (the dashboard, whose tree changes once a minute with its clock, between two of its ticks), where a seeded animation in the LVGL build, or a seeded timer that repaints with no change of the tree, fails it; a press on a button under each renderer, against a window model that answers each present at once, at irregular times, or 300 ms late, makes presents only up to the first answer at or after the `press` deadline, the last of them drawing the end state, and none after, where a seeded transition that starts again at its end fails it, and a seeded renderer that stops at the deadline without a final present leaves the node short of its end state; a one-pixel change makes exactly one push of one rectangle; moving a window pushes exactly the area whose content changed |
 | **G7.** A widget never fabricates | a `present` property and a value drawn from a record keep their `attr()` status; the renderer shows every status other than `ok` as its token, as `erx_render` does (V2) | a widget that drops a status | the status tests of design-live run through a widget tree, for each status and reporter |
 | **G8.** What a program writes to a terminal window costs bounded memory, and nothing of it comes back as input | `erx_vt`'s state is bounded by its size and the constants of [Bounds](#bounds): parameters, intermediates and strings are capped, the scrollback is capped in cells and the link table in entries, and an endless sequence costs no memory; its only replies are DA's and DSR's fixed forms, whose variable parts are numbers it computes; it is Erlang, so a fault in it ends one terminal process, not its session's runtime | a buffer that grows with a sequence; a report that echoes text, such as a title report; a native parser of program output | the fuzz target asserts the state's size against the bound computed from the size and the constants, where a seeded scrollback without its cap fails it; the reply test sends every query form, a title report among them, and checks every reply against the three forms, where a seeded title report fails it; the chokepoint check that only `erx_vt` interprets a terminal's output |
 | **G9.** The display domain interprets nothing a client drew | a client's bytes reach the display domain as the file protocol's terms, which the funnel and the protocol's grammar check, as one `ctl` or `wctl` line, which a pure parser reads, as a label or the clipboard's bytes, which are kept and never parsed, and as pixels, which `erx_memdraw` copies between images over rectangles the display computed; the display release holds no draw decoder, no `Y` or PNG decoder, no font reader, no widget schema and no renderer, and has no sub-space | a decoder of client bytes in the display release; a NIF of it that takes a client's binary and parses it | an xref check that the display release contains none of the session's draw, font, picture and widget modules, with a seeded dependency failing it; the build check over the release's NIFs (Chokepoints) |
@@ -882,7 +883,7 @@ byte fill of whole pages, and a drawing call for what is not drawing.
 
 The system domain therefore never deletes an area that a program still
 maps, on erXos's kernel, where memory mapped from a deleted object
-faults, and on the stopgap, whose delete removes every mapping of the
+faults, and on Fiasco, whose delete removes every mapping of the
 object (`erx_fiasco_vm_object_revoke`). A program whose display dies
 goes on writing its buffer without a fault until its session ends it.
 
@@ -894,7 +895,7 @@ The **buffer place** is the same in every program: from
 `prog_mem_base`, 0x7f00000000, for at most `prog_mem_bytes`, 1 GiB, two
 limits of `abi/protocols/prog.txt`. It holds the largest buffer, 16,384
 pixels square at 4 bytes a pixel. Its first page is below 2^32, as the
-startup message's page number needs. It lies inside the stopgap's task
+startup message's page number needs. It lies inside Fiasco's task
 range, from 2^38 to 2^39 (`liberx/backend/fiasco/vm.h`, `vm.c`), above
 the address `task.ld` links a program at, 0x4000100000, so one value
 serves both kernels and no image of the boot image meets it.
@@ -1951,7 +1952,7 @@ driver's sequence: open, identify, the event queue, negotiate, the
 configuration's reads, the line, and every buffer of the event queue
 posted. It sends its records under its device record's PATH, the
 device-tree path the board's device table gives the transport
-([design-stopgap.md](design-stopgap.md#device-records)), never under the
+([design-fiasco.md](design-fiasco.md#device-records)), never under the
 device's own `ID_NAME`: the path is the table's, fixed and known to the
 manifest before boot, and a device's name is text the device writes,
 untrusted and the same for every QEMU keyboard ([facts
@@ -2261,7 +2262,7 @@ times and chord:
   none while there is no screen;
 * for each source, its device's name, the device-tree path its
   device record carries
-  ([design-stopgap.md](design-stopgap.md#device-records)), and what it holds: each key with
+  ([design-fiasco.md](design-fiasco.md#device-records)), and what it holds: each key with
   the runes and the modifiers of its down and the window its down went
   to, or none; each button; each touch slot;
 * the **gesture**, while any source holds a button or a touch: its
@@ -4692,20 +4693,20 @@ emits presentations ([Inspection](design-live.md#inspection)); the
 inspector schema supplies the types
 ([Inspection](design-live.md#inspection)).
 
-## On the stopgap
+## On Fiasco
 
-The display runs on the stopgap Fiasco as designed, with trusted
-domains, and what differs is what the stopgap's kernel does not enforce
+The display runs on Fiasco as designed, with trusted
+domains, and what differs is what the Fiasco kernel does not enforce
 or its devices do not allow:
 
 * **The pixel area** is a memory object of the root task's pool, made
   and passed by the domain library in the connection's plan, as a
   connection's sides are
-  ([Sharing memory between tasks](design-stopgap.md#sharing-memory-between-tasks)).
+  ([Sharing memory between tasks](design-fiasco.md#sharing-memory-between-tasks)).
   The display's `liberx` maps it read-only and the client's read-write;
   nothing holds a domain that bypasses `liberx`, and its charge to the
   display's budget is a record.
-* **No direct path on virtio-gpu.** QEMU `virt` under the stopgap has no
+* **No direct path on virtio-gpu.** QEMU `virt` under Fiasco has no
   IOMMU, so virtio-gpu attaches over virtio-mmio, unconfined, and
   reaches only its own contiguous memory. Its driver reports `direct`
   false, and every frame takes the copy path: one copy of the changed
@@ -4723,7 +4724,7 @@ or its devices do not allow:
 Phase 1 defers the hardware of [Graphics hardware](#graphics-hardware),
 the bounds a hostile client is held to in CPU, and the confinement of the
 display's devices; each is the target design above and none is built on
-the stopgap.
+Fiasco.
 
 ## Compatibility and migration
 
@@ -4870,7 +4871,7 @@ the window and the reason.
   its two pipe ends and its window's buffer; what it reads was written
   by its own session's widget server, and what it reports is checked in
   Erlang before anything is presented.
-* **On the stopgap.** QEMU `virt` under the stopgap Fiasco, as the harness
+* **On Fiasco.** QEMU `virt` under Fiasco, as the harness
   starts it, has no IOMMU, so virtio-gpu and virtio-input attach over
   virtio-mmio and are unconfined. The development manifest gives them to
   the display domain, the Phase 1 manifest check allows that in a
@@ -5126,7 +5127,7 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
     freed makes ASan report;
   * on erXos's kernel a store by the display domain into a client's area
     faults in the display domain, where an install that gives the server
-    a writable capability fails it; on the stopgap the case reports
+    a writable capability fails it; on Fiasco the case reports
     `unsupported`;
   * `erx_memdraw:wrap/4` over ranges that end at the area's last byte,
     one byte past it and far past it, over sizes whose product
@@ -5229,7 +5230,7 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
     it, and its end is the session's stop, not a fault. A seeded driver
     that returns the lease right after mapping fails the third run: the
     connection's end deletes the area, and the program ends with a
-    fault on the stopgap, whose delete removes its mapping, as on
+    fault on Fiasco, whose delete removes its mapping, as on
     erXos's kernel.
 * **Presents.** Each passing case beside its seeded failure:
   * `erx_winctl`'s fuzz target over arbitrary lines, which asserts that
@@ -5850,8 +5851,9 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
     host process that plays `erx_ui_lvgl` and the display over the two
     pipes and a file both map as the buffer, so the parity corpus and
     the readers' fuzz targets run without QEMU.
-* **Power.** G6's idle test at the driver, on the desktop and on a kiosk
-  under LVGL, where an LVGL build with animations on fails it.
+* **Power.** G6's test at the driver, no device request between two
+  changes, on the desktop and on a kiosk under LVGL, where an LVGL build
+  with animations on, or a timer that repaints with no change, fails it.
 * **Failures.** One injected fault per row of the failure table above,
   each under QEMU `virt` with clients drawing: the fault is raised in the
   party the row names (a malformed write, a refused present, a full
@@ -5908,7 +5910,7 @@ between the renderer's write and the device:
 | copy path: the buffer into the screen image | one, of the changed rectangles, clipped to what is visible | virtio-gpu transfers the rectangles to the host; a firmware framebuffer shows them; a panel driver sends them on its bus |
 | direct path: the device reads the buffer | none | as above, from the client's memory |
 
-A kiosk's frame under LVGL on QEMU `virt` on the stopgap is therefore
+A kiosk's frame under LVGL on QEMU `virt` on Fiasco is therefore
 one copy of the changed rectangles and the device's transfer, and on a
 confined virtio-gpu or a panel on a bus no copy.
 
@@ -5961,11 +5963,33 @@ draws attaches as [Graphics hardware](#graphics-hardware) says.
 | --- | --- | --- | --- |
 | Plan 9's `libmemdraw`, from 9front | the per-byte pixel primitives of `erx_memdraw`; its image(6) loader `cloadmemimage` is linked into no release, since the `Y` decoder is the Erlang `erx_draw_image` | MIT (9front's `lib/legal/NOTICE`, whose exceptions cover only fonts) | permanent; 9front at commit 2859ae04, imported as erXos's code into `display/libmemdraw` with an `ORIGIN.md` listing its edits |
 | the 9front build: 9front's `libmemdraw` and the parts of its `libdraw` it links, unmodified | test tool: the oracle of the shapes' pixels, of every `erx_memdraw` operation against the code it was imported from, and through `cloadmemimage` of `erx_draw_image`'s decoding and of the C twin's framing of `Y` (Verification) | MIT | tool, never part of a shipped image; fetched at the commit the import's origin file records, verified against a pinned SHA-256, and built for the host out of tree by erXos's own compiler invocations against plan9port's `lib9`, which is already fetched for rc; 9front's mkfiles never run |
-| LVGL 9 | the native widget renderer for panels, the program `erx-lvgl` of the application's session | MIT; its built-in fonts are OFL-1.1 font data | stopgap, replaced by the Erlang renderer when the parity test and the panel's frame times admit it; a git submodule from erXos's fork pinned at a recorded commit, built out of tree as a native program, its display and input glue erXos's own |
+| LVGL 9 | the native widget renderer for panels, the program `erx-lvgl` of the application's session | MIT; its built-in fonts are OFL-1.1 font data | stopgap, shipped in 0.2 under [its release contract](#lvgls-release-contract) and replaced by the Erlang renderer when the parity test and the panel's frame times admit it; a git submodule from erXos's fork pinned at a recorded commit, built out of tree as a native program, its display and input glue erXos's own |
 | fonts | the glyphs of `erx_term` and of the Erlang renderer, in a session's release, as Plan 9 subfonts, and of the menu, in the display's, as a generated module | plan9port's `fixed` fonts (public domain, converted from X.Org's `misc-fixed` BDF files) for the terminal, of which the 6x13 subfonts of U+0000, U+2000 and U+2500 are imported into `display/font/fixed` with an origin file; Inter 4.1 (OFL-1.1, font data only) for the theme's roles, rasterised at build through FreeType, a host build tool used under the FTL, into 8-bit subfonts and the menu's module ([design-desktop-programs.md](design-desktop-programs.md#type)) | permanent |
 | libvterm 0.3.3 | the differential oracle of `erx_vt` | MIT | test tool, never in an image and never linked into erXos; fetched at its pinned release and SHA-256 and built out of tree for the host with the harness `test/vt/vterm_dump.c` |
 | `vttest`, Thomas Dickey's | the source of the corpus's `vttest` recordings | MIT-style (X11), confirmed at the pin | test tool, never in an image; fetched at a pinned release and SHA-256, built out of tree for the host and run on a host pseudo-terminal |
 | FreeBSD 15.1's `share/termcap/termcap`, from the pinned FreeBSD source | the `xterm` and `vt100` entries `abi/termcap` restricts | BSD-3-Clause, confirmed at the pin | reference; the restricted entries are erXos's text in `abi/termcap` |
+
+### LVGL's release contract
+
+0.2 ships LVGL as a stopgap renderer. Beyond what CLAUDE.md's rule for a stopgap promises, a
+release commits to this for every application, trusted or not, and no more; a gap that breaks
+it blocks the release, and every other gap is a published downside. Each test is a case of
+[Verification and testing](#verification-and-testing) ("A kiosk"), with its seeded failure,
+except the fuzz budgets, which are the milestone gate's.
+
+| Commitment | What a release does | Test, and the seeded failure that proves it ran |
+| --- | --- | --- |
+| **Placement** | `erx-lvgl` is a program of the application's own session, in a sub-space, with a namespace narrowed to nothing, holding a mapping of its window's buffer's pages and no other page of the pixel area, no capability to the area, and no handle beyond those its start gives every program ([The widget server](#the-widget-server), "The **LVGL renderer**"; "A buffer in a program") | a store one page past the buffer faults in the program; a session that maps the whole area into it fails. *new*: the program's space, read through `/proc` at the program's `capabilities` and `mappings` on a development build of either kernel ([design-fiasco.md](design-fiasco.md#reporting-kernel-objects)), slots and mappings apart, holds no slot beyond those of a program started with no files, none naming the pixel area, and no mapping of the area beyond its buffer's pages; a session that also hands it its own namespace grant fails, and so does one that passes it the area's handle |
+| **Input** | the program reads only the binary form of `abi/formats/ui.txt` through the generated bounded C reader, never an application's term; `erx_ui_lvgl` reads the program's records through the generated Erlang reader | `tools/fuzz/ui_wire_fuzz.c` (the C reader) and `test/erlang/erx_ui_wire_fuzz.erl` (the Erlang reader) at their full `check-fuzz` budgets with no open finding before the release; a reader without the `damage` report's count check fails its target |
+| **Failure** | a malformed `damage` report, a second report before the first is answered, or a program that leaves its standard input full stops the program, and the application receives `{ui_down, Window, renderer_down}`; the worst a hostile or broken `erx-lvgl` does is confined to its own application's session | each of the first two stops the program and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that presents them fails. *new*: a program that stops reading its standard input until the pipe is full is stopped and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that waits on the full pipe instead fails |
+| **Notices** | the image's notices carry LVGL's MIT license and the OFL-1.1 license of its built-in fonts, which the release check admits as font data only ([design.md](design.md#dependencies), LVGL's row) | `test_ofl_is_admitted_only_for_an_input_that_states_font_data` (`test/host/license_expression_test.rb`): OFL-1.1 refused for an input that does not state font data; and `test/host/production_image_test.rb`, which reads the LVGL archive as `MIT AND OFL-1.1` with font data |
+| **Retirement** | gate GD decides whether the Erlang renderer replaces LVGL on panels ([plan.md](plan.md#decision-gates)); GD is not among 0.2's gates, and a release after a GD that retires LVGL ships no LVGL | none: a plan gate |
+
+**Published downsides.** A defect in LVGL's C code can crash or hang its application's interface,
+which the application sees as `{ui_down, Window, renderer_down}` or a stalled frame; it reaches
+no memory or object outside that session, though, as any program, it can make the root and the
+services it calls spend their own CPU on its requests (FD17, FD31), and it is refused at its
+session's object and mapping limits before its budget is spent (FD14).
 
 ## Alternatives considered
 
@@ -6047,7 +6071,8 @@ Decisions:
 2. **LVGL is a stopgap.** The Erlang renderer exists for the desktop
    regardless, and one renderer is the simpler system; LVGL retires on
    panels when the parity test passes and the Erlang renderer matches
-   its frame times on a 240x240 panel, and stays until then. Both gates
+   its frame times on a 240x240 panel, and stays until then, in 0.2
+   under [its release contract](#lvgls-release-contract). Both gates
    compare the two on the same panel: the parity test on meaning, the
    frame times on speed; neither asks for the same pixels.
 3. **The web is a medium of its own.** Every renderer renders for its

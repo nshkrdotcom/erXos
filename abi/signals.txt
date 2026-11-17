@@ -11,6 +11,7 @@
 #   signal NAME NUMBER reserved [alias NAME]
 #   reserved_signal NUMBER
 #   realtime FIRST LAST ACTION
+#   signal_set SET NAME...
 #
 # NAME is the signal's name without SIG, in lower case. ACTION is
 # terminate, ignore, stop or continue for a signal a program may name,
@@ -20,7 +21,9 @@
 # realtime numbers the real-time signals FIRST to LAST and names them as
 # sig2str does: rtmin, rtmin+1 up to the middle of the range, then rtmax-N
 # down to rtmax; strsignal describes none of them. A number the table does
-# not list is not a signal.
+# not list is not a signal. signal_set names a set of signals a program may
+# name, each by its NAME, for a protocol that carries only those; the ABI
+# header gives it as ?ERX_<SET>_SIGNAL_MEMBERS.
 signal hup 1 terminate "Hangup"
 signal int 2 terminate "Interrupt"
 signal quit 3 terminate "Quit"
@@ -58,3 +61,7 @@ signal librt 33 reserved
 # musl's SIGSYNCCALL.
 reserved_signal 34
 realtime 65 126 terminate
+# The signals a tty's shell may end by, as its master hears it (erx_console:shell_ending/1)
+# and the SSH domain's channel sends it (abi/services/ssh.txt, signaled): Ctrl-C alone
+# ends an exec on a tty (docs/design-ssh.md).
+signal_set ssh_line int

@@ -756,7 +756,7 @@ screen rows each have a fuzz target.
   Seeded: `p` of lines that puts them above the cursor's line, where
   nvi appends them after it (`man/vi.1:275-276`).
 * **Motions and ranges:** the pinned examples of
-  [Motions and ranges](#motions-and-ranges), each with `d`, `c` and `y`.
+  [The core](#the-core), "Motions and ranges", each with `d`, `c` and `y`.
   Seeded: `w`'s range not stopped at the line's end, which joins the
   lines in the `dw` example.
 * **Drawing against the terminal emulator:** for screens produced by

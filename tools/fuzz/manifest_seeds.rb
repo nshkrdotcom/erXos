@@ -20,8 +20,12 @@ module Erx
   # start row for that template, left off and with its own restart intensity, and the
   # display_domain suite's manifest with its client's grant of the display stating each
   # parameter of the windows interface a facet row may, so the facet table holds parameter
-  # rows, and the configured domains' with an apps row offering one service, two packages,
-  # a signer and the build's development key, so each of those tables holds rows.
+  # rows, the configured domains' with alpha granted the line on a UART of its own, so a
+  # parameter row holds a device reference, the development manifest with its inspect grant
+  # naming both operations, so the facet table holds operation rows, and the configured
+  # domains' with an apps row
+  # offering one service, two packages, a signer and the build's development key, so each
+  # of those tables holds rows.
   module ManifestSeeds
     SESSION_FACET = "facet session_probe\n  grantee @session.system\n  service @service.probe\n  operations none\n" \
                     "  max_request 64\n  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n"
@@ -34,6 +38,15 @@ module Erx
                    "apps\n  memory 1048576\n  max 2\n  services appnet\npackage clock\n  input @artifact.package-clock\n  enable YES\n" \
                    "package quotes\n  input @artifact.package-quotes\nsigner ops\n  key hex:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\n"
     WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter clipboard yes\n"
+    # The operations operations_grant's grant of inspect names.
+    INSPECT_OPERATIONS = 'entries,inspect'
+    # The net grant's parameters: sockets, ports a full set of 16, stated out of order, and
+    # listen one of them, so its rows are a scalar, two sets, and a set at its most.
+    NET_PORTS = (2000...2016).to_a.freeze
+    NET_PARAMETERS = "  parameter sockets 80\n#{NET_PORTS.reverse.map { |port| "  parameter ports #{port}\n" }.join}" \
+                     "  parameter listen #{NET_PORTS.last}\n".freeze
+    # The UART line_grant's grant names.
+    LINE_UART = ManifestContextFixture::LINE_UARTS.fetch('line_a').first
 
     module_function
 
@@ -62,6 +75,9 @@ module Erx
                              context: domain_context, planner: ManifestContextFixture.accepting_planner)
       PackFuzz.prefix_seeds(development.bytes).merge('empty' => empty.bytes, 'system-args-escape' => escape.bytes,
                                                      'windows-grant' => windows_grant(repository, codec),
+                                                     'line-grant' => line_grant(repository, codec),
+                                                     'operations-grant' => operations_grant(source, codec, platform),
+                                                     'net-grant' => net_grant(repository, codec),
                                                      'domains' => domains.bytes, 'session-grantee' => session.bytes,
                                                      'start-row' => start.bytes, 'raspi4b' => pi.bytes,
                                                      'packages' => packages(source, codec, platform),
@@ -80,8 +96,43 @@ module Erx
       Manifest.admit(source: source, codec: codec, context: context, planner: planner).bytes
     end
 
-    # The configured domains' manifest with PACKAGE_ROWS, room for the apps row in
-    # max_domains and root_memory, and a development key.
+    # The development manifest with its grant of inspect to root's template naming both of
+    # the interface's operations, out of number order, as the check packs it.
+    def operations_grant(source, codec, platform)
+      granted = source.sub("  service @service.inspect\n  operations none\n", "  service @service.inspect\n  operations #{INSPECT_OPERATIONS}\n")
+      raise Error, 'the development manifest has no inspect grant of operations none' if granted == source
+
+      Manifest.admit(source: granted, codec: codec, context: Manifest::Context.new(**ManifestContextFixture.arguments(codec), platform: platform),
+                     planner: ManifestContextFixture.accepting_planner).bytes
+    end
+
+    # The development manifest on QEMU virt with its session template's grant of net
+    # stating NET_PARAMETERS, as the check packs it.
+    def net_grant(repository, codec)
+      grant = "facet net\n  grantee @session.system\n  service @service.net\n"
+      source = Platform.load(root: repository, name: 'qemu-virt').manifest_source(repository)
+      raise Error, 'the development manifest grants no net to its session template' unless source.include?(grant)
+
+      context = Manifest::Context.new(**ManifestContextFixture.arguments(codec), platform: platform_of(repository, 'qemu-virt'))
+      Manifest.admit(source: source.sub(grant) { grant + NET_PARAMETERS }, codec: codec, context: context,
+                     planner: ManifestContextFixture.accepting_planner).bytes
+    end
+
+    # The configured domains' manifest (ManifestContextFixture.domain_source) on QEMU virt
+    # with two more UARTs, alpha granted the line on the first
+    # (ManifestContextFixture.with_line), as the check packs it.
+    def line_grant(repository, codec)
+      source = Platform.load(root: repository, name: 'qemu-virt').manifest_source(repository)
+      grant = ManifestContextFixture.line_grant('line', '@domain.alpha', LINE_UART, floor: codec.constant('files_max_frame_min'))
+      context = Manifest::Context.new(**ManifestContextFixture.arguments(codec),
+                                      platform: ManifestContextFixture.line_platform(platform_of(repository, 'qemu-virt')))
+      Manifest.admit(source: ManifestContextFixture.with_line(ManifestContextFixture.domain_source(source), grant),
+                     codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
+    end
+
+    # The configured domains' manifest with PACKAGE_ROWS, the system tree the apps row
+    # needs, held by beta, room for the apps row in max_domains and root_memory, and a
+    # development key.
     def packages(source, codec, platform)
       arguments = ManifestContextFixture.arguments(codec)
       artifacts = %w[clock quotes].to_h do |name|
@@ -91,7 +142,8 @@ module Erx
                                                    development_key: "\x07".b * 32)
       roomy = ManifestContextFixture.domain_source(source).sub(/^(  max_domains )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + 2}" }
                                                          .sub(/^(  root_memory )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + 1_048_576}" }
-      Manifest.admit(source: roomy + PACKAGE_ROWS, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
+      source = ManifestContextFixture.with_system_tree(roomy, holder: '@domain.beta') + PACKAGE_ROWS
+      Manifest.admit(source: source, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
     # The platform record config/platforms/NAME.json.

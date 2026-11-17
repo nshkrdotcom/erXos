@@ -8,7 +8,13 @@ Q-R7, "HTTPS on the host"): erx_quotes, with its request unchanged,
 fetches over HTTPS from `ssl` servers this test runs on the loopback,
 with chains public_key:pkix_test_data/1 makes and their roots named by
 public_key's `cacerts_path`, and sends boards as a dashboard gets them.
-A server whose certificate is made for `localhost` gives a value; one
+Every source's URL names the host `quotes.test`, which does not
+resolve, and its address is 127.0.0.1, so a request reaches a server
+only through the address, and the servers answer only a request whose
+`host` header names `quotes.test` and its port.
+A server whose certificate is made for `quotes.test` gives a value,
+which the name check passes only on the host name sent as SNI, never
+the address; one
 made for `other.test` gives `certificate rejected`; a 70,000-byte body
 with its `content-length` gives `answer too big`, which max_body_size
 in httpc's fourth argument alone gives (seeded failure: with it moved
@@ -25,24 +31,23 @@ fetch_test_() ->
 
 fetch() ->
     {ok, _} = application:ensure_all_started(ssl),
-    {Good, GoodRoot} = chain("localhost"),
+    {Good, GoodRoot} = chain("quotes.test"),
     {Other, OtherRoot} = chain("other.test"),
     ok = file:write_file("roots.pem", public_key:pem_encode([{'Certificate', GoodRoot, not_encrypted},
                                                            {'Certificate', OtherRoot, not_encrypted}])),
     ok = application:set_env(public_key, cacerts_path, filename:absname("roots.pem")),
     GoodPort = serve(Good),
     OtherPort = serve(Other),
-    Url = fun(Port, Path) -> iolist_to_binary(["https://localhost:", integer_to_list(Port), Path]) end,
-    Source = fun(U) -> #{url => U, format => json, price => [<<"price">>], change => none,
-                         credit => <<"Local">>} end,
-    Quote = fun(S) -> #{label => <<"Q">>, decimals => 2, period => 10, sources => [S]} end,
-    Table = [{quote, btc, Quote(good)}, {quote, eth, Quote(other)}, {quote, big, Quote(big)},
-             {source, good, Source(Url(GoodPort, "/btc"))},
-             {source, other, Source(Url(OtherPort, "/btc"))},
-             {source, big, Source(Url(GoodPort, "/big"))}],
-    ok = file:write_file("fetch.config", [io_lib:format("~p.~n", [Term]) || Term <- Table]),
-    ok = application:set_env(erx_dashboard, quotes_table, "fetch.config"),
-    {ok, Pid} = erx_quotes:start_link(self()),
+    Source = fun(Port, Path) ->
+                     #{url => iolist_to_binary(["https://quotes.test:", integer_to_list(Port), Path]),
+                       address => {127, 0, 0, 1}, format => json, price => [<<"price">>],
+                       change => none, credit => <<"Local">>, note => <<>>}
+             end,
+    Quote = fun(S) -> {S, #{label => <<"Q">>, decimals => 2, period => 10000, sources => [S]}} end,
+    Table = #{quotes => [Quote(btc), Quote(eth), Quote(big)],
+              sources => #{btc => Source(GoodPort, "/btc"), eth => Source(OtherPort, "/btc"),
+                           big => Source(GoodPort, "/big")}},
+    {ok, Pid} = erx_quotes:start_link(self(), Table),
     Expected = #{<<"btc">> => {64412.5, <<"Local - 0 s">>},
                  <<"eth">> => {none, <<"no data: certificate rejected">>},
                  <<"big">> => {none, <<"no data: answer too big">>}},
@@ -82,31 +87,35 @@ chain(Host) ->
      lists:last(Cacerts)}.
 
 %% An ssl server on the loopback answering `/btc` with a price and `/big`
-%% with a body of 70,000 bytes and its content-length; its port.
+%% with a body of 70,000 bytes and its content-length, each only to a
+%% request whose host header is `quotes.test:Port`; its port.
 serve(Options) ->
     {ok, Listen} = ssl:listen(0, [binary, {active, false}, {ip, {127, 0, 0, 1}},
                                   {reuseaddr, true} | Options]),
     {ok, {_, Port}} = ssl:sockname(Listen),
-    spawn_link(fun() -> accept(Listen) end),
+    Host = iolist_to_binary(["\r\nhost: quotes.test:", integer_to_list(Port), "\r\n"]),
+    spawn_link(fun() -> accept(Listen, Host) end),
     Port.
 
-accept(Listen) ->
+accept(Listen, Host) ->
     case ssl:transport_accept(Listen) of
         {ok, Socket} ->
-            spawn(fun() -> answer(ssl:handshake(Socket, 10000)) end),
-            accept(Listen);
+            spawn(fun() -> answer(ssl:handshake(Socket, 10000), Host) end),
+            accept(Listen, Host);
         {error, closed} ->
             ok
     end.
 
-answer({ok, Socket}) ->
-    case request(Socket, <<>>) of
-        <<"GET /btc ", _/binary>> -> reply(Socket, <<"{\"price\": \"64412.50\"}">>);
-        <<"GET /big ", _/binary>> -> reply(Socket, binary:copy(<<"x">>, 70000));
+answer({ok, Socket}, Host) ->
+    Head = request(Socket, <<>>),
+    case {Head, binary:match(string:lowercase(Head), Host)} of
+        {_Head, nomatch} -> ok;
+        {<<"GET /btc ", _/binary>>, _At} -> reply(Socket, <<"{\"price\": \"64412.50\"}">>);
+        {<<"GET /big ", _/binary>>, _At} -> reply(Socket, binary:copy(<<"x">>, 70000));
         _Other -> ok
     end,
     ssl:close(Socket);
-answer({error, _Refused}) ->
+answer({error, _Refused}, _Host) ->
     ok.
 
 request(Socket, Head) ->

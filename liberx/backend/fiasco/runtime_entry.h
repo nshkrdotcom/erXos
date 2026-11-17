@@ -12,6 +12,7 @@
 #include "liberx/backend/fiasco/entropy.h"
 #include "liberx/backend/fiasco/boot_args.h"
 #include "liberx/backend/fiasco/libc_start.h"
+#include "liberx/backend/fiasco/pm_wdt.h"
 
 /* include/erx/pack.h's; that header's erx_boot_inputs_t is the first stage's, not the boot page's. */
 typedef struct erx_pack_view erx_pack_view_t;
@@ -27,6 +28,18 @@ typedef struct erx_pack_view erx_pack_view_t;
  * *tree alone and gives no seeds.
  */
 const char	*erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_seeds_t *seeds);
+
+/*
+ * The board's hardware watchdog (docs/design-platforms.md, "The watchdog"): the unit of
+ * ERX_PM_WDT_COMPATIBLE that manifest gives the system domain (erx_boot_held_row), mapped
+ * into *wdt when tree, the one erx_fiasco_program_tree accepted, confirms its row
+ * (erx_fiasco_pm_wdt_open); *wdt has no device otherwise, and nothing is written. *found
+ * says which. Returns NULL,
+ * or why the root cannot boot: the row's path is not a node path. A root built without a
+ * program has no board watchdog.
+ */
+const char	*erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
+		    erx_fiasco_pm_wdt_t *wdt, erx_fiasco_board_wdt_t *found);
 
 /*
  * What the root task runs once it is up: it joins tree's facts to the manifest's devices,

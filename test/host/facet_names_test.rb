@@ -37,7 +37,7 @@ class FacetNamesTest < Minitest::Test
                  "  period_ns 1000000000\n  max_heap_size 65536\n"
 
   # A small table: one interface citing one heading, one service of it and its facet.
-  def table(interface: "# The seeded interface (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n",
+  def table(interface: "# The seeded interface (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n  served_as message\n",
             manifest: "service seeded\n  server @domain.a\n  interface seeded\nfacet seeded\n  grantee system\n" \
                       "  service @service.seeded\n#{FACET_LIMITS}")
     [{ INTERFACE => interface, MANIFEST => manifest }, { DOC => "# Seeded\n\n## The `seeded` service\n" }]
@@ -58,17 +58,17 @@ class FacetNamesTest < Minitest::Test
                                             %w[inspect inspect]]
   end
 
-  # The system tree's mint names its service written out, so the check holds it to the
-  # manifest's row: without the row, the storage domain's mint of system is a use of a
-  # facet the table does not list.
+  # The system tree's mint and its reader name the service written out, so the check
+  # holds both to the manifest's row: without the row, the storage domain's mint of
+  # system and the system domain's read of it are uses of a facet the table does not list.
   def test_the_system_tree_s_mint_needs_its_manifest_row
     files, docs = tree
     board = 'config/manifest/development.txt'
     row = "service system\n  server @domain.storage\n  interface files\n"
     assert_includes files.fetch(board), row
     without = files.merge(board => files.fetch(board).sub(row, ''))
-    assert_equal ['erlang/apps/erx_storage/src/erx_storage_system.erl'],
-                 Erx::FacetNames.violations(without, docs: docs).map(&:path)
+    assert_equal %w[erlang/apps/erx_starter/src/erx_pkg_medium.erl erlang/apps/erx_storage/src/erx_storage_system.erl],
+                 Erx::FacetNames.violations(without, docs: docs).map(&:path).sort
   end
 
   # inspect is a manifest service of a declared interface that cites its design section,
@@ -120,8 +120,21 @@ class FacetNamesTest < Minitest::Test
   # An interface's name is no facet: only a manifest service grants one.
   def test_an_interface_no_service_instantiates_is_no_facet
     assert_equal [[MODULE, 1]], found("f() -> erx:cap(other).\n",
-                                      interface: "# (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n" \
-                                                 "service other 10\n")
+                                      interface: "# (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n  served_as message\n" \
+                                                 "service other 10\n  served_as message\n")
+  end
+
+  # A session's line is provided under its name, which is no facet: the check passes it
+  # in any file, and a manifest service of that name is refused.
+  def test_a_line_is_no_facet
+    assert_empty found("f() -> erx_facet:provide(ssh_line, self()).\ng() -> erx_facet:provide(web_line, self()).\n")
+    files, = table
+    Dir.mktmpdir do |root|
+      write(root, files.merge(MANIFEST => files.fetch(MANIFEST).sub("  interface seeded\n",
+                                                                    "  interface seeded\n  name \"ssh_line\"\n")))
+      error = assert_raises(Erx::Error) { Erx::FacetNames.generation(root: root) }
+      assert_match 'both declared and exempt or lines: ssh_line', error.message
+    end
   end
 
   def test_an_exempt_name_outside_its_listed_files_fails
@@ -139,8 +152,8 @@ class FacetNamesTest < Minitest::Test
   end
 
   def test_an_interface_without_a_design_section_fails
-    assert_equal [[INTERFACE, 2]], found('', interface: "# No citation.\nservice seeded 9\n")
-    assert_equal [[INTERFACE, 2]], found('', interface: "# (#{DOC}, \"Missing\").\nservice seeded 9\n")
+    assert_equal [[INTERFACE, 2]], found('', interface: "# No citation.\nservice seeded 9\n  served_as message\n")
+    assert_equal [[INTERFACE, 2]], found('', interface: "# (#{DOC}, \"Missing\").\nservice seeded 9\n  served_as message\n")
   end
 
   def test_an_exemption_no_use_names_fails
@@ -159,7 +172,8 @@ class FacetNamesTest < Minitest::Test
       write(root, files.merge(MANIFEST => files.fetch(MANIFEST).sub("facet seeded\n", "facet seeded\n  name \"other\"\n")))
       plan = Erx::FacetNames.generation(root: root)
       header = plan.files.fetch(Erx::FacetNames::HEADER)
-      assert_equal ["-define(ERX_FACET_NAMES, ['seeded'])."], header.lines(chomp: true).grep(/^-define\(ERX_/).grep_v(/_HRL,/)
+      assert_equal ["-define(ERX_FACET_NAMES, ['seeded']).", "-define(ERX_LINES, ['ssh_line', 'web_line'])."],
+                   header.lines(chomp: true).grep(/^-define\(ERX_/).grep_v(/_HRL,/)
       assert_equal({ 'abi/services/*.txt' => [INTERFACE], 'config/manifest/*.txt' => [MANIFEST] }, plan.globs)
     end
   end
@@ -172,9 +186,9 @@ class FacetNamesTest < Minitest::Test
     detail = ->(list) { Erx::FacetNames.exemption_violations(list).map(&:to_s).join }
     assert_empty detail.call(exemptions)
     longer = exemptions.merge('rogue' => Erx::FacetNames::Exemption.new(todo: 'none', sites: []))
-    assert_match(/UNDECLARED holds 3 names, not EXEMPTIONS_MAX \(2\): the exemptions only shrink/, detail.call(longer))
-    assert_match(/UNDECLARED holds 1 names, not EXEMPTIONS_MAX \(2\): lower EXEMPTIONS_MAX/,
-                 detail.call(exemptions.except('web_line')))
+    assert_match(/UNDECLARED holds 2 names, not EXEMPTIONS_MAX \(1\): the exemptions only shrink/, detail.call(longer))
+    assert_match(/UNDECLARED holds 0 names, not EXEMPTIONS_MAX \(1\): lower EXEMPTIONS_MAX/,
+                 detail.call(exemptions.except('console')))
   end
 
   # A manifest name outside the atom syntax generates nothing, so a name cannot close the
@@ -193,7 +207,7 @@ class FacetNamesTest < Minitest::Test
   def test_the_generated_table_refuses_a_manifest_violation
     files, = table
     Dir.mktmpdir do |root|
-      write(root, files.merge(INTERFACE => "service other 9\n"))
+      write(root, files.merge(INTERFACE => "service other 9\n  served_as message\n"))
       error = assert_raises(Erx::Error) { Erx::FacetNames.generation(root: root) }
       assert_match "service seeded's interface seeded", error.message
     end
@@ -206,7 +220,7 @@ class FacetNamesTest < Minitest::Test
     Dir.mktmpdir do |root|
       write(root, files.merge(MANIFEST => files.fetch(MANIFEST).sub("  interface seeded\n", "  interface seeded\n  name \"console\"\n")))
       error = assert_raises(Erx::Error) { Erx::FacetNames.generation(root: root) }
-      assert_match 'both declared and exempt in UNDECLARED: console', error.message
+      assert_match 'both declared and exempt or lines: console', error.message
     end
   end
 

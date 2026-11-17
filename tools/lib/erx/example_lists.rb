@@ -7,25 +7,31 @@ module Erx
   # under examples/ is built only as a third party builds one, through the SDK, so no file
   # of the build's tools, the board manifests or the host tests' build fixtures (where
   # ErlangBuild lists the applications tests compile) names a path under examples/ or an
-  # example's application, a directory examples/*/lib/APP. Checks runs it over the tree's
-  # listing; this file is the one that names the directory, to say what it scans for.
+  # example's application, a directory examples/*/lib/APP. The files of EXEMPT may: the
+  # harnesses the design names that pack an example through the SDK, and this file, which
+  # names the directory to say what it scans for. Checks runs it over the tree's listing.
   module ExampleLists
     DIRECTORY = 'examples/'
     SCOPES = %w[tools/lib/erx/ config/manifest/ test/fixtures/].freeze
-    SELF = 'tools/lib/erx/example_lists.rb'
+    # Each file that may name an example, with the design text that names it.
+    EXEMPT = {
+      'tools/lib/erx/example_lists.rb' => 'this check, which names the directory it scans for',
+      'tools/lib/erx/kiosk.rb' => 'docs/design-packaging.md#verification-and-testing, the kiosk cell',
+      'tools/lib/erx/qemu_suites/kiosk.rb' => 'docs/design-packaging.md#verification-and-testing, the kiosk cell'
+    }.freeze
 
-    def self.covers?(relative) = relative != SELF && SCOPES.any? { relative.start_with?(it) }
+    def self.covers?(relative) = !EXEMPT.key?(relative) && SCOPES.any? { relative.start_with?(it) }
 
     # The examples' application names, from the directories below root/examples.
     def self.applications(root:)
       Dir.glob("#{DIRECTORY}*/lib/*/", base: root).map { File.basename(it) }.uniq.sort
     end
 
-    # Each [path, line number, name] where files, a map from relative path to text, name
-    # the examples directory or one of applications.
+    # Each [path, line number, name] where the files covers? takes of files, a map from
+    # relative path to text, name the examples directory or one of applications.
     def self.violations(files, applications:)
       pattern = Regexp.union(DIRECTORY, *applications.map { /\b#{Regexp.escape(it)}\b/ })
-      files.sort.flat_map do |path, text|
+      files.select { |path, _| covers?(path) }.sort.flat_map do |path, text|
         text.each_line.with_index(1).filter_map { |line, number| [path, number, line[pattern]] if line.match?(pattern) }
       end
     end

@@ -9,14 +9,14 @@ it is [design-system.md](design-system.md#the-vault); TLS for the web is
 [design-web.md](design-web.md#the-network-front-end). It also says how a
 session or an app makes HTTPS requests, with `ssl`, `inets`' HTTP client
 and the image's trust store ([HTTPS clients](#https-clients)); the first
-app that does is the full kiosk's live quotes of
+app that does is the kiosk's live quotes of
 [design-quotes.md](design-quotes.md).
 
 ## Context
 
 Four uses need cryptography: the web domain's TLS listener, the vault's
 Argon2id, HKDF and AES-256-GCM, SSH, and HTTPS clients in sessions and
-apps, which fetch data from servers on the internet, the full kiosk's live
+apps, which fetch data from servers on the internet, the kiosk's live
 quotes first ([design-quotes.md](design-quotes.md)). The architecture already
 decides the library: "OTP's `crypto`, `ssl` and `ssh` use OpenSSL 3.5"
 and "a small verifier keeps the full library out of the system domain"
@@ -33,10 +33,10 @@ seeded from `erx_entropy_read`, never from another source
 belongs to the machine: the boot banner reports `entropy_quality`, a
 release build stops the boot on a weak seed and a development build
 continues ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy));
-on the stopgap the seed is the counter and `/chosen`'s seeds where the
-device tree carries them; where it carries none, the Raspberry Pi 4 adds
-its RNG200 and other boards use the counter alone
-([design-stopgap.md](design-stopgap.md#the-call-table)).
+on Fiasco the seed is the counter and `/chosen`'s seeds where the
+device tree carries them, and the Raspberry Pi 4 adds its RNG200 on the
+condition of [design-platforms.md](design-platforms.md#entropy-sources)
+([design-fiasco.md](design-fiasco.md#the-call-table)).
 
 ERTS is built once per execution flavour, as the interpreter and as
 BeamAsm, and each build is linked into the runtime images that use it
@@ -338,7 +338,7 @@ branch; each file carries its notice:
   `TODO.md`'s feature-words item carries to where the words are filled),
   so the read is not reached. `OPENSSL_armcap` sets the features and
   returns before that test, so it never causes the read. With the words
-  0, as on the stopgap, no feature bit is set, `OPENSSL_armcap_P` stays
+  0, as on Fiasco, no feature bit is set, `OPENSSL_armcap_P` stays
   0, and every algorithm takes its software path.
 * `providers/implementations/rands/seeding/rand_unix.c` includes
   `<sys/random.h>` and, in `syscall_random`, skips the weak `getentropy`
@@ -383,13 +383,13 @@ OpenSSL's one seed path is `getrandom`, in musl, over the seam's
 * **Quality is the machine's.** OpenSSL credits each seed byte with eight
   bits, as from any operating system source. Whether the kernel's seed
   deserves that is reported by `entropy_quality`; a release build never
-  runs on a weak seed. A development build on the stopgap leaves
+  runs on a weak seed. A development build on Fiasco leaves
   `entropy_quality` unreported, and its banner names the `/chosen` seeds
   it mixed or says it seeds from the counter alone; keys made on a
   boot without a seed are as weak as the counter, which
   [design-ssh.md](design-ssh.md#host-keys) records for the host key.
 * **Reseeding** follows OpenSSL's own intervals, each a call through the
-  same path; on the stopgap each is a request to the root's generator
+  same path; on Fiasco each is a request to the root's generator
   service. A generator already seeded need not read the kernel for every
   request, so a failure of the kernel's generator after the first seed
   shows at the next reseed, not at once.
@@ -594,7 +594,7 @@ holds them, and could not run `ssl`: its image has no `crypto` NIF (K1).
 | DigiCert Global Root G3 | FRED: DigiCert Global G3 TLS ECC SHA384 2020 CA1 | DigiCert |
 
 The chains are those the servers sent to a live request
-([design-quotes.md](design-quotes.md#what-the-sources-offer)). Which of
+([design-quotes.md](design-quotes.md#what-the-source-offers)). Which of
 two anchors of one chain OTP's path validation ends at is not relied on:
 the store holds both.
 
@@ -629,21 +629,36 @@ The leaves of the sources above live about 90 days.
 #### Time
 
 Validation reads the wall clock, so it is as right as the clock. The
-clock's state is `/proc/time/status`'s `state`: `unset`, `boot` or `set`
+clock's state is `/proc/time/status`'s `state`: `unset`, `boot`,
+`approximate` or `set`
 ([design-time.md](design-time.md#what-proc-shows)).
 
 | Machine | Wall clock at boot |
 | --- | --- |
-| QEMU `virt` on erXos's kernel | the PL031's reading, which the kernel takes once at boot ([design-kernel.md](design-kernel.md), "Time"), so `state` is `boot`. QEMU starts its real-time clock at the host's time unless `-rtc base=` says otherwise (unverified: QEMU's documentation was not read); deterministic mode starts it at 2026-01-01 ([design-stopgap.md](design-stopgap.md#deterministic-mode)) |
-| the stopgap, on QEMU `virt` | the PL031's reading, which the stopgap's root takes once at boot into the time page, as erXos's kernel does, so `state` is `boot`, and QEMU's clock starts as in the row above |
-| the stopgap, on the Raspberry Pi 4 without a module | 1970-01-01, `unset`: the board has no real-time clock and nothing sets the clock ([design-time.md](design-time.md#phase-1)) |
+| QEMU `virt` on erXos's kernel | the PL031's reading, which the kernel takes once at boot ([design-kernel.md](design-kernel.md), "Time"), so `state` is `boot`. QEMU starts its real-time clock at the host's time unless `-rtc base=` says otherwise (unverified: QEMU's documentation was not read); deterministic mode starts it at 2026-01-01 ([design-fiasco.md](design-fiasco.md#deterministic-mode)) |
+| Fiasco, on QEMU `virt` or on the Raspberry Pi 4 without a module | the build's date, `approximate`: the Fiasco backend puts no real-time clock's reading in the time page at boot and the Pi 4 has no clock, so the clock service starts the clock at the commit time of the image's source, and root's `date` or `ntpd` sets it exactly ([design-time.md](design-time.md#the-approximate-start)) |
 | the Raspberry Pi 4 with a DS3231 module | the module's time, read at `/dev/rtc/time` by the system domain's wall-clock keeper ([design-header-io.md](design-header-io.md#devrtc)), so `state` is `set` |
 | any machine running `ntpd` | set by the first sample ([design-time.md](design-time.md)); off unless enabled |
+| any machine, by hand | set by root's `date` ([design-time.md](design-time.md#setting-the-clock-by-hand)) until the next boot |
 | hosted mode | the host's clock, `boot` |
+| a build from a tree that is no git checkout, with no build date | 1970-01-01, `unset`, where no real-time clock reads |
 
-The stopgap's root reads the PL031 because that gives the time page the value the kernel interface promises and touches nothing above it. The Raspberry Pi 4 gets its time from a DS3231 module and the wall-clock keeper, since the board has no clock of its own. `ntpd` is designed and off unless an operator enables it with a server of their own.
+On Fiasco nothing reads a real-time clock at boot, so QEMU `virt` starts `approximate` at the build's date as a Raspberry Pi 4 without a module does, and stays so until root's `date`, `ntpd` or a DS3231 module sets it; reading the PL031 at boot is the kernel's, as design-kernel.md's "Time" gives it, and the Fiasco backend does not rebuild it in user mode. The Raspberry Pi 4 gets its time from a DS3231 module and the wall-clock keeper, since the board has no clock of its own. `ntpd` is designed and off unless an operator enables it with a server of their own.
 
-**What an unset clock does.** Validation compares each certificate's
+**What an approximate clock does.** Validation treats an approximate
+clock as a set one: the wall clock reads the build's date plus the
+uptime, and every certificate valid then is accepted. That is the point
+of the start, since it lets HTTPS reach live data from boot, and its
+cost: a certificate that expired after the build date but before the
+real date is accepted until something sets the clock, and one that
+became valid after the build date is refused. The window is the image's
+age. Development builds and 0.1 accept it; a release build's choice, to
+keep the start, to refuse TLS while `state` is `approximate`, or to drop
+the start, is open ([design-time.md](design-time.md#open-decisions),
+`TODO.md`).
+
+**What an unset clock does.** Only a build without a date leaves a
+clock unset. Validation compares each certificate's
 validity period with the wall clock as it reads; it never reads the
 clock's `state` (`pubkey_cert.erl:177-189`). On an unset clock the wall
 clock reads 1970 plus the uptime, so a chain is accepted only if every
@@ -656,7 +671,7 @@ no rule that refuses every connection while the clock is unset. No
 client skips the validity check, and nothing sets the clock from a TLS
 peer's time. A client that shows the failure to a person can tell an
 unset clock from the wall clock alone: no machine erXos runs on reads a
-time before 2000 once its clock is set, and the live quotes show
+time before 2000 once its clock is set, unless root set it there by hand, and the live quotes show
 `clock not set` when a certificate is refused as outside its validity
 while the wall clock reads before 2000
 ([design-quotes.md](design-quotes.md#refusals-and-error-results)).
@@ -749,9 +764,11 @@ for the resolver.
 * **Revocation and time.** No revocation is checked, and validity is as
   right as the clock: a clock set by an attacker on the path of
   unauthenticated network time can make an expired certificate valid
-  again ([design-time.md](design-time.md#security)); an unset clock
-  makes every certificate from a public authority invalid, which fails
-  closed ([Time](#time)).
+  again ([design-time.md](design-time.md#security)); an approximate
+  clock, at the build's date, accepts a certificate that expired since
+  the build until the clock is set; an unset clock makes every
+  certificate from a public authority invalid, which fails closed
+  ([Time](#time)).
 * **What a holder of `net` can reach.** A session or app with the grant
   reaches every address the stack routes to: the internet, the local
   network, and this machine's own addresses through loopback, where the

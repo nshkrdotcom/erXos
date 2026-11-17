@@ -16,13 +16,16 @@
 #include "erx/abi.h"
 #include "liberx/backend/api.h"
 #include "liberx/backend/fiasco/log.h"
+#include "liberx/backend/fiasco/pm_wdt.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/watchdog_thread.h"
 
 #define WATCHDOG_STACK_BYTES	16384u
 #define WATCHDOG_PRIORITY	255u
-#define WATCHDOG_US_PER_S	UINT64_C(1000000)
+/* The thread ticks about once a second, as the kernel's timer does, whatever the period: the
+ * board's watchdog, reloaded at each tick, fires ERX_PM_WDT_TIMEOUT_S after the last. */
+#define WATCHDOG_TICK_US	UINT64_C(1000000)
 /* The kernel-given UTCB page: the first thread has its first slot, the service its second. */
 #define WATCHDOG_UTCB_SLOT	2u
 
@@ -31,6 +34,7 @@ static void watchdog_main(void);
 static _Alignas(16) uint8_t watchdog_stack[WATCHDOG_STACK_BYTES];
 static erx_watchdog_config_t watchdog_config;
 static erx_watchdog_mode_t watchdog_mode;
+static erx_fiasco_pm_wdt_t watchdog_board;
 /* The time of the last pet, 0 before the first. Only erx_watchdog_pet writes it. */
 static _Atomic uint64_t watchdog_pet_ns;
 
@@ -44,8 +48,7 @@ erx_watchdog_pet(void)
 static void
 watchdog_main(void)
 {
-	const l4_timeout_t period = l4_timeout(L4_IPC_TIMEOUT_NEVER,
-	    l4_timeout_from_us(watchdog_config.period_s * WATCHDOG_US_PER_S));
+	const l4_timeout_t tick = l4_timeout(L4_IPC_TIMEOUT_NEVER, l4_timeout_from_us(WATCHDOG_TICK_US));
 	erx_watchdog_t state = erx_watchdog_initial();
 	erx_watchdog_step_t step;
 	uint64_t last_pet = 0, pet;
@@ -53,8 +56,9 @@ watchdog_main(void)
 	step = erx_watchdog_step(&state, &watchdog_config, watchdog_mode,
 	    (erx_watchdog_event_t){ .kind = ERX_WATCHDOG_START, .now_ns = erx_fiasco_clock_ns() });
 	state = step.next;
+	erx_fiasco_pm_wdt_step(&watchdog_board, step.action);
 	for (;;) {
-		(void)l4_ipc_sleep(period);
+		(void)l4_ipc_sleep(tick);
 		pet = atomic_load_explicit(&watchdog_pet_ns, memory_order_relaxed);
 		if (pet != last_pet) {
 			last_pet = pet;
@@ -67,17 +71,19 @@ watchdog_main(void)
 		state = step.next;
 		if (step.action == ERX_WATCHDOG_END)
 			erx_fiasco_end_watchdog(&step.end);
+		erx_fiasco_pm_wdt_step(&watchdog_board, step.action);
 	}
 }
 
 const char *
-erx_fiasco_watchdog_start(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode)
+erx_fiasco_watchdog_start(const erx_watchdog_config_t *config, erx_watchdog_mode_t mode, const erx_fiasco_pm_wdt_t *board)
 {
 	const l4_cap_idx_t thread = (l4_cap_idx_t)erx_fiasco_root_slot_cap(ERX_FIASCO_SLOT_WATCHDOG);
 	const l4_sched_param_t param = l4_sched_param(WATCHDOG_PRIORITY, 0);
 
 	watchdog_config = *config;
 	watchdog_mode = mode;
+	watchdog_board = *board;
 	if (l4_error(l4_factory_create_thread(L4_BASE_FACTORY_CAP, thread)) < 0)
 		return ("watchdog: the kernel refused its thread");
 	l4_thread_control_start();

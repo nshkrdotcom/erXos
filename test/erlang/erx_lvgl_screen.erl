@@ -26,7 +26,9 @@ checked it. It checks what erx_ui_lvgl and the display rely on:
 * a tree change that invalidates three areas apart from each other comes
   as one report of three rectangles: the program answers a refresh's first
   two flushes at once and only the last waits on `presented`, and one that
-  holds every flush until `presented` stops at the second area;
+  holds every flush until `presented` stops at the second area; and the
+  core presents every pixel that change altered, so a present of the
+  wrong area fails;
 * a press and release on the button comes back as `on_click` on the
   button's node, and on nothing else;
 * the program falls silent after each change, so an idle program reports
@@ -43,7 +45,8 @@ checked it. It checks what erx_ui_lvgl and the display rely on:
   presented at the size it was drawn at, and the next report covers the
   new size.
 
-picture/3 returns what the program draws of a tree at a size, for the
+picture/3 returns what the display shows of a tree the program draws at a
+size, the presented rectangles of its buffer and black elsewhere, for the
 display suite's reference picture.
 
 refused/2 checks that the program stops, with status 1, at a screen whose
@@ -111,10 +114,12 @@ run(#{program := Program, ruby := Ruby, launcher := Launcher}, Channel) ->
     Screen = step({window, {input, {pointer, ?WIDTH div 2, Y, 0}}}, Screen),
     {Pressed, Events} = settle(Screen, [], fun(_, Es) -> Es =/= [] end),
     [{event, ?BUTTON, on_click, none}] = Events,
+    Unchanged = snapshot(Screen),
     Screen = step({apply, [{set, Node, #{text => <<"changed">>}, []} || Node <- [?LABEL, ?MIDDLE, ?BOTTOM]] ++ [commit],
           three}, Screen),
     {[Three], []} = settle(Screen, [], fun(Rs, _) -> Rs =/= [] end),
     3 = length(Three),
+    presented_changes(Unchanged, Screen, [Three]),
     %% The label starts at the odd pixel PAD, so its change is an area off a
     %% word. The late change is written while the first report is open.
     Late = [{set, ?LABEL, #{text => <<"late">>}, []}, commit],
@@ -179,10 +184,48 @@ picture(#{program := Program, ruby := Ruby, launcher := Launcher}, Tree, {Width,
     send(Screen0, [Record || {write, Records} <- Start, Record <- Records]),
     {Realised, _Next} = erx_ui_model:pair(erx_ui_model:empty(), Tree, 1),
     Screen = step({apply, erx_ui_model:delta(erx_ui_model:empty(), Realised), tree}, Screen0),
-    {_Reports, []} = settle(Screen, [], fun(Reports, _) -> Reports =/= [] end),
-    Pixels = << <<R, G, B>> || <<B, G, R, _X>> <= snapshot(Screen) >>,
+    {Presents, []} = settle(Screen, [], fun(Reports, _) -> Reports =/= [] end),
+    Pixels = shown(snapshot(Screen), {Width, Height}, lists:append(Presents)),
     port_close(Port),
     Pixels.
+
+%% What the display shows of an x8r8g8b8 buffer of Size once each of Rects,
+%% the rectangles the core presented, is copied to the screen, as rows of
+%% red, green and blue: a pixel no present covered stays black, as the
+%% zeroed buffer starts. The buffer is read once, after the last present,
+%% which shows what each present copied because the program draws only
+%% what its next report names (answer/5 checks that it draws nothing while
+%% a report is open).
+shown(Bytes, {Width, Height}, Rects) ->
+    Stride = stride(Width, 32),
+    iolist_to_binary([shown_row(binary:part(Bytes, Y * Stride, Stride), {0, Y}, Rects)
+                      || Y <- lists:seq(0, Height - 1)]).
+
+shown_row(<<B, G, R, _X, Rest/binary>>, {X, Y}, Rects) ->
+    Pixel = case covers(Rects, X, Y) of
+                true -> <<R, G, B>>;
+                false -> <<0, 0, 0>>
+            end,
+    [Pixel | shown_row(Rest, {X + 1, Y}, Rects)];
+shown_row(<<>>, _At, _Rects) ->
+    [].
+
+%% Fails if a pixel the program changed between the buffer Before and the
+%% screen's buffer now lies outside every rectangle of Presents, the
+%% presents made meanwhile: such a pixel never reaches the display, as
+%% with a present of the wrong area. The screen is the full ?WIDTH by
+%% ?HEIGHT, as pixel/4 reads it, so it is called before any resize.
+presented_changes(Before, #{depth := Depth} = Screen, Presents) ->
+    After = snapshot(Screen),
+    Rects = lists:append(Presents),
+    Unshown = [{X, Y} || Y <- lists:seq(0, ?HEIGHT - 1), X <- lists:seq(0, ?WIDTH - 1),
+                         pixel(Before, X, Y, Depth) =/= pixel(After, X, Y, Depth),
+                         not covers(Rects, X, Y)],
+    Unshown =:= [] orelse error({changed_but_not_presented, length(Unshown), hd(Unshown)}).
+
+%% Whether one of Rects, half-open rectangles, covers the pixel at X, Y.
+covers(Rects, X, Y) ->
+    lists:any(fun({X0, Y0, X1, Y1}) -> X0 =< X andalso X < X1 andalso Y0 =< Y andalso Y < Y1 end, Rects).
 
 %% The tree, as erx_ui_model:delta/2 makes it from the empty tree.
 ops() ->
@@ -223,8 +266,9 @@ send(#{port := Port}, Records) ->
     true = port_command(Port, [erx_ui_wire:encode(R, Present) || R <- Records]).
 
 %% What the program sends for a change: its damage reports, each checked
-%% and answered (answer/5), and its events. Late is written while the first
-%% report is open. It waits, up to SETTLE_MS in all, until
+%% and answered (answer/5), as the rectangles the core presented of each
+%% (erx_win_core:rect(), half-open), and its events. Late is written while
+%% the first report is open. It waits, up to SETTLE_MS in all, until
 %% Shown(Reports, Events) holds of what has arrived, the condition that
 %% says the change is on screen, and then until the program is silent for
 %% QUIET_MS. Silence alone cannot say the change is shown: a slow program
@@ -250,11 +294,11 @@ settle(#{port := Port} = Screen, Late, Shown, Unread, Reports, Events, Deadline)
             case records(<<Unread/binary, Data/binary>>, [], Events) of
                 {[], Es, Rest} ->
                     settle(Screen, Late, Shown, Rest, Reports, Es, Deadline);
-                {[{_Drawn, Rects} = Report], Es, Rest} ->
+                {[Report], Es, Rest} ->
                     %% Only stale/2 writes a screen record while a report is
                     %% unread, so here every report names the current size.
-                    {presented, Es1, Rest1} = answer(Screen, Report, Late, Rest, Es),
-                    settle(Screen, [], Shown, Rest1, Reports ++ [Rects], Es1, Deadline);
+                    {{presented, Presented}, Es1, Rest1} = answer(Screen, Report, Late, Rest, Es),
+                    settle(Screen, [], Shown, Rest1, Reports ++ [Presented], Es1, Deadline);
                 {[_, _ | _], _, _} ->
                     error(report_before_presented)
             end;
@@ -296,7 +340,7 @@ resized_while_open(#{port := Port, chan := Chan} = Screen, {W, H}) ->
     Screen = step({window, repaint}, Screen),
     {{{DW, DH} = Drawn, Rects}, Rest} =
         await_report(Port, <<>>, erlang:monotonic_time(millisecond) + ?SETTLE_MS),
-    {Open, [{present, DW, DH, Rects}]} = step_actions({damage, DW, DH, Rects}, Screen),
+    {Open, [{present, DW, DH, _Presented}]} = step_actions({damage, DW, DH, Rects}, Screen),
     Before = snapshot(Open),
     Resized = step({resize, W, H, Chan}, Open),
     {[], Rest1} = hold(Resized, Rest, [], erlang:monotonic_time(millisecond) + ?HOLD_MS),
@@ -328,19 +372,19 @@ never_settled(false, Reports, Events) -> {never_shown, length(Reports), length(E
 %% the report names: held unanswered for HOLD_MS with Late written to the
 %% program, as records written before the report was read, failing if the
 %% buffer changed meanwhile or another report came. Then erx_ui_lvgl's core
-%% judges it: `presented`, a present the model answers at once, when it
-%% names the size of the last screen record written, and `dropped`,
-%% answered with nothing shown, when it was drawn at another size, whose
-%% stride the buffer's rows no longer have.
+%% judges it: `{presented, Rects}`, a present of Rects the model answers
+%% at once, when it names the size of the last screen record written, and
+%% `dropped`, answered with nothing shown, when it was drawn at another
+%% size, whose stride the buffer's rows no longer have.
 answer(Screen, {{W, H}, Rects}, Late, Unread, Events) ->
     Before = snapshot(Screen),
     send(Screen, Late),
     {Es, Rest} = hold(Screen, Unread, Events, erlang:monotonic_time(millisecond) + ?HOLD_MS),
     Before =:= snapshot(Screen) orelse error(drew_while_report_open),
     case step_actions({damage, W, H, Rects}, Screen) of
-        {Open, [{present, W, H, Rects}]} ->
+        {Open, [{present, W, H, Presented}]} ->
             Screen = step(shown, Open),
-            {presented, Es, Rest};
+            {{presented, Presented}, Es, Rest};
         {_Idle, [{write, [presented]}]} ->
             {dropped, Es, Rest}
     end.
@@ -386,7 +430,7 @@ label_drawn(#{depth := Depth} = Screen) ->
               [{X, Y} || Y <- lists:seq(?PAD, ?PAD + ?LABEL_HEIGHT - 1),
                          X <- lists:seq(0, ?WIDTH - 1)]).
 
-area(Reports) -> lists:sum([W * H || Rects <- Reports, {_, _, W, H} <- Rects]).
+area(Presents) -> lists:sum([(X1 - X0) * (Y1 - Y0) || Rects <- Presents, {X0, Y0, X1, Y1} <- Rects]).
 
 %% A buffer's rows (docs/design-display.md, "Windows and buffers"): the
 %% row's bits rounded up to 32.

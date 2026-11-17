@@ -60,7 +60,10 @@ module Erx
     FIRMWARE = %w[rpi-firmware-start4 rpi-firmware-fixup4 rpi-firmware-license].freeze
     # A file name of the layout: one name, or one under overlays/.
     NAME = %r{\A(?:overlays/)?[A-Za-z0-9][A-Za-z0-9_.,+-]*\z}
-    MAX_FILE = 64 * 1024 * 1024
+    # No file is larger than the partition that holds it, so the partition's size bounds each
+    # read. What fits in all, with the FATs and directories, is for fsimg to refuse when the
+    # volume fills; PiMedium.check_volumes reads the result back.
+    MAX_FILE = PiMedium::SLOT_FAT_BYTES
     # The medium's three entries beside the image: the partition's files, the card's disk
     # image, and their build record.
     PARTITION = 'boot'
@@ -95,6 +98,9 @@ module Erx
     # * core_freq, core_freq_fixed: the header map's core clock, which the I2C and SPI
     #   controllers divide, fixed so the rate their drivers divide holds (core_lines).
     # * total_mem, gpu_mem: the record's RAM.
+    # * framebuffer_depth, framebuffer_ignore_alpha, max_framebuffers: one 32-bit
+    #   framebuffer with its alpha channel ignored, so the root finds at most one
+    #   simple-framebuffer node, not one per HDMI port (design-device-tree.md).
     # * development_lines: the firmware's own boot log on the console and, for a map with
     #   jtag rows, the ARM's JTAG, on a development card only.
     # * a dtoverlay line for each overlay the board's tree carries.
@@ -114,6 +120,9 @@ module Erx
         init_uart_clock=#{pl011_clock(platform)}
         total_mem=#{total_mem_mib(platform)}
         gpu_mem=#{GPU_MEM_MIB}
+        framebuffer_depth=32
+        framebuffer_ignore_alpha=1
+        max_framebuffers=1
       CONFIG
     end
 

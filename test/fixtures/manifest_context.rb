@@ -107,26 +107,42 @@ module ManifestContextFixture
       "service probe\n  server @domain.alpha\n  interface 1\nintroduce @domain.alpha @domain.beta\n"
   end
 
+  # The system tree an apps row needs (property 19, docs/design-packaging.md, "The apps
+  # row"), added to a source of configured domains whose block device the system domain
+  # holds: the block device held by holder, which property 8 makes the system window's
+  # holder, that window on the device's partition 0, its system_image row and holder's
+  # service named system_service.
+  def with_system_tree(source, holder:)
+    substitute(source, BLOCK_UNIT, "\\1#{holder}") +
+      "window system\n  holder #{holder}\n  device \"/virtio_mmio@a003e00\"\n  role system\n  partition 0\n" \
+      "  rights read\n  image none\nsystem_image\n  input @artifact.release\n" \
+      "service system\n  server #{holder}\n  interface files\n"
+  end
+
   # The system principal's session template, its domain quota and max_domains in
   # the development manifest.
   SESSION_TEMPLATE = /^session system\n(?:  .*\n)*/
   # The development manifest's apps row.
   APPS_ROW = /^apps\n(?:  .*\n)*/
   SYSTEM_WINDOW = /^window system\n(?:  .*\n)*/
+  RECORD_VOLUME_WINDOW = /^window record_volume\n(?:  .*\n)*/
   SYSTEM_IMAGE = /^system_image\n(?:  .*\n)*/
+  BLOCK_UNIT = /^(unit block\n(?:  .*\n)*?  holder )system$/
   SYSTEM_QUOTA = /^(principal system\n(?:  .*\n)*?  domains )\d+$/
   MAX_DOMAINS = /^(  max_domains )\d+$/
 
   # The development manifest's own configured domains, storage, network, web and display,
   # with the profiles and runtime limits only they name, their services (storage's
-  # driver-control, data, packages and system, network's driver-control and net, web's relay, the display's
-  # window tree with its display record) and the system domain's facets of them, and the
+  # driver-control, data, packages, system and login_keys, network's driver-control and net, web's relay, the display's
+  # window tree with its display record) and the system domain's facets of them, root's
+  # session's grant of login_keys, which goes with its service, and the
   # display unit, which only a display domain holds (docs/design-stopgap.md, "Device
   # records"), so a manifest without one places none.
   DOMAIN_ROWS = [/^runtime_limits storage\n(?:  .*\n)*/, /^limits storage\n(?:  .*\n)*/, /^domain storage\n(?:  .*\n)*/,
                  /^service storage_ctl\n(?:  .*\n)*/, /^facet storage_ctl\n(?:  .*\n)*/,
-                 /^service data\n(?:  .*\n)*/, /^facet data\n(?:  .*\n)*/, /^service packages\n(?:  .*\n)*/,
-                 /^service system\n(?:  .*\n)*/,
+                 /^service data\n(?:  .*\n)*/, /^service home\n(?:  .*\n)*/, /^facet data\n(?:  .*\n)*/, /^service packages\n(?:  .*\n)*/,
+                 /^service system\n(?:  .*\n)*/, /^service login_keys\n(?:  .*\n)*/, /^facet login_keys\n(?:  .*\n)*/,
+                 /^facet login_keys_session\n(?:  .*\n)*/,
                  /^runtime_limits network\n(?:  .*\n)*/, /^limits network\n(?:  .*\n)*/, /^domain network\n(?:  .*\n)*/,
                  /^service network_ctl\n(?:  .*\n)*/, /^facet network_ctl\n(?:  .*\n)*/,
                  /^service net\n(?:  .*\n)*/,
@@ -137,8 +153,9 @@ module ManifestContextFixture
   # Root's session template's facets, of data, net, inspect, start and machine, which a
   # sessionless source (ProductionImage.without_sessions) does not hold.
   SESSION_FACETS = [/^facet data_session\n(?:  .*\n)*/, /^facet net\n(?:  .*\n)*/, /^facet inspect\n(?:  .*\n)*/,
-                    /^facet start\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/].freeze
-  # A service the system domain serves (inspect, start and machine, to session templates
+                    /^facet start\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/,
+                    /^facet root_clock\n(?:  .*\n)*/].freeze
+  # A service the system domain serves (inspect, start, machine and clock, to session templates
   # alone; log and code_objects, which no facet row grants), by its server line, so a new
   # one goes with the rest.
   SYSTEM_SERVICE = /^service \S+\n  server system\n(?:  .*\n)*/
@@ -165,12 +182,12 @@ module ManifestContextFixture
   # removed and what they hold but the display unit held by the system domain, as a
   # manifest that configures no domain holds them. A session facet is removed where the
   # source still has it, and so is its apps row, whose services those domains serve, and
-  # its system window, which only a storage domain holds (property 8), with the
-  # system_image row that names the window's image.
+  # its system and record_volume windows, which only a storage domain holds (property 8),
+  # with the system_image row that names the system window's image.
   def domainless(source)
     raise ArgumentError, 'the manifest has no configured domain holder' unless source.match?(DOMAIN_HOLDER)
 
-    appless = source.sub(APPS_ROW, '').sub(SYSTEM_WINDOW, '').sub(SYSTEM_IMAGE, '')
+    appless = source.sub(APPS_ROW, '').sub(SYSTEM_WINDOW, '').sub(RECORD_VOLUME_WINDOW, '').sub(SYSTEM_IMAGE, '')
     held = SESSION_FACETS.reduce(appless.gsub(DOMAIN_HOLDER, '  holder system')) { |text, facet| text.sub(facet, '') }
     DOMAIN_ROWS.reduce(held) { |text, row| substitute(text, row, '') }
   end
@@ -185,6 +202,36 @@ module ManifestContextFixture
     raise ArgumentError, "the manifest has no match for #{pattern.inspect}" unless source.match?(pattern)
 
     source.sub(pattern, replacement)
+  end
+
+  # Two UARTs beyond a board's console and host link, each a unit of its own, line_a and
+  # line_b, by path, register base and interrupt line, for the line interface's grants
+  # (docs/design-bluetooth.md, "The controller's line").
+  LINE_UARTS = { 'line_a' => ['/pl011@9050000', 0x9050000, 41], 'line_b' => ['/pl011@9060000', 0x9060000, 42] }.freeze
+
+  # The platform record with the LINE_UARTS units added, each a copy of the console's
+  # UART row at its own path, base and interrupt line, or the line lines gives by unit.
+  def line_platform(platform, lines: {})
+    console = platform.fetch('units').flat_map { |unit| unit.fetch('devices') }.find { |device| device['path'] == platform.fetch('console') }
+    units = LINE_UARTS.map do |key, (path, base, line)|
+      { 'key' => key, 'devices' => [console.merge('path' => path, 'base' => base, 'line' => lines.fetch(key, line), 'placement_key' => key)] }
+    end
+    platform.merge('units' => platform.fetch('units') + units)
+  end
+
+  # source with the unit records of the LINE_UARTS, each held by the system domain unless
+  # holders, by unit name, says otherwise, the system domain's line service and grants.
+  def with_line(source, *grants, holders: {})
+    units = LINE_UARTS.keys.map { |key| "unit #{key}\n  placement \"#{key}\"\n  holder #{holders.fetch(key, 'system')}\n" }
+    source + units.join + "service line\n  server system\n  interface line\n" + grants.join
+  end
+
+  # A facet row granting grantee the line service on the UART at uart, its max_request
+  # floor, the files_max_frame_min of a tree served as an erx_fs grant.
+  def line_grant(name, grantee, uart, floor:, flow: 'none')
+    "facet #{name}\n  grantee #{grantee}\n  service @service.line\n  operations none\n  max_request #{floor}\n" \
+      "  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n" \
+      "  parameter uart \"#{uart}\"\n  parameter rate 115200\n  parameter flow \"#{flow}\"\n"
   end
 
   # A planner that plans every configured domain, introduction and session, for

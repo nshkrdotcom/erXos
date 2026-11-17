@@ -202,14 +202,14 @@ It holds a **login facet** of the system domain's `erx_web_login`, whose
 two operations are `login` and `logout`. It holds no inspect, trace,
 console or shell facet.
 
-**On the stopgap.** The web domain runs on the stopgap Fiasco as designed:
+**On Fiasco.** The web domain runs on Fiasco as designed:
 a configured domain holding its login facet, reached through the host
 tool's front end over the host link, and through the network front end
 once the network domain gives it a network facet. Nothing in this document
-changes there. What the stopgap does not enforce is the wall around the
+changes there. What Fiasco does not enforce is the wall around the
 domain and W8's charge to the principal: budgets are records, so W8's
 bounds hold as the web domain's own limits but nothing is charged
-([design-domains.md](design-domains.md#on-the-stopgap)).
+([design-domains.md](design-domains.md#on-fiasco)).
 
 **A browser is a display.** A UI is a widget server in its application's
 session, whatever shows it: `erx_ui_server` with `erx_ui_schema`,
@@ -374,7 +374,7 @@ function:
 
 -type wire_attr() :: {Key :: binary(), reporter(), status(), datum()}.
 -type reporter() :: kernel | service | runtime
-                  | {stopgap, Name :: binary()}.  % a stopgap reporter of abi/inspection.txt
+                  | {backend, Name :: binary()}.  % a backend reporter of abi/inspection.txt
 -type status() :: ok | partial | unknown | unsupported | {timeout, pos_integer()} | error.
 -type wire_record() :: #{path := [datum()], kind := binary(), id := datum(),
                          attrs := [wire_attr()],                  % in the schema's order
@@ -752,7 +752,7 @@ on a file of another kind, a path with a segment that is empty, hidden,
   the page explains, in the client's own words, each status token the record
   holds (an unsupported value by its reporter: the kernel interface, a
   service or the runtime does not report it) and shows the generated scope
-  of each stopgap reporter the table names; the page shows a status's token
+  of each backend reporter the table names; the page shows a status's token
   and never the datum sent with it, so these words are the client's fixed
   text and claim no cause the status does not carry; the log and trace views, virtual lists of entries
   with gaps shown; the home page; the trace page, whose start button opens
@@ -932,8 +932,8 @@ in TypeScript, as in Erlang and C.
 `close`.
 
 **`abi/inspection.txt`**: the `present` marks of its paths, the
-append-only mark and the stopgap reporters' labels and scopes, generated
-into TypeScript as into Erlang; the decoder refuses a stopgap reporter
+append-only mark and the backend reporters' labels and scopes, generated
+into TypeScript as into Erlang; the decoder refuses a backend reporter
 the table does not name.
 
 **Erlang**: `erx_web_conn:step/2` and `perform/2`;

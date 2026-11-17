@@ -79,6 +79,12 @@ the_boot_clock_says_where_the_time_came_from_test() ->
     _ = erx_ui_query:find(#{text => <<"Sunday 15 November 2026">>}, Tree),
     _ = erx_ui_query:find(#{text => <<"from the real-time clock">>, role => caption}, Tree).
 
+the_approximate_clock_says_where_the_time_came_from_test() ->
+    Tree = shown(at(?NOW), world(approximate, 1)),
+    ?assertEqual(<<"14:07">>, text(#{role => display}, Tree)),
+    _ = erx_ui_query:find(#{text => <<"Sunday 15 November 2026">>}, Tree),
+    _ = erx_ui_query:find(#{text => <<"approximate, from the build date">>, role => caption}, Tree).
+
 %% An unset clock reads the time since boot from 1970: twelve minutes in,
 %% a core that ignored the state would show 00:12 on 1 January 1970.
 the_unset_clock_shows_no_date_test() ->
@@ -189,7 +195,7 @@ an_answer_of_an_earlier_tick_changes_nothing_test() ->
 every_tree_is_valid_test() ->
     rand:seed(exsss, {7, 11, 13}),
     Uptime = fun() -> rand:uniform(1 bsl 64) - 1 end,
-    Times = answers(clock, state, [unset, boot, set, later, 7]),
+    Times = answers(clock, state, [unset, boot, approximate, set, later, 7]),
     Machines = answers(machine, uptime, [Uptime, -1, <<"x">>]),
     lists:foreach(
       fun({Time, Machine}) ->

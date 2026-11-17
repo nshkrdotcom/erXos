@@ -21,7 +21,8 @@
 %% with expire/1.
 -define(DEADLINE, 3600000).
 %% The fixture's system principal, which the service charges creates to and whose
-%% sessions are root_N; the fake library's templates are principal 1's.
+%% sessions are root_N; the fake library's templates are principal 1's. Its mints name
+%% its user, root, not its manifest name (docs/design-system.md, the mint request).
 -define(PRINCIPALS, #{system => 1, names => #{1 => <<"system">>}}).
 
 mints_test_() ->
@@ -144,7 +145,9 @@ provide(Node) -> provide_a(fun(Id) -> #{echo => pid(Node, Id, 1)} end).
 provide_a(Provides) ->
     persistent_term:put({erx_domain_fake_lib, provides},
                         #{<<"a">> => Provides,
-                          <<"root_1">> => fun(Id) -> #{web_line => pid('root_1@erxos', Id, 3)} end}).
+                          <<"root_1">> => fun(Id) -> #{web_line => pid('root_1@erxos', Id, 3),
+                                                       ssh_line => pid('root_1@erxos', Id, 4),
+                                                       rogue_line => pid('root_1@erxos', Id, 6)} end}).
 
 %% The whole path for both grants: b is introduced to a, a's mint is asked, its reply
 %% installs the facet in b's registry through b's domain pid, and b's acknowledgement
@@ -166,7 +169,7 @@ installs() ->
     #{{0, echo} := {minting, {5, 6}, Tag}} = wait(fun(#{{0, echo} := {minting, _, _}}) -> true end),
     %% The request reaches the mint through a's domain pid, never from the service.
     Mint = pid('a@erxos', 5, 1),
-    ?assertMatch({erx_facet_mint, Tag, echo, 6, <<"system">>, #{max_request := 512}},
+    ?assertMatch({erx_facet_mint, Tag, echo, 6, <<"root">>, #{max_request := 512}},
                  receive {trace, PidA, 'receive', {_, mint, Mint, Request}} -> Request after 2000 -> none end),
     Facet = pid('a@erxos', 5, 2),
     PidB ! {erx_origin, 6, {erx_facet_minted, Tag, {ok, Facet}}},
@@ -223,7 +226,7 @@ funnel() ->
 %% stands outside it and still passes with a process of the system domain, so the spec
 %% fails only at its boot, and is refused with a process of another node; log, a
 %% manifest service name in the table that a spec cannot hand on, since the funnel
-%% passes no facet on unattenuated (attenuated/2), web_line, exempt in the check but
+%% passes no facet on unattenuated (attenuated/2), web_line, a line of the check's LINES but
 %% no stopgap of the funnel, and a name in neither are refused, alone or beside
 %% console.
 stopgap_names() ->
@@ -285,7 +288,7 @@ grantee_restart() ->
     PidB ! {erx_origin, 8, {erx_connection_mapped, 7}},
     #{{0, echo} := {minting, {7, 8}, Tag}} = wait(fun(#{{0, echo} := {minting, {7, 8}, _}}) -> true end),
     Mint = pid('a@erxos', 7, 1),
-    ?assertMatch({erx_facet_mint, Tag, echo, 8, <<"system">>, #{max_request := 512}},
+    ?assertMatch({erx_facet_mint, Tag, echo, 8, <<"root">>, #{max_request := 512}},
                  receive {trace, PidA, 'receive', {_, mint, Mint, Request}} -> Request after 2000 -> none end),
     Facet = pid('a@erxos', 7, 6),
     PidA ! {erx_origin, 7, {erx_facet_minted, Tag, {ok, Facet}}},
@@ -327,9 +330,11 @@ last_end() ->
 
 %% A configured domain's facets of services the system domain serves: b (row 0) is
 %% granted log, which a process of this runtime names with erx_facet:serve/2 before
-%% the service starts, and a (row 1) is granted clock, which no service names. b's
-%% ready answer carries a facet in front of log's process, bound to b and within the
-%% row's max_request; a's carries none, and no grant reaches the mint core.
+%% the service starts, and a (row 1) is granted clock, which no service names, and log
+%% by a row that lists its write operation, which erx_log_facet has no operation/1 to
+%% check (erx_facet:start/3). b's ready answer carries a facet in front of log's
+%% process, bound to b and within the row's max_request; a's carries none, and no grant
+%% reaches the mint core.
 %% It starts the service itself: the trace of the domain pids goes to the process that
 %% asks for it, and EUnit runs a fixture's setup in another process than its test.
 served_test() ->
@@ -342,7 +347,8 @@ served_setup() ->
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)], services => [],
                           grants => [{0, log, system, #{max_request => 64, in_flight => 2, queue => 4096}},
-                                     {1, clock, system, #{max_request => 1}}]}),
+                                     {1, clock, system, #{max_request => 1}},
+                                     {1, log, system, #{max_request => 64, operations => [write]}}]}),
     Log = spawn(fun() -> receive stop -> ok end end),
     ok = erx_facet:serve(log, Log),
     Self = self(),
@@ -423,15 +429,25 @@ system_data_mount_test_() ->
      {"not granted", fun() -> ?assertEqual([#{point => [], provider => release, root => [], rights => ro}],
                                            system_mounts([{0, data, 1, #{}}])) end}].
 
-%% The system domain's mounts once the service has booted from a manifest whose data is
-%% a files service of a (row 1) with Grants, as start_link returns them, with no call
-%% to the service first, as the release's later applications read /data.
+%% The packages tree, which no session mounts, the system domain mounts at its system
+%% place, /packages (erx_ns:packages_place/0), where erx_pkg_medium reads the installed
+%% packages, and only when the manifest grants it packages.
+system_packages_mount_test_() ->
+    [{"granted", fun() -> ?assertMatch([_, #{point := [<<"packages">>], provider := {facet, packages, <<"packages">>},
+                                             rights := rw}],
+                                       system_mounts([{system, packages, 1, #{}}, {0, packages, 1, #{}}])) end},
+     {"not granted", fun() -> ?assertEqual([#{point => [], provider => release, root => [], rights => ro}],
+                                           system_mounts([{0, packages, 1, #{}}])) end}].
+
+%% The system domain's mounts once the service has booted from a manifest whose data and
+%% packages are files services of a (row 1) with Grants, as start_link returns them, with
+%% no call to the service first, as the release's later applications read /data.
 system_mounts(Grants) ->
     Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
                                      restarts => 0, restart_period_s => 60, boot_timeout_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)],
-                          services => [{1, data, 5}], grants => Grants}),
+                          services => [{1, data, 5}, {1, packages, 5}], grants => Grants}),
     persistent_term:erase(erx_ns),
     {ok, Ns} = erx_ns:start_link(erx_ns_prim_stub),
     unlink(Ns),
@@ -523,7 +539,7 @@ session_files_grant_test() ->
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
         DomainPid = domain_pid(Id),
-        #{start := Grant} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
+        #{start := {Grant, rw}} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
         ?assertEqual([code_objects, start], lists:sort(maps:keys(Facets))),
         ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)]),
         %% The grant exports itself to the session, after the session's start.
@@ -550,15 +566,34 @@ session_without_files_grant_test() ->
         files_cleanup(Started)
     end.
 
-%% No configured domain, start a files service of the system domain with a test tree's
-%% grants behind it, and a trace of the domain pids' receives to this process, with
-%% Grants the manifest's.
+%% A session's template granted line, a service of the line interface, which abi/services
+%% declares served as a tree, finds an erx_fs grant of the tree's erx_fs_grants in its
+%% ready answer, as a files service's grantee does, and no facet in front of the tree
+%% (docs/design-bluetooth.md, "The controller's line").
+session_line_grant_test() ->
+    Started = {_, _, Grants} = tree_setup(line, ?ERX_SERVICE_LINE,
+                                          [{{template, 0}, line, system, #{max_request => 131072}}]),
+    try
+        {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
+        #{line := {Grant, rw}} = maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})),
+        ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)])
+    after
+        files_cleanup(Started)
+    end.
+
+%% No configured domain, start the system domain's files service named start, with a
+%% test tree's grants behind it, and a trace of the domain pids' receives to this process,
+%% with Grants the manifest's.
 files_setup(Grants) ->
+    tree_setup(start, ?ERX_SERVICE_FILES, Grants).
+
+%% As files_setup/1, for the system domain's service Name of interface Interface.
+tree_setup(Name, Interface, Grants) ->
     persistent_term:put({erx_domain_fake_lib, boot},
-                        #{domains => [], services => [{system, start, ?ERX_SERVICE_FILES}], grants => Grants}),
+                        #{domains => [], services => [{system, Name, Interface}], grants => Grants}),
     {ok, Tree} = erx_fs_grants:start_link(erx_fs_test_tree, []),
     unlink(Tree),
-    ok = erx_facet:serve(start, Tree),
+    ok = erx_facet:serve(Name, Tree),
     erlang:trace(new_processes, true, ['receive', {tracer, self()}]),
     Fake = erx_domain_fake_lib:start_log(),
     %% The service reads the manifest in its init, so a boot it refuses is start_link's
@@ -611,23 +646,25 @@ sessions() ->
     PidA ! {erx_origin, 5, {erx_connection_mapped, 7}},
     Pid7 ! {erx_origin, 7, {erx_connection_mapped, 5}},
     #{Key := {minting, {5, 7}, Tag}} = wait(fun(#{Key := {minting, _, _}}) -> true end),
-    ?assertMatch({erx_facet_mint, Tag, echo, 7, <<"system">>, #{max_request := 64, session := true}},
+    ?assertMatch({erx_facet_mint, Tag, echo, 7, <<"root">>, #{max_request := 64, session := true}},
                  receive {trace, PidA, 'receive', {_, mint, _, {erx_facet_mint, Tag, _, _, _, _} = R}} -> R
                  after 2000 -> none end),
     Facet = pid('a@erxos', 5, 7),
     PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, Facet}}},
     ?assertEqual(Facet, receive {trace, Pid7, 'receive', {_, install, Tag, echo, F}} -> F after 2000 -> none end),
-    %% The session's ready report named its web line, which the service keeps for the
-    %% session until it ends.
-    ?assertEqual({ok, pid('root_1@erxos', 7, 3)}, gen_server:call(erx_domain_srv, {web_line, 7})),
-    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {web_line, 5})),
+    %% The session's ready report named its web and SSH lines, which the service keeps
+    %% for the session until it ends, and a name outside the closed set, which it does not.
+    ?assertEqual({ok, pid('root_1@erxos', 7, 3)}, gen_server:call(erx_domain_srv, {line, web_line, 7})),
+    ?assertEqual({ok, pid('root_1@erxos', 7, 4)}, gen_server:call(erx_domain_srv, {line, ssh_line, 7})),
+    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {line, rogue_line, 7})),
+    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {line, web_line, 5})),
     PidB ! {erx_origin, 6, {erx_facets_installed, Tag}},
     wait_counts(fun(#{{dropped, wrong_domain} := N}) -> N =:= 1 end),
     Pid7 ! {erx_origin, 7, {erx_facets_installed, Tag}},
     wait(fun(#{Key := {installed, {5, 7}, F}}) -> F =:= Facet end),
     ok = erx_domain:stop(Session, kill),
     wait(fun(Grants) -> not is_map_key(Key, Grants) end),
-    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {web_line, 7})),
+    ?assertEqual({error, no_line}, gen_server:call(erx_domain_srv, {line, web_line, 7})),
     PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, Facet}}},
     wait_counts(fun(#{{dropped, unknown_tag} := N}) -> N =:= 1 end).
 

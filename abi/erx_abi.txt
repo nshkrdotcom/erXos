@@ -12,6 +12,8 @@ include services/inspect.txt
 include services/windows.txt
 include services/line.txt
 include services/log.txt
+include services/ssh.txt
+include services/clock.txt
 include services/code_objects.txt
 include manifest.txt
 include formats/elf64.txt
@@ -27,6 +29,7 @@ include medium.txt
 include formats/erofs.txt
 include formats/f2fs.txt
 include formats/ieee80211.txt
+include formats/ssh.txt
 include kernel.txt
 include signals.txt
 include errno.txt
@@ -54,6 +57,9 @@ limit utcb_brs u32 58
 limit utcb_bytes_max u32 504
 limit period_min u64 1000000
 limit period_max u64 1000000000
+# The largest wall offset the time page holds, in ns, early 2116 (docs/design-kernel.md,
+# "Time"): erx_time_set_offset refuses any offset outside 0..time_offset_max.
+limit time_offset_max u64 0x3fffffffffffffff
 limit cpuset_bits u32 64
 limit slice_min_us u32 500
 limit slice_max_us u32 50000
@@ -719,7 +725,7 @@ enum fiasco_call u32
   value irq_bind 33
   value irq_ack 34
   value irq_trigger 35
-  value time_set_wall 36
+  value time_set_offset 36
   value irq_unbind 37
   value gate_cancel 38
   value budget_create 39
@@ -948,9 +954,9 @@ layout erx_fiasco_irq_request wire_le 8 16
   field caller u64 0
   field irq u64 8
 
-layout erx_fiasco_time_set_wall_request wire_le 8 16
+layout erx_fiasco_time_set_offset_request wire_le 8 16
   field caller u64 0
-  field wall_ns u64 8
+  field offset_ns u64 8
 
 # erx_mem_create, and erx_mem_create_paged, whose flags are ERX_MEM_CODE or 0.
 layout erx_fiasco_mem_create_request wire_le 8 32

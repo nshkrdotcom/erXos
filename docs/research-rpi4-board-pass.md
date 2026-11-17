@@ -3,7 +3,7 @@
 A point-in-time record of the first manual pass of
 [design-platforms.md](design-platforms.md#trying-a-card-on-a-board) on a
 real board, part (a) of
-[plan.md](plan.md#1b-i-the-raspberry-pi-4-on-the-stopgap), stage 5, "The
+[plan.md](plan.md#1b-i-the-raspberry-pi-4-on-fiasco), stage 5, "The
 board". It was run by hand on 2026-11-12. This record states what
 was reported and what the probe runs on the same board showed. It
 was written from those reports, not from a serial log: the log is not in
@@ -104,6 +104,6 @@ These agree with what
 * The report of 2026-11-12 (this record's only source for the
   observations above).
 * [design-platforms.md](design-platforms.md#trying-a-card-on-a-board),
-  [plan.md](plan.md#1b-i-the-raspberry-pi-4-on-the-stopgap) and
+  [plan.md](plan.md#1b-i-the-raspberry-pi-4-on-fiasco) and
   [research-rpi4-bl31-qemu.md](research-rpi4-bl31-qemu.md), the QEMU
   experiment with the same BL31.

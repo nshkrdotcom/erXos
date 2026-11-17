@@ -30,7 +30,8 @@ class ErxLittlefsTest < Minitest::Test
            '-DERX_LITTLEFS_LOADABLE', '-DLFS_NO_DEBUG', '-DLFS_NO_WARN', '-DLFS_NO_ERROR'].freeze
   MODULES = ['erlang/apps/erx_files/src/erx_fs.erl', 'erlang/apps/erx_files/src/erx_fs_version.erl',
              'erlang/apps/erx_storage/src/erx_littlefs.erl', 'erlang/apps/erx_storage/src/erx_lfs.erl',
-             'erlang/apps/erx_blk/src/erx_blk_window.erl', 'test/fixtures/erx_littlefs_tests.erl'].freeze
+             'erlang/apps/erx_blk/src/erx_blk_window.erl', 'erlang/apps/erx/src/erx_ns.erl',
+             'test/fixtures/erx_littlefs_tests.erl'].freeze
   # erx_log's NIF is the guest's. The stub drops the line: standard_error's writer is a
   # dirty I/O NIF, which the test's one dirty I/O thread may be holding.
   LOG_STUB = <<~ERLANG
@@ -41,7 +42,8 @@ class ErxLittlefsTest < Minitest::Test
   CASES = %w[synced_file_survives_a_cut tree_operations block_error_ends_the_owner
              worker_end_ends_the_owner window_end_ends_the_owner mount_failure_ends_the_owner
              corrupt_volume_never_formats blank_blocks_do_not_mount deadline_ends_a_request refuses_bad_arguments
-             fsync_flushes_the_window failed_flush_fails_the_fsync a_tree_reaches_only_its_own].freeze
+             fsync_flushes_the_window failed_flush_fails_the_fsync a_tree_reaches_only_its_own
+             a_home_reaches_only_its_own].freeze
 
   def test_volume_cases_pass_under_one_dirty_io_scheduler
     skip 'stock OTP not built: make oracle-bootstrap' unless File.directory?(OTP)

@@ -128,7 +128,7 @@ and with it every call (a residual, TODO.md).
 -type opts() :: #{width := 1..65535, height := 1..65535, chan := 0..16#ffffffff,
                   program := program(),
                   window => erx_win:window(),
-                  present => fun((non_neg_integer(), 1..65535, 1..65535, [erx_ui_lvgl_core:rect(), ...]) -> ok),
+                  present => fun((non_neg_integer(), 1..65535, 1..65535, [erx_win_core:rect(), ...]) -> ok),
                   present_text := erx_ui_wire:present()}.
 
 -doc """

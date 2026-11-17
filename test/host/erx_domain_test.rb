@@ -131,9 +131,9 @@ class ErxDomainTest < Minitest::Test
               from: '<- Rows, T =:= Template].',
               to: '<- Rows, T >= 0, Template >= 0].',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'session_without_files_grant'),
-    # A files grant of a system domain's service bound to another domain than its
+    # A tree grant of a system domain's service bound to another domain than its
     # grantee: the grant exports itself to that domain, not to the session.
-    Fault.new(name: 'a files grant bound to another client', file: SERVICE,
+    Fault.new(name: 'a tree grant bound to another client', file: SERVICE,
               from: 'Binding = #{client => Id, ends_with => DomainPid, exports => Exports},',
               to: 'Binding = #{client => Id + 1, ends_with => DomainPid, exports => Exports},',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'session_files_grant'),
@@ -168,6 +168,22 @@ class ErxDomainTest < Minitest::Test
               file: 'erlang/apps/erx/src/erx_facet.erl',
               from: 'refuse(From, busy, State);', to: 'refuse(From, badarg, State);',
               tests: 'erx_facet_tests', caught_by: 'limits_its_forwards_test'),
+    # A grant's operations (docs/design-time.md, "Phase 1"): a facet that admits an
+    # operation its grant does not list lets a holder of one operation call every other.
+    Fault.new(name: 'a facet that admits an operation its grant does not list',
+              file: 'erlang/apps/erx/src/erx_facet.erl',
+              from: '                false -> eperm', to: '                false -> ok',
+              tests: 'erx_facet_tests', caught_by: 'admits_only_its_grants_operations_test'),
+    # A grant listing operations to a callback that cannot check them would admit them all.
+    Fault.new(name: 'a facet started for operations no callback checks',
+              file: 'erlang/apps/erx/src/erx_facet.erl',
+              from: 'false -> {error, unchecked_operations}', to: 'false -> {ok, all}',
+              tests: 'erx_facet_tests', caught_by: 'a_grant_s_operations_need_a_checking_callback_test'),
+    # A system-served grant that loses its row's operations reaches the facet granting none
+    # it can check, so a callback without operation/1 starts and admits every operation.
+    Fault.new(name: 'a served grant that drops its operations', file: SERVICE,
+              from: 'Checked#{operations => maps:get(operations, Limits, [])}', to: 'Checked',
+              tests: 'erx_domain_mints_srv_tests', caught_by: 'served_test'),
     # The system domain's namespace (docs/design-system.md, "A session takes the console"):
     # a wait answered before its files grant settles lets the start table read rc.conf
     # before the system domain's data grant is installed.

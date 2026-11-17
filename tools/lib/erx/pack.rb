@@ -40,9 +40,13 @@ module Erx
 
     # An entry names an artifact plus its trusted build receipt. Generated
     # manifest and notices entries belong to this funnel and cannot be supplied.
-    # test_code marks the archive a test image (PackWire#write).
+    # test_code marks the archive a test image (PackWire#write). partition names the
+    # files of the image's system partition that the archive does not hold, the image's
+    # packages, each its path, artifact and receipt: each receipt is judged as an
+    # entry's is, so its records join the notices and the manifest's provenance, and
+    # none becomes a row.
     def build(entries:, root_path:, build_kind:, platform:, artifacts:,
-              manifest_source:, output:, budget: DEFAULT_BUDGET, test_code: false)
+              manifest_source:, output:, budget: DEFAULT_BUDGET, test_code: false, partition: [])
       require_relative 'manifest'
       unless budget.is_a?(Integer) && budget.between?(1, 512 * 1024 * 1024)
         raise Error, 'invalid pack host budget'
@@ -53,7 +57,7 @@ module Erx
       directory = OutputDirectory.prepare(root: @output_root, path: File.dirname(destination))
       destination = File.join(directory, File.basename(destination))
       Dir.mktmpdir('.erx-pack-', File.dirname(destination)) do |workspace|
-        rows, records = snapshot(entries, workspace: workspace, budget: budget, build_kind: build_kind)
+        rows, records = snapshot(entries, partition: partition, workspace: workspace, budget: budget, build_kind: build_kind)
         generated_path = @codec.fixed_bytes('system_manifest_path')
         notices_path = 'system/NOTICES'.b
         if rows.any? { |row| [generated_path, notices_path].include?(row.fetch('path')) }
@@ -115,7 +119,7 @@ module Erx
 
     private
 
-    def snapshot(entries, workspace:, budget:, build_kind:)
+    def snapshot(entries, partition:, workspace:, budget:, build_kind:)
       unless entries.is_a?(Array) && entries.size.between?(1, @codec.constant('pack_entries_max') - 2)
         raise Error, 'invalid pack entry count'
       end
@@ -136,13 +140,7 @@ module Erx
         path = entry.fetch('path')
         raise Error, 'invalid pack artifact path' unless path.is_a?(String)
         original = File.expand_path(entry.fetch('artifact'), @root)
-        closure = @provenance.resolve(receipt: entry.fetch('receipt'), artifact: original,
-                                      build_kind: build_kind, notice_budget: budget)
-        closure.each do |record|
-          key = record.fetch('path')
-          raise Error, 'conflicting artifact provenance' if records.key?(key) && records[key] != record
-          records[key] = record
-        end
+        closure = judged(entry, records, build_kind: build_kind, budget: budget)
         target = File.join(workspace, "artifact-#{index}")
         File.open(original, File::RDONLY | File::NONBLOCK) do |source|
           raise Error, 'pack artifact must be a regular file' unless source.stat.file?
@@ -180,9 +178,28 @@ module Erx
         raise Error, 'pack payload exceeds host budget' if total > budget
         row
       end
+      partition.each do |file|
+        raise Error, 'invalid partition file fields' unless file.is_a?(Hash) && file.keys.sort == %w[artifact path receipt]
+
+        judged(file, records, build_kind: build_kind, budget: budget)
+      end
       [rows, records.values.sort_by { |record| record.fetch('path').b }.freeze]
     rescue KeyError => error
       raise Error, "missing pack artifact field: #{error.key}"
+    end
+
+    # The provenance records of file's artifact under its receipt, added to records,
+    # where a path already recorded must have the same record.
+    def judged(file, records, build_kind:, budget:)
+      closure = @provenance.resolve(receipt: file.fetch('receipt'), artifact: File.expand_path(file.fetch('artifact'), @root),
+                                    build_kind: build_kind, notice_budget: budget)
+      closure.each do |record|
+        key = record.fetch('path')
+        raise Error, 'conflicting artifact provenance' if records.key?(key) && records[key] != record
+
+        records[key] = record
+      end
+      closure
     end
 
     # An empty directory, a mount point with nothing under it in the archive: a path, a

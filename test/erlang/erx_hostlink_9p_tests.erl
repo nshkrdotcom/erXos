@@ -423,7 +423,7 @@ a_release_build_or_an_unread_manifest_serves_none_test() ->
 %% list, refuses the configuration with that entry named, line-escaped, rather than
 %% serving fewer trees than it meant.
 configured_trees_test() ->
-    Old = application:get_env(erx_hostlink, files_trees),
+    Old = application:get_env(erx_uart, files_trees),
     try
         ?assertEqual({ok, [<<"proc">>, <<"data">>]}, configured_trees([proc, data])),
         ?assertEqual({ok, []}, configured_trees([])),
@@ -434,13 +434,13 @@ configured_trees_test() ->
         ?assertEqual(nomatch, binary:match(Named, [<<16#202E/utf8>>, <<"\n">>]))
     after
         case Old of
-            {ok, Value} -> application:set_env(erx_hostlink, files_trees, Value);
-            undefined -> application:unset_env(erx_hostlink, files_trees)
+            {ok, Value} -> application:set_env(erx_uart, files_trees, Value);
+            undefined -> application:unset_env(erx_uart, files_trees)
         end
     end.
 
 configured_trees(Value) ->
-    application:set_env(erx_hostlink, files_trees, Value),
+    application:set_env(erx_uart, files_trees, Value),
     erx_hostlink_files:configured_trees().
 
 %%% The bridge process over a real grant ---------------------------------

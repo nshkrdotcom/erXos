@@ -80,6 +80,7 @@ module Erx
         out.concat(enum_name_tables(schema))
         out.concat(signal_tables(schema))
         out.concat(event_tables(schema))
+        out.concat(service_operation_table(schema)) if schema.types.key?(FACET_LAYOUT)
         out.concat(service_parameter_table(schema)) if schema.types.key?(FACET_LAYOUT)
         out.concat(rights_tables(schema)) if schema.objects.any?
         out.concat(['#endif /* ERX_ABI_H */', ''])
@@ -147,15 +148,13 @@ module Erx
       # whether a facet must state it, and its bound: an integer's range, an i64's as
       # its two's complement bits, the byte maximum of a text or bytes kind in
       # maximum, or a member kind's least and greatest value, with its members' names
-      # in value order, so value v is named members[v - minimum]. A set declares many
-      # values of one key, which the view's one value per
-      # key cannot carry, so a set fails the generation until the view carries one.
+      # in value order, so value v is named members[v - minimum], and the most rows a
+      # facet states of it: one, or a set's MAX_COUNT, its elements in strictly
+      # ascending order; a set is of u64 alone (the ABI reader refuses another).
       def service_parameter_table(schema)
         limits = schema.types.fetch(FACET_LAYOUT).fields.map(&:name)
         rows = schema.services.sort_by { |service| service.fetch(:number) }.flat_map do |service|
           service.fetch(:parameters).sort_by { |_key, parameter| parameter.fetch(:number) }.map do |key, parameter|
-            raise SchemaError, "service #{service.fetch(:name)}'s parameter #{key} is a set, which no facet carries" if
-              parameter.fetch(:cardinality) == 'set'
             raise SchemaError, "service #{service.fetch(:name)}'s parameter #{key} has a facet row field's name" if
               limits.include?(key)
             service_parameter_row(service, key, parameter)
@@ -170,7 +169,7 @@ module Erx
           end
         end
         most = schema.services.map { |service| service.fetch(:parameters).size }.max || 0
-        ['/* The most parameters one interface declares, so the most one facet states. */',
+        ['/* The most parameters one interface declares, so the most keys one facet states. */',
          "#define ERX_SERVICE_PARAMETERS_MAX #{most}", '',
          '/*', ' * A parameter an abi/services interface declares: its number, as a',
          ' * facet\'s packed parameter row names it, its name, its kind (an',
@@ -179,15 +178,41 @@ module Erx
          ' * or bytes kind\'s byte maximum in maximum, minimum 0, or a member',
          ' * kind\'s least and greatest value, its members\' names in value order',
          ' * in members, so value v is named members[v - minimum]; members is NULL',
-         ' * for every other kind.', ' */',
+         ' * for every other kind; and most, the most rows a facet states of it:',
+         " * 1, or a set's MAX_COUNT, above 1, its elements in strictly ascending", ' * order.', ' */',
          'typedef struct erx_service_parameter {', "\tuint32_t\tinterface;", "\tuint32_t\tnumber;",
          "\tconst char\t*name;", "\tuint32_t\tkind;", "\tbool\t\trequired;",
-         "\tuint64_t\tminimum, maximum;", "\tconst char *const *members;", '} erx_service_parameter_t;', '',
-         '/* The parameters interface declares, in number order: *count rows from the result. */',
-         'static inline const erx_service_parameter_t *',
-         'erx_service_parameters(uint32_t interface, size_t *count)', '{',
-         *names, "\tstatic const erx_service_parameter_t table[] = {", *rows,
-         "\t\t{ 0, 0, NULL, 0, false, 0, 0, NULL }", "\t};", "\tsize_t first = 0;", '',
+         "\tuint64_t\tminimum, maximum;", "\tconst char *const *members;", "\tuint32_t\tmost;", '} erx_service_parameter_t;', '',
+         *interface_lookup('parameters', 'erx_service_parameter_t', names + ["\tstatic const erx_service_parameter_t table[] = {",
+                                                                     *rows, "\t\t{ 0, 0, NULL, 0, false, 0, 0, NULL, 0 }", "\t};"])]
+      end
+
+      # erx_service_operations(interface, &count): the operations an abi/services
+      # interface declares, in number order, as the domain library's boot view checks a
+      # facet's packed operation rows against them and names each (docs/design-time.md,
+      # "The clock facet"). A row is the declaration's number and name. An interface
+      # served as a tree declares none (abi_contracts.rb).
+      def service_operation_table(schema)
+        services = schema.services.sort_by { |service| service.fetch(:number) }
+        rows = services.flat_map do |service|
+          service.fetch(:operations).sort_by(&:last).map do |name, number|
+            "\t\t{ #{constant("service_#{service.fetch(:name)}")}, #{number}, #{c_string(name)} },"
+          end
+        end
+        ['/*', ' * An operation an abi/services interface declares: its number, as a', ' * facet\'s packed operation rows name it, and its name.', ' */',
+         'typedef struct erx_service_operation {', "\tuint32_t\tinterface;", "\tuint32_t\tnumber;",
+         "\tconst char\t*name;", '} erx_service_operation_t;', '',
+         *interface_lookup('operations', 'erx_service_operation_t', ["\tstatic const erx_service_operation_t table[] = {",
+                                                                     *rows, "\t\t{ 0, 0, NULL }", "\t};"])]
+      end
+
+      # The lookup erx_service_WHAT(interface, &count) over a table of type, sorted by
+      # interface and ended by a row whose name is NULL, which table_lines declare: the
+      # rows of interface, *count of them from the result.
+      def interface_lookup(what, type, table_lines)
+        ["/* The #{what} interface declares, in number order: *count rows from the result. */",
+         "static inline const #{type} *", "erx_service_#{what}(uint32_t interface, size_t *count)", '{',
+         *table_lines, "\tsize_t first = 0;", '',
          "\twhile (table[first].name != NULL && table[first].interface != interface)", "\t\tfirst++;",
          "\tfor (*count = 0; table[first + *count].name != NULL && table[first + *count].interface == interface;)",
          "\t\t(*count)++;", "\treturn (&table[first]);", '}', '']
@@ -198,7 +223,7 @@ module Erx
         "\t\t{ #{constant("service_#{service.fetch(:name)}")}, #{parameter.fetch(:number)}, #{c_string(key)}, " \
           "#{constant("mf_parameter_#{parameter.fetch(:kind)}")}, #{parameter.fetch(:cardinality) == 'one'}, " \
           "UINT64_C(#{minimum}), UINT64_C(#{maximum}), " \
-          "#{parameter.fetch(:members) ? members_name(service, key) : 'NULL'} },"
+          "#{parameter.fetch(:members) ? members_name(service, key) : 'NULL'}, #{parameter.fetch(:maximum_count)} },"
       end
 
       def members_name(service, key) = "#{service.fetch(:name)}_#{key}_members"

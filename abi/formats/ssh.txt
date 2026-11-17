@@ -1,0 +1,27 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# SSH's constants, the one home of every value the login facet's decoder,
+# erx_ssh_wire, reads from the SSH domain (docs/design-ssh.md, "Logging in"). A value
+# erXos has no use for is not entered.
+#
+# The sources are RFC 4253 (rfc4253.txt, SHA-256
+# b471173305154f6c66facffcf7a4a25fc5c32765cb30542120be6c20a88f1ed3) and RFC 8709
+# (rfc8709.txt, SHA-256
+# ea4aa3a8feec6bd5b1cc7847a6d08cd0afae49d12220cac1e2c39bc72c29fd3d), both from
+# https://www.rfc-editor.org/rfc/, sections cited. A value marked erXos's is the
+# design's own choice, not the specification's.
+
+# The message number that opens a KEXINIT payload (RFC 4253, section 12) and the
+# random cookie that follows it (section 7.1).
+limit ssh_msg_kexinit u8 20
+limit ssh_kexinit_cookie_size u32 16
+
+# The name of the one login key algorithm, which opens both the key blob and the
+# signature blob (RFC 8709, sections 4 and 6), and the sizes of the key and the
+# signature those blobs carry after it.
+bytes ssh_ed25519_name 11 value 7373682d65643235353139
+limit ssh_ed25519_key_size u32 32
+limit ssh_ed25519_signature_size u32 64
+
+# erXos's: the longest exchange hash input the login facet takes, 64 KiB.
+limit ssh_exchange_max u32 65536

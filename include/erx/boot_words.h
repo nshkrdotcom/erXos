@@ -39,9 +39,9 @@
 #define ERX_BOOT_CONSOLE_WORDS_MAX	(sizeof(ERX_BOOT_RECORD_FLAG) + \
 	2u * ERX_BOOT_NAME_WORD_MAX + 4u * ERX_BOOT_NUMBER_WORD_MAX + ERX_BOOT_MARK_WORD_MAX)
 
-/* -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK, the system domain's physical record. */
+/* -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX, the system domain's physical record. */
 #define ERX_BOOT_DEVICE_WORDS_MAX	(sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("device") + \
-	2u * ERX_BOOT_NAME_WORD_MAX + ERX_BOOT_PATH_WORD_MAX + 4u * ERX_BOOT_NUMBER_WORD_MAX + ERX_BOOT_MARK_WORD_MAX)
+	2u * ERX_BOOT_NAME_WORD_MAX + ERX_BOOT_PATH_WORD_MAX + 5u * ERX_BOOT_NUMBER_WORD_MAX + ERX_BOOT_MARK_WORD_MAX)
 
 /*
  * -erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC, per given
@@ -67,12 +67,14 @@
 #define ERX_BOOT_BUILD_WORDS_MAX	(sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("build") + ERX_BOOT_NUMBER_WORD_MAX)
 
 /*
- * -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT, the system window's holder's
- * (docs/design-stopgap.md, "The booted slot"): three u64s, then the salt, at most the row's
- * array, and the root hash, each byte two lowercase hex digits.
+ * -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT [record_volume], the system
+ * window's holder's (docs/design-stopgap.md, "The booted slot"): three u64s, then the salt,
+ * at most the row's array, and the root hash, each byte two lowercase hex digits, and the
+ * record_volume window role's name, erx_mf_window_role_name's "record_volume", when the
+ * holder holds that window too.
  */
 #define ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX	(sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("system_image") + \
 	3u * ERX_BOOT_NUMBER_WORD_MAX + 2u * sizeof(((erx_mf_system_image_t *)0)->salt) + 1u + \
-	2u * sizeof(((erx_mf_system_image_t *)0)->root_hash) + 1u)
+	2u * sizeof(((erx_mf_system_image_t *)0)->root_hash) + 1u + sizeof("record_volume"))
 
 #endif /* ERX_BOOT_WORDS_H */

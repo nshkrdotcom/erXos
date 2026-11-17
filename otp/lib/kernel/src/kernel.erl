@@ -21,8 +21,9 @@
 %% system log's erx_syslog_sup right after it, before user, and
 %% kernel_safe_sup makes the domain's file version counter and starts the namespace
 %% table's writer, /tmp, /proc, the domain's inspection agent and the process behind
-%% the inspect facets; start_distribution false starts the local part of distribution
-%% alone.
+%% the inspect facets and the clock service's erx_clock_sup (an erx_service_sup, as
+%% erx_syslog_sup is);
+%% start_distribution false starts the local part of distribution alone.
 %%
 %% %CopyrightEnd%
 %%
@@ -153,16 +154,11 @@ init([]) ->
                  type => worker,
                  modules => [erx_watchdog]},
 
-    %% erXos: the system log's service, temporary as user is, so its end is neither
-    %% restarted nor counted here; its init makes the kernel log's first take, which
-    %% must come before user starts the console's driver (docs/design-log.md, "The
-    %% kernel's records" and "Service lifetime and restart").
-    Syslog = #{id => erx_syslog_sup,
-               start => {erx_syslog_sup, start_link, []},
-               restart => temporary,
-               shutdown => infinity,
-               type => supervisor,
-               modules => [erx_syslog_sup]},
+    %% erXos: the system log's service under erx_syslog_sup, temporary as user is,
+    %% so its end is neither restarted nor counted here; its init makes the kernel
+    %% log's first take, which must come before user starts the console's driver
+    %% (docs/design-log.md, "The kernel's records" and "Service lifetime and restart").
+    Syslog = erx_service_sup:child_spec(log),
 
     %% Must be started before user
     SigSrv = #{id => erl_signal_server,
@@ -322,7 +318,14 @@ init(safe) ->
                 type => worker,
                 modules => [erx_inspect_srv]},
 
-    {ok, {SupFlags, Boot ++ DiskLog ++ Pg ++ [Ns, Tmp, Proc, Agent, Inspect]}}.
+    %% erXos: the clock service, the wall clock's one authority, under erx_clock_sup,
+    %% the server of clock (erx_facet:serve/2) before the domain service mints the
+    %% clock facets, so they outlive the service's restarts; temporary, so a request
+    %% that keeps crashing the service ends it and not this supervisor
+    %% (design-time.md, Concurrency and failure); none but in the system domain.
+    Clock = erx_service_sup:child_spec(clock),
+
+    {ok, {SupFlags, Boot ++ DiskLog ++ Pg ++ [Ns, Tmp, Proc, Agent, Inspect, Clock]}}.
 
 start_distribution(Part) ->
     Rpc = #{id => rex,

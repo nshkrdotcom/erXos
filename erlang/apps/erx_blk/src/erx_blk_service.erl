@@ -16,8 +16,10 @@
 %% erx_blk_table:booted/1 derives from the -erx_record boot words the domain library
 %% gives the block device's holder: the read-only system window on the booted slot's
 %% system partition (docs/design-stopgap.md, "The booted slot"), which reads no
-%% manifest and is started only in the holder given a system_image record, and a
-%% read-only window on each EROFS image of the booted slot that the release's manifest
+%% manifest and is started only in the holder given a system_image record; the
+%% read-only record_volume window on the whole record partition, started in the holder
+%% whose system_image record names it, whatever the slot, for erx_storage_login_keys;
+%% and a read-only window on each EROFS image of the booted slot that the release's manifest
 %% gives the system domain, of role
 %% {image, Name}, which erx_blk_image places from the slot and the manifest. A boot with
 %% no slot, an unknown boot, serves neither; so does a boot value the reader refuses,

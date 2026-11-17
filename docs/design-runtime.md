@@ -86,7 +86,7 @@ Decisions every reader of this document needs:
   ([NIFs and blocking](#nifs-and-blocking)).
 * **`liberx` is the only way to the kernel.** It wraps every kernel call,
   generated from `abi/erx_abi.txt`, with three backends: erXos's kernel, the
-  stopgap Fiasco, and a hosted implementation on macOS for development
+  Fiasco, and a hosted implementation on macOS for development
   under the sanitizers. Its call stubs hand the kernel values alone:
   registers, fields of the calling thread's UTCB, or a memory window, a
   memory object's capability with an offset and a length; no stub passes
@@ -359,10 +359,12 @@ services (the carrier between domains, `erx_dist`, and its connection
 agent, `erx_connections`; the log sink's handler, `erx_log_h`;
 `erx_program`, `erx_device`, `erx_watchdog`, the console, the kernel log
 and the namespace); `erx_files`, the Erlang file servers; one driver
-application per device class, `erx_uart` and `erx_blk`; `erx_shell`, the
+application per device class, `erx_uart` and `erx_blk`, of which
+`erx_uart` also holds the services on the system domain's UARTs, the host
+link and the line service; `erx_shell`, the
 command shell; and the system services and their clients: `erx_domain`,
 the domain service, which only the system release ships; `erx_code`, the
-code service; `erx_hostlink`, the host link; `erx_net`, the TCP/IP stack;
+code service; `erx_net`, the TCP/IP stack;
 `erx_net_client`, its socket backends; `erx_web_line`, a session's line to
 the web domain, which only the domain release ships; `erx_desk`, the
 desktop programs, which the client script boots; and `erx_session`,
@@ -483,7 +485,7 @@ of behaviour, however many lines it touches:
 | `lib/kernel/src/inet_dns.erl` | 62. `decode_data/3`'s last clause keeps the data of every record type it has no format for raw, the types OTP names without a format included: UINFO, UID, GID and UNSPEC (100 to 103), IXFR, AXFR, MAILB, MAILA and ANY (251 to 255), and A, AAAA and WKS of a class other than IN; stock's clause takes only an integer type, so a reply carrying one of those, which any host on the path can forge, fails the whole decode with `function_clause` out of `inet_res`'s call and crashes the resolver's caller, an upstream bug ([design-network-stack.md](design-network-stack.md#name-resolution)) |
 | `lib/kernel/src/inet_db.erl` | 63. `crypto_rand_range/1`, where `crypto` is not loaded, draws eight bytes from `erx_bytes:entropy/1` and takes them modulo the range, so `inet_res`'s query IDs and the inet backend's random ports come from the kernel's generator in a domain whose release has no `crypto`, as the network domain's has none, and are not inet_db's counter, one more per query, which an off-path host could guess (RFC 5452); where `erx_bytes` is not loaded (`error:undef`), as on stock OTP, it answers `undefined` and stock's counter stays, and a failed read raises in the resolver's caller, the process that called `inet_res`, rather than fall back to the counter, whose IDs an off-path host could guess ([design-network-stack.md](design-network-stack.md#name-resolution)) |
 | `erts/preloaded/src/erlang.erl`, `lib/stdlib/src/gen.erl`, `lib/kernel/src/erpc.erl` | 64. the library calls that stock gives a node-level result when a connection's `noconnection` reaches them give the same result for edit 56's `{domain_down, D, Info}`: `spawn/4`, `spawn_link/4`, `spawn_opt/5` and `spawn_monitor/4`, and the forms that route to them, whose spawn gets it as its error reply, return a pid that exits with `noconnection`, as stock's documentation promises; `gen:call`, and so `gen_server:call` and its kin, exits `{nodedown, Node}`; and `erpc`'s calls and requests raise `{erpc, noconnection}` for it as the `DOWN` of the request's process or as its spawn's error reply, so `rpc:call/4,5`, which maps that error, returns `{badrpc, nodedown}`, `rpc:block_call` through `gen_server:call` the same, and `rpc:multicall` counts the node among its bad nodes. Raw links, monitors and `spawn_request` replies keep the reason. Each matches the shape alone: a spawn's error reply of that shape comes only from this node's ERTS, but any process can make a monitored process exit with it, as it can with `noconnection`, so the result tells a caller no more than stock's does ([Connections in ERTS](#connections-in-erts)) |
-| `erts/preloaded/src/init.erl` | 65. once the boot script has started every application, and before any `-s`, `-run` or `-eval`, a domain's runtime sends `{erx_ready, #{connections => Agent, inspect => InspectAgent, provides => Provides}}` to the domain pid that `erx_dist:boot/0` names, `Agent` being its connection agent, `erx_connections`, and `InspectAgent` its inspection agent, `erx_inspect_agent` ([design-live.md](design-live.md#the-runtime-agent)), a key left out when no agent is registered, both of which edit 8 hands out to the system domain with `send` as the frame is encoded, and `Provides` the mints its services named with `erx_facet:provide/2` ([design-system.md](design-system.md#facets-a-configured-domain-serves)), whose persistent term init then leaves as `reported`, so `provide/2` refuses a later mint: init's ready report, on which `erx_domain:create/1` returns ([design-domains.md](design-domains.md#messages-between-the-domain-service-and-a-runtime)). Further agents join the map as they come to exist. Coming before `-eval`, it is sent by a domain whose `-eval` halts it too. Init then waits, at most five seconds, for the domain service's answer, the domain's facets by name, which the connection agent keeps as the persistent term `{erx, facets}`, which `erx:cap/1` reads, and then hands it as `{erx_facets, Facets}`, so `-eval`, `-s` and `-run` find them. The agent is that term's one writer, for this answer and for every later installation, so no installation is lost to the answer; a domain whose answer does not come in time boots on without waiting for it. The system domain, whose boot page names no domain pid, and a runtime that is no node report nothing and wait for nothing; 68. once its shutdown is done, init ends `init:reboot/0` with `erx_domain_lib:end_commit(reset)` and `init:stop/0` with `erx_domain_lib:end_commit(off)`, which in the system domain end the machine and do not return ([design-system.md](design-system.md#shutting-down)) and elsewhere answer a refusal, after which the node halts as stock OTP's does; a reboot leaves its code loaded, as a stop does, so the module is still there to call |
+| `erts/preloaded/src/init.erl` | 65. once the boot script has started every application, and before any `-s`, `-run` or `-eval`, a domain's runtime sends `{erx_ready, #{connections => Agent, inspect => InspectAgent, provides => Provides}}` to the domain pid that `erx_dist:boot/0` names, `Agent` being its connection agent, `erx_connections`, and `InspectAgent` its inspection agent, `erx_inspect_agent` ([design-live.md](design-live.md#the-runtime-agent)), a key left out when no agent is registered, both of which edit 8 hands out to the system domain with `send` as the frame is encoded, and `Provides` the mints its services named with `erx_facet:provide/2` ([design-system.md](design-system.md#facets-a-configured-domain-serves)), whose persistent term init then leaves as `reported`, so `provide/2` refuses a later mint: init's ready report, on which `erx_domain:create/1` returns ([design-domains.md](design-domains.md#messages-between-the-domain-service-and-a-runtime)). Further agents join the map as they come to exist. Coming before `-eval`, it is sent by a domain whose `-eval` halts it too. Init then waits, at most five seconds, for the domain service's answer, the domain's facets by name, each a pid or, for a files service, `{Pid, Rights}` with the rights of its facet row (`erx:facet/0`), which the connection agent keeps as the persistent term `{erx, facets}`, whose pids `erx:cap/1` reads, and then hands it as `{erx_facets, Facets}`, so `-eval`, `-s` and `-run` find them. The agent is that term's one writer, for this answer and for every later installation, so no installation is lost to the answer; a domain whose answer does not come in time boots on without waiting for it. The system domain, whose boot page names no domain pid, and a runtime that is no node report nothing and wait for nothing; 68. once its shutdown is done, init ends `init:reboot/0` with `erx_domain_lib:end_commit(reset)` and `init:stop/0` with `erx_domain_lib:end_commit(off)`, which in the system domain end the machine and do not return ([design-system.md](design-system.md#shutting-down)) and elsewhere answer a refusal, after which the node halts as stock OTP's does; a reboot leaves its code loaded, as a stop does, so the module is still there to call |
 | `beam/jit/arm/ops.tab`, `beam/jit/x86/ops.tab` | 66. a `select_val` whose failure falls through to the next instruction, the small-integer half that `split_values` makes of a select that also matches bignums, takes a search and never a jump table, whose gaps need a failure label, as in the interpreter |
 | `lib/kernel/src/application_controller.erl` | 67. the controller keeps `init` as its group leader once `kernel` has started, rather than taking `user`'s pid, so every application master's group leader is `init` and finds `user` by name for each request (`application_master.erl:246-257`), and a restarted console's `user` serves every application |
 | `beam/beam_common.c`, `beam/erl_process.h` | 68. a dirty scheduler charges every call its elapsed time in reductions through `erts_time2reds`, on the dirty I/O pool as on the dirty CPU pool, which stock charges one reduction a call, and the conversion charges an interval the clock ran backwards its one-reduction minimum ([NIFs and blocking](#nifs-and-blocking)) |
@@ -2387,7 +2389,7 @@ domain's namespace may have the single row `/`, and an EROFS image or a
 file server, `/tmp`'s among them, add rows without moving a caller of `prim_file`. How the index is
 read is `erx_release_entry`, a `liberx` call: over `erx_pack_entry_at` and
 `erx_pack_path_at` on Phase 1's backends, hosted included
-([design-stopgap.md](design-stopgap.md#boot-information)), and over
+([design-fiasco.md](design-fiasco.md#boot-information)), and over
 `erx_object_info(release, ERX_INFO_IMAGE_ENTRY, ...)` on erXos's kernel, which
 keeps the index unmapped ([design-kernel.md](design-kernel.md#the-boot-image)).
 There the kernel's first use of a file holds the hash's verdict, and
@@ -2495,7 +2497,7 @@ itself, and a caller whose owner has gone. All of them use
   kernel, below: each thread gathers a line (`liberx/backend/core/line_gather.c`)
   and logs it with `erx_debug_log`, so a line reaches the console whole, as a record
   of the domain's space, through the console's one sink
-  ([design-stopgap.md](design-stopgap.md#the-console)). In the system domain it is
+  ([design-fiasco.md](design-fiasco.md#the-console)). In the system domain it is
   the seam's console write, which reaches the UART at once, unchanged, and can
   interleave with the driver's writes at any byte.
 * On erXos's kernel, it gathers a line in a buffer of the calling thread, as long
@@ -2578,7 +2580,7 @@ It assumes 80 by 24 until a driver reports a size, and a UART driver reports non
 names the console's peripheral, and `erx_console` starts that peripheral's driver: the
 root writes the console UART's record from the device entry `machine.console` names, and
 the hosted entry writes `-erx_record console stdio`, which names `erx_stdio`
-([design-stopgap.md](design-stopgap.md#the-console)). The console refuses a peripheral it
+([design-fiasco.md](design-fiasco.md#the-console)). The console refuses a peripheral it
 has no driver for, and the boot fails with the reason, so no record word becomes an atom.
 
 **Which input bytes mean something.** `erx_console` takes three bytes out of the
@@ -2693,7 +2695,7 @@ makes the line shared
 ([design-shared-devices.md](design-shared-devices.md#lines-inside-a-domain)),
 its peripheral's name in the CMSIS-SVD source, its device-tree path,
 the name its driver gives it and the NIF does not read
-([design-stopgap.md](design-stopgap.md#device-records)), whether it is
+([design-fiasco.md](design-fiasco.md#device-records)), whether it is
 coherent, and which descriptor forms of the ABI file it uses
 ([design-device-dma.md](design-device-dma.md#device-addresses-and-reach)).
 
@@ -3079,9 +3081,13 @@ Only the driver's modules reference the device NIF: ERTS binds a static NIF
 only to the module of its name, and the register BIFs are that module's, so
 Erlang reaches a device only by naming `erx_device`, and a source check
 (`tools/lib/erx/chokepoint_rules/device.rb`, in `make check`) fails the build when any
-Erlang source under `otp/` or `erlang/` other than `erx_device` itself and
-the modules of the driver applications names it, in a call, an apply, a
-quoted atom or a string, with a seeded violation in
+Erlang source under `otp/` or `erlang/` other than `erx_device` itself,
+the modules of the driver applications `erx_blk` and `erx_fb`, and the UART
+drivers of `erx_uart`, `erx_pl011` and `erx_mini_uart`, names it, in a
+call, an apply, a quoted atom or a string, so the host link and the line
+trees, which parse the bytes a UART carries, touch no device's registers
+themselves (which UART a driver drives is its starter's choice, which no
+check constrains), with a seeded violation in
 `test/host/device_callers_test.rb`. It reads text, so it catches a slip,
 not code that spells the atom with escapes or builds it from pieces; what
 keeps a device from every other domain is that its capabilities are
@@ -3143,7 +3149,7 @@ around them.
 * **The entropy entry.** `erx_bytes:entropy(N)` is not per-byte work,
   but it lives beside the primitives as Erlang's entry to the kernel's
   generator ([design.md](design.md#decisions)). It is a synchronous
-  kernel call, on the stopgap a request to the root's generator service,
+  kernel call, on Fiasco a request to the root's generator service,
   so the never-blocking rule above does not cover it. For an
   integer `N` from 1 to 256 (`entropy_bytes_max` of the ABI file) it
   returns exactly `N` bytes from one `erx_entropy_take`; any other `N`
@@ -3154,12 +3160,12 @@ around them.
   never returns fewer bytes, zeros, or bytes from `rand`, the clock or
   any other source. On erXos's kernel the read fails only on a length
   that `badarg` already refuses, since the generator is seeded before any
-  domain runs; on the stopgap it also fails when the backend cannot
+  domain runs; on Fiasco it also fails when the backend cannot
   reach its generator service
-  ([design-stopgap.md](design-stopgap.md#the-call-table)). How good the
+  ([design-fiasco.md](design-fiasco.md#the-call-table)). How good the
   seed is belongs to the machine, not to a call: `entropy_quality` in the
   machine information and the boot banner report it, a release build
-  refuses a weak seed at boot, and the stopgap's banner names the seeds it
+  refuses a weak seed at boot, and Fiasco's banner names the seeds it
   mixed (`/chosen`'s seeds or, on the Raspberry Pi 4, the RNG200), or says
   its seed comes from the counter alone
   ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy)). Any
@@ -3422,11 +3428,11 @@ and sleeps again; `__timedwait` is retried by the mutex, read-write lock,
 condition variable and `pthread_join` loops; `sem_timedwait` and
 `aio_suspend` return `EINTR` to their caller, which POSIX allows for both.
 `__timedwait` itself turns `EINTR` into 0 until a signal handler has been
-installed. ERTS never calls `pthread_cancel`. The stopgap backend refuses
+installed. ERTS never calls `pthread_cancel`. The Fiasco backend refuses
 `erx_thread_stop` and its siblings with `ERX_ENOTSUP`
 (`liberx/backend/core/refused.c`), so on Phase 1 a cancel acts at the
 target's next cancellation point, as
-[design-stopgap.md](design-stopgap.md) states.
+[design-fiasco.md](design-fiasco.md) states.
 
 ### What ERTS imports
 
@@ -3534,7 +3540,7 @@ layers:
   convention of the architecture's `abi/arch/<arch>.txt`.
   The `fiasco` backend maps each call onto the near-stock Fiasco's
   invocations from user mode, and refuses what Fiasco cannot offer
-  ([design-stopgap.md](design-stopgap.md)).
+  ([design-fiasco.md](design-fiasco.md)).
   The `hosted` backend implements the interface inside a macOS process:
   spaces are the process, threads are pthreads, memory objects are
   `mmap`ped regions, umtx waits are `os_sync_wait_on_address`, groups and
@@ -3731,8 +3737,8 @@ or beside it, in a closed set of places, and anything else that differs is a bug
 
 | What differs | Where | Why it stays there |
 | --- | --- | --- |
-| Who fills the boot information page and calls `erx_runtime_main` | the entry: `liberx/backend/fiasco/runtime_entry.c` and `runtime_main.c`, `liberx/backend/hosted/start.c` | ERTS's start reads only the page ([design-stopgap.md](design-stopgap.md#boot-information)) |
-| The bodies of `liberx`'s calls | `liberx/backend/fiasco`, `liberx/backend/hosted` | one function API, one test set, the differences listed in [The hosted backend](design-stopgap.md#the-hosted-backend) |
+| Who fills the boot information page and calls `erx_runtime_main` | the entry: `liberx/backend/fiasco/runtime_entry.c` and `runtime_main.c`, `liberx/backend/hosted/start.c` | ERTS's start reads only the page ([design-fiasco.md](design-fiasco.md#boot-information)) |
+| The bodies of `liberx`'s calls | `liberx/backend/fiasco`, `liberx/backend/hosted` | one function API, one test set, the differences listed in [The hosted backend](design-fiasco.md#the-hosted-backend) |
 | The C library under the import list | musl, libSystem | [What ERTS imports](#what-erts-imports) checks both links against one list |
 | The console's driver process and its NIF | `erx_stdio_nif`, in the hosted image's static NIF list | [The console and standard I/O](#the-console-and-standard-io) |
 | Compile and link lines, and configure's answers about the C library | one cross-compile file per target | below |
@@ -4015,7 +4021,7 @@ instead, and is no node.
 | Child | In erXos |
 | --- | --- |
 | `code_server`, `file_server_2`, `on_load` | stock: the first two over `erl_prim_loader` and the release file system |
-| `erx_watchdog` | [design-stopgap.md](design-stopgap.md#the-watchdog) |
+| `erx_watchdog` | [design-fiasco.md](design-fiasco.md#the-watchdog) |
 | `erx_syslog_sup` | the system log's service, temporary as `user` is, in the system domain alone; it makes the kernel log's first take before `user` starts the console's driver ([design-log.md](design-log.md#service-lifetime-and-restart)) |
 | `inet_db`, `erl_signal_server`, `logger_sup`, `kernel_config`, `kernel_refc`, `kernel_safe_sup` | stock: `inet_db`'s lookup is `file`, its hosts table, then `dns` once the domain holds a network grant, through `inet_res` over `gen_udp` with the name servers and search list from the grant's `resolver` operation ([design-network-stack.md](design-network-stack.md#name-resolution)); with no grant there is no resolver and no `inet_gethost`, `inet_gethost_native` answering `{error, notsup}` for a well-formed lookup, `localhost` too when this module is asked directly, since none ran, where stock answers `{error, notfound}` for a name its resolver does not know; `inet`'s calls read any error as not found and still answer `nxdomain`, and the difference is `inet_SUITE:t_gethostnative`'s, which accepts neither; and `inet_config` finding no UDP port names the host `nohost` |
 | `standard_error` | stock's I/O protocol over descriptor 2 (edit 39) |
@@ -4060,7 +4066,7 @@ Until a release promises compatibility, a change to one of these layouts
 replaces it outright: no runtime reads an earlier version, and a version
 field serves only to make a mismatch fail loudly. The two kernel
 backends of `liberx` expose the same calls, so each runtime image runs on
-the stopgap and on erXos's kernel unchanged; a runtime that compares results
+Fiasco and on erXos's kernel unchanged; a runtime that compares results
 across them is the conformance suite.
 
 ## Failure handling, diagnostics and debuggability
@@ -4097,7 +4103,7 @@ crash dump ([design-live.md](design-live.md#inspection)). The adapter
 emits trace events for capacity changes, yield requests honoured,
 refusals, connection closes and unheld frames. Parks and wakes are
 recorded by the layer that carries them out: the kernel trace ring, which
-also shows the executors' dispatches, or on the stopgap the backend's
+also shows the executors' dispatches, or on Fiasco the backend's
 ring, where the adapter emits none of its own. One viewer lines them up
 by time ([design-live.md](design-live.md#tracing)).
 Hosted mode adds `lldb` and the sanitizers.
@@ -4478,7 +4484,7 @@ own domain, so a runtime that lies harms only itself.
 
 **The port's seams.** Each passing case is paired with the seeded failure that
 shows it ran. Hosted cases run under ASan once per batch, and the native ones are
-listed in [design-stopgap.md](design-stopgap.md#verification).
+listed in [design-fiasco.md](design-fiasco.md#verification).
 
 | Case | Seeded failure, and what it shows |
 | --- | --- |

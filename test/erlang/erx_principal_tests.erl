@@ -106,7 +106,7 @@ the_record_keeps_the_app_record_with_its_place_test() ->
     {ok, Apps} = register(<<"clock">>, (admitted(development, ?MIB))#{display := none}, Image),
     {ok, #{app := Kiosk}} = erx_principal:app(<<"kiosk">>, Apps),
     %% A window exactly when the admission kept a windows service.
-    ?assertEqual(#{place => {system, [<<"apps">>, <<"kiosk.app">>]}, layout => ?LAYOUT, start => ?START,
+    ?assertEqual(#{place => {system, [<<"kiosk.app">>]}, layout => ?LAYOUT, start => ?START,
                    window => true},
                  Kiosk),
     {ok, #{app := Clock}} = erx_principal:app(<<"clock">>, Apps),

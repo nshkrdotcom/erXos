@@ -33,7 +33,18 @@ class SessionDomainTest < Minitest::Test
     assert_match(/did not open while/, error.message)
   end
 
+  # A boot's date reads the build date's hour, or the next one across a day's end, and no
+  # other hour, 1970's included.
+  def test_the_boot_date_is_the_build_dates_hour
+    hours = Suite.date_boot_hours(Time.utc(2026, 11, 16, 23, 30, 5))
+    assert_match hours, "2026111623\r\n"
+    assert_match hours, "2026111700\n"
+    refute_match hours, "2026111701\n"
+    refute_match hours, "1970010100\n"
+  end
+
   def test_a_point_list_that_does_not_end_at_the_shell_is_refused
-    assert_raises(Erx::Error) { Suite.root_session_checkpoints([{ name: 'image-identity', pattern: /y/n, seconds: 30 }]) }
+    points = [{ name: 'image-identity', pattern: /y/n, seconds: 30 }]
+    assert_raises(Erx::Error) { Suite.root_session_checkpoints(points, build_date: Time.at(0)) }
   end
 end

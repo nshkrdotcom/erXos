@@ -32,7 +32,7 @@ registers and terminal character classes retain their existing sources.
 | --- | --- | --- |
 | ABI calls, layouts, rights, limits and architecture binding | C headers and accessors, call stubs for every backend, decoders, Erlang/Ruby representations, field offsets and sizes, compile-time layout assertions | [kernel](design-kernel.md#the-abi-file) |
 | Service operation fragments | client stubs, server behaviour declarations and dispatch, bounded request and reply validation, operation identifiers, scoped-handle helpers, error types and reference tables | [domains](design-domains.md#authority) |
-| Inspection fragment | C record builders, Erlang types and `erx_schema`, Ruby types and validators, path/field descriptors, shell/host renderers and `/proc` projections; from the `present` marks, `erx_present`'s `text/2`, `parse/2`, `path/2`, `uri/2`, `parse_uri/1`, `type/1` and `marks/0`; for the web client, the kinds, attribute names, units, stopgap reporters and `present` marks in TypeScript | [live machine](design-live.md#inspection-records), [presentations](design-display.md#presentations) |
+| Inspection fragment | C record builders, Erlang types and `erx_schema`, Ruby types and validators, path/field descriptors, shell/host renderers and `/proc` projections; from the `present` marks, `erx_present`'s `text/2`, `parse/2`, `path/2`, `uri/2`, `parse_uri/1`, `type/1` and `marks/0`; for the web client, the kinds, attribute names, units, backend reporters and `present` marks in TypeScript | [live machine](design-live.md#inspection-records), [presentations](design-display.md#presentations) |
 | ABI status, errno, signal and fault declarations | context-specific status/error translations, diagnostic names and descriptions, signal defaults and fault-to-exit mappings, musl's signal-number header and set of valid signals, and the signal names and numbers of the shell's `kill` | [programs](design-programs.md#the-posix-lite-personality) |
 | ABI log and trace event declarations | typed emitters, bounded record readers, field-name/unit tables and decoders for the inspector and host tools | [kernel](design-kernel.md#trace-ring), [live machine](design-live.md#tracing) |
 | Protocol fields, bounds and operation declarations | codecs, per-operation reply checks, valid-input builders, boundary mutations, fuzz entry points and reference tables; for `web.txt`, the Erlang codec `erx_web_proto` and the TypeScript codec, with the protocol's limits and hash | [files](design-files.md#the-file-protocol), [programs](design-programs.md#the-program-protocol), [web](design-web.md#the-protocol) |
@@ -89,7 +89,7 @@ program another domain's capabilities or facets.
 
 Each inspection kind declares its paths and attribute keys, value types,
 units, bounds, permitted reporter categories and visibility requirements,
-and the schema declares the stopgap reporters with the category each
+and the schema declares the backend reporters with the category each
 stands in for, its label and its scope, in the grammar of
 [design-abi.md](design-abi.md#inspection-schema).
 Builders and validators preserve the existing tagged statuses, including
@@ -121,8 +121,8 @@ protocol error has a mapping or an explicit "not exposed here" result for
 each consumer that needs one. A missing case fails generation; there is
 no catch-all success or `EIO`. Unknown untrusted error codes follow the
 owning protocol's specified diagnostic/fallback rule. POSIX numbers are
-FreeBSD's, checked against FreeBSD's headers, and musl's errno and signal
-headers are generated from the ABI file's tables; 9P keeps its own Linux
+FreeBSD's, checked against FreeBSD's headers, and musl's errno, signal and
+termios headers are generated from the ABI file's tables; 9P keeps its own Linux
 wire numbering, which generation never redefines.
 
 Log and trace emitters accept the fields an event declares, with types,

@@ -11,7 +11,17 @@
 %% client template's grant of the display stating pixels, windows and clipboard;
 %% the grant's limits carry each by name, and erx_domain_mints charges the
 %% display the pixel area the row asks for. Each refused-NAME.bin beside it
-%% forges the grant's parameter rows, and the view refuses it.
+%% forges the grant's parameter rows, and the view refuses it. line.bin is the
+%% configured domains' manifest with alpha granted the line, its uart the
+%% device row whose index line-uart holds, and the reader refuses
+%% unreadable-device-past-the-table.bin, its uart one past the device table.
+%% operations.bin is the development manifest with root's template granted both
+%% of inspect's operations, which reach the grant's limits by name in number
+%% order; each forged-operations-NAME.bin forges its operation rows, or names
+%% them on a service a configured domain serves, and the view refuses it. net.bin is
+%% the development manifest with its session template's grant of net stating sockets,
+%% 16 ports and one listen port; each set reaches the limits as the list of its elements in
+%% ascending order.
 -module(erx_facet_parameters_tests).
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
@@ -35,9 +45,9 @@ display() ->
 
 the_grant_s_limits_carry_its_parameters_by_name_test() ->
     {_Services, _Grants, {_Grantee, _Name, _Server, Limits}} = display(),
-    ?assertMatch(#{pixels := 4194304, windows := 2, clipboard := true}, Limits),
+    ?assertMatch(#{pixels := 4194304, windows := 2, clipboard := true, operations := []}, Limits),
     ?assertEqual(lists:sort([max_request, in_flight, reductions, period_ns, max_heap_size, queue,
-                             pixels, windows, clipboard]),
+                             operations, pixels, windows, clipboard]),
                  lists:sort(maps:keys(Limits))).
 
 %% The mint core as the domain service makes it from those terms (erx_domain_srv:booted/1),
@@ -50,7 +60,41 @@ the_pixel_charge_follows_the_row_test() ->
     ?assertEqual({4194304, 5}, erx_domain_mints:pair_area({5, {configured, Server}},
                                                          {6, {rows, [{Name, Server, Limits}]}}, Mints)).
 
+the_line_grant_s_uart_is_its_device_row_test() ->
+    {ok, Bytes} = file:read_file("line.bin"),
+    {ok, Text} = file:read_file("line-uart"),
+    {ok, {Services, Grants}} = served(Bytes),
+    [Name] = [N || {system, N, ?ERX_SERVICE_LINE} <- Services],
+    [Limits] = [L || {0, N, system, L} <- Grants, N =:= Name],
+    ?assertMatch(#{uart := _, rate := 115200, flow := <<"none">>}, Limits),
+    ?assertEqual(binary_to_integer(Text), maps:get(uart, Limits)),
+    {ok, Past} = file:read_file("unreadable-device-past-the-table.bin"),
+    ?assertEqual(unreadable, served(Past)).
+
+the_net_grant_s_sets_are_lists_test() ->
+    {ok, Bytes} = file:read_file("net.bin"),
+    {ok, {Services, Grants}} = served(Bytes),
+    [{Server, Name}] = [{Row, N} || {Row, N, ?ERX_SERVICE_NET} <- Services],
+    [Limits] = [L || {{template, _}, N, S, #{sockets := _} = L} <- Grants, N =:= Name, S =:= Server],
+    Ports = lists:seq(2000, 2015),
+    ?assertMatch(#{sockets := 80, ports := Ports, listen := [2015], operations := []}, Limits),
+    ?assertEqual(lists:sort([max_request, in_flight, reductions, period_ns, max_heap_size, queue,
+                             operations, sockets, ports, listen]),
+                 lists:sort(maps:keys(Limits))).
+
 forged_parameter_rows_are_refused_test() ->
     Forged = filelib:wildcard("refused-*.bin"),
-    ?assertEqual(5, length(Forged)),
+    ?assertEqual(8, length(Forged)),
+    [?assertMatch({File, {refused, _}}, {File, served(element(2, file:read_file(File)))}) || File <- Forged].
+
+the_grant_s_limits_carry_its_operations_by_name_test() ->
+    {ok, Bytes} = file:read_file("operations.bin"),
+    {ok, {Services, Grants}} = served(Bytes),
+    [Name] = [N || {system, N, ?ERX_SERVICE_INSPECT} <- Services],
+    [Limits] = [L || {{template, _}, N, system, L} <- Grants, N =:= Name],
+    ?assertEqual([inspect, entries], maps:get(operations, Limits)).
+
+forged_operation_rows_are_refused_test() ->
+    Forged = filelib:wildcard("forged-operations-*.bin"),
+    ?assertEqual(4, length(Forged)),
     [?assertMatch({File, {refused, _}}, {File, served(element(2, file:read_file(File)))}) || File <- Forged].

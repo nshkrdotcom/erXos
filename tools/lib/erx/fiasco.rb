@@ -15,6 +15,7 @@ require_relative 'json_input'
 require_relative 'sources'
 require_relative 'fiasco_inputs'
 require_relative 'fiasco_config'
+require_relative 'build_kind'
 require_relative 'core_archive'
 require_relative 'stack_proof_run'
 require_relative 'glue_imports'
@@ -154,7 +155,8 @@ module Erx
       # but takes a minute to find it, and the audit after it would find what it found.
       BuildMemo.new(root: @root).in_place('fiasco', key: memo_key, outputs: memo_outputs) do
         cores = build_cores
-        kernel = build_kernel(jobs: jobs, cores: cores)
+        kernel = build_kernel(jobs: jobs, cores: cores, kind: BuildKind::DEVELOPMENT,
+                              directory: self.class.kernel_directory(root: @root, kind: BuildKind::DEVELOPMENT))
         boot_cores = build_boot_cores
         users = build_users(jobs: jobs, boot_cores: boot_cores)
         build_image(users: users)
@@ -164,20 +166,42 @@ module Erx
     end
 
     # The kernel again with a test's defines, in its own directory: for a suite
-    # that must hold a window open, which no image but that suite's ever boots.
-    # build must have run. A source change discards it, as it does the real one.
-    def build_test_kernel(name:, defines:, jobs: 4)
-      prepare_source_cache
-      cores = build_cores
-      directory = File.join(@build, "test-kernel-#{name}")
-      # Makeconf.local has no rule that rebuilds on a change, so the record holds the defines too.
-      inputs = File.read(File.join(@build, '.erx-inputs.json')) + defines.join(' ')
-      marker = File.join(directory, '.erx-test-inputs.json')
-      current = File.file?(marker) && File.read(marker) == inputs
-      FileUtils.remove_entry(directory) if File.exist?(directory) && !current
-      build_kernel(jobs: jobs, cores: cores, directory: directory, defines: defines)
-      File.write(marker, inputs)
-      File.join(directory, 'fiasco')
+    # that must hold a window open or seed a fault, which no image but that suite's
+    # ever boots. kind is the configuration it is built from (BuildKind). No test
+    # kernel is audited, since nothing ships one.
+    def build_test_kernel(name:, defines:, kind: BuildKind::DEVELOPMENT, jobs: 4)
+      build_kernel_beside(directory: File.join(@build, "test-kernel-#{name}"), kind: kind,
+                          defines: defines, jobs: jobs)
+    end
+
+    # The release kernel (docs/design-stopgap.md, "The kernel"): the same sources and cores,
+    # configured from the release defconfig (FiascoConfig.release_defconfig) and checked
+    # with the release rules, in Fiasco.kernel_directory. No image packs it:
+    # every image is a development build (ProductionImage::BUILD_KIND). The kernel's
+    # link audit (FiascoProvenance#certify) must find every source it links under terms a
+    # release may carry, or the build fails naming each source that is not. The kernel stays
+    # only beside the audit's pass record: an earlier record goes before the build, and a
+    # build that fails anywhere after it removes the kernel and any record.
+    def build_release_kernel(jobs: 4)
+      require_relative 'fiasco_provenance'
+      directory = self.class.kernel_directory(root: @root, kind: BuildKind::RELEASE)
+      kernel = File.join(directory, 'fiasco')
+      record = File.join(directory, FiascoProvenance::PASS_RECORD)
+      FileUtils.rm_f(record)
+      passed = false
+      build_kernel_beside(directory: directory, kind: BuildKind::RELEASE, defines: [], jobs: jobs)
+      provenance_auditor(kind: BuildKind::RELEASE).certify
+      passed = true
+      kernel
+    ensure
+      FileUtils.rm_f([kernel, record].compact) unless passed
+    end
+
+    # Where the tree at root builds the kernel of build kind kind: build's own kernel for
+    # development, build_release_kernel's for release. Its globalconfig.out is the resolved
+    # configuration, which tools/check_fiasco_config.rb checks.
+    def self.kernel_directory(root:, kind:)
+      File.join(File.expand_path(root), 'build/fiasco', BuildKind.development?(kind) ? 'kernel' : 'kernel-release')
     end
 
     # A board's own bootstrap (BOARD_BOOTSTRAPS): built from the same imported sources
@@ -241,7 +265,7 @@ module Erx
     end
 
     # The kernel and sigma0 the recipe packs, once built.
-    def kernel_path = File.join(@build, 'kernel/fiasco')
+    def kernel_path = File.join(self.class.kernel_directory(root: @root, kind: BuildKind::DEVELOPMENT), 'fiasco')
     def sigma0_path = File.join(@build, 'users/bin/arm64_armv8a/std/l4f/sigma0')
 
     # The kernel's name as uname -K shows it (BuildFacts): fiasco- and the first 12
@@ -287,15 +311,15 @@ module Erx
        *user_include_directories, File.join(@build, 'receipt.json'), File.join(@build, 'provenance.json')]
     end
 
-    def record_provenance
+    def record_provenance = provenance_auditor(kind: BuildKind::DEVELOPMENT).certify
+
+    # The link audit of the kernel of build kind kind, over this build's toolchain.
+    def provenance_auditor(kind:)
       require_relative 'fiasco_provenance'
-      auditor = FiascoProvenance.new(root: @root, runner: @runner,
-                                     external: FiascoProvenance.external_registry(root: @root, compiler: @compiler,
-                                                                                  runner: @runner, cross: cross_toolchain),
-                                     compiler: @compiler, cross: cross_toolchain)
-      auditor.capture_construction
-      report = auditor.audit
-      auditor.record_receipt(report)
+      FiascoProvenance.new(root: @root, runner: @runner, kind: kind,
+                           external: FiascoProvenance.external_registry(root: @root, compiler: @compiler,
+                                                                        runner: @runner, cross: cross_toolchain),
+                           compiler: @compiler, cross: cross_toolchain)
     end
 
     # Inherited dependency stamps do not cover every generator's code or the
@@ -402,21 +426,48 @@ module Erx
                         output: File.join(@build, 'cores'), check: proof)
     end
 
-    def build_kernel(jobs:, cores:, directory: File.join(@build, 'kernel'), defines: [])
-      configure(source: @inputs.part('kernel'), directory: directory,
-                input: @inputs.configuration('kernel.defconfig'),
-                output: 'globalconfig.out', name: 'fiasco-kernel-config')
+    # A kernel beside build's own, in directory, whose record discards it when a source
+    # or the defines change, as a source change discards the real one.
+    def build_kernel_beside(directory:, kind:, defines:, jobs:)
+      prepare_source_cache
+      cores = build_cores
+      # Makeconf.local has no rule that rebuilds on a change, so the record holds the defines too.
+      inputs = File.read(File.join(@build, '.erx-inputs.json')) + defines.join(' ')
+      marker = File.join(directory, '.erx-kernel-inputs.json')
+      current = File.file?(marker) && File.read(marker) == inputs
+      FileUtils.remove_entry(directory) if File.exist?(directory) && !current
+      build_kernel(jobs: jobs, cores: cores, kind: kind, directory: directory, defines: defines)
+      File.write(marker, inputs)
+      File.join(directory, 'fiasco')
+    end
+
+    def build_kernel(jobs:, cores:, kind:, directory:, defines: [])
+      configure(source: @inputs.part('kernel'), directory: directory, input: kernel_defconfig(kind),
+                output: 'globalconfig.out', name: "fiasco-#{File.basename(directory)}-config")
       # The resolved file, not the defconfig: a select can set an option the
       # defconfig leaves unset.
-      FiascoConfig.check(File.join(directory, 'globalconfig.out'))
+      FiascoConfig.check(File.join(directory, 'globalconfig.out'), kind: kind)
       # The kernel's Makeconf reads this file from its build directory.
       File.write(File.join(directory, 'Makeconf.local'), "CPPFLAGS += #{defines.join(' ')}\n") unless defines.empty?
       @runner.run(['gmake', '-C', directory, "-j#{jobs}", *toolchain_variables,
                    "ERX_CORE_ARCHIVE=#{cores.archive}", "ERX_CORE_INCLUDE=#{cores.seam}"],
-                  name: 'fiasco-kernel-build', deadline: 600, env: build_environment)
+                  name: "fiasco-#{File.basename(directory)}-build", deadline: 600, env: build_environment)
       GlueImports.check(source: @inputs.part('kernel'), allowlist: File.join(@source, GlueImports::ALLOWLIST),
                         objects: directory, nm: cross_toolchain.program('nm'), runner: @runner, env: build_environment)
       directory
+    end
+
+    # The kernel defconfig of build kind kind: the checked-in development one, or the
+    # release one derived from it, written into the build tree.
+    def kernel_defconfig(kind)
+      development = @inputs.configuration('kernel.defconfig')
+      return development if BuildKind.development?(kind)
+
+      directory = File.join(@build, 'release')
+      OutputDirectory.prepare(root: @root, path: directory)
+      path = File.join(directory, 'kernel-release.defconfig')
+      File.binwrite(path, FiascoConfig.release_defconfig(BoundedFile.read(development, maximum: FiascoInputs::MAX_FILE)))
+      path
     end
 
     def assemble_user_source

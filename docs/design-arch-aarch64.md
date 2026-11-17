@@ -54,7 +54,7 @@ the system-register accessors of `hw/sysreg/aarch64.json` complete it.
 Outside the kernel, ERTS's own AArch64 code, BeamAsm's back end and
 musl's architecture layer are AArch64 code behind their own seams
 ([design.md](design.md#portability)). The
-stopgap Fiasco runs on the same architecture, built for EL1 with
+Fiasco runs on the same architecture, built for EL1 with
 `CONFIG_CPU_VIRT` off, since its EL2 build does not boot under HVF
 ([research](research-hierarchical-scheduling.md#fiasco-under-hvf)).
 
@@ -666,7 +666,7 @@ The boot information page's `hwcap` and `hwcap2`, which musl's start gives
 a program as `AT_HWCAP` and `AT_HWCAP2`, and which a session hands each of
 its native programs in the program's argument registers
 ([design-programs.md](design-programs.md#the-channel)), come from the boot CPU's
-identification registers. EL0 cannot read them, so the stopgap's bootstrap
+identification registers. EL0 cannot read them, so Fiasco's bootstrap
 reads `ID_AA64ISAR0_EL1`, `ID_AA64ISAR1_EL1`, `ID_AA64ISAR2_EL1`,
 `ID_AA64PFR0_EL1` and `ID_AA64PFR1_EL1` at EL1 through the accessors
 generated from `hw/sysreg/aarch64.json` (`kernel/arch/aarch64/cpu_id.c`,
@@ -674,7 +674,7 @@ the one caller the `sysreg-read` chokepoint allows) into the handoff's
 `cpu_id` words, at the word the `cpu_id_word` enum of
 `abi/arch/aarch64.txt` gives each. The root turns the words into feature
 bits with a pure core, `liberx/backend/core/arch/aarch64/cpu_features.c`,
-over one table with a row for each feature the stopgap lets EL0 use. A
+over one table with a row for each feature Fiasco lets EL0 use. A
 row holds the feature field, read through the accessors generated from
 `hw/sysreg/aarch64.json`; the least value that has the feature, as
 FreeBSD 15.1.0 maps fields to bits (`sys/arm64/arm64/identcpu.c`, its
@@ -685,9 +685,9 @@ positions and bit values come from their sources; the least values are
 FreeBSD's, written into the rows, since `hw/sysreg/aarch64.json` keeps
 only each field's name, offset and width.
 
-Each row carries the reason the stopgap honours it: the kernel enables
+Each row carries the reason Fiasco honours it: the kernel enables
 the feature at EL0 and saves its state on a switch. The table itself is
-the list of claimed features. On the stopgap the reasons are that Fiasco
+the list of claimed features. On Fiasco the reasons are that Fiasco
 saves `q0` to `q31`, `FPCR` and `FPSR` on every switch and the general
 registers and `PSTATE`'s flags on every entry, and that `SCTLR_EL1.UCI`
 lets EL0 clean to the point of persistence. No `hwcap2` feature has a
@@ -750,7 +750,7 @@ cache holds the line. A `DSB` completes the maintenance of the CPU that
 executes it only, so the `DSB SY` of every exit from EL0
 ([Asynchronous errors](#asynchronous-errors)) is what completes a
 thread's outstanding maintenance before the thread can resume on another
-CPU; on the stopgap, which has no such barrier, no thread is moved while
+CPU; on Fiasco, which has no such barrier, no thread is moved while
 it makes a device call
 ([design-device-dma.md](design-device-dma.md#concurrency)).
 
@@ -874,7 +874,7 @@ The EL1 synchronous vector runs on the panic stack, so no kernel path
 counts it on a thread's stack.
 
 The relocation rule requires `-ffunction-sections` on every object the
-proof reads, the kernel's and the stopgap's C17 cores' alike: the
+proof reads, the kernel's and Fiasco's C17 cores' alike: the
 assembler resolves a `bl` to a `static` function in the same section
 itself and keeps no relocation for it, and the proof refuses such a call
 rather than guess its target, since a call it cannot name would make its

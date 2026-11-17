@@ -47,8 +47,10 @@ module Erx
     EventArgument = Struct.new(:name, :type, keyword_init: true)
 
     # args maps an enum member to its EventArgument list; an enum without
-    # args lines, and every flags type, has none.
-    EnumType = Struct.new(:name, :base, :members, :flags, :allowed, :args, keyword_init: true) do
+    # args lines, and every flags type, has none. attributes maps each name
+    # an `attribute` line declares to the members that carry it, by name and
+    # sorted, each declared name marking at least one; a flags type has none.
+    EnumType = Struct.new(:name, :base, :members, :flags, :allowed, :args, :attributes, keyword_init: true) do
       def size
         base.size
       end
@@ -160,7 +162,7 @@ module Erx
       TOP_LEVEL = %w[abi arch trap reg limit scalar enum flags bytes layout
                      status right type kind cap call reader translation service
                      projection protocol inspection ui draw input web theme signal reserved_signal realtime
-                     fault errno elements termios].freeze
+                     signal_set fault errno elements termios].freeze
       TYPE_KINDS = %w[scalar enum flags bytes layout].freeze
       BASE_TYPES = [1, 2, 4, 8].flat_map do |size|
         [false, true].map do |signed|
@@ -368,8 +370,8 @@ module Erx
       def unique_definitions(declarations)
         definitions = {}
         declarations.each do |declaration|
-          next if %w[abi arch trap reg cap inspection ui draw input web theme signal reserved_signal realtime fault
-                     errno termios service].include?(declaration.kind)
+          next if %w[abi arch trap reg cap inspection ui draw input web theme signal reserved_signal realtime signal_set
+                     fault errno termios service].include?(declaration.kind)
           name = Syntax.identifier(declaration.args.first, line: declaration.line)
           declaration.fail!("duplicate definition #{name}") if definitions.key?(name) || BASE_TYPES.key?(name)
           definitions[name] = declaration
@@ -507,7 +509,11 @@ module Erx
         members = {}
         allowed = nil
         args_lines = []
+        declared = declared_attributes(declaration, flags: flags)
+        carried = {}
         declaration.members.each do |line|
+          next if line.words.first == 'attribute'
+
           if line.words.first == 'args'
             line.fail!('args belong to an enum, not to flags') if flags
             args_lines << line
@@ -522,12 +528,13 @@ module Erx
             line.fail!('empty or duplicate flag combination') if allowed.empty? || allowed.uniq.size != allowed.size
             next
           end
-          arity(line, 3)
-          keyword, member, literal = line.words
+          line.fail!("expected 2 fields for #{line.words.first}") if line.tokens.size < 3 || (flags && line.tokens.size > 3)
+          keyword, member, literal, *names = line.words
           expected = flags ? 'bit' : 'value'
           line.fail!("expected #{expected} member") unless line.indent == 2 && keyword == expected
           Syntax.identifier(member, line: line)
           line.fail!('duplicate enumeration member') if members.key?(member)
+          carried[member] = carried_attributes(names, declared, name: name, member: member, line: line)
           value = Syntax.integer(literal, line: line)
           if flags
             line.fail!('flag position is outside its base') unless value.between?(0, base.bits - 1)
@@ -544,7 +551,40 @@ module Erx
         end
         EnumType.new(name: name, base: base, members: members.sort.to_h.freeze,
                      flags: flags, allowed: allowed&.sort&.freeze,
-                     args: event_arguments(args_lines, name: name, base: base, members: members)).freeze
+                     args: event_arguments(args_lines, name: name, base: base, members: members),
+                     attributes: attribute_members(declared, carried, name: name, line: declaration.line)).freeze
+      end
+
+      # An enum's `attribute NAME` lines: the closed set of names its member
+      # lines may carry after their value. A flags type takes none.
+      def declared_attributes(declaration, flags:)
+        declaration.members.select { |line| line.words.first == 'attribute' }.each_with_object([]) do |line, names|
+          line.fail!('attributes belong to an enum, not to flags') if flags
+          line.fail!('attribute is a member line of its enum') unless line.indent == 2
+          arity(line, 2)
+          attribute = Names.local(line.words[1], line: line)
+          line.fail!("duplicate attribute #{attribute}") if names.include?(attribute)
+          names << attribute
+        end.freeze
+      end
+
+      # The attributes a member line names after its value, each one its enum
+      # declares and each once.
+      def carried_attributes(names, declared, name:, member:, line:)
+        names.each { |attribute| line.fail!("#{name} declares no attribute #{attribute}") unless declared.include?(attribute) }
+        twice, = names.tally.find { |_attribute, count| count > 1 }
+        line.fail!("#{member} carries #{twice} twice") if twice
+        names.freeze
+      end
+
+      # Each declared attribute and the members that carry it, by name; an
+      # attribute no member carries states nothing and is refused.
+      def attribute_members(declared, carried, name:, line:)
+        declared.sort.to_h do |attribute|
+          holders = carried.select { |_member, names| names.include?(attribute) }.keys.sort.freeze
+          line.fail!("attribute #{attribute} marks no member of #{name}") if holders.empty?
+          [attribute, holders]
+        end.freeze
       end
 
       # Each args line: `args MEMBER NAME:TYPE...`, one per member of the

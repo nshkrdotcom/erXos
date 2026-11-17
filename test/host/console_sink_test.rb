@@ -8,14 +8,16 @@ require_relative '../fixtures/generated_tree'
 # Each UART line has one sink, the one process that sends its driver bytes, and only a UART
 # driver (erx_pl011, or erx_mini_uart on the Raspberry Pi 4) takes them: erx_console for the console's line (docs/design-runtime.md, "The console
 # and standard I/O"), with erx_stdio, its client module, and erx_hostlink for the host link's
-# (docs/design-live.md, "The host link"), and a session tty's terminal relay, erx_session_relay,
-# the driver of that tty's console (docs/design-live.md, "Between domains"). The chokepoint engine reads C, so this rule over
+# (docs/design-live.md, "The host link"), a session tty's terminal relay, erx_session_relay,
+# the driver of that tty's console (docs/design-live.md, "Between domains"), and erx_line for
+# a line tree's (docs/design-bluetooth.md, "The controller's line"). The chokepoint engine reads C, so this rule over
 # Erlang sources lives here. A new driver or line is a new site. The generated Erlang in
 # build/gen is read under the path it mirrors, as the chokepoint rules read generated C.
 class ConsoleSinkTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   SITES = %w[erlang/apps/erx_uart/src/erx_pl011.erl erlang/apps/erx_uart/src/erx_mini_uart.erl erlang/apps/erx/src/erx_console.erl erlang/apps/erx/src/erx_stdio.erl
-             erlang/apps/erx_hostlink/src/erx_hostlink.erl erlang/apps/erx_session/src/erx_session_relay.erl].freeze
+             erlang/apps/erx_uart/src/erx_hostlink.erl erlang/apps/erx_session/src/erx_session_relay.erl
+             erlang/apps/erx_uart/src/erx_line.erl].freeze
   PATTERN = /\berx_console_output\b/
 
   def offenders(files) = files.select { |path, text| !SITES.include?(path) && PATTERN.match?(text) }.keys

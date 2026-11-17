@@ -13,7 +13,8 @@
          worker_end_ends_the_owner/0, window_end_ends_the_owner/0,
          mount_failure_ends_the_owner/0, corrupt_volume_never_formats/0, blank_blocks_do_not_mount/0,
          deadline_ends_a_request/0, refuses_bad_arguments/0, fsync_flushes_the_window/0,
-         failed_flush_fails_the_fsync/0, a_tree_reaches_only_its_own/0]).
+         failed_flush_fails_the_fsync/0, a_tree_reaches_only_its_own/0,
+         a_home_reaches_only_its_own/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -30,7 +31,7 @@ main() ->
              worker_end_ends_the_owner, window_end_ends_the_owner,
              mount_failure_ends_the_owner, corrupt_volume_never_formats, blank_blocks_do_not_mount,
              deadline_ends_a_request, refuses_bad_arguments, fsync_flushes_the_window,
-             failed_flush_fails_the_fsync, a_tree_reaches_only_its_own],
+             failed_flush_fails_the_fsync, a_tree_reaches_only_its_own, a_home_reaches_only_its_own],
     Results = [run(Case) || Case <- Cases],
     erlang:halt(case lists:all(fun(R) -> R end, Results) of true -> 0; false -> 1 end).
 
@@ -219,7 +220,9 @@ tree_operations() ->
 %% nothing above it: the mount made the directory, a file of the data tree's
 %% root is no entry of the packages root, and no name walks, makes, removes
 %% or renames out of it. The data tree, the whole volume, sees what the
-%% packages grant wrote under packages/.
+%% packages grant wrote under packages/. A grant rooted at installed/, as the
+%% app template's row roots its packages grant, reaches what lies there and
+%% neither new/ beside it, where an upload in progress lies, nor anything above.
 a_tree_reaches_only_its_own() ->
     Volume = {_, _, Data} = start_volume(fresh_disk(), lfs_trees),
     {ok, Packages} = erx_lfs:init({lfs_trees, packages}),
@@ -240,10 +243,69 @@ a_tree_reaches_only_its_own() ->
     {ok, _, _, App} = erx_lfs:make(Root, <<"a.app">>, {file, 8#644, ?ERX_P9_O_RDWR}, Packages),
     ok = erx_lfs:clunk(App, Packages),
     {ok, RootH} = erx_lfs:open(Root, 0, Packages),
-    {ok, [{_, _, _, <<"a.app">>}]} = erx_lfs:readdir(RootH, 0, 16, Packages),
+    {ok, Listed} = erx_lfs:readdir(RootH, 0, 16, Packages),
+    [<<"a.app">>, <<"installed">>] = lists:sort([Name || {_, _, _, Name} <- Listed]),
     ok = erx_lfs:clunk(RootH, Packages),
     {ok, _, _} = erx_lfs:walk(Top, <<"secret">>, Data),
     {ok, _, {0, _, _}} = erx_lfs:walk(Root, <<"a.app">>, Data),
+    {ok, InstalledArgs} = erx_lfs:subtree({lfs_trees, packages}, installed, #{client => 5, principal => <<"clock">>}),
+    {ok, Installed} = erx_lfs:init(InstalledArgs),
+    {ok, <<"packages">>, Under, {?ERX_P9_QTDIR, _, _}} = erx_lfs:root(Installed),
+    {ok, Under, {?ERX_P9_QTDIR, _, _}} = erx_lfs:walk(Root, <<"installed">>, Packages),
+    {ok, New, _} = erx_lfs:make(Root, <<"new">>, {directory, 8#755, self()}, Packages),
+    {ok, _, _, Upload} = erx_lfs:make(New, <<"tmp.1">>, {file, 8#644, ?ERX_P9_O_RDWR}, Packages),
+    ok = erx_lfs:clunk(Upload, Packages),
+    {ok, _, _, Accepted} = erx_lfs:make(Under, <<"b.app">>, {file, 8#644, ?ERX_P9_O_RDWR}, Packages),
+    ok = erx_lfs:clunk(Accepted, Packages),
+    {ok, _, {0, _, _}} = erx_lfs:walk(Under, <<"b.app">>, Installed),
+    [{error, enoent}] = lists:usort([erx_lfs:walk(Under, Name, Installed) || Name <- [<<"new">>, <<"a.app">>]]),
+    {error, einval} = erx_lfs:walk(Under, <<"..">>, Installed),
+    [{error, einval}] = lists:usort([erx_lfs:subtree({lfs_trees, data}, installed, #{client => 5, principal => <<"clock">>}),
+                                     erx_lfs:subtree({lfs_trees, packages}, apps, #{client => 5, principal => <<"clock">>}),
+                                     erx_lfs:subtree({lfs_trees, packages}, packages, #{client => 5, principal => <<"clock">>})]),
+    stop_volume(Volume).
+
+%% A home grant (docs/design-files.md, "A user's home") is rooted at its user's home
+%% alone: root's at /root and any other user's at /home/NAME, each made by the grant's
+%% start, so the grant sees neither the volume's other files nor another user's home,
+%% and a name that is not one path name, a tree other than home, or a home grant with no
+%% tree roots nothing.
+a_home_reaches_only_its_own() ->
+    Volume = {_, _, Data} = start_volume(fresh_disk(), lfs_homes),
+    {ok, <<"data">>, Top, _} = erx_lfs:root(Data),
+    {ok, _, _, Secret} = erx_lfs:make(Top, <<"secret">>, {file, 8#644, ?ERX_P9_O_RDWR}, Data),
+    ok = erx_lfs:clunk(Secret, Data),
+    Grant = fun(User) ->
+                    {ok, Args} = erx_lfs:subtree({lfs_homes, home}, home, #{client => 5, principal => User}),
+                    {ok, Server} = erx_lfs:init(Args),
+                    {ok, <<"home">>, Root, {?ERX_P9_QTDIR, _, _}} = erx_lfs:root(Server),
+                    {Root, Server}
+            end,
+    {<<"/root">>, RootHome} = Grant(<<"root">>),
+    {<<"/home/alice">>, Alice} = Grant(<<"alice">>),
+    {ok, <<"/root">>, _} = erx_lfs:walk(Top, <<"root">>, Data),
+    {ok, Homes, _} = erx_lfs:walk(Top, <<"home">>, Data),
+    {ok, <<"/home/alice">>, _} = erx_lfs:walk(Homes, <<"alice">>, Data),
+    {ok, _, _, Note} = erx_lfs:make(<<"/home/alice">>, <<"note">>, {file, 8#644, ?ERX_P9_O_RDWR}, Alice),
+    ok = erx_lfs:clunk(Note, Alice),
+    {ok, Listed} = erx_lfs:readdir(element(2, erx_lfs:open(<<"/root">>, 0, RootHome)), 0, 16, RootHome),
+    [] = [Name || {_, _, _, Name} <- Listed, Name =/= <<".">>, Name =/= <<"..">>],
+    [{error, enoent}] = lists:usort([erx_lfs:walk(<<"/root">>, Name, RootHome)
+                                     || Name <- [<<"secret">>, <<"note">>, <<"home">>, <<"alice">>]]),
+    Escapes = [erx_lfs:walk(<<"/root">>, <<"..">>, RootHome),
+               erx_lfs:walk(<<"/home/alice">>, <<"..">>, Alice),
+               erx_lfs:make(<<"/root">>, <<"..">>, {directory, 8#755, self()}, RootHome),
+               erx_lfs:rename(<<"/root">>, <<"x">>, <<"/root">>, <<"..">>, RootHome)],
+    [{error, einval}] = lists:usort(Escapes),
+    {_, Again} = Grant(<<"alice">>),
+    {ok, _, {0, _, _}} = erx_lfs:walk(<<"/home/alice">>, <<"note">>, Again),
+    Refused = [erx_lfs:subtree({lfs_homes, home}, home, #{client => 5, principal => Bad})
+               || Bad <- [<<>>, <<".">>, <<"..">>, <<"a/b">>, <<"../root">>, <<"a", 0, "b">>]] ++
+              [erx_lfs:subtree({lfs_homes, data}, home, #{client => 5, principal => <<"root">>}),
+               erx_lfs:subtree({lfs_homes, packages}, home, #{client => 5, principal => <<"root">>}),
+               erx_lfs:subtree({lfs_homes, home}, installed, #{client => 5, principal => <<"root">>})],
+    [{error, einval}] = lists:usort(Refused),
+    {'EXIT', _} = catch erx_lfs:init({lfs_homes, home}),
     stop_volume(Volume).
 
 %% A block request the window refuses fails its operation with eio, and the

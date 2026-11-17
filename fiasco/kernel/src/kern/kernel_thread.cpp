@@ -1,3 +1,5 @@
+// Modified by erXos: a test kernel's seeded kernel trap (ERX_TEST_KERNEL_TRAP,
+// tools/lib/erx/native_kernel_trap.rb); no other kernel builds it.
 INTERFACE:
 
 #include "thread_object.h"
@@ -153,6 +155,15 @@ Kernel_thread::run()
   Rcu::leave_idle(home_cpu());
 
   check_debug_koptions();
+
+#ifdef ERX_TEST_KERNEL_TRAP
+  // The test kernel of tools/lib/erx/native_kernel_trap.rb only: a kernel-mode
+  // load from an unmapped address, once PSCI is known, so that its run shows
+  // what a kernel trap does to the machine. The address is 8, not 0, so that
+  // no compiler treats the load as a null dereference of its own.
+  printf("erx: kernel trap seed\n");
+  (void)*reinterpret_cast<Mword const volatile *>(Mword{8});
+#endif
 
   init_workload();
 

@@ -101,7 +101,7 @@ instead of a command line:
   domains talk by frames on connections, so message rates between
   domains are a first-class load. stats draws one row per domain
   against its grant and budget.
-* **clock** and **month**: the time and the date. On the stopgap the
+* **clock** and **month**: the time and the date. On Fiasco the
   wall clock may not be set: until a sample or a real-time clock sets
   it, wall time is uptime counted from 1970-01-01
   ([design-time.md](design-time.md#what-proc-shows), `state`).
@@ -918,7 +918,8 @@ touches a few kilobytes. Its frames interpolate until its deadline, its
 start plus its duration, at most 250 ms, and one final present after
 the deadline draws its end, as soon as the device has answered the
 present before; then the window is idle again (design-display's G6,
-"nothing paints without a change or a transition a change started").
+"nothing paints between two changes, except the frames of a transition a
+change started").
 The Erlang renderer draws a transition's frames at the answers of its
 presents and has no timer
 ([design-display.md](design-display.md#the-widget-server)); LVGL takes
@@ -1161,7 +1162,9 @@ the wall clock after the answer, `os:system_time(millisecond)`, which
 is the time page's wall clock in ERTS
 ([design-time.md](design-time.md#what-erxos-already-has)); clock shows
 that wall reading. The order is what makes a reading safe. The state only
-moves forward within a boot, from `unset` to `boot` to `set`
+moves forward within a boot, from `unset` to `approximate`, and from
+either or `boot` to `set`, but for a set that lands exactly on the
+build date's offset
 ([design-time.md](design-time.md#what-proc-shows)), so a wall reading
 taken after a state is at least as trusted as that state says. A clock
 set between the two reads shows "Clock not set" for one more minute;
@@ -1173,6 +1176,7 @@ clock its tick read, under that failure's status token:
 | --- | --- |
 | `set` | the time and date |
 | `boot` | the time and date, and the caption "from the real-time clock" |
+| `approximate` | the time and date, and the caption "approximate, from the build date": the clock service started the clock at the build's date ([design-time.md](design-time.md#the-approximate-start)) |
 | `unset` | `--:--`, "Clock not set", and the time since boot from `[]`'s `uptime`, an attribute every facet sees |
 | not `ok` (`unsupported` until the schema declares `[time]`, `unknown`, `timeout`) | the time and date in the `tertiary` colour with the status token beside the zone, since the reading may be the time since boot |
 

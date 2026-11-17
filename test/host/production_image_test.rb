@@ -7,10 +7,12 @@ require 'minitest/autorun'
 require 'open3'
 require 'pathname'
 require 'rbconfig'
+require 'tmpdir'
 require_relative '../../tools/lib/erx/oracle_qemu'
 require_relative '../../tools/lib/erx/medium_boot'
 require_relative '../../tools/lib/erx/production_image'
 require_relative '../../tools/lib/erx/net_device'
+require_relative '../fixtures/manifest_context'
 
 # The production image's host-side rules. Its boot is the QEMU gate's production_image suite.
 class ProductionImageTest < Minitest::Test
@@ -99,19 +101,13 @@ class ProductionImageTest < Minitest::Test
     end
   end
 
-  # The Raspberry Pi 4's card is the one the website offers: until a release signer exists
-  # its manifest leaves out the apps row, as the site's does, and it takes no package and
-  # no --local, refused before anything is built. QEMU's medium keeps the row. The Pi's
-  # development manifest has no apps row yet (TODO.md), so the card's edit is shown on
-  # QEMU virt's manifest, which has one.
-  def test_a_card_takes_no_packages
+  # The Raspberry Pi 4's card is the one the website offers: it carries the kiosk alone,
+  # which its own build adds, so it takes no app, signer or --local of its builder's,
+  # refused before anything is built; its manifest keeps the board's apps row, as QEMU's
+  # medium's does.
+  def test_a_card_takes_no_app_of_its_builders
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    apps_row = /^apps$/
-    with_row = PLATFORM.manifest_source(ROOT)
-    assert_match apps_row, with_row
-    refute_match apps_row, Erx::ProductionImage.medium_manifest(pi, with_row)
-    refute_match apps_row, Erx::ProductionImage.medium_manifest(pi, pi.manifest_source(ROOT))
-    assert_match apps_row, Erx::ProductionImage.medium_manifest(PLATFORM, with_row)
+    assert_match(/^apps\n  memory [0-9]+\n  max 1\n  services display net\n/, pi.manifest_source(ROOT))
 
     machine = Erx::ProductionImage::Machine.development(pi)
     image = Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
@@ -120,10 +116,49 @@ class ProductionImageTest < Minitest::Test
      Erx::ImageApps.plan([Erx::ImageApps::Package.new(path: '/p/clock.app', name: 'clock', memory: 1 << 22,
                                                      sha256: "\xab".b * 32, license: 'MIT')], enable: [])].each do |apps|
       error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', apps: apps) }
-      assert_equal 'the raspi4b card is the one the website offers, so it takes no app and no --local', error.message
+      assert_equal 'the raspi4b card is the one the website offers: it carries the kiosk alone and takes no app, ' \
+                   'signer or --local', error.message
     end
     Erx::ProductionImage.check_card_apps(pi, Erx::ImageApps.none)
     Erx::ProductionImage.check_card_apps(PLATFORM, Erx::ImageApps.plan([], enable: [], local: true))
+  end
+
+  # The card's own packages: the kiosk, examples/dashboard, packed and signed as the kiosk
+  # suite packs it, and enabled, with no signer row and no --local, so the card trusts the
+  # package by its row's hash and trusts no key.
+  def test_a_card_carries_the_kiosk_enabled_and_trusts_no_key
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+    image = Erx::ProductionImage.new(root: ROOT, runner: runner, compiler: ENV.fetch('ERX_CLANG'), linker: '',
+                                     machine: Erx::ProductionImage::Machine.development(pi), fiasco: Object.new,
+                                     runtime: nil, jit_runtime: nil)
+    home = Dir.mktmpdir('erx-card-apps-home-')
+    apps = image.card_apps(signer: Erx::PackageKey.ensure(directory: Erx::PackageKey.directory(home: home)))
+    assert_equal ['dashboard'], apps.packages.map(&:name)
+    assert_equal 'BSD-2-Clause', apps.packages.first.license
+    refute apps.local
+    rows = apps.rows
+    assert_match(/^package dashboard\n(?:  .*\n)*  enable YES\n/, rows)
+    refute_match(/^signer /, rows)
+  end
+
+  # An image's packages lie in its medium's system partition, so an image built without a
+  # medium refuses them before anything is built, rather than dropping them; --local alone
+  # passes the check (here to the missing directory).
+  def test_an_image_without_a_medium_takes_no_packages
+    image = Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '',
+                                     machine: Erx::ProductionImage::Machine.development(PLATFORM), fiasco: Object.new,
+                                     runtime: nil, jit_runtime: nil)
+    clock = Erx::ImageApps::Package.new(path: '/p/clock.app', name: 'clock', memory: 1 << 22, sha256: "\xab".b * 32,
+                                        license: 'MIT')
+    error = assert_raises(Erx::Error) do
+      image.build(directory: '/nonexistent', manifest_source: '', apps: Erx::ImageApps.plan([clock], enable: []))
+    end
+    assert_equal "an image takes packages only into its medium's system partition: pack them with --medium", error.message
+    error = assert_raises(Erx::Error) do
+      image.build(directory: '/nonexistent', manifest_source: '', apps: Erx::ImageApps.plan([], enable: [], local: true))
+    end
+    refute_match(/packages/, error.message)
   end
 
   # libbeam.a holds littlefs's objects (lfs.o and lfs_util.o, in the emulator's OS_OBJS), so
@@ -251,7 +286,7 @@ class ProductionImageTest < Minitest::Test
   end
 
   def test_the_refusal_transcript_ends_at_the_roots_diagnostic
-    point = Erx::ProductionImage::Run.refusal_checkpoints.last
+    point = Erx::ProductionImage::Run.refusal_checkpoints(machine: refusal_machine).last
     assert_match point.fetch(:pattern), 'erx: root task refused the boot: manifest: root_memory is more than this machine gives the root'
   end
 
@@ -612,8 +647,7 @@ class ProductionImageTest < Minitest::Test
   end
 
   # Each machine names the root's place. The development machine's lies inside its own
-  # RAM and the refusal boot's, below the device tree QEMU puts at half of the development
-  # machine's RAM and above the one at half of the refusal boot's; the oracle's lies high
+  # RAM, below the device tree QEMU puts at half of that RAM; the oracle's lies high
   # enough for its large archive. A place with no room for the root is refused, and the
   # link takes only a page-aligned address in RAM.
   def test_each_machine_names_a_root_place_its_ram_holds
@@ -621,8 +655,6 @@ class ProductionImageTest < Minitest::Test
     room = Erx::ProductionImage::ROOT_ROOM_MIB
     assert_equal 0x4400_0000, development.root_address
     assert_operator development.root_mib + room, :<=, development.memory_mib / 2
-    assert_operator (Erx::ProductionImage::TOO_LITTLE_MEMORY_MIB / 2) + 2, :<=, development.root_mib
-    assert_operator development.root_mib + room, :<=, Erx::ProductionImage::TOO_LITTLE_MEMORY_MIB
     assert_equal 0x4c00_0000, Erx::OracleQemu.machine(PLATFORM).root_address
     [development.memory_mib - room + 1, -1].each do |root_mib|
       assert_raises(Erx::Error) { development.with(root_mib: root_mib).root_address }
@@ -631,6 +663,27 @@ class ProductionImageTest < Minitest::Test
     [0x4400_0001, 0x3fff_f000, '0x44000000'].each do |place|
       assert_raises(Erx::Error) { Erx::NativeRoot.place_flags(place, ram_first: PLATFORM.ram_first) }
     end
+  end
+
+  # The refusal boot reaches the root only if QEMU's device tree lies clear of the root's
+  # place: bootstrap refuses a tree on it with place_overlap before the root runs. QEMU
+  # virt puts the tree at half of RAM, at most 128 MiB into it, or right behind the single
+  # file where that lies higher (docs/design-platforms.md, "Boot handoff"), so the tree
+  # must stay clear for a file short of the root, one that ends on the root's place, as
+  # the production image's does, and one that runs past the root's room. The root's
+  # room ends 72 MiB into RAM, so a machine of 144 MiB is the smallest refusal machine.
+  def test_the_refusal_machine_keeps_the_device_tree_off_the_root
+    refusal = refusal_machine
+    room_end = refusal.root_mib + Erx::ProductionImage::ROOT_ROOM_MIB
+    [refusal.root_mib - 8, refusal.root_mib + 1, room_end + 1].each do |file_end_mib|
+      tree_mib = [refusal.tree_floor_mib, file_end_mib].max
+      assert tree_mib + 1 <= refusal.root_mib || tree_mib >= room_end,
+             "on #{refusal.memory_mib} MiB a single file ending #{file_end_mib} MiB into RAM has its device " \
+             "tree at #{tree_mib} MiB, on the root's place (#{refusal.root_mib} to #{room_end} MiB)"
+    end
+    assert_equal 144, DEVELOPMENT.refusal(root_memory: 144 << 20).memory_mib
+    assert_raises(Erx::Error) { DEVELOPMENT.refusal(root_memory: 143 << 20) }
+    assert_equal [56, 128, 128], [112, 256, 512].map { |mib| DEVELOPMENT.with(memory_mib: mib).tree_floor_mib }
   end
 
   # The root's place does not bound the single file, since bootstrap moves an archive
@@ -685,31 +738,32 @@ class ProductionImageTest < Minitest::Test
   # The refusal boot means something only on a machine that cannot give root_memory:
   # one no larger than root_memory, of which Fiasco and the archive take a part first.
   # The default machine leaves room for both below RAM less fiasco_reserve.
-  def test_the_too_little_machine_cannot_hold_root_memory_and_the_default_can
-    source = PLATFORM.manifest_source(ROOT)
-    root_memory = manifest_number(source, 'root_memory')
-    assert_operator Erx::ProductionImage::TOO_LITTLE_MEMORY_MIB << 20, :<=, root_memory
+  def test_the_refusal_machine_cannot_hold_root_memory_and_the_default_can
+    root_memory = manifest_number(PLATFORM.manifest_source(ROOT), 'root_memory')
+    assert_operator refusal_machine.memory_mib << 20, :<=, root_memory
     machine = DEVELOPMENT
     assert_operator root_memory, :<, (machine.memory_mib - machine.fiasco_reserve_mib) << 20
   end
 
   # The refusal boot proves root_memory_fits, which the root reaches only once it holds the
   # contiguous pool: one run, aligned to its own size, of up to CONTIGUOUS_POOL_MAX_BYTES.
-  # The run is sought only above the root's room: below it lie the archive, which a refusal
-  # image keeps short of the root, and the device tree. Fiasco's kernel memory
-  # (Platform.fiasco_reserve) takes the top of the highest free region, the top of RAM
-  # (fiasco/kernel/src/kern/arm/kmem_alloc-arm.cpp, Kmem_alloc::Kmem_alloc), so the run
-  # must fit between the two. A machine without such a run refuses the boot at
-  # the pool, and the root_memory refusal never shows.
+  # The run is sought above the root's room and below the device tree, behind which
+  # bootstrap moves an archive the root lands on (docs/design-platforms.md, "Boot
+  # handoff"). Fiasco's kernel memory (Platform.fiasco_reserve) takes the top of the
+  # highest free region, the top of RAM (fiasco/kernel/src/kern/arm/kmem_alloc-arm.cpp,
+  # Kmem_alloc::Kmem_alloc), so the run must end below it too. A machine without such a
+  # run refuses the boot at the pool, and the root_memory refusal never shows.
   def test_the_refusal_machine_leaves_the_largest_contiguous_pool_its_run
     pool = Erx::Manifest::RootStartup::CONTIGUOUS_POOL_MAX_BYTES
-    memory_mib = Erx::ProductionImage::TOO_LITTLE_MEMORY_MIB
+    refusal = refusal_machine
+    memory_mib = refusal.memory_mib
     kmem_start = PLATFORM.ram_first + (memory_mib << 20) - Erx::Platform.fiasco_reserve(memory_mib << 20)
-    past_root = DEVELOPMENT.root_address + (Erx::ProductionImage::ROOT_ROOM_MIB << 20)
+    tree = PLATFORM.ram_first + (refusal.tree_floor_mib << 20)
+    past_root = refusal.root_address + (Erx::ProductionImage::ROOT_ROOM_MIB << 20)
     run_start = (past_root + pool - 1) / pool * pool
-    assert_operator run_start + pool, :<=, kmem_start,
+    assert_operator run_start + pool, :<=, [kmem_start, tree].min,
                     "#{memory_mib} MiB leaves no #{pool >> 20} MiB run for the contiguous pool " \
-                    "between the root's room and Fiasco's kernel memory"
+                    "between the root's room, the device tree and Fiasco's kernel memory"
   end
 
   # A root that drops system_args, or an erx.arg word, says fewer arguments than the page should hold.
@@ -748,6 +802,22 @@ class ProductionImageTest < Minitest::Test
       checkpoint_verifier('erts-start', manifest_source: source)
         .call("erx: erts: erl_start runs, #{words - Erx::ProductionImage::Run::GIVEN_RECORD_WORDS} arguments\n")
     end
+  end
+
+  # The line grant's UART gets a physical record as the host link's does
+  # (boot_manifest.c, device_kind): a manifest granting the line on line_a counts one more
+  # physical record, and line_b, a UART of a held unit that no grant names, none.
+  def test_the_erts_line_counts_the_line_grants_uart_record
+    units = ManifestContextFixture.line_platform(PLATFORM.record).fetch('units')
+    source = ManifestContextFixture.domain_source(PLATFORM.manifest_source(ROOT))
+    uart = ManifestContextFixture::LINE_UARTS.fetch('line_a').first
+    grant = ManifestContextFixture.line_grant('line', '@domain.alpha', uart, floor: 1)
+    plain, granted = [[], [grant]].map { |grants| Erx::Manifest::Frontend.read(ManifestContextFixture.with_line(source, *grants)) }
+    words = ->(manifest, hostlink) { Erx::ProductionImage::Run.held_record_words(ROOT, manifest, units, hostlink: hostlink) }
+    device = Erx::ProductionImage::Run::DEVICE_RECORD_WORDS
+    assert_equal words.call(plain, true) + device, words.call(granted, true)
+    assert_equal words.call(plain, false) + device, words.call(granted, false)
+    assert_equal words.call(plain, false) + device, words.call(plain, true), 'the host link adds its own record'
   end
 
   # The count reads boot_info.c's ALLOCATOR_WORDS: a misread string would leave every
@@ -943,4 +1013,6 @@ class ProductionImageTest < Minitest::Test
   private
 
   def manifest_number(text, field) = Integer(text[/^  #{field} ([0-9]+)$/, 1], 10)
+
+  def refusal_machine = DEVELOPMENT.refusal(root_memory: manifest_number(PLATFORM.manifest_source(ROOT), 'root_memory'))
 end

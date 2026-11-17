@@ -27,11 +27,11 @@ $(ERX_SPAWN_OBJS): CFLAGS_ALL += -I$(ERX_GEN) -I$(ERX_GEN)/include -I$(ERX_ROOT)
 ERX_OWN_OBJS = $(addsuffix /erxos/%.o,obj/src/internal obj/src/thread obj/src/signal obj/src/process obj/src/string)
 $(filter $(ERX_OWN_OBJS),$(ALL_OBJS)): CFLAGS_ALL += -Wall -Wextra -Werror -Wno-unused-parameter
 
-# The numbers abi/signals.txt and abi/errno.txt state, generated under
-# $(ERX_GEN)/musl/include and searched after musl's own directories, as
-# Erx::Musl#include_directories gives them to programs. No directory the erxos
-# arch searches holds a header of their names. Every object reads them, so every
-# object rebuilds when they change.
-ERX_NUMBER_HEADERS = $(ERX_GEN)/musl/include/bits/signum.h $(ERX_GEN)/musl/include/bits/errno.h
+# The numbers abi/signals.txt, abi/errno.txt and abi/termios.txt state,
+# generated under $(ERX_GEN)/musl/include and searched after musl's own
+# directories, as Erx::Musl#include_directories gives them to programs. No
+# directory the erxos arch searches holds a header of their names. Every object
+# reads them, so every object rebuilds when they change.
+ERX_NUMBER_HEADERS = $(addprefix $(ERX_GEN)/musl/include/bits/,signum.h errno.h termios.h vdisable.h)
 CFLAGS_ALL += -I$(ERX_GEN)/musl/include
 $(ALL_OBJS) $(ALL_OBJS:%.o=%.lo): $(ERX_NUMBER_HEADERS)

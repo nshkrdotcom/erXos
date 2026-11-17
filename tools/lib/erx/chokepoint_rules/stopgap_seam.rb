@@ -42,6 +42,7 @@ module Erx
         liberx/backend/hosted/wait.c
         liberx/backend/fiasco/arch/aarch64/cache.c
         liberx/backend/fiasco/arch/aarch64/clock.c
+        liberx/backend/fiasco/arch/aarch64/exception.c
         liberx/backend/fiasco/arch/aarch64/generated/trap.c
         liberx/backend/fiasco/arch/aarch64/root_start.S
         liberx/backend/fiasco/arch/aarch64/task_start.S
@@ -50,8 +51,11 @@ module Erx
         liberx/backend/fiasco/console.c
         liberx/backend/fiasco/console.h
         liberx/backend/fiasco/end.c
+        liberx/backend/fiasco/end_how.c
+        liberx/backend/fiasco/end_how.h
         liberx/backend/fiasco/entropy.c
         liberx/backend/fiasco/entropy.h
+        liberx/backend/fiasco/exception.h
         liberx/backend/fiasco/generated/calls.c
         liberx/backend/fiasco/generated/calls.h
         liberx/backend/fiasco/group.c
@@ -67,6 +71,8 @@ module Erx
         liberx/backend/fiasco/park.c
         liberx/backend/fiasco/park.h
         liberx/backend/fiasco/park_report.c
+        liberx/backend/fiasco/pm_wdt.c
+        liberx/backend/fiasco/pm_wdt.h
         liberx/backend/core/group_report.h
         liberx/backend/core/park_table.c
         liberx/backend/core/park_table.h
@@ -217,13 +223,9 @@ module Erx
                   Chokepoints::Site.new(glob: 'test/guest/native_space/program.c'),
                   Chokepoints::Site.new(glob: 'test/guest/native_domain/guest.c'),
                   Chokepoints::Site.new(glob: 'test/guest/native_domain/program.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_vm_driver.c'),
                   Chokepoints::Site.new(glob: 'test/fixtures/boot_info_driver.c'),
+                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_*_driver.c'),
                   Chokepoints::Site.new(glob: 'tools/fuzz/boot_args_fuzz.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_umtx_driver.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_park_driver.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_claim_driver.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_time_driver.c'),
                   Chokepoints::Site.new(glob: 'tools/fuzz/service_wire_fuzz.c')],
           seed: { 'kernel/core/seeded.c' => "#include \"liberx/backend/fiasco/generated/calls.h\"\n" }
         ),
@@ -245,7 +247,7 @@ module Erx
                 "the root's memory effects' fixed refusals, the entropy banner line, the root's device-tree lines, the end path's crash frame, the service's and the reaper's fixed refusals, " \
                 "the memory, thread, crash, watchdog and interrupt transcripts, the group's report, the debug log and the standard output of the root and of " \
                 "a task, through the service, call it",
-          design: "#{STOPGAP}#the-console",
+          design: "#{FIASCO}#the-console",
           scope: ERXOS_C,
           pattern: /\b(?:l4_vcon_write(?:_u)?|erx_fiasco_console_write)\b/,
           sites: [Chokepoints::Site.new(glob: 'liberx/backend/fiasco/console.[ch]'),
@@ -255,7 +257,6 @@ module Erx
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/libc_root.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/runtime_entry.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/root_no_program.c', permits: /\Aerx_fiasco_console_write\z/),
-                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/log.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/vm.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/end.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/entropy.c', permits: /\Aerx_fiasco_console_write\z/),
@@ -277,12 +278,27 @@ module Erx
           seed: { 'liberx/backend/fiasco/seeded.c' => "void f(void) { l4_vcon_write(0, \"x\", 1); }\n",
                   'liberx/backend/fiasco/root.c' => "void f(void) { l4_vcon_write(0, \"x\", 1); }\n" }
         ),
+        # The machine's end is static in end.c, behind erx_fiasco_end and its closed set of
+        # causes; a second caller of the platform control, in any of its forms, would end the
+        # machine with no cause
+        # and no last line.
+        Chokepoints::Forbidden.new(
+          name: 'fiasco-machine-end',
+          rule: 'only the end path, liberx/backend/fiasco/end.c, turns the machine off or resets it, so every end names ' \
+                'its cause and writes its last line',
+          design: "#{FIASCO}#the-end-path",
+          scope: ERXOS_C,
+          pattern: /\bl4_platform_ctl_\w+/,
+          sites: [Chokepoints::Site.new(glob: 'liberx/backend/fiasco/end.c')],
+          seed: { 'liberx/backend/fiasco/service.c' => "void f(void) { l4_platform_ctl_system_shutdown(0, 1); }\n",
+                  'test/guest/native_crash/guest.c' => "void f(void) { l4_platform_ctl_system_shutdown_u(0, 0, 0); }\n" }
+        ),
         # The range table and the pool take no lock, because the service alone runs a
         # body once it is up, and the first thread only before that.
         Chokepoints::Forbidden.new(
           name: 'fiasco-vm-body-callers',
           rule: "only the root service, and the thread table's setup before the service runs, call the vm bodies",
-          design: "#{STOPGAP}#the-root-service",
+          design: "#{FIASCO}#the-root-service",
           scope: ERXOS_C,
           pattern: /\berx_fiasco_vm_body\b/,
           sites: [Chokepoints::Site.new(glob: 'liberx/backend/fiasco/vm.[ch]'),
@@ -300,7 +316,7 @@ module Erx
           name: 'contiguous-create-callers',
           rule: "only the root's device step and the domain library's give make a device's contiguous memory, " \
                 'inside the range erx_boot_dma_range builds',
-          design: "#{STOPGAP}#the-pool",
+          design: "#{FIASCO}#the-pool",
           scope: Chokepoints::Scope.new(own: true, extra: [GLUE, 'otp/erts/emulator/nifs/erxos/**/*',
                                                            'otp/erts/emulator/sys/erxos/**/*']),
           pattern: /\berx_mem_create_contiguous(?:_in)?\b/,
@@ -326,7 +342,7 @@ module Erx
           name: 'one-erx-trap',
           rule: "kernel calls only through liberx: the ABI's trap only in liberx's erx and fiasco backends, " \
                 'and no other trap or raw instruction word in erXos C',
-          design: "#{STOPGAP}#verification-and-testing",
+          design: "#{FIASCO}#verification",
           scope: ERXOS_C,
           pattern: TRAP,
           sites: [Chokepoints::Site.new(glob: 'liberx/backend/erx/arch/aarch64/**/*', permits: ERX_TRAP),
@@ -343,7 +359,7 @@ module Erx
         Chokepoints::Forbidden.new(
           name: 'seam-only-from-glue',
           rule: "the glue alone of the stopgap kernel's sources includes erXos's headers",
-          design: "#{STOPGAP}#interfaces",
+          design: "#{FIASCO}#interfaces",
           scope: Chokepoints::Scope.new(own: false, extra: ['fiasco/kernel/**/*'], except: [GLUE]),
           pattern: %r{#{INCLUDE}[<"]erx/}i,
           seed: { 'fiasco/kernel/src/kern/seeded.cpp' => "#include \"erx/core/watchdog.h\"\n" }
@@ -351,20 +367,20 @@ module Erx
         Chokepoints::Pending.new(
           name: 'vector-route', rule: 'every user-mode vector entry is one direct branch to one of the three ' \
                                       'erXos stubs, and erx_user_sync_entry classifies first (B1)',
-          design: "#{STOPGAP}#verification-and-testing",
+          design: "#{FIASCO}#verification",
           awaits: ['fiasco/kernel/src/erx/entry.cpp', 'tools/check_vectors.rb'],
           reason: 'reads the vector table and the stubs in the kernel disassembly'
         ),
         Chokepoints::Elsewhere.new(
           name: 'glue-imports', rule: "a glue object's undefined symbols are all listed for its file in " \
                                       'fiasco/erx_glue_imports.txt',
-          design: "#{STOPGAP}#interfaces", check: 'GlueImports, on every kernel build',
+          design: "#{FIASCO}#interfaces", check: 'GlueImports, on every kernel build',
           test: 'test/host/glue_imports_test.rb'
         ),
         Chokepoints::Pending.new(
           name: 'raw-allocator-sites', rule: "the linked kernel's call sites of the raw page allocator are the " \
                                              'funnel and the listed boot-time functions (B9)',
-          design: "#{STOPGAP}#verification-and-testing",
+          design: "#{FIASCO}#verification",
           awaits: ['fiasco/erx_boot_allocators.txt', 'fiasco/kernel/src/erx/budget.cpp'],
           reason: "reads the linked kernel's call graph"
         ),
@@ -396,7 +412,7 @@ module Erx
         Chokepoints::Pending.new(
           name: 'pmem-converter-sites', rule: 'Mem_layout::pmem_to_phys, Mem_layout::phys_to_pmem and ' \
                                               "Kmem::kdir->virt_to_phys are called only from their listed callers",
-          design: "#{STOPGAP}#risks-and-open-questions",
+          design: "#{FIASCO}#risks",
           awaits: ['fiasco/kernel/src/erx/thread.cpp'],
           reason: "reads the linked kernel's call graph; the callers are inherited Fiasco's"
         )

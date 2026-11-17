@@ -46,8 +46,9 @@ typedef struct erx_boot_console {
  * "Device records"). A device of a row of erx/device_kinds.h is given: the root makes its
  * window, line and memory objects at boot, as a holder's creation makes them, and hands
  * their handles as -erx_record given (erx_boot_given_words), so a device that does DMA has one
- * form in every domain. The host link's UART, which does no DMA, is the one physical
- * record, -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK (erx_boot_device_words).
+ * form in every domain. The host link's UART and the line's, which do no DMA, are the
+ * physical records, -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX (erx_boot_device_words),
+ * INDEX the device's row in the manifest's device table.
  * role and peripheral point at a row's names, PATH is the device's device-tree path, which
  * names it to its driver, and the numbers are the manifest's device entry.
  * MARK, in every form, is shared when another device of the unit names the line and direct
@@ -59,9 +60,9 @@ typedef struct erx_boot_console {
 #define ERX_BOOT_DEVICES_MAX	8
 
 typedef struct erx_boot_device {
-	const char	*role;		/* the record's role word: "block", "net" or "hostlink" */
+	const char	*role;		/* the record's role word: "block", "net", "hostlink" or "line" */
 	const char	*peripheral;	/* the peripheral's name in the CMSIS-SVD source */
-	bool		given;		/* a row of erx/device_kinds.h; false for the host link's UART */
+	bool		given;		/* a row of erx/device_kinds.h; false for the host link's and the line's UARTs */
 	/* A framebuffer row: no kind, role and peripheral NULL, given false; its record is the
 	 * framebuffer record of its catalogue entry's facts (erx_boot_framebuffer_words). */
 	bool		framebuffer;
@@ -142,7 +143,7 @@ bool	erx_boot_console_matches(const erx_boot_manifest_t *manifest, const char *s
 uint64_t	erx_boot_console_page(const erx_boot_manifest_t *manifest);
 
 /*
- * Writes a physical record's words, -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK
+ * Writes a physical record's words, -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX
  * with the numbers in decimal and MARK direct or shared by line_shared, each word ended by
  * NUL, into words, and returns their whole length. Returns 0, having written nothing past
  * capacity, when they do not fit, for a path erx_boot_device_path_valid refuses, or for a
@@ -360,14 +361,18 @@ size_t	erx_boot_pair_words(uint32_t value, uint32_t slot, char *words, size_t ca
 size_t	erx_boot_build_words(uint64_t build_id, char *words, size_t capacity);
 
 /*
- * Writes -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT from the manifest's
- * system_image row into words (docs/design-stopgap.md, "The booted slot"): the image's
- * length and the tree's offset and length in decimal, the salt's first salt_length bytes
- * and the root hash in lowercase hex, the words erx_device_record:system_image/1 reads.
+ * Writes -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT [record_volume] from the
+ * manifest's system_image row into words (docs/design-stopgap.md, "The booted slot"): the
+ * image's length and the tree's offset and length in decimal, the salt's first salt_length
+ * bytes and the root hash in lowercase hex, then, when record_volume is true, the ABI's
+ * name of the record_volume window role, for a holder of that window too
+ * (docs/design-storage.md, "Removable media: FAT"): the words erx_device_record:
+ * system_image/1 and record_volume/1 read.
  * Returns their whole length; 0 for a salt_length out of 1 to the salt's array, or words
  * that do not fit, which ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX bytes always do. The domain
  * library writes it into the boot page of the system window's holder alone.
  */
-size_t	erx_boot_system_image_words(const erx_mf_system_image_t *row, char *words, size_t capacity);
+size_t	erx_boot_system_image_words(const erx_mf_system_image_t *row, bool record_volume, char *words,
+	    size_t capacity);
 
 #endif /* ERX_BACKEND_BOOT_MANIFEST_H */

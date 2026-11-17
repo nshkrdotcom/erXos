@@ -21,6 +21,7 @@ read them from a trace of the grant's calls of erlang:send/2.
 -define(SYSTEM, 1).
 -define(GRANTEE, 5).
 -define(THIRD, 9).
+-define(PRINCIPAL, <<"alpha">>).
 -define(WAIT, 5000).
 -define(VERSION, <<"9P2000.L">>).
 -define(O_WRONLY, 1).
@@ -30,7 +31,7 @@ read them from a trace of the grant's calls of erlang:send/2.
 %% Only a mint request in the system domain's envelope, for this service, is granted.
 only_the_system_domains_mint_request_is_granted_test() ->
     Request = {erx_facet_mint, 7, data, ?GRANTEE, <<"user">>, #{in_flight => 16}},
-    ?assertEqual({grant, 7, ?GRANTEE, #{in_flight => 16}},
+    ?assertEqual({grant, 7, ?GRANTEE, <<"user">>, #{in_flight => 16}},
                  erx_storage_mint:mint_request(?SYSTEM, data, {erx_origin, ?SYSTEM, Request})),
     Dropped = [Request,
                {erx_origin, ?GRANTEE, Request},
@@ -44,8 +45,10 @@ only_the_system_domains_mint_request_is_granted_test() ->
 %% Grant options -------------------------------------------------------------
 
 %% A row's limits become the grant's bounds, capped at erx_fs_grant's, and its rights the
-%% grant's, rw where it states none; a row below 9P's least message size, with a bound
-%% that is not positive, or with rights other than ro, rw and rx, is refused.
+%% grant's, rw where it states none, and its tree the grant's root, the tree's own where
+%% it states none; a row below 9P's least message size, with a bound that is not
+%% positive, with rights other than ro, rw and rx, or with a tree that is no member of
+%% files_tree, is refused.
 grant_options_test() ->
     ?assertEqual({ok, #{rights => rw, in_flight => 64, msize => 65560}}, erx_fs_grants:grant_options(#{})),
     ?assertEqual({ok, #{rights => rw, in_flight => 16, msize => 65560, max_heap_size => 262144}},
@@ -57,10 +60,13 @@ grant_options_test() ->
                  erx_fs_grants:grant_options(#{in_flight => 1, max_request => 4096})),
     [?assertEqual({ok, #{rights => Rights, in_flight => 64, msize => 65560}},
                   erx_fs_grants:grant_options(#{rights => Rights})) || Rights <- [ro, rw, rx]],
+    [?assertEqual({ok, #{rights => rx, tree => Tree, in_flight => 64, msize => 65560}},
+                  erx_fs_grants:grant_options(#{rights => rx, tree => Tree})) || Tree <- [apps, installed]],
     [?assertEqual({error, einval}, erx_fs_grants:grant_options(Limits))
      || Limits <- [#{max_request => 4095}, #{in_flight => 0}, #{max_heap_size => 0}, #{max_heap_size => 100},
                    #{in_flight => many}, #{max_request => -1}, #{max_heap_size => big},
-                   #{rights => rwx}, #{rights => <<"ro">>}, #{rights => 1}]].
+                   #{rights => rwx}, #{rights => <<"ro">>}, #{rights => 1},
+                   #{tree => packages}, #{tree => <<"installed">>}, #{tree => 2}]].
 
 %% Limits a row would refuse start no grant and export nothing.
 refused_limits_start_no_grant_test() ->
@@ -68,6 +74,41 @@ refused_limits_start_no_grant_test() ->
         ?assertEqual({error, einval}, grant(Grants, #{max_request => 1}, connection())),
         receive {exported, _, _, _, _} -> error(exported) after 0 -> ok end,
         ?assertEqual([], grants(Grants))
+    end).
+
+%% A row's tree that its tree's module roots no grant at, as a test tree with no subtree argument,
+%% starts no grant and exports nothing, so no grant reaches past the root it names.
+unrooted_tree_starts_no_grant_test() ->
+    with_grants(fun(Grants) ->
+        ?assertEqual({error, einval}, grant(Grants, #{rights => rx, tree => installed}, connection())),
+        receive {exported, _, _, _, _} -> error(exported) after 0 -> ok end,
+        ?assertEqual([], grants(Grants))
+    end).
+
+%% A row's tree roots the grant where the tree's module answers for that tree and that
+%% grantee (erx_fs's subtree/3): the grant starts from the rooted arguments, so it
+%% attaches as the tree named installed and not as the unrooted test, and the module
+%% was asked with the grantee's domain and the principal its mint request named.
+a_rooted_grant_starts_from_its_tree_s_arguments_test() ->
+    with_grants([{subtree, installed}, {observer, self()}], fun(Grants) ->
+        {ok, Grant} = grant(Grants, #{rights => rx, tree => installed}, connection()),
+        receive {exported, Grant, _, _, _} -> ok after 0 -> error(not_exported) end,
+        receive
+            {tree_subtree, installed, Grantee} ->
+                ?assertEqual(#{client => ?GRANTEE, principal => ?PRINCIPAL}, Grantee)
+        after 0 ->
+            error(not_asked)
+        end,
+        Alias = domain_ref(?GRANTEE),
+        trace_sends(Grant),
+        Attach = fun(Fid, Aname) ->
+                     {erx_origin, ?GRANTEE,
+                      {erx_9p, Alias, domain_pid(?GRANTEE), {attach, Fid, 16#ffffffff, <<"u">>, Aname, 0}}}
+                 end,
+        Grant ! Attach(1, <<"test">>),
+        ?assertMatch({Alias, {erx_9p, Alias, {error, _}}}, first_send(Grant)),
+        Grant ! Attach(2, <<"installed">>),
+        ?assertMatch({Alias, {erx_9p, Alias, {ok, _}}}, first_send(Grant))
     end).
 
 %% Minted grants -------------------------------------------------------------
@@ -144,7 +185,7 @@ the_grant_ends_with_its_connection_test() ->
         dropped(Grants, Grant, ?WAIT),
         Next = ?GRANTEE + 1,
         ok = erx_connections:set(Next, connection()),
-        {ok, NewGrant} = erx_storage_mint:grant(Grants, ?SYSTEM, Next, #{}, ?MODULE),
+        {ok, NewGrant} = erx_storage_mint:grant(Grants, ?SYSTEM, Next, ?PRINCIPAL, #{}, ?MODULE),
         Stale = {erx_9p, domain_ref(?GRANTEE), domain_pid(?GRANTEE), {version, 8192, ?VERSION}},
         trace_sends(NewGrant),
         NewGrant ! {erx_origin, ?GRANTEE, Stale},
@@ -158,9 +199,9 @@ the_grant_ends_with_its_connection_test() ->
 %% domain; another grantee with no connection to this domain gets no grant.
 only_the_system_domains_grant_has_no_connection_test() ->
     with_grants(fun(Grants) ->
-        {ok, Grant} = erx_storage_mint:grant(Grants, ?SYSTEM, ?SYSTEM, #{}, ?MODULE),
+        {ok, Grant} = erx_storage_mint:grant(Grants, ?SYSTEM, ?SYSTEM, ?PRINCIPAL, #{}, ?MODULE),
         ?assertEqual([Grant], grants(Grants)),
-        ?assertEqual({error, noconnection}, erx_storage_mint:grant(Grants, ?SYSTEM, ?THIRD, #{}, ?MODULE)),
+        ?assertEqual({error, noconnection}, erx_storage_mint:grant(Grants, ?SYSTEM, ?THIRD, ?PRINCIPAL, #{}, ?MODULE)),
         ?assertEqual([Grant], grants(Grants))
     end).
 
@@ -169,9 +210,13 @@ only_the_system_domains_grant_has_no_connection_test() ->
 %% Runs Fun with a grants supervisor of the test tree, linked to the test as it is to the
 %% mint, and with this module as the export table, answering ok.
 with_grants(Fun) ->
+    with_grants([], Fun).
+
+%% As with_grants/1, of the test tree that TreeArgs give.
+with_grants(TreeArgs, Fun) ->
     persistent_term:put({?MODULE, test}, self()),
     persistent_term:put({?MODULE, export}, ok),
-    {ok, Grants} = erx_fs_grants:start_link(erx_fs_test_tree, []),
+    {ok, Grants} = erx_fs_grants:start_link(erx_fs_test_tree, TreeArgs),
     try
         Fun(Grants)
     after
@@ -184,7 +229,7 @@ with_grants(Fun) ->
 %% The grantee's grant, over Connection, its stand-in's connection to the grantee.
 grant(Grants, Limits, Connection) ->
     ok = erx_connections:set(?GRANTEE, Connection),
-    erx_storage_mint:grant(Grants, ?SYSTEM, ?GRANTEE, Limits, ?MODULE).
+    erx_storage_mint:grant(Grants, ?SYSTEM, ?GRANTEE, ?PRINCIPAL, Limits, ?MODULE).
 
 %% The answer to Request, in the grantee's envelope, from the grantee's grant with Limits.
 granted_exchange(Limits, Request) ->

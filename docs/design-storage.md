@@ -7,7 +7,8 @@ each slot's EROFS system partition, which the storage domain that serves
 `system` serves as the `system` tree, every package there a self-checking file
 whose blocks are checked where they are consumed; read-write files
 on the data partition, in erXos's F2FS, with littlefs as the stopgap
-behind the same interface; FAT partitions for removable media and for
+behind the same interface, which 0.2 ships under its release contract
+([design-stopgap.md](design-stopgap.md#release-contract)); FAT partitions for removable media and for
 exchanging files with other machines; and system updates written to the
 spare of two slots and committed only after a healthy trial boot. This
 document is the medium's layout and formats, the block driver, the storage
@@ -58,8 +59,10 @@ Decisions every reader of this document needs:
   block driver, the EROFS reader, erXos's F2FS, the FAT server and the
   slot writer are Erlang; the driver touches its device through the
   device NIF, and hashing and checksums are C primitives
-  ([design.md](design.md#decisions)). littlefs, the stopgap, is C in a
-  sub-space port of the storage domain.
+  ([design.md](design.md#decisions)). littlefs, the stopgap, is C, in its
+  target placement a sub-space port of the storage domain; 0.2 ships it as
+  a NIF in the storage domain under its
+  [release contract](design-stopgap.md#release-contract).
 * **The block driver lives where the configuration puts the device.** In
   the default configuration the block device belongs to the storage
   domain and the driver runs there; on a board whose storage controller
@@ -72,7 +75,7 @@ Decisions every reader of this document needs:
 * **F2FS from a clean room.** erXos implements F2FS, in Erlang, from a
   specification written in its own words, with Linux as the oracle and a
   legal review before any distribution; littlefs
-  is the stopgap.
+  is the stopgap it replaces.
 * **A/B slots with trials, and the record is the whole state.** A slot is
   two partitions, a boot partition and a system partition, which the
   medium layout pairs and nothing records. An update goes to both
@@ -174,8 +177,8 @@ commits by rewriting the record only once the trial is healthy.
 
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
-| **PW1.** Only storage domains and the slot writer hold windows: a file system reaches the medium only through a window on its own partition, no window but the slot writer's covers a boot partition or the record, and the one window on a system partition besides the slot writer's is the read-only window of the storage domain that serves `system`, on the booted slot's | a window is a process of the block driver that checks every request against the sectors the device service named for it; the device service derives windows from the medium layout of the ABI file, the system configuration's roles and the boot value, names the boot, system A, system B and record windows for the slot writer alone, and the one read-only `system` window for the domain the manifest's `system` window row names as its holder, on the system partition of the slot the boot value names, and names that one on no `unknown` boot; a file system holds a window's pid and nothing of the device, since only the block driver's modules call the device NIF, a build check; native code that parses a file system runs in a sub-space holding only its channel, so it reaches no window and no device | a window named by sectors from anything but the layout; a window named for a domain that is neither a storage domain nor the slot writer; a parser that calls the device NIF or holds another window; native file-system code in the driver's domain | a host test of the device service's derivation: no domain but a storage domain or the slot writer receives any window; the vault's storage domain receives the vault's partition alone; the principals' storage domain receives the data partition's; the holder of the `system` window, that domain or a storage domain of its own, receives the booted slot's system partition, read-only, and no system partition on an `unknown` boot ([design.md](design.md#chokepoint-checks)); the build check that only the block driver's modules reference `erx_device`, with a seeded violation; a test that every other request for those windows fails |
-| **E1.** The tree's code parses only EROFS blocks that passed a hash tree whose root the boot image pins: a package's, through a header the system domain's file check accepted, or the system partition's own, through the root hash the booted boot image's manifest records for it | the EROFS reader reads every block through the hash-checking reader, `erx_verity`, the only module that reads the fid of an EROFS file mount or the `system` window, the header of a `{header, Path}` mount included, which `erx_verity:header/1` reads: it receives each block as a binary in the domain's own memory, checks it against the image's tree with the SHA-256 primitive and returns the binary only if it matches. Two modules open an image in it, and neither takes the layout from a caller. `erx_ns`'s process opens one for the one EROFS file mount, which takes no layout ([design-files.md](design-files.md#building-binding-and-mounting)), and takes it from one of two places the system domain fixed. For `app` it is the app's record, which the domain service fills from the answer of its file check, run with `{hash, H}` from a `package` row or `{signers, Keys}` from the manifest's keys, and sends the session over the runtime protocol. For `{header, Path}` it is the decoder's layout of the header bytes at the start of a file reached through the `apps` grant, which the `apps` tree serves only once their SHA-256 is the one it recorded when the file check accepted them (PK3 of [design-packaging.md](design-packaging.md#invariants)); a file reached through any other grant is refused with `einval`. E1 binds the code of the tree: a domain's own code can call any function of its runtime and parse what it likes, which harms only itself, and what that domain may run is bounded by the grant each mount's fid came through (F6 of [design-files.md](design-files.md#invariants)), which E1 does not need. The other module, the `system` backend, `erx_storage_system`, opens the system partition's image over the `system` window that PW1 gives to one storage domain, with the image's length and its tree's offset, length, salt and root hash from that domain's boot record, which the domain library writes, in the system domain, from the manifest the boot image holds ([The `system` tree](#the-system-tree)) | a read path around the hash-checking reader; a check on a copy the server still holds rather than the domain's; a form of the EROFS mount that takes a layout, a root hash or header bytes from its caller; an image opened in `erx_verity` by a module other than those two; a `header` mount through any grant but `apps`; a `system` image opened with a root hash from anything but its boot record; a `system` window named for a second domain | `Erx::ErofsReads`, a cross-reference check over the target releases: no module but `erx_verity` names the handle through which a file mount's fid or the `system` window is read; the reader's modules reach a block only through `erx_verity:read/3`; no module but `erx_ns` and `erx_storage_system` opens an image in `erx_verity`, each by its own open, `erx_ns` a fid by `erx_verity:open_file/3` and `erx_storage_system` the `system` window by `erx_verity:open/2`, and the reader mounts only the handle they return, so it opens none itself; seeded, an `erx_ns` that opens with `open/2`; `erx_storage_system` exports no mount that takes its layout from a caller; a test that `erx_ns`'s `app` mount reads the package through the record's place and layout and refuses every source that carries a layout or an image, seeded with a source `{layout, Place, Layout}` taken from the caller; each rule with a seeded violation; a test that a `header` mount of a file reached through any grant but `apps` is refused with `einval`; a test with a flipped bit in each block, of a package and of the system partition's directory; a host test of `erx_storage_system`'s open over a fixture window holding a changed partition whose tree was rebuilt to match it, with the boot record naming the original root: every read answers `eio`, and seeded, an open that takes the root from the partition's own tree, which serves the changed files |
+| **PW1.** Only storage domains and the slot writer hold windows: a file system reaches the medium only through a window on its own partition, no window but the slot writer's covers a boot partition, the slot writer's two windows on the record partition cover the record's sector and the reset count's alone, the one other window on the record partition is the read-only `record_volume` window of the storage domain that serves `system`, which reads root's login keys from it ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)), and the one window on a system partition besides the slot writer's is the read-only window of the storage domain that serves `system`, on the booted slot's | a window is a process of the block driver that checks every request against the sectors the device service named for it; the device service derives windows from the medium layout of the ABI file, the system configuration's roles and the boot value, names the boot, system A, system B, record and reset count windows for the slot writer alone, the last two of one sector each, and the read-only `record_volume` window for the holder its manifest row names, and the one read-only `system` window for the domain the manifest's `system` window row names as its holder, on the system partition of the slot the boot value names, and names that one on no `unknown` boot; a file system holds a window's pid and nothing of the device, since only the block driver's modules call the device NIF, a build check; native code that parses a file system runs in a sub-space holding only its channel, so it reaches no window and no device | a window named by sectors from anything but the layout; a writable window on any sector of the record partition but the record's and the reset count's; a window named for a domain that is neither a storage domain nor the slot writer; a parser that calls the device NIF or holds another window; native file-system code in the driver's domain | a host test of the device service's derivation: no domain but a storage domain or the slot writer receives any window; the vault's storage domain receives the vault's partition alone; the principals' storage domain receives the data partition's; the holder of the `system` window, that domain or a storage domain of its own, receives the booted slot's system partition, read-only, and no system partition on an `unknown` boot; every window on the record partition but the record's and the reset count's refuses a write, and those two cover one sector each ([design.md](design.md#chokepoint-checks)); the build check that only the block driver's modules reference `erx_device`, with a seeded violation; a test that every other request for those windows fails |
+| **E1.** The tree's code parses only EROFS blocks that passed a hash tree whose root the boot image pins: a package's, through a header the system domain's file check accepted, or the system partition's own, through the root hash the booted boot image's manifest records for it | the EROFS reader reads every block through the hash-checking reader, `erx_verity`, the only module that reads the fid of an EROFS file mount or the `system` window, the header of a `{header, Path}` mount included, which `erx_verity:header/1` reads: it receives each block as a binary in the domain's own memory, checks it against the image's tree with the SHA-256 primitive and returns the binary only if it matches. Two modules open an image in it, and neither takes the layout from a caller. `erx_ns`'s process opens one for the one EROFS file mount, which takes no layout ([design-files.md](design-files.md#building-binding-and-mounting)), and takes it from one of two places the system domain fixed. For `app` it is the app's record, which the domain service fills from the answer of its file check, run with `{hash, H}` from a `package` row or `{signers, Keys}` from the manifest's keys, and sends the session over the runtime protocol. For `{header, Path}` it is the decoder's layout of the header bytes at the start of a file reached through the `apps` grant, which the `apps` tree serves only once their SHA-256 is the one it recorded when the file check accepted them (PK3 of [design-packaging.md](design-packaging.md#invariants)); a file reached through any other grant is refused with `einval`. E1 binds the code of the tree: a domain's own code can call any function of its runtime and parse what it likes, which harms only itself, and what that domain may run is bounded by the grant each mount's fid came through (F6 of [design-files.md](design-files.md#invariants)), which E1 does not need. The other module, the `system` backend, `erx_storage_system`, opens the system partition's image over the `system` window that PW1 gives to one storage domain, with the image's length and its tree's offset, length, salt and root hash from that domain's boot record, which the domain library writes, in the system domain, from the manifest the boot image holds ([The `system` tree](#the-system-tree)) | a read path around the hash-checking reader; a check on a copy the server still holds rather than the domain's; a form of the EROFS mount that takes a layout, a root hash or header bytes from its caller; an image opened in `erx_verity` by a module other than those two; a `header` mount through any grant but `apps`; a `system` image opened with a root hash from anything but its boot record; a `system` window named for a second domain | `Erx::ErofsReads`, a cross-reference check over the target releases: no module but `erx_verity` names the handle through which a file mount's fid or the `system` window is read; the reader's modules reach a block only through `erx_verity:read/3`; no module but `erx_ns` and `erx_storage_system` opens an image in `erx_verity`, each by its own open, `erx_ns` a fid by `erx_verity:open_file/3` and `erx_storage_system` the `system` window by `erx_verity:open/2`, and the reader mounts only the handle they return, so it opens none itself; seeded, an `erx_ns` that opens with `open/2`; `erx_storage_system` exports no mount that takes its layout from a caller; a test that `erx_ns`'s `app` mount reads the package through the record's place and layout and refuses every source that carries a layout or an image, seeded with a source `{layout, Place, Layout}` taken from the caller; each rule with a seeded violation; a test that a `header` mount of a file reached through any grant but `apps` is refused with `einval`; a test in which one flipped byte of an image reads `eio`, of a package and of the system partition's directory, and the hash-checking reader's fuzz target; a host test of `erx_storage_system`'s open over a fixture window holding a changed partition whose tree was rebuilt to match it, with the boot record naming the original root: every read answers `eio`, and seeded, an open that takes the root from the partition's own tree, which serves the changed files |
 | **U1.** Neither partition of the slot the machine runs from, nor of the slot a failed trial falls back to, is ever written | the slot writer allows a slot write only on `normal(C)` with the record naming `C`, and only to the other slot's boot and system partitions, which the medium layout pairs | a slot write allowed on any other boot value, or from a service's word; a pairing of partitions recorded anywhere but the layout | the exhaustive model of the update path, with each slot's two partitions written separately |
 | **U2.** The record names only the slot first installed or a slot that passed a healthy trial | the slot writer rewrites the record only on `trial(S)` with the record naming the other slot, naming `S`, and the update service asks for that only once the trial is healthy; no other boot value, a firmware's fallback boot included, allows a record write | a record write on a normal boot | the exhaustive model, with every boot value against every record |
 | **U3.** After a power cut, a crash or a hang at any point, the machine boots the committed slot, or the spare once as a requested trial | the record changes only by one sector, the trial's request is one-shot, and a hang during a trial ends in the watchdog's reset; the firmware runs the watchdog from power-on on a board configured as [design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record) describes, and on a board without that configuration a trial whose firmware stage hangs, before the kernel's first decision, needs a power cycle | a multi-sector record; a request that survives the trial | the model with a power cut after every write; runs on each board |
@@ -423,7 +426,7 @@ medium layout of the ABI file:
 
 | Entry | Partition | Read by |
 | --- | --- | --- |
-| 1 | the boot-selection record's partition, FAT | the firmware and the slot writer |
+| 1 | the boot-selection record's partition, FAT, holding the record and, when whoever prepared the medium wrote one, root's `authorized_keys` | the firmware; the slot writer, which alone writes it, at the record's sector and the reset count's alone; the storage domain that serves `system`, read-only, for root's login keys |
 | 2, 3 | boot A, boot B: each slot's boot partition, FAT, holding what the firmware loads | the firmware, and the slot writer, which alone writes them |
 | 4 | an extended partition holding the four logical partitions below, each described by an extended boot record at a sector the layout fixes | the block driver, which reads exactly those four records |
 | 4, first and second logical | system A, system B: each slot's system partition, EROFS | the storage domain that serves `system`, read-only and only the booted slot's; the slot writer, which alone writes them |
@@ -576,6 +579,12 @@ exchange:
   slots' boot partitions are FAT too, for the firmware, but no domain
   parses them: only the slot writer holds their windows, and it writes
   their images raw (PW1).
+* The **record partition's FAT** holds the firmware's `autoboot.txt`,
+  whose one cluster is the record, and the one file a user adds before
+  the first boot, root's `authorized_keys`
+  ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)). It
+  belongs to neither slot, so no update writes it but at the record's
+  and the reset count's sectors, and it is the same volume on every platform's medium.
 
 A medium holds the **boot-selection record**, two **slots**, the vault's
 partition and the data partition. Each slot holds a system in two
@@ -1308,7 +1317,7 @@ salt and root hash, which the update writes with the partition
 the system domain, hands them to the storage domain that serves `system`, and to no other domain, in a boot
 record of its own, `-erx_record system_image`, beside the `-erx_record
 boot VALUE SLOT` record, whose words, one reader and refusals
-[design-stopgap.md](design-stopgap.md#the-booted-slot) defines: a
+[design-fiasco.md](design-fiasco.md#the-booted-slot) defines: a
 record that is malformed or absent leaves every request on the tree
 answering `eio`, so the image packages are absent, as on an `unknown`
 boot, and the manifest check refuses a manifest with a
@@ -1330,7 +1339,9 @@ A package block a client reads through the tree is therefore hashed
 twice, once here against the partition's tree and once in the client
 against the package's ([todo-performance.md](todo-performance.md)). The backend serves the partition's `apps/` as the tree's
 root, so a grant reaches the packages and nothing else the packer
-wrote; since every block matches the root hash the manifest records,
+wrote. The packer writes `apps/` on every medium, empty when the image
+has no package, so a partition without it is a fault, which the backend
+logs as `no system tree` and serves as no tree; since every block matches the root hash the manifest records,
 the partition holds only what the packer wrote, and nothing secret. It has no writing callback, and every grant of it is `ro` or `rx`, the
 app template's `rx` so that `/app` can be mounted through it, so
 every writing operation is refused before any callback
@@ -1464,12 +1475,13 @@ has a design of its own, [design-f2fs.md](design-f2fs.md); in brief:
 * **Parity.** It replaces littlefs only at parity over the file-semantics
   test corpus, as every stopgap's replacement does.
 
-In Phase 1 littlefs instead runs as a NIF in the storage domain, behind the
-same `erx_fs` interface; its design is the littlefs section of
+In Phase 1 and in 0.2 littlefs instead runs as a NIF in the storage domain, behind the
+same `erx_fs` interface, 0.2's under its
+[release contract](design-stopgap.md#release-contract); its design is the littlefs section of
 [design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain), and
 the port below is the target.
 
-**littlefs, the stopgap**, runs in the same storage domain behind the same
+**littlefs, the stopgap**, in its target placement runs in the same storage domain behind the same
 `erx_fs` interface, as a **sub-space port** of the storage domain, with
 the shape of a program
 ([design-programs.md](design-programs.md#a-program-is-a-port)):
@@ -1687,6 +1699,82 @@ target on the host's stock OTP. fsimg, the FAT server's oracle, creates
 FAT images for the server to read and checks every image the server
 writes with its verify (`fsimg W`).
 
+**The record volume's one reader.** One file of the boot medium's
+record partition is read on the target: root's `authorized_keys`
+([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)). The
+storage domain that serves `system` reads it once, at its start, through
+the read-only `record_volume` window, which its block service starts
+exactly when the manifest gives the domain that window: on erXos's
+kernel from the device service's derivation (PW1), and on the Phase 1
+stopgap from the sixth word, `record_volume`, of the domain's
+`-erx_record system_image`, which the domain library writes only for
+the holder of the manifest's window
+([design-fiasco.md](design-fiasco.md#the-booted-slot)). It reads the
+file with `erx_fat_read`, the pure read
+core of the FAT format that the FAT server above reads through too:
+`root_file(ReadSector, Name, MaxBytes)` takes a function that reads one
+sector of the window, the long name and the size bound, and answers
+`{ok, Bytes}` or `{error, Finding}`, one of the closed set of
+[design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium). Stage 2 of
+SSH builds it, and the FAT server, which comes later, is built on it. It
+is called as functions and serves nothing of the volume; only the keys the file names leave the domain.
+No FAT server runs on the record partition and nothing writes through
+the window. The read core admits the volume only as the layout makes
+it: 512-byte sectors and one-sector clusters, every region inside the
+partition, the reserved area covering the reset count's sector
+(`medium_record_count_start`), so neither FAT nor the root directory
+holds it, and the data area starting at the record's sector
+(`medium_record_select_start`), so its clusters are the layout's and no
+other. It looks the file up in the root directory alone, by its long
+name, compared as above; refuses an entry that is a directory or a label
+and a size past 16 KiB before it reads a cluster; and reads exactly as
+many clusters as the size needs, at most 32, each link a cluster of the
+data area; a cluster seen twice, a link outside the
+data area and an end of chain before the size's clusters are each `does
+not read`, and the chain past the size's clusters is not read, so whatever the FAT holds, the read is a bounded number of
+sector reads. It answers exactly the bytes the directory entry's size
+gives, so the slack of the last cluster, whatever it holds, never
+reaches the decoder. A sector read the window refuses ends the reader
+with `read failed`, which is not a finding about the file
+([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium) has the
+tree answer it `eio`).
+
+The reader refuses a file with any cluster in the record's region, the
+record's own included, with the one finding `lies in the boot-selection
+record's region`. The region is the erase unit that holds the record's
+sector: `abi/medium.txt`'s `medium_erase_sectors` (2048 sectors, 1 MiB)
+aligned from the partition's start, so with the layout's values it is
+MiB 3 of the volume, clusters 2 to 2049. The record is alone in its erase unit
+([System updates](#system-updates)), and a file there would share the
+unit a commit rewrites. The volume is built so that no FAT writer puts a
+file there: the image build marks every cluster of the region after the
+record's as bad in both FATs
+([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record)),
+and a FAT writer, a user's computer among them, allocates only a
+cluster whose entry is free, which a bad cluster's is not (the FAT
+specification's bad-cluster mark; that the hosts of the Raspberry Pi's
+manual checklist honor it is unverified until that step passes). The refusal is the bound for a volume whose marks a host's
+repair tool has cleared: the file is refused with that finding, and the
+record keeps its unit. The region has one source: every consumer
+derives its clusters from `medium_erase_sectors`,
+`medium_record_select_start` and the one-sector clusters, as the
+generated constants give them, and writes no cluster number down. The
+reader takes the range for its check; the image build passes the
+range after the record's cluster to fsimg's FAT creation as
+`-o bad=FIRST-LAST`, so fsimg writes the marks as it formats and nothing
+patches its output; and `check_volumes`
+(`tools/lib/erx/pi_medium.rb`) reads both FATs back through `FatVolume`
+and refuses a volume in which a cluster of that range is not marked bad.
+
+The reader runs in a process of its own, spawned and monitored by the
+tree's one holder, a process linked to the `login_keys` mint under
+`erx_storage_sup`, which publishes the first of the reader's result and
+its end once for the incarnation, so the domain serves `system` and its
+other trees without waiting for it
+([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium) gives the
+tree's lifecycle). It writes nothing, so a power cut or a restart finds
+the partition as it was, and the next start reads it again.
+
 ### System updates
 
 **A trial writes nothing but the record and the reset count.** On a
@@ -1705,7 +1793,8 @@ with nothing to undo.
 **The slot writer** is one domain of its own, running a small Erlang
 release from the boot image. It holds the only writable windows on the
 slots' partitions, the boot and the system partition of each, and the
-only window on the record, each a window process of the
+only writable windows on the record partition, one on the record's
+sector and one on the reset count's, each a window process of the
 block driver exported to it, and the update service in the system domain
 holds its only facet. Before every write it reads the record from the
 medium and the boot value from the machine page, and decides what it
@@ -1908,6 +1997,11 @@ reported as a durable checkpoint.
   `rx` to the app template's, whose row carries `tree installed` and
   which is rooted at `installed/`
   ([design-packaging.md](design-packaging.md#the-apps-row)),
+  the `home` tree, the users' homes, `root/` and `home/NAME/`, whose
+  every grant carries `tree home` and is rooted at its grantee's own
+  home, which its start makes when the volume lacks it
+  ([design-files.md](design-files.md#building-binding-and-mounting),
+  "A user's home"),
   and the `etc` tree, a service directory of its own holding the
   machine's own settings files, `rc.conf` among them: read-only to the
   system domain's grant and read-write to the grants of the session
@@ -2230,7 +2324,7 @@ The SD controller, each test paired with the fault that proves it ran:
   finds an admitted card whose last byte address does not fit 32 bits.
 * On the board, by hand: the card identifies at default speed, `/data`
   mounts, and the power-cut checklist of
-  [plan.md](plan.md#1b-i-the-raspberry-pi-4-on-the-stopgap) passes; the
+  [plan.md](plan.md#1b-i-the-raspberry-pi-4-on-fiasco) passes; the
   [board probe](#the-board-probe) records its items and its timed slow
   read settles the base clock.
 
@@ -2431,7 +2525,7 @@ is unconfined, with the same driver.
 **littlefs as a NIF in the storage domain.** littlefs's C would run on a
 dirty scheduler of the storage domain's runtime. It loses: in the default
 configuration that runtime also runs the block driver, so a memory bug in
-the stopgap could reach the device and every window on the medium, and a
+littlefs could reach the device and every window on the medium, and a
 crash in it would end every storage service's windows at once. A
 sub-space port confines the C to its channel and data area, by
 construction, and its crash ends one volume's port.

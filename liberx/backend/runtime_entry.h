@@ -28,6 +28,14 @@ bool			 erx_time_wall_ns(uint64_t *wall_ns) ERX_WARN_UNUSED_RESULT;
  * when the sequence has run out.
  */
 bool			 erx_time_offset(int64_t *offset_ns, bool *cold) ERX_WARN_UNUSED_RESULT;
+/*
+ * Stores offset_ns as the time page's wall offset, so wall time reads M + offset_ns at
+ * monotonic time M; monotonic time does not move. ERX_EINVAL outside
+ * 0..ERX_TIME_OFFSET_MAX, ERX_ELIMIT when the sequence has run out, ERX_ENOTSUP on a
+ * backend that cannot set wall time. It needs WRITE on time_page (docs/design-time.md,
+ * "The NIF and the liberx calls").
+ */
+int			 erx_time_set_offset(erx_cap_t time_page, uint64_t offset_ns) ERX_WARN_UNUSED_RESULT;
 /* In sys/erxos: starts ERTS on the page. */
 void			 erx_runtime_main(void);
 

@@ -136,7 +136,7 @@ module Erx
           they return comes from the declaration's tables.
           """.
           -export([encode/2, encode_raw/2, read/1, read_server/1]).
-          -export_type([wire_record/0, present/0, reason/0, refusal/0]).
+          -export_type([wire_record/0, rect/0, present/0, reason/0, refusal/0]).
 
           -define(OP_MAX, #{ui.op_max}).
           -define(NAME_MAX, #{NAME_MAX}).

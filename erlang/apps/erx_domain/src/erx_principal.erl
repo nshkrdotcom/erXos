@@ -103,9 +103,10 @@ register(#{name := Name, place := Place, checked := #{header := #{layout := Layo
 %% Where a package's file lies (docs/design-packaging.md, "Where a package lies"), as
 %% the facet of the app template that reaches it and the names below that facet's
 %% tree: an installed one at the root of the `packages` grant, rooted at installed/,
-%% and one of the image at apps/ of the `system` grant. erx_ns's process walks them on
-%% that facet's grant for the session's mount of /app.
-place(system, Name) -> {system, [<<"apps">>, <<Name/binary, ".app">>]};
+%% and one of the image at the root of the `system` grant, rooted at the system
+%% partition's apps/ (erx_storage_system). erx_ns's process walks them on that facet's
+%% grant for the session's mount of /app.
+place(system, Name) -> {system, [<<Name/binary, ".app">>]};
 place(installed, Name) -> {packages, [<<Name/binary, ".app">>]}.
 
 -doc "What admission compares a package with: each name's entry and signer.".

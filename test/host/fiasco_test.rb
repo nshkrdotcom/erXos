@@ -8,6 +8,7 @@ require 'rubygems/package'
 require 'stringio'
 require 'zlib'
 require_relative '../../tools/lib/erx/fiasco'
+require_relative '../../tools/lib/erx/fiasco_provenance'
 
 class FiascoTest < Minitest::Test
   # The recording runner resolves a configuration by copying it, so the
@@ -26,6 +27,14 @@ class FiascoTest < Minitest::Test
     def record_provenance
       nil
     end
+
+    # The release kernel's license check is the link audit's, which
+    # fiasco_provenance_test.rb covers; here it accepts every kernel.
+    AcceptingAudit = Data.define do
+      def certify = nil
+    end
+
+    def provenance_auditor(kind:) = AcceptingAudit.new
 
     # The cores' archive has its own tests (core_archive_test.rb); here it
     # is a fixed result whose paths the kernel make must receive.
@@ -165,6 +174,73 @@ class FiascoTest < Minitest::Test
       refute(@runner.commands.any? { |command| command.fetch(:options).fetch(:name) == 'fiasco-kernel-build' })
     end
     refute(@runner.commands.any? { |command| command.fetch(:options).fetch(:name) == 'fiasco-kernel-config' })
+  end
+
+  # The release kernel is configured from the development defconfig with the
+  # debugger and console input written as not set, in a directory of its own,
+  # and leaves the development kernel alone.
+  def test_release_kernel_is_configured_from_the_development_defconfig_without_the_debugger
+    path = @fiasco.build_release_kernel(jobs: 2)
+    directory = Erx::Fiasco.kernel_directory(root: @directory, kind: Erx::BuildKind::RELEASE)
+    assert_equal File.join(directory, 'fiasco'), path
+    assert_equal "#{KERNEL_CONFIG}# CONFIG_JDB is not set\n# CONFIG_INPUT is not set\n",
+                 File.read(File.join(directory, 'globalconfig.out'))
+    names = @runner.commands.map { |command| command.fetch(:options).fetch(:name) }
+    assert_includes names, 'fiasco-kernel-release-build'
+    refute_includes names, 'fiasco-kernel-build'
+    refute File.exist?(File.join(@directory, 'build/fiasco/kernel'))
+  end
+
+  # A release kernel stays only beside its pass record: an earlier record goes
+  # before the build, and a kernel whose audit fails is removed with it.
+  def test_a_refused_release_kernel_is_removed_with_any_pass_record
+    directory = Erx::Fiasco.kernel_directory(root: @directory, kind: Erx::BuildKind::RELEASE)
+    record = File.join(directory, Erx::FiascoProvenance::PASS_RECORD)
+    FileUtils.mkdir_p(directory)
+    File.write(record, 'an earlier pass')
+    @fiasco.build_release_kernel(jobs: 2)
+    refute File.exist?(record)
+    File.write(File.join(directory, 'fiasco'), 'refused kernel')
+    File.write(record, 'an earlier pass')
+    refusing = Object.new
+    refusing.define_singleton_method(:certify) { raise Erx::Error, 'the kernel links sources a release may not carry' }
+    @fiasco.define_singleton_method(:provenance_auditor) { |kind:| refusing }
+    assert_raises(Erx::Error) { @fiasco.build_release_kernel(jobs: 2) }
+    refute File.exist?(File.join(directory, 'fiasco'))
+    refute File.exist?(record)
+  end
+
+  # Seeded fault: a development defconfig that turns the debugger on would
+  # leave it on in the release kernel; that build stops before any make.
+  def test_release_kernel_refuses_a_development_defconfig_naming_the_debugger
+    File.write(kernel_config, KERNEL_CONFIG + "CONFIG_JDB=y\n")
+    error = assert_raises(Erx::Error) { @fiasco.build_release_kernel }
+    assert_includes error.message, 'CONFIG_JDB'
+    refute(@runner.commands.any? { |command| command.fetch(:options).fetch(:name).start_with?('fiasco-kernel-release') })
+  end
+
+  # The case a `select` produces: the resolved release configuration has
+  # console input on although the derived defconfig says it is not set.
+  class SelectingRunner < RecordingRunner
+    def run(argv, **options)
+      result = super
+      if options.fetch(:name) == 'fiasco-kernel-release-config'
+        directory = argv.find { |argument| argument.start_with?('B=') }.delete_prefix('B=')
+        resolved = File.join(directory, 'globalconfig.out')
+        File.write(resolved, File.read(resolved).sub("# CONFIG_INPUT is not set\n", "CONFIG_INPUT=y\n"))
+      end
+      result
+    end
+  end
+
+  # Seeded fault: the build checks the release kernel's resolved file with the
+  # release rules and stops before the kernel make.
+  def test_release_kernel_whose_resolved_configuration_has_input_stops_the_build
+    runner = SelectingRunner.new
+    fiasco = FixtureBuild.new(root: @directory, runner: runner, compiler: '/fixture/clang')
+    error = assert_raises(Erx::FiascoConfig::Violation) { fiasco.build_release_kernel }
+    assert_includes error.message, 'CONFIG_INPUT must be unset'
+    refute(runner.commands.any? { |command| command.fetch(:options).fetch(:name) == 'fiasco-kernel-release-build' })
   end
 
   def test_changed_user_config_is_applied_to_incremental_build

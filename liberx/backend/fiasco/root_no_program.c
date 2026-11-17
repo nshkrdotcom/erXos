@@ -26,6 +26,17 @@ erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx
 }
 
 const char *
+erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_pm_wdt_t *wdt,
+    erx_fiasco_board_wdt_t *found)
+{
+	(void)tree;
+	(void)manifest;
+	*wdt = (erx_fiasco_pm_wdt_t){ .armed = false };
+	*found = ERX_FIASCO_BOARD_WDT_ABSENT;
+	return (NULL);
+}
+
+const char *
 erx_fiasco_program_start(const erx_boot_handoff_view_t *handoff, const erx_manifest_view_t *manifest,
     const erx_pack_view_t *pack, const erx_dt_t *tree, const erx_boot_args_t *boot_args)
 {

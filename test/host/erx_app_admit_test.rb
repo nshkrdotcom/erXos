@@ -70,8 +70,9 @@ class ErxAppAdmitTest < Minitest::Test
   MIB = 1_048_576
   MAX_NAME = 60 # 63 bytes less the 3 of "_64", erx_domain_core's names quota as a pooled suffix
   # The app template's facet rows in the EUnit module's manifest: packages, then the apps
-  # row's services display (windows), data and panel (windows).
-  PACKAGES, DISPLAY, DATA, PANEL = 7, 8, 9, 10
+  # row's services display (windows), data and panel (windows), then system, which every
+  # admitted app holds.
+  PACKAGES, DISPLAY, DATA, PANEL, SYSTEM = 7, 8, 9, 10, 11
 
   def package(name, needs: %w[display data], memory: 64 * MIB, edits: ->(values) { values })
     declaration = Seeds::ERLANG.with(name: name, needs: needs, memory: memory)
@@ -144,7 +145,7 @@ class ErxAppAdmitTest < Minitest::Test
   end
 
   def ok(rows, display, memory: 64 * MIB)
-    Tuple.new([:ok, { rows: rows, display: display, memory: memory }])
+    Tuple.new([:ok, { rows: (rows + [SYSTEM]).sort, display: display, memory: memory }])
   end
 
   def error(reason) = Tuple.new([:error, reason])

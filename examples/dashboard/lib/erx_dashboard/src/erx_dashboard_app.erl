@@ -5,9 +5,8 @@
 -moduledoc """
 The application erx_dashboard, the kiosk dashboard of examples/dashboard:
 a clock, the date and a quotes panel on its session's display, drawn by
-erx-lvgl (docs/design-display.md, "Kiosks and glasses"). Its `source`
-value names the quotes source, erx_dashboard_sample unless the release
-sets another (erx_dashboard_source).
+erx-lvgl (docs/design-display.md, "Kiosks and glasses"), with live
+quotes fetched over HTTPS (erx_quotes).
 """.
 -behaviour(application).
 

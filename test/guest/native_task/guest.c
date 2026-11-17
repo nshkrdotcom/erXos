@@ -174,7 +174,7 @@ erx_fiasco_root_main(void)
 		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0, NULL);
 	if (reason != NULL) {
 		say(reason);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	erx_fiasco_task_set_archive(&pack);
 	say_case("program_found", erx_fiasco_launcher_find(&pack, PROGRAM, &program_entry) == ERX_OK);

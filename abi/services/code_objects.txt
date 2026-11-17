@@ -21,7 +21,8 @@
 # erx_ident identifiers, and an atom of at most 255 characters, so 624 at most; the
 # limit doubles past that to the next power of two, so an encoding that grows a little
 # between OTP releases still fits.
-service code_objects 11
+service code_objects 14
+  served_as message
   operation create 1
   operation drop 2
 limit code_objects_max u32 256

@@ -31,6 +31,7 @@
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/time.h"
 #include "liberx/backend/fiasco/vm.h"
+#include "liberx/backend/runtime_entry.h"
 #include "otp/erts/emulator/nifs/erxos/erx_device.h"
 #include "test/guest/native_irq/holder.h"
 
@@ -77,7 +78,7 @@ static _Noreturn void
 fail(const char *text)
 {
 	say(text);
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 }
 
 /* "erx: irq: <what> 0x<value> 0x<other>\n", all in one write so no line splits. */
@@ -521,7 +522,7 @@ executor_main(uint64_t unused)
 	case_uart("erx: irq: type another\n");
 	case_holder();
 	say("erx: irq: done\n");
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 }
 
 static void
@@ -579,7 +580,7 @@ check_time(void)
 		fail("erx: irq: the time page's fields disagree FAILED\n");
 	if (now < before || now > after)
 		fail("erx: irq: the page's clock disagrees with the counter's FAILED\n");
-	if (erx_time_set_wall(WALL_NS) != ERX_OK || !erx_time_wall_ns(&wall) || wall < WALL_NS ||
+	if (erx_time_set_offset((erx_cap_t){ .raw = erx_fiasco_time_object() }, WALL_NS - erx_time_monotonic_ns()) != ERX_OK || !erx_time_wall_ns(&wall) || wall < WALL_NS ||
 	    wall - WALL_NS > PATIENCE_NS)
 		fail("erx: irq: the wall clock disagrees FAILED\n");
 	say("erx: irq: the time page agrees with the counter\n");
@@ -648,7 +649,7 @@ erx_fiasco_root_main(void)
 		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff.image.start, (size_t)handoff.image.size, 0, NULL);
 	if (reason != NULL) {
 		say(reason);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	erx_fiasco_task_set_archive(&pack);
 	if (erx_fiasco_launcher_find(&pack, HOLDER_PROGRAM, &holder_entry) != ERX_OK)

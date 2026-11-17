@@ -126,7 +126,7 @@ start_app(#{start := {program, Program, Args}, window := Window},
 
 mount(#{mount := Mount}) ->
     case Mount() of
-        ok -> ok;
+        ok -> logger:notice("erx_app: mounted /app");
         {error, Reason} -> fail({mount, Reason})
     end.
 

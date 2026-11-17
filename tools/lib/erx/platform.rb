@@ -114,7 +114,7 @@ module Erx
     # start from (MediumBoot). It is made from the development manifest each time it is
     # read, so it never differs from it in anything but those domains and the apps row,
     # which it leaves out with its budget and its domains (Manifest::Edit.without_apps), so the
-    # website offers no image that takes packages (docs/design-packaging.md, "The shipped
+    # website's image takes no package (docs/design-packaging.md, "The shipped
     # manifests"). keep names domains
     # of site_leaves_out a harness keeps in, as the display suite keeps the display domain.
     # A board whose record has no site_leaves_out is refused on use, never handed its

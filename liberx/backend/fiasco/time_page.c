@@ -22,6 +22,7 @@
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/time.h"
 #include "liberx/backend/fiasco/time_table.h"
+#include "liberx/backend/runtime_entry.h"
 
 /*
  * Set once on the root's first thread before the service starts, and never again, so a
@@ -89,27 +90,31 @@ erx_fiasco_time_page_map(uint32_t task)
 	return (erx_fiasco_vm_object_map(task, time_record, ERX_FIASCO_TIME_PAGE_ADDR, ERX_PAGE_SIZE, 0, ERX_PROT_R));
 }
 
+/* The stopgap checks no right, so time_page_cap names nothing here (docs/design-time.md, "Phase 1"). */
 int
-erx_time_set_wall(uint64_t wall_ns)
+erx_time_set_offset(erx_cap_t time_page_cap, uint64_t offset_ns)
 {
-	const erx_fiasco_time_set_wall_request_t request = { .caller = erx_fiasco_thread_self()->index,
-	    .wall_ns = wall_ns };
+	const erx_fiasco_time_set_offset_request_t request = { .caller = erx_fiasco_thread_self()->index,
+	    .offset_ns = offset_ns };
 	erx_fiasco_reply_t reply;
 
-	return (erx_fiasco_service_call(ERX_FIASCO_CALL_TIME_SET_WALL, &request, sizeof(request), &reply));
+	(void)time_page_cap;
+	return (erx_fiasco_service_call(ERX_FIASCO_CALL_TIME_SET_OFFSET, &request, sizeof(request), &reply));
 }
 
+/* Stores the offset as given: the page moves wall time only, never the counter. */
 int
-erx_fiasco_time_set_wall_body(uint64_t wall_ns)
+erx_fiasco_time_set_offset_body(uint64_t offset_ns)
 {
 	const uint64_t seq = atomic_load_explicit(&time_page->seq, memory_order_relaxed);
 
+	if (offset_ns > ERX_TIME_OFFSET_MAX)
+		return (ERX_EINVAL);
 	if (seq >= ERX_FIASCO_TIME_SEQ_LAST)
 		return (ERX_ELIMIT);
 	atomic_store_explicit(&time_page->seq, seq + 1, memory_order_relaxed);
 	atomic_thread_fence(memory_order_release);
-	atomic_store_explicit(&time_page->wall_offset_ns, (int64_t)(wall_ns - erx_time_monotonic_ns()),
-	    memory_order_relaxed);
+	atomic_store_explicit(&time_page->wall_offset_ns, (int64_t)offset_ns, memory_order_relaxed);
 	atomic_store_explicit(&time_page->seq, seq + 2, memory_order_release);
 	return (ERX_OK);
 }

@@ -4,7 +4,7 @@
 -module(erx_principal).
 -moduledoc """
 A stub of the principal service's app registry for erx_pkg's tests: each
-registration is logged in erx_pkg_medium's table under `registered`, as
+registration is logged in the case's public ETS table erx_pkg_stubs under `registered`, as
 the package's name, place, the entry `erx_app_admit:entry/4` gives it and
 its admission, and the registry holds each logged name's entry and signer.
 """.
@@ -20,11 +20,11 @@ app_registry() ->
 register_app(#{name := Name, place := Place, checked := #{header := #{layout := _, start := _}},
                admitted := #{signer := Signer} = Admitted}) ->
     {ok, Entry} = erx_app_admit:entry(Name, Signer, ?MAX, app_registry()),
-    ets:insert(erx_pkg_medium, {registered, registrations() ++ [{Name, Place, Entry, Admitted}]}),
+    ets:insert(erx_pkg_stubs, {registered, registrations() ++ [{Name, Place, Entry, Admitted}]}),
     ok.
 
 registrations() ->
-    case ets:lookup(erx_pkg_medium, registered) of
+    case ets:lookup(erx_pkg_stubs, registered) of
         [{registered, Log}] -> Log;
         [] -> []
     end.

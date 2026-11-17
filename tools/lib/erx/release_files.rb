@@ -93,8 +93,8 @@ module Erx
     # every domain boots, the applications the system domain runs, and erx_session, which
     # it ships and never starts (DOMAIN_ONLY). Every other application is a domain boot
     # script's alone (RELEASE_SCRIPTS), and one in neither fails the load (check_released).
-    SYSTEM_APPLICATIONS = %w[kernel stdlib compiler runtime_tools erx erx_files erx_uart erx_code erx_hostlink
-                             erx_domain erx_starter erx_shell erx_session].freeze
+    SYSTEM_APPLICATIONS = %w[kernel stdlib compiler runtime_tools erx erx_files erx_code erx_uart
+                             erx_domain erx_starter erx_ssh_login erx_shell erx_session].freeze
     raise Error, "SYSTEM_APPLICATIONS names what the runtime does not build: #{SYSTEM_APPLICATIONS - APPLICATIONS}" unless
       (SYSTEM_APPLICATIONS - APPLICATIONS).empty?
     raise Error, 'SYSTEM_APPLICATIONS is not in release order (APPLICATIONS)' unless
@@ -169,7 +169,7 @@ module Erx
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
-                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_web_line'].freeze,
+                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_web_line', 'erx_ssh_line'].freeze,
                         'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage', 'erx_f2fs'].freeze,
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,

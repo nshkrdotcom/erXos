@@ -15,7 +15,7 @@ MSI frames and PCIe bridges of
 [design-platforms.md](design-platforms.md#pcie-bridges), the
 `ERX_IRQ_MSI` object of [design-kernel.md](design-kernel.md#irq-objects)
 and the device records of
-[design-stopgap.md](design-stopgap.md#device-records), and says where
+[design-fiasco.md](design-fiasco.md#device-records), and says where
 each of them changes.
 
 Decisions every reader needs:
@@ -69,14 +69,14 @@ Decisions every reader needs:
 * [Records](#records): the function, the setting, the bridge, the
   catalogue
 * [Interrupts](#interrupts): the choice, who programs what and when, the
-  MSI frame on the stopgap, the closed bus
+  MSI frame on Fiasco, the closed bus
 * [DMA](#dma)
 * [Facets](#facets): the three interfaces and the start's conversation
 * [The catalogue and gives](#the-catalogue-and-gives)
 * [Concurrency](#concurrency)
 * [Failure handling and restart](#failure-handling-and-restart)
 * [Refusals and error results](#refusals-and-error-results)
-* [On the stopgap](#on-the-stopgap)
+* [On Fiasco](#on-fiasco)
 * [Verification](#verification)
 * [Changes to other designs](#changes-to-other-designs)
 * [Alternatives considered](#alternatives-considered)
@@ -166,7 +166,7 @@ No PCIe domain exists. Property 3 of the manifest says the Raspberry Pi
 4 drives no bridge ([design-system.md](design-system.md#the-manifest)),
 and its Phase 1 row allows no holder of configuration space and places
 no `pci` device on QEMU `virt`
-([design-stopgap.md](design-stopgap.md#the-phase-1-manifest-check)).
+([design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)).
 The manifest already has a `pci` selector: a row names its host bridge
 by device-tree path and its bus, device and function
 (`abi/manifest.txt`, `erx_mf_device`; the choice at `:452-461`), with
@@ -174,8 +174,8 @@ by device-tree path and its bus, device and function
 domain library's boot view gives such a row no range, no line and no
 kind, so it is held and not driven (`liberx/system/dom_boot_view.c`,
 `boot_devices`, `:363-442`; a `TODO.md` item). `erx_irq_create` of
-`ERX_IRQ_MSI` is `ERX_ENOTSUP` on the stopgap
-(`liberx/backend/fiasco/irq.c:188`). The stopgap's give makes a
+`ERX_IRQ_MSI` is `ERX_ENOTSUP` on Fiasco
+(`liberx/backend/fiasco/irq.c:188`). Fiasco's give makes a
 device's memory with `erx_mem_create_contiguous_in` inside the DMA range
 of the device's catalogue facts, CPU addresses `cpu` through `last`
 seen by the device from `bus` (`liberx/system/dom_apply.c:420-425`,
@@ -250,8 +250,8 @@ next design that needs it adds it.
   sizing answers are parsed by binary matching in Erlang with fuzz
   targets; the report is checked once, whole, at the library's intake,
   against the bridge's windows and every other device.
-* **R9. Phases.** The same Erlang code runs on the stopgap and on erXos's
-  kernel; on the stopgap the backend implements `ERX_IRQ_MSI` over the
+* **R9. Phases.** The same Erlang code runs on Fiasco and on erXos's
+  kernel; on Fiasco the backend implements `ERX_IRQ_MSI` over the
   frame's lines, and every guarantee it cannot keep is a recorded
   residual.
 
@@ -903,11 +903,11 @@ device: a confined function that masters without its reset reaches only
 its own window, and the holder of an unconfined one is in the trusted
 base already ([DMA](#dma)).
 
-### The MSI frame on the stopgap
+### The MSI frame on Fiasco
 
 On erXos's kernel the kernel drives the frame and `ERX_IRQ_MSI` returns
 the doorbell and value ([design-kernel.md](design-kernel.md#irq-objects)).
-On the stopgap the backend implements the same call in the root, over
+On Fiasco the backend implements the same call in the root, over
 the frame's lines, which Fiasco binds as wired lines:
 
 * **The range.** QEMU `virt`'s platform record names the frame,
@@ -1024,7 +1024,7 @@ of the PCI-e controller, not the VL805" (`bcm2838_xhci.c:191`). The Pi
 shows the bridge's true limit.
 
 The give makes the memory as it makes every unconfined device's, from
-those facts: on the stopgap with `erx_mem_create_contiguous_in`
+those facts: on Fiasco with `erx_mem_create_contiguous_in`
 (`liberx/system/dom_apply.c:420-425`), on erXos's kernel with
 `erx_mem_create_contiguous` inside the windows `erx_dma_ranges` gives
 the function's resource, cut at the same limit
@@ -1266,7 +1266,7 @@ waits for.
 | the enumerator crashes | its application ends | the PCIe domain ends and is restarted; the device service goes `between`; the new start keeps every function that reads as its setting and turns every other one off |
 | the PCIe domain ends past its intensity | the domain service | it stays down; functions keep their state; holders' requests answer `{error, unavailable}` after 5 s ([Concurrency](#concurrency)) |
 | a configuration access with the link down, on erXos's kernel | a synchronous abort, a fault of the PCIe domain's thread, or an SError presumed the running thread's ([design-arch-aarch64.md](design-arch-aarch64.md#asynchronous-errors)) | the PCIe domain ends and is restarted; the BCM2711's start finds the link down and resets the bridge; every function below it that no longer reads as its setting is turned off with its layout |
-| the same, on the stopgap | the access's second link read, since Fiasco's SError handler counts and returns (`fiasco/kernel/src/kern/arm/thread-jdb.cpp:96-106`) | the access answers `{error, link_down}`, and the enumerator exits at once, so the domain restarts as above |
+| the same, on Fiasco | an SError Fiasco takes in user mode, which it presumes the running thread's (`arm_serror_user_entry`, `fiasco/kernel/src/kern/arm/thread-arm.cpp:713-735`); Fiasco runs its kernel with SErrors masked, so one raised while a CPU is in the kernel is taken against the next thread to enter user mode there, and the access's second link read catches the link down | the thread's task ends with a fault record of kind `async_error`, or the access answers `{error, link_down}` and the enumerator exits at once; either way the domain restarts as above |
 | the link falls under a running function, seen by its holder | its driver's accesses abort, read all ones or time out | the holder's driver ends and starts again ([design-system.md](design-system.md#devices)); its `open` makes the enumerator access the fallen link, which ends the PCIe domain as above; the `open` waits in `between` and is applied after the restart |
 | a plan cut short | the enumerator's end | the next start reads the prefix and keeps the function or turns it off ([The plan](#the-plan)) |
 | a write that does not take | the stage's readback | no later stage; the function is lowered to quiet by `quiet/1`; `{error, gone}`; the entry stays as the latest report left it |
@@ -1293,12 +1293,12 @@ firmware reads present, so its holder's restarts end at its bound.
 **The two link reads are not proof.** An access made while the link
 falls, the access faults, and the link comes back, all between the two
 status reads, passes both. On erXos's kernel the fault ends the PCIe
-domain whatever the reads say. On the stopgap the bus error is ignored,
+domain whatever the reads say. On Fiasco the bus error is ignored,
 so such an answer is taken: a read across it may give a wrong value,
 which the walk's identity check and the plan's readback catch only where
 it differs from what they expect, and a write across it may not have
 been made, which the readback catches. That is a stopgap residual
-([On the stopgap](#on-the-stopgap)).
+([On Fiasco](#on-fiasco)).
 
 ## Refusals and error results
 
@@ -1325,20 +1325,20 @@ been made, which the readback catches. That is a stopgap residual
 | `erx_pcie_cfg:parse/1`, `size/2` | `{error, Field}` | the parser's refusals ([The walk](#the-walk), [Sizing](#sizing)); the function is reported `malformed` or `unplaced` |
 | `erx_dom_pci_report` | `ERX_EINVAL`, the placing walk's layouts refused whole | a BAR outside its window, not aligned to its span, or overlapping another device; an MSI-X table past its BAR's hardware size |
 | `erx_irq_create` of `ERX_IRQ_MSI` | `ERX_ELIMIT` | no free line of the frame, or the function past `ERX_MSI_MAX` |
-| | `ERX_ENOMEM` | the stopgap root's IRQ slots are full |
+| | `ERX_ENOMEM` | the Fiasco root's IRQ slots are full |
 | the give | refused, the creation with it | a doorbell the function's DMA range does not map one to one |
 | | nothing given, as a device the machine lacks | a function with no layout, unconfirmed or not `ready`; at a closed bridge's place, a reported pin that is not the place's |
 | the boot view | the bridge's unit and the place's refused | a closed bridge's `interrupt-map` routing a listed place's pin to a line other than its row's, or to one of the bridge's own lines |
 | the manifest check | the build fails, naming the property | a second holder of a bridge's unit; a `pcie` domain holding another unit; a `pci` row with a line at a place no closed bridge lists; a closed bus's line given apart from its row; more line-less `pci` rows than the frame's lines; a `pci_bus`, `pcie` or `pci` facet granted against the rule above |
 
-## On the stopgap
+## On Fiasco
 
 The PCIe domain, the enumerator, both bridge drivers, the device
 service's PCIe process and the three facets are the same code on the
-stopgap and on erXos's kernel. The stopgap adds `ERX_IRQ_MSI` over the
-frame's lines ([The MSI frame on the stopgap](#the-msi-frame-on-the-stopgap))
+stopgap and on erXos's kernel. Fiasco adds `ERX_IRQ_MSI` over the
+frame's lines ([The MSI frame on Fiasco](#the-msi-frame-on-fiasco))
 and the give of a `pci` device in the root, as for any device another
-domain holds ([design-stopgap.md](design-stopgap.md#device-records)): its
+domain holds ([design-fiasco.md](design-fiasco.md#device-records)): its
 BAR windows with `erx_mem_create_physical`, its IRQ object, and its
 contiguous memory with `erx_mem_create_contiguous_in` inside its DMA
 facts. The VL805's notification runs in the root task, where the device
@@ -1348,10 +1348,12 @@ service runs. Its residuals:
   stopgap and the Pi 4 has none, so every PCIe function is unconfined
   and its holder, with the PCIe domain, is in the trusted base.
 * **No isolation between tasks.** The PCIe domain and the holders are
-  apart by convention ([design-stopgap.md](design-stopgap.md#what-phase-1-code-must-not-assume)).
-* **Bus errors are ignored.** Fiasco's SError handler returns, so an
-  access over a fallen link completes with whatever the bus returned.
-  The second link read keeps an answer made with the link down from
+  apart by convention ([design-fiasco.md](design-fiasco.md#what-phase-1-code-must-not-assume)).
+* **Bus errors reach only the running thread.** An SError Fiasco takes
+  in user mode ends the task of the thread that ran, presumed its own
+  (`arm_serror_user_entry`, `fiasco/kernel/src/kern/arm/thread-arm.cpp:713-735`); one raised while the CPU is in the kernel, where
+  SErrors are masked, lands on the next thread to enter user mode, and
+  the access completes with whatever the bus returned. The second link read keeps an answer made with the link down from
   being used, and turns it into the enumerator's exit; an answer made
   while the link fell and came back between the reads is taken
   ([Failure handling and restart](#failure-handling-and-restart)). A
@@ -1379,7 +1381,7 @@ that touches it.
 | `erx_devices_pci_core` | exhaustive over its states and events: requests in `between` are answered only after a report's answer, or at `down`; a holder's end in `between` lowers the setting and sends nothing; a lowering is written before it is sent and a raise after its `ok`; the report's answer is withheld until `await_grant` answers the incarnation's facet, and `answered` is written before the answer is sent; a restarted process begins in `synced` only when `answered` names the incarnation holding its bridges, and in `between` when it names an ended one or none; the sequence `targets` with a mastering setting, the holder's end, `report` leaves the model's function off | the answer's settings dropped: that sequence leaves the function mastering after its holder's end; a raise written before its `ok`: after a failed `set` the library says `mastering`; the restart's state taken from the facet's presence: a restart after the grant was installed and before the report was answered begins in `synced` |
 | `erx_dom_pci_report` (C, host) | a valid placing report is taken whole; a BAR outside the window, unaligned, overlapping another entry, an MSI-X table past its BAR's size, each refuses the placing report whole with `ERX_EINVAL`; at a later report, a changed record, a missing one and a `not_ready` one each leave the function ungiven although an earlier report confirmed it; on a bridge marked `firmware_lost`, a report listing the VL805 `ready` leaves it ungiven; `erx_dom_pci_firmware` over a backend whose call answers `ERX_ETIMEDOUT` marks the entry before it returns, and over one answering `ERX_OK` or `ERX_ENOTSUP` does not | the overlap check removed: the overlapping fixture is admitted; the earlier confirmation kept when a record is missing: the missing function stays given; the mark not read at intake: the VL805 reported ready after the timeout is given |
 | `erx_domain:await_grant/2`, the domain service over its mint core | a wait for incarnation `D` is answered `{ok, Facet}` with `D`'s facet once installed, `{error, failed}` when its grant fails, `{error, ended}` when `D` ends or the grant moves to another server, and `{error, unprovided}` when `D` is ready without `pcie`; the service answers other calls while it waits; `system_namespace/0` still waits for every `files` grant | the wait matched by service alone: a wait for `D` is answered with its predecessor's installed facet; the idle case dropped: the wait for an incarnation that provides no `pcie` is never answered within the test's deadline |
-| the stopgap's MSI line allocator (C, host) | lines from the range's first to its last, then `ERX_ELIMIT`; a freed line is taken again | the range's end off by one: the test's last allocation lies outside the range |
+| Fiasco's MSI line allocator (C, host) | lines from the range's first to its last, then `ERX_ELIMIT`; a freed line is taken again | the range's end off by one: the test's last allocation lies outside the range |
 
 ### Fuzz targets
 
@@ -1422,7 +1424,7 @@ confirmed against the pinned QEMU's documentation.
 | holder end during a PCIe start | the PCIe domain killed, then the test holder halted before the new report: after the start the function reads off | the report's answer carrying no settings: the function still masters |
 | interrupted transitions | the PCIe domain killed repeatedly while the test holder loops `open` and `master`: after each restart the function reads either as the library's setting or off, never mastering with another route | the start's rule replaced by the plan to the setting: a restart raises a function |
 | function-level reset | where `qemu-xhci` offers one, `reset` answers `{ok, flr}` and the function reads `decoding` with its layout; where it does not, `{ok, none}` | the plan to `decoding` after the reset left out: the function reads without its layout |
-| MSI frame | on the stopgap, a test task writes a made object's data to its doorbell and the object is delivered; the first and last line of the record's range both deliver | the backend's data off by one: the bound object sees no delivery within the deadline |
+| MSI frame | on Fiasco, a test task writes a made object's data to its doorbell and the object is delivered; the first and last line of the record's range both deliver | the backend's data off by one: the bound object sees no delivery within the deadline |
 | hold | the test holder's row starts only after the report's answer | the hold removed: the test holder's give finds no layout and its record is absent |
 
 The refusal of a function-level reset with transactions pending cannot
@@ -1447,9 +1449,9 @@ Made in their owning documents with this design:
 | [design.md](design.md) | the index row; SD1's summary: MSI except on a closed bus |
 | [design-shared-devices.md](design-shared-devices.md) | the closed bus's exception to "MSI only" in the decisions, the unit rule's line relation, the PCIe INTx paragraph and SD1; a closed bus is one whose platform record lists every place on it with its pin |
 | [design-system.md](design-system.md) | property 3: the Pi 4 drives its bridge, and a `pci` row's line only at a closed bridge's listed place; the PCIe paragraph: the BCM2711's access, the layout and setting, the closed bus, the give enabling nothing, the holder's requests through `pci`, the restart's rule; Resets: a PCIe function's reset after its `open`, and `reset` through `pci`; Security: the enumerator's crash ends its domain |
-| [design-platforms.md](design-platforms.md) | the Pi 4's PCIe bridge driven by the PCIe domain as a closed bus, in the platform table, the placement table, the Pi 4's section and PCIe bridges; the VL805 driven through the PCIe domain in the bus masters row; a PCIe function's DMA range cut at its `dma_limit`; the MSI frame's range on the stopgap |
+| [design-platforms.md](design-platforms.md) | the Pi 4's PCIe bridge driven by the PCIe domain as a closed bus, in the platform table, the placement table, the Pi 4's section and PCIe bridges; the VL805 driven through the PCIe domain in the bus masters row; a PCIe function's DMA range cut at its `dma_limit`; the MSI frame's range on Fiasco |
 | [design-usb.md](design-usb.md) | its sections on the PCIe domain, the BCM2711 bridge, the Pi 4's interrupt and the Phase 1 part, and its VL805 firmware section, cite this design for what they share: the give programs no MSI and enables nothing, `open` and `master` do; the BCM2711's access refuses every place its platform record does not list; the notification is `pci_bus:firmware/1`, which the device service makes through `erx_domain_lib:pci_firmware/1`; a VL805 whose firmware stays absent is reported `not_ready` and stays out of the catalogue until a later start of the PCIe domain finds it loaded, which after a timed-out notification is the next boot, by the bridge's `firmware_lost` in the library, which the device service's call marks and the intake reads, so no keep of the bridge at a later start admits it; its contiguous memory is made from its DMA facts with `erx_mem_create_contiguous_in`, not with a limit passed to `erx_mem_create_contiguous` |
-| [design-stopgap.md](design-stopgap.md) | property 3's Phase 1 row: one `pcie` domain on QEMU `virt` and the Pi 4 |
+| [design-fiasco.md](design-fiasco.md) | property 3's Phase 1 row: one `pcie` domain on QEMU `virt` and the Pi 4 |
 | [design-abi.md](design-abi.md) | a `pci` row's `line` at a closed bridge's listed place |
 | [design-kernel.md](design-kernel.md) | `ERX_IRQ_MSI`: the enumerator writes an MSI route, the holder's NIF an MSI-X table; `erx_dma_ranges` reads a PCI host bridge's three-cell `dma-ranges` |
 | [design-device-tree.md](design-device-tree.md) | the reader takes a PCI host bridge's three-cell `dma-ranges`, and its fixture translates a function through them |
@@ -1460,7 +1462,7 @@ Required of other documents, each their own revision:
 | --- | --- |
 | [design-device-tree.md](design-device-tree.md) | the reader takes a PCI host bridge's three-cell `ranges`, its `bus-range` and its `interrupt-map` by pin, with fuzz seeds; the DMA facts of a `pci` row cut at its `dma_limit` |
 | `abi/manifest.txt`, [design-abi.md](design-abi.md) | `dma_limit` in `erx_mf_device`, a device address, exclusive; the closed flag on a bridge's row and its listed places and pins; the manifest's `msi_frame` platform part on QEMU `virt`; the `dt` case's `base`, `size` and `line` made inactive for selector 2 except `line` at a closed bridge's place (the `TODO.md` item) |
-| [design-stopgap.md](design-stopgap.md) | `ERX_IRQ_MSI` over the frame's lines; the given record of a PCIe function (its place, a window per BAR with its hardware size, an MSI-X route's doorbell and table); the give in the root |
+| [design-fiasco.md](design-fiasco.md) | `ERX_IRQ_MSI` over the frame's lines; the given record of a PCIe function (its place, a window per BAR with its hardware size, an MSI-X route's doorbell and table); the give in the root |
 | [design-runtime.md](design-runtime.md#the-device-nif) | the NIF writes every MSI-X table entry from its record, entry 0 live and the rest masked, and reads entry 0 back; it opens a record with several BAR windows |
 | [design-hardware-generation.md](design-hardware-generation.md) | SVD files for the ECAM window and the BCM2711 bridge whose configuration-space views take 8-, 16- and 32-bit accesses at a computed offset, bounded by the window |
 | [design-system.md](design-system.md) | the device service's PCIe process, its core and its monitors; the hold of `pci` rows at boot; `/dev`'s PCIe fields; `erx_domain:await_grant/2`, the wait for a configured grant to the system domain bound to the server's incarnation ([Facets](#facets)), answered beside `erx_domain:system_namespace/0`'s callers |
@@ -1563,7 +1565,7 @@ erXos's own: [design-system.md](design-system.md#devices),
 [design-platforms.md](design-platforms.md),
 [design-kernel.md](design-kernel.md),
 [design-device-tree.md](design-device-tree.md),
-[design-stopgap.md](design-stopgap.md),
+[design-fiasco.md](design-fiasco.md),
 [design-domains.md](design-domains.md#facets),
 [design-usb.md](design-usb.md), Fiasco's ICU interface
 (`fiasco/l4re-core/l4sys/include/icu.h`).

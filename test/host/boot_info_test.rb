@@ -40,6 +40,7 @@ class BootInfoTest < Minitest::Test
     'the given record without its memory size' => [MANIFEST, 'number_put(words, capacity, &used, given->memory_size)', 'true', 'holder'],
     'the system_image record without its tree length' => [MANIFEST, 'number_put(words, capacity, &used, row->tree_length)', 'true', 'system_image'],
     'the system_image length and tree offset swapped' => [MANIFEST, "number_put(words, capacity, &used, row->image_length) &&\n\t    number_put(words, capacity, &used, row->tree_offset)", "number_put(words, capacity, &used, row->tree_offset) &&\n\t    number_put(words, capacity, &used, row->image_length)", 'system_image'],
+    'the record_volume word written for a holder without the window' => [MANIFEST, '(!record_volume || word_put(', '((void)record_volume, word_put(', "the record's words"],
     'a system_image salt past its array written' => [MANIFEST, 'row->salt_length == 0 || row->salt_length > sizeof(row->salt)', 'row->salt_length == 0', 'salt past its array'],
     'a second framebuffer record let through' => [INFO, "\t\tif (found)\n\t\t\treturn (false);\n", '', 'second record'],
     'a framebuffer record read before --' => [INFO, "\tdo\n\t\tword = next_word(words, length, &used);\n\twhile (word != NULL && strcmp(word, \"--\") != 0);\n", '', 'emulator flag'],

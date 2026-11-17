@@ -75,16 +75,17 @@ module Erx
 
     # The host's ssh to user at the guest whose daemon the host's loopback port port
     # reaches, logging in with pair's key and checking the guest's host key against the
-    # boot's known_hosts file under HOST_KEY_ALIAS: options go before the destination,
-    # command, if any, after it.
-    def ssh_argv(pair:, port:, known_hosts:, user: 'root', options: [], command: [])
+    # boot's known_hosts file under HOST_KEY_ALIAS, with options before the destination.
+    # No command follows it: the guest's daemon gives a shell on a tty and refuses exec
+    # (docs/design-ssh.md, "Stages").
+    def ssh_argv(pair:, port:, known_hosts:, user: 'root', options: [])
       raise Error, 'an ssh port is a port number' unless port.is_a?(Integer) && port.between?(1, 65_535)
       # A name that began with '-' would be read as one of ssh's options.
       raise Error, "#{user.inspect} is not a user name" unless user.is_a?(String) && /\A[a-z_][a-z0-9_-]{0,31}\z/.match?(user)
 
       plain_path(known_hosts, what: 'the known-hosts file')
       ['ssh', *SSH_OPTIONS, '-o', "UserKnownHostsFile=#{known_hosts}", '-o', "HostKeyAlias=#{HOST_KEY_ALIAS}",
-       '-i', pair.private_path, '-p', port.to_s, *options, '--', "#{user}@127.0.0.1", *command]
+       '-i', pair.private_path, '-p', port.to_s, *options, '--', "#{user}@127.0.0.1"]
     end
 
     # path, which must be a PLAIN_PATH; what names it in the error.

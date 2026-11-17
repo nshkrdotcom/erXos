@@ -7,6 +7,12 @@ Revision: 50bbe8a981199e17865e8553a4eb02c387b339cf
 The inventory records the imported bytes and their license evidence.
 Third-party notices remain in their original files.
 
+`src/kern/kobject_rpc.h` is not Fiasco's: it is erXos's clean-room replacement of
+the GPL-2.0-only original, written without reading it from the clean-room
+facts record (erxos-history `cleanroom/fiasco-gpl-facts.md`, commit
+`2a1e35e`) and the MIT files that include it, and is MIT-licensed. Its row
+is under `changes`.
+
 ```json
 {
   "version": 1,
@@ -20083,6 +20089,11 @@ Third-party notices remain in their original files.
     }
   },
   "changes": {
+    "src/kern/kobject_rpc.h": {
+      "license": "MIT",
+      "evidence": "erXos's clean-room replacement of the GPL-2.0-only original, written without reading it from the clean-room facts record erxos-history cleanroom/fiasco-gpl-facts.md (commit 2a1e35e) and the MIT files that include it",
+      "sha256": "5d6b457a91859f277da1a1bf320eb513e3c49c79e2a047ddc6d671a81528bdd5"
+    }
   }
 }
 ```

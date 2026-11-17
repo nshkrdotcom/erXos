@@ -110,11 +110,18 @@ A relay whose console is Console: the console holds the terminal from the
 start, in the editing setting made from the tty's defaults. With `master`
 `none` the relay has no master, as a session's console tty may have none
 (erx_session_tty:start_link/0): erx_tty_link sends nothing for one and drops a master
-message, and a drain is answered at once.
+message, and a drain is answered at once. `size`, {Rows, Columns}, is the
+tty's window size from the start, as a master's first report would make it;
+without it the tty has erx_tty's default.
 """.
--spec new(term(), #{master := none | present}) -> core().
-new(Console, #{master := Master}) ->
-    Tty = erx_tty:new(),
+-spec new(term(), #{master := none | present, size => {1..65535, 1..65535}}) -> core().
+new(Console, #{master := Master} = Options) ->
+    Tty = case Options of
+              #{size := {Rows, Columns}} ->
+                  {ok, _NothingToWake, Sized} = erx_tty:size(Rows, Columns, erx_tty:new()),
+                  Sized;
+              #{} -> erx_tty:new()
+          end,
     Cooked = erx_tty:termios(Tty),
     {ok, _, Editing} = erx_tty:set(erx_tty_modes:editing(Cooked), Tty),
     #core{tty = Editing, link = erx_tty_link:new(Master), console = Console,

@@ -62,7 +62,8 @@ session by its own policy (code_objects_row/0), go in the domain's ready
 answer, each in front of the
 process its service named with erx_facet:serve/2 (served/2); the inspect
 facet with the scope erx_domain_core:inspect_scope/3 gives the domain's
-principal (system_facet/4); and for a service of the `files` interface, an
+principal (system_facet/4); and for a service of an interface abi/services
+declares served_as tree (?ERX_TREE_SERVICES), an
 erx_fs grant that the process its service named, an erx_fs_grants
 supervisor, starts bound to the domain and ending with it, in place of a
 facet.
@@ -82,9 +83,11 @@ boot's step 5). erx_domain:display_settled/1 is answered ok, by the same
 checks, once no starting configured row serves the display it names, which
 the start table waits on before it starts a row that names a display.
 
-A session's ready report names its line to the web domain among its provides;
-the service keeps that pid until the session ends and hands it out only
-through erx_domain:web_line/2, when the host opens its web facet.
+A session's ready report names its lines among its provides, each under a
+name of the closed set ?ERX_LINES: its line to the web domain, web_line, and to
+the SSH domain, ssh_line. The service keeps each pid until the session ends
+and hands it out only through erx_domain:line/3, to the domain the line
+serves, when that domain asks for the session's line.
 
 Its state, erx_domain_core's and erx_domain_links's, lives in its own heap and nowhere else. The
 service is never restarted: its end, however it comes, ends the system
@@ -108,6 +111,7 @@ reach it only through facets, which arrive with the connections.
 %% The keys of a session's start beyond its console: the display the session is the
 %% session of, or the one it only takes as its default (session_start/3).
 -define(START_DISPLAYS, [display, default_display]).
+
 %% The keys of a request beyond its name, boot and boot_timeout: erx_domain_lib:spec()'s, less
 %% id, principal and domain_pid, which the service sets, and facets, the service's own.
 -define(REQUEST_KEYS, [runtime, release, release_files, memory, outer, grant, lane, args, env,
@@ -203,10 +207,10 @@ state(Lib, Principals, Opts) ->
       held => #{}, release_wait => maps:get(release_wait, Opts, ?RELEASE_WAIT),
       mint_config => MintConfig, mints => erx_domain_mints:new(MintConfig#{services => [], grants => []}),
       mint_timers => #{}, mint_counts => #{}, mint_log => {erlang:monotonic_time(millisecond), 0, 0},
-      served => #{}, web_lines => #{},
+      served => #{}, lines => #{},
       facet_names => maps:get(facet_names, Opts, ?ERX_FACET_NAMES),
       inspect_policy => inspect_policy(Opts), principals => Principals,
-      facet_rows => [], files => [], app_entries => AppEntries,
+      facet_rows => [], trees => [], app_entries => AppEntries,
       apps => erx_principal:new(apps_max(AppEntries))}.
 
 %% The app entries the library placed at boot (erx_domain_lib:apps/0), none with no
@@ -288,25 +292,30 @@ booted(#{lib := Lib} = State) ->
                                                maps:get(grants, Boot, [])),
             %% erx_domain_mints takes each configured domain's service as {Server,
             %% Name}; the interface number tells files services, which the mint core
-            %% settles before a session's start answers and which the system domain
-            %% serves as erx_fs grants (served_kind/2).
+            %% settles before a session's start answers. The services of interfaces
+            %% abi/services declares served_as tree, ?ERX_TREE_SERVICES, are those the
+            %% system domain serves as erx_fs grants (served_kind/2).
             Services = [{Server, Name} || {Server, Name, _Interface} <- maps:get(services, Boot, []), Server =/= system],
             Files = [Name || {_Server, Name, ?ERX_SERVICE_FILES} <- maps:get(services, Boot, [])],
             Windows = [Name || {_Server, Name, ?ERX_SERVICE_WINDOWS} <- maps:get(services, Boot, [])],
+            Trees = [Name || {_Server, Name, Interface} <- maps:get(services, Boot, []),
+                             lists:member(Interface, ?ERX_TREE_SERVICES)],
             Mints = erx_domain_mints:new((maps:get(mint_config, State))#{services => Services,
                                            grants => Minted, files => Files, windows => Windows}),
             %% Only configured rows, each its index, read Served: a {template, T}
             %% grant reaches each session through the session's own facet rows, and
             %% a grant to the system domain is planned by no ready answer.
             Served = maps:groups_from_list(fun({Row, _, _, _}) -> Row end,
-                                           fun({_, Name, _, Limits}) -> {Name, served_kind(Name, Files), Limits} end,
+                                           fun({_, Name, _, Limits}) -> {Name, served_kind(Name, Trees), Limits} end,
                                            [Grant || {Row, _, _, _} = Grant <- System, is_integer(Row)]),
             %% The system domain's own facets of configured domains: /data only where the
             %% manifest grants the system domain data (docs/design-files.md, "A facet's
-            %% mount").
-            ok = erx_ns:mount_facets(erx_domain_mints:granted_names(system, Mints)),
+            %% mount"), and the installed packages at their system place, /packages.
+            Granted = erx_domain_mints:granted_names(system, Mints),
+            ok = erx_ns:mount_facets(Granted),
+            ok = mount_packages(Granted),
             State#{core := erx_domain_core:new(Host), configured := Configured, mints := Mints, served := Served,
-                   facet_rows := lists:enumerate(0, maps:get(grants, Boot, [])), files := Files,
+                   facet_rows := lists:enumerate(0, maps:get(grants, Boot, [])), trees := Trees,
                    templates := maps:from_list([{P, T} || #{principal := P} = T <- Templates])};
         {{error, _}, _} ->
             State#{core := erx_domain_core:new(<<>>)};
@@ -368,9 +377,9 @@ handle_call(system_principal, _From, #{principals := #{system := System}} = Stat
                 _ -> {ok, System}
             end,
     {reply, Reply, State};
-handle_call({web_line, Id}, _From, #{web_lines := Lines} = State) ->
+handle_call({line, Name, Id}, _From, #{lines := Lines} = State) ->
     case Lines of
-        #{Id := Line} -> {reply, {ok, Line}, State};
+        #{Id := #{Name := Line}} -> {reply, {ok, Line}, State};
         #{} -> {reply, {error, no_line}, State}
     end;
 handle_call({inspect_view, Scope}, _From, #{core := Core} = State)
@@ -925,7 +934,7 @@ ready(Id, Ref, Provides, Inspect, #{core := Core, waiting := Waiting} = State) -
             case Origin of
                 {configured, Row} -> mints({ready, Row, Id, Node, Provides}, Answered);
                 {session, _Template} -> mints({session_ready, minted_rows(Domain), Id, marked(Start)},
-                                              keep_web_line(Id, Node, Provides, Answered));
+                                              keep_lines(Id, Node, Provides, Answered));
                 request -> Answered
             end;
         {_, #{Id := #{ref := Ref, ended := {running, _Info}}}} ->
@@ -945,7 +954,7 @@ marked(#{}) -> none.
 %% domain, exported to it and ends with the domain pid (mint/5). A spec's facet and a
 %% message service's facet stand in front of the process the spec or the service
 %% named (erx_facet:start/3) and end with it too; their callback is erx_domain_facet,
-%% or the one system_facet/4 picks for the service. A files service's grant is an
+%% or the one system_facet/4 picks for the service. A tree service's grant is an
 %% erx_fs grant its erx_fs_grants supervisor starts, and ends with that supervisor. The answer
 %% goes to the domain pid, which hands it to the domain's agent for init (edit 65). Init
 %% waits for it, so every domain that reported is answered, with no facets too. Granted,
@@ -968,7 +977,7 @@ grant_facets(Id, Served, Granted, #{core := Core, exports := Exports} = State) -
 %% The facet of a service the system domain serves, for a domain of Principal: the
 %% inspect facet, whose scope erx_domain_core:inspect_scope/3 alone decides
 %% (docs/design-live.md, "The inspect service"), an erx_domain_facet in front of the
-%% service's process, or, for a files service, the grant its erx_fs_grants supervisor
+%% service's process, or, for a tree service, the grant its erx_fs_grants supervisor
 %% starts (mint/5).
 system_facet(inspect, {message, Behind, Limits}, Principal,
              #{inspect_policy := #{roots := Roots, development := Development}}) ->
@@ -977,18 +986,23 @@ system_facet(log, {message, Behind, Limits}, _Principal, _State) ->
     %% docs/design-log.md, "The log facet": Behind is erx_syslog_sup, and the callback
     %% finds erx_syslog at each request.
     {facet, erx_log_facet, Behind, Limits};
+system_facet(clock, {message, Behind, Limits}, _Principal, _State) ->
+    %% docs/design-time.md, "The clock facet": Behind is erx_clock_sup, and the
+    %% callback finds erx_clock at each request and checks the grant's operations, sample
+    %% or set, against what it decodes.
+    {facet, erx_clock_facet, Behind, Limits};
 system_facet(code_objects, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_code_objects_facet, Behind, Limits#{behind => Behind}};
 system_facet(_Name, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_domain_facet, Behind, Limits#{behind => Behind}};
-system_facet(machine, {files, Grants, Limits}, Principal, #{principals := #{system := System}} = State) ->
+system_facet(machine, {tree, Grants, Limits}, Principal, #{principals := #{system := System}} = State) ->
     %% docs/design-system.md, "A session's request": the grant's own argument is its
     %% grantee's principal, `system` for the system principal (root's template) and the
     %% name otherwise, which the tree's ctl handler passes to the coordinator, so the log
     %% line names whoever the grant was made for and no request names anyone.
-    {files, Grants, machine_principal(Principal, System, State), Limits};
-system_facet(_Name, {files, Grants, Limits}, _Principal, _State) ->
-    {files, Grants, Limits}.
+    {tree, Grants, machine_principal(Principal, System, State), Limits};
+system_facet(_Name, {tree, Grants, Limits}, _Principal, _State) ->
+    {tree, Grants, Limits}.
 
 machine_principal(System, System, _State) -> system;
 machine_principal(Principal, _System, State) -> name_of(Principal, State).
@@ -1003,29 +1017,33 @@ name_of(Principal, #{principals := #{names := Names}, apps := Apps, app_entries 
         {#{}, #{first := First}} -> erx_principal:fetch_name(Principal - First, Apps)
     end.
 
-%% How the system domain serves its service Name to a grantee: an erx_fs grant for a
-%% service of the files interface, whose clients speak 9P (docs/design-system.md,
-%% "Facets of the system domain's services"), and a facet in front of the service's
-%% process for any other.
-served_kind(Name, Files) ->
-    case lists:member(Name, Files) of
-        true -> files;
+%% How the system domain serves its service Name to a grantee: tree, an erx_fs grant,
+%% for a service of Trees, those of the interfaces abi/services declares served_as
+%% tree, whose clients speak 9P (docs/design-system.md, "Facets of the system domain's
+%% services"), and message, a facet in front of the service's process, for any other.
+served_kind(Name, Trees) ->
+    case lists:member(Name, Trees) of
+        true -> tree;
         false -> message
     end.
 
-%% A session's line to the web domain, which its ready report names among its provides as
-%% web_line, a process of the session's own node (erx_web_line). The service keeps it
-%% until the session ends, for erx_domain:web_line/2 to hand to the web domain when the
-%% host opens the web facet; it hands the pid to no one before then.
-keep_web_line(Id, Node, #{web_line := Line}, #{web_lines := Lines} = State) when is_pid(Line), node(Line) =:= Node ->
-    State#{web_lines := Lines#{Id => Line}};
-keep_web_line(_Id, _Node, _Provides, State) ->
-    State.
+%% A session's lines, which its ready report names among its provides under the names
+%% of ?ERX_LINES, each a process of the session's own node (erx_web_line, erx_ssh_line). The
+%% service keeps them until the session ends, for erx_domain:line/3 to hand to the
+%% domain a line serves; it hands a pid to no one before then. A provide of another
+%% name, or one that is no process of the session, names no line.
+keep_lines(Id, Node, Provides, #{lines := Lines} = State) ->
+    case maps:filter(fun(_Name, Line) -> is_pid(Line) andalso node(Line) =:= Node end,
+                     maps:with(?ERX_LINES, Provides)) of
+        Kept when map_size(Kept) =:= 0 -> State;
+        Kept -> State#{lines := Lines#{Id => Kept}}
+    end.
 
-mint(Id, DomainPid, Name, {files, Grants, Limits}, Exports) ->
-    mint_files(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
-mint(Id, DomainPid, Name, {files, Grants, Args, Limits}, Exports) ->
-    mint_files(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Args, Limits, Binding) end, Exports);
+mint(Id, DomainPid, Name, {tree, Grants, Limits}, Exports) ->
+    mint_tree(Id, DomainPid, Name, Limits, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
+mint(Id, DomainPid, Name, {tree, Grants, Args, Limits}, Exports) ->
+    mint_tree(Id, DomainPid, Name, Limits, fun(Binding) -> erx_fs_grants:grant(Grants, Args, Limits, Binding) end,
+              Exports);
 mint(Id, DomainPid, Name, {facet, Callback, Behind, Grant}, Exports) ->
     case erx_facet:start(Callback, Grant#{grantee => Id, ends_with => [DomainPid, Behind]}, #{exports => Exports}) of
         {ok, Facet} ->
@@ -1039,17 +1057,19 @@ mint(Id, DomainPid, Name, {facet, Callback, Behind, Grant}, Exports) ->
             false
     end.
 
-%% A files service's grant serves the domain alone, in its envelope and with its names,
+%% A tree service's grant serves the domain alone, in its envelope and with its names,
 %% and ends with its domain pid; its supervisor's end ends it too. Grant starts it,
 %% with the grant's own argument where the service computed one at the mint
-%% (system_facet/4); a supervisor that ended while the service minted is a refusal.
-mint_files(Id, DomainPid, Name, Grant, Exports) ->
+%% (system_facet/4); a supervisor that ended while the service minted is a refusal. The
+%% facet goes to the domain with the rights of the row's Limits, those the grant serves
+%% (docs/design-files.md, "Rights beneath an entry").
+mint_tree(Id, DomainPid, Name, Limits, Grant, Exports) ->
     Binding = #{client => Id, ends_with => DomainPid, exports => Exports},
     case try Grant(Binding) catch exit:Exit -> {error, {exit, Exit}} end of
         {ok, Pid} ->
-            {true, Pid};
+            {true, erx_fs_grants:facet(Pid, Limits)};
         {error, Reason} ->
-            logger:error("erx_domain: domain ~b's files grant ~ts did not start: ~0P", [Id, Name, Reason, 8]),
+            logger:error("erx_domain: domain ~b's tree grant ~ts did not start: ~0P", [Id, Name, Reason, 8]),
             false
     end.
 
@@ -1059,7 +1079,7 @@ mint_files(Id, DomainPid, Name, Grant, Exports) ->
 %% policy (code_objects_row/0), and none for a domain a request made: Behind is the process the service
 %% named for it with erx_facet:serve/2, which the system domain's services do as they
 %% start. For a message service Limits are the grant's limits that erx_facet applies,
-%% max_request and in_flight, checked as a spec's are (grant/1); for a files service they
+%% max_request and in_flight, checked as a spec's are (grant/1); for a tree service they
 %% are the row's, which erx_fs_grants checks as it starts the grant. A service with no
 %% living process, or a grant whose limits fail that check, is left out and logged, so
 %% the domain finds the name absent,
@@ -1067,8 +1087,8 @@ mint_files(Id, DomainPid, Name, Grant, Exports) ->
 %% its process, and nothing grants a new one when the service restarts (TODO.md).
 served({configured, Row}, _Domain, #{served := Served}) ->
     served(Row, maps:get(Row, Served, []));
-served({session, _Template}, #{rows := Rows}, #{files := Files}) ->
-    Granted = [{Name, served_kind(Name, Files), Limits} || {Name, system, Limits} <- Rows],
+served({session, _Template}, #{rows := Rows}, #{trees := Trees}) ->
+    Granted = [{Name, served_kind(Name, Trees), Limits} || {Name, system, Limits} <- Rows],
     served(session, Granted ++ [code_objects_row()]);
 served(request, _Domain, _State) ->
     #{}.
@@ -1116,13 +1136,15 @@ served(Grantee, Rows) ->
                              end
                      end, Rows)).
 
+%% A message grant carries its row's operations, which the facet admits alone
+%% (erx_facet:start/3); a tree grant's row names none (dom_boot_view.c).
 served_grant(message, Behind, Limits) ->
     case grant({Behind, maps:with([max_request, in_flight], Limits)}) of
-        {ok, {Behind, Checked}} -> {ok, {message, Behind, Checked}};
+        {ok, {Behind, Checked}} -> {ok, {message, Behind, Checked#{operations => maps:get(operations, Limits, [])}}};
         invalid -> invalid
     end;
-served_grant(files, Grants, Limits) ->
-    {ok, {files, Grants, Limits}}.
+served_grant(tree, Grants, Limits) ->
+    {ok, {tree, Grants, Limits}}.
 
 %% Domain Id's create answered at its ready report; a session's start waits on for its
 %% namespace (answer_in_place/1).
@@ -1499,8 +1521,8 @@ log_end(Level, Name, Id, Info, Then) ->
 %% "A session takes the console": a session does not wait for a restart). A session's end cancels its grants'
 %% operations and deletes the grants.
 unprovide({configured, Row}, Id, State) -> mints({ended, Row, Id}, State);
-unprovide({session, _Template}, Id, #{web_lines := Lines} = State) ->
-    mints({session_ended, Id}, State#{web_lines := maps:remove(Id, Lines)});
+unprovide({session, _Template}, Id, #{lines := Lines} = State) ->
+    mints({session_ended, Id}, State#{lines := maps:remove(Id, Lines)});
 unprovide(request, _Id, State) -> State.
 
 %%% The facets configured domains serve (docs/design-system.md, "Facets a configured
@@ -1568,15 +1590,25 @@ is_ready(Id, Core) ->
         _ -> false
     end.
 
-%% The name of the principal of grantee GranteeId, which its mint carries
+%% The user name of the principal of grantee GranteeId, which its mint carries
 %% (docs/design-system.md, "Facets a configured domain serves"): the system principal's
 %% for the system domain, and for any other the one its record names, a configured row's
-%% or a session's template's. The core mints only for a grantee that is ready.
+%% or a session's template's. A user name is the prefix of the principal's sessions,
+%% root for the system principal (erx_domain_core:session_prefix/3), and an app
+%% principal's name otherwise, so a grant rooted at a user's home is rooted where the
+%% user's login name says (docs/design-files.md, "A user's home"). The core mints only
+%% for a grantee that is ready.
 principal_name(?SYSTEM_ID, #{principals := #{system := System}} = State) ->
-    name_of(System, State);
+    user_name(System, State);
 principal_name(GranteeId, #{core := Core} = State) ->
     {ok, #{principal := Principal}} = erx_domain_core:fetch(GranteeId, Core),
-    name_of(Principal, State).
+    user_name(Principal, State).
+
+user_name(Principal, #{principals := #{system := System, names := Names}} = State) ->
+    case erx_domain_core:session_prefix(Principal, System, Names) of
+        {ok, Name} -> Name;
+        error -> name_of(Principal, State)
+    end.
 
 %% An introduction that settles at once is answered through the service's own queue as
 %% one that settles later is (reply/2), so the core takes each in the same way.
@@ -1650,3 +1682,17 @@ throttle(_Now, {Start, Lines, Held}) when Lines < ?MINT_LOG_BURST ->
     {log, {Start, Lines + 1, Held}};
 throttle(_Now, {Start, Lines, Held}) ->
     {quiet, {Start, Lines, Held + 1}}.
+
+%% The system domain's packages grant at its place (erx_ns:packages_place/0),
+%% /packages, where erx_pkg_medium reads and deletes the installed packages
+%% (docs/design-packaging.md, "Where a package lies"), when the manifest grants it, as a
+%% board with an apps row does. Packages has no place a session mounts, so no session's
+%% mount_facets/1 mounts it; this is its one mount.
+mount_packages(Granted) ->
+    case lists:member(packages, Granted) of
+        true ->
+            {Point, Options} = erx_ns:packages_place(),
+            erx_ns:mount({facet, packages}, Point, Options);
+        false ->
+            ok
+    end.

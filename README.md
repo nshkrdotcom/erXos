@@ -78,7 +78,7 @@ pixels. The [overview](docs/overview.md) tells the longer story.
   else runs in user mode, the runtimes included. erXos's own kernel
   follows *L4* and *Fiasco*, with lessons from *seL4* and *Zircon*. Until it is
   written, a near-stock Fiasco stands in behind the same interface.
-  ([kernel](docs/design-kernel.md), [stopgap](docs/design-stopgap.md))
+  ([kernel](docs/design-kernel.md), [Fiasco](docs/design-fiasco.md))
 * **Two-level scheduling, one CPU authority.** The kernel grants CPU time
   to groups of threads. Each runtime schedules its processes on the
   threads its group pays for, without a kernel call. The kernel enforces
@@ -166,8 +166,12 @@ pixels. The [overview](docs/overview.md) tells the longer story.
 ## Current status
 
 erXos is in Phase 1 of the [roadmap](docs/plan.md): the system is up on the
-stopgap Fiasco kernel, and Phase 1b moves the user-facing parts into
-domains of their own. Every build is a development build and prints
+Fiasco kernel, and Phase 1b moves the user-facing parts into
+domains of their own. The next milestone is
+[0.1, the preview](docs/plan.md#01-the-preview),
+erXos's first public preview: a development build for the Raspberry
+Pi 4 and QEMU `virt` with the kiosk and its live quotes on the screen, SSH to `rc`, and Doom
+on QEMU for whoever builds it. Every build is a development build and prints
 `development build: trusted code only`. `tools/erx boot` builds an image
 and boots it in QEMU to the command shell:
 
@@ -203,7 +207,7 @@ Eshell V17.1.1 (type help(). for help)
 
 **Kernel and domains**
 
-* ERTS runs in user mode as the system domain on the stopgap Fiasco, behind
+* ERTS runs in user mode as the system domain on Fiasco, behind
   `liberx`; OTP 29.1.2 and musl live in the tree, modified.
 * Domains each run their own ERTS (interpreter or BeamAsm) in an address
   space of their own. The domain service starts the manifest's domains
@@ -215,13 +219,16 @@ Eshell V17.1.1 (type help(). for help)
 **Erlang runtime and tools**
 
 * The Erlang shell, `erx:i()`, `source(Pid)`, `erx:trace/1` and `/proc`
-  show processes and kernel objects; a value the stopgap cannot measure
+  show processes and kernel objects; a value Fiasco cannot measure
   reads as unsupported or partial.
 * `erx:inspect(Path, Options)` reads an inspection path with a wait of the
   caller's own. Every session sees the machine's load (each CPU's idle
   time and ready threads) and the clock's state at `/proc/time/status`:
-  unset, boot or set. The domains listing at `/proc` shows each domain a
-  caller's scope covers, with a record of its name, principal, state and
+  unset, boot, approximate or set. A machine with no real-time clock
+  starts at the build's date, approximate, so HTTPS works from boot
+  while the image is younger than its peers' certificates.
+  The domains listing at `/proc` shows each domain a caller's scope
+  covers, with a record of its name, principal, state and
   run queue; another domain's group and budget read as unsupported on the
   stopgap, which answers for the system domain's own only.
 * A host link lets `tools/erx load`, `watch` and `files` replace modules in
@@ -296,6 +303,17 @@ Eshell V17.1.1 (type help(). for help)
   failure. A QEMU suite kills the block driver in the middle of a transfer
   and finds each kept file cut at a sync. An EROFS reader mounts read-only
   images.
+* The build writes a slot's system partition, an EROFS image of the system
+  release's files with its dm-verity hash tree after it, and the manifest's
+  `system_image` row records the tree. On a guest, the `medium_boot` QEMU
+  suite reads a release file from the partition through the hash-checking
+  reader. `erx_storage_system`, the read-only backend that will serve the
+  partition's `apps/` as the `system` tree, is tested on the host: every
+  block the EROFS reader parses, directories included, is checked against
+  the tree's root hash first, and a block that does not match answers
+  `eio`. The partition holds no `apps/` yet, so a booted system serves an
+  empty `system` tree to no one. Packages still ride in the boot image,
+  and no slot writer or update is built to write the partition.
 * An F2FS codec reads a volume's superblock and checkpoint pack, its node
   and segment tables, journals, inodes and directory entries, and a mount
   core picks the superblock copy and checkpoint pack and decides the mount
@@ -358,12 +376,12 @@ Eshell V17.1.1 (type help(). for help)
 * The widget format carries type roles, areas, icons, a current item and a
   graph kind, with coverage masks for corners, shadows and graphs. The
   desktop's file list and statistics have pure cores with host tests.
-* `examples/dashboard`, the basic kiosk's app (a clock, the date and
-  sample quotes), is drawn by `erx-lvgl` and checked on the host against
-  its reference picture. It has no package and no QEMU boot yet; the
-  first boot comes with its package. The full kiosk takes live quotes
-  from `erx_quotes`, a source behind the dashboard's seam with pure cores for
-  the source table, retry holds, body parsing and the board; host tests
+* `examples/dashboard`, the kiosk's app (a clock, the date and live
+  quotes of Bitcoin, Ether and Solana from Kraken), is drawn by
+  `erx-lvgl` and checked on the host against its reference picture. Its
+  package boots on QEMU with no network, each quote showing why it has
+  no data. Its quotes come from `erx_quotes`, with pure cores for
+  retry holds, body parsing and the board; host tests
   and a fuzz target check them. A real fetch on a target waits on the
   network suite.
 
@@ -546,7 +564,7 @@ A new checkout or git worktree needs its sources, the stock OTP oracle and
 the native runtime built before `make check` can run. One command does it:
 
 ```sh
-ERX_SOURCE_CACHE=/path/to/other/checkout/build/third_party make setup
+ERX_SOURCE_CACHE=/path/to/other/checkout/build/downloads make setup
 ```
 
 `make setup` (`tools/erx setup --jobs N`) runs, in order: every source
@@ -561,9 +579,12 @@ skipped, so a second run does nothing. Each build runs under a deadline
 with its own log in `build/logs/`.
 
 It never downloads. `ERX_SOURCE_CACHE` names another checkout's
-`build/third_party`; the archives in the `downloads` directory beside it
-are copied only after their SHA-256 matches `deps.lock`. Without it, the
-sources must already be there from `make fetch`. It does not fetch
+`build/downloads`; its archives are copied only after their SHA-256 matches
+`deps.lock`. Without it, the sources must already be there from `make fetch`.
+`tools/erx fetch --cache DIR` does the same for every source at once, with DIR the other checkout's
+`build/downloads`: it fills each source the cache holds, names each it does
+not, and leaves an OCI image (the Docker cache holds those) to
+`tools/erx fetch --source ID`. Setup does not fetch
 `arm-registers`, `tla-tools`, `herdtools7` or the oracle image
 (`Erx::Setup::SKIPPED_SOURCES`): only `tools/erx sysreg refresh` reads
 the first, only `make check-tla` uses the second, only

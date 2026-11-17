@@ -14,9 +14,10 @@ module Erx
       # A program may name it: listed, and not kept by the C library.
       def nameable? = action != 'reserved'
     end
-    # The signal table: every signal in number order, and each alias with
-    # the name of the signal it stands for.
-    SignalTable = Struct.new(:signals, :aliases, keyword_init: true) do
+    # The signal table: every signal in number order, each alias with the
+    # name of the signal it stands for, and each named set with its signals
+    # in number order.
+    SignalTable = Struct.new(:signals, :aliases, :sets, keyword_init: true) do
       # The names a header defines as constants, each with the signal it
       # stands for: every name that is an identifier (hup, rtmin, but not
       # rtmin+1), in number order, then every alias (iot).
@@ -30,8 +31,8 @@ module Erx
     # signal that ends a program whose thread faults with that kind.
     FaultSignal = Struct.new(:kind, :value, :signal, keyword_init: true)
 
-    # The signal, reserved_signal and realtime lines of abi/signals.txt
-    # (docs/design-programs.md, "Signal numbers").
+    # The signal, reserved_signal, realtime and signal_set lines of
+    # abi/signals.txt (docs/design-programs.md, "Signal numbers").
     module Signals
       # Each default action with its number in the generated code; 0 is no
       # signal, so a lookup table's unlisted entries read as none.
@@ -56,7 +57,28 @@ module Erx
         line = (by_kind.fetch('signal', []) + by_kind.fetch('reserved_signal', []) + realtime).first
         unique(signals.map(&:number), label: 'signal number', line: line)
         unique(signals.filter_map(&:name) + signals.filter_map(&:alias_name), label: 'signal name', line: line)
-        SignalTable.new(signals: signals.map(&:freeze).freeze, aliases: aliases.freeze).freeze
+        sets = signal_sets(by_kind.fetch('signal_set', []), signals)
+        SignalTable.new(signals: signals.map(&:freeze).freeze, aliases: aliases.freeze, sets: sets).freeze
+      end
+
+      # signal_set NAME SIGNAL...: a named set of signals a program may name,
+      # each by its name in the table, so a protocol that carries only some
+      # signals takes them from the table instead of restating them; the set's
+      # signals are in number order.
+      def signal_sets(declarations, signals)
+        nameable = signals.select(&:nameable?).to_h { |signal| [signal.name, signal] }
+        unique(declarations.map { |declaration| declaration.args.first }, label: 'signal set',
+                                                                          line: declarations.first&.line)
+        declarations.to_h do |declaration|
+          declaration.fail!('signal_set does not take members') unless declaration.members.empty?
+          name, *members = declaration.args
+          declaration.fail!('expected signal_set NAME SIGNAL...') if members.empty?
+          unique(members, label: "signal in set #{name}", line: declaration.line)
+          listed = members.map do |member|
+            nameable.fetch(member) { declaration.fail!("signal set #{name} names #{member}, no signal a program may name") }
+          end
+          [Syntax.identifier(name, line: declaration.line).freeze, listed.sort_by(&:number).freeze]
+        end.freeze
       end
 
       # The fault lines (fault KIND SIGNAL) against the fault_kind enum, in

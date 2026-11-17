@@ -15,7 +15,7 @@ class ErxHostlinkTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   # The applications, compiled whole (ErlangBuild). The suite's stand-ins, compiled after
   # them, replace erx_dist and erx_bytes, whose BIFs stock's emulator lacks.
-  APPLICATIONS = %w[erx erx_hostlink].freeze
+  APPLICATIONS = %w[erx erx_uart].freeze
   TESTS = %w[test/erlang/stand_in/erx_dist.erl test/erlang/host_bytes/erx_bytes.erl
              test/erlang/erx_hostlink_tests.erl].freeze
 

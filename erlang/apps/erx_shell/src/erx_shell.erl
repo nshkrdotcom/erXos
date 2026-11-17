@@ -84,7 +84,7 @@ changes come, and each delivery sends a process one message.
 
 -export([start/0, start/1, server/1, console/0]).
 -export([after_parse/3, prompt/2, reader/1]).
--export([background/2, builtin/3, stop_own/1]).
+-export([background/2, builtin/3, stop_own/1, exit_with/1]).
 
 -export_type([options/0, terminal/0, reader/0, job_control/0]).
 
@@ -94,7 +94,10 @@ changes come, and each delivery sends a process one message.
 -type terminal() :: #{write := fun((iodata()) -> ok),
                       run_shell => fun((erx_console:shell()) -> ok | {error, term()}),
                       job_control => job_control(),
-                      foreground => foreground()}.
+                      foreground => foreground(),
+                      vars => erx_shell_script:vars(),
+                      %% The working directory the shell starts in, / when absent.
+                      cwd => binary()}.
 %% How the shell tells the terminal relay who holds the terminal
 %% (erx_session_relay:foreground/3,4), on a terminal a relay serves.
 -type foreground() :: fun((erx_shell_jobs:target(), {pid(), non_neg_integer()}) -> term()).
@@ -146,8 +149,6 @@ changes come, and each delivery sends a process one message.
 -define(DEFAULT_PROMPT, [<<"% ">>, <<>>]).
 %% Each unit runs within the heap the design gives every evaluator.
 -define(UNIT_HEAP_BYTES, (4 * 1024 * 1024)).
-%% How often a job's leader looks for the processes its job left running.
--define(LEFTOVER_LOOK_MS, 1000).
 -define(BANNER, <<"rc: the command shell; exit ends it\n">>).
 %% The console's own shell, which the console starts again when it ends.
 -define(CONSOLE_BANNER, <<"rc: the command shell; erl starts the Erlang shell\n">>).
@@ -208,8 +209,9 @@ booted() ->
 init(Runner, Terminal = #{write := Write}, Banner) ->
     process_flag(trap_exit, true),
     {RunnerFun, RunnerState} = Runner:new(above_terminal(Terminal#{job_control => self()})),
-    Sh = erx_shell_eval:new(#{<<"prompt">> => ?DEFAULT_PROMPT, <<"*">> => []},
-                            RunnerFun, RunnerState),
+    Vars = maps:merge(#{<<"prompt">> => ?DEFAULT_PROMPT, <<"*">> => []},
+                      erx_shell_script:first_vars(maps:get(vars, Terminal, #{}))),
+    Sh = erx_shell_eval:new(Vars, RunnerFun, RunnerState),
     ok = Write(Banner),
     next(#s{sh = Sh, reader = reader(<<>>), write = Write, group = group_leader(),
             foreground = maps:get(foreground, Terminal, none)}).
@@ -280,8 +282,8 @@ nth_or_empty(_N, _List) -> <<>>.
 
 %% What comes next once an event is handled: with no line running and no
 %% line being read, the next unit runs or the next line is read.
-next(#s{stop = true}) ->
-    ok;
+next(#s{stop = true, sh = Sh}) ->
+    exit_with(status(Sh));
 next(S = #s{reading = none, jobs = Jobs}) ->
     case erx_shell_jobs:line(Jobs) of
         idle -> proceed(S);
@@ -418,17 +420,9 @@ chars(Prompt) ->
 %%% Lines and jobs
 
 %% Runs Evaluate, which calls the evaluator and through it the runner, as
-%% the line in the foreground. A crash ends the process with a fixed reason
-%% and no report, since a crash's reason and stack carry the shell's
-%% variables and the runner's state, which must not reach a log.
+%% the line in the foreground.
 start_line(Evaluate, Text, S = #s{jobs = Jobs}) ->
-    Unit = fun() ->
-                   Outcome = try Evaluate()
-                             catch _Class:_Reason -> crashed
-                             end,
-                   exit({?MODULE, Outcome})
-           end,
-    {Leader, Go, S1} = start_first(Unit, S),
+    {Leader, Go, S1} = start_first(fun() -> {line, Evaluate()} end, S),
     %% The line takes the terminal before it runs.
     S2 = table(erx_shell_jobs:start_line(Leader, Text, Jobs), S1#s{text = Text}),
     Go(),
@@ -436,13 +430,7 @@ start_line(Evaluate, Text, S = #s{jobs = Jobs}) ->
 
 %% Starts Run, a background block of the running line, as a numbered job.
 start_job(Run, S) ->
-    Job = fun() ->
-                  Status = try Run()
-                           catch _Class:_Reason -> crashed
-                           end,
-                  exit({?MODULE, job, Status})
-          end,
-    {Leader, Go, S1} = start_first(Job, S),
+    {Leader, Go, S1} = start_first(fun() -> {job, Run()} end, S),
     Go(),
     {Leader, S1}.
 
@@ -451,29 +439,46 @@ start_job(Run, S) ->
 %% process waits until the shell has given it the leader and called Go, so
 %% everything it starts inherits the leader, the leader finds it if the
 %% shell ends, and the shell can carry out what its start calls for first.
+%% It ends as every process that runs evaluator code ends, a crash with a
+%% fixed reason and no report (erx_shell_runner:spawn_evaluator/3).
 start_first(Body, S = #s{group = Group, firsts = Firsts}) ->
-    Leader = leader(Group),
-    Heap = #{size => ?UNIT_HEAP_BYTES div erlang:system_info(wordsize),
-             kill => true, error_logger => false, include_shared_binaries => true},
-    First = fun() -> receive {?MODULE, go} -> Body() end end,
-    {Pid, Ref} = spawn_opt(First, [monitor, {max_heap_size, Heap}]),
-    true = group_leader(Leader, Pid),
-    {Leader, fun() -> Pid ! {?MODULE, go} end, S#s{firsts = Firsts#{Ref => {Leader, Pid}}}}.
+    Leader = erx_shell_leader:start(Group),
+    HeapWords = ?UNIT_HEAP_BYTES div erlang:system_info(wordsize),
+    {Pid, Ref, Go} = erx_shell_leader:spawn_member(Leader, Body, HeapWords),
+    {Leader, Go, S#s{firsts = Firsts#{Ref => {Leader, Pid}}}}.
 
 %% What a job's first process ended with, for the table, and for the
-%% shell if the process was the line's and the line ends in the foreground.
-ending({?MODULE, {exit, Sh}}) -> {{exited, status(Sh)}, stop};
-ending({?MODULE, crashed}) -> {failed, {diagnose, <<"rc: the line crashed\n">>}};
-ending({?MODULE, job, crashed}) -> {failed, none};
-ending({?MODULE, job, Status}) when is_binary(Status) -> {{exited, Status}, none};
-ending({?MODULE, Outcome}) -> {{exited, status(shell(Outcome))}, {continue, shell(Outcome)}};
-ending(killed) -> {failed, {diagnose, <<"rc: the line passed its heap limit\n">>}};
-ending(_Crash) -> {failed, {diagnose, <<"rc: the line crashed\n">>}}.
+%% shell if the process was the line's and the line ends in the foreground;
+%% a background block's first is never the line's. Reason is the end of the
+%% process, read as erx_shell_runner:ending/1 reads it.
+ending(Reason) ->
+    case erx_shell_runner:ending(Reason) of
+        {value, {line, {exit, Sh}}} -> {{exited, status(Sh)}, {stop, Sh}};
+        {value, {line, Outcome}} -> {{exited, status(shell(Outcome))}, {continue, shell(Outcome)}};
+        {value, {job, Status}} -> {{exited, Status}, none};
+        killed -> {failed, {diagnose, <<"rc: the line passed its heap limit\n">>}};
+        crashed -> {failed, {diagnose, <<"rc: the line crashed\n">>}}
+    end.
 
 %% The shell an evaluator's outcome leaves.
 shell({ok, Sh}) -> Sh;
 shell({syntax_error, _Message, Sh}) -> Sh;
 shell({error, _Message, Sh}) -> Sh.
+
+-doc """
+Ends the calling shell with the exit status that `$status`'s text Status gives
+rc as a program (erx_shell_jobs:exit_status/1): a normal end for 0, so a console
+that restarts or halts on the shell's end sees what it always has, and
+`{shutdown, {exited, N}}` otherwise, which proc_lib reports to no log. A console
+started to report the status (erx_console's `on_shell_end`) reads it from
+the end (erx_console:shell_ending/1).
+""".
+-spec exit_with(binary()) -> ok | no_return().
+exit_with(Status) ->
+    case erx_shell_jobs:exit_status(Status) of
+        0 -> ok;
+        N -> exit({shutdown, {exited, N}})
+    end.
 
 %% `$status` as one text, a pipeline's statuses joined by `|` as rc shows them.
 status(Sh) ->
@@ -491,7 +496,7 @@ first_ended(Ref, Reason, S = #s{firsts = Firsts, jobs = Jobs}) ->
 
 %% The line ended in the foreground: the shell goes on with what it left,
 %% keeps what it had if it failed, or ends after `exit`.
-finish_line(stop, S) -> S#s{stop = true};
+finish_line({stop, Sh}, S) -> S#s{stop = true, sh = Sh};
 finish_line({continue, Sh}, S) -> S#s{sh = Sh};
 finish_line({diagnose, Message}, S = #s{write = Write}) -> ok = Write(Message), S.
 
@@ -576,7 +581,7 @@ deliver_winch(S = #s{jobs = Jobs}) ->
     Firsts = lists:append([firsts_of(Tag, S) || Tag <- Tags]),
     {_Pid, Ref} = spawn_monitor(
                     fun() ->
-                            Members = lists:usort(Firsts ++ lists:append([led_by(Tag) || Tag <- Tags])),
+                            Members = lists:usort(Firsts ++ lists:append([erx_shell_leader:led_by(Tag) || Tag <- Tags])),
                             [Pid ! {erx_cmd, winch} || Pid <- Members, erx_cmd:asked_for(Pid, winch)]
                     end),
     Ref.
@@ -591,7 +596,7 @@ effect({resume, Tag}, S) -> resume(Tag, S);
 effect({terminate, Tag}, S) -> terminate(Tag, S);
 effect({release, Tag, Fate}, S) ->
     S1 = resume(Tag, S),
-    ok = release(Fate, Tag),
+    ok = erx_shell_leader:release(Fate, Tag),
     S1;
 effect({finish_line, _Tag}, S) -> S;
 %% The line Ctrl-C ended: the shell goes on with the variables it had before it.
@@ -618,7 +623,7 @@ pause(Tag, S = #s{paused = Paused}) ->
     S#s{paused = Paused#{Tag => Done}}.
 
 pause_passes(Tag, Firsts, Done) ->
-    case lists:usort(Firsts ++ led_by(Tag)) -- Done of
+    case lists:usort(Firsts ++ erx_shell_leader:led_by(Tag)) -- Done of
         [] ->
             Done;
         New ->
@@ -634,13 +639,14 @@ resume(Tag, S = #s{paused = Paused}) ->
 
 %% Ends every process of the job tagged Tag, its first process even before
 %% it has taken the job's leader, then resumes those it had paused, as
-%% `kill` of a stopped UNIX job continues it after the signal, and ends the
-%% leader. The first process's end still reaches first_ended/3.
+%% `kill` of a stopped UNIX job continues it after the signal, and closes the
+%% leader, which passes on the job's last output first (erx_shell_leader:close/1).
+%% The first process's end still reaches first_ended/3.
 terminate(Tag, S = #s{paused = Paused}) ->
     [exit(Pid, kill) || Pid <- firsts_of(Tag, S)],
-    ok = each_process_led_by(Tag, fun(Pid) -> exit(Pid, kill) end),
+    ok = erx_shell_leader:end_all(Tag),
     [resume_quietly(Pid) || Pid <- maps:get(Tag, Paused, [])],
-    exit(Tag, kill),
+    ok = erx_shell_leader:close(Tag),
     S#s{paused = maps:remove(Tag, Paused)}.
 
 firsts_of(Tag, #s{firsts = Firsts}) ->
@@ -657,70 +663,6 @@ resume_quietly(Pid) ->
     try erlang:resume_process(Pid)
     catch error:badarg -> false
     end.
-
-%%% A job's processes
-
-%% The group leader of a job's processes, which is the job's tag: it passes
-%% each io request on to the shell's group, which answers the requester
-%% itself, and drops any other message. Once the job's first process has
-%% ended (release/2), the leader stays while it still leads a process,
-%% looking once a second, and then ends. If the shell ends first, for any
-%% reason, the leader ends every process it leads and then itself, so no
-%% process a job started outlives its session.
-leader(Group) ->
-    Shell = self(),
-    spawn(fun() -> forward(Group, monitor(process, Shell), infinity) end).
-
-forward(Group, ShellRef, Look) ->
-    receive
-        {io_request, _From, _ReplyAs, _Request} = Request ->
-            Group ! Request,
-            forward(Group, ShellRef, Look);
-        {'DOWN', ShellRef, process, _, _} ->
-            each_process_led_by(self(), fun(Pid) -> exit(Pid, kill) end);
-        {?MODULE, released} ->
-            forward(Group, ShellRef, ?LEFTOVER_LOOK_MS);
-        _Other ->
-            forward(Group, ShellRef, Look)
-    after Look ->
-        case led_by(self()) of
-            [] -> ok;
-            _Left -> forward(Group, ShellRef, Look)
-        end
-    end.
-
-%% The job's first process has ended. After a crash or the heap limit
-%% (`kill`) every process the job's leader leads is killed, and then the
-%% leader; after a normal end (`keep`) the processes it started still
-%% running stay with the leader, unlisted, as the processes a UNIX job
-%% leaves stay in its process group, and end with the session at the
-%% latest. Each pass looks at every process. exit/2 is a signal, and the
-%% next pass's process_info/2 is a signal from the same sender to the same
-%% process, which arrives after it, so a process a pass killed is not found
-%% again; one started meanwhile is found by the next pass. The passes end
-%% when one finds none, as application_master's kill_all_procs does.
-release(kill, Leader) ->
-    ok = each_process_led_by(Leader, fun(Pid) -> exit(Pid, kill) end),
-    exit(Leader, kill),
-    ok;
-release(keep, Leader) ->
-    Leader ! {?MODULE, released},
-    ok.
-
-each_process_led_by(Leader, Act) ->
-    case led_by(Leader) of
-        [] ->
-            ok;
-        Led ->
-            lists:foreach(Act, Led),
-            each_process_led_by(Leader, Act)
-    end.
-
-%% The processes Leader leads. The leader is excluded only for clarity: its
-%% own group leader is the shell's group.
-led_by(Leader) ->
-    [Pid || Pid <- processes(), Pid =/= Leader,
-            process_info(Pid, group_leader) =:= {group_leader, Leader}].
 
 %%% What runners ask of the shell
 

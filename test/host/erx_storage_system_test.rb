@@ -7,6 +7,8 @@ require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/app_package'
 require_relative '../../tools/lib/erx/erofs_image'
+require_relative '../../tools/lib/erx/image_apps'
+require_relative '../../tools/lib/erx/release_medium'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../fixtures/erlang_build'
 
@@ -22,7 +24,10 @@ require_relative '../fixtures/erlang_build'
 # "good"; "directory", good's bytes with one bit of the `apps/` directory's entry names
 # flipped and good's record; "changed", an image whose package has other bytes of the
 # same length, its tree rebuilt to match, with good's record; and "changed-own", the
-# changed partition with the record of its own tree.
+# changed partition with the record of its own tree; and "packed", the partition the
+# packer writes (Erx::ReleaseMedium.image) from a release file and the image's packages,
+# big and small, with the record of the artifacts it hands the manifest check; and
+# "packed-empty", the partition it writes from the release file and no package.
 class ErxStorageSystemTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   APPLICATIONS = %w[erx_storage].freeze
@@ -88,6 +93,8 @@ class ErxStorageSystemTest < Minitest::Test
                    'directory' => [flip_name(good) + good_tree.bytes, record(good, good_tree)],
                    'changed' => [changed + changed_tree.bytes, record(good, good_tree)],
                    'changed-own' => [changed + changed_tree.bytes, record(changed, changed_tree)] }
+    partitions['packed'] = packed(work, runner, 'packed', PACKAGES)
+    partitions['packed-empty'] = packed(work, runner, 'packed-empty', {})
     terms = partitions.map do |name, (bytes, words)|
       File.binwrite(File.join(work, "#{name}.img"), bytes)
       "{\"#{name}\", [#{words.map { |word| "\"#{word}\"" }.join(', ')}]}.\n"
@@ -114,6 +121,28 @@ class ErxStorageSystemTest < Minitest::Test
     output = Erx::ErofsImage.new(runner: runner, root: ROOT).write(files: files.merge('README' => readme), name: name,
                                                                     output: File.join(work, "#{name}.erofs"))
     File.binread(output)
+  end
+
+  # The partition the packer writes for a release of one file, system/README, and the
+  # image's packages listed, staged in work/LABEL-files, and the record words of its artifact: the image, then its
+  # tree from the image's end.
+  def packed(work, runner, label, listed)
+    sources = File.join(work, "#{label}-files")
+    Dir.mkdir(sources)
+    packages = listed.map do |file, (size, seed)|
+      path = File.join(sources, file)
+      File.binwrite(path, contents(size, seed))
+      Erx::ImageApps::Package.new(path: path, name: File.basename(file, '.app'), memory: 1 << 22, sha256: "\0".b * 32,
+                                  license: 'BSD-2-Clause')
+    end
+    readme = File.join(sources, 'README')
+    File.binwrite(readme, "outside apps\n")
+    erofs, artifacts = Erx::ReleaseMedium.image(entries: [{ 'path' => 'system/README', 'artifact' => readme }],
+                                                apps: Erx::ImageApps.plan(packages, enable: []), directory: sources, runner: runner)
+    image = File.binread(erofs)
+    tree = artifacts.fetch(Erx::ReleaseMedium::IMAGE).fetch('tree')
+    [image + Erx::AppPackage.image_tree(image).bytes,
+     ['system_image', image.bytesize, *tree.values_at('offset', 'length', 'salt', 'root_hash')]]
   end
 
   # The words of `-erx_record system_image` after the role, as the domain library writes them.

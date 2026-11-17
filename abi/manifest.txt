@@ -100,22 +100,32 @@ enum mf_dma u32
 flags mf_device_flags u32
   bit hostile 0
 # A partition window's role (docs/design-abi.md, "Devices and partition windows"): the
-# slots' boot and system partitions and the two records are the slot writer's; system is
-# the one read-only window on the system partition of the slot the boot value names, and
-# an unknown boot has none (docs/design-storage.md, PW1). verified_image is a window on
-# one EROFS image of the booted slot (docs/todo-system-partition.md, deletions).
+# slots' boot and system partitions and the two records are the slot writer's, which
+# only the system domain holds in Phase 1 (docs/design-storage.md, PW1): a configured
+# domain holds only a configured role. A window of a role not marked writable grants
+# read alone, and its block driver refuses every write to it, so a role added with
+# neither attribute is the slot writer's and read-only. system is the one window on the
+# system partition of the slot the boot value names, and an unknown boot has none.
+# verified_image is a window on one EROFS image of the booted slot
+# (docs/todo-system-partition.md, deletions). record_volume is the one window on the
+# whole record partition besides the slot writer's two, read-only, held by the domain
+# that holds the system window, which reads root's login keys through it
+# (docs/design-ssh.md, "Root's login keys on the medium").
 enum mf_window_role u32
-  value boot_a 1
-  value boot_b 2
-  value boot_selection 3
-  value reset_count 4
-  value vault 5
-  value data 6
-  value fat 7
-  value system 8
-  value system_a 9
-  value system_b 10
-  value verified_image 11
+  attribute configured
+  attribute writable
+  value boot_a 1 writable
+  value boot_b 2 writable
+  value boot_selection 3 writable
+  value reset_count 4 writable
+  value vault 5 configured writable
+  value data 6 configured writable
+  value fat 7 configured writable
+  value system 8 configured
+  value system_a 9 writable
+  value system_b 10 writable
+  value verified_image 11 configured
+  value record_volume 12 configured
 flags mf_window_rights u32
   bit read 0
   bit write 1
@@ -166,6 +176,15 @@ bytes packages_service 8 value 7061636b61676573
 # manifest's `system` window (property 19). The app template's row of it is the one
 # from which an app's session mounts its image package.
 bytes system_service 6 value 73797374656d
+# The name of the service that serves the users' homes (docs/design-files.md, "A
+# user's home"): "home", an instance of files. The build derives a row of it, with
+# tree home, for every session template but the app template.
+bytes home_service 4 value 686f6d65
+# The name of the service that serves root's login keys from the medium
+# (docs/design-ssh.md, "Who publishes it"): "login_keys", an instance of files whose
+# server holds the manifest's record_volume window, granted read-only to the system
+# domain alone.
+bytes login_keys_service 10 value 6c6f67696e5f6b657973
 enum mf_image_format u32
   value erofs_verity 1
   value erofs_unchecked 2
@@ -301,9 +320,9 @@ layout erx_mf_display wire_le 4 16
   field idle_off_s u32 12
 # The apps row (docs/design-packaging.md, "The apps row"), at most one: the budget all
 # apps share, how many apps a boot holds, the app template the build derives from it
-# (the session row naming no principal) and that template's packages facet row, and
-# its services, the rows of app_services it owns, each the index of a service an app
-# may name in its needs and of the facet row granted to the template for it. The boot
+# (the session row naming no principal) and that template's packages and system facet
+# rows, and its services, the rows of app_services it owns, each the index of a
+# service an app may name in its needs and of the facet row granted to the template for it. The boot
 # view checks once that the indices name those rows and that the template holds no
 # other facet row, each named once (docs/design-packaging.md, "The template's rows by
 # index").
@@ -312,9 +331,8 @@ layout erx_mf_apps wire_le 8 32
   field max u32 8
   field app_template u32 12
   field packages_facet u32 16
-  field reserved u32 20
+  field system_facet u32 20
   field services erx_mf_span 24
-  zero reserved all
 layout erx_mf_app_service wire_le 4 8
   field service u32 0
   field facet u32 4
@@ -621,6 +639,7 @@ reader manifest erx_manifest @manifest_bytes_max
   partition apps[].services.offset apps[].services.count app_services
   index apps[].app_template sessions
   index apps[].packages_facet facets
+  index apps[].system_facet facets
   index app_services[].service services
   index app_services[].facet facets
   string packages[].name.offset packages[].name.length strings identifier 63 empty no

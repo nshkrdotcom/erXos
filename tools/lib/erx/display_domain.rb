@@ -155,23 +155,43 @@ module Erx
       Manifest::Edit.set(grown, { ["domain #{DOMAIN}", 'restarts'] => 0 }) + CLIENT
     end
 
-    # The screen read through the QMP socket until it equals the reference called name in
-    # references, or until wait_seconds have passed, which raises the last mismatch.
-    def await_screen(socket:, references:, name:, wait_seconds: WAIT_SECONDS)
+    # The name of the reference await_screen keeps of a screen that equals none.
+    KEPT_SCREEN = 'screen'
+
+    # The screen read through the QMP socket until it equals one of the references called
+    # names in references, whose name it answers, or until wait_seconds have passed. Then
+    # the last screen read is kept as the reference KEPT_SCREEN beside the socket, in the
+    # run's own directory, and Mismatch names it and how it differs from each reference.
+    def await_screen(socket:, references:, names:, wait_seconds: WAIT_SECONDS)
+      raise Error, 'await_screen names no reference' if names.empty?
+
+      wanted = names.map { |name| ScreenReference.load(references, name) }
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + wait_seconds
       client = Qmp.connect(socket)
-      dump = File.join(File.dirname(socket), 'screen.ppm')
+      directory = File.dirname(socket)
       loop do
-        image = client.screendump_image(dump)
-        begin
-          return ScreenReference.check(image, directory: references, name: name)
-        rescue ScreenReference::Mismatch
-          raise if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-        end
+        image = client.screendump_image(File.join(directory, "#{KEPT_SCREEN}.ppm"))
+        found = wanted.find { |reference| ScreenReference.matches?(image, reference) }
+        return found.name if found
+        raise kept_mismatch(image, directory: directory, references: references, names: names) if
+          Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
         sleep POLL_SECONDS
       end
     ensure
       client&.close
+    end
+
+    # Writes image as the reference KEPT_SCREEN into directory and answers the Mismatch
+    # that names it and each reference's mismatch.
+    def kept_mismatch(image, directory:, references:, names:)
+      mismatches = names.map do |name|
+        ScreenReference.check(image, directory: references, name: name)
+      rescue ScreenReference::Mismatch => e
+        e.message
+      end
+      kept = ScreenReference.write(directory, KEPT_SCREEN, image)
+      ScreenReference::Mismatch.new("the screen, kept at #{kept}, equals no reference: #{mismatches.join('; and ')}")
     end
 
     # The driver's lines of a boot's serial log: one bring-up, "erx_fb: scanout 0 at WxH",
@@ -297,7 +317,7 @@ module Erx
     # The lvgl cell's check: the screen until it equals LVGL, the click, then the client's
     # lines in the serial log at serial, or Error naming what came.
     def check_lvgl(socket:, references:, serial:)
-      await_screen(socket: socket, references: references, name: LVGL)
+      await_screen(socket: socket, references: references, names: [LVGL])
       click(socket)
       check_kiosk_lines(await_log(serial, wait_seconds: CLIENT_WAIT_SECONDS) { |text| text.scan(KIOSK_LINE).size >= KIOSK_LINES.size })
     end
@@ -352,7 +372,7 @@ module Erx
       raise Error, "the kill answered #{answer.strip.inspect}, not #{KILLED}" unless answer.strip == KILLED
 
       await_log(serial, wait_seconds: WAIT_SECONDS) { |text| text.scan(KIOSK_LINE).size > KIOSK_LINES.size }
-      await_screen(socket: socket, references: references, name: LVGL)
+      await_screen(socket: socket, references: references, names: [LVGL])
       click(socket)
       log = await_log(serial, wait_seconds: CLIENT_WAIT_SECONDS) { |text| text.scan(KIOSK_LINE).size >= 2 * KIOSK_LINES.size }
       lines = log.b.scan(KIOSK_LINE)
@@ -382,7 +402,7 @@ module Erx
 
       shell = points.last
       screen = lambda do |_text|
-        await_screen(socket: socket, references: references, name: PATTERN)
+        await_screen(socket: socket, references: references, names: [PATTERN])
         log = await_client_line(serial)
         check_driver_lines(log)
         check_client_lines(log)

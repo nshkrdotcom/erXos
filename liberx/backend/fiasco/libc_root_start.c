@@ -27,7 +27,7 @@
 _Noreturn void	erx_fiasco_call_on_stack(void *top, void (*entry)(void));
 
 static void	root_enter(void);
-static uint64_t	main_stack_alloc_or_machine_off(void);
+static uint64_t	main_stack_alloc_or_end(void);
 
 /*
  * The program to run and its CPU feature words, kept here because erx_fiasco_call_on_stack
@@ -41,7 +41,7 @@ erx_fiasco_libc_root_start(int (*program)(int, char **, char **), erx_fiasco_cpu
 {
 	root_program = program;
 	root_features = features;
-	erx_fiasco_call_on_stack((void *)(uintptr_t)main_stack_alloc_or_machine_off(), root_enter);
+	erx_fiasco_call_on_stack((void *)(uintptr_t)main_stack_alloc_or_end(), root_enter);
 }
 
 /*
@@ -49,7 +49,7 @@ erx_fiasco_libc_root_start(int (*program)(int, char **, char **), erx_fiasco_cpu
  * be had. A reserved page that nothing commits lies below the stack, so an overrun faults.
  */
 static uint64_t
-main_stack_alloc_or_machine_off(void)
+main_stack_alloc_or_end(void)
 {
 	static const char refused[] = "erx: root task: no memory for main's stack\n";
 	uint64_t base;
@@ -57,7 +57,7 @@ main_stack_alloc_or_machine_off(void)
 	if (erx_vm_reserve(ERX_CAP_SELF, 0, MAIN_STACK_GUARD_BYTES + MAIN_STACK_BYTES, 0, &base) != ERX_OK ||
 	    erx_vm_commit(ERX_CAP_SELF, base + MAIN_STACK_GUARD_BYTES, MAIN_STACK_BYTES) != ERX_OK) {
 		erx_fiasco_console_write(refused, sizeof(refused) - 1);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 	}
 	return (base + MAIN_STACK_GUARD_BYTES + MAIN_STACK_BYTES);
 }
@@ -69,5 +69,5 @@ root_enter(void)
 
 	if (erx_fiasco_libc_start(root_program, root_features) == ERX_FIASCO_TASK_STATUS_ENTROPY)
 		erx_fiasco_console_write(refused, sizeof(refused) - 1);
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 }

@@ -4,7 +4,7 @@
 
 require_relative 'chokepoints_helper'
 
-# The chokepoint that only erx_device and the driver applications name erx_device
+# The chokepoint that only erx_device, the driver applications and the UART drivers name erx_device
 # (docs/design-runtime.md, "The device NIF"): the tree passes, and each seeded way of
 # reaching the device module from elsewhere fails.
 class DeviceCallersTest < Minitest::Test
@@ -57,8 +57,15 @@ class DeviceCallersTest < Minitest::Test
 
   def test_the_device_module_and_a_driver_application_are_sites
     call = "f(D) -> erx_device:read(D, dr).\n"
-    assert_empty lines_of('erlang/apps/erx/src/erx_device.erl' => call, 'erlang/apps/erx_uart/src/seeded.erl' => call)
+    assert_empty lines_of('erlang/apps/erx/src/erx_device.erl' => call, 'erlang/apps/erx_blk/src/seeded.erl' => call)
     assert_equal [['erlang/apps/erx/src/seeded.erl', 1]], lines_of('erlang/apps/erx/src/seeded.erl' => call)
+  end
+
+  # erx_uart's host link parses the host's bytes and reaches its UART only through its
+  # driver: of erx_uart, only the UART drivers name erx_device.
+  def test_a_host_link_module_naming_the_device_fails
+    hostlink = 'erlang/apps/erx_uart/src/erx_hostlink_seeded.erl'
+    assert_equal [[hostlink, 1]], lines_of(hostlink => "f(D) -> erx_device:read(D, dr).\n")
   end
 
   # Only erx_irq_line binds and acknowledges lines (docs/design-shared-devices.md, SD3): a
@@ -66,7 +73,7 @@ class DeviceCallersTest < Minitest::Test
   # to the line's owner, and one that binds or acknowledges directly bypasses the mark. A
   # dynamic call and a literal table name the function as surely as a remote call does.
   def test_a_driver_that_binds_or_acknowledges_a_line_itself_fails
-    driver = 'erlang/apps/erx_uart/src/seeded.erl'
+    driver = 'erlang/apps/erx_blk/src/seeded.erl'
     ['f(D) -> erx_device:irq_bind(D, 0).', 'f(D) -> erx_device:irq_bind_owner(D, 0).',
      'f(D) -> erx_device:irq_ack(D, 0).', "f(D, M) -> apply(M, 'irq_bind', [D, 0]).",
      'f() -> [irq_ack].', 'f() -> #{call => irq_bind_owner}.'].each do |call|

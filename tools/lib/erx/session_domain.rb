@@ -13,6 +13,7 @@ require_relative 'qemu'
 require_relative 'qemu_cells'
 require_relative 'release_medium'
 require_relative 'runner'
+require_relative 'source_revision'
 require_relative 'web_build'
 require_relative 'web_guest'
 
@@ -30,7 +31,8 @@ module Erx
   # command shell's. There `ls /data` lists the storage domain's tree at the first prompt, since
   # the console takes the line only with the session's namespace in place (docs/design-system.md,
   # "A session takes the console"), `mount` shows /data as the storage domain's littlefs
-  # grant, `echo hi` answers, `ls /tmp` lists a file the shell wrote, and
+  # grant, `echo hi` answers, `echo $home; pwd` prints /root twice, root's home, where the
+  # login starts the shell, `ls /tmp` lists a file the shell wrote, and
   # `ps` lists none of the system domain's processes, and `dmesg` writes the kernel log, which
   # the session reads through the system domain (KERNEL_LOG); `uname -a` prints every field the
   # system shell's does (MediumBoot::UNAME_A), the build facts among them, and `uname -b`
@@ -170,6 +172,9 @@ module Erx
     # volume. dmesg reads /proc/kernel/log, which the session's /proc tree answers through the
     # session's inspect facet at the facet's scope, `all` for root in a development build, as
     # the system shell reads it through its own tree (MediumBoot).
+    # root's home (docs/design-files.md, "A user's home"): the login sets rc's $home to
+    # /root and starts the shell there, so both lines are /root.
+    HOME = "echo $home; pwd\r"
     # `mount`'s line for /data: the storage domain's grant, the tree data, and the type its
     # server answers statfs with (docs/design-files.md, "Showing the table").
     MOUNT_DATA = "mount | grep ' on /data '\r"
@@ -199,6 +204,24 @@ module Erx
     # `service -e` there: the configured domains in boot order and the enabled rows, read
     # from /proc/apps through the session's inspect facet, with status 0.
     SERVICE_E = "service -e && echo service-listed\r"
+    # The approximate start (docs/design-time.md, "The approximate start"): QEMU on Fiasco
+    # gives no real-time clock, so the clock service started the clock at the build date,
+    # the commit's time, and a reading date at the session writes that hour, or the next
+    # one after the minutes of the boot (date_boot_hours).
+    DATE_BOOT = "date +%Y%m%d%H\r"
+    # Set by hand (docs/design-time.md, "Verification and testing"): root's session sets
+    # the wall clock with date through its clock grant, which writes the time it set, and a
+    # reading date writes it back; 12:30 UTC that day is SET_EPOCH_S. Its Erlang shell's
+    # sample through the same grant is refused eperm, since root's row grants set alone,
+    # and its monotonic clock has not moved with the set; the system shell then reads the
+    # set time in another domain.
+    DATE_SET = "date 202611161230 +%Y%m%d%H%M\r"
+    DATE_READ = "date +%Y%m%d%H%M\r"
+    DATE_SET_LINE = '202611161230'
+    CLOCK_SAMPLE = "gen_server:call(erx:cap(clock), {sample, 0, 0, 1, {0, 0, 0, 0}}).\r"
+    MONOTONIC_KEPT = "os:perf_counter(second) < 3600.\r"
+    SET_EPOCH_S = 1_794_832_200
+    WALL_SET = "abs(os:system_time(second) - #{SET_EPOCH_S}) < 900.\r".freeze
     # erx:i([]) at root_1's Erlang shell: the machine's record through the session's facet.
     MACHINE = "erx:i([]).\r"
     MACHINE_UPTIME = /\A +uptime +kernel +[0-9]+\r*\n\z/n
@@ -320,9 +343,16 @@ module Erx
       end
     end
 
-    # The production checkpoints to the system's command shell, then the cell. points must
-    # end at the command shell.
-    def root_session_checkpoints(points)
+    # The lines a reading date (DATE_BOOT) may write at the session on a clock started at
+    # build_date, the image's commit time: its hour, or the next one.
+    def date_boot_hours(build_date)
+      hours = [build_date, build_date + 3600].map { |time| time.utc.strftime('%Y%m%d%H') }
+      /\A(?:#{hours.join('|')})\r*\n\z/n
+    end
+
+    # The production checkpoints to the system's command shell, then the cell, on an image
+    # whose build date is build_date. points must end at the command shell.
+    def root_session_checkpoints(points, build_date:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       shell = ProductionImage::Run::ERLANG_SHELL
@@ -330,7 +360,9 @@ module Erx
        session_shell('root_1-shell', "ls /data && echo data-listed\r"),
        { name: 'data-listed', pattern: line('data-listed'), seconds: 60, type: MOUNT_DATA }.freeze,
        { name: 'session-mount', pattern: MOUNT_DATA_LINE, seconds: 60, type: "echo hi\r" }.freeze,
-       { name: 'echo-hi', pattern: line('hi'), seconds: 60, type: "echo x > /tmp/session; ls /tmp\r" }.freeze,
+       { name: 'echo-hi', pattern: line('hi'), seconds: 60, type: HOME }.freeze,
+       { name: 'home-var', pattern: line('/root'), seconds: 60 }.freeze,
+       { name: 'home-cwd', pattern: line('/root'), seconds: 60, type: "echo x > /tmp/session; ls /tmp\r" }.freeze,
        { name: 'ls-tmp', pattern: line('session'), seconds: 60, type: COUNT_SERVICE }.freeze,
        { name: 'session-ps', pattern: line('0'), seconds: 60, type: KERNEL_LOG }.freeze,
        { name: 'session-dmesg', pattern: KERNEL_LOG_LINE, seconds: 60, type: "uname -a\r" }.freeze,
@@ -342,9 +374,14 @@ module Erx
        { name: 'session-proc-status', pattern: PROC_UPTIME, seconds: 60, type: START_LISTED }.freeze,
        { name: 'session-start-listed', pattern: line('start-listed'), seconds: 60, type: START_CTL_REFUSED }.freeze,
        { name: 'session-start-ctl-refused', pattern: line('start-ctl-refused-invalid argument'), seconds: 60, type: SERVICE_E }.freeze,
-       { name: 'session-service-e', pattern: line('service-listed'), seconds: 60, type: ERL }.freeze,
+       { name: 'session-service-e', pattern: line('service-listed'), seconds: 60, type: DATE_BOOT }.freeze,
+       { name: 'session-date-boot', pattern: date_boot_hours(build_date), seconds: 60, type: DATE_SET }.freeze,
+       { name: 'session-date-set', pattern: line(DATE_SET_LINE), seconds: 60, type: DATE_READ }.freeze,
+       { name: 'session-date-read', pattern: line(DATE_SET_LINE), seconds: 60, type: ERL }.freeze,
        shell.merge(name: 'root_1-erlang-shell', type: "node().\r").freeze,
-       { name: 'root_1-node', pattern: answer('root_1@erxos'), seconds: 60, type: MACHINE }.freeze,
+       { name: 'root_1-node', pattern: answer('root_1@erxos'), seconds: 60, type: CLOCK_SAMPLE }.freeze,
+       { name: 'root_1-sample-refused', pattern: answer('{error,eperm}'), seconds: 60, type: MONOTONIC_KEPT }.freeze,
+       { name: 'root_1-monotonic-kept', pattern: answer('true'), seconds: 60, type: MACHINE }.freeze,
        { name: 'root_1-machine', pattern: MACHINE_UPTIME, seconds: 60, type: PROGRAM_REFUSED }.freeze,
        { name: 'program-refused', pattern: answer('{{error,einval},{error,einval}}'), seconds: 60,
          type: PIPES }.freeze,
@@ -365,7 +402,8 @@ module Erx
        { name: 'system-ps', pattern: line('1'), seconds: 60, type: CAT_ACROSS }.freeze,
        { name: 'system-data', pattern: line('across'), seconds: 60, type: ERL }.freeze,
        shell.merge(name: 'system-erlang-shell', type: "node().\r").freeze,
-       { name: 'system-node', pattern: answer('system@erxos'), seconds: 60, type: SESSION_PROCESS }.freeze,
+       { name: 'system-node', pattern: answer('system@erxos'), seconds: 60, type: WALL_SET }.freeze,
+       { name: 'system-wall-set', pattern: answer('true'), seconds: 60, type: SESSION_PROCESS }.freeze,
        { name: 'session-process', pattern: SESSION_REDUCTIONS, seconds: 60,
          type: RESTART_STORAGE + with_data(READ_ACROSS, guard: 'Grant =/= Old') }.freeze,
        { name: 'storage-regranted', pattern: answer(ACROSS_READ), seconds: 180, type: KILL_SESSION }.freeze,
@@ -435,20 +473,25 @@ module Erx
         medium = written.fresh(directory: directory)
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: count,
                                                          manifest_source: @manifest, memory_mib: @machine.memory_mib)
+        # The build date the image's build facts name, its source's commit time.
+        revision = SourceRevision.read(root: @root, runner: @runner)
+        raise Error, 'the session cell needs a git checkout: its date check reads the build date' unless revision
+
+        build_date = revision.committed_at
         report = Qemu.new(root: @root, runner: @runner, program: @qemu)
                      .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
                           memory_mib: @machine.memory_mib,
                           disks: [QemuPlan::Disk.new(path: medium)],
-                          checkpoints: SessionDomain.root_session_checkpoints(points),
+                          checkpoints: SessionDomain.root_session_checkpoints(points, build_date: build_date),
                           **web_check(accel, count, built, directory: File.join(directory, 'boot')))
         SessionDomain.burst_whole!(File.binread(report.fetch('serial_log')))
       end
 
       # A boot of its own that `command` ends, which QEMU's exit under -no-reboot shows,
       # with the command's log line on the console before the end's and no crash frame, so
-      # a watchdog's end does not pass for it. The stopgap's end of the root's own halt
-      # also says `erx: end off`, so the halt boot cannot tell init's commit from init's
-      # halt after a refused one; the reboot boot can.
+      # a watchdog's end does not pass for it. The end line is not read: init's halt
+      # after a refused commit ends the root with its own stop, which resets, so only the
+      # halt boot's `erx: end off` would tell the commit from it (TODO.md).
       def machine_end(accel, count, remote, built, written, command:)
         run = "#{accel}-#{count}cpu-#{command}-#{Process.pid}-#{Random.bytes(8).unpack1('H*')}"
         directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(@root, 'build/session-domain', run))

@@ -41,10 +41,12 @@ module Erx
     Source = Data.define(:path, :size, :digest)
 
     # A version 4 (random-form) UUID drawn from the SHA-256 of the image's sorted paths
-    # and their files' digests (digests maps each path to its file's hex SHA-256), so two
-    # builds of one image share it and images that hold different files do not.
-    def self.uuid(digests)
-      listing = digests.sort.map { |path, digest| "#{path} #{digest}\n" }.join
+    # and their files' digests (digests maps each path to its file's hex SHA-256) and of
+    # its directories that hold no file at any depth (empty_directories), so two builds of
+    # one image share it and images that hold different files or directories do not.
+    def self.uuid(digests, directories: [])
+      listing = [*digests.sort.map { |path, digest| "#{path} #{digest}\n" },
+                 *directories.sort.map { |path| "#{path}/\n" }].join
       bytes = Digest::SHA256.digest(listing).bytes.first(16)
       bytes[6] = (bytes[6] & 0x0f) | 0x40
       bytes[8] = (bytes[8] & 0x3f) | 0x80
@@ -52,24 +54,35 @@ module Erx
       [hex[0, 8], hex[8, 4], hex[12, 4], hex[16, 4], hex[20, 12]].join('-')
     end
 
-    # files maps each path inside the image to the host file it holds. A path is
-    # refused unless it is relative and made of plain names, and a path that is also
-    # another's directory is refused, so the manifest describes exactly files.
-    def self.check_files(files)
+    # files maps each path inside the image to the host file it holds, and directories
+    # names directories the image holds whether or not a file lies in them. A path is
+    # refused unless it is relative and made of plain names, and a file's path that is
+    # also a directory is refused, so the manifest describes exactly files and
+    # directories.
+    def self.check_files(files, directories = [])
       raise Error, 'an EROFS image needs a map of its files' unless files.is_a?(Hash) && !files.empty?
 
-      files.each_key do |path|
+      [*files.keys, *directories].each do |path|
         names = path.is_a?(String) ? path.split('/', -1) : []
         unless !names.empty? && names.all? { |name| NAME.match?(name) && name.bytesize <= NAME_MAX && !%w[. ..].include?(name) }
           raise Error, "an EROFS image path must be relative plain names: #{path.inspect}"
         end
       end
-      directories = files.keys.flat_map { |path| parents(path) }.uniq
-      folded = (files.keys + directories).group_by(&:downcase).values.find { |spellings| spellings.size > 1 }
+      folded = (files.keys + held_directories(files.keys, directories)).group_by(&:downcase).values.find { |spellings| spellings.size > 1 }
       raise Error, "an EROFS image path is spelled twice or is both a file and a directory: #{folded.first}" if folded
 
       files
     end
+
+    # Every directory the image holds: the parents of each of paths, and each of named
+    # with its parents, without repeats.
+    def self.held_directories(paths, named = [])
+      [*paths.flat_map { |path| parents(path) }, *named.flat_map { |path| [*parents(path), path] }].uniq
+    end
+
+    # The directories of held_directories(paths, named) that hold no file at any depth,
+    # those the UUID must name since no file's path implies them.
+    def self.empty_directories(paths, named) = held_directories([], named) - held_directories(paths)
 
     # The directories above path, outermost first.
     def self.parents(path)
@@ -106,10 +119,11 @@ module Erx
       chains.reduce { |shared, chain| shared.take_while.with_index { |directory, index| chain[index] == directory } }.last
     end
 
-    # The manifest's entries: each directory below the root and each file, sorted by path.
-    def self.entries(sources, base:)
+    # The manifest's entries: each directory below the root, those named included, and
+    # each file, sorted by path.
+    def self.entries(sources, base:, directories: [])
       owner = { 'uid' => 0, 'gid' => 0 }
-      directories = sources.keys.flat_map { |path| parents(path) }.uniq.sort.map do |path|
+      held = held_directories(sources.keys, directories).sort.map do |path|
         Fsimg::Entry.new(path: path, keywords: { 'type' => 'dir', 'mode' => '0755', **owner })
       end
       prefix = base == '/' ? '/' : "#{base}/"
@@ -118,7 +132,7 @@ module Erx
                                                  'sha256digest' => source.digest,
                                                  'contents' => source.path.delete_prefix(prefix) })
       end
-      directories + files
+      held + files
     end
 
     def initialize(runner:, root: ROOT)
@@ -130,21 +144,22 @@ module Erx
     # reports the pinned version.
     def check_tools = Fsimg.checked(root: @root, runner: @runner)
 
-    # Writes the image of files as output, which must not exist, and returns its path.
+    # Writes the image of files and directories (check_files) as output, which must not
+    # exist, and returns its path.
     # The manifest and the image are written in a private directory beside output and
     # the image is linked to output whole, so a failed write leaves nothing at output and
     # an existing output, a link included, is refused. name labels the run's log.
-    def write(files:, name:, output:)
+    def write(files:, name:, output:, directories: [])
       output = File.expand_path(output)
-      self.class.check_files(files)
+      self.class.check_files(files, directories)
       fsimg = check_tools
       sources = self.class.sources(files)
       base = self.class.content_directory(sources)
-      uuid = self.class.uuid(sources.transform_values(&:digest))
+      uuid = self.class.uuid(sources.transform_values(&:digest), directories: self.class.empty_directories(sources.keys, directories))
       Dir.mktmpdir('.erx-erofs-', File.dirname(output)) do |workspace|
         manifest = File.join(workspace, 'image.mtree')
         image = File.join(workspace, 'image')
-        File.write(manifest, Fsimg.mtree(self.class.entries(sources, base: base)))
+        File.write(manifest, Fsimg.mtree(self.class.entries(sources, base: base, directories: directories)))
         @runner.run([fsimg, 'cW', '-f', image, *PACKER, '-o', "uuid=#{uuid}", '-C', base, "@#{manifest}"],
                     name: "fsimg-erofs-#{name}", deadline: DEADLINE)
         File.link(image, output)

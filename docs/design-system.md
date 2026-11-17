@@ -284,7 +284,16 @@ manifest holds:
 * **Each configured domain:** its name; its principal; its kind (`service`
   or `secret`); its runtime image and release, as boot-image entries; its
   own and outer budgets, grant, lane size, `connections` quota and crash
-  area; whether it holds `SPACES`, and its sub-space group's grant; its
+  area; whether it holds `SPACES`, and its sub-space group's grant; on
+  Fiasco, its priority band and its thread, object and mapping limits,
+  which bound what it can make the root hold for it
+  ([design-fiasco.md](design-fiasco.md#memory-and-budgets), FD14), all
+  of these from its limits record, as a session's come from its
+  template's, its threads running within its grant's CPU set
+  ([design-abi.md](design-abi.md#principal-domain-and-limit-records)).
+  The band and the three limits are Fiasco's alone and leave the
+  manifest with it: erXos's kernel bounds a domain by its budget and
+  grant (FD14, FD15), and nothing above the domain library reads them; its
   restart intensity, the seconds its runtime has to report ready (its
   boot timeout, 60 unless the row says otherwise, a default sessions and
   create requests share, long enough for an emulated machine), whether
@@ -443,6 +452,9 @@ violation fails the build with the property, the record and the field:
    so no two `line` grants name one UART and none names the console's or
    the host link's
    ([design-bluetooth.md](design-bluetooth.md#the-controllers-line)); the
+   service of the `line` interface is named `line`, the one name by which
+   the line service finds and serves its grants, the facet-names check
+   reads its serve call and its grantees mount it at `/line`; the
    console's UART shares an interrupt line with none of the others, since
    the console starts its own line's owner, while the host link's and the
    `line` grants' UARTs may share lines with each other, one line group
@@ -514,7 +526,7 @@ violation fails the build with the property, the record and the field:
     ([Devices](#devices), Units), and admits a configured row only when
     its arguments and environment leave room in its boot page's strings
     for what the library adds there
-    ([Boot information](design-stopgap.md#boot-information)), so a
+    ([Boot information](design-fiasco.md#boot-information)), so a
     placement or a row the boot would refuse fails the build. The
     production build always runs the planner; a check without one plans
     nothing for an empty set of children, and fails closed for a
@@ -575,9 +587,19 @@ violation fails the build with the property, the record and the field:
     interface written as its number; a `net` grantee whose runtime limits
     have a `max_frame` below the floor while the system domain's are
     above it; and a mint request naming the system domain, which the mint
-    refuses and counts.
-16. **Every receiver of `files` and of `inspect` takes its frames:** for each facet of the
-    `files` interface (`abi/services/files.txt`), compared by number, the
+    refuses and counts. A `net` grant's ports are this property's too: every
+    port its `listen` lists is one of its `ports`, those it lists or by
+    default 1,024 to 65,535, and a privileged port, below 1,024, which a
+    grant binds only when its row lists it, is listed by one grant of its
+    network domain alone, to a configured domain, never to a session
+    template, whose grant every session made from it holds. The stack binds a
+    port for the first grant to claim it, so without this any other grant of
+    the same network domain could take a service's privileged port first.
+    Seeded violation: two grants of one network domain listing the same
+    port below 1,024.
+16. **Every receiver of `files` and of `inspect` takes its frames:** for each facet of an
+    interface `abi/services` declares `served_as tree` (`files`, `windows`
+    and `line`), compared by number, the
     grantee (the system domain under the machine's system runtime limits, a
     configured domain or a session template) and the service's server
     each run with a `max_frame` of at least `files_max_frame_min`, 128 KiB:
@@ -628,7 +650,7 @@ violation fails the build with the property, the record and the field:
     beside the boot view's other reserve, since the library adds it to
     every session a start row starts
     ([design-apps.md](design-apps.md#start-flags),
-    [Boot information](design-stopgap.md#boot-information)). Seeded
+    [Boot information](design-fiasco.md#boot-information)). Seeded
     violations: a check that plans the enabled rows alone, which admits
     a system principal whose memory holds its start row but not root's
     console session beside it; a board source that grants `etc`
@@ -1549,7 +1571,7 @@ baseline remains the manifest's; runtime changes do not edit it.
       node name, the system domain's node name and id as the peer of its
       first connection, the number and serial of the domain pid the
       request names, and each given device's record
-      ([Boot information](design-stopgap.md#boot-information))
+      ([Boot information](design-fiasco.md#boot-information))
       ([design-runtime.md](design-runtime.md#data-model));
    7. create the first thread, a worker in the domain's group, with the
       boot information page's address as its argument, stopped;
@@ -1621,28 +1643,31 @@ pid's liveness, not by the pid's exit signal, which may still be in its
 queue when the caller's start arrives, so the rule holds for every caller
 by construction and no caller retries.
 
-**On the stopgap.** The plan, its checks and its undo are the same code.
-Each step's kernel call is a request to the stopgap's root service, the
+**On Fiasco.** The plan, its checks and its undo are the same code.
+Each step's kernel call is a request to Fiasco's root service, the
 one owner of every Fiasco object, served on its one thread
-([design-stopgap.md](design-stopgap.md#the-root-service)), each a row of
-[its call table](design-stopgap.md#the-call-table): step 1's budgets and
-step 3's group are records with nothing charged or enforced, so K32's
-walls do not hold; step 2's space is a Fiasco task with its parent and
+([design-fiasco.md](design-fiasco.md#the-root-service)), each a row of
+[its call table](design-fiasco.md#the-call-table): step 1's budgets and
+step 3's group are walls at their guarantees and a record: each budget
+a Fiasco factory for its kernel memory and the root's charge for its
+pages, so K32's walls hold without borrowing (FD25), and the group's
+grant is a record (FD15); step 2's space is a Fiasco task with its parent and
 fault gate recorded, so the domain's end ends its sub-spaces, and its
 faults reach the root service as Fiasco's fault messages, which become
 fault records at the library's gate; step 4's sides and bells are memory
 objects and IRQ objects of the root, the bells bound by the library to
 each party's group; and step 6's installs are `erx_cap_pass` from the
-library's table into the space it created. A handle on the stopgap
-carries no rights, so the rights step 6 names are the library's own
-discipline, recorded nowhere: the domain gets no delete right on its
-connection's objects because only an object's creator may destroy it,
-and it maps the system domain's side read-only because its own `liberx`
-asks for that. That a domain which bypasses `liberx` is held to step 6's
-rights and that its charges stay within its walls are erXos's kernel's
-([What Phase 1 defers](design-stopgap.md#what-phase-1-defers)); what the
+library's table into the space it created. A handle on Fiasco
+is a slot whose rights the root records and checks at every service
+call, and whose Fiasco capability carries only the rights those allow
+([design-fiasco.md](design-fiasco.md#passing-a-handle)), so a domain that
+bypasses `liberx` is still held to step 6's rights: it gets no delete
+right on its connection's objects, and the root refuses it a write
+mapping of the system domain's side. What Fiasco lacks against erXos's
+kernel is in
+[Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel); what the
 stopgap means for connections and for the domains' invariants, D7 and D17
-included, is in [design-domains.md](design-domains.md#on-the-stopgap).
+included, is in [design-domains.md](design-domains.md#on-fiasco).
 
 Domain ids come from a counter in the domain service that only grows and
 starts at 4, since stock `erlang:setnode/2` raises a creation below 4 to
@@ -1778,7 +1803,8 @@ the interface a session reaches the domain service's code objects
 through:
 
 ```text
-service code_objects 11
+service code_objects 14
+  served_as message
   operation create 1
   operation drop 2
 limit code_objects_max u32 256
@@ -2295,7 +2321,7 @@ ask for an end, because `erx_machine_end` itself is the system domain's
 alone. On erXos's kernel the call's generated decoder requires `POWER` on
 `res` through the one capability lookup, and only the root resource
 carries `POWER`, so any other caller gets `ERX_ERIGHTS` (K31;
-[design-kernel.md](design-kernel.md#kernel-calls)). On the stopgap, the
+[design-kernel.md](design-kernel.md#kernel-calls)). On Fiasco, the
 Fiasco backend's service does the same with the tool it has: it answers
 `ERX_FIASCO_CALL_MACHINE_END` only for the root task and refuses a call
 from any other task with `ERX_ENOTSUP`, as it refuses `erx_log_take` and
@@ -2382,7 +2408,7 @@ its seeded fault:
   the `machine` service and mounts one grant of them at `/machine` in the
   system domain's namespace, which a second start replaces. Seed: a
   start that leaves the own grant unmounted fails.
-* **The stopgap's root check**, a case of the native task guest
+* **Fiasco's root check**, a case of the native task guest
   (`test/guest/native_task`), since the Fiasco backend's service has no
   host build: a task's `erx_machine_end(res, ERX_END_RESET)` returns
   `ERX_ENOTSUP`, and the task's next line still reaches the console.
@@ -2506,7 +2532,7 @@ pair, so each operation is bound to both incarnations by construction:
 | `idle` | the grant has no pair: its server or its grantee is not ready, or the server provided no mint for the name |
 | `introducing` | the domain service is introducing the grantee to the server ([Creating a domain](#creating-a-domain)); skipped when the grantee is the system domain, which every domain is connected to |
 | `minting` | the mint has been asked for a facet bound to the grantee, and its reply is awaited |
-| `installing` | the facet's pid has been sent to the grantee's registry, and its acknowledgement is awaited |
+| `installing` | the facet has been sent to the grantee's registry, its pid and, for a files service, the rights of the grant's facet row, and its acknowledgement is awaited |
 | `installed` | the grantee acknowledged; the grant holds the facet's pid |
 | `failed` | the operation for this pair failed, and was logged; nothing is retried for the pair |
 
@@ -2541,9 +2567,15 @@ The record moves on these events, and on nothing else:
   for the whole of its introduction, mint and installation;
 * **the introduction's result**: `ok` sends the mint
   `{erx_facet_mint, Tag, Name, Grantee, Principal, Limits}`, where
-  `Principal` is the name of the grantee's principal, a configured
-  domain's row's or a session's template's, from which a server scopes
-  the grant by principal, and `Limits` is the facet row's limits, with
+  `Principal` is the user name of the grantee's principal, the prefix of
+  its sessions' names: `root` for the system principal, and for any other
+  its name in the system manifest, a configured domain's row's or a
+  session's template's
+  ([design-domains.md](design-domains.md#principals-sessions-and-quotas)),
+  from which a server scopes the grant by principal, as the storage
+  domain roots a home grant at the user's home
+  ([design-files.md](design-files.md#building-binding-and-mounting), "A
+  user's home"), and `Limits` is the facet row's limits, with
   the `session` parameter added where the grant's record carries the
   session mark (below), through the server's
   domain pid, which the server's domain already holds, since a send
@@ -2559,7 +2591,11 @@ The record moves on these events, and on nothing else:
   that tag. `{ok, Facet}` with `Facet` a pid the server's incarnation
   owns, node and creation both, moves the operation to `installing` and
   sends the grantee
-  `{erx_facets_install, Tag, Name, Facet}`; any other reply fails it. A
+  `{erx_facets_install, Tag, Name, Facet}`, where `Facet` is the pid, or
+  for a files service `{Pid, Rights}` with the rights of the grant's
+  facet row, which the manifest states and no reply sets
+  ([design-files.md](design-files.md#building-binding-and-mounting),
+  "Rights beneath an entry"); any other reply fails it. A
   reply with an unknown or finished tag, a second reply, or one from
   any other domain is dropped and counted;
 * **the acknowledgement**, `{erx_facets_installed, Tag}` from the
@@ -2568,8 +2604,8 @@ The record moves on these events, and on nothing else:
   it answers `connection_mapped`. It counts only from the pair's grantee,
   for an operation in `installing` with that tag, and makes the grant
   `installed`. Anything else is dropped and counted. The system domain's
-  own registry is local: the domain service installs there itself and
-  acknowledges at once;
+  own registry is local: the domain service installs there itself, the
+  same value it would send, and acknowledges at once;
 * **the deadline**, which fails an operation still pending.
 
 Since an operation exists only while both incarnations of its pair are
@@ -2633,7 +2669,10 @@ pure function gives for the grantee where the service has scopes, as
 and sends it in the ready answer with any other facet the domain gets
 there. So these facets reach every incarnation and every session with
 its ready answer, before any installation, and end with it, or with the
-process behind them. For a service of the `files` interface the process
+process behind them. For a service of an interface `abi/services` declares
+`served_as tree` (`files` and `line`; `windows` is left out because
+property 18 makes a configured domain, never the system domain, the server of
+every `windows` service) the process
 behind it is the supervisor of its tree's grants (`erx_fs_grants`), and
 the domain service asks it for an `erx_fs` grant bound to the grantee and
 ending with its domain pid, in place of a facet in front of it, as a
@@ -2674,17 +2713,23 @@ The domain library's boot view, the one reader of the packed manifest on
 the boot path, is the one place a row is decoded: it checks each facet's
 rows against the parameters its service's interface declares, from a
 table the build generates from `abi/services` (`erx_service_parameters`
-in `erx/abi.h`), so each row names a declared parameter once, in number
+in `erx/abi.h`), so each declared parameter appears once, except a set,
+whose elements are consecutive rows in ascending order, in number
 order, of its declared kind and within its declared bound, and no
-parameter the interface requires is left out; a row of a reference kind,
-which nothing yet carries to the domain service, is refused, as the
-manifest check refuses one. `erx_domain_lib:configured/0` then gives
+parameter the interface requires is left out. A device reference, such
+as the `line` grant's `uart`, is the index of its device row, which the
+manifest check resolves from the device-tree path the facet row states
+and the reader checks against the device table; a domain or principal
+reference, which no service declares, is refused, as the manifest check
+refuses one. `erx_domain_lib:configured/0` then gives
 each checked parameter in the grant's `Limits` under its declared name,
 beside the row's six limit fields: an integer kind as an integer, a
-boolean as `true` or `false`, and text or bytes as a binary. The
-generator refuses a parameter that takes a limit field's name, so the
-two never meet in one map, and a `set` declaration, whose many values
-the view does not carry. So the `windows` grant's `pixels`, `windows`
+boolean as `true` or `false`, text or bytes as a binary, a device
+reference as its row's index in the manifest's device table, and a
+`set`, whose elements the view takes as consecutive rows of its key in
+strictly ascending order and at most its `MAX_COUNT`, as the list of its
+elements in that order. The generator refuses a parameter that takes a
+limit field's name, so the two never meet in one map. So the `windows` grant's `pixels`, `windows`
 and `clipboard` are the row's, and the pixel area `erx_domain_mints` charges
 the display is the one property 18 summed.
 
@@ -2999,8 +3044,9 @@ change only when a run moves, a capacity changes by more than a tenth, or
 **Budgets.** Each principal's budget is carved from the root budget at the
 manifest's size, as a wall, a budget whose cap is fixed equal to its
 guarantee ([design-kernel.md](design-kernel.md#budgets)), and so is the
-budget the manifest's `apps` row gives all apps to share, under which
-each app principal's budget is elastic with no guarantee
+budget the manifest's `apps` row gives all apps to share, from which
+each app principal's budget is carved as a wall when its session starts
+and destroyed when that session retires
 ([design-packaging.md](design-packaging.md#an-apps-principal)); each domain's
 two budgets from its principal's, side by side and each a wall:
 its own budget at its spec's `memory`, and its outer
@@ -3023,11 +3069,12 @@ admits or refuses every charge of a domain's at the domain's own budget,
 counts none of it against another domain's, no principal of the manifest
 spends beyond its own, and a domain's memory depends on nothing outside
 it but the kernel (K32,
-[design-kernel.md](design-kernel.md#budgets)). The one elastic budget
-the library carves is an app principal's, with no guarantee and the
-`apps` budget's guarantee as its cap, fixed for the boot; it holds
-nothing but its sessions' walls, so apps share the `apps` wall's memory
-and none of it reaches past that wall; and the library's grant
+[design-kernel.md](design-kernel.md#budgets)). An app principal's
+budget is a wall carved from the `apps` budget for each of its sessions
+and destroyed at that session's retire; it holds nothing but that
+session's walls, so apps share the `apps` wall's memory and none of it
+reaches past that wall. The library carves no elastic budget for a
+domain or a principal; and the library's grant
 table passes no budget with `DESTROY`, so no domain resizes a budget of
 its own (A7). The policy corrects the size of a domain it created at run
 time with `erx_budget_resize` through the domain library's
@@ -3281,7 +3328,7 @@ and through a mapping it makes for those writes, during its boot and at
 a panic or the machine's end, and the driver owns it otherwise
 ([design-kernel.md](design-kernel.md#console-log-and-panic)).
 
-**On the stopgap.** The device service, the manifest's placement, the
+**On Fiasco.** The device service, the manifest's placement, the
 drivers and their supervisors are the same code. In a give, the domain
 library creates the unit's register windows, its lines' IRQ objects and,
 at the first give, each device's contiguous memory, all in the root, from the catalogue
@@ -3291,7 +3338,7 @@ nothing), and passes them to the holding domain, whose
 driver maps the window and binds the line to its own group, so the line's
 deliveries reach that task's readiness dispatcher; no device object is
 created from a task other than the root
-([Device records](design-stopgap.md#device-records)). At the holder's end
+([Device records](design-fiasco.md#device-records)). At the holder's end
 the library deletes the window's and the line's objects and keeps the
 contiguous memory for the restarted holder, as this section says of any
 unconfined device. QEMU `virt`, as the harness starts it, has no IOMMU
@@ -3301,7 +3348,7 @@ the domain library's boot view builds an entry per device, placed on its
 unit's holder, checks the units against the devices' register pages and
 lines, and refuses the whole view when devices that share a page or a
 line are in two unit rows, or when a device is marked confined,
-since the stopgap lists no IOMMU stream; the manifest check builds the same view, so such a
+since Fiasco lists no IOMMU stream; the manifest check builds the same view, so such a
 manifest fails the build, and no domain is created from a placement the
 view did not admit. The development manifest gives the block and network devices each
 a domain of its own: the block device to the storage domain, which
@@ -3313,13 +3360,13 @@ the host link. A manifest that configures a display domain gives it
 virtio-gpu and virtio-input; the development manifest configures none.
 The Phase 1 manifest check allows these unconfined devices in a development build, and
 property 9 refuses them in a release manifest as it does on erXos's kernel;
-the stopgap builds no release. In the storage domain a driver's end ends the domain, whose restart gives
+Fiasco builds no release. In the storage domain a driver's end ends the domain, whose restart gives
 the device back; other drivers die and restart under their supervisors as
 this section describes. Every driver's DMA reaches all memory,
 so a driver, or a domain that parses hostile bytes beside one, can reach
 every domain through its device. DMA windows, MSIs and the lifetime of
 device buffers are erXos's kernel's
-([What Phase 1 defers](design-stopgap.md#what-phase-1-defers)), and moving
+([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)), and moving
 a device to virtio-pci behind the IOMMU then changes its device record and
 its DMA profile, not its driver.
 
@@ -3607,10 +3654,10 @@ a session that hands it on shares the facet's control with the receiver
 ([design-files.md](design-files.md#narrowing-for-a-program)); the facet
 serves the tree from a process linked to it, so revoking the facet ends
 the tree and every fid on it, and no grant of the tree outlives the facet.
-Like every facet that serves a file tree, each of the two carries its
-tree's name with its pid and rights, as `erx_ns:mount`'s options do, so a
-namespace entry names the facet's pid, its rights and the tree, and the
-grant answers `enoent` to an attach that names any other tree
+Like every facet that serves a file tree, each of the two installs as its
+pid with the rights of its facet row; a namespace entry names the facet
+and the tree its mount's options give, and resolves with the lesser of
+its own rights and the facet's, and the grant answers `enoent` to an attach that names any other tree
 ([design-files.md](design-files.md#namespaces)).
 
 #### The holder's driver-control facet
@@ -3667,11 +3714,11 @@ sDDF driver may run as a stopgap shim, imported as erXos's code with an
 origin file, under a row of its own
 ([design.md](design.md#dependencies)).
 
-A measurement taken on the stopgap Fiasco admits no native driver. There
+A measurement taken on Fiasco admits no native driver. There
 an interrupt reaches its driver through a dispatcher thread, and its
 acknowledgement, like most kernel calls, is a request to the root
 service, which serves the whole machine on one thread
-([design-stopgap.md](design-stopgap.md#interrupts-and-readiness)), so an
+([design-fiasco.md](design-fiasco.md#interrupts-and-readiness)), so an
 Erlang driver that misses a device's timing there may be missing the
 stopgap's, and a shim admitted on that number would work around the
 stopgap rather than the device. Such a measurement is recorded with the
@@ -3709,7 +3756,7 @@ manifest lists: the vault.
 | resource policy, `erx_policy` | the group tree, grants, capacity, budgets, lane sizes | [Resource policy](#resource-policy) |
 | device service, `erx_devices` | the device catalogue, each device given to the domain the manifest names, `/dev` | [Devices](#devices) |
 | watchdog, `erx_watchdog` | pets the kernel's watchdog every period, at priority `max`, once every service it lists has answered a liveness call | [Boot](#boot) |
-| clock service, `erx_clock` | the wall clock's one setter: takes samples through the `clock` facet, which the manifest grants only to the ntpd app, decides each step with `erx_clock_core`, sets the time page through `erx_clock_nif`, and reports `/proc/time` | [design-time.md](design-time.md) |
+| clock service, `erx_clock` | the wall clock's one setter: takes ntpd's samples and root's sets through the `clock` facet, whose rows grant ntpd's template `sample` alone and root's template `set` alone ([design-time.md](design-time.md#who-may-set-it)), decides each step with `erx_clock_core`, sets the time page through `erx_clock_nif`, and reports `/proc/time` | [design-time.md](design-time.md) |
 | console service, `erx_console` | the two console lines: the UART over its driver in the system domain and the host-link port's bytes; each line's menu and login prompt, the connection of sessions' ttys, and the system-shell facet, which it grants to a login at a secure line, holds for that login and ends with it | [Devices](#devices), [design-live.md](design-live.md#the-console) |
 | inspector, `erx_inspector` | one schema over kernel, service and runtime reports, the previous boot's crash record included; the `inspect` service, whose facets the domain service mints with the scope `erx_domain_core:inspect_scope/3` gives, and the questions to each domain's inspection agent | [design-live.md](design-live.md#inspection), [design-live.md](design-live.md#the-inspect-service) |
 | tracer, `erx_tracer` | trace sessions and the kernel's trace | [design-live.md](design-live.md#tracing) |
@@ -5138,7 +5185,7 @@ lines of C++ inside the trusted base, for a domain whose work is bounded
 control; erXos runs the interpreter there.
 
 **L4Re's `moe` and `ned` as the root task.** They implement L4Re's own
-object model and loader, which erXos does not use; the stopgap keeps only
+object model and loader, which erXos does not use; Fiasco keeps only
 Fiasco's kernel, `bootstrap` and `sigma0`
 ([design-kernel.md](design-kernel.md#the-current-implementation-the-modified-fiasco)).
 

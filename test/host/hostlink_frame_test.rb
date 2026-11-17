@@ -20,7 +20,7 @@ class HostlinkFrameTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   F = Erx::HostlinkFrame
   VECTORS = File.join(ROOT, 'test/fixtures/hostlink_frames.txt')
-  APPLICATIONS = %w[erx erx_hostlink].freeze
+  APPLICATIONS = %w[erx erx_uart].freeze
   # The stand-in for erx's erx_bytes, whose CRC BIF is a NIF: compiled after the applications, it
   # replaces their erx_bytes.
   BYTES_STAND_IN = 'test/erlang/host_bytes/erx_bytes.erl'
