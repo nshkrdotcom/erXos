@@ -221,9 +221,13 @@ class ProductionImageTest < Minitest::Test
 
   # libbeam.a holds littlefs's objects (lfs.o and lfs_util.o, in the emulator's OS_OBJS), so
   # its attribution names littlefs's license beside OTP's; compiler-rt's builtins carry LLVM's
-  # license, and nothing linked is GPL; every notice named is a tree file.
+  # license, L4Re's user libraries carry the MIT text, and nothing linked is GPL; every
+  # notice named is a tree file.
   def test_emulator_archive_carries_the_littlefs_notice
-    fiasco = Struct.new(:boot_core_archive) { def user_library(name) = "/fiasco/#{name}" }.new('/fiasco/boot_cores.a')
+    fiasco = Struct.new(:boot_core_archive) do
+      def user_library(name) = "/fiasco/#{name}"
+      def user_library_notices(name) = Erx::Fiasco.new(root: ROOT).user_library_notices(name)
+    end.new('/fiasco/boot_cores.a')
     erts = Erx::NativeRuntime::Built.new(otp_archives: ['/otp/erl_main.o', '/otp/libbeam.a'], libc: '/musl/libc.a', headers: '/sysroot/include-0',
                                          builtins: '/crt/libclang_rt.builtins.a', otp: '/otp', openssl: '/openssl',
                                          system_table: '/otp/driver_tab.o',
@@ -244,6 +248,7 @@ class ProductionImageTest < Minitest::Test
     builtins = archives.fetch('libclang_rt.builtins.a')
     assert_equal ['Apache-2.0 WITH LLVM-exception', 'permanent'], [builtins.license, builtins.status]
     assert_equal 'compiler-rt/LICENSE.TXT', builtins.notices.first[%r{compiler-rt/LICENSE\.TXT\z}]
+    Erx::Fiasco::USER_LIBRARIES.each_key { |name| assert_includes archives.fetch(name).notices, 'otp/LICENSES/MIT.txt', name }
     refute archives.values.any? { |archive| archive.license.include?('GPL') }, 'no archive the image links is GPL'
     makefile = File.read(File.join(ROOT, 'otp/erts/emulator/Makefile.in'))
     assert_match %r{^LFS_DIR = \$\(ERX_TREE\)/littlefs$}, makefile

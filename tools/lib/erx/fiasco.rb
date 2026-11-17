@@ -23,10 +23,23 @@ require_relative 'cross_toolchain'
 require_relative 'host_path'
 require_relative 'output_directory'
 require_relative 'origin'
+require_relative 'import_notices'
+require_relative 'license_expression'
 
 module Erx
   class Fiasco
     IMPLEMENTATION_SHA256 = Digest::SHA256.file(__FILE__).hexdigest.freeze
+    # L4Re's user libraries, which the root links (in this order) and every image and
+    # the SDK ship: each library's license, as fiasco/l4re-core/LICENSE.spdx declares
+    # it for their packages, and the directories of the files it is compiled from: its
+    # own sources and the headers they include. user_library_notices derives the
+    # notices both ship them under from these.
+    UserLibrary = Data.define(:license, :sources)
+    USER_LIBRARIES = {
+      'libsigma0.a' => UserLibrary.new(license: 'MIT', sources: %w[libsigma0/include libsigma0/lib l4sys/include]
+                                         .map { "fiasco/l4re-core/#{it}" }.freeze),
+      'libl4sys.p.a' => UserLibrary.new(license: 'MIT', sources: %w[l4sys/include l4sys/lib].map { "fiasco/l4re-core/#{it}" }.freeze)
+    }.freeze
     KERNEL_COMMIT = '50bbe8a981199e17865e8553a4eb02c387b339cf'
     CORE_COMMIT = 'e2e2d5af9de7aa0e1df2a25ebadee54488fa4a49'
     # SHA-256 of git archives with no prefix, at the full commits above.
@@ -284,6 +297,72 @@ module Erx
     end
 
     def user_library(name) = File.join(@build, 'users/lib/arm64_armv8a/std/l4f', name)
+
+    # The notices user library name ships under, paths under the tree: its license's
+    # documents (user_license_notices) and a document of the copyright notices of its
+    # packages' files, written under build/fiasco/notices.
+    def user_library_notices(name)
+      profile = ImportNotices.parse(File.binread(File.join(@root, ImportNotices::PROFILE)))
+      directory = File.join(@build, 'notices')
+      FileUtils.mkdir_p(directory)
+      copyrights = File.join(directory, "#{name}.copyright")
+      File.binwrite(copyrights, Fiasco.user_copyrights(name, root: @root))
+      [*Fiasco.user_license_notices(name, profile: profile, root: @root), copyrights.delete_prefix("#{@root}/")]
+    end
+
+    # What import-notices.json gives user library name's sources for each grant of its
+    # license: l4re-core's LICENSE.spdx, which declares the license, and the license's
+    # permission text, each held to the profile's SHA-256. A grant the profile gives no
+    # text would ship the library without its license, so it fails the build.
+    def self.user_license_notices(name, profile:, root:)
+      library = USER_LIBRARIES.fetch(name)
+      grants = LicenseExpression.select(library.license, allow_restricted: false).fetch('grants')
+      references = library.sources.flat_map do |source|
+        missing = grants.select { |grant| ImportNotices.grant_documents(profile, source: source, grant: grant).empty? }
+        raise Error, "#{name} would ship without the text of #{missing.join(', ')}: #{ImportNotices::PROFILE} gives #{source} none" unless missing.empty?
+
+        ImportNotices.select(profile, source: source, grants: grants)
+      end
+      references.uniq.map do |reference|
+        path = reference.fetch('path')
+        raise Error, "#{path} differs from #{ImportNotices::PROFILE}" unless Digest::SHA256.file(File.join(root, path)).hexdigest == reference.fetch('sha256')
+
+        path
+      end
+    end
+
+    # The copyright notices of user library name's sources: of every file there, its
+    # opening comments up to the one that states a copyright, which name its authors
+    # where that statement says "Author(s)". Each text is the file's own, byte for
+    # byte, given once under the first file that carries it.
+    def self.user_copyrights(name, root:)
+      sources = USER_LIBRARIES.fetch(name).sources
+      files = sources.flat_map { |source| Dir.glob('**/*', base: File.join(root, source)).sort.map { File.join(source, it) } }
+      notices = files.select { File.file?(File.join(root, it)) }.to_h { [it, copyright_comment(File.binread(File.join(root, it)))] }.compact
+      heading = "Copyright notices of the files #{name} is compiled from (#{sources.join(', ')})\n"
+      notices.group_by { |_file, comment| comment }.map { |comment, carriers| "\n#{carriers.first.first}:\n#{comment}" }
+             .join.then { |body| (heading.b + body).b }
+    end
+
+    # The comment blocks a C, C++ or assembly file opens with, up to and including the
+    # first that states a copyright; nil when none of them does.
+    def self.copyright_comment(bytes)
+      blocks = []
+      lines = bytes.b.lines
+      until lines.empty?
+        line = lines.shift
+        stripped = line.lstrip
+        next if stripped.strip.empty?
+        break unless stripped.start_with?('/*', '//')
+
+        block = [line]
+        block << lines.shift while stripped.start_with?('/*') && !block.last.include?('*/') && !lines.empty?
+        blocks << block.join
+        return blocks.join if blocks.last.match?(/\(c\)|copyright/i)
+      end
+      nil
+    end
+
     def boot_core_archive = File.join(@build, 'boot-cores', CoreArchive::BOOT_ARCHIVE)
 
     private
@@ -307,7 +386,7 @@ module Erx
     # vouches for it: a hit needs each with the bytes the finished build left, the header
     # trees the native compiles include by content (BuildMemo#in_place).
     def memo_outputs
-      [image_path, kernel_path, sigma0_path, boot_core_archive, *%w[libsigma0.a libl4sys.p.a].map { |name| user_library(name) },
+      [image_path, kernel_path, sigma0_path, boot_core_archive, *USER_LIBRARIES.keys.map { |name| user_library(name) },
        *user_include_directories, File.join(@build, 'receipt.json'), File.join(@build, 'provenance.json')]
     end
 

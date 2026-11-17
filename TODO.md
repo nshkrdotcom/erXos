@@ -2367,7 +2367,7 @@ it; git history is the record of completed work.
   find them with `grep -rn design-stopgap tools test liberx erlang`). The eager-FP notices of the fork (`fiasco/kernel/src/kern/fpu.cpp:1-2`,
   `kern/arm/64/fpu-arm.cpp:1-2` and the other files that carry "lazy FP switching is deleted") cite only
   design-kernel.md; point them at design-fiasco.md's "The release's Fiasco build" too.
-* [Medium] build, `tools/lib/erx/production_image.rb:1906-1909`: the root's link records `libl4sys.p.a` and
+* [Medium] build, `tools/lib/erx/production_image.rb` (`archives`): the root's link records `libl4sys.p.a` and
   `libsigma0.a` with status `stopgap`, though the dependency table marks Fiasco's `l4re-core` parts `release`;
   the status sets of `tools/lib/erx/dependencies.rb:88` and `tools/lib/erx/toolchain_provenance.rb:72` admit
   only `permanent` and `stopgap`, two copies of one fact. Give the status set one source that includes

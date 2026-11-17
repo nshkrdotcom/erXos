@@ -122,7 +122,7 @@ module Erx
     # profile reference whose hash must agree before the catalog is returned.
     def self.pack(root:, paths:)
       root = File.realpath(root)
-      profile_path = File.join(root, 'config/provenance/import-notices.json')
+      profile_path = File.join(root, ImportNotices::PROFILE)
       support = [File.join(root, 'LICENSE')]
       support << profile_path if File.file?(profile_path)
       catalog = capture(root: root, paths: paths + support)

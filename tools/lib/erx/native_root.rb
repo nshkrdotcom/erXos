@@ -180,7 +180,7 @@ module Erx
     CODE_FLAGS = %w[--target=aarch64-none-elf -std=c17 -O2 -ffreestanding -fno-stack-protector -mno-outline-atomics].freeze
     FLAGS = [*CODE_FLAGS, *%w[-Wall -Wextra -Werror -pedantic -mgeneral-regs-only -I build/gen -I build/gen/include -I include
                               -I kernel/crypto -I build/gen/kernel/generated -I kernel/core -I .]].freeze
-    LIBRARIES = %w[libsigma0.a libl4sys.p.a].freeze
+    LIBRARIES = Fiasco::USER_LIBRARIES.keys.freeze
 
     # source is the tree the C comes from, which a test may seed with a fault.
     def initialize(root:, runner:, compiler:, linker:, platform:, source: root, fiasco: Fiasco.new(root: root, runner: runner, compiler: compiler))

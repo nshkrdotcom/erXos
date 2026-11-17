@@ -118,7 +118,7 @@ module Erx
       FileUtils.cp(libc, lib)
       builtins = CompilerRt.archive(root: @root, runner: @runner, compiler: @compiler)
       FileUtils.cp(builtins, lib)
-      %w[libsigma0.a libl4sys.p.a].each { |name| FileUtils.cp(@fiasco.user_library(name), lib) }
+      NativeRoot::LIBRARIES.each { |name| FileUtils.cp(@fiasco.user_library(name), lib) }
       FileUtils.cp(@fiasco.boot_core_archive, File.join(lib, 'libboot_cores.a'))
       EMPTY_LIBRARIES.each { |name| archive(File.join(lib, "lib#{name}.a"), []) }
       Sysroot.new(libc: libc, builtins: builtins, headers: headers)

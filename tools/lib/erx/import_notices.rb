@@ -10,6 +10,9 @@ module Erx
   # Package overrides select the legal text for the chosen grant, including
   # nested vendored libraries; filenames have no inferred license meaning.
   module ImportNotices
+    # The reviewed profile: each license's text, and each package's notices and grants.
+    PROFILE = 'config/provenance/import-notices.json'
+
     module_function
 
     def parse(bytes)
@@ -33,16 +36,24 @@ module Erx
     end
 
     def select(profile, source:, grants:)
-      packages = profile.fetch('packages').select do |package|
+      notices = packages(profile, source: source).flat_map { |package| package.fetch('notices') }
+      grants.each { |grant| notices.concat(grant_documents(profile, source: source, grant: grant)) }
+      notices.uniq.freeze
+    end
+
+    # The documents that state grant's terms for source: the grant of the innermost
+    # package holding source that lists one, else the profile's text of the license;
+    # empty when the profile has neither.
+    def grant_documents(profile, source:, grant:)
+      package = packages(profile, source: source).find { |candidate| candidate.fetch('grants').key?(grant) }
+      package ? package.fetch('grants').fetch(grant) : profile.fetch('licenses').fetch(grant, [])
+    end
+
+    # The packages of the profile that hold source, innermost first.
+    def packages(profile, source:)
+      profile.fetch('packages').select do |package|
         source == package.fetch('path') || source.start_with?(package.fetch('path') + '/')
       end.sort_by { |package| -package.fetch('path').bytesize }
-      notices = packages.flat_map { |package| package.fetch('notices') }
-      grants.each do |grant|
-        package = packages.find { |candidate| candidate.fetch('grants').key?(grant) }
-        chosen = package ? package.fetch('grants').fetch(grant) : profile.fetch('licenses').fetch(grant, [])
-        notices.concat(chosen)
-      end
-      notices.uniq.freeze
     end
 
     def documents(profile)
