@@ -2018,15 +2018,17 @@ the path into one of four images:
   * On the stopgap the backend under `liberx` brings three more
     archives into every link: the boot cores, `erx_boot.a`, and
     L4Re's `libsigma0.a` and `libl4sys.p.a` (the boot image's link,
-    `tools/lib/erx/native_root.rb:285-289`). The probe link took the
+    `NativeRoot.archive_group` in `tools/lib/erx/native_root.rb`). The probe link took the
     three as Fiasco's build makes them, and none of their members
     needed a relocation the static position-independent link refuses.
-    The SDK does not ship them: it ships `liberx_program.a`, an archive
-    the SDK's build makes from `liberx`'s program layer, its backend
-    and the members of the backend's own archives, so a package's link
-    line names `libc.a`, `liberx_program.a` and the builtins on every
-    backend, and a change of backend changes what that archive holds,
-    never a package's link.
+    The SDK ships them beside `liberx_program.a`, the archive the
+    SDK's build makes from `liberx`'s program layer and its backend,
+    which a package's link takes whole, as the boot image's link takes
+    those objects; the backend's archives are searched in one group
+    with `libc.a` and the builtins, as the boot image's link searches
+    them. A package's link names them only through `sdk.mk`'s
+    `ERX_LIBS`, so a change of backend changes what the SDK's `lib/`
+    holds and what `ERX_LIBS` names, never a package's link.
 
 * **`rc`.** The `rc` command runs in the program's command domain with an
   `rc` script: it runs the script with the shell's interpreter, with rc's

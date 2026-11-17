@@ -14,6 +14,8 @@ module Erx
   # The arch's seam calls liberx's fiasco backend, whose objects the program links.
   class Musl
     ARCH = 'erxos'
+    # musl's license notice, beside its source.
+    NOTICE = 'musl/COPYRIGHT'
     CPU = 'aarch64'
     # What musl's configure would choose for this compiler, and the target a root task links for.
     CFLAGS = %w[--target=aarch64-none-elf -Os -pipe -fomit-frame-pointer -fno-unwind-tables

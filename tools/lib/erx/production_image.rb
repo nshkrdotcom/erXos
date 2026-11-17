@@ -1995,7 +1995,7 @@ module Erx
 
     def archives(erts)
       [*otp_archives([erts.system_table, *erts.otp_archives], flavour: 'emu'),
-       Archive.new(path: erts.libc, label: 'musl libc', license: 'MIT', status: 'permanent', notices: ['musl/COPYRIGHT']),
+       Archive.new(path: erts.libc, label: 'musl libc', license: 'MIT', status: 'permanent', notices: [Musl::NOTICE]),
        Archive.new(path: erts.builtins, label: 'llvm compiler-rt builtins', license: CompilerRt::LICENSE,
                    status: 'permanent', notices: [CompilerRt.notice(root: @root, runner: @runner)]),
        *Fiasco::USER_LIBRARIES.map do |name, library|

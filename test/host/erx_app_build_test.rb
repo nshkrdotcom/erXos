@@ -25,7 +25,8 @@ class ErxAppBuildTest < Minitest::Test
       work = Dir.mktmpdir('erx-app-build-sdk-')
       Minitest.after_run { FileUtils.rm_rf(work) }
       directory = File.join(work, 'sdk')
-      Erx::Sdk.new(root: ROOT, runner: runner, erlc: ENV.fetch('ERX_ERLC')).export(directory)
+      Erx::Sdk.new(root: ROOT, runner: runner, erlc: ENV.fetch('ERX_ERLC'), compiler: ENV.fetch('ERX_CLANG'),
+                    linker: ENV.fetch('ERX_LLD')).export(directory)
       Erx::AppPack::Sdk.new(root: directory, erlc: ENV.fetch('ERX_ERLC'))
     end
   end

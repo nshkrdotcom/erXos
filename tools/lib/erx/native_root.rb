@@ -253,6 +253,15 @@ module Erx
     # a changed header.
     def self.libc_headers(root) = File.join(LIBC_SYSROOT, File.basename(Musl.headers(File.join(root, LIBC_SYSROOT))))
 
+    # A link's options before its output and inputs: script, flags, then what every link
+    # takes. The SDK's recipe (SdkSysroot) states its programs' link with it.
+    def self.link_options(script:, flags:, strip_debug:) = ['-T', script, *flags, *ROOT_LINK_FLAGS, *(strip_debug ? ['--strip-debug'] : [])]
+
+    # A link's archives after its objects: the caller's, then Fiasco's boot cores and its
+    # libraries. They name one another's symbols in no fixed order, so the linker rescans
+    # them as a group until nothing new resolves.
+    def self.archive_group(archives, boot_core:, libraries:) = ['--start-group', *archives, boot_core, *libraries, '--end-group']
+
     # The linker flag that gives root.ld its place: an address in RAM, which starts at
     # ram_first, on a page boundary.
     def self.place_flags(place, ram_first:)
@@ -289,11 +298,10 @@ module Erx
       objects = compile_all(sources: sources, directory: directory, flags: flags)
       libraries = LIBRARIES.map { |library| @fiasco.user_library(library) }
       program = File.join(directory, name)
-      @runner.run([@linker, '-T', script, *(place ? self.class.place_flags(place, ram_first: @platform.ram_first) : []), *link_flags, *ROOT_LINK_FLAGS, *(strip_debug ? ['--strip-debug'] : []), '-Map', map_path(program),
+      flags = [*(place ? self.class.place_flags(place, ram_first: @platform.ram_first) : []), *link_flags]
+      @runner.run([@linker, *self.class.link_options(script: script, flags: flags, strip_debug: strip_debug), '-Map', map_path(program),
                    '-o', program, *objects,
-                   # The archives name one another's symbols in no fixed order, so the linker
-                   # rescans them as a group until nothing new resolves.
-                   '--start-group', *archives, @fiasco.boot_core_archive, *libraries, '--end-group'],
+                   *self.class.archive_group(archives, boot_core: @fiasco.boot_core_archive, libraries: libraries)],
                   name: "native-root-#{name}-link", deadline: 60, chdir: @source)
       CounterReads.check(program: program, objdump: File.join(File.dirname(@compiler), 'llvm-objdump'), runner: @runner)
       program

@@ -9,6 +9,7 @@ require_relative 'bounded_file'
 require_relative 'erlang_apps'
 require_relative 'error'
 require_relative 'oracle'
+require_relative 'sdk_sysroot'
 require_relative 'source_revision'
 
 module Erx
@@ -22,7 +23,8 @@ module Erx
   # exports. DIR/host/erlang/ebin holds what the packer's file check calls outside the SDK's
   # applications: erx_bytes for stock OTP (test/erlang/host_bytes) and the preloaded
   # erx_verity_tree, the hash tree's layout. No private key enters an SDK: its packer makes
-  # its own development key on the host that uses it (Erx::PackageKey).
+  # its own development key on the host that uses it (Erx::PackageKey). DIR/sysroot and
+  # DIR/share/erxos/sdk.mk are the native half a C program builds with (Erx::SdkSysroot).
   class Sdk
     PUBLIC = 'sdk/public.txt'
     HOST_MODULES = %w[test/erlang/host_bytes/erx_bytes.erl otp/erts/preloaded/src/erx_verity_tree.erl].freeze
@@ -99,10 +101,12 @@ module Erx
     end
     private_class_method :reach
 
-    def initialize(root:, runner:, erlc:)
+    # compiler and linker are the LLVM clang and ld.lld the native half builds with (Erx::SdkSysroot).
+    def initialize(root:, runner:, erlc:, compiler:, linker:)
       @root = root
       @runner = runner
       @erlc = erlc
+      @sysroot = SdkSysroot.new(root: root, runner: runner, compiler: compiler, linker: linker)
     end
 
     # Writes the SDK into directory, which must not exist yet; returns directory.
@@ -130,6 +134,7 @@ module Erx
       File.write(File.join(work, 'erlang', 'public.txt'),
                  self.class.expand(entries, exports: exports(entries, lib: lib)).map { "#{it}\n" }.join)
       File.write(File.join(work, 'SDK.txt'), description)
+      @sysroot.write(work)
       host = File.join(work, 'host', 'erlang', 'ebin')
       FileUtils.mkdir_p(host)
       @runner.run([@erlc, '+deterministic', '-I', File.join(@root, HOST_INCLUDE), '-o', host,

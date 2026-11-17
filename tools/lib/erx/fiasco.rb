@@ -41,6 +41,8 @@ module Erx
       'libl4sys.p.a' => UserLibrary.new(license: 'MIT', sources: %w[l4sys/include l4sys/lib cxx/lib/tl/include]
                                           .map { "fiasco/l4re-core/#{it}" }.freeze)
     }.freeze
+    # The license notice of L4Re's user libraries (user_library).
+    USER_NOTICE = 'fiasco/l4re-core/LICENSE.spdx'
     KERNEL_COMMIT = '50bbe8a981199e17865e8553a4eb02c387b339cf'
     CORE_COMMIT = 'e2e2d5af9de7aa0e1df2a25ebadee54488fa4a49'
     # SHA-256 of git archives with no prefix, at the full commits above.

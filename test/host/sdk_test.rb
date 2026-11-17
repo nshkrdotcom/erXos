@@ -5,7 +5,9 @@
 require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
+require_relative '../../tools/lib/erx/app_pack'
 require_relative '../../tools/lib/erx/example_lists'
+require_relative '../../tools/lib/erx/package_key'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/sdk'
 # build/gen brought up to date at process entry, for the applications' generated headers.
@@ -16,11 +18,13 @@ require_relative '../fixtures/generated_tree'
 # test/erlang/erx_sdk_boundary.erl over an app of test/fixtures/sdk_app with its seeded
 # fault (a call of erx_ui:start/1, exported by a public module but not public), and the
 # check that no list names an example with its (erx_dashboard added to
-# ErlangApps::APPLICATIONS).
+# ErlangApps::APPLICATIONS), and the native half: test/fixtures/sdk_hello built with the SDK
+# alone, packed and planned as the loader plans it, with its seeded faults.
 class SdkTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   PROBE = File.join(ROOT, 'test/fixtures/sdk_app/lib/erx_sdk_probe/src/erx_sdk_probe.erl')
   BOUNDARY = File.join(ROOT, 'test/erlang/erx_sdk_boundary.erl')
+  HELLO = File.join(ROOT, 'test/fixtures/sdk_hello')
   DEADLINE = %w[gtimeout -k 10 300].freeze
 
   # One export per test process: compiling the public applications is the slow part.
@@ -28,7 +32,8 @@ class SdkTest < Minitest::Test
     @sdk ||= begin
       directory = File.join(Dir.mktmpdir('erx-sdk-test-'), 'sdk')
       runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
-      Erx::Sdk.new(root: ROOT, runner: runner, erlc: ENV.fetch('ERX_ERLC')).export(directory)
+      Erx::Sdk.new(root: ROOT, runner: runner, erlc: ENV.fetch('ERX_ERLC'), compiler: ENV.fetch('ERX_CLANG'),
+                    linker: ENV.fetch('ERX_LLD')).export(directory)
     end
   end
 
@@ -152,7 +157,103 @@ class SdkTest < Minitest::Test
     end
   end
 
+  # The hello program builds out of the tree with the SDK alone: its compile and link name
+  # only the SDK's files, and the executable is linked at task.ld's fixed base, as the boot
+  # image's programs are. Packed, its program passes the planner the loader uses.
+  def test_a_c_program_built_with_the_sdk_alone_packs
+    Dir.mktmpdir('erx-sdk-hello-') do |work|
+      recipe = File.read(File.join(sdk, 'share/erxos/sdk.mk'))
+      refute_includes recipe, ROOT
+      directory = hello(File.join(work, 'hello'))
+      program = File.binread(File.join(directory, 'bin/hello'))
+      assert_equal [2, Erx::AppPackage.codec.constant('exec_window_base')], [program.unpack1('v', offset: 16), first_load(program)]
+      path = Erx::AppPack.pack(directory: directory, sdk: app_sdk, signer: signer, output_directory: work, runner: runner, root: ROOT,
+                               compiler: ENV.fetch('ERX_CLANG'))
+      assert File.file?(path)
+    end
+  end
+
+  # Every library the SDK ships carries its license notices in share/licenses/LIB, copies
+  # of the tree's notice files; a seeded SDK with one library's notices dropped is caught.
+  def test_every_shipped_library_carries_its_notices
+    libraries = Dir.children(File.join(sdk, 'sysroot/aarch64/lib')).select { it.end_with?('.a') }.sort
+    assert_equal %w[libboot_cores.a libc.a libclang_rt.builtins.a liberx_program.a libl4sys.p.a libsigma0.a], libraries
+    assert_empty unattributed(sdk)
+    assert_equal File.read(File.join(ROOT, 'musl/COPYRIGHT')), File.read(File.join(sdk, 'share/licenses/libc.a/COPYRIGHT'))
+    Dir.mktmpdir('erx-sdk-notices-') do |work|
+      FileUtils.cp_r(File.join(sdk, 'sysroot'), work)
+      FileUtils.mkdir_p(File.join(work, 'share'))
+      FileUtils.cp_r(File.join(sdk, 'share/licenses'), File.join(work, 'share'))
+      FileUtils.rm_rf(File.join(work, 'share/licenses/libsigma0.a'))
+      assert_equal ['libsigma0.a'], unattributed(work)
+    end
+  end
+
+  # Seeded faults: the program made position-independent, an ET_DYN at the task script's
+  # base, and with its code segment made writable, are each refused before a package is
+  # made. (The recipe cannot link a PIE: task.ld names no dynamic section, and the link
+  # refuses an orphan.)
+  def test_a_pie_or_a_writable_code_segment_is_refused
+    Dir.mktmpdir('erx-sdk-hello-') do |work|
+      pie = seeded(File.join(work, 'pie')) { |program, _| program[16, 2] = [3].pack('v') }
+      assert_match(%r{\Abin/hello is not a program the loader accepts: pie_origin at byte [0-9]+\z}, refusal(pie))
+      writable = seeded(File.join(work, 'wx')) do |program, table|
+        assert_equal [1, 5], program.unpack('V2', offset: table)
+        program[table + 4, 4] = [7].pack('V')
+      end
+      assert_match(%r{\Abin/hello is not a program the loader accepts: load_protection_or_size at byte 0\z}, refusal(writable))
+    end
+  end
+
   private
+
+  def runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+  def app_sdk = Erx::AppPack::Sdk.new(root: sdk, erlc: ENV.fetch('ERX_ERLC'))
+  def signer = self.class.signer
+
+  def self.signer
+    @signer ||= Erx::PackageKey.ensure(directory: Erx::PackageKey.directory(home: Dir.mktmpdir('erx-sdk-home-')))
+  end
+
+  # A copy of the hello fixture in directory, built with the SDK's recipe by make.
+  def hello(directory)
+    FileUtils.mkdir_p(File.dirname(directory))
+    FileUtils.cp_r(HELLO, directory)
+    output, status = Open3.capture2e(*DEADLINE, 'gmake', '-C', directory, "SDK=#{sdk}", "ERX_CC=#{ENV.fetch('ERX_CLANG')}",
+                                     "ERX_LD=#{ENV.fetch('ERX_LLD')}", stdin_data: '')
+    assert status.success?, output
+    directory
+  end
+
+  # The hello program built in directory, its bytes changed by the block, which is given
+  # them and the offset of the program header table.
+  def seeded(directory)
+    path = File.join(hello(directory), 'bin/hello')
+    program = File.binread(path)
+    yield program, program.unpack1('Q<', offset: 32)
+    File.binwrite(path, program)
+    directory
+  end
+
+  # The virtual address of an executable's first program header, a load.
+  def first_load(program) = program.unpack1('Q<', offset: program.unpack1('Q<', offset: 32) + 16)
+
+  # The libraries of an SDK's lib/ with no non-empty notice in share/licenses/LIB.
+  def unattributed(directory)
+    Dir.children(File.join(directory, 'sysroot/aarch64/lib')).select { it.end_with?('.a') }.sort.reject do |library|
+      notices = File.join(directory, 'share/licenses', library)
+      File.directory?(notices) && !Dir.children(notices).empty? &&
+        Dir.children(notices).all? { File.size(File.join(notices, it)).positive? }
+    end
+  end
+
+  # The packer's refusal of the app in directory.
+  def refusal(directory)
+    assert_raises(Erx::Error) do
+      Erx::AppPack.pack(directory: directory, sdk: app_sdk, signer: signer, output_directory: File.dirname(directory),
+                        runner: runner, root: ROOT, compiler: ENV.fetch('ERX_CLANG'))
+    end.message
+  end
 
   # The boundary check's answer for the probe app compiled from source, printed by Erlang.
   def outside(source)
