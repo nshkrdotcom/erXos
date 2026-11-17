@@ -478,6 +478,14 @@ graph(lv_obj_t *parent, ui_node_t *node)
 	return obj;
 }
 
+/*
+ * The marks LVGL's checkbox and drop-down draw as text, in characters the
+ * theme's range holds (abi/theme.txt), since the roles' fonts have none of
+ * LVGL's symbols: U+2713, a check mark, and U+2193, a downwards arrow.
+ */
+#define CHECK_MARK	"\xe2\x9c\x93"
+#define LIST_ARROW	"\xe2\x86\x93"
+
 static lv_obj_t *
 widget(lv_obj_t *parent, ui_node_t *node)
 {
@@ -499,6 +507,8 @@ widget(lv_obj_t *parent, ui_node_t *node)
 	case ERX_UI_KIND_CHECKBOX:
 		obj = lv_checkbox_create(parent);
 		lv_checkbox_set_text_static(obj, "");
+		lv_obj_set_style_bg_image_src(obj, CHECK_MARK,
+		    LV_PART_INDICATOR | LV_STATE_CHECKED);
 		return obj;
 	case ERX_UI_KIND_SLIDER:
 		return lv_slider_create(parent);
@@ -509,7 +519,9 @@ widget(lv_obj_t *parent, ui_node_t *node)
 		lv_obj_set_style_anim_duration(obj, 0, LV_PART_CURSOR);
 		return obj;
 	case ERX_UI_KIND_LIST:
-		return lv_dropdown_create(parent);
+		obj = lv_dropdown_create(parent);
+		lv_dropdown_set_symbol(obj, LIST_ARROW);
+		return obj;
 	case ERX_UI_KIND_SPACER:
 		return container(parent, ERX_UI_KIND_SPACER);
 	default:
@@ -737,29 +749,22 @@ set_graph(ui_node_t *node)
 
 /*
  * The theme's type roles (abi/theme.txt, generated as erx/theme.h): each
- * role's size and where its colour lies in a palette, by its ui_role
- * value, which ui.txt and the theme name alike.
+ * role's LVGL font, which the glyph step writes from the role's typeface,
+ * size and weight (Erx::Glyphs::LvglFont), and where its colour lies in a
+ * palette, by its ui_role value, which ui.txt and the theme name alike. A
+ * value no role has has no font.
  */
+#define FONT(name, NAME) LV_FONT_DECLARE(erx_lvgl_font_##name)
+ERX_THEME_ROLES(FONT)
+#undef FONT
 #define ROLE(name, NAME) [ERX_UI_ROLE_##NAME] = \
-	{ ERX_THEME_ROLE_##NAME##_SIZE, \
+	{ &erx_lvgl_font_##name, \
 	    offsetof(erx_theme_palette_t, ERX_THEME_ROLE_##NAME##_COLOR) },
 static const struct {
-	int32_t size;
+	const lv_font_t *font;
 	size_t color;	/* the offset of its colour in erx_theme_palette_t */
 } roles[] = { ERX_THEME_ROLES(ROLE) };
 #undef ROLE
-
-/* LVGL's built-in faces that lv_conf.h compiles, smallest first. */
-static const struct {
-	int32_t size;
-	const lv_font_t *font;
-} faces[] = {
-	{ 12, &lv_font_montserrat_12 },
-	{ 14, &lv_font_montserrat_14 },
-	{ 16, &lv_font_montserrat_16 },
-	{ 20, &lv_font_montserrat_20 },
-	{ 48, &lv_font_montserrat_48 },
-};
 
 /* A colour of the window's palette, by its offset in erx_theme_palette_t. */
 static lv_color_t
@@ -771,31 +776,25 @@ palette_color(size_t offset)
 
 /*
  * Shows a node's text as its role and trend say, from the two together so
- * the order they arrive in does not matter: the face is the smallest at
- * least the role's size; the colour is the palette's ok for a trend up,
- * critical for one down, and otherwise the role's. What neither sets takes
- * LVGL's own face and the window's text colour again, as a node that never
+ * the order they arrive in does not matter: the font is the role's; the
+ * colour is the palette's ok for a trend up, critical for one down, and
+ * otherwise the role's. What neither sets takes LVGL's default font, body's
+ * (lv_conf.h), and the window's text colour again, as a node that never
  * had them shows.
  */
 static void
 text_style(ui_node_t *node)
 {
 	lv_obj_t *text = node->label != NULL ? node->label : node->obj;
-	size_t face = 0;
 
 	if (node->role >= 0 &&
 	    ((size_t)node->role >= sizeof(roles) / sizeof(roles[0]) ||
-	    roles[node->role].size == 0))
+	    roles[node->role].font == NULL))
 		fatal("role %d is not one of the theme's", node->role);
-	if (node->role < 0) {
+	if (node->role < 0)
 		lv_obj_remove_local_style_prop(text, LV_STYLE_TEXT_FONT, 0);
-	} else {
-		while (faces[face].size < roles[node->role].size)
-			if (++face == sizeof(faces) / sizeof(faces[0]))
-				fatal("no face has the %d pixels of role %d",
-				    roles[node->role].size, node->role);
-		lv_obj_set_style_text_font(text, faces[face].font, 0);
-	}
+	else
+		lv_obj_set_style_text_font(text, roles[node->role].font, 0);
 	if (node->trend == ERX_UI_TREND_UP)
 		lv_obj_set_style_text_color(text, lv_color_hex(palette->ok), 0);
 	else if (node->trend == ERX_UI_TREND_DOWN)

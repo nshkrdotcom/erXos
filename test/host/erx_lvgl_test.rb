@@ -7,6 +7,7 @@ require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/erlang_build'
+require_relative '../../tools/lib/erx/glyphs'
 require_relative '../../tools/lib/erx/lvgl'
 require_relative '../../tools/lib/erx/origin'
 require_relative '../../tools/lib/erx/ppm'
@@ -139,7 +140,45 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
     end
   end
 
+  # A role's text is drawn in the theme's font for that role, at its size and
+  # weight (abi/theme.txt), not in a face of another size: the ink of a run
+  # of H, where a pixel nearer the text's colour than the background's is
+  # ink, spans the pen's whole-pixel advances of Inter's H at the role's size
+  # and the columns of one H whose coverage is at least half, as erx-raster
+  # gives them. heading, 15 pixels, is a size no LVGL built-in face has.
+  def test_a_role_s_text_is_drawn_in_its_theme_font
+    runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+    program = Erx::Lvgl::Build.new(root: ROOT, runner: runner).call
+    theme = Erx::Glyphs.theme(root: ROOT)
+    role = theme.roles.fetch('heading')
+    letters = 6
+    h = Erx::Raster.locate(root: ROOT)
+                   .rasterise(font: File.join(ROOT, Erx::Glyphs.font_file(theme, role)), size: role.size,
+                              glyphs: ['U+0048'], runner: runner).glyphs.first
+    inked = h.rows.flat_map { |row| row.bytes.each_index.select { |column| row.getbyte(column) >= 128 } }
+    expected = ((letters - 1) * ((h.advance + 32) >> 6)) + inked.max - inked.min + 1
+    Dir.mktmpdir('erx-lvgl-face') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS)
+      tree = "{column, \#{}, [{label, \#{text => <<\"#{'H' * letters}\">>, role => heading}, []}]}"
+      run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
+           "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program)}, #{tree}, {200, 60})), " \
+           'halt(0)', chdir: work)
+      assert_equal expected, ink_span(File.binread(File.join(work, 'picture.rgb')).bytes.each_slice(3).each_slice(200).to_a)
+    end
+  end
+
   private
+
+  # The columns from the first to the last that hold ink in ROWS of [r, g, b]
+  # pixels: a pixel farther from the background, the commonest colour, than
+  # half the distance of the farthest pixel.
+  def ink_span(rows)
+    background = rows.flatten(1).tally.max_by { |_, count| count }.first
+    distance = ->(pixel) { pixel.zip(background).sum { |a, b| (a - b).abs } }
+    far = rows.flatten(1).map(&distance).max
+    columns = rows.flat_map { |row| row.each_index.select { |column| 2 * distance.call(row[column]) > far } }
+    columns.max - columns.min + 1
+  end
 
   # The model screen's map of the program and how to start it, as an Erlang term.
   def screen(program)
@@ -269,6 +308,11 @@ class LvglProgramTest < Minitest::Test
     def self.ensure(root:) = root
   end
 
+  # Writes no glyphs: the test compiles no font.
+  module Glyphs
+    def self.ensure(root:, runner:) = root
+  end
+
   # Takes NativeRoot#build_task_receipted's arguments and answers as it does.
   class Native
     attr_reader :link
@@ -290,7 +334,7 @@ class LvglProgramTest < Minitest::Test
       native = Native.new
       built = Erx::Lvgl::Program.new(root: root, runner: runner, native: native, compiler: '/llvm/clang', archives: %w[libc.a libclang_rt.builtins.a],
                                directory: File.join(root, 'out'), jobs: 2,
-                                     generated: Generated).call
+                                     generated: Generated, glyphs: Glyphs).call
 
       flags = Erx::Lvgl::Program.library_flags(root)
       assert_equal [*Erx::NativeRoot::CODE_FLAGS, '-isystem', headers, '-D_BSD_SOURCE'].join(' '),
@@ -304,6 +348,7 @@ class LvglProgramTest < Minitest::Test
       assert_includes make, 'CC=/llvm/clang'
       assert_includes make, 'AR=/llvm/llvm-ar'
       assert_includes make, 'SANITIZE='
+      assert_includes make, "GLYPHS=#{root}/build/glyphs"
       assert_equal [*Erx::NativeRoot::PROGRAM, *Erx::Lvgl::Program::SOURCES], native.link.fetch(:sources)
       assert_equal [archive, 'libc.a', 'libclang_rt.builtins.a'], native.link.fetch(:archives)
       refute native.link.key?(:flags)

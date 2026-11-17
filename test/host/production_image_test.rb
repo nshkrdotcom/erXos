@@ -641,7 +641,7 @@ class ProductionImageTest < Minitest::Test
     assert_equal lvgl.fetch(:inputs), parts.inputs
     library = parts.archives.fetch(0)
     assert_equal [lvgl.fetch(:archive), 'MIT AND OFL-1.1', true], [library.path, library.license, library.font_data]
-    assert_includes library.notices, 'display/lvgl/lvgl/scripts/generators/built_in_font/font_license/Montserrat/OFL.txt'
+    assert_includes library.notices, 'display/fonts/inter/LICENSE.txt'
 
     parts = Erx::ProductionImage.toolkit_parts(Erx::ReleaseFiles.domain([session]), codec: codec) { flunk 'erx-lvgl was built' }
     assert_equal [[], []], [parts.entries, parts.archives]

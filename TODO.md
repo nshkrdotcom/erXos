@@ -8793,17 +8793,26 @@ document's "residual risks accepted" paragraph.
   followed within the round, a request httpc refuses at once, the tick) have no test; the HTTPS test
   covers a value, a refused certificate and a body too big.
 
-* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`, `set_role`): a node with no `role` shows LVGL's own face
-  and colour, while ui.txt makes `body` the default, which an explicit `role => body` shows in the theme's
+* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`, `text_style`): a node with no `role` shows body's font (LVGL's
+  default, `lv_conf.h`) but LVGL's own colour, while ui.txt makes `body` the default, which an explicit `role => body` shows in the theme's
   `text` colour; applying `body` to every node that takes a role means re-recording the LVGL references.
 
 * [Low] `examples/dashboard`: the clock shows the wall clock even while `/proc/time`'s `state` is `unset`
   ([design-time.md](docs/design-time.md)), so an unset clock shows a 1970 date as if it were the time; it
   should show the clock as not set.
 
-* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`): a type role takes the smallest of LVGL's built-in Montserrat
-  faces at least its size, not the theme's Inter at its exact size, weight and tabular figures; `icon` and
-  the `graph` kind are not drawn.
+* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`): `icon` is not drawn.
+* [Medium] `erx-lvgl` (`tools/lib/erx/lvgl.rb`, `Lvgl::Program::NOTICES` and `LICENSE`): the archive's font
+  notice (`display/fonts/inter/LICENSE.txt`) and its OFL-1.1 are written by hand, while `abi/theme.txt` names
+  the fonts and their `ORIGIN.md` rows the license (`Glyphs.font_notice` reads both); a theme font in another
+  directory or under another license would ship under Inter's notice. Derive both from the glyph step that
+  built the archive and hand them to `ProductionImage.toolkit_parts` with the program.
+* [Low] glyph step (`Glyphs.ensure`, `display/lvgl/Makefile`): the output's lock covers the write, not the
+  make that compiles the fonts after it, so a writer that changes `build/glyphs` while another build compiles
+  from it can leave an object newer than its new source; hold the lock shared around the make.
+* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`, `CHECK_MARK`, `LIST_ARROW`): the checkbox mark U+2713 and the
+  drop-down arrow U+2193 must lie in the theme's range and in its font, which nothing checks and no test
+  draws; a missing one shows LVGL's placeholder box.
 
 * [Medium] clock record, `abi/inspection.txt` kind `clock`: design-time gives the service's `sample_at`,
   `step_at`, `step_ns`, `offset_ns`, `distance_ns`, `stratum` and `server` the value `none` before a

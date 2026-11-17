@@ -146,9 +146,12 @@ and it takes no other system's assets, names or icons.
 * **Fonts.** The tree holds no font. design-display's dependency rows
   name plan9port's `fixed` bitmap fonts for the terminal and the first
   widgets, and the anti-aliased fonts these programs bring
-  ([design-display.md](design-display.md#dependencies)). LVGL compiles in Montserrat 14 under OFL-1.1,
-  which the release check admits as font data only
-  (`tools/lib/erx/license_expression.rb:24-36`, `FONT_DATA_ONLY`).
+  ([design-display.md](design-display.md#dependencies)). LVGL compiles in
+  no font of its own: `liblvgl.a` holds each role's LVGL font from the
+  glyph step, Inter's glyphs under OFL-1.1, which the release check
+  admits as font data only (`tools/lib/erx/license_expression.rb`,
+  `FONT_DATA_ONLY`), with Inter's `LICENSE.txt` as the archive's notice
+  (`Erx::Lvgl::Program`).
 * **LVGL** 9.6.0 (`display/lvgl/ORIGIN.md`, commit `80ca777e`) draws
   rounded corners, shadows and anti-aliased arcs in software: its
   configuration sets `LV_DRAW_SW_COMPLEX` to `LV_USE_DRAW_SW` when
@@ -380,7 +383,7 @@ Its grammar, in outline (the full grammar is
 theme 1
   unit 4
   font ui display/fonts/inter regular Inter-Regular.ttf medium Inter-Medium.ttf semibold Inter-SemiBold.ttf
-  range ui 0020-007E 00A0-017F 2000-206F 2190-21FF
+  range ui 0020-007E 00A0-017F 2000-206F 2190-21FF 2713-2713
   role display  font ui size 48 line 64 weight semibold figures tabular
   role title    font ui size 20 line 28 weight semibold
   role heading  font ui size 15 line 20 weight semibold
@@ -976,13 +979,13 @@ additions](#widget-format-additions)): `folder`, `document`, `text`,
 
 | Need | Erlang renderer (`erx_ui_erlang`, part 7) | LVGL (`erx-lvgl`) | Where the gap is closed |
 | --- | --- | --- | --- |
-| anti-aliased text | glyphs from `fixed`, 1-bit | Montserrat 14 only | the glyph step: `k8` subfonts and LVGL fonts of every role, from one rasterisation |
-| a type scale | one size | one size | the theme's roles, and the `role` property |
-| kerning | none: a subfont gives one advance a glyph | Montserrat's own classes | the glyph step's pairs from each font's `GPOS`, in every form it writes ([Kerning](#kerning)) |
+| anti-aliased text | glyphs from `fixed`, 1-bit | each role's LVGL font from the glyph step | the glyph step: `k8` subfonts and LVGL fonts of every role, from one rasterisation |
+| a type scale | one size | the roles' sizes | the theme's roles, and the `role` property |
+| kerning | none: a subfont gives one advance a glyph | the glyph step's pairs | the glyph step's pairs from each font's `GPOS`, in every form it writes ([Kerning](#kerning)) |
 | rounded corners, borders | none | yes | `erx_mask`'s corner masks, in the Erlang renderer |
 | soft shadows | none | yes | `erx_mask`'s shadow masks, in the Erlang renderer |
 | graphs | no kind | chart widget | the `graph` kind; `erx_mask`'s stroke and area masks in the Erlang renderer, `lv_chart` in LVGL |
-| icons | no property | symbol font only | the icon set, the `icon` and `icons` properties |
+| icons | no property | none | the icon set, the `icon` and `icons` properties |
 | light and dark palettes | none | LVGL's default theme | the theme, in both renderers and the decorations, chosen by the display |
 
 ## Widget format additions

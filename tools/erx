@@ -942,19 +942,12 @@ module Erx
       RcOracle::Build.new(root: ROOT, runner: runner).call.rc
     end
 
-    # The theme's role subfonts and the menu's glyph module in build/glyphs
-    # (Glyphs), through erx-raster, which is built first from the fetched
-    # FreeType pin when it is missing or stale (Raster::Build); prints only
-    # the output directory.
+    # The theme's role subfonts, LVGL fonts and the menu's glyph module in
+    # build/glyphs (Glyphs.ensure); prints only the output directory.
     def self.build_glyphs
       require_relative 'lib/erx/glyphs'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
-      program = begin
-        Raster.locate(root: ROOT)
-      rescue Raster::MissingBuild, Raster::StaleBuild
-        Raster::Build.new(root: ROOT, runner: runner).call
-      end
-      Glyphs.write(root: ROOT, program: program, runner: runner)
+      Glyphs.ensure(root: ROOT, runner: runner)
       File.join(ROOT, Glyphs::OUTPUT)
     end
 

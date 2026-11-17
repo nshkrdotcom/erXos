@@ -15,7 +15,7 @@ theme 1
   # A font: its name, its directory, and the file of each weight it has.
   font ui display/fonts/inter regular Inter-Regular.ttf medium Inter-Medium.ttf semibold Inter-SemiBold.ttf
   # The code points the glyph step rasterises from a font.
-  range ui 0020-007E 00A0-017F 2000-206F 2190-21FF
+  range ui 0020-007E 00A0-017F 2000-206F 2190-21FF 2713-2713
   # Type roles; a renderer never picks a size, a role does. Sizes and line
   # heights are pixels; a role without a colour takes `text`.
   role display font ui size 48 line 64 weight semibold figures tabular
