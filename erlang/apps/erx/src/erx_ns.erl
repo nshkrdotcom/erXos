@@ -66,10 +66,10 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_link/1, mount/3, mount_facets/1, mount_own/2, unmount/1, bind/2, bind/3, tmp_limit/0,
-         change/2, packages_place/0]).
+         change/2, packages_place/0, home_place/1]).
 -export([image_log/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
--export_type([entry/0, table/0]).
+-export_type([entry/0, table/0, option/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -192,6 +192,23 @@ place(_Name) -> none.
 %% mounts it, whatever facets a session holds.
 -spec packages_place() -> {binary(), [option()]}.
 packages_place() -> {<<"/packages">>, [{tree, <<"packages">>}, rw]}.
+
+%% Where the home of the user named User lies, with the same options as place/1
+%% (docs/design-files.md, "A user's home"): /root for root and /home/User for any
+%% other user, FreeBSD's paths, the same path in a session's namespace, where the
+%% session mounts its home facet, and on the data volume, where the storage domain
+%% roots the user's home grant. A User that is not one path name, empty, . or .., or
+%% holding / or NUL, has no home: einval, so no name places a home above /home.
+-spec home_place(binary()) -> {ok, {binary(), [option()]}} | {error, einval}.
+home_place(User) when User =:= <<>>; User =:= <<".">>; User =:= <<"..">> ->
+    {error, einval};
+home_place(<<"root">>) ->
+    {ok, {<<"/root">>, [{tree, <<"home">>}, rw]}};
+home_place(User) when is_binary(User) ->
+    case binary:match(User, [<<"/">>, <<0>>]) of
+        nomatch -> {ok, {<<"/home/", User/binary>>, [{tree, <<"home">>}, rw]}};
+        _ -> {error, einval}
+    end.
 
 %% Removes the entry at exactly To.
 -spec unmount(file:name_all()) -> ok | {error, reason()}.

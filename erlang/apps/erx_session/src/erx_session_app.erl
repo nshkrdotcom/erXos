@@ -29,7 +29,13 @@
 %% without one has no such path at all.
 start(_Type, _Args) ->
     ok = erx_ns:mount_facets(lists:usort(erx:granted() ++ maps:keys(erx:caps()))),
+    ok = mount_home(erx_session_sup:home()),
     erx_session_sup:start_link().
+
+%% The session's home facet, which has no place of its own, at its user's home
+%% (docs/design-files.md, "A user's home"); nothing for a session without one.
+mount_home(none) -> ok;
+mount_home({ok, {Point, Options}}) -> erx_ns:mount({facet, home}, Point, Options).
 
 stop(_State) ->
     ok.

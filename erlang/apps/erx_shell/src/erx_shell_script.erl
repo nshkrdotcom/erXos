@@ -17,7 +17,7 @@ command that declares a facet the session lacks fails with `no_facet` before
 it starts, and one installed while the script runs serves the next command.
 """.
 
--export([run/1, run/2, script/1, command/2, first_vars/1, main/1]).
+-export([run/1, run/2, script/1, command/3, first_vars/1, main/1]).
 
 -export_type([options/0, vars/0, ending/0]).
 
@@ -98,14 +98,14 @@ An exit signal from any other process is a message left unread. Exits are
 trapped before the leader and the evaluator start, so an interrupt that
 comes sooner ends this process with nothing started.
 """.
--spec command(binary(), vars()) -> pid().
-command(Command, Vars) when is_binary(Command) ->
-    proc_lib:spawn_link(fun() -> exec(Command, Vars) end).
+-spec command(binary(), vars(), binary()) -> pid().
+command(Command, Vars, Cwd) when is_binary(Command), is_binary(Cwd) ->
+    proc_lib:spawn_link(fun() -> exec(Command, Vars, Cwd) end).
 
-exec(Command, Vars) ->
+exec(Command, Vars, Cwd) ->
     process_flag(trap_exit, true),
     Group = group_leader(),
-    Shell = shell(#{vars => first_vars(Vars)}),
+    Shell = shell(#{vars => first_vars(Vars), cwd => Cwd}),
     Leader = erx_shell_leader:start(Group),
     {_Pid, Ref, Go} = erx_shell_leader:spawn_member(Leader, evaluation(Command, Shell), ?MAX_HEAP_WORDS),
     ok = Go(),
@@ -126,7 +126,7 @@ exec(Command, Vars) ->
 
 -doc """
 The first variables a terminal gives a shell or an exec (erx_shell's
-terminal `vars`, command/2), checked once as they arrive: each name a
+terminal `vars`, command/3), checked once as they arrive: each name a
 binary and each value a list of words, at most 256 bytes in all. A variable
 of another shape is a fault of the code that built the terminal, which ends
 the shell it was meant for.

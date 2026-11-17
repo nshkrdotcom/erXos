@@ -31,6 +31,25 @@ leaving the other tty and the line's `user` running.
 -define(LEFT_RUNNING, <<"{ while (true) { x = 1 } & }; exit 0">>).
 -define(LEFT_WRITING, <<"{ while (true) { echo left } & }; echo done; exit 0">>).
 
+%% A session with a home starts its shells and its execs there, with $home its path
+%% (docs/design-files.md, "A user's home"), and the shell's runner takes that working
+%% directory; a session without one starts them at /, and its terminal sets no $home,
+%% so rc keeps its default, /.
+home_test() ->
+    Home = {ok, {<<"/root">>, [{tree, <<"home">>}, rw]}},
+    Write = fun(_) -> ok end,
+    {erx_shell, server, [{erx_shell_runner, #{vars := #{<<"home">> := [<<"/root">>]}, cwd := <<"/root">>} = At}]} =
+        erx_session_tty:shell_of(shell, #{write => Write}, Home),
+    {_Runner, #{cwd := <<"/root">>}} = erx_shell_runner:new(At),
+    {erx_shell_script, command, [<<"pwd">>, #{<<"home">> := [<<"/root">>], <<"x">> := [<<"1">>]}, <<"/root">>]} =
+        erx_session_tty:shell_of({exec, <<"pwd">>}, #{vars => #{<<"x">> => [<<"1">>]}}, Home),
+    {erx_shell, server, [{erx_shell_runner, Plain}]} = erx_session_tty:shell_of(shell, #{write => Write}, none),
+    ?assertNot(maps:is_key(cwd, Plain)),
+    {_, #{cwd := <<"/">>}} = erx_shell_runner:new(Plain),
+    {erx_shell_script, command, [<<"pwd">>, Vars, <<"/">>]} =
+        erx_session_tty:shell_of({exec, <<"pwd">>}, #{vars => #{}}, none),
+    ?assertEqual(#{}, Vars).
+
 %% One process drives a tty throughout, so the steps run in order in it.
 relay_test_() ->
     {timeout, 60, fun() -> in_session(fun relay/1) end}.

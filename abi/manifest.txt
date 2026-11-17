@@ -172,6 +172,10 @@ bytes packages_service 8 value 7061636b61676573
 # manifest's `system` window (property 19). The app template's row of it is the one
 # from which an app's session mounts its image package.
 bytes system_service 6 value 73797374656d
+# The name of the service that serves the users' homes (docs/design-files.md, "A
+# user's home"): "home", an instance of files. The build derives a row of it, with
+# tree home, for every session template but the app template.
+bytes home_service 4 value 686f6d65
 enum mf_image_format u32
   value erofs_verity 1
   value erofs_unchecked 2

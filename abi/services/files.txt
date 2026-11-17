@@ -13,7 +13,9 @@
 # writing operation of an ro or rx grant before its callback (F5), and nothing a client
 # sends widens its rights. A row's tree roots its grant at a directory within the
 # service's tree (docs/design-packaging.md, "The apps row"): installed at the packages
-# tree's installed/, apps at the app's own directory among the data tree's apps/; a row
+# tree's installed/, apps at the app's own directory among the data tree's apps/, home at
+# the grantee's user's home within the home tree (docs/design-files.md, "A user's
+# home"); a row
 # that states none is rooted at the tree's root, and only the rows the build derives
 # state one (property 19). files_grant is the manifest check's acceptance of the
 # parameters, whose kinds alone bound them to these members.
@@ -37,3 +39,4 @@ enum files_rights u8
 enum files_tree u8
   value apps 1
   value installed 2
+  value home 3

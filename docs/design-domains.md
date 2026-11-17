@@ -2784,7 +2784,11 @@ no login, an app's session and a display's session among them
 ([design-apps.md](design-apps.md#the-start-table)). A session
 is its facets and its session domain, created when it starts, in which
 the principal's shells run, at its own line and in its terminals on a
-display, and whose sub-spaces are the principal's programs.
+display, and whose sub-spaces are the principal's programs. Each
+session's user has a home, `/root` for root and `/home/NAME` for any
+other, which the session holds as a grant of its own and its shells
+start in ([design-files.md](design-files.md#building-binding-and-mounting),
+"A user's home").
 The domain service starts it with `erx_domain:start_session(Principal,
 Start)`, from the principal's session template alone: the domain library
 builds the domain from the template's runtime, release, arguments,

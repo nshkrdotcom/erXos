@@ -2565,9 +2565,15 @@ The record moves on these events, and on nothing else:
   for the whole of its introduction, mint and installation;
 * **the introduction's result**: `ok` sends the mint
   `{erx_facet_mint, Tag, Name, Grantee, Principal, Limits}`, where
-  `Principal` is the name of the grantee's principal, a configured
-  domain's row's or a session's template's, from which a server scopes
-  the grant by principal, and `Limits` is the facet row's limits, with
+  `Principal` is the user name of the grantee's principal, the prefix of
+  its sessions' names: `root` for the system principal, and for any other
+  its name in the system manifest, a configured domain's row's or a
+  session's template's
+  ([design-domains.md](design-domains.md#principals-sessions-and-quotas)),
+  from which a server scopes the grant by principal, as the storage
+  domain roots a home grant at the user's home
+  ([design-files.md](design-files.md#building-binding-and-mounting), "A
+  user's home"), and `Limits` is the facet row's limits, with
   the `session` parameter added where the grant's record carries the
   session mark (below), through the server's
   domain pid, which the server's domain already holds, since a send

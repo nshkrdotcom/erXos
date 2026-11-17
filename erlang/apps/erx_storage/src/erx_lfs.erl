@@ -36,13 +36,17 @@ volume afresh, so no write of the failed volume can race a later one.
 
 **Trees.** The volume holds the trees the storage domain serves
 (docs/design-storage.md, "Interfaces"), each a files service of its name:
-`data`, the whole volume, and `packages`, the volume's `packages/` directory
+`data`, the whole volume, `home`, the users' homes, `root/` and `home/NAME/`
+(docs/design-files.md, "A user's home"), and `packages`, the volume's `packages/` directory
 of installed app packages (docs/design-packaging.md, "Where a package
 lies"), which holds `installed/`, the packages whose checks passed, apart
 from any upload in progress. A grant of a tree roots at the tree's root, or,
 when its facet row states the files interface's `tree` (erx_fs_grants,
 subtree/3), at the root that `tree` names within it: `installed`, the
-packages tree's `installed/`, where the app template's grant roots.
+packages tree's `installed/`, where the app template's grant roots, and `home`,
+the grantee's user's home, made by the grant's start when the volume lacks it;
+the home tree has no root of its own, so a home grant whose row states no tree
+is not started.
 tree_root/1 is the one table of the roots. A grant names its root in init/1
 and roots there, and nothing it sends names a node above that root:
 the grant answers `..` itself, staying at its root (erx_fs_grant), and every
@@ -626,34 +630,61 @@ call({Pid, Secret, _Tree}, Request) ->
 
 -doc "The trees of the volume, each served as the files service of its name.".
 -spec trees() -> [atom()].
-trees() -> [data, packages].
+trees() -> [data, packages, home].
 
 -doc """
 The arguments of a grant of the tree that Args name, rooted at the root that
 Tree, a facet row's `tree` (abi/services/files.txt), names within it, which
 erx_fs_grants asks before it starts the grant: `installed` within `packages`,
-the same root for every grantee; `{error, einval}` for any other, so a row's
+the same root for every grantee, and `home` within `home`, the home of the
+grantee's user (erx_ns:home_place/1), refused for a name that is not one path
+name; `{error, einval}` for any other, so a row's
 tree never roots a grant elsewhere.
 """.
--spec subtree({atom(), atom()}, atom(), erx_fs_grants:grantee()) -> {ok, {atom(), atom()}} | {error, einval}.
+-spec subtree({atom(), atom()}, atom(), erx_fs_grants:grantee()) ->
+          {ok, {atom(), atom() | {home, binary()}}} | {error, einval}.
 subtree({Name, packages}, installed, _Grantee) -> {ok, {Name, installed}};
+subtree({Name, home}, home, #{principal := User}) ->
+    case erx_ns:home_place(User) of
+        {ok, {Home, _Options}} -> {ok, {Name, {home, Home}}};
+        {error, einval} = Refused -> Refused
+    end;
 subtree({_Name, _Tree}, _Subtree, _Grantee) -> {error, einval}.
 
-%% Every root a grant starts from, each after the one it lies within.
-roots() -> trees() ++ [installed].
+%% Every root the mount makes, each after the one it lies within: a home is made by its
+%% grant's start (init/1), and the home tree has no root of its own.
+roots() -> [data, packages, installed].
 
 %% Where each root of roots/0 lies in the volume, with the tree it lies within,
 %% whose files service's name the grant answers at attach.
 tree_root(data) -> {data, ?ROOT};
 tree_root(packages) -> {packages, <<"/packages">>};
-tree_root(installed) -> {packages, <<"/packages/installed">>}.
+tree_root(installed) -> {packages, <<"/packages/installed">>};
+tree_root({home, Home}) -> {home, Home}.
 
 -doc false.
 init({Name, Tree}) when is_atom(Name) ->
-    {_, _} = tree_root(Tree),
+    {_, Root} = tree_root(Tree),
     {Pid, Secret} = persistent_term:get({?MODULE, Name}),
     true = Pid =:= whereis(Name),
-    {ok, {Pid, Secret, Tree}}.
+    Server = {Pid, Secret, Tree},
+    ok = make_home(Tree, Root, Server),
+    {ok, Server}.
+
+%% A home grant's start makes the home's directories the volume lacks, /home before
+%% /home/NAME, each through the owner's own make, so a user's first login creates
+%% the home (docs/design-files.md, "A user's home"). Each answer is ignored: a
+%% directory that exists answers eexist, and one that cannot be made leaves the
+%% grant's requests failing, as a root the mount cannot make does.
+make_home({home, _}, Home, Server) ->
+    Make = fun(Name, Dir) ->
+                   _ = call(Server, {make, Dir, Name, {directory, 8#755}}),
+                   join(Dir, Name)
+           end,
+    _ = lists:foldl(Make, ?ROOT, binary:split(Home, <<"/">>, [global, trim_all])),
+    ok;
+make_home(_Tree, _Root, _Server) ->
+    ok.
 
 -doc false.
 root({_Pid, _Secret, Tree} = Server) ->

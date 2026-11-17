@@ -1565,12 +1565,37 @@ module Erx
         system = [grantee_kind('system'), 0]
         [[system, packages, { 'rights' => 'rw' }], [template, packages, { 'rights' => 'rx', 'tree' => 'installed' }],
          [system, tree, { 'rights' => 'ro' }], [template, tree, { 'rights' => 'rx' }],
-         *app_services.map { |service| [template, service, {}] }].map do |(kind, grantee), service, values|
-          row = service_rows.fetch(service)
-          { 'name' => row.fetch('name'), 'grantee_kind' => kind, 'grantee' => grantee, 'service' => service,
-            'operations' => { 'table' => 'facet_operations', 'first' => 0, 'count' => 0 },
-            **derived_quantities(row.fetch('interface'), row.fetch('name')) }.then { |facet| [facet, values.freeze] }
+         *app_services.map { |service| [template, service, {}] }].map do |grantee, service, values|
+          derived_facet(service_rows, grantee, service, values)
         end
+      end
+
+      # The home rows (docs/design-files.md, "A user's home"): for every session template
+      # but the app template, the last among the sessions when there is an apps row, a
+      # grant of the service named home_service, rights rw and tree home, which roots it
+      # at the home of the session's user; none in a manifest without that service.
+      # Answers each row as app_facets does.
+      def home_facets(tables)
+        service_rows = tables.fetch('services')
+        name = @codec.fixed_bytes('home_service')
+        return [] unless service_rows.any? { |row| row.fetch('name') == name }
+
+        home = fetch_files_service(service_rows, 'home_service', required_by: 'a home service')
+        users = tables.fetch('sessions').size - (@apps == NO_APPS ? 0 : 1)
+        Array.new(users) do |template|
+          derived_facet(service_rows, [grantee_kind('session'), template], home, { 'rights' => 'rw', 'tree' => 'home' })
+        end
+      end
+
+      # One row the build derives: the grant of service to grantee, [kind, index], named
+      # as its service is, with no operation and derived_quantities, paired with its
+      # parameter values.
+      def derived_facet(service_rows, (kind, grantee), service, values)
+        row = service_rows.fetch(service)
+        facet = { 'name' => row.fetch('name'), 'grantee_kind' => kind, 'grantee' => grantee, 'service' => service,
+                  'operations' => { 'table' => 'facet_operations', 'first' => 0, 'count' => 0 },
+                  **derived_quantities(row.fetch('interface'), row.fetch('name')) }
+        [facet, values.freeze]
       end
 
       # The index of the one service named by the machine constant name, of the files
@@ -1831,7 +1856,7 @@ module Erx
           invalid('facet names a service the manifest does not contain', 2, 'facet.service') unless index
           facet_row(record, index, tables.fetch('sessions'))
         end
-        derived = app_facets(tables, app_services)
+        derived = app_facets(tables, app_services) + home_facets(tables)
         rows = sources + derived.map(&:first)
         packed = records('facet').zip(sources).map { |record, row| facet_parameters(record, row, tables) } +
                  derived.map { |row, values| pack_parameters(values, granted_parameters(row, tables)) }

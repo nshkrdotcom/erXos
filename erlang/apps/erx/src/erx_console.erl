@@ -810,7 +810,7 @@ on_shell_end(Config, Role, Kind) ->
 -doc """
 How a shell that ended for Reason ended, as a tty's master hears it: with the
 status the command shell's end carries (erx_shell:exit_with/1), or by the
-signal an exec's end carries when Ctrl-C ended it (erx_shell_script:command/2),
+signal an exec's end carries when Ctrl-C ended it (erx_shell_script:command/3),
 one of the signal set ssh_line of abi/signals.txt, the signals a tty's master
 hears; with status 0 for a normal end, and 1 for any other, as for a shell
 that crashed or was killed or a signal the set does not list. So every ending

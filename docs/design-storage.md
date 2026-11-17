@@ -1914,6 +1914,11 @@ reported as a durable checkpoint.
   `rx` to the app template's, whose row carries `tree installed` and
   which is rooted at `installed/`
   ([design-packaging.md](design-packaging.md#the-apps-row)),
+  the `home` tree, the users' homes, `root/` and `home/NAME/`, whose
+  every grant carries `tree home` and is rooted at its grantee's own
+  home, which its start makes when the volume lacks it
+  ([design-files.md](design-files.md#building-binding-and-mounting),
+  "A user's home"),
   and the `etc` tree, a service directory of its own holding the
   machine's own settings files, `rc.conf` among them: read-only to the
   system domain's grant and read-write to the grants of the session
