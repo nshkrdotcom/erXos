@@ -90,9 +90,19 @@ typedef struct erx_dom_link_handles {
 							 * or carved from */
 } erx_dom_link_handles_t;
 
+/*
+ * One domain's code objects (erx_dom_lib_code_object), in the root's table:
+ * number n at n - 1, ERX_CAP_NULL for none. Each is charged to the domain's
+ * own budget, so the teardown that closes that budget's handle closes these.
+ */
+typedef struct erx_dom_code {
+	uint64_t	objects[ERX_CODE_OBJECTS_MAX];
+} erx_dom_code_t;
+
 typedef struct erx_dom_lib {
 	erx_dom_view_t	 view;		/* the core's view; its tables are the caller's */
 	erx_dom_handles_t *handles;	/* view.max_domains, record for record */
+	erx_dom_code_t	*code;		/* view.max_domains, record for record */
 	erx_dom_link_handles_t *links;	/* view.max_connections, row for row */
 	uint64_t	*remains_held;	/* view.max_remains: each remains row's outer
 					 * budget handle, ERX_CAP_NULL for none */
@@ -222,6 +232,28 @@ erx_status_t	erx_dom_lib_connect(erx_dom_lib_t *, uint32_t a, uint32_t b,
  */
 erx_status_t	erx_dom_lib_end_commit(erx_dom_lib_t *, uint32_t how) ERX_WARN_UNUSED_RESULT;
 
+/*
+ * A session's code objects (docs/design-system.md, "Code objects for a
+ * session"). erx_dom_lib_code_object makes a paged object of size bytes,
+ * rounded up to a page, with ERX_MEM_CODE from domain id's own budget
+ * through the library's handle to it, and installs a copy into the domain's
+ * space with SUPPLY, READ, MAP, CHILD, DUP, GIVE and EXEC, never WRITE and
+ * never DESTROY: *number is the object's number, 1 to ERX_CODE_OBJECTS_MAX,
+ * and *value the copy's value in the domain's table. ERX_EINVAL for a
+ * domain neither built nor running, or a size of 0; ERX_ELIMIT with
+ * ERX_CODE_OBJECTS_MAX objects live; ERX_ENOMEM for a size no page count
+ * holds; the backend's refusal otherwise, ERX_ENOMEM for the budget's, with
+ * nothing kept. erx_dom_lib_code_drop deletes the domain's object number,
+ * which removes the copy and every mapping of it; ERX_EINVAL for a number
+ * that names none of its live objects, and the backend's refusal of the
+ * destroy, which only a bad handle in the row gives, with the row kept. The objects not dropped go with the
+ * domain's own budget, whose teardown closes their handles.
+ */
+erx_status_t	erx_dom_lib_code_object(erx_dom_lib_t *, uint32_t id, uint64_t size,
+		    uint32_t *number, uint64_t *value) ERX_WARN_UNUSED_RESULT;
+erx_status_t	erx_dom_lib_code_drop(erx_dom_lib_t *, uint32_t id, uint32_t number)
+		    ERX_WARN_UNUSED_RESULT;
+
 /* erx_dom_disconnect and erx_dom_retire: their plans' answers. */
 erx_status_t	erx_dom_lib_disconnect(erx_dom_lib_t *, uint32_t number) ERX_WARN_UNUSED_RESULT;
 erx_status_t	erx_dom_lib_retire(erx_dom_lib_t *, uint32_t id) ERX_WARN_UNUSED_RESULT;
@@ -300,6 +332,7 @@ typedef struct erx_dom_boot_sizes {
 typedef struct erx_dom_boot_tables {
 	erx_dom_t		*domains;	/* max_domains */
 	erx_dom_handles_t	*handles;	/* max_domains */
+	erx_dom_code_t		*code;		/* max_domains */
 	erx_dom_connection_t	*connections;	/* max_connections */
 	erx_dom_link_handles_t	*links;		/* max_connections */
 	erx_dom_remains_t	*remains;	/* 2 * max_connections */

@@ -17,9 +17,10 @@
  * table"): a copy of object, a handle in the system domain's own table, with
  * its rights shrunk to the step's, passed into recipient, the space the plan
  * names for the step's row of erx_dom_grants, for a creation and for a
- * connection alike. The plan's check (erx_dom_plan_check, or
- * erx_dom_link_check for a connection) found that row and recipient
- * before anything was applied. *value is the copy's value
+ * connection alike, or the domain's own space for a session's code object
+ * (erx_dom_lib_code_object), whose step is a constant of dom_apply.c. The
+ * plan's check (erx_dom_plan_check, or erx_dom_link_check for a connection)
+ * found that row and recipient before anything was applied. *value is the copy's value
  * in the recipient's table, written only on ERX_OK. The library never moves
  * a capability and never passes out of another domain's table, so this file
  * holds its only erx_cap_pass, which tools/lib/erx/chokepoint_rules/cap.rb

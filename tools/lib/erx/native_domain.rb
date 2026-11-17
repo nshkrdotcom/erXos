@@ -56,7 +56,7 @@ module Erx
                     'test/guest/native_domain/guest.c'].freeze
     ROOT_FLAGS = %w[-DERX_DOM_TEST_HOOKS].freeze
     PROGRAM_SOURCES = [*NativeRoot::TASK, 'test/guest/native_domain/program.c'].freeze
-    CASES = %w[library warm halt fault stop lanes erts logger crypto ssh_key erts_refused crash jit_reload jit_write_rx
+    CASES = %w[library warm halt fault stop lanes code erts logger crypto ssh_key erts_refused crash jit_reload jit_write_rx
                  jit_run_rw jit_crypto jit_ssh_key connection
                  exports refs origins link_warm link link_area link_undo link_end undo
                  given_undo given given_kept].freeze

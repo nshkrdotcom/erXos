@@ -5,13 +5,15 @@
 # served by the system domain, which the domain service grants every session it starts by
 # its own policy, with no facet row. create takes the object's size in bytes, a positive
 # integer, and answers {ok, Number, Cap}, the object's number and the session's value of
-# its copy, or the library's refusal: {error, enomem} for the session's budget and
-# {error, elimit} beyond code_objects_max objects. drop takes a number and answers ok, or
+# its copy, or the library's refusal: {error, enomem} for the session's budget,
+# {error, elimit} beyond code_objects_max objects and {error, einval} once the session
+# has ended. drop takes a number and answers ok, or
 # {error, einval} for a number that names none of the grantee's live objects.
 # erx_code_objects_facet:decode/1 refuses anything else with {error, badarg}. The
 # grantee is the facet's, never the request's, so a session makes objects only from its
 # own budget and drops only its own. code_objects_max is the domain library's bound on
-# one session's live code objects, which the command server's table keeps within.
+# one session's live code objects, which the command server's table keeps within; it is
+# small, so the session's copies fit in its handle table beside its own handles.
 # code_objects_max_request is the facet's max_request, which erx_facet holds a request's
 # whole envelope to: {erx_origin, D, {'$gen_call', {Pid, [alias | Alias]}, Request}}
 # encodes in at most 114 + 2L bytes for a caller whose node name is L bytes, which its
@@ -24,5 +26,5 @@ service code_objects 14
   served_as message
   operation create 1
   operation drop 2
-limit code_objects_max u32 256
+limit code_objects_max u32 16
 limit code_objects_max_request u32 1024

@@ -1314,7 +1314,7 @@ the one entry that waits, is a dirty I/O NIF
 | `erx_dom_retire(id)` | releases an ended domain: destroys its crash area, frees its record and gives its principal back the domain and its own budget's bytes; destroys its outer budget when no connection names the domain, and otherwise keeps the outer budget as the domain's remains, which the disconnect of its last connection destroys; the domain service calls it once the crash area is read and the system connection disconnected, without waiting for any other connection | `ERX_OK`; `ERX_EINVAL` unless the domain has ended; `ERX_EBUSY` while its system connection stands |
 | `erx_dom_connect(a, b, a_reads, b_reads, area, area_reader)` | creates a connection between two built or running domains: carves from each domain's outer budget a child budget for the connection; creates two sides, `b`'s sized `a_reads` and charged to `a`'s child, since `a` reads it, and `a`'s sized `b_reads` and charged to `b`'s child; two bells, each charged to the child of the domain whose group it is bound to; and, when `area` is not 0, a pixel area of `area` bytes, charged to the child of `area_reader`, which maps it read-only while the other party writes it ([design-display.md](design-display.md#the-pixel-area)); gives each domain its share ([Authority](#authority)) | the connection's number and each domain's values; `ERX_ENOMEM` when a reader's outer budget cannot cover its child; `ERX_ELIMIT` for a full table; `ERX_EINVAL` for a domain outside built or running, for `a == b`, for an `area` that is not a whole number of pages, or for an `area` whose `area_reader` is neither, or an `area_reader` other than 0 without one |
 | `erx_dom_disconnect(number)` | destroys the connection's child budgets, which deletes its sides and bells at once, and the remains of each retired party that no other connection names; the domain service asks it only once each party has unmapped them or ended; a capability to them fails with `ERX_ESTALE` from then on | `ERX_OK`; `ERX_EINVAL` for an unknown number |
-| `erx_dom_code_object(session, size)` | creates a paged object with an execute ceiling from the session's budget through the system domain's own capability to it, which carries `CODE`, and gives the session a copy with `SUPPLY`, `READ`, `MAP`, `CHILD`, `DUP`, `GIVE` and `EXEC`; the kernel refuses an executable mapping of it until it is sealed (K8) | the object's number and the session's value; `ERX_ENOMEM`; `ERX_ELIMIT` beyond `code_objects_max` for the session |
+| `erx_dom_code_object(session, size)` | creates a paged object with an execute ceiling from the session's budget through the system domain's own capability to it, which carries `CODE`, and gives the session a copy with `SUPPLY`, `READ`, `MAP`, `CHILD`, `DUP`, `GIVE` and `EXEC`; the kernel refuses an executable mapping of it until it is sealed (K8) | the object's number and the session's value; `ERX_ENOMEM`; `ERX_ELIMIT` beyond `code_objects_max` for the session; `ERX_EINVAL` for a session neither built nor running, or a size of 0 |
 | `erx_dom_code_drop(session, number)` | deletes a session's code object, after which every mapping of it faults | `ERX_OK`; `ERX_EINVAL` |
 | `erx_dom_info(id, topic)` | the domain's group or own budget report, from `erx_object_info` on the library's handle, for the inspector's collector ([design-live.md](design-live.md#inspection-records)); any system-domain process may ask, since a report holds counts and masks and none of the domain's data | the report; `ERX_EINVAL` for a domain neither built nor running or another topic; the backend's refusal |
 | `erx_dom_end_begin(how)` | installs the ending record with its absolute deadline ([Shutting down](#shutting-down)) | `ERX_OK`; `ERX_EBUSY` for a second begin; `ERX_ENOTSUP` for a trial when the boot value is `unknown` |
@@ -1807,14 +1807,15 @@ service code_objects 14
   served_as message
   operation create 1
   operation drop 2
-limit code_objects_max u32 256
+limit code_objects_max u32 16
 limit code_objects_max_request u32 1024
 ```
 
 `create` takes the object's size in bytes, a positive integer, and
 answers `{ok, Number, Cap}`, the object's number and the session's value
 of its copy, or the library's refusal, `{error, enomem}` for the
-session's budget and `{error, elimit}` beyond `code_objects_max`; `drop`
+session's budget, `{error, elimit}` beyond `code_objects_max` and
+`{error, einval}` once the session has ended; `drop`
 takes a number and answers `ok`, or `{error, einval}` for a number that
 names none of the grantee's live objects. The facet's decoder refuses
 any other request with `{error, badarg}`. The session is the facet's

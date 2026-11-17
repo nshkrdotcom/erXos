@@ -207,7 +207,7 @@ it; git history is the record of completed work.
   the session's release (`image => <<"bin/NAME">>`). The handler resolves an absolute image through the
   starter's namespace and makes the image check of the entry's `rx` (`erx_prog_handler_core:resolve_image/3`),
   but has no filler to open the file and no code object from the command server (the rest of step 4 of
-  "Starting a program"), the domain library's `code_object/2` answers `enotsup`, and the loader `erx_exec`
+  "Starting a program"), and the loader `erx_exec`
   is only its load (`liberx/exec/load.c`, `erx_exec_load`: the object viewed and planned, the span
   reserved, segments mapped, copied and committed by a layout decided whole, relocations written), with no
   bootstrap around it (design-programs.md, "The loader's bootstrap" and "The executable's link";
@@ -237,13 +237,20 @@ it; git history is the record of completed work.
   program lands.
   So a native app's start of `/app/bin/NAME` is refused
   `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this
-  lands. The session asks for code objects through the `code_objects` facet
-  (`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which the domain service
-  grants every session by its own policy and forwards to `erx_domain_lib:code_object/2` and `code_drop/2`;
-  those answer `enotsup`, since the domain library has no `erx_dom_code_object` or `erx_dom_code_drop` over
-  `erx_mem_create_paged`, no per-session table bounded at `code_objects_max`, and no close of a session's
-  code-object handles at its retire. The command server's holds (fill, start,
-  row) decide every drop (design-programs.md, "Holds and drops"). Links: a package mount answers `enotsup`
+lands. The session asks for code objects through the `code_objects` facet
+(`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which the domain service
+grants every session by its own policy and forwards to `erx_domain_lib:code_object/2` and `code_drop/2`.
+The domain library makes them (`erx_dom_lib_code_object`, `liberx/system/dom_apply.c`): a paged
+`ERX_MEM_CODE` object from the session's own budget, a copy in the session's table without `WRITE` or
+`DESTROY`, at most `code_objects_max` in the root's per-domain table, a drop that destroys one, and a
+close of the rest at the teardown that closes the session's budget, all checked by the native_domain
+suite's `code` case. Not built: the command server's holds (fill, start, row), which decide every drop,
+and its table that reuses one object for every start of the same file (design-programs.md, "Holds and
+drops"); the cap of one eighth of the session's budget on its code objects together; and an accounting
+of their pages beyond the fixed bound of `code_objects_max` objects, so a session can tie up its budget
+in code objects up to its own memory, never another's. Nor is it measured that an ERTS session's own
+handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`,
+`liberx/system/dom_boot_view.c`): a session short of entries is refused a copy with `elimit` early. Links: a package mount answers `enotsup`
   for a link inode, since a package holds no links (design-storage.md, "Reading EROFS images"), but today
   the reader checks only the header's text (`relative_path`) and only the host packer refuses links, so the
   mount's refusal is part of this item. Meanwhile the resolve refuses every symbolic link on the way

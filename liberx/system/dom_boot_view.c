@@ -53,9 +53,11 @@
 
 /*
  * Each domain's handle table. The manifest names no size for it; this is
- * what a domain's runtime and its connections use, with room to spare.
+ * what a domain's runtime and its connections use, with room to spare,
+ * and its ERX_CODE_OBJECTS_MAX code objects' copies beside them.
  */
 #define BOOT_CAP_LIMIT	64u
+_Static_assert(ERX_CODE_OBJECTS_MAX <= BOOT_CAP_LIMIT / 4, "a session's code objects leave most of its table");
 
 static bool	boot_place(size_t *, size_t, size_t, uint32_t, size_t *);
 static bool	boot_limits(const erx_manifest_view_t *, uint32_t, erx_runtime_limits_t *);
@@ -156,6 +158,7 @@ erx_dom_boot_layout(const erx_dom_boot_sizes_t *sizes, uintptr_t base, erx_dom_b
 	    ((tables->field = base == 0 ? NULL : (__typeof__(tables->field))(base + at)), true))
 	if (!BOOT_PLACE(domains, sizes->max_domains) ||
 	    !BOOT_PLACE(handles, sizes->max_domains) ||
+	    !BOOT_PLACE(code, sizes->max_domains) ||
 	    !BOOT_PLACE(connections, sizes->max_connections) ||
 	    !BOOT_PLACE(links, sizes->max_connections) ||
 	    !BOOT_PLACE(remains, (size_t)sizes->max_connections * 2) ||
@@ -1208,7 +1211,11 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	for (uint32_t index = 0; index < header->max_connections; index++)
 		for (uint32_t obj = 0; obj < ERX_DOM_LINK_OBJS; obj++)
 			tables->links[index].made[obj] = ERX_CAP_NULL;
+	for (uint32_t index = 0; index < header->max_domains; index++)
+		for (uint32_t obj = 0; obj < ERX_CODE_OBJECTS_MAX; obj++)
+			tables->code[index].objects[obj] = ERX_CAP_NULL;
 	lib->handles = tables->handles;
+	lib->code = tables->code;
 	lib->links = tables->links;
 	lib->remains_held = tables->remains_held;
 	lib->held.principals = tables->held;
