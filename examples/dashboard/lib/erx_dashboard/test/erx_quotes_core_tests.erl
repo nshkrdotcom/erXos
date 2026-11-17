@@ -80,7 +80,7 @@ rounds_test() ->
     ?assertEqual([render], A2),
     ?assertMatch(#{value := {2.5, none, b, ?T0 + 200}, failure := none, next_at := ?T0 + 10200},
                  quote(q, S2)),
-    ?assertEqual(<<"B, delayed, live - 1 s">>, status(S2, <<"q">>, ?T0 + 1200)),
+    ?assertEqual(<<"delayed \x{B7} live chart"/utf8>>, status(S2, <<"q">>, ?T0 + 1200)),
     {_S3, A3} = erx_quotes_core:tick(S2, ?T0 + 10200, 1.0),
     ?assertEqual([{q, a}], fetches(A3)),
     {S4, _} = outcome(S0, q, {error, timeout, none}, ?T0 + 100),
@@ -174,19 +174,40 @@ staleness_test() ->
     {S0, _} = start(),
     ?assertEqual(<<"waiting">>, status(S0, <<"q">>, ?T0)),
     {S1, _} = outcome(S0, q, {value, 64412.5, 0.5, ?WALL}, ?T0),
-    ?assertEqual(<<"A, live - 30 s">>, status(S1, <<"q">>, ?T0 + 30000)),
-    ?assertEqual(<<"stale, 30 s - A, live">>, status(S1, <<"q">>, ?T0 + 30001)),
+    ?assertEqual(<<"live chart">>, status(S1, <<"q">>, ?T0 + 30000)),
+    ?assertEqual(<<"stale, 30 s \x{B7} live chart"/utf8>>, status(S1, <<"q">>, ?T0 + 30001)),
     {S2, _} = erx_quotes_core:tick(S1, ?T0 + 10000, 1.0),
     {S3, _} = outcome(S2, q, {error, {status, 503}, none}, ?T0 + 10000),
     {S4, _} = outcome(S3, q, {error, timeout, none}, ?T0 + 10000),
-    ?assertEqual(<<"A, live - 15 s: HTTP 503">>, status(S4, <<"q">>, ?T0 + 15000)),
-    ?assertEqual(<<"stale, 2 min - A, live: HTTP 503">>, status(S4, <<"q">>, ?T0 + 120000)),
+    ?assertEqual(<<"live chart: HTTP 503">>, status(S4, <<"q">>, ?T0 + 15000)),
+    ?assertEqual(<<"stale, 2 min \x{B7} live chart: HTTP 503"/utf8>>, status(S4, <<"q">>, ?T0 + 120000)),
     ?assertMatch([#{symbol := <<"q">>, price := 64412.5, change := 0.5, decimals := 2} | _],
                  quotes(S4, ?T0 + 15000)),
     {S5, _} = outcome(S0, r, {error, {status, 503}, none}, ?T0),
     {S6, _} = outcome(S5, r, {error, connect, none}, ?T0),
     ?assertEqual(<<"no data: HTTP 503">>, status(S6, <<"r">>, ?T0)),
     ?assertMatch([_, #{price := none, change := none}], quotes(S6, ?T0)).
+
+%% The board credits every source of the table once, in the order the
+%% quotes ask them, so the status lines need not. Seeded failure: a
+%% credit fixed in the view, not taken from the table, fails the first
+%% assertion.
+credit_test() ->
+    {S0, _} = start(),
+    ?assertEqual(<<"A, B, C">>, maps:get(credit, erx_quotes_view:board(S0, ?T0))).
+
+%% The kiosk's own table: a fresh quote's line says what its change is
+%% measured from and what its graph spans, and a stale one leads with its
+%% age; the board credits Kraken. Seeded failure: a line that still
+%% names the credit fails the second assertion.
+kiosk_lines_test() ->
+    {S0, _} = erx_quotes_core:tick(erx_quotes_core:new(erx_quotes_table:table(), ?T0), ?T0, 1.0),
+    {S1, _} = outcome(S0, btc, {value, 64412.5, 0.5, ?WALL}, ?T0),
+    {S2, _} = erx_quotes_core:history(S1, btc, on_buckets([64000.0], ?WALL)),
+    ?assertEqual(<<"Kraken">>, maps:get(credit, erx_quotes_view:board(S2, ?T0))),
+    ?assertEqual(<<"since 00:00 UTC \x{B7} 24 h chart"/utf8>>, status(S2, <<"btc">>, ?T0 + 30000)),
+    ?assertEqual(<<"stale, 3 min \x{B7} since 00:00 UTC \x{B7} 24 h chart"/utf8>>,
+                 status(S2, <<"btc">>, ?T0 + 180000)).
 
 ages_test() ->
     Cases = [{119000, <<"119 s">>}, {120000, <<"2 min">>}, {7199000, <<"119 min">>},
@@ -224,8 +245,9 @@ clock_unset_test() ->
     ?assertEqual(<<"no data: clock not set">>, status(S2, <<"q">>, ?T0)).
 
 %% Over generated event sequences, every price the board shows is the
-%% price of some successful outcome for that quote, with that outcome's
-%% credit and an age equal to Now minus its time. Seeded failure: keeping
+%% price of some successful outcome for that quote, whose source the
+%% board credits, and is stale, with the age Now minus that outcome's
+%% time, exactly when it is older than three periods. Seeded failure: keeping
 %% the previous price on a failed round with a new FetchedAt breaks the
 %% age property.
 no_fabrication_test() ->
@@ -269,7 +291,8 @@ record(Seen, _Quote, _Source, _Error, _Now) ->
     Seen.
 
 check(State, Now, Seen) ->
-    #{table := #{sources := Sources}} = State,
+    #{table := #{quotes := Rows, sources := Sources}} = State,
+    #{credit := Credits, quotes := Quotes} = erx_quotes_view:board(State, Now),
     [case Q of
          #{price := none} -> ok;
          #{symbol := Symbol, price := Price, status := Status} ->
@@ -278,9 +301,18 @@ check(State, Now, Seen) ->
              ?assertNotEqual([], Matching),
              [{Source, At} | _] = Matching,
              #{credit := Credit} = maps:get(Source, Sources),
-             ?assertNotEqual(nomatch, binary:match(Status, Credit)),
-             ?assertNotEqual(nomatch, binary:match(Status, erx_quotes_view:age(Now - At)))
-     end || Q <- quotes(State, Now)].
+             ?assertNotEqual(nomatch, binary:match(Credits, Credit)),
+             #{period := Period} = proplists:get_value(Quote, Rows),
+             check_age(Status, Now - At, Period)
+     end || Q <- Quotes].
+
+%% A line leads with the value's age once it is older than three periods,
+%% and says nothing of it before.
+check_age(Status, Age, Period) when Age > 3 * Period ->
+    Stale = <<"stale, ", (erx_quotes_view:age(Age))/binary, " ">>,
+    ?assertMatch(<<Stale:(byte_size(Stale))/binary, _/binary>>, Status);
+check_age(Status, _Age, _Period) ->
+    ?assertNotMatch(<<"stale", _/binary>>, Status).
 
 %% History
 
@@ -432,14 +464,14 @@ gap_test() ->
     {S1, _} = erx_quotes_core:history(S0, h, on_buckets([1.0, 2.0], ?WALL)),
     S2 = live(S1, 3.0, ?WALL + 5 * ?B, ?T0),
     ?assertEqual(on_buckets([1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0], ?WALL + 5 * ?B), series(S2)),
-    ?assertMatch([#{status := <<"K, 24 h - 0 s">>}], quotes(S2, ?T0)),
+    ?assertMatch([#{status := <<"24 h chart">>}], quotes(S2, ?T0)),
     S3 = live(S2, 4.0, ?WALL + 11 * ?B, ?T0 + 10000),
     ?assertEqual(none, series(S3)),
-    ?assertMatch([#{status := <<"K, live - 0 s">>}], quotes(S3, ?T0 + 10000)),
+    ?assertMatch([#{status := <<"live chart">>}], quotes(S3, ?T0 + 10000)),
     S4 = live(S3, 5.0, ?WALL + 12 * ?B, ?T0 + 20000),
     ?assertEqual(none, series(S4)),
     {S5, _} = erx_quotes_core:history(S4, h, on_buckets([6.0], ?WALL + 12 * ?B)),
-    ?assertMatch([#{status := <<"K, 24 h - 0 s">>}], quotes(S5, ?T0 + 20000)).
+    ?assertMatch([#{status := <<"24 h chart">>}], quotes(S5, ?T0 + 20000)).
 
 %% Without a history the card's graph is its live samples and its status
 %% says `live`; with one, the graph is the series' closes and the status
@@ -450,9 +482,9 @@ fallback_test() ->
     {S0, _} = history_start(),
     S1 = live(S0, 3.0, ?WALL, ?T0),
     ?assertEqual(none, series(S1)),
-    ?assertMatch([#{samples := [3.0], status := <<"K, live - 0 s">>}], quotes(S1, ?T0)),
+    ?assertMatch([#{samples := [3.0], status := <<"live chart">>}], quotes(S1, ?T0)),
     {S2, _} = erx_quotes_core:history(S1, h, on_buckets([1.0, 2.0], ?WALL)),
-    ?assertMatch([#{samples := [1.0, 2.0], status := <<"K, 24 h - 0 s">>}], quotes(S2, ?T0)),
+    ?assertMatch([#{samples := [1.0, 2.0], status := <<"24 h chart">>}], quotes(S2, ?T0)),
     S3 = live(S2, 4.0, ?WALL + ?B, ?T0 + 10000),
     ?assertMatch([#{samples := [1.0, 2.0, 4.0]}], quotes(S3, ?T0 + 10000)),
     {S4, _} = outcome(element(1, start()), q, {value, 1.0, none, ?WALL}, ?T0),

@@ -8817,7 +8817,7 @@ document's "residual risks accepted" paragraph.
 * [Low] `examples/dashboard`: the app draws its dial and ground for the dark palette (`?PALETTE` in
   `erx_dashboard.erl`) whatever its display chooses, since `erx_ui` does not tell an app its window's palette
   or size (`erx_win:info/1` has both); on a light display its text is dark on the dark ground. The ground is
-  drawn at the Pi's 1824x984 and centred, so a larger screen shows the window colour round it. The graph's
+  drawn at the Pi 4's 1920x1080 and centred, so a larger screen shows the window colour round it. The graph's
   dotted mark leaves every third point out, which at 180 live samples on 520 px is nearly solid; LVGL's
   line dash on the mark's draw task would be uniform. erx-lvgl's area fill draws nothing for a graph with
   more samples than pixels (LVGL's crowded mode).

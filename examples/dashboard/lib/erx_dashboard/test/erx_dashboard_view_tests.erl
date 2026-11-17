@@ -128,7 +128,7 @@ clock_picture_test() ->
 %% second colour instead of pulling along the path overflows the palette.
 ground_picture_test() ->
     Png = erx_dashboard_pictures:ground(erx_dashboard_view:clock_offset()),
-    ?assertMatch(<<137, "PNG", 13, 10, 26, 10, 13:32, "IHDR", 1824:32, 984:32, 8, 3, _/binary>>, Png),
+    ?assertMatch(<<137, "PNG", 13, 10, 26, 10, 13:32, "IHDR", 1920:32, 1080:32, 8, 3, _/binary>>, Png),
     ?assert(byte_size(Png) =< 49152),
     ?assertEqual({-284, -42}, erx_dashboard_view:clock_offset()).
 

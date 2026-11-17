@@ -1692,9 +1692,11 @@ Put the card in the Pi, start logging on the adapter, then power the Pi.
    [the framebuffer's unit](#raspberry-pi-4-model-b); `erx_fb: the
    framebuffer is not driven:` names why the driver refused it. The
    card's `config.txt` asks the firmware for one 32-bit framebuffer
-   (`framebuffer_depth=32`, `framebuffer_ignore_alpha=1`,
-   `max_framebuffers=1`; [design-device-tree.md](design-device-tree.md#context)),
-   so the root should name `x8r8g8b8` and see one node. Use HDMI0; HDMI1
+   with no overscan border (`framebuffer_depth=32`,
+   `framebuffer_ignore_alpha=1`, `max_framebuffers=1`, `disable_overscan=1`;
+   [design-device-tree.md](design-device-tree.md#context)), so the root
+   should name `x8r8g8b8` and see one node, and on a 1920x1080 screen
+   the size is `1920x1080`, not `1824x984`. Use HDMI0; HDMI1
    may be connected as well. Any other 32-bit format name is a pass:
    record which one appears, and a `framebuffer absent` line, `ambiguous`
    included, is a failure of the firmware option to record, since whether

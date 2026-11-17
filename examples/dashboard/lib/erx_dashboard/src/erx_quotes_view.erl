@@ -7,28 +7,38 @@ What the dashboard's quotes panel shows of the live quotes, as a pure
 function (docs/design-quotes.md, "What the screen shows"): board/2 turns
 the core's state and the current monotonic time into the board the
 dashboard draws (erx_dashboard_view), one quote per row of the table,
-in its order. The rule of Q-R1 and Q-R2 is state/3 alone: a quote
-shows the last value it received, the source that gave it and its age,
-stale once older than three periods, with the reason its last round
-failed beside it; a quote without a value shows `--` and why. A card's
-graph is the quote's series of 15 min closes once a history arrived,
-and its live samples before; the status line says which, `24 h` or
-`live`.
+in its order, under a credit naming every source the table asks
+(credits/2). Whether a quote's value is shown as current is state/3
+alone: a value at most three periods old is current, and an older one
+is stale and shown with its age. Either way, the reason the quote's last
+round failed follows its line; a quote without a value shows `--` and
+why. A card's graph is the quote's
+series of 15 min closes once a history arrived, and its live samples
+before; the status line says which, `24 h chart` or `live chart`.
 
-Every text is the table's, a fixed word or a number formatted here; no
-byte of a response reaches the board.
+Every text is the table's, a fixed word, the middle dot or a number
+formatted here; no byte of a response reaches the board.
 """.
 
 -export([board/2, lines/2, age/1]).
 
--define(CREDIT, <<"Kraken">>).
+%% What separates a status line's fields: U+00B7, the middle dot.
+-define(DOT, <<" \x{B7} "/utf8>>).
 
 -doc "The board of the core's `State` at monotonic time `Now`.".
 -spec board(erx_quotes_core:state(), integer()) -> erx_dashboard_view:board().
 board(#{table := #{quotes := Rows, sources := Sources}, quotes := Quotes}, Now) ->
-    #{credit => ?CREDIT,
+    #{credit => credits(Rows, Sources),
       quotes => [quote(Name, Row, maps:get(Name, Quotes), Sources, Now)
                  || {Name, Row} <- Rows]}.
+
+%% The board's credit: every source's credit the table's quotes may ask,
+%% each once, in the order they ask them. The panel's header shows it, so
+%% a status line does not repeat it.
+credits(Rows, Sources) ->
+    Credits = [maps:get(credit, maps:get(Source, Sources))
+               || {_Name, #{sources := Names}} <- Rows, Source <- Names],
+    iolist_to_binary(lists:join(<<", ">>, lists:uniq(Credits))).
 
 quote(Name, #{label := Label, decimals := Decimals} = Row, Quote, Sources, Now) ->
     {Price, Change} = case Quote of
@@ -44,11 +54,12 @@ quote(Name, #{label := Label, decimals := Decimals} = Row, Quote, Sources, Now) 
 points(#{series := none, samples := Samples}) -> Samples;
 points(#{series := Series}) -> [Close || {_Start, Close} <- Series].
 
-%% A quote's status line: `waiting`, `no data: REASON`, `CREDIT[, NOTE],
-%% RANGE - AGE` while its value is fresh and `stale, AGE - CREDIT[, NOTE],
-%% RANGE` once stale, each of the last two followed by `: REASON` when the
-%% quote's last round failed. RANGE is what the graph spans (range/1).
-%% `Sources` are the table's source rows.
+%% A quote's status line: `waiting`, `no data: REASON`, `[NOTE . ]RANGE
+%% chart` while its value is fresh and `stale, AGE . [NOTE . ]RANGE chart`
+%% once stale, each of the last two followed by `: REASON` when the
+%% quote's last round failed; `.` stands for ?DOT. NOTE is the note of
+%% the source that gave the value and RANGE what the graph spans
+%% (range/1). `Sources` are the table's source rows.
 -spec status(erx_quotes_core:quote(), erx_quotes_table:quote(),
              #{atom() => erx_quotes_table:source()}, integer()) -> binary().
 status(#{value := Value, failure := Failure} = Quote, Row, Sources, Now) ->
@@ -58,13 +69,16 @@ status(#{value := Value, failure := Failure} = Quote, Row, Sources, Now) ->
         {no_data, none, {Reason, _At}} ->
             <<"no data: ", (erx_quotes_http:word(Reason))/binary>>;
         {Shown, {_Price, _Change, Source, FetchedAt}, _} ->
-            Age = age(Now - FetchedAt),
-            Credit = [credit(maps:get(Source, Sources)), ", ", range(Quote)],
-            Line = case Shown of
-                       fresh -> [Credit, " - ", Age];
-                       stale -> ["stale, ", Age, " - ", Credit]
+            Stale = case Shown of
+                        fresh -> [];
+                        stale -> [<<"stale, ", (age(Now - FetchedAt))/binary>>]
+                    end,
+            Note = case maps:get(Source, Sources) of
+                       #{note := <<>>} -> [];
+                       #{note := Text} -> [Text]
                    end,
-            iolist_to_binary([Line | reason(Failure)])
+            Fields = Stale ++ Note ++ [<<(range(Quote))/binary, " chart">>],
+            iolist_to_binary([lists:join(?DOT, Fields) | reason(Failure)])
     end.
 
 %% The one rule of Q-R1 and Q-R2: a value is stale once older than three
@@ -77,9 +91,6 @@ state(#{value := none}, _Row, _Now) -> no_data;
 state(#{value := {_, _, _, FetchedAt}}, #{period := Period}, Now)
   when Now - FetchedAt > 3 * Period -> stale;
 state(#{value := {_, _, _, _}}, _Row, _Now) -> fresh.
-
-credit(#{credit := Credit, note := <<>>}) -> Credit;
-credit(#{credit := Credit, note := Note}) -> [Credit, ", ", Note].
 
 %% What the graph spans: a day of history, erx_quotes_core:buckets/0 of
 %% erx_quotes_core:bucket/0, or the live samples alone.
