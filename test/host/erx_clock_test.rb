@@ -9,7 +9,8 @@ require_relative '../fixtures/erlang_build'
 require_relative '../../tools/fuzz/erx_clock_facet'
 
 # Runs the clock service's EUnit cases (docs/design-time.md, "Verification and
-# testing", decide, restart and facet decode): test/erlang/erx_clock_core_tests.erl,
+# testing", decide, restart, the approximate start and facet decode):
+# test/erlang/erx_clock_core_tests.erl,
 # the Steps table and the set clause, and test/erlang/erx_clock_facet_tests.erl, the
 # facet's decoder, its operation/1 and the facet admitting only its grant's operations
 # outliving erx_clock's restart, and a crash loop ending erx_clock_sup and not its parent,
@@ -38,7 +39,16 @@ class ErxClockTest < Minitest::Test
     Fault.new(name: 'the two-sample rule dropped', module: CORE,
               from: "        Excess -> step;\n        Sign -> {hold, Sign}", to: "        _Sign -> step"),
     Fault.new(name: 'the floor row dropped', module: CORE,
-              from: 'row(Wall, _Cold, _D, _Excess) when Wall < ?FLOOR_NS -> {refuse, floor};', to: ''),
+              from: 'row(Wall, Floor, _Cold, _D, _Excess) when Wall < Floor -> {refuse, floor};', to: ''),
+    Fault.new(name: 'the floor ignored by the start', module: CORE,
+              from: 'Floor) when M + C < Floor -> {step, Floor};', to: 'Floor) when M + C >= 0 -> {step, Floor};'),
+    Fault.new(name: 'a start over a clock changed this boot', module: CORE,
+              from: 'start(#{cold := true, offset := C, monotonic := M}, Floor)',
+              to: 'start(#{offset := C, monotonic := M}, Floor)'),
+    Fault.new(name: 'an approximate clock taken as set', module: CORE,
+              from: "state(\#{cold := false, offset := Floor}, Floor) when Floor > 0 -> approximate;\n", to: ''),
+    Fault.new(name: 'a constant floor in place of the record', module: CORE,
+              from: '#{floor := Floor} = Record) ->', to: 'Record) -> Floor = 1794787200000000000,'),
     Fault.new(name: 'a set decided by the Steps table', module: CORE,
               from: "decide({set, W}, Source, Page, Record) ->\n    {step, step(W, Source, Page), Record\#{excess := none}};",
               to: "decide({set, W}, Source, Page, Record) ->\n    decide({sample, W, 0, 1, {0, 0, 0, 0}}, Source, Page, Record);"),

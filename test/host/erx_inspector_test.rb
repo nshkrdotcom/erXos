@@ -32,7 +32,7 @@ class ErxInspectorTest < Minitest::Test
   QUERY = File.join(ERX, 'src/erx_inspect_query.erl')
   FACET = File.join(ERX, 'src/erx_inspect_facet.erl')
   APP_RECORDS = File.join(ERX, 'src/erx_app_records.erl')
-  TIME_RECORDS = File.join(ERX, 'src/erx_time_records.erl')
+  CLOCK_CORE = File.join(ERX, 'src/erx_clock_core.erl')
   # The logger's default handler is configured to write to standard error, so a report a case
   # provokes, such as a process's crash at its maximum heap size, cannot land inside EUnit's
   # line for that case, which names the case and ends with its verdict.
@@ -41,9 +41,9 @@ class ErxInspectorTest < Minitest::Test
   # whole text, both streams, for messages.
   EunitRun = Data.define(:passed, :report, :text)
   FAULTS = [
-    Fault.new(name: 'a cold page with an offset shown as unset, and one without as boot', file: TIME_RECORDS,
-              from: "state({ok, \#{cold := true, offset := 0}}) -> {ok, unset};\nstate({ok, \#{cold := true}}) -> {ok, boot};",
-              to: "state({ok, \#{cold := true, offset := 0}}) -> {ok, boot};\nstate({ok, \#{cold := true}}) -> {ok, unset};",
+    Fault.new(name: 'a cold page with an offset shown as unset, and one without as boot', file: CLOCK_CORE,
+              from: "state(\#{cold := true, offset := 0}, _Floor) -> unset;\nstate(\#{cold := true}, _Floor) -> boot;",
+              to: "state(\#{cold := true, offset := 0}, _Floor) -> boot;\nstate(\#{cold := true}, _Floor) -> unset;",
               tests: 'erx_time_records_tests', caught_by: 'each_page_state_is_shown_test_'),
     Fault.new(name: 'the clock closed to scoped callers', file: INSPECTOR,
               from: "scoped_machine_path([time]) -> true;\n",

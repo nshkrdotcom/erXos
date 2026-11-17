@@ -465,9 +465,14 @@ so it never names a cause it did not see.
 
 **The clock.** On erXos's kernel the clock is the real-time clock's
 reading at boot when the machine has one, so QEMU `virt`'s boots at
-`boot`; on Fiasco, and on a Raspberry Pi 4 without a clock module,
-every boot starts at 1970-01-01 and stays `unset` until something sets
-it ([design-crypto.md](design-crypto.md#time)). Validation compares
+`boot`; on Fiasco, and on a Raspberry Pi 4 without a clock module, the
+clock service starts every boot at the build's date, `approximate`,
+which validation treats as set, so the sources' chains pass from boot
+while the image is younger than their certificates; a leaf first valid
+after the build date is refused until root's `date` sets the clock exactly
+([design-time.md](design-time.md#the-approximate-start)). Only a build
+without a date leaves the clock `unset` at 1970-01-01
+([design-crypto.md](design-crypto.md#time)). Validation compares
 each certificate's dates with the wall clock; an unset clock reads 1970
 plus the uptime, before the validity of every certificate a public
 authority issues, so `ssl` refuses the source's chain with

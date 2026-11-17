@@ -2214,11 +2214,12 @@ closure ([0.2](#02-the-first-release-on-fiasco)).
 published image, shows the development banner and the shell on its
 serial console, and shows the kiosk, `examples/dashboard` with its
 clock and its quotes panel, on its HDMI screen through the firmware's
-framebuffer. The panel reads `no data: clock not set`, since the clock
-starts at 1970. From another machine, `ssh root@` the board, with the
+framebuffer. The panel shows live quotes fetched over HTTPS from boot,
+since the clock starts at the build's date and the published image is
+younger than the sources' certificates
+([design-time.md](design-time.md#the-approximate-start)). From another machine, `ssh root@` the board, with the
 public key its user put in `authorized_keys` on the card's boot
-partition, reaches `rc`. There root sets the clock by hand, and at its
-next round the panel shows live quotes fetched over HTTPS. In the same
+partition, reaches `rc`. There root sets the exact time by hand. In the same
 session `ps` and `top` show the session's `rc` and the programs it
 runs, and `erl`'s `erx:domains()` lists every domain of the machine,
 the kiosk's among them. A file synced under `/data` survives a power cut,
@@ -2250,15 +2251,17 @@ its code, and the item's work waits on it.
   published images carry `examples/dashboard`, declared `needs display
   net`, packed with `tools/erx pack --app` and enabled on the display
   ([design-packaging.md](design-packaging.md#adding-an-app-to-an-image)).
-  Until the clock is set,
-  every quote reads `no data: clock not set`
+  The clock starts at the build's date, so the quotes are live from
+  boot, and root's `date` sets it exactly; a build without a date
+  leaves it unset, and then every quote reads `no data: clock not set`
   ([design-quotes.md](design-quotes.md#refusals-and-error-results)).
-* **The clock, set by hand.** With no time source the wall clock reads
-  1970 plus the uptime ([design-quotes.md](design-quotes.md#what-exists)),
-  and the live quotes' TLS checks refuse every certificate on it. 0.1
+* **The clock, set by hand.** With no time source the clock service
+  starts the wall clock at the build's date, approximate, which the live
+  quotes' TLS checks accept
+  ([design-time.md](design-time.md#the-approximate-start)). 0.1
   builds the clock service of [design-time.md](design-time.md) without
-  its SNTP client, and no clock module: root sets the clock by hand with
-  a command of its own, FreeBSD's `date` with a time argument, after
+  its SNTP client, and no clock module: root sets the exact time by hand
+  with a command of its own, FreeBSD's `date` with a time argument, after
   each boot. **No design**: the set-time mechanism is a section of
   design-time.md, written first, which names its authority, its
   grammar, its fuzz target and what a set by hand does to the clock
@@ -2382,8 +2385,9 @@ its code, and the item's work waits on it.
   [Trying a card on a board](design-platforms.md#trying-a-card-on-a-board).
   The release notes are a page the website publishes beside the
   downloads, its source under `site/`. They carry 0.1's known
-  limitations: what it leaves to 0.2 and later (below); the clock, unset
-  at each boot until root sets it; whoever can write the card can make
+  limitations: what it leaves to 0.2 and later (below); the clock, at the
+  build's date at each boot until root sets it, so a certificate that
+  expired since the build is accepted until then; whoever can write the card can make
   themselves root; a requested off on the Pi reboots it, which only
   cutting the power turns off; and the security residuals a user of 0.1 is exposed
   to, each pointing to its row in the
@@ -2447,9 +2451,8 @@ its code, and the item's work waits on it.
   1b-I's power-cut checklist; 1b-I's part (d), the kiosk's frame and a
   display driver's restart; `ssh root@` the board with the key on the
   boot partition reaching `rc`, `ps` and `top` there, and a 1 MiB
-  `ssh -T board cat` passing unchanged; the quotes panel reading
-  `no data: clock not set`, then live quotes once root has set the
-  clock; the same host key after a reboot; a fault of the system domain
+  `ssh -T board cat` passing unchanged; the quotes panel showing live
+  quotes from boot, on the clock started at the build's date; the same host key after a reboot; a fault of the system domain
   resetting the board, which boots back to the kiosk; and the soak, as
   its design states it.
 * By hand on the 4 GB Pi, a development image whose root stops its
