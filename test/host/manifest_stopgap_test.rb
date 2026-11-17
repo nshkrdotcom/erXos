@@ -139,7 +139,7 @@ class ManifestStopgapTest < Minitest::Test
     assert result.bytes.frozen?
     view = @codec.open('manifest', result.bytes)
     assert_equal 4, view.count('domains')
-    assert_equal 12, view.count('devices')
+    assert_equal 13, view.count('devices')
     assert_equal 10, view.count('windows')
     assert_equal 1, view.count('images')
   end
@@ -152,7 +152,7 @@ class ManifestStopgapTest < Minitest::Test
     assert result.matches?(@context)
     view = @codec.open('manifest', result.bytes)
     assert_equal 2, view.count('domains')
-    assert_equal 4, view.count('devices')
+    assert_equal 5, view.count('devices')
     assert_equal 10, view.count('windows')
     assert_equal 1, view.count('images')
   end

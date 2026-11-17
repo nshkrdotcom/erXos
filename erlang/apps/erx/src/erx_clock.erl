@@ -18,7 +18,9 @@ of erx_clock_core, it sets the clock to that date, `approximate`, so
 certificate checks work before anyone sets the time.
 
 A facet forwards `{sample, Source, Sample}` or `{set, Source, W}`, Source
-the grantee's domain. For each the service reads the time page, takes
+the grantee's domain, and the wall-clock keeper of this domain sends
+`{rtc, Source, Wall}` once at boot, a real-time clock's reading, Source
+this domain (docs/design-time.md, "The real-time clock at boot"). For each the service reads the time page, takes
 erx_clock_core's decision, applies a step through the setter and answers
 the facet; it keeps the record that decision leaves and logs each applied
 set with the domain that asked for it. kernel_safe_sup starts erx_clock_sup
@@ -71,6 +73,8 @@ handle_call({sample, Source, Sample}, _From, Record) ->
     request(Sample, Source, Record);
 handle_call({set, Source, W}, _From, Record) ->
     request({set, W}, Source, Record);
+handle_call({rtc, Source, Wall}, _From, Record) when is_integer(Wall), Wall >= 0 ->
+    request({rtc, Wall}, Source, Record);
 handle_call(_Request, _From, Record) ->
     {reply, {error, badarg}, Record}.
 
@@ -97,5 +101,8 @@ decided({step, #{offset := W} = Step, Record}) ->
 %% logs "date set by" its user (bin/date/date.c).
 logged({set, _W}, Source, {ok, {stepped, StepNs}}) ->
     logger:notice("erx_clock: clock set by domain ~b, stepped ~b ns", [Source, StepNs]);
+logged({rtc, Wall}, _Source, Answer) ->
+    Date = calendar:system_time_to_rfc3339(Wall, [{unit, nanosecond}, {offset, "Z"}]),
+    logger:notice("erx_clock: the real-time clock reads ~s: ~0p", [Date, Answer]);
 logged(_Request, _Source, _Answer) ->
     ok.

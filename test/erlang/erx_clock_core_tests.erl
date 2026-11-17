@@ -175,3 +175,29 @@ the_floor_is_the_records_test() ->
     ?assertMatch({step, _, _}, erx_clock_core:decide(sample(W), ?SOURCE, Page, erx_clock_core:new(?M, ?FLOOR))),
     ?assertMatch({answer, {ok, {refused, floor}}, _},
                  erx_clock_core:decide(sample(W), ?SOURCE, Page, erx_clock_core:new(?M, ?FLOOR + 3600 * ?S))).
+
+%% The real-time clock's reading at boot (docs/design-time.md, "The real-time clock at
+%% boot"): one at or past the floor steps an unset clock, or one the start left
+%% approximate, to read it; one before the floor, or before the uptime since 1970 where
+%% no floor is recorded, is refused and changes nothing, so the clock never steps below
+%% the floor; and a clock that already has a time, the boot's reading or a set this
+%% boot, keeps it, so a second source never steps it.
+the_real_time_clock_test() ->
+    Record = record(none),
+    Unset = #{offset => 0, cold => true, monotonic => ?M},
+    Approximate = #{offset => ?FLOOR, cold => false, monotonic => ?M},
+    Wall = ?FLOOR + 30 * 86400 * ?S,
+    [?assertMatch({step, #{offset := Offset, at := Wall}, _}
+                  when Offset =:= Wall - ?M, erx_clock_core:decide({rtc, Wall}, ?SOURCE, Page, Record))
+     || Page <- [Unset, Approximate]],
+    [?assertEqual({answer, {ok, {refused, floor}}, Record},
+                  erx_clock_core:decide({rtc, Early}, ?SOURCE, Page, Record))
+     || Early <- [0, ?FLOOR - 1], Page <- [Unset, Approximate]],
+    ?assertMatch({step, #{offset := 0}, _}, erx_clock_core:decide({rtc, ?FLOOR}, ?SOURCE, Approximate#{monotonic := ?FLOOR},
+                                                                  Record)),
+    NoFloor = erx_clock_core:new(?M, 0),
+    ?assertEqual({answer, {ok, {refused, floor}}, NoFloor}, erx_clock_core:decide({rtc, ?M - 1}, ?SOURCE, Unset, NoFloor)),
+    ?assertEqual({answer, {ok, {refused, boot}}, Record},
+                 erx_clock_core:decide({rtc, Wall}, ?SOURCE, page(true), Record)),
+    ?assertEqual({answer, {ok, {refused, set}}, Record},
+                 erx_clock_core:decide({rtc, Wall}, ?SOURCE, page(false), Record)).

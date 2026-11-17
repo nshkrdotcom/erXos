@@ -118,13 +118,16 @@ class BootManifestTest < Minitest::Test
   # compatible string are a row of device_kinds, each with the platform record's window, line
   # DMA memory and clock. The console's UART, a UART of the same compatible string in a unit
   # the system domain holds, is no record, and the block and net units are the storage and
-  # network domains', so the development manifest gives the system domain one record, the
-  # host link's: erx_pl011 reads -erx_record console pl011, whose numbers are the console's entry.
-  def test_the_hostlink_unit_gives_the_system_domain_s_one_device_record
+  # network domains', so the development manifest gives the system domain two records, the
+  # host link's and the PL031's, a given record of the rtc unit it holds, which erx_rtc_pl031
+  # reads: erx_pl011 reads -erx_record console pl011, whose numbers are the console's entry.
+  def test_the_hostlink_and_rtc_units_give_the_system_domain_s_device_records
     output, status = read(admitted)
     assert status.success?, output
     assert_includes output, "console_uart pl011 150994944 4096 33 direct 24000000\n"
-    assert_includes output, "devices 1\n"
+    assert_includes output, "devices 2\n"
+    assert_includes output, "device rtc pl031 151060480 4096 34 direct 0 0 window 151060480 4096 0 " \
+                            "words-erx_record given rtc pl031 /pl031@9010000 11 0 4096 12 direct 0 0 0 0 0 exact 1 short 0\n"
     assert_includes output, "device hostlink pl011 151257088 4096 40 direct 0 24000000 " \
                             "words-erx_record device hostlink pl011 /pl011@9040000 151257088 4096 40 direct 24000000 10 exact 1 short 0\n"
     refute_match(/^device (?:block|net) /, output)
@@ -185,7 +188,7 @@ class BootManifestTest < Minitest::Test
     refute_equal @source, source
     output, status = read(admitted(source))
     assert status.success?, output
-    assert_includes output, "devices 2\n"
+    assert_includes output, "devices 3\n"
     assert_includes output, "device net virtio_net 167783936 512 71 direct 262144 0 window 167780352 4096 3584 " \
                             "words-erx_record given net virtio_net /virtio_mmio@a002e00 11 3584 512 12 direct 13 262144 0 0 0 exact 1 short 0\n"
   end
@@ -222,7 +225,7 @@ class BootManifestTest < Minitest::Test
     assert_match(/^device hostlink pl011 151257088 /, asked)
     plain, status = read(admitted, hostlink: false)
     assert status.success?, plain
-    assert_includes plain, "devices 0\n"
+    assert_includes plain, "devices 1\n"
     refute_match(/^device hostlink /, plain)
     assert_equal asked.lines.grep(/^device net /), plain.lines.grep(/^device net /)
   end
@@ -255,7 +258,7 @@ class BootManifestTest < Minitest::Test
     refute_equal @source, source
     output, status = read(admitted(source))
     assert status.success?, output
-    assert_includes output, "devices 1\n"
+    assert_includes output, "devices 2\n"
     refute_match(/^device block /, output)
   end
 

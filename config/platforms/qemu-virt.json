@@ -28,6 +28,15 @@
       ]
     },
     {
+      "key": "rtc",
+      "devices": [
+        { "selector": "dt", "role": "rtc", "path": "/pl031@9010000", "bridge": "",
+          "base": 151060480, "size": 4096, "line": 34,
+          "compatible": "arm,pl031", "bus": 0, "device": 0, "function": 0,
+          "dma": "none", "flags": 0, "dma_memory": 0, "placement_key": "rtc" }
+      ]
+    },
+    {
       "key": "block",
       "devices": [
         { "selector": "dt", "role": "block", "path": "/virtio_mmio@a003e00", "bridge": "",

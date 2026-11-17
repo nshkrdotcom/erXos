@@ -1,0 +1,15 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The real-time clocks' device class (docs/design-header-io.md, "Drivers"), over
+%% erx_device: erx_rtc_pl031, the Arm PrimeCell RTC PL031's driver, the system domain's
+%% wall-clock keeper where the system domain holds one (docs/design-time.md, "The
+%% real-time clock at boot"). erx_rtc_sup, which erx_rtc_app starts, runs it once at boot.
+{application, erx_rtc,
+ [{description, "erXos real-time clocks: the PL031 and the wall-clock keeper"},
+  {vsn, "1"},
+  {modules, [erx_rtc_app, erx_rtc_pl031, erx_rtc_sup]},
+  {registered, [erx_rtc_sup]},
+  {applications, [kernel, stdlib, erx]},
+  {mod, {erx_rtc_app, []}},
+  {env, []}]}.

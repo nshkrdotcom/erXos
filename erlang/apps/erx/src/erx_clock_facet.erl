@@ -41,7 +41,7 @@ restarts; with none registered it refuses with `{error, unavailable}`.
 -define(IS_OFFSET(W), (is_integer(W) andalso W >= 0 andalso W =< ?ERX_TIME_OFFSET_MAX)).
 
 -doc "Request when the interface takes it, or `{error, badarg}`.".
--spec decode(term()) -> {ok, erx_clock_core:request()} | {error, badarg}.
+-spec decode(term()) -> {ok, erx_clock_core:facet_request()} | {error, badarg}.
 decode({sample, W, Distance, Stratum, Server} = Sample)
   when ?IS_OFFSET(W), is_integer(Distance), Distance >= 0, Distance < ?ERX_CLOCK_DISTANCE_MAX_NS,
        is_integer(Stratum), Stratum >= 1, Stratum =< 15 ->
@@ -67,7 +67,7 @@ init(#{grantee := Grantee}) ->
     {ok, #{grantee => Grantee}}.
 
 -spec admit(term(), pid(), #{grantee := pos_integer()}) ->
-          {forward, pid(), {sample, pos_integer(), erx_clock_core:request()} | {set, pos_integer(), non_neg_integer()},
+          {forward, pid(), {sample, pos_integer(), erx_clock_core:sample()} | {set, pos_integer(), non_neg_integer()},
            map()}
         | {refuse, badarg | unavailable, map()}.
 admit(Request, _From, #{grantee := Grantee} = State) ->
