@@ -381,12 +381,28 @@ join_test() ->
     %% Past skipped buckets, each skipped one repeats the last close.
     S4 = live(S3, 6.0, ?WALL + 4 * ?B + 1, ?T0 + 20000),
     ?assertEqual(on_buckets([1.0, 2.0, 4.0, 5.0, 5.0, 5.0, 6.0], ?WALL + 4 * ?B), series(S4)),
-    %% A price of an earlier bucket, as after the clock steps back, is left out.
+    %% A price of an earlier bucket, as from a clock behind the source's,
+    %% replaces the last close: the series keeps the source's times.
     S5 = live(S4, 0.5, ?WALL + 2 * ?B, ?T0 + 30000),
-    ?assertEqual(series(S4), series(S5)),
+    ?assertEqual(on_buckets([1.0, 2.0, 4.0, 5.0, 5.0, 5.0, 0.5], ?WALL + 4 * ?B), series(S5)),
     %% The next answer replaces the series whole, its own gaps filled.
     {S6, _} = erx_quotes_core:history(S5, h, [{?WALL - 2 * ?B, 9.0}, {?WALL, 8.0}]),
     ?assertEqual(on_buckets([9.0, 9.0, 8.0], ?WALL), series(S6)).
+
+%% A kiosk whose wall clock lags the source's by a day: the history,
+%% whose entries all lie after the clock, is drawn as `24 h`, and each
+%% live price, read in a bucket before the series' last, moves the last
+%% close, so the line ends at the live price. Seeded failure: leaving
+%% out a price of an earlier bucket keeps the history's last close.
+lagging_clock_test() ->
+    {S0, _} = history_start(),
+    Day = on_buckets([float(N) || N <- lists:seq(1, 96)], ?WALL + 86400),
+    {S1, _} = erx_quotes_core:history(S0, h, Day),
+    S2 = live(S1, 7.5, ?WALL, ?T0),
+    ?assertEqual(lists:droplast(Day) ++ [{?WALL + 86400, 7.5}], series(S2)),
+    ?assertMatch([#{status := <<"K, 24 h - 0 s">>}], quotes(S2, ?T0)),
+    S3 = live(S2, 8.5, ?WALL + ?B, ?T0 + 10000),
+    ?assertEqual(lists:droplast(Day) ++ [{?WALL + 86400, 8.5}], series(S3)).
 
 %% The series keeps the last erx_quotes_core:buckets() points, a day of
 %% 15 min buckets, and a history's own gaps are filled whatever their

@@ -99,7 +99,7 @@ entry(Time, Close) ->
 
 -doc """
 A day of `{Time, Close}` up to the bucket of `Wall`, as the request of
-erx_quotes_table:history_url/2 is answered: 97 entries on 15 min steps,
+erx_quotes_core:history_url/2 is answered: 97 entries on 15 min steps,
 the closes 64000.5, 64001.5 and so on as decimal strings.
 """.
 day(Wall) ->
@@ -108,19 +108,23 @@ day(Wall) ->
 
 history(Body) ->
     #{sources := #{kraken_btc := Btc}} = erx_quotes_table:table(),
-    erx_quotes_extract:history(Btc, Body, ?WALL).
+    erx_quotes_extract:history(Btc, Body).
 
 history_test() ->
     {ok, Entries} = history(ohlc(?PAIR, day(?WALL))),
     ?assertEqual(97, length(Entries)),
     ?assertEqual({?WALL - 86400, 64000.5}, hd(Entries)),
     ?assertEqual({?WALL, 64096.5}, lists:last(Entries)),
-    %% The bounds: every bucket from two days before the clock to the one
-    %% after its own, 194 entries, and every other item a string or an integer.
-    Most = [{?WALL - 172800 + I * 900, <<"1.0">>} || I <- lists:seq(0, 193)],
+    %% No time is bounded by a clock: a day that ends a day after ?WALL, as
+    %% Kraken answers a kiosk whose clock lags, is read whole, and so are
+    %% times a week apart.
+    {ok, Ahead} = history(ohlc(?PAIR, day(?WALL + 86400))),
+    ?assertEqual({?WALL + 86400, 64096.5}, lists:last(Ahead)),
+    ?assertMatch({ok, [{?WALL - 604800, 1.0}, {?WALL + 604800, 2.0}]},
+                 history(ohlc(?PAIR, [{?WALL - 604800, <<"1.0">>}, {?WALL + 604800, <<"2.0">>}]))),
+    %% The bounds: 200 entries, and every other item a string or an integer.
+    Most = [{?WALL + I * 900, <<"1.0">>} || I <- lists:seq(0, 199)],
     ?assertMatch({ok, [_ | _]}, history(ohlc(?PAIR, Most))),
-    ?assertMatch({ok, [{?WALL - 172800, 1.0}, {?WALL + 900, 2.0}]},
-                 history(ohlc(?PAIR, [{?WALL - 172800, <<"1.0">>}, {?WALL + 900, <<"2.0">>}]))),
     ?assertMatch({ok, [{?WALL, 1.0}]},
                  history(raw(?PAIR, [[?WALL, 1, 2, 3, <<"1.0">>, 4, <<"5">>, 6]]))).
 
@@ -142,9 +146,8 @@ history_refusals_test() ->
            {out_of_order, ohlc(?PAIR, [{?WALL, <<"1.0">>}, {?WALL - 900, <<"1.0">>}])},
            {repeated, ohlc(?PAIR, [{?WALL, <<"1.0">>}, {?WALL, <<"1.0">>}])},
            {off_step, ohlc(?PAIR, [{?WALL + 60, <<"1.0">>}])},
-           {too_old, ohlc(?PAIR, [{?WALL - 172800 - 900, <<"1.0">>}])},
-           {future, ohlc(?PAIR, [{?WALL + 1800, <<"1.0">>}])},
-           {too_new, ohlc(?PAIR, [{?WALL + 172800 + 900, <<"1.0">>}])},
+           {negative_time, ohlc(?PAIR, [{-900, <<"1.0">>}])},
+           {past_32_bits, ohlc(?PAIR, [{(1 bsl 32 + 899) div 900 * 900, <<"1.0">>}])},
            {no_entries, ohlc(?PAIR, [])},
            {too_many, ohlc(?PAIR, [{?WALL - 90000 + I * 900, <<"1.0">>} || I <- lists:seq(0, 200)])},
            {wrong_pair, ohlc(<<"XETHZUSD">>, day(?WALL))},

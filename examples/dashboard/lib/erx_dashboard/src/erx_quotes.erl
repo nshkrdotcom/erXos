@@ -104,8 +104,8 @@ read(price, Quote, Row, Body, Wall, State) ->
         {ok, Price, Change} -> outcome(Quote, {value, Price, Change, Wall}, State);
         {error, bad_data} -> outcome(Quote, {error, bad_data, none}, State)
     end;
-read(history, Quote, Row, Body, Wall, #{core := Core} = State) ->
-    case erx_quotes_extract:history(Row, Body, Wall) of
+read(history, Quote, Row, Body, _Wall, #{core := Core} = State) ->
+    case erx_quotes_extract:history(Row, Body) of
         {ok, Entries} ->
             logger:notice("quotes: ~ts history ~b entries", [Quote, length(Entries)]),
             carry_out(erx_quotes_core:history(Core, Quote, Entries), State);

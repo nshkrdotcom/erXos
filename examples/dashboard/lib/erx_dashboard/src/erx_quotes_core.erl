@@ -33,13 +33,14 @@ held back; a failed one waits for the next, and one answered with a
 `Retry-After` holds the source back as a round's does (history_failed/5).
 history/3 takes the entries an answer carried and makes them the
 quote's `series`, oldest first,
-the last buckets/0 of them. A live price joins the series by the
-wall-clock second it was read at: in the series' last bucket it replaces
-the close, in a later one it is appended after the skipped buckets, each
-repeating the last close, unless it skipped more than an hour of them,
-which makes the series `none` until the next history; in an earlier one
-it is left out. Until a history arrives the series is `none` and the
-screen draws the samples.
+the last buckets/0 of them. The series keeps the source's times, which
+the kiosk's wall clock may lag: a live price joins it by the wall-clock
+second it was read at, and in a bucket after the series' last one it is
+appended after the skipped buckets, each repeating the last close,
+unless it skipped more than an hour of them, which makes the series
+`none` until the next history; in the last bucket or an earlier one it
+replaces the last close. Until a history arrives the series is `none`
+and the screen draws the samples.
 """.
 
 -export([new/2, tick/3, outcome/5, history/3, history_failed/5, history_url/2, samples/0,
@@ -64,7 +65,8 @@ screen draws the samples.
 -type action() :: {fetch, Quote :: atom(), Source :: atom(), Url :: binary()}
                 | {history, Quote :: atom(), Source :: atom()}
                 | render.
-%% A bucket of the series: its start, a wall-clock second, and its close.
+%% A bucket of the series: its start, a second on the source's clock, and
+%% its close.
 -type point() :: {Start :: integer(), Close :: float()}.
 -type outcome() :: {value, float(), none | float(), WallSecond :: integer()}
                  | {error, reason(), RetryAfter :: none | pos_integer()}.
@@ -164,7 +166,7 @@ history_source(Name, #{table := #{sources := Rows}} = State) ->
 -doc """
 Takes the entries a history answer for `Quote` carried, `{Start, Close}`
 oldest first, each start on bucket/0 steps and later than the one before
-(erx_quotes_extract:history/3), and makes them the quote's series whole:
+(erx_quotes_extract:history/2), and makes them the quote's series whole:
 joined one by one, so gaps repeat the close before them, and trimmed to
 the last buckets/0.
 """.
@@ -274,10 +276,12 @@ last(Samples) when length(Samples) > ?SAMPLES -> tl(Samples);
 last(Samples) -> Samples.
 
 %% `Series` with `Price`, read at the wall-clock second `Wall`, joined:
-%% in the series' last bucket it replaces the close; in a later one it
-%% is appended after the buckets skipped, each repeating the last close,
-%% unless more than `MaxGap` were skipped, which makes the series `none`;
-%% in an earlier one, as after the clock stepped back, it is left out.
+%% in a bucket after the series' last one it is appended after the
+%% buckets skipped, each repeating the last close, unless more than
+%% `MaxGap` were skipped, which makes the series `none`; in the last
+%% bucket or an earlier one, as when the kiosk's clock lags the source's
+%% or stepped back, it replaces the last close, so the series keeps the
+%% source's times and the line ends at the live price.
 %% A history's entries join with a `MaxGap` of `infinity`, since a bucket
 %% the source left out had no trades; a live price with ?MAX_GAP, since
 %% a longer gap on our side is time nothing was known about.
@@ -291,16 +295,14 @@ join([], Wall, Price, _MaxGap) ->
 join(Series, Wall, Price, MaxGap) ->
     {Last, Close} = lists:last(Series),
     case start_of(Wall) of
-        Last ->
+        Start when Start =< Last ->
             lists:droplast(Series) ++ [{Last, Price}];
         Start when (Start - Last) div ?BUCKET - 1 > MaxGap ->
             none;
-        Start when Start > Last ->
+        Start ->
             From = max(Last + ?BUCKET, Start - (?BUCKETS - 1) * ?BUCKET),
             Skipped = [{Time, Close} || Time <- lists:seq(From, Start - ?BUCKET, ?BUCKET)],
-            keep(Series ++ Skipped ++ [{Start, Price}]);
-        _Earlier ->
-            Series
+            keep(Series ++ Skipped ++ [{Start, Price}])
     end.
 
 keep(Series) ->
