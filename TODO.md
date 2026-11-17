@@ -9658,9 +9658,9 @@ document's "residual risks accepted" paragraph.
   `ProductionImage::Machine.site`.
 * [Low] SSH stage 1, the port (`tools/lib/erx/dev_key.rb`,
   `erlang/apps/erx_session/src/erx_ssh_dev.erl`): `DevKey::PORT` is a
-  Ruby constant while the guest's port is the argument root types to
-  `erx_ssh_dev:start/1`, so the two agree only by the harness's typing
-  it. A constant of `abi/erx_abi.txt` that both read would make them one
+  Ruby constant while the guest's port is the argument of the development
+  manifest's `-eval ok=erx_ssh_dev:boot(2222)` for root's session, so the
+  two agree only by being written alike. A constant of `abi/erx_abi.txt` that both read would make them one
   fact.
 * [Medium] SSH stage 2, root's session's grant of `login_keys`
   (`config/manifest/development.txt`, `facet login_keys_session`;

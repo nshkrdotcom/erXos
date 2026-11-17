@@ -167,11 +167,15 @@ limits network
   runtime_limits @runtime_limits.network
   peer_held 4096
   peer_held_total 4096
+# The system principal's session template, root's session: it starts erx_session and
+# then SSH's stage-1 daemon on port 2222, which erx_ssh_dev:boot/1 starts once the
+# session holds its net and data facets, and only in a development build
+# (docs/design-ssh.md, "Stages").
 session system
   limits @limits.session
   runtime @artifact.emu
   release @artifact.session
-  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -erx_net_client grant {erx_net_client_erxos,grant,[]} -eval ok=application:start(erx_session)"
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -erx_net_client grant {erx_net_client_erxos,grant,[]} -eval ok=application:start(erx_session) -eval ok=erx_ssh_dev:boot(2222)"
 unit console
   placement "console-uart"
   holder system

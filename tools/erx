@@ -1120,7 +1120,7 @@ module Erx
     end
 
     # The host's ssh as root into a development guest whose daemon root's session
-    # started with erx_ssh_dev:start/1, through a host loopback port forwarded to it,
+    # started at boot (erx_ssh_dev:boot/1), through a host loopback port forwarded to it,
     # --port (by default DevKey::PORT), with the clone's development login key (DevKey)
     # and the interactive boot's known-hosts file, which each boot's build starts afresh
     # in its directory. It takes no command: the guest's daemon gives root rc on a tty

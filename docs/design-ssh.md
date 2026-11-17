@@ -1020,7 +1020,13 @@ identifier.
    [design-crypto.md](design-crypto.md)
    whole; `crypto`, `public_key`, `asn1` and `ssh` imported with their edits and carried by every domain's runtime image (`tools/lib/erx/domain_image_apps.rb`); in a development build,
    `erx_ssh_dev:start(Port)` (`erlang/apps/erx_session`) run in root's session starts `ssh:daemon` in
-   that session, through root's own `net` grant. Its sessions are
+   that session, through root's own `net` grant. Root's session starts
+   it at boot: the development manifest's session template for the
+   system principal ends its arguments with `-eval
+   ok=erx_ssh_dev:boot(2222)`, which starts the daemon in a process of
+   its own once the session holds its `net` and `data` facets, which
+   their domains install after the session is ready, registers the
+   daemon as `erx_ssh_dev` and logs whether it listens. Its sessions are
    interactive ttys only: a session channel's callback,
    `erx_ssh_dev_channel`, is the master of a tty of root's session
    (`erx_session_tty:open_channel/3`), speaking the tty's six messages

@@ -12,7 +12,9 @@ facet of its own. start/1 starts nothing unless the build facts of this
 runtime's release name a development configuration
 (erx_build:development_facts/1): the image build writes them into every
 release, a session domain's included, and facts it cannot read count as a
-release build's.
+release build's. Root's session runs boot/1 at boot, as the development manifest's
+`-eval` asks, which starts the daemon once the session holds the facets it
+needs and registers it as `erx_ssh_dev`.
 
 Who may log in is `root`, with a key of root's: one of the medium's
 `authorized_keys` (docs/design-ssh.md, "Root's login keys on the medium"),
@@ -44,8 +46,8 @@ it makes is written whole under another name, readable by its owner alone
 where the file system keeps modes, and renamed into place.
 
 What keeps the development key out of a release build is that its image
-carries no login-key file and that start/1 refuses it. Only start/1 and the
-key callback are exported, so no entry of the module as the build compiles
+carries no login-key file and that start/1 refuses it. Only boot/1, start/1
+and the key callback are exported, so no entry of the module as the build compiles
 it names another keys file; the host tests compile it with TEST defined to
 reach daemon/2, which does. The session's own authority is not narrowed by
 that: any code it runs may start OTP's daemon with keys of its choosing.
@@ -55,7 +57,7 @@ that: any code it runs may start OTP's daemon with keys of its choosing.
 
 -include("generated/erx_abi.hrl").
 
--export([start/1]).
+-export([boot/1, start/1]).
 -export([host_key/2, is_auth_key/3]).
 
 -ifdef(TEST).
@@ -69,6 +71,10 @@ that: any code it runs may start OTP's daemon with keys of its choosing.
 -define(BLOB_SIZE, (4 + ?ERX_SSH_ED25519_NAME_SIZE + 4 + ?ERX_SSH_ED25519_KEY_SIZE)).
 -define(MEDIUM_KEYS_MAX, 16).
 -define(MEDIUM_READ, (?MEDIUM_KEYS_MAX * ?BLOB_SIZE + 1)).
+%% How boot/1 waits for the session's facets: a look every GRANT_POLL_MS, at most
+%% GRANT_POLLS of them, ten minutes, after which it starts nothing.
+-define(GRANT_POLL_MS, 500).
+-define(GRANT_POLLS, 1200).
 
 %% What the daemon is given: keys, the file of the development login key, one
 %% `authorized_keys` line each; host, the directory of the host key, made there
@@ -78,6 +84,38 @@ that: any code it runs may start OTP's daemon with keys of its choosing.
                      medium := fun(() -> {ok, binary()} | {error, term()}),
                      open := fun((pid(), erx_session_tty:channel(), fun((term()) -> term())) ->
                                         {ok, pid()} | {error, term()})}.
+
+-doc """
+Starts the daemon on Port at the session's boot (docs/design-ssh.md,
+"Stages"), in a process of its own, and returns at once. The daemon listens
+through the session's `net` facet and keeps its host key under `/data`,
+through its `data` facet, and their domains install both some time after the
+session is ready (erx:cap/1), so the process looks for the two every
+GRANT_POLL_MS and then calls start/1. A daemon that started is registered as
+`erx_ssh_dev`, by which a shell of the session finds it, and either way one line is
+logged.
+""".
+-spec boot(inet:port_number()) -> ok.
+boot(Port) ->
+    _ = spawn(fun() -> booted(Port, start_when_granted(Port, ?GRANT_POLLS)) end),
+    ok.
+
+start_when_granted(_Port, 0) ->
+    {error, {no_grant, "the session holds no net or no data facet"}};
+start_when_granted(Port, Polls) ->
+    case is_pid(erx:cap(net)) andalso is_pid(erx:cap(data)) of
+        true ->
+            start(Port);
+        false ->
+            timer:sleep(?GRANT_POLL_MS),
+            start_when_granted(Port, Polls - 1)
+    end.
+
+booted(Port, {ok, Daemon}) ->
+    true = register(?MODULE, Daemon),
+    logger:notice("erx_ssh_dev: the daemon listens on port ~b", [Port]);
+booted(Port, {error, Reason}) ->
+    logger:notice("erx_ssh_dev: no daemon on port ~b: ~0p", [Port, Reason]).
 
 -doc """
 Starts the daemon on Port with root's login keys and host key, in a
