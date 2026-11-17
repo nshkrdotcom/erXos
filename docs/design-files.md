@@ -1623,9 +1623,14 @@ added:
   session template other than the app template, whose sessions have
   their own directory among `apps/`
   ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)).
-  Property 19 lets only the rows the build derives state a tree, so no
-  source row roots a home grant elsewhere, and every user's session
-  holds its home by construction.
+  Property 19 refuses a source facet row of `home_service` and lets only
+  the rows the build derives state a tree, so no source row roots a home
+  grant elsewhere, and every user's session holds its home by
+  construction. Its tenth clause grants the service named
+  `data_service`, the whole volume, to the system domain and, in a
+  development manifest only, to root's template, and to no other
+  grantee
+  ([design-packaging.md](design-packaging.md#the-builds-check)).
 * **The entry.** A session mounts its `home` facet at its home's path,
   which `erx_ns:home_place/1` makes from the session's login name, the
   prefix of its node name
@@ -1639,7 +1644,7 @@ added:
   administrator, and reaches the other homes under `/data/home` as
   FreeBSD's root does; that grant is a development build's alone
   ([the littlefs release contract](design-stopgap.md#release-contract),
-  Grants).
+  Grants), and no other user's session holds it ("The row").
 * **Creation.** A home grant's start makes its directory when the
   volume lacks it, `/home` before `/home/NAME`, through the owner's own
   `make`, so a user's first login creates the home. A directory that

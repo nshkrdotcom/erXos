@@ -1148,6 +1148,39 @@ class ManifestDomainsTest < Minitest::Test
             message: /home service/)
   end
 
+  # Property 19's tenth clause (docs/design-files.md, "A user's home"): a user's one
+  # place on the data volume is its home, so a grant of the service named data_service,
+  # the whole volume, is the system domain's or, only in a development manifest, root's
+  # template's, the system principal's; another template's or a configured domain's is
+  # refused. The
+  # Phase 1 check refuses every release build in check_mode, before any facet, so the
+  # release case runs a check whose check_mode lets one through.
+  def test_only_roots_template_takes_the_whole_volume_and_only_in_development
+    data = "service #{@codec.fixed_bytes('data_service').delete("\0")}\n  server @domain.beta\n  interface files\n"
+    system = window_facet('data', 'system', '@service.data')
+    root = window_facet('data_session', '@session.system', '@service.data')
+    source = with_display(served: data, grants: [system, root])
+    admit(source)
+    other = window_facet('data_session', '@session.other', '@service.data')
+    refused(Erx::Manifest::Invalid, 19, 'facet.grantee', with_display(served: data, grants: [system, other]),
+            message: /whole volume/)
+    domain = window_facet('data_alpha', '@domain.alpha', '@service.data')
+    refused(Erx::Manifest::Invalid, 19, 'facet.grantee', with_display(served: data, grants: [system, domain]),
+            message: /whole volume/)
+    release = Class.new(Erx::Manifest::Stopgap) { private def check_mode(development:, partial:) = nil }
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @platform),
+                                         build_kind: 'release')
+    check = lambda do |grants|
+      parsed = Erx::Manifest::Frontend.parse(with_display(served: data, grants: grants).sub('flags development', 'flags none'),
+                                             version: @codec.constant('manifest_version'))
+      release.new(parsed, codec: @codec, context: context, planner: @planner, consumers: {}).check
+    end
+    check.call([system])
+    error = assert_raises(Erx::Manifest::Invalid) { check.call([system, root]) }
+    assert_equal [19, 'facet.grantee'], [error.property, error.field], error.message
+    assert_match(/whole volume/, error.message)
+  end
+
   # Property 19's refusals of what would derive the template wrongly: a source facet
   # carrying a tree, apps or installed, which only a derived row may; a source facet naming the template,
   # which no @session.NAME reaches, since it names no principal; an apps row with no

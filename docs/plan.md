@@ -2079,9 +2079,9 @@ display another row holds or the template is not granted wait for
 Track D's part 3, which builds the display domain. The rescue
 configuration starting no row and the reset count cleared by the first
 kept session wait for M12, which builds the reset count and the rescue
-configuration. That a session holding `data` cannot rewrite `rc.conf` is
-not an exit criterion: until `data` grants are rooted by principal it
-can, a residual recorded in `TODO.md`.
+configuration. A user's session holds only its home and cannot rewrite
+`rc.conf`; root's session, which holds `data`, the whole volume, in a
+development build, can, as FreeBSD's root can (property 19).
 
 **Exit criteria, packages added to an image.** `examples/dashboard`
 builds, packs and passes its host test with nothing but the exported
@@ -3534,8 +3534,8 @@ is dropped when its release changes; each principal's hot store answers
 only for its own blobs; the code service's decoder of overlays and stores
 runs its fuzz budget clean; an app's `data` grant is rooted at its own
 directory under `apps/`, and `purge` removes that directory
-through the storage service's `remove_app`, with no directory of a
-manifest principal reachable by it; one app name under two signers gets
+through the storage service's `remove_app`, with no user's home
+reachable by it; one app name under two signers gets
 two directories
 ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)).
 

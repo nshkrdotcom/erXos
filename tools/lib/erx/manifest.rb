@@ -1416,6 +1416,9 @@ module Erx
       # Whether a session row is the app template, the one naming no principal.
       def app_session?(session) = session.fetch('principal') == @codec.constant('mf_none')
 
+      # The app template's index among the sessions, nil in a manifest without one.
+      def app_template_index(tables) = tables.fetch('sessions').index { |session| app_session?(session) }
+
       # A domain row's or session template's arguments as its boot page holds them: its
       # emulator flags (the words before the first --), then -- -boot /bin/<name> --,
       # then its init arguments (the words after that --). /bin/<name> is the boot
@@ -1564,7 +1567,7 @@ module Erx
         service_rows = tables.fetch('services')
         packages = fetch_files_service(service_rows, 'packages_service', required_by: 'an apps row')
         tree = fetch_files_service(service_rows, 'system_service', required_by: 'an apps row')
-        template = [grantee_kind('session'), tables.fetch('sessions').index { |session| app_session?(session) }]
+        template = [grantee_kind('session'), app_template_index(tables)]
         system = [grantee_kind('system'), 0]
         [[system, packages, { 'rights' => 'rw' }], [template, packages, { 'rights' => 'rx', 'tree' => 'installed' }],
          [system, tree, { 'rights' => 'ro' }], [template, tree, { 'rights' => 'rx' }],
@@ -1621,7 +1624,7 @@ module Erx
       end
 
       # The packed apps row and its app_services rows: none without an apps row, and
-      # otherwise the row, with the indices of the app template, last among the sessions,
+      # otherwise the row, with the indices of the app template (app_template_index),
       # and of its packages and system facet rows, and its services, the indices check_apps resolved,
       # ascending, each with the index of the facet row granted to the template for it.
       # The rows are the ones app_facets derived, found by grantee and service, which no
@@ -1629,7 +1632,7 @@ module Erx
       def apps_rows(service_indices, tables)
         return [[], []] if @apps == NO_APPS
 
-        template = tables.fetch('sessions').size - 1
+        template = app_template_index(tables)
         facets = tables.fetch('facets')
         tree = ->(name) { fetch_files_service(tables.fetch('services'), name, required_by: 'an apps row') }
         granted = lambda do |service|
@@ -1883,6 +1886,7 @@ module Erx
         invalid('no facet row grants code_objects, which the domain service grants every session', 8, 'facet.service') unless
           facets_of(rows, 'code_objects', tables).empty?
         check_code_objects_service(service_rows)
+        check_data_grants(rows, packed.map(&:first), tables)
         check_network_grants(rows, packed.map(&:first), tables)
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
@@ -2304,6 +2308,34 @@ module Erx
         return if found.size == 1 && found.first.fetch('name') == 'code_objects' && found.first.fetch('server') == system
 
         invalid('the manifest serves code_objects once, by that name, from the system domain', 8, 'service.interface')
+      end
+
+      # Property 19's tenth clause (docs/design-files.md, "A user's home"): a user's one
+      # place on the data volume is its home, so a grant of the service named
+      # data_service that states no tree, the whole volume, is the system domain's or,
+      # in a development manifest only, root's template's, the system principal's, and
+      # no other grantee's: no configured domain's and no other template's. A row with a
+      # tree (an app's, tree apps) is rooted below the volume and is not this clause's.
+      # values holds each facet's parameter values, by key name, in facets' order.
+      def check_data_grants(facets, values, tables)
+        name = @codec.fixed_bytes('data_service')
+        system_principal = reference(@source.machine, 'system_principal', 'principal')
+        development = BuildKind.development?(@context.build_kind)
+        allowed = lambda do |row|
+          case row.values_at('grantee_kind', 'grantee')
+          in [kind, _] if kind == grantee_kind('system') then true
+          in [kind, template] if kind == grantee_kind('session')
+            development && tables.fetch('sessions').fetch(template).fetch('principal') == system_principal
+          else false
+          end
+        end
+        facets.zip(values).each do |row, stated|
+          next unless tables.fetch('services').fetch(row.fetch('service')).fetch('name') == name && stated['tree'].nil?
+          next if allowed.call(row)
+
+          invalid("facet #{row.fetch('name')} grants the whole volume, data, which only the system domain " \
+                  "and, in a development manifest, root's template take", 19, 'facet.grantee')
+        end
       end
 
       # The facet rows of the interface abi/services declares as NAME, compared by number.

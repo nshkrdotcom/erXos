@@ -620,8 +620,12 @@ the packages are well formed**, beside the eighteen of
 6. every `signer` row holds a 32-byte Ed25519 public key under a unique
    name;
 7. no facet row of the board's source is granted to the app template,
-   carries `tree apps` or `tree installed`, or names the `apps` service: only the rows the
-   build derives do;
+   carries `tree apps` or `tree installed`, or names the `apps` service
+   or the service named `home_service`: only the rows the build derives
+   do, a `home` row among them for every session template but the app
+   template
+   ([design-files.md](design-files.md#building-binding-and-mounting),
+   "A user's home");
 8. the manifest holds one service named `system_service`, of the files
    interface, exactly when it has a `system` window, and its server is
    the holder of that window
@@ -643,7 +647,15 @@ the packages are well formed**, beside the eighteen of
    service admits a session only from what lies outside the configured
    domains' shares, so apps and sessions, however many run, never take
    what a configured domain's restart needs. The clause goes with Fiasco:
-   erXos's kernel has no table of the root's (FD30).
+   erXos's kernel has no table of the root's (FD30);
+10. a facet row of the service named `data_service` that states no
+    tree, the data volume whole, is granted to the system domain or, in
+    a development manifest only, to root's template, the system
+    principal's, and to no other grantee, configured domain or template,
+    since a user's one place on the volume is its home
+    ([design-files.md](design-files.md#building-binding-and-mounting),
+    "A user's home"); a row with `tree apps` is rooted below the volume
+    and is not this clause's.
 
 Each clause has a seeded violation: a check that counts the app template
 once in property 18, which admits a row whose apps together pass the
@@ -654,7 +666,11 @@ passes the `apps` budget; a `package` row whose declaration needs a
 service the row lacks; a configured domain's `data` row carrying `tree
 apps`; an `apps` row in a manifest with no `system_service`; a
 `system_service` served by a domain that does not hold the `system`
-window; a source facet row of `system_service`; an `apps` row
+window; a source facet row of `system_service`; a source facet row of
+`home_service`; a `data_service` row granted to the template of a
+principal other than the system principal; one granted to a configured
+domain; one granted to root's template in a release manifest; an `apps`
+row
 whose `max` times the app template's object limit, beside the configured
 domains' object limits, passes the page index's 4,096 labels.
 
@@ -1056,8 +1072,8 @@ it stops reading once its name holds another package.
 ### Where an app's files lie
 
 The data partition's storage service keeps every app's directory under
-one directory of its own, `apps/`, apart from the directories of the
-manifest's principals and services. A grant from a facet row that
+one directory of its own, `apps/`, apart from the users' homes,
+`root/` and `home/`, and the services' trees. A grant from a facet row that
 carries `tree apps` is rooted at `apps/NAME/SIGNER/`: `NAME` is the
 grantee's principal as the mint names it, the app's, and `SIGNER` is the
 signer its principal record holds, `image` for a package of the image
@@ -2276,8 +2292,9 @@ it guards.
   `dashboard.app` while the boot image holds no package, and
   `--enable` dropped leaving the screen blank, are further cases of the
   same boot;
-* two apps: neither's `/proc` shows the other's domains; once `data`
-  grants are rooted by principal, neither reads the other's `/data`;
+* two apps: neither's `/proc` shows the other's domains; once each
+  app's `data` grant is rooted at its own directory under `apps/`,
+  neither reads the other's files;
 * the principal's wall, on both kernels: two enabled apps start together
   within the `apps` budget and a third is refused with `no_memory` while
   both run; an app whose session ended and retired starts again, since

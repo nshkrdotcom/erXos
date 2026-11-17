@@ -251,9 +251,11 @@ covers the whole of `/data`, read-write
 ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)),
 so those sessions can also read `kernel/messages`, which their scope
 `all` already allows, and rewrite or truncate either family at
-`/data/log` (TODO.md, Security residuals). In the target design each
-principal's data grant is rooted at its own directory
-([design-storage.md](design-storage.md)), and none reaches the store.
+`/data/log` (TODO.md, Security residuals). In the target design a
+user's session holds only its home, since property 19 grants the whole
+volume to no session in a release manifest
+([design-files.md](design-files.md#building-binding-and-mounting), "A
+user's home"), and none reaches the store.
 
 ### The log facet
 
@@ -716,7 +718,7 @@ the supervisor's report is in the kernel ring, at `/proc/kernel/log`.
   the writer stored only while nothing else writes the store. A storage
   domain, or a holder of write access to `/data/log`, can put terminal
   controls in a stored file; that is a security residual in TODO.md,
-  closed with the per-principal data grants. The trusted base parses
+  closed when a release manifest grants no session the whole volume. The trusted base parses
   nothing of the store: a batch's process reads one byte of each file
   and its size.
 * **The kernel's lines** stay where scope `all` reaches (L5), but for
@@ -812,7 +814,7 @@ for [todo-performance.md](todo-performance.md):
 | a facet endpoint, a process in front of the service that relays each `write` | a relay that does not track each call leaves a request the dead service held without an answer, occupying the facet's limit in flight; resolving the service in the facet's callback lets `erx_facet`'s own forward answer it, with no process added |
 | the service tracking each batch until its consumer acknowledges it | an acknowledgement can arrive at a service restarted since, which has no record of its batch; with the consumer asking for each batch, the service keeps nothing to go stale |
 | retrying a failed append | a write past one request, or one whose reply is lost, may have reached the file, so a retry writes lines twice and can join a cut line to a whole one; giving the batch up and counting it loses at most that batch |
-| checking each stored byte against the line escape as `/var/log` serves it | a classifier in every read, against a medium that in Phase 1 only trusted domains write; rooting each principal's data grant at its own directory closes the same gap where it opens |
+| checking each stored byte against the line escape as `/var/log` serves it | a classifier in every read, against a medium that in Phase 1 only trusted domains write; a release manifest that grants no session the whole volume, so a user's session holds only its home, closes the same gap where it opens |
 
 ## Open decisions
 

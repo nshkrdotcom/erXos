@@ -211,11 +211,6 @@ facet clock_display
   grantee @session.clock
   service @service.display
   ...
-facet clock_data
-  name "data"
-  grantee @session.clock
-  service @service.data
-  ...
 ```
 
 * **The principal** pays for the app's sessions: its budget, its group
@@ -236,10 +231,15 @@ facet clock_data
 * **The facet rows** are the app's authority: a session holds every
   grant of its template and nothing more. An app is offered a display
   by a row of that display's `windows` service, with the grant's quotas
-  as the row's parameters, the network by a row of `net`, and files of
-  its own by a row of `data`, which the storage service roots at the
-  app's own directory, `apps/NAME/SIGNER/`
-  ([design-storage.md](design-storage.md#interfaces)).
+  as the row's parameters, and the network by a row of `net`. Its files
+  are its user's home, `/home/clock`, through the `home` row the build
+  derives for every session template but the app template
+  ([design-files.md](design-files.md#building-binding-and-mounting), "A
+  user's home"), as a package app's are its own directory,
+  `apps/NAME/SIGNER/`
+  ([design-packaging.md](design-packaging.md#where-an-apps-files-lie));
+  no source row grants it `data`, the whole volume, which property 19
+  leaves to root's template alone.
 
 An app's principal is an ordinary principal, so the principal service
 knows it as it knows every principal of the manifest, and its sessions'
@@ -987,7 +987,7 @@ later, and reports each as it is:
 
 | Deferred | Until | Meanwhile |
 | --- | --- | --- |
-| rooting an app's `data` grant at its own directory | facet parameters and the apps' directories | each grant covers the whole tree, so every domain holding `data` reaches the `etc` tree, can rewrite `rc.conf`, and reaches every app's directory: a security residual in `TODO.md` |
+| rooting an app's `data` grant at its own directory | facet parameters and the apps' directories | an app holds no `data` grant: the check refuses an `apps` row that names a files service, and property 19 grants the whole volume to no template but root's |
 | budgets and quotas as limits | erXos's kernel | they are records the build checked |
 
 ## Verification and testing
@@ -1079,9 +1079,11 @@ variable left out of the reserve, which admits the third.
   answers `eio` and `service NAME stop` of one that runs ends it;
   seeded: a boot that refuses as a command does, which starts no row.
 
-Once `data` grants are rooted by principal, a session holding `data`
-finds no `etc/` under its `/data`; until then the gap is the
-Phase 1 residual above, and no test claims it.
+A user's session reaches the data volume only through its home, since
+property 19 grants `data`, the whole volume, to no session template
+but root's, so it finds no `etc/`; root's session, the administrator's,
+reaches `etc/` as FreeBSD's root does; no configured domain holds
+`data`.
 
 **Fuzz targets**, each landing with its parser: the `ctl` line grammar
 and `rc.conf`'s grammar.
