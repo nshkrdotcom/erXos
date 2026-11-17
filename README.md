@@ -40,8 +40,11 @@ The [architecture](docs/design.md), the [roadmap](docs/plan.md) and the
 * **A live machine.** Recompile a module on your laptop, and a second
   later it runs on the target. Upgrade a driver in place. Follow any
   process to the line of source it is executing.
-* **UNIX look and feel.** The shell, files, pipes, `ps`, `grep` and
-  terminals behave as a UNIX user expects, as on QNX and Plan 9. A
+* **UNIX look and feel, honestly.** The shell, files, pipes, `ps`,
+  `grep` and terminals behave as a UNIX user expects, as on QNX and
+  Plan 9, and familiar names and formats stay wherever they fit. Nothing
+  pretends to be what it is not: where erXos works differently, it
+  looks different. Where a file fits, it is a file, as in Plan 9. A
   POSIX-lite layer runs FreeBSD programs recompiled from source.
 * **One kernel, many runtimes.** The kernel hands out CPU time to
   runtimes and native threads alike. ERTS comes first. C programs share
@@ -143,7 +146,7 @@ pixels. The [overview](docs/overview.md) tells the longer story.
   native on a touch panel and in a browser tab.
   ([web](docs/design-web.md))
 * **UNIX on the surface.** As on *QNX* and *Plan 9*, UNIX is how the system
-  looks, not what it is built on. The command shell speaks rc's language
+  looks wherever that is also how it works, not what it is built on. The command shell speaks rc's language
   and pipes text between commands, as UNIX does. Toybox supplies the
   familiar tools. Native programs run on a POSIX-lite layer over musl,
   each holding only what its starter handed it.

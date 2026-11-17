@@ -36,12 +36,22 @@ These shape every design and change; the rules below apply them.
    simple. Barrelfish's "Tackling OS Complexity with Declarative
    Techniques" and the BOOM project are the references
    ([research-os-ideas.md](docs/research-os-ideas.md)).
-5. **UNIX look and feel.** To its users the system feels like UNIX, as QNX
-   and Plan 9 do. A POSIX-like layer that runs FreeBSD programs, ported at
-   the source level, is a goal, but not at the expense of the other
-   principles; full POSIX compliance is not the bar. Programs brought in
-   from elsewhere come from FreeBSD or are BSD-licensed where possible.
-   Where UNIX systems differ and erXos must choose, it follows FreeBSD.
+5. **UNIX look and feel, honestly.** To its users the system feels like
+   UNIX, as QNX and Plan 9 do. Keep what a UNIX user already knows
+   wherever it fits what the thing is, and never change a familiar
+   name, command or format for change's sake; where UNIX systems
+   differ and erXos must choose, it follows FreeBSD. But no
+   skeuomorphism: every thing is what it is and behaves as its name
+   leads a user to expect. Nothing wears the name, syntax or shape of
+   something it is not, and where erXos's model differs from
+   FreeBSD's, the surface shows erXos's model rather than a FreeBSD
+   imitation of it. Where a file fits, follow Plan 9: state is a file
+   to read, control is a file to write, and a service is a file tree
+   its owner serves. A POSIX-like layer that runs FreeBSD programs,
+   ported at the source level, is a goal, but not at the expense of
+   the other principles; full POSIX compliance is not the bar.
+   Programs brought in from elsewhere come from FreeBSD or are
+   BSD-licensed where possible.
 
 ## Collaboration
 
@@ -439,6 +449,13 @@ scripts live in `~/erxos-scratch/tools/`.
   whether changing the architecture would make the edge cases disappear rather
   than handling them one by one. A simpler design that eliminates a class of
   problems beats a clever one that patches each instance.
+* **Familiar only where true.** Before a mechanism takes a UNIX or
+  FreeBSD name, file, syntax or command, check that it behaves as that
+  name promises: what a FreeBSD user would try with it works, or is
+  refused with a clear error. If the model underneath is different,
+  give it its own name and shape. Design and drift reviews ask of
+  every familiar surface: "what does this promise that it does not
+  do?"
 * **Question every requirement before building for it.** Before a design
   adds a mechanism (a borrowed algorithm, a dependency, a format feature, a
   test harness, a process), it names the consumer that needs the property
