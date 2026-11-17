@@ -303,7 +303,9 @@ session_commands_without_facets_test() ->
 %% The system domain is handed no facet, and no `net`, which it may not hold
 %% (docs/design-system.md, property 15); its shell holds `local` for each service
 %% the domain serves (docs/design-shell.md, "Interfaces"), so it refuses exactly
-%% the commands that need `net`, and no command needs any other facet it lacks.
+%% the commands that need `net`, ntpctl among them since a command's needs are
+%% its every form's (docs/design-time.md, "The command"), and no command needs any other facet
+%% it lacks.
 system_facets_refuse_only_the_network_commands_test() ->
     Dir = filename:dirname(code:which(erx_cmd)),
     Modules = [list_to_atom(filename:basename(File, ".beam")) || File <- filelib:wildcard("erx_cmd_*.beam", Dir)],
@@ -313,7 +315,7 @@ system_facets_refuse_only_the_network_commands_test() ->
     System = erx_shell_runner:facets(true, [inspect, log, machine, start], #{}),
     Missing = [{Name, Need} || {erlang, #{name := Name, needs := Needs}} <- maps:values(Table),
                                Need <- Needs, not is_map_key(Need, System)],
-    ?assertEqual([{<<"host">>, net}, {<<"ifconfig">>, net}, {<<"ping">>, net}],
+    ?assertEqual([{<<"host">>, net}, {<<"ifconfig">>, net}, {<<"ntpctl">>, net}, {<<"ping">>, net}],
                  lists:usort(Missing)).
 
 drain(Acc) ->
