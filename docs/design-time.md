@@ -561,8 +561,8 @@ and counts it.
 
 ## The approximate start
 
-A board without a real-time clock, and QEMU `virt` on Fiasco, boots at
-1970-01-01, where every certificate a public authority issues is not yet
+A board without a real-time clock the system domain reads, the Raspberry
+Pi 4 without a module, boots at 1970-01-01, where every certificate a public authority issues is not yet
 valid, so nothing reaches live data over TLS until someone sets the
 clock. The build knows a better time: the image cannot run before its
 source was committed. So the clock service, when it starts, sets a clock
@@ -619,6 +619,72 @@ but valid at the real date is refused. The window is the image's age.
 For development builds and 0.1, trusted code on a machine its operator
 watches, that is accepted; whether a release build keeps the start, or
 refuses TLS on an approximate clock, is [open](#open-decisions).
+
+## The real-time clock at boot
+
+A machine whose manifest gives the system domain a real-time clock the
+system domain can read sets the clock from it at boot, so its time is
+exact from the first second rather than the build's date. QEMU `virt`
+has one, the Arm PrimeCell RTC PL031 at `/pl031@9010000`, which QEMU
+starts at the host's time; the Raspberry Pi 4 has none of its own.
+
+* **The device is the system domain's by the manifest.** The platform
+  record's `rtc` unit holds the PL031, a device of kind `rtc` and
+  compatible string `arm,pl031` (`include/erx/device_kinds.h`), and the
+  manifest's `unit rtc` row names the system domain its holder, so the
+  root writes the system domain a given record of role `rtc` and
+  peripheral `pl031` ([design-system.md](design-system.md), property 8).
+* **The keeper is a driver.** `erx_rtc_pl031`, in the `erx_rtc`
+  application of the real-time clocks' device class
+  ([design-header-io.md](design-header-io.md#drivers)), is the system
+  domain's wall-clock keeper: started once at boot by `erx_rtc_sup`, a
+  temporary child for each record, it opens the record through
+  `erx_device` and reads the data register, `RTCDR`, the clock's count
+  of seconds (Arm DDI 0224C, section 3.3). Its hardware description,
+  `hw/svd/pl031`, names `RTCDR` alone, so the driver can reach no
+  register that changes the clock, and erXos never writes it. It sends
+  the clock service `{rtc, Source, Wall}`, `Wall` the reading in
+  nanoseconds and `Source` the system domain, and leaves no process
+  behind.
+* **The clock service decides it.** `erx_clock_core:decide/4` takes
+  `{rtc, Wall}` in one step with the page it reads when the request
+  arrives: on a clock with no time of its own, state `unset`, or the
+  [approximate start](#the-approximate-start)'s `approximate`, a
+  reading at or past the floor steps the clock to read `Wall`, and the
+  clock is `set`; a reading
+  before the floor, or before the uptime since 1970 where the build has
+  no floor, is refused `floor` and changes nothing, so a clock with a
+  flat battery or a hostile reading never moves the clock below the
+  floor; on a clock that already has a time, the boot's own reading
+  (`boot`) or a set this boot by `date` or `ntpd` (`set`), it is
+  refused with that state, since the reading is a start, not a
+  correction, so a second source never steps a clock that has a time
+  at or past the floor. It is
+  no facet's request: `erx_clock_facet` admits only `sample` and `set`,
+  so only the system domain's own processes send it.
+* **What a reading can do.** The PL031 is a device of the machine, as
+  trusted as the machine's other devices: a reading picks any time from
+  the floor to 2106, the largest count its 32 bits hold, and the
+  certificate checks of [design-crypto.md](design-crypto.md#time) then
+  run against it until `date` corrects it. Every later sample meets a
+  `set` clock, so `ntpd` steps it only while it is within the
+  [Steps](#steps) table's 1000 s and refuses a larger error `panic`;
+  a reading more than 1000 s wrong stays until root's `date` sets the
+  clock ([TODO.md](../TODO.md)).
+* **Deterministic mode** starts the PL031 at 2026-01-01
+  ([design-fiasco.md](design-fiasco.md#deterministic-mode)), before any
+  build's floor, so the reading is refused and the clock keeps the
+  approximate start, as the transcript needs.
+* **A machine without one,** the Raspberry Pi 4 without a module, has no
+  `rtc` unit, no record and no keeper, and keeps the approximate start;
+  the DS3231 module's `/dev/rtc` is the same keeper's other source
+  ([design-header-io.md](design-header-io.md#devrtc)), which
+  [TODO.md](../TODO.md) holds. On erXos's kernel, which reads the PL031
+  itself at boot ([design-kernel.md](design-kernel.md), "Time"), the
+  page arrives `boot`, so a keeper's reading is refused `boot` and
+  changes nothing; where the kernel's reading falls before the floor,
+  the start leaves the clock `approximate` and the keeper's reading,
+  from the same device, is refused `floor` too.
 
 ## The client
 
@@ -971,9 +1037,9 @@ both thresholds included, does not apply to it. The answer is `{ok,
   holds a real-time clock it writes a set like any other correction, as
   FreeBSD's `date` writes the hardware clock (`date.1`). A board without
   one, the Raspberry Pi 4 without a clock module, starts at the build's
-  date again, as does QEMU `virt` on Fiasco, whose root does not read the
-  PL031 ([Phase 1](#phase-1)); there the operator sets the exact time
-  after each boot, which the user documentation says.
+  date again; there the operator sets the exact time after each boot,
+  which the user documentation says. QEMU `virt` reads its PL031 again
+  at each boot ([The real-time clock at boot](#the-real-time-clock-at-boot)).
 
 ### Failure paths
 
@@ -1103,9 +1169,11 @@ nothing there checks them. The range check of
 `erx_time_set_offset` is the body's own and holds on Fiasco as on
 the kernel. The page starts zeroed, `seq` and offset included, so every
 boot is cold. The Fiasco backend puts no real-time clock's reading in
-the page at boot: QEMU `virt`'s PL031 is read only by erXos's kernel,
-and the Raspberry Pi 4 has no clock of its own. So on both the clock
-service starts the clock at the build's date, `approximate`
+the page at boot. On QEMU `virt` the system domain's wall-clock keeper,
+a user-mode driver of the PL031, reads it once at boot and sets the clock
+([The real-time clock at boot](#the-real-time-clock-at-boot)); the
+Raspberry Pi 4 has no clock of its own, so there the clock service
+starts the clock at the build's date, `approximate`
 ([The approximate start](#the-approximate-start)), until root's `date` or
 `ntpd` sets it, or, on a Pi 4 with a DS3231 module, the
 wall-clock keeper does
@@ -1211,10 +1279,14 @@ kiss code. The guest's test manifest enables ntpd with
   after check 4, with the peer's kiss carrying LI 3, ignores both.
 * **Refusals.** A session without the facet row has no `clock` name;
   `ntpd_flags=""` ends the row with `no servers` and leaves it down.
-* **The approximate start.** On QEMU `virt` on Fiasco, with no
-  real-time clock, root's session runs `date +%Y%m%d%H` before any set,
-  and it writes the hour of the image's commit time or the next one
-  (`session_domain`).
+* **The real-time clock at boot.** On QEMU `virt`, whose PL031 the
+  harness starts at the host's time, root's session runs
+  `date +%Y%m%d%H` before any set, and it writes the host's hour when the
+  boot began or the next one (`session_domain`). `erx_clock_core`'s
+  cases decide `{rtc, Wall}` over unset, approximate, boot and set pages
+  and readings either side of the floor. *Seeded failures:* the floor
+  check removed, the refusal over a boot clock removed, and the refusal
+  over a set clock removed.
 * **Set by hand.** With ntpd off, root's session runs `date
   203001011200`; `date +%Y%m%d%H%M` there and `os:system_time(second)`
   in another domain read the new time within a second, and

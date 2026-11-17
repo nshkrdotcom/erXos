@@ -636,14 +636,15 @@ clock's state is `/proc/time/status`'s `state`: `unset`, `boot`,
 | Machine | Wall clock at boot |
 | --- | --- |
 | QEMU `virt` on erXos's kernel | the PL031's reading, which the kernel takes once at boot ([design-kernel.md](design-kernel.md), "Time"), so `state` is `boot`. QEMU starts its real-time clock at the host's time unless `-rtc base=` says otherwise (unverified: QEMU's documentation was not read); deterministic mode starts it at 2026-01-01 ([design-fiasco.md](design-fiasco.md#deterministic-mode)) |
-| Fiasco, on QEMU `virt` or on the Raspberry Pi 4 without a module | the build's date, `approximate`: the Fiasco backend puts no real-time clock's reading in the time page at boot and the Pi 4 has no clock, so the clock service starts the clock at the commit time of the image's source, and root's `date` or `ntpd` sets it exactly ([design-time.md](design-time.md#the-approximate-start)) |
+| Fiasco, on QEMU `virt` | the PL031's reading, which the system domain's wall-clock keeper, a user-mode driver, takes once at boot ([design-time.md](design-time.md#the-real-time-clock-at-boot)), so `state` is `set`; deterministic mode's reading, before the build's date, is refused, and the clock starts `approximate` |
+| Fiasco, on the Raspberry Pi 4 without a module | the build's date, `approximate`: the Fiasco backend puts no real-time clock's reading in the time page at boot and the Pi 4 has no clock, so the clock service starts the clock at the commit time of the image's source, and root's `date` or `ntpd` sets it exactly ([design-time.md](design-time.md#the-approximate-start)) |
 | the Raspberry Pi 4 with a DS3231 module | the module's time, read at `/dev/rtc/time` by the system domain's wall-clock keeper ([design-header-io.md](design-header-io.md#devrtc)), so `state` is `set` |
 | any machine running `ntpd` | set by the first sample ([design-time.md](design-time.md)); off unless enabled |
 | any machine, by hand | set by root's `date` ([design-time.md](design-time.md#setting-the-clock-by-hand)) until the next boot |
 | hosted mode | the host's clock, `boot` |
 | a build from a tree that is no git checkout, with no build date | 1970-01-01, `unset`, where no real-time clock reads |
 
-On Fiasco nothing reads a real-time clock at boot, so QEMU `virt` starts `approximate` at the build's date as a Raspberry Pi 4 without a module does, and stays so until root's `date`, `ntpd` or a DS3231 module sets it; reading the PL031 at boot is the kernel's, as design-kernel.md's "Time" gives it, and the Fiasco backend does not rebuild it in user mode. The Raspberry Pi 4 gets its time from a DS3231 module and the wall-clock keeper, since the board has no clock of its own. `ntpd` is designed and off unless an operator enables it with a server of their own.
+On Fiasco the Fiasco backend reads no real-time clock at boot; on QEMU `virt` the system domain's wall-clock keeper, an ordinary user-mode driver that the manifest gives the PL031, reads it once and sets the clock, while a Raspberry Pi 4 without a module starts `approximate` at the build's date and stays so until root's `date`, `ntpd` or a DS3231 module sets it. The Raspberry Pi 4 gets its time from a DS3231 module and the wall-clock keeper, since the board has no clock of its own. `ntpd` is designed and off unless an operator enables it with a server of their own.
 
 **What an approximate clock does.** Validation treats an approximate
 clock as a set one: the wall clock reads the build's date plus the

@@ -2381,8 +2381,8 @@ its code, and the item's work waits on it.
   [Trying a card on a board](design-platforms.md#trying-a-card-on-a-board).
   The release notes are a page the website publishes beside the
   downloads, its source under `site/`. They carry 0.1's known
-  limitations: what it leaves to 0.2 and later (below); the clock, at the
-  build's date at each boot until root sets it, so a certificate that
+  limitations: what it leaves to 0.2 and later (below); the Pi's clock, at
+  the build's date at each boot until root sets it, so a certificate that
   expired since the build is accepted until then; whoever can write the card can make
   themselves root; a requested off on the Pi reboots it, which only
   cutting the power turns off; and the security residuals a user of 0.1 is exposed

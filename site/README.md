@@ -367,7 +367,7 @@ into the guest, and reaches only the visitor's own emulator.
 | Corrupt RAM | 64 bit positions, chosen from a seed, are flipped in the system domain's program, never in the kernel's memory (below). |
 | RAM fail | Disabled: needs a change inside v64, whose bus maps RAM as one region and refuses an MMIO range over it. |
 | Power cut | The machine stops at once and powers on again (`restart("power-on")`: RAM cleared, devices reset, the image loaded again). The disk keeps what reached it before the cut, and the faults above are undone first. |
-| Clock jump | Disabled: erXos has no wall clock yet, so moving the PL031's offset changes nothing it reads. The action is written. |
+| Clock jump | Disabled: erXos reads the PL031 once, at boot, so moving its offset afterwards changes nothing it reads. The action is written. |
 | CPU freeze | The machine stops for 15 s and runs again. v64 stops the machine's clock with the processor, so erXos's own time does not move, and the note says so. |
 
 The disk entries take the machine's first virtio-blk disk on a virtio-mmio
