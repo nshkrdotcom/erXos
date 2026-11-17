@@ -1497,7 +1497,8 @@ its reporter:
   inspector calls the same collectors in its own runtime.
 
 **Scopes.** Queries arrive through an inspect facet whose scope is `all` or
-a principal's domains, and which also carries its grantee's principal.
+a principal's domains, with the machine trees its grantee's other
+grants entitle it to read, and which also carries its grantee's principal.
 Both live only in the facet, in the system
 domain, fixed when the facet is minted ([The inspect
 service](#the-inspect-service)); a holder sends a path and its options and
@@ -1528,7 +1529,17 @@ any`, `[cpus]` lists the CPUs, `[time]` shows the clock's record, and
 every other machine-wide path
 (`[groups, ...]`, `[budgets, ...]`, `[devices, ...]`, `[kernel, ...]`)
 answers `{error, scope}`; a domain's own group and budget are under its
-path. A path outside the scope and a path that names nothing get the
+path. The one machine tree a grant adds is the start table's: a scoped
+facet whose grantee is a session template that holds the start
+service's tree, `start`, also reaches `[apps]` and every `[apps, Name]`,
+so whoever may command the start table, and edit `/etc/start.conf`,
+reads the table's applied state, its last read's problems and its
+rows' names, which `service status`, `service -e` and `service -c`
+need ([design-apps.md](design-apps.md#interfaces)). It reaches nothing
+else the scope did not: a row's `domain` attribute names the session's
+domain, whose own path `[domains, Id]` stays outside the scope unless
+the principal is the facet's, and a release build still gives no
+session scope `all`. A path outside the scope and a path that names nothing get the
 same answer, `{error, scope}`, so a scoped facet cannot learn whether a
 process outside its scope exists. The machine attributes `visible any`
 are those every UNIX user reads: the build identifier, the development
@@ -1593,8 +1604,8 @@ every user can run `erx:i/1` and read `/proc`, and a manifest that
 wants sessions without it leaves the row out. They grant it to no
 configured domain: a configured service's principal is commonly the
 `system` principal, which the configured domains share
-([design-system.md](design-system.md#identifiers)), so its `{principal,
-P}` would reach far beyond the service, and a manifest grants it to one
+([design-system.md](design-system.md#identifiers)), so its `{principal, P,
+Trees}` would reach far beyond the service, and a manifest grants it to one
 only for a need of that domain's own. The web domain holds none; its views read through
 the session's ([design-web.md](design-web.md#overview)). The process
 that serves `inspect` in the system domain, the one every inspect facet
@@ -1607,15 +1618,16 @@ inspector, and sends it with the grantee's ready answer, a session's and
 a configured domain's alike
 ([design-system.md](design-system.md#facets-a-configured-domain-serves),
 "Facets of the system domain's services"), with the scope
-that one pure function, `erx_domain_core:inspect_scope/3`, gives for the
-grantee's principal, the manifest's system-shell principals and its
-development flag: `all` for a system-shell principal (`root` in a
-development build) in a development build, and otherwise
-`{principal, P}`, the
-principal's domains, and with the grantee's principal itself, which a
+that one pure function, `erx_domain_core:inspect_scope/4`, gives for the
+grantee's principal, the manifest's system-shell principals, its
+development flag and whether a facet row grants the grantee `start`:
+`all` for a system-shell principal (`root` in a development build) in
+a development build, and otherwise `{principal, P, Trees}`, the
+principal's domains and the machine trees `Trees`, `[apps]` for a
+session template that holds `start` and none otherwise, and with the grantee's principal itself, which a
 facet of scope `all` would otherwise not carry. Both are parameters the
 domain service computes at the mint ([design-system.md](design-system.md#facets-a-configured-domain-serves),
-"Parameters the domain service computes at the mint"). The inspector resolves `{principal, P}` at each
+"Parameters the domain service computes at the mint"). The inspector resolves `{principal, P, Trees}` at each
 query from the domain service's records, its death records included,
 so a domain the principal starts later is in scope from its start and
 one that ended stays in scope while its record is kept, and a path of a
@@ -2977,9 +2989,21 @@ determinism test of the generated tree.
   late, which is printed marked `late`.
 * **The inspect service and the runtime agent:** each test names the
   seeded fault that must make it fail:
-  * `erx_domain_core:inspect_scope/3` over every pair of `root` or
-    another principal and the development flag set or clear, on the
-    host; seeded: `all` for every principal of a development build.
+  * `erx_domain_core:inspect_scope/4` over every combination of `root`
+    or another principal, the development flag set or clear, and a
+    grantee holding `start` or not, on the host; seeded: `all` for
+    every principal of a development build; `[apps]` among the trees
+    of a grantee that does not hold `start`.
+  * In a release build, an administrator's session whose template
+    holds `start` reads `/proc/apps` and `/proc/apps/clock`, and
+    `service clock status`, `service -e` and `service -c` answer
+    from them, while `[domains, Id]` of `clock`'s session and
+    `[groups]` answer `{error, scope}`; a session whose template
+    holds no `start` gets `{error, scope}` for `[apps]`; seeded: a
+    scope that ignores its trees, which refuses the administrator's
+    `[apps]`; a resolver that lets a tree's paths reach the
+    domains they name, which answers the administrator's
+    `[domains, Id]`.
   * A holder cannot widen its scope: a request that carries a scope, in
     its options or as an extra argument, is refused with `{error,
     badarg}`, and `root`'s session in a release build gets `{error,

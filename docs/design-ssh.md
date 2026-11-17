@@ -754,7 +754,7 @@ window is a range of the block device, which only that holder holds.
 **How the facet reads it.** The facet reads `root` from its start until
 it holds 817 bytes, one past 16 keys' 816, or meets its end, each read
 asking for no more than what is left of the 817, as the starter reads
-`rc.conf` (`erx_starter_rc`), on a file opened without read-ahead, so no
+`start.conf` (`erx_starter_rc`), on a file opened without read-ahead, so no
 request asks for more than the read does. It never asks the file's size, so a server
 that overstates it, or a file that never ends, costs at most 817 bytes,
 and holding 817 it reads no more. An answer longer than its request is

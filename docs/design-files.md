@@ -3902,10 +3902,10 @@ report, so a passing run shows the code under test ran.
   `within -f inspect -- ps` starts it, whose every path but `/` fails with
   `enoent`.
 * The export over a grant: a session with a writable fixture grant at
-  `/etc` whose tree holds `rc.conf` and its own `passwd`, and one at
+  `/etc` whose tree holds `start.conf` and its own `passwd`, and one at
   `/dev` holding `null` and `draw`. A native program's read of
-  `/etc/passwd` gets the export's text, its read of `/etc/rc.conf` the
-  grant's, and its edit of `/etc/rc.conf` reaches the grant; its listing
+  `/etc/passwd` gets the export's text, its read of `/etc/start.conf` the
+  grant's, and its edit of `/etc/start.conf` reaches the grant; its listing
   of `/etc` shows `passwd` once, with the export's qid, and every name
   it lists opens; `/dev/zero` and
   `/dev/urandom` read as theirs, `/dev/draw` reaches the grant, and a

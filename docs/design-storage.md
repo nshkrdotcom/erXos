@@ -1988,9 +1988,9 @@ reported as a durable checkpoint.
   ([design-files.md](design-files.md#building-binding-and-mounting),
   "A user's home"),
   and the `etc` tree, a service directory of its own holding the
-  machine's own settings files, `rc.conf` among them: read-only to the
-  system domain's grant and read-write to the grants of the session
-  templates that hold `start`
+  machine's own settings files, `start.conf` among them: read-write to the
+  system domain's grant and to the grants of the session templates
+  that hold `start`
   ([design-apps.md](design-apps.md#the-start-table)). On a board with
   WiFi it also serves the `wifi_etc` tree, a service directory of its
   own holding the WiFi configuration and no secret: read-only to the

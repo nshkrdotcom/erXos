@@ -859,7 +859,7 @@ the [performance watch list](todo-performance.md).
   to record that as a limitation.
 * **`vi` from a program or under `within`.** A command domain's streams
   are copied bytes, so `tty/2` answers `enotty` there and `vi` refuses:
-  `xargs vi` and `within /etc -- vi rc.conf` do not work.
+  `xargs vi` and `within /etc -- vi start.conf` do not work.
   Recommendation: accept it for the first version; a narrowed editor
   needs a tty open that crosses to the command domain, a design of its
   own.

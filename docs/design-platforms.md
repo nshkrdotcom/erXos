@@ -1951,7 +1951,7 @@ to user mode on that CPU, so the thread it is charged to, and the
 program counter shown, is only presumed to be its source; it may have
 come from an earlier write of the same thread or from another domain. While the storage domain serves no volume,
 `/data` answers `eio`, so the start service's lines
-`erx_starter: rc.conf cannot be read: eio` follow, one at boot and one
+`erx_starter: start.conf cannot be read: eio` follow, one at boot and one
 at each `service` start, stop or restart; they are a symptom of step 3's failure,
 not a fault of their own. Name the card's make and size, and for an
 Ethernet step the switch or router the cable goes to.

@@ -155,7 +155,7 @@ numbers are names; the table's order is the order.
 | **Phase 1b** | | | | |
 | 1b-A M5 on Fiasco | spawn into a sandbox domain with a link, crash it, get `{domain_down, D, crash}`; kill a domain mid-burst and watch its end arrive after its last messages; kill the system domain and read its crash record after the reset; every guarantee deferred | 9,000 lines of C17, 6,000 of Erlang for M5, its kernel interface carried as backend rows in the Fiasco backend, and in the hosted backend where cheap (2,000 to 4,000 lines of C17, a guess until the first rows land) | Phase 1 | G5, provisionally |
 | 1b-B Track S, programs | `find /tmp/logs -type f \| xargs tail -n 1` through toybox's applets as ports of the session, and `within` confining a program to one grant, on Fiasco | in track S's figure | 1b-A | |
-| Track A Apps, part 1 | a QEMU image boots into an app's session with no login, holding exactly its template's grants, and `service -e` prints everything that starts | estimated before it starts | 1b-A, 1b-B's session domain, and M6's data partition for `rc.conf` | |
+| Track A Apps, part 1 | a QEMU image boots into an app's session with no login, holding exactly its template's grants, and `service -e` prints everything that starts | estimated before it starts | 1b-A, 1b-B's session domain, and M6's data partition for `start.conf` | |
 | 1b-C Track D, parts 1 to 4 | `tools/erx web` shows a QEMU guest's records, kernel log and the traces of `root`'s session domain in a browser over the host link, with no network or display device; one application's user interface in the browser; a QEMU `virt` display showing the window of a session that starts at boot with no login, drawn by that session into a buffer the display domain composes; and the same interface on a QEMU `virt` kiosk, drawn by LVGL as a program of the kiosk's session | estimated per part before it starts; the designs give no figure | 1b-A and the session domain, 1b-B's first slice; part 3 also 1b-E and track A's first part; part 4b also 1b-B's sub-space ports and pipes, 1b-D's first slice and track A's second part | GW |
 | 1b-D Track P, the first part | a UNIX program recompiled unchanged makes pipes, spawns children with inherited descriptors and waits for them, on Fiasco | 10,000 to 15,000 lines of C for the track | 1b-B's session domain, sub-space ports and pipes, not toybox's applets | GP, provisionally; the G6 baseline |
 | 1b-E M9 on Fiasco | a block transfer runs while the block driver process is killed; the kill ends the storage domain, whose restart resets the device and mounts `/data` again with every synced file present ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)); drivers run in the storage and network domains over virtio-mmio, unconfined | 3,000 lines of C17, 5,000 of Erlang for M9, of which the PCIe enumerator and the MSI frame's driver are its kernel part's | 1b-A | G9's measurements, deciding nothing |
@@ -2006,18 +2006,18 @@ runs at full parallelism: every worker these items cannot use takes the
 next available item of the plan.
 
 1. **The start table**, in 1b, after 1b-A, 1b-B's session domain and
-   M6's data partition, whose `etc` tree holds `rc.conf`. `start` rows in
+   M6's data partition, whose `etc` tree holds `start.conf`. `start` rows in
    `abi/manifest.txt` and its reader; property 17; `erx_starter` with
    one supervisor and keeper per enabled row, boot step 5; `erx_domain:start_session/2` with its
    two forms of display, which this part lands as data, with host tests of
    the mark and the merge and no display domain; the session mark in the domain service's grant
-   records, carried by every mint; `rc.conf` at `/etc/rc.conf`, read at
+   records, carried by every mint; `start.conf` at `/etc/start.conf`, read at
    boot and at each command, with its parser and its fuzz target, and
    the merge, which sets only rows the manifest declares and
    refuses a display the row's template is not granted or another
    enabled row holds; the start service's tree, `start`, at `/etc/start`
    with `ctl` and its fuzz target;
-   `service`, whose `enable` and `disable` edit `/etc/rc.conf`; `/proc/apps`. An app is a principal of the manifest with its own template
+   `service`, whose `enable` and `disable` edit `/etc/start.conf`; `/proc/apps`. An app is a principal of the manifest with its own template
    and release.
 2. **Packages added to an image**, after part 1
    ([design-packaging.md](design-packaging.md)). The `apps`, `package`
@@ -2066,12 +2066,12 @@ with an enabled start row boots to that row's session with no login,
 holding exactly its template's grants, and one with none to the
 console's alone; a session killed is started again, and past the row's
 intensity the row is `down` at `/proc/apps`;
-`service enable` and `disable` edit `/etc/rc.conf` and survive a
+`service enable` and `disable` edit `/etc/start.conf` and survive a
 reboot, and an edit of the file changes nothing at a command for
 another row, only at the row's own `service` command or the next
 boot; a session whose template holds no `start` grant
-cannot reach `/etc/start`, `/etc/rc.conf` or `/apps`;
-`rc.conf`'s and `ctl`'s fuzz targets run their budgets clean; each seeded violation of property
+cannot reach `/etc/start`, `/etc/start.conf` or `/apps`;
+`start.conf`'s and `ctl`'s fuzz targets run their budgets clean; each seeded violation of property
 17 fails the manifest check; each chokepoint check catches its seeded
 violation. The kiosk tests, the display domain restarted giving the
 kiosk's session its screen back, and the refusal of an enable on a
@@ -2080,7 +2080,7 @@ Track D's part 3, which builds the display domain. The rescue
 configuration starting no row and the reset count cleared by the first
 kept session wait for M12, which builds the reset count and the rescue
 configuration. A user's session holds only its home and cannot rewrite
-`rc.conf`; root's session, which holds `data`, the whole volume, in a
+`start.conf`; root's session, which holds `data`, the whole volume, in a
 development build, can, as FreeBSD's root can (property 19).
 
 **Exit criteria, packages added to an image.** `examples/dashboard`
@@ -2103,7 +2103,7 @@ check` needs no `examples/doom`.
 through `mount /apps/NAME.app DIR`; `service NAME enable` starts
 nothing and `service NAME start` then starts it, and a reboot keeps it;
 a newer build copied over it stops it and starts nothing, whatever
-`rc.conf` says, and `service NAME restart` runs the new build with the
+`start.conf` says, and `service NAME restart` runs the new build with the
 app's files kept, and one cut short fails its `cp` and leaves the old one running;
 `rm` of it leaves no package or row, no session of it once the
 publication has answered, and the app's directory; a copy cut short

@@ -9,7 +9,7 @@ setting it from the network with SNTP, the simple subset of NTP that RFC
 4330 specifies: who measures, who sets, what a step is, what the
 operator configures and sees, and how it is tested. The kernel's clock
 and its time page are [design-kernel.md](design-kernel.md)'s ("Time");
-apps, the start table and `rc.conf` are [design-apps.md](design-apps.md)'s;
+apps, the start table and `start.conf` are [design-apps.md](design-apps.md)'s;
 UDP sockets and name resolution are
 [design-network-stack.md](design-network-stack.md)'s.
 
@@ -34,7 +34,7 @@ Decisions every reader needs:
   samples, never packets ([Who does what](#who-does-what)).
 * **Off unless enabled, as on FreeBSD, and no default server.** The
   manifest's `start ntpd` row says `enable NO` and names no server;
-  `ntpd_enable="YES"` and `ntpd_flags="SERVER ..."` in `/etc/rc.conf`
+  `ntpd_enable="YES"` and `ntpd_flags="SERVER ..."` in `/etc/start.conf`
   start it at boot against the operator's servers
   ([Configuration](#configuration)).
 * **A clock with no reading starts at the build date.** When the clock
@@ -214,8 +214,8 @@ read for this design.
   decision 19; [design-system.md](design-system.md#the-network-domain)).
 * **Apps and the start table.** An app is a principal with a session
   template; a manifest `start` row declares that it may start and its
-  defaults, and `/etc/rc.conf` sets `NAME_enable`, `NAME_display`,
-  `NAME_restarts`, `NAME_period` and `NAME_flags` over it
+  defaults, and `/etc/start.conf` sets `NAME_enable`, `NAME_display`,
+  `NAME_restarts`, `NAME_restart_period_s` and `NAME_flags` over it
   ([design-apps.md](design-apps.md#the-start-table)).
 
 ## Requirements
@@ -812,7 +812,7 @@ start ntpd
   enable NO
 ```
 
-The operator names the servers and enables the app in `/etc/rc.conf`,
+The operator names the servers and enables the app in `/etc/start.conf`,
 as FreeBSD's `ntpd_flags` and `ntpd_enable` do:
 
 ```text

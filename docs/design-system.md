@@ -323,7 +323,7 @@ manifest holds:
   each names a principal whose session starts at boot with no login,
   whether it is enabled, optionally a display, and its restart
   intensity. They are the start table's defaults, which the machine's
-  `rc.conf` overrides. An app is a principal of the manifest with a
+  `start.conf` overrides. An app is a principal of the manifest with a
   session template today; principals added at run time are the
   packaging design's ([design-apps.md](design-apps.md#packaging)).
 * **The boot order**, the configured domains in an order in which every
@@ -622,7 +622,11 @@ violation fails the build with the property, the record and the field:
     `max_frame` alone, which admits a template whose `max_message_heap`
     is below `inspect_message_heap_min`.
 17. **Start rows are well formed:** every `start` row names a principal
-    with a session template, at most one row for each principal; at most
+    with a session template, at most one row for each principal; every
+    such principal's name begins with a letter, and no two rows share a
+    variable name, the principal's name with each `-` replaced by `_`,
+    so `/etc/start.conf` names each row by one `sh` variable prefix
+    (`my-app` by `my_app_`); at most
     one enabled row names each display; a display a row names is a
     `windows` service that a facet row grants the principal's template;
     and the sessions the boot starts can all be built beside the
@@ -639,9 +643,11 @@ violation fails the build with the property, the record and the field:
     principal with no session template gives the console no session, and
     none is planned for it. Every facet row of the resolved manifest,
     the rows the build derives included, that grants the data
-    partition's `etc` tree, which holds `/etc/rc.conf`, with rights
-    other than read-only is granted to a session template that a facet
-    row also grants the start service's tree, `start`, so only who may
+    partition's `etc` tree, which holds `/etc/start.conf`, with rights
+    other than read-only is granted to one of two grantees: the system
+    domain, whose start service writes the file for `service enable` and
+    `disable`, or a session template that a facet row also grants the
+    start service's tree, `start`; so only the start service and who may
     command the start table may rewrite its settings
     ([design-apps.md](design-apps.md#the-start-table)). No session
     template's environment sets `ERX_START_FLAGS`, and every session
@@ -653,8 +659,15 @@ violation fails the build with the property, the record and the field:
     [Boot information](design-fiasco.md#boot-information)). Seeded
     violations: a check that plans the enabled rows alone, which admits
     a system principal whose memory holds its start row but not root's
-    console session beside it; a board source that grants `etc`
-    read-write to a session template holding no `start`; an `apps`
+    console session beside it; a check that compares principals' names
+    unmapped, which admits `start` rows for `my-app` and `my_app`; a
+    `start` row for a principal named `9lives`; a
+    board source that grants `etc` read-write to a session template
+    holding no `start`, and one that grants it to a configured domain
+    other than the system domain, which a check that admits any domain
+    misses; a check that admits a writable `etc` grant to templates
+    holding `start` alone, which refuses every manifest whose system
+    domain holds `etc` read-write; an `apps`
     row naming `etc` in `services` under a build whose property 19 lacks
     its `etc` exclusion, so the derived row grants `etc` to the app
     template, which this clause still refuses; a boot view that does not
@@ -1083,8 +1096,8 @@ and 6 give way to the partial boot below.
 5. **The start table.** Once the system domain's namespace is in place,
    by the rule a session's start waits on
    ([A session takes the console](#a-session-takes-the-console)), the
-   start service reads `rc.conf` and starts each enabled row of the start table,
-   the manifest's `start` rows with the machine's `rc.conf` over them
+   start service reads `start.conf` and starts each enabled row of the start table,
+   the manifest's `start` rows with the machine's `start.conf` over them
    ([design-apps.md](design-apps.md#the-start-table)): the session of
    the principal the row names, with no login, and for a row that names
    a display, once that display's server has settled
@@ -1257,7 +1270,7 @@ in place before anyone can connect to it.
   holds; the system domain holds its grants from the boot on, so they
   are checked from the first request, and the wait is bounded as a
   session's is. The start table waits for that answer before its first
-  read of `rc.conf` (step 5 of the boot), so on a boot whose storage
+  read of `start.conf` (step 5 of the boot), so on a boot whose storage
   domain comes up on its first start and makes the grant within the mint
   core's deadline the read finds the machine's settings before any row
   starts. On one whose storage domain is down, ends before it reports
@@ -2707,8 +2720,9 @@ computes at the mint: a value no facet row may set, which the domain
 service derives from its own records, with a pure function, each time it
 mints the grant or starts its facet, and carries in that mint. It is one
 mechanism, with three uses: `inspect`'s scope, which
-`erx_domain_core:inspect_scope/3` gives from the grantee's principal, the
-manifest's system-shell principals and its development flag
+`erx_domain_core:inspect_scope/4` gives from the grantee's principal, the
+manifest's system-shell principals, its development flag and whether
+the grantee holds `start`
 ([design-live.md](design-live.md#the-inspect-service)); the `windows`
 grant's `session`, the session mark the domain service fixes for the
 display's session and copies into every mint of that grant
@@ -3776,13 +3790,13 @@ manifest lists: the vault.
 | watchdog, `erx_watchdog` | pets the kernel's watchdog every period, at priority `max`, once every service it lists has answered a liveness call | [Boot](#boot) |
 | clock service, `erx_clock` | the wall clock's one setter: takes ntpd's samples and root's sets through the `clock` facet, whose rows grant ntpd's template `sample` alone and root's template `set` alone ([design-time.md](design-time.md#who-may-set-it)), decides each step with `erx_clock_core`, sets the time page through `erx_clock_nif`, and reports `/proc/time` | [design-time.md](design-time.md) |
 | console service, `erx_console` | the two console lines: the UART over its driver in the system domain and the host-link port's bytes; each line's menu and login prompt, the connection of sessions' ttys, and the system-shell facet, which it grants to a login at a secure line, holds for that login and ends with it | [Devices](#devices), [design-live.md](design-live.md#the-console) |
-| inspector, `erx_inspector` | one schema over kernel, service and runtime reports, the previous boot's crash record included; the `inspect` service, whose facets the domain service mints with the scope `erx_domain_core:inspect_scope/3` gives, and the questions to each domain's inspection agent | [design-live.md](design-live.md#inspection), [design-live.md](design-live.md#the-inspect-service) |
+| inspector, `erx_inspector` | one schema over kernel, service and runtime reports, the previous boot's crash record included; the `inspect` service, whose facets the domain service mints with the scope `erx_domain_core:inspect_scope/4` gives, and the questions to each domain's inspection agent | [design-live.md](design-live.md#inspection), [design-live.md](design-live.md#the-inspect-service) |
 | tracer, `erx_tracer` | trace sessions and the kernel's trace | [design-live.md](design-live.md#tracing) |
 | host link, `erx_hostlink` | sessions with the development host | [design-live.md](design-live.md#the-host-link) |
 | line service, `erx_line` | one line tree, `data` and `ctl`, for each grant of the `line` interface, over the driver of the UART its `uart` parameter names, in that line's group; it moves the bytes and parses none, and its `ctl` takes one word, `reset`, which turns the line's device off through the device service, programs the UART afresh and turns the device on | [design-bluetooth.md](design-bluetooth.md#the-controllers-line) |
 | code service, `erx_code` | the code store, code facets, overlays, the install facet | [design-live.md](design-live.md#the-code-store) |
 | update service, `erx_update` | system updates, through the slot writer: writing the spare slot, the trial, the commit and the fallback | [design-storage.md](design-storage.md#system-updates) |
-| start service, `erx_starter` | the start table, the manifest's `start` rows with the machine's `rc.conf` over them, and the supervisor and keeper of each row; its tree, `start`; the package process and its `apps` tree ([design-packaging.md](design-packaging.md#apps)) | [design-apps.md](design-apps.md) |
+| start service, `erx_starter` | the start table, the manifest's `start` rows with the machine's `start.conf` over them, and the supervisor and keeper of each row; its tree, `start`; the package process and its `apps` tree ([design-packaging.md](design-packaging.md#apps)) | [design-apps.md](design-apps.md) |
 | file trees, `erx_procfs` and the device service's tree | the system domain's own `/proc`, the system shell's and the host link's, as every domain runs one for itself; `/dev` for administrators | [design-live.md](design-live.md#the-proc-tree), [Devices](#devices) |
 | web login, `erx_web_login` | the web domain's facet with two operations: `login`, which checks a login with the vault as the console does, starts a session and introduces it to the web domain, and `logout`, which ends a session a login through it started; the sessions it started end with it | [design-web.md](design-web.md#logging-in-and-the-line) |
 | SSH login, `erx_ssh_login` | the SSH domain's facet with five operations: `cookie`, which issues a cookie for a connection's first key exchange; `key_ok` and `login_key`, which check a principal's login keys from the vault and, for `login_key`, a signature over a session identifier the facet derives from that exchange; `login_passphrase`, which checks a passphrase with the vault as the console does; and `logout`; a login starts a session and introduces it to the SSH domain, and the sessions it started end with it | [design-ssh.md](design-ssh.md#logging-in) |

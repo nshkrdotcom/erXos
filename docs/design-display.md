@@ -252,7 +252,7 @@ is not driven by this design, which says where each attaches
    the display, no code of it or of its renderer runs in the display
    domain, and when its session ends a new one takes its place. Which
    application a display shows is its start row's to say, the
-   manifest's default or the machine's own setting in `rc.conf`, with
+   manifest's default or the machine's own setting in `start.conf`, with
    no change to the display's entry or the display domain, and while
    the app's session or the display domain restarts no other client
    takes the screen.
@@ -4089,7 +4089,7 @@ on a display edits nothing of the board's:
   that names the display says whose session starts there at boot
   ([design-apps.md](design-apps.md#the-start-table)): an app's for a
   kiosk, and a person's for a desktop that needs no login. The manifest
-  declares every row, and the machine's `rc.conf` enables, disables or
+  declares every row, and the machine's `start.conf` enables, disables or
   moves one among the displays its template is granted. At most one
   row is kept on each display. The row's keeper starts the
   session with the display named in its start; the domain service then
@@ -4329,7 +4329,7 @@ counts it once for each session the principal's `domains` quota
 allows, here one. The row leaves `clipboard` off, so the kiosk shares no
 clipboard. Where the manifest declares the row with `enable NO`,
 `service thermostat enable display=display` on the running machine
-turns it on in `/etc/rc.conf`, and `service thermostat start` starts it.
+turns it on in `/etc/start.conf`, and `service thermostat start` starts it.
 
 At boot the domain service starts the display domain, and the row's
 keeper starts `thermostat`'s session on `display`, whose grant is
@@ -4932,7 +4932,7 @@ the window and the reason.
   logged in to at a console line is the login design's (decision 14).
 * **Who holds a display's screen** is the start table's to say, and
   the start table changes only through the `start` grant, the manifest
-  and the data partition's `rc.conf`, which sets only rows the manifest
+  and the data partition's `start.conf`, which sets only rows the manifest
   declares, and only to displays their templates are granted
   ([design-apps.md](design-apps.md#security)).
   Under the single policy no client takes the screen by opening a
@@ -6220,11 +6220,11 @@ Decisions:
     `service APP enable display=D` set answers `ebusy` while another
     row is kept on `D`, and `eperm` for a display the app's template is
     not granted. Enabling or disabling a row, by `service` or by an
-    edit of `/etc/rc.conf`, starts and stops nothing: the row takes its
+    edit of `/etc/start.conf`, starts and stops nothing: the row takes its
     settings at its own `service` command, which answers a refusal, or
     at the next boot, which shows one as `refused` at `/proc/apps`. A board's manifest closes
     a display to apps by granting it to no app's template, and decides
-    which rows exist; the machine's `rc.conf` only sets them
+    which rows exist; the machine's `start.conf` only sets them
     ([design-apps.md](design-apps.md#the-start-table)).
 
 23. **Input is translated once, by the router.** Drivers send records in

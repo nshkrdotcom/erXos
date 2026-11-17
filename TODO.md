@@ -1160,64 +1160,76 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_domain:start_session/2`'s `Start` and `ERX_START_FLAGS` in the session's environment; and the boot view's
   refusal of a session template whose environment sets the key, with the variable at its longest in its strings
   reserve (`boot_strings_fit` in `liberx/system/dom_boot_view.c`).
-* [Medium] apps, `/etc/rc.conf` and the commands of `/etc/start/ctl`
-  ([design-apps.md](docs/design-apps.md#the-start-table)): `ctl`'s `enable` and `disable` go and it gains
-  `restart`; and `rc.conf` becomes an ordinary file of the data partition's `etc` tree, a service directory with a
-  facet `etc` (read-only to the system domain, read-write to the templates that hold `start`, rows the build
-  derives, and an entry of the facet table), mounted at `/etc`. The `etc` grant waits for grants rooted at a
-  service directory and read-only by facet row (the facet parameters of design-apps.md, "Phase 1"): the storage
-  service's mint grants the whole volume read-write, and the `files` interface declares no parameters. Until
-  then the file lies in the volume's `etc/` directory, at `/data/etc/rc.conf` for the system domain and for root's
-  session, through their `data` grants. The start service writes it from the text it last read, so a hand edit
-  made since is lost at the next `enable` or `disable`; `service` therefore names `service NAME enable` rather
-  than the file in its rc.subr answer. Code to change: `erx_starter_rc` only reads, from the `etc` grant, and its
-  write path and the `superseded` rule go;
+* [Medium] apps, `/etc/start.conf` and the commands of `/etc/start/ctl`
+  ([design-apps.md](docs/design-apps.md#the-start-table)). The settings move from `/etc/rc.conf` to
+  `/etc/start.conf`, an ordinary file in rc.conf(5)'s assignment syntax with the fields `enable`, `display`,
+  `restarts`, `restart_period_s` and `flags`, on the data partition's `etc` tree: a service directory with a
+  facet `etc`, read-write to the system domain and to the templates that hold `start` (rows the build derives,
+  and an entry of the facet table), mounted at `/etc`. The `etc` grant waits for grants rooted at a service
+  directory (the facet parameters of design-apps.md, "Phase 1"); until then the file is
+  `/data/etc/start.conf`, through the `data` grants of the system domain and root's session. Code to change:
+  * the reader and judgement: `erx_start_conf:read/1`, the literal `sh` subset of "The file's syntax", with a
+    host test against the host's `sh` and a fuzz target, replacing `parse_rc_conf/1` and `erx_rc_conf_fuzz`; a
+    variable's row found from the field name that ends it, not a split at the last `_`;
+    `erx_start_settings:judge/2` returning each read's problems with their lines, shown at `/proc/apps` as
+    `problems`, with `start_conf` in place of `rc_conf` (`abi/inspection.txt`); `service -c [FILE]`, which checks row names only where `/proc/apps` lists the rows and says so elsewhere;
+    `judge/2` takes row names (or `any`) and no grants: a display line is judged for its form alone, and the
+    admission refuses a display the principal may not draw on;
+  * names: a row's variable name is its principal's name with each `-` replaced by `_`; the manifest check
+    (property 17) refuses a `start` row whose principal's name begins with a digit or whose variable name is
+    another row's, and admission (`erx_app_admit:admit/3`, rule 3) an app name that does either against the
+    manifest's `start` rows, the image's packages and the registry, with `{variable_taken, N, Other}`;
+    problems at `/proc/apps` and `service -c` show the row's own name beside its variable;
+  * commands: `ctl` gains `restart`, `onestart`, `onestop` and `onerestart`, and its `enable NAME
+    [display=D] [restarts=N] [restart_period_s=S]` and `disable NAME` edit the file and start nothing; `erx_starter` reads the file before every
+    command, and `erx_start_table:command/3` judges every command after the read (design-apps.md, "How a command
+    is judged"), returning the answer, the action and the row's new record, replacing `apply_ctl/4`, with the
+    errnos `enoent`, `enotsup`, `ealready` and `esrch`; `enable` and `disable` are carried out by the start
+    service one at a time from a fresh read, with `erx_start_settings:set/3` and `erx_starter_rc`'s write
+    (temporary file, sync, rename, sync again), without the `superseded` rule, and answer `eio` when the read
+    fails; `erx_cmd_service` writes them to `ctl`, drops its decisions from `/proc/apps` (`plan/3` and `act/4`,
+    `erlang/apps/erx_shell/src/erx_cmd_service.erl:236-290`) and answers from the write's errno, and its
+    `service -e` judges `/etc/start.conf` itself with the rows' `declared_enable`;
+  * applying: a command applies the file to its own row alone and the whole file applies only at boot, so
+    `erx_start_table:reconcile/3`, the stopped marks, the recorded text, the restart of a running row whose
+    settings changed, the comparison `erx_starter:kept/1` serves and the failed read's retry with backoff go;
+    the records process holds each row's applied record and the boot mark; the display rule judges a row
+    against the rows kept, so `merge/3` becomes `merge/4`; a failed read counts as a file with no settings at
+    boot, while at a command `start`, `restart`, `onestart` and `onerestart` answer `eio` and `stop` and
+    `onestop` are judged on the row as last applied; the boot applies the file to the rows of the boot's
+    package set when it arrives, and a later publication records the rows it adds `installed` and starts
+    nothing; a restarted table reads the file only to finish a boot the mark says is not done; the keeper waits
+    on `erx_domain:display_settled/1` before each start of its session; and a row runs while its kept or its
+    `onestart` session stands (the A5c residual);
+  * flags and limits: the start flags' byte rule excludes `"`, `\`, `$` and `` ` ``; packages declare default
+    `flags` in `app.txt` and `abi/formats/package.txt`, and `erx_app` passes a native app's program the one
+    environment entry `ERX_START_FLAGS` (design-packaging.md, "Starting an app"); `start_rc_conf_max` becomes `start_conf_max` in
+    `abi/manifest.txt`;
+  * mounts and checks: the session's and the system domain's mounts of `etc` at `/etc`; the paths
+    `/data/etc/rc.conf` names in `erx_starter_rc:directory/0`, `erx_cmd_service` and the `apps` QEMU suite; the
+    chokepoint that only `erx_starter_rc` writes on `etc`, and its refusal with `efbig` of an edit whose text
+    would pass `start_conf_max`; property 17's clause that every writable grant of `etc` belongs to the system
+    domain or to a template holding `start` ([design-system.md](docs/design-system.md#the-manifest)); and a
+    program's handler joining the session's export and its grant at `/etc` and `/dev`
+    ([design-files.md](docs/design-files.md#narrowing-for-a-program)), so a native editor reaches
+    `/etc/start.conf`, and a program with a window keeps a grant the session mounts at `/dev`, which its own
+    `/dev` replaces until then ([design-files.md](docs/design-files.md#a-programs-window)); the join keeps that
+    grant at its own rights, so it also decides whether a windowed start still refuses a read-only entry at
+    exactly `/dev` (`erx_prog_handler_core:writes_dev/2`). This removes the A5c residuals of an `enable`
+    interrupted during its write and of the stopped mark.
+* [Medium] live and apps, the start table's tree in an inspect facet's scope
+  ([design-live.md](docs/design-live.md#the-inspect-service),
+  [design-apps.md](docs/design-apps.md#interfaces)): `erx_domain_core:inspect_scope/3` becomes
+  `inspect_scope/4`, taking whether a facet row grants the grantee `start`, and a scoped facet becomes
+  `{principal, P, Trees}` with `Trees` `[apps]` for a session template that holds `start`; the inspector's
+  resolver answers `[apps]` and `[apps, Name]` to such a facet and nothing more, so `service NAME status`,
+  `service -e` and `service -c`'s row names work in a release build's administrator session; with the host
+  test of `inspect_scope/4` and the release-build QEMU case of design-live.md's tests.
 * [Medium] apps, `erx_starter:with_default_display/3`
   ([design-apps.md](docs/design-apps.md#starting-a-session)): no test covers the default display the start
   service gives a row or command that names none. Add an `erx_starter_tests` case over a stub domain service
   asserting the `Start` it receives: `#{default_display => D}` for a template granted exactly one display, `#{}`
   for none or two, and the same for `start` of a row that is not enabled.
-* [Medium] apps, `/etc/start/ctl` and `/etc/rc.conf` ([design-apps.md](docs/design-apps.md#the-start-table)):
-  `/apps` holds apps alone, so the tree that `erx_starter_fs` serves at `/apps` becomes the service `start`,
-  mounted at `/etc/start`, holding only `ctl`, whose `enable` and `disable` go and which gains `restart`; and
-  `rc.conf` becomes an ordinary file of the data partition's `etc` tree, a service directory with a facet `etc`
-  (read-only to the system domain, read-write to the templates that hold `start`, rows the build derives, and an
-  entry of the facet table), mounted at `/etc`. Code to change: `erx_starter_fs` loses its read-only `rc.conf`
-  node; `erx_starter_rc` only reads, from the `etc` grant, and its write path and the `superseded` rule go;
-  `erx_starter` reads `rc.conf` before every `ctl` command and writes nothing; a command applies the file to its
-  own row alone, and the whole file applies only at boot (design-apps.md, "When the file is read"), so
-  `erx_start_table:reconcile/3`, the stopped marks, the recorded `rc.conf` text, the restart of a running row whose
-  settings changed, the comparison `erx_starter:kept/1` serves, and the failed read's retry with backoff all go;
-  the records process holds each row's applied record instead; the display rule judges a row against the rows kept
-  (a live row supervisor) rather than the rows the file enables, so `merge/3` takes the rows kept as `merge/4`; a
-  failed read counts as a file with no settings at boot, while at a command `start`, `restart`,
-  `onestart` and `onerestart` answer `eio` and `stop` and `onestop` are judged on the row as last applied; the
-  boot applies the file to the rows of the boot's package set, the first set of the boot, when it arrives, and a
-  later publication applies nothing: it records the rows it adds `installed` and starts nothing, so an install or
-  an update starts its app only at its own `start` or `restart` or the next boot; the records process holds the
-  boot mark beside the records, and a restarted table reads `rc.conf` only to finish a boot the mark says is not
-  done, recording any other row with no record `installed`; the keeper, not the table, waits on
-  `erx_domain:display_settled/1`, before each start of its session; and a row runs while its kept or its `onestart`
-  session stands, so a `start` after `onestart` and `enable` answers `ealready` rather than leaving a
-  `{once, Name}` keeper beside the row's supervisor (the A5c residual); `erx_cmd_service`'s `enable` and `disable` edit
-  `/etc/rc.conf` with `erx_start_table:set/3` (moved where a session can call it), by a new file and a rename, and
-  write nothing to `ctl`; `ctl` gains `onestart`, `onestop` and `onerestart`, and `erx_start_table:command/3`
-  judges every command after the read (design-apps.md, "How a command is judged"), returning the answer, the action
-  and the row's new record, and replacing `apply_ctl/4`, with the errnos `enoent`, `enotsup`, `ealready` and
-  `esrch`; `erx_cmd_service` drops its decisions from `/proc/apps` (`plan/3` and `act/4`,
-  `erlang/apps/erx_shell/src/erx_cmd_service.erl:236-290`, which refuse a start from the cached `enabled` and
-  `state`) and answers from the write's errno, and its `service -e` reads `/etc/rc.conf` itself with the rows'
-  `declared_enable`; the session's and the system domain's mounts of `etc` at `/etc`, and the paths
-  `/data/etc/rc.conf` names in `erx_starter_rc:directory/0`, `erx_cmd_service` and the `apps` QEMU suite; and
-  the chokepoint that the start service writes no file on `etc`. The manifest check gains property 17's clause that every writable grant of
-  `etc` in the resolved manifest belongs to a template holding `start`
-  ([design-system.md](docs/design-system.md#the-manifest)), and a program's handler joins the session's export and
-  its grant at `/etc` and `/dev` ([design-files.md](docs/design-files.md#narrowing-for-a-program)), so a native
-  editor reaches `rc.conf`, and a program with a window keeps a grant the session mounts at `/dev`, which its
-  own `/dev` replaces until then ([design-files.md](docs/design-files.md#a-programs-window)); the join keeps
-  that grant at its own rights, so it also decides whether a windowed start still refuses a read-only entry at
-  exactly `/dev` (`erx_prog_handler_core:writes_dev/2`), a cap that follows from the replacement. This removes the A5c residuals of an `enable` interrupted during its write and of the
-  stopped mark.
 * [Low] The start table's first `rc.conf` read waits for the system domain's namespace to be in place
   (`erx_domain:system_namespace/0`), but a storage domain that ends once during boot, or misses the mint
   deadline, settles that wait as failed: the read answers an error and the manifest's enabled rows start before

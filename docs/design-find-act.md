@@ -513,7 +513,7 @@ REASON`, heads every palette until `act -r` reads a good file.
 
 **Who writes the rules.** A rule's line runs with the session's
 authority, so whoever can replace `$home/lib/act` can make the session
-run any line it can, as whoever may write `/etc/rc.conf` may command the
+run any line it can, as whoever may write `/etc/start.conf` may command the
 start table ([design-apps.md](design-apps.md#the-start-table), "Where
 the file is"). The writers are held to those who already hold the
 session's authority over its files:
@@ -1135,7 +1135,7 @@ the file protocol.
 | Running the default offer on a single click, as Plan 9's plumbing does | a link's URI is chosen by whatever program wrote it, so a click could start a command on a value the person never saw; one more gesture in a window that shows the line is the price of FA2 |
 | Building the line by quoting the value into rc text | correct only while the quoting is; a variable cannot be mis-quoted, because rc never rescans it |
 | Ending an act by a link from the palette to its evaluator | the runner's subshells and isolated commands run under monitors and an `&` block unmonitored (`erx_shell_runner.erl:155-163`, `:279-283`), and programs are the command server's rows, so a link ends the evaluator and leaves the rest running; the job tag is the shell's one way to end everything a line started |
-| The person's rules installed only through a command, kept where no program's namespace reaches, as crontab(1) installs a user's table (FreeBSD's not read in this task: unverified) | it would also keep the rules from programs given the whole namespace, the residual of [Security](#security), but needs a tree the session holds and never hands to a program, a kind of mount no design has, while `rc.conf`, the precedent, is writable by such programs too; the narrowing rule closes the case the person chose to restrict |
+| The person's rules installed only through a command, kept where no program's namespace reaches, as crontab(1) installs a user's table (FreeBSD's not read in this task: unverified) | it would also keep the rules from programs given the whole namespace, the residual of [Security](#security), but needs a tree the session holds and never hands to a program, a kind of mount no design has, while `start.conf`, the precedent, is writable by such programs too; the narrowing rule closes the case the person chose to restrict |
 | Apps offering commands in a person's palette | a command of one principal run in another's session, or a new cross-domain protocol, for no consumer; the powerbox is the design for handing an app a value |
 | files' kind table as the source of routes | a kind is a guess at a file's content for its icon; a route is the person's choice of command; they need not change together, so they are not one fact |
 | Ranking by use, hiding entries | no consumer yet: few commands declare `-erx_args`, so the Services lists are short; the rule order is the ranking |
@@ -1164,7 +1164,7 @@ and this form reuses the tokenizer and parser the shell already has,
 bounds and fuzz target included, and adds only the split of a line into
 fields. The statement has one quoting rule, the line in the file is byte
 for byte the line that runs, and the file reads like the shell, as
-`rc.conf` reads like sh. Because the rules are rc, the choice adds no
+FreeBSD's `rc.conf` reads like sh. Because the rules are rc, the choice adds no
 language to the system. The alternatives, each of which would hold to
 the same four rules of [Rules](#rules):
 
