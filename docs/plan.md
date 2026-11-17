@@ -2417,7 +2417,7 @@ its code, and the item's work waits on it.
   of that table, and `erl`'s `erx:domains()` in that session names the
   display's and the kiosk's domains, as each one's
   `/proc/domains/N/status` does; a second boot on the same medium offers the same host key.
-* On QEMU, the kiosk's live-quotes cell `display_domain/quotes` of
+* On QEMU, the kiosk's live-quotes cell `kiosk/hvf-1cpu-quotes` of
   [design-quotes.md](design-quotes.md#verification-and-testing) passes
   and fails on its seeds, and the set-time command's tests of its
   design pass, each failing on its seeded fault, with its fuzz target

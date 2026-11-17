@@ -70,6 +70,23 @@ class TrustStoreTest < Minitest::Test
     end
   end
 
+  # A test image's own root files follow the tree's, in the order given, each checked as
+  # a tree root is; none given, the store is the tree's alone.
+  def test_test_roots_follow_the_trees_and_are_checked_alike
+    tree = Erx::TrustStore.store(DIRECTORY)
+    first, second = Erx::TrustStore.roots(DIRECTORY).first(2)
+    assert_equal tree + File.binread(second) + File.binread(first),
+                 Erx::TrustStore.store(DIRECTORY, test_roots: [second, first].map { |path| fixture_root(path) })
+    Dir.mktmpdir('trust-store-') do |directory|
+      path = File.join(directory, 'two.pem')
+      File.binwrite(path, File.binread(first) + File.binread(second))
+      error = assert_raises(Erx::Error) { Erx::TrustStore.store(DIRECTORY, test_roots: [fixture_root(path)]) }
+      assert_includes error.message, path
+    end
+  end
+
+  def fixture_root(path) = Erx::TrustStore::TestRoot.new(path: path, source: 'test/fixtures/quotes_fixture.rb')
+
   def test_an_empty_directory_is_no_store
     Dir.mktmpdir('trust-store-') do |directory|
       assert_raises(Erx::Error) { Erx::TrustStore.store(directory) }

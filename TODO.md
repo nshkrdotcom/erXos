@@ -8749,9 +8749,6 @@ document's "residual risks accepted" paragraph.
   `test/display/reference/` (the dashboard's tree for a fixed time and a fixed live board), is not recorded;
   design-quotes.md's frame test row names it.
 
-* [Medium] `erx_quotes` (`examples/dashboard/lib/erx_dashboard/src/`): the per-quote state log lines the QEMU
-  cell reads (`quotes: btc fresh 64412.50 kraken_btc`, design-quotes.md "The QEMU cell") are not written yet.
-
 * [Medium] `erx_quotes_core` (`trying`): a round in flight has no deadline, so a request httpc never
   answers (a handler killed without replying) keeps its quote from fetching until the source restarts.
   Fix by construction: a deadline in `trying` that `tick/3` ends as `timeout`, and requests keyed by quote.
@@ -8763,17 +8760,6 @@ document's "residual risks accepted" paragraph.
 * [Medium] `examples/dashboard` (`erx_dashboard.app.src`): the live quotes need `ssl` and `inets`, which
   `erx_quotes` starts at run time but no `.app` file declares; settle whether the `.app` names them.
 
-* [Medium] `display_domain/quotes`, the QEMU cell of design-quotes.md ("Verification and testing"), is not
-  built; the harness lacks two pieces it needs: (a) a test image that carries a package on a medium, and
-  (b) the extra test root files design-crypto.md promises ("A test image adds roots", "The trust store").
-  The cell's guest then reaches the harness's TLS server through QEMU user networking whose `net=` covers
-  the table's hardcoded address, with a guest forward for that address and port 443 naming a `cmd:` relay
-  started per connection (unverified until the harness runs it).
-
-* [Low] `examples/dashboard` (`erx_quotes_http`): with no network device, as in the kiosk QEMU
-  boot, every quote shows `no data: failed`: httpc's connect error there is a shape the classifier
-  does not name. Log the term in a boot, then classify it (`no network` or `cannot connect`) and
-  re-record `test/display/reference/dashboard` with Kiosk::OFFLINE_REASON.
 * [Low] `examples/dashboard` (`erx_quotes_table`): Kraken's address, 104.16.14.28 (one of
   `api.kraken.com`'s Cloudflare addresses), is hardcoded and may change; a change shows
   `cannot connect` or `certificate rejected` until the row's `address` is updated.

@@ -116,7 +116,7 @@ action(render, #{dashboard := Dashboard, core := Core, sent := Sent, logged := L
     end.
 
 %% One log line per change of a quote's line (erx_quotes_view:lines/2),
-%% which the QEMU cell display_domain/quotes reads from the serial line.
+%% which the QEMU cell kiosk/hvf-1cpu-quotes reads from the serial line.
 log_changes(Lines, Logged) ->
     lists:foldl(fun({Name, Line}, Acc) ->
                         case Acc of
@@ -135,13 +135,19 @@ log_changes(Lines, Logged) ->
 %% request it would by name, and the certificate is verified against the
 %% system's roots and checked against the host name (ssl_handshake.erl:
 %% server_name/3 takes server_name_indication for the name check).
+%% `connection: close` keeps httpc from keeping the connection alive:
+%% httpc reuses a kept-alive connection by address and scheme alone
+%% (httpc_manager:select_session/5), so a later request for another host
+%% name at the same address would ride a connection whose certificate
+%% was checked against the first name. Each request opens its own.
 %% Both size limits go in the fourth argument, where httpc reads them. A
 %% request httpc refuses at once is answered as if it had failed.
 request(#{source := Source, url := Url} = Request,
         #{core := Core, requests := Requests} = State) ->
     #{address := Address} = source_row(Source, Core),
     {Target, Authority, Host} = by_address(Url, Address),
-    case httpc:request(get, {Target, [{"host", Authority}, {"user-agent", "erxos-quotes/1"}]},
+    case httpc:request(get, {Target, [{"host", Authority}, {"user-agent", "erxos-quotes/1"},
+                                       {"connection", "close"}]},
                        [{timeout, 20000}, {connect_timeout, 10000},
                         {autoredirect, false}, {autoretry, 0},
                         {ssl, httpc:ssl_verify_host_options(true)

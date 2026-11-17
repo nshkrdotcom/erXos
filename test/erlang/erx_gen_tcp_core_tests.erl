@@ -368,6 +368,17 @@ options_forwarded_once_test() ->
     Own = #{mode => binary, active => false},
     ?assertEqual({ok, Own, [{nodelay, false}]}, erx_gen_tcp_core:options([{nodelay, true}, {nodelay, false}], Own)).
 
+%% ssl adds its transport options to every TLS connect over gen_tcp and to a handshake's
+%% setopts, both of which go through options/2; one refused fails every TLS connect
+%% einval. The list is read from ssl itself, the oracle's copy, which matches the tree's
+%% unmodified otp/lib/ssl. `{header, 0}` is among them, and only a header of 0 is taken.
+ssl_transport_options_test() ->
+    Opts = tls_socket:internal_inet_values(gen_tcp),
+    ?assertMatch({ok, #{mode := binary, active := false, packet := raw, packet_size := 0}, []},
+                 erx_gen_tcp_core:options(Opts)),
+    ?assertMatch({ok, _, []}, erx_gen_tcp_core:options(Opts, own())),
+    ?assertEqual({error, einval}, erx_gen_tcp_core:options([binary, {header, 4}])).
+
 listen_options_test() ->
     ?assertEqual({ok, (own())#{active => true}, [{backlog, 8}, {reuseaddr, true}, {nodelay, true}]},
                  erx_gen_tcp_core:listen_options([{backlog, 8}, binary, {nodelay, true}, {reuseaddr, true}])),
@@ -437,7 +448,7 @@ accept_result() ->
 
 packet_test_() ->
     [{"ssh's hello: getopts buffer, line mode for the banner, raw for the rest", fun ssh_hello/0},
-     {"getopts answers buffer, packet_size and packet as stock's defaults", fun packet_defaults/0},
+     {"getopts answers buffer, packet_size, packet and header as stock's defaults", fun packet_defaults/0},
      {"a line split across pushes is one packet", fun line_across_pushes/0},
      {"a line over packet_size in active mode is emsgsize and closes", fun line_over_size_active/0},
      {"a line over packet_size in passive mode is emsgsize, then enotconn", fun line_over_size_passive/0},
@@ -552,8 +563,8 @@ ssh_hello() ->
     ?assertEqual([{tcp, ?SOCK, <<"kexinit">>}], tells(A5)).
 
 packet_defaults() ->
-    ?assertEqual([{reply, f1, {ok, [{buffer, 65536}, {packet_size, 0}, {packet, 0}]}}],
-                 element(2, call(f1, {getopts, [buffer, packet_size, packet]}, new(#{})))),
+    ?assertEqual([{reply, f1, {ok, [{buffer, 65536}, {packet_size, 0}, {packet, 0}, {header, 0}]}}],
+                 element(2, call(f1, {getopts, [buffer, packet_size, packet, header]}, new(#{})))),
     {C1, _} = setopts(f1, [{packet, line}, {packet_size, 100}, {buffer, 300}], new(#{})),
     ?assertEqual([{reply, f2, {ok, [{packet, line}, {packet_size, 100}, {buffer, 300}]}}],
                  element(2, call(f2, {getopts, [packet, packet_size, buffer]}, C1))).

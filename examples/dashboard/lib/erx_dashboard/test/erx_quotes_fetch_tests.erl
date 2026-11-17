@@ -11,7 +11,9 @@ public_key's `cacerts_path`, and sends boards as a dashboard gets them.
 Every source's URL names the host `quotes.test`, which does not
 resolve, and its address is 127.0.0.1, so a request reaches a server
 only through the address, and the servers answer only a request whose
-`host` header names `quotes.test` and its port.
+`host` header names `quotes.test` and its port and that asks for
+`connection: close`, so httpc keeps no connection to reuse by address
+alone (seeded failure: without the header every quote fails).
 A server whose certificate is made for `quotes.test` gives a value,
 which the name check passes only on the host name sent as SNI, never
 the address; one
@@ -88,7 +90,8 @@ chain(Host) ->
 
 %% An ssl server on the loopback answering `/btc` with a price and `/big`
 %% with a body of 70,000 bytes and its content-length, each only to a
-%% request whose host header is `quotes.test:Port`; its port.
+%% request whose host header is `quotes.test:Port` and that asks for
+%% `connection: close`; its port.
 serve(Options) ->
     {ok, Listen} = ssl:listen(0, [binary, {active, false}, {ip, {127, 0, 0, 1}},
                                   {reuseaddr, true} | Options]),
@@ -108,10 +111,12 @@ accept(Listen, Host) ->
 
 answer({ok, Socket}, Host) ->
     Head = request(Socket, <<>>),
-    case {Head, binary:match(string:lowercase(Head), Host)} of
-        {_Head, nomatch} -> ok;
-        {<<"GET /btc ", _/binary>>, _At} -> reply(Socket, <<"{\"price\": \"64412.50\"}">>);
-        {<<"GET /big ", _/binary>>, _At} -> reply(Socket, binary:copy(<<"x">>, 70000));
+    Lower = string:lowercase(Head),
+    case {Head, binary:match(Lower, Host), binary:match(Lower, <<"\r\nconnection: close\r\n">>)} of
+        {_Head, nomatch, _Close} -> ok;
+        {_Head, _At, nomatch} -> ok;
+        {<<"GET /btc ", _/binary>>, _At, _Close} -> reply(Socket, <<"{\"price\": \"64412.50\"}">>);
+        {<<"GET /big ", _/binary>>, _At, _Close} -> reply(Socket, binary:copy(<<"x">>, 70000));
         _Other -> ok
     end,
     ssl:close(Socket);

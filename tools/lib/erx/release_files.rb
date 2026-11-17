@@ -266,8 +266,11 @@ module Erx
 
     # otp is the built OTP copy; directory is where each boot script, under
     # boot/<name>/, and the receipts go;
-    # release is which release they are, the system release unless a domain's is asked.
-    def initialize(root:, otp:, directory:, runner:, codec:, oracle: Oracle.new(root: root, runner: runner), release: SYSTEM)
+    # release is which release they are, the system release unless a domain's is asked;
+    # test_roots are the root files a test image adds to the trust store after the
+    # tree's (TrustStore.store), none in any other image.
+    def initialize(root:, otp:, directory:, runner:, codec:, oracle: Oracle.new(root: root, runner: runner), release: SYSTEM,
+                   test_roots: [])
       raise Error, 'a release is a ReleaseFiles::Release' unless release.is_a?(Release)
 
       @root = root
@@ -277,6 +280,7 @@ module Erx
       @codec = codec
       @oracle = oracle
       @release = release
+      @test_roots = test_roots.dup.freeze
     end
 
     # Each file as an entry for Pack#build, with its receipt written.
@@ -408,13 +412,15 @@ module Erx
 
     # The image's trust store as a file under prefix, public_key's directory in the archive
     # (docs/design-crypto.md, "The trust store"): the tree's roots joined in name order,
-    # written beside the receipts, with each root as a source.
+    # then a test image's own, written beside the receipts, with each tree root and each
+    # test root's source as a source.
     def trust_store(prefix:)
       trust_directory = File.join(@root, TrustStore::DIRECTORY)
       artifact = File.join(@directory, 'trust', File.basename(TrustStore::PATH))
       FileUtils.mkdir_p(File.dirname(artifact))
-      File.binwrite(artifact, TrustStore.store(trust_directory))
-      ReleaseFile.new(path: "#{prefix}/#{TrustStore::PATH}", artifact: artifact, sources: TrustStore.roots(trust_directory))
+      File.binwrite(artifact, TrustStore.store(trust_directory, test_roots: @test_roots))
+      ReleaseFile.new(path: "#{prefix}/#{TrustStore::PATH}", artifact: artifact,
+                      sources: [*TrustStore.roots(trust_directory), *@test_roots.map(&:source)])
     end
 
     # The source a built file is compiled from: for erXos's applications one of the

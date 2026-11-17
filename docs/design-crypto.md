@@ -614,8 +614,12 @@ the store holds both.
   the tree's roots, and it changes on a machine only with the image,
   through the update that replaces the image.
 * **A test image adds roots.** A suite's image plan may name more root
-  files, which the build joins after the tree's; the production image
-  takes none, so no test root reaches an image erXos distributes.
+  files, which the build joins after the tree's and checks as it checks
+  them. Naming one makes the image a test image, marked as test code, so
+  the kernel's banner says so and only a development build boots it;
+  only the QEMU cells whose fixture serves HTTPS name one, which a source
+  check holds, and the production image takes none, so no test root
+  reaches an image erXos distributes.
 * **No run-time change.** No command adds or removes a root on a running
   machine; a program that must trust another root names it for its own
   connections.

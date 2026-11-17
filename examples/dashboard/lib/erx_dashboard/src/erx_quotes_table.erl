@@ -30,8 +30,7 @@ the rule for the change, and the credit and note the screen shows.
 
 %% One of api.kraken.com's addresses (Cloudflare's), hardcoded so the
 %% kiosk needs no DNS. It may change; the TLS name check still uses the
-%% host name of the URL. httpc reuses a kept-alive connection by address
-%% alone, so every row of one address names one host.
+%% host name of the URL.
 -define(KRAKEN_ADDRESS, {104, 16, 14, 28}).
 -define(PERIOD_MS, 10000).
 

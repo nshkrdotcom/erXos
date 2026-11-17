@@ -20,6 +20,10 @@ module Erx
     APPLICATION = 'public_key'
     PATH = 'priv/cacerts.pem'
     MAX_ROOT_BYTES = 8 * 1024
+    # A root file a test image adds (ProductionImage#build_medium): path, the root, and
+    # source, the tree's file that wrote it, which the store's receipt names in its
+    # place, since a generated root has no license of its own to attribute.
+    TestRoot = Data.define(:path, :source)
     ROOT_FORM = %r{\A\n*-----BEGIN CERTIFICATE-----\n(?:[A-Za-z0-9+/=]*\n)+-----END CERTIFICATE-----\n\n*\z}
 
     module_function
@@ -27,12 +31,14 @@ module Erx
     # The root files of directory, in name order.
     def roots(directory) = Dir.glob('*.pem', base: directory).sort.map { |name| File.join(directory, name) }
 
-    # The store's bytes: each root file of directory, checked, in name order.
-    def store(directory)
+    # The store's bytes: each root file of directory, checked, in name order, then each
+    # of test_roots, the root files a test image adds (ProductionImage#build_medium),
+    # checked alike, in the order given.
+    def store(directory, test_roots: [])
       paths = roots(directory)
       raise Error, "#{directory} holds no root certificate" if paths.empty?
 
-      paths.map { |path| root(path) }.join
+      [*paths, *test_roots.map(&:path)].map { |path| root(path) }.join
     end
 
     # One root file's bytes, or a refusal naming the file.

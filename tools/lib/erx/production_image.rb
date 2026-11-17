@@ -128,6 +128,12 @@ module Erx
       raise Error, "only a test image carries a test domain boot script: #{tests.join(', ')}" unless test_code || tests.empty?
     end
 
+    # Refuses test_roots, root files a test image adds to its trust store, unless the
+    # image is a test image, so no image without the mark trusts a test root.
+    def self.check_test_roots(test_roots, test_code:)
+      raise Error, "only a test image adds a trust root: #{test_roots.map(&:path).join(', ')}" unless test_code || test_roots.empty?
+    end
+
     # The domain boot script named name, with the applications the release scripts table
     # gives it; a name the table does not hold raises UnknownRelease.
     def self.domain_boot(name)
@@ -408,14 +414,24 @@ module Erx
     # row names the release and runtime image the image then carries. A card takes no
     # apps of its builder's (check_card_apps), carries its own (card_apps) and trusts no
     # key (check_card_trust).
-    def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none)
+    #
+    # test_roots (TrustStore::TestRoot) are root files the trust store takes after the
+    # tree's (TrustStore.store;
+    # docs/design-crypto.md, "A test image adds roots"), for a QEMU cell whose fixture
+    # serves HTTPS. Any makes the image a test image, marked as test code
+    # (build_test_image), so the kernel's banner says so and only a development build
+    # boots it; the source check lets only the test harnesses name them
+    # (Checks::TEST_ROOTS_ENTRY), and every other image's store is the tree's alone.
+    def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none,
+                     test_roots: [])
       on_own_board(machine)
       self.class.check_card_apps(machine.platform, apps)
 
       card = BootPartition.boot_partition_medium?(machine.platform)
       apps = card_apps if card
-      built = assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: false,
-                       machine: machine, domains: domain_boots(manifest_source), apps: apps, record: false)
+      built = assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: !test_roots.empty?,
+                       machine: machine, domains: domain_boots(manifest_source), apps: apps, record: false,
+                       test_roots: test_roots)
       if card
         self.class.check_card_trust(machine.platform, built.report.fetch('manifest'))
         return [built, BootPartition.lay_out(root: @root, runner: @runner, platform: machine.platform, build_kind: BUILD_KIND,
@@ -499,9 +515,10 @@ module Erx
     # "Where a package lies"), never in the archive, and their rows are appended to the
     # image's copy of the manifest source, which the board's file never holds.
     # With record, the image's build record is written beside the checked image.boot.
-    def assemble(directory:, manifest_source:, added:, test_code:, machine:, domains:, apps:, record:)
+    def assemble(directory:, manifest_source:, added:, test_code:, machine:, domains:, apps:, record:, test_roots: [])
       raise Error, 'a test image gets no build record' if record && test_code
       self.class.check_test_scripts(domains, test_code: test_code)
+      self.class.check_test_roots(test_roots, test_code: test_code)
 
       manifest_source = "#{manifest_source}#{apps.rows}"
       directory = OutputDirectory.prepare(root: @root, path: directory)
@@ -526,12 +543,14 @@ module Erx
         File.write(self.class.sources_path(archive), sources)
         facts = build_facts(platform: machine.platform, local: apps.local, revision: revision)
         made = made_files(directory: directory, facts: facts)
-        system_release = ReleaseFiles.new(root: @root, otp: erts.otp, directory: File.join(directory, 'release'), runner: @runner, codec: @codec)
+        system_release = ReleaseFiles.new(root: @root, otp: erts.otp, directory: File.join(directory, 'release'), runner: @runner, codec: @codec,
+                                          test_roots: test_roots)
         release = [*system_release.entries, *made_entries(made, release: ReleaseFiles::SYSTEM)]
         # The image's packages lie in the system partition alone, never in the archive;
         # the pack judges their receipts as it judges its entries'.
         erofs, images = ReleaseMedium.image(entries: release, apps: apps, directory: directory, runner: @runner)
-        domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, made: made, directory: directory)
+        domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, made: made, directory: directory,
+                              test_roots: test_roots)
         packages = self.class.package_entries(apps, directory: directory, root: @root)
         report = pack(entries: [*entries(root_task, kernel, sigma0), *release, *system_release.directories, *domain.entries,
                                 *added.entries],
@@ -540,7 +559,8 @@ module Erx
                       images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
                       imports: IMPORTS.merge(added.imports),
                       inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root, otp: erts.otp), *made_sources, *domain.inputs,
-                               *packages.flat_map { |entry| entry.values_at('artifact', 'receipt') }, *added.inputs].uniq,
+                               *packages.flat_map { |entry| entry.values_at('artifact', 'receipt') }, *added.inputs,
+                               *test_roots.map(&:source)].uniq,
                       test_code: test_code, machine: machine)
         single = File.join(directory, ImageRecord::IMAGE)
         # The single file is written as unchecked and renamed to image.boot only after every
@@ -1774,7 +1794,7 @@ module Erx
     # (toolkit_parts); nothing when there are no boot scripts. ReleaseFiles.domain
     # refuses a script it did not make, whose name could leave the work directory, and
     # two scripts of one name.
-    def domain_parts(boots, erts:, jit:, archives:, made:, directory:)
+    def domain_parts(boots, erts:, jit:, archives:, made:, directory:, test_roots:)
       return NOTHING_ADDED if boots.empty?
 
       release = ReleaseFiles.domain(boots)
@@ -1783,7 +1803,7 @@ module Erx
                                fiasco: @fiasco)
                           .build_domain_runtime_receipted(directory: File.join(directory, 'domain-runtime'), archives: archives)
       domain_release = ReleaseFiles.new(root: @root, otp: erts.otp, directory: File.join(directory, 'domains'), runner: @runner,
-                                        codec: @codec, release: release)
+                                        codec: @codec, release: release, test_roots: test_roots)
       releases = [*domain_release.entries, *made_entries(made, release: release)]
       beamasm = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @machine.platform,
                                fiasco: @fiasco)
