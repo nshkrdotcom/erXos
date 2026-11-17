@@ -1937,6 +1937,15 @@ it; git history is the record of completed work.
   per-entry test flags in the packer (ORed into the header, checked against the entries by
   `erx_index_check`); every packer then marks its test image, and the lexical
   `test-image-builder` check (`Checks::TEST_IMAGE_BUILDERS`) can go.
+* [Medium] build, `tools/lib/erx/import_notices.rb` and `tools/lib/erx/pack_provenance.rb` (`attribute`): a
+  license grant with no text in `config/provenance/import-notices.json` fails only for L4Re's user libraries
+  (`Fiasco.user_license_notices`); an imported file under a package that lists notices, and every other
+  external archive, passes with the package's notices alone, and an archive's notices are hashed from the live
+  file, not held to the profile's pin. Make "every selected grant has a document" part of `ImportNotices.select`
+  and route archive notices through it. The copyright extraction for the user libraries
+  (`Fiasco.copyright_comment`) is a second leading-comment parser beside `PackProvenance#leading_notice`, and
+  its source directories are listed by hand; one parser, and the file set from the build's dependency files,
+  would keep each fact once.
 * [Medium] Fiasco backend, `tools/lib/erx/production_image.rb`: the root's link attributes `libl4sys.p.a`,
   `libsigma0.a` and the boot cores whole, under a license the recipe states, and its dependency
   files leave out Fiasco's and the compiler's headers. The boot cores are stated as BSD-2-Clause
@@ -2367,7 +2376,7 @@ it; git history is the record of completed work.
   find them with `grep -rn design-stopgap tools test liberx erlang`). The eager-FP notices of the fork (`fiasco/kernel/src/kern/fpu.cpp:1-2`,
   `kern/arm/64/fpu-arm.cpp:1-2` and the other files that carry "lazy FP switching is deleted") cite only
   design-kernel.md; point them at design-fiasco.md's "The release's Fiasco build" too.
-* [Medium] build, `tools/lib/erx/production_image.rb:1906-1909`: the root's link records `libl4sys.p.a` and
+* [Medium] build, `tools/lib/erx/production_image.rb` (`archives`): the root's link records `libl4sys.p.a` and
   `libsigma0.a` with status `stopgap`, though the dependency table marks Fiasco's `l4re-core` parts `release`;
   the status sets of `tools/lib/erx/dependencies.rb:88` and `tools/lib/erx/toolchain_provenance.rb:72` admit
   only `permanent` and `stopgap`, two copies of one fact. Give the status set one source that includes

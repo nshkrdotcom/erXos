@@ -1994,15 +1994,14 @@ module Erx
     end
 
     def archives(erts)
-      spdx = 'fiasco/l4re-core/LICENSE.spdx'
       [*otp_archives([erts.system_table, *erts.otp_archives], flavour: 'emu'),
        Archive.new(path: erts.libc, label: 'musl libc', license: 'MIT', status: 'permanent', notices: ['musl/COPYRIGHT']),
        Archive.new(path: erts.builtins, label: 'llvm compiler-rt builtins', license: CompilerRt::LICENSE,
                    status: 'permanent', notices: [CompilerRt.notice(root: @root, runner: @runner)]),
-       Archive.new(path: @fiasco.user_library('libl4sys.p.a'), label: 'fiasco/l4re-core libl4sys',
-                   license: 'MIT', status: 'stopgap', notices: [spdx]),
-       Archive.new(path: @fiasco.user_library('libsigma0.a'), label: 'fiasco/l4re-core libsigma0',
-                   license: 'MIT', status: 'stopgap', notices: [spdx]),
+       *Fiasco::USER_LIBRARIES.map do |name, library|
+         Archive.new(path: @fiasco.user_library(name), label: "fiasco/l4re-core #{name}", license: library.license,
+                     status: 'stopgap', notices: @fiasco.user_library_notices(name))
+       end,
        Archive.new(path: @fiasco.boot_core_archive, label: 'kernel/core boot cores',
                    license: 'BSD-2-Clause', status: 'permanent', notices: [LICENSE])]
     end

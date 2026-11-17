@@ -501,7 +501,7 @@ module Erx
       end
       raise Error, 'invalid public provenance label' unless public_label?(label)
       if item
-        profile_path = File.join(@root, 'config/provenance/import-notices.json')
+        profile_path = File.join(@root, ImportNotices::PROFILE)
         references = if @catalog.include_path?(profile_path)
                        profile = @notice_profile ||= ImportNotices.parse(snapshot_bytes(profile_path))
                        ImportNotices.select(profile, source: label, grants: selected.fetch('grants'))
