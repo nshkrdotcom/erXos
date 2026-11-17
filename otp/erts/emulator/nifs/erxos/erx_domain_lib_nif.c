@@ -813,6 +813,45 @@ retire_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	return (id_entry(env, argc, argv, erx_dom_lib_retire));
 }
 
+/* A session's code object: {ok, Number, Value}, or the library's refusal. */
+static ERL_NIF_TERM
+code_object_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	unsigned int id;
+	ErlNifUInt64 size;
+	uint32_t number = 0;
+	uint64_t value = 0;
+	erx_status_t status;
+
+	if (argc != 2 || !enif_get_uint(env, argv[0], &id) || !enif_get_uint64(env, argv[1], &size))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	enif_mutex_lock(lib_lock);
+	status = caller_is_service(env) ? erx_dom_lib_code_object(lib, id, size, &number, &value) : ERX_ERIGHTS;
+	enif_mutex_unlock(lib_lock);
+	if (status != ERX_OK)
+		return (status_error(env, status));
+	return (enif_make_tuple3(env, atom(env, "ok"), enif_make_uint(env, number), enif_make_uint64(env, value)));
+}
+
+/* Deletes a session's code object: ok, or the library's refusal. */
+static ERL_NIF_TERM
+code_drop_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	unsigned int id, number;
+	erx_status_t status;
+
+	if (argc != 2 || !enif_get_uint(env, argv[0], &id) || !enif_get_uint(env, argv[1], &number))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	enif_mutex_lock(lib_lock);
+	status = caller_is_service(env) ? erx_dom_lib_code_drop(lib, id, number) : ERX_ERIGHTS;
+	enif_mutex_unlock(lib_lock);
+	return (status_term(env, status));
+}
+
 /*
  * The object a crash area is copied into, ERX_CRASH_SIZE bytes on the
  * system domain's budget, made at the first read and mapped read-only for
@@ -1201,6 +1240,8 @@ static ErlNifFunc nif_funcs[] = {
 	{ "start_nif", 1, start_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "stop_nif", 2, stop_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "retire_nif", 1, retire_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "code_object_nif", 2, code_object_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "code_drop_nif", 2, code_drop_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "crash_nif", 1, crash_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "info_nif", 3, info_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "connect_nif", 6, connect_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },

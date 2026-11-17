@@ -39,7 +39,8 @@ caller, since a group's or budget's report holds none of the domain's data.
          code_drop/2, end_commit/1]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, apps_nif/0, devices_nif/0,
-       session_create_nif/5, app_session_create_nif/6, end_commit_nif/1]).
+       session_create_nif/5, app_session_create_nif/6, code_object_nif/2, code_drop_nif/2,
+       end_commit_nif/1]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
@@ -334,15 +335,25 @@ app_session(Id, Entry, Memory, Name, none, DomainPid) ->
 app_session(Id, Entry, Memory, Name, Display, DomainPid) ->
     app_session_create_nif(Id, Entry, Memory, Name, atom_to_binary(Display), DomainPid).
 
--doc "A session's code object: {error, enotsup}, since the library makes none (TODO.md, an executable file as a program's image).".
+-doc """
+A session's code object (include/erx/dom_lib.h, erx_dom_lib_code_object):
+{ok, Number, Cap}, a paged object of Size bytes rounded up to a page, made
+from the session's own budget, and Cap its copy in the session's table,
+which can be filled, sealed and run but never written through a mapping or
+destroyed; {error, elimit} with code_objects_max live, {error, enomem} for
+the budget or for a size no page count holds, {error, einval} for a session
+neither built nor running. Size and, for code_drop/2, Number are within the
+bounds erx_code_objects_facet:decode/1 holds a request to, the facet being
+the one caller.
+""".
 -spec code_object(pos_integer(), pos_integer()) -> {ok, pos_integer(), non_neg_integer()} | error().
-code_object(_Session, _Size) ->
-    {error, enotsup}.
+code_object(Session, Size) ->
+    code_object_nif(Session, Size).
 
--doc "Deletes a session's code object: {error, enotsup}, since the library makes none.".
+-doc "Deletes a session's code object Number: ok, or {error, einval} for a number that names none of its live objects.".
 -spec code_drop(pos_integer(), pos_integer()) -> ok | error().
-code_drop(_Session, _Number) ->
-    {error, enotsup}.
+code_drop(Session, Number) ->
+    code_drop_nif(Session, Number).
 
 register_nif() ->
     erlang:nif_error(undef).
@@ -357,6 +368,12 @@ stop_nif(_Id, _Status) ->
     erlang:nif_error(undef).
 
 retire_nif(_Id) ->
+    erlang:nif_error(undef).
+
+code_object_nif(_Session, _Size) ->
+    erlang:nif_error(undef).
+
+code_drop_nif(_Session, _Number) ->
     erlang:nif_error(undef).
 
 crash_nif(_Id) ->

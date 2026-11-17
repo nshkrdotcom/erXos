@@ -99,6 +99,20 @@ erx_dom_lib_retire(erx_dom_lib_t *lib, uint32_t id)
 }
 
 erx_status_t
+erx_dom_lib_code_object(erx_dom_lib_t *lib, uint32_t id, uint64_t size, uint32_t *number, uint64_t *value)
+{
+	(void)lib, (void)id, (void)size, (void)number, (void)value;
+	return (ERX_ENOTSUP);
+}
+
+erx_status_t
+erx_dom_lib_code_drop(erx_dom_lib_t *lib, uint32_t id, uint32_t number)
+{
+	(void)lib, (void)id, (void)number;
+	return (ERX_ENOTSUP);
+}
+
+erx_status_t
 erx_dom_lib_crash_copy(erx_dom_lib_t *lib, uint32_t id, uint64_t dst)
 {
 	(void)lib, (void)id, (void)dst;

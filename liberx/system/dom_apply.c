@@ -100,6 +100,7 @@ static void	apply_undo(apply_t *, uint32_t);
 static void	apply_keep(apply_t *, erx_dom_created_t *);
 static erx_status_t teardown_apply(erx_dom_lib_t *, const erx_dom_teardown_t *);
 static void	lib_view_caps(erx_dom_lib_t *, uint32_t);
+static void	code_close(erx_dom_lib_t *, uint32_t);
 static uint32_t	lib_slot(const erx_dom_lib_t *, uint32_t);
 
 /* Pages to hold bytes, rounded up; the plan bounds every size, so this never wraps. */
@@ -1191,8 +1192,10 @@ teardown_apply(erx_dom_lib_t *lib, const erx_dom_teardown_t *teardown)
 		(void)erx_object_destroy(teardown->destroy[index].raw);
 		set_close_under(&set, obj[index]);
 	}
-	if (slot < lib->view.max_domains)
+	if (slot < lib->view.max_domains) {
 		lib_view_caps(lib, slot);
+		code_close(lib, slot);
+	}
 	if (teardown->kind == ERX_DOM_RETIRE && teardown->nremains == 1) {
 		lib->remains_held[teardown->remains[0]] = lib->handles[slot].made[ERX_DOM_OBJ_OUTER];
 		lib->handles[slot].made[ERX_DOM_OBJ_OUTER] = ERX_CAP_NULL;
@@ -1371,6 +1374,86 @@ erx_dom_lib_retire(erx_dom_lib_t *lib, uint32_t id)
 		return (status);
 	erx_dom_retire_record(&lib->view, &teardown);
 	memset(&lib->handles[teardown.index], 0, sizeof(lib->handles[0]));
+	return (ERX_OK);
+}
+
+/*
+ * The rights of a session's copy of its code object: a paged code object's
+ * default rights (abi/kernel.txt, paged_code_memory), which carry no WRITE,
+ * so no mapping of it is ever writable while EXEC lets one run it once
+ * sealed, less DESTROY, which only the library's own handle carries, and
+ * INSPECT, which the session has no use for.
+ */
+#define DOM_CODE_RIGHTS	(erx_kind_default_mask(ERX_KIND_PAGED_CODE_MEMORY) & \
+			    ~(uint32_t)(ERX_HR_DESTROY | ERX_HR_INSPECT))
+
+/*
+ * Closes slot's code object handles once its own budget's handle has gone:
+ * the destroy that closed it deleted every object charged to it.
+ */
+static void
+code_close(erx_dom_lib_t *lib, uint32_t slot)
+{
+	uint64_t *const objects = lib->code[slot].objects;
+
+	if (lib->handles[slot].made[ERX_DOM_OBJ_BUDGET] != ERX_CAP_NULL)
+		return;
+	for (uint32_t index = 0; index < ERX_CODE_OBJECTS_MAX; index++) {
+		if (objects[index] != ERX_CAP_NULL)
+			(void)erx_cap_close((erx_cap_t){ .raw = objects[index] });
+		objects[index] = ERX_CAP_NULL;
+	}
+}
+
+erx_status_t
+erx_dom_lib_code_object(erx_dom_lib_t *lib, uint32_t id, uint64_t size, uint32_t *number,
+    uint64_t *value)
+{
+	const erx_dom_step_t install = { .kind = ERX_DOM_STEP_INSTALL, .rights = DOM_CODE_RIGHTS };
+	const uint32_t slot = lib_slot(lib, id);
+	uint64_t *objects, bytes, object;
+	uint32_t index;
+	erx_status_t status;
+
+	if (slot == lib->view.max_domains || size == 0 ||
+	    (lib->view.domains[slot].state != ERX_DOM_BUILT && lib->view.domains[slot].state != ERX_DOM_RUNNING))
+		return (ERX_EINVAL);
+	if (__builtin_add_overflow(size, (uint64_t)ERX_PAGE_SIZE - 1, &bytes))
+		return (ERX_ENOMEM);
+	bytes &= ~((uint64_t)ERX_PAGE_SIZE - 1);
+	objects = lib->code[slot].objects;
+	for (index = 0; index < ERX_CODE_OBJECTS_MAX && objects[index] != ERX_CAP_NULL; index++)
+		continue;
+	if (index == ERX_CODE_OBJECTS_MAX)
+		return (ERX_ELIMIT);
+	status = erx_mem_create_paged(lib->handles[slot].made[ERX_DOM_OBJ_BUDGET], bytes, ERX_MEM_CODE, &object);
+	if (status != ERX_OK)
+		return (status);
+	status = erx_dom_install(&install, object, lib->handles[slot].made[ERX_DOM_OBJ_SPACE], value);
+	if (status != ERX_OK) {
+		(void)erx_object_destroy(object);
+		(void)erx_cap_close((erx_cap_t){ .raw = object });
+		return (status);
+	}
+	objects[index] = object;
+	*number = index + 1;
+	return (ERX_OK);
+}
+
+erx_status_t
+erx_dom_lib_code_drop(erx_dom_lib_t *lib, uint32_t id, uint32_t number)
+{
+	const uint32_t slot = lib_slot(lib, id);
+	uint64_t *object;
+
+	if (slot == lib->view.max_domains || number == 0 || number > ERX_CODE_OBJECTS_MAX)
+		return (ERX_EINVAL);
+	object = &lib->code[slot].objects[number - 1];
+	if (*object == ERX_CAP_NULL)
+		return (ERX_EINVAL);
+	(void)erx_object_destroy(*object);
+	(void)erx_cap_close((erx_cap_t){ .raw = *object });
+	*object = ERX_CAP_NULL;
 	return (ERX_OK);
 }
 

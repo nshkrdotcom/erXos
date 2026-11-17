@@ -30,7 +30,8 @@
  * domain's drain answers with DOWN noproc, then floods it with LINKs to that
  * pid without reading their answers, which ends the domain's port. After each end the domain
  * is disconnected and retired, and the pool and the root's handle table hold
- * what they held before. Two running domains are connected and disconnected,
+ * what they held before. A domain's code objects are made, dropped and
+ * checked from inside it, and go with its budget (case_code). Two running domains are connected and disconnected,
  * then end and are retired while connected, which leaves their outer
  * budgets as remains until the disconnect destroys them.
  * Then a connect, and a create, fails at each step in turn, before the step
@@ -88,6 +89,7 @@ static erx_dom_connection_t connections[CONNECTIONS];
 static erx_dom_principal_t principals[1];
 static erx_dom_principal_held_t principals_held[1];
 static erx_dom_handles_t handles[DOMAINS];
+static erx_dom_code_t code[DOMAINS];
 static erx_dom_link_handles_t links[CONNECTIONS];
 static erx_dom_remains_t remains[2 * CONNECTIONS];
 static uint64_t remains_held[2 * CONNECTIONS];
@@ -273,6 +275,7 @@ library_up(void)
 	    .system_lane = ERX_LANE_MIN, .next_connection = 1,
 	    .system_space = ERX_FIASCO_TASK_ROOT };
 	lib.handles = handles;
+	lib.code = code;
 	lib.links = links;
 	lib.remains_held = remains_held;
 	for (uint32_t row = 0; row < 2 * CONNECTIONS; row++)
@@ -2069,6 +2072,123 @@ case_end(const char *name, const erx_dom_spec_t *spec, run_action_t action, erx_
 	say_case(name, passed && erx_fiasco_vm_free_pages() == before && handles_used() == held);
 }
 
+/* Domain id's row of the root's code object table, or NULL. */
+static erx_dom_code_t *
+code_row(uint32_t id)
+{
+	for (uint32_t slot = 0; slot < DOMAINS; slot++)
+		if (domains[slot].id == id)
+			return (&code[slot]);
+	return (NULL);
+}
+
+/* Writes value into the CODE_DIGITS placeholder after CODE_WORD in domain id's arguments. */
+static bool
+code_value_give(uint32_t id, uint64_t value)
+{
+	static const char digits[] = "0123456789abcdef";
+	const erx_dom_handles_t *held;
+	uint64_t addr;
+	char *hex;
+
+	if (!boot_page_map(id, ERX_PROT_RW, &held, &addr))
+		return (false);
+	hex = (char *)(uintptr_t)(addr + ((const erx_boot_info_t *)(uintptr_t)addr)->args_off) + sizeof(CODE_WORD) - 1;
+	for (size_t at = 0; at < CODE_DIGITS; at++)
+		hex[at] = digits[(value >> (4 * (CODE_DIGITS - 1 - at))) & 0xf];
+	return (erx_vm_release(ERX_CAP_SELF, addr, ERX_PAGE_SIZE) == ERX_OK);
+}
+
+/*
+ * A session's code objects (erx_dom_lib_code_object): a size of 0 is
+ * refused; ERX_CODE_OBJECTS_MAX are made from the domain's budget and the
+ * next answers ERX_ELIMIT; a drop deletes one and a second drop of it, or a
+ * number past the table, answers ERX_EINVAL. The domain's program checks
+ * the copy of the first (program.c, code_check) and halts; an ended domain
+ * gets none. After the retire the root's table row is empty, a duplicate
+ * the root kept of the first object answers ERX_ESTALE, since the object
+ * went with the domain's budget.
+ */
+static bool
+code_run(uint32_t program)
+{
+	static const char word[] = CODE_WORD "0000000000000000";
+	const uint32_t cap_limit = lib.cap_limit;
+	erx_dom_created_t created;
+	erx_dom_report_t report = { 0 };
+	erx_dom_code_t *row;
+	uint64_t value = 0, first = 0, kept = ERX_CAP_NULL, scratch;
+	uint32_t number = 0, made = 0;
+	erx_status_t status = ERX_OK;
+	bool passed;
+
+	_Static_assert(sizeof(word) - sizeof(CODE_WORD) == CODE_DIGITS, "the placeholder is CODE_DIGITS digits");
+	/* Room in the domain's table for every copy beside its grants. */
+	lib.cap_limit = ERX_CODE_OBJECTS_MAX + cap_limit;
+	(void)request_for(word, program, 0);
+	request.memory = 4 * MIB;
+	passed = erx_dom_lib_create(&lib, &request, NULL, 0, &created) == ERX_OK;
+	row = passed ? code_row(created.id) : NULL;
+	passed = row != NULL && erx_dom_lib_code_object(&lib, created.id, 0, &number, &value) == ERX_EINVAL;
+	while (passed && made <= ERX_CODE_OBJECTS_MAX) {
+		status = erx_dom_lib_code_object(&lib, created.id, 1, &number, &value);
+		if (status != ERX_OK)
+			break;
+		made++;
+		if (made == 1)
+			first = value;
+		passed = number >= 1 && number <= ERX_CODE_OBJECTS_MAX && row->objects[number - 1] != ERX_CAP_NULL;
+	}
+	say_count("code_made", made);
+	passed = passed && made == ERX_CODE_OBJECTS_MAX && status == ERX_ELIMIT;
+	for (uint32_t drop = 2; passed && drop <= ERX_CODE_OBJECTS_MAX; drop++)
+		passed = erx_dom_lib_code_drop(&lib, created.id, drop) == ERX_OK && row->objects[drop - 1] == ERX_CAP_NULL;
+	passed = passed && erx_dom_lib_code_drop(&lib, created.id, 2) == ERX_EINVAL &&
+	    erx_dom_lib_code_drop(&lib, created.id, 0) == ERX_EINVAL &&
+	    erx_dom_lib_code_drop(&lib, created.id, ERX_CODE_OBJECTS_MAX + 1) == ERX_EINVAL;
+	passed = passed && erx_cap_dup(row->objects[0], &kept) == ERX_OK && code_value_give(created.id, first) &&
+	    erx_dom_lib_start(&lib, created.id) == ERX_OK;
+	if (passed) {
+		passed = end_wait(&report) && report.id == created.id;
+		say_count("end_kind", (uint64_t)report.end.kind);
+		say_count("end_status", (uint64_t)report.end.status);
+		passed = passed && report.end.kind == ERX_DOM_END_HALT && report.end.status == HALT_STATUS &&
+		    erx_dom_lib_code_object(&lib, created.id, 1, &number, &value) == ERX_EINVAL;
+	} else if (row != NULL && erx_dom_lib_start(&lib, created.id) == ERX_OK) {
+		(void)erx_dom_lib_stop(&lib, created.id, STOP_STATUS);
+		(void)end_wait(&report);
+	}
+	if (row != NULL) {
+		passed = erx_dom_lib_disconnect(&lib, created.connection) == ERX_OK && passed;
+		passed = erx_dom_lib_retire(&lib, created.id) == ERX_OK && passed;
+		for (uint32_t index = 0; index < ERX_CODE_OBJECTS_MAX; index++)
+			passed = passed && row->objects[index] == ERX_CAP_NULL;
+	}
+	passed = passed && erx_cap_dup(kept, &scratch) == ERX_ESTALE;
+	if (kept != ERX_CAP_NULL)
+		(void)erx_cap_close((erx_cap_t){ .raw = kept });
+	lib.cap_limit = cap_limit;
+	return (passed);
+}
+
+/*
+ * Two runs of code_run: the first grows the backend's tables to hold a
+ * domain's ERX_CODE_OBJECTS_MAX objects, which they keep, so the pool and
+ * the root's handles are checked across the second.
+ */
+static void
+case_code(uint32_t program)
+{
+	const bool warm = code_run(program);
+	const uint64_t before = erx_fiasco_vm_free_pages();
+	const uint32_t held = handles_used();
+	const bool passed = code_run(program);
+
+	say_count("free_pages_lost", before - erx_fiasco_vm_free_pages());
+	say_count("handles_left", handles_used() - held);
+	say_case("code", warm && passed && erx_fiasco_vm_free_pages() == before && handles_used() == held);
+}
+
 /* Creates and starts a domain that waits to be stopped; its id, or 0. */
 static uint32_t
 waiter(uint32_t program, uint32_t *connection)
@@ -2626,6 +2746,7 @@ erx_fiasco_root_main(void)
 	case_end("fault", request_for("fault", program, 0), RUN_PLAIN, ERX_DOM_END_FAULT, ERX_FAULT_MEMORY);
 	case_end("stop", request_for("wait", program, 0), RUN_STOP, ERX_DOM_END_STOPPED, 0);
 	case_end("lanes", request_for("halt", program, 1), RUN_PLAIN, ERX_DOM_END_HALT, HALT_STATUS);
+	case_code(program);
 	case_end("erts", erts_request(erts), RUN_PLAIN, ERX_DOM_END_HALT, 0);
 	case_end("logger", logger_request(erts), RUN_PLAIN, ERX_DOM_END_HALT, 0);
 	case_end("crypto", args_request(erts, crypto_args, sizeof(crypto_args)), RUN_PLAIN, ERX_DOM_END_HALT, 0);
