@@ -204,7 +204,8 @@ Eshell V17.1.1 (type help(). for help)
   and the [first pass](docs/research-rpi4-board-pass.md) record what was
   tried. The board's Ethernet is board-verified: the kiosk's live quotes
   and SSH login run over it. `tools/erx netboot` stages the board's boot
-  files for a TFTP network boot from a Mac, for development.
+  files for a TFTP network boot from a Mac, for development. The kiosk's
+  dashboard runs full screen at 1920x1080.
   The board needs a bootloader dated 2022-12-01 or later. When the
   device tree carries no random seed, the system domain seeds its
   generator from the board's RNG200 hardware entropy source.
@@ -232,7 +233,8 @@ Eshell V17.1.1 (type help(). for help)
 * `erx:inspect(Path, Options)` reads an inspection path with a wait of the
   caller's own. Every session sees the machine's load (each CPU's idle
   time and ready threads) and the clock's state at `/proc/time/status`:
-  unset, boot, approximate or set. On QEMU `virt` the clock reads the
+  unset, boot, approximate or set, and `/proc/time` shows who set it.
+  On QEMU `virt` the clock reads the
   PL031 real-time clock at boot. A machine with no real-time clock
   starts at the build's date, approximate, so HTTPS works from boot
   while the image is younger than its peers' certificates.
@@ -384,6 +386,10 @@ Eshell V17.1.1 (type help(). for help)
 * `erx_wm_rio`, a window-manager policy of overlapping windows after rio
   (pick, delete and a menu), is a pure core with exhaustive host
   tests, and the window server's tests run it. No QEMU cell runs it.
+* Network time: `ntpd` sets the clock at boot from an NTP server. The
+  Raspberry Pi 4 demo image uses `pool.ntp.org`, so the board's clock needs
+  no setting by hand; elsewhere it is off until enabled. `ntpctl` steps the
+  clock or shows the status.
 * The widget format carries type roles, areas, icons, a current item and a
   graph kind, with coverage masks for corners, shadows and graphs. The
   desktop's file list and statistics have pure cores with host tests.
@@ -494,8 +500,8 @@ the next `--medium`, and its disk is the copy. To log in over SSH, the medium ne
 
 **What to try.** In the SSH session or on the serial console:
 
-* `date` shows the clock, which starts at the build's date at every boot;
-  set it with FreeBSD's syntax, `date [[[[[cc]yy]mm]dd]HH]MM[.SS]`, for
+* `date` shows the clock, which starts at the build's date at every boot
+  unless `ntpd` sets it; set it by hand with FreeBSD's syntax, `date [[[[[cc]yy]mm]dd]HH]MM[.SS]`, for
   example `date 202611161530`. It is not kept across a reboot.
 * `ps` and `top` list your session's processes; `erl` starts an Erlang
   shell where `erx:domains()` lists every domain of the machine.
