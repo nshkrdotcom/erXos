@@ -1407,12 +1407,14 @@ module Erx
           'args' => boot_page_args(recipe.args.split(' '), recipe.release), 'env' => recipe.env.b }
       end
 
-      # Whether a facet row is granted to the app template, the session row naming no
-      # principal.
+      # Whether a facet row is granted to the app template.
       def app_template?(facet, tables)
         facet.fetch('grantee_kind') == grantee_kind('session') &&
-          tables.fetch('sessions').fetch(facet.fetch('grantee')).fetch('principal') == @codec.constant('mf_none')
+          app_session?(tables.fetch('sessions').fetch(facet.fetch('grantee')))
       end
+
+      # Whether a session row is the app template, the one naming no principal.
+      def app_session?(session) = session.fetch('principal') == @codec.constant('mf_none')
 
       # A domain row's or session template's arguments as its boot page holds them: its
       # emulator flags (the words before the first --), then -- -boot /bin/<name> --,
@@ -1562,7 +1564,7 @@ module Erx
         service_rows = tables.fetch('services')
         packages = fetch_files_service(service_rows, 'packages_service', required_by: 'an apps row')
         tree = fetch_files_service(service_rows, 'system_service', required_by: 'an apps row')
-        template = [grantee_kind('session'), tables.fetch('sessions').size - 1]
+        template = [grantee_kind('session'), tables.fetch('sessions').index { |session| app_session?(session) }]
         system = [grantee_kind('system'), 0]
         [[system, packages, { 'rights' => 'rw' }], [template, packages, { 'rights' => 'rx', 'tree' => 'installed' }],
          [system, tree, { 'rights' => 'ro' }], [template, tree, { 'rights' => 'rx' }],
@@ -1572,18 +1574,17 @@ module Erx
       end
 
       # The home rows (docs/design-files.md, "A user's home"): for every session template
-      # but the app template, the last among the sessions when there is an apps row, a
-      # grant of the service named home_service, rights rw and tree home, which roots it
-      # at the home of the session's user; none in a manifest without that service.
-      # Answers each row as app_facets does.
+      # but the app template, a grant of the service named home_service, rights rw and
+      # tree home, which roots it at the home of the session's user; none in a manifest
+      # without that service. Answers each row as app_facets does.
       def home_facets(tables)
         service_rows = tables.fetch('services')
         name = @codec.fixed_bytes('home_service')
         return [] unless service_rows.any? { |row| row.fetch('name') == name }
 
         home = fetch_files_service(service_rows, 'home_service', required_by: 'a home service')
-        users = tables.fetch('sessions').size - (@apps == NO_APPS ? 0 : 1)
-        Array.new(users) do |template|
+        sessions = tables.fetch('sessions')
+        sessions.each_index.reject { |template| app_session?(sessions.fetch(template)) }.map do |template|
           derived_facet(service_rows, [grantee_kind('session'), template], home, { 'rights' => 'rw', 'tree' => 'home' })
         end
       end
@@ -1857,6 +1858,9 @@ module Erx
           invalid('facet names a service the manifest does not contain', 2, 'facet.service') unless index
           facet_row(record, index, tables.fetch('sessions'))
         end
+        home = @codec.fixed_bytes('home_service')
+        invalid('a facet of the source grants the home service, whose rows only the build derives', 19, 'facet.service') if
+          sources.any? { |row| service_rows.fetch(row.fetch('service')).fetch('name') == home }
         derived = app_facets(tables, app_services) + home_facets(tables)
         rows = sources + derived.map(&:first)
         packed = records('facet').zip(sources).map { |record, row| facet_parameters(record, row, tables) } +

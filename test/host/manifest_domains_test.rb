@@ -1119,6 +1119,35 @@ class ManifestDomainsTest < Minitest::Test
     assert_equal declared, facets.fetch(app_services.first.fetch('facet')).slice(*declared.keys)
   end
 
+  # The home rows the build derives (docs/design-files.md, "A user's home"): every
+  # session template but the app template holds one grant of the home service, rights
+  # rw and tree home, and the app template none; a source row of the home service, which
+  # would state no tree, is refused. The app template given a home row, or a template
+  # left out, fails it.
+  def test_the_build_derives_a_home_row_for_every_user_template
+    outer = 2 * (4096 + 4096) + @codec.constant('windows_pixels_default') + 4096
+    roomy = with_windows.sub("  memory 4194304\n  outer 1048576\n", "  memory 16777216\n  outer #{outer}\n")
+    home = "service #{@codec.fixed_bytes('home_service').delete("\0")}\n  server @domain.beta\n  interface files\n"
+    view = @codec.open('manifest', admit(for_apps(roomy + home + self.class.apps(max: 1), 1)).bytes)
+    sessions = view.each('sessions').to_a
+    users = sessions.each_index.reject { |index| sessions.fetch(index).fetch('principal') == @codec.constant('mf_none') }
+    refute_empty users
+    assert_equal sessions.size - 1, users.size
+    services = view.each('services').map { |row| view.string(row.fetch('name')) }
+    parameters = view.each('facet_parameters').to_a
+    first = view.header.fetch('facet_parameters').fetch('offset')
+    homes = view.each('facets').select { |facet| services.fetch(facet.fetch('service')) == 'home' }.map do |facet|
+      span = facet.fetch('parameters')
+      [facet.fetch('grantee_kind'), facet.fetch('grantee'),
+       parameters[(span.fetch('offset') - first) / 32, span.fetch('count')].map { |row| row.fetch('scalar') }]
+    end
+    granted = [@codec.member('files_rights', 'rw'), @codec.member('files_tree', 'home')]
+    assert_equal users.map { |index| [@codec.member('mf_grantee', 'session'), index, granted] }, homes.sort
+    row = window_facet('own_home', '@domain.alpha', '@service.home')
+    refused(Erx::Manifest::Invalid, 19, 'facet.service', for_apps(roomy + home + self.class.apps(max: 1) + row, 1),
+            message: /home service/)
+  end
+
   # Property 19's refusals of what would derive the template wrongly: a source facet
   # carrying a tree, apps or installed, which only a derived row may; a source facet naming the template,
   # which no @session.NAME reaches, since it names no principal; an apps row with no
