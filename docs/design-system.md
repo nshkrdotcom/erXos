@@ -2209,16 +2209,16 @@ side fills the principal in, from the grant for a session's request and
 as the system principal for its own.
 
 **One entry for every request.** The coordinator takes every request for
-an end through one call, with the end and the principal. The `ctl`
-handler passes its grant's principal, and the system domain's own
+an end through one call, with the end and the user that asked. The
+`ctl` handler passes its grant's user name, and the system domain's own
 callers, `init:stop/0`, `init:reboot/0`, a numeric `erlang:halt/0,1`,
 the update service and the system shell's commands, pass the system
-principal. For each request the coordinator calls
+principal's, `root`. For each request the coordinator calls
 `erx_dom_end_begin(how)`. When the begin succeeds, the coordinator writes
 one log record at `critical`, which records the request it accepted:
 `rebooted by P` for `reset`, `powered off by P` for `off`, and
-`trial boot requested by P` for `trial`, where `P` is the principal's
-name and `root` for the system principal. The record names what was asked, not
+`trial boot requested by P` for `trial`, where `P` is that user name.
+The record names what was asked, not
 how the machine ended: an `off` accepted during a trial ends by a reset
 (K19), and a `trial` whose preparation failed ends by a reset, which the
 coordinator's preparation lines report. It then answers `ok`, and
@@ -2696,7 +2696,8 @@ grant's `session`, the session mark the domain service fixes for the
 display's session and copies into every mint of that grant
 ([design-display.md](design-display.md#the-pixel-area)); and the
 `machine`, `windows` and `inspect` grants' `principal`, the grantee's
-principal, which the tree's log line names ([A session's request](#a-sessions-request)),
+user name, the one name every grant carries (`root` for the system
+principal, as in a mint request), which the tree's log line names ([A session's request](#a-sessions-request)),
 the display's trusted overlay shows for each window
 ([design-display.md](design-display.md#windows-and-the-window-system))
 and the inspector reads to decide who sees a window's tree

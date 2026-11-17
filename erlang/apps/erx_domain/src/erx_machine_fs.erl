@@ -12,9 +12,9 @@ which a session whose template holds the `machine` grant mounts at
   names them the process behind the system domain's `machine` service
   (erx_facet:serve/2). The domain service asks it, in each grantee's ready
   answer, for one erx_fs grant bound to that session and ending with it,
-  and starts the grant with the grantee's principal name as the grant's
-  own argument, which it computes at the mint. One more grant, for the
-  system domain itself and with the system principal, is mounted at
+  and starts the grant with the grantee's user name as the grant's own
+  argument, which it computes at the mint. One more grant, for the system
+  domain itself and with the system principal's user name, root, is mounted at
   `/machine` in the system domain's namespace (erx_ns:mount_own/2), so
   the system shell's `reboot` and `halt` write the path a session's do
   (docs/design-shell.md, "Interfaces").
@@ -22,7 +22,7 @@ which a session whose template holds the `machine` grant mounts at
   `eacces`. A write is one end, whatever its offset: parse/1 takes `reset`
   or `off` with at most one trailing newline and refuses any other bytes
   with `einval`. The end goes to the coordinator's one entry,
-  erx_machine:request/2, with the grant's principal; the request carries
+  erx_machine:request/2, with the grant's user name; the request carries
   nothing else. The write succeeds once the coordinator accepted the
   request, answers `ebusy` once an earlier request was accepted, and `eio`
   when the coordinator ended before it answered.
@@ -59,7 +59,7 @@ own grant at `/machine`.
 start_link() ->
     {ok, Grants} = erx_fs_grants:start_link(?MODULE),
     ok = erx_facet:serve(?SERVICE, Grants),
-    {ok, Own} = erx_fs_grants:own(Grants, system),
+    {ok, Own} = erx_fs_grants:own(Grants, erx_domain_core:system_user()),
     ok = erx_ns:mount_own(?SERVICE, Own),
     {ok, Grants}.
 
@@ -89,11 +89,11 @@ errno(ended) -> {error, eio}.
 %% The erx_fs callbacks
 %% ---------------------------------------------------------------------------
 
-%% Each grant's argument is its grantee's principal, `system` for the system principal,
-%% whose sessions are root's, and the principal's name otherwise, which the domain
-%% service computed at the mint; a test hands a map with a stand-in for the coordinator.
+%% Each grant's argument is its grantee's user name, which the domain service computed
+%% at the mint, root for the system domain's own grant; a test hands a map with a
+%% stand-in for the coordinator.
 -doc false.
-init(Principal) when Principal =:= system; is_binary(Principal) ->
+init(Principal) when is_binary(Principal) ->
     {ok, #{principal => Principal, request => fun erx_machine:request/2}};
 init(#{principal := _, request := Request} = Fs) when is_function(Request, 2) ->
     {ok, Fs}.

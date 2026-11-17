@@ -1352,8 +1352,8 @@ These were open and are settled as stated here:
    An erXos vendor zone, when one exists, is the default to ship.
 2. **The operator's servers are `ntpd_flags`**, a bounded start-row
    field delivered as opaque data ([Configuration](#configuration)),
-   rather than a file in the ntpd principal's data directory, which would
-   need a way for an administrator to write another principal's files,
+   rather than a file in the ntpd user's home, which would need a way for
+   an administrator to write another user's home in a release build,
    or the manifest only, which would need a rebuilt image to change
    servers.
 3. **No slew.** The named consumers need a second, a slew needs a rate on

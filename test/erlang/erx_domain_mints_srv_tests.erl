@@ -581,6 +581,32 @@ session_line_grant_test() ->
         files_cleanup(Started)
     end.
 
+%% A session of the system principal holds a machine grant that names it by its user
+%% name, root, as every mint request does (docs/design-system.md, "A session's
+%% request"), so the machine's end is logged by the name the session logs in as.
+session_machine_grant_test() ->
+    Started = tree_setup(machine, ?ERX_SERVICE_FILES, [{{template, 0}, machine, system, #{max_request => 131072}}],
+                         fun() -> erx_fs_grants:start_link(erx_machine_fs) end),
+    {module, _} = code:ensure_loaded(erx_machine_fs),
+    1 = erlang:trace_pattern({erx_machine_fs, init, 1}, true, [local]),
+    erlang:trace(all, true, [call, {tracer, self()}]),
+    try
+        {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
+        #{machine := {_Grant, rw}} = maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})),
+        ?assertEqual([<<"root">>], [Arg || {trace, _, call, {erx_machine_fs, init, [Arg]}} <- flush_traces()])
+    after
+        erlang:trace(all, false, [call]),
+        erlang:trace_pattern({erx_machine_fs, init, 1}, false, [local]),
+        files_cleanup(Started)
+    end.
+
+%% Every trace message this process holds, in arrival order.
+flush_traces() ->
+    receive {trace, _, _, _} = Trace -> [Trace | flush_traces()];
+            {trace, _, _, _, _} = Trace -> [Trace | flush_traces()]
+    after 0 -> []
+    end.
+
 %% No configured domain, start the system domain's files service named start, with a
 %% test tree's grants behind it, and a trace of the domain pids' receives to this process,
 %% with Grants the manifest's.
@@ -589,9 +615,13 @@ files_setup(Grants) ->
 
 %% As files_setup/1, for the system domain's service Name of interface Interface.
 tree_setup(Name, Interface, Grants) ->
+    tree_setup(Name, Interface, Grants, fun() -> erx_fs_grants:start_link(erx_fs_test_tree, []) end).
+
+%% As tree_setup/3, with the grants supervisor Start starts behind the service.
+tree_setup(Name, Interface, Grants, Start) ->
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [], services => [{system, Name, Interface}], grants => Grants}),
-    {ok, Tree} = erx_fs_grants:start_link(erx_fs_test_tree, []),
+    {ok, Tree} = Start(),
     unlink(Tree),
     ok = erx_facet:serve(Name, Tree),
     erlang:trace(new_processes, true, ['receive', {tracer, self()}]),

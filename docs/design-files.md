@@ -1374,8 +1374,9 @@ never learns another's mounts.
 **Building.** The domain service builds a domain's namespace from its
 specification: `/` is the release slice, and each entry of the
 specification's `files` map mounts a facet the domain is granted, such as
-`/data` (its principal's directory on the data partition, read-write)
-or `/dev` (the device service's tree, for an administrator principal).
+`/root` or `/home/NAME` (its user's home on the data partition,
+read-write; [A user's home](#building-binding-and-mounting)), `/data`
+(the whole data partition, root's alone) or `/dev` (the device service's tree, for an administrator principal).
 The local entries follow from the release, `/proc` among them, a tree
 of the domain's own `erx_procfs` that reads through the domain's inspect
 facet ([design-live.md](design-live.md#the-proc-tree)), and the facets
@@ -1387,7 +1388,7 @@ mounts them before its release's applications start. `/tmp` is the grant
 of the domain's own RAM file server, which the runtime starts and mounts
 itself ([design-tmp.md](design-tmp.md#starting-and-mounting)). A facet that serves
 a tree carries its grant's rights, `ro`, `rw` or `rx`, those of its
-facet row, which the domain service takes from the manifest, so a tree whose programs a domain may run, such as a principal's
+facet row, which the domain service takes from the manifest, so a tree whose programs a domain may run, such as a
 directory of executables, comes only from a facet granted with `rx`, and
 a domain that should write a tree and run what it wrote holds two facets
 on one tree, through which a file is one entry of a session's file table.
@@ -1622,9 +1623,14 @@ added:
   session template other than the app template, whose sessions have
   their own directory among `apps/`
   ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)).
-  Property 19 lets only the rows the build derives state a tree, so no
-  source row roots a home grant elsewhere, and every user's session
-  holds its home by construction.
+  Property 19 refuses a source facet row of `home_service` and lets only
+  the rows the build derives state a tree, so no source row roots a home
+  grant elsewhere, and every user's session holds its home by
+  construction. Its tenth clause grants the service named
+  `data_service`, the whole volume, to the system domain and, in a
+  development manifest only, to root's template, and to no other
+  grantee
+  ([design-packaging.md](design-packaging.md#the-builds-check)).
 * **The entry.** A session mounts its `home` facet at its home's path,
   which `erx_ns:home_place/1` makes from the session's login name, the
   prefix of its node name
@@ -1632,9 +1638,13 @@ added:
   `place/1` gives `home` no place of its own, as it gives `packages`
   none. The grant is rooted at the home and answers `..` at its root
   itself, so a session that holds only `home` sees its own home and
-  nothing else of the volume. Root's session also holds `data`, the
-  whole volume, as the administrator, and reaches the other homes
-  under `/data/home` as FreeBSD's root does.
+  nothing else of the volume: the home is a user's one place on the
+  data volume, and no other grant reaches a part of it for one user.
+  Root's session also holds `data`, the whole volume, as the
+  administrator, and reaches the other homes under `/data/home` as
+  FreeBSD's root does; that grant is a development build's alone
+  ([the littlefs release contract](design-stopgap.md#release-contract),
+  Grants), and no other user's session holds it ("The row").
 * **Creation.** A home grant's start makes its directory when the
   volume lacks it, `/home` before `/home/NAME`, through the owner's own
   `make`, so a user's first login creates the home. A directory that

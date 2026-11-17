@@ -438,7 +438,10 @@ no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files
   ([design-system.md](design-system.md#identifiers));
 * at stage 4, the store's grant: in a release build the vault's state
   facet `{state, "bt"}` ([design-system.md](design-system.md#state-slots)),
-  and in a development build a `data` grant rooted at its own directory;
+  and in a development build a files service of its own that the storage
+  domain roots at the data volume's `bt/` directory and grants to the
+  Bluetooth domain alone, as it serves SSH's `ssh_state`
+  ([design-ssh.md](design-ssh.md#host-keys));
 * at stage 4, the system domain's login facet, when the console is
   configured ([The console](#the-console)).
 

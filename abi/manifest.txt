@@ -181,6 +181,11 @@ bytes system_service 6 value 73797374656d
 # user's home"): "home", an instance of files. The build derives a row of it, with
 # tree home, for every session template but the app template.
 bytes home_service 4 value 686f6d65
+# The name of the service that serves the data volume whole (docs/design-files.md,
+# "A user's home"): "data", an instance of files. Property 19 grants a row of it that
+# states no tree to the system domain and, in a development manifest only, to the
+# system principal's template, and to no other grantee.
+bytes data_service 4 value 64617461
 # The name of the service that serves root's login keys from the medium
 # (docs/design-ssh.md, "Who publishes it"): "login_keys", an instance of files whose
 # server holds the manifest's record_volume window, granted read-only to the system

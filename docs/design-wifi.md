@@ -720,9 +720,11 @@ interpreter domain like the storage and network domains, running the
   mounted at `/etc` in the WiFi domain's own namespace, so the station
   reads FreeBSD's path, `/etc/wpa_supplicant.conf`;
 * `wpa_key`, the station's facet of the key holder
-  ([Credentials](#credentials)); or in a development build a `data`
-  grant rooted at the WiFi domain's own directory on the data partition,
-  where the development key holder keeps its file.
+  ([Credentials](#credentials)); or in a development build a files
+  service of its own that the storage domain roots at the data volume's
+  `wifi/` directory and grants to the WiFi domain alone, as it serves
+  SSH's `ssh_state` ([design-ssh.md](design-ssh.md#host-keys)), where
+  the development key holder keeps its file.
 
 It serves one file tree, `wifi`, to root's session. It holds no device.
 The `wifi_etc` tree is granted read-write to the session templates the
@@ -1951,7 +1953,7 @@ state slot's. In the vault's terms:
 holder as `erx_wifi_keys_dev`, a process of the WiFi domain that serves
 `wpa_admin` to root's session from there: the same core over
 `erx_wpa_arith`, with the entries in a file, `keys`, in the WiFi
-domain's own directory on the data partition, one generated layout of
+domain's own tree on the data volume, `wifi/`, one generated layout of
 `abi/formats/wpa_keys.txt`, replaced whole by write, sync and rename,
 as the SSH domain keeps its host key before the vault
 ([design-ssh.md](design-ssh.md#host-keys)). The file is decoded with
@@ -2949,7 +2951,7 @@ under load. QEMU has no WiFi device for any machine.
 * The Pi's manifests: the `wifi` domain, the services `wifi_sdio`,
   `wlan0`, `wifi` and `wifi_etc`, their facet rows, `wpa_key` granted to
   the `wifi` domain and `wpa_admin` to root's session template; in a development
-  manifest, the `data` grant of the WiFi domain's own directory and
+  manifest, the WiFi domain's grant of its own tree, `wifi/`, and
   `wpa_admin` served by the WiFi domain, which the release manifest
   check refuses.
 * The data partition's storage service: the `wifi_etc` tree, a service

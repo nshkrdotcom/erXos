@@ -4305,11 +4305,6 @@ facet thermostat_display
   parameter windows 2
   parameter pixels 3072000
   ...
-facet thermostat_data
-  name "data"
-  grantee @session.thermostat
-  service @service.data
-  ...
 start thermostat
   display display
 ```

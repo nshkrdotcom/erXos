@@ -2274,9 +2274,9 @@ and does not add application-state rollback.
     release hash differs from the release the domain boots is dropped
     instead: after a system update, old modules never run over the new
     release, trial boots included.
-  * An overlay persists where its principal's data does: in the
-    principal's own directory on the data partition, applied only to that
-    principal's specifications. A specification of the system
+  * An overlay persists where its principal's data does: in its user's
+    home on the data partition, an app's in the app's own directory,
+    applied only to that principal's specifications. A specification of the system
     configuration, such as the vault's or a storage domain's, keeps its
     overlay in memory only, so its code changes durably only by a system
     update, as the system domain's does. With no writable data partition
