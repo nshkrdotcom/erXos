@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'error'
+require_relative 'git_environment'
 require_relative 'runner'
 
 module Erx
@@ -38,7 +39,7 @@ module Erx
       settings = ['core.fsmonitor=false', *config].flat_map { |setting| ['-c', setting] }
       runner.run(['git', *settings, '-C', root, *arguments], name: name,
                  deadline: DEADLINE, chdir: root, output_limit: output_limit,
-                 env: ENV.keys.grep(/\AGIT_/).to_h { |key| [key, nil] })
+                 env: GitEnvironment.isolated)
     rescue CommandError => error
       raise Error, "git #{arguments.grep_v(/\A-/).first} of #{path} failed; log: #{error.result.fetch('log')}"
     end

@@ -6,6 +6,7 @@ require_relative 'error'
 require_relative 'dependencies'
 require_relative 'output_directory'
 require_relative 'submodule'
+require_relative 'submodules'
 
 module Erx
   # `tools/erx fetch --example NAME` (docs/design-packaging.md, "Examples"): an example
@@ -21,8 +22,8 @@ module Erx
   # build/examples/NAME, a root of its own, so no id it names can replace a source of
   # erXos's deps.lock.
   module ExampleFetch
-    # Each example's name and the path of its submodule, the paths Origin::SUBMODULES lists.
-    SUBMODULES = { 'doom' => 'examples/doom/doom' }.freeze
+    # The examples: the submodules whose .gitmodules entry says `update = none`.
+    EXAMPLES = Submodules::TREE.examples
     LOCK = 'deps.lock'
     # An example's lock may pin an archive or a file; a git or image source would run
     # git or Docker on what the lock names.
@@ -35,7 +36,8 @@ module Erx
     # another checkout's build/downloads, from which the downloads come with no network.
     # Returns the lines that say what was done.
     def fetch(name:, root:, runner:, cache: nil)
-      path = SUBMODULES.fetch(name) { raise Error, "unknown example #{name}; the examples are #{SUBMODULES.keys.join(', ')}" }
+      path = EXAMPLES.find(name)&.path ||
+             raise(Error, "unknown example #{name}; the examples are #{EXAMPLES.names.join(', ')}")
       cloned = checkout(name: name, root: root, runner: runner, path: path)
       workspace = File.join(WORKSPACE, name)
       dependencies = Dependencies.new(root: OutputDirectory.prepare(root: root, path: File.join(root, workspace)),

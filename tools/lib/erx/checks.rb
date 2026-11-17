@@ -4,6 +4,7 @@
 
 require 'set'
 require_relative 'bounded_file'
+require_relative 'git_environment'
 require_relative 'chokepoint_rules'
 require_relative 'display_release'
 require_relative 'erlang_apps'
@@ -131,10 +132,6 @@ module Erx
                     refusal: "a test root is added only by #{TEST_ROOTS_BUILDERS.join(' and ')}")
     ].freeze
 
-    # Unsets every GIT_ variable of the caller's environment, for a git child
-    # that must act on the repository it names and on nothing else.
-    def self.isolated_git_environment = ENV.keys.grep(/\AGIT_/).to_h { |key| [key, nil] }
-
     # Decides what the log of `git ls-files -z` says: the sorted, distinct
     # names it lists, or a refusal. git ends each name with NUL and shares the
     # log with its warnings, which end in a newline. Every name must be valid
@@ -234,7 +231,7 @@ module Erx
         @runner.run(['git', '-c', 'core.fsmonitor=false', "--git-dir=#{git}", "--work-tree=#{@root}",
                      'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
                     name: 'list-own-sources', deadline: LISTING_DEADLINE, chdir: @root,
-                    env: self.class.isolated_git_environment,
+                    env: GitEnvironment.isolated,
                     output_limit: LISTING_BYTES)
       rescue CommandError => error
         raise Error, "git could not list the project's files; log: #{error.result.fetch('log')}"

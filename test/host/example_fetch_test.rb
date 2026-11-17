@@ -57,7 +57,7 @@ class ExampleFetchTest < Minitest::Test
     git(@repository, 'commit', '--quiet', '-m', 'the example')
     commit = git(@repository, 'rev-parse', 'HEAD')
     git(@root, 'init', '--quiet')
-    path = Erx::ExampleFetch::SUBMODULES.fetch('doom')
+    path = Erx::ExampleFetch::EXAMPLES.fetch('doom').path
     File.write(File.join(@root, '.gitmodules'), "[submodule \"#{path}\"]\n\tpath = #{path}\n\turl = #{@repository}\n\tupdate = none\n")
     git(@root, 'update-index', '--add', '--cacheinfo', "160000,#{commit},#{path}")
     File.write(File.join(@cache, "fakewad-#{Digest::SHA256.hexdigest(WAD)}.wad"), WAD)
@@ -126,10 +126,9 @@ class ExampleFetchTest < Minitest::Test
   end
 
   def test_the_example_is_a_submodule_with_its_provenance_beside_it
-    path = Erx::ExampleFetch::SUBMODULES.fetch('doom')
+    path = Erx::ExampleFetch::EXAMPLES.fetch('doom').path
     assert_includes Erx::Origin::SUBMODULES, path
     assert File.file?(File.join(ROOT, File.dirname(path), 'ORIGIN.md'))
-    assert_match(/^\[submodule "#{Regexp.escape(path)}"\]$/, File.read(File.join(ROOT, '.gitmodules')))
   end
 
   def test_a_zip_source_may_name_every_host

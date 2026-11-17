@@ -1785,7 +1785,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] `display/lvgl/Makefile`: `-I$(LVGL)` exposes the whole checkout, so a header at its root could shadow a system
   header.
 * [Low] `display/lvgl/Makefile`: a `.c` file deleted on a fork branch stays in `liblvgl.a`.
-* [Low] `tools/lib/erx/lvgl.rb`: `git` duplicates `Checks.isolated_git_environment` instead of sharing it.
+* [Low] `tools/lib/erx/`: git is run from many call sites, each of which must pass `GitEnvironment.isolated` and `-c core.fsmonitor=false` itself (`checks.rb`, `submodule.rb`, `source_revision.rb` do; `dependencies.rb` `export_commit`, `fiasco.rb` `import_git` and `net_bench_freebsd.rb` `tree_state` do not). One git funnel with a chokepoint check would make the isolation hold by construction.
 * [Low] `tools/lib/erx/lvgl.rb`, `Lvgl::Program::LICENSE`: the archive's license expression is hand-kept against
   `display/lvgl/lv_conf.h` and LVGL's sources, so an option turned on there (an image decoder, another font) or a
   third-party file no option guards (as FrogFS's `decomp_raw.c`, which the Makefile leaves out) is not attributed
@@ -3316,6 +3316,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `ERX_LLD` from the environment as given, not through `host_environment`, so it skips the minimum-LLVM
   check and the resolved `llvm-ar` beside clang that `pack` gets, and a missing linker is found only after
   the Erlang half. Fix: resolve the toolchain with `host_environment` and check it at `Sdk.new`.
+* [Low] examples, the Doom fork (`examples/doom/doom`) builds with its own `run.rb` over erXos's internal
+  build library and keeps `app.txt` in `app/`, where docs/design-packaging.md ("Examples") has a `Makefile`
+  over the SDK's `sdk.mk` and `app.txt` at the fork's root, so `tools/erx app run examples/doom/doom` finds
+  no app. Waits on the SDK (`sdk.mk`) and `tools/erx app run`; then the fork moves to the design in commits
+  of its own and the gitlink is re-pinned.
 * [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer
   compiles `lib/APP/src`, signs with the host's development package key by default and runs the file check, but
   does not yet run `DIR/Makefile`, with the exported SDK's `sdk.mk`, or write the build record beside
