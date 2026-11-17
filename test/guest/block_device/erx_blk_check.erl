@@ -115,7 +115,7 @@
 %% blk_kill's files: KEPT files, file N at kept_path(N) holding data_content(N), and the
 %% transfer, TRANSFER_BYTES bytes at most, byte I holding I rem 251, written PIECE_BYTES at
 %% a time and synced every SYNC_BYTES. The data window holds more than twice TRANSFER_BYTES
-%% (MediumImage::DATA_SECTORS); a transfer that ends before the kill fails the read back.
+%% (MediumImage::SUITE_DATA_SECTORS); a transfer that ends before the kill fails the read back.
 -define(KEPT, 3).
 -define(TRANSFER, "/data/transfer").
 -define(TRANSFER_BYTES, 64 * 1024 * 1024).

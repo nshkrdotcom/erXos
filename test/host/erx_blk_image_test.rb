@@ -22,8 +22,8 @@ class ErxBlkImageTest < Minitest::Test
   # The applications the cases exercise, compiled whole (ErlangBuild), and the cases.
   APPLICATIONS = %w[erx erx_blk].freeze
   TESTS = %w[test/erlang/erx_blk_image_tests.erl].freeze
-  TWO_EXTENTS = [{ 'slot_offset' => 128 << 20, 'length' => 4096 },
-                 { 'slot_offset' => (128 << 20) + 8192, 'length' => 4096 }].freeze
+  TWO_EXTENTS = [{ 'slot_offset' => 32 << 20, 'length' => 4096 },
+                 { 'slot_offset' => (32 << 20) + 8192, 'length' => 4096 }].freeze
 
   def setup
     @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))

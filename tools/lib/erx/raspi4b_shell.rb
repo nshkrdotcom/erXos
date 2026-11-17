@@ -9,6 +9,7 @@ require_relative 'board_tree'
 require_relative 'generated_abi'
 require_relative 'native_root'
 require_relative 'output_directory'
+require_relative 'pi_medium'
 require_relative 'platform'
 require_relative 'production_image'
 require_relative 'ppm'
@@ -49,7 +50,8 @@ module Erx
   # tree's CPUs and not a constant.
   #
   # tcg-sd-card: the same image with the card it was packed with on EMMC2's bus
-  # (QemuPlan::Machine#card_bus), a copy the guest writes. The storage domain's SD device
+  # (QemuPlan::Machine#card_bus), a copy the guest writes, padded to the model's size
+  # (QemuPlan.card_copy), since the card ends at its last partition. The storage domain's SD device
   # process (erx_blk_sd, docs/design-storage.md, "The SD host controller") identifies the
   # card only through interrupts of its line, 158, so its line in the kernel log, which
   # names the card's sectors, shows the line fires and the card answered; the block
@@ -397,11 +399,12 @@ module Erx
       end
     end
 
-    # A copy of the packed card, since the guest writes it, booted on the model's tree; the
-    # copy must then hold the probe's bytes.
+    # A copy of the packed card, since the guest writes it, padded to the model's size
+    # (QemuPlan.card_copy) and booted on the model's tree; the copy must then hold the
+    # probe's bytes.
     def card_boot(inputs)
       card = File.join(OutputDirectory.prepare(root: @root, path: File.join(@root, STUB_DIRECTORY)), BootPartition::IMAGE)
-      FileUtils.cp(inputs.fetch(:card), card)
+      QemuPlan.card_copy(inputs.fetch(:card), to: card)
       report = boot(inputs, dtb: inputs.fetch(:dtb), points: card_checkpoints(card), machine_end: true, disks: [QemuPlan::Disk.new(path: card)])
       check_no_screen(File.binread(report.fetch(:serial)))
       check_card_data!(card)
@@ -409,16 +412,17 @@ module Erx
       report
     end
 
-    # Raises unless the card file's data partition, from its first sector to the card's
-    # end, holds DATA_BYTES. A file that small is inline in its directory's metadata, so
+    # Raises unless the card file's data partition, from its first sector to its last
+    # (MediumImage::PACKED_DATA_SECTORS), holds DATA_BYTES. A file that small is inline in its directory's metadata, so
     # its bytes lie in one block; each read overlaps the next by DATA_BYTES less one byte,
     # so bytes across two reads are found too.
     def check_card_data!(card)
       start = CODEC.constant('medium_data_start') * SECTOR_BYTES
+      finish = start + (MediumImage::PACKED_DATA_SECTORS * SECTOR_BYTES)
       chunk = 1 << 22
       overlap = DATA_BYTES.bytesize - 1
       found = File.open(card, 'rb') do |file|
-        (start...file.size).step(chunk).any? { |at| file.pread(chunk + overlap, at).include?(DATA_BYTES) }
+        (start...finish).step(chunk).any? { |at| file.pread([chunk + overlap, finish - at].min, at).include?(DATA_BYTES) }
       end
       raise Error, "raspi4b: the card's data partition does not hold #{DATA_FILE}'s bytes after the run" unless found
     end

@@ -248,7 +248,7 @@ module Erx
       File.open(path, File::RDONLY | File::NOFOLLOW) do |medium|
         medium.binmode
         digest = Digest::SHA256.new
-        (0...(MediumImage::DATA_SECTORS * MediumImage::SECTOR_BYTES)).step(1 << 20) do |at|
+        (0...(MediumImage::SUITE_DATA_SECTORS * MediumImage::SECTOR_BYTES)).step(1 << 20) do |at|
           digest << medium.pread(1 << 20, offset + at)
         end
         digest.hexdigest
@@ -431,8 +431,8 @@ module Erx
       # guest's mount never formats.
       def fresh_medium(directory)
         volume = DataVolume.format(root: @root, runner: @runner, compiler: @compiler, directory: directory,
-                                   data_sectors: MediumImage::DATA_SECTORS)
-        pieces = MediumImage.probes(MediumImage::DATA_SECTORS).merge(DataVolume.pieces(volume))
+                                   data_sectors: MediumImage::SUITE_DATA_SECTORS)
+        pieces = MediumImage.probes(MediumImage::SUITE_DATA_SECTORS).merge(DataVolume.pieces(volume))
         MediumImage.create(directory: directory, name: MEDIUM_NAME, pieces: pieces)
       end
 

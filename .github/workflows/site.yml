@@ -8,13 +8,12 @@
 # (the cross compilers, the OTP and Fiasco builds), which this job does not
 # set up. It takes each, with its build record, from a URL instead, normally
 # a release asset, and checks it against the SHA-256 given with it.
-# GitHub refuses a release asset of 2 GiB or more, which the card is, so the
-# release holds the card as sdcard.img.xz: the workflow checks the SHA-256 of
-# that file, unpacks it (at most CARD_MAX_BYTES), and tools/build_site.rb
-# then refuses a record that does not name the unpacked card's SHA-256 or
-# the commit image_source resolves to, built with no changes, and publishes
-# the card xz-compressed again (Erx::Site::XZ_ARGUMENTS). It refuses the
-# image unless its record (Erx::ImageRecord) names its SHA-256 and that
+# The release holds the card as sdcard.img.xz, as make pack compresses it:
+# the workflow checks the SHA-256 of that file, unpacks it (at most
+# CARD_MAX_BYTES), and tools/build_site.rb then refuses a record that does
+# not name the unpacked card's SHA-256 or the commit image_source resolves
+# to, built with no changes, and publishes the card xz-compressed again
+# (Erx::BootPartition::XZ_ARGUMENTS). It refuses the image unless its record (Erx::ImageRecord) names its SHA-256 and that
 # commit, built with no changes, as a build that is no local test image and
 # carries no package.
 # The image and the card carry GPL-2.0 files, so the page links the erXos

@@ -492,7 +492,7 @@ module Erx
     # path, and the slot plan, data_sectors and volume a fresh copy is made from.
     def release_medium(built)
       directory = built_directory(built)
-      data_sectors = MediumImage.constant('data_sectors_min')
+      data_sectors = MediumImage::PACKED_DATA_SECTORS
       volume = DataVolume.format(root: @root, runner: @runner, compiler: @compiler, directory: directory, data_sectors: data_sectors)
       ReleaseMedium.write(built: built, directory: directory, volume: volume, data_sectors: data_sectors, runner: @runner,
                           fsimg: Fsimg.checked(root: @root, runner: @runner))
@@ -2061,9 +2061,12 @@ module Erx
 
     def reference(path) = self.class.reference(path, root: @root)
 
+    # Each part's SHA-256: the archive, the single file, the EROFS image, the medium and,
+    # for a card (BootPartition::Written), the card compressed.
     def digests(built, medium)
+      compressed = medium.is_a?(BootPartition::Written) ? { 'compressed_medium_sha256' => medium.compressed } : {}
       { 'archive_sha256' => built.archive, 'single_sha256' => built.single,
-        'release_erofs_sha256' => built.erofs, 'medium_sha256' => medium.path }
+        'release_erofs_sha256' => built.erofs, 'medium_sha256' => medium.path, **compressed }
         .transform_values { |path| Digest::SHA256.file(path).hexdigest }
     end
 

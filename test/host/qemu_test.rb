@@ -97,6 +97,27 @@ class QemuTest < Minitest::Test
     assert_raises(Erx::Error) { Erx::QemuPlan.argv(**plan, disks: ['/b/sdcard.img']) }
   end
 
+  # QEMU's SD card model takes 2 GiB, a standard-capacity card, or 4 GiB, a high-capacity
+  # one, and the harness pads its copy of a card to the smaller that holds it; the card as
+  # packed keeps its length.
+  def test_the_harness_pads_its_copy_of_a_card_to_the_models_size
+    gib = 1 << 30
+    assert_equal 2 * gib, Erx::QemuPlan.card_bytes(718 << 20)
+    assert_equal 2 * gib, Erx::QemuPlan.card_bytes(2 * gib)
+    assert_equal 4 * gib, Erx::QemuPlan.card_bytes((2 * gib) + 512)
+    assert_equal 4 * gib, Erx::QemuPlan.card_bytes(4 * gib)
+    assert_raises(Erx::Error) { Erx::QemuPlan.card_bytes((4 * gib) + 512) }
+    Dir.mktmpdir do |directory|
+      packed = File.join(directory, 'sdcard.img')
+      File.binwrite(packed, "card\0".b * 1000)
+      copy = Erx::QemuPlan.card_copy(packed, to: File.join(directory, 'copy.img'))
+      assert_equal 2 * gib, File.size(copy)
+      assert_equal File.binread(packed), File.binread(copy, File.size(packed))
+      assert_equal "\0".b * 4096, File.binread(copy, 4096, (2 * gib) - 4096)
+      assert_equal 5000, File.size(packed), 'the packed card keeps its length'
+    end
+  end
+
   def test_the_deterministic_word_counts_instructions_on_one_tcg_cpu
     plan = { accel: 'tcg', image: 'image', serial: 'serial' }
     argv = Erx::QemuPlan.argv(platform: PLATFORM, **plan, command_line: 'erx.det=1 erx.arg=-deterministic')

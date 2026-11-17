@@ -29,7 +29,7 @@ module Erx
   # block device, on the virtio-mmio slot where the QEMU harness attaches
   # its guest's: a boot medium laid out by abi/medium.txt whose windows are
   # blank but for the data partition's fresh littlefs volume (fresh_medium).
-  # The medium is 1.2 GiB, but only its partition table and the volume's
+  # The medium is 718 MiB, but only its partition table and the volume's
   # first blocks hold bytes, so it is published as those bytes and the
   # extents they fill, and the page keeps it sparse.
   #
@@ -41,9 +41,8 @@ module Erx
   # no Content-Encoding setup. The same file is the page's QEMU virt
   # download: QEMU's -kernel takes a gzip-compressed image as it is.
   #
-  # The card is a download, xz-compressed (XZ_ARGUMENTS): a card is mostly
-  # blank, xz makes it less than half what gzip does, and Raspberry Pi
-  # Imager writes a .img.xz as it is. Its build record is published beside
+  # The card is a download, xz-compressed as `make pack` compresses it
+  # (BootPartition.compress). Its build record is published beside
   # it, once card_record finds it is the card's, of the commit the page
   # links with no changes, and names no host path.
   #
@@ -64,15 +63,6 @@ module Erx
     TAG = /\A[A-Za-z0-9][A-Za-z0-9._-]{0,99}\z/
     COMMIT = /\A[0-9a-f]{40}\z/
     SECTOR_BYTES = MediumImage::SECTOR_BYTES
-    # How the card is compressed. One fixed preset and one thread, so xz
-    # writes one stream of one block, and XZ_ENVIRONMENT unsets the variables
-    # xz reads options from before its command line, so the bytes depend only
-    # on the card and xz's encoder. -9's 64 MiB dictionary reaches repeats
-    # far apart in a card; reading it back takes 65 MiB.
-    XZ_ARGUMENTS = %w[xz --format=xz --check=crc64 -9 --threads=1 --stdout].freeze
-    XZ_ENVIRONMENT = { 'XZ_DEFAULTS' => nil, 'XZ_OPT' => nil }.freeze
-    # Far above what xz takes for the 2 GiB card, most of which is zeros (unmeasured).
-    XZ_DEADLINE = 900
 
     # One output file: where it goes under the site directory, where it comes
     # from, and how it is stored: as it is (nil), :gzip or :xz.
@@ -144,9 +134,8 @@ module Erx
     end
     private_class_method :disk_span
 
-    # The data partition's length on the page's disk: the layout's minimum
-    # (128 MiB).
-    def data_sectors = MediumImage.constant('data_sectors_min')
+    # The data partition's length on the page's disk, a medium as packed.
+    def data_sectors = MediumImage::PACKED_DATA_SECTORS
 
     # The disk the page attaches: a boot medium of data_sectors whose windows
     # are blank but for the data partition, which holds volume, the bytes of
@@ -326,8 +315,7 @@ module Erx
           File.open(entry.source, 'rb') { |input| IO.copy_stream(input, gz) }
         end
       in :xz
-        runner.run(XZ_ARGUMENTS, name: 'site-card-xz', deadline: XZ_DEADLINE, env: XZ_ENVIRONMENT,
-                                 stdin: entry.source, stdout: target)
+        BootPartition.compress(entry.source, to: target, runner: runner)
         File.chmod(0o644, target) # the runner creates its output owner-only; the site is public
       end
     end

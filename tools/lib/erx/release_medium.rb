@@ -159,7 +159,7 @@ module Erx
     # the build wrote (ProductionImage::Built#erofs), with volume, a fresh volume of
     # data_sectors' partition (DataVolume.format), in its data partition, and the record
     # volume, which runner has fsimg write into directory, in its record partition.
-    def write(built:, directory:, volume:, runner:, fsimg:, data_sectors: MediumImage.constant('data_sectors_min'))
+    def write(built:, directory:, volume:, runner:, fsimg:, data_sectors: MediumImage::PACKED_DATA_SECTORS)
       plan = slot_plan(boot: slot_file('boot', built.single), images: [slot_file(IMAGE, built.erofs)])
       record_volume = RecordVolume.write(directory: directory, runner: runner, fsimg: fsimg)
       Written.new(path: medium(plan, directory: directory, data_sectors: data_sectors, volume: volume, record_volume: record_volume),

@@ -432,24 +432,27 @@ trusted code only` at boot and must run trusted code only. It runs on
 QEMU `virt` and on a Raspberry Pi 4. Read the release notes' known
 limitations before you put it on a network.
 
-**Raspberry Pi 4.** You need a Pi 4, a microSD card of at least 4 GB,
+**Raspberry Pi 4.** You need a Pi 4, a microSD card of at least 1 GB,
 an Ethernet cable and, for the kiosk, a screen on the HDMI0 port. A 3.3 V
 USB-serial adapter gives you the console
 ([the wiring](docs/design-platforms.md#trying-a-card-on-a-board)).
 
 1. Download the card image from the website, or build it with
    `make pack PLATFORM=raspi4b` (see
-   [Raspberry Pi 4 SD card](#raspberry-pi-4-sd-card)). Check its SHA-256
-   against the build record beside it.
+   [Raspberry Pi 4 SD card](#raspberry-pi-4-sd-card)). The build record
+   beside it names the unpacked card's SHA-256: check it with
+   `xz -dc sdcard.img.xz | shasum -a 256`.
 2. The Pi's bootloader must be from 2022-12-01 or later; the steps to
    update it are in
    [Trying a card on a board](docs/design-platforms.md#trying-a-card-on-a-board).
-3. Write the card. On macOS, with `diskN` the card in `diskutil list`
-   (everything on it is erased, so check the size twice):
+3. Write the card, a `.img.xz` file of 718 MiB unpacked, to a microSD
+   card of 1 GB or more. Raspberry Pi Imager writes the `.img.xz` as it
+   is. Or, on macOS, with `diskN` the card in `diskutil list` (everything
+   on it is erased, so check the size twice) and Homebrew's `xz`:
 
    ```sh
    diskutil unmountDisk /dev/diskN
-   xz -dc erxos-card.img.xz | sudo dd of=/dev/rdiskN bs=4m
+   xz -dc sdcard.img.xz | sudo dd of=/dev/rdiskN bs=4m
    diskutil eject /dev/diskN
    ```
 
@@ -616,7 +619,8 @@ Apple Silicon macOS is the primary host. You need:
   builds it);
 * QEMU 11.1, with its `virt-11.1` machine;
 * Node.js and pnpm, for `make web` (the browser client);
-* xz (XZ Utils), which compresses the website's Raspberry Pi 4 download;
+* xz (XZ Utils), which compresses the Raspberry Pi 4 card (`make pack PLATFORM=raspi4b`,
+  the raspi4b QEMU suite and the website);
 * a Homebrew JVM;
 * Docker, a local engine or context, for the full stock OTP suites only.
   The [host oracle design](docs/design-host-oracle.md) describes its
@@ -824,7 +828,8 @@ make pack PLATFORM=raspi4b
 builds the Raspberry Pi 4's production image and its SD card, offline
 from the pinned sources `make fetch` verified, into
 `build/production-image/raspi4b/`: `sdcard.img`, a disk image to write
-to a card; `boot/`, the same files as a directory, which also serves as
+to a card, which ends at its last partition, 718 MiB in; `sdcard.img.xz`,
+the same card xz-compressed, to copy or publish; `boot/`, the same files as a directory, which also serves as
 the firmware's network boot root; and `sdcard.img.receipt.json`, their
 build record, beside the image's own. The same inputs give the same
 bytes (`make check-reproducible`). The raspi4b QEMU suite packs the same

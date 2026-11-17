@@ -93,7 +93,7 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   harness attaches its guest's disk. Making the disk is the page's
   installation: the guest's mount never formats, so the build formats
   `/data`'s volume with the host formatter (`Erx::DataVolume`). The medium
-  is 1.2 GiB, since the layout fixes where the data partition starts, but
+  is 718 MiB, since the layout fixes where the data partition starts, but
   only its partition table's five records and the volume's first blocks
   hold bytes, so it is published as `disk-<digest>.bin`, those bytes, and
   `boot.json` lists the extents they fill.
@@ -104,10 +104,10 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   offers the card in its Downloads section as `sdcard-<digest>.img.xz`,
   with the download's size and SHA-256, the record beside it as
   `sdcard-<digest>.img.receipt.json`, and how to write the card. It is
-  xz-compressed, with the options of `Erx::Site::XZ_ARGUMENTS` (`-9`, one
-  thread, so the same card gives the same bytes on every host): a card is
-  mostly blank, and xz makes it less than half the size gzip does. Raspberry
-  Pi Imager writes a `.img.xz` as it is; on macOS, `dd` needs Homebrew's
+  xz-compressed as `make pack` compresses it,
+  `Erx::BootPartition::XZ_ARGUMENTS` (`-9`, one thread, so the same card
+  gives the same bytes on every host): a card is mostly blank, and xz
+  makes it less than half the size gzip does. Raspberry Pi Imager writes a `.img.xz` as it is; on macOS, `dd` needs Homebrew's
   `xz` to unpack it. The build runs `xz` from the `PATH`. The record
   names the full erXos commit the card was built from and whether the
   tree had changes. A record that does not name the card's SHA-256, that
@@ -152,9 +152,8 @@ recorded session; the Boot button needs the built site.
 `.github/workflows/site.yml` runs the same steps on GitHub, by hand only,
 and publishes `build/site` to GitHub Pages. It does not build the erXos
 image or the card, which need the whole erXos toolchain; it downloads a
-release's `image.boot` and `sdcard.img.xz` (GitHub refuses a release asset
-of 2 GiB or more, and the card is 2 GiB), each named by its URL and its own
-SHA-256 as the workflow's inputs, and their build records,
+release's `image.boot` and `sdcard.img.xz`, as `make pack` writes it,
+each named by its URL and its own SHA-256 as the workflow's inputs, and their build records,
 `image.boot.receipt.json` and `sdcard.img.receipt.json`, by their URLs and
 SHA-256s too, and refuses one whose digest differs; each download
 is capped in size (the compressed card must stay under 1 GiB). It then
@@ -261,7 +260,7 @@ blink.
 
 The disk lives in the page's memory for the visit. `SparseDisk` holds
 only the 64 KiB chunks something wrote and reads every other byte as
-zero, so the 1.2 GiB medium costs a few kilobytes until the guest writes
+zero, so the 718 MiB medium costs a few kilobytes until the guest writes
 to it; a visitor who fills `/data` makes the page hold up to its 128 MiB
 more. v64 takes it as a disk object of its own (`load`, `get`, `set`)
 and writes the guest's writes straight into it; Reset starts the new

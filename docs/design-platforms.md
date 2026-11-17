@@ -1564,9 +1564,12 @@ other than `sd0`, which the model's own card on the legacy controller
 takes ([research-sdhci-qemu-model.md](research-sdhci-qemu-model.md)). The model's
 card is standard capacity up to 2 GiB and high capacity above, and takes
 an image of a power-of-two size up to 2 GiB and of a multiple of 512 KiB
-above ([research-sdhci-qemu-model.md](research-sdhci-qemu-model.md#qemus-sd-card-model-how-it-sizes-a-medium)), so the harness pads the
-medium to 2 GiB for a standard-capacity card and to 4 GiB for a
-high-capacity one. The model's bus is not timed, so the base clock is checked on the
+above ([research-sdhci-qemu-model.md](research-sdhci-qemu-model.md#qemus-sd-card-model-how-it-sizes-a-medium)), so the harness pads its
+own copy of the medium, the one the guest boots and writes, to 2 GiB for a
+standard-capacity card and to 4 GiB for a high-capacity one
+(`QemuPlan.card_copy`); the card as packed ends at its last partition
+([design-storage.md](design-storage.md#data-model), "The boot medium's
+table"). The model's bus is not timed, so the base clock is checked on the
 board alone.
 
 ### The Raspberry Pi 4 on Fiasco
@@ -1594,7 +1597,7 @@ its device tree and its UART setup. It is done by hand, once per change
 to the boot path.
 
 **You need** a Raspberry Pi 4 (any memory size: `total_mem` makes the
-board use 1 GB; the 4 GB board is the one tested), a microSD card of at least 4 GB (the card's image is 2 GiB), and a 3.3 V
+board use 1 GB; the 4 GB board is the one tested), a microSD card of at least 1 GB (the card's image is 718 MiB), and a 3.3 V
 USB-serial adapter (never a 5 V one). Wire it to the 40-pin header: the
 adapter's ground to pin 6, its receive line to pin 8 (GPIO 14, the Pi's
 transmit) and its transmit line to pin 10 (GPIO 15). Open it at 115200
@@ -1644,13 +1647,28 @@ diskutil list
 
 Pick the disk whose size is the card's, `/dev/diskN`, marked `external,
 physical`. **Writing to the wrong disk destroys what is on it, your
-Mac's own disk included: check the size and the name twice.** Then:
+Mac's own disk included: check the size and the name twice.** Then write
+`make pack PLATFORM=raspi4b`'s `sdcard.img`:
 
 ```sh
 diskutil unmountDisk /dev/diskN
 sudo dd if=build/production-image/raspi4b/sdcard.img of=/dev/rdiskN bs=4m
 diskutil eject /dev/diskN
 ```
+
+or `sdcard.img.xz` beside it, the same card xz-compressed, which is the
+form to copy to another machine or download: unpack it on the way with
+Homebrew's `xz`,
+
+```sh
+diskutil unmountDisk /dev/diskN
+xz -dc build/production-image/raspi4b/sdcard.img.xz | sudo dd of=/dev/rdiskN bs=4m
+diskutil eject /dev/diskN
+```
+
+or give it to Raspberry Pi Imager, which writes a `.img.xz` as it is.
+The card ends at its last partition, 718 MiB in, so only that much is
+written, and the rest of a larger card is left as it was.
 
 Put the card in the Pi, start logging on the adapter, then power the Pi.
 
@@ -1754,7 +1772,7 @@ tree the firmware made from the partition's tree and `uart3` overlay is
 the one erXos expects. Anything at all after BL31 on this card also means
 the bootloader read `autoboot.txt` from the record's FAT16 in partition 1
 and booted slot A's FAT32 in partition 2, since partition 1 holds no boot
-files (boot A's volume is the whole of its partition, 128 MiB); the
+files (boot A's volume is the whole of its partition, 192 MiB); the
 bootloader's version, from its own log or from a running system, goes
 into the board's port as the oldest that honours `autoboot.txt`. A
 board whose bootloader stops before BL31 with this card and boots an
@@ -1785,7 +1803,9 @@ or to the network stack's DHCP client.
 **What the model cannot check**, beside
 [what it never checks](#bring-up-under-qemu): QEMU's `raspi4b` model has
 no Ethernet controller, so `erx_genet` never runs there. Its SD card is QEMU's SD
-model on programmed I/O, a 2 GiB card it presents as standard capacity,
+model on programmed I/O, the card padded to 2 GiB, as the harness pads
+every card it boots ([The model's SD controller](#bring-up-under-qemu)),
+which it presents as standard capacity,
 so the order in which the BCM2711's controller raises its events, its
 clock, a high-capacity card of the card's own size and what a real card
 reports for a read past its end are seen only on a board. The suite's
@@ -1829,7 +1849,7 @@ opens in root's session. Type each command as shown and press Enter.
    xz -dc sdcard-DIGEST.img.xz | sudo dd of=/dev/daN bs=1m
    ```
 
-   `dd` ends with `2147483648 bytes transferred`, the card image's 2 GiB.
+   `dd` ends with `752877568 bytes transferred`, the card image's 718 MiB.
 2. **Boot.** Put the card in the Pi, plug the Ethernet cable in, start
    logging on the adapter, then power the Pi. Expect the boot pass's
    lines 1 to 4, ending with the `%` prompt.

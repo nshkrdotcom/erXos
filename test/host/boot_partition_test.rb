@@ -107,19 +107,24 @@ class BootPartitionTest < Minitest::Test
       names = %w[LICENCE.broadcom LICENSE.linux-dts LICENSE.tf-a bcm2711-rpi-4-b.dtb bcm2711-rpi-4-b.dts bl31.bin config.txt fixup4.dat
                  kernel8.img overlays/uart3.dtbo start4.elf]
       files = Dir.glob('**/*', base: output).reject { |name| File.directory?(File.join(output, name)) }.sort
-      assert_equal [*names.map { |name| "boot/#{name}" }, 'image.boot', 'sdcard.img', 'sdcard.img.receipt.json'].sort, files
+      assert_equal [*names.map { |name| "boot/#{name}" }, 'image.boot', 'sdcard.img', 'sdcard.img.receipt.json', 'sdcard.img.xz'].sort,
+                   files
       assert_equal 'kernel', File.read(File.join(output, 'boot/kernel8.img'))
       assert_equal File.join(File.realpath(output), 'sdcard.img'), written.path
-      assert_equal %w[boot image.boot sdcard.img sdcard.img.receipt.json], Dir.children(output).sort, 'no work directory is left'
+      assert_equal File.join(File.realpath(output), 'sdcard.img.xz'), written.compressed
+      assert_equal %w[boot image.boot sdcard.img sdcard.img.receipt.json sdcard.img.xz], Dir.children(output).sort,
+                   'no work directory is left'
 
-      # The card is the ABI's medium, 2 GiB: the record partition (FAT16) first and slot A
+      # The card is the ABI's medium, ending at its data partition of the layout's minimum
+      # length, and the compressed card unpacks to it. The record partition (FAT16) is first and slot A
       # (FAT32) second. Each volume, cut out of the card, reads back through fsimg's own
       # reader and checker: the record volume holds autoboot.txt, medium_record_a, and the
       # slot volume the layout's files with the bytes the layout gave them. The raw
       # sectors agree: the record at its sector, kernel8.img at the slot's boot start, the
       # EROFS image at system A's start and the data volume at its partition's start.
       image = written.path
-      assert_equal 1 << 31, File.size(image)
+      assert_equal Erx::MediumImage.sectors(data_sectors: Erx::MediumImage::PACKED_DATA_SECTORS) * Erx::MediumImage::SECTOR_BYTES, File.size(image)
+      assert_equal Digest::SHA256.file(image).hexdigest, unpacked_sha256(written.compressed), 'the compressed card is the card'
       assert_equal "\x55\xAA".b, File.binread(image, 2, 510)
       assert_equal [0x0e, 0x0c, 0x0c, 0x0f], (0..3).map { |index| File.binread(image, 1, 446 + (index * 16) + 4).ord }
       sector = Erx::MediumImage::SECTOR_BYTES
@@ -156,9 +161,26 @@ class BootPartitionTest < Minitest::Test
       # The same layout written again is the same bytes.
       again = File.join(root, 'again')
       Dir.mkdir(again)
-      assert_equal Digest::SHA256.file(image).hexdigest, Digest::SHA256.file(write(root, again, plan(root)).path).hexdigest,
+      repeated = write(root, again, plan(root))
+      assert_equal Digest::SHA256.file(image).hexdigest, Digest::SHA256.file(repeated.path).hexdigest,
                    'the card image is the same bytes on every write'
+      assert_equal Digest::SHA256.file(written.compressed).hexdigest, Digest::SHA256.file(repeated.compressed).hexdigest,
+                   'the compressed card is the same bytes on every write'
     end
+  end
+
+  # The SHA-256 of the xz file at path unpacked, read as a stream.
+  def unpacked_sha256(path)
+    digest = Digest::SHA256.new
+    Open3.popen2('xz', '-dc', path) do |input, output, wait|
+      input.close
+      output.binmode
+      while (chunk = output.read(1 << 20))
+        digest << chunk
+      end
+      assert wait.value.success?, "xz -dc test/host/boot_partition_test.rb failed"
+    end
+    digest.hexdigest
   end
 
   def test_refuses_to_write_outside_its_root

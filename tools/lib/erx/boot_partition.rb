@@ -28,7 +28,8 @@ module Erx
   # partition's files and serves as the firmware's network boot (TFTP) root; sdcard.img
   # is the card, ready to write, laid out as abi/medium.txt's medium (PiMedium), whose
   # slot A holds the same files in its FAT32, the system release's EROFS image after
-  # them, and whose data partition holds a fresh littlefs volume; and
+  # them, and whose data partition holds a fresh littlefs volume; sdcard.img.xz is the
+  # card xz-compressed (compress), the form it is downloaded and written in; and
   # sdcard.img.receipt.json is their build record
   # (docs/design-stopgap.md, "The Raspberry Pi 4"; docs/design-platforms.md, "Firmware").
   # The files are the firmware, unmodified, with its license; config.txt, written from
@@ -64,12 +65,24 @@ module Erx
     # read. What fits in all, with the FATs and directories, is for fsimg to refuse when the
     # volume fills; PiMedium.check_slot reads the result back.
     MAX_FILE = PiMedium::SLOT_FAT_BYTES
-    # The medium's three entries beside the image: the partition's files, the card's disk
-    # image, and their build record.
+    # The medium's four entries beside the image: the partition's files, the card's disk
+    # image, the image compressed, and their build record.
     PARTITION = 'boot'
     IMAGE = 'sdcard.img'
+    COMPRESSED = 'sdcard.img.xz'
     RECORD = 'sdcard.img.receipt.json'
-    ENTRIES = [PARTITION, IMAGE, RECORD].freeze
+    ENTRIES = [PARTITION, IMAGE, COMPRESSED, RECORD].freeze
+    # How the card is compressed. One fixed preset and one thread, so xz writes one stream
+    # of one block, and XZ_ENVIRONMENT unsets the variables xz reads options from before its
+    # command line, so the bytes depend only on the card and xz's encoder. -9's 64 MiB
+    # dictionary reaches repeats far apart in a card; reading it back takes 65 MiB. xz makes
+    # a card, which is mostly blank, less than half what gzip does, and Raspberry Pi Imager
+    # writes a .img.xz as it is.
+    XZ_ARGUMENTS = %w[xz --format=xz --check=crc64 -9 --threads=1 --stdout].freeze
+    XZ_ENVIRONMENT = { 'XZ_DEFAULTS' => nil, 'XZ_OPT' => nil }.freeze
+    # Far above what xz takes for a card, most of which is zeros: some 6 s for 718 MiB of
+    # zeros on an Apple Silicon Mac.
+    XZ_DEADLINE = 900
     # The most bytes a reader takes of a build record, a few kilobytes of names, pins and
     # digests; anything far larger is not one.
     RECORD_BYTES = 1024 * 1024
@@ -81,9 +94,9 @@ module Erx
     GPU_MEM_MIB = 76
 
     # What write left in the image's directory: path, the card's image (the medium, as
-    # ReleaseMedium::Written#path is QEMU's); files, the partition's directory; record,
-    # their build record.
-    Written = Data.define(:path, :files, :record)
+    # ReleaseMedium::Written#path is QEMU's); compressed, the image compressed (compress);
+    # files, the partition's directory; record, their build record.
+    Written = Data.define(:path, :compressed, :files, :record)
 
     module_function
 
@@ -211,8 +224,9 @@ module Erx
     # with each root name that fits 8.3 stored as its own short name, which is all the
     # boot ROM reads, followed by erofs, the release's EROFS image (nothing when erofs is
     # nil), and whose data partition holds volume, a fresh littlefs volume of
-    # PiMedium.data_sectors sectors (DataVolume.format); and record, the inputs' build
-    # record, with the SHA-256 of each file, the EROFS image, the volume and the card added.
+    # MediumImage::PACKED_DATA_SECTORS sectors (DataVolume.format); the card compressed (compress);
+    # and record, the inputs' build record, with the SHA-256 of each file, the EROFS image,
+    # the volume and the card added.
     def write(root:, directory:, plan:, record:, runner:, fsimg:, erofs:, volume:)
       plan.each_key { |name| raise Error, "boot partition: #{name.inspect} is not a file name of the layout" unless NAME.match?(name) }
       directory = OutputDirectory.check(root: root, path: directory)
@@ -234,11 +248,19 @@ module Erx
         end
         image = PiMedium.write(directory: work, name: IMAGE, files: files, names: plan.keys.map { |name| name.split('/').first }.uniq,
                                erofs: erofs, volume: volume, runner: runner, fsimg: fsimg)
+        compress(image, to: File.join(work, COMPRESSED), runner: runner)
         pieces = [erofs, volume.path].compact.to_h { |piece| [File.basename(piece), Digest::SHA256.file(piece).hexdigest] }
         File.write(File.join(work, RECORD), JSON.pretty_generate(receipt(record, image: image, files: written, pieces: pieces)) + "\n")
         ENTRIES.each { |name| File.rename(File.join(work, name), File.join(directory, name)) }
       end
-      Written.new(path: File.join(directory, IMAGE), files: File.join(directory, PARTITION), record: File.join(directory, RECORD))
+      Written.new(path: File.join(directory, IMAGE), compressed: File.join(directory, COMPRESSED),
+                  files: File.join(directory, PARTITION), record: File.join(directory, RECORD))
+    end
+
+    # Writes the card at card xz-compressed (XZ_ARGUMENTS) to to, which the runner creates
+    # owner-only or truncates. runner runs xz (Runner).
+    def compress(card, to:, runner:)
+      runner.run(XZ_ARGUMENTS, name: 'card-xz', deadline: XZ_DEADLINE, env: XZ_ENVIRONMENT, stdin: card, stdout: to)
     end
 
     # The card's receipt, in the shape of the image's own (ProductionImage's assembled
@@ -378,7 +400,7 @@ module Erx
       record = record(root: root, runner: runner, revision: revision, platform: platform,
                       firmware: pinned.map(&:first), compiler: compiler, linker: linker, bootable_record: bootable_record)
       volume = DataVolume.format(root: root, runner: runner, compiler: compiler, directory: directory,
-                                 data_sectors: PiMedium.data_sectors)
+                                 data_sectors: MediumImage::PACKED_DATA_SECTORS)
       write(root: root, directory: directory, plan: plan, record: record, runner: runner,
             fsimg: Fsimg.checked(root: root, runner: runner), erofs: erofs, volume: volume)
     end

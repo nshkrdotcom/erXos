@@ -643,7 +643,8 @@ module Erx
       in nil
         nil
       in BootPartition::Written
-        Terminal.puts("boot partition: #{written.files}; SD card image: #{written.path}; build record: #{written.record}")
+        Terminal.puts("boot partition: #{written.files}; SD card image: #{written.path}; compressed: #{written.compressed}; " \
+                      "build record: #{written.record}")
       in ReleaseMedium::Written
         extents = written.slot.images.map do |extent|
           "#{extent.file.name} at slot byte #{extent.slot_offset}, #{extent.file.length} bytes"
