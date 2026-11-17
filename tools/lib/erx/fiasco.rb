@@ -301,13 +301,18 @@ module Erx
 
     # The notices user library name ships under, paths under the tree: its license's
     # documents (user_license_notices) and a document of the copyright notices of its
-    # packages' files, written under build/fiasco/notices.
+    # packages' files, written under build/fiasco/notices whole or not at all: staged
+    # beside it and renamed into place, so a reader never meets a half-written one.
     def user_library_notices(name)
       profile = ImportNotices.parse(File.binread(File.join(@root, ImportNotices::PROFILE)))
       directory = File.join(@build, 'notices')
       FileUtils.mkdir_p(directory)
       copyrights = File.join(directory, "#{name}.copyright")
-      File.binwrite(copyrights, Fiasco.user_copyrights(name, root: @root))
+      Dir.mktmpdir('.notices-', directory) do |staging|
+        staged = File.join(staging, 'copyright')
+        File.binwrite(staged, Fiasco.user_copyrights(name, root: @root))
+        File.rename(staged, copyrights)
+      end
       [*Fiasco.user_license_notices(name, profile: profile, root: @root), copyrights.delete_prefix("#{@root}/")]
     end
 

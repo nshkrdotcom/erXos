@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'error'
+require_relative 'example_lists'
 
 module Erx
   # The git submodules of erXos's tree, read from the tree's .gitmodules, the one list
@@ -16,58 +17,57 @@ module Erx
       def example? = update == 'none'
     end
 
-EXAMPLES_DIRECTORY = 'examples'
-HEADER = /\A\[submodule "(?<name>[^"\s]+)"\]\z/
-# A value is a plain word: git's own comment, quote and continuation syntax is
-# refused, so a line is never read differently from how git reads it.
-SETTING = /\A(?<key>path|url|update)[ \t]*=[ \t]*(?<value>[^\s"#;\\]+)\z/
-PATH = %r{\A(?:[^/\s]+/)*[^/\s]+\z}
+    HEADER = /\A\[submodule "(?<name>[^"\s]+)"\]\z/
+    # A value is a plain word: git's own comment, quote and continuation syntax is
+    # refused, so a line is never read differently from how git reads it.
+    SETTING = /\A(?<key>path|url|update)[ \t]*=[ \t]*(?<value>[^\s"#;\\]+)\z/
+    PATH = %r{\A(?:[^/\s]+/)*[^/\s]+\z}
 
-# Reads the .gitmodules file at path: one section per submodule, whose settings
-# are `key = value` lines. A line of any other form fails, so a form this reader
-# does not understand is never read wrongly.
-def self.read(path)
-  sections = []
-  File.foreach(path, chomp: true).with_index(1) do |raw, number|
-    line = raw.strip
-    next if line.empty? || line.start_with?('#', ';')
+    # Reads the .gitmodules file at path: one section per submodule, whose settings
+    # are `key = value` lines. A line of any other form fails, so a form this reader
+    # does not understand is never read wrongly.
+    def self.read(path)
+      sections = []
+      File.foreach(path, chomp: true).with_index(1) do |raw, number|
+        line = raw.strip
+        next if line.empty? || line.start_with?('#', ';')
 
-    if (header = HEADER.match(line))
-      sections << { name: header[:name] }
-    elsif (setting = SETTING.match(line))
-      raise Error, "#{path}:#{number}: a setting before any submodule" if sections.empty?
+        if (header = HEADER.match(line))
+          sections << { name: header[:name] }
+        elsif (setting = SETTING.match(line))
+          raise Error, "#{path}:#{number}: a setting before any submodule" if sections.empty?
 
-      sections.last[setting[:key].to_sym] = setting[:value]
-    else
-      raise Error, "#{path}:#{number}: a line that is neither a submodule header nor a plain setting: #{line.dump}"
+          sections.last[setting[:key].to_sym] = setting[:value]
+        else
+          raise Error, "#{path}:#{number}: a line that is neither a submodule header nor a plain setting: #{line.dump}"
+        end
+      end
+      entries = sections.map { |section| entry(path, section) }
+      duplicate = entries.map(&:name).tally.find { |_, count| count > 1 }
+      raise Error, "#{path}: two submodules are called #{duplicate.first}" if duplicate
+
+      new(entries)
     end
-  end
-  entries = sections.map { |section| entry(path, section) }
-  duplicate = entries.map(&:name).tally.find { |_, count| count > 1 }
-  raise Error, "#{path}: two submodules are called #{duplicate.first}" if duplicate
 
-  new(entries)
-end
+    # One submodule: its section is named by its path, the path is a relative one
+    # without `.` or `..`, and it is an example (`update = none`) exactly when it lies
+    # under ExampleLists::DIRECTORY, the directory tree code may not name.
+    def self.entry(file, section)
+      missing = %i[path url].reject { |key| section.key?(key) }
+      raise Error, "#{file}: submodule #{section[:name]} lacks its #{missing.join(' and ')}" unless missing.empty?
 
-# One submodule: its section is named by its path, the path is a relative one
-# without `.` or `..`, and it is an example (`update = none`) exactly when it lies
-# under EXAMPLES_DIRECTORY, the directory ExampleLists keeps tree code from naming.
-def self.entry(file, section)
-  missing = %i[path url].reject { |key| section.key?(key) }
-  raise Error, "#{file}: submodule #{section[:name]} lacks its #{missing.join(' and ')}" unless missing.empty?
-
-  entry = Entry.new(path: section.fetch(:path), url: section.fetch(:url), update: section[:update])
-  raise Error, "#{file}: submodule #{section[:name]} has path #{entry.path}" unless section[:name] == entry.path
-  unless entry.path.match?(PATH) && entry.path.split('/').none? { |part| part.match?(/\A\.\.?\z/) }
-    raise Error, "#{file}: submodule path #{entry.path} is not a relative path of plain components"
-  end
-  unless entry.example? == entry.path.start_with?("#{EXAMPLES_DIRECTORY}/")
-    raise Error, "#{file}: #{entry.path} is an example exactly when it lies under #{EXAMPLES_DIRECTORY}/ " \
-                 'and says `update = none`'
-  end
-  entry
-end
-private_class_method :entry
+      entry = Entry.new(path: section.fetch(:path), url: section.fetch(:url), update: section[:update])
+      raise Error, "#{file}: submodule #{section[:name]} has path #{entry.path}" unless section[:name] == entry.path
+      unless entry.path.match?(PATH) && entry.path.split('/').none? { |part| part.match?(/\A\.\.?\z/) }
+        raise Error, "#{file}: submodule path #{entry.path} is not a relative path of plain components"
+      end
+      unless entry.example? == entry.path.start_with?(ExampleLists::DIRECTORY)
+        raise Error, "#{file}: #{entry.path} is an example exactly when it lies under #{ExampleLists::DIRECTORY} " \
+                     'and says `update = none`'
+      end
+      entry
+    end
+    private_class_method :entry
 
     attr_reader :entries
 
