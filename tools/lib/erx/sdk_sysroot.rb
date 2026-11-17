@@ -36,10 +36,11 @@ module Erx
     OBJECTS = 'build/sdk/program'
     DEADLINE = 120
     BOOT_CORES = 'libboot_cores.a'
+    BLAKE3_NOTICE = 'kernel/crypto/blake3/LICENSE_A2LLVM'
     # Each library of lib/ and its license notices, paths under the tree; compiler-rt's is
     # in its fetched source (CompilerRt.notice).
-    NOTICES = { PROGRAM_ARCHIVE => ['LICENSE', 'kernel/crypto/blake3/LICENSE_A2LLVM'], 'libc.a' => [Musl::NOTICE],
-                BOOT_CORES => ['LICENSE'], **NativeRoot::LIBRARIES.to_h { [it, [Fiasco::USER_NOTICE]] } }.freeze
+    NOTICES = { PROGRAM_ARCHIVE => ['LICENSE', BLAKE3_NOTICE], 'libc.a' => [Musl::NOTICE, 'LICENSE'],
+                BOOT_CORES => ['LICENSE', BLAKE3_NOTICE], **NativeRoot::LIBRARIES.to_h { [it, [Fiasco::USER_NOTICE]] } }.freeze
     LICENSES = 'share/licenses'
 
     def initialize(root:, runner:, compiler:, linker:)

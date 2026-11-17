@@ -2920,8 +2920,7 @@ it; git history is the record of completed work.
   (`tools/lib/erx/sdk_sysroot.rb`): `sysroot/aarch64` and `share/erxos/sdk.mk`. The native half links a
   fixed-address executable at `task.ld`'s base, as the boot image's programs are, where the design's table
   names a position-independent one: 0.1 starts a package's program from its fixed link, and the move to a
-  position-independent link and the loader is 0.2's. `liberx_program.a` carries Fiasco's `libl4sys.p.a`,
-  `libsigma0.a` and boot cores flattened in, whose licenses an SDK handed to others must be checked against.
+  position-independent link and the loader is 0.2's.
   Not yet written: `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, the host build of `erx_elf_plan` the packer plans a
   program with, which it builds from the tree into `build/app-pack-tools`, a host `erx-lvgl` and
   its descriptor-3 launcher), `erx_ui_host`, `erx-app test`, and `SDK.txt`'s minimum LLVM and `fsimg` version,
@@ -2940,6 +2939,18 @@ it; git history is the record of completed work.
   terminal tables, which the export copies, `Erx::ErofsImage` takes the fsimg path it runs, and the export
   copies `erx-app`, its handful of library files, those generated files and fsimg into `host/`; until then
   `tools/erx-app`, which finds its SDK at `../..`, runs from no SDK.
+* [Medium] apps, the SDK's and the image's notices (`Erx::SdkSysroot::NOTICES`, `ProductionImage#archives`):
+  each states which notices go with which library, so the mapping exists twice; `Fiasco::USER_NOTICE`,
+  L4Re's `LICENSE.spdx`, holds no MIT permission text or copyright line for `libl4sys.p.a` and
+  `libsigma0.a`, though both ship in the SDK and the image; the SDK copies Fiasco's archives as built, with
+  the builder's uid and gid in their members; and the constant lives in `fiasco.rb`, whose digest keys
+  Fiasco's build, so a notice edit rebuilds Fiasco. Fix: one attribution table, derived from each
+  archive's objects, that both read and the SDK copies `lib/` from; an erXos-written MIT notice naming
+  l4sys's and sigma0's holders, recorded in `ORIGIN.md`; a deterministic re-archive.
+* [Low] apps, `tools/erx sdk export` (`tools/erx`, `Erx::SdkSysroot`): the export takes `ERX_CLANG` and
+  `ERX_LLD` from the environment as given, not through `host_environment`, so it skips the minimum-LLVM
+  check and the resolved `llvm-ar` beside clang that `pack` gets, and a missing linker is found only after
+  the Erlang half. Fix: resolve the toolchain with `host_environment` and check it at `Sdk.new`.
 * [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer
   compiles `lib/APP/src`, signs with the host's development package key by default and runs the file check, but
   does not yet run `DIR/Makefile`, with the exported SDK's `sdk.mk`, or write the build record beside
