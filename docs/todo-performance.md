@@ -1194,4 +1194,4 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   app's tree. Measure, on the Raspberry Pi 4 image with ntpd and a second
   app serving trees, the memory and the time a connection adds to a
   root login; the fix on the table is a grant made at the first walk of
-  `/svc/NAME` ([design-app-trees.md](design-app-trees.md#open-decisions), 4).
+  `/svc/NAME` ([design-app-trees.md](design-app-trees.md#decisions), 4).

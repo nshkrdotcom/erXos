@@ -35,7 +35,8 @@ it; git history is the record of completed work.
   [design.md](docs/design.md#dependencies)). The import also records the
   link closure of L4Re's `bootstrap` and `sigma0`, their `drivers-frst`
   UART support, and the license of each library in it.
-* [Medium] apps, an app's own tree ([design-app-trees.md](docs/design-app-trees.md)): build `/svc/NAME`.
+* [Medium] apps, an app's own tree ([design-app-trees.md](docs/design-app-trees.md)): build `/svc/NAME`; `service NAME CMD` lands with the first app whose tree has a `ctl`, since ntpd's has none; the administrator's documentation says that `cat` of an app's file shows its bytes unescaped.
+* [Low] apps, `service` ([design-apps.md](docs/design-apps.md#interfaces)): rc.subr's `enabled`, `rcvar`, `describe` and `delete` are refused with the usage line, so a script testing `service NAME enabled` reads every row as disabled; offer them from `/etc/start.conf` as FreeBSD does (`libexec/rc/rc.subr:1126`, 1188-1191).
   `erx_svc` (the SDK's tree server and mint, started before a session's ready report when its template or
   package declares `serves svc`), `erx_svc_status` (format and parser, with its fuzz target) and
   `erx_svc_client` (reads and commands at `svc_wait_max`, with the chokepoint source check); the `serves` field

@@ -473,6 +473,23 @@ app's words does not change it.
 **`ntpctl -s status`** and **`-s peers`** read `/proc/apps/ntpd` and then
 `/svc/ntpd/status` ([design-time.md](design-time.md#what-ntpd-serves)).
 
+**`service NAME CMD [ARG ...]`** reaches an app's own commands, as a
+FreeBSD script's `extra_commands` run its own verbs. A CMD that is one
+of rc.subr's own keywords (`rcvar`, `enabled`, `delete`, `describe`,
+`extracommands`, and the verbs `service` itself offers,
+[design-apps.md](design-apps.md#interfaces)) never reaches an app: one
+`service` does not offer is refused with its usage line and status 1,
+as rc.subr refuses a verb it does not know. For any other CMD, `service`
+first reads `/proc/apps/NAME`, as `status` does: a name with no row and
+a configured domain answer as `start` does for them, and a row that does
+not run answers `NAME not running?`, each with status 1. For a running
+row it writes the line `CMD ARG ...` to `/svc/NAME/ctl` through
+`erx_svc_client:command/2` and answers from that write alone: status 0
+when it succeeds; `enoent`, an app that takes no commands, as its usage
+line; at `svc_wait_max`, `service: NAME: CMD: outcome unknown`, since
+the app may have run it; and any other errno as `service: NAME: CMD: `
+and its text; each failure with status 1 and on standard error.
+
 **`cat /svc/NAME/status`** writes the file's bytes unchanged, as `cat`
 writes every file. An honest app's file holds only what the field escape
 writes; a hostile app's may hold anything, and `cat` shows it as it shows
@@ -541,7 +558,7 @@ any file another principal wrote ([Security](#security)).
   where root's `cat` of a file another user wrote shows whatever it
   holds; a hostile app can send controls to the terminal of an
   administrator who `cat`s its file, as any principal can through a file
-  in its home ([Open decisions](#open-decisions), 2).
+  in its home ([Decisions](#decisions), 2).
 * **Cost an app imposes.** One introduction for each session that holds
   `start`, paid from both sessions' budgets
   ([design-domains.md](design-domains.md#introduction-and-connection-down)), and only for
@@ -589,6 +606,14 @@ Each test is paired with the fault that proves the code ran.
   `svc_wait_max`, then counts the command. `erx_svc_client:command/2`
   answers `unknown`, and the count is 1 after the handler finishes.
   Seeded: a client that writes again after `timeout`; the count is 2.
+* **`service NAME CMD` answers from the write.** A test app whose
+  handler answers `ok`, `{error, eperm}` and a sleep past
+  `svc_wait_max`: `service` exits 0, prints `eperm`'s text, and prints
+  `outcome unknown`, each failure with status 1; `service ntpd reload`,
+  ntpd having no `ctl`, prints the usage line; `service NAME enabled`
+  and `service NAME delete` never reach the handler, whose count stays
+  0. Seeded: `service` forwarding every verb not in its table; the count
+  is 1.
 * **The provider rule.** Host tests of the domain service: a report
   providing `svc` from a template without `serves svc`, from a principal
   with no start row, from an older session, with a mint of another
@@ -641,34 +666,31 @@ Each test is paired with the fault that proves the code ran.
   ([design-files.md](design-files.md#flush)); ending the reading process
   is the bound that needs nothing from the server.
 
-## Open decisions
+## Decisions
 
-1. **One `rw` grant to every session that holds `start`.** This design
-   gives whoever may command the start table both the reading and the
-   commanding of every app's tree. A read-only grant for a wider set of
-   sessions, the start-holders keeping `rw`, would take a second grant
-   record and a policy of who reads. Recommendation: one grant, as
-   stated; a wider reader is a later consumer's to ask for.
+1. **One `rw` grant to every session that holds `start`.** Whoever may
+   command the start table both reads and commands every app's tree. A
+   read-only grant for a wider set of sessions would take a second grant
+   record and a policy of who reads; a wider reader is a later consumer's
+   to ask for.
 2. **`cat` of an app's file passes its bytes.** An app's controls reach
-   the terminal of an administrator who `cat`s its file, as with any
-   file another principal wrote; the commands that show an app's words
-   under its name escape them. The alternative, a tree whose reads are
-   filtered on the reader's side, would make `cat` lie about a file's
-   bytes. Recommendation: accept, and say so in the administrator's
-   documentation.
-3. **`service NAME CMD` for an app's own commands.** FreeBSD's
-   `extra_commands` let `service NAME reload` run a script's own verb.
-   `service` could write `CMD` and its arguments to `/svc/NAME/ctl`
-   through `erx_svc_client:command/2` for any verb not its own, answering
-   the errno, and `unknown` at the deadline. Recommendation: yes, with
-   the first app that takes a command; ntpd takes none.
-4. **Grants made at the session's ready report, or on first use.** The
-   design introduces every session that holds `start` to every serving
-   app when both are ready, one connection each from both budgets. Made
-   on first use, a walk of `/svc/NAME` would ask the domain service for
-   the grant, a new request. Recommendation: at ready, since the count is
-   bounded by the start rows and needs no new request; measure the
-   connection's cost with the first board that runs several serving apps
+   the terminal of an administrator who `cat`s its file, as with any file
+   another principal wrote, and the administrator's documentation says
+   so; `service` and `ntpctl`, which show an app's words under its name,
+   escape them ([What the commands show](#what-the-commands-show)). A tree
+   whose reads are filtered on the reader's side would make `cat` lie
+   about a file's bytes.
+3. **`service NAME CMD` reaches an app's own commands.** As FreeBSD's
+   `extra_commands` let `service NAME reload` run a script's own verb,
+   `service` writes a verb that is neither its own nor one of rc.subr's
+   keywords, with its arguments, to `/svc/NAME/ctl`
+   ([What the commands show](#what-the-commands-show)).
+4. **Grants follow the ready reports.** Every session that holds `start`
+   is introduced to every serving app by the two sessions' ready reports,
+   one connection each from both budgets ([Granting](#granting)). The
+   count is bounded by the start rows and needs no new request; a grant
+   made at the first walk of `/svc/NAME` would need one, a request to the
+   domain service. What the connections cost is a watch-list item
    ([todo-performance.md](todo-performance.md)).
 
 ## References
