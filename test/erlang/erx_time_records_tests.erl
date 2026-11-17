@@ -30,7 +30,8 @@ state(Read) -> maps:get(state, attrs(Read)).
 %% by domain 3 that stepped the clock, as erx_clock_core keeps it.
 sampled() ->
     (erx_clock_core:new(5_000_000_000, ?FLOOR))#{
-        excess := positive, sample_at := ?FLOOR + 10, offset_ns := -42, distance_ns := 20_000_000, stratum := 2,
+        excess := positive, sample_at := ?FLOOR + 10, offset_ns := -42, sample_wall_offset_ns := ?FLOOR - 4_999_999_032,
+        distance_ns := 20_000_000, stratum := 2,
         server := {192, 0, 2, 1}, source := 7, sample_from := {ntp, {192, 0, 2, 1}},
         step_at := ?FLOOR + 20, step_ns := 60_000_000_000, step_source := 3, step_from := root,
         step_error := limit, steps := 1, refused := 2}.
@@ -51,7 +52,7 @@ the_services_record_is_shown_test() ->
     {ok, Keys} = erx_schema:attributes(clock),
     ?assertEqual(lists:sort(Keys), lists:sort(maps:keys(Attrs))),
     ?assertEqual(#{record_since => {ok, 5}, sample_at => {ok, ?FLOOR + 10}, offset_ns => {ok, -42},
-                   distance_ns => {ok, 20_000_000}, stratum => {ok, 2}, server => {ok, <<"192.0.2.1">>},
+                   sample_wall_offset_ns => {ok, ?FLOOR - 4_999_999_032}, distance_ns => {ok, 20_000_000}, stratum => {ok, 2}, server => {ok, <<"192.0.2.1">>},
                    source => {ok, 7}, sample_from => {ok, <<"ntp 192.0.2.1">>}, step_at => {ok, ?FLOOR + 20},
                    step_ns => {ok, 60_000_000_000}, step_source => {ok, 3}, step_from => {ok, <<"root">>},
                    step_error => {ok, limit}, steps => {ok, 1}, refused => {ok, 2}},
@@ -65,7 +66,7 @@ an_empty_record_shows_rtc_and_unknowns_test() ->
     ?assertEqual({service, {ok, <<"rtc">>}}, maps:get(step_from, Attrs)),
     ?assertEqual({service, {ok, 0}}, maps:get(steps, Attrs)),
     [?assertEqual({Key, {service, unknown}}, {Key, maps:get(Key, Attrs)})
-     || Key <- [sample_at, offset_ns, distance_ns, stratum, server, source, sample_from, step_at, step_ns,
+     || Key <- [sample_at, offset_ns, sample_wall_offset_ns, distance_ns, stratum, server, source, sample_from, step_at, step_ns,
                 step_source, step_error]].
 
 %% A service that is not running, or does not answer, is shown as such in every

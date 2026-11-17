@@ -5,7 +5,7 @@
 %% core, erx_ntp_core, and erx_ntpd, the application and its one effect process.
 %% The ntpd session template's -eval starts it, permanent, so its end ends the
 %% session and the start row's keeper starts it again. The packet codec, the checks
-%% of one reply and the exchange are the erx library's, shared with root's ntpdate;
+%% of one reply and the exchange are the erx library's, shared with root's ntpctl;
 %% the sockets are erx_net_client's.
 {application, erx_ntpd,
  [{description, "erXos network time client"},

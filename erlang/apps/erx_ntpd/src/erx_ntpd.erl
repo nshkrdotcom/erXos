@@ -13,7 +13,8 @@ flags, or flags that break the server-list rule, fail the start with
 session; the start table's intensity then leaves the row down. Otherwise it
 performs what erx_ntp_core asks, one action at a time, for as long as the
 session runs: it resolves the names through the session's resolver, makes
-each exchange over a socket of its own (erx_ntp_exchange), sends each sample
+each exchange over a socket of its own (erx_ntp_exchange:ask/1; a socket that
+cannot be opened is no reply), sends each sample
 to the clock service through the session's `clock` facet, which decides
 whether to step, and waits. Network that is not up yet is no special case:
 the resolution or the exchange fails and the schedule's backoff asks again.
@@ -32,13 +33,8 @@ exchange or a sample waits for the next wait.
 -export([start/2, stop/1]).
 -export([init/1, status/1]).
 
-%% How long one exchange waits for its reply, one resolution for DNS, and one
-%% sample for the clock service's answer.
--define(EXCHANGE_MS, 2000).
--define(RESOLVE_MS, 10000).
+%% How long one sample waits for the clock service's answer.
 -define(CLOCK_MS, 10000).
-%% The addresses of one name that are used, as DNS orders them.
--define(ADDRESSES_PER_NAME, 4).
 
 start(_Type, _Args) ->
     proc_lib:start_link(?MODULE, init, [self()]).
@@ -96,9 +92,9 @@ loop(Action, State) ->
     loop(Next, State1).
 
 perform({resolve, Names}, _State) ->
-    {resolved, lists:append([addresses(Name) || Name <- Names])};
+    {resolved, lists:append([erx_ntp_exchange:addresses(Name) || Name <- Names])};
 perform({exchange, Address, _Kind}, _State) ->
-    {exchanged, exchange(Address)};
+    {exchanged, erx_ntp_exchange:ask(Address)};
 perform({submit, Sample, Address}, _State) ->
     Answer = submit(erx_ntp_core:request(Sample, Address)),
     report(Answer, Address),
@@ -114,32 +110,6 @@ wait(Deadline, State) ->
             wait(Deadline, State)
     after max(0, Deadline - erlang:monotonic_time(millisecond)) ->
         woke
-    end.
-
-addresses(Name) ->
-    String = binary_to_list(Name),
-    case inet:parse_ipv4strict_address(String) of
-        {ok, Address} ->
-            [Address];
-        {error, _} ->
-            case inet:getaddrs(String, inet, ?RESOLVE_MS) of
-                {ok, Addresses} -> lists:sublist(Addresses, ?ADDRESSES_PER_NAME);
-                {error, _} -> []
-            end
-    end.
-
-%% A socket that cannot be opened is no reply: the schedule asks again later.
-exchange(Address) ->
-    case gen_udp:open(0, [binary, {active, false}]) of
-        {ok, Socket} ->
-            try erx_ntp_exchange:exchange(Socket, Address, ?EXCHANGE_MS) of
-                {sample, Sample, _WallOffset} -> {sample, Sample};
-                Other -> Other
-            after
-                gen_udp:close(Socket)
-            end;
-        {error, _} = Error ->
-            Error
     end.
 
 %% A facet that has ended was sent nothing; one that ends or stays silent past

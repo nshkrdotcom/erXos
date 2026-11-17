@@ -6,9 +6,8 @@
 ntpd's pure core (docs/design-time.md, "The client"): the server list read
 from the start flags, and the schedule as one state machine.
 
-servers/1 reads `ERX_START_FLAGS`' value: at most 8 entries split at
-spaces, each an IPv4 literal or a host name of letters, digits and hyphens
-in labels of 1 to 63 bytes, 253 in all.
+servers/1 reads `ERX_START_FLAGS`' value: entries split at spaces, which
+erx_ntp_exchange:servers/1's server-list rule must accept.
 
 start/1 and step/2 are the schedule. Each answers the next action for the
 effect process to perform and the state to hand back with that action's
@@ -36,9 +35,6 @@ the run, `RATE` doubles the interval, and any other kiss is discarded.
 -export([servers/1, start/1, step/2, request/2, interval/1, status/1]).
 -export_type([state/0, action/0, event/0, status/0]).
 
--define(MAX_SERVERS, 8).
--define(MAX_NAME, 253).
--define(MAX_LABEL, 63).
 -define(POLL_MIN_MS, 64000).
 -define(POLL_MAX_MS, 1024000).
 -define(RESOLVE_MIN_MS, 15000).
@@ -88,26 +84,12 @@ entries or one that is neither an IPv4 literal nor a host name.
 servers(Flags) when is_binary(Flags) ->
     case binary:split(Flags, <<" ">>, [global, trim_all]) of
         [] -> {error, no_servers};
-        Entries when length(Entries) > ?MAX_SERVERS -> {error, bad_flags};
-        Entries ->
-            case lists:all(fun server/1, Entries) of
-                true -> {ok, Entries};
+        Names ->
+            case erx_ntp_exchange:servers(Names) of
+                true -> {ok, Names};
                 false -> {error, bad_flags}
             end
     end.
-
-server(Entry) when byte_size(Entry) > ?MAX_NAME -> false;
-server(Entry) ->
-    case inet:parse_ipv4strict_address(binary_to_list(Entry)) of
-        {ok, _} -> true;
-        {error, _} -> lists:all(fun label/1, binary:split(Entry, <<".">>, [global]))
-    end.
-
-label(Label) when byte_size(Label) < 1; byte_size(Label) > ?MAX_LABEL -> false;
-label(Label) -> lists:all(fun label_byte/1, binary_to_list(Label)).
-
-label_byte(C) -> (C >= $a andalso C =< $z) orelse (C >= $A andalso C =< $Z)
-                     orelse (C >= $0 andalso C =< $9) orelse C =:= $-.
 
 %%% The schedule
 

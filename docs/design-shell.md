@@ -345,8 +345,9 @@ shell and for `erx:` functions that run commands:
    are never built; the screen editor `vi`, which behaves like FreeBSD's
    nvi in its basics ([design-vi.md](design-vi.md)), so toybox's `vi` is
    never built either; the network utilities `ifconfig [-a] [interface]`,
-   `ping`, `host` and `ntpdate`, which follow FreeBSD's ifconfig(8),
-   ping(8), host(1) and ntpdate(8) over erXos's own stack, reading interfaces through
+   `ping` and `host`, which follow FreeBSD's ifconfig(8), ping(8) and
+   host(1) over erXos's own stack, and `ntpctl`, after OpenBSD's
+   ntpctl(8), reading interfaces through
    `erx_net:interfaces/0`, echo replies through `erx_icmp_sock` and
    names through `inet_res`
    ([design-network-stack.md](design-network-stack.md)); `reboot` and
@@ -705,10 +706,11 @@ in UTC, the only zone erXos has. Setting needs the `clock` grant, which
 root's session holds; its forms, conversions and failure paths are
 [design-time.md](design-time.md#setting-the-clock-by-hand)'s.
 
-**`ntpdate [-4bqu] [-t timeout] server ...`** asks NTP servers for the
-time once, as FreeBSD's ntpdate does, and sets the clock with the same
-`clock` grant `date` uses, or with `-q` only writes what the server
-said; its exchange, checks and lines are
+**`ntpctl step [server ...]`** sets the clock once, with the same
+`clock` grant `date` uses, from the servers named or, with none named,
+from ntpd's last sample, and says which; **`ntpctl -s status|peers`**
+writes ntpd's state from `/proc/ntp`. Its sources, exchange, checks and
+lines are
 [design-time.md](design-time.md#setting-the-clock-from-a-server-once)'s.
 
 **`host name [server]`** looks a name or an address up in the DNS, as

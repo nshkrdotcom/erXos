@@ -4,7 +4,7 @@
 -module(erx_ntp_wire).
 -moduledoc """
 The NTP packet codec (docs/design-time.md, "Checks on a reply"): the one
-reader of NTP bytes, for ntpd's client and root's `ntpdate` alike. It is
+reader of NTP bytes, for ntpd's client and root's `ntpctl` alike. It is
 pure and total, and decides nothing about a reply; erx_ntp_sample checks
 what it decodes.
 

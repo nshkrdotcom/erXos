@@ -12,7 +12,7 @@
 %%
 %% Its applications are those its modules call. Three are optional, since a
 %% release ships them only where the shell may reach them: erx_net_client,
-%% whose sockets ifconfig, ping, host and ntpdate open, in a session's release; and
+%% whose sockets ifconfig, ping, host and ntpctl open, in a session's release; and
 %% erx_domain and erx_starter, whose trees reboot, halt and service reach
 %% directly in the system shell (docs/design-shell.md, "Interfaces"). Only
 %% application:start/1 starts it: ensure_all_started would start each optional
@@ -36,7 +36,7 @@
              erx_cmd_mkdir,
              erx_cmd_mount,
              erx_cmd_mv,
-             erx_cmd_ntpdate,
+             erx_cmd_ntpctl,
              erx_cmd_ping,
              erx_cmd_ps,
              erx_cmd_pwd,

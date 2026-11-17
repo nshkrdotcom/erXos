@@ -39,10 +39,10 @@ module Erx
   # `host nonexistent HOST_IP`, which must be NXDOMAIN; `host ADDRESS HOST_IP`, which
   # must give the pointer back; ntpd's step, which its session, started at boot with the
   # harness as its one server (NTPD), logs once the harness's answer, NTP_AHEAD seconds
-  # past the host's clock, has come in two samples in a row; `ntpdate -q HOST_IP` and
-  # `ntpdate HOST_IP`, against the harness answering 2030 from then on, which
-  # same harness answering as an NTP server, which must show ntpdate's server line and
-  # then its step, and `date`, which must then read the server's year; and, in the Erlang
+  # past the host's clock, has come in two samples in a row; `ntpctl step`, which must
+  # step from ntpd's sample of HOST_IP; `ntpctl step HOST_IP`, against the harness
+  # answering 2030 from then on, which must show its step from HOST_IP, and `date`,
+  # which must then read the server's year; and, in the Erlang
   # shell, the node, which must be root's
   # session's, and inet_db's name servers and
   # search list, which must be the lease's: none, since slirp in restricted mode, which
@@ -125,10 +125,10 @@ module Erx
     HOST_LINE = "host www #{SERVER}\r".freeze
     MISSING_LINE = "host nonexistent #{SERVER}\r".freeze
     POINTER_LINE = "host 192.0.2.10 #{SERVER}\r".freeze
-    # ntpdate against the link server, whose replies say 2030-01-01 (NameServer::NTP_TIME):
-    # a query that sets nothing, a step, and the year date reads after it.
-    NTP_QUERY_LINE = "ntpdate -q #{SERVER}\r".freeze
-    NTP_SET_LINE = "ntpdate #{SERVER}\r".freeze
+    # ntpctl's two sources: ntpd's last sample, and the link server asked directly once
+    # its replies say 2030-01-01 (NameServer::NTP_TIME), after which date reads the year.
+    NTPD_STEP_LINE = "ntpctl step\r".freeze
+    NTP_SET_LINE = "ntpctl step #{SERVER}\r".freeze
     # The clock's record after ntpd's step (docs/design-time.md, "What /proc shows").
     TIME_LINE = "cat /proc/time/status\r".freeze
     # ntpd's session (docs/design-time.md, "The client"), with the harness as its one
@@ -160,7 +160,7 @@ module Erx
     # How far ntpd's step may be from NTP_AHEAD: the real-time clock's whole seconds and drift.
     NTPD_STEP_SLACK = 10
     YEAR_LINE = "date +year=%Y\r"
-    SECONDS = '-?[0-9]+\.[0-9]{6}'
+    STEP = '[-+][0-9]+\.[0-9]{3}'
     RESOLVER_LINE = "{node(), inet_db:res_option(nameservers), inet_db:res_option(search)}.\r"
     # The shell's node, root's session's, and what inet_db holds once the lease is loaded:
     # no name server, which a restricted slirp does not offer, and NIC_DOMAIN.
@@ -316,15 +316,18 @@ module Erx
     # What ntpd's session logs: its step to the harness's time, by NTP_AHEAD seconds give or
     # take the real-time clock's second and the boot's drift (ntpd_step!); then /proc/time,
     # whose record names ntpd's server as the source of the last sample and step, the
-    # second step of the boot after the real-time clock's. The harness then fixes its
-    # answers at 2030 (fix_ntp_time) and ntpdate's query is typed.
+    # second step of the boot after the real-time clock's; then `ntpctl step`, which steps
+    # to ntpd's last sample, a third. The harness then fixes its answers at 2030
+    # (fix_ntp_time) and ntpctl asks it directly.
     def ntpd_checkpoints(fix_ntp_time:)
       from = "ntp #{Regexp.escape(SERVER)}"
       [{ name: 'ntpd-step', pattern: /ntpd: stepped by [0-9]+ ns from #{Regexp.escape(SERVER)}\r*\n\z/n,
          seconds: NTPD_STEP_SECONDS, verify: NetDevice.method(:ntpd_step!), type: TIME_LINE }.freeze,
        shell_point('time-sample-from', "sample_from\t#{from}\tservice"),
        shell_point('time-step-from', "step_from\t#{from}\tservice"),
-       shell_point('time-steps', "steps\t2\tservice", verify: ->(_line) { fix_ntp_time.call }, type: NTP_QUERY_LINE)]
+       shell_point('time-steps', "steps\t2\tservice", type: NTPD_STEP_LINE),
+       shell_point('ntpctl-ntpd', "ntpctl: stepped #{STEP} s from ntpd's sample of #{Regexp.escape(SERVER)}",
+                   verify: ->(_line) { fix_ntp_time.call }, type: NTP_SET_LINE)]
     end
 
     # Raises unless ntpd's step line says a step of NTP_AHEAD seconds within NTPD_STEP_SLACK.
@@ -335,15 +338,12 @@ module Erx
       raise Error, "ntpd stepped by #{seconds} s, not the harness's #{NameServer::NTP_AHEAD} s: #{line.inspect}"
     end
 
-    # What ntpdate shows against the link server: the query's server line, the step to
-    # 2030, and the year `date` then reads. The offsets are how far the guest's clock was
-    # from 2030, so only their form is fixed.
-    def ntpdate_checkpoints
-      server = Regexp.escape(SERVER)
-      [shell_point('ntpdate-query', "server #{server}, stratum 1, offset #{SECONDS}, delay [0-9]+\\.[0-9]{5}",
-                   type: NTP_SET_LINE),
-       shell_point('ntpdate-step', "ntpdate: step time server #{server} offset #{SECONDS} sec", type: YEAR_LINE),
-       shell_point('ntpdate-year', Regexp.escape('year=2030'), type: ProductionImage::Run::ERL_LINE)]
+    # What ntpctl shows asking the link server: the step to 2030, and the year `date`
+    # then reads. The step is how far the guest's clock was from 2030, so only its form
+    # is fixed.
+    def ntpctl_checkpoints
+      [shell_point('ntpctl-step', "ntpctl: stepped #{STEP} s from #{Regexp.escape(SERVER)}", type: YEAR_LINE),
+       shell_point('ntpctl-year', Regexp.escape('year=2030'), type: ProductionImage::Run::ERL_LINE)]
     end
 
     # What the resolver lines show: each `host` answer, in FreeBSD's lines, and inet_db's
@@ -358,7 +358,7 @@ module Erx
        shell_point('host-nxdomain', Regexp.escape('Host nonexistent not found: 3(NXDOMAIN)'), type: POINTER_LINE),
        shell_point('host-pointer', Regexp.escape("10.2.0.192.in-addr.arpa domain name pointer #{name}.")),
        *ntpd_checkpoints(fix_ntp_time: fix_ntp_time),
-       *ntpdate_checkpoints,
+       *ntpctl_checkpoints,
        ProductionImage::Run::ERLANG_SHELL.merge(type: RESOLVER_LINE).freeze,
        erl_point('resolver-config', Regexp.escape(RESOLVER_ANSWER), type: IDS_LINE),
        erl_point('query-ids', '\{[0-9]+,[0-9]+,[0-9]+,[0-9]+\}', verify: method(:random_ids!), type: CONNECT_LINE)]

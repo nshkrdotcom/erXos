@@ -51,7 +51,7 @@ row_case(Cold, D, Excess) ->
     Record = record(Excess),
     {Result, Left} = expected(Cold, D, Excess),
     Decision = erx_clock_core:decide(sample(W), ?SOURCE, page(Cold), Record),
-    Sampled = #{sample_at => ?M + ?C, offset_ns => D, distance_ns => 20 * ?MS, stratum => 2,
+    Sampled = #{sample_at => ?M + ?C, offset_ns => D, sample_wall_offset_ns => W, distance_ns => 20 * ?MS, stratum => 2,
                 server => {192, 0, 2, 1}, source => ?SOURCE, sample_from => {ntp, {192, 0, 2, 1}}, excess => Left},
     case {Result, Decision} of
         {step, {step, Step, Record1}} ->
@@ -116,8 +116,8 @@ applied_test() ->
 
 %% A new record has nothing sampled or stepped and counts from its start, in seconds.
 new_test() ->
-    ?assertEqual(#{floor => ?FLOOR, record_since => 5, excess => none, sample_at => none, offset_ns => none, distance_ns => none,
-                   stratum => none, server => none, source => none, sample_from => none, step_at => none, step_ns => none,
+    ?assertEqual(#{floor => ?FLOOR, record_since => 5, excess => none, sample_at => none, offset_ns => none,
+                   sample_wall_offset_ns => none, distance_ns => none, stratum => none, server => none, source => none, sample_from => none, step_at => none, step_ns => none,
                    step_source => none, step_from => none, step_error => none, steps => 0, refused => 0},
                  erx_clock_core:new(?M + 1, ?FLOOR)).
 

@@ -12,12 +12,12 @@ module Erx
     # whose answers no test controls. It answers, from HOST_MAC and HOST_IP, ARP requests
     # for HOST_IP and DNS queries to HOST_IP port 53 from the records in RECORDS:
     # NOERROR with the matching records for a name RECORDS knows, NXDOMAIN for any other.
-    # It is the NTP server of ntpd and of the `ntpdate` command too: an SNTP client request
+    # It is the NTP server of ntpd and of the `ntpctl step` command too: an SNTP client request
     # to HOST_IP port 123 gets a stratum-1 reply that says the time is NTP_AHEAD seconds
     # past the host's clock, until the run fixes it at NTP_TIME (fix_ntp_time). The first
     # answer is within the clock service's 1000 s panic threshold of a guest whose clock the
     # real-time clock set at boot, so ntpd's first sample is held and its second steps
-    # (docs/design-time.md, "Steps"); the second makes ntpdate's step one to a time the test
+    # (docs/design-time.md, "Steps"); the second makes ntpctl's step one to a time the test
     # fixes (docs/design-time.md, "Setting the clock from a server once").
     #
     # Every frame comes from the guest, the code under test, so each is parsed with bounds

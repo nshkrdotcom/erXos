@@ -3,7 +3,8 @@
 # frozen_string_literal: true
 
 # Runs test/erlang/erx_ntpd_flags_fuzz.erl, the fuzz target of ntpd's start flags
-# reader, erx_ntp_core:servers/1 (docs/design-time.md, "Verification and testing"),
+# reader, erx_ntp_core:servers/1, and the server-list rule it applies,
+# erx_ntp_exchange:servers/1 (docs/design-time.md, "Verification and testing"),
 # on stock's emulator (ERX_ERL and ERX_ERLC), and then once with each seeded fault,
 # which must fail the run with the property it breaks.
 
@@ -14,14 +15,16 @@ require 'tmpdir'
 module ErxNtpdFlagsFuzz
   ROOT = File.expand_path('../..', __dir__)
   CORE = 'erlang/apps/erx_ntpd/src/erx_ntp_core.erl'
+  # The seeded faults go into the rule's module, which ntpd's core and ntpctl share.
+  RULE = 'erlang/apps/erx/src/erx_ntp_exchange.erl'
   TARGET = 'test/erlang/erx_ntpd_flags_fuzz.erl'
   Fault = Data.define(:name, :from, :to, :failure)
   FAULTS = [
     Fault.new(name: 'a reader without the 253-byte bound',
-              from: 'server(Entry) when byte_size(Entry) > ?MAX_NAME -> false;', to: '',
+              from: 'server(Name) when byte_size(Name) > ?MAX_NAME -> false;', to: '',
               failure: 'entry_out_of_rule'),
     Fault.new(name: 'a reader that accepts a ninth entry',
-              from: 'length(Entries) > ?MAX_SERVERS', to: 'length(Entries) > ?MAX_SERVERS + 1',
+              from: 'length(Names) =< ?MAX_SERVERS', to: 'length(Names) =< ?MAX_SERVERS + 1',
               failure: 'entry_count')
   ].freeze
   DEADLINE_SECONDS = '180'
@@ -29,8 +32,8 @@ module ErxNtpdFlagsFuzz
   module_function
 
   def run(seed:)
-    source = File.binread(File.join(ROOT, CORE))
-    FAULTS.each { |fault| raise "#{CORE} lacks #{fault.from}" unless source.scan(fault.from).size == 1 }
+    source = File.binread(File.join(ROOT, RULE))
+    FAULTS.each { |fault| raise "#{RULE} lacks #{fault.from}" unless source.scan(fault.from).size == 1 }
 
     output, status = fuzz(source, seed: seed)
     abort(output) unless status.success? && output.match?(/^fuzz: \d+ rounds ok, \d+ accepted$/)
@@ -44,9 +47,10 @@ module ErxNtpdFlagsFuzz
   # In a directory of its own, which also takes the crash dump of a failed round.
   def fuzz(source, seed:)
     Dir.mktmpdir('erx-ntpd-flags-fuzz') do |work|
-      core = File.join(work, File.basename(CORE))
-      File.binwrite(core, source)
-      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', work, core, File.join(ROOT, TARGET), stdin_data: '')
+      rule = File.join(work, File.basename(RULE))
+      File.binwrite(rule, source)
+      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', work, rule, File.join(ROOT, CORE),
+                                       File.join(ROOT, TARGET), stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

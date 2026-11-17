@@ -5,7 +5,8 @@
 %% erx_ntp_sample (docs/design-time.md, "Checks on a reply" and "Verification
 %% and testing"): the era conversion, the offset of a board at 1970 against a
 %% 2026 server, each check refusing a reply built to break only it, the
-%% kiss-o'-death, and the distance's clamp of a negative root delay.
+%% kiss-o'-death, and the distance's clamp of a negative root delay; and what
+%% one datagram is to an exchange (erx_ntp_exchange:classify/4).
 -module(erx_ntp_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -123,3 +124,20 @@ distance_test_() ->
                    erx_ntp_sample:check(Negative#{root_dispersion := 2 * 65536}, ?NONCE, M1, M4)),
      ?_assertMatch({sample, #{distance := 50000000}},
                    erx_ntp_sample:check(Negative#{root_dispersion := 0}, ?NONCE, M1, M4))].
+
+%% What a datagram on an exchange's socket is: one that does not decode, or answers
+%% another request or another mode, is foreign, so the wait goes on; this exchange's
+%% answer gets erx_ntp_sample's verdict, a sample or a reply that is none.
+classify_test_() ->
+    Nonce = 16#0123456789abcdef,
+    T = (1794873600 + 2208988800) bsl 32,
+    Reply = #{leap => 0, version => 4, mode => 4, stratum => 2, poll => 6, precision => -20,
+              root_delay => 0, root_dispersion => 0, reference_id => <<"GPS", 0>>,
+              reference_time => 0, originate_time => Nonce, receive_time => T, transmit_time => T},
+    Classify = fun(Packet) -> erx_ntp_exchange:classify(Packet, Nonce, 5000000000, 5020000000) end,
+    [?_assertEqual(foreign, Classify(<<0:47/unit:8>>)),
+     ?_assertEqual(foreign, Classify(erx_ntp_wire:encode(Reply#{originate_time := Nonce + 1}))),
+     ?_assertEqual(foreign, Classify(erx_ntp_wire:encode(Reply#{version := 3}))),
+     ?_assertMatch({sample, #{stratum := 2}}, Classify(erx_ntp_wire:encode(Reply))),
+     ?_assertEqual({drop, stratum}, Classify(erx_ntp_wire:encode(Reply#{stratum := 16}))),
+     ?_assertEqual({kiss, <<"RATE">>}, Classify(erx_ntp_wire:encode(Reply#{stratum := 0, reference_id := <<"RATE">>})))].

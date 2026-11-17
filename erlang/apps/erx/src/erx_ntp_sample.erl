@@ -5,7 +5,7 @@
 -moduledoc """
 The checks of one NTP reply and the sample it gives (docs/design-time.md,
 "Checks on a reply" and "The construction"), for ntpd's client and root's
-`ntpdate` alike, so both drop a reply for the same reasons.
+`ntpctl step` alike, so both drop a reply for the same reasons.
 
 check/4 takes a reply erx_ntp_wire decoded, the request's nonce and the
 monotonic times `M1`, when the request went, and `M4`, when the reply

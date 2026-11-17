@@ -194,6 +194,7 @@ inspection 1
     attr record_since seconds reporters service visible any build all projections shell,host,proc,web
     attr sample_at wall_time reporters service visible any build all projections shell,host,proc,web
     attr offset_ns signed_duration reporters service visible any build all projections shell,host,proc,web
+    attr sample_wall_offset_ns wall_time reporters service visible any build all projections shell,host,proc,web
     attr distance_ns duration reporters service visible any build all projections shell,host,proc,web
     attr stratum stratum reporters service visible any build all projections shell,host,proc,web
     attr server net_address reporters service visible all build all projections shell,host,proc,web

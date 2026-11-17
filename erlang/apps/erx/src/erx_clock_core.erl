@@ -72,6 +72,7 @@ offset beyond 128 ms, and `floor`, the floor the service started with.
 -type state() :: unset | boot | approximate | set.
 -type clock_record() :: #{floor := floor(), record_since := non_neg_integer(), excess := none | sign(),
                     sample_at := none | integer(), offset_ns := none | integer(),
+                    sample_wall_offset_ns := none | non_neg_integer(),
                     distance_ns := none | non_neg_integer(), stratum := none | 1..15,
                     server := none | inet:ip4_address(), source := none | source(), sample_from := none | from(),
                     step_at := none | integer(), step_ns := none | integer(), step_source := none | source(),
@@ -101,7 +102,8 @@ nanoseconds, with floor Floor: nothing sampled or stepped yet.
 -spec new(non_neg_integer(), floor()) -> clock_record().
 new(Monotonic, Floor) ->
     #{floor => Floor, record_since => Monotonic div ?NS_PER_S, excess => none,
-      sample_at => none, offset_ns => none, distance_ns => none, stratum => none, server => none, source => none,
+      sample_at => none, offset_ns => none, sample_wall_offset_ns => none, distance_ns => none, stratum => none,
+      server => none, source => none,
       sample_from => none, step_at => none, step_ns => none, step_source => none, step_from => none,
       step_error => none, steps => 0, refused => 0}.
 
@@ -145,8 +147,8 @@ decide({rtc, Wall} = Request, Source, #{monotonic := M} = Page, Record = #{floor
 decide({sample, W, Distance, Stratum, Server} = Request, Source, #{offset := C, monotonic := M} = Page,
        #{floor := Floor} = Record) ->
     D = W - C,
-    Sampled = Record#{sample_at := M + C, offset_ns := D, distance_ns := Distance, stratum := Stratum,
-                      server := Server, source := Source, sample_from := from(Request)},
+    Sampled = Record#{sample_at := M + C, offset_ns := D, sample_wall_offset_ns := W, distance_ns := Distance,
+                      stratum := Stratum, server := Server, source := Source, sample_from := from(Request)},
     %% Cold: nothing but the boot and the start at the floor has changed the page.
     Cold = state(Page, Floor) =/= set,
     case row(M + W, Floor, Cold, D, maps:get(excess, Record)) of

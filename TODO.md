@@ -7240,16 +7240,19 @@ to the corpus and follow rc
   answers it in its own runtime, where no ntpd runs, so every attribute reads unsupported; the worker
   needs a way to find ntpd's domain and its agent a bound that admits `[ntp]` (erx_inspect_worker route/2,
   erx_inspect_agent owns/2), which no design names yet, and the start table's `app` record has no `domain` to
-  find it by; (3) `/proc/time`
-  shows a value the clock service's record holds as `none` as `[unknown]` (`erx_time_records`), since no type of
-  the inspection schema holds `none`, where design-time.md says `none`: give the schema an absent value or
-  have the design say `unknown`, as `/proc/ntp`'s does; (4) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
-  resolver call that answers TTLs lets it wait the shortest TTL instead; (5) the QEMU suites check held then
+  find it by; until then `ntpctl -s` says `/proc/ntp: unsupported`; (3) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
+  resolver call that answers TTLs lets it wait the shortest TTL instead; (4) the QEMU suites check held then
   stepped (net_device, against the harness 300 s ahead of a clock the PL031 keeper set) but not the cases
   restart, kiss and refusals of design-time.md's verification, nor a cold boot's first-sample step, which QEMU
-  virt's real-time clock prevents; (6) review findings left: address resolution, the socket's open and close and the clock facet call are
-  written in both erx_ntpd and erx_cmd_ntpdate or erx_cmd_date, and the server-list limits in both cores (fold
-  them into erx_ntp_exchange); the
+  virt's real-time clock prevents; (5) ntpd answers `/proc/ntp` only while it waits, so a read during a
+  resolution (up to 10 s), an exchange (2 s, a burst up to 8 s) or its call to the clock service (up to 10 s)
+  outlasts inspect_agent_wait and reads `[timeout]`; answer from a process that does not block on the network
+  or the facet; (6) `ntpctl step` (erlang/apps/erx_shell/src/erx_cmd_ntpctl.erl) applies ntpd's last sample
+  without saying whether the clock service refused it or how old it is (the record keeps neither); `-s`'s lines
+  name `/proc/ntp`'s attributes by hand rather than from the schema; `-erx_needs([inspect, net])` asks for `net`
+  on the forms that read only `/proc`; when every address fails, `ntpctl step HOST` gives no reason per address;
+  the name rule passes short IPv4 forms such as `1.2.3` to `inet:getaddrs/3`, which reads them as addresses;
+  (7) review findings left: the clock facet call is written in both erx_ntpd and erx_cmd_date; the
   core is a one-action loop, not the events and `next_deadline/1` shape "Who does what" describes; the bound on
   `denied` is both erx_ntp_core's `REMEMBERED_MAX` (64) and the schema's `net_addresses` list (32), so 33 to 64
   denied addresses read `{error, invalid}` (generate one bound); `step_from` names every `set` `root`, which
@@ -7886,8 +7889,8 @@ to the corpus and follow rc
 * [Medium] network time, unauthenticated ([design-time.md](docs/design-time.md#security)): the NTP server
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
-  checks follow the clock. Root's `ntpdate` sets through `set`: its server, or anyone on the path, sets any
-  time, below the floor too, and the set then holds it against ntpd for the boot (design-time.md, decision 7,
+  checks follow the clock. Root's `ntpctl step` sets through `set`: the server it takes the time from, or anyone
+  on the path, sets any time, below the floor too, and the set then holds it against ntpd for the boot (design-time.md, decision 7,
   published). Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
 * [Low] stopgap, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case):
   the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks no right, so any
