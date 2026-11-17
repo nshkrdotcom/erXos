@@ -26,8 +26,7 @@ module Erx
                 'loads' => [{ 'source_offset' => 0, 'file_offset' => 4096, 'mem_offset' => 0,
                               'file_size' => 128, 'mem_size' => 128, 'prot' => 5, 'flags' => 0 }] }
       seeds = [JSON.generate(reply).b, "root.o: source.c header.h\n".b,
-               "10000 10000 20 4 root.o:(.text)\n".b,
-               "Linker script and memory map\n .text 0x10000 0x20 root.o\n".b]
+               "10000 10000 20 4 root.o:(.text)\n".b]
       Dir.mktmpdir('erx-receipt-fuzz-') do |directory|
         receipt, artifact = receipt_seed(directory)
         seeds << JSON.generate(receipt).b
@@ -52,8 +51,6 @@ module Erx
             when 2
               PackProvenance.contributors(bytes, format: 'lld')
             when 3
-              PackProvenance.contributors(bytes, format: 'gnu')
-            when 4
               File.binwrite(receipt_path, bytes)
               catalog = fixed.merge(BuildInputs.capture(root: directory, paths: [receipt_path]))
               resolver = PackProvenance.new(root: directory, catalog: catalog)

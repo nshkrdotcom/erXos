@@ -183,35 +183,19 @@ module Erx
     private_class_method :dependency_rule
 
     # Input columns identify contributions; filename suffixes have no meaning
-    # to a linker. GNU's discarded-section preamble is outside this closure.
+    # to a linker. Every link the build makes is LLD's, so its map is the one format.
     def self.contributors(bytes, format:)
       raise Error, 'link map is too large' if bytes.bytesize > MAX_METADATA
-      text = bytes
-      if format == 'gnu'
-        _discarded, marker, text = text.partition('Linker script and memory map')
-        raise Error, 'GNU link map has no allocated section' if marker.empty?
-      elsif format != 'lld'
-        raise Error, 'unsupported link map format'
-      end
-      result = text.lines.map do |line|
-        if format == 'lld'
-          row = /\A\s*[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+\d+\s+(.+?)\s*\z/.match(line)
-          next unless row
-          # Output-section and symbol rows have no input-section delimiter.
-          next unless row[1].include?(':(')
-          input = /\A(.+):\([^()]*\)\z/.match(row[1])
-          raise Error, 'unsupported LLD input contribution' unless input
-          next if input[1] == '<internal>'
-          input[1]
-        else
-          next if line.match?(/\A\s*\*fill\*\s/)
-          row = /\A\s*(?:[^\s]+\s+)?0x[0-9a-fA-F]+\s+0x[0-9a-fA-F]+\s+(.+?)\s*\z/.match(line)
-          next unless row
-          next if row[1].match?(/\Aload address 0x[0-9a-fA-F]+\z/)
-          # These are bytes emitted by the linker script, not input files.
-          next if row[1].match?(/\A(?:BYTE|SHORT|LONG|QUAD|SQUAD) 0x[0-9a-fA-F]+(?: [A-Za-z_][A-Za-z0-9_]*| \([A-Za-z_][A-Za-z0-9_]* [-+] [A-Za-z_][A-Za-z0-9_]*\))?\z/)
-          row[1]
-        end
+      raise Error, 'unsupported link map format' unless format == 'lld'
+      result = bytes.lines.map do |line|
+        row = /\A\s*[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+\d+\s+(.+?)\s*\z/.match(line)
+        next unless row
+        # Output-section and symbol rows have no input-section delimiter.
+        next unless row[1].include?(':(')
+        input = /\A(.+):\([^()]*\)\z/.match(row[1])
+        raise Error, 'unsupported LLD input contribution' unless input
+        next if input[1] == '<internal>'
+        input[1]
       end.compact.uniq
       unless result.all? { |input| input.match?(/\A[^\s()]+(?:\([^\s()]+\))?\z/) }
         raise Error, 'unsupported link input name'

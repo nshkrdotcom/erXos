@@ -143,15 +143,9 @@ class PackProvenanceTest < Minitest::Test
     end
   end
 
-  def test_gnu_script_scalars_are_not_file_contributions
-    map = "Linker script and memory map\n .text 0x10000 0x4 root.o\n" +
-          %w[BYTE SHORT LONG QUAD SQUAD].map { |op| " 0x10004 0x8 #{op} 0x10 (_end - _start)\n" }.join
-    assert_equal ['root.o'], Erx::PackProvenance.contributors(map, format: 'gnu')
+  def test_only_lld_link_maps_are_read
     assert_raises(Erx::Error) do
-      Erx::PackProvenance.contributors(map + " 0x10008 0x8 UNKNOWN 0x0\n", format: 'gnu')
-    end
-    assert_raises(Erx::Error) do
-      Erx::PackProvenance.contributors(map + " 0x10008 0x8 QUAD 0x0 hidden.o\n", format: 'gnu')
+      Erx::PackProvenance.contributors("Linker script and memory map\n .text 0x10000 0x4 root.o\n", format: 'gnu')
     end
   end
 
@@ -821,9 +815,8 @@ class PackProvenanceTest < Minitest::Test
     ['hidden.obj', 'extensionless', 'odd.lib(member.obj)'].each do |name|
       File.write(@map, "10000 10000 4 4 root.o:(.text)\n10004 10004 4 4 #{name}:(.text)\n")
       @receipt['linker_map'] = reference(@map).merge('format' => 'lld', 'directory' => '.')
+      assert_equal ['root.o', name], Erx::PackProvenance.contributors(File.binread(@map), format: 'lld')
       assert_raises(Erx::Error) { resolve }
-      gnu = "Linker script and memory map\n .text 0x10000 0x4 root.o\n .text 0x10004 0x4 #{name}\n"
-      assert_equal ['root.o', name], Erx::PackProvenance.contributors(gnu, format: 'gnu')
     end
   end
 
@@ -834,16 +827,6 @@ class PackProvenanceTest < Minitest::Test
     ["x: $(shell bad)", 'x: a#bad', "x: a\\", 'no target'].each do |bad|
       assert_raises(Erx::Error) { Erx::PackProvenance.dependencies(bad) }
     end
-  end
-
-  def test_gnu_discarded_contributions_do_not_enter_the_closure
-    map = "Discarded input sections\n 0x0000 0x4 dead.o\nLinker script and memory map\n .text 0x10000 0x4 root.o\n"
-    assert_equal ['root.o'], Erx::PackProvenance.contributors(map, format: 'gnu')
-  end
-
-  def test_gnu_linker_fill_is_not_a_file_contribution
-    map = "Linker script and memory map\n .text 0x10000 0x4 root.o\n *fill* 0x00000000000058ec 0x14 00000000\n"
-    assert_equal ['root.o'], Erx::PackProvenance.contributors(map, format: 'gnu')
   end
 
   def test_assembled_receipts_bind_components_and_producer

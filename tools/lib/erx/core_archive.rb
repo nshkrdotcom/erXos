@@ -238,8 +238,8 @@ module Erx
       BoundedFile.read(result.fetch('log'), maximum: PackProvenance::MAX_METADATA)
     end
 
-    # A GNU-format archive with a symbol index, which the GNU linker of the
-    # inherited build reads; llvm-ar writes it without times or owners.
+    # A GNU-format archive with a symbol index, which the inherited build's
+    # linker reads; llvm-ar writes it without times or owners.
     def archive(objects, directory:, tools:, runner:, name: ARCHIVE)
       runner.run([tools.fetch(:ar), '--format=gnu', 'rcsD', name, *objects.map { |path| File.basename(path) }],
                  name: 'core-archive', deadline: 60, chdir: directory, env: environment)
