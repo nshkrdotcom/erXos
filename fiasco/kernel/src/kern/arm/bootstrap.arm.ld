@@ -1,4 +1,6 @@
-/* Modified by erXos: the raw bootstrap keeps the dynamic symbols. */
+/* Modified by erXos: the raw bootstrap keeps the dynamic symbols, the link
+ * checks its relocations are in the format its relocator applies, and
+ * _start_link_addr gives _start its link address. */
 PHDRS
 {
   phdr PT_PHDR PHDRS;
@@ -33,6 +35,11 @@ SECTIONS {
     ASSERT(_alt_insns_begin == _alt_insns_end,
            "No alternative instruction patching in bootstrap!");
   } :rw
+
+  /* _start's link address as an absolute symbol, a link-time constant that
+   * needs no relocation: the AArch64 _start subtracts it from its run-time
+   * address to find the load offset before relocate() has run. */
+  _start_link_addr = ABSOLUTE(_start);
 
   /* Add dynamic symbol information. It keeps readelf happy when dumping
    * bootstrap.fiasco.pre.o, and the raw bootstrap keeps it too. */
@@ -71,6 +78,16 @@ SECTIONS {
       *(.rela.bss .rela.bss.* .rela.gnu.linkonce.b.*)
       *(.rela.iplt)
     }
+
+  /* The relocator (Elf::relocate in bootstrap.cpp) applies the one format of
+   * dynamic relocation whose tag bootstrap_reloc_tag names, DT_RELA (7) or
+   * DT_REL (17), and skips the other without a word: a bootstrap linked with
+   * the other format runs with none of its pointers relocated. Tag 0 is a
+   * bootstrap without an MMU, which runs at its link address. */
+  ASSERT(bootstrap_reloc_tag == 7 ? SIZEOF(.rel.dyn) == 0 :
+         bootstrap_reloc_tag == 17 ? SIZEOF(.rela.dyn) == 0 :
+         bootstrap_reloc_tag == 0,
+         "bootstrap: dynamic relocations in a format its relocator skips")
 
   .rel.plt        : { *(.rel.plt) }
   .rela.plt       : { *(.rela.plt) }

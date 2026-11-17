@@ -1,3 +1,6 @@
+// Modified by erXos: the relocator names the dynamic relocation format it
+// applies, which the bootstrap link checks, and reaches the dynamic section
+// PC-relatively under clang too.
 INTERFACE [arm]:
 
 #include "mem_layout.h"
@@ -39,6 +42,12 @@ public:
   static unsigned long load_addr;
 };
 
+// The dynamic section, which the relocator reads before any GOT entry holds
+// a run-time address, so it must be reached PC-relatively: hidden, and
+// declared at namespace scope, since clang drops the attribute from a
+// block-scope declaration in a template and loads the address from the GOT.
+extern char _DYNAMIC[] __attribute__ ((visibility ("hidden")));
+
 /**
  * Helper to apply REL(A) relocations at startup.
  *
@@ -54,13 +63,18 @@ struct Elf
   static inline unsigned long
   elf_dynamic_section()
   {
-    extern char _DYNAMIC[] __attribute__ ((visibility ("hidden")));
     return reinterpret_cast<unsigned long>(&_DYNAMIC[0]);
   }
 
   static inline void
   relocate(unsigned long load_addr)
   {
+    // Names the one format applied, for bootstrap.arm.ld's check that the
+    // link made no dynamic relocation of the other, which this loop skips.
+    // The symbol is global, so the bootstrap instantiates this template once.
+    asm (".global bootstrap_reloc_tag\n\t"
+         ".set bootstrap_reloc_tag, %c0" : : "i"(DYN::Reloc));
+
     DYN *dyn = reinterpret_cast<DYN *>(elf_dynamic_section());
     unsigned long relcnt = 0;
     RELOC *rel = nullptr;
@@ -187,8 +201,13 @@ IMPLEMENTATION [arm && !mmu]:
 #include "globalconfig.h"
 #include "infinite_loop.h"
 
+// Runs at its link address and relocates nothing: tag 0, which
+// bootstrap.arm.ld's check accepts.
 extern "C" void relocate(unsigned long)
 {}
+
+asm (".global bootstrap_reloc_tag\n"
+     ".set bootstrap_reloc_tag, 0\n");
 
 extern "C" void bootstrap_main()
 {

@@ -12,8 +12,8 @@
     "fiasco/kernel/src/Makefile.sub2": "a717a2f669e4a5af1ad7fade3b3a6e6316b209002def978d06bad4157e1dd359",
     "fiasco/kernel/src/Makerules.TCBOFFSET": "3925981e6c0c4781b29d2dae04d8af728785ef7f3f8e888d508c358916e84487",
     "fiasco/kernel/src/Makerules.VERSION": "da58b8087505d7abfd20720ba523c20de38518d444c146dd3faee4d8788f78ef",
-    "fiasco/kernel/src/kern/arm/Makerules.KERNEL.arm": "3665a6c45a1e7cb9e577d10d22254d5cf136972a0ee3542ed09301e2034e479d",
-    "fiasco/kernel/src/kern/arm/bootstrap.arm.ld": "2341e7581215e641a4f6b906b706fa6a2975964426d7fcb93d90a78c36ca02e8",
+    "fiasco/kernel/src/kern/arm/Makerules.KERNEL.arm": "747e188522207fa99d08211c9b01fdcdd653a357af8e00048e0a5dc10cf12481",
+    "fiasco/kernel/src/kern/arm/bootstrap.arm.ld": "c755264ee3b9f9488d1549ea0d46824f2e843c4b0378ab7e620cfdeafc171876",
     "fiasco/kernel/src/kern/dump_tcboffsets.cc": "e2947eb49cb2cff66199257c35de0dbc2c0dab405946f1aaf2715f9dfb6db4f7",
     "fiasco/kernel/tool/config-tags": "791f463b77a54e1862d294b32afb78a8d4f9b52558f0b746ee3533cda11324a1",
     "fiasco/kernel/tool/gen_kconfig": "8d1cde5253ba072714454357627990af042345fbb209546e1849ae8e89154451",
@@ -205,11 +205,11 @@
       },
       "build/fiasco/kernel/bootstrap.fiasco.bin": {
         "mode": "binary",
-        "sha256": "d9e1b5fab34ab4ff968d10c50e746c657bb932d0bc38bf44b4c99a539c9671d5"
+        "sha256": "44e43bc54b60d9f34b26541d0b4d379905f91978b2091fa38366fcb5ff0153c9"
       },
       "build/fiasco/kernel/bootstrap.fiasco.pre.o": {
         "mode": "binary",
-        "sha256": "9b09f08555cf266b86ceecc6d9d90a47966e81ce7d6fd4d5c81939face2c2748"
+        "sha256": "e38dfea3d7aa3a0ee51c397c5f8eeeed611a9bffe5d74b63adc92dcbf8215af2"
       },
       "build/fiasco/kernel/dump_tcboffsets": {
         "mode": "binary",
@@ -360,7 +360,7 @@
       },
       "kernel/bootstrap.fiasco.rel": {
         "role": "object",
-        "output_sha256": "220531b4939078caa8dc48d6c7ce92c037b02ed1144b644df2c46288b1134bdd",
+        "output_sha256": "6d3416c359d1854b85b83f7150c69459a61caaf61d3b851c9bc94409dd3d6351",
         "code": [
           "fiasco/kernel/src/kern/arm/bootstrap.arm.ld"
         ],

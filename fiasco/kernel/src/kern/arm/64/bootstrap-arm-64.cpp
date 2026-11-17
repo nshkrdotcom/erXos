@@ -1,3 +1,5 @@
+// Modified by erXos: _start takes its link address from a link-time constant
+// rather than its GOT slot, so the load offset needs no relocated word.
 INTERFACE [arm && mmu]:
 
 #include "mem_layout.h"
@@ -497,8 +499,7 @@ asm
 "     adr  x10, _start                 \n"
 "     add  x9, x9, x10                 \n"
 "     mov  sp, x9                      \n"
-"     adrp x9, :got:_start             \n"
-"     ldr  x9, [x9, #:got_lo12:_start] \n"
+"     ldr  x9, .Lstart_link            \n"
 "     sub  x0, x10, x9                 \n"
 "     mov  x19, x0                     \n"
 "     bl   relocate                    \n"
@@ -506,6 +507,10 @@ asm
 "     bl   bootstrap_main              \n"
 ".p2align 3                            \n"  // running uncached and need align!
 ".Lstack_offs: .8byte (_stack - _start)\n"
+// _start's link address, an absolute symbol of bootstrap.arm.ld, so the word
+// holds it from the link on and no relocation touches it.
+".p2align 3                            \n"
+".Lstart_link: .8byte _start_link_addr \n"
 ".previous                             \n"
 ".section .bss                         \n"
 ".p2align 4                            \n"

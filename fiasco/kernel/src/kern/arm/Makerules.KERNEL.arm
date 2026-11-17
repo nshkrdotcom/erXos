@@ -1,4 +1,6 @@
-# Modified by erXos: the raw bootstrap keeps its dynamic symbols, for llvm-objcopy.
+# Modified by erXos: the raw bootstrap keeps its dynamic symbols (for
+# llvm-objcopy); LLD writes link-time values into the bootstrap's relocated
+# words; only whole exported names reach bootstrap.fiasco.sym.
 # -*- makefile -*-
 # vim:se ft=make:
 
@@ -66,12 +68,19 @@ bootstrap_ldflags  = $(LDFLAGS) $(LD_EMULATION_FLAG)
 bootstrap_ldflags += -static -pie --no-dynamic-linker -z text
 bootstrap_ldflags += -defsym kernel_load_addr=$(CONFIG_KERNEL_LOAD_ADDR)
 bootstrap_ldflags += -T$(bootstrap_lds)
-bootstrap_ldflags += $(if $(filter clang,$(LD_TYPE)),-z rel)
+# Each relocated word holds its link-time value: an AArch64 bootstrap without
+# an MMU runs at its link address and relocates nothing, and LLD leaves a RELA
+# word zero unless told to apply it (a REL word on 32-bit Arm always holds it).
+# The format is the architecture's own (REL on 32-bit Arm, RELA on AArch64),
+# the one its relocator applies; bootstrap.arm.ld checks it.
+bootstrap_ldflags += $(if $(filter clang,$(LD_TYPE)),--apply-dynamic-relocs)
 
 bootstrap_export   = _start start_of_loader end_of_bootstrap_info
 bootstrap_strip    = --strip-all $(addprefix --keep-symbol=,$(bootstrap_export))
 bootstrap_syms     = end_of_bootstrap_info|_start|start_of_loader
-bootstrap_sed      = 's/^0*([0-9a-f]*) [a-zA-Z] ($(bootstrap_syms))/\2 = 0x\1;/p'
+# Whole names only: a symbol that merely begins with an exported name, such
+# as _start_link_addr, is not exported.
+bootstrap_sed      = 's/^0*([0-9a-f]*) [a-zA-Z] ($(bootstrap_syms))$$/\2 = 0x\1;/p'
 
 bootstrap.$(KERNEL).pre.o: $(OBJ_BOOTSTRAP) $(bootstrap_lds)
 	$(LINK_MESSAGE)
@@ -80,8 +89,8 @@ bootstrap.$(KERNEL).pre.o: $(OBJ_BOOTSTRAP) $(bootstrap_lds)
 # Make a raw binary. The linker script is already minimal. Only explicitly drop
 # what is expected to come from fiasco instead (.bootstrap.dropped_info). The
 # dynamic symbols stay: llvm-objcopy refuses to remove .dynsym and .dynstr while
-# .rel.dyn links to them, and they lie inside the loaded range either way, so
-# keeping them changes only those bytes, never the layout.
+# the dynamic relocation section links to them, and they lie inside the loaded
+# range either way, so keeping them changes only those bytes, never the layout.
 bootstrap.$(KERNEL).bin: bootstrap.$(KERNEL).pre.o
 	$(COMP_MESSAGE)
 	$(VERBOSE)$(OBJCOPY) -O binary --remove-section=.bootstrap.dropped_info $< $@
