@@ -45,10 +45,9 @@ module Erx
     # How long the altered cell watches after the refusal for a mount or a screen.
     SETTLE_SECONDS = 15
     # Why each quote's first fetch fails in the kiosk boot, which has no network device,
-    # so the dashboard shows that reason's words beside every quote. httpc's error there
-    # is a shape erx_quotes_http does not name, so it shows the catch-all, failed
-    # (TODO.md, the dashboard's offline reason).
-    OFFLINE_REASON = :failed
+    # so the dashboard shows that reason's words beside every quote: the connect finds no
+    # route, which erx_quotes_http names connect ("cannot connect").
+    OFFLINE_REASON = :connect
     ALTERED = '-altered'
     # The minute Run#call draws before the boots, to build and compile the renderer.
     WARM_MINUTE = [[1970, 1, 1], [0, 0, 0]].freeze

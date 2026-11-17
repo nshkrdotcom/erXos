@@ -2969,6 +2969,8 @@ it; git history is the record of completed work.
 * [High] network, `erx_net_client` (`erx_gen_tcp`; design-network-stack, "The socket
   process"): the TCP socket process lacks parts of the design.
   Still missing:
+  `monitor/1`, which `inet:monitor/1` calls, so `ssl:listen` ends in `undef` (its session cache and ticket
+  tracker monitor the listening socket; traced from source, not run);
   the packet modes `http`, `http_bin`, `httph`, `httph_bin`, `asn1`, `cdr`, `sunrm`, `fcgi` and
   `tpkt` (erx_net_packet frames 1, 2, 4 and `line`; the http modes need the core to keep
   whether the request line was read, as gen_tcp_socket's `recv_httph`), `line_delimiter`, and the
@@ -8768,10 +8770,6 @@ document's "residual risks accepted" paragraph.
   the table's hardcoded address, with a guest forward for that address and port 443 naming a `cmd:` relay
   started per connection (unverified until the harness runs it).
 
-* [Low] `examples/dashboard` (`erx_quotes_http`): with no network device, as in the kiosk QEMU
-  boot, every quote shows `no data: failed`: httpc's connect error there is a shape the classifier
-  does not name. Log the term in a boot, then classify it (`no network` or `cannot connect`) and
-  re-record `test/display/reference/dashboard` with Kiosk::OFFLINE_REASON.
 * [Low] `examples/dashboard` (`erx_quotes_table`): Kraken's address, 104.16.14.28 (one of
   `api.kraken.com`'s Cloudflare addresses), is hardcoded and may change; a change shows
   `cannot connect` or `certificate rejected` until the row's `address` is updated.
