@@ -7,6 +7,7 @@ require_relative 'runner'
 require_relative 'json_input'
 require_relative 'source_text'
 require_relative 'bounded_file'
+require_relative 'example_fetch'
 
 module Erx
   # Import inventories record attribution decisions; they do not infer a
@@ -168,9 +169,9 @@ module Erx
     # submodule, which Checks requires. That directory is not an import root:
     # the submodule is, and what erXos keeps beside it (display/lvgl's
     # erx_lvgl.c and lv_conf.h) is erXos's code (PackProvenance#find_origin).
-    SUBMODULES = %w[
-      display/lvgl/lvgl
-    ].freeze
+    # The examples' submodules (ExampleFetch::SUBMODULES) are listed too: a clone does not
+    # check them out, and no gate reads them.
+    SUBMODULES = ['display/lvgl/lvgl', *ExampleFetch::SUBMODULES.values].freeze
     INVENTORY_MARKER = "\n```json\n"
     # Each inventory field and the class of its value; the one list of the
     # fields, from which the reader names a missing or mistyped one.

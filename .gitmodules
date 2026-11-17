@@ -1,3 +1,7 @@
 [submodule "display/lvgl/lvgl"]
 	path = display/lvgl/lvgl
 	url = https://github.com/stass/lvgl
+[submodule "examples/doom/doom"]
+	path = examples/doom/doom
+	url = https://github.com/stass/erxos-doom
+	update = none

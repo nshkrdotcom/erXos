@@ -16,8 +16,8 @@ module Erx
     COMMON_FIELDS = %w[id kind version sha256 license status].freeze
     # The hosts a zip source can name, each with the Ruby platforms it covers. A zip
     # source is a prebuilt program for one host (Playwright's Chromium), fetched only
-    # on that host.
-    HOSTS = { 'darwin-arm64' => /\A(?:arm64|aarch64)-darwin/ }.freeze
+    # on that host, or data for every host ('any': Freedoom's release archive).
+    HOSTS = { 'darwin-arm64' => /\A(?:arm64|aarch64)-darwin/, 'any' => /./ }.freeze
     # A file source may also pin what it encodes, an image inside a test program, by
     # the decoded bytes' SHA-256 and size, both or neither: the reader that decodes it
     # checks them, and decompresses no more than decoded_bytes. The fetch step checks
@@ -380,7 +380,8 @@ module Erx
 
       Dir.mktmpdir('.source-', parent) do |temporary|
         extracted = File.join(temporary, 'tree')
-        # tar is bsdtar on every host a zip source names, and reads a zip as it reads a tar.
+        # tar is bsdtar on macOS and FreeBSD, and reads a zip as it reads a tar; a host whose
+        # tar cannot read a zip refuses the source in Sources.unpack.
         if %w[tar zip git].include?(source.fetch('kind'))
           selected = extracted
           if source.fetch('directory') != '.'

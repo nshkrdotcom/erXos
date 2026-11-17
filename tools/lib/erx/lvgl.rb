@@ -10,6 +10,7 @@ require_relative 'runner'
 require_relative 'bounded_file'
 require_relative 'generated'
 require_relative 'native_root'
+require_relative 'submodule'
 
 module Erx
   # erx-lvgl (docs/design-display.md, "The widget server"): LVGL from the git
@@ -24,11 +25,9 @@ module Erx
     SUBMODULE = 'display/lvgl/lvgl'
     MAKEFILE = 'display/lvgl/Makefile'
     DEADLINE = 1800
-    GIT_DEADLINE = 900
     STATUS_BYTES = 65_536
     HOST_FLAGS = '-g -O1'
     SANITIZE = '-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer'
-    FILE_TRANSPORT = 'protocol.file.allow=always'
     INIT_COMMAND = "git submodule update --init #{SUBMODULE}".freeze
     # The flags after S in the submodule field of a porcelain v2 entry.
     DRIFT_NOTES = { 'C' => 'is not at the commit the index records', 'M' => 'has changes to tracked files',
@@ -43,17 +42,11 @@ module Erx
     # when it is not checked out yet; `git fetch --unshallow` in it brings
     # the history for patch work. A checkout that is there is left as
     # it is, so a patch being developed in it is never moved. `tools/erx
-    # fetch` runs it: the one step that reaches the network for LVGL. When git's
-    # configuration names a local path as the submodule's URL (a worktree whose
-    # shared configuration points it at the main checkout's clone), git
-    # refuses the clone unless the file transport is allowed, so the clone
-    # allows it, for this one command on this one submodule path and never in
-    # git's configuration.
+    # fetch` runs it: the one step that reaches the network for LVGL (Submodule.checkout).
     # Returns the line that says which of the two it did.
     def init(root:, runner:)
       return "LVGL: #{SUBMODULE} is already checked out; left as it is" if checked_out?(root)
-      git(root: root, runner: runner, name: 'lvgl-submodule-init',
-          config: [FILE_TRANSPORT], arguments: ['submodule', 'update', '--init', '--depth', '1', '--', SUBMODULE])
+      Submodule.checkout(root: root, runner: runner, path: SUBMODULE, name: 'lvgl-submodule-init')
       "LVGL: cloned #{SUBMODULE} at the commit its gitlink records"
     end
 
@@ -103,21 +96,8 @@ module Erx
       BoundedFile.read(result.fetch('log'), maximum: STATUS_BYTES)
     end
 
-    # git on the superproject the root names, with no GIT_ variable of the
-    # caller's environment and core.fsmonitor off, so it acts on that
-    # checkout alone and starts no program its configuration names. config
-    # adds `-c` settings for this one command.
-    def git(root:, runner:, name:, arguments:, config: [], output_limit: nil)
-      unless File.exist?(File.join(root, '.git'))
-        raise Error, "#{root} is not a git checkout, so git cannot fetch or check #{SUBMODULE}"
-      end
-      settings = ['core.fsmonitor=false', *config].flat_map { |setting| ['-c', setting] }
-      runner.run(['git', *settings, '-C', root, *arguments], name: name,
-                 deadline: GIT_DEADLINE, chdir: root, output_limit: output_limit,
-                 env: ENV.keys.grep(/\AGIT_/).to_h { |key| [key, nil] })
-    rescue CommandError => error
-      raise Error, "git #{arguments.grep_v(/\A-/).first} of #{SUBMODULE} failed; log: #{error.result.fetch('log')}"
-    end
+    # git on the superproject the root names, for LVGL's submodule (Submodule.git).
+    def git(**arguments) = Submodule.git(path: SUBMODULE, **arguments)
     private_class_method :status, :git
 
     # Builds the variant and returns the program's path.
