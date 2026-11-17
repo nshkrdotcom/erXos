@@ -3240,11 +3240,16 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   normal scheduler. Check `F_GETFL` at each call and fail with `{error, blocking}`, or poll with a
   zero timeout before each read and write. Also refuse a descriptor not open for reading and
   writing at adoption.
-* [Low] network tests, `erx_tap_tests:owner_end_closes_the_descriptor_test`: under a host load
-  near 20 the FIFO's reader was still blocked 2 s after the owner's `DOWN` (`{value, blocked}`,
-  line 138), and the same file passed alone at once. Find what closes the descriptor after the
-  owner's end (the resource's down callback or its destructor) and wait on that, not on a fixed
-  2 s.
+* [Low] network tests, `erx_tap_tests:owner_end_closes_the_descriptor_test`: under load the
+  FIFO's reader is still blocked 2 s after the owner's `DOWN` (`{expected, eof}, {value,
+  blocked}`): seen under a host load near 20, and once in a full `make check`, while
+  `test_tap_transport_and_nif` passed five runs out of five alone. The owner's exit sends the
+  test's `DOWN` and runs the handle's down callback in one walk of its monitors
+  (`erts_proc_exit_handle_monitor`, `otp/erts/emulator/beam/erl_process.c`, which calls
+  `erts_fire_nif_monitor` in `erl_nif.c`), so `DOWN` can arrive first; an armed descriptor is
+  closed only by the stop callback, which `ERL_NIF_SELECT_STOP` may schedule for later. Wait on
+  the close itself, or bound the reader by the case's own timeout rather than a fixed 2 s,
+  since an `eof` that comes at all comes at once.
 * [Low] network, `erx_tap` (unprivileged runs): the privileged opener that hands the node a tap
   descriptor over `SCM_RIGHTS` ([design-network-stack.md](docs/design-network-stack.md), "The tap
   transport") is not built; it must hand the descriptor over close-on-exec, so no port program
