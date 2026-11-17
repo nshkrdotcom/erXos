@@ -45,6 +45,8 @@ start(Read) ->
     1 = erlang:trace(Owner, true, [set_on_spawn, 'receive', {tracer, Case}]),
     Owner ! go,
     {ok, Holder} = receive {holder, Started} -> Started end,
+    %% The first query starts the reader.
+    {error, eagain} = erx_storage_login_keys:root_answer(Holder),
     Monitor = receive {trace, _Reader, 'receive', {start, Ref}} -> Ref end,
     {Holder, Monitor}.
 
@@ -80,6 +82,19 @@ the_keys_of_the_file_are_root_test() ->
     ?assertEqual({ok, <<(key(1))/binary, (key(2))/binary>>}, settled(Holder)),
     ?assertEqual({ok, <<(key(1))/binary, (key(2))/binary>>}, grant_read(Holder)),
     ?assertEqual([], logs()).
+
+%% No sector is read until root is first asked for, so a boot whose session has
+%% imported its keys never reads the medium.
+no_sector_is_read_until_root_is_asked_test() ->
+    Case = self(),
+    Read = reader("found"),
+    {ok, Holder} = erx_storage_login_keys:start_link(fun(Sector) -> Case ! {read, Sector}, Read(Sector) end,
+                                                     fun(_Line) -> ok end),
+    ?assertEqual(none, receive {read, _} -> read after 100 -> none end),
+    ?assertEqual({error, eagain}, erx_storage_login_keys:root_answer(Holder)),
+    ?assertEqual(read, receive {read, _} -> read after 5000 -> none end),
+    unlink(Holder),
+    exit(Holder, kill).
 
 %% The mount returns before the reader reads: root answers eagain, an error and not an
 %% empty file, through the grant too, until the reader is released.

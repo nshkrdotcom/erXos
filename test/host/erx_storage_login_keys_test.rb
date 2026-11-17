@@ -38,11 +38,10 @@ class ErxStorageLoginKeysTest < Minitest::Test
               from: "decided(Answer) ->\n    receive\n",
               to: "decided(Answer) ->\n    receive\n        {_, {result, {keys, Late, _}}} -> decided({ok, iolist_to_binary(Late)});\n",
               caught_by: 'a_result_after_the_reader_s_end_changes_nothing_test'),
-    Fault.new(name: 'the mount waiting for the reader',
-              from: "    proc_lib:init_ack(Parent, {ok, Holder}),\n    loading(Monitor, Log).",
-              to: "    receive {Monitor, {result, _}} = Result -> self() ! Result end,\n" \
-                  "    proc_lib:init_ack(Parent, {ok, Holder}),\n    loading(Monitor, Log).",
-              caught_by: 'a_held_reader_leaves_root_answering_eagain_until_it_is_released_test'),
+    Fault.new(name: 'the medium read at the mount',
+              from: "    proc_lib:init_ack(Parent, {ok, self()}),\n    idle(Read, Log).",
+              to: "    proc_lib:init_ack(Parent, {ok, self()}),\n    loading(start_reader(Read), Log).",
+              caught_by: 'no_sector_is_read_until_root_is_asked_test'),
     Fault.new(name: 'a read past the request',
               from: 'min(Count, byte_size(Bytes) - Offset)', to: 'byte_size(Bytes) - Offset',
               caught_by: 'reads_stay_within_the_file_test')
