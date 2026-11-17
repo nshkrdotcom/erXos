@@ -79,6 +79,11 @@ narrowed by that: any code it runs may start OTP's daemon with keys of its choos
 -define(HOME_KEYS, "/root/.ssh/authorized_keys").
 -define(USER, "root").
 -define(MAX_AUTH_TRIES, 6).
+%% The version banner, SSH-2.0-erXos_<release>: the softwareversion of RFC 4253, section 4.2,
+%% printable US-ASCII without spaces or minus signs. The system name and the release
+%% number are abi/erx_abi.txt's `uname_sysname` and `uname_release`, and the case
+%% erx_ssh_dev_tests:the_banner_names_erxos checks the line against those limits.
+-define(ID_STRING, binary_to_list(<<?ERX_UNAME_SYSNAME_BYTES/binary, "_", ?ERX_UNAME_RELEASE_BYTES/binary>>)).
 -define(BLOB_SIZE, (4 + ?ERX_SSH_ED25519_NAME_SIZE + 4 + ?ERX_SSH_ED25519_KEY_SIZE)).
 -define(MEDIUM_KEYS_MAX, 16).
 -define(MEDIUM_READ, (?MEDIUM_KEYS_MAX * ?BLOB_SIZE + 1)).
@@ -188,6 +193,7 @@ daemon(Port, #{keys := Keys, home := Home, host := Host, open := Open}) ->
                           {key_cb, {?MODULE, [{keys, [Home, Keys]}]}},
                           {auth_methods, "publickey"},
                           {max_auth_tries, ?MAX_AUTH_TRIES},
+                          {id_string, ?ID_STRING},
                           {ssh_cli, {erx_ssh_dev_channel, [Open]}},
                           {subsystems, []}])
     end.

@@ -20,13 +20,15 @@
 -module(erx_ssh_dev_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 -include_lib("kernel/include/file.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
 daemon_test_() ->
     {setup, fun start/0, fun stop/1,
      fun(Context) ->
-             [?_test(a_shell_runs_on_a_tty(Context)),
+             [?_test(the_banner_names_erxos(Context)),
+              ?_test(a_shell_runs_on_a_tty(Context)),
               ?_test(ctrl_c_ends_with_int(Context)),
               ?_test(exec_is_refused(Context)),
               ?_test(root_logs_in_with_a_home_key(Context)),
@@ -124,6 +126,17 @@ connect(#{port := Port}, User, Dir) ->
     ssh:connect("localhost", Port, [{user, User}, {user_dir, Dir}, {silently_accept_hosts, true},
                                     {save_accepted_host, false}, {user_interaction, false},
                                     {auth_methods, "publickey"}, {connect_timeout, 10000}], 10000).
+
+%% The server announces itself as erXos and the release number of abi/erx_abi.txt, not as
+%% OTP's default id_string (Erlang/<ssh version>). The line is RFC 4253, section 4.2's
+%% identification string, whose softwareversion has no space, no minus sign and only
+%% printable US-ASCII.
+the_banner_names_erxos(#{port := Port}) ->
+    {ok, Socket} = gen_tcp:connect("localhost", Port, [binary, {active, false}, {packet, line}], 10000),
+    {ok, Line} = gen_tcp:recv(Socket, 0, 10000),
+    ok = gen_tcp:close(Socket),
+    ?assertEqual(<<"SSH-2.0-erXos_", ?ERX_UNAME_RELEASE_BYTES/binary, "\r\n">>, Line),
+    ?assertMatch({match, _}, re:run(Line, "^SSH-2\\.0-[\\x21-\\x2c\\x2e-\\x7e]+\r\n$")).
 
 %% A pty-req's size reaches the tty, a window change resizes it, input reaches it
 %% and its output the client, and the status the shell ends with is the channel's.

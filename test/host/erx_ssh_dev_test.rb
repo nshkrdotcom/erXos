@@ -21,7 +21,8 @@ require_relative '../fixtures/erlang_build'
 # a keys file. Each seeded fault must fail the cases: a key callback that admits every
 # user name, a home copy imported again or written empty, the medium's blobs written
 # without being decoded, a medium file of any length
-# taken as blobs, keys files read by OTP's ssh_file, exec run, any build kind taken for
+# taken as blobs, keys files read by OTP's ssh_file, the default version banner (OTP's
+# id_string, Erlang/<version>, in place of erXos_<release>), exec run, any build kind taken for
 # a development one, and OTP's encoding of an Ed25519 private key without its public
 # half, which ssh_file cannot read back as a host key.
 class ErxSshDevTest < Minitest::Test
@@ -45,6 +46,8 @@ class ErxSshDevTest < Minitest::Test
     Fault.new(name: 'a keys file read by ssh_file', source: DEV,
               from: '{ok, Blobs, _Findings} ?= erx_boot_keys:decode(Bytes),',
               to: 'Blobs = [ssh_file:encode(K, ssh2_pubkey) || {K, _} <- ssh_file:decode(Bytes, auth_keys)],'),
+    Fault.new(name: 'the default version banner', source: DEV,
+              from: '{id_string, ?ID_STRING},', to: ''),
     Fault.new(name: 'exec run', source: DEV,
               from: '{ssh_cli, {erx_ssh_dev_channel, [Open]}},', to: '{exec, erlang_eval},'),
     Fault.new(name: 'any build kind taken for a development one', source: 'erlang/apps/erx/src/erx_build.erl',

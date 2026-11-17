@@ -1067,7 +1067,11 @@ identifier.
    ended is the channel's `exit-status`, or `exit-signal` `INT`
    ([Sessions, ttys and shells](#sessions-ttys-and-shells)). An `exec`
    request is answered `exec is not supported in 0.1` on standard error
-   with exit status 1, and no subsystem is offered. Its host
+   with exit status 1, and no subsystem is offered. Its version banner
+   is `SSH-2.0-erXos_` and the release number of `abi/erx_abi.txt`'s
+   `uname_release`, not OTP's `Erlang/<version>`, within RFC 4253's
+   section 4.2 limits on the softwareversion (printable US-ASCII, no space,
+   no minus sign). Its host
    key is root's, Ed25519, at `/data/ssh/ssh_host_ed25519_key`, read
    through OTP's `ssh_file`, made when missing and refused when it does
    not decode. It admits `root` alone, by public key alone, with
