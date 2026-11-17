@@ -25,6 +25,7 @@ require_relative 'fiasco_provenance'
 require_relative 'generated'
 require_relative 'image_apps'
 require_relative 'image_record'
+require_relative 'package_key'
 require_relative 'files_guest'
 require_relative 'hostlink_guest'
 require_relative 'reload_guest'
@@ -382,6 +383,9 @@ module Erx
     # whole on every pack.
     def self.packed_directory(platform) = "build/production-image/#{platform.name}"
 
+    # Where card_apps packs a card's own packages, replaced whole on every build.
+    CARD_APPS_DIRECTORY = 'build/card-apps'
+
     # `tools/erx pack`'s one build: Fiasco for platform (Fiasco#build_for), then the
     # production image of platform's development machine, with its medium when medium
     # is set, into packed_directory, cleared first, with the packages of apps
@@ -402,15 +406,17 @@ module Erx
     # (BootPartition.boot_partition_medium?) gets that partition's files and the card, the ABI's medium for the board (PiMedium); any other
     # gets the release medium for QEMU (ReleaseMedium). A boot that creates a domain
     # (MediumBoot) names a larger machine and a manifest with room for it, whose domain
-    # row names the release and runtime image the image then carries.
+    # row names the release and runtime image the image then carries. A card takes no
+    # apps of its builder's (check_card_apps) and carries its own (card_apps).
     def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none)
       on_own_board(machine)
       self.class.check_card_apps(machine.platform, apps)
 
-      source = self.class.medium_manifest(machine.platform, manifest_source)
-      built = assemble(directory: directory, manifest_source: source, added: NOTHING_ADDED, test_code: false,
-                       machine: machine, domains: domain_boots(source), apps: apps, record: false)
-      if BootPartition.boot_partition_medium?(machine.platform)
+      card = BootPartition.boot_partition_medium?(machine.platform)
+      apps = card_apps if card
+      built = assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: false,
+                       machine: machine, domains: domain_boots(manifest_source), apps: apps, record: false)
+      if card
         return [built, BootPartition.lay_out(root: @root, runner: @runner, platform: machine.platform, build_kind: BUILD_KIND,
                                              bootable: built.single, erofs: built.erofs,
                                              directory: built_directory(built), compiler: @compiler, linker: @linker)]
@@ -419,22 +425,32 @@ module Erx
       [built, release_medium(built)]
     end
 
-    # The manifest source a medium of platform is packed from. A card, the medium of a
-    # board the firmware boots from a boot partition, is the one the website offers, so,
-    # until a release signer exists, it leaves out the apps row with the room it took
-    # (Manifest::Edit.without_apps), as the site's manifest does, and takes no package
-    # (build_medium; docs/design-packaging.md, "The shipped manifests"). Every other
-    # medium's is source.
-    def self.medium_manifest(platform, source)
-      BootPartition.boot_partition_medium?(platform) ? Manifest::Edit.without_apps(source) : source
-    end
-
-    # Refuses apps (ImageApps::Plan) for a medium of platform when it is a card, which
-    # takes no package, no signer and no --local (medium_manifest).
+    # Refuses apps (ImageApps::Plan) of a builder's for a medium of platform when it is a
+    # card, the medium of a board the firmware boots from a boot partition, which the
+    # website offers: it carries the kiosk alone (card_apps), and no package, signer or
+    # --local of its builder's (docs/design-packaging.md, "The shipped manifests").
     def self.check_card_apps(platform, apps)
       return if apps.empty? || !BootPartition.boot_partition_medium?(platform)
 
-      raise Error, "the #{platform.name} card is the one the website offers, so it takes no app and no --local"
+      raise Error, "the #{platform.name} card is the one the website offers: it carries the kiosk alone and takes no " \
+                   'app, signer or --local'
+    end
+
+    # A card's own packages (docs/design-packaging.md, "The shipped manifests"): the kiosk,
+    # ImageApps::KIOSK, enabled, packed as the kiosk suite packs it, from a copy in the
+    # build tree so the packer's ebin/ never lands in the source tree, over an SDK the tree
+    # exports, and signed with signer, the builder's development package key unless a
+    # test names a scratch one. The plan holds no
+    # signer row and is no local image, and the build hands the manifest no development
+    # key, so the card trusts its package by its row's hash and trusts no key.
+    def card_apps(signer: PackageKey.ensure)
+      work = self.class.clear_directory(root: @root, path: File.join(@root, CARD_APPS_DIRECTORY))
+      sdk, packages = %w[sdk packages].map { |name| FileUtils.mkdir_p(File.join(work, name)).first }
+      app = File.join(work, 'app')
+      FileUtils.cp_r(File.join(@root, ImageApps::KIOSK), app)
+      kiosk = ImageApps.packed_apps([app], sdk_directory: sdk, packages_directory: packages, root: @root, runner: @runner,
+                                           signer: signer, compiler: @compiler)
+      ImageApps.plan(kiosk, enable: kiosk.map(&:name))
     end
 
     # The release medium for QEMU (ReleaseMedium) of built, an image this object packed, in

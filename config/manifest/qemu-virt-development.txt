@@ -223,6 +223,21 @@ limits web
   runtime_limits @runtime_limits.web
   peer_held 4096
   peer_held_total 4096
+# The display domain's limits, whose figures this part's opening comment explains (its
+# display domain paragraph): 24 MiB, outer 1 MiB and the apps row's four
+# pixel areas with their lanes, and one connection for each of the four apps.
+limits display
+  memory 25165824
+  outer 34619392
+  grant @share.display
+  spaces none
+  lane 4096
+  connections 4
+  crash 0
+  flags none
+  runtime_limits @runtime_limits.display
+  peer_held 4096
+  peer_held_total 4096
 principal system
   memory 197148672
   grant @share.users

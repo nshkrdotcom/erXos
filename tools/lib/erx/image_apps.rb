@@ -37,6 +37,9 @@ module Erx
     PARTITION_DIRECTORY = 'apps'
     ARTIFACT_KIND = 'package'
     DEVELOPMENT_SIGNER = 'development'
+    # The kiosk: the app the Raspberry Pi 4's card carries, enabled (ProductionImage#card_apps),
+    # and the kiosk suite boots on QEMU virt (Kiosk).
+    KIOSK = 'examples/dashboard'
     KEY_BYTES = 32
     # The most bytes of a signer's key file; a PEM Ed25519 public key takes about 115.
     KEY_FILE_MAX = 16 * 1024

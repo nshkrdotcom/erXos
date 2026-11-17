@@ -512,13 +512,16 @@ as it leaves out the domains `site_leaves_out` names
 no display domain for `services` to name and the site machine's 256 MiB
 no room for the row's memory. The Raspberry Pi 4's card, the medium of a
 board the firmware boots from a boot partition, is the other image the
-website offers, so until a release signer exists it carries none either:
-its build leaves the row out of the board's manifest with the room it
-took (`ProductionImage.medium_manifest`), and refuses a package or
-`--local`, so a card takes packages only once a key the release trusts
-can seal them, and no downloaded card ever trusts its builder's
-development key. A Raspberry Pi 4 image built without its card keeps the
-row. The row's size follows from how the build counts it:
+website offers, and boots to the kiosk: it keeps the board's row and
+carries one package, `examples/dashboard`, enabled, which its own build
+packs from the tree as the kiosk suite does (`ProductionImage#card_apps`)
+and the row binds by its header's hash. Until a release signer exists it
+carries no signer row and its build hands the manifest no development
+key, so the card trusts that one package by its hash and no key, and no
+downloaded card ever trusts its builder's development key; the build
+refuses a package, signer or `--local` of its builder's
+(`ProductionImage.check_card_apps`), so what the card holds follows from
+the tree it was built from. The row's size follows from how the build counts it:
 
 * `max` is reserved in full: property 19 counts the app template as
   `max` principals, each holding every service of `services`, in the
@@ -527,7 +530,8 @@ row. The row's size follows from how the build counts it:
   or not an app ever arrives. So `max` is the number of apps a developer
   keeps installed in one boot, not a bound to be generous with. A
   development manifest takes the default, 8, and lowers it only if the
-  board's own sums then fail. The sums are the packer's room check
+  board's own sums then fail, or to the packages its build adds where
+  the board's image trusts no key that could install another. The sums are the packer's room check
   (`RootStartup.check_archive`): the archive and `root_memory` together
   fit in RAM less `fiasco_reserve` and what the boot keeps, and the row
   adds to `root_memory` its `memory` and, in the display's outer budget,
@@ -542,9 +546,13 @@ row. The row's size follows from how the build counts it:
     development image's archive of about 54 MiB. Its manifest sets `max`
     4: `root_memory` is 383.375 MiB, and the archive has 74.125 MiB.
   * The Raspberry Pi 4, 948 MiB of RAM less a `fiasco_reserve` of 58 MiB
-    and the 12 MiB the boot keeps, leaves 878 MiB. Its `root_memory` of 185 MiB grows to
-    380 MiB at the default `max` 8, leaving 498 MiB for an archive of
-    about 60 MiB, so its manifest takes the default.
+    and the 12 MiB the boot keeps, leaves 878 MiB. Its manifest sets
+    `max` 1: its card, the only medium a Raspberry Pi 4 image takes
+    packages on, trusts no key ([The shipped manifests](#the-apps-row)),
+    so it holds only the one package its build adds, the dashboard, and
+    the display pays for one pixel area. Its `root_memory` is 275 MiB,
+    66 MiB of it the row's `memory`, leaving 603 MiB for an archive of
+    about 60 MiB.
 
   When the archive grows past the room `max` leaves it, the packer
   refuses the image, and the board's `max` is lowered then; a `max` set
@@ -1366,9 +1374,10 @@ local in its build facts, whose configuration reads
 banner names the archive's flags, and no flag says local. A local image
 never leaves the host that built it, and nothing distributes it: the
 website's build (`tools/build_site.rb`) has no `--local`, and the images
-it offers are made by builds that take no package: the website's image
+it offers are made by builds that take no package of their builder's: the website's image
 by `tools/erx boot --without-web`, and the card by the card build, which
-refuses `--local` and every package ([The shipped manifests](#the-apps-row)).
+refuses `--local` and every package of its builder's and adds only the
+kiosk ([The shipped manifests](#the-apps-row)).
 The site build takes the card only with the card's build record, which
 names its commit, built with no changes, and takes the website's image
 only with its build record, `image.boot.receipt.json`, which the
@@ -2461,8 +2470,8 @@ Decisions:
     [design-apps.md](design-apps.md#the-start-table)).
 11. **Both development manifests carry an `apps` row**, sized as
     [The shipped manifests](#the-apps-row) says; the website's image
-    and the Raspberry Pi 4's card, the images the website offers, carry
-    none until a release signer exists.
+    carries none, and the Raspberry Pi 4's card carries the kiosk alone,
+    trusted by its hash, and trusts no key until a release signer exists.
 12. **A native app starts through `erx_prog_handler`'s `window`
     option**, and the handler's start returns a monitor whose `'DOWN'`
     is the program's one end report, so no second launcher and no second

@@ -6,8 +6,10 @@
 # storage and display domains, and the services and facets of the system, storage,
 # network and display domains. A board's development manifest is this text followed by
 # the board's own part, config/manifest/BOARD-development.txt, which holds what differs:
-# its machine record, its system principal's memory, the units and windows of its own
-# devices and the domains whose rows name them (Platform#manifest_source). Neither part
+# its machine record, its system principal's memory, its apps row, the display domain's
+# limits, which follow from the board's screen and its apps row's pixel areas, the units
+# and windows of its own devices and the domains whose rows name them
+# (Platform#manifest_source). Neither part
 # is a manifest alone; the packer admits the two together, and only that text boots.
 # QEMU virt's part gives the measurements behind these figures.
 manifest 1
@@ -163,18 +165,6 @@ limits network
   runtime_limits @runtime_limits.network
   peer_held 4096
   peer_held_total 4096
-limits display
-  memory 25165824
-  outer 34619392
-  grant @share.display
-  spaces none
-  lane 4096
-  connections 4
-  crash 0
-  flags none
-  runtime_limits @runtime_limits.display
-  peer_held 4096
-  peer_held_total 4096
 session system
   limits @limits.session
   runtime @artifact.emu
@@ -235,8 +225,9 @@ facet storage_ctl
 # replaced; a domain's system connection counts against no quota (life_connections,
 # liberx/system/dom_life.c). The network domain takes two, as the storage domain does for sessions,
 # and four more, one for each app of QEMU virt's apps row, whose template the build
-# grants net; the display domain, whose display no source facet grants, takes four,
-# one for each app, whose template the build grants the display. Each board's machine
+# grants net; the display domain, whose display no source facet grants, takes one for
+# each app of the board's apps row, whose template the build grants the display (its
+# limits, in the board's part). Each board's machine
 # record reckons its max_connections from these rows.
 service data
   server @domain.storage
