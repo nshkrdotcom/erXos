@@ -1846,8 +1846,11 @@ only as a third party would build it, through the SDK.
   erXos's tree holds only the gitlink, a commit id, so no GPL code
   enters the tree. `git clone` does not check it out, and `tools/erx
   fetch` fetches it, and its downloads against their SHA-256, only with
-  `--example doom`; no part of `make check`, the landing gate or the
-  milestone gate builds it; `tools/erx app run examples/doom/doom` runs
+  `--example doom`, which clones the submodule with no history and
+  publishes the downloads, parsed and verified as `deps.lock`'s sources
+  are, under `build/examples/doom`, a root of their own, and takes only
+  file, tar and zip downloads; no part of
+  `make check`, the landing gate or the milestone gate builds it; `tools/erx app run examples/doom/doom` runs
   it on request. It never ships: its license keeps it out of every image
   erXos distributes (step 4 of [Adding an app to an
   image](#adding-an-app-to-an-image)). Nothing erXos builds, tests or

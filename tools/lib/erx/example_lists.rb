@@ -16,6 +16,7 @@ module Erx
     # Each file that may name an example, with the design text that names it.
     EXEMPT = {
       'tools/lib/erx/example_lists.rb' => 'this check, which names the directory it scans for',
+      'tools/lib/erx/example_fetch.rb' => 'docs/design-packaging.md#examples, the fetch step that obtains an example',
       'tools/lib/erx/kiosk.rb' => 'docs/design-packaging.md#verification-and-testing, the kiosk cell',
       'tools/lib/erx/qemu_suites/kiosk.rb' => 'docs/design-packaging.md#verification-and-testing, the kiosk cell'
     }.freeze

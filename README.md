@@ -615,7 +615,8 @@ cloned from erXos's fork at the commit its gitlink records
 (`display/lvgl/ORIGIN.md` says where it comes from): `make fetch` clones
 it, without history, when it is not checked out, and `git submodule update --init display/lvgl/lvgl` does
 the same by hand; `git clone --recurse-submodules` fetches it with the
-tree.
+tree. The Doom example's submodule is the exception: its entry says `update = none`, and only
+`tools/erx fetch --example doom` obtains it.
 
 `make check` is the everyday gate. It verifies the oracle runtime, the
 source provenance and the ASCII rule. It generates every
