@@ -138,6 +138,32 @@ class ProductionImageTest < Minitest::Test
     end
   end
 
+  # A card build whose assembled image's manifest trusts a key: build_medium itself
+  # refuses it before it lays out the card. The image builder stands in for the steps
+  # around the check (CardTrustProbe), so the test fails if build_medium stops calling
+  # check_card_trust.
+  def test_a_card_build_refuses_a_manifest_that_trusts_a_key
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    image = CardTrustProbe.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: Erx::ProductionImage::Machine.development(pi),
+                               fiasco: Object.new, runtime: nil, jit_runtime: nil)
+    error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent') }
+    assert_equal 'the raspi4b card trusts no package key, but its manifest trusts signer deployer', error.message
+  end
+
+  # A card's image builder whose own packages are none and whose assembled image's
+  # manifest trusts a signer row, and which lays out no card.
+  class CardTrustProbe < Erx::ProductionImage
+    Assembled = Data.define(:report)
+
+    def card_apps = Erx::ImageApps.none
+
+    private
+
+    def domain_boots(_manifest_source, given: []) = given
+
+    def assemble(**) = Assembled.new(report: { 'manifest' => { 'signers' => ['deployer'], 'development_key' => false } })
+  end
+
   # The card's own packages: the kiosk, examples/dashboard, packed as the kiosk suite packs
   # it, and enabled, with no signer row and no --local, so the card trusts the package by
   # its row's hash and trusts no key. Two builders, each with a development package key of

@@ -523,8 +523,11 @@ read ([The package](#the-package)), the kiosk is sealed by the
 phrase in the tree (`Erx::PackageKey.published`), not by its builder's
 development key: anyone may seal with it, and every builder of a commit
 packs the same kiosk bytes, so no builder's key makes two builders'
-cards of one commit differ. Nothing trusts the key: no image carries it,
-and `--signer` refuses it.
+cards of one commit differ. The published key is never a trust root:
+the manifest check (property 19) refuses it as the key of a `signer` row
+of any source and as the build's development key, so no image, release
+or development, trusts a package for its seal; `--signer` refuses it
+before the check runs.
 The row's size follows from how the build counts it:
 
 * `max` is reserved in full: property 19 counts the app template as
@@ -1393,7 +1396,8 @@ kind is development and packs it as the manifest's `development_key`
 record, which the reader accepts in a development manifest alone. A
 source row naming `development` as a signer is refused, so no board
 source or added row stands in for the builder's key, and a release image
-carries none.
+carries none. Neither a `signer` row nor the development key may be the
+published package key ([The `apps` row](#the-apps-row)).
 
 `--signer FILE` adds a `signer` row, so a deployer's machine trusts the
 deployer's own key for packages installed later. The board's manifest

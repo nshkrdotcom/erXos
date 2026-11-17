@@ -1171,6 +1171,21 @@ class ManifestDomainsTest < Minitest::Test
     assert_equal false, admit.report.fetch('development_key')
   end
 
+  # The published package key, whose private half the tree holds, is never a trust root
+  # (docs/design-packaging.md, "The `apps` row"): a signer row of any source holding it,
+  # under any name, is refused, and so is a build that hands it over as the development
+  # key; a row beside it holding another key is admitted.
+  def test_the_published_package_key_is_never_a_trust_root
+    published = Erx::PackageKey.published.public_key
+    admit(@source + "signer deployer\n  key hex:#{'ab' * 32}\n")
+    refused(Erx::Manifest::Invalid, 19, 'signer.key', @source + "signer deployer\n  key hex:#{published.unpack1('H*')}\n",
+            message: /\bsigner deployer's key is the published package key, which nothing trusts\z/)
+    arguments = ManifestContextFixture.arguments(@codec).merge(platform: @platform)
+    @context = Erx::Manifest::Context.new(**arguments, development_key: published)
+    refused(Erx::Manifest::Invalid, 19, 'context.development_key', for_apps(@source + self.class.apps, 8),
+            message: /\bthe development package key is the published package key, which nothing trusts\z/)
+  end
+
   # The manifest packs the apps row, its services, the package and signer rows and the
   # development key as records the machine reads (abi/manifest.txt), each as the check
   # admitted it; a manifest with none of them packs empty tables.

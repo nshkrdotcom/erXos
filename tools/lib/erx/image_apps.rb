@@ -188,7 +188,7 @@ module Erx
       raise Error, "--signer #{path} is not an Ed25519 public key" unless key.oid == 'ED25519'
 
       raise Error, "--signer #{path} is the published package key, which nothing trusts" if
-        key.raw_public_key == PackageKey.published.public_key
+        PackageKey.published?(key.raw_public_key)
 
       Signer.new(name: name, key: key.raw_public_key)
     rescue OpenSSL::PKey::PKeyError

@@ -26,8 +26,9 @@ module Erx
   # seed is the SHA-256 of PUBLISHED, so its private half is no secret, anyone may seal
   # with it, and every build of a tree seals alike. It seals the kiosk of the card the
   # website offers (ImageApps.packed_kiosk), which the card trusts by its row's hash, not
-  # by a key, so two builders' cards of one commit are the same. Nothing trusts it: no
-  # image carries it, and ImageApps.signer refuses it as a signer.
+  # by a key, so two builders' cards of one commit are the same. It is never a trust
+  # root: the manifest check refuses it as a signer row's key or the build's development
+  # key (PackageKey.published?), and ImageApps.signer refuses it as a --signer first.
   module PackageKey
     DIRECTORY = '.erxos/package-key'
     KEY = 'development.key'
@@ -60,5 +61,8 @@ module Erx
 
     # The published package key as an AppPackage::Signer.
     def published = AppPackage::Signer.new(OpenSSL::PKey.new_raw_private_key('ED25519', Digest::SHA256.digest(PUBLISHED)))
+
+    # Whether key, a raw 32-byte Ed25519 public key, is the published package key's.
+    def published?(key) = key.b == published.public_key.b
   end
 end
