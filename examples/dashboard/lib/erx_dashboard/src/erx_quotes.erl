@@ -17,7 +17,11 @@ last one sent. A `fetch` is one httpc request, made exactly as
 docs/design-quotes.md, "One request", states; its answer is classified
 (erx_quotes_http), a redirect within its origin followed within the same
 round, and a body read (erx_quotes_extract), and the outcome goes back
-to the core. An answer to a request it does not hold is dropped.
+to the core with the wall-clock second it was read at. A `history` is
+one request of the same kind for the source's history URL
+(erx_quotes_core:history_url/2); its entries go to the core, and its
+failure is logged and goes to the core, where only a `Retry-After`
+changes anything. An answer to a request it does not hold is dropped.
 """.
 -behaviour(gen_server).
 
@@ -26,8 +30,8 @@ to the core. An answer to a request it does not hold is dropped.
 
 -define(TICK_MS, 1000).
 
--type request() :: #{quote := atom(), source := atom(), url := binary(),
-                     hops := non_neg_integer()}.
+-type request() :: #{kind := price | history, quote := atom(), source := atom(),
+                     url := binary(), hops := non_neg_integer()}.
 -type state() :: #{dashboard := pid(),
                    core := erx_quotes_core:state(),
                    requests := #{reference() => request()},
@@ -81,20 +85,41 @@ handle_info({http, {RequestId, Result}}, #{requests := Requests} = State) ->
 handle_info(_Other, State) ->
     {noreply, State}.
 
-answered(#{quote := Quote, source := Source, url := Url, hops := Hops} = Request,
+answered(#{kind := Kind, quote := Quote, source := Source, url := Url, hops := Hops} = Request,
          Result, #{core := Core} = State) ->
-    case erx_quotes_http:classify(Result, Url, Hops, os:system_time(second)) of
+    Wall = os:system_time(second),
+    case erx_quotes_http:classify(Result, Url, Hops, Wall) of
         {follow, Next} ->
             request(Request#{url := Next, hops := Hops + 1}, State);
         {body, Body} ->
-            Outcome = case erx_quotes_extract:value(source_row(Source, Core), Body) of
-                          {ok, Price, Change} -> {value, Price, Change};
-                          {error, bad_data} -> {error, bad_data, none}
-                      end,
-            outcome(Quote, Outcome, State);
+            read(Kind, Quote, source_row(Source, Core), Body, Wall, State);
         {error, Reason, RetryAfter} ->
-            outcome(Quote, {error, Reason, RetryAfter}, State)
+            failed(Kind, Quote, Reason, RetryAfter, State)
     end.
+
+%% A body: a price is the round's outcome, with the wall-clock second it
+%% was read at; a history's entries become the quote's series.
+read(price, Quote, Row, Body, Wall, State) ->
+    case erx_quotes_extract:value(Row, Body) of
+        {ok, Price, Change} -> outcome(Quote, {value, Price, Change, Wall}, State);
+        {error, bad_data} -> outcome(Quote, {error, bad_data, none}, State)
+    end;
+read(history, Quote, Row, Body, Wall, #{core := Core} = State) ->
+    case erx_quotes_extract:history(Row, Body, Wall) of
+        {ok, Entries} ->
+            logger:notice("quotes: ~ts history ~b entries", [Quote, length(Entries)]),
+            carry_out(erx_quotes_core:history(Core, Quote, Entries), State);
+        {error, bad_data} ->
+            failed(history, Quote, bad_data, none, State)
+    end.
+
+%% A failed request: a round's is its outcome; a history's is logged and
+%% taken by the core, which holds the source back on a `Retry-After`.
+failed(price, Quote, Reason, RetryAfter, State) ->
+    outcome(Quote, {error, Reason, RetryAfter}, State);
+failed(history, Quote, Reason, RetryAfter, #{core := Core} = State) ->
+    logger:notice("quotes: ~ts history failed: ~0p", [Quote, Reason]),
+    carry_out(erx_quotes_core:history_failed(Core, Quote, Reason, RetryAfter, now_ms()), State).
 
 outcome(Quote, Outcome, #{core := Core} = State) ->
     carry_out(erx_quotes_core:outcome(Core, Quote, Outcome, now_ms(), jitter()), State).
@@ -103,7 +128,10 @@ carry_out({Core, Actions}, State) ->
     lists:foldl(fun action/2, State#{core := Core}, Actions).
 
 action({fetch, Quote, Source, Url}, State) ->
-    request(#{quote => Quote, source => Source, url => Url, hops => 0}, State);
+    request(#{kind => price, quote => Quote, source => Source, url => Url, hops => 0}, State);
+action({history, Quote, Source}, #{core := Core} = State) ->
+    Url = erx_quotes_core:history_url(source_row(Source, Core), os:system_time(second)),
+    request(#{kind => history, quote => Quote, source => Source, url => Url, hops => 0}, State);
 action(render, #{dashboard := Dashboard, core := Core, sent := Sent, logged := Logged} = State) ->
     Now = now_ms(),
     Logged2 = log_changes(erx_quotes_view:lines(Core, Now), Logged),

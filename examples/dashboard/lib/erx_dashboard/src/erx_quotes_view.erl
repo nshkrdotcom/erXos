@@ -10,7 +10,10 @@ dashboard draws (erx_dashboard_view), one quote per row of the table,
 in its order. The rule of Q-R1 and Q-R2 is state/3 alone: a quote
 shows the last value it received, the source that gave it and its age,
 stale once older than three periods, with the reason its last round
-failed beside it; a quote without a value shows `--` and why.
+failed beside it; a quote without a value shows `--` and why. A card's
+graph is the quote's series of 15 min closes once a history arrived,
+and its live samples before; the status line says which, `24 h` or
+`live`.
 
 Every text is the table's, a fixed word or a number formatted here; no
 byte of a response reaches the board.
@@ -33,13 +36,19 @@ quote(Name, #{label := Label, decimals := Decimals} = Row, Quote, Sources, Now) 
                           #{value := none} -> {none, none}
                       end,
     #{symbol => atom_to_binary(Name), name => Label, price => Price, change => Change,
-      samples => maps:get(samples, Quote),
+      samples => points(Quote),
       decimals => Decimals, status => status(Quote, Row, Sources, Now)}.
 
-%% A quote's status line: `waiting`, `no data: REASON`, `CREDIT[, NOTE] -
-%% AGE` while its value is fresh and `stale, AGE - CREDIT[, NOTE]` once
-%% stale, each of the last two followed by `: REASON` when the quote's last
-%% round failed. `Sources` are the table's source rows.
+%% What a card's graph draws: the closes of the quote's series once a
+%% history arrived, else its live samples.
+points(#{series := none, samples := Samples}) -> Samples;
+points(#{series := Series}) -> [Close || {_Start, Close} <- Series].
+
+%% A quote's status line: `waiting`, `no data: REASON`, `CREDIT[, NOTE],
+%% RANGE - AGE` while its value is fresh and `stale, AGE - CREDIT[, NOTE],
+%% RANGE` once stale, each of the last two followed by `: REASON` when the
+%% quote's last round failed. RANGE is what the graph spans (range/1).
+%% `Sources` are the table's source rows.
 -spec status(erx_quotes_core:quote(), erx_quotes_table:quote(),
              #{atom() => erx_quotes_table:source()}, integer()) -> binary().
 status(#{value := Value, failure := Failure} = Quote, Row, Sources, Now) ->
@@ -50,7 +59,7 @@ status(#{value := Value, failure := Failure} = Quote, Row, Sources, Now) ->
             <<"no data: ", (erx_quotes_http:word(Reason))/binary>>;
         {Shown, {_Price, _Change, Source, FetchedAt}, _} ->
             Age = age(Now - FetchedAt),
-            Credit = credit(maps:get(Source, Sources)),
+            Credit = [credit(maps:get(Source, Sources)), ", ", range(Quote)],
             Line = case Shown of
                        fresh -> [Credit, " - ", Age];
                        stale -> ["stale, ", Age, " - ", Credit]
@@ -71,6 +80,11 @@ state(#{value := {_, _, _, _}}, _Row, _Now) -> fresh.
 
 credit(#{credit := Credit, note := <<>>}) -> Credit;
 credit(#{credit := Credit, note := Note}) -> [Credit, ", ", Note].
+
+%% What the graph spans: a day of history, erx_quotes_core:buckets/0 of
+%% erx_quotes_core:bucket/0, or the live samples alone.
+range(#{series := none}) -> <<"live">>;
+range(#{}) -> <<"24 h">>.
 
 reason(none) -> [];
 reason({Reason, _At}) -> [": ", erx_quotes_http:word(Reason)].
