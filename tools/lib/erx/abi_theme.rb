@@ -84,6 +84,16 @@ module Erx
         enum.members.map { |line| [line.words.fetch(1), Integer(line.words.fetch(2))] }.sort_by(&:last).map(&:first)
       end
 
+      # The palettes' names among the ABI model's resolved TYPES, the default
+      # first, for the theme DECLARATION, which fails if no enum
+      # mf_display_palette is among them.
+      def palettes_of(types, declaration:)
+        enum = types[PALETTE_ENUM]
+        declaration.fail!("the theme's palettes are the enum #{PALETTE_ENUM} of #{PALETTE_SOURCE}, which the sources do not declare as an enum") unless
+          enum.is_a?(EnumType)
+        enum.members.sort_by { |_, value| value }.map(&:first)
+      end
+
       # PALETTES are the names of the palettes, in the order a colour row
       # gives its values, the default first: the members of the manifest's
       # mf_display_palette in value order (ABI::Model#validate_theme).

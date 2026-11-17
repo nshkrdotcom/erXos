@@ -2498,6 +2498,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] host tools, one build scaffold (`tools/lib/erx/raster.rb`, `rc_oracle.rb`, `fsimg.rb`): `source_record`,
   `locate` and its build record, `source_tree`, `compiler_identity` and `publish` are the same code three times.
   Fold them into one module that takes a source id and an output directory.
+* [Medium] desktop, the palettes have two readers (`tools/lib/erx/abi_theme.rb` `Theme.palettes` and
+  `Theme.palettes_of`): the ABI model takes `mf_display_palette` from whichever included file declares it, while the
+  glyph step's `Theme.palettes(root:)` parses `abi/manifest.txt` alone and re-reads the enum's members by hand, so
+  moving the enum to another file passes `tools/gen_abi.rb` and fails only in `tools/erx build glyphs`. Give the
+  glyph step the palettes through the model's own parse.
 * [Medium] desktop, the window menu's role (`tools/lib/erx/glyphs_menu.rb` `ROLE`, `abi_theme.rb`): only the glyph step
   requires the theme to have a `body` role, so a theme without one passes `tools/gen_abi.rb` and fails only in
   `tools/erx build glyphs`, after every role is rasterised. Require the role in `ABI::Theme.validate` and the

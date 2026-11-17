@@ -1361,11 +1361,14 @@ module Erx
 
       # The desktop's theme refers to nothing outside its declaration but
       # the palettes, which a display's manifest entry chooses among
-      # (docs/design-abi.md, "Theme").
+      # (docs/design-abi.md, "Theme"). Sources without a theme, such as a
+      # test's fixture, need no palettes.
       def validate_theme(by_kind, types)
+        declarations = by_kind.fetch('theme', [])
+        return nil if declarations.empty?
+
         require_relative 'abi_theme'
-        palettes = types.fetch('mf_display_palette').members.sort_by { |_, value| value }.map(&:first)
-        Theme.validate(by_kind.fetch('theme', []), palettes: palettes)
+        Theme.validate(declarations, palettes: Theme.palettes_of(types, declaration: declarations.first))
       end
 
       def validate_projections(declarations, types)

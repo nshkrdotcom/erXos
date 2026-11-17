@@ -5,6 +5,7 @@
 require 'minitest/autorun'
 require 'json'
 require 'open3'
+require 'fileutils'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/abi'
 require_relative '../fixtures/erlang_build'
@@ -139,6 +140,24 @@ class ErxThemeTest < Minitest::Test
     declarations = Erx::ABI::Syntax.parse(SOURCE, path: 'abi/formats/theme.txt').select { |item| item.kind == 'theme' }
     error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Theme.validate(declarations, palettes: Erx::ABI::Theme.palettes(root: ROOT)) }
     assert_match(/belongs in abi\/theme\.txt/, error.message)
+  end
+
+  # The model asks for the palettes only when the sources declare a theme, so
+  # a source set without one, such as the inspection forms of
+  # erx_schema_test.rb, validates without abi/manifest.txt; a theme without
+  # the palettes' enum fails with a diagnostic.
+  def test_the_palettes_are_needed_only_by_a_theme
+    forms = File.join(ROOT, 'test/fixtures/inspection_forms/abi')
+    Dir.mktmpdir('erx-theme-test') do |work|
+      FileUtils.mkdir_p(File.join(work, 'abi'))
+      FileUtils.cp(File.join(forms, 'inspection.txt'), File.join(work, 'abi'))
+      FileUtils.cp(File.join(forms, 'erx_abi.txt'), File.join(work, 'abi'))
+      assert_nil Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: work, architecture: nil)).theme
+      File.write(File.join(work, 'abi/theme.txt'), SOURCE)
+      File.write(File.join(work, 'abi/erx_abi.txt'), "#{File.read(File.join(forms, 'erx_abi.txt'))}include theme.txt\n")
+      error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: work, architecture: nil)) }
+      assert_match(/abi\/theme\.txt:\d+: .*mf_display_palette/, error.message)
+    end
   end
 
   def test_the_output_is_byte_identical_over_two_runs
