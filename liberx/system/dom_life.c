@@ -622,6 +622,8 @@ erx_dom_record_step(const erx_dom_view_t *view, uint64_t label,
 		action->teardown = (erx_dom_teardown_t){
 		    .kind = ERX_DOM_DESTROY, .index = slot, .ndestroy = 1,
 		    .destroy = { dom->budget } };
+		if (action->end.kind == ERX_DOM_END_FAULT)
+			action->fault = dom->fault;
 		return;
 	}
 	/* The first stop the library makes is the one its exit record names. */
@@ -630,6 +632,7 @@ erx_dom_record_step(const erx_dom_view_t *view, uint64_t label,
 	action->kind = ERX_DOM_ACT_STOP;
 	action->status = ERX_EXIT_CRASH;
 	action->end = (erx_dom_end_t){ ERX_DOM_END_FAULT, record->kind };
+	action->fault = *record;
 }
 
 erx_status_t

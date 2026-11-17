@@ -198,7 +198,7 @@ module Erx
           rule: "only erx_device.c's effect layer calls the DMA architecture layer's cache maintenance and barriers",
           design: 'docs/design-device-dma.md#the-architecture-layer',
           scope: DEVICE_SCOPE,
-          pattern: /\berx_dma_(?:clean|clean_inval|publish_barrier|report_barrier|completion_barrier)\b/,
+          pattern: /\berx_dma_(?:clean|clean_inval|publish_barrier|report_barrier|completion_barrier|store_wait)\b/,
           sites: [Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/erx_device.c"),
                   Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/erx_dma_arch.h"),
                   Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/arch/*/erx_dma_arch.c"),

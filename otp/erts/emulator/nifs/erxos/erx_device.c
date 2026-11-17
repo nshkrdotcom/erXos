@@ -486,11 +486,19 @@ store_width(const erx_device_t *device, const erx_device_register_t *reg, uint64
 	}
 }
 
-/* The one store to a register; a hosted stand-in's device then acts on it, as a device would. */
+/*
+ * The one store to a register, waited for before anything after it: a store the device
+ * answers with a bus error raises it asynchronously (an SError on AArch64), and the wait
+ * has the answer arrive before the call returns, so the error is pending by then; the
+ * architecture does not bound when it is taken, so that its pc lies in the store's
+ * caller is likely, not certain. A hosted stand-in's device then acts on the store, as
+ * a device would.
+ */
 static void
 store(const erx_device_t *device, const erx_device_register_t *reg, uint64_t offset, uint64_t value)
 {
 	store_width(device, reg, offset, value);
+	erx_dma_store_wait();
 #ifdef ERX_DEVICE_STAND_IN
 	if (device->form == ERX_DEVICE_FORM_STAND_IN)
 		stand_in_stored(device, reg, offset, value);

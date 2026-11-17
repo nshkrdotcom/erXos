@@ -6,10 +6,12 @@
 /*
  * The architecture layer of DMA by devices that are not cache-coherent
  * (docs/design-device-dma.md, "The architecture layer"): the cache maintenance, the three
- * barriers and the two sizes the handoff sequencer needs, under generic names. Each
+ * barriers and the two sizes the handoff sequencer needs, under generic names, and the
+ * wait after a register store. Each
  * architecture gives them in its own file, arch/<arch>/erx_dma_arch.c, and the host build in
  * arch/host/erx_dma_arch.c. Only erx_device.c's effect layer calls them, with the ranges, steps
- * and barrier kinds erx_device_dma_order chose; nothing here decides which to issue.
+ * and barrier kinds erx_device_dma_order chose, and store() the store wait after every
+ * register store; nothing here decides which to issue.
  */
 
 #ifndef ERX_DMA_ARCH_H
@@ -38,5 +40,11 @@ void	erx_dma_publish_barrier(bool completes);
 void	erx_dma_report_barrier(void);
 /* After taking back, before the reads of what came back: completes the maintenance before it. */
 void	erx_dma_completion_barrier(void);
+/*
+ * After a register store: waits for the device's answer to every access before it, so an
+ * error the store raises is pending when the store's call returns
+ * (docs/design-arch-aarch64.md, "Asynchronous errors").
+ */
+void	erx_dma_store_wait(void);
 
 #endif /* ERX_DMA_ARCH_H */

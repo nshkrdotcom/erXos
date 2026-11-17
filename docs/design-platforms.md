@@ -1940,7 +1940,16 @@ with the failing command and what it printed, and the output of `dmesg`
 typed right after it: it holds the drivers' lines (`erx_blk`,
 `erx_blk_service`, `erx_lfs`, `erx_genet`) and, when a domain ends, the
 system's line `erx_domain: configured domain NAME (domain N) ended,
-REASON; restarting it`. While the storage domain serves no volume,
+REASON; restarting it`; for a fault, REASON is followed by where it
+struck, `{fault,K} at pc 0xP, cause 0xC, addr 0xA`, the kernel's record
+of the fault: its program counter, its cause (for an exception the
+syndrome register; for a memory fault on Fiasco, its access bits) and
+the address it touched, `addr unknown` for a fault that names none. An
+asynchronous error (`{fault,7}`, an SError) reads `{fault,7} presumed at
+pc 0xP, cause 0xC, addr unknown`: the error is taken at the next return
+to user mode on that CPU, so the thread it is charged to, and the
+program counter shown, is only presumed to be its source; it may have
+come from an earlier write of the same thread or from another domain. While the storage domain serves no volume,
 `/data` answers `eio`, so the start service's lines
 `erx_starter: rc.conf cannot be read: eio` follow, one at boot and one
 at each `service` start, stop or restart; they are a symptom of step 3's failure,

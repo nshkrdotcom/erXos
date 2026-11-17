@@ -2443,6 +2443,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   only in the test that feeds it the other kind of source. Derive the removals from the manifest's
   structure instead, as `Manifest::Edit.without_sessions` already does for session grants: drop a
   configured domain with the services it serves and every facet granting them.
+* [Low] Fiasco backend, fault records (`liberx/backend/fiasco/service.c` `service_page_fault`): a
+  memory fault's `cause` is Fiasco's access bits (`mr[0] & SERVICE_FAULT_ACCESS`), not the cause
+  as the CPU reported it, which [design-kernel.md](docs/design-kernel.md) gives for every fault
+  record; the domain service's end line prints it as is. Pass the exception syndrome for a page
+  fault where Fiasco hands it over, or state per kind what `cause` holds, with a test.
+
 * [Low] stopgap Fiasco, bootstrap (`fiasco/bootstrap/server/src/platform/arm_virt.cc`): `init`
   never calls `query_psci_method()`, so `reboot_psci` uses the default `Psci_smc`
   (`platform-arm.h:96`) while QEMU virt's device tree says hvc; bootstrap's own reboot path on

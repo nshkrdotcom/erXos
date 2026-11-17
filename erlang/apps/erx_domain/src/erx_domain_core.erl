@@ -37,11 +37,13 @@ state is a bug of the caller and fails with a badmatch.
 """.
 
 -export([new/1, host/1, admit/4, built/5, running/2, ready/3, stopping/2, failed/2, ended/5,
-         restart/5, fetch/2, find_pid/2, deaths/2, domains/1, info/1, session_prefix/3, session_name/3,
-         session_reserved/1, names_quota/0, system_user/0, app_session/4]).
+         restart/5, fetch/2, find_pid/2, deaths/2, domains/1, info/1, fault_where/2, session_prefix/3,
+         session_name/3, session_reserved/1, names_quota/0, system_user/0, app_session/4]).
 -export([inspect_scope/3, inspect_view/2]).
 -export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0,
               app_session/1, session_row/0]).
+
+-include("generated/erx_abi.hrl").
 
 -define(SYSTEM_ID, 4).
 -define(ID_MAX, 16#ffffffff).
@@ -350,6 +352,34 @@ info({halt, Status}) -> {halt, Status};
 info({crash, _}) -> crash;
 info({fault, Kind}) -> {fault, Kind};
 info({stopped, _}) -> stopped.
+
+-doc """
+Where a fault struck, as the tail of a configured domain's end line: the fault record of
+the stop that ended the domain, which erx_domain_lib reports as the exit record's fault, as
+" at pc 0xP, cause 0xC, addr 0xA". These are the kernel's own record of the fault, nothing
+read from the domain's memory. Only a memory, deleted or alignment fault names an
+address; any other reads "addr unknown" rather than a number the kernel did not report.
+An asynchronous error (an SError on AArch64) is taken at a later return to user mode, on
+whatever thread runs then, so its thread is only presumed to be the source and its pc is
+where that thread was: its tail begins "presumed at pc". "" for any other end, and for a
+record without the fault.
+""".
+-spec fault_where({atom(), integer()}, map()) -> iodata().
+fault_where({fault, _Kind}, #{fault := #{kind := Kind, cause := Cause, addr := Addr, pc := Pc}}) ->
+    [fault_at(Kind), hex(Pc), ", cause ", hex(Cause), ", addr ", fault_addr(Kind, Addr)];
+fault_where(_End, _Record) ->
+    "".
+
+fault_at(?ERX_FAULT_ASYNC_ERROR) -> " presumed at pc ";
+fault_at(_Kind) -> " at pc ".
+
+fault_addr(Kind, Addr) when Kind =:= ?ERX_FAULT_MEMORY; Kind =:= ?ERX_FAULT_DELETED;
+                            Kind =:= ?ERX_FAULT_ALIGNMENT ->
+    hex(Addr);
+fault_addr(_Kind, _Addr) ->
+    "unknown".
+
+hex(N) -> ["0x", string:lowercase(integer_to_list(N, 16))].
 
 -doc """
 The scope of the inspect facet the service mints for a domain of Principal

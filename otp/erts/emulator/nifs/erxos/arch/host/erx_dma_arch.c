@@ -67,3 +67,9 @@ erx_dma_completion_barrier(void)
 {
 	atomic_thread_fence(memory_order_seq_cst);
 }
+
+void
+erx_dma_store_wait(void)
+{
+	atomic_thread_fence(memory_order_seq_cst);
+}

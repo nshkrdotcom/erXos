@@ -15,8 +15,13 @@ is gone:
 
 Kind is halt, crash, fault or stopped; Status is the halt status, or the
 fault's kind for a fault. Record is the exit record's fields by name
-(kind, cause, addr, pc, thread, space, status). Every other outcome is the
-return value of the call that caused it.
+(kind, cause, addr, pc, thread, space, status); for a fault it also has
+fault, the same fields of the fault record whose stop ended the domain,
+the kernel's own record of where the fault struck (its pc, cause and
+addr; for an asynchronous error the addr is not valid, and the thread,
+and so the pc, is only the one that ran when the error was taken,
+presumed to be its source). Every other outcome is
+the return value of the call that caused it.
 
 A refused call is {error, Name}, Name the ABI file's status name with an
 e before it (einval, enomem, ebusy, enotsup), or {error, {status, N}} for

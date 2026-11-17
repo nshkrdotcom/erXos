@@ -762,7 +762,12 @@ address, the technique of KVM's exit path (`abort_guest_exit_start` in
 `arch/arm64/kvm/hyp/entry.S`):
 
 * **At EL0** SErrors are unmasked; one taken there stops the running
-  thread with a fault record of kind `async_error`.
+  thread with a fault record of kind `async_error`. The device NIF follows
+  every register store with `DSB SY` (`erx_dma_store_wait`), so an error
+  a store raises is pending before the store's call returns, and the
+  thread it stops is presumed at a pc in that call's caller; without
+  the RAS extension's `ESB` the architecture does not bound when it is
+  taken.
 * **The exit window.** Every exit from EL0 executes `DSB SY` and `ISB` and
   reads `ISR_EL1`; if an SError is pending, it unmasks SErrors for one
   instruction, and the SError stops the exiting thread.

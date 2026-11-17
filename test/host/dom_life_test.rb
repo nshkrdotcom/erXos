@@ -83,7 +83,7 @@ class DomLifeTest < Minitest::Test
     'stop_crash_status' => "0 kind=1 slot=1 status=#{CRASH} end=4,0",
     'stop_ended' => EINVAL, 'stop_building' => EINVAL, 'stop_unknown' => EINVAL,
     'stop_parent_status' => EINVAL, 'stop_released_status' => EINVAL, 'stop_nothread_status' => EINVAL,
-    'fault_running' => "0 kind=1 slot=0 status=#{CRASH} end=3,1",
+    'fault_running' => "0 kind=1 slot=0 status=#{CRASH} end=3,1 fault=1,0,0,0",
     'exit_halt' => '0 kind=2 slot=0 status=0 end=1,0 teardown=2,0,501',
     'exit_halt_status' => '0 kind=2 slot=1 status=0 end=1,42 teardown=2,1,601',
     'exit_nothread' => "0 kind=2 slot=0 status=0 end=1,#{NOTHREAD} teardown=2,0,501",
@@ -96,7 +96,12 @@ class DomLifeTest < Minitest::Test
     'exit_stopped' => '0 kind=2 slot=1 status=0 end=4,0 teardown=2,1,601',
     'exit_fault_unknown_stopper' => '0 kind=2 slot=0 status=0 end=3,3 teardown=2,0,501',
     'exit_halt_first' => '0 kind=2 slot=0 status=0 end=1,2 teardown=2,0,501',
-    'exit_crash_first' => '0 kind=2 slot=1 status=0 end=2,0 teardown=2,1,601'
+    'exit_crash_first' => '0 kind=2 slot=1 status=0 end=2,0 teardown=2,1,601',
+    # The fault record that stopped 5 rides its STOP and its end, location and all.
+    'fault_located' => "0 kind=1 slot=0 status=#{CRASH} end=3,7 fault=7,0xbf000002,0,0x40002cd4c4",
+    'fault_located_again' => DROP,
+    'exit_fault_located' => '0 kind=2 slot=0 status=0 end=3,7 teardown=2,0,501 fault=7,0xbf000002,0,0x40002cd4c4',
+    'exit_halt_after_fault' => '0 kind=2 slot=0 status=0 end=1,2 teardown=2,0,501'
   }.freeze
 
 # A unit's give: the unconfined transport 0's unit and the confined device 1's,

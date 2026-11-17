@@ -1092,11 +1092,10 @@ end_name(erx_dom_end_kind_t kind)
 	}
 }
 
-/* {domain_ended, Id, {Kind, Status}, Record}, Record the exit record's fields by name. */
+/* A kernel record's fields by name. */
 static ERL_NIF_TERM
-report_term(ErlNifEnv *env, const erx_dom_report_t *report)
+record_term(ErlNifEnv *env, const erx_fault_t *record)
 {
-	const erx_fault_t *const record = &report->record;
 	ERL_NIF_TERM keys[7], values[7], fields;
 
 	keys[0] = atom(env, "kind"), values[0] = enif_make_uint(env, (unsigned int)record->kind);
@@ -1108,6 +1107,22 @@ report_term(ErlNifEnv *env, const erx_dom_report_t *report)
 	keys[6] = atom(env, "status"), values[6] = enif_make_int64(env, record->status);
 	if (!enif_make_map_from_arrays(env, keys, values, 7, &fields))
 		fields = enif_make_new_map(env);
+	return (fields);
+}
+
+/*
+ * {domain_ended, Id, {Kind, Status}, Record}: Record is the exit record's
+ * fields by name, and for a fault end also has fault, the fields of the
+ * fault record its stop came from.
+ */
+static ERL_NIF_TERM
+report_term(ErlNifEnv *env, const erx_dom_report_t *report)
+{
+	ERL_NIF_TERM fields = record_term(env, &report->record);
+
+	if (report->end.kind == ERX_DOM_END_FAULT)
+		(void)enif_make_map_put(env, fields, atom(env, "fault"),
+		    record_term(env, &report->fault), &fields);
 	return (enif_make_tuple4(env, atom(env, "domain_ended"), enif_make_uint(env, report->id),
 	    enif_make_tuple2(env, atom(env, end_name(report->end.kind)),
 	    enif_make_int64(env, report->end.status)),
