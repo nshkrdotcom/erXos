@@ -7,6 +7,7 @@ require 'fileutils'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/build_memo'
 require_relative '../../tools/lib/erx/compile_memo'
+require_relative '../../tools/lib/erx/file_lock'
 require_relative '../../tools/lib/erx/core_archive'
 
 # A step runs again when any input its key names changes, and only then. Each test
@@ -36,6 +37,76 @@ class BuildMemoTest < Minitest::Test
       end)
     end
     assert_equal 2, runs
+  end
+
+  RAN = 10
+  REUSED = 11
+
+  # One turn at step 'step' as Fiasco#build takes it on a host that reuses no record: the
+  # record's stamp before waiting, then in_place under the step's lock. Exits RAN or REUSED.
+  def take_turn(name, output:, runs:, &inside)
+    memo = Erx::BuildMemo.new(root: @root, reuse: false)
+    before_waiting = memo.stamp('step')
+    ran = Erx::FileLock.hold(File.join(@root, 'step.lock'), what: 'the test step', busy: :wait) do
+      memo.in_place('step', key: Erx::BuildMemo.key('source' => 'one'), outputs: [output],
+                            written_since: before_waiting) do
+        File.write(runs, "#{name}\n", mode: 'a')
+        inside&.call
+        FileUtils.mkdir_p(File.dirname(output))
+        File.write(output, 'made')
+      end
+    end
+    exit!(ran ? RAN : REUSED)
+  end
+
+  # Two processes start one step at once in one tree, as make check's test files each
+  # build Fiasco: the first runs it, the second waits for its turn and takes the record
+  # the first finished while it waited.
+  def test_a_step_two_processes_start_at_once_runs_once
+    output = File.join(@root, 'out/a')
+    runs = File.join(@root, 'runs')
+    inside_read, inside_write = IO.pipe
+    go_read, go_write = IO.pipe
+    waiting_read, waiting_write = IO.pipe
+    children = []
+    children << fork do
+      [inside_read, go_write, waiting_read, waiting_write].each(&:close)
+      take_turn('first', output: output, runs: runs) do
+        inside_write.puts('inside')
+        go_read.gets
+      end
+    end
+    [inside_write, go_read].each(&:close)
+    assert_equal "inside\n", inside_read.gets
+    children << fork do
+      [inside_read, go_write, waiting_read].each(&:close)
+      $stderr.reopen(waiting_write)
+      take_turn('second', output: output, runs: runs)
+    end
+    waiting_write.close
+    # The second has taken its stamp and waits on the first's hold.
+    assert_match(/waiting/, waiting_read.gets)
+    go_write.puts('go')
+    statuses = children.map { |pid| Process.wait2(pid).last.exitstatus }
+    children.clear
+    assert_equal [RAN, REUSED], statuses, 'the first runs the step and the second reuses it'
+    assert_equal "first\n", File.read(runs)
+  ensure
+    # A failed assertion leaves no child behind.
+    children&.each { |pid| Process.kill(:KILL, pid) }
+    Process.waitall
+  end
+
+  # A record that was there before the stamp was taken is no turn's work while this one
+  # waited: on a host that reuses no record the step runs.
+  def test_a_record_from_before_the_wait_does_not_stand_in
+    output = File.join(@root, 'out/a')
+    runs = File.join(@root, 'runs')
+    pid = fork { take_turn('earlier', output: output, runs: runs) }
+    assert_equal RAN, Process.wait2(pid).last.exitstatus
+    pid = fork { take_turn('later', output: output, runs: runs) }
+    assert_equal RAN, Process.wait2(pid).last.exitstatus
+    assert_equal "earlier\nlater\n", File.read(runs)
   end
 
   def test_in_place_step_runs_again_only_for_another_key_or_changed_output

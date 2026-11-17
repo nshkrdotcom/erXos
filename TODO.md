@@ -4986,6 +4986,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   compile) discards `build/fiasco/users` and rebuilds it from scratch, about 75 s of a 300 s `medium_boot` run on a
   loaded host. Capture for each component only the C17 sources its cores read (CoreArchive), so such an edit reruns
   only the native compiles that read it.
+* [Medium] Fiasco build, `tools/lib/erx/fiasco.rb` `build_image`: what reads `build/fiasco` (image packing,
+  QEMU, the native compiles against its headers and libraries) holds no lock, and on a host that reuses no record
+  (FreeBSD) a later `Fiasco#build` runs make again and rewrites `images/bootstrap.raw` in place, so a reader in
+  another process can see a short image; `prepare_source_cache` rewrites `.erx-inputs.json` in place and, when the
+  inputs change, removes `kernel`, `users`, `source` and `images` whole, on every host. Builds already take turns under `build/fiasco/.lock`; give readers a
+  shared hold of it, as `Runtime.reading` does for `build/runtime`, and publish the image and every other rewrite
+  under `build/fiasco` by rename.
 * [Low] build memo, `tools/lib/erx/compile_memo.rb`: a quoted include that climbs out of its includer's directory
   (`#include "../x.h"`) and was found through an `-I` directory is not keyed against a file of that name appearing
   above the includer, which would then come first; the native sources use none. Key each quoted include's name

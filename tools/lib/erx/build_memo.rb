@@ -33,6 +33,15 @@ module Erx
   # Records are written to a temporary name and renamed, so an interrupted build leaves no
   # record that claims outputs it did not finish. A record of another shape is refused with
   # a diagnostic, never read as a miss or a hit.
+  #
+  # Processes that start one in-place step at once in one tree (make check's test files,
+  # each building Fiasco) take turns under the lock of the directory the step writes
+  # (Fiasco#with_tree_lock). Each takes the step's stamp before it waits and passes it to
+  # in_place as written_since. A record whose stamp differs was written by an earlier turn
+  # while this one waited; on a host that reuses no record it stands in for a run all the
+  # same, so a waiter does not build again what finished while it waited. The stamp is the
+  # record file's identity, not a time, so no clock decides it: a record no turn rewrote
+  # during the wait never passes for one written during it.
   class BuildMemo
     VERSION = 1
     OUTPUT = 'build/memo'
@@ -216,12 +225,25 @@ module Erx
       end
     end
 
+    # The identity of step's in-place record as it is now, for in_place's written_since:
+    # its file's device, inode, change time and size, or :absent when there is none.
+    def stamp(step)
+      stat = File.lstat(record_path(step))
+      [stat.dev, stat.ino, stat.ctime.tv_sec, stat.ctime.tv_nsec, stat.size]
+    rescue Errno::ENOENT
+      :absent
+    end
+
     # Runs the block unless step's record names key and each output it lists still has the
     # bytes recorded. Returns true when the block ran; the record then names key and the
-    # outputs as the block left them.
-    def in_place(step, key:, outputs:)
-      path = File.join(step_directory(step), 'current.json')
-      record = @reuse && find_record(path, key: key)
+    # outputs as the block left them. A record stands in for a run where this host reuses
+    # records, and wherever it is not the record written_since names: a stamp taken before
+    # waiting for the step's turn, so a record that differs from it was written while the
+    # caller waited.
+    def in_place(step, key:, outputs:, written_since: nil)
+      path = record_path(step)
+      written_while_waiting = !written_since.nil? && stamp(step) != written_since
+      record = (@reuse || written_while_waiting) && find_record(path, key: key)
       return false if record && record.fetch('outputs') == digests(outputs.map { |output| relative(output) })
 
       FileUtils.rm_f(path)
@@ -247,6 +269,8 @@ module Erx
 
       File.join(step_directory(step), key)
     end
+
+    def record_path(step) = File.join(step_directory(step), 'current.json')
 
     def step_directory(step)
       raise Error, "invalid build memo step name #{step.inspect}" unless step.is_a?(String) && STEP_NAME.match?(step)

@@ -21,6 +21,7 @@ require_relative 'stack_proof_run'
 require_relative 'glue_imports'
 require_relative 'cross_toolchain'
 require_relative 'host_path'
+require_relative 'file_lock'
 require_relative 'output_directory'
 require_relative 'origin'
 require_relative 'import_notices'
@@ -109,6 +110,14 @@ module Erx
     # shares. PROGRAMS also names the host compilers (HostOs::HOST_CC, HOST_CXX), so a
     # host without them fails before the build.
     PROGRAMS = [*%w[gmake gawk dtc perl], HostOs::HOST_CC, HostOs::HOST_CXX].freeze
+    # The build's memo step (BuildMemo#in_place).
+    MEMO_STEP = 'fiasco'
+    # The lock of build/fiasco (FileLock), which every build into it holds exclusively
+    # (with_tree_lock): processes that build in one tree at once, as make check's test
+    # files do, take turns instead of running make over each other's directories, and a
+    # build that waited reuses the one that finished meanwhile (BuildMemo). The notices
+    # user_library_notices publishes by rename are not a build and take no lock.
+    LOCK = 'build/fiasco/.lock'
 
     # compiler is the LLVM clang that builds the C17 cores' archive; the
     # resource headers it compiles with must be those the reviewed LLVM
@@ -160,19 +169,22 @@ module Erx
         path = File.join(@source, name)
         raise Error, "missing or external imported Fiasco part: #{name}" unless File.directory?(path) && !File.symlink?(path)
       end
-      OutputDirectory.prepare(root: @root, path: @build)
-      prepare_source_cache
-      # A build whose every input is unchanged since the last finished one, with that
-      # build's outputs in place, does nothing (memo_key); make would find nothing to do
-      # but takes a minute to find it, and the audit after it would find what it found.
-      BuildMemo.new(root: @root).in_place('fiasco', key: memo_key, outputs: memo_outputs) do
-        cores = build_cores
-        kernel = build_kernel(jobs: jobs, cores: cores, kind: BuildKind::DEVELOPMENT,
-                              directory: self.class.kernel_directory(root: @root, kind: BuildKind::DEVELOPMENT))
-        boot_cores = build_boot_cores
-        users = build_users(jobs: jobs, boot_cores: boot_cores)
-        build_image(users: users)
-        record_provenance
+      memo = BuildMemo.new(root: @root)
+      before_waiting = memo.stamp(MEMO_STEP)
+      with_tree_lock do
+        prepare_source_cache
+        # A build whose every input is unchanged since the last finished one, with that
+        # build's outputs in place, does nothing (memo_key); make would find nothing to do
+        # but takes a minute to find it, and the audit after it would find what it found.
+        memo.in_place(MEMO_STEP, key: memo_key, outputs: memo_outputs, written_since: before_waiting) do
+          cores = build_cores
+          kernel = build_kernel(jobs: jobs, cores: cores, kind: BuildKind::DEVELOPMENT,
+                                directory: self.class.kernel_directory(root: @root, kind: BuildKind::DEVELOPMENT))
+          boot_cores = build_boot_cores
+          users = build_users(jobs: jobs, boot_cores: boot_cores)
+          build_image(users: users)
+          record_provenance
+        end
       end
       image_path
     end
@@ -182,8 +194,10 @@ module Erx
     # ever boots. kind is the configuration it is built from (BuildKind). No test
     # kernel is audited, since nothing ships one.
     def build_test_kernel(name:, defines:, kind: BuildKind::DEVELOPMENT, jobs: 4)
-      build_kernel_beside(directory: File.join(@build, "test-kernel-#{name}"), kind: kind,
-                          defines: defines, jobs: jobs)
+      with_tree_lock do
+        build_kernel_beside(directory: File.join(@build, "test-kernel-#{name}"), kind: kind,
+                            defines: defines, jobs: jobs)
+      end
     end
 
     # The release kernel (docs/design-stopgap.md, "The kernel"): the same sources and cores,
@@ -199,14 +213,16 @@ module Erx
       directory = self.class.kernel_directory(root: @root, kind: BuildKind::RELEASE)
       kernel = File.join(directory, 'fiasco')
       record = File.join(directory, FiascoProvenance::PASS_RECORD)
-      FileUtils.rm_f(record)
-      passed = false
-      build_kernel_beside(directory: directory, kind: BuildKind::RELEASE, defines: [], jobs: jobs)
-      provenance_auditor(kind: BuildKind::RELEASE).certify
-      passed = true
-      kernel
-    ensure
-      FileUtils.rm_f([kernel, record].compact) unless passed
+      with_tree_lock do
+        FileUtils.rm_f(record)
+        passed = false
+        build_kernel_beside(directory: directory, kind: BuildKind::RELEASE, defines: [], jobs: jobs)
+        provenance_auditor(kind: BuildKind::RELEASE).certify
+        passed = true
+        kernel
+      ensure
+        FileUtils.rm_f([kernel, record]) unless passed
+      end
     end
 
     # Where the tree at root builds the kernel of build kind kind: build's own kernel for
@@ -224,10 +240,12 @@ module Erx
       config = BOARD_BOOTSTRAPS.fetch(name) { raise Error, "platform #{name} has no bootstrap build of its own" }
       raise Error, 'jobs must be between 1 and 64' unless jobs.is_a?(Integer) && jobs.between?(1, 64)
 
-      prepare_source_cache
-      users = build_users(jobs: jobs, boot_cores: build_boot_cores,
-                          directory: File.join(@build, "users-#{name}"), config: config)
-      build_image(users: users, output: board_image_path(name))
+      with_tree_lock do
+        prepare_source_cache
+        users = build_users(jobs: jobs, boot_cores: build_boot_cores,
+                            directory: File.join(@build, "users-#{name}"), config: config)
+        build_image(users: users, output: board_image_path(name))
+      end
     end
 
     def board_image_path(name) = File.join(@build, "images/bootstrap-#{name}.raw")
@@ -384,6 +402,13 @@ module Erx
     def boot_core_archive = File.join(@build, 'boot-cores', CoreArchive::BOOT_ARCHIVE)
 
     private
+
+    # Runs the block holding build/fiasco's lock (LOCK) exclusively, waiting while another
+    # process builds there, and returns its value.
+    def with_tree_lock(&)
+      OutputDirectory.prepare(root: @root, path: @build)
+      FileLock.hold(File.join(@root, LOCK), what: "the Fiasco build tree of #{@root}", busy: :wait, &)
+    end
 
     # What the build reads: every captured input by content (FiascoInputs' record), the
     # Ruby that drives it, the compiler, the cross prefix, and the environment it runs
