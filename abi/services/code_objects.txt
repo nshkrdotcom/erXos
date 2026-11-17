@@ -1,0 +1,27 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The code_objects interface (docs/design-system.md, "Creating a domain", the paragraphs
+# "Code objects for a session" and "The code_objects facet"): a session's code objects,
+# served by the system domain, which the domain service grants every session it starts by
+# its own policy, with no facet row. create takes the object's size in bytes, a positive
+# integer, and answers {ok, Number, Cap}, the object's number and the session's value of
+# its copy, or the library's refusal: {error, enomem} for the session's budget and
+# {error, elimit} beyond code_objects_max objects. drop takes a number and answers ok, or
+# {error, einval} for a number that names none of the grantee's live objects.
+# erx_code_objects_facet:decode/1 refuses anything else with {error, badarg}. The
+# grantee is the facet's, never the request's, so a session makes objects only from its
+# own budget and drops only its own. code_objects_max is the domain library's bound on
+# one session's live code objects, which the command server's table keeps within.
+# code_objects_max_request is the facet's max_request, which erx_facet holds a request's
+# whole envelope to: {erx_origin, D, {'$gen_call', {Pid, [alias | Alias]}, Request}}
+# encodes in at most 114 + 2L bytes for a caller whose node name is L bytes, which its
+# pid and its alias, a reference of up to five words, each carry, with D below 2^32 and
+# Request a create of a size below 2^64, the largest. A node name is ASCII, built from
+# erx_ident identifiers, and an atom of at most 255 characters, so 624 at most; the
+# limit doubles past that to the next power of two, so an encoding that grows a little
+# between OTP releases still fits.
+service code_objects 11
+  operation create 1
+  operation drop 2
+limit code_objects_max u32 256
+limit code_objects_max_request u32 1024

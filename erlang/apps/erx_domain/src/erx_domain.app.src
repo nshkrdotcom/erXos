@@ -11,6 +11,7 @@
  [{description, "erXos domain service"},
   {vsn, "1"},
   {modules, [erx_app_admit,
+             erx_code_objects_facet,
              erx_devfs,
              erx_devfs_core,
              erx_devices,

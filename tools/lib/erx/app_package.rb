@@ -178,7 +178,8 @@ module Erx
 
     def program(line)
       path, *args = line.tokens.drop(1).map(&:value)
-      line.fail!('program names a path under bin/') unless path&.start_with?('bin/') && path.bytesize <= codec.constant('pkg_program_max')
+      line.fail!('program names a path of plain names under bin/') unless path&.start_with?('bin/') && codec.string_class?('relative_path', path)
+      line.fail!("the program path is longer than #{codec.constant('pkg_program_max')} bytes") if path.bytesize > codec.constant('pkg_program_max')
       line.fail!("program takes at most #{codec.constant('pkg_args_max')} arguments") if args.size > codec.constant('pkg_args_max')
       line.fail!('a program argument holds no NUL') if args.any? { |arg| arg.include?("\0") }
       line.fail!('the program arguments are too long') if args.sum { |arg| arg.bytesize + 1 } > codec.constant('pkg_args_bytes_max')

@@ -3521,7 +3521,9 @@ typedef struct erx_image_manifest {
 
 Both layouts are fixed by the ABI file and pinned with `_Static_assert`.
 The packer accepts static position-independent executables (`ET_DYN` with
-no interpreter and no dynamic dependencies) and static executables linked
+no interpreter and no dynamic dependencies, in the one shape
+[design-programs.md](design-programs.md#what-a-program-can-start) gives
+a position-independent file) and static executables linked
 at a fixed address (`ET_EXEC`), for which it sets `ERX_IMAGE_FIXED`. It
 sets `ERX_IMAGE_JIT` on the images the build declares as making JIT
 objects, and on no other: the BeamAsm runtime image, which ordinary

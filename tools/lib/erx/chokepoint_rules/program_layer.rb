@@ -68,7 +68,8 @@ module Erx
                             liberx/program/poll.c liberx/program/poll.h
                             liberx/program/signal.c liberx/program/signal.h
                             liberx/program/spawn.c liberx/program/spawn.h
-                            liberx/program/spawn_plan.c liberx/program/spawn_plan.h]
+                            liberx/program/spawn_plan.c liberx/program/spawn_plan.h
+                            liberx/program/image.c]
     )
   end
 end

@@ -398,6 +398,8 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 		return (erx_fiasco_time_set_offset_body(((const erx_fiasco_time_set_offset_request_t *)words)->offset_ns));
 	case ERX_FIASCO_CALL_MEM_CREATE:
 		return (erx_fiasco_task_mem_create_body(decoded->task, words, &reply->first));
+	case ERX_FIASCO_CALL_MEM_CREATE_PAGED:
+		return (erx_fiasco_task_mem_paged_body(decoded->task, words, &reply->first));
 	case ERX_FIASCO_CALL_MEM_CREATE_PHYSICAL:
 		return (erx_fiasco_task_mem_physical_body(decoded->task, words, &reply->first));
 	case ERX_FIASCO_CALL_MEM_CREATE_CONTIGUOUS:
@@ -436,6 +438,10 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 		return (erx_fiasco_cap_pass_body(decoded->task, decoded->caller, words));
 	case ERX_FIASCO_CALL_OBJECT_DESTROY:
 		return (erx_fiasco_object_destroy_body(decoded->task, ((const erx_fiasco_cap_request_t *)words)->cap));
+	case ERX_FIASCO_CALL_MEM_CHILD:
+		return (erx_fiasco_task_mem_child_body(decoded->task, words, &reply->first));
+	case ERX_FIASCO_CALL_MEM_SEAL:
+		return (erx_fiasco_task_mem_seal_body(decoded->task, ((const erx_fiasco_cap_request_t *)words)->cap));
 	case ERX_FIASCO_CALL_BUDGET_CREATE: {
 		const erx_fiasco_budget_create_request_t *const create = (const void *)words;
 
@@ -451,6 +457,8 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 		return (erx_fiasco_slice_create_body(decoded->task, words, &reply->first));
 	case ERX_FIASCO_CALL_MEM_COPY:
 		return (erx_fiasco_mem_copy_body(decoded->task, words, &reply->first));
+	case ERX_FIASCO_CALL_MEM_SUPPLY:
+		return (erx_fiasco_mem_supply_body(decoded->task, words, &reply->first));
 	case ERX_FIASCO_CALL_RELEASE_ENTRY:
 		return (erx_fiasco_release_entry_body(decoded->task, words, reply));
 	case ERX_FIASCO_CALL_GROUP_CONFIGURE:

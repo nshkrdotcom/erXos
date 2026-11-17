@@ -33,6 +33,14 @@
 
 /* The status of a program whose frame from its handler liberx refuses. */
 #define ERX_PROG_STATUS_REFUSED	127
+/*
+ * The status of a program whose start-up could not release the loader
+ * erx_exec left behind (liberx/exec/release.h), and of a load whose cleanup
+ * the space refused: a fault of the loader or the session, never of the
+ * file. It is negative, and exit_group passes only a status's low byte
+ * (musl/src/internal/erxos/syscall.c), so no main's return or exit status is it.
+ */
+#define ERX_PROG_STATUS_RELEASE	(-(INT64_C(1) << 32))
 
 /* A set of the ABI's signal numbers 1 to ERX_SIGRTMAX: bit N - 1 is signal N. */
 typedef struct erx_prog_sigset {

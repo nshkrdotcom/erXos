@@ -337,13 +337,13 @@ app_session(Id, Entry, Memory, Name, none, DomainPid) ->
 app_session(Id, Entry, Memory, Name, Display, DomainPid) ->
     app_session_create_nif(Id, Entry, Memory, Name, atom_to_binary(Display), DomainPid).
 
--doc "A session's code object: {error, enotsup} until sessions exist.".
--spec code_object(pos_integer(), non_neg_integer()) -> {ok, map()} | error().
+-doc "A session's code object: {error, enotsup}, since the library makes none (TODO.md, an executable file as a program's image).".
+-spec code_object(pos_integer(), pos_integer()) -> {ok, pos_integer(), non_neg_integer()} | error().
 code_object(_Session, _Size) ->
     {error, enotsup}.
 
--doc "Deletes a session's code object: {error, enotsup} until sessions exist.".
--spec code_drop(pos_integer(), non_neg_integer()) -> ok | error().
+-doc "Deletes a session's code object: {error, enotsup}, since the library makes none.".
+-spec code_drop(pos_integer(), pos_integer()) -> ok | error().
 code_drop(_Session, _Number) ->
     {error, enotsup}.
 

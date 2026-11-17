@@ -419,6 +419,9 @@ module Erx
                    name: 'fuzz-erx-log-facet', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_clock_facet.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-clock-facet', deadline: 300, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_code_objects_facet.rb'), '--seed',
+                    options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-code-objects-facet', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_devfs.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-devfs', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_rc_conf.rb'), '--seed', options.fetch(:seed).to_s],

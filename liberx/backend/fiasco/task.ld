@@ -10,7 +10,12 @@
  * nothing else. A section this script does not name would take the segments of the one before
  * it, so .got has its place ahead of them, and a task's link refuses an unnamed section
  * (NativeRoot::TASK_LINK_FLAGS). ERTS keeps data it seldom writes in ERTS_LOW_WRITE
- * (ERTS_WRITE_UNLIKELY in sys.h), which is data like any other here.
+ * (ERTS_WRITE_UNLIKELY in sys.h), which is data like any other here. erx_image_end marks
+ * the end of the last segment, where liberx/program/image.c finds the program's image ends.
+ * The base, erx_base, is the loader's window's, and the image ends below the window's last
+ * page, erx_exec_record_page (abi/protocols/prog.txt): every link gives both with --defsym
+ * (NativeRoot::TASK_PLACE_FLAGS), from the generated ABI, so the loader erx_exec, linked here
+ * as every task is, never reaches the exec record's page.
  */
 ENTRY(_start)
 PHDRS {
@@ -21,7 +26,7 @@ PHDRS {
 	note PT_NOTE FLAGS(4);
 }
 SECTIONS {
-	. = 0x4000100000 + SIZEOF_HEADERS;
+	. = erx_base + SIZEOF_HEADERS;
 	.note.erx.abi : { KEEP(*(.note.erx.abi)) } :text :note
 	.text : { *(.text .text.*) } :text
 	. = ALIGN(4096);
@@ -34,6 +39,8 @@ SECTIONS {
 	.tbss : { *(.tbss .tbss.*) } :data :tls
 	.data : { *(.data .data.*) *(ERTS_LOW_WRITE) } :data
 	.bss : { *(.bss .bss.* COMMON) } :data
+	erx_image_end = .;
+	ASSERT(erx_image_end <= erx_exec_record_page, "the image reaches the exec record's page (abi/protocols/prog.txt)")
 	.symtab 0 : { *(.symtab) }
 	.strtab 0 : { *(.strtab) }
 	.shstrtab 0 : { *(.shstrtab) }

@@ -25,6 +25,8 @@ module Erx
           static bool erx_abi_utf8(const uint8_t *, size_t, bool) ERX_UNUSED;
           static bool erx_abi_identifier(const uint8_t *, size_t) ERX_UNUSED;
           static bool erx_abi_path(const uint8_t *, size_t, bool) ERX_UNUSED;
+          static bool erx_abi_relative_path(const uint8_t *, size_t) ERX_UNUSED;
+          static bool erx_abi_plain_names(const uint8_t *, size_t, size_t) ERX_UNUSED;
           static bool erx_abi_vector(const uint8_t *, size_t, bool) ERX_UNUSED;
 
           static bool
@@ -119,16 +121,34 @@ module Erx
           static bool
           erx_abi_path(const uint8_t *bytes, size_t length, bool device_tree)
           {
-          	size_t start, component;
 
           	if (length == 0 || bytes[0] != '/')
           		return (false);
           	if (!erx_abi_utf8(bytes, length, device_tree))
           		return (false);
-          	if (length == 1)
-          		return (true);
-          	start = 1;
-          	for (size_t cursor = 1; cursor <= length; cursor++) {
+          	return (length == 1 || erx_abi_plain_names(bytes, length, 1));
+          }
+
+          /* A relative path: plain names joined by '/', in UTF-8 without controls. */
+          static bool
+          erx_abi_relative_path(const uint8_t *bytes, size_t length)
+          {
+
+          	return (length != 0 && erx_abi_utf8(bytes, length, true) &&
+          	    erx_abi_plain_names(bytes, length, 0));
+          }
+
+          /*
+           * Whether bytes from first on are names, each ended by '/' or the end:
+           * none empty, '.' or '..', and none holding a NUL.
+           */
+          static bool
+          erx_abi_plain_names(const uint8_t *bytes, size_t length, size_t first)
+          {
+          	size_t start, component;
+
+          	start = first;
+          	for (size_t cursor = first; cursor <= length; cursor++) {
           		if (cursor < length && bytes[cursor] == 0)
           			return (false);
           		if (cursor < length && bytes[cursor] != '/')
@@ -427,10 +447,12 @@ module Erx
                 when 'identifier' then "erx_abi_identifier(#{bytes}, #{count})"
                 when 'dt_path' then "erx_abi_path(#{bytes}, #{count}, true)"
                 when 'namespace_path' then "erx_abi_path(#{bytes}, #{count}, false)"
+                when 'relative_path' then "erx_abi_relative_path(#{bytes}, #{count})"
                 when 'utf8' then "erx_abi_utf8(#{bytes}, #{count}, true)"
                 when 'args' then "erx_abi_vector(#{bytes}, #{count}, false)"
                 when 'env' then "erx_abi_vector(#{bytes}, #{count}, true)"
                 when 'bytes' then nil
+                else raise SchemaError, "no C check for the string class #{rule.fetch(:class)}"
                 end
         if check
           check = "#{length} == 0 || #{check}" if rule.fetch(:empty)

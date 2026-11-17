@@ -174,7 +174,7 @@ class LibcTestTest < Minitest::Test
   def test_a_tasks_link_refuses_a_section_the_script_does_not_name
     stray = "__attribute__((section(\".stray\"))) int stray = 1;\n"
     script = File.expand_path('../../liberx/backend/fiasco/task.ld', __dir__)
-    link_tls_program(script, extra: stray) { |_, said, status| assert(status.success?, said) }
+    link_tls_program(script, link_flags: Erx::NativeRoot::TASK_PLACE_FLAGS, extra: stray) { |_, said, status| assert(status.success?, said) }
     link_tls_program(script, link_flags: Erx::NativeRoot::TASK_LINK_FLAGS, extra: stray) do |_, said, status|
       refute(status.success?, 'the stray section linked')
       assert_match(/\.stray/, said)

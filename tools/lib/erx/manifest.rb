@@ -1847,6 +1847,12 @@ module Erx
         control = fetch_interface('driver_control')
         invalid('only the system domain holds a driver-control facet', 8, 'facet.grantee') if
           rows.any? { |row| row.fetch('grantee_kind') != grantee_kind('system') && service_rows.fetch(row.fetch('service')).fetch('interface') == control }
+        # The domain service grants every session its code_objects facet by its own policy
+        # (docs/design-system.md, "The code_objects facet"), so no row grants one: not to a
+        # configured domain, and not to a template, whose limits would replace the service's.
+        invalid('no facet row grants code_objects, which the domain service grants every session', 8, 'facet.service') unless
+          facets_of(rows, 'code_objects', tables).empty?
+        check_code_objects_service(service_rows)
         check_network_grants(rows, packed.map(&:first), tables)
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
@@ -2255,6 +2261,19 @@ module Erx
           invalid('only the system domain serves the inspect interface', 16, 'service.server')
         end
         facets_of(facets, 'inspect', tables).each { |row| check_receiver_floors(row, tables, 'inspect', floors, property: 16) }
+      end
+
+      # At most one service of the code_objects interface, named code_objects and served by
+      # the system domain, the name and server the domain service grants every session's
+      # facet under (docs/design-system.md, "The code_objects facet").
+      def check_code_objects_service(service_rows)
+        interface = fetch_interface('code_objects')
+        system = @codec.constant('mf_none')
+        found = service_rows.select { |row| row.fetch('interface') == interface }
+        return if found.empty?
+        return if found.size == 1 && found.first.fetch('name') == 'code_objects' && found.first.fetch('server') == system
+
+        invalid('the manifest serves code_objects once, by that name, from the system domain', 8, 'service.interface')
       end
 
       # The facet rows of the interface abi/services declares as NAME, compared by number.

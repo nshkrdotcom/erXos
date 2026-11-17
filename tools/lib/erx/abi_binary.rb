@@ -177,6 +177,14 @@ module Erx
         fail_decode('string_reference', table_name, 0)
       end
 
+      # Whether bytes are a string of the class kind, the check every reader makes of a
+      # string of that class. An unknown class raises.
+      def string_class?(kind, bytes)
+        raise Erx::Error, "unknown string class #{kind}" unless Contracts::STRING_CLASSES.include?(kind)
+
+        valid_string?(kind, bytes)
+      end
+
       private
 
       def layout(name)
@@ -514,6 +522,7 @@ module Erx
           text.valid_encoding? && text.codepoints.none? { |point| point < 0x20 || point.between?(0x7f, 0x9f) }
         when 'dt_path', 'namespace_path'
           valid_path?(bytes, clean: kind == 'dt_path')
+        when 'relative_path' then !bytes.empty? && valid_path?("/#{bytes}", clean: true)
         when 'args', 'env'
           return true if bytes.empty?
           return false unless bytes.end_with?("\0")

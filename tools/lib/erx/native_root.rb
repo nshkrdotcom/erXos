@@ -9,6 +9,7 @@ require_relative 'compile_memo'
 require_relative 'counter_reads'
 require_relative 'error'
 require_relative 'fiasco'
+require_relative 'generated_abi'
 require_relative 'musl'
 require_relative 'platform'
 require_relative 'interpreter_image'
@@ -25,7 +26,12 @@ module Erx
     TASK_LINK_SCRIPT = "#{BACKEND}/task.ld"
     # A section task.ld does not name would take the segments of the one before it, and a
     # writable one after .tbss would shrink every thread's TLS, so such a link fails.
-    TASK_LINK_FLAGS = %w[--orphan-handling=error].freeze
+    # Where task.ld places a task, from the ABI (abi/protocols/prog.txt): its base, the
+    # loader's window's, and the exec record's page, which its image ends below.
+    TASK_PLACE_FLAGS = [format('--defsym=erx_base=0x%x', ABI::Generated::CODEC.constant('exec_window_base')),
+                        format('--defsym=erx_exec_record_page=0x%x',
+                               ABI::Generated::CODEC.constant('exec_record_page'))].freeze
+    TASK_LINK_FLAGS = [*TASK_PLACE_FLAGS, '--orphan-handling=error'].freeze
     # Flags of every link that build makes, root and task. The scripts place each segment
     # on a page of its own and the program has nothing to relocate, so the linker adds no
     # RELRO header: root.ld names no program headers and would get one for it, and task.ld
@@ -40,7 +46,7 @@ module Erx
     # What every root task needs: its entry, its console and its compiler's memcpy.
     RUNTIME = %W[#{BACKEND}/arch/aarch64/root_start.S #{BACKEND}/console.c #{BACKEND}/root_mem.c].freeze
     # The root's own memory and objects: the effects over sigma0 and the four pure cores.
-    VM = %W[#{BACKEND}/vm.c #{BACKEND}/page_pool.c #{BACKEND}/object.c liberx/backend/core/vm_table.c
+    VM = %W[#{BACKEND}/vm.c #{BACKEND}/vm_rules.c #{BACKEND}/page_pool.c #{BACKEND}/object.c liberx/backend/core/vm_table.c
             liberx/backend/core/grow_table.c liberx/backend/core/handles.c #{BACKEND}/fault_gate.c #{BACKEND}/budget.c
             liberx/backend/core/gate.c].freeze
     # The root service and what it runs on: threads, waits and the end path. The
@@ -88,7 +94,7 @@ module Erx
                          liberx/program/pages.c liberx/program/fd.c liberx/program/fd_plan.c liberx/program/file.c
                          liberx/program/data.c liberx/program/pipe.c liberx/program/wake.c
                          liberx/program/poll.c liberx/program/signal.c liberx/program/spawn.c
-                         liberx/program/spawn_plan.c liberx/erx_lane.c
+                         liberx/program/spawn_plan.c liberx/program/image.c liberx/exec/release.c liberx/erx_lane.c
                          liberx/erx_profile.c build/gen/liberx/generated/prog_profile.c liberx/erx_etf.c
                          kernel/crypto/blake3/blake3.c kernel/crypto/blake3/blake3_portable.c], *PIPE].freeze
     PROGRAM = [*(LIBC_TASK - ["#{BACKEND}/libc_task.c"]), "#{BACKEND}/program_task.c", "#{BACKEND}/api_names.c",

@@ -1667,8 +1667,10 @@ about a program.
 driver's `start` is a plan validated whole before any effect, then
 applied in this order, each step undoing the ones before it on failure:
 
-1. **Validate.** The spec names the image, a program of the boot image or
-   a file object the session holds through an `rx` grant; the handler, a
+1. **Validate.** The spec names the image, a program of the boot image
+   by its path in the session's release (`image => <<"bin/NAME">>`) or a
+   code object the session holds through an `rx` grant by its value in
+   the session's table (`image => {object, Cap}`); the handler, a
    process of the session (the owner by default); the parent of the
    program's anchor; the pipe ends and descriptors the program inherits,
    a window's buffer among them as `{mem, Lease, Pages}`, the number
@@ -1747,7 +1749,9 @@ applied in this order, each step undoing the ones before it on failure:
    destroyed the anchor, which ends the mapping, and then returns it. A program of the boot image is mapped from its
    slices with `erx_image_map`, its code shared with every program that
    runs it; an executable file runs the boot image's loader, `erx_exec`,
-   mapped the same way, which once it runs in the image checks the file
+   the release's entry at `loader_path` (`libexec/erx_exec`), mapped the
+   same way, with the code object installed beside it, which once it
+   runs in the image checks the file
    with `erx_elf_plan` and maps its code from the file object, never
    writable and executable at once
    ([design-programs.md](design-programs.md#what-a-program-can-start)).

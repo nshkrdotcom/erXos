@@ -47,6 +47,18 @@ class AbiLimitsTest < Minitest::Test
     assert_equal 1000, erlang_values.fetch(at)
   end
 
+  # The loader's window (abi/protocols/prog.txt): the generator derives the exec record's
+  # page as the window's last, and fails a window that meets the program memory place
+  # (seed: the comparison removed generates it).
+  def test_the_exec_window_gives_the_record_page_and_stays_apart_from_program_memory
+    constants = generate.constants
+    assert_equal constants.fetch('exec_window_base').value + constants.fetch('exec_window_bytes').value - 4096,
+                 constants.fetch('exec_record_page').value
+    seed('abi/protocols/prog.txt', 'limit exec_window_base u64 0x4000100000', 'limit exec_window_base u64 0x7f3ff00000')
+    error = assert_raises(Erx::ABI::SchemaError) { generate }
+    assert_match(/the exec window meets the program memory place/, error.message)
+  end
+
   def test_the_pipe_check_builds_against_the_abi
     generate
     output, status = compile_pipe_check

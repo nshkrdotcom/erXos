@@ -22,10 +22,33 @@ limit elf_pt_tls u32 7
 limit elf_pf_x u32 1
 limit elf_pf_w u32 2
 limit elf_pf_r u32 4
-limit elf_dt_null i64 0
-limit elf_dt_needed i64 1
-limit elf_dt_textrel i64 22
-limit elf_dt_flags i64 30
+# The closed list of tags a static executable's dynamic section may carry, ended by
+# DT_NULL (docs/design-programs.md, "An executable file"): its one DT_RELA table, the
+# flags, the debugger's word, the dynamic symbol table nothing reads since no
+# relocation names a symbol, and the constructor and destructor tags, which nothing
+# reads either. The planner refuses every other tag, DT_NEEDED, DT_TEXTREL and every
+# other relocation table among them.
+enum elf_dt i64
+  value null 0
+  value hash 4
+  value strtab 5
+  value symtab 6
+  value rela 7
+  value relasz 8
+  value relaent 9
+  value strsz 10
+  value syment 11
+  value init 12
+  value fini 13
+  value debug 21
+  value init_array 25
+  value fini_array 26
+  value init_arraysz 27
+  value fini_arraysz 28
+  value flags 30
+  value gnu_hash 0x6ffffef5
+  value relacount 0x6ffffff9
+  value flags_1 0x6ffffffb
 limit elf_df_textrel u64 4
 limit elf_pn_xnum u16 65535
 # The auxiliary vector's keys a program's start gives musl (liberx/backend/fiasco/libc_start.c).
@@ -69,3 +92,7 @@ layout erx_elf64_nhdr wire_le 4 12
 layout erx_elf64_dyn wire_le 8 16
   field d_tag i64 0
   field d_value u64 8
+layout erx_elf64_rela wire_le 8 24
+  field r_offset u64 0
+  field r_info u64 8
+  field r_addend i64 16

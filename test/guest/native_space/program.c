@@ -31,8 +31,8 @@
 /* The handle table of each space the creator makes. */
 #define CREATED_CAP_LIMIT	16u
 
-_Static_assert(PROGRAM_TAG_ARG > ERX_PROGRAM_ARG_HWCAP2 && PROGRAM_TAG_ARG < ERX_FIASCO_START_ARGS,
-    "the tag's register is an argument register no program value uses");
+_Static_assert(PROGRAM_TAG_ARG == ERX_PROGRAM_ARG_EXEC,
+    "the tag's register is exec's, which only liberx's program layer reads, and this task's entry is its own");
 
 /* A word of the program's writable data, of which each task has its own copy. */
 static volatile uint64_t data_word = DATA_PATTERN;
@@ -670,6 +670,18 @@ mode_code_write(void)
 	return (110);
 }
 
+/* A task may not make code, and runs the root's sealed code object, mapped at CODE_ADDR. */
+static int64_t
+mode_code_run(void)
+{
+	int64_t (*const code)(void) = (int64_t (*)(void))(uintptr_t)CODE_ADDR;
+	uint64_t mem;
+
+	if (erx_mem_create_paged(0, PAGE, ERX_MEM_CODE, &mem) != ERX_ERIGHTS)
+		return (120);
+	return (code());
+}
+
 int64_t
 erx_task_main(const uint64_t args[ERX_FIASCO_START_ARGS])
 {
@@ -708,6 +720,8 @@ erx_task_main(const uint64_t args[ERX_FIASCO_START_ARGS])
 		return ((int64_t)*code_word());
 	case MODE_CODE_WRITE:
 		return (mode_code_write());
+	case MODE_CODE_RUN:
+		return (mode_code_run());
 	default:
 		return (90);
 	}

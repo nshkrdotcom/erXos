@@ -192,11 +192,17 @@ directory, which design-apps.md serves as the `etc` tree at `/etc`) and
 `erx_domain:start_session/2` (TODO.md, the design-apps.md items). The EROFS reader `erx_erofs` and
 its block funnel `erx_verity` read images through a block window
 (`otp/erts/preloaded/src/erx_verity.erl`, which checks no hash tree yet).
-A native program runs either as a program of the boot image or as an
-executable file that a grant with `rx` reaches, through the loader
-`erx_exec` and a code object the domain service makes
+A native program runs as a program of the boot image
+(`otp/erts/preloaded/src/erx_program.erl`, whose `image` is a path in
+the session's release); design-programs.md runs an executable file that
+a grant with `rx` reaches through the loader `erx_exec` and a code
+object the domain service makes
 ([design-programs.md](design-programs.md#what-a-program-can-start),
-[File objects](design-programs.md#file-objects)); a program that draws is
+[File objects](design-programs.md#file-objects)), which a native app's
+program needs (TODO.md, "an executable file as a program's image"). A
+program opens files through its handler
+(`liberx/backend/fiasco/program_task.c`, `SYS_openat`, over
+`liberx/program/file.c`). A program that draws is
 started with a window, whose `/dev/draw`, `/dev/kbd` and `/dev/mouse` its
 handler binds ([design-display.md](design-display.md#the-window-tree),
 "A program's `/dev`"). The session's program handler, `erx_prog_handler`,
@@ -256,7 +262,7 @@ branch `lvglscreen`, commit `82b02f4ff`) and Doom (the repository
 | no SDK: the build drove `tools/lib/erx` internals (`NativeRoot`, `ProductionImage`, `Programs::PROGRAM_PREFIX`) | Doom 1 | [The SDK](#the-sdk) |
 | the program joined the one domain release's `bin/`, seen by every session | Doom 5 | the program is `/app/bin/NAME`, an executable file run through `erx_exec` |
 | app code in the boot image made it 88 MiB, which stays in RAM for the whole boot, out of the room `root_memory` leaves | Doom 6 | the image builder's packages lie in the slot's system partition, outside the boot image ([Where a package lies](#where-a-package-lies)) |
-| no `open()` in a native program: `liberx/program/fd.h:37-41` has null, pipe and mem objects, and the C library seam answers every unlisted call `ENOSYS` (`musl/src/internal/erxos/syscall.c:536-537`), so the WAD was linked in | Doom 4 | designed, not built: [Descriptors and files](design-programs.md#descriptors-and-files) gives a program files through its handler; a package's data is `/app/share`, its writable files `/data` |
+| no `open()` in a native program: `liberx/program/fd.h:37-41` has null, pipe and mem objects, and the C library seam answers every unlisted call `ENOSYS` (`musl/src/internal/erxos/syscall.c:536-537`), so the WAD was linked in | Doom 4 | a program opens files through its handler ([Descriptors and files](design-programs.md#descriptors-and-files)); a package's data is `/app/share`, its writable files `/data` |
 | the launcher invented a pid, parent, group, directory and masks for `erx_program:start/1` | Doom 7 | programs start through `erx_prog_handler`, which assigns them |
 | presents on a 100 ms timer, no keyboard | Doom 8, 11 | a program started with a window draws through `/dev/draw`, flushes when its frame is done, and reads `/dev/kbd` |
 | `erx_win:open/2` answered `{error, none}` until the display's grant arrived, so the launcher polled | Doom 9 | `erx_app` starts the app's code only once the app's record has come, after its grants |
@@ -388,7 +394,7 @@ clock restart` starts it on the new package. `rm
 
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
-| **PK1.** An app holds no grant the `apps` row does not offer, and its memory comes only from the row's budget | the declaration grammar names services and one amount of memory; admission keeps a need only if it is one of the row's services; the session's facets are the `packages` and `system` grants and the kept needs, all rows of the manifest, through the domain service's one funnel (A10); the app's principal budget is a child of the `apps` budget, so every session it starts is carved there or refused | a declaration field that carries a parameter or a grant; an admission that keeps a need the row lacks; a session plan that grants a row the app did not name; an app budget carved from the root | admission's corpus with a seeded admission that drops the subset test; the session plan's host test with a seeded plan that grants every row of the template |
+| **PK1.** An app holds no grant the `apps` row does not offer, and its memory comes only from the row's budget | the declaration grammar names services and one amount of memory; admission keeps a need only if it is one of the row's services; the session's facets are the `packages` and `system` grants and the kept needs, all rows of the manifest, and the `code_objects` facet the domain service grants every session, which reaches only the session's own budget, through the domain service's one funnel (A10); the app's principal budget is a child of the `apps` budget, so every session it starts is carved there or refused | a declaration field that carries a parameter or a grant; an admission that keeps a need the row lacks; a session plan that grants a row the app did not name; an app budget carved from the root | admission's corpus with a seeded admission that drops the subset test; the session plan's host test with a seeded plan that grants every row of the template |
 | **PK2.** The build's proof for the board's own domains holds with every app present | property 19 counts the app template as `max` principals in every sum that counts a principal or a template's rows (display pixel areas and connections, domain slots, start rows, principal table, name atoms), each holding every service of the row | a sum that counts the app template once; a service an app may take that no sum counts | the seeded violations of [The build's check](#the-builds-check) |
 | **PK3.** Every block of a package's image that a session reads, at `/app` or at a mount of a file of `/apps`, matched the root hash of a header the system domain authenticated | every package mount is the one EROFS mount, through `erx_verity`, and takes no layout from its caller: for `/app`, `erx_ns`'s process takes the root hash, salt and tree layout from the app's record, which the domain service fills only from a header the file check accepted; for the shell's `mount`, from the header bytes that `erx_verity:header/1` reads through the same open as the image, which it takes only for a file it reached through the `apps` grant, and the `apps` tree serves header bytes only once their SHA-256 is the one it recorded when the file check accepted them | a form of the mount that takes a layout or a root hash from its caller; a `header` mount of a file reached through any grant but `apps`; a header read the tree answers without its hash check; a mount that reads the header and the image through two opens; a read path around `erx_verity` | from M11, a QEMU test that flips one byte of an installed package's image and finds the read refused at `/app` and at a mount of it; the `apps` tree's host test of a header changed on the medium after the check, answered `eio`; a test that a `header` mount of a file of `/tmp` or `/data` is refused with `einval`; E1's build check, `Erx::ErofsReads` ([design-storage.md](design-storage.md#invariants)): no module but `erx_verity` reads a file mount's fid or the `system` window, the reader reaches a block only through `erx_verity:read/3`, and no module but `erx_ns` and `erx_storage_system` opens an image in it |
 | **PK4.** Two apps see nothing of each other, and two signers' apps of one name share no directory | each is its own principal; the domain service computes every scope from the session's principal, the app's; the storage service roots each app's `data` grant at `apps/NAME/SIGNER/`, both parts from the principal's record | a scope, storage root or name pool derived from the template's key; a data root that leaves out the signer; two apps registered under one principal | a QEMU test with two apps; the mint's host test of one name under two signers, two roots; seeded: the mint's scope taken from the template's key, and a root of the name alone |
@@ -680,8 +686,8 @@ app doom
 A declaration has exactly one of `applications` and `program`. An Erlang
 app that needs a native helper starts it itself with
 `erx_prog_handler:start/1`. A program starts with a window on the
-session's default display when the app needs a `windows` service, and
-otherwise without one. A declaration names no facet parameter, quota,
+session's default display whenever the session has one, and otherwise
+without one. A declaration names no facet parameter, quota,
 CPU share, environment or grant, and there is no field through which it
 could: the illegal declaration is one the grammar cannot write. An app
 that wants the LVGL renderer says so where it opens its UI, with
@@ -714,8 +720,8 @@ A package is one file, `NAME.app`, of three parts, each starting at a
 | hash tree | the image's dm-verity tree, over the image's blocks as they lie in the file, its levels top first; an image of one block has no level, its block's hash being the root hash |
 
 The image uses only the layouts the EROFS reader implements: compact and
-extended inodes, the plain and inline data layouts, regular files,
-directories and symbolic links, and no compression
+extended inodes, the plain and inline data layouts, regular files and
+directories, and no compression
 ([design-storage.md](design-storage.md#reading-erofs-images)). They are
 the layouts `fsimg` writes with the options every erXos image is made
 with, `-o cluster=4096 -o compression=none`
@@ -724,9 +730,16 @@ uses too. The file check reads only the header, so an image another tool
 made in another layout is admitted and fails where the reader meets it:
 the mount refuses an incompatible feature bit, and an inode of a
 compressed or chunked layout answers `enotsup` when it is reached, in the
-reading session alone. The image's entries carry fixed owner, mode and
+reading session alone. **A package holds no links.** The packer writes
+none, and on a package mount, `{erofs, app}` or `{erofs, {header,
+Path}}`, the reader answers a symbolic-link inode with `enotsup` wherever
+it reaches one, as it answers an inode of a layout it does not
+implement, so a walk, a `readlink` and an open through a link all fail
+and no path beneath `/app` leads out of the package: a program the
+header names, and every file a program of the package opens there, is
+the package's own. The image's entries carry fixed owner, mode and
 time, so the same inputs give the same bytes and no host metadata leaks
-into a package. The image names no device, socket or link leaving it.
+into a package. The image names no device or socket.
 
 **The decoder**, `erx_pkg_header:decode(Length, Bytes)`, is the one
 parser of a package file's structure, whatever the file's origin and
@@ -1169,8 +1182,11 @@ third from the package the entry was registered from:
   so it refuses that template, and neither entry can pair an app
   principal with another template or the app template with another
   principal;
-* its facets are the template's `packages` and `system` rows and the
-  rows the admission kept, and no others; each mint computes its parameters from
+* its facets are the template's `packages` and `system` rows, the
+  rows the admission kept, and the `code_objects` facet the domain
+  service grants every session by its own policy, with no row
+  ([design-system.md](design-system.md#creating-a-domain), "The
+  `code_objects` facet"), and no others; each mint computes its parameters from
   the session's principal, the app's, as every mint does
   ([design-system.md](design-system.md#facets-a-configured-domain-serves));
 * its environment holds its default display, which its planning sets
@@ -1192,8 +1208,9 @@ third from the package the entry was registered from:
   nothing secret, and a package file begins with its header, not an
   executable's), the
   header's layout, which the file check built, and its
-  applications or its program with its arguments and whether it has a
-  window.
+  applications or its program with its arguments; the record holds no
+  window of its own, since `erx_app` starts a program with a window
+  whenever the session has a default display.
 
 The record comes only once the session's namespace is in place, each of
 its grants of a files service settled, the `packages` and `system`
@@ -1290,7 +1307,8 @@ DIR/Makefile           optional: builds bin/ with the SDK's make variables
   when `DIR/Makefile` exists, runs `make` there with the SDK's variables.
   It then parses `app.txt`, checks that each application has its OTP
   application resource file, `lib/APP/ebin/APP.app`, or that the program
-  exists and passes `erx_elf_plan` with the SDK's ABI version, writes the
+  exists and passes `erx_elf_plan` with the SDK's ABI version as a
+  position-independent executable, as `erx_exec` takes it ([design-programs.md](design-programs.md#what-a-program-can-start)), writes the
   image from an mtree manifest with `fsimg`, computes the hash tree with
   the image's SHA-256 as its salt, writes the header with the
   SDK's ABI version and target, signs it with FILE's key or else the
@@ -1399,8 +1417,13 @@ that server serves. Once the record has come, it:
    `application:ensure_all_started(App, permanent)`, its dependencies on
    the release's applications resolved from the release;
 3. for a native app, starts its program with `erx_prog_handler:start/1`:
-   with the spec's `window` option naming the session's default display
-   when the app needs a `windows` service, so the handler opens the
+   the image `/app/` and the header's `program`, a `relative_path` the
+   package reader checks, so it names a file of the image and nothing
+   outside it; that path as `argv[0]`, the declared arguments after it,
+   an empty environment, `/` as its working directory and no right to
+   start commands; and the spec's `window` option naming the session's
+   default display, the environment's `display`, whenever the session
+   has one, so the handler opens the
    window and binds its `/dev/draw`, `/dev/kbd`, `/dev/mouse` and
    `/dev/wctl` ([design-programs.md](design-programs.md#the-handler),
    [design-display.md](design-display.md#the-window-tree)); without,
@@ -1743,8 +1766,8 @@ or `one` command, or at the next boot.
 | --- | --- |
 | `SDK.txt` | the erXos commit, `ERX_ABI_VERSION`, the target architecture, the OTP release (29.1.2), the minimum LLVM, `fsimg`'s version |
 | `sysroot/<arch>/include` | musl's headers as erXos ships them; the draw protocol's message layouts, generated from `abi/formats/draw.txt` |
-| `sysroot/<arch>/lib` | `libc.a`; `liberx_program.a`, liberx's program layer and entry, prebuilt; the compiler's builtins; the program link script |
-| `share/erxos/sdk.mk` | make variables: the compiler and flags erXos's own programs build with, and the link line |
+| `sysroot/<arch>/lib` | `libc.a`; `liberx_program.a`, liberx's program layer and entry, prebuilt; the compiler's builtins, each built once, position-independent, as the boot image's programs use them; the task link script, with its base 0, which lays a static position-independent executable out as the boot image's programs are laid out ([design-programs.md](design-programs.md#what-a-program-can-start), "The executable's link") |
+| `share/erxos/sdk.mk` | make variables: the compiler and flags erXos's own programs build with, position-independent, and the link line, which links a static position-independent executable with no musl start file, `-pie --no-dynamic-linker -static -z norelro -z max-page-size=4096 --orphan-handling=error`, and never `-z pack-relative-relocs` |
 | `erlang/` | the public Erlang applications as `.app`, `.beam` and `include/` files, `public.txt`, the list of public functions as `Module:Function/Arity`, and `erx_ui_host` |
 | `host/bin/` | `erx-app`, the packer, and `fsimg`; `erx-lvgl` built for the host, for `erx_ui_host` |
 | `host/erlang/ebin` | `erx_bytes` for stock OTP 29.1.2, a model of the per-byte primitives that stock lacks, with which the packer runs the file check on the host |

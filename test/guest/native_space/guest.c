@@ -974,6 +974,157 @@ case_copy(uint32_t first)
 	say_case("copy", passed && erx_fiasco_vm_free_pages() == before);
 }
 
+/* mov x0, #CODE_STATUS; ret: the code the root supplies into its code objects. */
+static const uint32_t code_function[] = { UINT32_C(0xd2800000) | (uint32_t)CODE_STATUS << 5, UINT32_C(0xd65f03c0) };
+#define CODE_BYTES	sizeof(code_function)
+
+/* A page of the root's own, mapped read-write at *addr, holding code_function. */
+static bool
+code_stage(uint64_t *mem, uint64_t *addr)
+{
+	if (!copy_object(PAGE, mem, addr))
+		return (false);
+	for (size_t word = 0; word < sizeof(code_function) / sizeof(code_function[0]); word++)
+		((volatile uint32_t *)(uintptr_t)*addr)[word] = code_function[word];
+	return (true);
+}
+
+/*
+ * A code object maps nowhere unsealed (ERX_EBUSY), takes a supply, is sealed, and then
+ * refuses a further supply, a copy and a writable map (ERX_ERIGHTS); mapped to run into
+ * a task, which may not make one itself, it runs there. A data object, sealed, may not
+ * run, and ERX_MEM_CODE with the writable ERX_MEM_JIT is ERX_EINVAL.
+ */
+static void
+case_code_objects(void)
+{
+	const uint64_t before = erx_fiasco_vm_free_pages();
+	uint64_t space = 0, code = 0, data = 0, stage = 0, stage_addr = 0, refused = 0;
+	bool started = false;
+	bool passed = task_make(&space, CODE_ADDR, 1) && code_stage(&stage, &stage_addr) &&
+	    erx_mem_create_paged(0, PAGE, ERX_MEM_CODE, &code) == ERX_OK && erx_mem_create_paged(0, PAGE, 0, &data) == ERX_OK;
+
+	passed = passed && erx_mem_create_paged(0, PAGE, ERX_MEM_CODE | ERX_MEM_JIT, &refused) == ERX_EINVAL &&
+	    erx_vm_map(space, CODE_ADDR, PAGE, code, 0, ERX_PROT_RX) == ERX_EBUSY &&
+	    erx_mem_supply(code, 0, stage, 0, CODE_BYTES) == ERX_OK && erx_mem_seal(code) == ERX_OK &&
+	    erx_mem_supply(code, 0, stage, 0, CODE_BYTES) == ERX_ERIGHTS &&
+	    erx_mem_copy(code, 0, stage, 0, CODE_BYTES) == ERX_ERIGHTS &&
+	    erx_vm_map(space, CODE_ADDR, PAGE, code, 0, ERX_PROT_RW) == ERX_ERIGHTS &&
+	    erx_mem_seal(data) == ERX_OK && erx_vm_map(space, CODE_ADDR, PAGE, data, 0, ERX_PROT_RX) == ERX_ERIGHTS &&
+	    erx_vm_map(space, CODE_ADDR, PAGE, code, 0, ERX_PROT_RX) == ERX_OK;
+	if (passed) {
+		started = true;
+		passed = task_finish(space, MODE_CODE_RUN) == CODE_STATUS;
+	}
+	if (space != 0 && !started)
+		task_drop(space);
+	if (stage_addr != 0)
+		passed = erx_vm_release(ERX_CAP_SELF, stage_addr, PAGE) == ERX_OK && passed;
+	passed = (stage == 0 || handle_close(stage) == ERX_OK) && (code == 0 || handle_close(code) == ERX_OK) &&
+	    (data == 0 || handle_close(data) == ERX_OK) && passed;
+	say_case("code_objects", passed && erx_fiasco_vm_free_pages() == before);
+}
+
+/*
+ * erx_mem_supply's bounds: a range past the object's end, one a page past it, and a
+ * target or source offset whose sum wraps are ERX_ERANGE and leave the object as it
+ * was; a supply into an object that is not paged is ERX_ETYPE. The sealed object then
+ * reads exactly the one supply that was in bounds.
+ */
+static void
+case_supply_bounds(void)
+{
+	const uint64_t before = erx_fiasco_vm_free_pages();
+	uint64_t code = 0, stage = 0, stage_addr = 0, addr = 0;
+	bool passed = code_stage(&stage, &stage_addr) && erx_mem_create_paged(0, PAGE, ERX_MEM_CODE, &code) == ERX_OK;
+
+	passed = passed && erx_mem_supply(code, CODE_BYTES, stage, 0, PAGE) == ERX_ERANGE &&
+	    erx_mem_supply(code, PAGE, stage, 0, PAGE) == ERX_ERANGE &&
+	    erx_mem_supply(code, UINT64_MAX - 7, stage, 0, 16) == ERX_ERANGE &&
+	    erx_mem_supply(code, 0, stage, UINT64_MAX - 7, 16) == ERX_ERANGE &&
+	    erx_mem_supply(stage, 0, stage, PAGE / 2, CODE_BYTES) == ERX_ETYPE &&
+	    erx_mem_supply(code, 0, stage, 0, CODE_BYTES) == ERX_OK && erx_mem_seal(code) == ERX_OK &&
+	    erx_vm_reserve(ERX_CAP_SELF, 0, PAGE, 0, &addr) == ERX_OK &&
+	    erx_vm_map(ERX_CAP_SELF, addr, PAGE, code, 0, ERX_PROT_R) == ERX_OK;
+	passed = passed && copy_word(addr) == copy_word(stage_addr) && copy_word(addr + CODE_BYTES) == 0;
+	if (addr != 0)
+		passed = erx_vm_release(ERX_CAP_SELF, addr, PAGE) == ERX_OK && passed;
+	if (stage_addr != 0)
+		passed = erx_vm_release(ERX_CAP_SELF, stage_addr, PAGE) == ERX_OK && passed;
+	passed = (stage == 0 || handle_close(stage) == ERX_OK) && (code == 0 || handle_close(code) == ERX_OK) && passed;
+	say_case("supply_bounds", passed && erx_fiasco_vm_free_pages() == before);
+}
+
+/*
+ * erx_mem_child of a sealed code object: the child reads its parent's bytes, maps
+ * read-write but never to run (ERX_ERIGHTS), and a write to it leaves the parent as it
+ * was. A child of an unsealed paged object, of a plain one and of a child is ERX_ETYPE;
+ * a range past the parent's end, or one whose sum wraps, ERX_ERANGE; a size off a page
+ * ERX_EINVAL. Every page comes back once the handles are closed.
+ */
+static void
+case_child_objects(void)
+{
+	const uint64_t before = erx_fiasco_vm_free_pages();
+	uint64_t code = 0, data = 0, child = 0, stage = 0, stage_addr = 0, child_addr = 0, code_addr = 0, refused = 0;
+	bool passed = code_stage(&stage, &stage_addr) && erx_mem_create_paged(0, PAGE, ERX_MEM_CODE, &code) == ERX_OK &&
+	    erx_mem_create_paged(0, PAGE, 0, &data) == ERX_OK && erx_mem_supply(code, 0, stage, 0, CODE_BYTES) == ERX_OK;
+
+	passed = passed && erx_mem_child(code, 0, 0, PAGE, &refused) == ERX_ETYPE && erx_mem_seal(code) == ERX_OK &&
+	    erx_mem_child(data, 0, 0, PAGE, &refused) == ERX_ETYPE &&
+	    erx_mem_child(stage, 0, 0, PAGE, &refused) == ERX_ETYPE &&
+	    erx_mem_child(code, 0, PAGE, PAGE, &refused) == ERX_ERANGE &&
+	    erx_mem_child(code, 0, PAGE, UINT64_MAX - PAGE + 1, &refused) == ERX_ERANGE &&
+	    erx_mem_child(code, 0, 0, PAGE / 2, &refused) == ERX_EINVAL &&
+	    erx_mem_child(code, 0, 0, PAGE, &child) == ERX_OK &&
+	    erx_mem_child(child, 0, 0, PAGE, &refused) == ERX_ETYPE &&
+	    erx_vm_reserve(ERX_CAP_SELF, 0, PAGE, 0, &child_addr) == ERX_OK &&
+	    erx_vm_map(ERX_CAP_SELF, child_addr, PAGE, child, 0, ERX_PROT_RX) == ERX_ERIGHTS &&
+	    erx_vm_map(ERX_CAP_SELF, child_addr, PAGE, child, 0, ERX_PROT_RW) == ERX_OK &&
+	    erx_vm_reserve(ERX_CAP_SELF, 0, PAGE, 0, &code_addr) == ERX_OK &&
+	    erx_vm_map(ERX_CAP_SELF, code_addr, PAGE, code, 0, ERX_PROT_R) == ERX_OK;
+	passed = passed && copy_word(child_addr) == copy_word(stage_addr) && copy_word(child_addr + CODE_BYTES) == 0;
+	if (passed) {
+		*(volatile uint64_t *)(uintptr_t)child_addr = ~copy_word(stage_addr);
+		passed = copy_word(child_addr) == ~copy_word(stage_addr) && copy_word(code_addr) == copy_word(stage_addr);
+	}
+	if (child_addr != 0)
+		passed = erx_vm_release(ERX_CAP_SELF, child_addr, PAGE) == ERX_OK && passed;
+	if (code_addr != 0)
+		passed = erx_vm_release(ERX_CAP_SELF, code_addr, PAGE) == ERX_OK && passed;
+	if (stage_addr != 0)
+		passed = erx_vm_release(ERX_CAP_SELF, stage_addr, PAGE) == ERX_OK && passed;
+	passed = (stage == 0 || handle_close(stage) == ERX_OK) && (code == 0 || handle_close(code) == ERX_OK) &&
+	    (data == 0 || handle_close(data) == ERX_OK) && (child == 0 || handle_close(child) == ERX_OK) && passed;
+	say_case("child_objects", passed && erx_fiasco_vm_free_pages() == before);
+}
+
+/*
+ * A child of a two-page sealed object from its second page: it reads that page's bytes,
+ * eight bytes in, and not the first page's, which holds the same bytes at its start.
+ */
+static void
+case_child_offset(void)
+{
+	const uint64_t before = erx_fiasco_vm_free_pages();
+	uint64_t wide = 0, child = 0, stage = 0, stage_addr = 0, addr = 0;
+	bool passed = code_stage(&stage, &stage_addr) && erx_mem_create_paged(0, 2 * PAGE, 0, &wide) == ERX_OK &&
+	    erx_mem_supply(wide, 0, stage, 0, CODE_BYTES) == ERX_OK &&
+	    erx_mem_supply(wide, PAGE + 8, stage, 0, CODE_BYTES) == ERX_OK && erx_mem_seal(wide) == ERX_OK &&
+	    erx_mem_child(wide, 0, PAGE, PAGE, &child) == ERX_OK &&
+	    erx_vm_reserve(ERX_CAP_SELF, 0, PAGE, 0, &addr) == ERX_OK &&
+	    erx_vm_map(ERX_CAP_SELF, addr, PAGE, child, 0, ERX_PROT_R) == ERX_OK;
+
+	passed = passed && copy_word(addr + 8) == copy_word(stage_addr) && copy_word(addr) == 0;
+	if (addr != 0)
+		passed = erx_vm_release(ERX_CAP_SELF, addr, PAGE) == ERX_OK && passed;
+	if (stage_addr != 0)
+		passed = erx_vm_release(ERX_CAP_SELF, stage_addr, PAGE) == ERX_OK && passed;
+	passed = (stage == 0 || handle_close(stage) == ERX_OK) && (wide == 0 || handle_close(wide) == ERX_OK) &&
+	    (child == 0 || handle_close(child) == ERX_OK) && passed;
+	say_case("child_offset", passed && erx_fiasco_vm_free_pages() == before);
+}
+
 /*
  * The root's own tables, and the service's rows for the first WARM_TASKS task indices,
  * as many as one case holds at once (case_created), take their pages here, so no case
@@ -1189,6 +1340,10 @@ erx_fiasco_root_main(void)
 		say("erx: space: no domain release\n");
 	case_slices(release_first);
 	case_copy(release_first);
+	case_code_objects();
+	case_supply_bounds();
+	case_child_objects();
+	case_child_offset();
 	if (erx_fiasco_launcher_find(&pack, IMAGE_PROGRAM, &image_entry) != ERX_OK)
 		say("erx: space: no image program\n");
 	case_image_shared(image_entry);

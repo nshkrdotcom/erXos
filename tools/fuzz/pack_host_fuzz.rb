@@ -20,6 +20,7 @@ module Erx
       random = Random.new(seed)
       reply = { 'abi_version' => 1, 'virtual_origin' => 65536, 'fixed_base' => 65536, 'span' => 4096,
                 'entry' => 64, 'phdr_offset' => 0, 'output_size' => 8192,
+                'relocation_offset' => 0, 'relocation_count' => 0,
                 'flags' => 1, 'phnum' => 1, 'base_alignment' => 4096,
                 'loads' => [{ 'source_offset' => 0, 'file_offset' => 4096, 'mem_offset' => 0,
                               'file_size' => 128, 'mem_size' => 128, 'prot' => 5, 'flags' => 0 }] }

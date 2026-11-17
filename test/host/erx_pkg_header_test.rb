@@ -111,6 +111,17 @@ class ErxPkgHeaderTest < Minitest::Test
     end
   end
 
+  # A native program whose path would name something outside the image once joined to
+  # /app: up out of it, absolute, or through an empty or `.` name. The reader refuses each
+  # as a string outside its class, so no app record names one.
+  def program_escapes
+    %w[bin/../../bin/sh /bin/sh bin//sh bin/./sh bin/].each_with_index.map do |path, index|
+      declaration = Seeds::NATIVE.with(start: Erx::AppPackage::Program.new(path: path, args: []))
+      [Seeds.sample("escape_#{index}", declaration: declaration, image_blocks: 3, tree_blocks: 1),
+       header(Refused.new(:string_class))]
+    end
+  end
+
   # One file for each check, the first that fails answering.
   def refusals
     too_large = Seeds.codec.constant('pkg_bytes_max') + 1
@@ -122,6 +133,7 @@ class ErxPkgHeaderTest < Minitest::Test
      [erlang('seal_not_at_end', edits: ->(values) { values.merge('header_length' => values['header_length'] + 1) },
                                 header_edit: ->(bytes) { bytes + "\0".b }), header(Refused.new(:trailing))],
      [erlang('both_starts', edits: ->(values) { values.merge('program' => values['name']) }), header(Refused.new(:inactive))],
+     *program_escapes,
      [erlang('header_past_max', edits: ->(values) { values.merge('header_length' => Seeds.header_max + 1) },
                                 length_edit: ->(_) { 2 * Seeds.header_max }), header(Refused.new(:length))],
      # A read past the header's boundary but short of the bytes the decoder reads.

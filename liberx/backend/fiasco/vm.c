@@ -42,11 +42,13 @@
 
 #include "erx/abi.h"
 #include "liberx/backend/core/mem.h"
+#include "liberx/backend/fiasco/cache.h"
 #include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/object.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/page_pool.h"
 #include "liberx/backend/fiasco/vm.h"
+#include "liberx/backend/fiasco/vm_rules.h"
 #include "liberx/backend/core/vm_table.h"
 
 /* The backend's address layout: above all RAM, and below 2^39, Fiasco's user limit here. */
@@ -87,19 +89,11 @@ _Static_assert(ERX_MEM_CONTIGUOUS_MAX <= (uint64_t)ERX_FIASCO_CONTIG_PAGES << L4
 _Static_assert(ERX_FIASCO_KIP_WINDOW % ERX_PAGE_SIZE == 0 && ERX_FIASCO_KIP_WINDOW + ERX_PAGE_SIZE <= VM_DEVICE_BASE,
     "the kernel information page's window is a page below the device window");
 
-typedef enum vm_object_kind {
-	VM_OBJECT_PAGES,
-	VM_OBJECT_PHYSICAL,
-	VM_OBJECT_CONTIGUOUS,
-	VM_OBJECT_SLICE
-} vm_object_kind_t;
-
 typedef struct vm_object {
-	vm_object_kind_t	kind;
-	uint64_t		device_base;	/* VM_OBJECT_CONTIGUOUS: offset 0's device address */
-	uint32_t		slice_first;	/* VM_OBJECT_SLICE: its first archive entry */
-	uint32_t		slice_count;	/* VM_OBJECT_SLICE: how many entries it holds */
-	bool			code;		/* VM_OBJECT_SLICE: an image entry's, which erx_fiasco_vm_image_map may execute */
+	erx_fiasco_vm_traits_t	traits;		/* what vm_rules.c decides by */
+	uint64_t		device_base;	/* ERX_FIASCO_VM_CONTIGUOUS: offset 0's device address */
+	uint32_t		slice_first;	/* ERX_FIASCO_VM_SLICE: its first archive entry */
+	uint32_t		slice_count;	/* ERX_FIASCO_VM_SLICE: how many entries it holds */
 	uint64_t		size;
 	erx_backend_vm_table_t	table;
 } vm_object_t;
@@ -131,6 +125,7 @@ static vm_object_t *vm_object(uint32_t);
 static uint32_t	vm_label_task(uint32_t);
 static _Noreturn void vm_refused(const char *);
 static int	object_map(uint32_t, uint32_t, uint64_t, uint64_t, uint64_t, uint32_t);
+static int	object_copy(uint32_t, uint64_t, uint32_t, uint64_t, uint64_t, uint64_t *);
 
 const erx_backend_grow_pages_t erx_fiasco_vm_records = { .take = vm_record_take, .give = vm_record_give };
 
@@ -340,7 +335,7 @@ erx_fiasco_vm_object_window(uint32_t object, uint64_t offset)
  * refused fill holds no label or page.
  */
 static int
-object_fill(uint32_t index, uint64_t size, const erx_backend_vm_effects_t *effects, vm_object_kind_t kind,
+object_fill(uint32_t index, uint64_t size, const erx_backend_vm_effects_t *effects, erx_fiasco_vm_kind_t kind,
     uintptr_t run)
 {
 	const erx_backend_vm_request_t reserve = { .op = ERX_BACKEND_VM_RESERVE, .addr = VM_OBJECT_AREA_START,
@@ -367,16 +362,57 @@ object_fill(uint32_t index, uint64_t size, const erx_backend_vm_effects_t *effec
 		vm_label_put(label);
 		return (status == ERX_ERANGE ? ERX_ENOMEM : status);
 	}
-	object->kind = kind;
-	object->code = false;
+	object->traits = (erx_fiasco_vm_traits_t){ .kind = kind };
 	object->size = size;
 	return (ERX_OK);
 }
 
 int
-erx_fiasco_vm_object_create(uint32_t object, uint64_t size)
+erx_fiasco_vm_object_create(uint32_t object, uint64_t size, bool jit)
 {
-	return (object_fill(object, size, &vm_no_effects, VM_OBJECT_PAGES, 0));
+	return (object_fill(object, size, &vm_no_effects, jit ? ERX_FIASCO_VM_JIT : ERX_FIASCO_VM_PAGES, 0));
+}
+
+int
+erx_fiasco_vm_paged_create(uint32_t object, uint64_t size, bool code)
+{
+	const int status = object_fill(object, size, &vm_no_effects, ERX_FIASCO_VM_PAGED, 0);
+
+	if (status == ERX_OK)
+		vm_object(object)->traits.code = code;
+	return (status);
+}
+
+/* The parent is read by value: object_fill's room may move every record. */
+int
+erx_fiasco_vm_child_create(uint32_t object, uint32_t parent, uint64_t offset, uint64_t size)
+{
+	const erx_fiasco_vm_traits_t traits = vm_object(parent)->traits;
+	const uint64_t parent_size = vm_object(parent)->size;
+	const int status = erx_fiasco_vm_child_rule(traits, parent_size, offset, size);
+
+	return (status != ERX_OK ? status : object_fill(object, size, &vm_no_effects, ERX_FIASCO_VM_CHILD, 0));
+}
+
+/*
+ * No supply or copy writes the object again, and nothing mapped it before, so its
+ * pages are final: a code object's are made coherent for instruction fetch once, here.
+ */
+int
+erx_fiasco_vm_object_seal(uint32_t index)
+{
+	vm_object_t *const object = vm_object(index);
+	const erx_fiasco_vm_seal_t seal = erx_fiasco_vm_seal_rule(object->traits);
+
+	if (seal.status != ERX_OK)
+		return (seal.status);
+	/* The one service thread maps nothing meanwhile: every page is coherent before the flag lets a map succeed. */
+	if (seal.coherent)
+		for (uint64_t offset = 0; offset < object->size; offset += ERX_PAGE_SIZE)
+			erx_fiasco_cache_make_coherent(erx_backend_vm_window(&object->table, VM_OBJECT_AREA_START + offset),
+			    ERX_PAGE_SIZE);
+	object->traits.sealed = true;
+	return (ERX_OK);
 }
 
 /*
@@ -411,7 +447,7 @@ erx_fiasco_vm_physical_create(uint32_t object, uint64_t base, uint64_t size)
 
 	status = device_map(base, size, &window);
 	if (status == ERX_OK)
-		status = object_fill(object, size, &vm_run_effects, VM_OBJECT_PHYSICAL, window);
+		status = object_fill(object, size, &vm_run_effects, ERX_FIASCO_VM_PHYSICAL, window);
 	if (status != ERX_OK)
 		return (status);
 	device_take(size);
@@ -445,7 +481,7 @@ erx_fiasco_vm_contiguous_create(uint32_t object, uint64_t size, uint64_t cpu, ui
 		return (ERX_ENOMEM);
 	window = (uintptr_t)(VM_CONTIG_BASE + ((uint64_t)first << L4_PAGESHIFT));
 	bzero((void *)window, (size_t)size);
-	status = object_fill(object, size, &vm_run_effects, VM_OBJECT_CONTIGUOUS, window);
+	status = object_fill(object, size, &vm_run_effects, ERX_FIASCO_VM_CONTIGUOUS, window);
 	if (status != ERX_OK)
 		return (status);
 	/*
@@ -462,7 +498,7 @@ erx_fiasco_vm_object_dma_addr(uint32_t index, uint64_t offset, uint64_t *addr)
 {
 	const vm_object_t *const object = vm_object(index);
 
-	if (object->kind != VM_OBJECT_CONTIGUOUS)
+	if (object->traits.kind != ERX_FIASCO_VM_CONTIGUOUS)
 		return (ERX_ETYPE);
 	if (offset >= object->size)
 		return (ERX_ERANGE);
@@ -476,7 +512,7 @@ erx_fiasco_vm_slice_create(uint32_t object, uintptr_t window, uint64_t size, uin
 	/* vm_give keeps a page below the window out of the pool, so the archive's must lie there. */
 	if (window >= VM_WINDOW_BASE || size > VM_WINDOW_BASE - window)
 		return (ERX_ENOTSUP);
-	const int status = object_fill(object, size, &vm_run_effects, VM_OBJECT_SLICE, window);
+	const int status = object_fill(object, size, &vm_run_effects, ERX_FIASCO_VM_SLICE, window);
 
 	if (status != ERX_OK)
 		return (status);
@@ -488,7 +524,7 @@ erx_fiasco_vm_slice_create(uint32_t object, uintptr_t window, uint64_t size, uin
 void
 erx_fiasco_vm_slice_code(uint32_t object)
 {
-	vm_object(object)->code = true;
+	vm_object(object)->traits.code = true;
 }
 
 int
@@ -496,7 +532,7 @@ erx_fiasco_vm_slice_entries(uint32_t index, uint32_t *first, uint32_t *count)
 {
 	const vm_object_t *const object = vm_object(index);
 
-	if (object->kind != VM_OBJECT_SLICE)
+	if (object->traits.kind != ERX_FIASCO_VM_SLICE)
 		return (ERX_ETYPE);
 	*first = object->slice_first;
 	*count = object->slice_count;
@@ -516,14 +552,29 @@ int
 erx_fiasco_vm_object_copy(uint32_t dst_index, uint64_t dst_offset, uint32_t src_index, uint64_t src_offset, uint64_t len,
     uint64_t *done)
 {
+	const int status = erx_fiasco_vm_copy_rule(vm_object(dst_index)->traits, vm_object(src_index)->traits);
+
+	return (status != ERX_OK ? status : object_copy(dst_index, dst_offset, src_index, src_offset, len, done));
+}
+
+int
+erx_fiasco_vm_object_supply(uint32_t dst_index, uint64_t dst_offset, uint32_t src_index, uint64_t src_offset,
+    uint64_t len, uint64_t *done)
+{
+	const int status = erx_fiasco_vm_supply_rule(vm_object(dst_index)->traits, vm_object(src_index)->traits);
+
+	return (status != ERX_OK ? status : object_copy(dst_index, dst_offset, src_index, src_offset, len, done));
+}
+
+/* One request's part of a copy or a supply that its rule admitted: the ranges are checked before any byte moves. */
+static int
+object_copy(uint32_t dst_index, uint64_t dst_offset, uint32_t src_index, uint64_t src_offset, uint64_t len,
+    uint64_t *done)
+{
 	const vm_object_t *const dst = vm_object(dst_index);
 	const vm_object_t *const src = vm_object(src_index);
 	uint64_t dst_end, src_end, cursor, stop;
 
-	if (dst->kind == VM_OBJECT_PHYSICAL || src->kind == VM_OBJECT_PHYSICAL)
-		return (ERX_ETYPE);
-	if (dst->kind == VM_OBJECT_SLICE)
-		return (ERX_ERIGHTS);
 	if (__builtin_add_overflow(dst_offset, len, &dst_end) || dst_end > dst->size ||
 	    __builtin_add_overflow(src_offset, len, &src_end) || src_end > src->size)
 		return (ERX_ERANGE);
@@ -551,16 +602,9 @@ erx_fiasco_vm_object_copy(uint32_t dst_index, uint64_t dst_offset, uint32_t src_
 int
 erx_fiasco_vm_object_map(uint32_t task, uint32_t index, uint64_t addr, uint64_t size, uint64_t offset, uint32_t prot)
 {
-	const vm_object_t *const object = vm_object(index);
+	const int status = erx_fiasco_vm_map_rule(vm_object(index)->traits, prot);
 
-	/*
-	 * A device's memory is never code: registers fault, and a device could write a run.
-	 * A slice's pages are the archive's, which no task writes.
-	 */
-	if ((object->kind != VM_OBJECT_PAGES && prot == ERX_PROT_RX) ||
-	    (object->kind == VM_OBJECT_SLICE && prot != ERX_PROT_R))
-		return (ERX_ERIGHTS);
-	return (object_map(task, index, addr, size, offset, prot));
+	return (status != ERX_OK ? status : object_map(task, index, addr, size, offset, prot));
 }
 
 /*
@@ -570,11 +614,9 @@ erx_fiasco_vm_object_map(uint32_t task, uint32_t index, uint64_t addr, uint64_t 
 int
 erx_fiasco_vm_image_map(uint32_t task, uint32_t index, uint64_t addr, uint64_t size, uint64_t offset, uint32_t prot)
 {
-	const vm_object_t *const object = vm_object(index);
+	const int status = erx_fiasco_vm_image_map_rule(vm_object(index)->traits, prot);
 
-	if (object->kind != VM_OBJECT_SLICE || !object->code || (prot != ERX_PROT_R && prot != ERX_PROT_RX))
-		return (ERX_ERIGHTS);
-	return (object_map(task, index, addr, size, offset, prot));
+	return (status != ERX_OK ? status : object_map(task, index, addr, size, offset, prot));
 }
 
 static int

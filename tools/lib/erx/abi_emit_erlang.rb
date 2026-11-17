@@ -1316,6 +1316,8 @@ module Erx
         valid_string(utf8, Bytes) -> valid_utf8(Bytes, true);
         valid_string(dt_path, Bytes) -> valid_path(Bytes, true);
         valid_string(namespace_path, Bytes) -> valid_path(Bytes, false);
+        valid_string(relative_path, Bytes) ->
+            Bytes =/= <<>> andalso valid_path(<<$/, Bytes/binary>>, true);
         valid_string(args, <<>>) -> true;
         valid_string(args, Bytes) -> binary:last(Bytes) =:= 0;
         valid_string(env, Bytes) -> environment(Bytes, #{}).

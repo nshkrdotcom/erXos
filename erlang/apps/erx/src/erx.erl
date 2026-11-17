@@ -203,16 +203,19 @@ them, the rights erx_path:with_facets/2 puts beneath each entry of the facet
 The app's record, as the domain service sends it once the session's namespace
 is in place (docs/design-packaging.md, "An app's session"): the place of the
 package's file, as the facet whose grant holds it and its names below that
-facet's tree, its header's layout, and what it starts, as its header declares it.
+facet's tree, its header's layout, what it starts, as its header declares it,
+and whether its program starts with a window, as it does when the app needs a
+`windows` service.
 """.
 -type app_record() :: #{place := {packages | system, [binary()]},
                         layout := erx_verity_tree:layout(),
-                        start := erx_pkg_header:start()}.
+                        start := erx_pkg_header:start(),
+                        window := boolean()}.
 
 -doc """
 The app's record, when the domain is an app's session (docs/design-packaging.md,
-"An app's session"): its package's place, its header's layout and what it
-starts, which erx_app reads. The domain service sends it after the ready answer,
+"An app's session"): its package's place, its header's layout, what it starts
+and whether its program has a window, which erx_app reads. The domain service sends it after the ready answer,
 once the session's namespace is in place; the connection agent keeps it, and
 answers at once if it holds it and else once it comes. `{error, badarg}` in the
 system domain; in another domain that is no app's session it never comes.

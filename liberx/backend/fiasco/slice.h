@@ -34,6 +34,9 @@ int	erx_fiasco_slice_image(uint32_t entry, uint32_t *object) ERX_WARN_UNUSED_RES
 /* One request of a copy between two memory objects the caller holds: erx_fiasco_vm_object_copy's results. */
 int	erx_fiasco_mem_copy_body(uint32_t caller, const erx_fiasco_mem_copy_request_t *request, uint64_t *done)
 	    ERX_WARN_UNUSED_RESULT;
+/* One request of a supply, the request's dst a paged object: erx_fiasco_vm_object_supply's results. */
+int	erx_fiasco_mem_supply_body(uint32_t caller, const erx_fiasco_mem_copy_request_t *request, uint64_t *done)
+	    ERX_WARN_UNUSED_RESULT;
 /*
  * The index-th entry of the slice release names: a memory object that is not a slice
  * ERX_ETYPE, an index past the slice or a piece past the path ERX_ERANGE, a file

@@ -6,6 +6,7 @@ require 'fileutils'
 require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
+require_relative '../../tools/lib/erx/generated'
 
 # Runs the EUnit cases of an app's session, erx_app over a fixture /app
 # (test/erlang/erx_app_tests.erl), on stock's emulator (ERX_ERL and ERX_ERLC, which make
@@ -14,9 +15,22 @@ require 'tmpdir'
 # The fixtures are compiled here: a release directory holding erx_app_clash, an app that
 # starts, and an app that ships its own erx_app_clash, whose start calls a function only
 # its copy has, so it starts only if its copy is the one the code server finds.
+#
+# The seeded faults are a native app's: its program started without its window, and the
+# program's end taken as a start, so the session would outlive its program.
 class ErxAppTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  SOURCES = %w[erlang/apps/erx_app/src/erx_app.erl test/erlang/erx_app_tests.erl].map { |path| File.join(ROOT, path) }.freeze
+  Erx::Generated.ensure(root: ROOT)
+  MODULE = File.join(ROOT, 'erlang/apps/erx_app/src/erx_app.erl')
+  TESTS = File.join(ROOT, 'test/erlang/erx_app_tests.erl')
+  INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
+
+  # Each seeded fault: a passage of erx_app and what replaces it.
+  FAULTS = {
+    'window dropped' => ['window(true, Spec, #{display := Display}) -> Spec#{window => Display}.',
+                         'window(true, Spec, #{display := _Display}) -> Spec.'],
+    'program end ignored' => ['fail({program_exit, Status});', '_ = Status, ok;']
+  }.freeze
 
   # Each fixture directory's modules and the application resource file of its app.
   FIXTURES = {
@@ -33,19 +47,42 @@ class ErxAppTest < Minitest::Test
   }.freeze
 
   def test_erx_app_cases_pass_under_eunit
-    Dir.mktmpdir('erx-app-test') do |work|
-      FIXTURES.each { |directory, fixture| build(File.join(work, directory), **fixture) }
-      erlc(work, *SOURCES)
-      output, status = Open3.capture2e({ 'ERX_APP_CASES' => work }, 'gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'),
-                                       '-noshell', '-pa', work, '-eval',
-                                       'case eunit:test(erx_app_tests, [verbose]) of ok -> halt(0); _ -> halt(1) end.',
-                                       stdin_data: '', chdir: work)
-      assert status.success?, output
-      assert_match(/All 4 tests passed/, output)
+    output, status = eunit
+    assert status.success?, output
+    assert_match(/All 9 tests passed/, output)
+  end
+
+  def test_each_seeded_fault_fails_a_case
+    FAULTS.each do |name, (from, to)|
+      output, status = eunit(from => to)
+      refute status.success?, "#{name} passed:\n#{output}"
     end
   end
 
   private
+
+  # The cases under EUnit over the fixtures, with erx_app's passages that fault names
+  # replaced.
+  def eunit(fault = {})
+    Dir.mktmpdir('erx-app-test') do |work|
+      FIXTURES.each { |directory, fixture| build(File.join(work, directory), **fixture) }
+      erlc(work, faulted(work, fault), TESTS)
+      Open3.capture2e({ 'ERX_APP_CASES' => work }, 'gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'),
+                      '-noshell', '-pa', work, '-eval',
+                      'case eunit:test(erx_app_tests, [verbose]) of ok -> halt(0); _ -> halt(1) end.',
+                      stdin_data: '', chdir: work)
+    end
+  end
+
+  def faulted(work, fault)
+    return MODULE if fault.empty?
+
+    text = fault.reduce(File.read(MODULE)) do |source, (from, to)|
+      assert_equal 1, source.scan(from).size, "fault passage missing: #{from}"
+      source.sub(from) { to }
+    end
+    File.join(work, 'erx_app.erl').tap { |copy| File.write(copy, text) }
+  end
 
   def build(directory, modules:, app: nil)
     FileUtils.mkdir_p(directory)
@@ -64,8 +101,8 @@ class ErxAppTest < Minitest::Test
   end
 
   def erlc(directory, *sources)
-    output, status = Open3.capture2e('gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERLC'), '-Werror', '-o', directory, *sources,
-                                     stdin_data: '')
+    output, status = Open3.capture2e('gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERLC'), '-Werror', '-I', INCLUDE,
+                                     '-o', directory, *sources, stdin_data: '')
     assert status.success?, output
   end
 end

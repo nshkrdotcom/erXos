@@ -188,8 +188,8 @@ class ManifestStopgapTest < Minitest::Test
   end
 
   # The development manifest as a partial boot, which makes no sessions and configures
-  # no domains, so without its session template, the services only sessions are granted
-  # (inspect, start and machine) and its storage, network and web domains.
+  # no domains, so without its session template, the system domain's services (which only
+  # sessions use) and its storage, network and web domains.
   def partial_boot
     changed(ManifestContextFixture.without_system_services(
       ManifestContextFixture.domainless(@source).sub('flags development', 'flags development,partial_boot')
@@ -213,9 +213,9 @@ class ManifestStopgapTest < Minitest::Test
 
   def test_admitted_services_reach_the_encoded_manifest
     view = @codec.open('manifest', admit(@source + SERVICE).bytes)
-    # The development manifest's own, clock, data, display, inspect, log, machine, net,
+    # The development manifest's own, clock, code_objects, data, display, inspect, log, machine, net,
     # network_ctl, packages, start, storage_ctl, system and web, and this one.
-    assert_equal %w[clock data display inspect log machine net network_ctl packages probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
+    assert_equal %w[clock code_objects data display inspect log machine net network_ctl packages probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
     assert_equal 0, view.count('liveness')
   end
 

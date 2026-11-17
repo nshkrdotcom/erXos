@@ -40,9 +40,10 @@
 
 -export([read_file/1, write_file/2]).
 
-%% erXos: the namespace's table, for erx_ns, and the runtime's fid counter, for
-%% erx_file_remote.
--export([erx_table/0, erx_mounts/0, erx_fid/0, erx_tmp_limit/0, erx_open_at/5]).
+%% erXos: the namespace's table, for erx_ns, the runtime's fid counter, for
+%% erx_file_remote, and the walk of each provider, erx_path's walk callback, for the
+%% resolve of a program's image (erx_prog_handler_core:resolve_image/3).
+-export([erx_table/0, erx_mounts/0, erx_fid/0, erx_tmp_limit/0, erx_open_at/5, erx_walk/2]).
 
 -export([read_link/1, read_link_all/1,
          read_link_info/1, read_link_info/2,

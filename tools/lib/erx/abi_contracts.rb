@@ -18,7 +18,7 @@ module Erx
     # Reader rules name records explicitly. This pass closes each reference and
     # relation before the emitters can turn it into pointer or binary arithmetic.
     module Contracts
-      STRING_CLASSES = %w[identifier dt_path namespace_path utf8 bytes args env].freeze
+      STRING_CLASSES = %w[identifier dt_path namespace_path relative_path utf8 bytes args env].freeze
       module_function
 
       def reader(declaration, types:, constants:)

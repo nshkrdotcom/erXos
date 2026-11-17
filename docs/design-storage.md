@@ -1229,7 +1229,9 @@ parallel.
    a loop over the path's names, at most 256, and recurses nowhere; a
    symbolic link ends it, and the client resolves the link's text through
    its own namespace, as for every provider
-   ([design-files.md](design-files.md#resolving-a-path)).
+   ([design-files.md](design-files.md#resolving-a-path)). On a package
+   mount a link inode answers `enotsup` instead, since a package holds
+   no links ([design-packaging.md](design-packaging.md#the-package)).
 3. **Reading.** A file's data blocks come from `erx_verity:read(Image,
    Block, Count)`, at most 16 blocks a call, as binaries in the domain's
    memory that matched the tree (E1). `erx_verity` is Erlang running in

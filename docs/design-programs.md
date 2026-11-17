@@ -422,14 +422,12 @@ carries what a sub-space needs:
                  umask := 0..8#777,           % the file mode creation mask
                  data_area := {Cap, Slots},   % the data area, in the program's table
                  fds := [{0..1023, Descriptor}],
-                 image => Image,              % erx_exec only
                  sigpending => [signal()],    % exec only: still pending
                  children => [Child],         % exec only: from the handler's record
                  handover => Handover,        % exec only: from the old image
                  cloexec => [0..1023],        % fork only: descriptors with FD_CLOEXEC
                  mapped => [{Cap, Open}]}}    % fork only: shared mappings of files
 %% signal() = a signal's name from the ABI file's signal table, such as sigint
-%% Image = {object, Cap}  % erx_exec: the executable's file object
 %% Descriptor = {pipe, read | write, PipeEnd, EndValues}
 %%            | {socketpair, PipeEnd, EndValues, PipeEnd, EndValues}
 %%                                  % its read end, then its write end
@@ -534,9 +532,7 @@ program chooses its own. `sigmask` and
 `sigignore` follow POSIX's rule for `posix_spawn`: the program starts with
 its parent's mask and ignores what its parent ignores, unless the spawn's
 attributes set them, and every other signal starts with its default
-action. `image` names, for `erx_exec`, the capability value of the
-executable's file object, which the session installs before the image
-runs ([File objects](#file-objects)). The program's namespace and its
+action. The program's namespace and its
 rights beyond files are not in the message: the program never holds them,
 and its handler keeps them ([The handler](#the-handler)).
 
@@ -846,7 +842,7 @@ holds one ends the program (Credit, below).
 | `{local, Op, ...}` | an operation the session answers from its own tables, which reaches no server but by a `walk` or a `getattr`, its name `Op` after `local` and its fields after the name, as a file request's: `{local, seek, Open, Offset, Whence}` on the open's description, `Whence` one of `bof`, `cur` and `eof` for `SEEK_SET`, `SEEK_CUR` and `SEEK_END`, `{local, setfl, Open, Flags}` of the description's status flags, `{local, chdir, Path}`, and `{local, access, Path, Mode}`, answered from the rights of the grant the path resolves through ([Descriptors and files](#descriptors-and-files)) | `{ok, Value}`; `{error, Errno}` |
 | `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `{tcsetattr, Termios, sigttou_ignored}` from a thread that ignores or blocks `SIGTTOU`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer, `{background, Orphaned}` among them, from which `liberx` decides as [The terminal](#the-terminal) says; `{error, enotty}` for any other open |
 | `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`, a terminal's read naming its count as `{read, Count}`: the session's terminal relay answers for a terminal, `{error, ebadf}` for the watch of a read while the handler's open of it is write-only, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later; `{error, ebadf}` at once, and no report, for the watch of a read on a terminal while the handler's open of it is write-only |
-| `{map, What, Use}` | give the requester an object of a file: for `Use` of `code` or `data`, the file's sealed file object, `What` a path the handler opens with `lopen` for reading, and for code only through a grant of the program's that carries `rx` ([File objects](#file-objects)); for `{shared, End}`, the session's object for the file, covering at least `End` bytes, `What` the program's `Open` of a file ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)) | `{ok, Cap}`, the object's capability value in the requester's table, and for a shared mapping `{ok, Cap, Open}`, with the mapping open that holds the requester's share; `{error, Errno}` |
+| `{map, What, Use}` | give the requester an object of a file: for `Use` of `code` or `data`, the file's sealed file object, `What` a path the handler opens with `lopen` for reading, and for code only through a grant of the program's that carries `rx` ([File objects](#file-objects)); for `{shared, End}`, the session's object for the file, covering at least `End` bytes, `What` the program's `Open` of a file ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)) | `{ok, Cap}`, the object's capability value in the requester's table, for `code` `{ok, Cap, Bytes}`, with the file's exact length in bytes, the most of the object a plan of it reads, and for a shared mapping `{ok, Cap, Open}`, with the mapping open that holds the requester's share; `{error, Errno}` |
 | `{fork, Start}` | the second tier's `fork`: `Start` names what the child receives, planned as for a spawn: every descriptor without a `dup`, each as `{pipe, End}`, `{socketpair, End, End}` or `{open, Open}`, and the flags of `cloexec` ([Fork](#fork)) | `{ok, Pid}`; `{error, Errno}` |
 | `{exec, Image, Start}` | the second tier's `exec`, first step, sent once the program's other threads are parked: build the requester's next image from `Image`, `{object, Cap}` for a file object of code that `liberx` obtained with `{map, Path, code}` and checked, or `{command, Path}` for a command of `/bin`; `Start` holds what the next image keeps that the parking froze ([Exec](#exec)) | `ok` once the next image is built, past which `exec` never returns; `{error, e2big}` past the message's bound; `{error, Errno}`; each error with the old image whole |
 | `{exec_commit, Captured}` | the second tier's `exec`, last step, sent only after `ok` to `{exec}`: `Captured` holds what the old image captured in one step ([Exec](#exec)); the handler makes the reaps it names, as `{waited}` makes one, and builds the next image's startup message from the rest, `{exec}`'s `Start` and its record | none: the old image ends, and the new one finds its startup message in its lane |
@@ -1184,27 +1180,62 @@ enters no object of it in its table and reads it afresh for every map.
 
 A **code object** is a sealed object with an execute ceiling, which only a
 budget carrying `CODE` creates, the system domain's alone (K8): the
-session's command server asks the domain service, over the session's
-connection to the system domain, for one of the file's size, charged to
+session's command server asks the domain service, through the session's
+`code_objects` facet
+([design-system.md](design-system.md#creating-a-domain), "The
+`code_objects` facet"), for one of the file's size, charged to
 the session's budget, and the domain service gives it to the session with
 `SUPPLY`, `READ`, `MAP`, `EXEC`, `CHILD`, `DUP` and `GIVE`, never
-`DESTROY`, which the system domain's domain library alone holds
-([design-system.md](design-system.md#creating-a-domain)). A **data
+`DESTROY`, which the system domain's domain library alone holds. A **data
 object** the session creates itself, from the requesting program's
-budget, and gives to that program alone. The command server keeps a table
-of code objects, at most `file_objects` (256 by default) and at most an
-eighth of the session's budget
+budget, and gives to that program alone.
+
+**Holds and drops.** Every code object the command server has had made
+has **holds**, each with one owner, which the command server's table
+records and which `erx_command_core:step` alone makes, passes and ends:
+
+* the **fill** holds the object from its creation until the fill ends,
+  sealed or failed; the command server monitors the filler, and a filler
+  that exits ends the fill as a failure;
+* a **start** holds the object a spawn's step 4 was handed, from that
+  handover until the reservation of step 5, which names the object and
+  passes the hold to the new program's row, or ends it when it refuses
+  the start; a starter's handler that exits ends it too;
+* a **row** of the process table holds the objects handed to its
+  program: the one its start's reservation passed it, and each one a
+  `map` of the program's was handed, an exec's among them. A forked
+  child's row is made holding each object its parent's row holds. An
+  exec's switch, which the program's handler reports, replaces the
+  row's holds with the objects installed into the new image, the
+  exec's own. The row's end ends every hold it has, so a start that
+  fails after its reservation ends its hold when its handler exits and
+  drops the row.
+
+An object is dropped once nothing holds it and the table below does not
+keep it: the command server asks the domain service, through the same
+facet, to drop it, which the domain library does with
+`erx_dom_code_drop`. Deleting an object removes every capability to it
+and every mapping of it, after which an access would fault
+([design-kernel.md](design-kernel.md#closing-and-deleting)). No image
+maps an object its row does not hold, since an image is installed only
+with objects handed to its row or to its start, and an image's mappings
+end no later than its row's holds; so no object is dropped while an
+image may still map it, and none outlives every party that could use
+it. A row holds a superset of what its image maps: an object it
+unmapped, or whose `map` failed after the handover, it keeps until its
+next exec or its end, at most `code_objects_max` in all. The objects not
+dropped go with the session's budget.
+
+**The table.** The command server keeps a table of code objects for
+reuse, at most `code_objects_max` (256, `abi/services/code_objects.txt`,
+the library's bound on the session's live code objects) and at most an eighth of
+the session's budget
 ([design-system.md](design-system.md#resource-policy)), shared by every
-program of the session that runs or maps the same file. It evicts one by
-asking the domain service, over the session's connection, to drop it,
-which the domain library does with `erx_dom_code_drop`; deleting one
-removes every program's capability to it and every mapping of it, after
-which an access would fault
-([design-kernel.md](design-kernel.md#closing-and-deleting)), so it evicts,
-least recently given first, only objects that no running program it gave
-them to may still map, forked children included, since it is every such
-program's handler and sees each one end. The objects it has not evicted
-go with the session's budget.
+program of the session that runs or maps the same file; to make room it
+evicts, least recently given first, an object nothing holds, and drops
+it. The table only shares: with it empty, every request is a miss of
+step 2 below, every object is dropped when its last hold ends, and
+every result is the same but for the sharing.
 
 To answer `{map, Path, code | data}`, the requester's handler starts a
 **filler**, a process of the session's for this request alone, so that
@@ -1214,20 +1245,22 @@ The filler:
 1. **Opens** the file through the program's namespace on every request,
    whatever the cache holds, with `lopen` for reading, after the
    handler's **image check** for `code`: the namespace entry the path
-   resolved through and the grant beneath it must both carry `rx`, since
-   an entry's rights only lower its grant's, never raise them
+   resolved through must carry `rx`. That entry's rights are the check's
+   one input, since no entry a resolution returns carries more than the
+   grant beneath it
    ([design-files.md](design-files.md#building-binding-and-mounting),
    "Rights beneath an entry"). For a program's entry on the session's
    export, the export's grant carries the rights of the session's own
-   entry it serves, which for an EROFS mount are `rx` only through an
-   `rx` grant. It takes the key from the entry's own provider and the
+   entry it serves, and the program's entry was narrowed from its
+   starter's. It takes the key from the entry's own provider and the
    opened fid's `getattr`, as above.
    So the cache never answers for a grant: a
    program whose grant cannot open the file for its use gets the open's
    error, `EACCES` for code through an `ro` grant, even when another
    program's `rx` map put the object in the cache.
-2. **Looks the key up** in the command server's table, and on a hit goes
-   to step 5. On a miss the command server has the object made, a code
+2. **Looks the key up** in the command server's table, and on a hit the
+   command server hands the object to the request, as the start's hold
+   or the row's, and the filler goes to step 5. On a miss the command server has the object made, a code
    object by the domain service and a data object itself, and hands the
    filler its `SUPPLY`; a request for the same code key meanwhile waits
    for this fill and gets its outcome, the object or the fill's error.
@@ -1240,14 +1273,25 @@ The filler:
    means the bytes may mix two versions, so the object is discarded and
    filled once more, and a file that changes again fails the request with
    `ETXTBSY`, as Linux refuses to run a file open for writing. A read that
-   fails or times out discards the object and fails the request with the
-   read's error.
-4. **Seals** the object and closes its `SUPPLY` capability, and the
-   command server enters a code object under the key.
+   fails or times out fails the fill and the request with the read's
+   error.
+4. **Seals** the object and closes its `SUPPLY` capability; a code
+   object's first seal makes each of its pages coherent for instruction
+   fetch, so no map, which waits for the seal, reaches a stale
+   instruction ([design-arch-aarch64.md](design-arch-aarch64.md#cache-maintenance)
+   for AArch64). The
+   command server enters a code object under the key and, in the step
+   that ends the fill's hold, hands it to the request and to every
+   request that waited on the fill, each the start's or the row's hold
+   above. A code object's fill that fails ends its hold with nothing handed, so the
+   object is dropped.
 5. **Installs** it: the handler installs into the requester a copy with
    `READ`, `MAP`, `CHILD` and `DUP`, and `EXEC` for code, never `GIVE` or
    `DESTROY`, so a program can keep it across `fork` but cannot pass it
-   on, and replies `{ok, Cap}`.
+   on, and replies `{ok, Cap}`, for `code` `{ok, Cap, Bytes}`, `Bytes`
+   the file's exact length from the `getattr` that checked the fill's
+   version, which the command server keeps beside a code object in its
+   table, so a hit answers it as a fill does.
 
 The filler clunks its fid and ends once the object is installed or the
 request has failed. A file whose server changes it gets a new version, so
@@ -1295,8 +1339,8 @@ The parties in a program's life, all but the first in its session:
 * the session's **pipe server**, which makes every pipe end
   ([design-pipes.md](design-pipes.md#the-pipe-server));
 * the system domain's **domain service**, which the session asks for a
-  code object, to drop one, and for a command domain, over the session's
-  connection to it
+  code object and to drop one through its `code_objects` facet, and for
+  a command domain, over the session's connection to it
   ([design-system.md](design-system.md#the-domain-library));
 * the program's own `liberx`, which reads the startup message, builds the
   program's tables and runs its event executor.
@@ -1324,7 +1368,7 @@ server's end ends the session's domain. A domain that does not run
 `erx_session`, the system domain among them, has no command server and
 starts no program: `erx_prog_handler:start/1` there fails with `ENOTSUP`.
 
-**What it keeps.** The process table, beside the code objects and the
+**What it keeps.** The process table, beside the code objects with their holds and the
 file table it keeps for file objects and shared mappings ([File
 objects](#file-objects), [Shared libraries and mappings of
 files](#shared-libraries-and-mappings-of-files)):
@@ -1456,10 +1500,10 @@ reserved:
 | 1 | the starter | plans the spawn with `erx_spawn_plan`, a pure function from its descriptor table, its signal dispositions, the calling thread's mask and the spawn's file actions and attributes to a plan: the executable's path, `argv`, `env`, `cwd`, the signal mask, the ignored signals, the file mode creation mask and the descriptors, each named as the end or the open the starter holds. A plan that names a closed descriptor, or one number twice, is rejected | nothing happened; the spawn function returns the error |
 | 2 | the starter | sends `{spawn, Path, Start}` to its handler and waits for the reply, in a closed wait ([Signals in liberx](#signals-in-liberx)) | as the step that fails |
 | 3 | the starter's handler: **validate** | checks the frame against the protocol's grammar and bounds, the requester's right to start commands, its `children` quota and its principal's `programs` quota, and that every end and open the request names is in the requester's table | nothing to undo; `EPERM` without the right, `EAGAIN` at a quota, `EBADF` for an end or open the requester does not hold |
-| 4 | the starter's handler: **resolve** | resolves `Path` through the requester's namespace to an image ([What a program can start](#what-a-program-can-start)); for an executable file, the handler makes its image check and a filler opens it for reading, and the command server makes or finds its code object ([File objects](#file-objects)) | nothing to undo, since a code object belongs to the cache; `ENOENT` for an unknown command, `EACCES` for a file without `rx`, `ETXTBSY` for a file that keeps changing while it is read |
-| 5 | the command server, the starter's handler, the program's handler, the pipe server: **reserve** | the starter's handler asks the command server for the program's handler, and the server assigns the next process id, records the program in the starter's job and spawns the handler outside every job ([The command server](#the-command-server)); the starter's handler monitors the new handler and sends it the start, and the handler then makes the program's holder entry in the pipe NIF ([design-pipes.md](design-pipes.md#hand-offs)) and builds the record: it builds the program's table from the requester's, narrowed as the request asks and with no entry on a window tree, which asks no server anything, and gives the program an open of its own naming the open-file description of each file, directory, terminal and socket open it hands on, which asks no server anything ([design-files.md](design-files.md#narrowing-for-a-program), [Descriptors and files](#descriptors-and-files)), copies the requester's rights beyond files and its right to start commands, and has the pipe server make an end of the same kind for each pipe end the request names, with the starter as the end's holder, each answered as a hand-off the handler owns, its doorbell not yet bound, since the program's group does not exist yet ([design-pipes.md](design-pipes.md#inherited-ends), [Hand-offs](design-pipes.md#hand-offs)) | the handler drops the opens it made, and drops the ends' hand-offs and its hold on the program's holder entry, so the pipe server reads the program's gone, and exits, which drops the command server's row, whose id is never given again; `EAGAIN` once every id is spent, `EMFILE` beyond a pipe's read ends, `EINVAL` for a table with an entry at or below a name the export takes at `/dev` or `/etc` |
-| 6 | the program's handler, through the port driver: **build** | hands the port driver one plan, which it validates whole and then applies. The plan first creates the channel and the data area from the session's own budget, since the session maps both and deletes them only after the program's budget. It then carves the program's budget from the session's pool for programs, with the floor as its guarantee and the cap the spec gives it, creates its group under the programs group, and creates the anchor, with the starter's anchor or the session's space as parent, the session's fault gate and a label of its own, and the image below it under another; the driver allocates both labels and never reuses them. For a program given a window's buffer, it then maps the buffer's pages, read-write, at the buffer place of the image, from the lease the spec names, which the plan takes first, so that its return is the last undo, and keeps it until the anchor is released ([design-display.md](design-display.md#the-pixel-area)). It then maps the image, a program command's slices from the boot image with `erx_image_map`, or the loader `erx_exec` from the boot image for an executable file; installs into the image's table the budget, the group, the channel's two sides and the session's doorbell, the data area, the copies of each pipe end's hand-off, which the plan takes by its number with the lease, and the code object for `erx_exec`; binds the program's doorbell to its group, and each pipe end's doorbell to it with the end's label; and creates the first thread, stopped, with the values of the budget, the group, the channel's two sides and the session's doorbell, then the session's CPU feature words, in its argument registers | the plan is undone, the anchor stopped and released, which releases the image and the buffer's mapping, the lease returned, the hand-offs let go and the port's hold on the program's holder entry with them, and then step 5's reservations as there; `EAGAIN` for a program nested deeper than the kernel's 64 levels of spaces allow, about 60 generations of programs, `ENOMEM` for the session's budget |
-| 7 | the program's handler | writes the startup message into the image's inbound lane, with the program's `pid`, `ppid` and `pgid`, the data area's value, each descriptor's values in the program's table, and for `erx_exec` the code object's value as `image` | none: the lane is the session's own memory |
+| 4 | the starter's handler: **resolve** | resolves `Path` through the requester's namespace to an image ([What a program can start](#what-a-program-can-start)); for an executable file, the handler makes its image check and a filler opens it for reading, and the command server makes or finds its code object ([File objects](#file-objects)) | nothing to undo: the start's hold on a code object passes to the program's row at step 5 or ends with its refusal there ([File objects](#file-objects), "Holds and drops"); `ENOENT` for an unknown command, `EACCES` for a file without `rx`, `ETXTBSY` for a file that keeps changing while it is read, `EAGAIN` when the session already holds `code_objects_max` code objects and `ENOMEM` when its budget cannot cover one more |
+| 5 | the command server, the starter's handler, the program's handler, the pipe server: **reserve** | the starter's handler asks the command server for the program's handler, and the server assigns the next process id, records the program in the starter's job and spawns the handler outside every job ([The command server](#the-command-server)); the starter's handler monitors the new handler and sends it the start, and the handler then makes the program's holder entry in the pipe NIF ([design-pipes.md](design-pipes.md#hand-offs)) and builds the record: it builds the program's table from the requester's, narrowed as the request asks and with no entry on a window tree, which asks no server anything, and gives the program an open of its own naming the open-file description of each file, directory, terminal and socket open it hands on, which asks no server anything ([design-files.md](design-files.md#narrowing-for-a-program), [Descriptors and files](#descriptors-and-files)), copies the requester's rights beyond files and its right to start commands, and has the pipe server make an end of the same kind for each pipe end the request names, with the starter as the end's holder, each answered as a hand-off the handler owns, its doorbell not yet bound, since the program's group does not exist yet ([design-pipes.md](design-pipes.md#inherited-ends), [Hand-offs](design-pipes.md#hand-offs)) | the handler drops the opens it made, and drops the ends' hand-offs and its hold on the program's holder entry, so the pipe server reads the program's gone, and exits, which drops the command server's row, whose id is never given again, and ends the row's hold on a code object; a refusal of the reservation ends the start's hold; `EAGAIN` once every id is spent, `EMFILE` beyond a pipe's read ends, `EINVAL` for a table with an entry at or below a name the export takes at `/dev` or `/etc` |
+| 6 | the program's handler, through the port driver: **build** | hands the port driver one plan, which it validates whole and then applies. The plan first creates the channel and the data area from the session's own budget, since the session maps both and deletes them only after the program's budget. It then carves the program's budget from the session's pool for programs, with the floor as its guarantee and the cap the spec gives it, creates its group under the programs group, and creates the anchor, with the starter's anchor or the session's space as parent, the session's fault gate and a label of its own, and the image below it under another; the driver allocates both labels and never reuses them. For a program given a window's buffer, it then maps the buffer's pages, read-write, at the buffer place of the image, from the lease the spec names, which the plan takes first, so that its return is the last undo, and keeps it until the anchor is released ([design-display.md](design-display.md#the-pixel-area)). It then maps the image, a program command's slices from the boot image with `erx_image_map`, or the loader `erx_exec` from the boot image for an executable file; installs into the image's table the budget, the group, the channel's two sides and the session's doorbell, the data area, the copies of each pipe end's hand-off, which the plan takes by its number with the lease, and the code object for `erx_exec`, for which it also creates the exec record from the program's budget, writes it and maps it into the image at the ABI's `exec_record_page` ([What a program can start](#what-a-program-can-start), "The loader's bootstrap"); binds the program's doorbell to its group, and each pipe end's doorbell to it with the end's label; and creates the first thread, stopped, with the values of the budget, the group, the channel's two sides and the session's doorbell, then the session's CPU feature words, in its argument registers, with register 7, `program_arg`'s `exec`, 0 for `erx_exec` as for every image | the plan is undone, the anchor stopped and released, which releases the image and the buffer's mapping, the lease returned, the hand-offs let go and the port's hold on the program's holder entry with them, and then step 5's reservations as there; `EAGAIN` for a program nested deeper than the kernel's 64 levels of spaces allow, about 60 generations of programs, `ENOMEM` for the session's budget |
+| 7 | the program's handler | writes the startup message into the image's inbound lane, with the program's `pid`, `ppid` and `pgid`, the data area's value, each descriptor's values in the program's table | none: the lane is the session's own memory |
 | 8 | the session's job table, then the program's handler | when the program's starter is paused for its job, or the shell starts it for a job it has stopped, the port driver pauses the image first ([Job control](#job-control)); the handler then has the port driver start the first thread | `ERX_EDEAD` when the program was stopped first, by a kill or by its parent's or session's end: the starter still gets `{ok, Pid}`, then the child's end as `SIGKILL` |
 | 9 | the starter's handler, then the program | the handler answers `{ok, Pid}`, before any report about the child, so the reply that introduces a child always precedes the child's states. `liberx`'s start-up runs on the first thread, a worker: it maps the channel, starts the event executor and waits on a umtx word; the event executor takes the startup message from the inbound lane, copying it out as it is published and checking it, builds the descriptor table from it, mapping its pipe ends, before it reads the reports that follow, which may name those ends, and wakes the first thread, which maps the data area, sets its mask, arms itself for vCPU upcalls with its signal IRQ object and calls `main` | a malformed message ends the program with status 127 before `main` and without a line, since its descriptors come only from a message `liberx` accepted ([design-abi.md](design-abi.md#program-protocol)) |
 
@@ -1607,16 +1651,82 @@ the path into one of four images:
 * **An executable file.** Any other path names a file at some server. The
   handler has the file's code object made or found, after its image check
   of the program's `rx` grant and an `lopen` for reading
-  ([File objects](#file-objects)),
-  builds the sub-space with the boot image's **loader**, `erx_exec`, as its
-  image, and installs the code object before the image runs, naming its
-  value as `image`. After `liberx`'s start-up, `erx_exec` maps the object
-  read-only, and `erx_elf_plan`, a pure function with a fuzz target,
-  checks its bytes: an executable for the architecture and the ABI version
-  erXos runs, static and position-independent in the first tier, with at
+  ([File objects](#file-objects)), and names it to the port driver as
+  `image => {object, Cap}`, `Cap` the session's value of the object,
+  with the file's exact length in bytes, which the command server keeps
+  in its table beside the object from the `getattr` that checked the
+  fill's version, so a cache hit gives it as a fill does. The driver
+  builds the sub-space with the boot image's **loader**, `erx_exec`, as
+  its image, installs the code object into the image's table, and hands
+  the loader the object's value and the file's length in the **exec
+  record** (below). The
+  loader is a program of the session's release at `libexec/erx_exec`, a
+  path the ABI file names once as `loader_path`, from which the release
+  builder places it and the driver finds it with `erx_release_entry`; it
+  is outside the release's program list, so `/bin` never lists it and no
+  program starts it by name, as FreeBSD keeps its run-time linker in
+  `/libexec`. It is linked as every program of the boot image is, but
+  its image's entry is its own: it runs on the program's first thread
+  before `liberx`'s start-up, so before musl, the channel and the
+  backend's helper threads exist (**The loader's bootstrap**, below).
+  `erx_exec` maps the object read-only, the file's length rounded up to
+  whole pages, and `erx_elf_plan`, a pure function with a fuzz target,
+  checks exactly the file's length of its bytes, so the zeros that pad
+  the object's last page are never taken for the file's: an executable
+  for the architecture and the ABI version
+  erXos runs, static and position-independent (`ET_DYN`) in the first
+  tier, with at
   most 16 loadable segments inside the file, page-aligned, not overlapping,
   none both writable and executable, its entry in an executable segment, and
-  in the first tier no interpreter. The ABI version is carried by exactly
+  in the first tier no interpreter. A position-independent file has one
+  shape, and the planner refuses every other like a malformed file: its
+  first loadable segment at address 0, so the plan's virtual origin is 0
+  and every address the file holds, a relocation's offset and addend
+  among them, is an offset from the base `erx_exec` chooses; every
+  segment but a writable one as long in memory as in the file, so no
+  read-only or executable segment ends in zeros the file does not hold,
+  which the object's pages could not give it and private memory, never
+  executable, could not stand in for; exactly one `PT_DYNAMIC` header,
+  not empty and lying wholly inside one writable segment, since musl's
+  start finds the thread-local image through it (**The executable's
+  link**, below), so a file without it, with an empty one or with its
+  section in another segment is refused by the planner rather than
+  left to fault in musl's start; and a dynamic section carrying
+  only the tags `abi/formats/elf64.txt` lists for it, the tags a
+  static position-independent link may carry. LLD writes a subset of
+  them: the probe link on LLD 23.1.3 with
+  `-pie --no-dynamic-linker -static` and the task script wrote every
+  one but `DT_FLAGS`, and no other. The list:
+  `DT_NULL`, `DT_RELA`, `DT_RELASZ`, `DT_RELAENT`, `DT_RELACOUNT`,
+  `DT_FLAGS` without `DF_TEXTREL`, `DT_FLAGS_1`, `DT_DEBUG`;
+  `DT_SYMTAB`, `DT_SYMENT`, `DT_STRTAB`, `DT_STRSZ`, `DT_HASH` and
+  `DT_GNU_HASH` of the dynamic symbol table, which nothing reads since
+  no relocation names a symbol; and `DT_INIT`, `DT_FINI`,
+  `DT_INIT_ARRAY`, `DT_INIT_ARRAYSZ`, `DT_FINI_ARRAY` and
+  `DT_FINI_ARRAYSZ`, which the linker writes for musl's weak `_init`
+  and `_fini` and the task script's `.init_array` and `.fini_array`,
+  and which nothing reads either: a program's constructors and
+  destructors are run by musl, as in any static program, through the
+  link's own symbols, `_init` and `__init_array_start` to
+  `__init_array_end` in `__libc_start_main`'s `__libc_start_init`
+  (`musl/src/env/__libc_start_main.c:59-67`, called at `:92`) and the fini array and
+  `_fini` in `exit` (`musl/src/exit/exit.c:16-25`). The arrays lie in
+  the writable load, so their words are ordinary relative relocations
+  that `erx_exec` writes, and the planner checks no address these six
+  tags hold, since no loader follows one. A tag outside the list, another
+  relocation table's among them, a linker's own packed form or a
+  dependency, is refused, so no table the planner does not read can
+  leave a file unrelocated. The planner also plans fixed executables
+  (`ET_EXEC`), the boot image's on the stopgap, whose task script is
+  the SDK's and so gives a fixed link a dynamic header too, empty since
+  a fixed link writes no dynamic section; the planner requires a fixed
+  file's dynamic header, when there is one, to hold no bytes and reads
+  nothing from it, neither as a dynamic section nor as metadata a load
+  must cover, so a fixed file names no relocation table, since no
+  loader of a fixed image applies one. `erx_exec` refuses a plan marked `ERX_IMAGE_FIXED`, since a fixed
+  address could meet the loader's own, and `erx-app pack` refuses a
+  fixed file with it. The SDK's program link script makes exactly the
+  one shape. The ABI version is carried by exactly
   one erXos ELF ABI note in a `PT_NOTE` segment. The note's owner is the six
   bytes `erXos` and NUL, its type is 1, and its descriptor is one
   little-endian `u32` ABI version; name and descriptor use ELF's four-byte
@@ -1630,16 +1740,294 @@ the path into one of four images:
   interface compatibility; it authenticates no code. The boot packer uses
   this same ELF planner before producing the kernel's normalized image
   manifest ([image manifests](design-kernel.md#image-manifests)).
-  `erx_exec` maps each executable segment
-  from the object, read-only and executable, so its pages are shared with
-  every program that runs the same file; maps each writable segment as a
-  copy-on-write child of the object, so only the pages a program touches
-  are copied into its own; and zeroes the rest in private memory. It then starts a worker at
-  the executable's entry, passing the channel's values and a block holding
-  the startup message's bytes and the ranges `erx_exec` occupies, and its
-  own threads exit. The executable's own `liberx` decodes the startup
-  message from that block with the same decoder, releases the block and
-  `erx_exec`'s ranges, and starts as any program does.
+
+  **Placing and relocating.** `erx_exec` reserves the executable's span,
+  plus its base alignment less a page, with `erx_vm_reserve`, which never
+  returns addresses the space already uses, the loader's own segments and
+  a window's buffer included, and takes the first address in it aligned
+  to the base alignment as the executable's base. It maps each executable
+  segment from the object, read-only and executable, and each read-only
+  segment read-only, so their pages are shared with every program that
+  runs the same file; maps each writable segment as a copy-on-write child
+  of the object (`erx_mem_child`), charged to the program's budget, so
+  only the pages a program touches are copied into its own, and zeroes
+  its last file page past the segment's file size; and commits the rest
+  of each writable segment as private memory, which reads as zeros. It then
+  applies the executable's relocations, which `erx_elf_plan` checked
+  whole with the rest of the file: the dynamic section's one relocation
+  table is a `DT_RELA` table, the only one the list above admits, with
+  `DT_RELASZ` and `DT_RELAENT` each given once, and each of its entries is the architecture's
+  relative relocation, naming no symbol, whose eight-byte target is
+  aligned and lies wholly inside a writable segment, the offset plus 8
+  computed with checked arithmetic against the segment's end. For each
+  entry `erx_exec` writes the base plus the addend at the base plus the
+  offset: with the virtual origin 0 the offset is the target's place in
+  the plan, so the write lands inside the reservation, and the value
+  written, taken modulo 2^64, is the program's own to use. So the loader is the one
+  relocator, as it is for libraries in the second tier, and an
+  executable never relocates itself; a relocation never writes code,
+  and the words it writes stay writable, as musl's own static-PIE start
+  leaves them, so the first tier has no `RELRO`. It then releases its
+  read-only view of the object, which only the plan and the relocations
+  read, and transfers the thread to the executable only once that
+  release has succeeded.
+
+  **The loader's bootstrap.** A space holds one runtime: one `liberx`,
+  one musl, one reader of the channel, one set of the backend's helper
+  threads. `erx_exec` keeps it so by doing all its work before any of
+  them exists, and handing the space over with nothing of its own
+  running. Its whole input is the exec record and its own first thread;
+  the program's channel is the executable's alone, from its first byte.
+
+  * **The loader's window** is a fixed place of the program's space,
+    given by two facts of the program protocol
+    (`abi/protocols/prog.txt`): `exec_window_base`, where the task
+    script links every program of the boot image, the loader among
+    them, and `exec_window_bytes`. While `erx_exec` runs, the window
+    holds three things and nothing else: the loader's own image, from
+    the window's base; the rest of the window, which `erx_exec_load`
+    reserves as its first step; and the exec record, on the window's
+    last page, `exec_record_page`, which the generator derives. So the
+    executable removes the loader with one release of the window, and
+    that release can take no memory of its own. The window is the
+    ABI's, not the loader's build's: an executable installed at run
+    time is linked once, by the SDK, and must run under whatever loader
+    the system ships later, so it knows the window from the ABI it was
+    built against and reads nothing of the loader's link or of the
+    record. The generator fails a window that is not whole pages or
+    that meets the program memory place, `prog_mem_base`; the task
+    script asserts that a program's image ends below the record's page,
+    and the stopgap's backend that its fixed task area ends below the
+    window.
+  * **The exec record** is an object of one page that the port
+    driver creates from the program's budget, writes through a mapping
+    of its own that it releases as soon as the fields are written, and
+    maps read-write into the image at `exec_record_page` before the
+    first thread starts, so the session holds no view of the record
+    while the program runs, and a build plan that fails after the write
+    releases that view in its undo. Its layout, `erx_exec_record`, is
+    the ABI file's: the driver writes `object`, the code object's value
+    in the image's table, and `file_bytes`, the file's exact length,
+    and nothing writes the record afterwards. `erx_exec` reads both
+    fields at the record's fixed page, copying each once into its own
+    locals before acting on it, and nothing else reads the record. The
+    first thread's argument register 7, `program_arg`'s `exec`, is 0 in
+    every start a session gives, the loader's included. The
+    driver closes its capability to the record once the first thread
+    has started, or with the program's other values when it never
+    starts; from then on the image's mapping is the record's only
+    hold, and the page, charged to the program's budget, goes with that
+    budget. That is no exception to step 6's rule that the channel and
+    the data area come from the session's budget because the session
+    maps them: the session maps those for the program's whole life and
+    past its budget's end, while it maps the record only to write it,
+    before the first thread starts, and holds nothing of it once the
+    thread runs. The startup message carries no image: the record
+    is the one place that names the object, and the loader never reads
+    the channel.
+
+    The record is the session's word to its own program, not input from
+    another domain: the session built the space, chose its image and
+    could have put any code there, so the loader trusts the record as
+    it trusts its argument registers. A record missing from its page
+    faults the loader, a fault of the session's; a length the object
+    cannot cover fails the load as any failed call does (below).
+  * **Loading** runs on the first thread with only that thread's
+    synchronous memory calls (`erx_vm_reserve`, `erx_vm_map`,
+    `erx_mem_child`, `erx_vm_commit`, `erx_vm_release`), through the
+    pure planner and layout of `liberx/exec/load_plan.c` and the effects
+    of `liberx/exec/load.c`. Its first call reserves the window's rest,
+    from the end of the loader's own image, `erx_prog_image()`, to the
+    record's page, fixed and replacing nothing (`ERX_VM_FIXED` with
+    `ERX_VM_NOREPLACE`), before the view and the executable's
+    reservation, so that from then on every page of the window is taken
+    and the space places nothing else there: not the view, not the
+    executable, not the stacks the executable's start-up takes before
+    its release. The load never releases that reservation; the
+    executable's release of the window does. It uses no thread-local storage, calls no
+    musl function that does and uses no heap: what it holds is on its
+    first stack. The page rounding of `file_bytes` is checked
+    arithmetic; a length that overflows, or an object shorter than the
+    rounded length, fails the view's map, as any failed call does.
+  * **The transfer.** `erx_exec` gives the same first thread, the
+    space's only one, the start a session gives a program's first
+    thread: argument registers 0 to 6 as the session wrote them, the
+    `program_arg` values; register 7 the record's page,
+    `exec_record_page`, the one start that gives it a value other than
+    0; the stack and thread pointer of a first
+    start; and the executable's entry, its base plus the file's entry
+    address. The backend's **exec entry**, a few instructions in its
+    architecture layer, sets that state and jumps; it is no C call,
+    since nothing returns to `erx_exec` and the executable's own entry
+    expects exactly a first start's state, whatever the backend makes
+    of it ([design-stopgap.md](design-stopgap.md#thread-creation)).
+    From then on no instruction of `erx_exec` runs: its stack, data and
+    code are abandoned with the thread on the executable's stack.
+  * **Release.** The executable's start-up is that of every program:
+    its first instructions take a stack of its own, its backend starts
+    the helper threads, and its program entry hands the first thread's
+    argument registers to `erx_prog_enter`, `liberx`'s backend-neutral
+    entry to the program layer, before musl's `__libc_start_main` runs.
+    `erx_prog_enter` calls `erx_exec_release` when register 7 is not 0,
+    so the one routine that ends a loader's tenure is reached from the
+    one call every backend's entry already makes, and no backend names
+    it. Register 7 is tested only against 0: its value names nothing
+    the release uses. So nothing
+    of the executable but `liberx`'s start-up runs while the window is
+    mapped: no constructor, which musl's start runs, no
+    `main` and no part of musl, and `erx_exec_release`, like the
+    loader, uses no thread-local storage and no musl function that
+    does. It reads no record. It refuses, releasing nothing, when the
+    window meets the executable's own image, whose span the executable
+    knows from its own link's symbols, as the image of a program of the
+    boot image does, since the task script links those at the window's
+    base and no loader enters them. Otherwise it makes one
+    `erx_vm_release` over the whole window; the space skips the
+    window's holes and removes every mapping and reservation within it:
+    the loader's code, its data and the first stack it ran on, the
+    reserved rest and the record's page. A loaded program so keeps
+    nothing of `erx_exec` but the object's own mappings. A window it
+    refuses, or a release the space
+    refuses, stops the program with the program layer's start-up status
+    for a refused release, `ERX_PROG_STATUS_RELEASE`, a negative status
+    beside `ERX_PROG_STATUS_REFUSED` that no `main` can return: it is a
+    fault of the loader or the session, never of the file.
+  * **The channel waits.** While the loader runs, nothing reads the
+    inbound lane: the startup message, and any report or signal the
+    handler writes after it, stay where the handler wrote them, the
+    handler waiting for room as for any slow reader, and the program's
+    doorbell is pending until the executable's dispatcher runs, as it
+    is for any program between its first instruction and its
+    dispatcher's start. The executable's `liberx` then reads the lane
+    from its first frame, the startup message first, as every program
+    does. A second reader could only move the lane's read position
+    backwards, which the lane refuses as a fault of its reader, so the
+    loader never maps the channel at all.
+  * **A load that fails** leaves nothing of the executable:
+    `erx_exec_load`'s one failure route releases the executable's
+    reservation and the view, whether the plan refused the file or a
+    call failed part way. A window's rest the space refuses to reserve
+    fails the load with the call `window`, before anything is reserved.
+    `erx_exec` copies the reason `erx_exec_load` gave, the planner's
+    refusal or the failed call's name and status, by value into one
+    static of its own image, the only thing its `main` reads, and then
+    calls the ordinary start-up of its own image as a C function, with
+    the argument registers as it received them, register 7 among them
+    0. The window stays as it is, and nothing on this path releases it:
+    the program ends at once, and the window goes with the space, so
+    the window's one release is `erx_exec_release`'s on a successful
+    hand-off. With register 7 at 0 that start-up sees an image with no
+    loader behind it, and `erx_exec_release` never runs in the loader.
+    It runs the helpers, the channel and the startup
+    message, whose `main` writes the static's diagnostic to its standard
+    error and returns 127, after the spawn has answered, as a malformed
+    startup message ends a program; no other route reaches the loader's
+    `main`. That runtime is still the space's only one, since no
+    executable ran.
+  * **A release that fails.** Every release in the hand-off is its
+    cleanup, and each must succeed: `erx_exec_load` therefore has three
+    outcomes, loaded with the view released, failed with the view and
+    the reservation released, and refused cleanup, when the space
+    refuses either release. The window's rest is not among them: the
+    load never releases it. Refused cleanup is terminal: the thread is
+    never transferred, no diagnostic is attempted, and `erx_exec`
+    stops the program with `ERX_PROG_STATUS_RELEASE`, the status
+    `erx_exec_release` uses, so one status names every cleanup failure
+    of the hand-off, the loader's and the executable's. Whatever the
+    refused release left mapped goes with the space.
+
+  The record and the entry are the whole of the hand-off: no startup
+  bytes are replayed, no lane position, descriptor or thread passes from
+  one runtime to another, and no reaper or dispatcher changes hands,
+  since the loader starts none.
+
+  **Removing the loader is the executable's start-up's work.** The
+  loader leaves its pages to be released by the start-up it enters, so
+  their removal rests on the executable running `liberx`'s start-up. An
+  executable whose entry skips that start-up keeps the window, the
+  loader and the record in it, mapped. It gains nothing by it: the loader's code is the
+  release's and makes no call the program could not make itself, its
+  data and stack hold only what the record and the file gave it, the
+  record names only the code object already installed in the program's
+  table, and the space holds no capability the program was not given. So removal is a
+  property of every executable the SDK links, which the verification
+  below checks, and not a guarantee against a hostile file.
+
+  **The executable's link.** The SDK builds every native program of a
+  package so: its libraries and programs are compiled position-independent
+  and linked as static position-independent executables
+  ([design-packaging.md](design-packaging.md#the-sdk)), and `erx-app
+  pack` refuses a program `erx_exec` would refuse. The programs of the
+  boot image, the loader among them, are `erx_image_map`'s, never
+  `erx_exec`'s; on the stopgap they are linked at fixed addresses, since
+  its `erx_image_map` loads only a fixed image
+  ([design-stopgap.md](design-stopgap.md#the-call-table)). Both links
+  are one link script, the task script, with its base as a symbol,
+  `erx_base`, that the link line sets with `--defsym`: the loader's
+  window's base, `exec_window_base`, taken from the generated ABI, for
+  the boot image's programs, and 0 for the SDK's. The link line also
+  sets `erx_exec_record_page` from the generated ABI, and the script
+  asserts that the image ends below it, so the loader, linked as every
+  program of the boot image is, never reaches the record's page. So
+  the segments, their order and the sections each holds have one
+  source:
+
+  * No musl start file enters either link, neither `crt1` nor `rcrt1`:
+    the entry is `liberx`'s own, which builds musl's start block itself
+    and calls `__libc_start_main`. `rcrt1` would relocate the program a
+    second time, and an executable never relocates itself.
+  * The script keeps every segment it names, with the dynamic section,
+    `.dynamic`, in the writable load and its own `PT_DYNAMIC` header,
+    and the relocation table, `.rela.dyn`, the dynamic symbol table,
+    `.dynsym`, its strings, `.dynstr`, and its hash tables, `.hash` and
+    `.gnu.hash`, in the read-only load, since nothing writes them and
+    only the plan and the relocations read them, from the file's bytes.
+    It names each of the six, since `--orphan-handling=error` refuses a
+    section it does not place, and the writable load takes
+    `.data.rel.ro`, the constant tables of pointers that relocations
+    write, through its `.data.*` pattern. musl's
+    start finds the thread-local image of a static executable at the
+    load base that `PT_DYNAMIC` and `_DYNAMIC` give it
+    (`musl/src/env/__init_tls.c:87-106`); the task script names no
+    `PT_PHDR`, so without `PT_DYNAMIC` a program's thread-local image
+    would be read at its unrelocated address. A fixed link has no
+    dynamic section, so its `PT_DYNAMIC` header is empty, at address 0
+    with no bytes, and its weak `_DYNAMIC` stays undefined, so musl
+    takes its base as 0. The planner meets that empty header first in
+    the boot packer, which plans every boot-image program before it
+    writes the program's image manifest, and on the stopgap again in
+    `erx_image_map` for a file entry of the boot archive (an image
+    entry it reads with `erx_image_plan`); in both it takes the empty
+    header as no dynamic section, as above.
+  * The SDK's link line is `-pie --no-dynamic-linker -static -z norelro
+    -z max-page-size=4096 --orphan-handling=error`: the shape the
+    planner accepts, pages the size the planner checks, no `RELRO`
+    header the first tier does not apply, and no section the script
+    does not place. It never passes `-z pack-relative-relocs`, whose
+    `DT_RELR` table the planner refuses.
+  * Each archive, musl's `libc.a`, `liberx` and the compiler's
+    builtins, is built once, position-independent (`-fPIE`), and serves
+    both links: position-independent code links into a fixed executable
+    as well, and one build keeps one copy of each object. Code built
+    without it does not link as a static position-independent
+    executable: its constant tables of pointers, `liberx`'s generated
+    profile tables among them, land in the read-only load and need an
+    absolute relocation there, which the link refuses, and two members
+    of musl's `libc.a`, `vmlock.o` and `ofl.o`, fail the same way. A program linked so has only the architecture's relative
+    relocations in `.rela.dyn`.
+  * On the stopgap the backend under `liberx` brings three more
+    archives into every link: the boot cores, `erx_boot.a`, and
+    L4Re's `libsigma0.a` and `libl4sys.p.a` (the boot image's link,
+    `tools/lib/erx/native_root.rb:285-289`). The probe link took the
+    three as Fiasco's build makes them, and none of their members
+    needed a relocation the static position-independent link refuses.
+    The SDK does not ship them: it ships `liberx_program.a`, an archive
+    the SDK's build makes from `liberx`'s program layer, its backend
+    and the members of the backend's own archives, so a package's link
+    line names `libc.a`, `liberx_program.a` and the builtins on every
+    backend, and a change of backend changes what that archive holds,
+    never a package's link.
+
 * **`rc`.** The `rc` command runs in the program's command domain with an
   `rc` script: it runs the script with the shell's interpreter, with rc's
   own builtins, the Erlang commands of its release and the program commands
@@ -2847,8 +3235,10 @@ exit record, moves the handler from the old image to the new one:
 
 1. **Check, while the old image runs whole.** `liberx` resolves the path
    as `posix_spawn` does. For an executable file it asks its handler for
-   the file's object with `{map, Path, code}`, maps the object read-only
-   and checks it with `erx_elf_plan`; a command of `/bin` needs no check,
+   the file's object with `{map, Path, code}`, whose reply gives the
+   object and the file's exact length, maps the object read-only and
+   checks exactly that many of its bytes with `erx_elf_plan`, as the
+   loader will; a command of `/bin` needs no check,
    since its image is the boot image's or the command image. A missing or
    malformed executable fails `exec` with `ENOENT`, `EACCES` or `ENOEXEC`,
    and arguments and an environment past 128 KiB fail it with `E2BIG`, as
@@ -2914,7 +3304,16 @@ exit record, moves the handler from the old image to the new one:
    lock page and doorbells, from the pipe server's own capabilities, in
    the one step that also closes every end the old image does not keep
    ([design-pipes.md](design-pipes.md#the-second-tier)), and
-   the port driver install a fresh data area and the code object; the old
+   the port driver install a fresh data area and, for an executable
+   file, the code object, which
+   the program's row has held since step 1's `map` handed it, so the old
+   image's end leaves it held, and make the exec record with the
+   object's value and the file's length, as a start's build does
+   ([What a program can start](#what-a-program-can-start), "The
+   loader's bootstrap"); the next image of an executable file is the
+   loader, as a start's is. The command server then replaces the
+   row's holds with the new image's ([File objects](#file-objects),
+   "Holds and drops"); the old
    image's copies went with its table, and the port driver hands the
    handler the signal reports among the frames the old image had not read
    to their end, which it keeps whole until the program's read position
@@ -2923,7 +3322,8 @@ exit record, moves the handler from the old image to the new one:
    table below gives and writes it into the new lane, then the signal
    reports the port driver handed back, and after them the signal reports
    it still owed the old image (P13); the port driver then starts the
-   first thread. The new image then
+   first thread, with the record's address in register 7 for the
+   loader and 0 for any other image. The new image then
    builds its tables from the message: it maps its channel and data area and
    each kept pipe end's pages; takes each write end's position from the
    handover, never from the ring, and each read end's lanes, open or gone,
@@ -2937,12 +3337,14 @@ exit record, moves the handler from the old image to the new one:
    protocol](#the-program-protocol)).
 
 **What the next image keeps.** Each field of the next image's startup
-message comes from one place:
+message comes from one place. The code object and the file's length
+are no field of it: they reach the loader in the exec record the switch
+makes, as at a start.
 
 | Field | Carried by | The new image |
 | --- | --- | --- |
 | `pid`, `ppid`, `pgid`, `spawn` | the handler's record | as any program does |
-| `data_area`, `image` | the installs at the switch | as any program does |
+| `data_area` | the install at the switch | as any program does |
 | `argv`, `env`, `cwd`, `umask`, `sigmask`, `sigignore` | `{exec}`'s `Start`, every caught signal reset to its default action, as POSIX prescribes | as any program does |
 | `fds` | `{exec}`'s `Start`: the descriptors without `FD_CLOEXEC`, each pipe end with the values the pipe server installed at the switch and each open with its number | keeps each object |
 | `handover`'s `nonblock`, `wpos` | `{exec}`'s `Start` | sets `O_NONBLOCK` and takes each write position |
@@ -3187,7 +3589,7 @@ fails with `ENOMEM`.
 code only from objects it cannot write, it is given a code object only
 after the handler's image check of its own `rx` grant, and no program's
 space is
-a JIT space (P10). A program that holds both an `rw` and an `rx` grant
+a JIT space (P10); the session that fills the object is trusted for its bytes, as for everything else it gives its programs ([design-system.md](design-system.md#creating-a-domain), "Code objects for a session"). A program that holds both an `rw` and an `rx` grant
 over one tree can write a library and load it, as it can write an
 executable and spawn it; the shell's default namespace gives `rx` only for
 `/bin` and the trees the user binds with it.
@@ -3596,8 +3998,8 @@ test:
 | A program writes a frame outside the protocol's grammar, a request on a busy slot and a notice that is not due among them | the handler's decoder; the port driver's count of the program's credit | nothing | the port driver or the handler ends the program as a fault ends it | its parent sees `SIGSYS`; the shell prints the frame's offset |
 | A frame from the handler is outside the grammar, which only a bug in the session can produce | `liberx`'s decoder | nothing | the program ends | status 127, a line on its standard error |
 | A shared mapping fails after its mapping open is made: the server's refusal, the mapping quota, a fill, the install or `erx_vm_map` | the mapper, the handler or `liberx` | the mapping open, until it closes | the mapper closes the mapping open on a failure of its own; `liberx` closes what arrived and the mapping open on a failure after the handler answered | `mmap` fails with its error; no open or quota remains |
-| `erx_exec` cannot load an executable: a plan `erx_elf_plan` refuses, a library that cannot be found or mapped | `erx_exec` | nothing of the executable | the program ends | status 127, the reason on its standard error |
-| A file object cannot be made: a file without `rx` for code, a read that fails or times out, a file that keeps changing, the session's `file_objects` or the budget charged | the filler or the command server | nothing: the object is freed when its last capability closes | the command server closes its capability | `EACCES`, `EIO`, `ETXTBSY` or `ENOMEM` from `posix_spawn`, `dlopen`, `mmap` or `exec` |
+| `erx_exec` cannot load an executable: a plan `erx_elf_plan` refuses, a memory call that fails part way, a library that cannot be found or mapped | `erx_exec` | nothing of the executable: its one failure route releases what the load had made | the program ends | status 127, the reason on its standard error |
+| A file object cannot be made: a file without `rx` for code, a read that fails or times out, a file that keeps changing, the session's `code_objects_max` or the budget charged | the filler or the command server | nothing: a code object is dropped when its fill's hold, or the start's, ends with nothing holding it ([File objects](#file-objects), "Holds and drops"), and a data object is freed when its last capability closes | the command server ends the fill's or the start's hold and closes its capability | `EACCES`, `EIO`, `ETXTBSY` or `ENOMEM` from `posix_spawn`, `dlopen`, `mmap` or `exec` |
 | A command domain's Erlang command needs a facet the program did not hand it | the command, from its context | nothing | the run ends; the command domain serves the program's other runs | the command fails with `no_facet`, its status the program's wait status |
 | `fork` cannot copy: the session's or the child's budget | the copier's `erx_space_copy`, which charges as it copies | nothing: the child is undone | the port driver | `fork` returns -1 with `ENOMEM` |
 | `exec` fails | before `{exec}` answers `ok`: `liberx`'s check, the handler's or the port driver's; after: the commit or the new image's start | before: the old image, running and whole; after: nothing of the old image | after: the program ends, as at any end | before: `exec` returns -1 with its `errno`; after: status 127 |
@@ -3933,6 +4335,145 @@ terminal cases.
   fails; a program whose frame is outside the
   grammar, which ends with `SIGSYS`; and each row of the exit status
   table.
+* **Loading an executable.** Host tests of `erx_elf_plan`, each with
+  its seed: a static position-independent executable whose relocations
+  the plan accepts, and a fixed one without a relocation table, which
+  it plans; beside them a `DT_RELR` table, an unlisted tag in the
+  operating system's range of tags, an entry naming a symbol, an entry
+  of another type, a target in a read-only segment, a first loadable
+  segment above address 0, a read-only segment longer in memory than
+  in the file and a fixed file naming a `DT_RELA` table, each refused,
+  where a plan without that one check accepts the file; the unlisted
+  tag's seed is a planner that refuses the named relocation tags
+  rather than every tag outside the list. Host tests of
+  `erx_command_core` over random sequences of fills, handovers,
+  reservations and their refusals, forks, switches and row ends, with
+  the property that an object is dropped exactly when no fill, start
+  or row holds it and the table does not keep it; seeded: a core
+  whose refused reservation keeps the start's hold, which never drops
+  the object, one that ends a row's holds at its old image's end
+  rather than at the switch, which drops an exec's object before its
+  install, and one that makes a forked child's row with no holds. A
+  QEMU test runs a package's program from `/app` whose
+  initialised table of string pointers it prints, which a loader that
+  skips the relocations fails with a fault, and a fixed executable,
+  which ends with status 127, where a loader that takes it fails the
+  case. The loader's bootstrap, each case with the seed that proves the
+  code it names ran:
+
+  * *The file's end.* A host test of `erx_exec_load` over a file whose
+    length is not a whole number of pages: one whose last segment ends
+    at the file's last byte loads, and one whose segment's file extent
+    reaches one byte into the page's padding is refused, where a load
+    that plans the page-rounded length accepts it.
+  * *The dynamic tags.* A host test of `erx_elf_plan` plans a
+    position-independent file whose dynamic section holds every listed
+    tag, the six of the constructors and destructors among them, and
+    refuses one that adds a single unlisted tag; a planner that passes
+    tags it does not name accepts that
+    file. It plans a fixed file whose dynamic header is empty and refuses
+    a fixed file whose dynamic header holds a `DT_RELA`; a planner that
+    reads the empty header as a dynamic section refuses the first for
+    its missing terminator, and one that checks it as metadata a load
+    must cover refuses it for its address. It refuses a
+    position-independent file linked by a task script without the
+    `PT_DYNAMIC` header, one whose header is empty and one whose
+    dynamic section lies in the read-only load; a planner without the
+    requirement of one non-empty header in the writable load accepts
+    the header-less file.
+  * *What the relocations reach.* The QEMU fixture prints, from `main`,
+    a flag its constructor set, its table of string pointers, and an
+    initialised thread-local value read on the first thread and on a
+    second one; a loader that skips the relocations faults in the
+    constructor.
+  * *Reports during loading.* A program started into a stopped job, so
+    its image is paused before its first instruction, is sent
+    `SIGUSR1`, which its spawn's mask blocks, and enough signals after
+    it to fill the inbound lane, and is then continued; its `main`
+    finds `SIGUSR1` pending and the handler's waits for room all end.
+    Seed: a loader that maps and reads the inbound lane before the
+    transfer, which the executable's lane check ends as a fault.
+  * *Cleanup after entry.* The fixture reads a word at the window's
+    base, `exec_window_base`, after `main` starts, and ends with
+    `SIGSEGV`; a start-up that skips `erx_exec_release` lets the read
+    succeed and fails the case. The same run checks that one release
+    removes the whole window on the stopgap. A second run reads instead
+    the first word of the record, at `exec_record_page`, and ends with
+    `SIGSEGV` too; a release that ends below the record's page lets
+    that read succeed.
+  * *Release before constructors.* A second fixture, whose constructor
+    reads the same word, ends with a fault before its `main` writes
+    anything; a start-up that calls `erx_exec_release` after musl's
+    start, where `liberx` maps the channel, lets the constructor's read
+    succeed and `main` print, which fails the case.
+  * *The window's release.* A host test of `erx_prog_enter`
+    (`test/host/exec_release_test.rb`) finds that a program with
+    register 7 at 0 releases nothing, and that any other value releases
+    the whole window in one call before a constructor runs; seed: an
+    `erx_prog_enter` that leaves the release to musl's start lets a
+    constructor run while the loader is mapped. It refuses, releasing
+    nothing, a window that meets the program's own image (at the
+    window's base, as a program of the boot image is linked, across
+    either end, inside or around it) and stops the program with
+    `ERX_PROG_STATUS_RELEASE`; seed: a release without that comparison
+    releases the image. A release the space refuses stops the program
+    with the same status.
+  * *The window's rest.* A host test of `erx_exec_load`
+    (`test/host/exec_load_test.rb`) finds the window's rest, from the
+    loader's image to the record's page, reserved by the load's first
+    call, and every later reservation outside the window; seed: without
+    that reserve, the view of an 800 KiB file lands inside the window,
+    where the executable's release would take it. A window's rest the
+    space refuses fails the load with the call `window` and nothing
+    reserved or released.
+  * *The window's place.* A host test of the ABI generator
+    (`test/host/abi_limits_test.rb`) finds the record's page derived as
+    the window's last, and generation failing for a window moved onto
+    the program memory place.
+  * *A release over holes.* The stopgap backend's memory test
+    (`test/host/fiasco_vm_test.rb`) has a mutant whose release refuses a
+    range with a hole in it, which the test kills: the one release of
+    the window relies on a release that skips the window's holes.
+  * *The driver's view.* A host test of the port driver's build plan
+    for an executable file finds the release of the session's view of
+    the record before the record's map into the image, and in the undo
+    of a plan that fails after the write; a plan without that release
+    fails the test's check that every range the plan reserves in the
+    session's space is released by the plan's end.
+  * *The entry.* A seeded exec entry that calls the executable's entry
+    as a C function on the loader's stack faults before `main`.
+  * *A load that fails part way.* A program whose budget cannot cover
+    one writable segment's child ends with status 127 and the call's
+    name and status on its standard error. Two seeds: a failure route
+    that stops the program without the ordinary start-up ends it with
+    no line on standard error; one that calls the start-up with
+    register 7 set to the record's page runs `erx_exec_release` in the
+    loader, which finds the window meeting the loader's own image,
+    refuses it and stops the program with `ERX_PROG_STATUS_RELEASE`, so
+    the case sees that status instead of 127 and no line on standard
+    error.
+    The release of what the load made is `erx_exec_load`'s host test's.
+  * *A release that fails.* `erx_exec_load`'s host test, over memory
+    calls whose release of the view is refused, gets refused cleanup and
+    no transfer; a load that discards the status of the view's release
+    reports the file loaded and transfers.
+
+  A package image holding `bin/x` as a link to `/bin/sh` fails
+  its start of `bin/x` with `enotsup`, where a package mount that
+  follows links starts the shell. With the table empty, a program that
+  forks a child which keeps running and then execs another executable
+  runs the new one and leaves the child running the first one's code,
+  where a command server that makes the child's row with no holds
+  faults the child, and one that ends the row's holds at the old
+  image's end ends the program at its switch; and a session that starts one executable 300 times
+  in turn, beyond `code_objects_max`, runs every start, where one that
+  never drops fails the 257th with `EAGAIN`. Through the `code_objects`
+  facet, a `drop` of a number the session's own `create` answered
+  succeeds and one of another session's answers `{error, einval}`,
+  where a library that ignores the grantee drops it. On the stopgap,
+  `function_api` makes a child of a sealed object, reads the parent's
+  bytes through it and writes it without changing the parent, where a
+  child that skips the copy reads zeros.
 * **The POSIX-lite personality.** musl's `libc-test` and the Open POSIX Test
   Suite run in a test domain; every failure is a bug, a documented
   difference with a test, an unsupported case of a tier not yet built, or
@@ -4476,12 +5017,25 @@ execute makes code, and objects confined to one program share nothing.
 The command
 server, trusted session code, fills objects that its programs only read.
 
-**The session loads executables from files.** The session would read the
-file and copy its segments into the new program's image itself, with no
-loader in the program. It loses: the session would parse untrusted
-executables in its own domain, while `erx_elf_plan` parses them in the
-program's own space, which holds only what the starter gave it, and a
-malformed executable harms only the program.
+**The session loads executables from files.** The session's port driver
+would load an executable file as it loads a program of the boot image
+(`erx_program_drv.c`, its image map step): plan the code object with
+`erx_elf_plan`, map its read-only and executable segments from the object
+into the new image, give each writable one a copy-on-write child, and
+write the relocations, all before the first thread starts, which then
+starts at the executable's entry like any program's. It wins on
+mechanism: no loader program, no exec record, no exec entry, no release
+of a loader's pages and no path at `libexec`, and the first thread's
+start is one shape for every image. It loses on authority:
+`erx_elf_plan`, the parser of the most attacker-shaped input a program
+can name, would run in the session's domain, beside every program, grant
+and terminal of the principal, so a parser bug would be the session's
+compromise, where in the program's own space it reaches only what the
+starter gave that program; and the session would map and write each
+program's writable copies before handing them over. The design keeps the
+parse in the program. The alternative is the smaller one in code, and
+the one to take if the parse's place matters less than the loader's
+bootstrap costs.
 
 **`exec` in a new sub-space under the session.** `exec` could start a
 fresh program and end the old one, handing over its process id and its
@@ -4648,9 +5202,12 @@ proves hard to adapt.
 | Recompiled programs detach: `daemon`, a double `fork`, `nohup` | medium | the detached child ends with the program that started it, and a ported service dies with its shell | the documented difference and its test; a service runs as a domain under a supervisor ([design-system.md](design-system.md#system-services)) |
 | `system`, `popen` and Erlang commands started by programs are slow, a command domain's start each first time | medium | a program that runs many commands is slow at its first | the command domain is kept for the program's image, so a second command costs a frame; a small release for the command image; `tools/erx bench system` |
 | `fork` of a large program is slow, a copy of all its memory | medium | `fork` followed by `exec` wastes the copy | `posix_spawn` stays the fast path; `tools/erx bench fork`; the copy-on-write `fork` option |
-| A session's code objects hold much of its budget | low | the session runs out of memory sooner | `file_objects` and an eighth of the budget bound the table; eviction keeps live objects alive in their programs only; data objects are the program's own and end with it |
+| A session's code objects hold much of its budget | low | the session runs out of memory sooner | `code_objects_max` and an eighth of the budget bound the table; eviction keeps live objects alive in their programs only, and a failed fill or start holds nothing; data objects are the program's own and end with it |
 | Write-back of shared mappings costs more than programs expect | medium | a program that maps a large file and stores widely pays a write for each run of stored pages at every `msync` and every letting-go, and an `mmap` pays up front the filling of the object from the file's start to the mapping's end, a high offset included | only stored pages are written, from the kernel's report; gate GQ measures fill and write-back with `tools/erx bench mmap` ([plan.md](plan.md#decision-gates)); filling on first touch would need a pager, which the design rejects ([Alternatives considered](#alternatives-considered)) |
 | Ported programs rely on writes from outside their session showing in a shared mapping at once, as Linux's page cache gives | low | such a program reads stale bytes through its mapping until every program of its session has let go of the file | the documented difference and its test; programs that share a mapped file run in one session, where descriptors and mappings agree at once ([Alternatives considered](#alternatives-considered)) |
+| A static position-independent link through the task script that the planner refuses: a probe link, with `liberx` and musl built `-fPIE`, a `main` that returns 0 and the script naming the six dynamic sections, linked with LLD 23.1.3 and gave the shape above, the listed tags but `DT_FLAGS`, every relocation relative, `PT_DYNAMIC` at the start of the writable load, and an empty `PT_DYNAMIC` in the fixed link; no planner ran over it and nothing booted it | medium | a package's program fails the planner or the boot image's fixed programs fail the stopgap's `erx_image_map` | `erx_elf_plan`'s host build over the SDK fixture's link, and the QEMU fixture's run, before the SDK's link lands |
+| Open second-tier question: `exec`'s step 1 has `liberx` check the file with `erx_elf_plan` in the program's own layer ([Exec](#exec)), but the `elf-reader-callers` chokepoint admits only `erx_exec`'s load and its pure core, the stopgap's `erx_image_map`, the host planner, the fuzz target and the loader's host driver (`tools/lib/erx/chokepoint_rules/exec.rb:20-33`), and its seed is a call from `liberx/program` | certain once `exec` is built | the check fails the build, or the rule gains a site in the program layer and stops being one funnel | recommended: step 1 calls the pure planner of `liberx/exec/load_plan.c`, the funnel's own file, so the rule's sites stay as they are and `exec` and the loader refuse a file by one decision; the alternative, leaving the check to the next image's loader, loses `ENOEXEC` with the old image whole, which POSIX's `exec` requires |
+| Open second-tier question: shared libraries and dynamic executables need `DT_NEEDED`, a `DT_JMPREL` table of symbol relocations and `RELRO` ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)), which the first tier's closed list of tags and its one relative relocation type refuse | certain once shared libraries are built | no library loads | recommended: one planner with one closed list per kind of file in `abi/formats/elf64.txt`, the static executable's list unchanged and a library's list naming exactly what musl's dynamic linker reads, chosen by the file's kind and never widened for a static executable |
 | Ported programs hard-code Linux's signal numbers or name Linux's own signals | low | a program that sends `kill(pid, 19)` meaning a stop continues its target instead, and one that names `SIGPWR` unconditionally fails to compile | code that builds on FreeBSD and macOS names its signals and guards Linux's own names already; the oracles' documented differences ([Signal numbers](#signal-numbers)) |
 
 A program is a port of its session, not a domain,

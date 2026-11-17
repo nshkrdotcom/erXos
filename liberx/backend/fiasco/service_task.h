@@ -145,6 +145,16 @@ bool	erx_fiasco_task_created_by(uint32_t task, uint32_t caller);
  */
 void	erx_fiasco_task_space_release(uint32_t record);
 int	erx_fiasco_task_mem_create_body(uint32_t caller, const erx_fiasco_mem_create_request_t *request, uint64_t *mem);
+/*
+ * erx_mem_create_paged and erx_mem_seal (docs/design-stopgap.md, "The call table"):
+ * erx_fiasco_vm_paged_rule's refusals, then the object's charge to its budget; a seal
+ * of an object the caller holds, erx_fiasco_vm_object_seal's results; erx_mem_child's
+ * child of a parent the caller holds, charged to its budget, erx_fiasco_vm_child_create's
+ * refusals and results.
+ */
+int	erx_fiasco_task_mem_paged_body(uint32_t caller, const erx_fiasco_mem_create_request_t *request, uint64_t *mem);
+int	erx_fiasco_task_mem_seal_body(uint32_t caller, uint64_t mem);
+int	erx_fiasco_task_mem_child_body(uint32_t caller, const erx_fiasco_mem_child_request_t *request, uint64_t *mem);
 int	erx_fiasco_task_mem_dma_body(uint32_t caller, uint64_t mem, uint64_t offset, uint64_t *addr);
 int	erx_fiasco_task_mem_physical_body(uint32_t caller, const erx_fiasco_mem_physical_request_t *request, uint64_t *mem);
 int	erx_fiasco_task_mem_contiguous_body(uint32_t caller, const erx_fiasco_mem_contiguous_request_t *request, uint64_t *mem);

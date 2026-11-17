@@ -199,9 +199,67 @@ it; git history is the record of completed work.
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
   the plan's PK10 comparison does not cover it; the rest of the file-backed EROFS mount of
   [todo-system-partition.md](docs/todo-system-partition.md), whose `{erofs, app}` source `erx_app`
-  mounts `/app` with; a native app's start and the record's
-  `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
-  (`erx_app` ends with `{not_supported, program}` until then).
+  mounts `/app` with. A native app's start is built in `erx_app` (`/app/` and the header's `program`, a
+  `relative_path` the reader checks, through `erx_prog_handler:start/1` with the record's `window` on the
+  session's default display, the program's end ending the session); see the next item for what it waits on.
+* [High] programs, an executable file as a program's image
+  ([design-programs.md](docs/design-programs.md#what-a-program-can-start), "File objects"; plan 1b-D,
+  "`erx_exec` with `rx` grants"): not built past the resolve. `erx_program:start/1` takes only a program of
+  the session's release (`image => <<"bin/NAME">>`). The handler resolves an absolute image through the
+  starter's namespace and makes the image check of the entry's `rx` (`erx_prog_handler_core:resolve_image/3`),
+  but has no filler to open the file and no code object from the command server (the rest of step 4 of
+  "Starting a program"), the domain library's `code_object/2` answers `enotsup`, and the loader `erx_exec`
+  is only its load (`liberx/exec/load.c`, `erx_exec_load`: the object viewed and planned, the span
+  reserved, segments mapped, copied and committed by a layout decided whole, relocations written), with no
+  bootstrap around it (design-programs.md, "The loader's bootstrap" and "The executable's link";
+  design-stopgap.md, "An exec's entry"): the loader's window (`abi/protocols/prog.txt`, the task script's link
+  at its base and the load's reserve of its rest), the exec record's layout, register 7 and the executable's
+  `erx_exec_release` (`liberx/exec/release.c`, from `erx_prog_enter`) are built, and not built are the
+  record's writers (the port driver's create, write and map of it, which must map it at the ABI's
+  `exec_record_page`, and the command server's keeping of
+  the file's length), the loader's own C entry ahead of the helpers, the exec entry, the loader's failure path that copies its reason into a static and calls its
+  start-up with the arguments it received,
+  the port driver's release of its own view of the record and its close of the record's capability once
+  the first thread has started, the SDK's `liberx_program.a` (`liberx`'s program layer, its backend and
+  the members of `erx_boot.a`, `libsigma0.a` and `libl4sys.p.a`), the `{ok, Cap, Bytes}` reply to `{map, Path, code}` and the exec switch's
+  record, the SDK's link of the task script at base 0 and its dynamic sections, and the removal of `image` from the
+  startup message (`abi/protocols/prog.txt`, the `image` union). The static link needs `-fPIE`
+  objects: musl's `libc.a` is built without it (`musl.rb`'s `CFLAGS`), so `vmlock.o` and `ofl.o` fail
+  the link, and `liberx`'s program objects without it fail with 344 absolute relocations in read-only
+  tables, mostly the generated `prog_profile.c`; `task.ld` names none of `.rela.dyn`, `.hash`,
+  `.gnu.hash`, `.dynsym`, `.dynstr` and `.dynamic`, which `--orphan-handling=error` then refuses. A
+  probe link with those fixed gave the design's shape (622 relocations, all relative); unverified are
+  `erx_elf_plan` over that link, a booted run, and whether one release removes the loader's whole window
+  on the stopgap. The load trusts its object to be a sealed code
+  object: it checks neither, the stopgap maps a pool object read-execute, and the relocations are read
+  again from the view, so a writer of an unsealed object could move them [Medium, security residual]; the
+  exec record names only an object the command server sealed. `load.c` runs only in its host test, over memory calls
+  of the test's own (`test/fixtures/exec_load_effects.c`), which checks its outcomes and releases but not the bytes it maps, and whose stand-in space checks neither page alignment nor that a map lies in a reservation, nor makes an object shorter than the rounded length [Low]; nothing yet states who guarantees the code object's zeros past the file's last byte, which a read-only or executable segment ending in the last page maps into the program [Medium, security residual]: the programs suite gets the bootstrap's cases (design-programs.md, "Loading an executable") when the
+  program lands.
+  So a native app's start of `/app/bin/NAME` is refused
+  `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this
+  lands. The session asks for code objects through the `code_objects` facet
+  (`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which the domain service
+  grants every session by its own policy and forwards to `erx_domain_lib:code_object/2` and `code_drop/2`;
+  those answer `enotsup`, since the domain library has no `erx_dom_code_object` or `erx_dom_code_drop` over
+  `erx_mem_create_paged`, no per-session table bounded at `code_objects_max`, and no close of a session's
+  code-object handles at its retire. The command server's holds (fill, start,
+  row) decide every drop (design-programs.md, "Holds and drops"). Links: a package mount answers `enotsup`
+  for a link inode, since a package holds no links (design-storage.md, "Reading EROFS images"), but today
+  the reader checks only the header's text (`relative_path`) and only the host packer refuses links, so the
+  mount's refusal is part of this item. Meanwhile the resolve refuses every symbolic link on the way
+  (`eacces`), on every mount, where design-programs.md has a resolve follow links as FreeBSD's does.
+  The image check reads the entry's rights alone, which design-files.md (F6) names as the wrong check until
+  every entry's rights are capped by its grant's ("files, the app mount's rights", below). The resolve runs
+  in the program's own handler, after the command server gave the program its id and job row, and waits on
+  the walks of a grant server, where step 4 puts it in the starter's handler before step 5. The filler, when
+  built, must check that the file is regular (a grant's walk answers `other` for devices too) and open it
+  without following a link, since its open walks the path again.
+* [Medium] apps, `erx_app`, a native app's standard streams: design-packaging.md ("Starting an app") starts a
+  program without a window with standard input null and its output to the session's log, but
+  `erx_prog_handler:start/1` offers only pipe ends and a window's buffer as descriptors, so `erx_app` starts
+  every program with descriptors 0 to 2 closed. Needs a null descriptor and one for the session's log in the
+  handler's spec.
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
   an image package's place on the `system` grant is written in `erx_principal:place/2` and again in
   `erx_pkg_medium` (`place/2`, `on_system/1`, beside `erx_ns:facet_grant/1`'s grant tuple; one owner wanted); the
@@ -702,6 +760,7 @@ it; git history is the record of completed work.
   and returns with the `erx` backend's kernel.
 * [Low] Fiasco backend, `liberx/backend/fiasco`: own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that design-fiasco.md's "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`, and an `erx_cap_pass` item holding an own thread's handle is read as the handle table's entry of that number, so it may pass a memory object instead of being refused. Move handles onto the base. Likewise the handle the root or a creator holds to a created space's first thread is the task above the index (`service_thread_handle` in `service.c`), not the handle-table entry "Thread creation" names, so it can equal one of the root's entries once the root holds 256 of them, and `erx_cap_close` or `erx_cap_dup` of it reaches that entry; give it a value no entry can bear, as the base does.
 * [Medium] Fiasco backend, `liberx/backend/fiasco/vm.c`: the page index's size counts the window, contiguous and device pages but not the archive pages a slice adds, one index entry each per live slice, so enough live slices fill the index and `page_find` spins on the service thread. One slice per domain cannot reach it; before a session slices per command, count live slice pages against a cap and refuse past it with `ERX_ENOMEM`, as `vm_device_pages_used` does, and correct `vm_table.h`'s "committing never finds it full".
+* [Low] Fiasco backend, `erx_mem_child`: the child's handle is in its caller's table before the eager copy fills it, so a thread of the same task that closes the parent's handle and makes another object under the same number between the two calls has the child filled from that object. Make the creation and the copy one service request.
 * [Low] Fiasco backend, `liberx/backend/fiasco/service_wire.c`: the decoder copies a call's words into `decoded.request` without checking them against `ERX_FIASCO_WIRE_WORDS_MAX`; `erx_fiasco_mem_copy_request` fills all seven, so a longer layout would overflow it. Refuse past the maximum in the decoder, or assert every layout's size.
 * [Low] Fiasco backend, `fiasco/kernel/src/erx/erx_probe.cpp` and `erx_syscall.cpp`
   are reference text for erXos's kernel, out of the build: `erx_syscall.cpp`
@@ -791,8 +850,8 @@ it; git history is the record of completed work.
   launcher turns into the ended semaphore's slot without the service (`launcher.c`). It moves onto records with
   BK5's space tree (the 1b-A package plan). Until then its value overlaps object handles, so `erx_cap_close` or
   `erx_object_destroy` given a space handle acts on whatever entry has that number.
-* [Medium] security residual, `liberx/backend/fiasco/vm.c`: nothing records `ERX_MEM_JIT` on an object, so any
-  object maps read-write at one address and read-execute at another, a protect moves RW to RX freely, and the
+* [Medium] security residual, `liberx/backend/fiasco/vm_rules.c`: `erx_vm_map` lets every `erx_mem_create`
+  object run, not only a JIT one, so any such object maps read-write at one address and read-execute at another, a protect moves RW to RX freely, and the
   root maps RX into a child made without `ERX_SPACE_JIT`. No single mapping is ever writable and executable,
   but code-making does not yet follow from the image.
 * [Low] Fiasco backend, `musl/src/internal/erxos/syscall.c`: `munmap` of part of an object's mapping is `EINVAL` and
@@ -848,6 +907,16 @@ it; git history is the record of completed work.
   preemptible steps, and keep only the measurement in `docs/todo-performance.md`.
 * [Low] Fiasco backend, `liberx/backend/fiasco/irq.c`: an IRQ object is unbound by a holder allowed in its group (the group's home, its creator or the root: `irq_group_allowed`) and freed with its last handle. Whether a restarted block driver can rebind its line through that is untested.
 * [Medium] Fiasco backend, `liberx/backend/fiasco/vm.c`, `liberx/backend/core/vm_table.c`: the range table sees an object's mapping as uncommitted, so
+* [Medium] erXos's kernel, [design-kernel.md](docs/design-kernel.md#threads) ("The kernel-user page"): the kernel maps
+  each thread's kernel-user page "at an address it picks", and nothing keeps that address out of the places the ABI
+  fixes in every program's space: the loader's window (`exec_window_base`, `exec_window_bytes`) and the program
+  memory place (`prog_mem_base`, `prog_mem_bytes`) of `abi/protocols/prog.txt`. A kernel-user page inside the
+  window makes every exec's fixed, non-replacing reserve of the window's rest fail with `ERX_EEXIST`
+  (design-programs.md, "The loader's bootstrap"). State in the design where the kernel places these pages, apart
+  from both, and check it against the ABI's places at build time, as the stopgap's `liberx/backend/fiasco/time.h`
+  asserts that its fixed task area ends below the window.
+* [Low] stopgap, `liberx/backend/fiasco/irq.c`: an IRQ object is unbound by a holder allowed in its group (the group's home, its creator or the root: `irq_group_allowed`) and freed with its last handle. Whether a restarted block driver can rebind its line through that is untested.
+* [Medium] stopgap, `liberx/backend/fiasco/vm.c`, `liberx/backend/core/vm_table.c`: the range table sees an object's mapping as uncommitted, so
   `erx_space_protect` over mapped registers or a mapped run returns `ERX_OK` and puts a fresh pool page there, and a decommit or release leaves the
   mapping reachable. No caller does either. Nothing tests a task that ends holding a physical or contiguous object, so `vm_give`'s address check and
   the index's room for run pages stay untested. A restarted driver spends device window pages and contiguous runs each life, since neither comes back.

@@ -57,7 +57,9 @@ registry, which erx:cap/1 reads, and is acknowledged there and then. Every
 refusal and dropped message is counted (the call mints);
 their log lines are rate-limited (throttle/2). The facets of services the
 system domain serves that the manifest grants a configured domain or a
-session's template go in the domain's ready answer, each in front of the
+session's template, and the code_objects facet the service grants every
+session by its own policy (code_objects_row/0), go in the domain's ready
+answer, each in front of the
 process its service named with erx_facet:serve/2 (served/2); the inspect
 facet with the scope erx_domain_core:inspect_scope/3 gives the domain's
 principal (system_facet/4); and for a service of an interface abi/services
@@ -161,6 +163,8 @@ start_link(Opts) ->
 init(Opts) ->
     process_flag(trap_exit, true),
     Lib = library(maps:get(lib, Opts, erx_domain_lib)),
+    %% The code_objects service is the domain service's own (code_objects_row/0).
+    ok = erx_facet:serve(code_objects, self()),
     case principals(Lib, Opts) of
         {ok, Principals} ->
             {ok, booted(state(Lib, Principals, Opts)), {continue, boot}};
@@ -189,7 +193,8 @@ state(Lib, Principals, Opts) ->
     %% mint_timers, and mint_counts and mint_log what was refused or dropped (note/4).
     %% Served holds, by configured row, the facets of services the system domain serves
     %% that the manifest grants the row, each its service's name, its kind (served_kind/2)
-    %% and the grant's limits; a session's are its own facet rows (served/3).
+    %% and the grant's limits; a session's are its own facet rows and its code_objects facet
+    %% (served/3).
     %% Apps is the boot's registry of app principals (erx_principal), of the apps row's
     %% max entries, as the library placed them (app_entries/1, the library's apps/0).
     %% Facet_rows holds every facet row of the manifest by its index in the facet table,
@@ -383,6 +388,13 @@ handle_call({inspect_view, Scope}, _From, #{core := Core} = State)
 handle_call(mints, _From, #{mints := Mints, mint_counts := Counts} = State) ->
     %% Each grant's state, configured and per session, and how many of each refusal and drop were counted.
     {reply, #{grants => erx_domain_mints:grants(Mints), counts => Counts}, State};
+%% A session's code objects, which its code_objects facet forwards with the session it was
+%% minted for (erx_code_objects_facet): the library answers, and refuses a number that is
+%% not that session's.
+handle_call({code_object, Session, Size}, _From, #{lib := Lib} = State) ->
+    {reply, Lib:code_object(Session, Size), State};
+handle_call({code_drop, Session, Number}, _From, #{lib := Lib} = State) ->
+    {reply, Lib:code_drop(Session, Number), State};
 handle_call(_Request, _From, State) ->
     {reply, {error, badarg}, State}.
 
@@ -654,7 +666,8 @@ local({Pid, Limits}) ->
 %% is not enough either: only the system domain holds a facet of driver control
 %% (docs/design-system.md, "The manifest", property 8), so the hand-on must also keep to
 %% the manifest's facet rows for the new domain. A system-served facet such as inspect
-%% reaches a domain only from the manifest's rows (served/2).
+%% reaches a domain only from the manifest's rows, or as code_objects from the domain
+%% service's own policy (served/3).
 attenuated(_Name, _Grant) ->
     false.
 
@@ -978,6 +991,8 @@ system_facet(clock, {message, Behind, Limits}, _Principal, _State) ->
     %% callback finds erx_clock at each request and checks the grant's operations, sample
     %% or set, against what it decodes.
     {facet, erx_clock_facet, Behind, Limits};
+system_facet(code_objects, {message, Behind, Limits}, _Principal, _State) ->
+    {facet, erx_code_objects_facet, Behind, Limits#{behind => Behind}};
 system_facet(_Name, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_domain_facet, Behind, Limits#{behind => Behind}};
 system_facet(machine, {tree, Grants, Limits}, Principal, #{principals := #{system := System}} = State) ->
@@ -1060,7 +1075,8 @@ mint_tree(Id, DomainPid, Name, Limits, Grant, Exports) ->
 
 %% The facets of services the system domain serves that the manifest grants a configured
 %% domain's row or that a session's own rows hold, each {Kind, Behind, Limits} by its service's
-%% name, and none for a domain a request made: Behind is the process the service
+%% name, with the code_objects facet every session holds by the domain service's own
+%% policy (code_objects_row/0), and none for a domain a request made: Behind is the process the service
 %% named for it with erx_facet:serve/2, which the system domain's services do as they
 %% start. For a message service Limits are the grant's limits that erx_facet applies,
 %% max_request and in_flight, checked as a spec's are (grant/1); for a tree service they
@@ -1072,9 +1088,19 @@ mint_tree(Id, DomainPid, Name, Limits, Grant, Exports) ->
 served({configured, Row}, _Domain, #{served := Served}) ->
     served(Row, maps:get(Row, Served, []));
 served({session, _Template}, #{rows := Rows}, #{trees := Trees}) ->
-    served(session, [{Name, served_kind(Name, Trees), Limits} || {Name, system, Limits} <- Rows]);
+    Granted = [{Name, served_kind(Name, Trees), Limits} || {Name, system, Limits} <- Rows],
+    served(session, Granted ++ [code_objects_row()]);
 served(request, _Domain, _State) ->
     #{}.
+
+%% The code_objects facet every session holds, by the domain service's own policy and with
+%% no facet row (docs/design-system.md, "Creating a domain", "The code_objects facet"): a
+%% request's whole envelope fits ?ERX_CODE_OBJECTS_MAX_REQUEST, whose derivation
+%% abi/services/code_objects.txt states, and in_flight lets a session's command server
+%% fill a few programs' objects at once. It comes last in served/3's list, so its limits
+%% stand whatever the rows hold; the manifest's check refuses a facet row of the service.
+code_objects_row() ->
+    {code_objects, message, #{max_request => ?ERX_CODE_OBJECTS_MAX_REQUEST, in_flight => 4}}.
 
 %% The names of the facets of configured domains the manifest grants a domain of
 %% Origin: its row's, or a session's own rows, and no other domain's; none for a domain

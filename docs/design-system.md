@@ -1314,7 +1314,7 @@ the one entry that waits, is a dirty I/O NIF
 | `erx_dom_retire(id)` | releases an ended domain: destroys its crash area, frees its record and gives its principal back the domain and its own budget's bytes; destroys its outer budget when no connection names the domain, and otherwise keeps the outer budget as the domain's remains, which the disconnect of its last connection destroys; the domain service calls it once the crash area is read and the system connection disconnected, without waiting for any other connection | `ERX_OK`; `ERX_EINVAL` unless the domain has ended; `ERX_EBUSY` while its system connection stands |
 | `erx_dom_connect(a, b, a_reads, b_reads, area, area_reader)` | creates a connection between two built or running domains: carves from each domain's outer budget a child budget for the connection; creates two sides, `b`'s sized `a_reads` and charged to `a`'s child, since `a` reads it, and `a`'s sized `b_reads` and charged to `b`'s child; two bells, each charged to the child of the domain whose group it is bound to; and, when `area` is not 0, a pixel area of `area` bytes, charged to the child of `area_reader`, which maps it read-only while the other party writes it ([design-display.md](design-display.md#the-pixel-area)); gives each domain its share ([Authority](#authority)) | the connection's number and each domain's values; `ERX_ENOMEM` when a reader's outer budget cannot cover its child; `ERX_ELIMIT` for a full table; `ERX_EINVAL` for a domain outside built or running, for `a == b`, for an `area` that is not a whole number of pages, or for an `area` whose `area_reader` is neither, or an `area_reader` other than 0 without one |
 | `erx_dom_disconnect(number)` | destroys the connection's child budgets, which deletes its sides and bells at once, and the remains of each retired party that no other connection names; the domain service asks it only once each party has unmapped them or ended; a capability to them fails with `ERX_ESTALE` from then on | `ERX_OK`; `ERX_EINVAL` for an unknown number |
-| `erx_dom_code_object(session, size)` | creates a paged object with an execute ceiling from the session's budget through the system domain's own capability to it, which carries `CODE`, and gives the session a copy with `SUPPLY`, `READ`, `MAP`, `CHILD`, `DUP`, `GIVE` and `EXEC`; the kernel refuses an executable mapping of it until it is sealed (K8) | the object's number and the session's value; `ERX_ENOMEM`; `ERX_ELIMIT` beyond `file_objects` for the session |
+| `erx_dom_code_object(session, size)` | creates a paged object with an execute ceiling from the session's budget through the system domain's own capability to it, which carries `CODE`, and gives the session a copy with `SUPPLY`, `READ`, `MAP`, `CHILD`, `DUP`, `GIVE` and `EXEC`; the kernel refuses an executable mapping of it until it is sealed (K8) | the object's number and the session's value; `ERX_ENOMEM`; `ERX_ELIMIT` beyond `code_objects_max` for the session |
 | `erx_dom_code_drop(session, number)` | deletes a session's code object, after which every mapping of it faults | `ERX_OK`; `ERX_EINVAL` |
 | `erx_dom_info(id, topic)` | the domain's group or own budget report, from `erx_object_info` on the library's handle, for the inspector's collector ([design-live.md](design-live.md#inspection-records)); any system-domain process may ask, since a report holds counts and masks and none of the domain's data | the report; `ERX_EINVAL` for a domain neither built nor running or another topic; the backend's refusal |
 | `erx_dom_end_begin(how)` | installs the ending record with its absolute deadline ([Shutting down](#shutting-down)) | `ERX_OK`; `ERX_EBUSY` for a second begin; `ERX_ENOTSUP` for a trial when the boot value is `unknown` |
@@ -1760,25 +1760,85 @@ own capabilities to budgets carry `CODE`: the root budget's, and its
 capability to every budget it carves, each principal's and each
 domain's; the capability a domain receives to its own budget never does,
 so no table but the system domain's holds `CODE`. The session asks
-through its facet, and the domain service calls
+through its `code_objects` facet, and the domain service calls
 `erx_dom_code_object(session, size)`, which creates the object from the
 session's budget through the system domain's own capability to it, so
 the session pays for its code, and gives the
 session a copy with `SUPPLY`, `READ`, `MAP`, `CHILD`, `DUP`, `GIVE` and
-`EXEC`: the session fills and seals it, and maps it into its programs'
-sub-spaces itself, as their creator; the kernel refuses an executable
+`EXEC`: the session fills and seals it, and installs it into its
+programs' sub-spaces itself, as their creator, where the loader maps
+it; the kernel refuses an executable
 mapping before the seal. The library keeps the only `DESTROY`, so the
-session's copy carries none, bounds the objects at `file_objects` per
+session's copy carries none, bounds the objects at `code_objects_max` per
 session, and deletes one at `erx_dom_code_drop`, which the domain
-service calls when the session's command server evicts the object from
-its cache by asking over the session's connection; the rest go with the
+service calls when the session's command server drops the object
+through the same facet; the rest go with the
 session's budget at its destroy, after every program that mapped one has
 stopped with the session
-([design-programs.md](design-programs.md#file-objects)). A
+([design-programs.md](design-programs.md#file-objects)).
+
+A session is a trusted supplier of its own programs' code, an app's
+session as much as a template's: the copy it holds can be filled with
+any bytes, from any source, and sealed, and nothing below the session
+checks where they came from. That harms no party but the session: the
+object is charged to the session's own budget and runs only in the
+session's own spaces, its own and its programs', which stop with the
+session, and a session whose image carries `ERX_IMAGE_JIT` already
+makes machine code in its own JIT space. What
+the `rx` rule of a grant protects is a program, from running a file
+that it or another program could rewrite: the session's handler fills
+a code object for a program only from a file the program reaches
+through an `rx` entry
+([design-files.md](design-files.md#invariants), F6; [design-programs.md](design-programs.md#invariants), P10).
+It is no check on the session itself.
+
+A
 program from the boot image needs none: its session maps its slice. A
 session's shared mappings of files need nothing of the library either: the
 session serves them from memory objects of its own budget
 ([design-files.md](design-files.md#shared-mappings)).
+
+**The `code_objects` facet.** `abi/services/code_objects.txt` declares
+the interface a session reaches the domain service's code objects
+through:
+
+```text
+service code_objects 11
+  operation create 1
+  operation drop 2
+limit code_objects_max u32 256
+limit code_objects_max_request u32 1024
+```
+
+`create` takes the object's size in bytes, a positive integer, and
+answers `{ok, Number, Cap}`, the object's number and the session's value
+of its copy, or the library's refusal, `{error, enomem}` for the
+session's budget and `{error, elimit}` beyond `code_objects_max`; `drop`
+takes a number and answers `ok`, or `{error, einval}` for a number that
+names none of the grantee's live objects. The facet's decoder refuses
+any other request with `{error, badarg}`. The session is the facet's
+grantee, taken from its grant record and never from a request, so no
+request names a session: a session makes objects only from its own
+budget and drops only its own. The system manifest declares the
+service once, served by the system domain, and the domain service
+grants a facet of it to every session it starts, a template's and an
+app's alike, by its own policy
+([design-domains.md](design-domains.md#facets), "The facet table"),
+with no facet row: what it hands a session, memory of the session's
+own budget within `code_objects_max` for code the session supplies, depends
+on nothing a template chooses, and an app's session lists it among its
+facets ([design-packaging.md](design-packaging.md#an-apps-session)).
+The facet's limits are the domain service's policy too, the same for
+every session: `max_request` is `code_objects_max_request`, which holds
+the largest request's whole envelope, a call whose caller's pid and alias
+each carry a node name of up to 255 bytes, with room to spare; and
+`in_flight` is 4, so the command server can fill a few programs' objects
+at once. A facet row for the service is refused by the build's check of
+the manifest, so no row grants it to a configured domain or changes its
+limits for a template.
+Any process of the session can reach it, an app's own Erlang
+applications among them; that the command server is its one caller in
+erXos's code is no boundary, and the trust above covers them all.
 
 ### Ending a domain
 

@@ -38,7 +38,8 @@ register(Name, Admitted, Apps) ->
 %% The record `Name`'s registration as an installed package writes.
 record(Name, Entry, Signer, Memory) ->
     #{entry => Entry, signer => Signer, memory => Memory, rows => [0, 2],
-      app => #{place => {packages, [<<Name/binary, ".app">>]}, layout => ?LAYOUT, start => ?START}}.
+      app => #{place => {packages, [<<Name/binary, ".app">>]}, layout => ?LAYOUT, start => ?START,
+               window => true}}.
 
 registered(Max, Records) ->
     lists:foldl(fun({Name, Admitted}, Apps) ->
@@ -102,11 +103,14 @@ without_an_apps_row_nothing_registers_test() ->
 the_record_keeps_the_app_record_with_its_place_test() ->
     {ok, Image} = erx_principal:register(package(<<"kiosk">>, system, admitted(image, ?MIB)),
                                          erx_principal:new(2)),
-    {ok, Apps} = register(<<"clock">>, admitted(development, ?MIB), Image),
+    {ok, Apps} = register(<<"clock">>, (admitted(development, ?MIB))#{display := none}, Image),
     {ok, #{app := Kiosk}} = erx_principal:app(<<"kiosk">>, Apps),
-    ?assertEqual(#{place => {system, [<<"kiosk.app">>]}, layout => ?LAYOUT, start => ?START},
+    %% A window exactly when the admission kept a windows service.
+    ?assertEqual(#{place => {system, [<<"kiosk.app">>]}, layout => ?LAYOUT, start => ?START,
+                   window => true},
                  Kiosk),
     {ok, #{app := Clock}} = erx_principal:app(<<"clock">>, Apps),
-    ?assertEqual(#{place => {packages, [<<"clock.app">>]}, layout => ?LAYOUT, start => ?START}, Clock),
+    ?assertEqual(#{place => {packages, [<<"clock.app">>]}, layout => ?LAYOUT, start => ?START,
+                   window => false}, Clock),
     ?assertEqual(<<"kiosk">>, erx_principal:fetch_name(0, Apps)),
     ?assertEqual(<<"clock">>, erx_principal:fetch_name(1, Apps)).
