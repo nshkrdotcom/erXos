@@ -5182,7 +5182,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   unpacked directory (`libc-test-63e36e9`) by hand, so a pin bump in `deps.lock` fails it with
   a missing-file error, and it reads the tree without checking its provenance record. Route
   it through `Dependencies#fetched_tree`, which has no other caller until then;
-  `RcOracle::Build#source_tree` repeats the same check by hand.
+  `RcOracle::Build#source_tree`, `Raster`'s `source_tree`, `MemdrawBuild#ninefront_tree` and
+  `SiteV64.fetched` each repeat the same check of `.source.json` by hand.
 * [Low] tooling, `tools/lib/erx/libc_test.rb:158,270-279,454-457`, `tools/lib/erx/setup.rb`: (1)
   Every serial line between a test's run and end lines that matches `FILE.c:N: ` is
   attributed to that test, including kernel or root C output; a spurious disagreement, never a
