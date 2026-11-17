@@ -199,7 +199,10 @@ Eshell V17.1.1 (type help(). for help)
   power cycle) and Ethernet (1000 Mb/s, DHCP, `ping`, `host`) work; the
   card's [manual checklist](docs/design-platforms.md#the-sd-card-and-ethernet-on-a-board)
   and the [first pass](docs/research-rpi4-board-pass.md) record what was
-  tried. The board needs a bootloader dated 2022-12-01 or later. When the
+  tried. The board's Ethernet is board-verified: the kiosk's live quotes
+  and SSH login run over it. `tools/erx netboot` stages the board's boot
+  files for a TFTP network boot from a Mac, for development.
+  The board needs a bootloader dated 2022-12-01 or later. When the
   device tree carries no random seed, the system domain seeds its
   generator from the board's RNG200 hardware entropy source.
 * Boot images are reproducible, for the QEMU disk image and the Pi 4's
@@ -210,7 +213,9 @@ Eshell V17.1.1 (type help(). for help)
 * ERTS runs in user mode as the system domain on Fiasco, behind
   `liberx`; OTP 29.1.2 and musl live in the tree, modified.
 * Domains each run their own ERTS (interpreter or BeamAsm) in an address
-  space of their own. The domain service starts the manifest's domains
+  space of their own. A domain that ends in a fault has an end line in the
+  log that names where the fault struck: the instruction, the cause and
+  the address. The domain service starts the manifest's domains
   and creates others on request; domains message each other as Erlang
   nodes do.
 * erXos's own kernel has begun as host-built C17 cores (object store,
@@ -224,7 +229,8 @@ Eshell V17.1.1 (type help(). for help)
 * `erx:inspect(Path, Options)` reads an inspection path with a wait of the
   caller's own. Every session sees the machine's load (each CPU's idle
   time and ready threads) and the clock's state at `/proc/time/status`:
-  unset, boot, approximate or set. A machine with no real-time clock
+  unset, boot, approximate or set. On QEMU `virt` the clock reads the
+  PL031 real-time clock at boot. A machine with no real-time clock
   starts at the build's date, approximate, so HTTPS works from boot
   while the image is younger than its peers' certificates.
   The domains listing at `/proc` shows each domain a caller's scope
@@ -333,7 +339,9 @@ Eshell V17.1.1 (type help(). for help)
   connections out and in work in root's session.
 * In a development build, root logs in over SSH with the clone's
   development key to an Erlang shell in root's session, served by OTP's
-  `ssh` daemon. The network suite logs in through a host port forward,
+  `ssh` daemon, whose version banner names erXos and the release. The
+  first boot imports the `authorized_keys` of the card's FAT volume into
+  root's home. The network suite logs in through a host port forward,
   and root's login there reboots the machine; `tools/erx boot` gives its
   guest no network device yet.
 * OTP's `ssl` and `inets` are in every domain release, with a trust store
@@ -635,7 +643,8 @@ packages: `llvm23`, `gmake`, `coreutils` (for `gtimeout`), `gawk`,
 `perl5`, `autoconf`, `automake`, `libtool`, `ruby` with
 `rubygem-minitest` and `rubygem-rexml`, `b3sum`, `node`, and the
 AArch64 ELF GCC and binutils (`aarch64-none-elf-gcc`), plus QEMU, a JVM
-and Docker for what needs them as above. The Fiasco build takes the cross
+and Docker for what needs them as above. Fiasco and L4Re build there
+with the system's own `cp`, `find` and `sed`. The Fiasco build takes the cross
 tools under the port's `aarch64-none-elf-` prefix or Homebrew's
 `aarch64-elf-`, preferring Homebrew's where both are on `PATH`. The base
 system's `dtc` serves. Run the
@@ -692,8 +701,10 @@ export them yourself for later commands.
 
 ## Fetch, bootstrap and check
 
-Only `make fetch` downloads anything. Name your local Docker context, and
-it fetches the oracle image too:
+Only `make fetch` downloads anything, and it keeps a fetched source tree
+that is the pin's and unchanged, so a copied build directory keeps its
+sources. Name your local Docker context, and it fetches the oracle image
+too:
 
 ```sh
 make fetch DOCKER_CONTEXT=NAME
