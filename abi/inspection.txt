@@ -67,6 +67,10 @@ inspection 1
   integer signed_duration -0x8000000000000000 0x7fffffffffffffff unit ns
   integer stratum 1 15
   text net_address 64
+  # The kind of source of the clock's last sample or step: "ntp ADDRESS" for
+  # ntpd's sample from that server, "rtc" for the keeper's reading at boot,
+  # "root" for a set.
+  text clock_from 80
   list urgency_counts count 64
   list proc_ids proc_id 1000
   tuple location module_name name arity file_name line_number
@@ -188,8 +192,11 @@ inspection 1
     attr stratum stratum reporters service visible any build all projections shell,host,proc,web
     attr server net_address reporters service visible all build all projections shell,host,proc,web
     attr source domain_id reporters service visible all build all projections shell,host,proc,web
+    attr sample_from clock_from reporters service visible all build all projections shell,host,proc,web
     attr step_at wall_time reporters service visible any build all projections shell,host,proc,web
     attr step_ns signed_duration reporters service visible any build all projections shell,host,proc,web
+    attr step_source domain_id reporters service visible all build all projections shell,host,proc,web
+    attr step_from clock_from reporters service visible all build all projections shell,host,proc,web
     attr step_error clock_refusal reporters service visible any build all projections shell,host,proc,web
     attr steps count reporters service visible any build all projections shell,host,proc,web
     attr refused count reporters service visible any build all projections shell,host,proc,web

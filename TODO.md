@@ -7237,9 +7237,10 @@ to the corpus and follow rc
   field; when the start table's settings file carries `flags`, move the value to the row and add the refusal;
   (2) `/proc/ntp` is designed ("What /proc shows") and not reported: `erx_ntp_core:status/1` holds the
   values, and the inspection schema's `ntp` kind, a collector that asks ntpd's session through its domain's
-  agent, and the rendering of each status (unknown, unavailable, timed out) are to build; (3) `/proc/time`'s
-  `sample_from` and `step_from` are designed and not built, behind the record that is not yet reported (the
-  item below); (4) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
+  agent, and the rendering of each status (unknown, unavailable, timed out) are to build; (3) `/proc/time`
+  shows a value the clock service's record holds as `none` as `[unknown]` (`erx_time_records`), since no type of
+  the inspection schema holds `none`, where design-time.md says `none`: give the schema an absent value or
+  have the design say `unknown`, as `/proc/ntp`'s does; (4) re-resolution waits the doubled interval because `inet:getaddrs/3` answers no TTL; a
   resolver call that answers TTLs lets it wait the shortest TTL instead; (5) the QEMU cases restart, held
   and stepped, kiss and refusals of design-time.md's verification are not written, nor the bootstrap: on QEMU
   virt the PL031 keeper sets the clock at boot, so the boot is not cold and the link server's 2030 answer is
@@ -7251,8 +7252,7 @@ to the corpus and follow rc
 * [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
   [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
   through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:
-  the service's record is kept but not reported, so `/proc/time/status` shows every attribute but `state` as
-  `unsupported` (`erx_time_records`); a set's log line names the domain, not the grant's principal as the
+  a set's log line names the domain, not the grant's principal as the
   design says; in the system domain's own shell a set answers `eagain`, since that shell holds the service
   itself (`erx_cmd_date:request/2`, `local`); a session of a template without the row is checked for `eperm` on
   the host only, as the development manifest has no other session template. `date`'s `%N` pass runs inside the

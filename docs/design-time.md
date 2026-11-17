@@ -868,11 +868,12 @@ in `TODO.md`.
 ## What /proc shows
 
 `abi/inspection.txt` gains a kind `clock`, visible to every scope, at
-path `time`, so `cat /proc/time/status` reads it. Three attributes are
+path `time`, so `cat /proc/time/status` reads it. Five attributes are
 visible only to the whole-machine scope (`visible all`): `server`, the
 address the client samples, `source`, the id of the domain whose facet
-sent the sample, and `step_source`, the one whose facet sent the last
-step, all facts of another domain, so a scoped caller
+sent the sample, `step_source`, the one whose facet sent the last
+step, and `sample_from` and `step_from` below, which name the server,
+all facts of another domain, so a scoped caller
 reads the record without them. The inspector reads `state` from the page
 through `erx_clock_nif:read/0`, reported by `kernel`, whose object the
 page is; the clock service reports the rest. Each attribute names its
@@ -891,6 +892,7 @@ restart.
 | `source` | record | the domain whose facet sent it, from the facet, never the request |
 | `step_at`, `step_ns` | record | the last applied step's wall time and size, or `none` |
 | `step_source` | record | the domain whose facet asked for the last applied step, a sample's or a set's, from the facet; or `none` |
+| `sample_from`, `step_from` | record | the kind of source of the last sample and of the last applied step, below; or `none` |
 | `step_error` | record | the setter's refusal of the last step it refused, `unsupported`, `limit` or `badarg`, or `none` |
 | `steps`, `refused` | record | steps applied and samples refused, floor and panic, since `record_since` |
 

@@ -268,8 +268,8 @@ reachable(Path, Scope) ->
 %% "Scopes"): the machine's record and each CPU's, of which scoped/3 keeps
 %% only the attributes the schema marks `visible any`, the CPUs' listing,
 %% the domains and the processes, each listing only its own domains', and
-%% the clock, of which scoped/3 drops the `visible all` server and source
-%% (docs/design-time.md, "What /proc shows").
+%% the clock, of which scoped/3 drops the `visible all` attributes that name
+%% another domain or a server (docs/design-time.md, "What /proc shows").
 scoped_machine_path([]) -> true;
 scoped_machine_path([cpus]) -> true;
 scoped_machine_path([cpus, _Index]) -> true;
