@@ -52,7 +52,11 @@ module Erx
   # from, a release tag or a commit, beside each download (docs/design.md,
   # "Licenses and notices").
   module Site
-    PAGE_FILES = %w[index.html style.css favicon.svg terminal.js].freeze
+    PAGE_FILES = %w[index.html release-notes.html style.css favicon.svg terminal.js].freeze
+    # What marks a statement of a page source that no source in the tree confirms yet. A
+    # page that holds one is a draft, and the site publishes no draft (CLAUDE.md, "Never
+    # fabricate").
+    UNVERIFIED = '<!-- unverified'
     MANIFEST = 'boot.json'
     # Marks a directory this step built; the server's route table skips it.
     MARKER = '.erx-site'
@@ -200,6 +204,9 @@ module Erx
       missing = [*page.values, *emulator.values, *notices.values, image, image_record, card, card_record].compact.reject { |path| File.file?(path) }
       raise Error, "site input missing: #{missing.first}" unless missing.empty?
 
+      draft = page.keys.find { |name| File.read(page.fetch(name)).include?(UNVERIFIED) }
+      raise Error, "site/#{draft} holds a statement marked #{UNVERIFIED}; settle it before publishing" if draft
+
       digest = ->(path) { Digest::SHA256.file(path).hexdigest }
       image_sha256 = digest.(image)
       ImageRecord.check(BoundedFile.read(image_record, maximum: ImageRecord::MAX_BYTES), sha256: image_sha256, commit: source.ref)
@@ -211,7 +218,8 @@ module Erx
               .merge(card ? { 'card' => "sdcard-#{card_sha256[0, 16]}.img.xz",
                               'card_record' => "sdcard-#{card_sha256[0, 16]}.img.receipt.json" } : {})
               .merge(emulator.to_h { |name, path| [name, "v64/#{digest_name(name, digest.(path))}"] })
-      entries = [Entry.new(path: 'style.css', source: page.fetch('style.css'), compression: nil),
+      entries = [Entry.new(path: 'release-notes.html', source: page.fetch('release-notes.html'), compression: nil),
+                 Entry.new(path: 'style.css', source: page.fetch('style.css'), compression: nil),
                  Entry.new(path: 'favicon.svg', source: page.fetch('favicon.svg'), compression: nil),
                  Entry.new(path: names.fetch('terminal.js'), source: page.fetch('terminal.js'), compression: nil),
                  *emulator.map { |name, path| Entry.new(path: names.fetch(name), source: path, compression: nil) },

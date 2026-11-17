@@ -132,6 +132,7 @@ class SiteTest < Minitest::Test
       assert_equal 'LICENSE.MIT', File.read(File.join(out, 'v64/LICENSE.MIT.txt'))
       assert File.file?(File.join(out, 'v64/COPYRIGHT-rust-library.html'))
       assert_equal 'favicon.svg', File.read(File.join(out, 'favicon.svg'))
+      assert_equal 'release-notes.html', File.read(File.join(out, 'release-notes.html')), 'the release notes are published as they are'
       refute File.exist?(File.join(out, 'terminal.js')), 'only the digest-named terminal.js is published'
       assert_equal File.binread(image), Zlib.gunzip(File.binread(File.join(out, manifest.fetch(:image))))
       written = JSON.parse(File.read(File.join(out, 'boot.json')), symbolize_names: true)
@@ -374,6 +375,15 @@ class SiteTest < Minitest::Test
       refute File.exist?(File.join(out, first.fetch(:image)))
       assert_equal 'another image', Zlib.gunzip(File.binread(File.join(out, second.fetch(:image))))
       assert_equal [], Dir.children(File.join(root, 'build')) - ['site'], 'no staging directory is left behind'
+    end
+  end
+
+  # A page whose source still marks a statement unverified is a draft and is not published.
+  def test_a_page_with_an_unverified_statement_is_refused
+    with_inputs do |root, image|
+      File.write(File.join(root, 'site/release-notes.html'), "<p>It soaked a day. <!-- unverified: no record --></p>\n")
+      error = assert_raises(Erx::Error) { inventory(root, image) }
+      assert_match %r{site/release-notes\.html holds a statement marked <!-- unverified}, error.message
     end
   end
 

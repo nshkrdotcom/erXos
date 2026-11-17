@@ -8505,6 +8505,12 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [High] 0.1, Doom's demo loop on the Pi ([plan.md](docs/plan.md#01-the-preview)): no card can hold Doom, since
+  Doom reaches an image only through `tools/erx pack --app --local` and the card build refuses `--local` and every
+  package of its builder's ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image),
+  `ProductionImage.check_card_apps`). A user-built local card (its configuration, how the card build takes Doom
+  without the published card ever doing so, and which app the firmware framebuffer shows) needs a design section
+  first, with the plan's exit criterion for it.
 * [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the line tree,
   `erx_line_fs`, and its keeper, `erx_line`, run in their UART's line group under `erx_uart_sup`, which starts the
   keeper on the root's `line` record with the rate and flow of the grant of the system domain's service named
