@@ -29,6 +29,9 @@ program; and the pipe server's loss reaches the program.
 
 -include_lib("eunit/include/eunit.hrl").
 
+%% The logger handler a case adds to see what the handler logs.
+-export([log/2]).
+
 %% The process id a fresh command server gives first.
 -define(PID, 2).
 -define(WAIT, 2000).
@@ -423,11 +426,13 @@ a_first_draw_without_a_display_is_enodev_and_retried(_) ->
 
 %% A display that grants the window and then refuses its draw connection ends the
 %% handler, naming the errno, and the program with it; the window and its /dev end
-%% with the handler, and the open is never answered.
+%% with the handler, and the open is never answered. The handler logs the refusal
+%% once, with its errno.
 a_first_draw_the_connection_refuses_ends_the_program(_) ->
     first_draw(fun() ->
                        persistent_term:put({erx, facets}, #{display => self()}),
                        persistent_term:put(erx_draw_conn, true),
+                       ok = logger:add_handler(?MODULE, ?MODULE, #{config => #{to => self()}}),
                        {H, Port, []} = started([]),
                        H ! {erx_channel, Port, ?OPEN(4, <<"/dev/draw">>)},
                        [Window] = told(opened),
@@ -435,10 +440,15 @@ a_first_draw_the_connection_refuses_ends_the_program(_) ->
                        Down = down(H),
                        WindowEnded = receive {'DOWN', Watch, process, Window, _} -> true after ?WAIT -> false end,
                        Closed = closed(Port, 200),
+                       ok = logger:remove_handler(?MODULE),
+                       Mailbox = mailbox_all(),
+                       Logged = [Line || {logged, "erx_prog_handler: " ++ _ = Line} <- Mailbox],
                        [?_assertEqual({shutdown, {window, enomem}}, Down),
                         ?_assert(WindowEnded),
                         ?_assert(Closed),
-                        ?_assertEqual([], [Sent || {fake, {send, _, _} = Sent} <- mailbox_all()])]
+                        ?_assertMatch([_], Logged),
+                        ?_assertNotEqual(nomatch, string:find(lists:flatten(Logged), "enomem")),
+                        ?_assertEqual([], [Sent || {fake, {send, _, _} = Sent} <- Mailbox])]
                end).
 
 %% Before draw, ctl and kbd go to the shared /dev, which answers enoent, and open no
@@ -506,6 +516,12 @@ told_one(open, Wait) ->
 %% Every message waiting, the stand-ins' reports among them.
 mailbox_all() ->
     receive Message -> [Message | mailbox_all()] after 100 -> [] end.
+
+%% The logger handler: each event's text, to the case that added it.
+log(#{msg := {Format, Args}}, #{config := #{to := To}}) when is_list(Format) ->
+    To ! {logged, lists:flatten(io_lib:format(Format, Args))};
+log(_Event, _Config) ->
+    ok.
 
 %% The live grants of erx_fs, found by their initial call.
 dev_grants() ->

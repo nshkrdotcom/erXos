@@ -232,10 +232,13 @@ init(Starter, #{pid := Pid} = Spec) ->
             ok
     end.
 
-%% Once the core has ended, the handler exits with the core's reason.
+%% Once the core has ended, the handler exits with the core's reason, which it
+%% first logs when it is neither `normal` nor the program's exit: the starter then
+%% tells no status, and the log says why.
 loop(#h{core = Core, port = Port, closed = Closed, starter = Starter, spec = #{pid := Pid}, pipes = Pipes} = H) ->
     case erx_prog_handler_core:phase(Core) of
         {ended, Reason} ->
+            ok = log_end(Pid, Reason),
             exit(Reason);
         _ ->
             Event = next_event(Port, Closed, Starter, Pid, Pipes),
@@ -425,6 +428,13 @@ lend(Peer, Bytes) ->
         error:undef -> {refused, enodev};
         exit:{noproc, _} -> {refused, enodev}
     end.
+
+log_end(_Pid, normal) ->
+    ok;
+log_end(_Pid, {shutdown, {program_exit, _Status}}) ->
+    ok;
+log_end(Pid, Reason) ->
+    logger:notice("erx_prog_handler: program ~b ended with no status: ~0P", [Pid, Reason, 8]).
 
 %% The program's own /dev tree on a window of its own on Display, with the handler
 %% as the one owner of the window, its draw connection and the tree

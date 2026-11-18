@@ -150,8 +150,8 @@ class ErxProgHandlerTest < Minitest::Test
       Mutant.new(file: HANDLER, original: "{'DOWN', _, process, Starter, _} -> stop;",
                  replacement: '', caught_by: 'starters_exit_stops_the_program'),
     'a handler that stays after its program ends' =>
-      Mutant.new(file: HANDLER, original: "        {ended, Reason} ->\n            exit(Reason);\n",
-                 replacement: "        {ended, _Reason} ->\n            receive after infinity -> ok end;\n",
+      Mutant.new(file: HANDLER, original: "            ok = log_end(Pid, Reason),\n            exit(Reason);\n",
+                 replacement: "            ok = log_end(Pid, Reason),\n            receive after infinity -> ok end;\n",
                  caught_by: 'exit_is_the_monitors_down'),
     'a handler that exits normal, which the starter reads as a lost status' =>
       Mutant.new(file: HANDLER, original: '            exit(Reason);', replacement: '            exit(normal);',
