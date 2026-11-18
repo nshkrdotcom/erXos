@@ -150,7 +150,7 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
   def test_a_role_s_text_is_drawn_in_its_theme_font
     runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
     program = Erx::Lvgl::Build.new(root: ROOT, runner: runner).call
-    theme = Erx::Glyphs.theme(root: ROOT)
+    theme = Erx::ABI::Theme.read(root: ROOT)
     role = theme.roles.fetch('heading')
     letters = 6
     h = Erx::Raster.locate(root: ROOT)

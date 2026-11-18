@@ -146,13 +146,6 @@ module Erx
 
     def field(word) = "#{word.to_s.rjust(FIELD)} "
 
-    # The theme of the tree at root.
-    def theme(root:)
-      source = File.read(File.join(root, ABI::Theme::SOURCE))
-      ABI::Theme.validate(ABI::Syntax.parse(source, path: ABI::Theme::SOURCE).select { |item| item.kind == 'theme' },
-                          palettes: ABI::Theme.palettes(root: root))
-    end
-
     # What write wrote: each role's subfont's path and LVGL font's path by
     # role name, and the window menu's glyph module's path.
     Written = Data.define(:subfonts, :lvgl, :menu)
@@ -161,7 +154,7 @@ module Erx
     # the menu role's glyph module (Menu), into OUTPUT beneath output_root,
     # and returns their paths as Written. Font paths in the theme are beneath
     # root.
-    def write(root:, program:, runner:, theme: Glyphs.theme(root: root), output_root: root)
+    def write(root:, program:, runner:, theme: ABI::Theme.read(root: root), output_root: root)
       notices = theme.roles.transform_values { |role| font_notice(theme, role, root: root) }
       subfonts = theme.roles.transform_values do |role|
         font = theme.fonts.fetch(role.font)

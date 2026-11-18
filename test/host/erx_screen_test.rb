@@ -19,6 +19,9 @@ class ErxScreenTest < Minitest::Test
   MODULES = %w[erlang/apps/erx_memdraw/src/erx_memdraw.erl erlang/apps/erx_memdraw/src/erx_chan.erl erlang/apps/erx_display/src/erx_screen_core.erl
                erlang/apps/erx_display/src/erx_display.erl erlang/apps/erx_display/src/erx_screen.erl
                erlang/apps/erx_display/src/erx_winfs.erl
+               erlang/apps/erx_display/src/erx_splash.erl erlang/apps/erx_memdraw/src/erx_mask.erl
+               build/gen/erlang/apps/erx_display/src/erx_splash_mark.erl
+               build/gen/erlang/apps/erx_memdraw/src/erx_theme.erl
                test/erlang/erx_screen_tests.erl].freeze
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
   DEADLINE_SECONDS = '120'

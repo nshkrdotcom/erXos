@@ -11,10 +11,14 @@ through `erx_display:flush_request/3`. Its decisions are
 filling and copying with `erx_memdraw`, and hands the driver each plan's
 pushed rectangles as one frame.
 
-At start it reads the driver's `info/1`, attaches to `erx_winfs`
-(erx_winfs:attach/2), which answers the layout, paints the whole screen
-from it and asks every shown window to present again, since it holds no
-image of any buffer. After that it takes:
+At start it reads the driver's `info/1`, paints the whole screen with
+the background and the splash over it, attaches to `erx_winfs`
+(erx_winfs:attach/2), which answers the layout, and asks every shown
+window to present again, since it holds no image of any buffer. Until a
+shown window first presents, the screen keeps the splash and takes each
+layout without drawing it; that present repaints the whole screen from
+the current layout (docs/design-display.md, "The splash"). After that it
+takes:
 
 * a **layout** from `erx_winfs`, the shown windows topmost first: the
   core's plan fills the decorations and background, and copies the part
@@ -52,13 +56,12 @@ restart.
 """.
 -behaviour(gen_server).
 
--export([start_link/1, background/0, present_request/2]).
+-export([start_link/2, present_request/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
-%% The background colour as erx_memdraw takes a colour, 0xRRGGBBAA: a slate
-%% blue, which no blank or black screen shows, so a screenshot tells a filled
-%% and flushed screen from one that was not.
--define(BACKGROUND, 16#3a6ea5ff).
+%% The 8-bit grey channel of the splash's masks, Plan 9's GREY8: CHAN1(CGrey, 8),
+%% grey's type 3.
+-define(MASK_CHAN, 16#38).
 %% The fill's source channel, Plan 9's RGB24: CHAN3(CRed, 8, CGreen, 8,
 %% CBlue, 8) of draw(2)'s draw.h, red's type 0, green's 1 and blue's 2, each
 %% a byte of type and bits, the first channel in the highest byte.
@@ -74,6 +77,8 @@ restart.
                 rect :: erx_screen_core:rect(),
                 partial :: boolean(),
                 chan :: 0..16#ffffffff,
+                %% The background's colour, the palette's `desktop`.
+                ground :: erx_screen_core:color(),
                 core :: erx_screen_core:state(),
                 %% The layout the core holds.
                 layout = [] :: erx_screen_core:layout(),
@@ -88,21 +93,22 @@ restart.
                 %% its process, the image and the buffer's width and height.
                 images = #{} :: #{pos_integer() => {pid(), erx_memdraw:image(),
                                                    {pos_integer(), pos_integer()}}},
-                monitors = #{} :: #{pid() => reference()}}).
+                monitors = #{} :: #{pid() => reference()},
+                %% Whether the splash may be on the screen: from the start until
+                %% the first present of a window the layout shows. Meanwhile the
+                %% core takes each layout but its plans are not drawn.
+                splash = true :: boolean()}).
 
 -doc """
 The screen over the driver `{Module, Name}`, an `erx_display` callback
 module and the name its process is registered under, registered as
-`erx_screen`. With no process of that name, as after a driver whose start
-found no device, there is no screen: `ignore`.
+`erx_screen`, drawn in the theme's `Palette`: where no window is shown it
+fills the palette's `desktop` colour. With no process of that name, as
+after a driver whose start found no device, there is no screen: `ignore`.
 """.
--spec start_link({module(), atom()}) -> {ok, pid()} | ignore | {error, term()}.
-start_link(Driver) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, Driver, []).
-
--doc "The colour of the screen where no window is shown.".
--spec background() -> erx_screen_core:color().
-background() -> ?BACKGROUND.
+-spec start_link({module(), atom()}, erx_theme:palette()) -> {ok, pid()} | ignore | {error, term()}.
+start_link(Driver, Palette) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, {Driver, Palette}, []).
 
 -doc """
 For window Id's process: asks the screen to show the buffer Present names,
@@ -120,7 +126,7 @@ present_request(Id, #{area := Area, offset := Offset, width := Width, height := 
     end.
 
 -doc false.
-init({Module, Name}) ->
+init({{Module, Name}, Palette}) ->
     case whereis(Name) of
         undefined ->
             ignore;
@@ -129,10 +135,16 @@ init({Module, Name}) ->
               chan := Chan} = Module:info(Driver),
             {ok, Code, _Depth} = erx_chan:parse(Chan),
             Rect = {0, 0, Width, Height},
-            {ok, Core} = erx_screen_core:new(Rect, ?BACKGROUND, false),
+            Ground = erx_theme:color(Palette, desktop),
+            {ok, Core} = erx_screen_core:new(Rect, Ground, false),
             State = #state{driver = Driver, screen = Screen, rect = Rect, partial = Partial,
-                           chan = Code, core = Core},
-            {Push, Laid} = apply_layout(erx_winfs:attach(Rect, Chan), State),
+                           chan = Code, ground = Ground, core = Core},
+            %% The whole screen, the background with the splash over it, is the
+            %% first frame; the attached layout is taken under the splash.
+            {Background, Fresh} = erx_screen_core:repaint(Core),
+            {Push, Painted} = draw(Background, State#state{core = Fresh}),
+            ok = splash(Painted, Palette),
+            {[], Laid} = apply_layout(erx_winfs:attach(Rect, Chan), Painted),
             {ok, send(Push, Laid)}
     end.
 
@@ -220,23 +232,41 @@ answer_or_hold(Froms, Push, #state{answers = Answers} = State) ->
 
 %% Layouts -------------------------------------------------------------------
 
-%% Brings the screen to Layout: the core's fills, and each window's copies from the
-%% image the screen holds of it, the background where it holds none or where the
-%% buffer does not reach. A window shown without an image is asked to present again.
+%% Takes Layout into the core, drops the images of windows it no longer shows and asks
+%% each window it shows without an image to present again. After the splash the
+%% core's plan is drawn; while the splash may be on the screen it is not, and the
+%% screen keeps the splash until a shown window presents (end_splash/1).
 apply_layout(Layout, #state{core = Core} = State) ->
     case erx_screen_core:layout(Layout, Core) of
-        {ok, #{fill := Fills, copy := Copies, push := Push}, Core1} ->
+        {ok, Plan, Core1} ->
             Shown = maps:from_list([{Id, Entry} || #{id := Id} = Entry <- Layout]),
             Kept = keep_images(Shown, State#state{core = Core1, layout = Layout}),
-            ok = fill(Kept#state.screen, Fills),
-            _ = [copy_window(Id, Rects, maps:get(Id, Shown), Kept) || {Id, Rects} <- Copies],
             _ = [Proc ! {erx_screen, present_again}
                  || #{id := Id, proc := Proc} <- Layout, not has_image(Id, Proc, Kept)],
-            {Push, Kept};
+            case Kept of
+                #state{splash = true} -> {[], Kept};
+                #state{splash = false} -> draw(Plan, Kept)
+            end;
         {error, einval} ->
             _ = erx_log:debug(["erx_screen: a malformed layout"]),
             {[], State}
     end.
+
+%% Ends the splash: the core's plan of its layout over a screen of unknown contents
+%% repaints every pixel, the presented window's image among them, so no part of the
+%% splash outlives it.
+end_splash(#state{core = Core} = State) ->
+    {Plan, Core1} = erx_screen_core:repaint(Core),
+    draw(Plan, State#state{splash = false, core = Core1}).
+
+%% Draws a plan of the core's: its fills, and each window's copies from the image the
+%% screen holds of it, the background where it holds none or where the buffer does
+%% not reach. Returns the rectangles to push.
+draw(#{fill := Fills, copy := Copies, push := Push}, #state{layout = Layout, screen = Screen} = State) ->
+    Shown = maps:from_list([{Id, Entry} || #{id := Id} = Entry <- Layout]),
+    ok = fill(Screen, Fills),
+    _ = [copy_window(Id, Rects, maps:get(Id, Shown), State) || {Id, Rects} <- Copies],
+    {Push, State}.
 
 %% Drops the image of every window the layout no longer shows from the same process,
 %% and collects, so the area it maps is released.
@@ -261,25 +291,28 @@ has_image(Id, Proc, #state{images = Images}) ->
     end.
 
 copy_window(Id, Rects, #{proc := Proc, rect := {X0, Y0, _, _}},
-            #state{images = Images, screen = Screen}) ->
+            #state{images = Images, screen = Screen, ground = Ground}) ->
     case Images of
         #{Id := {Proc, Image, {Width, Height}}} ->
             Bounds = {X0, Y0, X0 + Width, Y0 + Height},
             _ = [copy(Screen, Piece, Image, {X0, Y0}) || R <- Rects, Piece <- [intersect(R, Bounds)],
                                                          not is_empty(Piece)],
-            fill(Screen, [{Piece, ?BACKGROUND} || R <- Rects, Piece <- subtract(R, Bounds)]);
+            fill(Screen, [{Piece, Ground} || R <- Rects, Piece <- subtract(R, Bounds)]);
         #{} ->
-            fill(Screen, [{R, ?BACKGROUND} || R <- Rects])
+            fill(Screen, [{R, Ground} || R <- Rects])
     end.
 
 %% Presents ------------------------------------------------------------------
 
 %% A present of a window the layout shows from the presenting process: its image is
-%% kept, and the core's rectangles are copied from it; any other copies nothing.
+%% kept, and the core's rectangles are copied from it, or, the first while the splash
+%% is on, it ends the splash; any other copies nothing.
 present(Id, {{Proc, _}, Image, {Width, Height}, Rects}, #state{layout = Layout} = State) ->
+    Kept = State#state{images = (State#state.images)#{Id => {Proc, Image, {Width, Height}}}},
     case [Entry || #{id := I, proc := P} = Entry <- Layout, I =:= Id, P =:= Proc] of
+        [_] when State#state.splash ->
+            end_splash(Kept);
         [#{rect := {X0, Y0, _, _}}] ->
-            Kept = State#state{images = (State#state.images)#{Id => {Proc, Image, {Width, Height}}}},
             Bounds = {X0, Y0, X0 + Width, Y0 + Height},
             Placed = case Rects of
                          [] -> [Bounds];
@@ -321,6 +354,25 @@ fill(Screen, Fills) ->
                           {ok, Source} = erx_memdraw:alloc(?FILL_CHAN, {0, 0, 1, 1}, ?EVERYWHERE, true, Color),
                           {ok, _Touched} = erx_memdraw:draw(Screen, R, Source, {0, 0}, opaque, {0, 0}, ?SOVERD, dst)
                   end, Fills).
+
+%% The splash over the background the screen's start painted: each of erx_splash's
+%% draws, a colour through a mask, inside the whole screen that first frame pushes.
+%% The splash stays until a shown window's first present (end_splash/1).
+splash(#state{screen = Screen, rect = Rect}, Palette) ->
+    Draws = erx_splash:plan(Rect, Palette, mark()),
+    lists:foreach(fun({{X, Y}, {Width, Height, Coverage}, Color}) ->
+                          Bounds = {0, 0, Width, Height},
+                          {ok, Mask} = erx_memdraw:alloc(?MASK_CHAN, Bounds, Bounds, false, 0),
+                          {ok, _} = erx_memdraw:load(Mask, Bounds, Coverage),
+                          {ok, Source} = erx_memdraw:alloc(?FILL_CHAN, {0, 0, 1, 1}, ?EVERYWHERE, true, Color),
+                          {ok, _} = erx_memdraw:draw(Screen, {X, Y, X + Width, Y + Height}, Source, {0, 0},
+                                                     Mask, {0, 0}, ?SOVERD, dst)
+                  end, Draws).
+
+%% The wordmark's mask, from the generated module.
+mark() ->
+    {Width, Height} = erx_splash_mark:size(),
+    {Width, Height, erx_splash_mark:pixels()}.
 
 %% Copies screen rectangle R from a window's image placed with its top left corner at
 %% Origin.

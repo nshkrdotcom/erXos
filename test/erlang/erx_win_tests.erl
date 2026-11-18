@@ -89,7 +89,7 @@ start() ->
                                          minted => fun(Tag, Reply) -> Test ! {minted, Tag, Reply} end,
                                          area => fun erx_area:open/1, clients => own, provide => false,
                                          policy => {erx_wm_single, #{}}, palette => dark}),
-    {ok, Screen} = erx_screen:start_link({?MODULE, ?DRIVER}),
+    {ok, Screen} = erx_screen:start_link({?MODULE, ?DRIVER}, light),
     {ok, Client} = erx_win_sup:start_link(),
     [true = unlink(P) || P <- [Winfs, Screen, Client]],
     Tag = erlang:unique_integer([positive]),

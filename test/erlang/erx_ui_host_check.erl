@@ -20,9 +20,9 @@ reads the frames the renderer presents. It checks:
 
 A frame is settled once it shows what the step waits for, judged by the
 label's band of rows, and frame/1 has answered it unchanged for QUIET_MS:
-the program may present the empty screen before the tree arrives, and
-the press's own feedback before the tree that answers it. run/1 raises at the first check
-that fails and otherwise returns a summary.
+the program may present the press's own feedback before the tree that
+answers it. run/1 raises at the first check that fails and otherwise
+returns a summary.
 """.
 
 -export([run/1]).

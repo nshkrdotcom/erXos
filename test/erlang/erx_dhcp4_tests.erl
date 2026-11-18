@@ -121,15 +121,61 @@ ignored_replies_test() ->
     {_, [{send, broadcast, ?ANY, #dhcp4{options = #{message_type := discover}}}]} =
         erx_dhcp4_core:step(timeout, C3, erx_dhcp4_core:next_deadline(C3)).
 
+%% The interval rule of dhclient's send_discover (sbin/dhclient/dhclient.c:1381-1396), over
+%% every interval a schedule can hold and every draw: grown while within the 15 s cutoff,
+%% and past it drawn again from 7 to 21 s.
+next_interval_test() ->
+    [?assertEqual(case Interval + Growth of
+                      Grown when Grown =< 15 -> Grown;
+                      _ -> 7 + Redraw
+                  end, erx_dhcp4_core:next_interval(Interval, Growth, Redraw))
+     || Interval <- lists:seq(3, 21), Growth <- lists:seq(0, 2 * Interval - 1),
+        Redraw <- lists:seq(0, 14)].
+
+%% The waits between DISCOVERs: whole seconds, the 3 s initial interval grown before each
+%% send by a draw of 0 to twice itself less a second, past the cutoff a draw of 0 to 14.
 backoff_test() ->
-    Waits = backoff(new(), 0, 7, []),
-    Bases = [4000, 8000, 16000, 32000, 64000, 64000, 64000],
-    [?assert(abs(Wait - Base) =< 1000) || {Wait, Base} <- lists:zip(Waits, Bases)],
-    %% Five REQUESTs without an answer start again with a DISCOVER.
+    Schedules = [backoff(new(<<Key:128>>), 0, 12, []) || Key <- lists:seq(1, 300)],
+    [?assertEqual(0, Wait rem 1000) || Waits <- Schedules, Wait <- Waits],
+    Seconds = [[Wait div 1000 || Wait <- Waits] || Waits <- Schedules],
+    ?assertEqual(lists:seq(3, 8), lists:usort([First || [First | _] <- Seconds])),
+    Pairs = [Pair || Waits <- Seconds, Pair <- lists:zip(lists:droplast(Waits), tl(Waits))],
+    [?assert(grown_or_redrawn(Prev, Next)) || {Prev, Next} <- Pairs],
+    %% The redraw reaches both its ends.
+    ?assertEqual(21, lists:max(lists:append(Seconds))),
+    ?assert(lists:member({true, 7}, [{Prev > 7, Next} || {Prev, Next} <- Pairs])).
+
+grown_or_redrawn(Prev, Next) ->
+    (Next >= Prev andalso Next =< min(3 * Prev - 1, 15))
+        orelse (3 * Prev - 1 > 15 andalso Next >= 7 andalso Next =< 21).
+
+%% Each exchange starts again from the initial interval: the REQUESTs of an offer, however
+%% long the DISCOVERs went on, and the DISCOVERs after a NAK; five REQUESTs without an
+%% answer start again with a DISCOVER.
+exchange_backoff_test() ->
+    {Requests, Naks} = lists:unzip([fresh_exchange_waits(<<Key:128>>)
+                                    || Key <- lists:seq(1, 100)]),
+    [?assertEqual(lists:seq(3000, 8000, 1000), lists:usort(Waits)) || Waits <- [Requests, Naks]],
     {C1, [{send, _, _, #dhcp4{xid = X}}]} = erx_dhcp4_core:step(timeout, new(), 0),
     {C2, _} = erx_dhcp4_core:step({reply, reply(offer, X, #{})}, C1, 0),
     Types = requests(C2, 4),
     ?assertEqual([request, request, request, request, discover], Types).
+
+%% The first REQUEST's wait after eight DISCOVERs, and the wait after that REQUEST's NAK.
+%% The OFFER arrives just before the ninth DISCOVER is due.
+fresh_exchange_waits(Key) ->
+    Selecting = discovers(new(Key), 0, 8),
+    Now = erx_dhcp4_core:next_deadline(Selecting) - 1,
+    Offer = reply(offer, erx_dhcp4_core:xid(Selecting), #{}),
+    {Requesting, [_]} = erx_dhcp4_core:step({reply, Offer}, Selecting, Now),
+    Nak = reply(nak, erx_dhcp4_core:xid(Requesting), #{}),
+    {Init, []} = erx_dhcp4_core:step({reply, Nak}, Requesting, Now),
+    {erx_dhcp4_core:next_deadline(Requesting) - Now, erx_dhcp4_core:next_deadline(Init) - Now}.
+
+discovers(Core, _Now, 0) -> Core;
+discovers(Core, Now, N) ->
+    {Next, [_]} = erx_dhcp4_core:step(timeout, Core, Now),
+    discovers(Next, erx_dhcp4_core:next_deadline(Next), N - 1).
 
 backoff(_, _, 0, Acc) -> lists:reverse(Acc);
 backoff(Core, Now, N, Acc) ->
@@ -147,14 +193,14 @@ requests(Core, N) ->
     [Type | requests(Next, N - 1)].
 
 random_values_follow_the_key_test() ->
-    Script = fun(Key) -> {C, Actions} = erx_dhcp4_core:step(timeout, new(Key), 0),
-                         {Actions, erx_dhcp4_core:next_deadline(C)}
+    Script = fun(Key) -> {_, Actions} = erx_dhcp4_core:step(timeout, new(Key), 0),
+                         {Actions, backoff(new(Key), 0, 8, [])}
              end,
     ?assertEqual(Script(<<1:128>>), Script(<<1:128>>)),
-    {[{send, _, _, #dhcp4{xid = X1}}], D1} = Script(<<1:128>>),
-    {[{send, _, _, #dhcp4{xid = X2}}], D2} = Script(<<2:128>>),
+    {[{send, _, _, #dhcp4{xid = X1}}], Waits1} = Script(<<1:128>>),
+    {[{send, _, _, #dhcp4{xid = X2}}], Waits2} = Script(<<2:128>>),
     ?assertNotEqual(X1, X2),
-    ?assertNotEqual(D1, D2).
+    ?assertNotEqual(Waits1, Waits2).
 
 infinite_lease_test() ->
     {C1, [{send, _, _, #dhcp4{xid = X}}]} = erx_dhcp4_core:step(timeout, new(), 0),

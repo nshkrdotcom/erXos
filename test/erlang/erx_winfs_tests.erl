@@ -13,8 +13,9 @@
 %% session's next oldest is shown. G3: against a driver that never answers, many wctl
 %% writes and window makes and removes leave the window system and the screen
 %% responsive, the screen's mailbox drained and its frame the one it started with, and
-%% the screen's end answers a held present EIO. G6: a one-pixel present pushes one
-%% rectangle of one pixel, and a change that shows nothing new pushes nothing.
+%% the screen's end answers a held present EIO. G6: a window's first present ends the
+%% splash and pushes the whole screen, a one-pixel present then pushes one rectangle of
+%% one pixel, and a change that shows nothing new pushes nothing.
 
 -module(erx_winfs_tests).
 -include_lib("eunit/include/eunit.hrl").
@@ -90,7 +91,7 @@ start(Mode, Policy) ->
                                          minted => fun(Tag, Reply) -> Test ! {minted, Tag, Reply} end,
                                          area => fun area_of/1, clients => own, provide => false,
                                          policy => Policy}),
-    {ok, Screen} = erx_screen:start_link({?MODULE, ?DRIVER}),
+    {ok, Screen} = erx_screen:start_link({?MODULE, ?DRIVER}, light),
     true = unlink(Winfs),
     true = unlink(Screen),
     #{driver => Driver, image => Image, winfs => Winfs, screen => Screen}.
@@ -329,10 +330,13 @@ the_overlapping_policy_s_click_moves_the_border_and_the_keyboard_together_test_(
 click_picks() ->
     World = start(answer, {erx_wm_rio, #{}}),
     Session = mint(?SESSION, #{session => true, windows => 2}),
+    _ = give_area(?OTHER),
     Other = mint(?OTHER, #{windows => 2}),
     {ok, _} = mkdir(Session, <<"a">>),
     {ok, _} = mkdir(Other, <<"b">>),
     Corner = corner(Other, open(Other, 2, <<"b">>, <<"wctl">>, ?O_RDONLY)),
+    %% b's first present ends the splash, which until then hides every border.
+    {ok, _, _} = write(Other, open(Other, 4, <<"b">>, <<"ctl">>, ?O_RDWR), <<"present 0 8 4\n">>),
     ok = drain_flushes(),
     ?assertEqual(rgb(erx_theme:color(light, line)), pixel(World, Corner)),
     Kbd = open(Other, 3, <<"b">>, <<"kbd">>, ?O_RDONLY),
@@ -436,14 +440,17 @@ push_counts() ->
     Ctl = open(Session, 2, <<"w">>, <<"ctl">>, ?O_RDWR),
     %% The display's channel, the scale and the palette, the first when the options name none.
     ?assertEqual({ok, <<"x8r8g8b8 1/1 light\n">>}, read(Session, Ctl)),
-    {ok, _} = erx_memdraw:load(Buffer, {0, 0, 1, 1}, <<16#11, 16#22, 16#33, 0>>),
+    %% The first present ends the splash: the whole screen is repainted.
+    ?assertMatch({ok, _, _}, write(Session, Ctl, <<"present 0 8 4 0 0 1 1\n">>)),
+    ?assertEqual([{0, 0, ?WIDTH, ?HEIGHT}], flushed()),
+    {ok, Shown} = erx_memdraw:read(Screen, {1, 0, 2, 1}),
+    %% A one-pixel present copies and pushes that pixel alone, not its changed neighbour.
+    {ok, _} = erx_memdraw:load(Buffer, {0, 0, 2, 1}, <<16#11, 16#22, 16#33, 0, 16#44, 16#55, 16#66, 0>>),
     ?assertMatch({ok, _, _}, write(Session, Ctl, <<"present 0 8 4 0 0 1 1\n">>)),
     ?assertEqual([{0, 0, 1, 1}], flushed()),
     ok = no_flush(),
-    {ok, <<16#11, 16#22, 16#33, _, Next:3/binary, _/binary>>} =
-        erx_memdraw:read(Screen, {0, 0, 2, 1}),
-    <<R, G, B, _>> = <<(erx_screen:background()):32>>,
-    ?assertEqual(<<B, G, R>>, Next),
+    {ok, <<16#11, 16#22, 16#33, _, Next/binary>>} = erx_memdraw:read(Screen, {0, 0, 2, 1}),
+    ?assertEqual(Shown, Next),
     %% A window that is made hidden, and its present, show nothing new.
     _ = give_area(?OTHER),
     Other = mint(?OTHER, #{}),

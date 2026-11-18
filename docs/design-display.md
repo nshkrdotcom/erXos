@@ -2176,7 +2176,9 @@ other domain, is made and kept hidden: its `mkdir` succeeds, its
 presents succeed and reach no pixel of the screen, its `wctl` reads
 report it hidden, and its `mouse` and `kbd` receive nothing until it
 is shown. While the display has no session, or its session has no live
-window, the screen shows only the background `erx_screen` fills.
+window, the screen shows only the background `erx_screen` fills, with
+the splash over it until the first window's first frame is presented
+([The splash](#the-splash)).
 
 The policy refuses every `wctl` request with `EINVAL`, so no window
 takes the screen by asking, and it delivers every event the router
@@ -2588,7 +2590,8 @@ hardware](#graphics-hardware)).
 **Geometry.** When the layout changes, `erx_screen` fills the
 decorations and background the plan names and copies, from the buffers
 it already holds, the part of each shown window that the screen does not
-already show from it. It asks no window and no client for anything, so a
+already show from it. It asks no window and no client for anything but
+a present from a window it shows and holds no image of, so a
 window drag costs its clients nothing and waits on none of them. A copy
 reads a window's buffer as it stands: a client with one buffer that
 draws a frame in several steps can be shown part-way through, as on
@@ -2610,8 +2613,9 @@ path, by the driver while it holds a frame. The screen image is
 written only by `erx_screen` and read by the driver only while it holds
 a frame, during which `erx_screen` does not write it. Requests go one
 way, window to `erx_screen` to driver, and `erx_screen` sends a window
-nothing but one asynchronous message, the request to present again
-after `erx_screen`'s own restart, and `erx_winfs` nothing but the
+nothing but one asynchronous message, the request to present again,
+which it sends a window it shows and holds no image of, as after its
+own restart, and `erx_winfs` nothing but the
 asynchronous `{shown, D}`, so no cycle of waits exists. A
 window's call to `erx_screen` waits without a timeout, until the answer
 or `erx_screen`'s end, and `erx_screen`'s request to the driver is
@@ -2634,6 +2638,40 @@ answer arrives as a frame's does. While the panel is off, presents change their
 windows' buffers and are answered without a copy, and nothing is pushed;
 the next input event turns the display `on` and repaints. The idle clock
 is a timer for power, not for drawing.
+
+#### The splash
+
+From its start until the first window's first frame is presented,
+`erx_screen` shows the **splash** over the background: the erXos wordmark in the
+palette's `text` colour, centred across the screen with its middle a
+little above the screen's, and below it three dots in `secondary`, the
+quiet sign that the system is still starting. The background is the
+palette's `desktop` colour, as everywhere a window is not
+([design-desktop-programs.md](design-desktop-programs.md#colour)). So
+from the moment the display domain owns the screen until its first
+application window, a display shows erXos starting rather than a bare
+colour.
+
+The splash costs nothing a drawing would: its placement is a pure
+function of the screen's rectangle and palette, `erx_splash:plan/3`, and
+the wordmark is an 8-bit coverage mask the build rasterises from the
+checked-in `erxos-logo.svg` into the generated module `erx_splash_mark`
+(`tools/lib/erx/splash_mark.rb`), so the screen draws one colour through
+the mask and three dots with `erx_memdraw`, as part of the frame that
+paints the background at its start. A screen too small to hold the whole splash
+shows the background alone, never a clipped mark.
+
+While the splash is on, the screen takes each layout without drawing
+it and asks each window it shows to present, so the splash stays until
+there is a window's frame to replace it, never a bare background
+between. The first present of a window the current layout shows ends the
+splash: the core plans the current layout over a screen of unknown
+contents (`erx_screen_core:repaint/1`), so the plan repaints every pixel, that window's frame among
+them, and no part of the splash outlives it whatever the policy places.
+After that the screen fills only the background where no window is,
+also when every window has gone. A screen started again behind a
+restarted driver shows the splash again until a window presents, which
+the screen asks each shown window to do at its start.
 
 ### The window process
 
@@ -3725,6 +3763,18 @@ opener and ends with it. On a tree the server:
    node takes the event, gives the term and detail the server sends the
    owner as `{ui, Window, Term, Detail}`.
 
+**A window's first frame is its first tree.** A renderer draws and
+presents nothing before it has applied the `commit` of the first tree,
+nor a frame between a tree's first operation and its `commit`. So a
+window never presents an empty screen while its application builds the
+tree, and its first present shows the whole first tree; the screen's
+splash, which the first window's first frame ends
+([The splash](#the-splash)), gives way to the application's content,
+never to a plain window. A window whose application sends no tree
+presents nothing: while it is the only window shown the splash stays,
+and otherwise its rectangle shows the background, as for any window
+that has not presented.
+
 Validation, the diff, the layout and the drawing all run in the
 application's domain, on its CPU grant and in its memory, so a tree
 costs the display nothing but the presents it leads to. The schema still
@@ -3883,7 +3933,11 @@ record when the whole window must be drawn again, and a `presented`
 record when a frame it reported has been shown or dropped.
 
 The program maps each kind to an LVGL object, sets its properties and
-renders in LVGL's direct mode into the mapped buffer, which has the
+renders in LVGL's direct mode into the mapped buffer. It runs no LVGL
+timer, so starts no refresh, before its first `commit`, nor between a
+tree's first operation and its `commit`, so its first report is the
+first tree over the whole screen, which the first `screen` record
+invalidated. The buffer has the
 layout LVGL's own draw buffers have at a stride aligned to 32 bits ([Windows
 and buffers](#windows-and-buffers)). One refresh of LVGL calls the
 program's flush callback once for each area it redrew, and LVGL's
@@ -4766,14 +4820,14 @@ at a terminal that declares `links`.
 | a window's holder ends, or `rmdir` | the window ends; its process and pending input go, and `erx_screen` drops its waiting present and its image of the buffer; the buffer's pages return to the client's allocator when their owner exits, zeroed before they are handed out again | `erx_screen` copies what it uncovered from the windows below |
 | a client domain's end | its grant ends and every window of it with it; its connection goes down, the display unmaps its pixel area, and the system domain deletes the area with the connection | as above |
 | a client is killed while `erx_screen` copies from its buffer | the copy finishes: the area stays mapped until the display lets go | none needed |
-| a kiosk's application fails inside its session | its UI's processes end with it and its window is removed; the screen shows the background | the application's supervisor in the session restarts it, and it opens its UI and its window again |
+| a kiosk's application fails inside its session | its UI's processes end with it and its window is removed; the screen shows the background, or the splash while no window has presented since the screen started | the application's supervisor in the session restarts it, and it opens its UI and its window again |
 | a display's session domain ends, a kiosk's among them | as a client domain's end; under the single policy the screen shows the background, and another session's window stays hidden | the start row's keeper starts a new session, which is introduced and marked as at boot, within the row's intensity; a kiosk's app opens its window again, a desktop's session its terminal |
 | a display's session domain ends more often than its start row's intensity allows | the row is down, shown at `/proc/apps` with its last reason; the screen keeps the background | `service NAME start`, at the UART or the host link, or the next boot |
 | no start row names the display | the display has no session and shows its background, or under the overlapping policy the windows of the sessions that hold its grant | enabling a row that names the display |
 | the row's session is refused, its principal's budget or quota full | no session; the refusal is the row's state and reason at `/proc/apps` and counts as an end against the row's intensity | the administrator's: room for the principal |
 | a local setting names a display the row's template is not granted, or one another enabled row holds | the row is `refused` with `{no_grant, D}` or `{display_held, Name}` at `/proc/apps` and starts nothing; the display keeps its session or its background | the administrator's: a setting the merge accepts ([design-apps.md](design-apps.md#the-start-table)) |
 | a window process crashes | as the window's end, logged with the message that caused it | the client sees `EIO` on its fids and makes a new window |
-| `erx_screen` crashes | supervisor restart; it asks `erx_winfs` for the layout and every shown window to present again, which each does from its last present; a window waiting in a present sees the call fail and answers its client `EIO` | the client presents again; nothing is lost but one frame |
+| `erx_screen` crashes | supervisor restart; it shows the splash, asks `erx_winfs` for the layout and every shown window to present again, which each does from its last present, the first of which ends the splash; a window waiting in a present sees the call fail and answers its client `EIO` | the client presents again; nothing is lost but one frame |
 | the display driver crashes | restart; device reset; scanout re-created; `erx_screen` repaints from its windows' buffers; the screen image's memory stays in the NIF's record | no client notices |
 | the display driver stops answering without ending | the screen keeps its last frame; `erx_screen` keeps draining its mailbox and holds one pending layout and at most one waiting present for each live window (G3); clients wait in their presents | the frame goes out when the driver answers, or the driver ends and restarts as above |
 | `erx_winfs` crashes | it holds every grant and window of the display, so its crash ends the display domain, with the effect of the domain's end below | as for the domain's end |
@@ -5854,6 +5908,12 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
     `presented` record: the model screen compares the buffer's bytes at
     both ends of that interval; a program that tells LVGL the last
     flush is done at once fails;
+  * a window's first frame is its first tree: `erx_ui_lvgl` over the
+    real program on the host presents nothing in the second before the
+    tree is applied, then one present of the whole window whose buffer
+    shows the tree; a program that renders before its first `commit`
+    presents its empty screen first and fails, on a host where the
+    program starts within that second;
   * a driver restart is followed by exactly one push of the whole screen
     from the application's buffer, and no record reaches the program; an
     `erx_screen` that does not monitor the driver fails;

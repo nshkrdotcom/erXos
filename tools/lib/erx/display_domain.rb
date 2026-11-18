@@ -28,7 +28,7 @@ module Erx
   # the platform's display unit, with a client (manifest), a virtio-gpu attached and QMP on an owner-only socket in the run's
   # directory. The development manifest's display row has no client and its boots attach
   # no gpu, so a client's window on a screen is this boot's alone. The virtio-gpu driver
-  # brings the device up and erx_screen fills the empty layout's background. The start row client
+  # brings the device up and erx_screen shows its splash until a window presents. The start row client
   # names the display, so once its server has settled the row's keeper starts the
   # display's session, whose release (BOOT) runs erx_pattern_test: it opens a window
   # with erx_win:open/2, which the single policy places over the whole screen, fills it
@@ -42,7 +42,7 @@ module Erx
   #
   # A driver that sets no scanout leaves QEMU's own picture of an inactive display; a
   # frame never flushed leaves the device's resource black; a session that never starts,
-  # or a window never presented, leaves the background; a wrong colour or channel order,
+  # or a window never presented, leaves the splash; a wrong colour or channel order,
   # in the client, the window's buffer or the driver, gives another digest. Each fails
   # the cell. A domain that ends after the picture came is not seen: QEMU keeps the last
   # scanout.
