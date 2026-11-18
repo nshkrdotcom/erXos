@@ -122,7 +122,7 @@ module Erx
     # @artifact.emu and @artifact.jit resolve here as natively. None runs: hosted,
     # erx_domain_lib does not load, so the domain service makes no domain and starts no session.
     def domain_entries(manifest_source, root_task)
-      boots = Manifest.release_names(source: manifest_source, codec: @codec).map { |name| ProductionImage.domain_boot(name) }
+      boots = ProductionImage.domain_boots(manifest_source, codec: @codec)
       return [] if boots.empty?
 
       stand_in = { 'kind' => @codec.member('entry_kind', 'image'), 'flags' => 0,

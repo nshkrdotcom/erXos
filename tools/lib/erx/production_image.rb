@@ -1835,13 +1835,20 @@ module Erx
     # their release references are read here, so the image can carry what they name; the
     # manifest check proves the rows, each reference included, when Pack#build admits
     # the manifest. Scripts given (a test image's own) stand in for the table's script of
-    # the same name; two given of one name are refused.
-    def domain_boots(manifest_source, given: [])
+    # the same name; two given of one name are refused. Each script of a row that holds a
+    # display's grant starts the client side, or the build fails
+    # (ReleaseFiles.check_display_clients). The hosted archive's domain release (Release)
+    # takes its scripts from here too.
+    def self.domain_boots(manifest_source, codec:, given: [])
       raise Error, 'two given domain boot scripts share a name' unless given.map(&:name).uniq.size == given.size
 
-      names = Manifest.release_names(source: manifest_source, codec: @codec) - given.map(&:name)
-      given + names.map { |name| self.class.domain_boot(name) }
+      names = Manifest.release_names(source: manifest_source, codec: codec) - given.map(&:name)
+      boots = given + names.map { |name| domain_boot(name) }
+      ReleaseFiles.check_display_clients(boots, holders: Manifest.display_releases(source: manifest_source, codec: codec))
+      boots
     end
+
+    def domain_boots(manifest_source, given: []) = self.class.domain_boots(manifest_source, codec: @codec, given: given)
 
     # The domain release's entries, each file once under domains/erxos/ without the
     # system mark, with a boot script for each of boots, and the two runtime images', the

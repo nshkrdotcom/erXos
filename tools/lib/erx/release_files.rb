@@ -61,6 +61,14 @@ module Erx
     # supervisor until a program of its own calls ssh:start/0 (docs/design-ssh.md,
     # "Stages"), and none runs ssl's or inets' supervisors until a program starts them.
     DOMAIN_IMAGE_ONLY = DomainImageApps::APPLICATIONS
+    # Every application a release only loads; it starts each other one it holds
+    # (release_entry).
+    LOADED = [*LOAD_ONLY, *DOMAIN_ONLY, *DOMAIN_IMAGE_ONLY].freeze
+    # The client side of the display (docs/design-display.md, "The pixel area"): the
+    # pixel primitives and erx_win, whose allocator, erx_pixels, gives a window its
+    # buffer in the display's pixel area. Every release that holds a display's grant
+    # starts both (check_display_clients).
+    DISPLAY_CLIENT = %w[erx_memdraw erx_win].freeze
 
     NAME = 'erxos'
     BOOT_DEADLINE = 120
@@ -121,10 +129,11 @@ module Erx
     #   (DOMAIN_IMAGE_ONLY), which it only loads, so that a principal can run OTP's ssh
     #   daemon in its own session (docs/design-ssh.md, "Stages", stage 1) and fetch over
     #   HTTPS (docs/design-crypto.md, "Releases"), and no session runs ssh's supervisors
-    #   unasked. It also starts the client side of the display, erx_win with the pixel
-    #   primitives: a session template may hold a display's grant (root's display_root),
-    #   and its programs' window buffers come from erx_win's allocator, erx_pixels, which
-    #   runs in every release that holds one (docs/design-display.md, "The pixel area");
+    #   unasked. It also starts the client side of the display (DISPLAY_CLIENT): a
+    #   session template may hold a display's grant (root's display_root), and its
+    #   programs' window buffers come from erx_win's allocator, erx_pixels, which runs in
+    #   every release that holds one (docs/design-display.md, "The pixel area";
+    #   check_display_clients);
     # * storage: the block driver, littlefs's volume (docs/design-stopgap.md, "littlefs
     #   in the storage domain") and F2FS's codec (docs/design-f2fs.md), so no system
     #   domain loads the driver of a device the manifest gives the storage domain,
@@ -178,16 +187,16 @@ module Erx
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
-                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, 'erx_memdraw', 'erx_win', 'erx_net_client', 'erx_web_line',
+                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, *DISPLAY_CLIENT, 'erx_net_client', 'erx_web_line',
                                       'erx_ssh_line'].freeze,
                         'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage', 'erx_f2fs'].freeze,
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
-                        'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
+                        'client' => [*DOMAIN_BASE, *DISPLAY_CLIENT, 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'ssh'].freeze,
                         DomainStartup::APP_TEMPLATE.release =>
-                          [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', 'erx_memdraw', 'erx_win', 'erx_ui',
+                          [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', *DISPLAY_CLIENT, 'erx_ui',
                            'erx_net_client', 'erx_app'].freeze,
                         'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
                         'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze,
@@ -204,6 +213,20 @@ module Erx
         unreleased.empty?
     end
     check_released(APPLICATIONS, system: SYSTEM_APPLICATIONS, boots: RELEASE_SCRIPTS)
+
+    # Refuses a boot script that does not start the client side (DISPLAY_CLIENT) when a
+    # row holding a display's grant boots it: holders are those rows' release names
+    # (Manifest.display_releases), and boots the scripts an image carries. Every domain
+    # boots in interactive mode, so any domain can load erx_win, but only one whose
+    # script starts it runs the allocator a program's first open of /dev/draw takes its
+    # window's buffer from; without it the open fails with ENODEV.
+    def self.check_display_clients(boots, holders:)
+      lacking = boots.select { |boot| holders.include?(boot.name) }.filter_map do |boot|
+        missing = DISPLAY_CLIENT - (boot.applications - LOADED)
+        "the #{boot.name} script holds a display's grant and does not start #{missing.join(', ')}" unless missing.empty?
+      end
+      raise Error, lacking.join('; ') unless lacking.empty?
+    end
 
     # Where the one domain release lies: domains/erxos/, which sorts after boot/ and
     # before system/, so it is one run of whole entries that does not split the system
@@ -494,11 +517,12 @@ module Erx
     end
 
     # An application's term in the boot script's release file: its name and version, and
-    # the start type load for one only loaded, DOMAIN_ONLY's and DOMAIN_IMAGE_ONLY's among
-    # them, in every release; the others take systools' default, permanent.
+    # the start type load for one only loaded (LOADED), DOMAIN_ONLY's and
+    # DOMAIN_IMAGE_ONLY's among them, in every release; the others take systools'
+    # default, permanent.
     def release_entry(application)
       term = "#{application},\"#{version(application)}\""
-      if [*LOAD_ONLY, *DOMAIN_ONLY, *DOMAIN_IMAGE_ONLY].include?(application)
+      if LOADED.include?(application)
         "{#{term},load}"
       else "{#{term}}"
       end

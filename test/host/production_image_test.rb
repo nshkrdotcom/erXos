@@ -640,6 +640,38 @@ class ProductionImageTest < Minitest::Test
     assert_raises(Erx::Error) { image.send(:domain_boots, source, given: [echo, echo]) }
   end
 
+  # Every release that holds a display's grant starts the client side of the display
+  # (docs/design-display.md, "The pixel area"), so a program's first open of /dev/draw
+  # gets a window, where without the allocator its window's buffer comes from it gets
+  # ENODEV. The development manifest grants the display to root's template, which boots
+  # the session script, and through its apps row's services to the app template, also
+  # when the display's name is spelt in hex; a session script without erx_memdraw and
+  # erx_win fails the build, as does an app script without erx_win and a configured
+  # domain granted the display whose script is the base alone.
+  def test_a_release_holding_a_displays_grant_starts_the_client_side
+    codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
+    source = PLATFORM.manifest_source(ROOT)
+    assert_equal %w[app session], Erx::Manifest.display_releases(source: source, codec: codec)
+    hex = source.sub("service display\n", "service display\n  name hex:646973706c6179\n")
+    refute_equal source, hex
+    assert_equal %w[app session], Erx::Manifest.display_releases(source: hex, codec: codec)
+    Erx::ProductionImage.domain_boots(source, codec: codec)
+    lacking = Erx::ReleaseFiles.domain_boot('session',
+                                            applications: Erx::ReleaseFiles::RELEASE_SCRIPTS.fetch('session') - %w[erx_memdraw erx_win])
+    error = assert_raises(Erx::Error) { Erx::ProductionImage.domain_boots(source, codec: codec, given: [lacking]) }
+    assert_match(/the session script holds a display's grant and does not start erx_memdraw, erx_win/, error.message)
+    app = Erx::ReleaseFiles.domain_boot('app', applications: Erx::ReleaseFiles::RELEASE_SCRIPTS.fetch('app') - %w[erx_win])
+    error = assert_raises(Erx::Error) { Erx::ProductionImage.domain_boots(source, codec: codec, given: [app]) }
+    assert_match(/the app script holds a display's grant and does not start erx_win/, error.message)
+    granted = "facet display_d\n  name \"display\"\n  grantee @domain.d\n  service @service.display\n  operations none\n" \
+              "  max_request 131072\n  in_flight 16\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 262144\n" \
+              "domain d\n  principal @principal.system\n  limits @limits.native\n  kind service\n  flags none\n" \
+              "  runtime @artifact.emu\n  release @artifact.erts\n  restarts 0\n  restart_period_s 0\n"
+    assert_equal %w[app erts session], Erx::Manifest.display_releases(source: source + granted, codec: codec)
+    error = assert_raises(Erx::Error) { Erx::ProductionImage.domain_boots(source + granted, codec: codec) }
+    assert_match(/the erts script holds a display's grant/, error.message)
+  end
+
   # The production image carries the domain releases its manifest's domain rows and
   # session templates name. The development manifest configures the storage, network,
   # web and display domains, has a session template and an apps row, so it carries the

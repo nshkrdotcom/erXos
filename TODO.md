@@ -2470,13 +2470,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   alone, so a writable grant of another provider mounted at `/dev` gets a window, or ENODEV, when
   its `draw` file is opened, instead of that file. No manifest declares such a grant. Identify
   the resolved provider instead of inferring it from the mount point.
-* [Medium] display, no build check holds that a release holding a display's grant starts
-  erx_win (`tools/lib/erx/release_files.rb` RELEASE_SCRIPTS, docs/design-display.md "The pixel
-  area"): the session script lacked it while root's template held display_root, every build
-  check passed, and a program's first open of /dev/draw crashed its handler at run time. A
-  manifest check that every row or template granted a facet of a `windows` service names a
-  script that starts erx_memdraw and erx_win (with a seeded test planting the old session
-  script), or the client side in SESSION_BASE, would make it hold by construction.
 * [Low] display, a window opened where no connection agent runs answers `noproc`, which is no
   errno (`erx_win:own/4` passes `erx_area:open/1`'s `{error, noproc}` up through `erx_win:open/2`,
   and `erx_session_export:open_window/1` maps only `none` to `ENODEV`): a program's first open

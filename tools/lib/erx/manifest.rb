@@ -411,12 +411,57 @@ module Erx
     # (Stopgap#artifact).
     def self.release_names(source:, codec:)
       records = Frontend.parse(source, version: codec.constant('manifest_version')).records
-      records.values_at('domain', 'session').compact.flatten.filter_map do |record|
-        tokens = record.properties.fetch('release')
-        token = tokens.first if tokens.size == 1
-        token.value.delete_prefix('@artifact.') if token && !token.quoted && token.value.start_with?('@artifact.')
-      end.then { |names| records.key?('apps') ? [*names, DomainStartup::APP_TEMPLATE.release] : names }.uniq.sort
+      records.values_at('domain', 'session').compact.flatten.filter_map { |record| release_reference(record) }
+             .then { |names| records.key?('apps') ? [*names, DomainStartup::APP_TEMPLATE.release] : names }.uniq.sort
     end
+
+    # The release names of the rows that hold a display's grant (docs/design-display.md,
+    # "The pixel area"), sorted and once each, read before any check as release_names
+    # reads them, so the build can refuse one whose script does not start the client side
+    # (ReleaseFiles.check_display_clients).
+    #
+    # A display is a service a display record names, as property 18 holds of every
+    # service of the windows interface. It is held by each domain row and session
+    # template a facet row grants it to, and by the app template when the apps row's
+    # services name it by its name's bytes, as check_apps reads them, since the check
+    # derives the app template's grant of each of those. A reference of another form
+    # names nothing here; admission refuses it.
+    def self.display_releases(source:, codec:)
+      records = Frontend.parse(source, version: codec.constant('manifest_version')).records
+      aliases = records.fetch('display', []).map(&:name)
+      displays = records.fetch('service', []).select { |service| aliases.include?(service.name) }
+      services = displays.map { |service| "@service.#{service.name}" }
+      grantees = records.fetch('facet', []).select { |facet| services.include?(word(facet, 'service')) }
+                        .map { |facet| word(facet, 'grantee') }
+      holders = records.values_at('domain', 'session').compact.flatten.select { |row| grantees.include?("@#{row.kind}.#{row.name}") }
+      names = displays.map do |service|
+        service.properties.key?('name') ? token_bytes(service.properties.fetch('name').first) : service.name.b
+      end
+      app_services = records.fetch('apps', []).flat_map { |row| row.properties.fetch('services', []) }
+      app = app_services.any? { |token| names.include?(token.value.b) }
+      [*holders.filter_map { |row| release_reference(row) }, *(app ? [DomainStartup::APP_TEMPLATE.release] : [])].uniq.sort
+    end
+
+    # The bytes a token spells: a quoted string's own, or those of a hex: word's pairs of
+    # hexadecimal digits; nil for any other word.
+    def self.token_bytes(token)
+      return token.value.b if token.quoted
+
+      hex = token.value.delete_prefix('hex:')
+      [hex].pack('H*') if token.value.start_with?('hex:') && hex.match?(/\A(?:[0-9a-fA-F]{2})*\z/)
+    end
+
+    # The <name> of a row's `release @artifact.<name>`, nil for a release of another form.
+    def self.release_reference(record)
+      word(record, 'release')&.then { |value| value.delete_prefix('@artifact.') if value.start_with?('@artifact.') }
+    end
+
+    # A record's field when it is one unquoted token, nil when it is anything else.
+    def self.word(record, field)
+      tokens = record.properties.fetch(field, [])
+      tokens.first.value if tokens.size == 1 && !tokens.first.quoted
+    end
+    private_class_method :release_reference, :word
 
     def self.structural_fixture(source:, codec:, context:)
       StructuralFixture.prepare(source: source, codec: codec, context: context)
@@ -612,12 +657,7 @@ module Erx
       end
 
       def text(record, key)
-        token = one(record, key)
-        return token.value.b if token.quoted
-        if token.value.start_with?('hex:') && token.value.delete_prefix('hex:').match?(/\A(?:[0-9a-fA-F]{2})*\z/)
-          return [token.value.delete_prefix('hex:')].pack('H*')
-        end
-        record.line.fail!("#{key} requires quoted or hexadecimal bytes")
+        Manifest.token_bytes(one(record, key)) || record.line.fail!("#{key} requires quoted or hexadecimal bytes")
       end
 
       # A word list as the page holds it, each word ended by a NUL. A source writes it
