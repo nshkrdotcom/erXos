@@ -2287,7 +2287,9 @@ The step's rules, by input:
   a down that fails it makes the gesture's destination nowhere, is
   counted, and asks the policy nothing. Otherwise the
   policy routes its first event, and its answer fixes the destination:
-  `{to, W, _}` the window `W`, `{wm, _}` and `{delete, _}` the policy,
+  `{to, W, _}` the window `W` while `W` is on the screen, as for a
+  key's down below, and nowhere otherwise, the event dropped and
+  counted; `{wm, _}` and `{delete, _}` the policy,
   and `{windows, _}` or `drop` nowhere, so a click the policy answers with a new table,
   such as one that raises a window, gives no window any of that
   gesture. Every later pointer event and wheel step of the gesture goes
@@ -2298,7 +2300,10 @@ The step's rules, by input:
   was hidden; to the policy as a question of `input/5`, whose
   `{to, _, _}` answer is dropped and counted, so no window receives the
   rest of a gesture whose start it did not; or nowhere. Between
-  gestures the policy routes each pointer event and wheel step.
+  gestures the policy routes each pointer event and wheel step, and a
+  `{to, W, _}` answer passes only while `W` is on the screen; otherwise
+  the event is dropped and counted. So no policy's answer delivers a
+  pointer event or wheel step to a window off the screen.
 * **Seen before pressed.** A gesture's first down lands, by the window
   table the policy routes with, on the topmost shown window whose
   rectangle holds the point, or on none. It passes only when the
@@ -5379,11 +5384,13 @@ change nothing; pointer gestures start with
   session's window until its frame is answered; a key held in the
   session's window while a front window opens and ends repeats there
   only from the `{shown, D}` that shows it again; a policy that answers
-  a window the screen shows and the table hides delivers no down.
-  Seeded: a router that passes a key's down by the policy's answer
-  alone, or sends a repeat by the table alone, which delivers to a
-  window not on screen; a router whose on-screen test reads the
-  displayed windows alone.
+  a window the screen shows and the table hides delivers no down, and
+  no pointer move, wheel step or gesture's first event, while the same
+  answer for a window on the screen delivers all of them. Seeded: a
+  router that passes a key's down or a gesture's first event by the
+  policy's answer alone, or sends a repeat by the table alone, which
+  delivers to a window not on screen; a router whose on-screen test
+  reads the displayed windows alone.
 * **The keymap.** `gen_keymap.rb` refuses each malformed layout its
   section names; the US layout's every key and layer is checked against
   the generated `erx_keymap`; through a terminal, arrows and function

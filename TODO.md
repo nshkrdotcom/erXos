@@ -1830,12 +1830,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   which keys' downs and repeats use), so a drag held in a window while a front window opens and ends resumes its
   moves there before `{shown, D}` shows that window again. Fold `deliver/5`'s state test into `on_screen/3`, with
   its let-go clause applying to every window not on the screen (so such a window still sees its buttons go up),
-  the gesture rule's text and a router case, alongside "seen before pressed".
-* [Medium] `erlang/apps/erx_display/src/erx_input.erl` (`pointer/5`, the wheel's record), [The input router](docs/design-display.md#the-input-router):
-  a policy's `{to, W, _}` answer to a pointer event between gestures, a gesture's first event or a wheel step
-  reaches `W` whatever the table and the screen say of it, so G1's "no pointer move to a hidden window" rests on
-  every policy's `input/5`. Pass those answers through `pass_on_screen/2` as a key's down is, with a stub-policy
-  router case.
+  the gesture rule's text and a router case, alongside "seen before pressed". Then widen `test/erlang/erx_input_tests.erl`'s
+  `on_screen/3` check, which covers keys alone, to every pointer event but a let-go.
 * [Medium] `erlang/apps/erx_display/src/erx_input.erl` (`key_up/6`, `release`), [The input router](docs/design-display.md#the-input-router):
   a key's up carries `mods(S)`, the modifiers held over every source now, so a window off the screen learns of a
   modifier pressed at the window on the screen (hold A at the kiosk, a front window shows, Ctrl there, A up: the

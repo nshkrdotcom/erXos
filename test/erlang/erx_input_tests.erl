@@ -17,8 +17,8 @@
 %%     button or touch go, and once every source has ended every window's last event
 %%     holds no button (pointer_while_hidden, pointer_held_at_end).
 %% Every key's down or repeat that reaches a window reaches one the screen shows: the `frame`
-%% action answers the frame of the table's layout, `{shown, D}`, so `focus` moves the
-%% table ahead of the screen until a frame follows (key_not_displayed).
+%% action, in both runs, answers the frame of the table's layout, `{shown, D}`, so `focus`
+%% moves the table ahead of the screen until a frame follows (key_not_displayed).
 %% A random run checks that every pointer event lies inside the screen of its step
 %% (pointer_outside_screen), with records before the first screen and screen changes.
 -module(erx_input_tests).
@@ -144,7 +144,7 @@ pointer_alphabet() ->
     [{s1, {key, down, ?LEFT}}, {s1, {key, up, ?LEFT}},
      {s1, {touch, 0, down, 100, 100}}, {s1, {touch, 0, move, 200, 200}}, {s1, {touch, 0, up, 200, 200}},
      {s1, {pointer, abs, 60000, 60000}}, {s2, {key, down, ?LEFT}}, {s2, {key, up, ?LEFT}},
-     focus, {s1, release}, {gone, s1}].
+     focus, frame, {s1, release}, {gone, s1}].
 
 check_pointer(#{got := Got}) ->
     Last = lists:foldl(fun({Id, State, {pointer, _, _, Buttons}, Action}, Seen) ->
@@ -279,7 +279,35 @@ a_key_reaches_no_window_the_table_hides_test() ->
     ?assertEqual([], Got),
     ?assertEqual(1, erx_input:dropped(S)).
 
+%% docs/design-display.md, "The input router", "A gesture": the same policy, for what the
+%% pointer starts. A move between gestures, a wheel step and a gesture's first event are
+%% each dropped and counted, and the gesture goes nowhere, so its move and its end reach
+%% no window either.
+a_pointer_event_reaches_no_window_the_table_hides_test() ->
+    View = (single([{1, <<"a">>, hidden}, {2, <<"a">>, shown}], <<"a">>))#{policy := ?MODULE},
+    {S, Outs} = outs([{mouse({pointer, rel, 5, 5}), View},
+                      {mouse({wheel, 1}), View},
+                      {mouse({key, down, ?LEFT}), View},
+                      {mouse({pointer, rel, 5, 5}), View},
+                      {mouse({key, up, ?LEFT}), View}], shown_first(View)),
+    ?assertEqual([], [Out || {to, _, _} = Out <- Outs]),
+    ?assertEqual(3, erx_input:dropped(S)).
+
+%% The same answer for a window on the screen passes: a move and a wheel step between
+%% gestures, and every event of the gesture, reach it.
+a_pointer_event_reaches_the_window_on_the_screen_test() ->
+    View = (single([{1, <<"a">>, shown}], <<"a">>))#{policy := ?MODULE},
+    {S, Outs} = outs([{mouse({pointer, rel, 5, 5}), View},
+                      {mouse({wheel, 1}), View},
+                      {mouse({key, down, ?LEFT}), View},
+                      {mouse({pointer, rel, 5, 5}), View},
+                      {mouse({key, up, ?LEFT}), View}], shown_first(View)),
+    ?assertMatch([{pointer, _, _, 0}, {wheel, 1}, {pointer, _, _, 1}, {pointer, _, _, 1}, {pointer, _, _, 0}],
+                 [Event || {to, 1, #{event := Event}} <- Outs]),
+    ?assertEqual(0, erx_input:dropped(S)).
+
 input(Event, _Windows, _Screen, _Session, State) -> {{to, 1, Event}, State}.
+
 
 %% A view of the single policy over Windows, {Id, Dir, State}, with Session the display's.
 single(Windows, Session) ->
@@ -297,13 +325,21 @@ shown(Id) -> {shown, [{Id, ?SCREEN}]}.
 %% A key's record with the test process as the keyboard, so every step's downs and ups match.
 key(Edge, Code) -> {record, self(), <<"kbd">>, 0, {key, Edge, Code}}.
 
+%% A record of the test process as the mouse.
+mouse(Record) -> {record, self(), <<"mouse">>, 0, Record}.
+
 %% Each input stepped over its view, from State: the state after and the keys delivered,
 %% {Window, Edge, Code}, in order.
 run(Steps, State) ->
-    lists:foldl(fun({In, View}, {S, Got}) ->
+    {S, Outs} = outs(Steps, State),
+    {S, [{Id, Edge, Code} || {to, Id, #{event := {key, Edge, Code, _, _, _}}} <- Outs]}.
+
+%% Each input stepped over its view, from State: the state after and every answer but the
+%% policy's state, in order.
+outs(Steps, State) ->
+    lists:foldl(fun({In, View}, {S, Acc}) ->
                         {S1, [{policy_state, _} | Outs]} = erx_input:step(In, View, S),
-                        {S1, Got ++ [{Id, Edge, Code}
-                                     || {to, Id, #{event := {key, Edge, Code, _, _, _}}} <- Outs]}
+                        {S1, Acc ++ Outs}
                 end, {State, []}, Steps).
 
 %% Random ----------------------------------------------------------------------
@@ -325,7 +361,13 @@ random_run(Steps) ->
               {S1, [{policy_state, _} | Outs]} = erx_input:step(In, View, S),
               [inside(X, Y, Screen1) || {to, _, #{event := {pointer, X, Y, _}}} <- Outs],
               {S1, Screen1}
-      end, {erx_input:new(?CONFIG), none}, lists:seq(1, Steps)).
+      end, {displaying_one(View0), none}, lists:seq(1, Steps)).
+
+%% A router whose screen shows window 1, the window the view's table shows, so the
+%% policy's answers to pointer events reach it once there is a screen.
+displaying_one(View) ->
+    {S, _} = erx_input:step(shown(1), View, erx_input:new(?CONFIG)),
+    S.
 
 random_input(Source, Screen) ->
     Big = 16#7fffffff,

@@ -27,11 +27,12 @@ event, and a pointer event or wheel step while nothing is held. What
 follows goes where the start went, by the record of the start, not by
 asking again:
 
-* a key's down the policy sends to a window passes only while that
-  window is **on the screen**: the displayed windows hold it and the
-  table shows it. Otherwise it is dropped and counted, so while the
-  table and the screen disagree a key reaches neither the window
-  leaving the screen nor the one the table has chosen;
+* an answer that sends what starts something to a window passes only
+  while that window is **on the screen**: the displayed windows hold it
+  and the table shows it. Otherwise it is dropped and counted and what
+  it starts goes nowhere, so while the table and the screen disagree a
+  key or a pointer event reaches neither the window leaving the screen
+  nor the one the table has chosen;
 * a key's up goes to the window its down went to, whatever that
   window's state, and stops that window's repeat;
 * a key's repeat goes to the window its down went to, and only while
@@ -97,9 +98,9 @@ new table, the timer.
              | {delete, erx_wm:window_id()} | {windows, [erx_wm:window()]}
              | {wake, At :: integer() | none}.
 
-%% A key a source holds: the window its down went to, or none, and what its down typed,
-%% the unshifted rune, the modifier row it holds and the modifiers then held, which its
-%% repeats and up carry.
+%% A key a source holds: the window its down went to, or none; what its down typed and the
+%% unshifted rune, which its repeats and up carry; the modifier row it holds; and the
+%% modifiers held at its down, which its repeats carry.
 -type held_key() :: #{dest := erx_wm:window_id() | none,
                       typed := rune() | none,
                       unshifted := rune() | none,
@@ -209,7 +210,7 @@ record({wheel, Steps}, Source, At, Step, #input{gesture = Gesture} = S) ->
     Event = event(Source, At, {wheel, Steps}, S),
     case Gesture of
         none ->
-            {Route, Asked} = ask(Event, Step, S),
+            {Route, Asked} = ask_on_screen(Event, Step, S),
             {answer(Route, Asked), S};
         _ ->
             {Delivered, _Same} = deliver(Gesture, Event, move, Step, S),
@@ -264,11 +265,11 @@ pointer(Source, At, Edge, Step, #input{pointer = {X, Y}, gesture = Gesture} = S)
     case {Gesture, Buttons} of
         {none, 0} ->
             %% Between gestures the policy routes it.
-            {Route, Asked} = ask(Event, Step, S),
+            {Route, Asked} = ask_on_screen(Event, Step, S),
             {answer(Route, Asked), S};
         {none, _} ->
             %% A press begins a gesture, whose destination the policy's answer fixes.
-            {Route, Asked} = ask(Event, Step, S),
+            {Route, Asked} = ask_on_screen(Event, Step, S),
             {answer(Route, Asked), S#input{gesture = destination(Route)}};
         {_, 0} ->
             %% The gesture ends with the event after which nothing is held.
@@ -343,7 +344,7 @@ key_down(Code, Row, #source{keys = Keys} = Src, Source, At, Step, S) ->
     Event = event(Source, At, {key, down, Code, Typed, Unshifted, Mods}, S),
     {Route, Asked} = case chord(Code, S) of
                          true -> {{wm, chord}, Step};
-                         false -> pass_on_screen(ask(Event, Step, S), S)
+                         false -> ask_on_screen(Event, Step, S)
                      end,
     Dest = case Route of {to, Window, _} -> Window; _ -> none end,
     Held = #{dest => Dest, typed => Typed, unshifted => Unshifted, modifier => Modifier,
@@ -352,20 +353,24 @@ key_down(Code, Row, #source{keys = Keys} = Src, Source, At, Step, S) ->
                          S#input{locks = toggle(Row, S#input.locks)}),
     {answer(Route, Asked), repeat_from(Dest, Typed, Source, Code, At, Pressed)}.
 
-%% The policy's answer to a key's down, passed only to a window on the screen; to any
-%% other it is dropped and counted, and the down goes nowhere.
-pass_on_screen({{to, Window, _}, #step{view = #{windows := Windows}, drops = Drops} = Asked}
-               = Routed, S) ->
-    case on_screen(Window, Windows, S) of
-        true -> Routed;
-        false -> {drop, Asked#step{drops = Drops + 1}}
-    end;
-pass_on_screen(Routed, _S) ->
-    Routed.
+%% The policy's answer to what starts something, a key's down, a gesture's first event or
+%% a pointer event or wheel step between gestures, passed only to a window on the screen;
+%% to any other it is dropped and counted, and what it starts goes nowhere.
+ask_on_screen(Event, Step, S) ->
+    case ask(Event, Step, S) of
+        {{to, Window, _}, #step{view = #{windows := Windows}, drops = Drops} = Asked} = Routed ->
+            case on_screen(Window, Windows, S) of
+                true -> Routed;
+                false -> {drop, Asked#step{drops = Drops + 1}}
+            end;
+        Routed ->
+            Routed
+    end.
 
 %% Whether a window is on the screen: the table shows it, and so does the frame the screen
-%% last answered. Only such a window receives a key's down or repeat, so neither reaches a
-%% window while the table and the screen disagree about it, in either direction.
+%% last answered. Only such a window receives what the policy routes and a key's repeat, so
+%% neither reaches a window while the table and the screen disagree about it, in either
+%% direction.
 on_screen(Window, Windows, #input{displayed = Displayed}) ->
     case erx_wm:fetch(Window, Windows) of
         {ok, #{state := shown}} -> lists:keymember(Window, 1, Displayed);
@@ -526,6 +531,9 @@ mods(S) -> lists:usort([Rune || #{modifier := {Rune, _}} <- held_keys(S), Rune =
 
 %% Helpers --------------------------------------------------------------------
 
+%% The policy's input/5, with the step's view. Its {to, W, _} answer is checked by its
+%% only callers: ask_on_screen/3 passes it only to a window on the screen, and deliver/5
+%% drops it during a gesture the policy holds.
 ask(Event, #step{view = #{windows := Windows, session := Session, policy := Policy},
                  policy_state = PolicyState} = Step,
     #input{screen = Screen}) ->

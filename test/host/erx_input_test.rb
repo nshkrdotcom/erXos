@@ -45,9 +45,17 @@ class ErxInputTest < Minitest::Test
       test: KEYS_RUN, property: /key_order/
     ),
     key_by_the_table: Mutant.new(
-      text: 'false -> pass_on_screen(ask(Event, Step, S), S)',
+      text: 'false -> ask_on_screen(Event, Step, S)',
       broken: 'false -> ask(Event, Step, S)',
       test: KEYS_RUN, property: /key_not_displayed/
+    ),
+    press_by_the_table: Mutant.new(
+      text: "%% A press begins a gesture, whose destination the policy's answer fixes.\n" \
+            '            {Route, Asked} = ask_on_screen(Event, Step, S),',
+      broken: "%% A press begins a gesture, whose destination the policy's answer fixes.\n" \
+              '            {Route, Asked} = ask(Event, Step, S),',
+      test: "{#{TEST}, a_pointer_event_reaches_no_window_the_table_hides_test}",
+      property: /a_pointer_event_reaches_no_window_the_table_hides_test\.\.\..*failed/
     ),
     repeat_by_the_table: Mutant.new(
       text: 'case on_screen(Window, Windows, SAcc) of',
@@ -87,6 +95,8 @@ class ErxInputTest < Minitest::Test
   def test_a_repeat_by_the_table_alone_fails_the_keys_run = assert_mutant_fails(:repeat_by_the_table)
 
   def test_a_key_by_the_screen_alone_fails_its_case = assert_mutant_fails(:key_by_the_screen)
+
+  def test_a_press_routed_by_the_table_alone_fails_its_case = assert_mutant_fails(:press_by_the_table)
 
   def test_a_clamp_to_the_edge_fails_the_screen_property = assert_mutant_fails(:clamp_to_the_edge)
 
