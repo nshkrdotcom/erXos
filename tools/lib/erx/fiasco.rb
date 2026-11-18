@@ -200,7 +200,7 @@ module Erx
       end
     end
 
-    # The release kernel (docs/design-stopgap.md, "The kernel"): the same sources and cores,
+    # The release kernel (docs/design-fiasco.md, "The kernel"): the same sources and cores,
     # configured from the release defconfig (FiascoConfig.release_defconfig) and checked
     # with the release rules, in Fiasco.kernel_directory. No image packs it:
     # every image is a development build (ProductionImage::BUILD_KIND). The kernel's
