@@ -103,7 +103,8 @@ acts(#{table := Table, next := Next, mode := Mode, gesture := Gesture}) ->
 
 %% A client's acts never move the model's pick.
 act({new, Session}, #{table := Table, state := State, next := Id} = W) ->
-    Row = #{id => Id, dir => {Session, integer_to_binary(Id)}, rect => ?SCREEN, state => hidden},
+    Row = #{id => Id, dir => {Session, integer_to_binary(Id)}, front => false, rect => ?SCREEN,
+            state => hidden},
     {ok, Table1, State1} = erx_wm_rio:place(new, Id, [Row | Table], ?SCREEN, ?SESSION, State),
     W#{table := Table1, state := State1, next := Id + 1, pressed := none};
 act({wctl, Id, Command}, #{table := Table, state := State} = W) ->
@@ -297,8 +298,8 @@ ids(Table) -> [Id || #{id := Id} <- Table].
 
 made(N) ->
     lists:foldl(fun(Id, {Table, State}) ->
-                        Row = #{id => Id, dir => {<<"10">>, integer_to_binary(Id)}, rect => ?SCREEN,
-                                state => hidden},
+                        Row = #{id => Id, dir => {<<"10">>, integer_to_binary(Id)}, front => false,
+                                rect => ?SCREEN, state => hidden},
                         {ok, T, S} = erx_wm_rio:place(new, Id, [Row | Table], ?SCREEN, ?SESSION, State),
                         {T, S}
                 end, erx_wm_rio:arrange([], ?SCREEN, ?SESSION, erx_wm_rio:init(#{})), lists:seq(1, N)).

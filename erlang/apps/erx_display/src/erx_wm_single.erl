@@ -11,17 +11,22 @@ event the router asks it about goes to it.
 Configuration: none. It names no session: erx_winfs passes every call
 the directory of the display's session.
 
-Which window is shown is derived, never stored: it is the live window
-of the display's session with the lowest id, shown/2, computed afresh from
-every table erx_winfs hands the policy. A window is matched by its
-session, since a window's name is its client's choice. Every other
-window, a later one of the same session or one of any other session, is
-hidden. With no live window of the session, none is shown and input is
-dropped.
+Which window is shown is derived, never stored: shown/2 computes it
+afresh from every table erx_winfs hands the policy. It is the newest
+live window marked `front`, the one with the highest id, since ids only
+grow; while no front window lives, it is the live window of the
+display's session with the lowest id. A window is front when the grant
+it was made through carries `front`, which the manifest allows only on
+root's session template's grant in a development build; erx_winfs
+records the mark in the window's row. A window is matched to the
+session by its directory, since a window's name is its client's choice.
+Every other window is hidden. With neither a front window nor a live
+window of the session, none is shown and input is dropped.
 
-Placement. `new` and arrange/3 give every window the screen's rectangle
+Placement. `new` and arrange/4 give every window the screen's rectangle
 and set each window's state from shown/2, so when the shown window ends
-the session's next oldest is shown. Every `wctl` request is refused with
+the next newest front window, or else the session's oldest, is shown.
+Every `wctl` request is refused with
 `einval`, so no window takes the screen by asking.
 
 Input. Every event the router asks about goes to the shown window, or
@@ -92,14 +97,22 @@ input(Input, Windows, _Screen, Session, State) ->
     end.
 
 -doc """
-The window the policy shows: the live window of session `Session` with
-the lowest id, or `none` when there is no session or it has no window in
-the table.
+The window the policy shows: the front window with the highest id, or,
+when the table holds no front window, the live window of session
+`Session` with the lowest id, or `none` when there is no session or it
+has no window in the table.
 """.
 -spec shown(erx_wm:session(), [erx_wm:window()]) -> erx_wm:window_id() | none.
-shown(none, _Windows) ->
-    none;
 shown(Session, Windows) ->
+    case [Id || #{id := Id, front := true} <- Windows] of
+        [] -> oldest(Session, Windows);
+        Front -> lists:max(Front)
+    end.
+
+%% The live window of the session with the lowest id, or none.
+oldest(none, _Windows) ->
+    none;
+oldest(Session, Windows) ->
     case [Id || W = #{id := Id} <- Windows, erx_wm:session(W) =:= Session] of
         [] -> none;
         Ids -> lists:min(Ids)

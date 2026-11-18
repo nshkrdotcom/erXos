@@ -38,6 +38,21 @@ class ErxWmTest < Minitest::Test
                              text: 'Id -> {{to, Id, Input}, State}',
                              broken: '_Id -> {drop, State}',
                              property: /key_not_delivered/),
+    # The single policy shows the newest front window, else the session's oldest: a pick of
+    # the oldest front window, one that ignores front and one of the newest window of any
+    # grant each fail one property of the exhaustive pick run.
+    oldest_front_shown: Mutant.new(file: 'erx_wm_single.erl',
+                                   text: 'Front -> lists:max(Front)',
+                                   broken: 'Front -> lists:min(Front)',
+                                   property: /front_not_newest_shown/),
+    front_ignored: Mutant.new(file: 'erx_wm_single.erl',
+                              text: '[Id || #{id := Id, front := true} <- Windows]',
+                              broken: '[Id || #{id := Id, front := ignored} <- Windows]',
+                              property: /front_not_newest_shown/),
+    newest_of_any_grant_shown: Mutant.new(file: 'erx_wm_single.erl',
+                                          text: '[Id || #{id := Id, front := true} <- Windows]',
+                                          broken: '[Id || #{id := Id} <- Windows]',
+                                          property: /shown_neither_front_nor_session/),
     # The overlapping policy's keyboard goes only to the user's pick: a client that gains it
     # by its own wctl top, a window that takes it by being made, and a current window that
     # falls back to the topmost shown one when the pick is hidden or ended each fail the
@@ -91,6 +106,12 @@ class ErxWmTest < Minitest::Test
   def test_showing_the_newest_window_fails_the_single_property = assert_mutant_fails(:newest_window_shown)
 
   def test_dropped_keys_fail_the_delivery_property = assert_mutant_fails(:keys_dropped)
+
+  def test_showing_the_oldest_front_window_fails_the_pick_run = assert_mutant_fails(:oldest_front_shown)
+
+  def test_a_pick_that_ignores_front_fails_the_pick_run = assert_mutant_fails(:front_ignored)
+
+  def test_showing_the_newest_window_of_any_grant_fails_the_pick_run = assert_mutant_fails(:newest_of_any_grant_shown)
 
   def test_a_pick_by_wctl_top_fails_the_overlapping_keyboard_run = assert_mutant_fails(:top_picks)
 

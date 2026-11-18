@@ -33,6 +33,8 @@
 -define(SERVICE, screen).
 -define(SESSION, 10).
 -define(OTHER, 20).
+%% A grantee whose grant carries front, as root's session template's does.
+-define(FRONT, 30).
 -define(NOFID, 16#ffffffff).
 -define(AT_REMOVEDIR, 16#200).
 -define(O_RDONLY, 0).
@@ -234,6 +236,34 @@ single_policy() ->
     ?assertEqual({error, eio}, read(Session, Second)),
     %% The hidden read of the removed window ends with it.
     ?assertEqual({error, eio}, answered(HiddenRead)),
+    stop(World).
+
+a_window_takes_its_front_mark_from_its_grant_test_() ->
+    {timeout, 60, fun front_mark/0}.
+
+%% docs/design-display.md, "Windows and the window system": a window is front when the
+%% grant it was made through carries front. Of two grants minted with and without front,
+%% only the first's window is shown over the session's, and a window made later through
+%% the second leaves it shown; when it ends, the session's window is shown again.
+front_mark() ->
+    World = start(answer),
+    Session = mint(?SESSION, #{session => true}),
+    Front = mint(?FRONT, #{front => true}),
+    Other = mint(?OTHER, #{}),
+    {ok, _} = mkdir(Session, <<"home">>),
+    Home = open(Session, 2, <<"home">>, <<"wctl">>, ?O_RDWR),
+    ?assertEqual(<<"visible">>, state(Session, Home)),
+    {ok, _} = mkdir(Front, <<"f">>),
+    FrontWctl = open(Front, 2, <<"f">>, <<"wctl">>, ?O_RDWR),
+    ?assertEqual(<<"visible">>, state(Front, FrontWctl)),
+    ?assertEqual(<<"hidden">>, state(Session, Home)),
+    {ok, _} = mkdir(Other, <<"x">>),
+    OtherWctl = open(Other, 2, <<"x">>, <<"wctl">>, ?O_RDWR),
+    ?assertEqual(<<"hidden">>, state(Other, OtherWctl)),
+    ?assertEqual(<<"visible">>, state(Front, FrontWctl)),
+    ok = call(Front, {unlinkat, 1, <<"f">>, ?AT_REMOVEDIR}),
+    ok = shown_soon(Session, Home),
+    ?assertEqual(<<"hidden">>, state(Other, OtherWctl)),
     stop(World).
 
 an_empty_screen_is_refused_and_the_old_one_kept_test_() ->

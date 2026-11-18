@@ -47,6 +47,10 @@ class ErxWinfsTest < Minitest::Test
   # callback, in the grant, instead of at the window process.
   STREAM_READ = '    {wait, Proc, {read, File, Count}};'
   READ_IN_CALLBACK = '    receive {erx_window_record, Record} -> {ok, Record} end;'
+  # The seeded fault: an erx_winfs that marks every window front, whatever its grant.
+  FRONT_FROM_GRANT = 'front => Front, holder => Owner'
+  FRONT_ALWAYS = 'front => true, holder => Owner'
+  FRONT_CASE = '{generator, erx_winfs_tests, a_window_takes_its_front_mark_from_its_grant_test_}'
   WAITING_CASE = '{generator, erx_winfs_tests, a_waiting_kbd_read_holds_up_nothing_of_its_grant_test_}'
 
   def setup
@@ -84,6 +88,18 @@ class ErxWinfsTest < Minitest::Test
     text, status = eunit(WAITING_CASE, replaced: { WINFS => source.sub(STREAM_READ, READ_IN_CALLBACK) })
     refute status.success?, text
     assert_match(/no_reply,\{write,2/, text)
+  end
+
+  # docs/design-display.md, "Verification and testing", a front window: an erx_winfs that
+  # marks every window front shows the later window of a grant without front over the
+  # front grant's.
+  def test_marking_every_window_front_fails_the_front_case
+    source = File.read(File.join(ROOT, WINFS))
+    raise "#{WINFS} no longer holds #{FRONT_FROM_GRANT.inspect}" unless source.include?(FRONT_FROM_GRANT)
+
+    text, status = eunit(FRONT_CASE, replaced: { WINFS => source.sub(FRONT_FROM_GRANT, FRONT_ALWAYS) })
+    refute status.success?, text
+    assert_match(/expected,<<"hidden">>/, text)
   end
 
   private
