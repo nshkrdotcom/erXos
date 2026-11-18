@@ -123,7 +123,7 @@ it; git history is the record of completed work.
   types), then delete both copies; a seeded member without a declared attribute fails the generator.
 * [Low] apps, the derivation's readability (`tools/lib/erx/manifest.rb`): `app_template` rebuilds the
   session row and SPACES check `normalize_sessions` writes (one `session_row` for both); `named_artifact`
-  duplicates `artifact`'s kind check; `app_facets` maps positional triples where a small `Data` value
+  duplicates `artifact`'s kind check; `derived_facets` maps positional triples where a small `Data` value
   would read better; `apps_rows` searches the sorted facets for rows `normalize_facets` just placed; the
   `tree apps` refusal in `check_apps` runs with no apps row and is redundant while files declares no
   `tree`; dom_planner_test's apps case hand-codes header offsets the codec can give.
@@ -9999,7 +9999,7 @@ document's "residual risks accepted" paragraph.
   fact.
 * [Medium] SSH stage 2, root's session's grant of `login_keys`
   (`config/manifest/development.txt`, `facet login_keys_session`;
-  `tools/lib/erx/manifest.rb`, `check_login_keys_service`;
+  `tools/lib/erx/manifest.rb`, `WELL_KNOWN`'s `login_keys_service` row;
   [design-ssh.md](docs/design-ssh.md#invariants) H8): stage 1's daemon
   reads the card's keys through a read-only grant to root's session
   template, which the check admits beside the system domain's. When the
@@ -10018,7 +10018,7 @@ document's "residual risks accepted" paragraph.
   the demo's medium holds no `authorized_keys`; the site manifest should
   drop the window as the design says.
 * [Low] SSH stage 1, one lookup of root's session template
-  (`tools/lib/erx/manifest.rb`, `check_login_keys_service` and
+  (`tools/lib/erx/manifest.rb`, `root_template?` and
   `planned_sessions`): both find the system principal's template by
   the same predicate, and the check resolves the system principal from
   the source again though the header holds it; one helper would serve

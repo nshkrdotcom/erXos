@@ -1215,6 +1215,106 @@ module Erx
         'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings'
       }.freeze
 
+      # Who may hold a granted facet row of a well-known service (check_granted_rows), and
+      # why: the system domain, and root's session template, the system principal's,
+      # always (root :always) or only in a development build (root :development); with
+      # read_only, every such row states rights ro, a row that states none being rw
+      # (abi/services/files.txt). why completes the refusal "grants NAME, whose ...".
+      SourceGrants = Data.define(:root, :read_only, :why) do
+        def initialize(root:, read_only:, why:)
+          raise Erx::Error, "SourceGrants root #{root.inspect} is not :always or :development" unless
+            %i[always development].include?(root)
+          raise Erx::Error, "SourceGrants read_only #{read_only.inspect} is not a boolean" unless [true, false].include?(read_only)
+
+          super
+        end
+      end
+
+      # A row the build derives of a well-known service: its grantee, :system (the system
+      # domain), :app_template or :user_templates (every session template but the app
+      # template), and its parameter values.
+      Derived = Data.define(:grantee, :values) do
+        def initialize(grantee:, values:)
+          raise Erx::Error, "Derived grantee #{grantee.inspect} is not one derived_grantees names" unless
+            %i[system app_template user_templates].include?(grantee)
+
+          super
+        end
+      end
+
+      # A service of the files interface that the machine knows by a fixed name, and what
+      # the manifest check requires of it beyond what it requires of every service:
+      #
+      # * constant, the abi/manifest.txt constant that holds its name;
+      # * property, the property its clauses are numbered under;
+      # * needs, what makes the manifest hold exactly one service of the name, of the
+      #   files interface, and the build derive its rows: an apps row (:apps), the name
+      #   being served at all (:served), or nothing (nil), when it derives none;
+      # * window, the window role whose holder serves it, when one does: a manifest with
+      #   that window holds exactly one service of the name, of the files interface,
+      #   served by the window's holder, and one without it holds none, so an apps row
+      #   that needs the service needs the window too;
+      # * derived, the Derived rows the build derives of it. An apps row names no service
+      #   with an :app_template row, since every app holds that grant already; the apps
+      #   row packs the template's packages and system rows in fields of their own
+      #   (apps_rows), so a new service with such a row needs a field there too;
+      # * source, which granted rows (check_granted_rows) may grant it: :any, :none (only
+      #   the derived rows do), or a SourceGrants.
+      #
+      # A row with neither needs nor window is not checked to be of the files interface.
+      WellKnown = Data.define(:constant, :property, :needs, :window, :derived, :source) do
+        def initialize(constant:, property:, needs:, window:, derived:, source:)
+          raise Erx::Error, "WellKnown #{constant} needs #{needs.inspect}" unless [:apps, :served, nil].include?(needs)
+          raise Erx::Error, "WellKnown #{constant} source #{source.inspect}" unless
+            [:any, :none].include?(source) || source.is_a?(SourceGrants)
+          raise Erx::Error, "WellKnown #{constant} derives rows that are not Derived" unless derived.all?(Derived)
+          raise Erx::Error, "WellKnown #{constant} derives rows it never needs" unless needs || derived.empty?
+
+          super
+        end
+      end
+
+      # The well-known services, one row each (docs/design-packaging.md, "The apps row"
+      # and "The build's check"; docs/design-files.md, "A user's home";
+      # docs/design-ssh.md, "Who publishes it").
+      WELL_KNOWN = Ractor.make_shareable([
+        # Property 19's first clause and "The apps row": the system domain's grant rw at
+        # the tree's root, and the app template's rx, rooted at installed/, where no upload
+        # in progress lies: an app's session mounts its installed package at /app through
+        # it (design-files.md F6: an rx mount only through an rx grant).
+        WellKnown.new(constant: 'packages_service', property: 19, needs: :apps, window: nil,
+                      derived: [Derived.new(grantee: :system, values: { 'rights' => 'rw' }),
+                                Derived.new(grantee: :app_template, values: { 'rights' => 'rx', 'tree' => 'installed' })],
+                      source: :any),
+        # Property 19's eighth clause: served by the system window's holder, the domain
+        # whose block driver serves the system partition; the app template's rx grant
+        # mounts an image package at /app.
+        WellKnown.new(constant: 'system_service', property: 19, needs: :apps, window: 'system',
+                      derived: [Derived.new(grantee: :system, values: { 'rights' => 'ro' }),
+                                Derived.new(grantee: :app_template, values: { 'rights' => 'rx' })],
+                      source: :none),
+        # Property 19's seventh clause: every user's template is granted its user's home.
+        WellKnown.new(constant: 'home_service', property: 19, needs: :served, window: nil,
+                      derived: [Derived.new(grantee: :user_templates, values: { 'rights' => 'rw', 'tree' => 'home' })],
+                      source: :none),
+        # Property 19's tenth clause: a user's one place on the data volume is its home,
+        # so a grant that reaches the whole volume is the system domain's, or root's in
+        # development.
+        WellKnown.new(constant: 'data_service', property: 19, needs: nil, window: nil, derived: [],
+                      source: SourceGrants.new(root: :development, read_only: false,
+                                               why: 'grants state no tree and so reach the whole volume')),
+        # Property 8's: the system domain and the import of SSH's stage 1 in root's
+        # sessions read root's login keys, and nothing writes them (docs/design-ssh.md,
+        # "Invariants", H8).
+        WellKnown.new(constant: 'login_keys_service', property: 8, needs: nil, window: 'record_volume', derived: [],
+                      source: SourceGrants.new(root: :always, read_only: true, why: 'tree holds root\'s login keys'))
+      ])
+
+      # The interface, and the name, of the facet the domain service grants every session
+      # by its own policy, with no facet row (docs/design-system.md, "The code_objects
+      # facet"): it serves the facet under its interface's name.
+      CODE_OBJECTS = 'code_objects'
+
       private
 
       def check_mode(development:, partial:)
@@ -1283,8 +1383,7 @@ module Erx
         rows['images'], rows['extents'] = normalize_images(rows.fetch('devices'))
         rows['system_image'] = system_image_rows
         rows['windows'] = normalize_windows(rows)
-        check_system_service(rows)
-        check_login_keys_service(rows, facet_values)
+        check_window_services(rows)
         RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
                           root_memory: root_memory, platform: @context.platform)
       end
@@ -1507,17 +1606,17 @@ module Erx
 
       # The services an app may never take, whatever the apps row says, by name
       # (docs/design-packaging.md, "The build's check", property 19's first clause): the
-      # services named packages_service and system_service, which every app holds
-      # already, and those that
+      # well-known services the build derives the app template a row of, which every app
+      # holds already, and those that
       # would let an app command the start table, install packages, rewrite
       # /etc/rc.conf or end the machine.
       def app_services_refused
-        { @codec.fixed_bytes('packages_service') => 'every app holds its packages grant already',
-          @codec.fixed_bytes('system_service') => 'only the derived system rows grant it',
+        held = WELL_KNOWN.select { |known| known.derived.any? { |grant| grant.grantee == :app_template } }
+        held.to_h { |known| [@codec.fixed_bytes(known.constant), 'every app holds its grant already, which the build derives'] }.merge(
           'start'.b => 'it would let an app command the start table',
           'apps'.b => 'it would let an app install packages',
           'etc'.b => 'it would let an app rewrite /etc/rc.conf',
-          'machine'.b => 'it would let an app end the machine' }
+          'machine'.b => 'it would let an app end the machine')
       end
 
       # Property 19's first and seventh clauses; answers the index of each service of the
@@ -1569,45 +1668,95 @@ module Erx
         declared.merge('queue' => number(@source.machine, 'system_queue'))
       end
 
-      # The facet rows the build derives from the apps row (docs/design-packaging.md, "The
-      # apps row"), none without one: the system domain's grant of the service named
-      # packages_service, rights rw, rooted at the tree's root, and the app template's,
-      # rights rx and tree installed, rooted at installed/, where no upload in progress
-      # lies; the system domain's grant of the service named system_service, rights ro, and
-      # the template's, rights rx; the template's two grants are rx because an app's session
-      # mounts its installed or image package at /app through one of them
-      # (design-files.md F6: an rx mount only through an rx grant); and the template's grant
-      # of each service of app_services, which states no parameter. Each is named as its
-      # service is and takes derived_quantities. Answers each row with its resolved
-      # parameter values, as normalize_facets builds a source row's.
-      def app_facets(tables, app_services)
-        return [] if @apps == NO_APPS
-
+      # The well-known services' derived rows (docs/design-packaging.md, "The apps row";
+      # docs/design-files.md, "A user's home"): those of each service whose needs call
+      # for them, in WELL_KNOWN's order. Each is named as its service is and takes
+      # derived_quantities. Answers each row with its resolved parameter values, as
+      # normalize_facets builds a source row's.
+      def well_known_facets(tables)
         service_rows = tables.fetch('services')
-        packages = fetch_files_service(service_rows, 'packages_service', required_by: 'an apps row')
-        tree = fetch_files_service(service_rows, 'system_service', required_by: 'an apps row')
-        template = [grantee_kind('session'), app_template_index(tables)]
-        system = [grantee_kind('system'), 0]
-        [[system, packages, { 'rights' => 'rw' }], [template, packages, { 'rights' => 'rx', 'tree' => 'installed' }],
-         [system, tree, { 'rights' => 'ro' }], [template, tree, { 'rights' => 'rx' }],
-         *app_services.map { |service| [template, service, {}] }].map do |grantee, service, values|
-          derived_facet(service_rows, grantee, service, values)
+        WELL_KNOWN.select { |known| derives?(known, service_rows) }.flat_map do |known|
+          required_by = known.needs == :apps ? 'an apps row' : "a #{name_of(known)} service"
+          service = fetch_well_known(service_rows, known, required_by: required_by)
+          known.derived.flat_map do |grant|
+            derived_grantees(grant.grantee, tables).map { |grantee| derived_facet(service_rows, grantee, service, grant.values) }
+          end
         end
       end
 
-      # The home rows (docs/design-files.md, "A user's home"): for every session template
-      # but the app template, a grant of the service named home_service, rights rw and
-      # tree home, which roots it at the home of the session's user; none in a manifest
-      # without that service. Answers each row as app_facets does.
-      def home_facets(tables)
-        service_rows = tables.fetch('services')
-        name = @codec.fixed_bytes('home_service')
-        return [] unless service_rows.any? { |row| row.fetch('name') == name }
+      # The rows an apps row asks for (docs/design-packaging.md, "The apps row"): the app
+      # template's grant of each service of app_services, which states no parameter, none
+      # without an apps row. Answers each row as well_known_facets does.
+      def app_service_facets(tables, app_services)
+        return [] if @apps == NO_APPS
 
-        home = fetch_files_service(service_rows, 'home_service', required_by: 'a home service')
+        template = [grantee_kind('session'), app_template_index(tables)]
+        app_services.map { |service| derived_facet(tables.fetch('services'), template, service, {}) }
+      end
+
+      # Whether the build derives the rows of the well-known service known, and the
+      # manifest must hold it: with an apps row, for one an apps row needs, and whenever
+      # it is served, for one its being served needs.
+      def derives?(known, service_rows)
+        case known.needs
+        in :apps then @apps != NO_APPS
+        in :served then service_rows.any? { |service| service.fetch('name') == name_of(known) }
+        in nil then false
+        end
+      end
+
+      # The grantees, each [kind, index], that a derived row's grantee names.
+      def derived_grantees(grantee, tables)
         sessions = tables.fetch('sessions')
-        sessions.each_index.reject { |template| app_session?(sessions.fetch(template)) }.map do |template|
-          derived_facet(service_rows, [grantee_kind('session'), template], home, { 'rights' => 'rw', 'tree' => 'home' })
+        case grantee
+        in :system then [[grantee_kind('system'), 0]]
+        in :app_template then [[grantee_kind('session'), app_template_index(tables)]]
+        in :user_templates
+          sessions.each_index.reject { |template| app_session?(sessions.fetch(template)) }
+                  .map { |template| [grantee_kind('session'), template] }
+        end
+      end
+
+      # The name of the well-known service known, its machine constant's bytes.
+      def name_of(known) = @codec.fixed_bytes(known.constant)
+
+      # The well-known services' source clauses, over granted: every facet row but the
+      # well-known services' own derived rows, that is the board's source rows and the
+      # rows an apps row asks for. Each row of a well-known service meets that service's
+      # source rule (check_granted_row). values holds each row's resolved parameter
+      # values, in granted's order.
+      def check_granted_rows(granted, values, tables)
+        service_rows = tables.fetch('services')
+        WELL_KNOWN.each do |known|
+          granted.zip(values).each do |row, stated|
+            check_granted_row(known, row, stated, tables) if service_rows.fetch(row.fetch('service')).fetch('name') == name_of(known)
+          end
+        end
+      end
+
+      # One granted row of the well-known service known, with its resolved parameter
+      # values: refused for a service whose rows only the build derives, and for one with
+      # SourceGrants unless its grantee is the system domain or a template its root
+      # setting admits and, for a read_only one, it states ro.
+      def check_granted_row(known, row, stated, tables)
+        name = name_of(known)
+        case known.source
+        in :any then nil
+        in :none
+          invalid("facet #{row.fetch('name')} grants the #{name} service: only the derived #{name} rows do",
+                  known.property, 'facet.service')
+        in SourceGrants(root:, read_only:, why:)
+          grantee = row.values_at('grantee_kind', 'grantee')
+          root_may, holders = case root
+                              in :always then [root_template?(*grantee, tables), "the system domain or root's session template"]
+                              in :development
+                                [development_root?(*grantee, tables),
+                                 "the system domain or, in a development manifest, root's session template"]
+                              end
+          invalid("facet #{row.fetch('name')} grants #{name}, whose #{why}, to another grantee than #{holders}",
+                  known.property, 'facet.grantee') unless grantee.first == grantee_kind('system') || root_may
+          invalid("facet #{row.fetch('name')} grants #{name} other than read-only", known.property, 'facet.parameter') if
+            read_only && stated.fetch('rights', 'rw') != 'ro'
         end
       end
 
@@ -1622,17 +1771,43 @@ module Erx
         [facet, values.freeze]
       end
 
-      # The index of the one service named by the machine constant name, of the files
-      # interface, which property 19 requires of a manifest with an apps row
-      # (packages_service and system_service, app_facets) and of one with a system window
-      # (system_service, its eighth clause), required_by naming which.
-      def fetch_files_service(service_rows, name, required_by:)
-        bytes = @codec.fixed_bytes(name)
-        named = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == bytes }
-        invalid("a manifest with #{required_by} holds one service named #{bytes}", 19, 'service.name') unless named.size == 1
-        invalid("the service named #{bytes} is of the files interface", 19, 'service.interface') unless
+      # The index of the one service named as the well-known service known is, of the
+      # files interface, which a manifest holds when known's needs or window call for it,
+      # required_by naming which, or known's property refuses it.
+      def fetch_well_known(service_rows, known, required_by:)
+        name = name_of(known)
+        named = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == name }
+        invalid("a manifest with #{required_by} holds one service named #{name}", known.property, 'service.name') unless
+          named.size == 1
+        invalid("the service named #{name} is of the files interface", known.property, 'service.interface') unless
           service_rows.fetch(named.first).fetch('interface') == fetch_interface('files')
         named.first
+      end
+
+      # The well-known services' window clauses, those of property 19's eighth and of
+      # docs/design-ssh.md, "Who publishes it": for each service with a window, a manifest
+      # with the window holds exactly one service of its name, of the files interface,
+      # served by the window's holder, so the domain that mints the tree's grants is the
+      # one whose block driver serves its partition; and one without the window holds
+      # none, nor an apps row that needs the service.
+      def check_window_services(tables)
+        service_rows = tables.fetch('services')
+        WELL_KNOWN.select(&:window).each do |known|
+          name = name_of(known)
+          role = known.window
+          window = tables.fetch('windows').find { |row| row.fetch('role') == @codec.member('mf_window_role', role) }
+          unless window
+            invalid("an apps row needs a #{role} window, whose holder serves #{name}", known.property, 'apps') if
+              known.needs == :apps && derives?(known, service_rows)
+            invalid("a manifest without a #{role} window holds no service named #{name}", known.property, 'service.name') if
+              service_rows.any? { |row| row.fetch('name') == name }
+            next
+          end
+
+          service = service_rows.fetch(fetch_well_known(service_rows, known, required_by: "a #{role} window"))
+          invalid("the service named #{name} is served by the holder of the #{role} window", known.property,
+                  'service.server') unless window.fetch('holder') == service.fetch('server')
+        end
       end
 
       # Property 19's third clause: the start rows and every app's row fit the start table.
@@ -1646,14 +1821,15 @@ module Erx
       # otherwise the row, with the indices of the app template (app_template_index),
       # and of its packages and system facet rows, and its services, the indices check_apps resolved,
       # ascending, each with the index of the facet row granted to the template for it.
-      # The rows are the ones app_facets derived, found by grantee and service, which no
-      # source row shares with them: no source row names the template.
+      # The rows are the ones derived_facets derived, found by grantee and service, each
+      # service the one of its name, which derived_facets fetched; no source row shares
+      # them: no source row names the template.
       def apps_rows(service_indices, tables)
         return [[], []] if @apps == NO_APPS
 
         template = app_template_index(tables)
         facets = tables.fetch('facets')
-        tree = ->(name) { fetch_files_service(tables.fetch('services'), name, required_by: 'an apps row') }
+        tree = ->(constant) { tables.fetch('services').index { |row| row.fetch('name') == @codec.fixed_bytes(constant) } }
         granted = lambda do |service|
           facets.index do |facet|
             facet.fetch('grantee_kind') == grantee_kind('session') && facet.fetch('grantee') == template &&
@@ -1887,13 +2063,18 @@ module Erx
           invalid('facet names a service the manifest does not contain', 2, 'facet.service') unless index
           facet_row(record, index, tables.fetch('sessions'))
         end
-        home = @codec.fixed_bytes('home_service')
-        invalid('a facet of the source grants the home service, whose rows only the build derives', 19, 'facet.service') if
-          sources.any? { |row| service_rows.fetch(row.fetch('service')).fetch('name') == home }
-        derived = app_facets(tables, app_services) + home_facets(tables)
+        known = well_known_facets(tables)
+        asked = app_service_facets(tables, app_services)
+        derived = known + asked
         rows = sources + derived.map(&:first)
         packed = records('facet').zip(sources).map { |record, row| facet_parameters(record, row, tables) } +
                  derived.map { |row, values| pack_parameters(values, granted_parameters(row, tables)) }
+        # Every row but the well-known services' own derived rows, before the name checks,
+        # which a source row of a service the build derives a row of for the same grantee
+        # would trip first.
+        values = packed.map(&:first)
+        check_granted_rows(sources + asked.map(&:first),
+                           values.first(sources.size) + values.last(asked.size), tables)
         grantee = ->(row) { row.values_at('grantee_kind', 'grantee') }
         server = ->(row) { service_rows.fetch(row.fetch('service')).fetch('server') }
         none = @codec.constant('mf_none')
@@ -1909,10 +2090,9 @@ module Erx
         # The domain service grants every session its code_objects facet by its own policy
         # (docs/design-system.md, "The code_objects facet"), so no row grants one: not to a
         # configured domain, and not to a template, whose limits would replace the service's.
-        invalid('no facet row grants code_objects, which the domain service grants every session', 8, 'facet.service') unless
-          facets_of(rows, 'code_objects', tables).empty?
+        invalid("no facet row grants #{CODE_OBJECTS}, which the domain service grants every session", 8, 'facet.service') unless
+          facets_of(rows, CODE_OBJECTS, tables).empty?
         check_code_objects_service(service_rows)
-        check_data_grants(rows, packed.map(&:first), tables)
         check_network_grants(rows, packed.map(&:first), tables)
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
@@ -2262,11 +2442,18 @@ module Erx
 
       # Whether a facet row may set front: a development build's row granting the display to
       # the system principal's session template, root's, and no other template's or domain's.
-      def front_grantee?(facet, tables)
-        BuildKind.development?(@context.build_kind) && facet.fetch('grantee_kind') == grantee_kind('session') &&
-          tables.fetch('sessions').fetch(facet.fetch('grantee')).fetch('principal') ==
-            reference(@source.machine, 'system_principal', 'principal')
+      def front_grantee?(facet, tables) = development_root?(*facet.values_at('grantee_kind', 'grantee'), tables)
+
+      # Whether the grantee kind and index name root's session template, the system
+      # principal's.
+      def root_template?(kind, index, tables)
+        kind == grantee_kind('session') &&
+          tables.fetch('sessions').fetch(index).fetch('principal') == reference(@source.machine, 'system_principal', 'principal')
       end
+
+      # Whether the grantee is root's session template in a development build, the one
+      # build whose root's template a few grants (front, the whole data volume) may reach.
+      def development_root?(kind, index, tables) = BuildKind.development?(@context.build_kind) && root_template?(kind, index, tables)
 
       # How many grants a facet row makes at once: one for a domain, for the app template
       # the apps row's max, each app a principal with a domains quota of one (property
@@ -2377,41 +2564,13 @@ module Erx
       # the system domain, the name and server the domain service grants every session's
       # facet under (docs/design-system.md, "The code_objects facet").
       def check_code_objects_service(service_rows)
-        interface = fetch_interface('code_objects')
+        interface = fetch_interface(CODE_OBJECTS)
         system = @codec.constant('mf_none')
         found = service_rows.select { |row| row.fetch('interface') == interface }
         return if found.empty?
-        return if found.size == 1 && found.first.fetch('name') == 'code_objects' && found.first.fetch('server') == system
+        return if found.size == 1 && found.first.fetch('name') == CODE_OBJECTS.b && found.first.fetch('server') == system
 
-        invalid('the manifest serves code_objects once, by that name, from the system domain', 8, 'service.interface')
-      end
-
-      # Property 19's tenth clause (docs/design-files.md, "A user's home"): a user's one
-      # place on the data volume is its home, so a grant of the service named
-      # data_service that states no tree, the whole volume, is the system domain's or,
-      # in a development manifest only, root's template's, the system principal's, and
-      # no other grantee's: no configured domain's and no other template's. A row with a
-      # tree (an app's, tree apps) is rooted below the volume and is not this clause's.
-      # values holds each facet's parameter values, by key name, in facets' order.
-      def check_data_grants(facets, values, tables)
-        name = @codec.fixed_bytes('data_service')
-        system_principal = reference(@source.machine, 'system_principal', 'principal')
-        development = BuildKind.development?(@context.build_kind)
-        allowed = lambda do |row|
-          case row.values_at('grantee_kind', 'grantee')
-          in [kind, _] if kind == grantee_kind('system') then true
-          in [kind, template] if kind == grantee_kind('session')
-            development && tables.fetch('sessions').fetch(template).fetch('principal') == system_principal
-          else false
-          end
-        end
-        facets.zip(values).each do |row, stated|
-          next unless tables.fetch('services').fetch(row.fetch('service')).fetch('name') == name && stated['tree'].nil?
-          next if allowed.call(row)
-
-          invalid("facet #{row.fetch('name')} grants the whole volume, data, which only the system domain " \
-                  "and, in a development manifest, root's template take", 19, 'facet.grantee')
-        end
+        invalid("the manifest serves #{CODE_OBJECTS} once, by that name, from the system domain", 8, 'service.interface')
       end
 
       # The facet rows of the interface abi/services declares as NAME, compared by number.
@@ -2703,32 +2862,6 @@ module Erx
         end
       end
 
-      # Property 19's eighth clause (docs/design-packaging.md, "The build's check"): a
-      # manifest with a system window holds exactly one service named system_service,
-      # of the files interface, served by the window's holder, so the domain that mints
-      # the tree's grants is the one whose block driver serves its partition, and one
-      # without a system window holds none, so an apps row, which needs the service,
-      # needs the window; and no source facet row grants it, by whatever label its record
-      # carries.
-      def check_system_service(tables)
-        name = @codec.fixed_bytes('system_service')
-        window = tables.fetch('windows').find { |row| row.fetch('role') == system_role }
-        unless window
-          invalid("an apps row needs a system window, whose holder serves #{name}", 19, 'apps') unless @apps == NO_APPS
-          invalid("a manifest without a system window holds no service named #{name}", 19, 'service.name') if
-            tables.fetch('services').any? { |row| row.fetch('name') == name }
-          return
-        end
-
-        index = fetch_files_service(tables.fetch('services'), 'system_service', required_by: 'a system window')
-        service = tables.fetch('services').fetch(index)
-        invalid("the service named #{name} is served by the holder of the system window", 19, 'service.server') unless
-          window.fetch('holder') == service.fetch('server')
-        labels = records('service').select { |record| service_name(record) == name }.map { |record| "@service.#{record.name}" }
-        invalid("no source facet row names the service #{name}: only the derived system rows do", 19, 'facet.service') if
-          records('facet').any? { |record| labels.include?(one(record, 'service').value) }
-      end
-
       # Root's login keys on the medium (docs/design-ssh.md, "Who publishes it"): at most one
       # record_volume window, on the system window's medium and held by its holder, so the
       # domain that reads the record partition is the one whose block driver serves it.
@@ -2738,42 +2871,6 @@ module Erx
         system = rows.find { |row| row.fetch('role') == system_role }
         invalid('the record_volume window is held by the holder of the system window, on its device', 8, 'window.holder') if
           volumes.any? { |volume| system.nil? || volume.values_at('holder', 'device') != system.values_at('holder', 'device') }
-      end
-
-      # The other half of "Who publishes it": a manifest with a record_volume window holds
-      # exactly one service named login_keys_service, of the files interface, served by the
-      # window's holder, and one without holds none; and every facet row of it is read-only,
-      # a row that states no rights being rw (abi/services/files.txt), and the system
-      # domain's or the system principal's session template's, whose import of SSH's stage 1
-      # reads root's keys (docs/design-ssh.md, "Invariants", H8).
-      # facet_values holds each facet row's resolved parameters, in the rows' order.
-      def check_login_keys_service(tables, facet_values)
-        name = @codec.fixed_bytes('login_keys_service')
-        service_rows = tables.fetch('services')
-        indices = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == name }
-        window = tables.fetch('windows').find { |row| row.fetch('role') == record_volume_role }
-        invalid("a manifest with a record_volume window holds one service named #{name}, and one without holds none", 8,
-                'service.name') unless indices.size == (window ? 1 : 0)
-        return if indices.empty?
-
-        index = indices.first
-        service = service_rows.fetch(index)
-        invalid("the service named #{name} is of the files interface", 8, 'service.interface') unless
-          service.fetch('interface') == fetch_interface('files')
-        invalid("the service named #{name} is served by the holder of the record_volume window", 8, 'service.server') unless
-          window.fetch('holder') == service.fetch('server')
-        principal = reference(@source.machine, 'system_principal', 'principal')
-        root_template = tables.fetch('sessions').index { |row| row.fetch('principal') == principal }
-        grantees = [[grantee_kind('system'), 0], [grantee_kind('session'), root_template]]
-        tables.fetch('facets').zip(facet_values).each do |facet, values|
-          next unless facet.fetch('service') == index
-
-          invalid("facet #{facet.fetch('name')} grants #{name} to another grantee than the system domain or " \
-                  'the system principal\'s session template', 8, 'facet.grantee') unless
-            grantees.include?(facet.values_at('grantee_kind', 'grantee'))
-          invalid("facet #{facet.fetch('name')} grants #{name} other than read-only", 8, 'facet.parameter') unless
-            values.fetch('rights', 'rw') == 'ro'
-        end
       end
 
       def window_device(record, devices)

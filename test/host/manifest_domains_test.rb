@@ -1184,6 +1184,16 @@ class ManifestDomainsTest < Minitest::Test
   # refused. The
   # Phase 1 check refuses every release build in check_mode, before any facet, so the
   # release case runs a check whose check_mode lets one through.
+  # Seed: the clause binds every row that is not one of the well-known services' own
+  # derived rows, so the app template's row of a service named data, which an apps row
+  # asks for and which states no tree, is refused as a source row would be, whatever the
+  # service's interface.
+  def test_an_apps_row_s_grant_of_data_is_refused_as_the_whole_volume
+    data = "service #{@codec.fixed_bytes('data_service').delete("\0")}\n  server @domain.beta\n  interface net\n"
+    refused(Erx::Manifest::Invalid, 19, 'facet.grantee',
+            for_apps(with_display(served: data, grants: []) + self.class.apps(services: 'data'), 8), message: /whole volume/)
+  end
+
   def test_only_roots_template_takes_the_whole_volume_and_only_in_development
     data = "service #{@codec.fixed_bytes('data_service').delete("\0")}\n  server @domain.beta\n  interface files\n"
     system = window_facet('data', 'system', '@service.data')

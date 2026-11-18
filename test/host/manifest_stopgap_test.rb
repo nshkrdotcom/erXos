@@ -839,7 +839,7 @@ class ManifestStopgapTest < Minitest::Test
   # The build's packages and system rows (docs/design-packaging.md, "The apps row"):
   # the system domain's packages grant rw and system grant ro, and the app template's
   # system grant rx, the one an app's session mounts /app through (design-files.md F6),
-  # which the apps row names by index. Seeded: app_facets deriving the template's system
+  # which the apps row names by index. Seeded: derived_facets deriving the template's system
   # row ro, or packing no system_facet, fails it.
   def test_the_build_derives_the_packages_and_system_rows
     view = @codec.open('manifest', admit.bytes)
@@ -868,7 +868,7 @@ class ManifestStopgapTest < Minitest::Test
   end
 
   # The development manifest without its apps row, whose own check of the system service
-  # (app_facets) would otherwise answer the seeds of the system window's first.
+  # (derived_facets) would otherwise answer the seeds of the system window's first.
   def appless = Erx::Manifest::Edit.without_apps(@source)
 
   def test_a_system_service_of_another_interface_is_refused
