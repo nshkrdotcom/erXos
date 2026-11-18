@@ -21,13 +21,15 @@ module Erx
   # beams are the image's; DIR/erlang/public.txt lists the public functions one
   # MODULE:FUNCTION/ARITY a line, a module line of sdk/public.txt expanded to the module's
   # exports. DIR/host/erlang/ebin holds what the packer's file check calls outside the SDK's
-  # applications: erx_bytes for stock OTP (test/erlang/host_bytes) and the preloaded
-  # erx_verity_tree, the hash tree's layout. No private key enters an SDK: its packer makes
+  # applications: erx_bytes for stock OTP (test/erlang/host_bytes), the preloaded
+  # erx_verity_tree, the hash tree's layout, and the preloaded erx_facets, the facet
+  # registry erx:cap/1 reads, for an app run on the host. No private key enters an SDK: its packer makes
   # its own development key on the host that uses it (Erx::PackageKey). DIR/sysroot and
   # DIR/share/erxos/sdk.mk are the native half a C program builds with (Erx::SdkSysroot).
   class Sdk
     PUBLIC = 'sdk/public.txt'
-    HOST_MODULES = %w[test/erlang/host_bytes/erx_bytes.erl otp/erts/preloaded/src/erx_verity_tree.erl].freeze
+    HOST_MODULES = %w[test/erlang/host_bytes/erx_bytes.erl otp/erts/preloaded/src/erx_verity_tree.erl
+                      otp/erts/preloaded/src/erx_facets.erl].freeze
     # Where erx_verity_tree's generated ABI header lies.
     HOST_INCLUDE = 'build/gen/erlang/apps/erx/include'
     DEADLINE = 300

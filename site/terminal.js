@@ -47,8 +47,9 @@ function jit_disabled() { return new URLSearchParams(location.search).get("jit")
 // this value it truncates from a page's 17th compile to a still-large
 // threshold, so such a page recompiles sooner, which costs time only.
 // Elsewhere v64's defaults stand, which boot about twice as fast.
-const JIT_SWITCHES = matchMedia("(pointer: coarse)").matches
-    ? { a64_page_hot: 1_000_000, a64_page_code_mb: 8 } : {};
+function jit_switches() {
+    return matchMedia("(pointer: coarse)").matches ? { a64_page_hot: 1_000_000, a64_page_code_mb: 8 } : {};
+}
 // ?log=console also writes the guest's serial output to the browser's
 // console, one line per line, for a browser whose console outlives the tab.
 function log_to_console() { return new URLSearchParams(location.search).get("log") === "console"; }
@@ -881,7 +882,7 @@ const machine = {
             cpu_type: "arm64", graphics_adapter: "none", cpu_cores: CPU_CORES,
             memory_size: RAM_MIB << 20, log_level: 0, wasm_path: site_url(this.manifest.emulator.wasm),
             kernel: { buffer: kernel }, cmdline: CMDLINE, virtio_disks: virtio_disks(this.disk),
-            net_device: { ...NET_DEVICE }, jit_switches: { ...JIT_SWITCHES, a64_page: jit_disabled() ? 0 : 1 }, autostart: true,
+            net_device: { ...NET_DEVICE }, jit_switches: { ...jit_switches(), a64_page: jit_disabled() ? 0 : 1 }, autostart: true,
         });
         if(log_to_console()) {
             const log = serial_lines(line => console.log("%s", line));

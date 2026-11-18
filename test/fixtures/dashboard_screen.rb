@@ -56,7 +56,7 @@ module DashboardScreen
 
   # The code path of what compile wrote into work: work first, the SDK's applications
   # after it.
-  def code_path(work, sdk:) = ['-pa', work, *sdk.ebins.flat_map { ['-pz', it] }]
+  def code_path(work, sdk:) = ['-pa', work, *[*sdk.ebins, sdk.host_ebin].flat_map { ['-pz', it] }]
 
   # The modules of the applications at app, each behaviour before the modules that implement
   # it, the order erlc needs them in.
