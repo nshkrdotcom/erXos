@@ -56,6 +56,11 @@ screen of each record first, for its idle clock.
 the grants: the client directory of the live grant most recently minted
 with `session` set, or `none`.
 
+**The front mark.** A window's `front` is its grant's `front` limit,
+recorded in its row when the window is made; a grant's limits do not
+change while it lives and its windows end with it, so the mark never
+goes stale.
+
 **The tree.** A grant's root is its client's directory, named by the
 grantee's domain id in decimal, and lists the client's windows by the
 names the client chose and, when the grant's limits carry `clipboard`, the
@@ -280,7 +285,9 @@ grant(Grantee, Limits, #winfs{options = Options, grants_sup = Sup, minted = Mint
     Windows = maps:get(windows, Limits, ?ERX_WINDOWS_DEFAULT),
     Session = maps:get(session, Limits, false),
     HasClipboard = maps:get(clipboard, Limits, false),
-    case is_integer(Windows) andalso Windows >= 0 andalso is_boolean(Session) andalso is_boolean(HasClipboard) of
+    Front = maps:get(front, Limits, false),
+    case is_integer(Windows) andalso Windows >= 0 andalso is_boolean(Session) andalso is_boolean(HasClipboard)
+        andalso is_boolean(Front) of
         false ->
             {{error, einval}, State};
         true ->
@@ -292,7 +299,7 @@ grant(Grantee, Limits, #winfs{options = Options, grants_sup = Sup, minted = Mint
                                              Limits, Binding) of
                         {ok, Grant} ->
                             Record = #{client => Client, area => area(Grantee, Options),
-                                       windows => Windows, session => Session,
+                                       windows => Windows, session => Session, front => Front,
                                        minted => Minted + 1,
                                        monitor => erlang:monitor(process, Grant)},
                             {{ok, Grant}, State#winfs{grants = (State#winfs.grants)#{Grant => Record},
@@ -452,14 +459,14 @@ make_window(Grant, Client, Name, Owner, #winfs{grants = Grants} = State) ->
             {{error, eio}, State}
     end.
 
-new_window(Grant, #{client := Client, area := Area}, Name, Owner, State) ->
+new_window(Grant, #{client := Client, area := Area, front := Front}, Name, Owner, State) ->
     #winfs{next_id = Id, chan = Chan, depth = Depth, windows = Windows,
            policy = Policy, policy_state = PolicyState, session = Session} = State,
     Screen = screen_rect(State),
     Palette = maps:get(palette, State#winfs.options, hd(erx_theme:palettes())),
     {ok, Proc} = erx_window:start_link(#{id => Id, chan => Chan, depth => Depth, palette => Palette,
                                          area => Area}),
-    Row = #{id => Id, dir => {Client, Name}, holder => Owner, rect => Screen, state => hidden,
+    Row = #{id => Id, dir => {Client, Name}, front => Front, holder => Owner, rect => Screen, state => hidden,
             proc => Proc, grant => Grant, monitor => erlang:monitor(process, Owner)},
     Next = State#winfs{next_id = Id + 1},
     ok = log_ids_spent(Id),

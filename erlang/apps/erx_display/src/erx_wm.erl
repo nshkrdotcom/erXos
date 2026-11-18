@@ -79,6 +79,7 @@ fields named here; erx_winfs's other fields pass through unchanged.
 """.
 -type window() :: #{id := window_id(),
                     dir := {Session :: binary(), Name :: binary()},
+                    front := boolean(),        % its grant's front, fixed when it is made
                     rect := rect(),
                     state := shown | hidden,
                     atom() => term()}.

@@ -17,6 +17,8 @@
 %%     session has a window, the shown one is its window with the lowest
 %%     id (single);
 %%   * every key event reaches the shown window (single).
+%% The single policy's pick of a front window is tested exhaustively apart, over every
+%% small table (single_pick_keeps_its_properties_over_every_table_test).
 %% The reserved chord is the input router's, tested with it (erx_input_tests).
 %% The key oracle keeps its own record of the windows keys went down to,
 %% written from the moduledocs' rules rather than from the policy's code. The sequences come from rand with a fixed seed, and
@@ -73,7 +75,7 @@ config(Policy) ->
 %% route an input event.
 step({new, Session}, World = #{policy := Policy, table := Table, next := Id,
                                screen := Screen, state := State}) ->
-    Window = #{id => Id, dir => {Session, integer_to_binary(Id)},
+    Window = #{id => Id, dir => {Session, integer_to_binary(Id)}, front => false,
                rect => {0, 0, 0, 0}, state => hidden, holder => {holder, Id}},
     Given = Table ++ [Window],
     {ok, Placed, Next} = Policy:place(new, Id, Given, Screen, ?APP, State),
@@ -247,8 +249,8 @@ pick(List) -> lists:nth(rand:uniform(length(List)), List).
 screen() -> {0, 0, 1024, 768}.
 
 window(Id, Session) ->
-    #{id => Id, dir => {Session, integer_to_binary(Id)}, rect => {0, 0, 0, 0},
-      state => hidden}.
+    #{id => Id, dir => {Session, integer_to_binary(Id)}, front => false,
+      rect => {0, 0, 0, 0}, state => hidden}.
 
 key(Direction, Code) -> #{device => <<"kbd">>, at => 0, event => {key, Direction, Code, none, none, []}}.
 
@@ -310,3 +312,53 @@ single_follows_the_session_it_is_passed_test() ->
     {ForA, State} = erx_wm_single:arrange(ForB, screen(), <<"a">>, State),
     ?assertMatch([#{id := 1}], erx_wm:shown(ForA)),
     ?assertMatch({{to, 1, _}, _}, erx_wm_single:input(key(down, 30), ForA, ?SCREEN, <<"a">>, State)).
+
+%% The single policy's pick over every table of up to four windows, ids drawn from 1
+%% to 4 in every order, each window the display's session's, a front grant's or another
+%% grant's, with the session set or none (docs/design-display.md, "Verification and
+%% testing", a front window). Each table must keep the pick's four properties, and
+%% arrange/4 and input/5 must show and route to the window shown/2 picks.
+single_pick_keeps_its_properties_over_every_table_test() ->
+    State = erx_wm_single:init(#{}),
+    lists:foreach(fun({Session, Table}) -> picked(Session, Table, State) end,
+                  [{Session, Table} || Session <- [?APP, none], Table <- tables(4)]).
+
+picked(Session, Table, State) ->
+    Shown = erx_wm_single:shown(Session, Table),
+    Case = {Session, Table, Shown},
+    Front = [Id || #{id := Id, front := true} <- Table],
+    Own = lists:sort([Id || #{id := Id, dir := {Dir, _}} <- Table, Dir =:= Session]),
+    holds(Shown =:= none orelse lists:member(Shown, [Id || #{id := Id} <- Table]),
+          {shown_not_in_table, Case}),
+    holds(Shown =:= none orelse lists:member(Shown, Front ++ Own),
+          {shown_neither_front_nor_session, Case}),
+    holds(Front =:= [] orelse Shown =:= lists:max(Front),
+          {front_not_newest_shown, Case}),
+    holds(Front =/= [] orelse Shown =:= case Own of [] -> none; [Oldest | _] -> Oldest end,
+          {session_oldest_not_shown, Case}),
+    {Arranged, State} = erx_wm_single:arrange(Table, screen(), Session, State),
+    holds([Id || #{id := Id, state := shown} <- Arranged] =:= case Shown of none -> []; _ -> [Shown] end,
+          {arranged_beside_the_pick, Case}),
+    Route = case Shown of none -> drop; _ -> {to, Shown, key(down, 1)} end,
+    holds(erx_wm_single:input(key(down, 1), Table, ?SCREEN, Session, State) =:= {Route, State},
+          {routed_beside_the_pick, Case}).
+
+holds(true, _Failure) -> ok;
+holds(false, Failure) -> error(Failure).
+
+%% Every table of up to N windows with ids from 1 to N, in every order, each window of
+%% every kind.
+tables(N) ->
+    [[kind_window(Id, Kind) || {Id, Kind} <- Rows]
+     || Ids <- orders(lists:seq(1, N)), Rows <- kinds(Ids)].
+
+%% Every sequence of distinct elements of Ids, the empty one included.
+orders(Ids) -> [[] | [[Id | Rest] || Id <- Ids, Rest <- orders(Ids -- [Id])]].
+
+kinds(Ids) ->
+    lists:foldr(fun(Id, Rows) -> [[{Id, Kind} | Rest] || Kind <- [session, front, other], Rest <- Rows] end,
+                [[]], Ids).
+
+kind_window(Id, session) -> window(Id, ?APP);
+kind_window(Id, front) -> (window(Id, <<"root">>))#{front := true};
+kind_window(Id, other) -> window(Id, <<"other">>).
