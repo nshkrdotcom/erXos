@@ -2318,9 +2318,7 @@ its code, and the item's work waits on it.
 * **Persistence and recovery.** `/data` on littlefs on the card, 1b-I's
   part (b) ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)).
   A root fault and a missed pet reset the machine, as
-  [design-fiasco.md](design-fiasco.md#the-end-path) has it, where the
-  backend's code powers it off
-  ([design-fiasco.md](design-fiasco.md#what-the-code-does-today)); 0.1
+  [design-fiasco.md](design-fiasco.md#the-end-path) has it: 0.1
   takes the end path's reset, in which every end names its cause and
   only a requested power-off halts the board in the firmware. The root's watchdog thread arms the Pi 4's power-management
   watchdog on every boot and reloads it at each step, so a hang of
@@ -2402,7 +2400,7 @@ its code, and the item's work waits on it.
   evidence not recorded for the boards; and a host key made on a weak
   seed ([design-ssh.md](design-ssh.md#host-keys)) when a boot's seed is
   the counter alone
-  ([design-fiasco.md](design-fiasco.md#what-the-code-does-today)).
+  ([TODO.md](../TODO.md)).
 * **The board by hand**, on the 4 GB Pi with no rig: 1b-I's manual
   passes and power-cut checklist, and a soak. **No design** for the
   soak: its workload, its length and what it records are written first,

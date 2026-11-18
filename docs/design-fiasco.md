@@ -114,8 +114,7 @@ From them:
 
 * **Every build promises**, for trusted workloads: the results in [the call table](#the-call-table),
   no memory errors, no deadlock, and exact accounting of whatever it reports. The call table is
-  the target; [What the code does today](#what-the-code-does-today) lists each place today's code
-  differs from it, and each is a bug until fixed.
+  the target, and each place the code differs from it is a bug in `TODO.md`.
 * **A release on Fiasco promises**, for every domain, trusted or not: isolation of each domain's
   memory and capabilities by Fiasco's address spaces and object spaces, which only the root
   writes, so that isolation rests on Fiasco and on the root's request decoder and placement code
@@ -155,45 +154,6 @@ From them:
 [Read in source, never run](#read-in-source-never-run) lists what the first packages must check; a
 claim that fails changes this document.
 
-## What the code does today
-
-The backend mediates every call. The root task holds every
-Fiasco capability; another task holds only its gate to the root and its threads' semaphores
-([Capabilities in Fiasco's object space](#capabilities-in-fiascos-object-space)).
-Callers hold handles, indices into a table the root service keeps, each naming a record and its
-generation; handles carry no rights. A doorbell's trigger and an interrupt's acknowledgement are
-requests to the root, so a doorbell costs one service round trip at its ringer. Budgets are
-records with nothing charged against a cap, and every kernel object comes from the root's own
-factory, so one domain can spend kernel memory every other domain needs; the root's tables are
-machine-wide, among them 256 IRQ objects for every task together (`irq_objects`,
-`liberx/backend/fiasco/irq.c:60`). Every thread but the watchdog runs at Fiasco's priority 1
-([Scheduling](#scheduling)). Fiasco builds with its debugger on by default
-(`src/Kconfig:773-775`), and every kernel build compiles the GPL-2.0 `kobject_rpc.h`, which
-`task.cpp`, `ipc_gate.cpp`, `irq.cpp`, `icu_helper.cpp`, `pi_mutex.cpp` and `arm/smc_user.cpp`
-include, and the GPL-2.0 `jdb_object.cpp`, which `Modules.generic` lists for every kernel
-whatever the debugger's setting (`fiasco/kernel/src/Modules.generic:58`), so no build may be distributed ([design.md](design.md#dependencies)).
-
-Beyond that construction, today's code gives these results where the call table gives others,
-each a bug in `TODO.md`:
-
-* `erx_space_pause` and `_resume` answer `ERX_ENOTSUP`.
-* `erx_time_set_offset` checks no right, so any task sets the wall clock
-  (`liberx/backend/fiasco/service.c`, the `ERX_FIASCO_CALL_TIME_SET_WALL` case).
-* `erx_mem_copy` copies a JIT object: `erx_mem_create` checks `ERX_MEM_JIT` at the create
-  (`service_task.c:747-751`) but no record keeps the flag, and the copy refuses only physical
-  memory and a slice destination (`vm.c:523-526`).
-* `erx_image_map` answers `ERX_ENOMEM` for every refusal after the plan, a slice's
-  `ERX_ECORRUPT` from the entry's hash check (`slice.c:84-85`) and a range in use among them
-  (`service_task.c:515-526`).
-* Paged objects are not offered (`service.h:90`), so no destination is ever sealed.
-* A map Fiasco refuses under a range call ends the machine ([The range table](#the-range-table) gives the domain-local `ERX_ENOMEM`).
-* `erx_thread_set_affinity` and a thread's start pass the caller's mask to Fiasco unnarrowed, and a thread with no mask stays on the root service's CPU (`service.c`, `service_thread_set_affinity` and `service_sched_param`).
-* `task_write` is answered for every task (`service.c`, `service_task_write`), and a boot whose seed is the counter alone goes on in every build (`entropy.c`, `erx_fiasco_entropy_init`); the Raspberry Pi 4 reads its RNG200 only when `/chosen` holds no seed at all.
-* `erx_machine_end` answers `ERX_EINVAL` for every `how` but `ERX_END_OFF` and `ERX_END_RESET`,
-  `ERX_END_TRIAL` included (`service.c`, the `ERX_FIASCO_CALL_MACHINE_END` case).
-* A missed pet, a root fault and the root's own stop power the machine off rather than reset it (`end.c`,
-  `erx_fiasco_end_watchdog`; `service.c`, `service_fault`; `service_task.c`, the root's case of a space's stop).
-
 ## The construction
 
 ### Who holds what
@@ -206,8 +166,8 @@ reference count before the root deletes it.
 | erXos object | Fiasco object | Created by the root through | Placed in the holder with | The holder's own use |
 | --- | --- | --- | --- | --- |
 | a doorbell, a device line | an IRQ object (`Irq_sender`) | the owning domain's factory | trigger and acknowledgement only: no special right, so `sys_bind` and `sys_detach` refuse (`irq.cpp:1104-1137`); the root alone binds | `l4_irq_trigger`; the line's `l4_irq_unmask` |
-| a thread's wait object | a semaphore | the thread's domain's factory | the rights `l4_semaphore_up` and `_down` take | umtx, park and the reaper, as today |
-| a task's request gate | an IPC gate bound to the root service | the task's domain's factory | the send right, at `L4_BASE_PAGER_CAP` | every service call and fault, as today |
+| a thread's wait object | a semaphore | the thread's domain's factory | the rights `l4_semaphore_up` and `_down` take | umtx, park and the reaper |
+| a task's request gate | an IPC gate bound to the root service | the task's domain's factory | the send right, at `L4_BASE_PAGER_CAP` | every service call and fault |
 | a thread | a thread | the domain's factory, started by the root through the scheduler with its domain's band and CPU set | nothing: no task holds a thread capability | none |
 | a space (a domain's task, a sub-space) | a task | the domain's factory | nothing | none |
 | a budget | a factory for the domain's kernel memory, and the root's page record for its user pages | the parent budget's factory | nothing | none |
@@ -316,7 +276,7 @@ space the creator made, which pass sets do not bind on erXos's kernel either
 `erx_object_destroy` is the root's delete through its delete right, after which Fiasco's object
 deletion removes the capability from every holder at once; a memory object's destroy unmaps its
 pages from every space through Fiasco's mapping database. Ending a domain deletes every object the
-root's records charge to its budget, and then its factory, as the root's list walk does today
+root's records charge to its budget, and then its factory, in the root's one list walk
 ([Deletion](#deletion)).
 
 ### Memory and budgets
@@ -459,8 +419,7 @@ root; its setup does.
 Every consumer kept in Phase 1 has a row, and `ERX_ENOTSUP` answers everything else. This one table
 gives every call's result on Fiasco, its refusals included, on a development build and a release
 alike; it is the one place results are written, and the downside rows and other sections cite it.
-It is the target: [What the code does today](#what-the-code-does-today) lists where today's code
-differs. Its last column names the rows of [Downsides against erXos's kernel](#downsides-against-erxoss-kernel)
+It is the target, and code that differs from it is a bug in `TODO.md`. Its last column names the rows of [Downsides against erXos's kernel](#downsides-against-erxoss-kernel)
 where the result differs from erXos's kernel's, and a row whose last column says none gives erXos's
 kernel's result. M7's parity review works from it: a difference that neither a row nor its downside
 names is a bug in one backend. A call that names a space takes `ERX_CAP_SELF` or a space handle, and
@@ -646,7 +605,7 @@ follows.
 
 A band is a run of Fiasco priorities a domain's threads start in, from its limits record. The first
 release needs one priority per band, since nothing changes a thread's urgency. There are six bands,
-from the top: the watchdog at 255 as today; the root service; the system domain; the driver and device
+from the top: the watchdog at 255; the root service; the system domain; the driver and device
 domains; interactive domains (the display, web and session domains); and apps and programs, the
 lowest, so no priority lies below it. A band is a domain's, not a thread's, so a domain's
 background work runs in its own band. A spinning
@@ -666,7 +625,7 @@ into erXos's kernel. The sizes are estimates from the files named and are unveri
 | 2, deferred preemption | at a slice end with another thread ready, a bounded grace while the executor's `defer` count is raised; never for a higher-priority wake | `Timeslice_timeout::expired` (`timeslice_timeout.cpp:36-48`, a 49-line file) | 50 to 150 lines |
 | 3, urgency within a band | a store the runtime makes, read at the thread's next transition, or a scheduler capability bounded to a band | `Scheduler::sys_run` (`scheduler.cpp:63-110`) | 50 to 200 lines |
 | 4, group park | the group's ready list and epochs in the kernel, removing the dispatcher's thread switch | a new kernel object beside `Irq_sender` | 300 to 600 lines, with the park core |
-| 5, group quotas | charging up the group tree across CPUs, as a new scheduling-context variant beside the fixed-priority one, which Kconfig's scheduler choice selects (`src/Kconfig:330-351`) | the fixed-priority variant is `sched_context-fixed_prio.cpp` (321 lines), `sched_context.cpp` (188) and `ready_queue_fp.cpp` (171); the six variant and queue files total 1,450 lines | 1,500 to 3,000 lines, with its policy in `kernel/sched/sched.c` (676 lines today, the C0 core) |
+| 5, group quotas | charging up the group tree across CPUs, as a new scheduling-context variant beside the fixed-priority one, which Kconfig's scheduler choice selects (`src/Kconfig:330-351`) | the fixed-priority variant is `sched_context-fixed_prio.cpp` (321 lines), `sched_context.cpp` (188) and `ready_queue_fp.cpp` (171); the six variant and queue files total 1,450 lines | 1,500 to 3,000 lines, with its policy in `kernel/sched/sched.c`, the C0 core |
 
 The first release ships bands alone. The stages follow it in the order 1, 2, 4, 5, once everything
 else works, each kept only when its measurement pays, as [plan.md](plan.md)'s M8 keeps each feature
@@ -866,114 +825,92 @@ Inherited code reads no executable and no modules.
 
 1. The plan finds the archive through the locator in the bootable file's header, or as the one
    initrd, opens it with `erx_pack_open`, and checks each role's file with `erx_pack_file_check`:
-   the kernel at `boot_kernel_path`, `sigma0` at `boot_sigma0_path`, and the root at
-   `boot_stand_in_root_path`, the path at which the packer stores the system release's root entry.
-2. It reads each with `erx_elf_plan_kernel` and chooses where it goes, in three steps. The root,
-   a static executable, runs at the physical addresses it is linked at, which must lie in memory
-   and clear `bootstrap`, the device tree and every reserved region. The archive stays where the
-   loader left it unless such an image lands on it; it then moves, whole, to the lowest page
-   behind every image placed at its link addresses that is in memory and clear of `bootstrap`,
-   the device tree, the reservations and those images, as stock Fiasco's `bootstrap` moves its
-   modules behind the ELF images it loads (`Boot_modules::move_modules`, `boot_modules.cc:262`);
-   the new place may overlap the old one.
-   Last, an image that relocates itself, as the fork's kernel and `sigma0` do, goes behind the
-   archive where the plan leaves it, and a kernel that cannot relocate fails the plan. Every copy
-   reads the archive at that final place. The plan then chooses the room for the device tree's
-   copy, the tree's declared size in whole pages, and the handoff page, each at the lowest free
-   page in memory past the first, so neither is at address 0, clear of everything placed and of
-   the archive where the loader left it, and
-   gives where the kernel's two views lie in that loaded archive. A refusal prints
-   `erXos image: <where>: <reason>` and stops, having copied and moved nothing; a move with no
-   room is `archive_no_room`, named after the root, and no room for the copy or the page is
-   `device tree: no_free_ram` or `handoff page: no_free_page`.
-3. Before anything moves, `erx_image_load` checks the kernel information page's magic and the
-   options block's magic and version in the loaded archive, where the copy will read them, then
-   reserves the whole archive, at its final place and never released, then the images, then
-   writes the device tree's copy and the handoff record of step 4, so every refusal comes before
-   any of the archive's or an image's bytes move. Then it moves the archive when the plan moves
-   it, as `memmove` does, and prints `erXos image: moving the archive from <old> to <new>`, and
-   only then copies, since a copy reads the archive at its new place and the root's copy may land
-   on its old one; nothing past that point refuses. The archive so reaches `init_kip_md` whole.
-   Each range it writes is cleaned from the data cache by whole lines at the address's full
-   width (`erx_cache_lines`, `erx/core/cache_lines.h`). A `Region::Root` region's sub-type is what
-   `sigma0` answers a page fault of the root with (`init_mem.cc:73`, `memmap.cc:170-176`):
-   `Root_section_rwx` for the root's image, whose segments one range cannot tell apart, and
-   `Root_section_rx` for the archive, read and execute and never write, so the root can map an image
-   entry's code from the archive's own pages.
-4. `erx_boot_handoff_write` writes the `erx_boot_handoff` record of `abi/kernel.txt` (flags, build
-   identifier, index hash, the archive's range, `/chosen/bootargs` cut at the last whole word, and
-   the full path of the node `/chosen/stdout-path` names: libfdt resolves the value up to its first
-   `:`, a path or an alias of `/aliases`, and the path is empty when that names no node or is longer
-   than `ERX_BOOT_STDOUT_PATH_MAX`; and the boot value with its slot, which `erx_boot_pair_derive`
+   the kernel, `sigma0` and the root, at the ABI's `boot_kernel_path`, `boot_sigma0_path` and
+   `boot_stand_in_root_path`.
+2. It reads each with `erx_elf_plan_kernel` and places them. The root, a static executable, runs
+   at the physical addresses it is linked at, which must lie in memory and clear `bootstrap`, the
+   device tree and every reserved region. The archive stays where the loader left it unless such
+   an image lands on it, and then moves, whole, to the lowest free page behind those images, as
+   stock Fiasco's `bootstrap` moves its modules (`Boot_modules::move_modules`,
+   `boot_modules.cc:262`). An image that relocates itself, as the fork's kernel and `sigma0` do,
+   goes behind the archive, and a kernel that cannot relocate fails the plan. The device tree's
+   copy and the handoff page each take the lowest free page in memory past the first, so neither
+   is at address 0, clear of everything placed and of the archive where the loader left it, since
+   both are written before the archive moves; the archive's new place may overlap its old one. A refusal prints `erXos image: <where>: <reason>` and stops, having copied and moved
+   nothing (`archive_no_room`, `device tree: no_free_ram`, `handoff page: no_free_page` among the
+   reasons).
+3. Every check and reservation comes before any byte moves: `erx_image_load` checks the kernel
+   information page's magic and the options block's magic and version where the copy will read
+   them, reserves the whole archive at its final place, never released, then the images, then
+   writes the device tree's copy and the handoff record. Only then does it move the archive, if
+   the plan moves it, as `memmove` does, and copy the images from the archive's new place; nothing past that point
+   refuses. Each range it writes is cleaned from the data cache by whole lines. A `Region::Root`
+   region's sub-type is what `sigma0` answers a page fault of the root with (`init_mem.cc:73`,
+   `memmap.cc:170-176`): `Root_section_rwx` for the root's image, whose segments one range cannot
+   tell apart, and `Root_section_rx` for the archive, read and execute and never write, so the
+   root can map an image entry's code from the archive's own pages.
+4. `erx_boot_handoff_write` writes the `erx_boot_handoff` record of `abi/kernel.txt`: flags, build
+   identifier, index hash, the archive's range, `/chosen/bootargs` cut at the last whole word, the
+   full path of the node `/chosen/stdout-path` names (libfdt resolves the value up to its first `:`,
+   a path or an alias of `/aliases`; empty when that names no node or is longer
+   than `ERX_BOOT_STDOUT_PATH_MAX`), the boot value with its slot, which `erx_boot_pair_derive`
    computes from `/chosen/bootloader`'s `partition` and `tryboot`
-   ([design-platforms.md](design-platforms.md#data-model)), `unknown` with slot `none` when either is
-   missing or malformed or the partition is not a slot; and the range of the copy of the device tree it
-   made: it packs the tree with `fdt_open_into` and `fdt_pack` into the plan's room, without
-   `/chosen`'s `linux,initrd-start` and `linux,initrd-end`, which name where the loader left the
-   two-file form's archive, reserves the copy's whole pages as `Region::Root` with `Root_section_ro`, named
-   `.erxtree`, and refuses the boot when the packed tree exceeds `ERX_BOOT_TREE_MAX` or a step fails
-   ([design-device-tree.md](design-device-tree.md#on-fiasco)); and the boot CPU's
-   identification registers, which `erx_boot_cpu_id_read` reads in kernel mode, since user mode
-   cannot and Fiasco publishes no copy, into the record's `cpu_id` words)
-   into a buffer of its own, before anything moves, and copies it into the options block for the
-   kernel once the kernel is copied. That block is mapped into no task, so it also writes the
-   record, by `erx_image_load`, into the **handoff page** the plan chose, reserved as
-   `Region::Root` with `Root_section_ro`. The record's pool fields stay zero, with no reader.
+   ([design-platforms.md](design-platforms.md#data-model)), `unknown` with slot `none` when either
+   is missing or malformed or the partition is not a slot; the range of the device tree's packed
+   copy, without `/chosen`'s `linux,initrd-start` and `linux,initrd-end`, reserved read-only as
+   `.erxtree`, the boot refused when it exceeds `ERX_BOOT_TREE_MAX`
+   ([design-device-tree.md](design-device-tree.md#on-fiasco)); and the boot CPU's identification
+   registers, which user mode cannot read and Fiasco publishes nowhere, in the record's `cpu_id`
+   words. It writes the record into a buffer of its own before anything moves, and into the
+   **handoff page**, reserved read-only for the root, and copies it into the options block for the
+   kernel once the kernel is copied; the options block is mapped into no task, so the root reads the
+   handoff page. The record's pool fields stay zero, with no reader.
 5. `init_kip_infos` assigns the page's address to the kernel information page's `user_ptr`
-   (`init_kip.cc:30`), which `boot_info_t` carries there.
+   (`init_kip.cc:30`).
 
 **The kernel.** Its options are a constant, `Fiasco::KERNEL_OPTIONS` (`fiasco.rb`), built into
-`bootstrap`, with neither `-serial_esc` nor `-serial_input`. Its configuration is one
-defconfig, `config/fiasco/kernel.defconfig`, for every board. A development kernel is built
-from it as it is, with JDB, the kernel debugger, which selects `CONFIG_INPUT`, the kernel's own
-console input: a panic (`kernel_panic.cc`) enters JDB on the console through
-`Thread::system_abort` (`thread.cpp`) once JDB is initialized, and before that waits at
-`terminate.cpp`'s `raw_exit` for a key; either way the run waits for the operator or the
+`bootstrap`, with neither `-serial_esc` nor `-serial_input`. Its configuration is one defconfig,
+`config/fiasco/kernel.defconfig`, for every board. A development kernel is built from it as it is,
+with JDB, the kernel debugger, and the kernel's own console input it selects: a panic enters JDB on
+the console, or before JDB is initialized waits for a key, so the run waits for the operator or the
 harness's deadline. A release kernel is built from the same defconfig with `CONFIG_JDB` and
-`CONFIG_INPUT` written as not set after it, its only differences, stated once in
-`FiascoConfig::RELEASE_UNSET` (`fiasco_config.rb`, `tools/erx build release-kernel`). Without
-JDB a panic calls `terminate`, and so does a trap in kernel mode. Every synchronous kernel-mode
-exception that does not panic at once (`arm/64/thread-arm-64.cpp`, `Thread::arm_kernel_sync_entry`) reaches
-`Thread::call_nested_trap_handler` (`arm/thread-jdb.cpp`), which is JDB's entry in a development
-kernel, stopping every CPU, and in a release kernel prints the trap state and panics: a kernel
-trap is fatal in both, and neither leaves the faulting CPU to trap again while the others run. A
-kernel-mode SError is counted and execution goes on, in both (`Thread::arm_serror_handler`).
-Its exit question, which `kernel_main` installs
-(`arm/main.cpp`), reboots at once when console input is out of the build
-(`terminate.cpp`, `Exit_question::ask`); before `kernel_main`, during the static
-initialization that runs `Startup::stage1` and `stage2`, `raw_exit` stands in, reads no key
-without console input and resets as well. The reset (`reset-arm-gen.cpp`) is PSCI's system
-reset, or the BCM2711 watchdog where the device tree has one and no PSCI was found, and
-otherwise an endless loop: a panic before `Dt::init` and `Psci::init` in `stage2`, the
-handoff checks among them, does not reset. With console input in, the exit question would
-instead wait on the console with interrupts off. `FiascoConfig` checks the resolved configuration,
+`CONFIG_INPUT` unset, its only differences, stated once in `FiascoConfig::RELEASE_UNSET`
+(`fiasco_config.rb`). A kernel trap is fatal in both: a development kernel enters JDB, stopping
+every CPU, and a release kernel prints the trap state and panics
+(`Thread::call_nested_trap_handler`, `arm/thread-jdb.cpp`), so no faulting CPU traps again while
+the others run. A kernel-mode SError is counted and execution goes on, in both
+(`Thread::arm_serror_handler`, FD33). Without console input a panic resets at once
+(`terminate.cpp`, `Exit_question::ask`, and `raw_exit` before `kernel_main`) through PSCI's
+system reset, or the BCM2711 watchdog where the device tree has one and no PSCI was found
+(`reset-arm-gen.cpp`), and otherwise loops forever: a panic before `Dt::init` and `Psci::init`,
+the handoff checks among them, does not reset. With console input in, the exit question would wait on the console with
+interrupts off instead. `FiascoConfig` checks the resolved configuration,
 `globalconfig.out`, after every configuration step, since a `select` can set what the defconfig
-leaves unset: every kernel needs `CONFIG_FPU`, `CONFIG_PERFORMANCE`, `CONFIG_PERF_CNT_USER`
-(with `CONFIG_PERF_CNT`, which only JDB turns on by default) and `CONFIG_SYNC_CLOCK`, and none
-has `CONFIG_LAZY_FPU`, `CONFIG_ARM_SVE` or `CONFIG_CPU_VIRT`; a release kernel's has neither
-`CONFIG_JDB` nor `CONFIG_INPUT`. A release kernel links only sources under permissive terms:
-its build runs the link audit (`FiascoProvenance`) over the kernel alone and fails naming each
-linked source whose license, as its import record gives it, is neither permissive
-(`LicenseExpression.permissive?`) nor GCC's on the cross compiler's `stdarg.h`, `stdbool.h`
-and `stddef.h`, so `jdb_object.cpp` (GPL-2.0-only) is built only with `CONFIG_JDB`. A source
-the audit cannot attribute fails the build too, and a file without a license passes only as
-configuration or as one made from attributed sources. The gate rests on which sources the
-kernel's objects were compiled from, as the release build's own compile records give them; on
-the import records' licenses; and on the profile's account of each generated kernel file and
-its recipes' bytes, which hold for every build kind, but not on the development build's
-pinned generated bytes, configuration or host tools. A development build's audit compares those
-with the profile's pins and records each that the host's tools made with other bytes (another
-cross toolchain, another host) in its report's `host_generated`, with the pinned hash and the
-host's, instead of refusing the build: the image stays project-only, and the record names what
-differs. A refused kernel is removed; one that
-passes has `license-check.json` beside it, naming its build kind and its bytes. The kernel's own
-changes are `erx_handoff.cpp`: it accepts the record, refusing a boot value and slot that are not
-one of the machine page's pairs, prints the banner (`development build: trusted code only`, the
-build identifier, the index hash, then `erx: boot value <unknown|normal|trial> slot <none|a|b>`,
-whose names come from a fixed table) and panics if no bootloader descriptor covers the archive. The fork's kernel-call route, `erx_probe` and `erx_syscall`, is out of its build
-(`Modules.generic:112`), and its sources stay in `fiasco/kernel/src/erx/` for erXos's kernel to draw on. It
-greets as erXos (`kip.cpp`). It starts `sigma0` and then the root (`std_workload.cpp`), with capabilities
-at `L4_BASE_TASK_CAP`, `L4_BASE_FACTORY_CAP`, `L4_BASE_THREAD_CAP`, `L4_BASE_PAGER_CAP` (a gate to
+leaves unset: every kernel needs `CONFIG_FPU`, `CONFIG_PERFORMANCE`, `CONFIG_PERF_CNT_USER` (with
+`CONFIG_PERF_CNT`, which only JDB turns on by default) and
+`CONFIG_SYNC_CLOCK`, and none has `CONFIG_LAZY_FPU`, `CONFIG_ARM_SVE` or `CONFIG_CPU_VIRT`.
+
+A release kernel links only sources under permissive terms: its build runs the link audit
+(`FiascoProvenance`) over the kernel and fails naming each linked source whose license, as its
+import record gives it, is not permissive, the cross compiler's three GCC headers excepted
+([License](#the-releases-fiasco-build)), so `jdb_object.cpp` (GPL-2.0-only) is built only with
+`CONFIG_JDB`; a source the audit cannot attribute fails the build too, and a file without a license passes only
+as configuration or as one made from attributed sources. The audit rests on the
+release build's own compile records, the import records' licenses and the profile's account of
+each generated kernel file, not on a development build's pinned generated bytes or host tools: a
+development build's audit records each generated file that the host's tools made with other bytes
+in its report's `host_generated` instead of refusing the build, and the image stays project-only.
+A refused kernel is removed; one that passes has `license-check.json` beside it, naming its build
+kind and its bytes.
+
+The kernel's own changes are `erx_handoff.cpp`: it accepts the record, refusing a boot value and
+slot that are not one of the machine page's pairs, prints the banner (`development build: trusted
+code only`, the build identifier, the index hash, then `erx: boot value <unknown|normal|trial> slot
+<none|a|b>`, from a fixed table) and panics if no bootloader descriptor covers the archive. The
+fork's kernel-call route, `erx_probe` and `erx_syscall`, is out of its build (`Modules.generic:112`),
+and its sources stay in `fiasco/kernel/src/erx/` for erXos's kernel to draw on. The kernel greets as
+erXos (`kip.cpp`) and starts `sigma0` and then the root (`std_workload.cpp`), with capabilities at
+`L4_BASE_TASK_CAP`, `L4_BASE_FACTORY_CAP`, `L4_BASE_THREAD_CAP`, `L4_BASE_PAGER_CAP` (a gate to
 `sigma0`), `L4_BASE_LOG_CAP`, `L4_BASE_ICU_CAP` (also the platform control object) and
 `L4_BASE_SCHEDULER_CAP`; a stack pointer of 0; one page of UTCB slots (`std_workload.cpp:95`);
 Fiasco's default priority, on the boot CPU.
@@ -1087,18 +1024,14 @@ function and maps it read-only.
 task's first thread as its argument. Its `flags` carry `ERX_BOOT_DET` when the system's page does. Its strings hold the
 domain's node name and the system node's, its `args` and `env`, and the words the library adds to its `args`, after
 the row's own: `-erx_record build ID` with the boot image's build identifier, as the root's own page carries it, so
-every domain names the same build; one record per device it was given that has one, `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
-MEM_SIZE CLOCK COHERENT MAC`, the same record the root writes into the system domain's page for each device of a kind it holds ([Device records](#device-records)), or, for a framebuffer the root placed, `-erx_record framebuffer WINDOW_H OFFSET SIZE WIDTH HEIGHT STRIDE FORMAT` ([design-device-tree.md](design-device-tree.md#facts-into-records)), and, when it holds a
+every domain names the same build; one `given` record per device it was given that has one, the
+same record the root writes into the system domain's page for each device of a kind it holds
+([Device records](#device-records)), or, for a framebuffer the root placed, `-erx_record framebuffer WINDOW_H OFFSET SIZE WIDTH HEIGHT STRIDE FORMAT` ([design-device-tree.md](design-device-tree.md#facts-into-records)), and, when it holds a
 block device, `-erx_record boot VALUE SLOT` with the boot's pair, as the root's own page carries it, and, when the
 manifest's `system` window row names it, `-erx_record system_image` ([The booted
 slot](#the-booted-slot)). A device of no kind has no record and no window of its own: its registers on a page that a device of a kind in
 its unit shares lie in that device's window, and a line it shares with one is that device's IRQ object
-([design-shared-devices.md](design-shared-devices.md#the-unit-rule)). PATH is the device-tree path of its manifest row, the name its driver gives it (`erx_device_record` returns it as `path`), a node path of at most `device_path_max` bytes (`abi/erx_abi.txt`), which the manifest grammar holds `devices[].path` to; the record writers, the root's reader and the domain library's view refuse any other path (`erx_boot_device_path_valid`), and `erx_device_record` any other PATH word, so a name a driver shows holds no control or escape, and reaches a display only through that sink's escaping function; WINDOW_H, LINE_H and MEM_H are the installed objects' values in the holder's own handle
-table, OFFSET and SIZE place the registers in the window page, MEM_H and MEM_SIZE are 0 for a device with no
-memory, CLOCK is the device's clock in hertz from its manifest row, 0 for a device whose driver reads none, and
-COHERENT is 1 when the device tree the firmware handed over marks the device coherent, else 0, and MAC is the
-hardware address that tree gives a network device, as a 48-bit number, 0 for none
-([design-device-tree.md](design-device-tree.md#facts-into-records)); ROLE and PERIPHERAL come from `include/erx/device_kinds.h`, and `erx_device_record` reads the records. The
+([design-shared-devices.md](design-shared-devices.md#the-unit-rule)). The
 domain library's boot view admits a configured row or a session template only when its own words leave room within
 `ERX_BOOT_STRINGS_MAX` for all of those at their longest (`ERX_DOM_NODE_MAX` per node name, and the record sizes of
 `include/erx/boot_words.h`), and refuses the manifest with a reason naming that reserve otherwise, so a creation never
@@ -1330,26 +1263,16 @@ without `ERX_PACK_TEST_CODE` (`ProductionImage.check_test_scripts`, seeded in
 `test/host/production_image_test.rb`). The system domain suite's configured
 server boots `erx_echo_test` this way, to provide a service before its ready report.
 
-A test image may also name a larger machine (`ProductionImage::Machine`): its RAM,
-from which its `fiasco_reserve` follows by Fiasco's rule (`Platform.fiasco_reserve`), a growth added to both `root_memory` and `system_baseline` of the
-development manifest, a growth of `/tmp`'s cap, and the root's place, the one
-address `liberx/backend/fiasco/root.ld` takes from the root's link; the rest of the
-added RAM widens the archive's room below RAM. The
-development machine links the root 64 MiB into RAM, so it fits small machines, and the
-oracle's 2 GiB machine 192 MiB into RAM, above that machine's larger archive, which then
-stays where the loader left it ([Boot](design-platforms.md#boot)).
-No other line of the manifest changes, and the manifest check proves the
-grown manifest against the platform record with that RAM and reserve as it proves
-the development one. The production image boots on the development machine,
-which is the platform record's own RAM and `fiasco_reserve`: on QEMU `virt` 512 MiB,
-room for the test images' archives beside `root_memory`. The site image, built from the
-site manifest, is packed and checked on the site machine (`Machine.site`): 256 MiB with
-a 16 MiB reserve, the RAM the website's browser emulator gives its guest, since the
-guest's RAM is the tab's memory. `OracleQemu` boots on 2 GiB with a
-124 MiB reserve, the system domain 1 GiB larger and `/tmp`'s cap 160 MiB, since
-OTP's suites ask for more than the development baseline holds (compiler's
-`beam_ssa_check_SUITE` asks for a 98 MiB heap) and fill more of `/tmp` than its
-4 MiB (stdlib's group charges about 97 MiB).
+A test image may also name a larger machine (`ProductionImage::Machine`): its RAM, from which its
+`fiasco_reserve` follows by Fiasco's rule (`Platform.fiasco_reserve`), a growth of the development
+manifest's `root_memory`, `system_baseline` and `/tmp` cap, and the root's link address
+(`liberx/backend/fiasco/root.ld`), placed as [Boot](design-platforms.md#boot) gives it. No other
+line of the manifest changes, and the manifest check proves the grown manifest against the platform
+record with that RAM and reserve as it proves the development one. The production image boots on
+the development machine, the platform record's own RAM and `fiasco_reserve`; the site image is
+packed and checked on the site machine (`Machine.site`), the RAM the website's browser emulator
+gives its guest; and `OracleQemu` boots a larger machine, since OTP's suites need more heap and
+`/tmp` than the development baseline holds.
 
 | Archive entry | Kind | What it is |
 | --- | --- | --- |
@@ -1357,7 +1280,7 @@ OTP's suites ask for more than the development baseline holds (compiler's
 | `boot_stand_in_root_path` | file | the root as an ELF file, which `bootstrap` loads |
 | `system/root` | image | the same program as an image, the header's root entry, which the root startup rule sizes |
 | `system_manifest_path`, `system/NOTICES` | file | what `Pack#build` generates |
-| `domains/erxos/...` | file | the domain release, which every domain boots from. It holds each file of the applications any of its boot scripts names, once, under `lib/` as in the system release, and a boot script `bin/<name>.boot` for each name the manifest's domain rows and session templates give their release, and in a test image for each script its harness adds, and the build facts at `releases/build-facts`, the same file as the system release's ([design-shell.md](design-shell.md#text-commands)), and, in a development image whose build was given the development login key, root's login key at `ssh_authorized_keys_path` (`releases/ssh/authorized_keys`), the same file as the system release's ([design-ssh.md](design-ssh.md#login-keys)). The build's release scripts table (`ReleaseFiles::RELEASE_SCRIPTS`) defines a script's applications under its name, each the base every domain boots through (`kernel`, `stdlib`, `erx` and `erx_files`) and one kind of domain's own: `erts` names the base alone; `session` and `app` a session's and an app's session's, each with the command shell and `erx_session`; `storage`, `network`, `web`, `display`, `ssh` ([design-ssh.md](design-ssh.md#the-ssh-domain)), `usb` ([design-usb.md](design-usb.md#domains-and-authority)), `bt` ([design-bluetooth.md](design-bluetooth.md#the-bluetooth-domain)) and `wifi` ([design-wifi.md](design-wifi.md#the-wifi-domain)) those domains' stacks; and `client` a display client's ([design-display.md](design-display.md#overview)). The system release ships only the applications its own list names, and an application in neither that list nor a script fails the build (`ReleaseFiles.check_released`), since it would be built and booted nowhere. So a domain's stack has its script whether or not a manifest configures the domain, and a production image carries only the scripts its manifest names; a name the table does not hold fails the build, so a misspelt release boots nothing. Each script's release file lists only its own applications and is named after the script, so a domain boots only those and `init:script_id()` names its script; the domain can still read and load any application of the release, which grants nothing, since authority is its capabilities. The session script only loads `erx_session`, which the session template's arguments start with `-eval` once init holds the domain's facets, since its tty relay needs `erx:cap(console)`. Every script only loads those of `asn1`, `crypto`, `public_key`, `ssh`, `ssl` and `inets` that it names, so a domain runs none of their supervisors until a program of its own starts them, as `ssh:start/0` does ([design-ssh.md](design-ssh.md#stages)). The index is sorted, so the release is one run of whole entries, which the domain library slices; none carries the system mark, and no other file lies under `domains/`. The release provider strips the prefix, as it strips `system/`. `<name>` is a manifest identifier, and a domain row's `release @artifact.<name>` names both the run (its first entry and its count of files, which every name shares) and the script. The packer binds the script: it puts `-- -boot /bin/<name> --` between the row's emulator flags and its init arguments, so the binding is init's first flag and no later argument hides it, and it refuses a row whose own arguments name `-boot`. The domain service does the same for a create request's `boot` ([design-domains.md](design-domains.md#erlang-interface)) |
+| `domains/erxos/...` | file | the domain release, which every domain boots from. It holds each file of the applications any of its boot scripts names, once, under `lib/` as in the system release; a boot script `bin/<name>.boot` for each name the manifest's domain rows and session templates give their release, and in a test image for each script its harness adds; the build facts at `releases/build-facts` ([design-shell.md](design-shell.md#text-commands)); and, in a development image whose build was given the development login key, root's login key at `ssh_authorized_keys_path` ([design-ssh.md](design-ssh.md#login-keys)), each the same file as the system release's. The build's release scripts table (`ReleaseFiles::RELEASE_SCRIPTS`) defines each script's applications: the base every domain boots through (`kernel`, `stdlib`, `erx` and `erx_files`) and one kind of domain's own stack. An application in neither the system release's list nor a script fails the build (`ReleaseFiles.check_released`), since it would be booted nowhere, and a name the table does not hold fails the build, so a misspelt release boots nothing. Each script's release file lists only its own applications, so a domain boots only those; it can still read and load any application of the release, which grants nothing, since authority is its capabilities. The session script only loads `erx_session`, which the session template's arguments start with `-eval` once init holds the domain's facets, since its tty relay needs `erx:cap(console)`. A script only loads those of `asn1`, `crypto`, `public_key`, `ssh`, `ssl` and `inets` that it names, so a domain runs none of their supervisors until a program of its own starts them. The index is sorted, so the release is one run of whole entries, which the domain library slices; none carries the system mark, and no other file lies under `domains/`. `<name>` is a manifest identifier, and a domain row's `release @artifact.<name>` names both the run and the script, which `init:script_id()` names. The packer binds the script: it puts `-- -boot /bin/<name> --` between the row's emulator flags and its init arguments, so the binding is init's first flag and no later argument hides it, and it refuses a row whose own arguments name `-boot`; the domain service does the same for a create request's `boot` ([design-domains.md](design-domains.md#erlang-interface)) |
 | `runtimes/emu` | image | the domain runtime image: the interpreter ERTS linked as a task's program at `task.ld`'s fixed addresses, since `erx_image_map` loads only an `ERX_IMAGE_FIXED` image; one image for every domain, named as `erx_domain`'s spec names its flavour, with BeamAsm's beside it as `runtimes/jit`, the one entry whose manifest carries `ERX_IMAGE_JIT`, named `@artifact.jit`. It carries no system mark, since the root does not run it, and a domain row's `runtime @artifact.emu` names it |
 
 The root is stored twice because `bootstrap` reads an ELF file while the archive's
@@ -2493,23 +2416,11 @@ unit. It places no input device, since the record's `display` unit lists the gpu
 development image that attaches no gpu leaves the gpu's transport empty, and the display domain
 runs without a screen.
 
-The network domain runs the network stack, `erx_net`, and its virtio-net driver: the
-development manifest gives it the `net` record, and its row's arguments name
-`erx_virtio_net:interfaces/0` for the stack's interfaces. It serves `net` to the system
-principal's sessions and `network_ctl`, its driver-control facet, to the system domain.
-The system release ships neither the stack nor its client, `erx_net_client`
-(`ReleaseFiles::SYSTEM_APPLICATIONS`), and the system domain holds no `net` facet
-([design-system.md](design-system.md#the-manifest), property 15),
-so its command shell refuses `ifconfig`, `ping` and `host` with `no_facet`; they run in
-root's session, whose `erx_net_client` reaches the grant through its `grant` key.
-
-What the network domain controls, for its clients: the bytes it delivers, the results
-of their calls, the resolver's answers and the ends of their sockets, and it can leave a
-call unanswered, since `erx_inet` calls its grant with `infinity`. A client checks the
-shape of each push and reply (`erx_sock_admit`, with its EUnit tests and fuzz target),
-so a malformed answer fails the call, not the client. In Phase 1 the domain is trusted:
-its virtio-net device is unconfined, so it can reach all memory through it, and the
-domain is in the trusted base (FD12).
+The network domain runs the network stack, `erx_net`, and its virtio-net driver over the `net`
+record ([design-network-stack.md](design-network-stack.md)); the system domain holds no `net`
+facet ([design-system.md](design-system.md#the-manifest), property 15). In Phase 1 the network
+domain is trusted: its virtio-net device is unconfined, so it can reach all memory through it, and
+the domain is in the trusted base (FD12).
 
 `gpu` and `input` are values of the manifest's `mf_device_role` beside `network` and `block`, since
 the manifest check reasons about a display domain's devices by role
@@ -2574,15 +2485,23 @@ device is behind it. A manifest with no such unit has no record, and a machine w
 device boots the same, with nothing for its driver to drive.
 
 A given record, a holder domain's or the root's own, has a word of its own, `-erx_record given ROLE
-PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC`: the device's
-device-tree path, as the `device` form carries it, the handles of the window, line and
-memory objects the domain library installed when it created the domain, or the root made for
-itself, the transport's offset and size in the window object, the memory's bytes, 0 for a
-device that does no DMA, the device's clock, as the `device` form carries it, so a
-given PL011 has its clock as the host link's does, its coherent mark and its hardware address, the last two from
-the device tree the firmware handed over. Since each form has its own word, the reader never tells one from
-the other by counting numbers, and a plain word of the command line after a record cannot
-make one form look like the other.
+PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC`. ROLE and
+PERIPHERAL come from `include/erx/device_kinds.h`. PATH is the device-tree path of the device's
+manifest row, the name its driver gives it, a node path of at most `device_path_max` bytes
+(`abi/erx_abi.txt`), which the manifest grammar holds `devices[].path` to; the record writers, the
+root's reader and the domain library's view refuse any other path (`erx_boot_device_path_valid`),
+and `erx_device_record` any other PATH word, so a name a driver shows holds no control or escape,
+and reaches a display only through that sink's escaping function. WINDOW_H, LINE_H and MEM_H are
+the values, in the holder's own handle table, of the window, line and memory objects the domain
+library installed when it created the domain, or the root made for itself; OFFSET and SIZE place
+the registers in the window; MEM_H and MEM_SIZE are 0 for a device that does no DMA; CLOCK is the
+device's clock in hertz from its manifest row, 0 for a device whose driver reads none, so a given
+PL011 has its clock as the host link's does; COHERENT is 1 when the device tree the firmware handed
+over marks the device coherent, else 0; and MAC is the hardware address that tree gives a network
+device, as a 48-bit number, 0 for none
+([design-device-tree.md](design-device-tree.md#facts-into-records)). Since each form has its own
+word, the reader never tells one from the other by counting numbers, and a plain word of the
+command line after a record cannot make one form look like the other.
 
 MARK, in both forms and in `-erx_record console`, says whether the line is shared: `shared` when
 another device of the unit names the line, `direct` otherwise
@@ -2671,13 +2590,9 @@ image packages are absent and nothing reads an unchecked block. The
 manifest check refuses a manifest with a `system` window row and no
 `system_image` fields, or with an empty salt, so a built image never
 takes that path, and refuses `system_image` fields with no `system`
-window row, which would reach no holder. Its host test covers a well-formed record, with
-and without `record_volume`, each word
-malformed in turn, a missing word, an extra word, a sixth word other
-than `record_volume`, a second record and
-none, seeded with a reader that takes ROOT of any length, which the
-short-root case catches, and one that takes any sixth word as the
-window's name, which the other-sixth-word case catches.
+window row, which would reach no holder. The reader's host test covers each word malformed in turn,
+a missing, extra or other sixth word, and a second record or none, seeded with a reader that takes
+ROOT of any length and one that takes any sixth word as the window's name.
 
 ### The console
 
@@ -2762,41 +2677,27 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   leaves the counter alone. The RNG200's registers and read sequence come from a clean-room facts record of the RNG200.
 * **The card.** `sdcard.img` is the medium of `abi/medium.txt`, as QEMU `virt`'s medium is, laid out as
   [Slots and the boot-selection record](design-platforms.md#slots-and-the-boot-selection-record) describes: the
-  record's partition, an 8 MiB FAT16 whose data area begins with `autoboot.txt`, one cluster at
-  `medium_record_select_start`, and whose reserved area holds the reset count alone in its MiB at
-  `medium_record_count_start`; boot A, a FAT32 volume that holds the boot files below, with `kernel8.img`
-  allocated first and contiguous from `medium_slot_boot_start`, so the harness and the slot writer find it without
-  parsing FAT and the firmware finds it through FAT; boot B, empty; system A, the EROFS image of the slot's packages;
-  system B, empty; the vault's partition; and the data partition with
-  a fresh littlefs volume. The volume is the whole of boot A, 192 MiB, and its 1 KiB clusters make it FAT32 by the cluster count the FAT
-  specification sets ([design-storage.md](design-storage.md#references)), as the boot partition's type
-  (`medium_boot_type`, `0x0c`) says. Both placed files are fsimg's `place` option, `-o place=/PATH@OFFSET`, the file's absolute path in the
-  volume and a byte offset from the volume's start: one placed file per volume, on FAT16 and FAT32, for which fsimg pads the reserved area so that the data area starts at
-  the placement sector and gives the file the clusters from the first data cluster on, in order, the FAT32 root
-  directory's cluster following them; `kernel8.img` is placed at `medium_slot_boot_start` and `autoboot.txt` at
-  `medium_record_select_start`, each sector count times 512 bytes (`tools/lib/erx/pi_medium.rb`). The card ends
-  where its data partition, of the layout's minimum length, ends, 718 MiB in; every byte no piece holds is zero; and
-  `sdcard.img.xz` beside it is the card xz-compressed. The QEMU harness pads its own copy to the SD model's size. The packer checks each placed file after fsimg writes the volume: it reads the
-  file's directory entry, walks its whole cluster chain in the first FAT, bounded by the clusters its length needs,
-  and refuses a chain that is not consecutive from the placement sector, that ends early or that runs on past the
-  file's last cluster; it then compares the file read through that chain with the raw extent at the placement sector
-  byte for byte, and for `autoboot.txt` checks that its length is the record's 64 bytes. Its test seeds a fragmented
-  `kernel8.img`, whose chain jumps once, and the check refuses it. The firmware boots this card only if the board's EEPROM bootloader reads `autoboot.txt` and
-  honours `tryboot_a_b` and `boot_partition`; the board's port records the oldest bootloader version that does, which
-  the board pass records from the bootloader's log on the console
-  ([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record)). The Pi's development manifest
-  gives the SD controller's unit to the domain that runs the block driver and littlefs at `/data`, as QEMU `virt`'s
-  development manifest gives its block unit, and the platform record carries the unit, read from the board's device
-  tree on the host like every other.
+  record's partition, whose FAT16 data area begins with `autoboot.txt`; boot A, a FAT32 volume of the boot files below;
+  boot B, empty; system A, the EROFS image of the slot's packages; system B, empty; the vault's partition; and the data
+  partition with a fresh littlefs volume. `kernel8.img` and `autoboot.txt` are each placed contiguous at the layout's
+  start sector (`medium_slot_boot_start`, `medium_record_select_start`) with fsimg's `place` option, so the harness and
+  the slot writer find them without parsing FAT and the firmware finds them through FAT; the packer reads each placed
+  file back through its cluster chain and refuses a chain that is not consecutive from the placement sector, ends early or runs on
+  past the file's last cluster, a file that differs from the raw extent, and an `autoboot.txt` that is not
+  the record's 64 bytes (`tools/lib/erx/pi_medium.rb`; seeded with a fragmented `kernel8.img`). Every byte no piece holds is zero, and
+  `sdcard.img.xz` beside it is the card xz-compressed. The firmware boots this card only if the board's EEPROM
+  bootloader reads `autoboot.txt` and honours `tryboot_a_b` and `boot_partition`; the board's port records the oldest
+  bootloader version that does ([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record)). The
+  Pi's development manifest gives the SD controller's unit to the domain that runs the block driver and littlefs at
+  `/data`, as QEMU `virt`'s gives its block unit.
 * **Boot files.** One directory, `boot/`, serves as the firmware's network boot root and holds the files slot A's
-  FAT holds, written by `tools/erx pack --medium --platform raspi4b` into `build/production-image/raspi4b/` beside
-  `sdcard.img` (`tools/lib/erx/boot_partition.rb`): the firmware and its license; `config.txt`, written from the platform record; it asks the firmware for one 32-bit framebuffer
-  (`framebuffer_depth=32`, `framebuffer_ignore_alpha=1`, `max_framebuffers=1`) with no overscan border (`disable_overscan=1`) and, on a development card only, the firmware's boot log on the console (`uart_2ndstage=1`) and the ARM's JTAG on GPIO 22
-  to 27 (`enable_jtag_gpio=1`);
-  BL31 and its license; the bootable file as `kernel8.img`; Linux's device tree for the board, compiled from its
-  pinned source with its two serial aliases swapped, so that `serial0` names the console, with that source beside it; and the overlays `config.txt` names, which the firmware applies.
-  Mainline Linux has no overlays, so erXos keeps their sources in `hw/dts`, and the board's tree, its overlays and
-  the model's tree are built by `tools/lib/erx/board_tree.rb`.
+  FAT holds, written by `tools/erx pack --medium --platform raspi4b` beside `sdcard.img`
+  (`tools/lib/erx/boot_partition.rb`): the firmware and its license; `config.txt`, written from the platform record,
+  which asks for one 32-bit framebuffer with no overscan border and, on a development card only, the firmware's boot
+  log on the console and the ARM's JTAG on GPIO 22 to 27; BL31 and its license; the bootable file as `kernel8.img`;
+  Linux's device tree for the board, compiled from its pinned source with its two serial aliases swapped, so that
+  `serial0` names the console, with that source beside it; and the overlays `config.txt` names, whose sources erXos
+  keeps in `hw/dts`, since mainline Linux has none (`tools/lib/erx/board_tree.rb`).
 * **Under QEMU.** The same image, device tree and BL31 also boot on QEMU's `raspi4b` model under TCG, where QEMU's
   generic loader places them in place of the firmware and the harness gives the model's second serial port, the mini
   UART's, to the console; what the model checks and what it cannot is in
@@ -2869,7 +2770,7 @@ root's first line if Fiasco's own boot proves not deterministic, recorded as a d
 
 * **Handles are opaque**, not Fiasco capabilities and not stable across a boot.
 * **A committed page is present here, and Phase 2 populates lazily.** Read no timing or fault counts from it. (FD7)
-* **One node today.** Local message delivery is Phase 1's transport and a frame on a lane is Phase 2's.
+* **One node in Phase 1.** Local message delivery is Phase 1's transport and a frame on a lane is Phase 2's.
 * **`erx_device` keeps physical addresses behind the DMA profile**, and nothing else sees one.
 * **Faults reach code as crash records**, never as Fiasco's exception messages.
 * **Callers check `ERX_ENOTSUP`**, and show `unsupported` and `partial` as such.
@@ -3018,72 +2919,68 @@ gate sets; a crash or hang of Fiasco is a HIGH finding and its input joins the c
 
 ### The backend's cases
 
-| Case | Seeded failure, and what it shows |
+Each case names its suite or host test, which holds its steps, and the seeded failures that show it
+ran the code it claims to:
+
+| Case | Seeded failures, and what each shows |
 | --- | --- |
-| **Image and banner.** `tools/erx check-boot-image` and the QEMU gate's `boot_image` suite: the banner image, the two-file form, and the damage cases, each refusing with its reason | a damaged entry that boots fails the case |
-| **Boot information.** Host tests of `erx_boot_info_build` and `erx_boot_args_parse` at every limit, with fuzz targets on the page's reader and the command line; the root and the hosted entry fill the page from one manifest and a test compares the two field by field, those the table says differ excepted | a seeded unchecked `args_off` fails the reader's bounds case under AddressSanitizer; a word past the strings limit that does not refuse fails its case; a seeded wrong `pack_flags` in the root fails the comparison |
-| **The watchdog from the command line.** A test release boots under `erx.watchdog=1,5,600` with `erx_watchdog` running: its transcript shows the first pet's time, the machine stays up for more than `D` after that pet, then halts cleanly | The same release with its first pet withheld, under `erx.watchdog=1,5,7` and `1,5,14`: each ends the machine with `ERX_CRASH_CAUSE_WATCHDOG` at its own `B`, which shows the numbers came from the command line; a release whose `erx_watchdog` stops after a pet ends the machine with `ERX_CRASH_CAUSE_WATCHDOG` at `D`; a malformed `erx.watchdog=`, and `1,5,2`, whose `B` is under `D` (`watchdog.c:262-264`), refuse the boot, naming the word |
-| **Native boot.** The QEMU gate's `native_boot` suite: the root accepts the record through `user_ptr`, checks the archive's last entry, writes one line through `l4_vcon_write`, and shuts down, so QEMU exits by itself | shutdown removed: the deadline fires. `user_ptr` left 0: the root's accept refuses. The archive's sub-type removed: `sigma0` refuses the page fault and the root's line never comes |
-| **Debug log.** `tools/erx check-debug-log` and the gate's `debug_log` suite: the probe's calls, good and malformed, on the hosted backend and as the root over the native path to `l4_vcon_write`, compared record by record | `make check-qemu-mutant`: the native call asks for one byte more than a full message, and only the target's transcript differs |
-| **Memory.** The QEMU gate's `native_memory` suite, in the root first: commit, write, raise R to RW; decommit and recommit reads zeros; no access and back keeps contents; every protection change keeps contents and its one page; the whole pool committed at once; the pool's count before and after agree | wrong window page: contents differ. Zeroing skipped: old bytes. Protect takes a fresh page: zeros. Pool check removed: a refused protect is not refused |
-| **Protection**, in a test task: a page of code runs in RX; a write in RX and a run in RW each give the expected fault | the drop step skipped: Fiasco adds rights, so the write succeeds and its fault is missing |
-| A stack through `PROT_NONE` then RW; a refused protect, with the pool short, changes nothing | commit on access change removed: a fault. Plan applied page by page: the first page changed |
-| **musl.** The QEMU gate's `native_musl` suite, a C program using the C library's interface as the root: `printf` of floats, TLS from `.tdata` and `.tbss`, 1,000 create-and-join rounds and 1,000 detached exits pinned across CPUs with the pool's count restored, `pthread_cond_broadcast` over 64 waiters for 20 rounds, timed waits on both clocks never early, a contended mutex, `malloc` and `free` under 8 threads with blocks freed by another thread, `realloc` through `mmap` sizes, `mprotect` to a page's own protection under a running thread and over a hole, `pthread_cancel`, a constructor, `mmap` flags it does not offer, and the refusals; `exit` ends the machine after its `atexit` handler and destructor | `FUTEX_REQUEUE` restored: a broadcast stalls. `__unmapself` not releasing: the pool's count stays down. `mprotect` committing first: the thread running on the page faults |
-| **Range table.** `test/host/fiasco_vm_test.rb`, host, exhaustive over page states, ranges and calls against a fake memory unit that adds rights as Fiasco does, plus random sequences; each seed is a mutant there | a target with write and execute admitted. Each of the other seeds of this table's memory rows, and a page given back still mapped |
-| **Thread start**, the QEMU gate's `native_threads` suite: TLS in the new thread equals the value given | trampoline omits the thread pointer: the case's line reports a failure |
-| **Failed start**, a hook built only into the suite's image (`ERX_FIASCO_TEST_HOOKS`) failing each of the three steps: the status returns, `l4_task_cap_valid` is 0 for the thread, its stack canary is untouched, the next create works | the deletion skipped: the capability stays valid |
-| **Claim**, `test/host/fiasco_park_test.rb`, a fake kernel writing the marker late, over every order of exit and create | the claim ignores the marker: the fake's write lands on a live thread |
-| **Umtx**: a timed wait is never early; host model and TSan, a wake between compare and sleep, a timeout racing a wake | deadline rounded down. Compare outside the lock: a lost wake. Absorb removed: a stale count |
-| **Join loop, 10,000 times**, the `native_threads` suite in musl's form, a word the reaper clears: stack and index reused; after each join the handle names no thread, its capabilities gone and a start refused | reaper's steps 1 and 3 swapped: a live capability. Step 3 removed: the case's patience runs out |
-| **Detached loop**, the `native_threads` suite: range and index return; the pool's count is steady | range omitted: the count falls |
-| `pthread_cond_broadcast` with 64 waiters, one mutex held at a time | the next waiter's barrier left locked: the deadline fires |
-| **Park**, `test/host/fiasco_park_test.rb`, exhaustive over two executors, two objects, three events and two timeouts, with each up landing on its own, and TSan over real threads; on QEMU, the `native_threads` suite, a trigger between the empty check and the park, a turn with two executors on two CPUs, and a timeout racing a wake | the epoch comparison removed: a lost wake. An up to a slot not listed: a stale count. The epoch comparison removed on QEMU: the case's park never returns |
-| **Group report**, `test/host/group_report_test.rb`, the executor count over a status page, and the report line both backends write (`erx_group_report_line` in `liberx/backend/core/group_report.h`) at zero and the largest counts, in a buffer of exactly its size and in one a byte short | an empty slot counted, or the last slot skipped: a wrong count. No room kept for the NUL: a write past the buffer. A count one digit short: a wrong line |
-| **Kernel reports**, the `function_api` set's `object_info` cases: each topic's `reported` bits as [Reporting kernel objects](#reporting-kernel-objects) lists them; a group before and after its first configure; the root's budget's `used` rising by the pages a commit takes and falling by those a decommit returns, with its `reported` bit clear and `erx_info_partial` naming `used` alone and, for the machine, `memory_total` and `memory_free` with `uptime` reported; the budget topic on a carved budget `ERX_ENOTSUP`; `cpus_online` equal to the CPUs the harness starts. On target, a boot of the `check-qemu` production-image matrix at each CPU count types `erl` at the command shell and each of `erx_kernel_records`'s collectors at the Erlang shell, and holds a summary of what is not `{kernel,unsupported}` to the table: `build` ok as sixteen lower-case hex digits, `boot_value` ok as a boot value's name, `cpus_online` ok at the guest's count, `uptime` ok and above zero, `memory_total`, `memory_free` and `used` each `{{stopgap,liberx_pool},{partial,N}}` with N above zero, the group's `parked` and `ready` ok, and the CPUs and threads listed whole with nothing reported | the pool's count skipped on a commit: `used` does not move. `capacity_mcpu`'s bit set: the case reads a set bit for a field the table lists clear. A failed `l4_scheduler_info`, through a test hook, leaving `cpus_online` set: the case reads a set bit with the value 0. `used`'s bit set: the case reads a set bit for a partial field. The summary's mutants in `test/host/production_image_test.rb`, each one status off, are refused, `build` in upper case and `boot_value` as a number among them. `erx_info_report`'s machine branch with the build or boot value dropped, or reported without a handoff, through `test/host/object_info_test.rb`'s mutants: its driver reads a clear bit where it expects a set one, or the reverse |
-| Affinity to each CPU, read back: the `native_threads` suite pins a thread of raised priority to each CPU in turn while a probe counts on every CPU, and only that CPU's probe stops | mask ignored: every CPU but the first shows the wrong probe stopping |
-| **A second task**, the QEMU gate's `native_task` suite: a program from the boot image, built through `elf_plan.c`, commits memory and creates a thread through the service, writes code through a JIT object's read-write alias and runs it through the read-execute alias, then rewrites the page on one CPU and runs it on each other CPU in turn, 2,000 times each, with a status of 0. On HVF this also exercises cache maintenance, as coverage, since no omission is sure to show. A write in the read-execute alias and a run in the read-write alias each end the task with a crash frame the suite reads back, and the machine continues. An IRQ object of either kind made from the task is `ERX_ENOTSUP`; its bind, unbind, ack or trigger through a handle it does not hold, the root's own object among them, is refused, and the root's object is still its own afterwards. A physical object over a device's registers and a contiguous run, each made from the task, are `ERX_ENOTSUP` whatever the request | RW alias mapped RX: the write faults, and the case's status is not 0. The range table's own seeds, in `fiasco_vm_test.rb`, catch an index that ignores the label. Without the create refusal, the `irq_refused` case's status is 80; with the handle lookup in the root's table, 100 plus the root's object's handle; without the root check of the physical and contiguous creates, the `device_refused` case's status is 117 |
-| **`libc-test` canary**, the QEMU gate's `native_libc_canary` suite: `Erx::LibcTest::CANARY`, about ten programs covering threads and robust mutexes, TLS, stdio and `malloc`, each as a task through the same runner as `tools/erx check-libc-test`; each must pass and no boot may leak the pool. The whole of `libc-test` is `tools/erx check-libc-test`, held to its verdict table ([musl's own tests](#musls-own-tests)) | a test that does not pass, or is not run: `canary_problems` refuses the totals, in `test/host/libc_test_test.rb` |
-| **Task exit**: with a thread spinning on each CPU, the first thread stops the task; `l4_task_cap_valid` is 0 for every thread, semaphore, gate and space of the task; the pool's count returns; the root's stop does the same | thread deletion skipped: the capability stays valid. Memory step skipped: the pool is short |
-| **Request against exit**, in `native_task`: one thread loops on `erx_vm_commit` while another faults, 1,000 times, and a new task reuses the label; the service's count of dropped requests, `erx_fiasco_test_dropped`, stays 0, and the pool's count returns | no seed of its own: **Task exit**'s thread deletion seed stops the suite at its earlier `service` case, before this one runs |
-| **A task's write**, `native_task`'s `write` case: a task writes tab, newline, an escape sequence and every byte value through `erx_fiasco_task_write`, past two splits of `utcb_bytes_max`, and the suite finds exactly those bytes in the serial log, with Fiasco's carriage return ahead of each newline; lengths past the UTCB and an index past the thread table are refused. The `log` case holds `erx_debug_log` to its escape and its refusals. A task's link refuses a section `task.ld` does not name, in `test/host/libc_test_test.rb`. **A raw `task_write` from a domain**: a test domain and a program in a session each send the `task_write` request by hand, with an escape sequence as its bytes, and get `ERX_ENOTSUP`, and the serial log holds none of the bytes | the write sent through `erx_debug_log`: the judge finds no such bytes; the test-task mark not checked: the domain's escape sequence reaches the serial log |
-| **Task fault**: the record appears, and the machine continues | the fault ends the machine: the next line is missing |
-| **Interrupt**, the `native_irq` suite: a UART receive and a software object wake a parked executor, across CPUs at four; a trigger between the empty check and the park returns at once; `erx_group_take_ready` returns each label once and the oldest first; a timed park ends at its deadline on the time page's clock; ack lets the next character through, which the harness types through a FIFO when the transcript asks. A holder task, given the line's object, a register window and a contiguous run by the root as a device's holder is, maps the window, but not as code, maps the run and gets the DMA address the root got, binds the line to its own group and moves its label, takes the third character's label, acks it and takes the label again, since the byte is still unread, which shows its ack opened the line; a bind into the root's group, and a move or unbind of the root's object bound there, are `ERX_ETYPE`. Host: the ready list and flags in the Park row's model, and the page's scale and the wait against exact arithmetic in `test/host/fiasco_time_test.rb` | ack removed: the second character never arrives. Listed flag ignored: the status page's `ready` shows it twice. The interlock removed: the trigger before the park is lost. The dispatcher's trigger removed: a parked executor's deadline fires. The hooked trigger removed: the case's park reaches its deadline. The home check of a task's bind removed: the holder's status is 30 |
-| **Trace ring**, `test/host/trace_ring_test.rb`: records read back field by field; a cursor of `UINT64_MAX` returns the head and counts nothing; a reader lapped by more than 4,096 records counts exactly those skipped; a record a test hook rewrites between the reader's two `seq` loads is counted overwritten, not kept, and so is one read while its writer is between its field stores; a read of four writes four records and not the slot after them; a cursor past the head, `max` 0 and `max` 513 each `ERX_EINVAL`; a ring whose head a test hook sets to the last index writes it, then nothing, and its reader answers `ERX_ELIMIT`; under TSan, four writers and a reader, each kept record whole, its fields derived from its index; a task's call `ERX_ENOTSUP` | the second `seq` load removed: the hooked record is kept. The head start returning 0: the present cursor is not the head. The skip counted one short: the lapped count differs. The cursor check removed: the past-the-head case copies stale slots. The `max` bound removed: `max` 513 is accepted. A read that ignores `max`: the read of four copies more, past its slot. The terminal check removed: the write past the last index is accepted. The exhausted head's check removed: its read is not `ERX_ELIMIT`. The odd store removed: the record read in the middle of its write is kept. The ring linked into a task in place of the stub: the link lists' test fails |
-| **Trace on four CPUs**, the QEMU gate's `native_trace` suite: a test workload spawned at the Erlang shell, a process that waits for a message or 20 ms and loops, traced with `erx:trace(#{select => [Workload], kernel => true})` and sent a message, shows the kernel's row as exactly one `unsupported` line reported by `kernel`, a backend `park` followed by a `wake` of the same slot, and the workload's `in`, not marked `late`, with every `erts` line naming the workload; a test task started and stopped shows `space_start` and `space_end` with the same `target` and the task's status; the suite never sets the wall clock, so the clock offset is constant. The workload is off the console's output path, but with `kernel => true` printing still feeds the backend row: each printed line parks and wakes executors, whose `park` and `wake` records the trace then prints, and the window bounds that loop; only the trace process and the printer are kept out of the trace, by `{erx_untraced, true}` | the park core's `trace` effect removed: no `park` or `wake`. The clock offset added with the wrong sign: the workload's `in` comes out `late` or out of order with the backend's lines. `erx_trace_read` answering `ERX_OK` with no records: the `unsupported` line is missing, which shows the line comes from the call's answer |
-| **Watchdog**, the `native_watchdog` suite: pets hold the machine up past `erx.watchdog=1,2,2`; once they stop, a spinning first thread does not keep the machine from ending, with cause and time since the pet in the record, and the machine resets | the end skipped: the guest's own line reports it. Pets ignored: the machine ends before the guest's line |
-| **A semaphore's wake across CPUs**, `tools/lib/erx/native_semaphore_race.rb` under `make check-native-seeds`, under HVF at 4 CPUs as every seed runs, on a test kernel whose up holds itself between the dequeue and the activation until the waiter is queued again or half a second passes: at least three raced downs each, followed by an IPC wait that lasts its whole length and by a down that times out; too few raced downs fail the case | the bit's wait removed: the IPC wait ends early and the second down reports an up that never came |
-| **A kernel trap on a release kernel**, `tools/lib/erx/native_kernel_trap.rb` under `make check-native-seeds`, under HVF at 1 CPU, on a test kernel of the release configuration that loads from an unmapped address in kernel mode once boot is done, with `-no-reboot`: one `Panic: kernel trap` line, then QEMU exits through PSCI's system reset | the trap handler that kills the faulting thread and returns, as Fiasco's own release build does: trap dumps repeat until the deadline |
-| **End path**, on a quiet console, the QEMU gate's `native_crash` suite: a read of a decommitted page, a write to a read-only page, a read from another thread and a trap each give a whole crash frame, held to what the guest said it would touch; a root fault gives the undrained lines; `erx_machine_end` with each `how` | the frame's write removed: `crash_frame.rb` reports none. The drain removed: the last line is missing |
-| **Console handoff**: lines before and after the log service's first take arrive once, in order; a counter of the service's `l4_vcon_write` calls stays still after that take; an earlier map of the console's page leaves the sink alone. On the host, `dispatch_test.rb`'s handoff, readers and wrap cases count the core's console writes; natively, the console suite logs a tab and an escape sequence after the take and finds them escaped on the line, and a root that stops with the log service suspended still shows its parked record | the sink never switched: the counter moves |
-| **Manifest check**: each kept property with a seeded violation, each refusal with a seeded record | [the table](#the-phase-1-manifest-check) is the pairing |
-| **Service decoder**: fuzz target, and a task sending an unknown number, wrong count, bad index and long payload | word-count check removed: the fuzz target reports it |
-| **Chokepoint**: a Fiasco header outside the backend | the seeded violation is the case |
-| **Chokepoint** `fiasco-charge`: an `l4_task_map`, an `l4_factory_create_irq` and an `l4_task_add_ku_mem` each written in `service.c` | the seeded violation is the case: each fails the build |
-| **Production image.** The QEMU gate's `production_image` suite: the platform record's device paths, and each recorded window's base, size and line, against QEMU's device tree, then the image packed through the manifest check boots to its ERTS line with the watchdog's numbers and the exact argument count, a boot with `erx.det=1 erx.arg=WORD` shows the watchdog off and one more argument, a boot with an unknown `erx.` word and a 256 MiB machine each end at the root's refusal, and a boot with a plain `erx.arg` word is answered at the serial console through `erx_pl011`: a sum, a line with a mistake rubbed out, and an output longer than the transmit FIFO, a boot with `erx.group_report=1` reports every executor parked at the shell, and the TCG smoke boot, with one `-serial` and no `erx.hostlink=1`, reaches the command shell with no host link record; `production_image_test.rb` | a wrong device path, compatible or window, in that test, and a recorded base that is not its path's unit address on the host; a console driver that drops input or output: the console transcript stops; a misread `root_memory` or a lost `-append`: the manifest, watchdog and argument lines fail its transcript; a host link record handed without the word: the TCG smoke boot counts eight more arguments, and faults the root task |
-| **The manifest's C reader**: `tools/fuzz/manifest_fuzz.c`, each table of an accepted manifest read back to its count and no further | a row out of a table's range would abort it |
-| `make check-reproducible`: two builds of the production image, each clearing `build/runtime/native` first and packing into a directory of its own name, byte-identical in archive and bootable file. OTP and musl build at one path both times, so a path of theirs reaching an output does not show | a time, or a path under the two directories, reaching an output fails it |
+| **Image and banner**, `tools/erx check-boot-image`, `boot_image`: the banner image, the two-file form, each damaged entry refused with its reason | a damaged entry that boots |
+| **Boot information**, host tests of `erx_boot_info_build` and `erx_boot_args_parse` at every limit, fuzz targets on the page's reader and the command line, the root's and the hosted entry's pages compared field by field | an unchecked `args_off`: AddressSanitizer; a word past the strings limit accepted; a wrong `pack_flags` in the root: the comparison fails |
+| **The watchdog from the command line**, a test release under `erx.watchdog=1,5,600` stays up past `D` after its first pet | the first pet withheld under `1,5,7` and `1,5,14`: each ends with `ERX_CRASH_CAUSE_WATCHDOG` at its own `B`; `erx_watchdog` stopping after a pet: the end at `D`; a malformed `erx.watchdog=` and `1,5,2` (`B` under `D`) booting |
+| **Native boot**, `native_boot`: the root accepts the record through `user_ptr`, checks the archive's last entry, writes one line and shuts down | shutdown removed: the deadline fires; `user_ptr` left 0: the root's accept refuses; the archive's sub-type removed: `sigma0` refuses the root's fault |
+| **Debug log**, `tools/erx check-debug-log`, `debug_log`: the probe's calls compared record by record on both backends | one byte more than a full message (`make check-qemu-mutant`): only the target's transcript differs |
+| **Memory**, `native_memory`: commit, decommit, protection changes and the whole pool keep contents and count | the wrong window page; zeroing skipped; a protect that takes a fresh page; the pool check removed: a protect that should be refused is not |
+| **Protection**, a test task: a write in RX and a run in RW fault; a stack through `PROT_NONE`; a refused protect changes nothing | the drop step skipped: the write succeeds; commit on access change removed: a fault; the plan applied page by page: the first page changed |
+| **musl**, `native_musl`: the C library's interface as the root, threads, TLS, condition variables, timed waits, `malloc` across threads, `mprotect` under a running thread, cancellation, `exit` | `FUTEX_REQUEUE` restored: a broadcast stalls; `__unmapself` not releasing: the pool's count stays down; `mprotect` committing first: the running thread faults |
+| **Range table**, `fiasco_vm_test.rb`, exhaustive over page states, ranges and calls against a fake memory unit that adds rights as Fiasco does | write and execute admitted together; a page given back still mapped; each memory seed of this table |
+| **Thread start and failed start**, `native_threads` and a test-hook image: TLS equals the value given; a start failing at each step leaves no capability and an untouched stack | the trampoline omitting the thread pointer; the deletion skipped: the capability stays valid |
+| **Claim**, `fiasco_park_test.rb`, a fake kernel writing the marker late over every order of exit and create | the claim ignoring the marker: the fake's write lands on a live thread |
+| **Umtx**, host model and TSan: a timed wait never early, a wake between compare and sleep, a timeout racing a wake | the deadline rounded down; the compare outside the lock: a lost wake; absorb removed: a stale count |
+| **Join and detached loops**, `native_threads`: 10,000 joins reuse stack and index and leave no capability; detached exits return range, index and pool; a broadcast over 64 waiters | the reaper's steps 1 and 3 swapped: a live capability; step 3 removed: the case times out; the range omitted: the count falls; the next waiter's barrier left locked: the deadline fires |
+| **Park**, `fiasco_park_test.rb` exhaustive and under TSan; on QEMU, a trigger between the empty check and the park, two executors on two CPUs, a timeout racing a wake | the epoch comparison removed: a lost wake, on the host and on QEMU; an up to a slot not listed: a stale count |
+| **Group report**, `group_report_test.rb`: the executor count and the report line at zero and the largest counts, in a buffer of exactly its size and one a byte short | an empty slot counted or the last skipped: a wrong count; no room kept for the NUL: a write past the buffer; a count one digit short: a wrong line |
+| **Kernel reports**, `function_api`'s `object_info` cases and the production image's summary of `erx_kernel_records`: each topic's `reported` bits as [Reporting kernel objects](#reporting-kernel-objects) lists them, partial fields named, nothing fabricated | the pool's count skipped on a commit: `used` does not move; a clear field's bit set; a failed `l4_scheduler_info` leaving `cpus_online` set; `used`'s bit set for a partial field; the summary's mutants, one status off each (`production_image_test.rb`); `erx_info_report`'s machine branch mutants (`object_info_test.rb`) |
+| **Affinity**, `native_threads`: a thread pinned to each CPU in turn stops only that CPU's probe | the mask ignored |
+| **A second task**, `native_task`: a JIT object's two aliases across CPUs; a write in the read-execute alias and a run in the read-write alias each end the task alone; an IRQ object, a physical object over registers and a contiguous run made from a task are `ERX_ENOTSUP`, and its use of a handle it does not hold, the root's own object among them, is refused | the read-write alias mapped read-execute; the create refusal removed (`irq_refused`); the handle looked up in the root's table; the root check of physical and contiguous creates removed (`device_refused`) |
+| **`libc-test` canary**, `native_libc_canary`, about ten programs as tasks; no boot leaks the pool | a test that does not pass or is not run: `canary_problems` refuses the totals |
+| **Task exit and requests against it**, `native_task`: with a thread spinning on each CPU, every capability of the task gone and the pool returned; a request racing exit 1,000 times drops nothing | thread deletion skipped: a capability stays valid; the memory step skipped: the pool is short |
+| **A task's write**, `native_task`: a test task's bytes reach the serial log unchanged; a raw `task_write` from a domain or a session's program is `ERX_ENOTSUP` and writes nothing; `erx_debug_log` escapes and refuses as its row says | the write sent through `erx_debug_log`: the bytes are missing; the test-task mark not checked: the domain's escape sequence reaches the serial log |
+| **A payload read once**, a host test of the decoder over a public UTCB a second thread rewrites | the length read again from the public UTCB: AddressSanitizer reports the overread |
+| **Task fault**: the record appears and the machine continues | the fault ending the machine |
+| **Interrupt**, `native_irq` and `fiasco_time_test.rb`: a UART line and a software object wake a parked executor across CPUs; ack opens the line; a holder binds and acks its own line and is refused the root's group | ack removed; the listed flag ignored: a label reported twice; the interlock removed: the early trigger lost; the dispatcher's trigger removed; the hooked trigger removed; the home check of a task's bind removed |
+| **Trace ring**, `trace_ring_test.rb` and TSan: lapping, overwrite during a read, bounds, a task's call `ERX_ENOTSUP` | the second `seq` load removed; the head start returning 0; the skip counted one short; the cursor check removed: stale slots copied; the `max` bound removed; a read that ignores `max`: a copy past its slot; the terminal check removed; the exhausted head's check removed; the odd store removed; the ring linked into a task in place of the stub: the link lists' test fails |
+| **Trace on four CPUs**, `native_trace`: the kernel row's `unsupported` line, a backend `park` and `wake`, the workload's `in` not `late` | the park core's `trace` effect removed; the clock offset's sign flipped; `erx_trace_read` answering `ERX_OK` with no records: the `unsupported` line is missing |
+| **Watchdog**, `native_watchdog`: pets hold the machine up; once they stop a spinning thread does not keep it from ending and resetting | the end skipped; pets ignored |
+| **A semaphore's wake across CPUs**, `native_semaphore_race.rb` under `make check-native-seeds`, on a test kernel that holds the up between dequeue and activation | the bit's wait removed: the IPC wait ends early |
+| **A kernel trap on a release kernel**, `native_kernel_trap.rb` under `make check-native-seeds`: one `Panic: kernel trap` line, then PSCI's reset | the handler that kills the faulting thread and returns, as Fiasco's release build does: trap dumps repeat |
+| **End path**, `native_crash`: each fault's whole crash frame; a root fault's undrained lines; `erx_machine_end` with each `how` | the frame's write removed; the drain removed |
+| **Console handoff**, `dispatch_test.rb` and the console suite: each line once and in order across the take; a tab and an escape sequence logged after the take arrive escaped | the sink never switched: the service's write counter moves |
+| **Manifest check** | each kept property's seeded violation and each refusal's seeded record ([the table](#the-phase-1-manifest-check)) |
+| **Service decoder**: a fuzz target, and a task sending an unknown number, a wrong count, a bad index, a long payload | the word-count check removed |
+| **Chokepoints**: a Fiasco header outside the backend; `fiasco-charge` | the violation itself: an `l4_task_map`, an `l4_factory_create_irq` and an `l4_task_add_ku_mem` in `service.c` each fail the build |
+| **Production image**, `production_image`: device paths and windows against QEMU's tree; boots with the watchdog's numbers and exact argument count; refusals of an unknown `erx.` word and a small machine; the serial console; the TCG smoke boot with no host link | a wrong path, compatible or window; a console driver dropping input or output; a misread `root_memory` or a lost `-append`; a host link record handed without the word: eight more arguments and a root fault |
+| **The manifest's C reader**, `manifest_fuzz.c`: each table read back to its count | a row out of a table's range aborts it |
+| `make check-reproducible`: two builds byte-identical | a time or a build path reaching an output |
 | **Function-API set** on each backend that carries a case's row, refusals included | a refusal changed in one backend |
-| **Mapping between tasks**, the QEMU gate's `native_space` suite, a root and two tasks: the root creates an object, writes a pattern, maps it read-only into one task and read-write into the other; the writer's bytes reach the reader; the root closes its handle and each task releases its range, and the pool's count returns only after the second release; a map over a committed page or a mapping, and a release that cuts a mapping, are `ERX_EINVAL` and change nothing. Host: `fiasco_vm_test.rb` over runs, pages and mappings | the release's decrement of the mapping list removed: the pool stays short. The overlap check removed: the host model maps over a committed page |
-| **Revoke**, `native_space`: an object mapped into both tasks is destroyed by its creator; each task's next read gives a fault record at its gate, and the pool's count returns; a destroy from a task that did not create it is `ERX_ERIGHTS` | the revoke step removed: the reader's read succeeds after the destroy |
-| **A stale handle**, `function_api`: a handle to a destroyed object is `ERX_ESTALE`, directly and by a service call, while its holder keeps the slot, and an object created meanwhile takes another slot | the root frees the holder's slot at the destroy: the new object takes it and the stale handle reads the new object's size |
-| **The tree**, from 1b-B, `native_space`: a task creates a sub-space, maps its own object into it and starts a thread there; the parent stops; the child's exit record, status `ERX_EXIT_PARENT`, comes before the parent's, each after its threads' deletions, and the pool's count returns | children walked after their parent: the child's object is freed while the child still maps it, and the child's spinning counter in that page moves after the parent's record |
-| **Passing**, `native_space`: the root passes a copy and a move of handles to one object into a task, which maps the copy after the root has closed its own handle and finds the root's pattern; each item comes back with its value in the task's table, its type and its mask's rights within the type's, less `DESTROY`; a pass of four into a table with room for three passes three and is `ERX_ELIMIT` at the fourth; a pass stops at a gate's handle with `ERX_ENOTSUP`, leaving the item before it passed; a pass from a space not the caller's, into the caller's own, of a space's handle and of more than four items are refused | none: the holder's map fails if a copy does not raise the count |
-| **A session's install**, `native_space`: a task binds a doorbell into the group of a child it created before the child's first thread exists, makes the channel's two sides and maps them as a session does, installs a budget, a group, both sides and its own doorbell into the child, refused a pass of a space's or a gate's handle, into its own space and into a handle that names no space, and starts the child with the values in the registers of `program_arg`'s objects, `budget` to `doorbell`, and a mark in each other argument register; the child finds every mark, maps its own side read-write and the task's side read-only, finds the task's value in the task's side and leaves its pattern in its own, is refused a bind into a group it neither created nor is the home of, takes its doorbell's ring and rings the task's | the creator's bind refused: the task's bind into the child's group is `ERX_ETYPE`. A bind into any group allowed: the child's refused bind succeeds. A pass into the caller's own space allowed: that pass succeeds. The trampoline loading fewer than eight registers: the child does not find its tag and ends without its status |
-| **Fault gates**, `native_space`: a task with a gate as fault gate faults; the gate's server receives a fault record of kind `memory` with the space's label, stops the space and receives the exit record with the stop's status; a wait with nothing posted ends at its deadline with `ERX_ETIMEDOUT`. Host: `fiasco_gate_test.rb`, a model of post, wait and timeout over every order, under TSan with real threads | the owed down removed: the model's next wait returns at once with nothing. The record posted before the deletions: the faulting task's other thread's counter moves after the exit record |
-| **Doorbells between tasks**, `native_space`: the root binds a software IRQ object into a task's group before the task's first thread runs and triggers it twice; the task's executor takes the label once after it starts; the task triggers an object bound to the root's group and the root's executor wakes; a thread created in a group whose home is another task is `ERX_ENOTSUP`; the task then exits while the root still holds the object, and the object is left unbound; a second bind of a bound object is `ERX_ENOTSUP` | the bind deferred until the home exists dropped: the task's park reaches its deadline. The home check removed: the cross-task thread is created. The detach at task exit removed: the service's test hook that lists bound objects still shows the object bound to the dead task's group |
-| **A budget's destroy**, `function_api` and `native_space`: a budget, a budget carved from it, a space, a group, an IRQ object and two memory objects charged to them; one destroy posts the space's exit record, makes every handle `ERX_ESTALE` and returns the pool's count | the walk skips carved budgets: the pool stays short by the second object's pages |
-| **Code objects**, from 1b-B, `native_space`: a paged object maps nowhere unsealed (`ERX_EBUSY`), takes a supply, is sealed, refuses a further supply and a writable map (`ERX_ERIGHTS`), and runs the supplied code through an executable map in a task; `ERX_MEM_CODE` from a task is `ERX_ERIGHTS` | the sealed flag not read at the map: the unsealed map succeeds |
-| **Copy and slices**, `native_space`: `erx_mem_copy` between two objects, and `ERX_ESTALE` once the source is destroyed; a slice mapped read-only into a task reads the archive's bytes and its write faults | the destroyed check removed: the copy reads freed pages. A slice mapped with write: the write lands in the archive |
-| **Shared image segments**, `native_space`: the test program packed as an image entry runs in six tasks, the first under a budget destroyed once it has ended; a map of it takes fewer pool pages than one of the same program as a file entry, each task finds its writable word as linked though the task before wrote it, and a write to its own code faults at its gate while the tasks before and after read the same word there | the image slice charged to the space's budget: the destroy ends it and later tasks fault or fail to map. Code mapped writable: the write lands and no fault comes. The writable segment shared: a task finds the word its predecessor wrote |
-| **A task's start, time and release**, `native_space`: a task reads the wall clock the root set before the task was created and again after the root moves it; a task given a slice of a `domains/<name>/` release lists it with `erx_release_entry`, each path without the prefix and each offset from `release_addr` reading the file's bytes, one path longer than `utcb_bytes_max` included, and an index one past the slice is `ERX_ERANGE`; in a task holding a memory handle whose value equals the index of a thread it created and has not started, `erx_thread_start` of the memory handle is refused and the thread stays unstarted | `erx_time_page` in a task returning the root's address: the read faults. Offsets answered from the archive's start: the bytes differ. The stub taking one piece: the long path is cut. The base check removed: the start takes the memory handle for the thread |
-| **Devices in domains**, the production image suite with the harness's net device: each platform record path, base and line against QEMU's device tree; the network domain's driver reads each transport's magic and device id through objects the domain library gave them, and an interrupt reaches each driver's group | a platform record naming the transport of another device: that driver reads the wrong device id |
-| **Bounds of maps, supplies and copies**, `function_api`: `erx_vm_map`, `erx_mem_copy` and, from 1b-B, `erx_mem_supply` each with an offset plus length one page past the object, and with an offset near 2^64 whose sum wraps, are `ERX_ERANGE` and change nothing, the supply's in `native_space`, where a supply into an object that is not paged is `ERX_ETYPE`; a map off a page boundary or of size 0 is `ERX_EINVAL`; a copy into a slice is `ERX_ERIGHTS` | the end check written without checked arithmetic: the wrapping offset maps a page of the pool past the object, which the test finds by reading a pattern another object holds |
-| **Slot reuse**, `function_api`: two handles closed in turn, then a create: the create takes the slot freed first, not the one just closed; a second thread created in a created space is `ERX_ENOTSUP` | the free slots taken newest first: the create reuses the slot just closed |
-| **A group and its threads**, `native_space`: destroying a group whose home task still has a thread in it is `ERX_ENOTSUP` and the thread runs on; destroying the budget the group is charged to stops its home task, whose exit record arrives, and its stacks and pool pages return | the refusal removed: the service deletes the thread alone, and the pool count stays short by its stack |
-| **A payload read once**, a host test of the service's decoder over a public UTCB a second thread rewrites in a loop: `erx_debug_log` and `task_write` with their length changing between reads never copy more than `utcb_bytes_max` and never more than the length the decoder checked | the body reading the length again from the public UTCB: AddressSanitizer reports the overread |
-| **A configured holder restarted**, the QEMU gate's `device_give` suite: a configured domain holding the platform's spare unit opens it from its `given` record and reads the transport's magic; it is halted, the domain service restarts its row under the next id, and the new domain reads the magic again through the window and line its creation was given | the restart's plan with no gives: the new domain finds no record of the unit, and the cell's answer disagrees |
-| **A device's holder restarted**, the production image suite: the network domain is killed and restarted; the new driver gets a new window and line object and the same contiguous memory, resets the device and passes its traffic test | the line's object not deleted at the exit record: the restarted holder's give is refused with `ERX_EBUSY`, since the line already has an object |
-| **vCPU upcalls**, `native_signal`, at 1 and 4 CPUs: an upcall interrupts a computing worker, including one on another CPU than the raiser's; a umtx wait of `liberx` ends by the raiser's wake and a reply wait not at all; a signal raised while the target is in a kernel call runs at the call's return to the program's own code, and then the worker computes without kernel calls; the frame and the FP registers are restored register by register; a delivery between a handler's last check and its resume enters the handler again | the resume ignoring a queued delivery: the second signal is lost; the return to the program's own code without the pending-flag test: the signal raised during the call never runs while the worker computes; the backend entry copying with a SIMD instruction: the FP registers come back changed |
+| **Mapping between tasks**, `native_space` and `fiasco_vm_test.rb`: the writer's bytes reach the reader; the pool returns only after the last release; maps over committed pages refused | the mapping list's decrement removed; the overlap check removed |
+| **Revoke**, `native_space`: the creator's destroy faults every holder's next read; another task's destroy is `ERX_ERIGHTS` | the revoke step removed |
+| **A stale handle**, `function_api`: `ERX_ESTALE` directly and by a service call while the holder keeps the slot | the root freeing the holder's slot at the destroy |
+| **The tree**, `native_space`: a child's exit record, `ERX_EXIT_PARENT`, before its parent's | children walked after their parent |
+| **Passing**, `native_space`: copies and moves within the mask less `DESTROY`, `ERX_ELIMIT` past room, a gate's handle `ERX_ENOTSUP` | none of its own: the holder's map fails if a copy does not raise the count |
+| **A session's install**, `native_space`: a parent binds into its child's group before the child runs, installs a budget, a group, both channel sides and a doorbell, and starts it with the values in `program_arg`'s registers; the child is refused a bind into a group it neither created nor is home of, and the parent a pass into its own space | the creator's bind refused; a bind into any group allowed; a pass into the caller's own space allowed; the trampoline loading fewer than eight registers |
+| **Fault gates**, `native_space` and `fiasco_gate_test.rb`: a fault record, then the exit record; a wait with nothing posted times out | the owed down removed; the record posted before the deletions |
+| **Doorbells between tasks**, `native_space`: a bind before the task's first thread; a cross-task thread `ERX_ENOTSUP`; an object left unbound at its home's exit | the deferred bind dropped; the home check removed; the detach at task exit removed |
+| **A budget's destroy**, `function_api` and `native_space`: one destroy ends everything charged to a budget and its carved budgets | the walk skipping carved budgets |
+| **Code objects**, `native_space`: a paged object maps nowhere unsealed, refuses a supply and a writable map once sealed; `ERX_MEM_CODE` from a task `ERX_ERIGHTS` | the sealed flag not read at the map |
+| **Copy and slices**, `native_space`: a copy `ERX_ESTALE` once the source is destroyed; a slice's write faults | the destroyed check removed: the copy reads freed pages; a slice mapped with write: the write lands in the archive |
+| **Shared image segments**, `native_space`: one image entry in six tasks, each with its own writable segment and read-only code | the image slice charged to the space's budget; code mapped writable; the writable segment shared |
+| **A task's start, time and release**, `native_space`: the wall clock, a release slice's entries and offsets, a memory handle refused as a thread | `erx_time_page` returning the root's address; offsets from the archive's start; the stub taking one piece; the base check removed: the start takes the memory handle for the thread |
+| **Devices in domains**, the production image suite: each transport's magic and device id through the objects given | a platform record naming another device's transport |
+| **Bounds**, `function_api` and `native_space`: `erx_vm_map`, `erx_mem_copy` and `erx_mem_supply` past the object and at a wrapping offset `ERX_ERANGE` | the end check written without checked arithmetic: the wrapping offset reaches another object's page |
+| **Slot reuse**, `function_api`: the slot freed first is taken first | free slots taken newest first |
+| **A group and its threads**, `native_space`: a live group's destroy `ERX_ENOTSUP`; its budget's destroy stops its home task | the refusal removed: the pool stays short by the thread's stack |
+| **Holders restarted**, `device_give` and the production image suite: a configured holder and the network domain each restarted get new window and line objects and the same memory | the restart's plan with no gives; the line's object not deleted at the exit record: the give is `ERX_EBUSY` |
+| **vCPU upcalls**, `native_signal`, at 1 and 4 CPUs: a worker interrupted on another CPU, a signal raised during a kernel call run at its return, FP registers restored | a queued delivery ignored at resume; the pending-flag test dropped; the backend entry copying with a SIMD instruction |
 
 ### The release's cases
 
@@ -3109,7 +3006,7 @@ Each test below names the seeded failure that proves it ran:
 | writable or executable | a request for such a mapping into a task fails at Fiasco's map, and the root still boots from `sigma0`'s mapping | the patch's check removed: the mapping is made; the exemption removed: the root does not start |
 | release licenses | the release image's link closure is all permissive | a release build with `jdb_object.cpp` listed again in `Modules.generic`; one with the original `kobject_rpc.h` restored in place |
 | the fuzz campaign | it runs its budget clean, every seed of its corpus reached | a fork build with the bound removed from `L4_snd_item_iter::next` (`if (_buf >= _max)`, `l4_buf_iter.cpp:116-121`), which any domain reaches by a send on its own gate whose words and typed items together pass the 63 message registers (`Utcb::Max_words`, `abi/l4_types.cpp:789`), so the kernel's item transfer writes past the root service's message registers before the root's decoder sees the message (`Thread::transfer_msg_items`, `thread-ipc.cpp:1203-1227`); the seed build counts each pass of the removed bound, the case fails if that count is 0, so it cannot pass without reaching the defect, and it fails if the campaign then reports clean |
-| a map at the factory's end | a domain whose row gives it a page budget larger than its kernel-memory figure can map, so its factory is spent before its page cap or its object and mapping limits, has closed no handle, so the root hands it never-used slots in index order before any freed one ([Handles are slots](#handles-are-slots)). Sizes: a capability-table page is one 4 KiB page (`Config::PAGE_SIZE`, `obj_space_phys_util.cpp:221-226`) of `Config::PAGE_SIZE / sizeof(Obj::Entry)` slots (`obj_space_types.cpp:195-197`), 128 if an entry is the 32 bytes its capability word, list link and flags word add up to (`obj_space_types.cpp:45-102`; read, not measured: a wrong count makes the create below succeed and the case fail); an IRQ object charges its slab entry, `s` bytes (`irq.cpp:1201-1206`, `slab_cache.cpp:295-306`); a commit of a page in a 2 MiB region already mapped charges only its mapping-database node (`mapdb.cpp:858`), under a page. While its factory is ample, the domain makes doorbells until the handle it gets is the last slot of a table page, keeping one of them, `D`, so the next slot the root takes is the first of a page Fiasco has not allocated. It then commits a page and sets it to no access, then commits a page in each fresh 2 MiB region, each taking a page-table page, until one answers `ERX_ENOMEM`, and asks for a two-page commit across a fresh region's edge, a protect of the no-access page to read and write, and an `erx_vcpu_control` arming a thread, which needs the task's second kernel-user area. It then commits single pages in regions already mapped until one answers `ERX_ENOMEM`, so its factory holds less than one node's charge, and destroys and closes `D`: the root's delete returns only once Fiasco has freed the object, past an RCU grace period (`kobject.cpp:155-175`, `:224-233`), its `s` bytes back in the factory (`irq.cpp:1220-1225`), and its slot goes behind the never-used ones. The factory now holds at least `s` and less than `s` and a page together, so the next `erx_irq_create`'s factory create succeeds and its placement into the fresh slot, which needs a new table page, is refused. Each of the commit, the protect, the arming and the create answers `ERX_ENOMEM`, a touch of each refused range faults in the domain alone, the arming leaves the thread unarmed, the pool's count and the domain's object count are what they were before each call, and a neighbour domain keeps committing | a refused map ending the machine: the machine ends; the commit's undo skipped: the pool's count drops and the first page of the refused commit can be read; the undo returning every page of the plan to the pool: the refused protect raises the pool's count; the add's refusal ignored, the arming going on to `vcpu_control`: the arming answers other than `ERX_ENOMEM`; the create's undo skipped: the domain's object count rises by one with no handle returned |
+| a map at the factory's end | a domain whose page budget exceeds its kernel-memory figure spends its factory before its page cap or its object and mapping limits. It has closed no handle, so the root hands it never-used slots in index order before any freed one ([Handles are slots](#handles-are-slots)). While its factory is ample, it makes doorbells until the handle it gets is the last slot of a capability-table page, keeping that one, `D`, so the next slot the root takes is the first of a page Fiasco has not allocated; it commits a page and sets it to no access; it then commits a page in each fresh 2 MiB region, each taking a page-table page, until one answers `ERX_ENOMEM`, and there asks for the commit, the protect and the arming named below; it then commits single pages in regions already mapped until one answers `ERX_ENOMEM`, so its factory holds less than one mapping-database node's charge. Last it destroys and closes `D`, then asks for the create: the root's delete returns once Fiasco has freed it, its slab entry back in the factory, and its slot goes behind the never-used ones, so the factory holds enough for an IRQ object's slab entry but not for a new table page. A two-page commit across a fresh region's edge, a protect of a no-access page, an `erx_vcpu_control` arming a thread (which needs the task's second kernel-user area) and an `erx_irq_create` (whose placement needs the new table page) each answer `ERX_ENOMEM`; a touch of each refused range faults in the domain alone, the arming leaves the thread unarmed, the pool's count and the domain's object count are what they were before each call, and a neighbour domain keeps committing. The recipe rests on Fiasco's sizes (a 4 KiB capability-table page, `obj_space_phys_util.cpp:221-226`; its 32-byte entries, `obj_space_types.cpp:45-102`, read, not measured; an IRQ object's slab entry, `irq.cpp:1201-1206`; a node's charge, `mapdb.cpp:858`; deletion past an RCU grace period, `kobject.cpp:155-175`) | a refused map ending the machine; the commit's undo skipped (the pool's count drops and the refused commit's first page reads); the undo returning every page of the plan to the pool (the refused protect raises the pool's count); the add's refusal ignored (the arming answers other than `ERX_ENOMEM`); the create's undo skipped (the object count rises with no handle returned) |
 | writable peer side | a domain sends a raw `erx_vm_map` request asking for read and write on its peer's side, which it was passed without `WRITE`: `ERX_ERIGHTS`, and after the domain writes through every mapping it holds, the peer's side is unchanged | the map body's check against the slot record removed: the mapping is made and the peer's side changes |
 | CPU ceiling | a domain whose CPU set is one CPU, not the root service's, starts its threads with no mask, moves one by a raw affinity request naming every CPU, and spins them all, while a lower band's echo runs on the root service's CPU: the echo answers within one quantum, and a raw request naming only CPUs outside the set answers `ERX_EINVAL`; a domain whose set names only a CPU past the online ones is refused at admission with its diagnostic | the narrowing skipped: a spinner lands on the echo's CPU and the echo waits; the admission check removed: the domain is admitted and its first thread's start fails |
 | repeated delivery | a ringer on another CPU fires a holder's doorbell 10,000 times while the holder's executors postpone `erx_group_take_ready`: the holder's next take returns the object once, and its dispatcher's deliveries and wakes are counted and reported with the run, the load FD31 publishes | the listed flag ignored: the take returns the object more than once |
@@ -3130,7 +3027,7 @@ These differ from the native backend, and a caller must not depend on either sid
 * **A thread's stack switches at its start.** The pthread starts on its own stack and moves to the one the start record names, and back to end, in the host architecture's `arch/<arch>/switch_stack.S` (each file assembles to nothing for another target), and `thread.c` tells the address sanitizer of each move. The thread pointer is a field read through `erx_thread_pointer`, since the host owns the register. The first thread is a worker with no thread pointer, and its `erx_thread_exit_release` releases nothing.
 * **Affinity is checked, not applied.** macOS cannot hold a thread to a CPU.
 * **The wake order is the host's.** Natively the oldest waiter wakes first; `os_sync_wake_by_address_any` promises no order, so that case stays with the native guest. A wake's count is of the host's wakes, so a waiter that waits again at once on the same word may count twice.
-* **No devices.** A well-formed `erx_mem_create_physical` or `erx_mem_create_contiguous` is `ERX_ENOTSUP`, since a device's address here would be made up, and `erx_mem_dma_addr` and `erx_vm_map` are `ERX_EINVAL`, since no handle names such an object. `erx_device:open/1` reports that refusal for a real window. Its `stand_in` window, in a hosted build alone, is plain memory with software objects for lines, which `erx_device:stand_in_fire/2` fires. A `virtio_mmio` stand-in reads as a version 2 transport offering `VERSION_1`, whose reset lets its queues go; its queues are plain memory, and `erx_device:stand_in_used/3` plays the device writing the used ring, honest or hostile: an index ahead of what is in flight, a foreign head, an over-length entry. A `genet` stand-in reads as a GENET v5 whose MDIO finishes each command at once over a BCM54213PE with its link up at 1000 Mb/s, and whose DMA stops as soon as DMA control stops it; its engine runs only when a test asks: `erx_device:stand_in_transmitted/1` sends what the transmit ring holds and `erx_device:stand_in_receive/2` fills free receive buffers, each reading the descriptors and the buffers their addresses name through the window, as the controller does, never through the NIF's bookkeeping. So `test/integration/runtime_genet_test.rb` carries UDP and TCP between the stack's sockets and a far end over `erx_genet`. Over the `virtio_mmio` stand-in, `test/integration/runtime_device_test.rb` runs the BIFs, the bindings and the queue's judgement of a hostile device from Erlang, and shows that a driver of a broken queue ends, the runtime goes on and its restart's `negotiate/2` gets every posted buffer back. Both backends refuse a malformed request from one source, `liberx/backend/core/device_check.h`. Entropy is the host's `getentropy`, and an add takes nothing; with `ERX_HOSTED_ENTROPY_FAIL=N` the first N reads go through and every later one is `ERX_ENOTSUP`, the failure the native backend gives when it cannot reach its generator service, so `test/integration/runtime_hosted_smoke_test.rb` sees `erx_bytes:entropy/1` raise after the boot read of the reference key (N = 1), and the runtime refuse to start without that key (N = 0).
+* **No devices.** A well-formed `erx_mem_create_physical` or `erx_mem_create_contiguous` is `ERX_ENOTSUP`, since a device's address here would be made up, and `erx_mem_dma_addr` and `erx_vm_map` are `ERX_EINVAL`, since no handle names such an object. `erx_device:open/1` reports that refusal for a real window. Its `stand_in` window, in a hosted build alone, is plain memory with software objects for lines: a `virtio_mmio` stand-in plays a version 2 transport and its device writing the used ring, honest or hostile, and a `genet` stand-in plays a GENET v5 and its PHY; `erx_device:stand_in_fire/2`, `stand_in_used/3` (an index ahead of what is in flight, a foreign head, an over-length entry), `stand_in_transmitted/1` and `stand_in_receive/2` play the device's side, each reading descriptors and buffers through the window as the controller does, never through the NIF's bookkeeping. Both backends refuse a malformed request from one source, `liberx/backend/core/device_check.h`. Entropy is the host's `getentropy`, and an add takes nothing; with `ERX_HOSTED_ENTROPY_FAIL=N` the first N reads go through and every later one is `ERX_ENOTSUP`, the failure the native backend gives when it cannot reach its generator service.
 * **No lines.** `ERX_IRQ_LINE` and `ERX_IRQ_MSI` are `ERX_ENOTSUP` hosted; natively the root makes both, an MSI as a line of the platform's MSI frame ([The call table](#the-call-table)). A trigger of an object not bound delivers nothing, and a bind takes any nonzero group, since there is one.
 * **An object fires in the caller's thread.** A trigger has listed its object and advanced the epoch by the time it returns, each fire counted, and a bound object rebinds under a new label or unbinds. Natively a trigger reaches the dispatcher later, the kernel keeps two fires not yet received as one, and a second bind, an unbind and a rebind are `ERX_ENOTSUP`; a caller must wait on the epoch, as an executor does. So `irq_ready_once` and `irq_line_refused` run hosted only, and the rest of the IRQ row on both.
 * **A reset is exit status 75**, an end `exit(0)`.
@@ -3138,7 +3035,7 @@ These differ from the native backend, and a caller must not depend on either sid
 * **A runtime links libSystem.** ERTS's threads are libSystem's pthreads with libSystem's TLS, and `erx_utcb_self` is a thread-local block (`hosted/log.c:40`), so it works on any host thread. Only a thread that `erx_thread_create` or `erx_pthread_create_executor` made has a slot; for one that plain `pthread_create` made, `erx_executor_slot` says none and `erx_park` is `ERX_ETYPE`, as for a worker natively.
 * **Time.** `erx_clock_ns` is the host's `CLOCK_UPTIME_RAW`, the raw counter that stock OTP also takes on macOS and that the hosted wait's `OS_CLOCK_MACH_ABSOLUTE_TIME` counts in: nanoseconds, stopped during a sleep of the machine, and never below a thread's earlier read, which ERTS's time supervisor checks on every read and stops the runtime over. `CLOCK_MONOTONIC` does not keep that promise on macOS, since it is the wall clock less the boot time. `erx_time_wall_ns` adds one offset that the entry reads from `CLOCK_REALTIME` at its start, as the time page's wall offset does natively, so a later step of the host's clock does not reach ERTS, and wall time runs behind by the length of any sleep of the machine until the next start. `erlang:system_info(os_monotonic_time_source)` and `os_system_time_source` name these two calls as their functions, and report their unit as the resolution, since neither backend says how fine its clock ticks. The zone is UTC whatever the host's `TZ` says. `statistics(runtime)` fails with `notsup`, as on Fiasco, though the host could answer, so nothing comes to depend on it; no start path calls it.
 * **The entry maps an archive.** `liberx/backend/hosted/start.c` holds `main(ARCHIVE, ARGS...)`: it `mmap`s the file read-only, closes it, runs `erx_pack_open` and the manifest reader, builds [the boot information page](#boot-information) and calls `erx_runtime_main`. A missing file or a refusal prints its reason and exits with status 1. A file truncated during the run faults, as the host's. `erx.*` words do not exist here: arguments after the archive's path are `init`'s.
-* **The archive has a root that never runs.** `erx_pack_open` requires a root image and a manifest (`pack.c:405`, `:505`), and the packer sizes the root as an executable for the target. A hosted release is packed by the same `Pack#build`, with the same manifest and the same entries under `system/`, and a minimal static executable as `system/root`, so hosted iteration needs neither Fiasco's build nor the cross-compiled ERTS. It carries the domain release under `domains/erxos/`, with a boot script for each name the manifest's session and domain rows give their release, as the production image does, and the same executable again at `runtimes/emu`, so the manifest's references resolve as they do natively; neither runs, since hosted the domain service makes no domain. A test compares the two archives' release files, path and hash; the root, the manifest and the notices, which name what each build links, are excepted. `tools/lib/erx/release_files.rb` lists the files: each beam and `.app` under `lib/<application>-<version>/ebin/` with a `compiled` build receipt naming its source in `otp/` or `erlang/apps/`, each `include/*.hrl` header under `lib/<application>-<version>/include/` with a receipt naming the header itself as its source, `public_key`'s `priv/cacerts.pem`, the trust store, with a receipt naming each root of `config/trust/` ([design-crypto.md](design-crypto.md#the-trust-store)), and the boot scripts, the system release's `bin/start.boot` and the domain release's `bin/<name>.boot`, which `systools` on the stock host build writes from a release file and the applications' own `.app` files.
+* **The archive has a root that never runs.** `erx_pack_open` requires a root image and a manifest (`pack.c:405`, `:505`), and the packer sizes the root as an executable for the target. A hosted release is packed by the same `Pack#build`, with the same manifest and the same entries under `system/` and `domains/erxos/`, and a minimal static executable as `system/root` and again at `runtimes/emu`, so the manifest's references resolve as they do natively and hosted iteration needs neither Fiasco's build nor the cross-compiled ERTS; neither executable runs, since hosted the domain service makes no domain. A test compares the two archives' release files, path and hash, the root, the manifest and the notices excepted; `tools/lib/erx/release_files.rb` lists the files, each with a build receipt naming its source.
 * **No watchdog.** A pet is accepted and does nothing, so a process stopped under `lldb` lives, and `erx_watchdog` runs as natively.
 * **No domain library in one process.** The one-process form is the system domain alone and builds no library, as a domain's runtime builds none: both link `liberx/backend/core/dom_lib_none.c` in its place, so the domain service's NIF module `erx_domain_lib` loads as natively and answers every well-formed call `{error, enotsup}`, and the domain service runs with no library. `erx_mem_create`, `erx_cap_close` and `erx_gate_bind`, which that module links for the library's crash copies and fault gate, are `ERX_ENOTSUP`.
 * **The console's driver is `erx_stdio`** ([design-runtime.md](design-runtime.md#the-console-and-standard-io)).
@@ -3165,19 +3062,12 @@ call, and no stub takes a snapshot of it.
 
 ## Read in source, never run
 
-The gate's `native_musl` suite has run `libl4sys.p.a` linked beside musl, and musl's start, TLS, identifiers, join, detached exit and condition variables on the root, under HVF at 1 and 4 CPUs.
-
-The gate's `boot_image`, `native_boot`, `production_image`, `native_memory`, `debug_log`, `native_threads`, `native_crash` and `native_task` suites have run the load plan, the region reservations, the banner, the descriptor check, `sigma0`'s paging of the root's image, of the
-handoff page and of the archive, `user_ptr`, `l4_vcon_write`, power-off and every call of the [Protection](#protection) table that does not fault, under HVF at 1 and 4 CPUs, with `l4sys` (`libl4sys.p.a`, since `libl4sys-direct.a` lacks `l4_utcb_wrap`) and
-`libsigma0.a` linked freestanding. They have also run `l4sigma0_map_mem` over the root's image, one gate as the pager, exception handler and request target of the root's threads, with a root thread calling its own task's gate, the 128 KiB area in
-`l4_task_add_ku_mem` on the root, semaphore creation, threads on those UTCB slots, and the deletion of a thread and its semaphore when a start fails at each step, so that an unbound thread that never started can be deleted. `native_threads` and `native_watchdog` have run, with each thread on a CPU in turn, service calls and semaphore wakes across
-CPUs, timed waits racing wakes, `l4_scheduler_run_thread`'s mask on a thread before its start and while it runs, priority 255 over a spinning thread, the deletion of a running thread's capability from another CPU with the marker cleared afterwards, the same for the first thread, an index and its
-native UTCB reused, and deleted semaphores recreated at the same slot. `native_task` has run `l4_factory_create_task` with the 128 KiB `utcb_area`, a gate and semaphores mapped into a task, a gate named at `L4_BASE_PAGER_CAP` as pager and exception handler in the thread's own task, `l4_thread_control_bind` into another task, `l4_task_map` into a task from the window, one page mapped twice with different rights, user-mode cache maintenance through the read-execute alias, and a task's end while its threads run on other CPUs or call the gate.
-Everything below was read at the cited lines and has not been executed.
-
-**Run by hand, not kept in a suite**, a root with a helper thread whose pager it was, under TCG and HVF: a write in R, a run in R or RW, a touch of an
-uncommitted or no-access page and a write in RX each fault and the same page keeps its contents; `L4_FP_OTHER_SPACES` on a window page removes the
-derived mapping and leaves the window's; mapping RX over RW without the drop leaves the write right. The suites that keep these need the service thread.
+The QEMU gate's suites run the boot path, `sigma0`'s paging, the root's threads, tasks, memory,
+interrupts and device windows under HVF at one and four CPUs, and the production image suite
+compares two deterministic boots' transcripts byte for byte from erXos's banner to the shell's
+line, Fiasco's own boot included. What this document rests on that no suite runs was read at the
+cited lines and has not been executed; the first package that carries each claim checks it, and a
+claim that fails changes this document.
 
 **Speculation advisories**, fetched 2026-11-16 over HTTPS from Arm's Trusted Firmware-A repository
 (`https://github.com/ARM-software/arm-trusted-firmware`, tag `v2.12.0`), since Arm's security
@@ -3201,24 +3091,12 @@ prediction barriers (`INTEL_IA32_BRANCH_BARRIERS`, `:478-487`) depend on AMD64. 
 4's A72 revision, whether 0.2's BL31 build turns the two workarounds on, and the exposure of the
 Apple cores an HVF guest runs on are unverified.
 
-**The thread package:**
+**Read, not run:**
 
 * A fault never answered blocks its thread until deleted: `thread.cpp:582-584`; the fault paths not read.
-
-The gate's `function_api` suite has run `l4sigma0_map_iomem` over QEMU's `fw_cfg` and refused over RAM, the object's `l4_task_map` from the device window, `l4sigma0_map_anypage` of the contiguous pool's 16 MiB run, and `fw_cfg`'s DMA writing a run at the address `erx_mem_dma_addr` gives, which shows that the physical address `sigma0` reports is the device's. The `native_irq` suite reaches the UART through the same object, by `erx_device`'s C interface and the generated PL011 table.
-
-The gate's `native_irq` suite has run `l4_icu_bind` on the UART's receive line with no `-serial_esc`, which the kernel leaves free; `l4sigma0_map_iomem` of the kernel UART's own page, which `sigma0` gives; a bound IRQ object's label arriving at an open wait whole, for a device line and a software `l4_irq_trigger` alike; `l4_irq_detach` stopping deliveries, a software object's fire while detached arriving at the next bind, and a detached line opening again at its next bind; the line masked until `l4_irq_unmask`; and a semaphore up from the dispatcher waking an executor on another CPU.
-
-The gate's `production_image` suite has run ERTS's interpreter as the root, `ERX_CLONE_EXECUTOR`'s path through `pthread_create.c` and `clone.c`, `l4_scheduler_info` as a CPU count, the release's files through `erx_prim_file` from the archive, `init`, `kernel_sup`'s children to `erx_console`'s banners, under HVF at 1 and 4 CPUs, with a one-CPU boot and the deterministic transcript under TCG, and a release's pets, kept past the deadlines and then stopped, under both at 1 CPU.
-
-The same suite boots the image twice in deterministic mode to the shell and compares the two serial transcripts byte for byte from erXos's banner to the shell's line, which includes the counter Fiasco's timer reports; Fiasco's own boot, its delay calibration and timer setup included, gives the same bytes each time.
-
-**Later packages:**
-
 * `enif_send` from a dirty NIF's callback, and its report of a dead receiver: `erl_nif.c:883`.
-* The size estimates: backend packages 1 to 6, 3,000 to 4,500 lines of C17; the musl port 1,000 to 2,000, of which threads and `malloc` measure 600; NIF glue about 500.
 
-**The rows between tasks**, to be read in source, each for the first package that carries it:
+**The rows between tasks**, each read for the first package that carries it:
 
 * `l4_rcv_ep_bind_thread` by the root onto a thread of another task, with deliveries reaching that thread's open wait, and the
   root's stores into the task's memory before the bind visible to the thread after the delivery.
@@ -3227,14 +3105,13 @@ The same suite boots the image twice in deterministic mode to the shell and comp
 * `l4_semaphore_up` by the service on a semaphore of a thread of another task, which the root holds at its own slot.
 * `l4_irq_detach` by the root of an object bound to a thread of another task, and `l4_icu_bind` of a line whose earlier
   IRQ object was deleted, so a restarted device holder gets its line again.
-* The size estimate: the rows between tasks, 2,000 to 4,000 lines of C17 across both backends, a guess until the first rows land.
 
 ## Measurements
 
 Each is taken with `tools/erx bench` before and after the change, with the host, accelerator,
 QEMU version, compiler, flags, workload and baseline recorded as CLAUDE.md requires:
 
-* **a doorbell from ring to wake**, between two domains: a root round trip and a trigger today, a
+* **a doorbell from ring to wake**, between two domains: a root round trip and a trigger before, a
   direct trigger after;
 * **a service round trip**, the null request, to price what stays in the root, and, on the Raspberry Pi 4 with and
   without the branch-predictor patch, to decide whether the fork carries it
