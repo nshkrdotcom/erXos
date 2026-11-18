@@ -480,6 +480,36 @@ class PackProvenanceTest < Minitest::Test
                                                 build_kind: 'development').first.fetch('license')
   end
 
+  # The Doom example's archive, attributed whole under the label the image build gives it, as
+  # the one input of an image registered as example.
+  def resolve_example(license:, label: Erx::PackProvenance::EXAMPLE_LABEL, status: 'example', build_kind: 'development')
+    external = [{ 'path' => @source, 'sha256' => Digest::SHA256.file(@source).hexdigest,
+                  'label' => label, 'license' => license, 'status' => status, 'evidence' => 'example archive fixture',
+                  'notices' => [{ 'path' => File.join(@root, 'LICENSE'),
+                                  'sha256' => Digest::SHA256.file(File.join(@root, 'LICENSE')).hexdigest }] }]
+    receipt = write('receipt.json', JSON.generate(@receipt))
+    Erx::PackProvenance.new(root: @root, catalog: build_catalog, external: external)
+                       .resolve(receipt: receipt, artifact: @artifact, build_kind: build_kind)
+  end
+
+  # The example status admits GPL-2.0 only for the Doom example's archive, in a development
+  # build: the same GPL bytes under another label or as permanent, another restricted
+  # license under the example's label, and a release build are refused. (A stopgap keeps
+  # the development build's admission, test_permissive_stopgap_is_allowed_in_release_provenance.)
+  def test_only_the_example_archive_enters_under_gpl_2
+    record = resolve_example(license: 'GPL-2.0-or-later AND BSD-3-Clause').first
+    assert_equal ['GPL-2.0-or-later AND BSD-3-Clause', 'example'], record.values_at('declared_license', 'status')
+    refusals = { { label: 'third_party/fixture/root.c' } => /registered as example/,
+                 { license: 'GPL-3.0-or-later' } => /registered as example/,
+                 { license: 'GPL-2.0-only' } => /registered as example/,
+                 { status: 'permanent' } => /no permitted grant/,
+                 { build_kind: 'release' } => /no permitted grant/ }
+    refusals.each do |change, reason|
+      error = assert_raises(Erx::Error) { resolve_example(license: 'GPL-2.0-or-later AND BSD-3-Clause', **change) }
+      assert_match(reason, error.message, change.inspect)
+    end
+  end
+
   def test_empty_receipt_is_a_typed_refusal
     receipt = write('empty.json', ''.b)
     @resolver.instance_variable_set(:@catalog, build_catalog)

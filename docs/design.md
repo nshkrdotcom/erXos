@@ -2038,13 +2038,17 @@ pin what the build takes from FreeBSD. The network stack, its drivers
 included, is pinned apart, at the 16.0-CURRENT commit its row names.
 Research records keep the release they were checked against.
 
-A row's status is one of three. `permanent`: kept for good. `stopgap`:
+A row's status is one of four. `permanent`: kept for good. `stopgap`:
 used to reach a working system and replaced later; a release ships only
 the stopgaps its milestone names, each under the release contract its
 design states (littlefs and LVGL for 0.2), and no other. `release`: in a
 release's trusted base and replaced later, with its replacement planned
 in [plan.md](plan.md) and what it lacks against that replacement
-published with the release.
+published with the release. `example`: a demo shipped in the published
+images of a preview release only, never part of the system, its source
+offered with the image; Doom for 0.1 is the one, and the image build
+admits the `example` status for its archive alone, under GPL-2.0-or-later
+(`PackProvenance::EXAMPLE`).
 
 | Component | Purpose | License | Status | How it enters |
 | --- | --- | --- | --- | --- |
@@ -2121,6 +2125,7 @@ published with the release.
 | Bumble `v0.0.237` (`34def7f1`), with its Python dependencies (`click`, `cryptography`, `platformdirs`, `prompt_toolkit`, `pyee`, `websockets`, `pyserial`, `libusb1`, `pyusb` and theirs), on Python 3.11 or later | the Bluetooth test peer: virtual controllers joined by a local link, and the central that scans, connects, pairs and reads ([design-bluetooth.md](design-bluetooth.md#verification)) | Bumble Apache-2.0; each Python dependency's license recorded with its lock entry; Python's own unverified | tools, never part of an image | Bumble fetched at a pinned commit and hash, its dependencies from a checked-in lock with hashes, into a virtual environment outside the tree; Python installed through Homebrew; run unmodified as subprocesses of the Ruby harness |
 | v64 `87d26deb` | the website's in-browser console: an AArch64 virt machine in WebAssembly that boots the erXos image in a visitor's browser | BSD-2-Clause and MIT | permanent, website only, never in an image | unmodified source fetched at a pinned commit through `deps.lock` and built by `tools/build_site.rb`, whose `npm ci` alone fetches online (an exception for the site build); built in a staged copy of the fetched tree, with npm install scripts disabled; the built bundle and core ship with the site beside v64's license texts and the notices of the third-party code compiled into them (Berkeley SoftFloat, zstd and the Rust standard library), which the build collects and checks ([site/README.md](../site/README.md)) |
 | Closure Compiler v20210601 | builds v64's JavaScript bundle | Apache-2.0 | permanent host tool for the website build | unmodified jar fetched through `deps.lock` |
+| doomgeneric (Doom), with Freedoom 0.13.0's `freedoom1.wad` | the Doom demo: the program `/bin/doom` of the published QEMU virt and Raspberry Pi 4 images, started from rc by typing `doom` | GPL-2.0-or-later; the WAD BSD-3-Clause; the image's NOTICES carries both texts, and the GPL-2.0 text comes from the fork, never from erXos's tree | example, shipped in 0.1's images | the git submodule `examples/doom/doom` from erXos's fork `https://github.com/stass/erxos-doom`, pinned by the commit the tree records, fetched by `tools/erx fetch --example doom`, which also fetches the WAD against the SHA-256 its `deps.lock` pins ([ORIGIN.md](../examples/doom/ORIGIN.md)); no file of it enters erXos's tree |
 | xterm.js 5.5.0 | the website console's terminal | MIT | permanent, website only | loaded by the visitor's browser from jsDelivr at a pinned version, checked by Subresource Integrity |
 
 ### Licenses and notices
