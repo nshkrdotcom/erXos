@@ -2176,7 +2176,9 @@ other domain, is made and kept hidden: its `mkdir` succeeds, its
 presents succeed and reach no pixel of the screen, its `wctl` reads
 report it hidden, and its `mouse` and `kbd` receive nothing until it
 is shown. While the display has no session, or its session has no live
-window, the screen shows only the background `erx_screen` fills.
+window, the screen shows only the background `erx_screen` fills, with
+the splash over it until the first window is shown
+([The splash](#the-splash)).
 
 The policy refuses every `wctl` request with `EINVAL`, so no window
 takes the screen by asking, and it delivers every event the router
@@ -2634,6 +2636,36 @@ answer arrives as a frame's does. While the panel is off, presents change their
 windows' buffers and are answered without a copy, and nothing is pushed;
 the next input event turns the display `on` and repaints. The idle clock
 is a timer for power, not for drawing.
+
+#### The splash
+
+From its start until its first layout that shows a window, `erx_screen`
+shows the **splash** over the background: the erXos wordmark in the
+palette's `text` colour, centred across the screen with its middle a
+little above the screen's, and below it three dots in `secondary`, the
+quiet sign that the system is still starting. The background is the
+palette's `desktop` colour, as everywhere a window is not
+([design-desktop-programs.md](design-desktop-programs.md#colour)). So
+from the moment the display domain owns the screen until its first
+application window, a display shows erXos starting rather than a bare
+colour.
+
+The splash costs nothing a drawing would: its placement is a pure
+function of the screen's rectangle and palette, `erx_splash:plan/3`, and
+the wordmark is an 8-bit coverage mask the build rasterises from the
+checked-in `erxos-logo.svg` into the generated module `erx_splash_mark`
+(`tools/lib/erx/splash_mark.rb`), so the screen draws one colour through
+the mask and three dots with `erx_memdraw`, as part of the frame that
+paints its first layout. A screen too small to hold the whole splash
+shows the background alone, never a clipped mark.
+
+The first layout that shows a window ends the splash: the screen takes
+its core afresh, its contents unknown, so that layout's plan repaints
+every pixel, and no part of the splash outlives it whatever the policy
+places. After that the screen fills only the background where no window
+is, also when every window has gone. A screen started again behind a
+restarted driver shows the splash only if its first layout shows no
+window.
 
 ### The window process
 
