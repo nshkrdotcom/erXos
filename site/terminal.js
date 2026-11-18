@@ -26,6 +26,9 @@ const CPU_CORES = 1;
 // No erx.hostlink=1: v64's machine has one UART, the console, so there is
 // no host link UART to drive (docs/design-fiasco.md, "The command line").
 const CMDLINE = "erx.watchdog=1,30,600";
+// ?jit=0 in the page's address runs v64 without its JIT, for telling a browser
+// that fails while the JIT compiles guest code from one that fails otherwise.
+function jit_disabled() { return new URLSearchParams(location.search).get("jit") === "0"; }
 const MANIFEST = "boot.json";
 // The bounds on what boot.json may ask the page to hold: the image and the
 // disk's published bytes must each fit in the guest's memory, and the
@@ -801,7 +804,7 @@ const machine = {
             cpu_type: "arm64", graphics_adapter: "none", cpu_cores: CPU_CORES,
             memory_size: RAM_MIB << 20, log_level: 0, wasm_path: site_url(this.manifest.emulator.wasm),
             kernel: { buffer: this.image.slice(0) }, cmdline: CMDLINE, virtio_disks: virtio_disks(this.disk),
-            net_device: { ...NET_DEVICE }, jit_switches: { a64_page: 1 }, autostart: true,
+            net_device: { ...NET_DEVICE }, jit_switches: { a64_page: 1 }, disable_jit: jit_disabled(), autostart: true,
         });
         session.emulator.add_listener("emulator-error", error => {
             if(this.current === session) this.fail(error);
