@@ -1825,11 +1825,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_wm`'s rule that every rectangle lies within the screen.
 * [Low] `erlang/apps/erx_display/src/erx_input.erl`: `destination/1` ends in a catch-all, so a new route that
   should give the policy its gesture would silently go nowhere.
-* [Medium] `erlang/apps/erx_display/src/erx_input.erl` (`key_up/6`, `release`), [The input router](docs/design-display.md#the-input-router):
-  a key's up carries `mods(S)`, the modifiers held over every source now, so a window off the screen learns of a
-  modifier pressed at the window on the screen (hold A at the kiosk, a front window shows, Ctrl there, A up: the
-  kiosk's up names Ctrl), against "nothing pressed after". Carry only the modifiers whose downs went to the up's
-  window, with a router case and a seeded `mods(S)`.
 * [Medium] `test/host/display_domain_test.rb`: the suite has no cell under `rio`: keys typed at a clicked window
   keep reaching it while a second client makes, raises, hides and shows a window, with a seeded policy that picks
   each new window ([Verification and testing](docs/design-display.md#verification-and-testing), the window
