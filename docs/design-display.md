@@ -2503,8 +2503,8 @@ takes. When the driver answers, `erx_screen` takes what is pending:
    pending.
 
 **What the screen shows** is the layout of the last frame the driver
-answered, and `erx_screen` alone knows it. With each answer, before it
-answers the frame's presents, it sends
+answered, and `erx_screen` alone knows it. With each frame the driver
+takes, before it answers the frame's presents, it sends
 `erx_winfs` `{shown, D}`, the shown windows of that frame's layout,
 topmost first, with each one's rectangle and the time of the last frame
 in which the window gained pixels: a frame whose plan copied any of the

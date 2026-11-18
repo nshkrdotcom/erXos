@@ -720,7 +720,8 @@ handler decides before it opens anything fails the open and keeps
 nothing, so the program runs on and a later open tries again: `ENODEV`
 for a session with no `windows` grant on the display or with no
 `display` and no only display, and the table's refusals of a window
-start: `EINVAL` for a table with no room for the window's `/dev` entry,
+start: `EINVAL` for a table with no room for the window's `/dev` entry or
+with an entry at or below one of the window's `/dev` names,
 and `EACCES` for one whose entry at exactly `/dev` cannot write. Once
 the handler has begun opening the
 window, any failure ends the handler, and the program with it, as a
@@ -753,8 +754,8 @@ Once its program has ended, the handler exits with `{shutdown,
 ordinary end out of OTP's crash reports
 (`lib/stdlib/src/proc_lib.erl:951`). A window that failed once its
 opening began, at the program's first open of `/dev/draw`, ends the
-handler with `{shutdown, {window, Errno}}`, `Errno` the window's,
-the connection's or the tree's refusal, and the program with it. Any
+handler with `{shutdown, {window, Errno}}`, `Errno` the atom
+the window, the connection or the tree refused with, and the program with it. Any
 other reason is the handler's own end, a crash or a port the driver
 closed with no status to read, and the program ended with it, since a
 port closes with its owner. So a
