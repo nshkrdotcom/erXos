@@ -39,7 +39,8 @@ asking again:
   that window is on the screen;
 * every event of a gesture goes to its destination, the window, the
   policy or nowhere, fixed by the policy's answer to its first event; a
-  hidden window receives only the events that let a button or touch go;
+  window that is not on the screen receives only the events that let a
+  button or touch go;
 * the reserved chord is answered `{wm, chord}` before the policy is
   asked, so no window receives its down, repeats or up.
 
@@ -111,7 +112,7 @@ new table, the timer.
                  buttons = #{} :: #{code() => 1..255},
                  touches = [] :: ordsets:ordset(slot())}).
 %% A gesture's destination, fixed by the policy's answer to its first event. A window's
-%% names the buttons of the last pointer event it received, so that once hidden it hears
+%% names the buttons of the last pointer event it received, so that off the screen it hears
 %% only those go up.
 -type destination() :: {window, erx_wm:window_id(), Seen :: 0..255} | policy | nowhere.
 -record(input, {config :: config(),
@@ -288,24 +289,23 @@ destination({delete, _}) -> policy;
 destination(_WindowsOrDrop) -> nowhere.
 
 %% An event of a gesture after its first, and the gesture's destination after it. A
-%% window receives it while shown. While hidden it receives only an event that lets go a
-%% button it saw pressed, carrying only the buttons it saw that are still held, so a
-%% hidden window never hears of a button pressed after it was hidden. The policy is
-%% asked, and an answer naming a window is dropped and counted, since that window did
+%% window receives it while on the screen. Off the screen it receives only an event that
+%% lets go a button it saw pressed, carrying only the buttons it saw that are still held,
+%% so a window off the screen never hears of a button pressed after it left. The policy
+%% is asked, and an answer naming a window is dropped and counted, since that window did
 %% not see the gesture start.
 -spec deliver(destination(), erx_wm:input(), edge(), #step{}, #input{}) -> {#step{}, destination()}.
 deliver({window, Window, Seen} = Dest, #{event := Ev} = Event, Edge,
-        #step{view = #{windows := Windows}} = Step, _S) ->
-    case {erx_wm:fetch(Window, Windows), Edge, Ev} of
-        {{ok, #{state := shown}}, _, {pointer, _, _, Buttons}} ->
+        #step{view = #{windows := Windows}} = Step, S) ->
+    case {on_screen(Window, Windows, S), Edge, Ev} of
+        {true, _, {pointer, _, _, Buttons}} ->
             {out({to, Window, Event}, Step), {window, Window, Buttons}};
-        {{ok, #{state := shown}}, _, _Wheel} ->
+        {true, _, _Wheel} ->
             {out({to, Window, Event}, Step), Dest};
-        {{ok, #{state := hidden}}, letgo, {pointer, X, Y, Buttons}}
-          when Buttons band Seen =/= Seen ->
+        {false, letgo, {pointer, X, Y, Buttons}} when Buttons band Seen =/= Seen ->
             Kept = Buttons band Seen,
             {out({to, Window, Event#{event := {pointer, X, Y, Kept}}}, Step), {window, Window, Kept}};
-        _HiddenOrEnded ->
+        _OffTheScreen ->
             {Step, Dest}
     end;
 deliver(policy, Event, _Edge, Step, S) ->
@@ -368,9 +368,9 @@ ask_on_screen(Event, Step, S) ->
     end.
 
 %% Whether a window is on the screen: the table shows it, and so does the frame the screen
-%% last answered. Only such a window receives what the policy routes and a key's repeat, so
-%% neither reaches a window while the table and the screen disagree about it, in either
-%% direction.
+%% last answered. Only such a window receives what the policy routes, a key's repeat and
+%% every event of a gesture except one that lets a button or touch go, so none of them
+%% reaches a window while the table and the screen disagree about it, in either direction.
 on_screen(Window, Windows, #input{displayed = Displayed}) ->
     case erx_wm:fetch(Window, Windows) of
         {ok, #{state := shown}} -> lists:keymember(Window, 1, Displayed);

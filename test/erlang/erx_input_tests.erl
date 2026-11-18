@@ -13,12 +13,14 @@
 %%     no down or repeat while the window is hidden; the chord's key reaches no window;
 %%     once every source has ended, no timer is set (key_order, key_while_hidden,
 %%     chord_delivered, timer_left);
-%%   * pointer: a hidden window receives only the events of the records that let a
-%%     button or touch go, and once every source has ended every window's last event
-%%     holds no button (pointer_while_hidden, pointer_held_at_end).
-%% Every key's down or repeat that reaches a window reaches one the screen shows: the `frame`
-%% action, in both runs, answers the frame of the table's layout, `{shown, D}`, so `focus`
-%% moves the table ahead of the screen until a frame follows (key_not_displayed).
+%%   * pointer: a window the table hides receives only the events of the records that
+%%     let a button or touch go, and once every source has ended every window's last
+%%     event holds no button (pointer_while_hidden, pointer_held_at_end); the same for a
+%%     window the screen does not show is checked at each step, below.
+%% Every key's down or repeat, and every pointer event but one that lets a button or touch
+%% go, that reaches a window reaches one the screen shows: the `frame` action, in both
+%% runs, answers the frame of the table's layout, `{shown, D}`, so `focus` moves the table
+%% ahead of the screen until a frame follows (key_not_displayed, pointer_not_displayed).
 %% A random run checks that every pointer event lies inside the screen of its step
 %% (pointer_outside_screen), with records before the first screen and screen changes.
 -module(erx_input_tests).
@@ -65,19 +67,23 @@ step(In, #{state := State, got := Got, wake := Wake, displayed := Displayed} = W
     {Got1, Wake1} = lists:foldl(
                       fun({to, Id, #{event := Event}}, {G, Wk}) ->
                               {ok, #{state := WindowState}} = erx_wm:fetch(Id, Windows),
-                              ok = on_screen(Id, Event, Displayed),
+                              ok = on_screen(Id, Event, maps:get(action, World), Displayed),
                               {[{Id, WindowState, Event, maps:get(action, World)} | G], Wk};
                          ({wake, At}, {G, _}) -> {G, At};
                          (_Other, Acc) -> Acc
                       end, {Got, Wake}, Outs),
     World#{state := Next, got := Got1, wake := Wake1}.
 
-on_screen(Id, {key, Edge, _, _, _, _} = Event, Displayed) when Edge =/= up ->
-    case lists:member(Id, Displayed) of
-        true -> ok;
-        false -> error({key_not_displayed, Id, Event})
-    end;
-on_screen(_Id, _Event, _Displayed) ->
+%% A key's up, and the pointer event of an action that lets a button or touch go, may reach
+%% a window the screen does not show; no other key or pointer event may.
+on_screen(Id, {key, Edge, _, _, _, _} = Event, _Action, Displayed) when Edge =/= up ->
+    lists:member(Id, Displayed) orelse error({key_not_displayed, Id, Event}),
+    ok;
+on_screen(Id, {pointer, _, _, _} = Event, Action, Displayed) ->
+    lets_go(Action) orelse lists:member(Id, Displayed)
+        orelse error({pointer_not_displayed, Id, Event}),
+    ok;
+on_screen(_Id, _Event, _Action, _Displayed) ->
     ok.
 
 %% One action of a run, at a clock 300 ms on from the last.
@@ -158,7 +164,8 @@ check_pointer(#{got := Got}) ->
     [error({pointer_held_at_end, Id, B}) || {Id, B} <- maps:to_list(Last), B =/= 0],
     ok.
 
-%% The actions that let a button or touch go, the only ones a hidden window hears of.
+%% The actions that let a button or touch go, the only ones a window off the screen hears
+%% of, whether the table hides it or the screen does not show it.
 lets_go({_, {key, up, _}}) -> true;
 lets_go({_, {touch, _, up, _, _}}) -> true;
 lets_go({_, release}) -> true;
@@ -305,6 +312,27 @@ a_pointer_event_reaches_the_window_on_the_screen_test() ->
     ?assertMatch([{pointer, _, _, 0}, {wheel, 1}, {pointer, _, _, 1}, {pointer, _, _, 1}, {pointer, _, _, 0}],
                  [Event || {to, 1, #{event := Event}} <- Outs]),
     ?assertEqual(0, erx_input:dropped(S)).
+
+%% A drag held in the kiosk while a front window opens and ends: the front window's end
+%% returns the kiosk to the table while the screen still shows the front window, and the
+%% drag's moves and wheel steps resume only once {shown, D} shows the kiosk again. Its
+%% button, let go while the screen shows the front window, still goes up at the kiosk.
+a_drag_resumes_only_once_its_window_is_shown_again_test() ->
+    Kiosk = single([{1, <<"a">>, shown}], <<"a">>),
+    Front = single([{1, <<"a">>, hidden}, {2, <<"a">>, shown}], <<"a">>),
+    {_S, Outs} = outs([{mouse({key, down, ?LEFT}), Kiosk},
+                       {shown(2), Front},
+                       {mouse({pointer, rel, 5, 5}), Kiosk},
+                       {mouse({wheel, 1}), Kiosk},
+                       {shown(1), Kiosk},
+                       {mouse({pointer, rel, 5, 5}), Kiosk},
+                       {mouse({wheel, 1}), Kiosk},
+                       {shown(2), Front},
+                       {mouse({pointer, rel, 5, 5}), Kiosk},
+                       {mouse({key, up, ?LEFT}), Kiosk}], shown_first(Kiosk)),
+    ?assertMatch([{1, {pointer, _, _, 1}}, {1, {pointer, _, _, 1}}, {1, {wheel, 1}},
+                  {1, {pointer, _, _, 0}}],
+                 [{Id, Event} || {to, Id, #{event := Event}} <- Outs]).
 
 input(Event, _Windows, _Screen, _Session, State) -> {{to, 1, Event}, State}.
 

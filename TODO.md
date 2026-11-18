@@ -1825,13 +1825,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_wm`'s rule that every rectangle lies within the screen.
 * [Low] `erlang/apps/erx_display/src/erx_input.erl`: `destination/1` ends in a catch-all, so a new route that
   should give the policy its gesture would silently go nowhere.
-* [Low] `erlang/apps/erx_display/src/erx_input.erl` (`deliver/5`), [The input router](docs/design-display.md#the-input-router):
-  a gesture's later events go to its window while the table shows it, not while it is on the screen (`on_screen/3`,
-  which keys' downs and repeats use), so a drag held in a window while a front window opens and ends resumes its
-  moves there before `{shown, D}` shows that window again. Fold `deliver/5`'s state test into `on_screen/3`, with
-  its let-go clause applying to every window not on the screen (so such a window still sees its buttons go up),
-  the gesture rule's text and a router case, alongside "seen before pressed". Then widen `test/erlang/erx_input_tests.erl`'s
-  `on_screen/3` check, which covers keys alone, to every pointer event but a let-go.
 * [Medium] `erlang/apps/erx_display/src/erx_input.erl` (`key_up/6`, `release`), [The input router](docs/design-display.md#the-input-router):
   a key's up carries `mods(S)`, the modifiers held over every source now, so a window off the screen learns of a
   modifier pressed at the window on the screen (hold A at the kiosk, a front window shows, Ctrl there, A up: the

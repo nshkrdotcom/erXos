@@ -23,12 +23,24 @@ class ErxInputTest < Minitest::Test
   Mutant = Data.define(:text, :broken, :test, :property)
   POINTER_RUN = "{generator, #{TEST}, pointer_exhaustive_test_}".freeze
   KEYS_RUN = "{generator, #{TEST}, keys_exhaustive_test_}".freeze
+  # A gesture's later events by the table alone, as if every window were displayed: one
+  # broken rule that both its case and the pointer run must catch.
+  DRAG_BY_THE_TABLE = {
+    text: 'case {on_screen(Window, Windows, S), Edge, Ev} of',
+    broken: 'case {on_screen(Window, Windows, S#input{displayed = [{Window, none}]}), Edge, Ev} of'
+  }.freeze
   MUTANTS = {
     hidden_window_hears_moves: Mutant.new(
-      text: '{{ok, #{state := shown}}, _, {pointer, _, _, Buttons}} ->',
-      broken: '{{ok, #{state := _}}, _, {pointer, _, _, Buttons}} ->',
+      text: '{true, _, {pointer, _, _, Buttons}} ->',
+      broken: '{_, _, {pointer, _, _, Buttons}} ->',
       test: POINTER_RUN, property: /pointer_while_hidden/
     ),
+    drag_by_the_table: Mutant.new(
+      **DRAG_BY_THE_TABLE,
+      test: "{#{TEST}, a_drag_resumes_only_once_its_window_is_shown_again_test}",
+      property: /a_drag_resumes_only_once_its_window_is_shown_again_test\.\.\..*failed/
+    ),
+    drag_by_the_table_in_the_run: Mutant.new(**DRAG_BY_THE_TABLE, test: POINTER_RUN, property: /pointer_not_displayed/),
     hidden_window_told_every_button: Mutant.new(
       text: '{out({to, Window, Event#{event := {pointer, X, Y, Kept}}}, Step), {window, Window, Kept}};',
       broken: '{out({to, Window, Event}, Step), {window, Window, Kept}};',
@@ -97,6 +109,10 @@ class ErxInputTest < Minitest::Test
   def test_a_key_by_the_screen_alone_fails_its_case = assert_mutant_fails(:key_by_the_screen)
 
   def test_a_press_routed_by_the_table_alone_fails_its_case = assert_mutant_fails(:press_by_the_table)
+
+  def test_a_drag_by_the_table_alone_fails_its_case = assert_mutant_fails(:drag_by_the_table)
+
+  def test_a_drag_by_the_table_alone_fails_the_pointer_run = assert_mutant_fails(:drag_by_the_table_in_the_run)
 
   def test_a_clamp_to_the_edge_fails_the_screen_property = assert_mutant_fails(:clamp_to_the_edge)
 
