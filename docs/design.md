@@ -1294,7 +1294,9 @@ Phase 1 and 1b's. erXos's kernel replaces Fiasco once it runs the first
 release's system, gated on the conformance suite and Phase 1's tests
 ([plan.md](plan.md)), after a pilot of the capability table and budgets
 calibrates the effort
-([design-kernel.md](design-kernel.md#risks-and-open-questions)).
+([design-kernel.md](design-kernel.md#risks-and-open-questions)). Both
+kernels may stay supported for a while before Fiasco leaves, each a
+backend behind the same kernel interface.
 
 ## C library
 

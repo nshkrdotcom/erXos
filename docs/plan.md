@@ -1993,7 +1993,9 @@ walk after every test finds no writable and executable mapping.
 
 **Gate GK3.** Decides the replacement, from the conformance suite and
 0.2's workloads: parity over 0.2's system, which is all Fiasco carries, as
-replacing Fiasco or a stopgap needs. The fork leaves the tree with its
+replacing Fiasco or a stopgap needs. Both kernels may then stay
+supported for a while, each a backend behind the same kernel interface;
+once erXos's kernel has replaced it, the fork leaves the tree with its
 `TODO.md` item, and with it what
 [design-fiasco.md](design-fiasco.md#what-erxoss-kernel-keeps-and-drops)
 drops; the dependency table drops it.
