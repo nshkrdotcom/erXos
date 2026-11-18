@@ -8,7 +8,7 @@ require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
 # Runs test/erlang/erx_cmd_top_tests.erl, the EUnit cases of the command
-# shell's `top` (docs/design-live.md, "The command shell"), against the
+# shell's `top` (docs/design-shell.md, "Text commands"), against the
 # erx_shell application compiled from source with warnings as errors on
 # stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies).
 class ErxCmdTopTest < Minitest::Test

@@ -9168,7 +9168,7 @@ document's "residual risks accepted" paragraph.
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
   request, right after the signal and errno table package, which gives `SIGINFO` its number.
-* [Low] live inspection, `ps` and `top` ([design-live.md](docs/design-live.md)): the `time` and `pcpu` columns of an
+* [Low] live inspection, `ps` and `top` ([design-shell.md](docs/design-shell.md#text-commands)): the `time` and `pcpu` columns of an
   Erlang process show its reductions, labelled as reductions, instead of `-`; real CPU time per process comes
   later as an opt-in scheduler flag.
 * [Medium] desktop, the release of `erx_desk` (`tools/lib/erx/release_files.rb`, `RELEASE_SCRIPTS`):

@@ -4,7 +4,7 @@
 -module(erx_cmd_top).
 -moduledoc """
 `top [-bn] [-d count] [-s time] [number]`: FreeBSD's top (usr.bin/top)
-over the table `ps` reads (docs/design-live.md, "The command shell").
+over the table `ps` reads (docs/design-shell.md, "Text commands").
 
 Each display is a header and a process table. The header's lines are
 FreeBSD's where they map: the run queue, the uptime and the time of day,
