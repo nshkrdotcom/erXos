@@ -744,10 +744,11 @@ system release starts the domain service
 that holds a display's grant, a session template's or a configured
 domain's, starts `erx_win` as a permanent application, so the
 allocator's end ends the application and the domain
-([design-apps.md](design-apps.md#starting-a-session)), and the build
-refuses an image whose manifest grants a display, by a facet row or
-the apps row's services, to a row whose release does not start
-`erx_memdraw` and `erx_win`; the display domain's release does
+([design-apps.md](design-apps.md#starting-a-session)), and the manifest
+check refuses a grant of a display, by a facet row or the apps row's
+services, to a row whose release does not start `erx_memdraw` and
+`erx_win` (property 18 of [The manifest](design-system.md#the-manifest));
+the display domain's release does
 not hold it, so no allocator runs over the display's read-only mappings. A handler
 reaches the allocator by its registered name, and names the area by
 its display's `Peer`, which `erx_win`'s handle keeps with the buffer.

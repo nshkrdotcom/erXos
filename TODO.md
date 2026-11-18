@@ -2465,12 +2465,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
-* [Medium] build, the display client check (`tools/lib/erx/manifest.rb` `display_releases`,
-  `tools/lib/erx/release_files.rb` `check_display_clients`): it resolves which rows and
-  templates hold a display's grant a second time, outside the manifest checker, so a
-  disagreement with the checker passes silently. Make it a clause of property 18 in the
-  checker (`check_display_grants`), with the checker's context recording which applications
-  each release script starts (`applications - LOADED`), and delete the second resolution.
 * [Low] programs, a narrowing to `/dev` (`erlang/apps/erx/src/erx_prog_handler_core.erl`,
   `narrowed_at/4`): where no entry of the starter's table stands at `/dev`, `within [/dev]` makes
   an entry at `/dev` on the provider above it, such as the release slice's root, so the program

@@ -52,6 +52,21 @@ class ManifestTest < Minitest::Test
     refute fixture.matches?(other)
   end
 
+  # A boot script's artifact records what the script starts, which property 18 reads, so
+  # a context whose release artifact records nothing is refused, and one whose script
+  # starts other applications is a different context.
+  def test_a_release_artifact_records_what_its_script_starts
+    arguments = ManifestContextFixture.arguments(@codec)
+    artifacts = arguments.fetch(:artifacts)
+    error = assert_raises(Erx::Manifest::Invalid) do
+      Erx::Manifest::Context.new(**arguments, artifacts: artifacts.merge('session' => artifacts.fetch('session').except('started')))
+    end
+    assert_equal %w[context input], [error.property, error.field]
+    other = Erx::Manifest::Context.new(**arguments, artifacts: artifacts.merge('session' => artifacts.fetch('session')
+                                                                                             .merge('started' => %w[kernel])))
+    refute_equal @context.fingerprint, other.fingerprint
+  end
+
   def test_notice_binding_accepts_original_non_utf8_bytes_without_exposing_them
     record = @context.provenance.first
     refute record.key?('notice')

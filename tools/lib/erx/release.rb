@@ -94,14 +94,15 @@ module Erx
         system_release = ReleaseFiles.new(root: @root, otp: @otp, directory: @directory, runner: @runner, codec: @codec, oracle: @oracle)
         files = system_release.entries
         manifest_source = @platform.manifest_source(@root)
-        domains = domain_entries(manifest_source, root_task)
+        boots = ProductionImage.domain_boots(manifest_source, codec: @codec)
+        domains = domain_entries(boots, root_task)
         entries = [root_entry(root_task), *files, *system_release.directories, *domains]
         _erofs, images = ReleaseMedium.image(entries: files, directory: @directory, runner: @runner)
         catalog = root_task.fetch('catalog').merge(BuildInputs.pack(root: @root, paths: ReleaseFiles.inputs_of([*files, *domains], root: @root, otp: @otp)))
         pack_with(tools, catalog).build(
           entries: entries, root_path: 'system/root', build_kind: BuildKind::DEVELOPMENT,
           platform: @platform.record,
-          artifacts: ProductionImage.artifacts(archive_paths(entries), images: images),
+          artifacts: ProductionImage.artifacts(archive_paths(entries), images: images, boots: boots),
           manifest_source: manifest_source, output: output
         )
       end
@@ -114,15 +115,15 @@ module Erx
         'id' => 'root', 'artifact' => root_task.fetch('artifact'), 'receipt' => root_task.fetch('receipt') }
     end
 
-    # The domain release, with a boot script for each name the manifest's session and
-    # domain rows give their release, under domains/ as the production image carries it.
+    # The domain release, with a boot script for each of boots, one for each name the
+    # manifest's session and domain rows give their release (ProductionImage.domain_boots),
+    # under domains/ as the production image carries it.
     # Two stand-ins take the runtime images' places: the root-task fixture's program at
     # ProductionImage::DOMAIN_RUNTIME_PATH, and again at JIT_RUNTIME_PATH, marked jit as
     # ProductionImage#domain_parts marks the BeamAsm image. They exist only so the manifest's
     # @artifact.emu and @artifact.jit resolve here as natively. None runs: hosted,
     # erx_domain_lib does not load, so the domain service makes no domain and starts no session.
-    def domain_entries(manifest_source, root_task)
-      boots = ProductionImage.domain_boots(manifest_source, codec: @codec)
+    def domain_entries(boots, root_task)
       return [] if boots.empty?
 
       stand_in = { 'kind' => @codec.member('entry_kind', 'image'), 'flags' => 0,

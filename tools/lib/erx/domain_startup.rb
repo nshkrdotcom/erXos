@@ -5,7 +5,8 @@
 module Erx
   # What a domain's startup names that both the manifest check and the image builders
   # read, kept apart from either so that the check loads no runtime or release code:
-  # the runtime artifact a domain row names, and the app template's one recipe.
+  # the runtime artifact a domain row names, the app template's one recipe, and the
+  # client side of the display.
   module DomainStartup
     # The artifact name of a domain's runtime image, the interpreter's, which a domain
     # row's or session template's `runtime @artifact.NAME` names (ProductionImage
@@ -27,5 +28,12 @@ module Erx
             '-eval ok=application:start(erx_session,permanent),ok=application:start(erx_app,permanent)',
       env: ''
     )
+
+    # The client side of the display (docs/design-display.md, "The pixel area"): the
+    # pixel primitives and erx_win, whose allocator, erx_pixels, gives a window its
+    # buffer in the display's pixel area. Every release script that a holder of a
+    # display's grant boots starts both, which property 18 checks against what the
+    # checked context records each script starts (ReleaseFiles.domain_artifacts).
+    DISPLAY_CLIENT = %w[erx_memdraw erx_win].freeze
   end
 end

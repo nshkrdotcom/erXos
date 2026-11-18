@@ -62,13 +62,8 @@ module Erx
     # "Stages"), and none runs ssl's or inets' supervisors until a program starts them.
     DOMAIN_IMAGE_ONLY = DomainImageApps::APPLICATIONS
     # Every application a release only loads; it starts each other one it holds
-    # (release_entry).
+    # (started?).
     LOADED = [*LOAD_ONLY, *DOMAIN_ONLY, *DOMAIN_IMAGE_ONLY].freeze
-    # The client side of the display (docs/design-display.md, "The pixel area"): the
-    # pixel primitives and erx_win, whose allocator, erx_pixels, gives a window its
-    # buffer in the display's pixel area. Every release that holds a display's grant
-    # starts both (check_display_clients).
-    DISPLAY_CLIENT = %w[erx_memdraw erx_win].freeze
 
     NAME = 'erxos'
     BOOT_DEADLINE = 120
@@ -129,11 +124,11 @@ module Erx
     #   (DOMAIN_IMAGE_ONLY), which it only loads, so that a principal can run OTP's ssh
     #   daemon in its own session (docs/design-ssh.md, "Stages", stage 1) and fetch over
     #   HTTPS (docs/design-crypto.md, "Releases"), and no session runs ssh's supervisors
-    #   unasked. It also starts the client side of the display (DISPLAY_CLIENT): a
-    #   session template may hold a display's grant (root's display_root), and its
-    #   programs' window buffers come from erx_win's allocator, erx_pixels, which runs in
-    #   every release that holds one (docs/design-display.md, "The pixel area";
-    #   check_display_clients);
+    #   unasked. It also starts the client side of the display
+    #   (DomainStartup::DISPLAY_CLIENT): a session template may hold a display's grant
+    #   (root's display_root), and its programs' window buffers come from erx_win's
+    #   allocator, erx_pixels, which runs in every release that holds one
+    #   (docs/design-display.md, "The pixel area"; property 18);
     # * storage: the block driver, littlefs's volume (docs/design-stopgap.md, "littlefs
     #   in the storage domain") and F2FS's codec (docs/design-f2fs.md), so no system
     #   domain loads the driver of a device the manifest gives the storage domain,
@@ -187,17 +182,17 @@ module Erx
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
-                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, *DISPLAY_CLIENT, 'erx_net_client', 'erx_web_line',
-                                      'erx_ssh_line'].freeze,
+                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, *DomainStartup::DISPLAY_CLIENT, 'erx_net_client',
+                                      'erx_web_line', 'erx_ssh_line'].freeze,
                         'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage', 'erx_f2fs'].freeze,
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
-                        'client' => [*DOMAIN_BASE, *DISPLAY_CLIENT, 'erx_ui', 'erx_desk'].freeze,
+                        'client' => [*DOMAIN_BASE, *DomainStartup::DISPLAY_CLIENT, 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'ssh'].freeze,
                         DomainStartup::APP_TEMPLATE.release =>
-                          [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', *DISPLAY_CLIENT, 'erx_ui',
-                           'erx_net_client', 'erx_app'].freeze,
+                          [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', *DomainStartup::DISPLAY_CLIENT,
+                           'erx_ui', 'erx_net_client', 'erx_app'].freeze,
                         'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
                         'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze,
                         'ntpd' => [*DOMAIN_BASE, 'erx_net_client', 'erx_ntpd'].freeze,
@@ -214,20 +209,6 @@ module Erx
     end
     check_released(APPLICATIONS, system: SYSTEM_APPLICATIONS, boots: RELEASE_SCRIPTS)
 
-    # Refuses a boot script that does not start the client side (DISPLAY_CLIENT) when a
-    # row holding a display's grant boots it: holders are those rows' release names
-    # (Manifest.display_releases), and boots the scripts an image carries. Every domain
-    # boots in interactive mode, so any domain can load erx_win, but only one whose
-    # script starts it runs the allocator a program's first open of /dev/draw takes its
-    # window's buffer from; without it the open fails with ENODEV.
-    def self.check_display_clients(boots, holders:)
-      lacking = boots.select { |boot| holders.include?(boot.name) }.filter_map do |boot|
-        missing = DISPLAY_CLIENT - (boot.applications - LOADED)
-        "the #{boot.name} script holds a display's grant and does not start #{missing.join(', ')}" unless missing.empty?
-      end
-      raise Error, lacking.join('; ') unless lacking.empty?
-    end
-
     # Where the one domain release lies: domains/erxos/, which sorts after boot/ and
     # before system/, so it is one run of whole entries that does not split the system
     # run (docs/design-stopgap.md, "The production image").
@@ -239,7 +220,16 @@ module Erx
     # image's, which alone may boot a test-only application (ErlangApps::TEST_ONLY).
     DomainBoot = Data.define(:name, :applications, :test) do
       def initialize(name:, applications:, test: false) = super
+
+      # The applications the script starts, in release order (ReleaseFiles.started?).
+      def started = applications.select { |application| ReleaseFiles.started?(application) }
     end
+
+    # Whether a release starts an application it holds: every one but those it only
+    # loads (LOADED). release_entry writes each start type by it and DomainBoot#started
+    # reports by it, so what the checked context records a script starts is what the
+    # script's release file says.
+    def self.started?(application) = !LOADED.include?(application)
     # Every application a test image's domain boot script may take, in release order.
     TEST_APPLICATIONS = [*APPLICATIONS, *ErlangApps::TEST_ONLY].freeze
 
@@ -296,6 +286,19 @@ module Erx
       raise Error, 'the domain release has no boot script' if names.empty?
 
       names.to_h { |name| [name, slice] }.freeze
+    end
+
+    # What a manifest's references to the domain release name in an archive of these
+    # sorted paths, which carries boots: each script's run (domain_runs) with the
+    # applications the script starts (DomainBoot#started), which the manifest check reads
+    # of every script a display's grant holder boots (property 18). An archive whose
+    # scripts are not boots' own, one more or one fewer, is refused.
+    def self.domain_artifacts(paths, boots:)
+      runs = domain_runs(paths)
+      raise Error, "the archive's domain boot scripts (#{runs.keys.sort.join(', ')}) are not those given " \
+                   "(#{boots.map(&:name).sort.join(', ')})" unless runs.keys.sort == boots.map(&:name).sort
+
+      boots.to_h { |boot| [boot.name, runs.fetch(boot.name).merge('started' => boot.started).freeze] }.freeze
     end
 
     # otp is the built OTP copy; directory is where each boot script, under
@@ -517,14 +520,14 @@ module Erx
     end
 
     # An application's term in the boot script's release file: its name and version, and
-    # the start type load for one only loaded (LOADED), DOMAIN_ONLY's and
+    # the start type load for one a release does not start (started?), DOMAIN_ONLY's and
     # DOMAIN_IMAGE_ONLY's among them, in every release; the others take systools'
     # default, permanent.
     def release_entry(application)
       term = "#{application},\"#{version(application)}\""
-      if LOADED.include?(application)
-        "{#{term},load}"
-      else "{#{term}}"
+      if self.class.started?(application)
+        "{#{term}}"
+      else "{#{term},load}"
       end
     end
 

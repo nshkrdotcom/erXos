@@ -612,7 +612,7 @@ module Erx
                                 *added.entries],
                       partition: packages,
                       root_task: root_task, added_archives: [*domain.archives, *added.archives], apps: apps,
-                      images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
+                      images: images, boots: domains, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
                       imports: IMPORTS.merge(added.imports),
                       inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root, otp: erts.otp), *made_sources, *domain.inputs,
                                *packages.flat_map { |entry| entry.values_at('artifact', 'receipt') }, *added.inputs,
@@ -1835,17 +1835,13 @@ module Erx
     # their release references are read here, so the image can carry what they name; the
     # manifest check proves the rows, each reference included, when Pack#build admits
     # the manifest. Scripts given (a test image's own) stand in for the table's script of
-    # the same name; two given of one name are refused. Each script of a row that holds a
-    # display's grant starts the client side, or the build fails
-    # (ReleaseFiles.check_display_clients). The hosted archive's domain release (Release)
-    # takes its scripts from here too.
+    # the same name; two given of one name are refused. The hosted archive's domain
+    # release (Release) takes its scripts from here too.
     def self.domain_boots(manifest_source, codec:, given: [])
       raise Error, 'two given domain boot scripts share a name' unless given.map(&:name).uniq.size == given.size
 
       names = Manifest.release_names(source: manifest_source, codec: codec) - given.map(&:name)
-      boots = given + names.map { |name| domain_boot(name) }
-      ReleaseFiles.check_display_clients(boots, holders: Manifest.display_releases(source: manifest_source, codec: codec))
-      boots
+      given + names.map { |name| domain_boot(name) }
     end
 
     def domain_boots(manifest_source, given: []) = self.class.domain_boots(manifest_source, codec: @codec, given: given)
@@ -1904,14 +1900,14 @@ module Erx
     end
 
     # What a manifest's references name in an archive of these sorted paths: the root
-    # and the two domain runtime images as executables, images as built EROFS artifacts, and
-    # each domain boot script as the release's run of entries (ReleaseFiles.domain_runs), and
-    # each package of apps (ImageApps::Plan) by its header's hash, which names no entry
-    # of the archive. Two under one name would leave a reference ambiguous, so that is
-    # refused.
-    def self.artifacts(paths, images:, apps: ImageApps.none)
+    # and the two domain runtime images as executables, images as built EROFS artifacts,
+    # each of boots, the domain boot scripts the archive carries, as the release's run of
+    # entries with the applications it starts (ReleaseFiles.domain_artifacts), and each
+    # package of apps (ImageApps::Plan) by its header's hash, which names no entry of the
+    # archive. Two under one name would leave a reference ambiguous, so that is refused.
+    def self.artifacts(paths, images:, boots:, apps: ImageApps.none)
       named = [{ 'root' => { 'kind' => 'executable', 'entry' => paths.index(ROOT_ENTRY_PATH) } }, images,
-               ReleaseFiles.domain_runs(paths), apps.artifacts]
+               ReleaseFiles.domain_artifacts(paths, boots: boots), apps.artifacts]
       runtime = paths.index(DOMAIN_RUNTIME_PATH)
       named << { DOMAIN_RUNTIME_ARTIFACT => { 'kind' => 'executable', 'entry' => runtime } } if runtime
       beamasm = paths.index(JIT_RUNTIME_PATH)
@@ -1923,8 +1919,8 @@ module Erx
       named.reduce(:merge)
     end
 
-    def pack(entries:, partition:, root_task:, added_archives:, apps:, images:, manifest_source:, inputs:, erts:, jit:, output:,
-             imports:, test_code:, machine:)
+    def pack(entries:, partition:, root_task:, added_archives:, apps:, images:, boots:, manifest_source:, inputs:, erts:, jit:,
+             output:, imports:, test_code:, machine:)
       tools = PackTools.build(root: @root, owner_root: @root, directory: File.join(@root, 'build/production-image-tools'),
                               runner: @runner, compiler: @compiler, sanitizers: [])
       provenance = PackProvenance.new(root: @root, catalog: catalog(root_task, inputs), external: external(erts, jit, added_archives, apps), runner: @runner,
@@ -1934,7 +1930,7 @@ module Erx
                checker: tools.fetch('checker'), hasher: tools.fetch('hasher'), runner: @runner, provenance: provenance,
                domain_planner: DomainPlanner.new(helper: tools.fetch('domains'), runner: @runner))
           .build(entries: entries, root_path: ROOT_ENTRY_PATH, build_kind: BUILD_KIND, platform: machine.record,
-                 artifacts: self.class.artifacts(paths, images: images, apps: apps),
+                 artifacts: self.class.artifacts(paths, images: images, boots: boots, apps: apps),
                  manifest_source: manifest_source, output: output, test_code: test_code, partition: partition)
     end
 

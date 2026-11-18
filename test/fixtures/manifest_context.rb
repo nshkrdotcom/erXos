@@ -6,6 +6,7 @@
 # integration obtains its image facts from erx_elf_plan and provenance receipts.
 require 'digest'
 require_relative '../../tools/lib/erx/device_kinds'
+require_relative '../../tools/lib/erx/domain_startup'
 
 module ManifestContextFixture
   module_function
@@ -52,7 +53,11 @@ module ManifestContextFixture
   # An archive of the domain release, with a boot script for each of boots and one
   # library file, then runtimes/emu, then system/, the order the archive's sorted paths
   # take, with its artifacts named as ProductionImage.artifacts names them: each boot
-  # script names the release's whole run.
+  # script names the release's whole run, and starts the client side of the display,
+  # which property 18 asks of every script a display's grant holder boots. Every script
+  # here starts it, the display's own among them, unlike the real scripts, so only a
+  # test that records what real scripts start (production_image_test) sees that clause
+  # refuse.
   def archive_arguments(codec, boots:)
     system = codec.member('entry_flags', 'system')
     ordinary = codec.member('entry_kind', 'file')
@@ -77,7 +82,9 @@ module ManifestContextFixture
         'image' => image(codec) }
     ]
     paths = catalog.map { |row| row.fetch('path') }
-    runs = boots.to_h { |name| [name, { 'kind' => 'release', 'entry' => 0, 'files' => domains.size }] }
+    runs = boots.to_h do |name|
+      [name, { 'kind' => 'release', 'entry' => 0, 'files' => domains.size, 'started' => Erx::DomainStartup::DISPLAY_CLIENT }]
+    end
     root = paths.index('system/root')
     { build_kind: 'development', platform: platform, root_entry: root,
       artifacts: { 'root' => { 'kind' => 'executable', 'entry' => root },

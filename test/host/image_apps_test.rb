@@ -86,7 +86,7 @@ class ImageAppsTest < Minitest::Test
     # scripts, under the archive's one duplicate-name refusal; the package lies in the
     # system partition, so the archive holds no entry of it.
     paths = %w[domains/erxos/bin/session.boot system/root].map(&:b)
-    artifacts = Erx::ProductionImage.artifacts(paths, images: {}, apps: plan)
+    artifacts = Erx::ProductionImage.artifacts(paths, images: {}, boots: [Erx::ProductionImage.domain_boot('session')], apps: plan)
     assert_equal({ 'kind' => 'package', 'name' => 'dashboard', 'memory' => dashboard.memory,
                    'sha256' => dashboard.sha256.unpack1('H*') }, artifacts.fetch('package-dashboard'))
     assert_equal 0, artifacts.fetch('session').fetch('entry')

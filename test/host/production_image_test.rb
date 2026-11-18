@@ -641,35 +641,47 @@ class ProductionImageTest < Minitest::Test
   end
 
   # Every release that holds a display's grant starts the client side of the display
-  # (docs/design-display.md, "The pixel area"), so a program's first open of /dev/draw
-  # gets a window, where without the allocator its window's buffer comes from it gets
-  # ENODEV. The development manifest grants the display to root's template, which boots
-  # the session script, and through its apps row's services to the app template, also
-  # when the display's name is spelt in hex; a session script without erx_memdraw and
-  # erx_win fails the build, as does an app script without erx_win and a configured
-  # domain granted the display whose script is the base alone.
+  # (docs/design-display.md, "The pixel area"; property 18), so a program's first open
+  # of /dev/draw gets a window, where without the allocator its window's buffer comes
+  # from it gets ENODEV. The manifest check reads what each script starts from the
+  # artifacts an archive of the image's scripts names. The development manifest grants
+  # the display to root's template, which boots the session script, and through its apps
+  # row's services to the app template, also when the display's name is spelt in hex;
+  # its own scripts are admitted, and a session script without erx_memdraw and erx_win is
+  # refused, as are an app script without erx_win and a configured domain granted the
+  # display whose script is the base alone, its one small pixel area within the
+  # display's budget so that only the client clause refuses it.
   def test_a_release_holding_a_displays_grant_starts_the_client_side
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
+    admit = lambda do |source, given = []|
+      boots = Erx::ProductionImage.domain_boots(source, codec: codec, given: given)
+      arguments = ManifestContextFixture.archive_arguments(codec, boots: boots.map(&:name))
+      paths = arguments.fetch(:catalog).map { |row| row.fetch('path') }
+      artifacts = Erx::ProductionImage.artifacts(paths, images: ManifestContextFixture.images, boots: boots)
+      context = Erx::Manifest::Context.new(**arguments, platform: DEVELOPMENT.record, artifacts: artifacts)
+      Erx::Manifest.admit(source: source, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner)
+    end
+    refused = lambda do |source, given, field, message|
+      error = assert_raises(Erx::Manifest::Invalid) { admit.call(source, given) }
+      assert_equal [18, field], [error.property, error.field], error.message
+      assert_match message, error.message
+    end
     source = PLATFORM.manifest_source(ROOT)
-    assert_equal %w[app session], Erx::Manifest.display_releases(source: source, codec: codec)
+    admit.call(source)
+    without = ->(name, applications) { Erx::ReleaseFiles.domain_boot(name, applications: Erx::ReleaseFiles::RELEASE_SCRIPTS.fetch(name) - applications) }
+    refused.call(source, [without.call('session', %w[erx_memdraw erx_win])], 'facet.grantee',
+                 /whose release session does not start erx_memdraw, erx_win/)
+    refused.call(source, [without.call('app', %w[erx_win])], 'apps.services', /whose release app does not start erx_win/)
     hex = source.sub("service display\n", "service display\n  name hex:646973706c6179\n")
     refute_equal source, hex
-    assert_equal %w[app session], Erx::Manifest.display_releases(source: hex, codec: codec)
-    Erx::ProductionImage.domain_boots(source, codec: codec)
-    lacking = Erx::ReleaseFiles.domain_boot('session',
-                                            applications: Erx::ReleaseFiles::RELEASE_SCRIPTS.fetch('session') - %w[erx_memdraw erx_win])
-    error = assert_raises(Erx::Error) { Erx::ProductionImage.domain_boots(source, codec: codec, given: [lacking]) }
-    assert_match(/the session script holds a display's grant and does not start erx_memdraw, erx_win/, error.message)
-    app = Erx::ReleaseFiles.domain_boot('app', applications: Erx::ReleaseFiles::RELEASE_SCRIPTS.fetch('app') - %w[erx_win])
-    error = assert_raises(Erx::Error) { Erx::ProductionImage.domain_boots(source, codec: codec, given: [app]) }
-    assert_match(/the app script holds a display's grant and does not start erx_win/, error.message)
+    admit.call(hex)
+    refused.call(hex, [without.call('app', %w[erx_win])], 'apps.services', /whose release app does not start erx_win/)
     granted = "facet display_d\n  name \"display\"\n  grantee @domain.d\n  service @service.display\n  operations none\n" \
               "  max_request 131072\n  in_flight 16\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 262144\n" \
+              "  parameter pixels 4096\n" \
               "domain d\n  principal @principal.system\n  limits @limits.native\n  kind service\n  flags none\n" \
               "  runtime @artifact.emu\n  release @artifact.erts\n  restarts 0\n  restart_period_s 0\n"
-    assert_equal %w[app erts session], Erx::Manifest.display_releases(source: source + granted, codec: codec)
-    error = assert_raises(Erx::Error) { Erx::ProductionImage.domain_boots(source + granted, codec: codec) }
-    assert_match(/the erts script holds a display's grant/, error.message)
+    refused.call(source + granted, [], 'facet.grantee', /whose release erts does not start erx_memdraw, erx_win/)
   end
 
   # The production image carries the domain releases its manifest's domain rows and
@@ -717,33 +729,39 @@ class ProductionImageTest < Minitest::Test
     assert_equal [[], []], [parts.entries, parts.archives]
   end
 
+  def base_boot(name = 'base') = Erx::ReleaseFiles.domain_boot(name, applications: Erx::ReleaseFiles::DOMAIN_BASE)
+
   # A domain row's runtime names the domain runtime image and its release a boot script
-  # of the domain release, as the run of the release's entries, beside the root and the
-  # release medium's EROFS image.
+  # of the domain release, as the run of the release's entries with the applications the
+  # script starts, beside the root and the release medium's EROFS image.
   def test_the_artifacts_name_the_root_the_domain_runtime_and_each_boot_script
     paths = ['boot/kernel', 'domains/erxos/bin/base.boot', 'domains/erxos/bin/session.boot', 'domains/erxos/lib/x',
              'runtimes/emu', 'system/manifest', 'system/root']
     images = { 'release' => { 'kind' => 'erofs_image' } }
     run = { 'kind' => 'release', 'entry' => 1, 'files' => 3 }
+    session = Erx::ProductionImage.domain_boot('session')
     assert_equal({ 'root' => { 'kind' => 'executable', 'entry' => 6 }, 'release' => { 'kind' => 'erofs_image' },
-                   'base' => run, 'session' => run, 'emu' => { 'kind' => 'executable', 'entry' => 4 } },
-                 Erx::ProductionImage.artifacts(paths, images: images))
+                   'base' => run.merge('started' => Erx::ReleaseFiles::DOMAIN_BASE),
+                   'session' => run.merge('started' => session.started),
+                   'emu' => { 'kind' => 'executable', 'entry' => 4 } },
+                 Erx::ProductionImage.artifacts(paths, images: images, boots: [base_boot, session]))
     assert_equal({ 'root' => { 'kind' => 'executable', 'entry' => 1 } },
-                 Erx::ProductionImage.artifacts(['system/manifest', 'system/root'], images: {}))
+                 Erx::ProductionImage.artifacts(['system/manifest', 'system/root'], images: {}, boots: []))
   end
 
   # The BeamAsm image is an executable artifact of its own, which a domain row's runtime
   # names as jit.
   def test_the_artifacts_name_the_beamasm_image
     paths = ['domains/erxos/bin/base.boot', 'runtimes/emu', 'runtimes/jit', 'system/root']
-    assert_equal({ 'kind' => 'executable', 'entry' => 2 }, Erx::ProductionImage.artifacts(paths, images: {}).fetch('jit'))
+    assert_equal({ 'kind' => 'executable', 'entry' => 2 },
+                 Erx::ProductionImage.artifacts(paths, images: {}, boots: [base_boot]).fetch('jit'))
   end
 
   def test_a_boot_script_named_as_another_artifact_is_refused
     %w[root emu release].each do |name|
       paths = ["domains/erxos/bin/#{name}.boot", 'runtimes/emu', 'system/root']
       error = assert_raises(Erx::Error) do
-        Erx::ProductionImage.artifacts(paths, images: { 'release' => { 'kind' => 'erofs_image' } })
+        Erx::ProductionImage.artifacts(paths, images: { 'release' => { 'kind' => 'erofs_image' } }, boots: [base_boot(name)])
       end
       assert_includes error.message, name
     end

@@ -461,6 +461,25 @@ class ReleaseFilesTest < Minitest::Test
     assert_includes error.message, 'no boot script'
   end
 
+  # Each boot script's artifact is its run with the applications it starts, every one it
+  # boots but those a release only loads: the session script starts the client side of
+  # the display and loads erx_session and crypto. An archive whose scripts are not the
+  # given ones, one more or one fewer, is refused.
+  def test_each_boot_script_artifact_records_what_the_script_starts
+    paths = ['domains/erxos/bin/base.boot', 'domains/erxos/bin/session.boot', 'domains/erxos/lib/x', 'system/root']
+    session = Erx::ProductionImage.domain_boot('session')
+    assert_includes session.applications, 'erx_session'
+    assert_includes session.applications, 'crypto'
+    assert_empty Erx::DomainStartup::DISPLAY_CLIENT - session.started
+    assert_empty session.started & %w[erx_session crypto]
+    run = { 'kind' => 'release', 'entry' => 0, 'files' => 3 }
+    assert_equal({ 'base' => run.merge('started' => Erx::ReleaseFiles::DOMAIN_BASE), 'session' => run.merge('started' => session.started) },
+                 Erx::ReleaseFiles.domain_artifacts(paths, boots: [session, base_boot]))
+    assert_raises(Erx::Error) { Erx::ReleaseFiles.domain_artifacts(paths, boots: [base_boot]) }
+    assert_raises(Erx::Error) { Erx::ReleaseFiles.domain_artifacts(paths, boots: [session, base_boot, base_boot('extra')]) }
+    assert_empty Erx::ReleaseFiles.domain_artifacts(['system/root'], boots: [])
+  end
+
   def test_the_hosted_tree_ships_headers_from_the_tree_and_no_appup
     files = Erx::OracleHosted.application_files(root: ROOT, otp: @otp)
     assert_equal File.join(ROOT, 'otp/lib/stdlib/include/qlc.hrl'), files['lib/stdlib/include/qlc.hrl']

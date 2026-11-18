@@ -649,6 +649,13 @@ violation fails the build with the property, the record and the field:
     root's, sets the `front` parameter, and only in a development build,
     since the newest window of a front grant takes a single display's
     screen ([design-display.md](design-display.md#windows-and-the-window-system));
+    every holder of a display's grant, a configured domain or a session
+    template, the app template among them, boots a release script that
+    starts `erx_memdraw` and `erx_win`, the client side of the display,
+    whose allocator gives each window its buffer in the pixel area
+    ([design-display.md](design-display.md#the-pixel-area)), which the
+    check reads from what the build records each script of the archive
+    starts;
     and no facet row turns `clipboard` on for a configured domain on a display
     whose policy is `single`, which never shows a configured domain's
     window, so that grant could never hold the window taking the
@@ -663,8 +670,11 @@ violation fails the build with the property, the record and the field:
     record, whose grants no sum would count; a check that sums
     each display alone, which admits a domain serving two displays
     whose grants together pass its budget; a facet row granting a
-    display to the system domain; and a configured domain's row with
-    `clipboard` on a `single` display.
+    display to the system domain; a session script without `erx_memdraw`
+    and `erx_win`, an app script without `erx_win`, also when the
+    display's name is spelt in hex, and a configured domain granted the
+    display whose script boots only what every domain boots; and a
+    configured domain's row with `clipboard` on a `single` display.
 
 Property 19, which holds the board's own domains to their proof with
 every installed app present, is the packaging design's

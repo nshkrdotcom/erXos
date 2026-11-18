@@ -86,7 +86,8 @@ module Erx
         build_kind = BuildKind.fetch(build_kind)
         unless platform.is_a?(Hash) && catalog.is_a?(Array) && artifacts.is_a?(Hash) &&
                provenance.is_a?(Array) && root_entry.is_a?(Integer) && root_entry.between?(0, catalog.size - 1) &&
-               device_kinds.is_a?(Array) && !device_kinds.empty? && device_kinds.all? { |kind| device_kind?(kind) }
+               device_kinds.is_a?(Array) && !device_kinds.empty? && device_kinds.all? { |kind| device_kind?(kind) } &&
+               artifacts.values.all? { |artifact| started_recorded?(artifact) }
           raise Invalid.new('incomplete checked context', property: 'context', field: 'input')
         end
         unless development_key.nil? || (development_key.is_a?(String) && BuildKind.development?(build_kind))
@@ -133,6 +134,14 @@ module Erx
       def device_kind?(kind)
         kind.is_a?(Hash) && kind.keys.sort == DEVICE_KIND_FIELDS && [true, false].include?(kind['clocked']) &&
           kind.values_at('compatible', 'peripheral', 'role', 'role_word').all?(String)
+      end
+
+      # Whether an artifact that is a domain release's boot script records the
+      # applications the script starts (ReleaseFiles.domain_artifacts), which property 18
+      # reads; an artifact of another kind records none.
+      def started_recorded?(artifact)
+        !(artifact.is_a?(Hash) && artifact['kind'] == 'release') ||
+          (artifact['started'].is_a?(Array) && artifact['started'].all?(String))
       end
 
       def validate_catalog_shape
@@ -415,42 +424,6 @@ module Erx
              .then { |names| records.key?('apps') ? [*names, DomainStartup::APP_TEMPLATE.release] : names }.uniq.sort
     end
 
-    # The release names of the rows that hold a display's grant (docs/design-display.md,
-    # "The pixel area"), sorted and once each, read before any check as release_names
-    # reads them, so the build can refuse one whose script does not start the client side
-    # (ReleaseFiles.check_display_clients).
-    #
-    # A display is a service a display record names, as property 18 holds of every
-    # service of the windows interface. It is held by each domain row and session
-    # template a facet row grants it to, and by the app template when the apps row's
-    # services name it by its name's bytes, as check_apps reads them, since the check
-    # derives the app template's grant of each of those. A reference of another form
-    # names nothing here; admission refuses it.
-    def self.display_releases(source:, codec:)
-      records = Frontend.parse(source, version: codec.constant('manifest_version')).records
-      aliases = records.fetch('display', []).map(&:name)
-      displays = records.fetch('service', []).select { |service| aliases.include?(service.name) }
-      services = displays.map { |service| "@service.#{service.name}" }
-      grantees = records.fetch('facet', []).select { |facet| services.include?(word(facet, 'service')) }
-                        .map { |facet| word(facet, 'grantee') }
-      holders = records.values_at('domain', 'session').compact.flatten.select { |row| grantees.include?("@#{row.kind}.#{row.name}") }
-      names = displays.map do |service|
-        service.properties.key?('name') ? token_bytes(service.properties.fetch('name').first) : service.name.b
-      end
-      app_services = records.fetch('apps', []).flat_map { |row| row.properties.fetch('services', []) }
-      app = app_services.any? { |token| names.include?(token.value.b) }
-      [*holders.filter_map { |row| release_reference(row) }, *(app ? [DomainStartup::APP_TEMPLATE.release] : [])].uniq.sort
-    end
-
-    # The bytes a token spells: a quoted string's own, or those of a hex: word's pairs of
-    # hexadecimal digits; nil for any other word.
-    def self.token_bytes(token)
-      return token.value.b if token.quoted
-
-      hex = token.value.delete_prefix('hex:')
-      [hex].pack('H*') if token.value.start_with?('hex:') && hex.match?(/\A(?:[0-9a-fA-F]{2})*\z/)
-    end
-
     # The <name> of a row's `release @artifact.<name>`, nil for a release of another form.
     def self.release_reference(record)
       word(record, 'release')&.then { |value| value.delete_prefix('@artifact.') if value.start_with?('@artifact.') }
@@ -657,7 +630,12 @@ module Erx
       end
 
       def text(record, key)
-        Manifest.token_bytes(one(record, key)) || record.line.fail!("#{key} requires quoted or hexadecimal bytes")
+        token = one(record, key)
+        return token.value.b if token.quoted
+        if token.value.start_with?('hex:') && token.value.delete_prefix('hex:').match?(/\A(?:[0-9a-fA-F]{2})*\z/)
+          return [token.value.delete_prefix('hex:')].pack('H*')
+        end
+        record.line.fail!("#{key} requires quoted or hexadecimal bytes")
       end
 
       # A word list as the page holds it, each word ended by a NUL. A source writes it
@@ -2209,8 +2187,9 @@ module Erx
       # connections no introduction makes and so carry no pixel area, no facet row of
       # its service sets session, only a row granting it to the system principal's session
       # template, root's, sets front, and only in a development build, since the newest
-      # window of a front grant takes a single display's screen, and the grants' costs fit the
-      # display domain's outer budget. Each grant costs its pixel area, its pixels or
+      # window of a front grant takes a single display's screen, every grant's holder boots
+      # a script that starts the client side (check_display_client), and the grants' costs
+      # fit the display domain's outer budget. Each grant costs its pixel area, its pixels or
       # windows_pixels_default, and the side the display reads for it, the display's own
       # lane, each rounded up to pages; a session template's grant costs that once for
       # each session its principal's domains quota lets live at once, a configured
@@ -2233,6 +2212,7 @@ module Erx
             values.key?('session')
           invalid("facet #{facet.fetch('name')} sets front, which only root's template's grant takes, in a development build",
                   18, 'facet.parameter') if values.key?('front') && !front_grantee?(facet, tables)
+          check_display_client(facet, tables)
           [grant_instances(facet, tables), values]
         end
         apps = grants.any? { |facet, _values| app_template?(facet, tables) }
@@ -2244,6 +2224,40 @@ module Erx
 
         invalid("display #{service.fetch('name')}'s grants#{' and the apps row\'s max apps' if apps} cost #{cost} bytes, " \
                 "past its domain's outer budget of #{limits.fetch('outer')}", 18, apps ? 'apps.max' : 'facet.parameter')
+      end
+
+      # Property 18's client clause: the release script a display grant's holder boots, a
+      # configured domain's or a session template's, the app template's among them, starts
+      # the client side of the display (DomainStartup::DISPLAY_CLIENT), as the checked
+      # context records what each script starts. Every domain boots in interactive mode, so
+      # any can load erx_win, but only one whose script starts it runs the allocator that a
+      # program's first open of /dev/draw takes its window's buffer from; without it that
+      # open fails with ENODEV (docs/design-display.md, "The pixel area").
+      def check_display_client(facet, tables)
+        release = grantee_release(facet, tables)
+        missing = DomainStartup::DISPLAY_CLIENT - @context.artifacts.fetch(release).fetch('started')
+        return if missing.empty?
+
+        invalid("facet #{facet.fetch('name')} grants a display to a holder whose release #{release} does not start " \
+                "#{missing.join(', ')}", 18, app_template?(facet, tables) ? 'apps.services' : 'facet.grantee')
+      end
+
+      # The release artifact a facet row's grantee boots, a configured domain or a session
+      # template, never the system domain, whose grant check_display_grants refuses first:
+      # the app template's recipe's, or the `release @artifact.NAME` of the source record
+      # the row was normalized from, a domain's by its name and a template's by its
+      # principal's.
+      def grantee_release(facet, tables)
+        return DomainStartup::APP_TEMPLATE.release if app_template?(facet, tables)
+
+        grantee = facet.fetch('grantee')
+        kind, name = case facet.fetch('grantee_kind')
+                     when grantee_kind('domain') then ['domain', tables.fetch('domains').fetch(grantee).fetch('name')]
+                     when grantee_kind('session')
+                       principal = tables.fetch('sessions').fetch(grantee).fetch('principal')
+                       ['session', tables.fetch('principals').fetch(principal).fetch('name')]
+                     end
+        release_name(records(kind).find { |record| record.name == name }, property: 18, field: "#{kind}.release")
       end
 
       # Whether a facet row may set front: a development build's row granting the display to
