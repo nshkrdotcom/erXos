@@ -52,8 +52,12 @@ starts from 3 seconds, so its first wait is 3 to 8 seconds. `dhclient`'s `send_r
 redraws a REQUEST's interval past the cutoff over the grown interval rather than the
 cutoff (dhclient.c:1602-1606); here both messages use `send_discover`'s rule, which
 keeps every wait within 21 seconds. While no server answers, DISCOVERs go on at those
-waits, where `dhclient` gives up after its 60-second `timeout` (dhclient.c:1341-1345)
-and starts again after its 300-second `retry_interval` (`state_panic`, dhclient.c:1521).
+waits indefinitely, a deliberate departure from `dhclient`, which gives up after its
+60-second `timeout` (clparse.c:78, dhclient.c:1342-1347) and starts again only after
+its 300-second `retry_interval` (clparse.c:81, `state_panic`, dhclient.c:1521): a kiosk
+whose router comes up late must get its address within one wait, at most 21 seconds,
+of the router answering. The fresh start at each link up covers a cable plugged in
+later, not a router that answers later over a link already up.
 After a NAK the DISCOVER waits an exchange's first wait, where `dhclient` starts again at
 once (`dhcpnak`), so a server that refuses every REQUEST cannot hold the client in a
 loop of messages. The transaction ids and these delays come from the `erx_net_rand`

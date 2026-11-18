@@ -2654,10 +2654,16 @@ and an interval past 15 seconds (`backoff_cutoff`, `clparse.c:82`) is
 drawn again from 7 to 21 seconds (`send_discover`,
 `sbin/dhclient/dhclient.c:1381-1396`). The REQUEST uses that rule too,
 where `dhclient`'s `send_request` draws again over the grown interval
-(`dhclient.c:1602-1606`), so no wait exceeds 21 seconds; DISCOVERs go
-on at those waits while no server answers, where `dhclient` gives up
-after its 60-second `timeout` (`dhclient.c:1341-1345`) and starts again
-after its 300-second `retry_interval` (`dhclient.c:1521`); and after a
+(`dhclient.c:1602-1606`), so no wait exceeds 21 seconds. While no
+server answers, DISCOVERs go on at those waits indefinitely, a
+deliberate departure from `dhclient`, which gives up after its
+60-second `timeout` (`clparse.c:78`, `dhclient.c:1342-1347`) and
+starts again only after its 300-second `retry_interval`
+(`clparse.c:81`, `state_panic`, `dhclient.c:1521`): a kiosk whose
+router comes up late must get its address within one wait, at most 21
+seconds, of the router answering, not up to five minutes later. The
+client's fresh start at each link up covers a cable plugged in later,
+not a router that answers later over a link already up. After a
 NAK the DISCOVER waits an exchange's first wait, 3 to 8 seconds, where
 `dhclient` starts again at once (`dhcpnak`, `dhclient.c:1325-1326`). As
 `dhclient` does, the client takes the first acceptable offer, sends
