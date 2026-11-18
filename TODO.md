@@ -7763,11 +7763,6 @@ to the corpus and follow rc
   then the working files are compiled, so a file marked `assume-unchanged` carries edited bytes
   while the source offer names the original commit. Compile a snapshot of the pinned commit, or
   check each input against its blob.
-* [Medium] build, the closed license table's stopgap rows (`tools/lib/erx/pack_provenance.rb`
-  RESTRICTED: the GCC headers, `kip_addr.S`, `jdb_object.cpp`) match a registration by its label
-  alone, so a registration under such a label admits whatever bytes it names, in development
-  builds and from our own tooling only. Give each row its path, as Doom's row has
-  (`jdb_object.cpp` is read from `fiasco/` or `build/fiasco/inputs/`).
 * [Medium] apps, an app's directory ([design-packaging.md](docs/design-packaging.md#invariants), PK4): until
   the storage service roots an app's `data` grant at `apps/NAME/SIGNER/` (`tree apps`), apps hold no `data`
   grant (the files-service item under Major initiatives) and the directory half of PK4's QEMU test waits; and

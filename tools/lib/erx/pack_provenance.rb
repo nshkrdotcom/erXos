@@ -35,22 +35,43 @@ module Erx
     STOPGAP = 'stopgap'
     DEPENDENCY_STATUSES = [PERMANENT, STOPGAP, EXAMPLE].freeze
     # The cross compiler's freestanding headers that Fiasco's C and C++ include, which
-    # FiascoProvenance.gcc_registry registers under labels toolchain/gcc-RELEASE/NAME.
+    # FiascoProvenance.gcc_registry registers under labels GCC_LABEL fills.
     GCC_LICENSE = 'GPL-3.0-or-later WITH GCC-exception-3.1'
     GCC_HEADERS = %w[stdarg.h stdbool.h stddef.h].freeze
+    GCC_LABEL = 'toolchain/gcc-%<release>s/%<name>s'
+    # A GCC release as its include directory and its headers' labels name it.
+    GCC_RELEASE = /[0-9][0-9.]{0,31}/
+    # Where the build reads such a header: the include directory of its cross gcc's
+    # installation, lib/gcc/TARGET/RELEASE/include, outside the tree.
+    GCC_HEADER_PATH = %r{\A/(?:[^/]+/)*lib/gcc/[^/]+/(?<release>#{GCC_RELEASE})/include/(?<name>#{Regexp.union(GCC_HEADERS)})\z}
+    # Where the build reads Fiasco's sources: the staged copy of its inputs (FiascoInputs)
+    # that FiascoProvenance audits, laid out as the repository's fiasco/ is.
+    FIASCO_INPUTS = 'build/fiasco/inputs/fiasco'
     # One input a development build admits under a license that is not permissive: the
-    # status it is registered under, its label as its record names it (a String, or a
-    # Regexp the whole label must match), the license expressions it may carry, exactly
-    # as recorded, and, for an input a build writes to one fixed place, that path relative
-    # to the tree (nil when the label alone names the input).
+    # status it is registered under, its label as its record names it, the license
+    # expressions it may carry, exactly as recorded, and where the build reads it. That is
+    # a path relative to the tree, with the label a literal, or, for a toolchain's files
+    # outside it, a Regexp the whole absolute path must match, with the label a format
+    # template its named captures fill, so the label always names the file the row admits.
     Restricted = Data.define(:status, :label, :licenses, :path) do
-      def initialize(status:, label:, licenses:, path: nil) = super
-
       # Whether this row names the input registered under input_status with input_label
-      # and license, found at input_path relative to the tree (nil outside it).
+      # and license, read from input_path: relative to the tree within it, absolute outside.
       def admits?(input_status:, input_label:, license:, input_path:)
-        named = label.is_a?(Regexp) ? label.match?(input_label) : label == input_label
-        status == input_status && licenses.include?(license) && named && (path.nil? || path == input_path)
+        status == input_status && licenses.include?(license) && label_at(input_path) == input_label
+      end
+
+      private
+
+      # The label of the input this row reads from input_path, nil if it reads none there.
+      # A Regexp row admits only a whole match, however its pattern is anchored.
+      def label_at(input_path)
+        case path
+        in String
+          label if path == input_path
+        in Regexp
+          match = path.match(input_path)
+          format(label, **match.named_captures(symbolize_names: true)) if match && match[0] == input_path
+        end
       end
     end
     # The closed table of such inputs (docs/design.md, "Licenses and notices"). Every
@@ -64,16 +85,17 @@ module Erx
       # GCC's headers: macros and types only, and the GCC Runtime Library Exception 3.1
       # lets code compiled with them be distributed under any terms, so they are
       # permissive in effect for what includes them.
-      Restricted.new(status: STOPGAP, label: %r{\Atoolchain/gcc-[0-9][0-9.]{0,31}/(?:#{GCC_HEADERS.map { |name| Regexp.escape(name) }.join('|')})\z},
-                     licenses: [GCC_LICENSE]),
+      Restricted.new(status: STOPGAP, label: GCC_LABEL, licenses: [GCC_LICENSE], path: GCC_HEADER_PATH),
       # A linker script of l4re-core under the FSF All Permissive License, which permits
       # copying and distribution with or without modification if the notice is kept: a
       # permissive license the table names for this file alone.
-      Restricted.new(status: STOPGAP, label: 'fiasco/l4re-core/ldscripts/kip_addr.S', licenses: ['FSFAP']),
+      Restricted.new(status: STOPGAP, label: 'fiasco/l4re-core/ldscripts/kip_addr.S', licenses: ['FSFAP'],
+                     path: "#{FIASCO_INPUTS}/l4re-core/ldscripts/kip_addr.S"),
       # Fiasco's kernel debugger, carried in development builds by decision, distributed
       # under the website exception with its source offered (CLAUDE.md, Dependencies,
       # stopgaps and release components); the release kernel leaves it out.
-      Restricted.new(status: STOPGAP, label: 'fiasco/kernel/src/kern/jdb_object.cpp', licenses: ['GPL-2.0-only'])
+      Restricted.new(status: STOPGAP, label: 'fiasco/kernel/src/kern/jdb_object.cpp', licenses: ['GPL-2.0-only'],
+                     path: "#{FIASCO_INPUTS}/kernel/src/kern/jdb_object.cpp")
     ].freeze
     PACKAGE_STATUSES = [PERMANENT, PACKAGE_LOCAL].freeze
     # compiler is the clang that built Fiasco's C17 cores, which Fiasco's audit records.
@@ -359,7 +381,7 @@ module Erx
       end
       register_external(external)
       FiascoProvenance::PARTS.each do |part|
-        [File.join(@root, 'fiasco', part), File.join(@root, 'build/fiasco/inputs/fiasco', part)].each do |directory|
+        [File.join(@root, 'fiasco', part), File.join(@root, FIASCO_INPUTS, part)].each do |directory|
           @imports[directory] = 'stopgap' if File.directory?(directory) && @catalog.find_import(directory)
         end
       end
@@ -745,9 +767,9 @@ module Erx
     # with label and license, although the license is not permissive: a package of a local
     # test image, or a row of RESTRICTED.
     def restricted_admitted?(status:, path:, label:, license:)
-      relative = path.delete_prefix(@root + '/') if path.start_with?(@root + '/')
+      read_from = path.delete_prefix(@root + '/')
       status == PACKAGE_LOCAL ||
-        RESTRICTED.any? { |row| row.admits?(input_status: status, input_label: label, license:, input_path: relative) }
+        RESTRICTED.any? { |row| row.admits?(input_status: status, input_label: label, license:, input_path: read_from) }
     end
 
     def leading_notice(bytes)

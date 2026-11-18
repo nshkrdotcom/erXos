@@ -292,7 +292,7 @@ module Erx
       directories = Dir.glob("lib/gcc/#{cross.target}/*/include", base: installation)
       raise Error, "cannot find one include directory of #{gcc} under #{installation}" unless directories.size == 1
       release = directories.first.split('/').fetch(3)
-      raise Error, "unexpected #{gcc} release directory: #{release}" unless /\A[0-9][0-9.]{0,31}\z/.match?(release)
+      raise Error, "unexpected #{gcc} release directory: #{release}" unless /\A#{PackProvenance::GCC_RELEASE}\z/.match?(release)
       notices = GCC_NOTICES.map do |relative|
         path = File.join(root, relative)
         { 'path' => path, 'sha256' => Digest::SHA256.hexdigest(BoundedFile.read(path, maximum: 1024 * 1024)) }.freeze
@@ -301,7 +301,7 @@ module Erx
         header = File.realpath(File.join(installation, directories.first, name))
         raise Error, "#{gcc}'s #{name} leaves its installation" unless header.start_with?(installation + '/')
         { 'path' => header, 'sha256' => Digest::SHA256.hexdigest(BoundedFile.read(header, maximum: 1024 * 1024)),
-          'label' => "toolchain/gcc-#{release}/#{name}", 'license' => PackProvenance::GCC_LICENSE, 'status' => 'stopgap',
+          'label' => format(PackProvenance::GCC_LABEL, release:, name:), 'license' => PackProvenance::GCC_LICENSE, 'status' => 'stopgap',
           'evidence' => "#{name}'s own GPL version 3 or later grant with GCC Runtime Library Exception 3.1",
           'notices' => notices }.freeze
       end.freeze

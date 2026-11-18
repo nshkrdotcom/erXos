@@ -2030,15 +2030,18 @@ images' included, carry it by decision, and the release kernel leaves it
 out ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)).
 A development build admits a license that is not permissive only from
 one closed table, `PackProvenance::RESTRICTED`, whose every row names
-one input by its status, its label and its exact license, and a file
-the build writes to one fixed place also by that path: Doom's archive,
-the `example`, under GPL-2.0-or-later at `build/doom/libdoom.a`; the cross compiler's
-three freestanding headers that Fiasco includes, under GPL-3.0-or-later
-with the GCC Runtime Library Exception, which lets code compiled with
-them go out under any terms; l4re-core's `ldscripts/kip_addr.S`, under
-the FSF All Permissive License; and `jdb_object.cpp`, under
-GPL-2.0-only, which goes out only in the website's images with its
-source offered. Beyond the table it admits only a
+one input by its status, its label, its exact license and where the
+build reads it: Doom's archive, the `example`, under GPL-2.0-or-later
+at `build/doom/libdoom.a`; the cross compiler's three freestanding
+headers that Fiasco includes, under GPL-3.0-or-later with the GCC
+Runtime Library Exception, which lets code compiled with them go out
+under any terms, each from a GCC include directory outside the tree,
+`lib/gcc/TARGET/RELEASE/include`, whose release and file name its
+label carries; and, from the staged copy of Fiasco's inputs in
+`build/fiasco/inputs/`, l4re-core's `ldscripts/kip_addr.S`, under the
+FSF All Permissive License, and `jdb_object.cpp`, under GPL-2.0-only,
+which goes out only in the website's images with its source offered.
+Beyond the table it admits only a
 local test image's own packages (`package-local`), which no published
 image takes, so a copyleft file that comes back into any other closure,
 a stopgap's included, fails the build. The only development images that

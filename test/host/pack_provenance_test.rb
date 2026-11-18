@@ -485,11 +485,23 @@ class PackProvenanceTest < Minitest::Test
   # (EXAMPLE_ARCHIVE) unless at names another.
   def resolve_example(license:, label: Erx::PackProvenance::EXAMPLE_LABEL, status: 'example', build_kind: 'development',
                       at: Erx::PackProvenance::EXAMPLE_ARCHIVE)
-    FileUtils.mkdir_p(File.join(@root, File.dirname(at)))
-    archive = write(at, File.binread(@source))
-    @receipt['compiles'] = [@receipt.fetch('compiles').first.merge('sources' => [reference(archive)],
+    resolve_registered_at(at, license: license, label: label, status: status, build_kind: build_kind)
+  end
+
+  # Resolves the fixture's source copied to at, a path relative to the tree or an absolute
+  # one outside it, as the one input the receipt compiles, registered as an external file
+  # under label, license and status.
+  def resolve_registered_at(at, license:, label:, status:, build_kind: 'development')
+    input = File.expand_path(at, @root)
+    FileUtils.mkdir_p(File.dirname(input))
+    if input.start_with?(@root + '/')
+      write(at, File.binread(@source))
+    else
+      File.binwrite(input, File.binread(@source))
+    end
+    @receipt['compiles'] = [@receipt.fetch('compiles').first.merge('sources' => [reference(input)],
                                                                     'dependency' => reference(write('root.d', "root.o: #{at}\n")))]
-    resolve_registered(license: license, label: label, status: status, build_kind: build_kind, path: archive)
+    resolve_registered(license: license, label: label, status: status, build_kind: build_kind, path: input)
   end
 
   # Resolves the fixture's one input, the file at path (the fixture's source unless path
@@ -523,34 +535,83 @@ class PackProvenanceTest < Minitest::Test
     end
   end
 
+  # Where the build reads each stopgap row's input (PackProvenance::RESTRICTED), as the
+  # fixture places it: GCC's header in a cross gcc's include directory under outside, a
+  # directory outside the tree, and Fiasco's files in the staged copy of its inputs that
+  # FiascoProvenance audits.
+  def stopgap_rows(outside)
+    [{ label: 'toolchain/gcc-16.2.0/stddef.h', license: Erx::PackProvenance::GCC_LICENSE, at: gcc_header(outside, 'stddef.h') },
+     { label: 'fiasco/l4re-core/ldscripts/kip_addr.S', license: 'FSFAP',
+       at: 'build/fiasco/inputs/fiasco/l4re-core/ldscripts/kip_addr.S' },
+     { label: 'fiasco/kernel/src/kern/jdb_object.cpp', license: 'GPL-2.0-only',
+       at: 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp' }]
+  end
+
+  def gcc_header(outside, name) = File.join(outside, 'lib/gcc/aarch64-elf/16.2.0/include', name)
+
   # Seeded fault: a development build admits a license that is not permissive only from
   # PackProvenance::RESTRICTED, so a GPL input that the table does not name is refused,
-  # as is one of the table's labels under another license or another status.
+  # as is one of the table's labels under another license or another status, each at the
+  # place its row reads it from.
   def test_a_gpl_stopgap_outside_the_closed_table_is_refused
-    refusals = [{ license: 'GPL-2.0-only', label: 'third_party/fixture/root.c' },
-                { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/fixture.cpp' },
-                { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/arm/jdb_object.cpp' },
-                { license: 'GPL-2.0-or-later', label: 'fiasco/kernel/src/kern/jdb_object.cpp' },
-                { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/jdb_object.cpp', status: 'permanent' },
-                { license: 'GPL-3.0-or-later', label: 'toolchain/gcc-16.2.0/stdarg.h' },
-                { license: 'FSFAP', label: 'fiasco/l4re-core/ldscripts/other.S' },
-                { license: Erx::PackProvenance::GCC_LICENSE, label: 'toolchain/gcc-16.2.0/limits.h' }]
-    refusals.each do |input|
-      error = assert_raises(Erx::Error) { resolve_registered(**{ status: 'stopgap' }.merge(input)) }
-      assert_match(/no permitted grant/, error.message, input.inspect)
+    Dir.mktmpdir('outside-toolchain-') do |outside|
+      jdb = 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp'
+      refusals = [{ license: 'GPL-2.0-only', label: 'third_party/fixture/root.c', at: 'root.c' },
+                  { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/fixture.cpp',
+                    at: 'build/fiasco/inputs/fiasco/kernel/src/kern/fixture.cpp' },
+                  { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/arm/jdb_object.cpp',
+                    at: 'build/fiasco/inputs/fiasco/kernel/src/kern/arm/jdb_object.cpp' },
+                  { license: 'GPL-2.0-or-later', label: 'fiasco/kernel/src/kern/jdb_object.cpp', at: jdb },
+                  { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/jdb_object.cpp', status: 'permanent', at: jdb },
+                  { license: 'GPL-3.0-or-later', label: 'toolchain/gcc-16.2.0/stdarg.h', at: gcc_header(outside, 'stdarg.h') },
+                  { license: 'FSFAP', label: 'fiasco/l4re-core/ldscripts/other.S',
+                    at: 'build/fiasco/inputs/fiasco/l4re-core/ldscripts/other.S' },
+                  { license: Erx::PackProvenance::GCC_LICENSE, label: 'toolchain/gcc-16.2.0/limits.h',
+                    at: gcc_header(outside, 'limits.h') }]
+      refusals.each do |input|
+        error = assert_raises(Erx::Error) do
+          resolve_registered_at(input.fetch(:at), **{ status: 'stopgap' }.merge(input.except(:at)))
+        end
+        assert_match(/no permitted grant/, error.message, input.inspect)
+      end
     end
   end
 
-  # Each row of the table admits its input under its exact license in a development
-  # build, and no release build admits it.
+  # Seeded fault: a stopgap row names its input by where the build reads it as well as by
+  # its label, so a registration under the row's label and license that names other bytes,
+  # such as the repository's copy of a Fiasco file the build compiles from its staged copy,
+  # a header outside a cross gcc's include directory, or another release's or another
+  # header's file there, is refused.
+  def test_a_stopgap_row_refuses_its_label_at_another_path
+    Dir.mktmpdir('outside-toolchain-') do |outside|
+      elsewhere = { 'toolchain/gcc-16.2.0/stddef.h' => [File.join(outside, 'stddef.h'),
+                                                        'lib/gcc/aarch64-elf/16.2.0/include/stddef.h',
+                                                        File.join(outside, 'lib/gcc/aarch64-elf/15.1.0/include/stddef.h'),
+                                                        gcc_header(outside, 'stdarg.h')],
+                    'fiasco/l4re-core/ldscripts/kip_addr.S' => ['fiasco/l4re-core/ldscripts/kip_addr.S'],
+                    'fiasco/kernel/src/kern/jdb_object.cpp' => ['fiasco/kernel/src/kern/jdb_object.cpp'] }
+      stopgap_rows(outside).each do |row|
+        ['root.c', *elsewhere.fetch(row.fetch(:label))].each do |at|
+          error = assert_raises(Erx::Error) { resolve_registered_at(at, status: 'stopgap', **row.except(:at)) }
+          assert_match(/no permitted grant/, error.message, [row.fetch(:label), at].inspect)
+        end
+      end
+    end
+  end
+
+  # Each row of the table admits its input under its exact license, at the place the build
+  # reads it, in a development build, and no release build admits it.
   def test_the_closed_table_admits_its_rows_in_development_builds_only
-    { 'toolchain/gcc-16.2.0/stddef.h' => Erx::PackProvenance::GCC_LICENSE,
-      'fiasco/l4re-core/ldscripts/kip_addr.S' => 'FSFAP',
-      'fiasco/kernel/src/kern/jdb_object.cpp' => 'GPL-2.0-only' }.each do |label, license|
-      record = resolve_registered(license: license, label: label, status: 'stopgap').first
-      assert_equal [label, license, 'stopgap'], record.values_at('path', 'declared_license', 'status')
-      error = assert_raises(Erx::Error) { resolve_registered(license: license, label: label, status: 'stopgap', build_kind: 'release') }
-      assert_match(/no permitted grant/, error.message)
+    Dir.mktmpdir('outside-toolchain-') do |outside|
+      stopgap_rows(outside).each do |row|
+        label, license, at = row.values_at(:label, :license, :at)
+        record = resolve_registered_at(at, license: license, label: label, status: 'stopgap').first
+        assert_equal [label, license, 'stopgap'], record.values_at('path', 'declared_license', 'status')
+        error = assert_raises(Erx::Error) do
+          resolve_registered_at(at, license: license, label: label, status: 'stopgap', build_kind: 'release')
+        end
+        assert_match(/no permitted grant/, error.message)
+      end
     end
   end
 
