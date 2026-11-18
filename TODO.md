@@ -7750,6 +7750,12 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [High] Fiasco backend, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case),
+  blocks 0.2: the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks
+  no right, so any task sets the wall clock, against 0.2's contract that an app cannot
+  ([design-fiasco.md](docs/design-fiasco.md), the release's cases) and the root's `WRITE` check of
+  [design-time.md](docs/design-time.md#phase-1); certificate checks follow the clock. Pass the caller, check
+  `WRITE` on its time-page handle, answer `ERX_ERIGHTS` without it, with a backend case.
 * [Low] build, the source revision of a tree holding the Doom fork (`tools/lib/erx/source_revision.rb`):
   its `git status` recurses into `examples/doom/doom` and runs there under the fork's own
   configuration and attributes, so a clean filter they name runs, and a fork checked out away from
@@ -7943,11 +7949,6 @@ to the corpus and follow rc
   on the path, sets any time, below the floor too when root names the server and past the floor from ntpd's
   sample, and the set then holds it against ntpd for the boot (design-time.md, decision 7,
   published). Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
-* [Low] Fiasco backend, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case):
-  the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks no right, so any
-  task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
-  `[only_erx_clock_nif]` imports section and the facet for trusted code; erXos's kernel checks `WRITE` on the
-  time page. A Phase 1 residual, not fixed on Fiasco.
 * [Medium] WiFi's key holder before its release placement, development
   builds only ([design-wifi.md](docs/design-wifi.md#where-the-holder-runs)):
   the holder runs as a process of the WiFi domain, so the networks'
