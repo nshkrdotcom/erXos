@@ -62,30 +62,6 @@ Decisions every reader of this document needs:
   writes by default, and converts an inline file or directory to blocks
   in the step that first changes it.
 
-## Contents
-
-* [Context](#context)
-* [Requirements](#requirements)
-* [Scope: features and forms](#scope-features-and-forms)
-* [The construction](#the-construction)
-* [Processes and ownership](#processes-and-ownership)
-* [The core](#the-core)
-* [Durability](#durability)
-* [Mount and recovery](#mount-and-recovery)
-* [Space and the cleaner](#space-and-the-cleaner)
-* [The interface](#the-interface)
-* [Reading the medium](#reading-the-medium)
-* [Formatting a volume](#formatting-a-volume)
-* [Replacing littlefs](#replacing-littlefs)
-* [Failure handling](#failure-handling)
-* [Security](#security)
-* [Verification](#verification)
-* [Performance](#performance)
-* [Alternatives considered](#alternatives-considered)
-* [Stages](#stages)
-* [Risks](#risks)
-* [References](#references)
-
 ## Context
 
 ### What erXos matches

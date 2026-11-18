@@ -58,31 +58,6 @@ Decisions every reader needs:
   keep them in the Bluetooth domain's directory on the data partition,
   as the SSH design keeps its host key before the vault.
 
-## Contents
-
-* [Context](#context): what is matched, the hardware, what the tree
-  offers today, the sources
-* [Requirements](#requirements)
-* [The construction](#the-construction): one table, one gate; a name
-  dies at once; one owner, one step; what disappears
-* [Stages](#stages)
-* [Domains and authority](#domains-and-authority): the Bluetooth domain,
-  the controller's line with its reset and power line, what a radio
-  peer can make the domain spend
-* [Stage 1: the controller and advertising](#stage-1-the-controller-and-advertising)
-* [Stage 2: the GATT server](#stage-2-the-gatt-server)
-* [Stage 3: the serial service](#stage-3-the-serial-service)
-* [Stage 4: pairing and bonding](#stage-4-pairing-and-bonding)
-* [Later stages](#later-stages): Wi-Fi provisioning, HID over GATT,
-  classic Bluetooth
-* [Security](#security), with the [attack classes](#attack-classes)
-* [Concurrency](#concurrency), [Failure handling](#failure-handling),
-  [Refusals and error results](#refusals-and-error-results)
-* [Verification](#verification), [Performance](#performance)
-* [Changes to other designs](#changes-to-other-designs),
-  [Alternatives considered](#alternatives-considered),
-  [Decisions](#decisions), [Board probes](#board-probes)
-
 ## Context
 
 ### What is matched

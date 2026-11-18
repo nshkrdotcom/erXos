@@ -1199,13 +1199,6 @@ Numbers to measure, on the
 * the client's first load over the host tool and over the network, and
   the bundle's size.
 
-## Portability
-
-Nothing here names an architecture or a platform. The host tool's front
-end runs on any host with Ruby and a browser; the network front end needs
-the network service and a network device, which are rows of the device
-table per platform.
-
 ## Dependencies
 
 | Component | Purpose | License | Status |

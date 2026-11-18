@@ -145,7 +145,7 @@ numbers are names; the table's order is the order.
 | Milestone | Demo | New code (estimate) | Needs | Gate |
 | --- | --- | --- | --- | --- |
 | **Phase 1** | | | | |
-| M0 The tree, the toolchain and the oracle | focused stock OTP 29.1.2 cases verify the offline Linux test runner; native Mac OTP supplies bootstrap tools; the frozen Fiasco set builds from the tree; every generated file regenerates unchanged | 4,000 lines of Ruby | | G0 |
+| M0 The tree, the toolchain and the oracle | focused stock OTP 29.1.2 cases verify the offline Linux test runner; native Mac OTP supplies bootstrap tools; the frozen Fiasco set builds from the tree; `make check` regenerates every generated file into the build tree from checked-in inputs, and fails on a generated file found in the tree | 4,000 lines of Ruby | | G0 |
 | M1 The system boots on Fiasco | the near-stock Fiasco prints erXos's banner and starts `liberx`'s root entry as the root task under HVF; the root allocates, maps and reuses memory, runs threads with TLS and timed waits, runs a second task through a read-execute alias and ends it, takes an interrupt through the readiness interface, and ends the machine with a crash record on a stopped pet; the production image boots to the point where ERTS starts | 3,000 to 4,500 lines of C17 | M0, G0 | |
 | Track H Hosted mode | the runtime runs as a Mac process under the sanitizers; once the Fiasco backend's rows between tasks have settled, domains and their connections run as Mac processes too, over the same backend rows as Fiasco's | 3,000 lines of C17 | M0 | |
 | M3 The shell is the operating system | `1>` on the serial console, from ERTS in the system domain in user mode, started by the root task | 8,000 lines of C, 1,000 of Erlang | M1, track H | G3 |
@@ -388,8 +388,8 @@ oracle's OCI toolchain image; `tools/erx oracle build` builds stock OTP
 runs a focused stock case and stores its result; `tools/erx build fiasco`
 builds the frozen Fiasco set
 from `fiasco/` and `tools/erx qemu --accel tcg` and `--accel hvf` boot it
-on `virt-11.1` to Fiasco's own banner; `make check` regenerates every
-generated file and finds it unchanged.
+on `virt-11.1` to Fiasco's own banner; `make check` regenerates every generated file into
+the build tree from the checked-in inputs and fails on a generated file checked in at a generated path.
 
 **Scope.**
 

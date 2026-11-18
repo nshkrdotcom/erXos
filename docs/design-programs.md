@@ -1860,7 +1860,7 @@ the path into one of four images:
     architecture layer, sets that state and jumps; it is no C call,
     since nothing returns to `erx_exec` and the executable's own entry
     expects exactly a first start's state, whatever the backend makes
-    of it ([design-stopgap.md](design-stopgap.md#thread-creation)).
+    of it ([design-fiasco.md](design-fiasco.md#thread-creation)).
     From then on no instruction of `erx_exec` runs: its stack, data and
     code are abandoned with the thread on the executable's stack.
   * **Release.** The executable's start-up is that of every program:
@@ -1961,7 +1961,7 @@ the path into one of four images:
   boot image, the loader among them, are `erx_image_map`'s, never
   `erx_exec`'s; on the stopgap they are linked at fixed addresses, since
   its `erx_image_map` loads only a fixed image
-  ([design-stopgap.md](design-stopgap.md#the-call-table)). Both links
+  ([design-fiasco.md](design-fiasco.md#the-call-table)). Both links
   are one link script, the task script, with its base as a symbol,
   `erx_base`, that the link line sets with `--defsym`: the loader's
   window's base, `exec_window_base`, taken from the generated ABI, for

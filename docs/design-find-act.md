@@ -1117,12 +1117,6 @@ accepted:
   ([decision 3](#decisions)).
 * **design.md** lists this document in its map.
 
-## Dependencies
-
-None new. Find and act is Erlang in the desktop session's release, over
-the shell's evaluator and parser, the widget toolkit, the inspector and
-the file protocol.
-
 ## Alternatives considered
 
 | Alternative | Why not |

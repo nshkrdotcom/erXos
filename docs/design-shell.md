@@ -3248,10 +3248,6 @@ microseconds, a write between two Erlang stages is one message, and
 a program's start, budgeted at 1 ms under HVF, dominates a line that
 runs programs ([design-programs.md](design-programs.md#performance)).
 
-## Portability
-
-The shell is Erlang and depends on nothing of the architecture.
-
 ## Dependencies
 
 No new library. One host test tool: plan9port's rc, built from its pinned

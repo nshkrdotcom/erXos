@@ -4192,12 +4192,6 @@ on QEMU under HVF for files of 64 KiB to 1 GiB, against reads and writes
 of the same bytes through a descriptor as the baseline, at
 [gate GQ](plan.md#track-q-the-second-tier).
 
-## Portability
-
-Nothing in this design is platform-specific: the protocol rides on
-frames, the codec on bytes, and the resolver is Erlang, the same module
-on the target and on the host.
-
 ## Dependencies
 
 No new dependencies: the resolver, the frame profile, `erx_9p` and

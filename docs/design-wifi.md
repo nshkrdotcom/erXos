@@ -85,37 +85,6 @@ Decisions every reader needs:
   command that makes it transmit until the configuration or `ctl` names
   the country.
 
-## Contents
-
-1. [Context](#context)
-2. [Requirements](#requirements)
-3. [The construction](#the-construction)
-4. [The SDIO host in the storage domain](#the-sdio-host-in-the-storage-domain)
-5. [The `sdio` interface](#the-sdio-interface)
-6. [The WiFi domain](#the-wifi-domain)
-7. [The chip](#the-chip)
-8. [The station](#the-station)
-9. [The supplicant](#the-supplicant)
-10. [SAE and protected management frames](#sae-and-protected-management-frames)
-11. [Configuration, credentials and control](#configuration-credentials-and-control)
-12. [The `ether` interface and `wlan0`](#the-ether-interface-and-wlan0)
-13. [OTP's `crypto`: SAE's arithmetic](#otps-crypto-saes-arithmetic)
-14. [Invariants](#invariants)
-15. [Concurrency and ordering](#concurrency-and-ordering)
-16. [Failure handling](#failure-handling)
-17. [Refusals and error results](#refusals-and-error-results)
-18. [Untrusted input](#untrusted-input)
-19. [Security](#security)
-20. [Facts this design does not have](#facts-this-design-does-not-have)
-21. [Performance](#performance)
-22. [Verification](#verification)
-23. [Interfaces](#interfaces)
-24. [Edits to other designs](#edits-to-other-designs)
-25. [Alternatives considered](#alternatives-considered)
-26. [Lineage](#lineage)
-27. [Decisions](#decisions)
-28. [Sources](#sources)
-
 ## Context
 
 ### What a FullMAC chip leaves to the host

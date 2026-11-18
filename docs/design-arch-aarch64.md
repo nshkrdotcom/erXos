@@ -1078,11 +1078,6 @@ on the primary host: HVF enters at EL1 and reports no GIC in
 `ID_AA64PFR0_EL1`, and its in-kernel GIC has no ITS; neither has `RNDR`
 ([measured](research-baselines.md#accelerator-capabilities)).
 
-## Dependencies
-
-No new dependencies: Arm's machine-readable architecture specification is
-in the dependency table of [design.md](design.md#dependencies).
-
 ## Alternatives considered
 
 **Running the kernel at EL2.** With the Virtualization Host Extensions the

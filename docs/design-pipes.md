@@ -2167,11 +2167,6 @@ inside a macOS process
 ([design-runtime.md](design-runtime.md#hosted-mode)), and the pipe core's
 model runs on every host.
 
-## Dependencies
-
-No dependencies of their own: pipes use `liberx`, the session's runtime
-and kernel objects that exist for other purposes.
-
 ## Alternatives considered
 
 **A kernel pipe object.** The kernel would own the buffer and count each

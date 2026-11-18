@@ -57,31 +57,6 @@ Decisions every reader needs:
   supplies only its bring-up, one configuration access at a place, and
   the refusal of every place its bridge must not be asked about.
 
-## Contents
-
-* [Context](#context): what is matched, what the tree does today, the
-  consumers
-* [Requirements](#requirements)
-* [The construction](#the-construction): targets, the plan, what
-  follows, what disappears
-* [The PCIe domain](#the-pcie-domain): processes, the bridge seam, the
-  walk, sizing, placement, root ports
-* [Records](#records): the function, the setting, the bridge, the
-  catalogue
-* [Interrupts](#interrupts): the choice, who programs what and when, the
-  MSI frame on Fiasco, the closed bus
-* [DMA](#dma)
-* [Facets](#facets): the three interfaces and the start's conversation
-* [The catalogue and gives](#the-catalogue-and-gives)
-* [Concurrency](#concurrency)
-* [Failure handling and restart](#failure-handling-and-restart)
-* [Refusals and error results](#refusals-and-error-results)
-* [On Fiasco](#on-fiasco)
-* [Verification](#verification)
-* [Changes to other designs](#changes-to-other-designs)
-* [Alternatives considered](#alternatives-considered)
-* [References](#references)
-
 ## Context
 
 ### What is matched

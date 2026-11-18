@@ -87,29 +87,6 @@ Decisions every reader needs:
   configuration, and the stack's own modules name neither
   ([The effect layer](#the-effect-layer)).
 
-## Contents
-
-1. [Context](#context)
-2. [Requirements](#requirements)
-3. [The construction](#the-construction)
-4. [Processes and the packet path](#processes-and-the-packet-path)
-5. [The TCP core](#the-tcp-core)
-6. [IP, neighbours and UDP](#ip-neighbours-and-udp)
-7. [The effect layer](#the-effect-layer)
-8. [Modules and provenance](#modules-and-provenance)
-9. [Authority and admission](#authority-and-admission)
-10. [The interface towards Erlang programs](#the-interface-towards-erlang-programs)
-11. [The interface towards POSIX programs](#the-interface-towards-posix-programs)
-12. [Untrusted input](#untrusted-input)
-13. [Concurrency and failure](#concurrency-and-failure)
-14. [Refusals and error results](#refusals-and-error-results)
-15. [Where C is used, and what is measured](#where-c-is-used-and-what-is-measured)
-16. [Verification](#verification)
-17. [Scope](#scope)
-18. [Decisions](#decisions)
-19. [Alternatives considered](#alternatives-considered)
-20. [References](#references)
-
 ## Context
 
 ### What the stack matches

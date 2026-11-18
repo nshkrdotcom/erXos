@@ -79,30 +79,6 @@ Decisions every reader needs:
   out, is a [Medium] security residual
   ([The boot firmware's handover](#the-bcm2711-bridge)).
 
-## Contents
-
-* [Context](#context): what is matched, the hardware, what the tree
-  offers today, the sources
-* [Requirements](#requirements)
-* [The construction](#the-construction)
-* [Domains and authority](#domains-and-authority)
-* [The PCIe domain](#the-pcie-domain): QEMU `virt`, the BCM2711 bridge,
-  interrupts, the Phase 1 part, the VL805's firmware
-* [The USB core](#the-usb-core): the bus core, descriptors, pipes
-* [The xHCI driver](#the-xhci-driver): the controller process, the TRB
-  ring form, the two controllers
-* [HID](#hid)
-* [Mass storage](#mass-storage)
-* [The order of work](#the-order-of-work), [On Fiasco](#on-fiasco),
-  [Changes to other designs](#changes-to-other-designs)
-* [Concurrency](#concurrency), [Failure handling](#failure-handling),
-  [Refusals and error results](#refusals-and-error-results)
-* [Verification](#verification), [Performance](#performance)
-* [Outside this design](#outside-this-design), with [DWC2](#dwc2),
-  [Alternatives considered](#alternatives-considered),
-  [The research questions](#the-research-questions),
-  [References](#references)
-
 ## Context
 
 ### What is matched
@@ -2664,7 +2640,7 @@ recorded here as the design's and in `TODO.md` when the code lands:
 * **Bus errors.** An SError raised by a configuration access, or by an
   xHCI register access over a link that has fallen, ends the task of
   the next thread to enter user mode on that CPU, presumed its own
-  ([On the stopgap](#on-the-stopgap));
+  ([On Fiasco](#on-fiasco));
   the bridge driver's second link read keeps a configuration value read
   that way from being used, and the xHCI driver's next event or command
   deadline fails the controller. A synchronous external abort takes

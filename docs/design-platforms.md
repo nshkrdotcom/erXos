@@ -2165,7 +2165,7 @@ with an unknown check is not a pass (Pass and fail, below).
 repeated boots are no one's yet (the soak boots once); the soak writes
 far less than the data partition holds, so it is no wear or full-volume
 test; Fiasco's own kernel memory is not reported to user mode
-([design-stopgap.md](design-stopgap.md#reporting-a-budget)), so a leak
+([design-fiasco.md](design-fiasco.md#reporting-a-budget)), so a leak
 there shows only once a session or a call is refused; the board's
 temperature and any throttling by the firmware are not reported at all;
 a screen that froze while the dashboard's processes still run is seen
@@ -2388,8 +2388,8 @@ which every boot prints, or the log's end:
 
 | The console shows | What it means |
 | --- | --- |
-| a crash record of cause `watchdog`, then `erx: end reset` | a missed pet: the system domain's schedulers or timers stopped while the root ran ([design-stopgap.md](design-stopgap.md#the-watchdog)) |
-| a crash record of a fault, then `erx: end reset` | the root task faulted ([design-stopgap.md](design-stopgap.md#the-end-path)) |
+| a crash record of cause `watchdog`, then `erx: end reset` | a missed pet: the system domain's schedulers or timers stopped while the root ran ([design-fiasco.md](design-fiasco.md#the-watchdog)) |
+| a crash record of a fault, then `erx: end reset` | the root task faulted ([design-fiasco.md](design-fiasco.md#the-end-path)) |
 | `erx: end reset` or `erx: end off` with no crash record | an end someone or something asked for, or the root's own stop; the log lines before it say which |
 | nothing, then a boot line | a reset nobody logged: on a board whose hardware watchdog runs, a hang of Fiasco or of the root, or else a loss of power; the console cannot tell the two apart, and whether the board's reset status tells them apart is unverified |
 | nothing, and no boot line | a hang nothing reset: the board stays silent until its power is cycled; on QEMU, which has no hardware watchdog, the harness's deadline ends the run as timed out, which the driver maps as in Running it on QEMU |
@@ -2486,7 +2486,7 @@ from what the soak must repeat and what only time brings:
   backs off) and about 170,000 pets of the system's watchdog.
 * **Time.** The board's day crosses one midnight UTC, when the change
   that Kraken's quotes give against the day's opening price starts again
-  ([design-quotes.md](design-quotes.md#what-the-sources-offer)); it
+  ([design-quotes.md](design-quotes.md#what-the-source-offers)); it
   crosses the DHCP client's renewal when the lease's renewal time is
   under a day, the server's T1 where it sends a valid one and otherwise
   half the lease (`erx_dhcp4_core.erl`, `times/4`), which the notes'
@@ -2883,12 +2883,6 @@ for any device kind the table lacks, its early console, its manifest, its
 trial request if it has one, its crash region if its RAM survives a reset,
 and a section of this document; generic code does not change (PL1). A
 platform of another architecture also needs that architecture's binding.
-
-## Dependencies
-
-No new dependencies: the Raspberry Pi firmware and TF-A's BL31 are in the
-dependency table of [design.md](design.md#dependencies), with swtpm among
-its test tools.
 
 ## Alternatives considered
 

@@ -816,10 +816,6 @@ for [todo-performance.md](todo-performance.md):
 | retrying a failed append | a write past one request, or one whose reply is lost, may have reached the file, so a retry writes lines twice and can join a cut line to a whole one; giving the batch up and counting it loses at most that batch |
 | checking each stored byte against the line escape as `/var/log` serves it | a classifier in every read, against a medium that in Phase 1 only trusted domains write; a release manifest that grants no session the whole volume, so a user's session holds only its home, closes the same gap where it opens |
 
-## Open decisions
-
-None.
-
 ## References
 
 * erXos's designs, each linked where it is used: design-live.md,
