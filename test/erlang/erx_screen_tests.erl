@@ -139,9 +139,20 @@ the_splash_shows_until_a_window_presents_and_none_of_it_stays_test() ->
     receive {erx_screen, present_again} -> ok after 5000 -> error(no_present_again) end,
     receive {flushed, _, _} -> error(window_layout_flushed_before_its_present) after 200 -> ok end,
     ?assertEqual(length(Marked), length([P || P <- pixels(Screen, Size), P =/= Ground])),
+    %% A present of that window's id from a process the layout does not name is
+    %% answered and changes nothing: the splash stays.
+    {ok, Area, _Page} = erx_memdraw:test_area(65536, write),
+    Test = self(),
+    spawn(fun() ->
+                  {ok, Other} = erx_screen:present_request(1, #{area => Area, offset => 0, width => 16,
+                                                                height => 16, rects => []}),
+                  Test ! {other, gen_server:receive_response(Other, 5000)}
+          end),
+    receive {other, Answer} -> ?assertEqual({reply, ok}, Answer) after 5000 -> error(no_answer) end,
+    receive {flushed, _, _} -> error(foreign_present_flushed) after 200 -> ok end,
+    ?assertEqual(length(Marked), length([P || P <- pixels(Screen, Size), P =/= Ground])),
     %% Its first present, of a zeroed buffer, repaints the whole screen in one frame:
     %% the window's black pixels and the ground everywhere else.
-    {ok, Area, _Page} = erx_memdraw:test_area(65536, write),
     {ok, Request} = erx_screen:present_request(1, #{area => Area, offset => 0, width => 16, height => 16,
                                                     rects => []}),
     {Rects, _} = flushed(),
