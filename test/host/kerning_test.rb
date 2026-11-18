@@ -70,7 +70,7 @@ class KerningTest < Minitest::Test
       Minitest.after_run { FileUtils.remove_entry(work) }
       runner = Erx::Runner.new(owner_root: work, log_dir: File.join(work, 'logs'))
       program = Erx::Raster::Build.new(root: ROOT, runner: runner, output_root: work).call
-      theme = Erx::Glyphs.theme(root: ROOT)
+      theme = Erx::ABI::Theme.read(root: ROOT)
       theme.roles.transform_values do |role|
         font = theme.fonts.fetch(role.font)
         requests = Erx::Glyphs.requests(role, font)

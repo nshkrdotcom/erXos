@@ -39,7 +39,8 @@ drop_flushes() ->
     receive {flushed, _} -> drop_flushes() after 0 -> ok end.
 
 %% A window as large as the screen and a draw connection on it, both the caller's, once
-%% the screen has flushed the layouts that show the window.
+%% the screen has flushed the window's first present, which ends the splash and repaints
+%% the whole screen (docs/design-display.md, "The splash").
 opened() ->
     opened(#{}).
 
@@ -50,6 +51,7 @@ opened(Options) ->
 
 draw_on_window(Options) ->
     {ok, Window} = erx_win:open(screen, #{}),
+    ok = erx_win:present(Window, [{0, 0, ?WIDTH, ?HEIGHT}]),
     {ok, Draw} = erx_draw:open(Window, Options),
     Draw.
 
