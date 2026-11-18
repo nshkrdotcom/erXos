@@ -19,7 +19,8 @@ using it, it feels like UNIX.
 > and inspection span every runtime.
 
 The [architecture](docs/design.md), the [roadmap](docs/plan.md) and the
-[working agreement](CLAUDE.md) define the project.
+[working agreement](CLAUDE.md) define the project. The
+[user guide](docs/guide/README.md) has the how-tos.
 
 ## Goals
 
@@ -200,7 +201,7 @@ Eshell V17.1.1 (type help(). for help)
   real 4 GB board from an SD card that `make pack PLATFORM=raspi4b`
   builds. On the board the serial console, the SD card (`/data` survives a
   power cycle) and Ethernet (1000 Mb/s, DHCP, `ping`, `host`) work; the
-  card's [manual checklist](docs/design-platforms.md#the-sd-card-and-ethernet-on-a-board)
+  card's [manual checklist](docs/guide/raspberry-pi-4.md#check-the-sd-card-and-ethernet)
   and the [first pass](docs/research-rpi4-board-pass.md) record what was
   tried. The board's Ethernet is board-verified: the kiosk's live quotes
   and SSH login run over it. `tools/erx netboot` stages the board's boot
@@ -435,7 +436,7 @@ limitations before you put it on a network.
 **Raspberry Pi 4.** You need a Pi 4, a microSD card of at least 1 GB,
 an Ethernet cable and, for the kiosk, a screen on the HDMI0 port. A 3.3 V
 USB-serial adapter gives you the console
-([the wiring](docs/design-platforms.md#trying-a-card-on-a-board)).
+([the wiring](docs/guide/raspberry-pi-4.md#what-you-need)).
 
 1. Download the card image from the website, or build it with
    `make pack PLATFORM=raspi4b` (see
@@ -444,7 +445,7 @@ USB-serial adapter gives you the console
    `xz -dc sdcard.img.xz | shasum -a 256`.
 2. The Pi's bootloader must be from 2022-12-01 or later; the steps to
    update it are in
-   [Trying a card on a board](docs/design-platforms.md#trying-a-card-on-a-board).
+   [the Raspberry Pi 4 guide](docs/guide/raspberry-pi-4.md#update-the-bootloader-once).
 3. Write the card, a `.img.xz` file of 718 MiB unpacked, to a microSD
    card of 1 GB or more. Raspberry Pi Imager writes the `.img.xz` as it
    is. Or, on macOS, with `diskN` the card in `diskutil list` (everything
@@ -836,16 +837,15 @@ bytes (`make check-reproducible`). The raspi4b QEMU suite packs the same
 way and boots `boot/`'s files on QEMU's model, so it replaces what
 `make pack` left there. Writing the card and what
 to expect on a board is in
-[design-platforms.md](docs/design-platforms.md#trying-a-card-on-a-board),
-and the checklist for the SD card and Ethernet on a board
-[after it](docs/design-platforms.md#the-sd-card-and-ethernet-on-a-board).
+[the Raspberry Pi 4 guide](docs/guide/raspberry-pi-4.md),
+which also holds the checklist for the SD card and Ethernet on a board.
 
 To boot each new build without writing a card, a development board can
 netboot from the Mac over an Ethernet cable: `tools/erx netboot` stages
 `boot/` into the Mac's TFTP root and prints the TFTP server's command
 line. The EEPROM setting, Internet Sharing and what a netboot lacks (the
 card's image packages) are in
-[Netbooting from a Mac](docs/design-platforms.md#netbooting-from-a-mac).
+[Netbooting from a Mac](docs/guide/raspberry-pi-4.md#netbooting-from-a-mac).
 
 ## Guest and stock oracle
 

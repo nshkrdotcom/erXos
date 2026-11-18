@@ -829,8 +829,8 @@ word of the buffer) and `vcgencmd` record:
 The probe's record fixes the decoder's grammar, its voltage form and
 `fw_throttle`'s span, and this design is edited to match.
 
-**The board pass**, one more step in [design-platforms.md, "Trying a
-card on a board"](design-platforms.md#trying-a-card-on-a-board), once per
+**The board pass**, one more step after the boot of the [Raspberry Pi 4
+guide](guide/raspberry-pi-4.md#first-boot), once per
 change to the sensors or the mailbox core:
 
 1. After the prompt, `cat /proc/sensors/status`: each attribute shows a
