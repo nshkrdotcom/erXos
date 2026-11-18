@@ -10,17 +10,19 @@ in the sense of docs/design-display.md, "Kiosks and glasses": it opens
 its UI with `erx_ui:open(#{renderer => lvgl})`, and when the UI ends its
 supervisor starts it again, with a new window.
 
-At start it starts erx_quotes, linked to it, stopping with its reason
-if it refuses, and asks for its window. A
+At start it asks for its window, and does nothing else first: a
 refused open is asked again every ?RETRY_MS,
 since the session's display or pixel area may not be ready yet; each
 refusal unlike the one before is logged as `erx_dashboard: refused
-Reason`. Once a minute, on the minute, and whenever a board comes, it
-computes the tree and hands it to the UI if it differs from the one
-shown; the dial in it is drawn once a minute and kept. The first tree
-a window takes is logged as `erx_dashboard:
-shown YYYY-MM-DD HH:MM`, the minute of the clock it shows
-(erx_dashboard_view:minute/1). The tree takes no input, so the UI's events are dropped.
+Reason`. The window's first tree is the screen with no pictures and no
+board, which takes nothing slow to compute; it is logged as
+`erx_dashboard: shown YYYY-MM-DD HH:MM`, the minute of the clock it
+shows (erx_dashboard_view:minute/1). Only once it is shown does the
+dashboard start erx_quotes, linked to it, and draw the ground and the
+dial, the slow part of its start, and show the screen with them. From then on, once a minute, on the minute, and whenever a
+board comes, it computes the tree and hands it to the UI if it differs
+from the one shown; the dial in it is drawn once a minute and kept.
+The tree takes no input, so the UI's events are dropped.
 """.
 -behaviour(gen_server).
 
@@ -39,7 +41,7 @@ shown YYYY-MM-DD HH:MM`, the minute of the clock it shows
                    board := none | erx_dashboard_view:board(),
                    shown := none | erx_ui_model:tree(),
                    dial := none | {Minute :: binary(), Png :: binary()},
-                   ground := binary(),
+                   ground := none | binary(),
                    refused := none | term()}.
 
 -doc "Starts the dashboard's process, registered as erx_dashboard.".
@@ -48,22 +50,19 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 -doc false.
--spec init([]) -> {ok, state(), {continue, open}} | {stop, term()}.
+-spec init([]) -> {ok, state(), {continue, open}}.
 init([]) ->
-    case erx_quotes:start_link(self()) of
-        {error, Reason} ->
-            {stop, {source, Reason}};
-        {ok, _Quotes} ->
-            next_tick(),
-            Ground = erx_dashboard_pictures:ground(erx_dashboard_view:clock_offset()),
-            {ok, #{window => none, board => none, shown => none, dial => none, ground => Ground,
-                   refused => none},
-             {continue, open}}
-    end.
+    next_tick(),
+    {ok, #{window => none, board => none, shown => none, dial => none, ground => none,
+           refused => none},
+     {continue, open}}.
 
 -doc false.
 handle_continue(open, State) ->
-    open(State).
+    open(State);
+handle_continue(dress, State) ->
+    {ok, _Quotes} = erx_quotes:start_link(self()),
+    render(State#{ground := erx_dashboard_pictures:ground(erx_dashboard_view:clock_offset())}).
 
 -doc false.
 handle_call(Request, _From, State) ->
@@ -92,7 +91,10 @@ handle_info({'DOWN', Window, process, _Server, Reason},
 open(#{refused := Last} = State) ->
     case erx_ui:open(#{renderer => lvgl, label => <<"dashboard">>}) of
         {ok, Window} ->
-            render(State#{window := Window, refused := none});
+            case render(State#{window := Window, refused := none}) of
+                {noreply, Bare} -> {noreply, Bare, {continue, dress}};
+                Stop -> Stop
+            end;
         {error, Reason} ->
             case Reason of
                 Last -> ok;
@@ -106,8 +108,8 @@ render(#{window := none} = State) ->
     {noreply, State};
 render(#{window := Window, board := Board, shown := Shown, ground := Ground} = State0) ->
     Time = calendar:universal_time(),
-    #{dial := {_Minute, Dial}} = State = dial(Time, State0),
-    case erx_dashboard_view:tree(#{time => Time, board => Board, dial => Dial, ground => Ground}) of
+    #{dial := Dial} = State = dial(Time, State0),
+    case erx_dashboard_view:tree(#{time => Time, board => Board, dial => png(Dial), ground => Ground}) of
         Shown ->
             {noreply, State};
         Tree ->
@@ -125,12 +127,19 @@ render(#{window := Window, board := Board, shown := Shown, ground := Ground} = S
 
 %% The dial for the minute of Time, drawn once a minute: a board comes
 %% about once a second, and the picture changes only with the minute.
+%% Until the ground is drawn, after the first tree, no dial is either, so
+%% the first tree computes no picture.
+dial(_Time, #{ground := none} = State) ->
+    State;
 dial(Time, #{dial := Kept} = State) ->
     Minute = erx_dashboard_view:minute(Time),
     case Kept of
         {Minute, _Png} -> State;
         _Other -> State#{dial := {Minute, erx_dashboard_clock:png(?PALETTE, Time)}}
     end.
+
+png(none) -> none;
+png({_Minute, Png}) -> Png.
 
 %% The next tick, at the start of the next wall-clock minute, when the
 %% clock it shows changes.

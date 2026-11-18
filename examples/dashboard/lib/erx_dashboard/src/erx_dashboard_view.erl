@@ -24,7 +24,10 @@ role over its change, which carries its direction as a `trend`, each
 recent prices with the day's opening price marked across it. A
 block's key is its quote's symbol, so a board that reorders its quotes
 moves blocks instead of rewriting their text. Before the first board the
-panel says it is waiting.
+panel says it is waiting. A model whose `ground` or `dial` is `none`, as
+the dashboard's first is, before either picture is drawn, shows the
+window's own colour in place of the ground and leaves the dial's square
+empty, so nothing moves when the pictures come.
 
 A board is its sources' credit, flush right of the panel's title, which
 says where the numbers come from, and its quotes in the order the
@@ -52,8 +55,8 @@ dot; the view checks nothing again.
                    status => binary()}.
 -type board() :: #{credit := binary(), quotes := [quote()]}.
 -type model() :: #{time := calendar:datetime(),
-                   dial := binary(),
-                   ground := binary(),
+                   dial := none | binary(),
+                   ground := none | binary(),
                    board := none | board()}.
 
 %% The graph's range: a card's prices are scaled onto it, so no price,
@@ -84,12 +87,11 @@ dot; the view checks nothing again.
 tree(#{time := Time, board := Board, dial := Dial, ground := Ground}) ->
     Size = erx_dashboard_clock:size(),
     {stack, #{},
-     [{image, #{image => Ground, image_type => png}, []},
-      {row, #{pad => ?MARGIN},
+     ground(Ground) ++
+     [{row, #{pad => ?MARGIN},
        [{column, #{weight => 1},
          [{spacer, #{weight => 1}, []},
-          centred({image, #{width => Size, height => Size, image => Dial,
-                            image_type => png, alt => clock(Time)}, []}),
+          centred(dial(Dial, Size, Time)),
           gap(?DATE_GAP),
           centred({label, #{height => ?DATE_LINE, role => headline, text => date(Time)}, []}),
           gap(?TIME_GAP),
@@ -108,6 +110,14 @@ a column centred on the rest. The ground's glow is drawn there.
 -spec clock_offset() -> {integer(), integer()}.
 clock_offset() ->
     {-(?PANEL + ?PANEL_GAP) div 2, -(?DATE_GAP + ?DATE_LINE + ?TIME_GAP + ?TIME_LINE) div 2}.
+
+ground(none) -> [];
+ground(Png) -> [{image, #{image => Png, image_type => png}, []}].
+
+dial(none, Size, _Time) ->
+    {spacer, #{width => Size, height => Size}, []};
+dial(Png, Size, Time) ->
+    {image, #{width => Size, height => Size, image => Png, image_type => png, alt => clock(Time)}, []}.
 
 panel(none) ->
     [panel_header(<<"Waiting for quotes">>)];

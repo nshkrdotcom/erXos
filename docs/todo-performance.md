@@ -1195,3 +1195,7 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   app serving trees, the memory and the time a connection adds to a
   root login; the fix on the table is a grant made at the first walk of
   `/svc/NAME` ([design-app-trees.md](design-app-trees.md#decisions), 4).
+  Drawing the ground also takes the dashboard about 115 ms on the host
+  under the JIT, after its first tree, unmeasured on the Pi. Measure a
+  redraw's time and peak memory on the Pi; the fixes are a one-entry image
+  cache in erx-lvgl, or a ground that is not a full-screen picture.

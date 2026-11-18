@@ -211,9 +211,11 @@ dashboard draws the window; `erx_quotes` owns none.
   pairs and reasons alone, so the rule of Q-R1 and Q-R2 is in one
   function, `erx_quotes_view:state/3`, which the screen's status line
   and the log's line both take.
-* **At start** `erx_quotes` takes the table, starts `ssl` and `inets`
-  itself (`application:ensure_all_started/1`), starts the core with every
-  quote due and ticks it every second.
+* **At start** `erx_quotes` takes the table and starts the core with every
+  quote due, and its start returns; only then does it start `ssl` and
+  `inets` itself (`application:ensure_all_started/1`) and read the trust
+  store, so nothing slow holds up the dashboard that starts it, and it
+  ticks the core every second.
 
 The special cases this removes:
 
@@ -585,9 +587,11 @@ response reaches the screen.
   Repeated crashes reach the supervisor's intensity, which ends the app,
   and its start row's keeper starts the session again within its own
   intensity ([design-packaging.md](design-packaging.md#starting-an-app)).
-* **An application that does not start** stops `erx_quotes` with the
-  reason, and the dashboard's start with it, so the session ends with the
-  reason, which `/proc/apps` shows.
+* **An application that does not start**, or a trust store that cannot
+  be read, stops `erx_quotes` with the reason after its start has
+  returned, and the link ends the dashboard with it, which has by then
+  shown its first tree; the supervisor starts it again with a new window,
+  as for a crash, and the reason is in the log.
 * **`httpc`'s processes** run under `inets`'s supervisor; a handler that
   crashes answers its request with an error, which is a failed source.
 * **The network domain's restart** ends the grant; connections fail with

@@ -22,6 +22,8 @@ class ErxDashboardTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   DASHBOARD = File.join(ROOT, 'examples/dashboard')
   TESTS = [File.join(DASHBOARD, 'lib/erx_dashboard/test/erx_dashboard_view_tests.erl')].freeze
+  START_TESTS = [File.join(DASHBOARD, 'lib/erx_dashboard/test/erx_dashboard_start_tests.erl'),
+                 File.join(ROOT, 'sdk/erx_ui_host.erl')].freeze
   DEADLINE = '300'
 
   def self.runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
@@ -49,6 +51,22 @@ class ErxDashboardTest < Minitest::Test
     end
   end
 
+  # The dashboard's start on the SDK's stand-in display (erx_dashboard_start_tests): its window
+  # is drawn whole, its ground included, while its quotes source waits forever on a trust
+  # store that is a FIFO no one writes. The host's erx-lvgl draws it (Erx::Lvgl::Build).
+  def test_the_window_is_drawn_while_the_quotes_source_waits
+    sdk = self.class.sdk
+    program = Erx::Lvgl::Build.new(root: ROOT, runner: self.class.runner).call
+    Dir.mktmpdir('erx-dashboard-start') do |work|
+      DashboardScreen.compile(work, app: DASHBOARD, sdk: sdk, runner: self.class.runner, tests: START_TESTS)
+      File.mkfifo(File.join(work, 'roots.fifo'))
+      output = run!(sdk.erl, '-noshell', *DashboardScreen.code_path(work, sdk: sdk), '-eval',
+                    'halt(case eunit:test(erx_dashboard_start_tests, [verbose]) of ok -> 0; _ -> 1 end).',
+                    chdir: work, env: { 'ERX_LVGL' => program, 'TMPDIR' => work })
+      assert_match(/Test passed/, output)
+    end
+  end
+
   # The dashboard's screen at the display suite's size (test/display/reference/
   # display-lvgl.ppm.gz), at a fixed time with every quote's first round failed for want of
   # a network, as the host's erx-lvgl draws it (DashboardScreen), against test/display/reference/dashboard.
@@ -70,8 +88,8 @@ class ErxDashboardTest < Minitest::Test
 
   private
 
-  def run!(*command, chdir:)
-    output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE, *command, chdir: chdir, stdin_data: '')
+  def run!(*command, chdir:, env: {})
+    output, status = Open3.capture2e(env, 'gtimeout', '-k', '10', DEADLINE, *command, chdir: chdir, stdin_data: '')
     assert status.success?, output
     output
   end
