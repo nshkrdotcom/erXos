@@ -39,10 +39,12 @@ class ChecksTest < Minitest::Test
   # The fixture trees hold none of the tests the Elsewhere rules name, so
   # they are checked against the active chokepoint rules alone.
   # The fixture checkouts hold no generator inputs, so by default their
-  # generated tree is computed by no generator and holds no file.
+  # generated tree is computed by no generator and holds no file. They hold
+  # no design document either, so no rule's design link is resolved.
   def checks(imports: [], root: @root, generators: [], submodules: [])
     Erx::Checks.new(root: root, runner: @runner, required_imports: imports,
-                    chokepoints: Erx::ChokepointRules::ACTIVE, generators: generators, submodules: submodules)
+                    chokepoints: Erx::ChokepointRules::ACTIVE, generators: generators, submodules: submodules,
+                    design_rules: [])
   end
 
   # The source check runs the chokepoint rules over the git listing, so an

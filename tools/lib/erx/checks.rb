@@ -9,6 +9,7 @@ require_relative 'chokepoint_rules'
 require_relative 'display_release'
 require_relative 'erlang_apps'
 require_relative 'dependencies'
+require_relative 'doc_links'
 require_relative 'area_mappers'
 require_relative 'erofs_reads'
 require_relative 'example_lists'
@@ -164,14 +165,17 @@ module Erx
     # whose files the chokepoint rules read beside the listed ones.
     # submodules: the git submodules (Origin::SUBMODULES), each with an ORIGIN.md
     # beside it; any other nested repository is refused.
+    # design_rules: the rules whose design links the document check resolves.
     def initialize(root:, runner:, required_imports: IMPORTS, chokepoints: ChokepointRules::ALL,
-                   generators: Generated::GENERATORS, submodules: Origin::SUBMODULES)
+                   generators: Generated::GENERATORS, submodules: Origin::SUBMODULES,
+                   design_rules: ChokepointRules::ALL)
       @root = File.expand_path(root)
       @runner = runner
       @required_imports = required_imports
       @chokepoints = chokepoints
       @generators = generators
       @submodules = submodules
+      @design_rules = design_rules
     end
 
     def run
@@ -189,10 +193,12 @@ module Erx
 
         raise Error, "missing submodule provenance: #{File.dirname(relative)}/ORIGIN.md"
       end
-      listed = project_files.reject { |name| @submodules.include?(name) }
+      names = project_files
+      listed = names.reject { |name| @submodules.include?(name) }
       listed_set = listed.to_set
       own_sources = listed.reject { |relative| imported?(relative) }
       own_sources.each { |relative| check_own_source(relative, listed: listed_set) }
+      check_doc_links(names, own_sources)
       check_json_parsing(own_sources)
       check_named_only(own_sources)
       check_area_mappers(listed)
@@ -394,6 +400,23 @@ module Erx
       raise Error, violations.join("\n") unless violations.empty?
     end
 
+    # Every document link and section citation of erXos's own files reaches a
+    # section (DocLinks), and so does each chokepoint rule's design link. The
+    # citing files are the own sources alone, so no import's text, the two
+    # GPL files of the Fiasco fork among them, is ever read; every listed
+    # Markdown file, imports' included, is a document a link may reach.
+    def check_doc_links(names, own_sources)
+      present = ->(relative) { File.file?(File.join(@root, relative)) }
+      documents = names.select { |relative| DocLinks.document?(relative) && present.call(relative) }
+                       .to_h { |relative| [relative, text_of(relative)] }
+      sources = own_sources.select { |relative| DocLinks.reads?(relative) && present.call(relative) }
+                           .to_h { |relative| [relative, text_of(relative)] }
+                           .reject { |_relative, text| text.include?("\0") || !text.include?('.md') }
+      designs = @design_rules.to_h { |rule| ["chokepoint rule #{rule.name}", rule.design] }
+      violations = DocLinks.violations(sources, documents: documents, listed: names, designs: designs)
+      raise Error, violations.join("\n") unless violations.empty?
+    end
+
     # No list of the build names an example (ExampleLists).
     def check_example_lists(listed)
       files = listed.select { |relative| ExampleLists.covers?(relative) && File.file?(File.join(@root, relative)) }
@@ -440,10 +463,15 @@ module Erx
       read = ->(paths) { paths.select { |relative| File.file?(File.join(@root, relative)) }
                               .to_h { |relative| [relative, File.binread(File.join(@root, relative))] } }
       files = read.call(listed.select { |relative| FacetNames.covers?(relative) || FacetNames.table_file?(relative) })
-      docs = read.call(listed.select { |relative| FacetNames.design_doc?(relative) })
+      docs = listed.select { |relative| FacetNames.design_doc?(relative) && File.file?(File.join(@root, relative)) }
+                   .to_h { |relative| [relative, text_of(relative)] }
       violations = FacetNames.violations(files, docs: docs)
       raise Error, violations.join("\n") unless violations.empty?
     end
+
+    # A listed file as UTF-8 text, any invalid sequence replaced: the text the
+    # document checks read, Markdown prose being free to hold any character.
+    def text_of(relative) = File.binread(File.join(@root, relative)).force_encoding(Encoding::UTF_8).scrub
 
     def ruby_source?(path)
       File.file?(path) &&

@@ -2391,6 +2391,22 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   document's headings, forms each anchor as the viewer does, and fails on a link whose file or anchor does not
   exist, with a seeded dangling anchor; a rule that links go through a constant, as `chokepoint_rules.rb`'s
   `design:` fields do, needs the same check over the interpolated strings.
+* [Low] build, document links (`tools/lib/erx/doc_links.rb`): four citation forms are not read. A
+  `TODO.md` item cited by its words (`TODO.md, "/etc/rc.conf"`) names no section, so a citation of a closed
+  item dangles unreported; checking it needs the words to be found in an item. A section of the citing
+  document named without its file (`(below, "A facet's mount")`, or a name after a link to the
+  document's own anchor, 36 sites), a second name after the first (`/dev/tty` in
+  `design-programs.md ("The terminal", "/dev/tty")`) and a possessive (`design-tmp.md's "Core"
+  item`, which can also introduce a quoted phrase) are not read either; each needs the citation's
+  grammar to say which document a name belongs to. In the Fiasco design, two bold lead-ins, "A
+  page's identity is its window address" and "Thread handles" (which a Fiasco backend item cites in
+  the possessive), start no paragraph: each follows its previous line with no blank line between,
+  so it renders inside that paragraph and a citation of it would fail once the form is read.
+* [Medium] build, `tools/lib/erx/production_image.rb` (`archives`): the root's link records `libl4sys.p.a` and
+  `libsigma0.a` with status `stopgap`, though the dependency table marks Fiasco's `l4re-core` parts `release`;
+  the status sets of `tools/lib/erx/dependencies.rb:88` and `tools/lib/erx/toolchain_provenance.rb:72` admit
+  only `permanent` and `stopgap`, two copies of one fact. Give the status set one source that includes
+  `release`, record both archives as `release`, and test a record with an unknown status refused.
 * [Low] Fiasco backend, the host link's boot word: the host link is opt-in through
   `erx.hostlink=1` (`liberx/backend/fiasco/boot_args.c`,
   `liberx/backend/core/boot_manifest.c`), because the root takes the host

@@ -4,6 +4,7 @@
 
 require 'digest'
 require 'set'
+require_relative 'doc_links'
 require_relative 'erlang_text'
 require_relative 'error'
 require_relative 'generation_plan'
@@ -28,7 +29,7 @@ module Erx
   # binds names, not grantees: which domain may hold a facet is the manifest reader's
   # to check (Manifest, normalize_facets). It refuses:
   #
-  # * an interface file whose services cite no design section, or cite a heading the
+  # * an interface file whose services cite no design section, or cite a section the
   #   document does not have;
   # * a manifest service whose interface no abi/services file declares, by name or by
   #   number;
@@ -274,7 +275,8 @@ module Erx
                 grantee: field(record, 'grantee'), path: record.line.path, line: record.line.number)
     end
 
-    # The design citations of the interfaces: each must name a heading of its document.
+    # The design citations of the interfaces: each must name a section of its document,
+    # as every citation must (DocLinks).
     def design_violations(table, docs)
       table.interfaces.filter_map do |interface|
         doc, heading = interface.design
@@ -282,17 +284,12 @@ module Erx
           Violation.new(path: interface.path, line: interface.line,
                         detail: "service #{interface.name}'s file cites no design section " \
                                 '(docs/<file>.md, "<heading>") in its header comment')
-        elsif !headings(docs.fetch(doc, '')).include?(plain(heading))
+        elsif !DocLinks.sections(docs.fetch(doc, '')).named?(heading)
           Violation.new(path: interface.path, line: interface.line,
-                        detail: "service #{interface.name} cites #{doc}, \"#{heading}\", which has no such heading")
+                        detail: "service #{interface.name} cites #{doc}, \"#{heading}\", which names no section")
         end
       end
     end
-
-    # A document's headings, with code marks dropped as a citation writes them.
-    def headings(text) = text.each_line.filter_map { |line| line[/\A#+\s+(.*?)\s*\z/, 1]&.then { plain(_1) } }.to_set
-
-    def plain(heading) = heading.delete('`').squeeze(' ').strip
 
     # Each facet name path uses: [path, line, name].
     def uses(path, text)
