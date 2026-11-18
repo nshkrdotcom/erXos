@@ -8754,6 +8754,22 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] WiFi, the vault purpose for network keys
+  ([design-wifi.md](docs/design-wifi.md#credentials)): design-system.md
+  does not yet list the vault purpose `{wpa, Service}`, with facet
+  `wpa_key` for the WiFi domain and `wpa_admin` for the administrator's
+  session template, taking the seven operations of design-wifi
+  Credentials and kept as a sealed section of the machine's file. Add it
+  to design-system.md#the-vault when the WiFi holder is built.
+* [Medium] WiFi, who may enroll a network over Bluetooth
+  ([design-bluetooth.md](docs/design-bluetooth.md),
+  [design-wifi.md](docs/design-wifi.md#credentials)): design-wifi grants
+  `wpa_admin` only to root's session template and keeps every passphrase
+  in the session that typed it, while Bluetooth provisioning has the
+  passphrase typed on a phone and handed on by a provisioning app.
+  Decide with the provisioning design: name that app's template as a
+  second `wpa_admin` grantee and state the passphrase path, or route
+  provisioning through root's session.
 * [Medium] apps, who may read the start table's row names in a release build ([design-apps.md](docs/design-apps.md),
   [design-find-act.md](docs/design-find-act.md#decisions), decision 3): `[apps]` is visible only at scope `all`, so a
   release build's palette lists no apps and `service -e` cannot read `declared_enable`; design-apps decides which
