@@ -2385,8 +2385,8 @@ its code, and the item's work waits on it.
   the website beside their records ([site/README.md](../site/README.md)).
 * **Documentation.** The getting-started steps for the Pi and for QEMU
   are in the README, grown from its "Boot erXos" and "Raspberry Pi 4 SD
-  card" and from design-platforms.md's
-  [Trying a card on a board](design-platforms.md#trying-a-card-on-a-board).
+  card" and from
+  [the Raspberry Pi 4 guide](guide/raspberry-pi-4.md).
   The release notes are a page the website publishes beside the
   downloads, its source under `site/`. They carry 0.1's known
   limitations: what it leaves to 0.2 and later (below); the Pi's clock, at
@@ -2406,7 +2406,13 @@ its code, and the item's work waits on it.
 * **The board by hand**, on the 4 GB Pi with no rig: 1b-I's manual
   passes and power-cut checklist, and a soak. **No design** for the
   soak: its workload, its length and what it records are written first,
-  beside design-platforms.md's board passes.
+  beside design-platforms.md's board passes; [its design](design-platforms.md#the-soak)
+  is written. Building it is four packages of about 50 to 100 calls each
+  (unverified until they run): the judge and the round's readers
+  (`tools/lib/erx/soak.rb`, a pure core, with `test/host/soak_test.rb`), the
+  board's driver (`tools/erx soak board` and `soak judge`, extending
+  `DevKey.ssh_argv` to take a destination and an identity path), the QEMU
+  run, and the runs themselves, whose records go to the history repository.
 * **Installing an app at run time**, track A's part 3
   ([design-packaging.md](design-packaging.md)), if it lands before
   0.1's other items are done; otherwise 0.2 takes it. It is not an exit
@@ -2450,8 +2456,8 @@ its code, and the item's work waits on it.
   the tree, which the website's build checks.
 * By hand on the 4 GB Pi, from the published card rather than a local
   build: the boot pass of
-  [Trying a card on a board](design-platforms.md#trying-a-card-on-a-board);
-  the [SD card and Ethernet pass](design-platforms.md#the-sd-card-and-ethernet-on-a-board);
+  [the Raspberry Pi 4 guide](guide/raspberry-pi-4.md#first-boot);
+  the [SD card and Ethernet pass](guide/raspberry-pi-4.md#check-the-sd-card-and-ethernet);
   1b-I's power-cut checklist; 1b-I's part (d), the kiosk's frame and a
   display driver's restart; `ssh root@` the board with the key on the
   record partition reaching `rc`, `ps` and `top` there, and a 1 MiB

@@ -389,42 +389,31 @@ instructions but not the cryptography extension, so SHA-256, which every
 EROFS block's check needs, runs in portable C on it
 ([design-storage.md](design-storage.md#performance)).
 
-**The Ethernet controller.** GENET's driver decides in three pure
-Erlang cores beside the network transports in
-`erlang/apps/erx_net/erxos/`; the transport around them, which reads
-and writes the registers, comes with the controller's own design.
-Register facts are FreeBSD's (`if_genet.c`, `if_genetreg.h`,
-`brgphy.c`, `brgphyreg.h`, `mii.h`, `miidevs`):
-
-* `erx_genet_rx` reads one receive completion of the device NIF, the
-  descriptor status's flags and the bytes the controller wrote, a
-  private copy the frame keeps alive, into a frame or a drop with its
-  reason. The length is the size of those bytes, so no length can
-  disagree with them; it counts the two bytes of padding the controller
-  writes before the frame, so a frame is at most the 2 KiB buffer less
-  those two bytes. Flags with an error bit or without both start and end
-  of packet, or fewer bytes than the padding and an Ethernet header, or
-  more than the buffer, are dropped. The NIF consumes every descriptor,
-  frame or drop, so a bad frame never stalls the ring, and refuses a
-  producer index more than a ring ahead and a length past the buffer as
-  controller faults ([design-device-dma.md, "The register ring (GENET)"](design-device-dma.md#the-three-descriptor-forms)).
-* `erx_mdio` builds the MDIO command word of a clause 22 read or write
-  (busy 29, read failed 28, read 27, write 26, PHY 25:21, register
-  20:16, data 15:0) and decides each poll of it: wait while busy, up to
-  1,000 polls 10 us apart, then the data, `read_failed` or `timeout`.
-* `erx_phy_c22` is the PHY's state machine: a function from its state
-  and the result of its last MDIO operation to its next state, its next
-  operation and its reports. It resets the PHY, refuses any PHY but the
-  BCM54213PE (OUI `0x18c086`, model `0x0a`) with its ID, sets the
-  receive clock delay the board's `rgmii-rxid` wiring asks for
-  (`RGMII_SKEW_EN` in auxiliary control shadow 7, `GTXCLK_EN` clear in
-  shadow `0x1C`), advertises full duplex only, since the controller's
-  command register has a speed field and no duplex field (FreeBSD's
-  `if_genetreg.h:75-92`; unverified on the board), and autonegotiates. It then polls the link every
-  second, reading the status register twice because its link bit
-  latches low, and reports `{link, up, Speed}` for the auxiliary status
-  register's full-duplex resolution with that register's link bit set, `{link, down}` at every drop, and
-  `{failed, Reason}` at an MDIO error, after which the driver restarts.
+**The Ethernet controller.** GENET's driver decides in three pure Erlang
+cores beside the network transports in `erlang/apps/erx_net/erxos/`
+(`erx_genet_rx`, `erx_mdio`, `erx_phy_c22`), and the transport around
+them reads and writes the registers; register facts are FreeBSD's
+(`if_genet.c`, `if_genetreg.h`, `brgphy.c`). A receive completion is
+read into a frame or a drop with its reason, the length being the size of
+the bytes the controller wrote, so no length can disagree with them; it
+counts the two bytes of padding the controller writes before the frame, so
+a frame is at most the 2 KiB buffer less those two. Flags with an error
+bit or without both start and end of packet, fewer bytes than the padding
+and an Ethernet header, or more than the buffer, are dropped. The device NIF
+consumes every descriptor, so a bad frame never stalls the ring, and
+refuses a producer index more than a ring ahead and a length past the
+buffer as controller faults
+([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)).
+A clause 22 MDIO operation polls while busy up to 1,000 times 10 us apart,
+then reports `read_failed` or `timeout`. The PHY's state machine refuses
+any PHY but the BCM54213PE (OUI `0x18c086`, model `0x0a`), sets the
+receive clock delay the board's `rgmii-rxid` wiring asks for, advertises
+full duplex only, since the controller's command register has a speed
+field and no duplex field (FreeBSD's `if_genetreg.h:75-92`; unverified on
+the board), and polls the link every second, reading the status register
+twice because its link bit latches low. It reports `{link, down}` at every
+  drop and `{failed, Reason}` at an MDIO error, after which the driver
+  restarts.
 
 ### Raspberry Pi 5
 
@@ -1503,31 +1492,16 @@ and its firmware requests, each a fixed row of the platform record
 mailbox requests. Nothing of
 erXos links or packs the stand-in, and no card holds it.
 
-* On the host, the harness copies the model's tree, adds the node with
-  placeholder cells for its base, size, width, height and stride, and
-  its format, and builds the stand-in with the address of each
-  placeholder cell in the tree as the loader places it.
-* QEMU's generic loader starts CPU 0 at the stand-in's ELF entry
-  (`cpu-num=0`; QEMU's `docs/system/generic-loader.rst`) instead of in
-  BL31. The stand-in sends one property request on mailbox channel 8
-  (the firmware's "Mailbox property interface" page): set the physical
-  and virtual size to 640x480, the depth to 32 and the pixel order to
-  BGR, then allocate the buffer and get the pitch. It writes the answer
-  into the placeholder cells and enters BL31 at address 0 with `x0` to
-  `x3` zero, as reset leaves them. An answer that is not the screen
-  asked for leaves the placeholders, which name a framebuffer outside
-  every window, so the root refuses it, the display domain runs without
-  a screen and the suite's screen check fails.
-* QEMU 11.1.3 answers with the base `0x3c100000`, `0x12c000` bytes, 640
-  by 480 and a pitch of 2560, inside the unit's window and above the
-  RAM the tree reports. Under BGR the model shows a 32-bit word's bits
-  23:16 as red, 15:8 as green and 7:0 as blue, so the node's format is
-  `x8r8g8b8`; under RGB a probe's `0x00ff0000` shows blue.
-* The suite then checks the root's `framebuffer 640x480 2560 x8r8g8b8`
-  line, the driver's `erx_fb: framebuffer 640x480 stride 2560
-  x8r8g8b8` line once, and the screen read through QMP: every pixel
-  the empty layout's background, the colour `erx_screen` defines,
-  which the harness reads from that source.
+The stand-in runs before BL31: it sends one property request on mailbox
+channel 8 (set the size to 640x480, the depth to 32 and the pixel order
+to BGR, then allocate the buffer and get the pitch), writes the answer
+into placeholder cells that the harness put in a copy of the model's
+tree, and enters BL31 as reset leaves the registers. An answer that is
+not the screen asked for leaves placeholders that name a framebuffer
+outside every window, so the root refuses it and the suite's screen
+check fails. The suite checks the root's and the driver's framebuffer
+lines and reads the screen through QMP: every pixel the empty layout's
+background.
 
 The stand-in proves erXos's side of the contract, from the node to the
 pixels; that the firmware writes the node the root reads is what the
@@ -1594,1056 +1568,448 @@ adds the kernel's items on erXos's kernel.
 
 One pass on a real board checks what QEMU's model cannot: the firmware,
 its device tree and its UART setup. It is done by hand, once per change
-to the boot path.
-
-**You need** a Raspberry Pi 4 (any memory size: `total_mem` makes the
-board use 1 GB; the 4 GB board is the one tested), a microSD card of at least 1 GB (the card's image is 718 MiB), and a 3.3 V
-USB-serial adapter (never a 5 V one). Wire it to the 40-pin header: the
-adapter's ground to pin 6, its receive line to pin 8 (GPIO 14, the Pi's
-transmit) and its transmit line to pin 10 (GPIO 15). Open it at 115200
-baud, 8N1, no flow control, for example `screen -L /dev/cu.usbserial-XXXX
-115200`, where `-L` logs everything it prints to `screenlog.0`. A second adapter on UART3, the
-host link, is optional: ground to pin 9, receive to pin 7 (GPIO 4),
-transmit to pin 29 (GPIO 5), also 115200 8N1.
-
-**Build** the card's image on the development host:
-
-```sh
-make pack PLATFORM=raspi4b
-```
-
-It writes `build/production-image/raspi4b/sdcard.img`.
+to the boot path. The steps, the wiring and what the console shows are in
+the [Raspberry Pi 4 guide](guide/raspberry-pi-4.md); this section says what
+the pass settles and why the steps are what they are.
 
 **The bootloader must be 2022-12-01 or later.** The card's partition 1
-holds no boot files, only `autoboot.txt` with `tryboot_a_b=1` and, when
-a user adds it, root's `authorized_keys`, and each slot holds its
-own `config.txt`. A bootloader older than the 2022-12-01 release does not
-know `tryboot_a_b`: the 2022-10-18 beta first loaded `config.txt` in
-that mode, and the 2022-12-01 release made it the default
+holds no boot files, only `autoboot.txt` with `tryboot_a_b=1` and, when a
+user adds it, root's `authorized_keys`, and each slot holds its own
+`config.txt`. A bootloader older than the 2022-12-01 release does not know
+`tryboot_a_b`: the 2022-10-18 beta first loaded `config.txt` in that mode,
+and the 2022-12-01 release made it the default
 ([research](research-boards-storage.md#booting-a-chosen-partition-on-the-raspberry-pi)).
-On a Pi 4 (board revision c03112) with such a bootloader the card
-showed nothing at all on the UART and the green LED stayed on, with
-or without a card, where the Raspberry Pi documentation has it flash
-during card activity; after the reflash below the same card booted. A
-card with one boot partition still boots on such a board, which tells a
-bootloader that is too old from a bad card. To read a board's bootloader build date, boot a
-Raspberry Pi OS that has it, or read
-`/proc/device-tree/chosen/bootloader/build-timestamp`; or just reflash:
-
-1. On the development host, open Raspberry Pi Imager and pick the
-   Raspberry Pi 4 as the device.
-2. As the operating system pick *Misc utility images > Bootloader > SD
-   Card Boot*, and write it to a spare card (not the erXos card).
-3. Put that card in the Pi and power it. Wait until the green LED flashes
-   in a steady pattern (the documentation adds a green screen on an HDMI
-   display), then power the Pi off.
-4. Take the spare card out. The EEPROM now holds a current bootloader.
-
-**Write the card** on macOS. Insert the card, then find it:
-
-```sh
-diskutil list
-```
-
-Pick the disk whose size is the card's, `/dev/diskN`, marked `external,
-physical`. **Writing to the wrong disk destroys what is on it, your
-Mac's own disk included: check the size and the name twice.** Then write
-`make pack PLATFORM=raspi4b`'s `sdcard.img`:
-
-```sh
-diskutil unmountDisk /dev/diskN
-sudo dd if=build/production-image/raspi4b/sdcard.img of=/dev/rdiskN bs=4m
-diskutil eject /dev/diskN
-```
-
-or `sdcard.img.xz` beside it, the same card xz-compressed, which is the
-form to copy to another machine or download: unpack it on the way with
-Homebrew's `xz`,
-
-```sh
-diskutil unmountDisk /dev/diskN
-xz -dc build/production-image/raspi4b/sdcard.img.xz | sudo dd of=/dev/rdiskN bs=4m
-diskutil eject /dev/diskN
-```
-
-or give it to Raspberry Pi Imager, which writes a `.img.xz` as it is.
-The card ends at its last partition, 718 MiB in, so only that much is
-written, and the rest of a larger card is left as it was.
-
-Put the card in the Pi, start logging on the adapter, then power the Pi.
-
-**Expect**, in this order, on the console adapter:
-
-1. BL31's banner, two lines: `NOTICE:  BL31: v2.15.0(release):v2.15.0`
-   and `NOTICE:  BL31: Built : erXos`.
-   BL31 writes the mini UART, since its Pi 4 port takes it when GPIO 14
-   is in ALT5, where `enable_uart=1` puts it.
-2. bootstrap's memory line, exactly
-   `  Total RAM: 948.0 MiB; available for Bootstrap/Sigma0/Kernel: 948.0 MiB`:
-   the 1024 MiB `total_mem` gives less the 76 MiB of `gpu_mem`.
-3. `Starting kernel at`, then the erXos banner art, `erXos`, Fiasco's
-   version lines and `development build: trusted code only`, then
-   Fiasco's start-up lines, `DT Platform: Raspberry Pi 4 Model B` among
-   them.
-4. After a minute or less, a line that starts `rc: the command shell`
-   and the command shell's `%` prompt. Type `erl` and Enter: the Erlang
-   shell's `(root_1@erxos)1>` prompt comes up. Type `1 + 2.` and
-   Enter: it answers `3`. Type `q().` to return to the command shell,
-   then `dmesg`, which prints the kernel's and the system's log.
-5. With a screen on the micro-HDMI port the board labels HDMI0, plugged
-   in before power-on: the firmware's rainbow square and boot text give
-   way to the kiosk, the dashboard the card carries
-   ([design-packaging.md](design-packaging.md#the-apps-row)), within
-   60 seconds of the erXos banner, and the picture stays put but for its
-   clock. Record the seconds from the banner to the dashboard's first
-   tree, and to its ground and dial. The
-   serial console shows `packages: admitted dashboard`, `erx_app: mounted
-   /app` and `erx_dashboard: shown` with the minute of its first tree,
-   which comes before its pictures and its quotes; a dashboard
-   that does not appear with those lines present is a failure of the
-   display path, and one whose lines are missing names the step that
-   failed. `dmesg`
-   holds the root's line `erx: device tree: /chosen: framebuffer
-   WIDTHxHEIGHT STRIDE FORMAT` and the display domain's `erx_fb:
-   framebuffer WIDTHxHEIGHT stride STRIDE FORMAT`, with the same numbers,
-   and no `configured domain display ... ended` line. `framebuffer absent
-   outside BASE SIZE` instead names where the firmware put the
-   framebuffer, outside the window of
-   [the framebuffer's unit](#raspberry-pi-4-model-b); `erx_fb: the
-   framebuffer is not driven:` names why the driver refused it. The
-   card's `config.txt` asks the firmware for one 32-bit framebuffer
-   with no overscan border (`framebuffer_depth=32`,
-   `framebuffer_ignore_alpha=1`, `max_framebuffers=1`, `disable_overscan=1`;
-   [design-device-tree.md](design-device-tree.md#context)), so the root
-   should name `x8r8g8b8` and see one node, and on a 1920x1080 screen
-   the size is `1920x1080`, not `1824x984`. Use HDMI0; HDMI1
-   may be connected as well. Any other 32-bit format name is a pass:
-   record which one appears, and a `framebuffer absent` line, `ambiguous`
-   included, is a failure of the firmware option to record, since whether
-   the pinned firmware honors those options is unverified.
-6. The root's lines hold `erx: root task: board watchdog 4`: the tree
-   confirmed the power-management watchdog's row, and the root's watchdog
-   thread arms it with a 4 s timeout ([The watchdog](#the-watchdog)).
-   `board watchdog none: the tree does not confirm its record` instead
-   means the board runs without it. Then the hardware watchdog's own
-   checks, each timed from the event to BL31's banner of the next boot
-   in the console log:
-   * **A hang of the kernel resets.** Stop the whole machine in the
-     kernel debugger, which development builds keep (how its entry key
-     reaches it over the console is unverified on the board): no thread
-     runs, the watchdog is reloaded no more, and BL31's banner follows
-     within about 4 s.
-   * **Seeded: the arming skipped.** Build the card with the arming
-     skipped, the seeded fault `the arming skipped` of
-     `test/host/pm_wdt_test.rb` applied by hand to `kernel/core/pm_wdt.c`,
-     and stop it in the debugger the same way: the board must stay
-     stopped, with no BL31 banner for at least 30 s. A board that resets
-     anyway is reset by something else, and the first check proved
-     nothing.
-   * **A kernel trap on a release kernel resets.** Build the card by hand
-     with the release-configuration test kernel of
-     `tools/lib/erx/native_kernel_trap.rb` (`build/fiasco/test-kernel-kernel-trap/fiasco`,
-     which loads from an unmapped address in kernel mode once boot is done)
-     in place of the card's kernel: the console shows `erx: kernel trap seed`,
-     the trap's state and one `Panic: kernel trap` line, and BL31's banner
-     follows within about 1 s, since BL31's system reset sets the watchdog
-     to about 153 us ([design-fiasco.md](design-fiasco.md#the-watchdog)). Trap
-     dumps that repeat, or no banner within 10 s, fail.
-   * **A requested off becomes a reset.** In `erl`, `erlang:halt().` ends
-     with `erx: end off`; the board halts in the firmware and the armed
-     watchdog resets it, so BL31's banner follows within about 5 s.
-     The sources read predict otherwise: BL31's `SYSTEM_OFF` writes the
-     watchdog itself, with 10 ticks and the firmware's halt mark, so its
-     write replaces the 4 s arm and the reset it makes is the halt. A board
-     that stays halted fails the design, not the board; record which.
-
-   QEMU's `raspi4b` model checks none of this: its tree disables the
-   watchdog's node, since the model is not known to count a 4 s timeout
-   down or to take a reload, and the root says `board watchdog none`
-   there. The decision to write and the words written are checked on the
-   host, with seeded faults (`test/host/pm_wdt_test.rb`).
+On a Pi 4 (board revision c03112) with such a bootloader the card showed
+nothing on the UART and the green LED stayed on; after a reflash the same
+card booted. A card with one boot partition still boots on such a board,
+which tells a bootloader that is too old from a bad card. The bootloader's
+build date is `/proc/device-tree/chosen/bootloader/build-timestamp` on a
+system that has it.
 
 **What the pass settles.** Typing works, so the mini UART raises its
 receive interrupt with bits 3:2 of its interrupt-enable register set, as
 the console driver sets them although Broadcom's manual marks those bits
-reserved; anything at all after BL31 means the firmware loaded
-`kernel8.img` at `kernel_address`, where bootstrap is linked; output
-after BL31's banner means the card's `serial0` is the UART on the
-adapter; and the memory line and the shell together show that the device
-tree the firmware made from the partition's tree and `uart3` overlay is
-the one erXos expects. Anything at all after BL31 on this card also means
-the bootloader read `autoboot.txt` from the record's FAT16 in partition 1
-and booted slot A's FAT32 in partition 2, since partition 1 holds no boot
-files (boot A's volume is the whole of its partition, 192 MiB); the
-bootloader's version, from its own log or from a running system, goes
-into the board's port as the oldest that honours `autoboot.txt`. A
-board whose bootloader stops before BL31 with this card and boots an
-older card of one FAT32 partition is one whose bootloader does not read
-`autoboot.txt`.
+reserved. Anything at all after BL31 means the firmware loaded
+`kernel8.img` at `kernel_address`, where bootstrap is linked, and that the
+bootloader read `autoboot.txt` from the record's FAT16 in partition 1 and
+booted slot A's FAT32 in partition 2; the bootloader's version goes into
+the board's port as the oldest that honors `autoboot.txt`. Output after
+BL31's banner means the card's `serial0` is the UART on the adapter, and
+the memory line and the shell together show that the device tree the
+firmware made from the partition's tree and `uart3` overlay is the one
+erXos expects. BL31's banner followed by silence means `serial0` is not
+the mini UART: every stage after BL31 then writes UART0, and the root task
+refuses the manifest. A board whose bootloader stops before BL31 with this
+card and boots an older card of one FAT32 partition is one whose
+bootloader does not read `autoboot.txt`.
 
-**What a 4 GB board shows.** BL31 enters `kernel8.img` at `0x200000` in
-EL2 with the device tree's address in `x0`; the firmware leaves the
-card's serial aliases as they are; `enable_uart=1` puts GPIO 14 and 15 in
-ALT5 even when `config.txt` has `gpio=14=a0` and `gpio=15=a0,pu` lines
-after it, and `enable_uart=0` leaves the header's UART silent, BL31's
-banner included. BL31's banner followed by silence on the adapter means
-the card's `serial0` is not the mini UART: every stage after BL31 then
-writes UART0, and the root task refuses the manifest.
+**What a 4 GB board shows.** BL31 enters `kernel8.img` at `0x200000` in EL2
+with the device tree's address in `x0`; the firmware leaves the card's
+serial aliases as they are; `enable_uart=1` puts GPIO 14 and 15 in ALT5
+even when `config.txt` has `gpio=14=a0` and `gpio=15=a0,pu` lines after it,
+and `enable_uart=0` leaves the header's UART silent, BL31's banner
+included. BL31 writes the mini UART because its Pi 4 port takes it when
+GPIO 14 is in ALT5. The memory line is `Total RAM: 948.0 MiB`: the 1024 MiB
+`total_mem` less the 76 MiB of `gpu_mem`.
 
-**Send back** the whole serial log of the console adapter (and of the
-second adapter, if one was wired), from power-on to `dmesg`'s output.
-If the board stops early, the log up to the stop is what tells where.
+**The display.** The card's `config.txt` asks the firmware for one 32-bit
+framebuffer with no overscan border (`framebuffer_depth=32`,
+`framebuffer_ignore_alpha=1`, `max_framebuffers=1`, `disable_overscan=1`;
+[design-device-tree.md](design-device-tree.md#context)), so the root names
+`x8r8g8b8` and sees one node, and on a 1920x1080 screen the size is
+`1920x1080`, not `1824x984`. Any other 32-bit format name is a pass, and a
+`framebuffer absent` line, `ambiguous` included, is a failure to record,
+since whether the pinned firmware honors those options is unverified.
+`framebuffer absent outside BASE SIZE` names where the firmware put the
+framebuffer, outside the window of [the framebuffer's
+unit](#raspberry-pi-4-model-b). The screen is plugged in before power-on,
+and the picture stays put but for the dashboard's clock. A dashboard that
+does not appear with its console lines present (`packages: admitted
+dashboard`, `erx_app: mounted /app`, `erx_dashboard: shown`) is a failure of
+the display path, and one whose lines are missing names the step that
+failed; `dmesg` shows no `configured domain display ... ended` line. The kiosk, the dashboard the card carries
+([design-packaging.md](design-packaging.md#the-apps-row)), appears within
+60 seconds of the banner; the pass records the seconds from the banner to the dashboard's first tree,
+and to its ground and dial.
+
+**The hardware watchdog on a board.** The root's lines hold `erx: root
+task: board watchdog 4` when the tree confirms the power-management
+watchdog's row; `board watchdog none: the tree does not confirm its
+record` means the board runs without it. QEMU's `raspi4b` model checks none
+of it: its tree disables the watchdog's node, and the decision to write and
+the words written are checked on the host, with seeded faults
+(`test/host/pm_wdt_test.rb`). On the board, each check is timed from the
+event to BL31's banner of the next boot in the console log:
+
+* **A hang of the kernel resets.** Stopping the whole machine in the kernel
+  debugger, which development builds keep, reloads the watchdog no more,
+  and BL31's banner follows within about 4 s. How the debugger's entry key
+  reaches it over the console is unverified on the board.
+* **Seeded: the arming skipped.** With the seeded fault `the arming
+  skipped` of `test/host/pm_wdt_test.rb` applied by hand to
+  `kernel/core/pm_wdt.c`, the same stop leaves the board stopped for at
+  least 30 s. A board that resets anyway is reset by something else, and
+  the first check proved nothing.
+* **A kernel trap on a release kernel resets.** The release-configuration
+  test kernel of `tools/lib/erx/native_kernel_trap.rb` in place of the
+  card's kernel prints `erx: kernel trap seed`, the trap's state and one
+  `Panic: kernel trap` line, and BL31's banner follows within about 1 s,
+  since BL31's system reset sets the watchdog to about 153 us
+  ([design-fiasco.md](design-fiasco.md#the-watchdog)). Dumps that repeat,
+  or no banner within 10 s, fail.
+* **A requested off becomes a reset.** `erlang:halt().` ends with `erx: end
+  off`; the board halts in the firmware and the armed watchdog resets it,
+  with BL31's banner within about 5 s. The sources read predict otherwise:
+  BL31's `SYSTEM_OFF` writes the watchdog itself, with 10 ticks and the
+  firmware's halt mark, so its write replaces the 4 s arm and the reset it
+  makes is the halt. A board that stays halted fails the design, not the
+  board; record which.
 
 #### The SD card and Ethernet on a board
 
 A second pass by hand checks the two drivers QEMU's model runs only in
-part or not at all: `erx_blk_sd` on the board's EMMC2 with a real card,
-and `erx_genet` on the board's Ethernet. It is done once per change to
-either driver, to the storage or network domain's rows of the manifest,
-or to the network stack's DHCP client.
+part or not at all: `erx_blk_sd` on the board's EMMC2 with a real card, and
+`erx_genet` on the board's Ethernet. It is done once per change to either
+driver, to the storage or network domain's rows of the manifest, or to the
+network stack's DHCP client. The steps are in the
+[guide](guide/raspberry-pi-4.md#check-the-sd-card-and-ethernet).
 
-**What the model cannot check**, beside
-[what it never checks](#bring-up-under-qemu): QEMU's `raspi4b` model has
-no Ethernet controller, so `erx_genet` never runs there. Its SD card is QEMU's SD
-model on programmed I/O, the card padded to 2 GiB, as the harness pads
-every card it boots ([The model's SD controller](#bring-up-under-qemu)),
-which it presents as standard capacity,
-so the order in which the BCM2711's controller raises its events, its
-clock, a high-capacity card of the card's own size and what a real card
-reports for a read past its end are seen only on a board. The suite's
-run also ends at the machine's halt, so `/data` across a real reset is
-checked only here.
+Beside [what the model never checks](#bring-up-under-qemu): QEMU's
+`raspi4b` model has no Ethernet controller, so `erx_genet` never runs
+there. Its SD card is QEMU's SD model on programmed I/O, the card padded to
+2 GiB as the harness pads every card it boots ([The model's SD
+controller](#bring-up-under-qemu)), presented as standard capacity, so the
+order in which the BCM2711's controller raises its events, its clock, a
+high-capacity card of the card's own size and what a real card reports for
+a read past its end are seen only on a board. The suite's run also ends at
+the machine's halt, so `/data` across a real reset is checked only here.
 
-**You need** the boot pass's board, card and console adapter, and an
-Ethernet cable to a network with a DHCP server and a route to the
-internet, such as a home router.
-
-In the steps, `%` is the command shell's prompt, which the console
-opens in root's session. Type each command as shown and press Enter.
-
-1. **Write the card.** The card under test is the one built from the
-   change: `make pack PLATFORM=raspi4b`'s `sdcard.img`, written as in
-   **Write the card** above, or the same image compressed,
-   `sdcard-DIGEST.img.xz` with its build record
-   `sdcard-DIGEST.img.receipt.json`, as the website names a card, by the
-   first 16 hexadecimal digits of the card image's SHA-256. Check a
-   compressed card before writing it:
-
-   ```sh
-   xz -dc sdcard-DIGEST.img.xz | shasum -a 256
-   ```
-
-   prints the card's whole SHA-256 that its build record names, which
-   starts with `DIGEST`. Find the card as in
-   **Write the card** above (`diskutil list` on macOS; on FreeBSD,
-   `geom disk list`, where it is `/dev/daN`), check its size and name
-   twice, then on macOS:
-
-   ```sh
-   diskutil unmountDisk /dev/diskN
-   xz -dc sdcard-DIGEST.img.xz | sudo dd of=/dev/rdiskN bs=1m
-   diskutil eject /dev/diskN
-   ```
-
-   or on FreeBSD:
-
-   ```sh
-   xz -dc sdcard-DIGEST.img.xz | sudo dd of=/dev/daN bs=1m
-   ```
-
-   `dd` ends with `752877568 bytes transferred`, the card image's 718 MiB.
-2. **Boot.** Put the card in the Pi, plug the Ethernet cable in, start
-   logging on the adapter, then power the Pi. Expect the boot pass's
-   lines 1 to 4, ending with the `%` prompt.
-3. **The card is identified.**
-
-   ```sh
-   dmesg | grep erx_blk
-   ```
-
-   prints a line that ends
-   `erx_blk: SD card, high capacity, N sectors, 4-bit bus at F Hz`,
-   where N times 512 is the card's size in bytes (about 62,500,000
-   sectors for a 32 GB card), and a line that ends
-   `erx_blk_service: partition table admitted; W windows`. Then
-   `dmesg | grep erx_lfs` prints a line that ends `erx_lfs: volume mounted`.
-   A line `erx_blk: the SD card is not driven: REASON` instead means the
-   driver refused the card, and REASON says at which step.
-4. **`/data` is the card's volume.** `/data` is the littlefs volume on
-   the card's data partition. The storage domain serves it, and root's
-   session reaches it through a grant, an entry of its namespace that
-   names the storage domain's file service, so `mount` prints, among its
-   lines, `PID:/data on /data (littlefs)`, where PID is the file
-   service's process: the type `littlefs` is what the service answers
-   statfs with, and the `PID:/data` source marks a tree another domain
-   serves. A line `ended on /data (-)` means the service's grant has ended, and
-   a `/data` line with another type means something else is mounted
-   there. On a freshly
-   written card `ls /data` prints nothing. Then
-
-   ```sh
-   echo written on the board > /data/hello
-   cat /data/hello
-   ```
-
-   prints `written on the board`. Two errors mean the write never
-   reached littlefs:
-   * a read-only file system error (`erofs`): the session holds no
-     `data` grant, so `/data` is the release slice's own empty directory,
-     and the release slice is read-only;
-   * an I/O error (`eio`): the grant is there but no volume is behind it,
-     because the storage domain has no card or did not mount it, which
-     step 3's lines explain.
-5. **`/data` survives a reset.** Wait five seconds, then reset the
-   machine from the system's own shell: press Ctrl-G, which prints
-   `erx_console: Ctrl-G menu`; press `s`, which gives the system's
-   command shell and its `%` prompt; type `erl` and Enter, then
-   `init:reboot().` and Enter, which asks for the ordered end `reset`
-   ([design-system.md](design-system.md#shutting-down)). The board
-   resets and boots again from BL31's banner. (`erlang:halt().` asks
-   for `off` instead, and the board then halts in the firmware.) If it
-   stays silent for a minute, power it off and on, and send back the
-   log. At the `%` prompt, `cat /data/hello` prints
-   `written on the board`.
-6. **`genet0`'s link is up.**
-
-   ```sh
-   dmesg | grep erx_genet
-   ```
-
-   prints a line that ends `erx_genet: GENET v5, mtu 1500` and then one
-   that ends `erx_genet: link up, 1000 Mb/s full duplex` (100 or 10 Mb/s
-   with a slower switch port). A line `erx_genet: the network device is
-   not driven: REASON` means the driver refused the controller.
-7. **A DHCP lease.**
-
-   ```sh
-   ifconfig genet0
-   ```
-
-   prints four lines in FreeBSD's layout:
-
-   ```
-   genet0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
-   	ether MAC
-   	inet A netmask M broadcast B
-   	status: active
-   ```
-
-   where MAC is the board's Ethernet address and A the address the
-   network's DHCP server leased, which the router's list of leases
-   shows under that MAC. With no `inet` line there is no lease yet: run
-   the command again after 30 seconds. `status: no carrier` means the
-   link is down.
-8. **The gateway answers.** With G the router's address (its own pages
-   show it; on many home networks it is A with its last number
-   replaced by 1):
-
-   ```sh
-   ping -c 3 G
-   ```
-
-   prints three `64 bytes from G` lines and
-   `3 packets transmitted, 3 packets received, 0.0% packet loss`.
-9. **Names resolve.**
-
-   ```sh
-   host www.freebsd.org
-   ```
-
-   prints one or more lines `NAME has address X`, where NAME is
-   `www.freebsd.org` or, when that is an alias, the name a line
-   `www.freebsd.org is an alias for NAME.` gives before them (IPv6
-   lines may follow). Then `ping -c 3 X`,
-   with one of those addresses, shows replies from beyond the router.
-   `;; connection timed out; no servers could be reached` means the
-   lease named no name server that answers.
-
-**When a step fails**, send back the whole console log from power-on,
-with the failing command and what it printed, and the output of `dmesg`
-typed right after it: it holds the drivers' lines (`erx_blk`,
-`erx_blk_service`, `erx_lfs`, `erx_genet`) and, when a domain ends, the
-system's line `erx_domain: configured domain NAME (domain N) ended,
-REASON; restarting it`; for a fault, REASON is followed by where it
-struck, `{fault,K} at pc 0xP, cause 0xC, addr 0xA`, the kernel's record
-of the fault: its program counter, its cause (for an exception the
-syndrome register; for a memory fault on Fiasco, its access bits) and
-the address it touched, `addr unknown` for a fault that names none. An
-asynchronous error (`{fault,7}`, an SError) reads `{fault,7} presumed at
-pc 0xP, cause 0xC, addr unknown`: the error is taken at the next return
-to user mode on that CPU, so the thread it is charged to, and the
-program counter shown, is only presumed to be its source; it may have
-come from an earlier write of the same thread or from another domain. While the storage domain serves no volume,
-`/data` answers `eio`, so the start service's lines
-`erx_starter: start.conf cannot be read: eio` follow, one at boot and one
-at each `service` start, stop or restart; they are a symptom of step 3's failure,
-not a fault of their own. Name the card's make and size, and for an
-Ethernet step the switch or router the cable goes to.
+`/data` is the littlefs volume on the card's data partition. The storage
+domain serves it, and root's session reaches it through a grant, an entry
+of its namespace that names the storage domain's file service, so `mount`
+shows `PID:/data on /data (littlefs)`. A write that fails with `erofs`
+means the session holds no `data` grant, so `/data` is the release slice's
+own empty read-only directory; one that fails with `eio` means the grant is
+there and no volume is behind it. While the storage domain serves no
+volume, the start service's `erx_starter: start.conf cannot be read: eio`
+lines are a symptom, not a fault of their own. A domain's end is reported
+as `erx_domain: configured domain NAME (domain N) ended, REASON;
+restarting it`; for a fault, REASON is followed by the kernel's record of
+it, `{fault,K} at pc 0xP, cause 0xC, addr 0xA`. An asynchronous error
+(`{fault,7}`, an SError) reads `presumed at pc 0xP, cause 0xC, addr
+unknown`: the error is taken at the next return to user mode on that CPU,
+so the thread it is charged to is only presumed to be its source; it may
+have come from an earlier write of the same thread or from another domain.
 
 #### Netbooting from a Mac
 
-While a change to the boot image is iterated on, the board can boot
-each build over an Ethernet cable from the Mac instead of from a newly
-written card. The Pi 4's bootloader, in its EEPROM, fetches the boot
-files over TFTP from `boot/` beside the card, the firmware's network
-boot root ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)).
-**This is a development setup only.** With the network first in the
-boot order, whatever answers DHCP and TFTP on the board's network
-chooses the kernel it runs, and that kernel then reads the card's
-`/data`, the SSH host key among it, and root's `authorized_keys`, so a
-board leaves the desk with the
-bootloader's SD card boot order restored (Imager's *Bootloader > SD Card
-Boot* image, as in [Trying a card on a board](#trying-a-card-on-a-board)).
+While a change to the boot image is iterated on, the board can boot each
+build over an Ethernet cable from the Mac instead of from a newly written
+card. The Pi 4's bootloader, in its EEPROM, fetches the boot files over
+TFTP from `boot/` beside the card, the firmware's network boot root
+([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)); `tools/erx
+netboot` stages them, and the [guide](guide/raspberry-pi-4.md#netbooting-from-a-mac)
+has the steps.
 
-**What a netboot is.** The card stays in the board and is written once.
-A network boot loads no slot's partition, so the boot is taken to name
-no slot and come up as an unknown boot ([The booted slot](design-fiasco.md#the-booted-slot)),
-which the first netboot is to confirm:
-the block service starts no `system` window, so the `system` tree is
-empty and the image packages the card carries in its system partition,
-the kiosk among them, are absent. `/data` and the `ERXOS` volume, root's
-`authorized_keys` with it, still come from the card, so state and login
-keys persist across netboots. The console's `erx: boot value ... slot ...`
-line shows the boot value and slot the firmware handed over. A/B slots
-and trials are tried only with the card first in the boot order: with
-the network first, a system update's trial reboot boots the staged
-build, not the trial slot.
+**This is a development setup only.** With the network first in the boot
+order, whatever answers DHCP and TFTP on the board's network chooses the
+kernel it runs, and that kernel then reads the card's `/data`, the SSH host
+key among it, and root's `authorized_keys`, so a board leaves the desk with
+the bootloader's SD card boot order restored.
 
-**You need** the board, console adapter and written card of [Trying a card
-on a board](#trying-a-card-on-a-board), an Ethernet cable from the Pi to
-the Mac (a USB Ethernet adapter on a Mac without a port), and Homebrew's
-`dnsmasq` (`brew install dnsmasq`), which serves TFTP only.
+A network boot loads no slot's partition, so the boot is taken to name no
+slot and come up as an unknown boot ([The booted
+slot](design-fiasco.md#the-booted-slot)), which the first netboot is to
+confirm: the block service starts no
+`system` window, so the `system` tree is empty and the image packages the
+card carries in its system partition, the kiosk among them, are absent.
+`/data` and the `ERXOS` volume, root's `authorized_keys` with it, still come
+from the card. A/B slots and trials are tried only with the card first in
+the boot order: with the network first, a system update's trial reboot
+boots the staged build, not the trial slot.
 
-1. **The EEPROM's boot order, once.** Write this `boot.conf`, with
-   `TFTP_IP` the Mac's address on the cable from step 2:
-
-   ```
-   [all]
-   BOOT_UART=1
-   BOOT_ORDER=0xf12
-   DHCP_TIMEOUT=5000
-   TFTP_FILE_TIMEOUT=120000
-   TFTP_IP=192.168.2.1
-   ```
-
-   `BOOT_ORDER` is read right to left: network (2), then the SD card (1),
-   then from the start (f), so a Mac that does not answer costs
-   `DHCP_TIMEOUT`, 5 seconds, its minimum, before the card boots.
-   `TFTP_IP` overrides the TFTP server the DHCP reply names, so Internet
-   Sharing's DHCP server, which knows nothing of TFTP, is taken to be
-   enough; to confirm on the first netboot, since the bootloader matches
-   the reply on its option 43, which Internet Sharing does not send. If
-   its log shows no address, add `CLIENT_IP` (a free address on the
-   cable's subnet) and `SUBNET` (`255.255.255.0`): with those and
-   `TFTP_IP` set the bootloader skips DHCP. `TFTP_FILE_TIMEOUT` gives each
-   file 120 seconds instead of the default 30: a development
-   `kernel8.img` is about 70 MB, and the bootloader's TFTP waits for each
-   block's acknowledgement before the next.
-   `BOOT_UART=1` puts the bootloader's own log, its DHCP and TFTP progress
-   among it, on the console. The default `TFTP_PREFIX` first tries a
-   directory named after the board's serial number, finds no
-   `start4.elf` there and falls back to the TFTP root. Use a bootloader of
-   2025-09-23 or later, whose TFTP lets the block counter roll over for
-   large files. Put the configuration in
-   the EEPROM with a recovery card: from `raspberrypi/rpi-eeprom`'s
-   `firmware-2711/default/`, take `recovery.bin` and the newest
-   `pieeprom-DATE.bin`, then
-
-   ```sh
-   python3 rpi-eeprom-config --config boot.conf --out pieeprom.bin pieeprom-DATE.bin
-   printf '%s\nts: %s\n' "$(shasum -a 256 pieeprom.bin | cut -d' ' -f1)" "$(date -u +%s)" > pieeprom.sig
-   ```
-
-   and copy `recovery.bin`, `pieeprom.bin` and `pieeprom.sig` to a
-   FAT32 card. Boot the Pi from it; a green screen and a rapidly
-   flashing green LED mean the EEPROM is written. Put the erXos card back.
-2. **The Mac's link, each session.** In System Settings > General >
-   Sharing, turn on Internet Sharing from the Mac's internet connection to
-   the adapter the cable is on (`networksetup -listallhardwareports`
-   names it). Internet Sharing gives the bootloader and erXos's DHCP
-   client an address, a route and name servers. `ifconfig` shows the
-   bridge it made, often `bridge100`, with the Mac's address on the
-   cable; check that it is the `TFTP_IP` of step 1.
-3. **Each build.** After `tools/erx pack --medium --platform raspi4b`
-   (`make pack PLATFORM=raspi4b`), run
-
-   ```sh
-   tools/erx netboot
-   ```
-
-   It stages `boot/` into `~/erxos-tftp` (`--tftp DIR` names another),
-   which it keeps as a symbolic link to a directory holding one build:
-   it copies the files the card's build record lists into a new
-   directory beside it, checks each copy against the record's SHA-256,
-   refuses a set with a file missing or changed, and only then moves the
-   link to the new directory in one rename, so a request never meets a
-   copy in progress. A boot that is under way at that moment can still
-   read its first files from the earlier build, so stage while the board
-   is off. It prints the commit the staged build is of, the
-   `kernel8.img` digest, and the `dnsmasq` command line that serves the
-   root, with `INTERFACE` for the bridge of step 2. Run that line in a
-   terminal of its own (it needs `sudo` to bind port 69, then runs as
-   you; Ctrl-C stops it; `sudo` runs Homebrew's binary, which your
-   account can rewrite, as Homebrew's other root-run tools are), once `tools/erx netboot` has made the root;
-   it keeps serving every later build. Power the Pi.
-
-**Expect** the bootloader's DHCP and TFTP lines on the console, then
-the lines of [Trying a card on a board](#trying-a-card-on-a-board) from
-BL31's banner on, with the `erx: boot value` line naming the slot as
-above. `dnsmasq` logs each file it sends, by its full path, which names
-your home directory. Send back the console log and `dnsmasq`'s log of
-the first netboot, with the home directory cut from the paths before
-the log goes anywhere public.
+The first netboot's console log and `dnsmasq`'s log, with the home
+directory cut from the paths, are what settle the two unverified points of
+this section. `TFTP_IP` in the EEPROM's configuration overrides the TFTP server the DHCP
+reply names, so Internet Sharing's DHCP server, which knows nothing of TFTP,
+is taken to be enough; that is to be confirmed on the first netboot, since
+the bootloader matches the reply on its option 43, which Internet Sharing
+does not send. A bootloader of 2025-09-23 or later is needed, whose TFTP
+lets the block counter roll over for large files.
 
 #### The soak
 
-The passes above check that each part works once. The soak checks that
-the preview's whole workload keeps working on one machine for a day: the
-kiosk with its live quotes, root's SSH sessions with `ps` and `top`,
-files written under `/data`, and the watchdogs that stand behind a hang.
-It runs by hand on the 4 GB Raspberry Pi 4 from the published card, and
-under the QEMU harness on QEMU `virt` under HVF. It is release evidence
-for the preview ([plan.md](plan.md)), run before the release on the
-release's commit, and a developer's tool, run on demand after a change
-suspected of a leak. It is in no gate: the milestone gate does not run
-it.
+The passes above check that each part works once. The soak checks that the
+preview's whole workload keeps working on one machine for a day: the kiosk
+with its live quotes, root's SSH sessions with `ps` and `top`, files
+written under `/data`, and the watchdogs that stand behind a hang. It runs
+by hand on the 4 GB Raspberry Pi 4 from the published card, and under the
+QEMU harness on QEMU `virt` under HVF. It is release evidence for the
+preview ([plan.md](plan.md)), run before the release on the release's
+commit, and a developer's tool, run on demand after a change suspected of a
+leak. It is in no gate.
 
-**The construction.** A soak is a series of identical rounds that a
-program on the development host, the soak driver, runs against the
-machine as its user would: over SSH, with the command shell's own
-commands, logged in as root with the user's own key. The machine's
-console log is the soak's second input. Every pass or fail is decided
-by one pure function, the judge, over the record the rounds leave and
-the console log, so:
-
-* nothing is added to the image for the soak: the published card is
-  soaked as it is published, with no test code, no agent on the machine
-  and no counter of its own;
-* both targets run the same rounds and the same judge, and differ only
-  in where the console log comes from, how far apart the rounds start,
-  how long the soak lasts, and the quotes' sources;
-* a kept record can be judged again later, by a corrected judge,
-  without running the soak again;
-* no rig is needed: the board needs only what the board passes already
-  use, the console adapter and an Ethernet cable.
-
-A check that lacks its evidence is unknown, never passed, and a soak
-with an unknown check is not a pass (Pass and fail, below).
+**The construction.** A soak is a series of identical rounds that a program
+on the development host, the soak driver, runs against the machine as its
+user would: over SSH, with the command shell's own commands, logged in as
+root with the user's own key. The machine's console log is the second
+input. One pure function, the judge, decides every pass or fail over the
+record the rounds leave and the console log, so nothing is added to the
+image for the soak (no test code, no agent on the machine, no counter of
+its own), both targets run the same rounds and the same judge, a kept
+record can be judged again by a corrected judge, and the board needs only
+what the board passes use already, the console adapter and an Ethernet
+cable. A check that lacks its evidence is unknown, never passed, and a
+soak with an unknown check is not a pass.
 
 **What it proves.**
 
-* **The kiosk keeps running.** The dashboard app's `ends` stays 0 and
-  its `state` stays `running` in every round, every configured domain
-  runs under the same domain id in every round, and at the soak's end
-  each quote's last state is the one its sources allow (below).
-* **SSH keeps admitting root.** Every login of every round is admitted
-  and ends in time, each one a session domain made and ended
-  ([design-ssh.md](design-ssh.md#logging-in)), and the host key the
-  first login saw is the one every later login sees.
-* **`ps` and `top` keep answering** as the preview's exit criteria ask:
-  `ps` lists the session's `rc` and `ps` itself, and `top -b` prints one
-  display of at most 18 process rows with its `Mem` line.
-* **`/data` keeps its files.** Every round writes a file under
+* **The kiosk keeps running.** The dashboard app's `ends` stays 0 and its
+  `state` stays `running` in every round, every configured domain runs
+  under the same domain id in every round, and at the end each quote's last
+  state is the one its sources allow.
+* **SSH keeps admitting root.** Every login of every round is admitted and
+  ends in time, each one a session domain made and ended
+  ([design-ssh.md](design-ssh.md#logging-in)), and the host key the first
+  login saw is the one every later login sees.
+* **`ps` and `top` keep answering:** `ps` lists the session's `rc` and
+  `ps` itself, and `top -b` prints one display of at most 18 process rows
+  with its `Mem` line.
+* **`/data` keeps its files.** Every round writes a 256 KiB file under
   `/data/soak/` and reads back, byte for byte, the file the round before
-  wrote, then removes it. The log store's `/var/log/messages` and its
-  rotation ([design-log.md](design-log.md)) write underneath on their
-  own.
-* **Neither watchdog fires on a machine that works.** A day of the
-  system domain's pets under this load, with no end of the machine. On
-  a board whose hardware watchdog runs ([The watchdog](#the-watchdog)),
-  the same day shows that its reloads keep up. That a hang *is* caught
-  is for seeded checks to show (the `native_watchdog` suite on QEMU, and
-  on a board a seeded hang by hand), not the soak: a soak cannot plant a
-  hang without changing the image.
-* **The clock stays set.** Set once at the start, the machine's time of
-  day stays within 60 s of the host's in every round.
+  wrote, then removes it. The one-round lag makes every file be read after
+  another was written and an older one removed, so a file system that hands
+  a live file's blocks to a new file, or loses a file across a removal,
+  shows it.
+* **Neither watchdog fires on a machine that works.** That a hang *is*
+  caught is for seeded checks to show (the `native_watchdog` suite on QEMU,
+  and on a board a seeded hang by hand), not the soak: a soak cannot plant
+  a hang without changing the image.
+* **The clock stays set.** Set once at the start with the set-time command
+  ([design-time.md](design-time.md)), the machine's time of day stays within
+  60 s of the host's in every round.
 * **Nothing grows.** No count of a domain the soak follows, and not the
-  pool's free memory, moves one way between the soak's second quarter
-  and its last (the growth rule below).
+  pool's free memory, moves one way between the soak's second quarter and
+  its last.
 
 **What it does not prove.** Power cuts are the power-cut checklist's;
-repeated boots are no one's yet (the soak boots once); the soak writes
-far less than the data partition holds, so it is no wear or full-volume
-test; Fiasco's own kernel memory is not reported to user mode
-([design-fiasco.md](design-fiasco.md#reporting-a-budget)), so a leak
-there shows only once a session or a call is refused; the board's
-temperature and any throttling by the firmware are not reported at all;
-a screen that froze while the dashboard's processes still run is seen
-only by a person; bytes lost between the board's serial port and the
-host, on an adapter without flow control, are not detected; and hostile
-load is out of scope for a development build.
-
-**A round.** Round N makes three logins, each one `ssh root@MACHINE
-COMMAND`, which the SSH domain runs as `rc -c COMMAND`
-([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)):
-
-1. **Inspect:** `ps`, `top -b`, `cat` of `/proc/status`,
-   `/proc/apps/status` and `/proc/apps/dashboard/status`, and
-   `for (f in /proc/domains/*/status) { echo soak: $f; cat $f }`, with
-   an `echo soak: SECTION` line before each part so the driver can split
-   the output. rc runs commands separated by `;` and expands a pattern
-   across path components (`erx_shell_runner.erl`, `glob/2`; tested in
-   `erx_shell_eval_tests.erl`), so each domain's record arrives under its
-   own path, which names its id.
-2. **Write:** `cat > /data/soak/N`, with the round's payload on the
-   login's standard input: 256 KiB whose byte I is (I + N) mod 251, the
-   rule of the block suite's power-cut files
-   (`tools/lib/erx/block_device.rb`, `data_content`), taken from that
-   one definition with its length as an argument.
-3. **Read back:** from round 2 on, `cat /data/soak/M && rm
-   /data/soak/M` with M = N - 1, which the driver compares with payload
-   M.
-
-The read-back lags one round so that every file is read after another
-file has been written and an older one removed: a file system that hands
-a live file's blocks to a new file, or loses a file across a removal,
-shows it then, where a file read straight after its own write may come
-from what was just written.
-
-After the soak's last round comes the closing round, which makes the
-inspect and read-back logins of a round N + 1 and writes nothing, so
-every file written is read and removed and `/data/soak` ends empty.
-Before round 1, a setup login makes `/data/soak`, whose `mkdir` fails if
-it already exists, and sets the clock from the host's UTC time with the
-set-time command (below).
-
-Rounds start one slot apart: 60 s on the board, 10 s on QEMU. A round
-that runs past the start of its next slot is followed at once by the
-next, and the overrun is recorded. Elapsed time governs the soak's end,
-not a count: the soak's last round is the first that ends once its
-length has passed since round 1 started, so a soak whose rounds overrun
-runs fewer of them and still lasts its length. Each login runs under the
-host's `Erx::Runner` with a 60 s deadline. The driver stops at the first
-failed round: a soak has failed once one round has, and what the machine
-did next is in the console log.
-
-**The set-time command** is the preview's way to set the clock, which a
-user runs as root after each boot: FreeBSD's `date` with a time
-argument, specified with its authority, grammar, fuzz target and effect
-on the clock service in a section of [design-time.md](design-time.md)
-that the preview's plan requires written before the command is built.
-The soak defines no interface of its own for it and needs only this of
-it: run as root by `rc -c`, it takes a UTC time to the second, exits 0
-having set the clock to it whatever the clock read before, and exits
-non-zero having changed nothing. A setup login that fails for a
-reason the machine caused, no answer within the deadline or the command
-exiting non-zero, fails the soak before round 1; one that fails for a
-reason it did not cause, no set-time command on the machine or an error
-of a host tool, leaves the soak incomplete. The driver waits on that section and that
-command (see Building it).
-
-**The quotes' sources.** On the board the kiosk fetches live quotes from
-the internet over the board's Ethernet, as a user's does
-([design-quotes.md](design-quotes.md)), and at the soak's end each
-quote's last `quotes:` line on the console must read `fresh`. A source's
-outage at that moment fails the soak with the reason its line names, and
-the record shows whether the reason was the network's or the kiosk's; the
-operator then runs the soak again. On QEMU the quotes are offline: the
-harness's network is restricted, so nothing leaves the host, and the
-soak boots the image of the `display_domain/quotes` cell, whose fixture
-app serves the quotes in the guest
-([design-quotes.md](design-quotes.md#verification-and-testing)). At the
-end `eth` and `spx` read `fresh` and `btc` reads `stale` with
-`{status,503}`, since the fixture answers `/btc` with 503 after its first
-five answers, so one quote runs the failure path and its backoff for
-hours while two run the success path. The automated run so depends on
-nothing outside the host, and the board's soak covers the live path, the
-real TLS endpoints and the published card.
+repeated boots are no one's yet (the soak boots once); it is no wear or
+full-volume test; Fiasco's own kernel memory is not reported to user mode
+([design-fiasco.md](design-fiasco.md#reporting-a-budget)), so a leak there
+shows only once a session or a call is refused; the board's temperature
+and any throttling by the firmware are not reported at all; a screen that
+froze while the dashboard's processes still run is seen only by a person;
+bytes lost between the board's serial port and the host, on an adapter
+without flow control, are not detected; and hostile load is out of scope
+for a development build.
 
 **The growth rule.** A leak is a figure that moves one way and does not
-come back: a domain's count that rises, the pool's free memory that
-falls. The rule's claim: a series whose typical value moves by more than
-one unit of its series between the soak's second quarter and its
-last fails, and a series that only varies around a steady value passes.
+come back. The series are the pool's free memory, from `top`'s `Mem` line,
+and the `processes`, `atoms`, `ets_tables`, `modules` and `threads` of each
+configured domain and of the dashboard's domain. The rounds split into four
+quarters; the first is warm-up and is not judged. A series fails when the
+median of its last quarter stands beyond the median of its second quarter
+by more than one unit, in the bad direction: above it for a count, below it
+for free memory (the median of an even number of values is the lower middle
+one, so it is always a value that was observed; free memory is normalized
+to KiB before comparing). The third quarter is not compared: it is the
+distance between the two that are, so a leak has half the soak to move them
+apart. A median is not moved by a minority of rounds, so a transient
+process or a spike neither hides a rise nor makes one. The rule assumes
+warm-up ends within the first quarter and that a stationary series' median
+is steady to within one unit from quarter to quarter, which holds for
+quarters of at least 30 rounds, so the judge needs 120 rounds; a series
+still settling after the first quarter fails, and the remedy is a longer
+soak, never a looser rule.
 
-The series are the pool's free memory, from `top`'s `Mem` line, and the
-`processes`, `atoms`, `ets_tables`, `modules` and `threads` of each
-configured domain and of the dashboard's domain, which
-`/proc/apps/dashboard/status` names. The rounds split into four quarters by number: of N
-rounds, quarter k holds rounds floor((k - 1)N/4) + 1 to floor(kN/4).
-The first quarter is warm-up and is not judged. A series **fails** when
-the median of its last quarter stands beyond the median of its second
-quarter by more than one unit, in the bad direction: above it for a
-count, below it for free memory. The median of a quarter of an even
-number of values is the lower of its two middle values, so it is always
-a value that was observed. `top` prints free memory in FreeBSD's
-`format_k()` units, K, M or G by size ([design-live.md](design-live.md)), and the judge
-turns every figure into KiB before comparing; the unit is then 1 for a
-count and 1 KiB for free memory, and the allowance is one unit of the
-normalised series whatever unit `top` printed. The third quarter is not
-compared: it is the distance between the two that are, so a leak has
-half the soak to move them apart.
+A figure keeps the status its reporter gave
+([design-live.md](design-live.md#inspection-records)); on Fiasco the pool's
+figures are `partial`, reporter `root pool`, and are judged as numbers and
+named partial in the report. A figure printed as `-` with its reason is a
+gap in its series, kept with the reason, never a zero. A series is judged
+when its second and last quarters each hold a number in at least half their
+rounds; a series with no number in any round is listed as not reported, and
+any other series that falls short is unknown, since a figure that stopped
+being reported may have stopped for the reason the soak looks for. The
+pool's free memory is the soak's one memory figure, so it must be judged.
 
-* **What it catches.** A series that moves by L each round moves its
-  median about L times N/2 between the two quarters, so it fails once
-  that exceeds one unit. At about 1,440 rounds, a 4 KiB page leaked per
-  login moves free memory about 8 MiB, and a count that gains more than
-  one object between the two quarters' middles fails.
-* **What it does not mistake for growth.** A median does not move for a
-  minority of rounds, so a transient process, a briefly freed cache or
-  a spike in a few rounds of either quarter neither hides a rise nor
-  makes one.
-* **What it assumes.** Warm-up ends within the first quarter: a series
-  still settling after it, such as a cache that fills late, fails, and
-  that is a finding to explain before the soak counts, whose remedy is a
-  longer soak, never a looser rule. And a stationary series' median is
-  steady to within one unit from quarter to quarter, which holds for
-  quarters of many rounds: the judge needs at least 30 rounds a quarter,
-  120 in all, and a failure that noise caused is a failure to
-  investigate, never a pass. The first QEMU run doubles as a run-in: it
-  is judged like any other, and its research record states each series'
-  quarter medians and their spread on a machine that works, so a later
-  failure can be told from the spread the machine shows when nothing
-  leaks.
+**The quotes' sources.** On the board the kiosk fetches live quotes from the
+internet, and at the end each quote's last `quotes:` line on the console
+must read `fresh`; a source's outage at that moment fails the soak with the
+reason its line names, and the operator runs it again. On QEMU the quotes
+are offline: the harness's network is restricted and a fixture app in the
+guest serves them, with one quote failing with `{status,503}` so that one
+runs the failure path and its backoff for hours while two run the success
+path. The console log decides this one check: the log service reports every
+loss in a line of its own beginning `erx_syslog:`, so the judge reads the
+console as one span, from the last `erx_syslog: start` line to the `soak:
+end` mark the operator types after the closing round, and the span claims
+to be whole only when it has both ends and no other `erx_syslog:` line.
+Any such line, one the service gains later included, makes the check
+unknown, never passed.
 
-The time each kind of login takes is reported, as its median in each
-quarter, and not judged: its noise is the host's and the network's, so
-no allowance follows from the figure itself, and the 60 s deadline
-bounds it.
+**Pass and fail.** Every check gives passed, failed or unknown. The answer
+is **failed** when a check failed (the first, with its round, the host's
+time and the evidence, quoted through the host tool's line escape),
+**incomplete** when no check failed but one is unknown or the driver
+stopped for a reason that is not the machine's, and **passed** only when
+every round and the closing round ran and every check passed.
 
-**Figures and gaps.** A figure keeps the status its reporter gave
-([design-live.md](design-live.md#inspection-records)). On Fiasco the
-pool's figures are `partial`, reporter `root pool`, and `top` alone
-prints them with their numbers (`/proc` prints a partial value as
-`[partial]`); a partial number is judged as a number and named partial
-in the report. A figure printed as `-` with its reason is a gap in its
-series, kept with the reason, never a zero.
-
-A series is judged when its second and last quarters each hold a number
-in at least half their rounds. A series with no number in any round,
-such as `threads` where Fiasco does not report it (unverified), is
-listed as not reported: the platform gives no such figure, and the soak
-claims nothing of it. Any other series that falls short is unknown,
-since a figure that stopped being reported may have stopped for the
-reason the soak looks for. The pool's free memory is the soak's one
-memory figure, so it must be judged.
-
-A `/proc` status file holds either lines of name, value and reporter,
-separated by tabs, or one line with the status of an answer that holds
-no record, `[unsupported]` or `[error]` (`erx_procfs_core.erl`,
-`status/2`). The second leaves every figure of that record a gap with
-that status, and a check that needs one of them, a domain's `state` or
-the dashboard's `ends`, is unknown for that round. Any other text fails
-the round as unreadable, quoting the bytes escaped and truncated; it is
-never read as a figure.
-
-**The console.** The console log decides one check, the quotes' last
-states, and explains a failure (Hangs and resets, below);
-every other check reads the rounds. The log service writes every log
-line to the console ([design-log.md](design-log.md#the-line)), but not
-without loss: past 1 MiB of backlog the oldest lines go, a domain over
-its rate has records dropped, kernel records can be lost, and a
-restarted service loses its backlog
-([design-log.md](design-log.md#consumers-and-backlogs)). The service
-reports each such loss in a line of its own, and its own lines are only
-its start line, `erx_syslog: start, release R, build B`, and the lines
-that report a loss or a restart (`erx_syslog.erl`, `erx_syslog_core.erl`).
-So the judge reads the console as one span, from the last line whose
-text begins `erx_syslog: start` to the end mark, the line `soak: end`
-that `echo soak: end` at the console's prompt prints after the closing
-round. The span is complete when it has both ends and no other line
-whose text begins `erx_syslog:`; otherwise the quotes check is unknown.
-No list of loss texts is kept: any line the service writes about itself
-after its start takes away the span's claim to be whole, so a loss line
-the service gains later makes the check unknown, never passed. A
-`quotes:` line that does not parse, as a byte lost on the serial link
-would leave it, makes the check unknown as well. A loss line that a lost
-byte mangled so that it no longer begins `erx_syslog:` is not seen: that
-is an accepted risk, since bytes lost on the serial link are not
-detected at all (What it does not prove, above).
-
-**Pass and fail.** Every check gives passed, failed or unknown, and the
-judge's answer is one of three:
-
-* **failed** when a check failed: the first, with its round, the host's
-  time and the evidence, the login's output or the console lines, quoted
-  through the host tool's line escape (`Erx::LineEscape`) and truncated;
-* **incomplete** when no check failed but one is unknown, or the driver
-  stopped for a reason that is not the machine's (the operator stopped
-  it, a host tool failed before its login started, or the harness timed
-  out or failed with no login failed); the report names
-  each unknown check and what it lacked;
-* **passed** when every round and the closing round ran and every check
-  passed.
-
-| Check | Read from | Fails when | Unknown when |
-| --- | --- | --- | --- |
-| login | each login | a non-zero exit, the 60 s deadline, or a changed host key, which the known-hosts file of the record refuses | |
-| `ps`, `top` | inspect | `ps` lacks `rc` or `ps`; `top` prints no `Mem` line or more than 18 process rows | |
-| clock | inspect | the time of day on `top`'s first line differs from the host's UTC time of day at the login's end by more than 60 s, counted around midnight; it is UTC because erXos keeps no time zone (unverified: a clock shown in another zone fails this check, never passes it) | |
-| kiosk | inspect | `/proc/apps/dashboard/status` has `state` other than `running` or `ends` above 0 | a round's record is `[unsupported]` or `[error]` |
-| domains | inspect | a name in the `boot_order` of `/proc/apps/status` (unverified: the file's field name) without exactly one domain of that name in state `running`, or under another id than in round 1: ids are never reused (`erx_domain_srv.erl`), so a configured domain that ended and was restarted shows a new one | a domain's record is `[unsupported]` or `[error]` |
-| reset | inspect | `uptime` in `/proc/status` (unverified: the file's field name) is below the previous round's: the machine booted between them | |
-| `/data` | read back | file M's SHA-256 is not payload M's; the report names the first differing offset | |
-| quotes | console, at the end mark | a quote whose last `quotes:` line in the span is not in the state its target expects | the span is not complete, a quote has no `quotes:` line in it, or one does not parse; a loss line mangled by serial byte loss is not detected, an accepted risk |
-| growth | the rounds | a judged series fails the growth rule | free memory, or a series reported in some rounds, is not judged, or fewer than 120 rounds ran |
-
-**Hangs and resets.** A reset is noticed by the reset check, an `uptime`
-that went down between two rounds, which needs no console; the closing
-round's inspect covers the time after the last round. A hang is noticed
-by the login check, at the first login that does not end within its
+**Hangs and resets.** A reset is noticed by an `uptime` that went down
+between two rounds, a hang by the first login that does not end within its
 deadline. Attribution comes from the console, from the last line of the
-soak's boot to the next boot line, the bootstrap's `Total RAM:` line,
-which every boot prints, or the log's end:
+soak's boot to the next boot line, and explains a failure without deciding
+a check: a crash record of cause `watchdog` then `erx: end reset` is a
+missed pet; a crash record of a fault is a fault of the root task; `erx: end
+reset` or `erx: end off` with no record is a requested end; a boot line
+with nothing before it is a reset nobody logged, which on a board is a hang
+of Fiasco or of the root or a loss of power and which the console cannot
+tell apart; no boot line is a hang nothing reset, which on QEMU, with no
+hardware watchdog, the harness's deadline ends. The judge reads each record
+with `Erx::CrashFrame`, which the `native_watchdog` and `native_crash`
+suites read records with.
 
-| The console shows | What it means |
-| --- | --- |
-| a crash record of cause `watchdog`, then `erx: end reset` | a missed pet: the system domain's schedulers or timers stopped while the root ran ([design-fiasco.md](design-fiasco.md#the-watchdog)) |
-| a crash record of a fault, then `erx: end reset` | the root task faulted ([design-fiasco.md](design-fiasco.md#the-end-path)) |
-| `erx: end reset` or `erx: end off` with no crash record | an end someone or something asked for, or the root's own stop; the log lines before it say which |
-| nothing, then a boot line | a reset nobody logged: on a board whose hardware watchdog runs, a hang of Fiasco or of the root, or else a loss of power; the console cannot tell the two apart, and whether the board's reset status tells them apart is unverified |
-| nothing, and no boot line | a hang nothing reset: the board stays silent until its power is cycled; on QEMU, which has no hardware watchdog, the harness's deadline ends the run as timed out, which the driver maps as in Running it on QEMU |
-| an `erx_domain: configured domain` line | a configured domain ended or did not start, with the reason in the line; the domain service restarts it within its row's intensity |
+**The record.** The driver writes a new directory, `build/soak/RUN/`, and
+refuses one that already holds files; it makes the directory and each file
+in it readable by its owner alone, since a record holds what the machine
+printed. It holds the target, the commit and the image's SHA-256 (but not
+the machine's address), the round log, the host key the first login saw
+(under `DevKey`'s alias, so no address), a copy of the console log and the
+judge's report. The bytes a read-back returned are not kept: payload M is
+made again from its number, so its hash judges the file again, and nothing
+a storage fault returned in its place, another file's blocks with the SSH
+host key among them, is written down. The record stays on the development
+host. A record that counts as evidence goes to
+the separate history repository, `~/erxos-history/soak-TARGET-DATE/`, only
+after a person has read every text it keeps for anything private: an
+address, a name of the operator's network, a key, a command typed at the
+console. A record whose console log holds such a thing goes without it, its notes
+say so, and a later judgment of that copy leaves the quotes check unknown.
+A research record in `docs/` states the result and cites the copy by path
+and commit, and names no host, address or network of the operator's;
+nothing of a record enters erXos's tree.
 
-The judge reads each crash record with `Erx::CrashFrame`, which the
-`native_watchdog` and `native_crash` suites already read records with,
-so the soak has no reader of its own; the report keeps its absent,
-corrupt and truncated results apart. Attribution explains a failure; it
-decides no check.
+**A round.** Round N makes three logins, each `ssh root@MACHINE COMMAND`,
+which the SSH domain runs as `rc -c COMMAND`
+([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)): *inspect* (`ps`,
+`top -b`, `cat` of `/proc/status`, `/proc/apps/status` and
+`/proc/apps/dashboard/status`, and each `/proc/domains/*/status`, with an
+`echo soak: SECTION` line before each part so the driver can split the
+output); *write* (`cat > /data/soak/N` with a 256 KiB payload on standard
+input whose byte I is (I + N) mod 251, the rule of the block suite's
+power-cut files, `data_content` in `tools/lib/erx/block_device.rb`, taken
+from that one definition); and, from round 2, *read back* (`cat
+/data/soak/M && rm /data/soak/M` with M = N - 1, compared with payload M).
+Before round 1 a setup login makes `/data/soak` (its `mkdir` fails if the
+directory exists) and sets the clock; after the last round a closing round
+makes the inspect and read-back logins of round N + 1 and writes nothing,
+so `/data/soak` ends empty. Rounds start one slot apart, 60 s on the board
+and 10 s on QEMU; an overrunning round is followed at once by the next and
+the overrun is recorded. Elapsed time ends the soak, not a count: the last
+round is the first that ends once the length has passed since round 1
+started. Each login runs under `Erx::Runner` with a 60 s deadline, and the
+driver stops at the first failed round.
 
-**What is measured and what is observed.**
+**The set-time command** is the preview's way to set the clock, FreeBSD's
+`date` with a time argument, specified in [design-time.md](design-time.md).
+The soak needs only that, run as root by `rc -c`, it takes a UTC time to the
+second, exits 0 having set the clock whatever it read before, and exits
+non-zero having changed nothing. A setup login that fails for a reason the
+machine caused (no answer within the deadline, a non-zero exit) fails the
+soak before round 1; one that fails for a reason it did not cause (no
+set-time command, an error of a host tool) leaves it incomplete.
 
-| Measured, in the record, judged | Measured, in the record, not judged | Observed by a person, in the notes |
-| --- | --- | --- |
-| each login's exit and duration; `ps` and `top`; `top`'s time of day against the host; the dashboard's `state` and `ends`; the configured domains' ids and states; `uptime`; each read-back; the quotes' last states; every series of the growth rule | each series' median per quarter; each kind of login's median time per quarter; the rounds' overruns; the clock's offset over the soak; the quotes' lines as they change | the kiosk's screen at the start and at the end, its clock against the host's and its quotes live; the board's LEDs; the router's DHCP lease time; on QEMU the two screenshots below |
+**The checks.** Each reads one source and gives passed, failed or unknown:
+login (a non-zero exit, the deadline, or a changed host key fails); `ps` and
+`top` (`ps` lacking `rc` or `ps`, `top` with no `Mem` line or more than 18
+process rows); clock (`top`'s time of day against the host's UTC time of day
+at the login's end, more than 60 s apart, counted around midnight; erXos
+keeps no time zone, and a clock in another zone fails, never passes; this is
+unverified); kiosk (`state` other than `running` or `ends` above 0; unknown
+when the round's record is `[unsupported]` or `[error]`); domains (each
+name in `boot_order` of `/proc/apps/status` must have exactly one domain in
+state `running` under the id it had in round 1, since ids are never reused
+and a restarted domain shows a new one; the field name is unverified);
+reset (`uptime` in `/proc/status` below the previous round's: the machine
+booted between them; the field name is unverified); `/data` (file M's
+SHA-256 is not payload M's, reporting the first differing offset); quotes
+(a quote whose last `quotes:` line in the console span is not in the state
+its target expects; unknown when the span is incomplete or a line does not
+parse); growth (a judged series fails the rule; unknown when free memory or
+a series reported in some rounds is not judged, or fewer than 120 rounds
+ran). A `/proc` status file holds tab-separated lines of name, value and
+reporter, or one line, `[unsupported]` or `[error]`, which leaves every
+figure of that record a gap and a check that needs one unknown for that
+round; any other text fails the round as unreadable, quoted escaped and
+truncated, and is never read as a figure. A failed round's error output and
+raw output are kept escaped through `Erx::LineEscape`.
 
-The pet's lateness is not measured: no inspection value reports how
-close a pet came to its deadline, and the soak's question, whether a
-working machine is ever reset, is answered by the reset and login checks
-without one.
-
-**The record.** The driver writes a new directory, `build/soak/RUN/` by
-default, and refuses one that already holds files, so no record is ever
-overwritten. It makes the directory readable by its owner alone and each
-file in it likewise, as the QEMU harness makes its run directories
-(`Erx::OutputDirectory`), since a record holds what the machine printed:
-
-* `soak.json`: the target; the commit and the image's SHA-256, from the
-  card's build record on the board or from the harness's report on QEMU;
-  the slot and the length; the host's operating system, `ssh -V` and,
-  on QEMU, the harness's QEMU identity and invocation; the start and end
-  times in UTC. It does not keep the machine's address;
-* `rounds.jsonl`: one JSON object per round, the closing round and the
-  setup included: its number, its start in UTC and any overrun; for each
-  login its name, exit status and duration; for a login that failed, its
-  error output decoded as text and escaped through `Erx::LineEscape`; for
-  the inspect login, the parsed values the judge reads (each series'
-  figure with its status or its gap and reason, each configured domain's
-  id and state, the dashboard's `state` and `ends`, `uptime`, `top`'s time
-  of day and its row count, and whether `ps` listed `rc` and `ps`), and,
-  for a round that failed, the login's raw output as escaped text, so a
-  failure is shown as the machine printed it; and for the read-back, the length and SHA-256 of what came back and, where it
-  differs from the payload, the first differing offset. The bytes a
-  read-back returned are not kept: payload M is made again from its
-  number, so its hash judges the file again, and nothing a storage fault
-  returned in its place is written down;
-* `known_hosts`: the host key the first login saw;
-* `console.log`: a copy of the console log, `screen`'s `screenlog.0` on
-  the board or the harness's serial log on QEMU;
-* `report.json`: the judge's answer, each check's result with its
-  evidence, and each series' quarter medians and status;
-* `notes.md`, on the board: the operator's notes (below).
-
-A day's record is a few MiB, mostly the parsed values at about 1 KiB a
-round, and the console log (unverified until the first record). The
-record stays on the development host where it was made. `known_hosts`
-holds the host key under `DevKey`'s alias, not under an address: the
-extended builder keeps `HostKeyAlias` (`dev_key.rb`, `ssh_argv`), so
-the file names no address. A record that counts as evidence goes to the
-separate history repository, `~/erxos-history/soak-TARGET-DATE/`, only
-after a person has read every text it keeps, its console log, its notes
-and the error output and raw output of each failed round, for anything
-private: an address, a name of the operator's network, a key, a command
-typed at the console. A record whose console log holds such a thing goes
-without `console.log`, and its notes say so; judged again, that copy
-leaves the quotes check unknown, never passed. The history copy is
-committed there, and a research record in `docs/` states its result and
-cites it by path and commit, as the board pass's record does
-([research-rpi4-board-pass.md](research-rpi4-board-pass.md)). Nothing of
-a record enters erXos's tree, and the research record names no host,
-address or network of the operator's.
-
-**Refusals.** The driver refuses to start, with a diagnostic and before
-any login, on a record directory that holds files; an identity file or
+**Refusals.** The driver refuses to start, with a diagnostic and before any
+login, on a record directory that holds files; an identity file or
 known-hosts path that `ssh` would not read as written (`DevKey`'s
 `plain_path` rule); a machine address that is not a host name or an IP
-address; a length shorter than 120 slots, since the growth rule needs
-quarters of at least 30 rounds; and, on the board, a build record whose
-SHA-256 is not the card's the operator names. The judge refuses a record
-whose files do not parse, with a diagnostic naming the file and line,
-and gives no answer for it.
+address, so an address cannot become an `ssh` option; a length under 120
+slots, since the growth rule needs quarters of at least 30 rounds; and, on
+the board, a build record whose SHA-256 is not the card's the operator
+names. The judge refuses a record whose files do not parse, with a
+diagnostic naming the file and line, and gives no answer for it.
 
-**Length.** The board's soak lasts a day at a 60 s slot, about 1,440
-rounds; QEMU's lasts four hours at a 10 s slot, at most 1,440 rounds and
-fewer when a round overruns its slot (how long a login takes on either
-target is unverified, and the record states it). The board's day comes
-from what the soak must repeat and what only time brings:
-
-* **Repetitions.** About 1,440 rounds are about 4,320 logins, each a
-  session domain made and ended, 1,440 files of 256 KiB written, read
-  and removed (360 MiB), up to about 19,000 quote requests a day on the
-  board (two quotes every 10 s and one every 60 s, fewer while a source
-  backs off) and about 170,000 pets of the system's watchdog.
-* **Time.** The board's day crosses one midnight UTC, when the change
-  that Kraken's quotes give against the day's opening price starts again
-  ([design-quotes.md](design-quotes.md#what-the-source-offers)); it
-  crosses the DHCP client's renewal when the lease's renewal time is
-  under a day, the server's T1 where it sends a valid one and otherwise
-  half the lease (`erx_dhcp4_core.erl`, `times/4`), which the notes'
-  lease time shows; and it holds the quotes' longest waits, the 15
-  minute backoff cap and an hour's `Retry-After`, many times over. On
-  QEMU the restricted network's lease and the wall clock matter less,
-  and four hours hold the backoff's settling and three quarters of
-  judged rounds after it.
-* **Use.** A day is the preview's demo use: a kiosk left on, with SSH
-  sessions now and then.
-
-**What the release notes claim.** Exactly what ran: "soaked a day on the
-Pi 4 and four hours on QEMU under this workload, no reset", with a link
-to the research record, and no uptime beyond it. A longer claim needs a
-longer soak, at a person's day per extra day of board time.
-
-**Running it on the board.**
-
-**You need** the board, console adapter and Ethernet cable of the SD
-card and Ethernet pass, a screen on HDMI0, the card written from the
-published image with your public key in `authorized_keys` on its boot
-partition, and the development host on the same wired network as the
-board: a soak fails at its first failed login, so a host on a flaky
-wireless link costs a day.
-
-1. **Boot.** Put the card in the board, start logging on the console
-   adapter with `screen -L`, as the boot pass does, then power the
-   board. Expect the boot pass's lines 1 to 4 and the kiosk on the
-   screen, its quotes panel reading `no data: clock not set`.
-2. **Find its address.** At the console's `%` prompt, `ifconfig genet0`
-   prints the board's address A on its `inet` line.
-3. **Start the soak** on the development host, kept awake for the day
-   (on macOS, under `caffeinate -i`):
-
-   ```sh
-   caffeinate -i tools/erx soak board --address A --identity KEY \
-       --receipt sdcard-DIGEST.img.receipt.json
-   ```
-
-   where KEY is the private half of the key on the card. The driver sets
-   the clock and runs its rounds, printing one line per round.
-4. **Write down at the start**: within a few minutes, the quotes panel
-   showing live quotes and the kiosk's clock matching the host's.
-5. **At the end**, a day later, the driver prints that the rounds are
-   done and the record's directory. Write down what the screen shows,
-   the clock against the host's and the quotes live or not. Then type
-   `echo soak: end` at the console's `%` prompt, and judge the record
-   with `tools/erx soak judge RUN --console screenlog.0`, which copies
-   the console log into the record and prints the answer. Put into
-   `notes.md` the board's revision, the card's make and size, the power
-   supply, the switch or router and its DHCP lease time, and what you
-   saw at the start and at the end.
-
-If a round fails, the driver stops and prints why; leave `screen` running
-a few minutes so the console log holds what the board did next, then, if
-the console still answers, type the end mark, judge the record as in
-step 5, and send back the record. A board that stays silent is
-power-cycled only after the console log is saved.
-
-**Running it on QEMU.** `tools/erx soak qemu` builds the image of the
-`display_domain/quotes` cell with the clone's development login key,
-which makes its builder one of `Checks::LOGIN_KEY_BUILDERS`
+**On QEMU,** `tools/erx soak qemu` builds the image of the
+`display_domain/quotes` cell with the clone's development login key, which
+makes its builder one of `Checks::LOGIN_KEY_BUILDERS`
 ([design-ssh.md](design-ssh.md#login-keys)), and boots it through
-`Erx::Qemu.run` under HVF, with the display, the network device's SSH
-port forward and a fresh data medium, at the CPU count the QEMU
-getting-started steps boot with. The setup, the rounds and the closing
-round run in the `verify` of the checkpoint at which the SSH daemon is
-up, as the network domain's SSH cells run their logins
-(`tools/lib/erx/network_domain.rb`, `checkpoints`). The harness's hard
-deadline is the sum of its checkpoints' times (`Erx::Qemu.run`), and the
-checkpoint after the rounds is given the soak's length plus a fixed 600 s.
-The margin covers what runs outside the length: the setup's two logins,
-the last round's three (it starts before the length has passed), the
-closing round's two, the screenshots 61 s apart and the mark. At most
-60 s a login, the seven logins and the screenshots come to 481 s and the
-mark takes a few seconds more, so the margin ends only a run whose
-driver itself hung. A fixed margin reads at a glance and needs no change
-when the slot or the length does. Under
-`-no-reboot` any end of the machine exits QEMU, the next login fails, and
-the judge reads the serial log the harness kept. After the closing round the harness takes
-two screenshots through QMP 61 s apart, so the kiosk's clock has moved
-between them, and keeps them in the record for a person to look at; they
-are not judged. It then types `echo soak: end` on the serial line, as
-its checkpoints type at the console, waits for the line it prints, and
-runs the judge on the serial log. That the cell's console offers the
-`%` prompt is unverified until the first run; without it the mark never
-comes, the checkpoint raises `TranscriptTimeout` (`qemu.rb`), and the
-quotes check is unknown.
+`Erx::Qemu.run` under HVF with the SSH port forward and a fresh data
+medium. The rounds run in the `verify` of the checkpoint at which the SSH
+daemon is up; the checkpoint after them is given the soak's length plus a
+fixed 600 s, which covers the logins outside the length, two screenshots
+taken 61 s apart for a person to look at (not judged) and the end mark. At
+the end `eth` and `spx` read `fresh` and `btc` reads `stale` with
+`{status,503}`, since the fixture answers `/btc` with 503 after its first
+five answers. If `Erx::Qemu.run` ends timed out or failed, the driver maps
+it to incomplete, or to failed if a login had already failed, and still
+judges the serial log and the record it kept. That the cell's console
+offers the `%` prompt is unverified; without it the end mark never comes,
+the checkpoint raises `TranscriptTimeout` and the quotes check is unknown.
+The board's soak is run as `tools/erx soak board --address A --identity KEY
+--receipt RECEIPT`, kept awake for the day, and judged with `tools/erx soak
+judge RUN --console screenlog.0` after `echo soak: end` is typed at the
+console's `%` prompt; the operator's `notes.md` in the record holds the
+board's revision, the card's make and size, the power supply, the switch or
+router and its DHCP lease time, and what the screen showed at the start and
+the end.
 
-`Erx::Qemu.run` can end with its report timed out or failed, because a
-checkpoint never matched or the guest ended. The driver maps such an end
-to incomplete, or to failed if a login had already failed, and in either
-case still runs the judge on the serial log and the record it kept, so a
-run that ends early is judged on what it holds.
+**The soak's own tests** are host tests over records the test generates,
+each failing on a seeded fault of the judge: the growth rule (a series that
+settles after warm-up passes, and judging the warm-up quarter fails it; a
+spike that hides a rise, where comparing least and greatest values instead
+of medians passes it; an even quarter, where taking the upper middle value
+fails it; free memory printed in K and in M, where comparing the printed
+numbers fails it; two quarters of the same noise, where comparing with no
+allowance fails them; a falling `partial` figure, where dropping partial
+figures leaves the check unknown; a count that stops being reported, where
+treating it as not reported passes the soak; `-` read as 0); the status-only
+records; a domain under a new id; an `uptime` below the previous round's,
+where comparing with round 1's misses a late reset; the clock across
+midnight; the console span with a loss line or without its end mark;
+attribution of each row of the hangs table from generated console logs and
+records made with `Erx::CrashFrame`'s codec; a read-back differing at
+offset 200,000, where hashing only the first 64 KiB passes it; and the
+18-row `top`. The driver's plumbing is proven by the QEMU run with its seed,
+a 20-minute run of 120 rounds that passes, and a quotes fixture built to
+make an ETS table for each answer and never delete it, which must fail the
+growth rule on the fixture's domain's `ets_tables`: that proves the rounds
+read `/proc`, the record kept it and the judge read the record.
 
-**Cost.**
 
-| | The board | QEMU |
-| --- | --- | --- |
-| wall time | a day, and about 45 minutes of a person: 30 to write the card and start, 15 at the end | four hours of the host, unattended, plus the image build |
-| host | a development host awake for a day, running `ssh` once every 20 s on average | one HVF guest with the display suite's memory; under the memory watch when other guests run |
-| network | about 720 MiB over the local network a day (each file twice), and the quotes' requests to the internet | none beyond the host |
-| card | 360 MiB written to `/data`, and the log store's writes | none |
-| when | once before the preview's release, on its commit, from the published card | once before the preview's release, on its commit, and on demand after a change suspected of a leak; not in the milestone gate |
-
-**Tests.** The judge is the soak's one decision, so its tests are host
-tests over records the test generates, each failing on a seeded fault
-of the judge; the driver's plumbing is proven by the QEMU run with its
-seed.
-
-| Test | Passes when | Seeded failure |
-| --- | --- | --- |
-| growth: settling | a series that rises through its warm-up quarter and then varies around a steady value passes | judging the warm-up quarter too fails it |
-| growth: a spike hides no rise | a count whose second quarter is steady but for one round ten times higher, and whose last quarter rises steadily from twice the steady value, fails | comparing the quarters' least and greatest values, not their medians, passes it |
-| growth: an even quarter | a last quarter of 30 values whose two middle values are 5 and 9, against a second quarter whose median is 5, passes | taking the upper middle value, or the mean of the two, fails it |
-| growth: units | free memory printed in K in some rounds and in M in others is compared in KiB and passes when steady | comparing the printed numbers without the unit fails it |
-| growth: noise is not growth | two quarters drawn from the same noise, whose medians differ by one unit, pass | comparing the medians with no allowance fails them |
-| growth: a leak in a partial figure | free memory with status `partial`, reporter `root pool`, falling one mebibyte every 40 rounds after warm-up fails, named partial | dropping partial figures as unknown leaves the growth check unknown |
-| growth: a figure that stops | a count numeric in the first and third quarters and printed `-` in the second and last is unknown, and the soak incomplete | treating it as not reported passes the soak |
-| no figure made up | a `top` whose `Mem` line prints `-` with a reason in a few rounds leaves gaps with the reason kept, and the series still passes | reading `-` as 0 fails the series on a fall that was never reported |
-| status-only records | a domain's status file reading `[unsupported]` in one round leaves the domains check unknown; one whose line has two fields fails the round as unreadable | reading the bracketed line as unreadable fails the round instead |
-| domains | a configured domain under a new id in round 50 fails the domains check, with no console line | comparing names alone passes it |
-| reset | a round whose `uptime` is below the previous round's fails the reset check, with no console line | comparing each round with the first round's `uptime` misses a reset late in the soak |
-| clock | a machine at 23:59:50 against a host at 00:00:20 passes; one 61 s off fails | comparing times of day without wrapping at midnight fails the first |
-| console: a loss | a console whose span holds `erx_syslog: 3 lines missed` leaves the quotes check unknown and the soak incomplete, though every quote's last line is right | a judge that reads only the `quotes:` lines passes it |
-| console: the end mark | a console without `soak: end` after its start line leaves the quotes check unknown | taking the file's end as the span's end passes it |
-| attribution | generated console logs, crash records made with `Erx::CrashFrame`'s codec, give each row of the hangs and resets table its meaning | matching `erx: end reset` before reading the crash record reads a missed pet as an end someone asked for |
-| read back | a file differing from its payload in one byte at offset 200,000 fails, naming the offset | hashing only the first 64 KiB passes it |
-| `ps` and `top` | an 18-row display passes and a 19-row one fails; a `ps` without `rc` fails | counting `top`'s header lines as rows fails the 18-row display |
-| the whole soak on QEMU | a 20-minute run, 120 rounds at 10 s, passes | the quotes fixture built to make an ETS table for each answer and never delete it fails the growth rule on the fixture's domain's `ets_tables`, which proves the rounds read `/proc`, the record kept it and the judge read the record |
-
-**Building it.** In agent packages of about 50 to 100 calls, each its own
-commit; the figures are estimates, unverified until the packages run:
-
-1. **The judge and the round's readers** (about 70 to 90 calls):
-   `tools/lib/erx/soak.rb`, a pure core: the round plan and the
-   payloads, the readers of `ps`, `top` and `/proc` status files, the
-   growth rule, the console's span and its reader over
-   `Erx::CrashFrame`, and the judge; with the host tests above,
-   `test/host/soak_test.rb`. About 450 lines of Ruby and 350 of tests.
-2. **The board's driver** (about 40 to 60 calls): `tools/erx soak board`
-   and `tools/erx soak judge`, the record's writing, and the logins
-   through `Erx::Runner`. `DevKey.ssh_argv`, which takes the clone's key
-   pair and a loopback port, is extended to take a destination host
-   and port and an identity path, which the guest's callers pass as the
-   loopback address and the clone pair's private path, so the board's
-   `ssh` and the guest's come from one builder with the same options.
-   About 200 lines.
-3. **The QEMU run** (about 60 to 90 calls): `tools/erx soak qemu` over
-   `Erx::Qemu.run`, the image's login key, the end screenshots and end
-   mark, the leaking fixture build and its seeded run, and one 20-minute
-   run passing. It waits on the `display_domain/quotes` cell and the
-   `quotes:` log lines it reads (design-quotes.md), on SSH's stage 2,
-   and on the set-time command. About 200 lines.
-4. **The runs** (about 20 to 30 calls, and a person's day for the board):
-   the four-hour QEMU soak and the board's day on the preview's commit,
-   both records in the history repository, and the research record.
+**Length and the claim.** The board's soak lasts a day at one round a
+minute, QEMU's four hours at one round every ten seconds. A day is what the
+soak must repeat (about 4,320 logins, 1,440 files, up to 19,000 quote
+requests and about 170,000 pets of the system's watchdog) and what only
+time brings: one midnight UTC, the DHCP client's lease renewal where the
+renewal time is under a day, and the quotes' longest backoff waits. The
+release notes claim exactly what ran: "soaked a day on the Pi 4 and four
+hours on QEMU under this workload, no reset", with a link to the research
+record, and no uptime beyond it.
 
 ## Interfaces
 
@@ -2673,15 +2039,12 @@ commit; the figures are estimates, unverified until the packages run:
 
 ## Compatibility and migration
 
-No platform keeps a path for an earlier form. Until a release promises
-compatibility, a change to a platform's binding, to
-`hw/kernel_devices.txt`, to a platform's system manifest, to a boot
-argument, to the crash record's layout or to the device-secret page's
-layout replaces the old form outright, the layouts' as a new version of
-the ABI file; a crash record of another version fails its check and is
-shown as none. Platforms share one kernel interface, so adding one adds
-table entries, drivers and a manifest without changing a call, a layout or
-a boot argument.
+Until a release promises compatibility, a change to a platform's binding, to `hw/kernel_devices.txt`, to a system
+manifest, to a boot argument or to the layout of the crash record or the
+device-secret page replaces the old form outright, a layout as a new
+version of its ABI file; a crash record of another
+version fails its check and is shown as none. Platforms share one kernel
+interface, so adding one changes no call, layout or boot argument.
 
 ## Failure handling, diagnostics and debuggability
 
@@ -2741,126 +2104,109 @@ in [Trust in the boot](#trust-in-the-boot).
 
 ## Verification and testing
 
+The oracles are the platforms themselves: the same conformance suite runs
+on QEMU `virt` under HVF and on each board, and a test that passes on one
+accelerator only is a bug until explained. QEMU's `raspi4b` model checks
+only what it models ([Bring-up under QEMU](#bring-up-under-qemu)); the
+board passes ([the Raspberry Pi 4 on Fiasco](#the-raspberry-pi-4-on-fiasco))
+and the boot probe check the rest. Each check below that guards something
+subtle has a paired seeded fault that must make it fail.
+
 * **Boot probe.** At each board port's first boot, a probe confirms where
-  the firmware places a single bootable file of the release's size and
-  the device tree beside it, whether it honours `image_size`, `/chosen`,
-  the CPU's entry state and the memory map, that the boot reaches the kernel's timer well inside
-  the hardware watchdog's timeout, how long the system runtime takes to
-  its first pet, which `B` must cover, and whether the crash region
-  survives `SYSTEM_RESET`; the results go into a research record.
-* **The soak.** The preview's workload for a day on the Raspberry Pi 4
-  by hand and four hours on QEMU `virt` under the harness, judged from
-  its record and the console log ([The soak](#the-soak)).
-* **The same suite everywhere.** The conformance suite runs on QEMU
-  `virt` under HVF and on each board; a test that passes only on
-  one accelerator is a bug until explained.
+  the firmware places a single bootable file of the release's size and the
+  device tree beside it, whether it honors `image_size`, `/chosen`, the
+  CPU's entry state and the memory map, that the boot reaches the kernel's
+  timer well inside the hardware watchdog's timeout, how long the system
+  runtime takes to its first pet, which `B` must cover, and whether the
+  crash region survives `SYSTEM_RESET`; the results go into a research
+  record.
+* **The soak** ([The soak](#the-soak)), whose judge has host tests with
+  seeded faults and whose whole run on QEMU has a seeded leak.
 * **Device-tree tests.** The `dma-ranges` reader runs on the host over the
   trees of QEMU `virt`, both BCM2711 steppings and the BCM2712; the device
-  pass's leaving out of nodes that share a kept page is tested with each
-  tree, and so is the crash region's discovery, with a tree that has the
-  node and one that lacks it.
-* **Reset before use.** The three rules of [The handover at
-  entry](#dma) rest on tests the designs that own them name: the device
-  NIF's property tests, whose seeded post before `negotiate/2` fails
+  pass's leaving out of nodes that share a kept page and the crash
+  region's discovery are tested with each tree, with and without the node.
+* **Reset before use.** The three rules of [The handover at entry](#dma)
+  rest on tests the designs that own them name: the device NIF's property
+  tests, whose seeded post before `negotiate/2` fails
   ([design-runtime.md](design-runtime.md#the-device-nif), R8); GENET's
-  stop, whose seeded idle test of one direction lets the install write
-  under a running engine
-  ([design-device-dma.md](design-device-dma.md#verification)); and
-  `erx_pcie_plan`'s exhaustive test, under which the start's target for
-  a function that does not read as its setting is `off`
-  ([design-pcie.md](design-pcie.md#verification)). One test is this
-  rule's own, the device the loader left running: over the device NIF's
-  hosted stand-in, for each descriptor form, a record opened for the
-  first time on a stand-in that already runs a queue aimed into the
-  memory the record holds. `negotiate/2` writes the form's reset before
-  any other owned register and writes no address until the stand-in
-  reports idle, and the stand-in records no owned-register write but the
-  reset while it runs. Seed: `negotiate/2` skips the reset for a record that no
-  driver has opened before, as if a new record's device were idle, and
-  the stand-in records the install's base-address writes while it is
-  still running. Each row of the driver table runs the same test against
-  its native shim's `negotiate`, with the same seed, before the row is
-  admitted.
+  stop ([design-device-dma.md](design-device-dma.md#verification)); and
+  `erx_pcie_plan`'s exhaustive test ([design-pcie.md](design-pcie.md#verification)).
+  The rule's own test is the device the loader left running: over the
+  device NIF's hosted stand-in, for each descriptor form, a record opened
+  for the first time on a stand-in that already runs a queue aimed into
+  the memory the record holds must see `negotiate/2` write the form's reset
+  before any other owned register and no address until the stand-in
+  reports idle. Seed: `negotiate/2` skips the reset for a record no driver
+  has opened before. Each row of the driver table runs the same test
+  against its native shim's `negotiate`, with the same seed, before the row
+  is admitted.
 * **Ends and trials.** Each end (off, reset, panic, trial) is tested on
-  each platform with and without a lease, and on each board a trial that
-  panics, hangs with interrupts masked or halts boots the committed slot.
-  On QEMU and on each board, a spare whose write a test cuts short fails
-  its check at boot and no trial of it is requested; the paired passing
-  case writes the same spare whole and its trial boots.
-* **The early console.** On QEMU and on each board, a panic forced while
-  the console's driver runs puts the report and the final line in the
-  serial log; the paired failure seeds an early-console writer that drops
-  its bytes and expects neither. On each board, a panic forced after the
-  driver has disabled the UART still ends the machine within the writer's
-  bound, by `SYSTEM_RESET` in a release build; the paired failure seeds a
-  writer without the bound and expects the machine to end only through
-  the hardware watchdog. On QEMU, a device tree with a wrong magic, and
-  one whose `stdout-path` names the host link's PL011, each stop the
-  boot with their reason in the serial log; the paired failures seed an
-  early-console writer that starts only at the device pass, which leaves
-  the first log empty, and a hook that skips the check of `stdout-path`,
-  after which the boot goes on and the test fails.
-* **The watchdog.** On each platform, a system runtime told to stop
-  petting ends the machine at the deadline with a crash record naming the
-  watchdog, by a reset in a release build and, on each board whose
-  watchdog runs, by a development build's halt that the hardware watchdog
-  turns into a reset;
-  a partial boot, selected by a development build's system manifest's
-  `partial_boot` field, that outlives `B` runs on; the paired failure
-  seeds a kernel whose timer skips the deadline check and expects the
-  reset not to come. On each board with the watchdog started by `config.txt`, a kernel
-  hung with interrupts masked resets within the hardware watchdog's timeout; the paired failure seeds
-  a reload of the hardware watchdog from outside the timer and expects the
-  reset not to come. A boot in deterministic mode runs past the deadline
-  without a pet and does not reset.
+  each platform with and without a lease; on each board a trial that
+  panics, hangs with interrupts masked or halts boots the committed slot;
+  on QEMU and on each board, a spare whose write is cut short fails its
+  check at boot and no trial of it is requested, and the paired passing
+  case writes it whole and its trial boots.
+* **The early console.** A panic forced while the console's driver runs
+  puts the report and the final line in the serial log (seed: a writer that
+  drops its bytes); on a board, a panic forced after the driver disabled
+  the UART still ends the machine within the writer's bound (seed: a
+  writer without the bound, which ends only through the hardware watchdog);
+  on QEMU, a device tree with a wrong magic and one whose `stdout-path`
+  names the host link's PL011 each stop the boot with their reason in the
+  log (seeds: a writer that starts only at the device pass, and a hook that
+  skips the `stdout-path` check).
+* **The watchdog.** A system runtime told to stop petting ends the machine
+  at the deadline with a crash record naming the watchdog, by a reset in a
+  release build and, on a board whose watchdog runs, by a development
+  build's halt that the hardware watchdog turns into a reset (seed: a timer
+  that skips the deadline check). A kernel hung with interrupts masked
+  resets within the hardware watchdog's timeout (seed: a reload from
+  outside the timer). A partial boot, selected by a development build's manifest `partial_boot`
+  field, that outlives `B` runs on. A boot in deterministic mode runs past
+  the deadline without a pet and does not reset. The hand checks on a board are in
+  [Trying a card on a board](#trying-a-card-on-a-board).
 * **The crash record.** On each board, a forced fault of the system domain
   resets the machine and the next boot's inspector shows the record with
-  the fault's cause, in the brief form in a release build and the full
-  form in a development build, to the system shell alone; the paired failures corrupt one byte of the region before the
-  reset, and leave a development build's full record for a release
-  build, and each expects the inspector to show none. On QEMU, the
-  harness finds the record in the serial log before `erx: end reset`.
+  the fault's cause, to the system shell alone; paired failures corrupt one
+  byte of the region before the reset, and leave a development build's full
+  record for a release build, and each expects the inspector to show none.
+  On QEMU, the harness finds the record in the serial log before `erx: end
+  reset`.
 * **Reset loops.** On QEMU and on each board, a test-build hook that
-  faults the system domain at every boot brings the fifth boot up in
-  the rescue configuration; the paired failure seeds a slot writer that
-  never advances the count and expects the harness to stop the run as a
-  loop.
+  faults the system domain at every boot brings the fifth boot up in the rescue configuration (seed: a slot writer
+  that never advances the count; the harness must stop the run as a loop).
 * **Device secrets and TPMs.** On each board, a key provisioned with
   Raspberry Pi's tool gives the same device secret at every boot and a
-  different one on another board, and a board whose key was never
-  programmed reports none. On the host, against a model of the firmware,
-  every buffer that held the key holds zeros once the read returns, a
-  model that never answers ends the read at its deadline and the boot goes
-  on without a device secret, a model that answers after the deadline
-  writes only the buffer page, which no mapping the boot made and no page
-  the allocator hands out covers, and the derivation runs against fixed
-  keys. Under QEMU, the vault's `tpm` backend runs against swtpm behind
-  `tpm-tis-device`; on each board with a module, against the module.
+  different one on another board, and a board with no key reports none. On
+  the host, against a model of the firmware, every buffer that held the key
+  holds zeros once the read returns, a model that never answers ends the
+  read at its deadline, one that answers late writes only the buffer page,
+  which no mapping and no allocated page covers, and the derivation runs
+  against fixed keys. Under QEMU the vault's `tpm` backend runs against
+  swtpm behind `tpm-tis-device`; on a board with a module, against it.
 * **The system manifests.** Each platform's system manifest for a release
-  build passes the build's manifest check and boots with every device
-  where [What the manifest says](#what-the-manifest-says) puts it, which a
-  boot test reads back from the device service. The paired failures each
-  fail the build with a diagnostic: a board's system manifest for a
-  release build that gives the SD controller to the storage domain, QEMU's
-  system manifest for a release build that gives a virtio-mmio device to
-  the network domain, a manifest that gives PCIe configuration space to
-  the devices domain, one that places the console's UART unit in the
-  devices domain, one whose `hostlink` path is its `console` path, and a
-  board's release manifest that gives an unconfined device marked
-  `hostile` to a domain that also holds partition windows. A test reads
-  each shipped manifest's `hostile` marks back from the packed manifest
-  and compares them with the placement table, transcribed into the test;
-  the paired failure drops one mark and expects the test to fail. At boot,
-  a seeded manifest that gives the Raspberry Pi 4's mini UART and an
-  auxiliary SPI controller to two domains, and one that marks a
-  virtio-mmio device confined, are each refused for that unit with a
-  diagnostic, while the rest boots; and a manifest whose `console` and
-  `hostlink` paths are swapped, so that `console` is not the UART
-  `stdout-path` names, ends the boot with both paths in the kernel log.
-* **Secure boot.** On a board with secure boot on, a slot whose
-  `boot.img` its owner did not sign does not boot, and a trial of a signed
-  spare boots from the trial's partition; the board port records the cost
-  of the check for the slot images' sizes.
+  build passes the build's manifest check and boots with every device where
+  [What the manifest says](#what-the-manifest-says) puts it, which a boot
+  test reads back from the device service. Seeded manifests each fail the
+  build with a diagnostic: a board's release manifest that gives the SD
+  controller to the storage domain, QEMU's release manifest that gives a
+  virtio-mmio device to the network domain, a manifest that gives PCIe
+  configuration space or the console's UART unit to the devices domain, one
+  whose `hostlink` path is its `console` path, and a board's release
+  manifest that gives an unconfined `hostile` device to a domain that also
+  holds partition windows. A
+  test reads each shipped manifest's `hostile` marks back from the packed
+  manifest and compares them with the placement table (seed: one mark
+  dropped). At boot, a manifest that gives the Raspberry Pi 4's mini UART
+  and an auxiliary SPI controller to two domains, or marks a virtio-mmio
+  device confined, is refused for that unit with a diagnostic while the
+  rest boots, and one whose `console` is not the UART `stdout-path` names
+  ends the boot with both paths in the kernel log.
+* **Secure boot.** On a board with secure boot on, a slot whose `boot.img`
+  its owner did not sign does not boot, and a trial of a signed spare boots
+  from the trial's partition; the board port records the cost of the check
+  for the slot images' sizes.
 
 ## Performance
 
