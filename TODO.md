@@ -6150,7 +6150,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   holds a link with the sender (a bit of `erx_funnel_hold_t` from the same
   lookup), and only then queues the conditional `LINK` for the target to
   re-judge. The ERTS side has no edit yet either: stock
-  `ERTS_SIG_Q_OP_LINK` always inserts, so design-runtime.md's edit table
+  `ERTS_SIG_Q_OP_LINK` always inserts, so design-runtime.md's list of edits
   needs a LINK signal that creates nothing unless a link (in any state)
   exists and otherwise sends the `noproc` exit, which the lane driver
   (RT6a) uses for `ERX_FUNNEL_DELIVER_IF_LINKED`.
@@ -9167,7 +9167,7 @@ document's "residual risks accepted" paragraph.
 * [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):
   the group keeps every line its editor returns, so a long session, or a paste or peer that sends many lines, grows
   the group without end, though edit 73 of [design-runtime.md](docs/design-runtime.md) bounds each line. Keep the
-  most recent lines only, with the bound in design-runtime.md's edit table and a test that measures the whole group
+  most recent lines only, with the bound in design-runtime.md's list of edits and a test that measures the whole group
   after many lines, beside design-shell.md's "A line that never ends".
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
