@@ -2054,7 +2054,7 @@ next available item of the plan.
    have ended; the package lifetime, `erx_pkg_io` and the bounded
    recovery with its fuzz target; `erx_pkg_plan` with its crash and
    failure tests over reordered writes. One check of
-   design-packaging.md's Phase 1 table lands later: `purge` with the
+   design-packaging.md lands later (TODO.md, security residuals): `purge` with the
    storage service's `remove_app` and directories named by signer, at
    M10.
 

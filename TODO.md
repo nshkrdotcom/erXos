@@ -1180,7 +1180,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `restarts`, `restart_period_s` and `flags`, on the data partition's `etc` tree: a service directory with a
   facet `etc`, read-write to the system domain and to the templates that hold `start` (rows the build derives,
   and an entry of the facet table), mounted at `/etc`. The `etc` grant waits for grants rooted at a service
-  directory (the facet parameters of design-apps.md, "Phase 1"); until then the file is
+  directory; until then the file is
   `/data/etc/start.conf`, through the `data` grants of the system domain and root's session. Code to change:
   * the reader and judgement: `erx_start_conf:read/1`, the literal `sh` subset of "The file's syntax", with a
     host test against the host's `sh` and a fuzz target, replacing `parse_rc_conf/1` and `erx_rc_conf_fuzz`; a
@@ -7731,6 +7731,11 @@ to the corpus and follow rc
   `record_volume` mark, which grants nothing without the block device). Refuse `-erx_record` there.
 
 ## Security residuals
+
+* [Medium] apps, an app's directory ([design-packaging.md](docs/design-packaging.md#invariants), PK4): until
+  the storage service roots an app's `data` grant at `apps/NAME/SIGNER/` (`tree apps`), apps hold no `data`
+  grant (the files-service item under Major initiatives) and the directory half of PK4's QEMU test waits; and
+  `service NAME purge` answers `enotsup` until the storage service offers `remove_app`.
 
 * [Low] storage, a host writing beside the boot-selection record (`erlang/apps/erx_storage/src/erx_fat_read.erl`;
   [design-storage.md](docs/design-storage.md#removable-media-fat)): a computer that writes the `ERXOS` volume,
