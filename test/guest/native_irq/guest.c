@@ -4,7 +4,7 @@
  */
 
 /*
- * Interrupts through the readiness interface (docs/design-stopgap.md, "Interrupts and
+ * Interrupts through the readiness interface (docs/design-fiasco.md, "Interrupts and
  * readiness", "Verification"), as the root task; tools/lib/erx/native_irq.rb judges the
  * transcript and types the characters. The first thread rings the software object when
  * the executor is seen parked, a handshake that needs no sleep; the executor runs on
@@ -446,7 +446,7 @@ holder_objects_make(uint64_t objects[HOLDER_HANDLES])
  * Makes the holder task, passes it the objects and starts its first thread in a new group,
  * which makes the holder that group's home, then waits for its end and gives its status.
  * The masks are the rights the target design gives each handle; this backend records none
- * (docs/design-stopgap.md, "Capabilities in Fiasco's object space"), so they limit nothing here.
+ * (docs/design-fiasco.md, "Capabilities in Fiasco's object space"), so they limit nothing here.
  */
 static int64_t
 holder_run(const uint64_t objects[HOLDER_HANDLES])
@@ -473,7 +473,7 @@ holder_run(const uint64_t objects[HOLDER_HANDLES])
 }
 
 /*
- * A device another domain holds (docs/design-stopgap.md, "Device records"): the root makes
+ * A device another domain holds (docs/design-fiasco.md, "Device records"): the root makes
  * a device's objects and passes them, with the root's own group and a software object bound
  * there, to a holder task (program.c), whose status says how far it got. The byte the line
  * fired for is still waiting, and the root reads it through its own window, so the harness

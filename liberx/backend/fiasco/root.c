@@ -10,7 +10,7 @@
  * device tree, takes the machine's memory from sigma0 into the pool and refuses the boot if that falls short of the
  * manifest's root_memory, seeds the generator, starts the root service, reports what it saw on the
  * console, and runs its program, ERTS, through musl's start path
- * (docs/design-stopgap.md, "Boot handoff").
+ * (docs/design-fiasco.md, "Boot handoff").
  *
  * Until erx_fiasco_root_up returns, only this one thread exists, and every page
  * it reads comes from a page fault that sigma0 answers one to one, with the

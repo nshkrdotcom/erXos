@@ -45,7 +45,7 @@ module Erx
     Extent = Data.define(:file, :slot_offset)
     # A slot's contents: the bootable file's extent and each EROFS image's, in order.
     SlotPlan = Data.define(:boot, :images)
-    # The booted slot's system partition (docs/design-stopgap.md, "The booted slot"): the
+    # The booted slot's system partition (docs/design-fiasco.md, "The booted slot"): the
     # release's EROFS image at its Extent, from the partition's start, and its dm-verity
     # tree (AppPackage.image_tree), whose whole blocks start where the image ends.
     SystemPartition = Data.define(:image, :tree) do

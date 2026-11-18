@@ -12,7 +12,7 @@ require_relative 'qemu_cells'
 require_relative 'runner'
 
 module Erx
-  # The function-API set that both backends pass (docs/design-stopgap.md, "The call
+  # The function-API set that both backends pass (docs/design-fiasco.md, "The call
   # table"): test/guest/function_api compiled hosted, which test/host/hosted_function_api_test.rb
   # runs under each sanitizer, and for native Fiasco's root task, which Run boots here.
   module FunctionApi

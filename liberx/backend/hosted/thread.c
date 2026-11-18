@@ -6,7 +6,7 @@
 /*
  * The thread calls and the machine's end in a macOS process: a thread is a pthread
  * that moves to the stack its start record names and moves back to end
- * (docs/design-stopgap.md, "The hosted backend"). The pthread's own stack holds
+ * (docs/design-fiasco.md, "The hosted backend"). The pthread's own stack holds
  * nothing but the way back, so a joiner may reuse or release the caller's stack as
  * soon as the thread's clear word reads 0, as natively. The thread pointer is a
  * field here, since the host owns the register.

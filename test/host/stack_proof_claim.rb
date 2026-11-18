@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
-# The wording rule of the stack proof's report (B8 of docs/design-stopgap.md):
+# The wording rule of the stack proof's report (docs/design-fiasco.md, FD24):
 # every allowance line names the C17 cores and leaves Fiasco's stack
 # unproven, and no line names the kernel stack.
 module StackProofClaim

@@ -1,4 +1,4 @@
-# Modified by erXos: it boots from erXos's boot image (docs/design-stopgap.md, "Boot handoff").
+# Modified by erXos: it boots from erXos's boot image (docs/design-fiasco.md, "Boot handoff").
 # Modified by erXos: the glue module of erx/ joins the kernel.
 # Modified by erXos: jdb_object is built only into a kernel with the debugger.
 # -*- makefile -*-

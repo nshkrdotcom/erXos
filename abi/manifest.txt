@@ -368,7 +368,7 @@ layout erx_mf_signer wire_le 4 40
 # context, never from a signer row, and at most one, in a development manifest only.
 layout erx_mf_development_key wire_le 1 32
   field key u8 0 count @signer_key_bytes
-# The booted slot's system partition (docs/design-stopgap.md, "The booted slot"): one
+# The booted slot's system partition (docs/design-fiasco.md, "The booted slot"): one
 # EROFS image of image_length bytes from the partition's start, and its dm-verity tree,
 # tree_length bytes at tree_offset, under salt (its first salt_length bytes) and
 # root_hash. At most one row, which the domain library writes as `-erx_record

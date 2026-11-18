@@ -4,7 +4,7 @@
  */
 
 /*
- * A domain's runtime in a task, the task twin of runtime_entry.c (docs/design-stopgap.md,
+ * A domain's runtime in a task, the task twin of runtime_entry.c (docs/design-fiasco.md,
  * "Boot information"). The domain library wrote the boot information page, mapped it
  * read-only and passed its address as the first thread's argument. Before musl's start
  * runs, this entry copies the page into the task's own memory, which nothing outside the

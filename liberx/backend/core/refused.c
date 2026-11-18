@@ -4,7 +4,7 @@
  */
 
 /*
- * The calls the call table refuses on both backends (docs/design-stopgap.md, "The
+ * The calls the call table refuses on both backends (docs/design-fiasco.md, "The
  * call table"), in one place so a caller cannot come to depend on one that only
  * one backend has.
  */

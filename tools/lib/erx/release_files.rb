@@ -108,7 +108,7 @@ module Erx
     SYSTEM = Release.new(name: NAME, prefix: 'system/', applications: SYSTEM_APPLICATIONS, system: true,
                          boots: { 'start' => SYSTEM_APPLICATIONS }.freeze)
     # The build's release scripts table: each domain boot script's applications under its
-    # name, which a domain row's `release @artifact.NAME` names (docs/design-stopgap.md,
+    # name, which a domain row's `release @artifact.NAME` names (docs/design-fiasco.md,
     # "The production image"), so two rows naming one script cannot disagree on what it
     # boots, and a name the table does not hold is refused (ProductionImage.domain_boot).
     # What a script adds to DOMAIN_BASE and the system release does not ship stays out of
@@ -211,7 +211,7 @@ module Erx
 
     # Where the one domain release lies: domains/erxos/, which sorts after boot/ and
     # before system/, so it is one run of whole entries that does not split the system
-    # run (docs/design-stopgap.md, "The production image").
+    # run (docs/design-fiasco.md, "The production image").
     DOMAINS_PREFIX = 'domains/'
     DOMAIN_PREFIX = "#{DOMAINS_PREFIX}#{NAME}/".freeze
 

@@ -15,7 +15,7 @@
 %% Once the table is admitted, it also starts the windows the boot value decides, which
 %% erx_blk_table:booted/1 derives from the -erx_record boot words the domain library
 %% gives the block device's holder: the read-only system window on the booted slot's
-%% system partition (docs/design-stopgap.md, "The booted slot"), which reads no
+%% system partition (docs/design-fiasco.md, "The booted slot"), which reads no
 %% manifest and is started only in the holder given a system_image record; the
 %% read-only record_volume window on the whole record partition, started in the holder
 %% whose system_image record names it, whatever the slot, for erx_storage_login_keys;

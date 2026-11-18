@@ -34,7 +34,7 @@ every_reporter_is_refused_where_it_is_not_listed_test() ->
     ?assertEqual({error, reporter}, erx_schema:validate_attr(budget, used, {stopgap, other}, unknown)),
     ?assertEqual({error, reporter}, erx_schema:validate_attr(budget, used, liberx_pool, unknown)).
 
-%% docs/design-stopgap.md, "Reporting a budget": used is partial, by root pool; the
+%% docs/design-fiasco.md, "Reporting a budget": used is partial, by root pool; the
 %% rest is the kernel's, unsupported.
 budget_on_the_stopgap_test() ->
     ?assertEqual({ok, {{stopgap, liberx_pool}, {partial, 12}}},

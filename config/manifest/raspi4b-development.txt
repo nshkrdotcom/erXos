@@ -31,7 +31,7 @@
 # link's, the PL011s' page, of which the host link uses UART3, both in the common part; and
 # rng, the RNG200, which no runtime drives and the root reads itself at boot when /chosen
 # carries no seed, at the window its row in the platform record states and only when the
-# firmware's tree names that window (docs/design-stopgap.md, "The Raspberry Pi 4", its
+# firmware's tree names that window (docs/design-fiasco.md, "The Raspberry Pi 4", its
 # entropy item); and watchdog, the power-management block's watchdog, which no runtime drives
 # either and the root's watchdog thread arms and reloads, at the window its row states and only
 # when the firmware's tree names that window (docs/design-platforms.md, "The watchdog"). The
@@ -148,7 +148,7 @@ window data
   rights read,write
   image none
 # system: the booted slot's system partition, read-only for the storage domain, whose
-# block driver serves it (docs/design-stopgap.md, "The booted slot"), as on QEMU virt.
+# block driver serves it (docs/design-fiasco.md, "The booted slot"), as on QEMU virt.
 window system
   holder @domain.storage
   device "/emmc2bus/mmc@7e340000"
@@ -157,7 +157,7 @@ window system
   rights read
   image none
 # The system partition's image and tree, from the release image the packer writes
-# (docs/design-stopgap.md, "The booted slot"), handed to the system window's holder.
+# (docs/design-fiasco.md, "The booted slot"), handed to the system window's holder.
 system_image
   input @artifact.release
 # network: QEMU virt's network domain row for row (config/manifest/qemu-virt-development.txt,

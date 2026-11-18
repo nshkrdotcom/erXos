@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 /*
- * How each end of the machine ends it (docs/design-stopgap.md, "The end path"):
+ * How each end of the machine ends it (docs/design-fiasco.md, "The end path"):
  * a pure function of why it ends, so the host tests it. Only a requested power-off
  * turns the machine off; every end nobody ordered resets it, so that an update's
  * trial boot that fails falls back to its other slot.

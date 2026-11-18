@@ -184,7 +184,7 @@ module Erx
       private
 
       # A single file past the native root's place, 64 MiB into RAM, so bootstrap moves the
-      # archive behind the root (docs/design-stopgap.md, "Boot handoff"); the root then
+      # archive behind the root (docs/design-fiasco.md, "Boot handoff"); the root then
       # reads the archive at its new place and reports its index, as in the native boot.
       # It reuses the banner image's recipe: a second recipe would rebuild the pack tools
       # under the first one's helpers, whose checked inputs then no longer match.

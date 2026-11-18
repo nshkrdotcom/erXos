@@ -18,7 +18,7 @@
 
 /*
  * What of the system manifest reaches the boot information page, the same on both
- * entries (docs/design-stopgap.md, "Boot information"): the node name, the system's
+ * entries (docs/design-fiasco.md, "Boot information"): the node name, the system's
  * arguments, the projection of system_runtime_limits, the console and the device
  * records. Pure, over the bytes handed in.
  */
@@ -42,7 +42,7 @@ typedef struct erx_boot_console {
 
 /*
  * A device record: a device of a unit the system domain holds, of a kind its ERTS drives,
- * which the root hands that ERTS so that erx_device can open it (docs/design-stopgap.md,
+ * which the root hands that ERTS so that erx_device can open it (docs/design-fiasco.md,
  * "Device records"). A device of a row of erx/device_kinds.h is given: the root makes its
  * window, line and memory objects at boot, as a holder's creation makes them, and hands
  * their handles as -erx_record given (erx_boot_given_words), so a device that does DMA has one
@@ -111,7 +111,7 @@ bool	erx_boot_manifest_read(const uint8_t *bytes, size_t length, bool hostlink, 
  * of a unit the system domain holds, its path into the manifest's bytes and its register
  * window as the platform record states it, which the firmware's tree only confirms
  * (erx_dt_registers). The Raspberry Pi 4's RNG200 is the one such device
- * (docs/design-stopgap.md, "The Raspberry Pi 4").
+ * (docs/design-fiasco.md, "The Raspberry Pi 4").
  */
 typedef struct erx_boot_row {
 	erx_boot_words_t	path;
@@ -137,7 +137,7 @@ bool	erx_boot_console_matches(const erx_boot_manifest_t *manifest, const char *s
 /*
  * The page that holds the console's registers, which its driver maps first: the device NIF
  * maps the pages of a window, and the root hands the log to the console when a physical
- * object starts at this page (docs/design-stopgap.md, "The console"). 0, which turns the handoff
+ * object starts at this page (docs/design-fiasco.md, "The console"). 0, which turns the handoff
  * off, when no entry names the console or its registers lie in the first page.
  */
 uint64_t	erx_boot_console_page(const erx_boot_manifest_t *manifest);
@@ -171,7 +171,7 @@ size_t	erx_boot_console_words(const erx_boot_console_t *console, char *words, si
 bool	erx_boot_device_window(const erx_boot_device_t *device, erx_boot_window_t *window);
 
 /*
- * A device given to a holder domain, as its creation installed it (docs/design-stopgap.md,
+ * A device given to a holder domain, as its creation installed it (docs/design-fiasco.md,
  * "Boot information"): the values of its objects in the holder's table, which the holder's
  * device NIF opens it by. window and line are its register window's and its line's IRQ
  * object's; offset and size place its registers in the window; memory is its contiguous
@@ -196,7 +196,7 @@ typedef struct erx_boot_given {
 } erx_boot_given_t;
 
 /*
- * The given record of a device the root gives itself (docs/design-stopgap.md, "Device
+ * The given record of a device the root gives itself (docs/design-fiasco.md, "Device
  * records"): the device's names and register size, the offset of its window (from
  * erx_boot_device_window), and the handles of the objects the root made for it, its
  * register window, its line's IRQ object and its contiguous memory. A device without
@@ -362,7 +362,7 @@ size_t	erx_boot_build_words(uint64_t build_id, char *words, size_t capacity);
 
 /*
  * Writes -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT [record_volume] from the
- * manifest's system_image row into words (docs/design-stopgap.md, "The booted slot"): the
+ * manifest's system_image row into words (docs/design-fiasco.md, "The booted slot"): the
  * image's length and the tree's offset and length in decimal, the salt's first salt_length
  * bytes and the root hash in lowercase hex, then, when record_volume is true, the ABI's
  * name of the record_volume window role, for a holder of that window too

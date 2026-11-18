@@ -249,7 +249,7 @@ module Erx
       #
       # with boot_kept estimated from the platform record, the archive and the devices'
       # memory the manifest declares (dma_memory, the admission report's). The estimate
-      # errs high by a few hundred KiB (docs/design-stopgap.md, "The root startup
+      # errs high by a few hundred KiB (docs/design-fiasco.md, "The root startup
       # rule"), so an image this refuses fails at boot or comes within that margin of
       # failing. Every figure is in bytes; the platform's come from archive_machine.
       # An archive that fits returns the figures the rule derived (ArchiveRoom), which
@@ -949,7 +949,7 @@ module Erx
       end
 
       # A device-tree row's path, which its device record carries as PATH, the device's name
-      # to its driver (docs/design-stopgap.md, "Device records"): a node path of at most the
+      # to its driver (docs/design-fiasco.md, "Device records"): a node path of at most the
       # ABI's device_path_max bytes, as erx_boot_device_path_valid admits it.
       def device_path?(path) = path.is_a?(String) && path.match?(NODE_PATH) && path.bytesize <= @codec.constant('device_path_max')
 
@@ -1202,7 +1202,7 @@ module Erx
       def claims = { 'mode' => 'empty_native', 'root_startup' => 'unsupported' }
     end
 
-    # Phase 1's check (docs/design-stopgap.md, "The Phase 1 manifest check"): a
+    # Phase 1's check (docs/design-fiasco.md, "The Phase 1 manifest check"): a
     # development manifest, full or partial boot, with the system domain and its
     # configured domains. A holder or server is the system domain or a configured
     # domain, and a grantee one of those or a session template; a domain row's runtime and release name artifacts of this
@@ -1442,7 +1442,7 @@ module Erx
       # emulator flags (the words before the first --), then -- -boot /bin/<name> --,
       # then its init arguments (the words after that --). /bin/<name> is the boot
       # script of the domain release that its `release @artifact.<name>` names
-      # (docs/design-stopgap.md, "The production image"). The binding is init's first
+      # (docs/design-fiasco.md, "The production image"). The binding is init's first
       # flag and the second -- closes its value, so no later word (-extra, a final -S)
       # can make it a plain argument and leave init to its default script. Its own
       # arguments naming -boot are refused, since its release names the script.
@@ -1706,7 +1706,7 @@ module Erx
       end
 
 
-      # The booted slot's system partition (docs/design-stopgap.md, "The booted slot"),
+      # The booted slot's system partition (docs/design-fiasco.md, "The booted slot"),
       # packed as its one system_image record from the erofs_image artifact the nameless
       # system_image row's input names, as ReleaseMedium.image records it: the image one
       # extent from the partition's start (checked_extents keeps it inside the partition),
@@ -2647,7 +2647,7 @@ module Erx
       # slot writer's, the system domain's alone in Phase 1, and the one system window is
       # read-only and held by its block device's holder, the storage domain whose block
       # driver serves it, since the driver hands a window only to its own domain
-      # (docs/design-stopgap.md, "The booted slot").
+      # (docs/design-fiasco.md, "The booted slot").
       def normalize_windows(tables)
         devices = tables.fetch('devices')
         rows = records('window').map do |record|
@@ -2688,7 +2688,7 @@ module Erx
       # At most one system window, held by a storage domain: a configured domain, never
       # the system domain, that holds the window's block device. The window and the
       # system_image row come together, since its holder opens the window's image by
-      # that row (docs/design-stopgap.md, "The booted slot").
+      # that row (docs/design-fiasco.md, "The booted slot").
       def check_system_window(rows, tables)
         system = rows.select { |row| row.fetch('role') == system_role }
         invalid('a manifest has at most one system window', 8, 'window.role') if system.size > 1
@@ -2819,7 +2819,7 @@ module Erx
       def system_role = @codec.member('mf_window_role', 'system')
       def record_volume_role = @codec.member('mf_window_role', 'record_volume')
 
-      # The image table and its extents (docs/design-stopgap.md, "The Phase 1 manifest
+      # The image table and its extents (docs/design-fiasco.md, "The Phase 1 manifest
       # check"): each image is format erofs_unchecked, since the packer writes no hash
       # tree, so its record holds its data's length and extents, taken from the built
       # image its input artifact describes, and zeros for every tree field.

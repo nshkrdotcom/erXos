@@ -4,7 +4,7 @@
  */
 
 /*
- * musl's one way to the kernel on erXos (docs/design-stopgap.md, "musl over the
+ * musl's one way to the kernel on erXos (docs/design-fiasco.md, "musl over the
  * backend"). Each offered call is a few lines onto liberx, and __erx_syscall at the
  * end names each call's arguments. Everything else is refused with ENOSYS, which a
  * caller checking for failure sees as a kernel that lacks the call.

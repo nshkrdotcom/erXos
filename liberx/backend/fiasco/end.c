@@ -4,7 +4,7 @@
  */
 
 /*
- * The end path (docs/design-stopgap.md, "The end path"), and the effects the crash
+ * The end path (docs/design-fiasco.md, "The end path"), and the effects the crash
  * codec asks of it. Best effort, with no lock. No thread is stopped first. An end on the
  * thread that owns the debug log (erx_fiasco_log_owned) first writes the records that
  * wait for a reader to the console, so none is lost; on any other thread a write to the

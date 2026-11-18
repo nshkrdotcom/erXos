@@ -4,7 +4,7 @@
  */
 
 /*
- * Handles to memory objects (docs/design-stopgap.md, "Capabilities in Fiasco's object
+ * Handles to memory objects (docs/design-fiasco.md, "Capabilities in Fiasco's object
  * space", and the "A stale handle" and "Generations" rows of its tests), which only
  * native has calls for: hosted gets them with the rest of the handle rows. A stale
  * handle is told from a live one by a map two pages long, which the stale handle's own

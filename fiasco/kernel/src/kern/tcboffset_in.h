@@ -1,5 +1,5 @@
 // Modified by erXos: FP state is switched eagerly, so no thread owns the
-// FPU (docs/design-stopgap.md, "FP and SIMD state").
+// FPU (docs/design-fiasco.md, "Eager FP switching").
   DUMP_MEMBER1 (THREAD, Context, _state,		STATE)
   DUMP_MEMBER1 (THREAD, Context, _lock_cnt,		LOCK_CNT)
 #if defined(CONFIG_ARM) && defined(CONFIG_BIT32)

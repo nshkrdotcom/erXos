@@ -4,7 +4,7 @@
  */
 
 /*
- * Groups as records (docs/design-stopgap.md, "Budgets and groups as records"): the
+ * Groups as records (docs/design-fiasco.md, "Budgets and groups as records"): the
  * service's group records and their homes, and the root's stubs of the group calls. A
  * group record is an object record of kind group in its creator's handle table. Its home, the one task its threads run in, is that task's row
  * (service_task.h), which the group's first thread sets; a task is the home of one group
@@ -184,7 +184,7 @@ group_is_root(uint64_t group)
 /*
  * The root keeps its own group's CPU set, which erx_group_info reports. Any other group
  * its caller holds the service checks and accepts, keeping nothing of the grant
- * (docs/design-stopgap.md, "What Phase 1 defers").
+ * (docs/design-fiasco.md, "The call table").
  */
 int
 erx_group_configure(uint64_t group)
@@ -212,7 +212,7 @@ erx_group_info(uint64_t group)
 
 /*
  * Group runs erx_group_info's local body; every other topic is the service's
- * (docs/design-stopgap.md, "Reporting kernel objects"). Only the root links it, as
+ * (docs/design-fiasco.md, "Reporting kernel objects"). Only the root links it, as
  * every topic is the root's alone.
  */
 int

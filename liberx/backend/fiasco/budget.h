@@ -11,7 +11,7 @@
 #include "erx/cdefs.h"
 
 /*
- * Budgets as records (docs/design-stopgap.md, "Budgets and groups as records"). A
+ * Budgets as records (docs/design-fiasco.md, "Budgets and groups as records"). A
  * budget is an object record of kind budget, and like every object record it names
  * the budget it is charged to, which for a budget is its parent. Its kind, guarantee
  * and cap are kept here by the record's index, as given: nothing reads them back, so

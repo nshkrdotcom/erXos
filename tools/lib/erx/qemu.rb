@@ -66,7 +66,7 @@ module Erx
     # standard input too, so the plan takes no serial_input. Also for the boot benchmark
     # (BenchBoot), which reads the line from a pipe to stamp each chunk with the host's clock.
     STDIO = :stdio
-    # The kernel command line's word for deterministic mode (docs/design-stopgap.md,
+    # The kernel command line's word for deterministic mode (docs/design-fiasco.md,
     # "Deterministic mode"). A plan whose line carries it, split on spaces as the guest
     # splits it, runs one CPU under TCG, which instruction counting makes single-threaded.
     # The guest's every input is then the same at each boot: its clock counts the
@@ -219,10 +219,10 @@ module Erx
       end
     end
     # As hostlink, no host link at all: one serial line, the console's, as on a machine
-    # with one UART, such as the website's emulator (docs/design-stopgap.md, "Device paths").
+    # with one UART, such as the website's emulator (docs/design-fiasco.md, "Device paths").
     NO_HOSTLINK = :none
     # The kernel command line's word that asks the root for the host link's device record
-    # (docs/design-stopgap.md, "The command line"). A plan puts it first on the line exactly
+    # (docs/design-fiasco.md, "The command line"). A plan puts it first on the line exactly
     # when it gives the guest the host link's serial line, so the record never names a UART
     # the machine lacks; a caller's line that carries it is refused.
     HOSTLINK_WORD = 'erx.hostlink=1'

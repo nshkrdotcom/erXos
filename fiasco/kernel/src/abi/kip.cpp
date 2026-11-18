@@ -1,4 +1,4 @@
-// Modified by erXos: the boot greets as erXos (docs/design-stopgap.md, "Boot handoff").
+// Modified by erXos: the boot greets as erXos (docs/design-fiasco.md, "Boot handoff").
 INTERFACE:
 
 #include <cxx/static_vector>

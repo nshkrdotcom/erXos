@@ -860,7 +860,7 @@ class DomPlannerTest < Minitest::Test
   end
 
   # The domain library writes -erx_record system_image into the boot page of the configured
-  # row that holds the system window alone (docs/design-stopgap.md, "The booted slot"):
+  # row that holds the system window alone (docs/design-fiasco.md, "The booted slot"):
   # storage, the server of storage_ctl, carries the system_image row's words, and no other
   # row does, with the record_volume window's name after them when it holds that window too
   # (docs/design-ssh.md, "Who publishes it") and without it when the manifest has none; a

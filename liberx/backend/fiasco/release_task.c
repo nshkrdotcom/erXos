@@ -5,7 +5,7 @@
 
 /*
  * The release readers of erx/release.h that ERTS calls, for a domain's runtime in a
- * task (docs/design-stopgap.md, "The call table"). A task holds no archive index: its
+ * task (docs/design-fiasco.md, "The call table"). A task holds no archive index: its
  * release is the slice the boot information's release names, mapped at release_addr,
  * and the service answers each entry from the slice's record and checks a file
  * before ERTS first reads it. The root's own readers are liberx/release.c.

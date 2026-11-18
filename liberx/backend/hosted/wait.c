@@ -6,7 +6,7 @@
 /*
  * The umtx calls and the park protocol's semaphores, over the host's wait on an
  * address. The host's own table holds the waiters, so the wake order is its own and
- * a wake's count is of the host's wakes (docs/design-stopgap.md, "The hosted backend").
+ * a wake's count is of the host's wakes (docs/design-fiasco.md, "The hosted backend").
  */
 
 #include <errno.h>

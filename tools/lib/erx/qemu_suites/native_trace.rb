@@ -5,7 +5,7 @@
 require_relative '../production_image'
 require_relative '../qemu_gate'
 
-# erx:trace on the production image at four CPUs under HVF (docs/design-stopgap.md,
+# erx:trace on the production image at four CPUs under HVF (docs/design-fiasco.md,
 # Verification, "Trace on four CPUs"; Erx::ProductionImage::Run#trace): the kernel row
 # unsupported, a backend park and a wake of the same slot, and a test workload's erts in
 # not late, with every erts line naming the workload (trace_problems). Run raises on the

@@ -12,7 +12,7 @@ require_relative 'qemu_cells'
 require_relative 'runner'
 
 module Erx
-  # A second task on QEMU (docs/design-stopgap.md, "The root service", "Task exit",
+  # A second task on QEMU (docs/design-fiasco.md, "The root service", "Task exit",
   # "Shared objects and the JIT alias"): test/guest/native_task loads a program from the
   # boot image and runs a task per case. Each case's line says whether its status, its
   # capabilities and the pool's count came back as they should. A fault's crash frame is
@@ -93,7 +93,7 @@ module Erx
 
     # A task's write reaches the serial log as the program wrote it. Fiasco's console
     # puts a carriage return ahead of every newline, whoever writes it, and that is the
-    # one difference (docs/design-stopgap.md, "The console").
+    # one difference (docs/design-fiasco.md, "The console").
     def judge_write(serial)
       raise Error, "the task's write is not in the serial log byte for byte" unless serial.b.include?(WRITE_BYTES.gsub("\n", "\r\n"))
     end

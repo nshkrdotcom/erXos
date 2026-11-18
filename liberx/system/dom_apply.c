@@ -666,7 +666,7 @@ apply_bootinfo(apply_t *apply)
 	 * No install names a space to itself: a domain names its own as every
 	 * space does, by ERX_CAP_SELF. group_ctl and group_stat stay
 	 * ERX_CAP_NULL on the stopgap, whose group status page is the home
-	 * task's own (docs/design-stopgap.md, "Boot information").
+	 * task's own (docs/design-fiasco.md, "Boot information").
 	 */
 	inputs.space = (erx_cap_t){ .raw = ERX_CAP_SELF };
 	inputs.group = (erx_cap_t){ .raw = apply->installed[ERX_DOM_OBJ_GROUP] };

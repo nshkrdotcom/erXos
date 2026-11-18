@@ -21,7 +21,7 @@
 #include "liberx/backend/fiasco/entropy.h"
 
 /*
- * The root service (docs/design-stopgap.md, "The root service"): one thread that
+ * The root service (docs/design-fiasco.md, "The root service"): one thread that
  * owns the root's tables and receives every request and every fault of the root's
  * threads through one gate.
  */
@@ -80,7 +80,7 @@ int	erx_image_map(uint64_t space, uint64_t image, uint64_t entry, uint64_t *star
 int	erx_space_stop(uint64_t space, int64_t status);
 
 /*
- * Slices and copies (docs/design-stopgap.md, "The call table"). erx_image_slice, from the
+ * Slices and copies (docs/design-fiasco.md, "The call table"). erx_image_slice, from the
  * root alone, makes a memory object of entries [first, first + count) of the boot archive,
  * charged to budget; image is ignored, as this backend has the one image. A map of it is
  * read-only. erx_mem_copy copies len bytes between two memory objects the caller holds,
@@ -110,7 +110,7 @@ int	erx_mem_child(uint64_t parent, uint64_t budget, uint64_t offset, uint64_t si
 	    ERX_WARN_UNUSED_RESULT;
 
 /*
- * Handle calls (docs/design-stopgap.md, "Capabilities in Fiasco's object space"): a
+ * Handle calls (docs/design-fiasco.md, "Capabilities in Fiasco's object space"): a
  * handle that is no entry in use is ERX_EINVAL, one whose object has gone ERX_ESTALE.
  * A dup into a full table is ERX_ELIMIT. A close frees the entry, a stale one too,
  * and the object goes with its last handle unless it is mapped. A destroy from a task
@@ -122,7 +122,7 @@ int	erx_cap_close(erx_cap_t cap) ERX_WARN_UNUSED_RESULT;
 int	erx_object_destroy(uint64_t object) ERX_WARN_UNUSED_RESULT;
 
 /*
- * Budgets as records (docs/design-stopgap.md, "Budgets and groups as records"). Only
+ * Budgets as records (docs/design-fiasco.md, "Budgets and groups as records"). Only
  * the root carves and resizes; a task's call is ERX_ENOTSUP. A create makes a budget
  * under parent, ERX_CAP_SELF for the root's own or a budget the root holds, with kind
  * ERX_BUDGET_WALL or ERX_BUDGET_ELASTIC, else ERX_EINVAL, and guarantee and cap in pages,
@@ -139,7 +139,7 @@ int	erx_budget_resize(uint64_t budget, uint64_t guarantee, uint64_t cap) ERX_WAR
 int	erx_budget_watch(uint64_t budget, uint64_t irq, uint64_t threshold) ERX_WARN_UNUSED_RESULT;
 
 /*
- * erx_cap_pass (docs/design-stopgap.md, "Passing a handle"), the creator's case from
+ * erx_cap_pass (docs/design-fiasco.md, "Passing a handle"), the creator's case from
  * any task: from is ERX_CAP_SELF and to a live space the caller created. Its n
  * items, at most ERX_MSG_CAPS, are erx_msg_item_t in the calling thread's public UTCB,
  * each a copy or a move of one of the caller's handles with a rights mask. They pass in
@@ -151,7 +151,7 @@ int	erx_budget_watch(uint64_t budget, uint64_t irq, uint64_t threshold) ERX_WARN
 int	erx_cap_pass(uint64_t from, uint64_t to, uint32_t n) ERX_WARN_UNUSED_RESULT;
 
 /*
- * Fault gates (docs/design-stopgap.md, "Fault gates"): a gate carries the fault and
+ * Fault gates (docs/design-fiasco.md, "Fault gates"): a gate carries the fault and
  * exit records of the spaces made naming it, and nothing else. budget charges it as for every create. A
  * bind's thread is ERX_CAP_SELF_THREAD or a handle of one of the caller's own
  * threads, another task's ERX_ENOTSUP; ERX_CAP_NULL unbinds, and a bind replaces the
@@ -186,7 +186,7 @@ void	erx_fiasco_task_console_set(uint64_t page);
 int	erx_machine_end(uint64_t res, uint32_t how);
 
 /*
- * The end path (docs/design-stopgap.md, "The end path"): the first caller wins
+ * The end path (docs/design-fiasco.md, "The end path"): the first caller wins
  * and the rest sleep. With a fault, the root's, it first prints the crash frame; the
  * cause decides how the machine ends (erx_fiasco_end_how). Takes no lock.
  */

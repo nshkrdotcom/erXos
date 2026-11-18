@@ -6,7 +6,7 @@
 # describes the whole manifest and gives the measurements behind both parts' figures.
 #
 # The development manifest of QEMU virt: the system domain, four configured domains,
-# storage, network, web and display, as docs/design-stopgap.md's "The Phase 1 manifest check"
+# storage, network, web and display, as docs/design-fiasco.md's "The Phase 1 manifest check"
 # admits them, and the system principal's session template, from which the console starts root's
 # session at boot (docs/design-system.md, "Booting"). The storage domain is an
 # interpreter service domain that holds the block unit and its data, release and
@@ -90,7 +90,7 @@
 # (property 13); the web and display shares' cpuset, CPU 0 alone, gives each domain one
 # scheduler. The gpu's 9 MiB of DMA memory is made at every boot, a gpu attached or not,
 # since the manifest places the device; with it the devices' 10.375 MiB take the
-# contiguous pool to its 16 MiB bound (docs/design-stopgap.md, "The pool"), which the
+# contiguous pool to its 16 MiB bound (docs/design-fiasco.md, "The pool"), which the
 # boot keeps beside root_memory, and leave 5.625 MiB for any other device's memory.
 # The storage domain's 30 MiB is its
 # use rounded up to a whole MiB: 7,635 pool pages, 29.8 MiB, with BeamAsm (more than the
@@ -108,7 +108,7 @@
 # (ProductionImage::Machine), which grows root_memory, the baseline and /tmp's cap.
 # The website's manifest is made from this one at build time: it leaves out the
 # domains the platform record's site_leaves_out names, each with the records only it
-# uses and the room it took (Platform#site_manifest_source; docs/design-stopgap.md,
+# uses and the room it took (Platform#site_manifest_source; docs/design-fiasco.md,
 # "The Phase 1 manifest check").
 #
 # What a driver domain costs (tools/lib/erx/medium_boot.rb, Footprint; an Apple M3 Max
@@ -183,7 +183,7 @@
 # archive, the root's image (4.8 MiB) and the device tree's 1 MiB; each MiB the
 # archive grows takes a MiB of what sigma0 offers the root. The packer refuses an
 # archive that leaves too little, counting what the boot keeps from the platform
-# record (docs/design-stopgap.md, "The root startup rule"), and prints the largest
+# record (docs/design-fiasco.md, "The root startup rule"), and prints the largest
 # archive this root_memory leaves room for. A larger machine grows root_memory with
 # the system's growth (ProductionImage::Machine), never by an edit here.
 #
@@ -366,7 +366,7 @@ image release
   device "/virtio_mmio@a003e00"
   input @artifact.release
 # The system partition's image and tree, from the release image the packer writes
-# (docs/design-stopgap.md, "The booted slot"), handed to the system window's holder.
+# (docs/design-fiasco.md, "The booted slot"), handed to the system window's holder.
 system_image
   input @artifact.release
 window release

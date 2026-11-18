@@ -11,7 +11,7 @@ require_relative '../fixtures/generated_tree'
 
 # erx-gate: sanitizers
 
-# The stopgap's trace ring and its lock-free reader on the host (docs/design-stopgap.md,
+# The stopgap's trace ring and its lock-free reader on the host (docs/design-fiasco.md,
 # "The trace ring", and its Verification row): test/fixtures/trace_ring_driver.c runs
 # each case, and each seed below must make its case name what it broke.
 class TraceRingTest < Minitest::Test

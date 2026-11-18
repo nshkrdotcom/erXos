@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 /*
- * The root service's decoder (docs/design-stopgap.md, "The root service"): what a
+ * The root service's decoder (docs/design-fiasco.md, "The root service"): what a
  * received message is, from its gate label, tag and message words. It reads
  * nothing else, and every word it sees is the sender's.
  */

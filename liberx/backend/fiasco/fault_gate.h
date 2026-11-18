@@ -14,7 +14,7 @@
 #include "erx/core/crash.h"
 
 /*
- * Fault gates on the service (docs/design-stopgap.md, "Fault gates"), over the core in
+ * Fault gates on the service (docs/design-fiasco.md, "Fault gates"), over the core in
  * liberx/backend/core/gate.c. A gate is an object record of kind gate, made and
  * destroyed through object.c like any object. Each space keeps here the fault gate
  * and label its creator named, its exit record's entry and a pool of fault entries,

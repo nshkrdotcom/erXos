@@ -4,7 +4,7 @@
  */
 
 /*
- * The hosted process's writer of its trace ring (docs/design-stopgap.md, "The trace
+ * The hosted process's writer of its trace ring (docs/design-fiasco.md, "The trace
  * ring"): the parks, wakes and deliveries the hosted backend carries out. A host thread
  * has no thread record, task or known CPU, so every record has thread and space 0 and
  * sets cpu_unknown.

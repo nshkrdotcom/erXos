@@ -1,5 +1,5 @@
 // Modified by erXos: FP state is switched eagerly, so no thread owns the
-// FPU (docs/design-stopgap.md, "FP and SIMD state").
+// FPU (docs/design-fiasco.md, "Eager FP switching").
 INTERFACE [arm_em_tz]:
 
 #include "task.h"

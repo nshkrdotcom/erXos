@@ -4,7 +4,7 @@
  */
 
 /*
- * The group's report on the native root, under erx.group_report=1 (docs/design-stopgap.md,
+ * The group's report on the native root, under erx.group_report=1 (docs/design-fiasco.md,
  * "The command line"): a thread of its own looks at the status page park.c keeps ten times a
  * second, and the console gets a line each time the count of parked executors or of executors
  * changes, as ERX_HOSTED_GROUP_REPORT gives the hosted backend. That is how the QEMU suite

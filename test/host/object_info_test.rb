@@ -11,7 +11,7 @@ require_relative '../fixtures/generated_tree'
 # erx-gate: sanitizers
 
 # The machine and CPU reports of erx_object_info on the Phase 1 backends, on the host
-# (docs/design-stopgap.md, "Reporting kernel objects"): a reported bit is set exactly
+# (docs/design-fiasco.md, "Reporting kernel objects"): a reported bit is set exactly
 # for a fact the backend gave. liberx/backend/core/object_info.c is the core, and each
 # seed below drops one bit, which the driver must name.
 class ObjectInfoTest < Minitest::Test

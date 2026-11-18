@@ -1,4 +1,4 @@
-# Modified by erXos: it boots from erXos's boot image (docs/design-stopgap.md, "Boot handoff").
+# Modified by erXos: it boots from erXos's boot image (docs/design-fiasco.md, "Boot handoff").
 # ARM platforms
 
 $(if $(IS_GEN_DT_PLATFORM),\
@@ -94,7 +94,7 @@ SUPPORT_CC_arm64-ls1012afrdm   := platform/layerscape.cc platform_single_ram_reg
 DEFAULT_RELOC_arm64-arm_virt   := 0x00200000
 # The generic platform's RAM starts at 0. erXos links its bootstrap static at
 # 2 MiB, where the Raspberry Pi 4's firmware loads a 64-bit image, above
-# BL31's reserved first 512 KiB (docs/design-stopgap.md, "The Raspberry Pi 4").
+# BL31's reserved first 512 KiB (docs/design-fiasco.md, "The Raspberry Pi 4").
 DEFAULT_RELOC_arm64-arm_gen    := 0x00200000
 SUPPORT_CC_arm64-arm_virt      := platform/arm_virt.cc dt.cc
 SUPPORT_CC_arm64-imx8m         := platform/imx.cc platform_single_ram_region.cc

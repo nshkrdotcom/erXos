@@ -490,7 +490,7 @@ _Static_assert(ERX_BOOT_FRAMEBUFFER_WORDS_MAX <= ERX_BOOT_GIVEN_WORDS_MAX, "a fr
 
 /*
  * Whether a domain's boot page's strings hold its arguments and
- * environment beside what the library writes there (docs/design-stopgap.md,
+ * environment beside what the library writes there (docs/design-fiasco.md,
  * "Boot information"): its own node name and the system node's, -erx_record
  * build, a -erx_record given record per device of a kind it holds, and -erx_record boot when it holds a
  * block device of a kind, and -erx_record system_image when it holds the system
@@ -619,7 +619,7 @@ boot_places(erx_dom_configured_t *configured, uint32_t nconfigured, const erx_ma
  * manifest's system window, plus one, or 0 for a manifest with none; and
  * system_image, the manifest's row that the holder's boot page alone
  * carries as -erx_record system_image
- * (docs/design-stopgap.md, "The booted slot"). The check gives a manifest
+ * (docs/design-fiasco.md, "The booted slot"). The check gives a manifest
  * at most one system window, held by the configured domain that holds its
  * block device, and the system_image row with it (property 8). The view
  * refuses a second window, a holder past the domains table and a window

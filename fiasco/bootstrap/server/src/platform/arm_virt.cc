@@ -1,4 +1,4 @@
-// Modified by erXos: it boots from erXos's boot image (docs/design-stopgap.md, "Boot handoff").
+// Modified by erXos: it boots from erXos's boot image (docs/design-fiasco.md, "Boot handoff").
 /*
  * Copyright (C) 2018-2025 Kernkonzept GmbH.
  * Author(s): Sarah Hoffmann <sarah.hoffmann@kernkonzept.com>

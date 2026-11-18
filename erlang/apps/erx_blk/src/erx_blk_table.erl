@@ -30,7 +30,7 @@
 %% count. admit/2 names a window on each partition of the layout but the two system
 %% partitions: the slot writer's windows on those wait for its grant, so nothing in the
 %% driver's domain writes a system partition. booted/1 names the one window the boot value
-%% decides (PW1 of docs/design-storage.md; docs/design-stopgap.md, "The booted slot"):
+%% decides (PW1 of docs/design-storage.md; docs/design-fiasco.md, "The booted slot"):
 %% system, read-only, on the system partition of the slot that `-erx_record boot VALUE
 %% SLOT` names, for the holder the domain library gave the slot's `-erx_record
 %% system_image` record, and none on a boot that names no slot, an unknown boot, on boot

@@ -64,7 +64,7 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   `site_leaves_out` names, the web domain, which only the host link serves,
   and the display domain, which has no gpu on the page, each of which would
   cost boot time, and gives back the room they took
-  ([docs/design-stopgap.md](../docs/design-stopgap.md), "The Phase 1
+  ([docs/design-fiasco.md](../docs/design-fiasco.md), "The Phase 1
   manifest check"). The image's build runs the same manifest check over it
   as over the development manifest, so the check proves what the site
   ships, and a change to the development manifest reaches the site's at
@@ -329,7 +329,7 @@ image shares with the QEMU harness (the production image, built from
 disk on the last transport, 0x0a003e00, and the network device on the
 last of the page below, 0x0a002e00 (interrupt 71), since a 4 KiB page
 holds eight transports and is one device's alone
-([design-stopgap.md](../docs/design-stopgap.md)). So `terminal.js` gives
+([design-fiasco.md](../docs/design-fiasco.md#device-records)). So `terminal.js` gives
 v64 the disk and then seven blank read-only disks of one sector, which
 fill the rest of the disk's 4 KiB page and which no erXos driver is
 given, and the network device lands on the transport the record names.

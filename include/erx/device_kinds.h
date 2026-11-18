@@ -26,7 +26,7 @@
  *
  * erx_device_kinds are the kinds a give drives: a device of one gets a
  * record, -erx_record given, in the system domain's boot page and in a holder
- * domain's (docs/design-stopgap.md, "Boot information"), and is driven
+ * domain's (docs/design-fiasco.md, "Boot information"), and is driven
  * (erx_dom_entry_driven, erx/dom.h). The root's reader
  * (liberx/backend/core/boot_manifest.c) and the domain library's boot view
  * (liberx/system/dom_boot_view.c) both read this table, so a further kind
@@ -56,7 +56,7 @@ static const erx_device_kind_t erx_device_kinds[] = {
 };
 
 /*
- * The UARTs a console may be (docs/design-stopgap.md, "The console"): the
+ * The UARTs a console may be (docs/design-fiasco.md, "The console"): the
  * root writes the record -erx_record ROLE_WORD PERIPHERAL ... for the UART
  * machine.console names from its row here, erx_console starts the driver of
  * that PERIPHERAL, and the manifest check refuses a console of a compatible

@@ -14,7 +14,7 @@
 #include "erx/cdefs.h"
 
 /*
- * The boot information page (docs/design-stopgap.md, "Boot information"), made and read
+ * The boot information page (docs/design-fiasco.md, "Boot information"), made and read
  * by pure functions over the memory they are handed, so both entries write the same page
  * and ERTS's start reads it one way.
  *

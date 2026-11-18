@@ -1018,7 +1018,7 @@ $(OBJDIR)/%.o: nifs/common/%.c
 $(OBJDIR)/%.o: nifs/common/%.cpp
 	$(V_CXX) $(CFLAGS) $(ESOCK_CFLAGS) -DLIBSCTP=$(LIBSCTP) $(INCLUDES) -Inifs/common -Inifs/$(STOCK_OSTYPE) -c $< -o $@
 
-# A hosted runtime has no devices; its stand-in lets tests reach the BIFs (docs/design-stopgap.md,
+# A hosted runtime has no devices; its stand-in lets tests reach the BIFs (docs/design-fiasco.md,
 # "The hosted backend").
 $(OBJDIR)/erx_device.o $(OBJDIR)/erx_device_nif.o: CFLAGS += $(if $(findstring hosted,$(TARGET)),-DERX_DEVICE_STAND_IN)
 

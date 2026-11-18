@@ -5,7 +5,7 @@
 
 /*
  * The debug log on Fiasco with no root service: one thread in one task runs
- * the call's body directly (docs/design-stopgap.md, "Boot handoff"),
+ * the call's body directly (docs/design-fiasco.md, "Boot handoff"),
  * which is the kernel's own dispatch and log cores, as on the hosted backend.
  * Each record goes out through the kernel's log object as it is written. A
  * public UTCB of this file's own holds what the caller stores, since each

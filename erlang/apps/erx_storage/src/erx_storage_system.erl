@@ -12,7 +12,7 @@ domain that serves `system` serves the booted slot's system partition.
   of this domain's `-erx_record system_image` record: the image from the
   partition's byte 0 and its dm-verity tree's offset, length, salt and root
   hash, which the domain library wrote from the manifest the booted boot
-  image holds (docs/design-stopgap.md, "The booted slot"). mount/1 reads
+  image holds (docs/design-fiasco.md, "The booted slot"). mount/1 reads
   the record itself, through erx_device_record:system_image/0, and only
   the mint calls it; the module exports no mount, but mount/3, which
   takes the record's answer from its caller, to the EUnit cases compiled

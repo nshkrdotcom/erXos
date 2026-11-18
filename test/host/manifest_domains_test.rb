@@ -8,7 +8,7 @@ require_relative '../../tools/lib/erx/platform'
 require_relative '../../tools/lib/erx/manifest'
 require_relative '../fixtures/manifest_context'
 
-# Phase 1's manifest check over configured domains (docs/design-stopgap.md, "The
+# Phase 1's manifest check over configured domains (docs/design-fiasco.md, "The
 # Phase 1 manifest check"): the kept properties a domain row brings, each with a
 # seeded violation, and the refusals it adds, each with a seeded record. Every seed
 # edits the real development manifest with two configured domains, alpha and beta,

@@ -14,7 +14,7 @@ require_relative 'source_revision'
 
 module Erx
   # A board's device tree, compiled on the host from Linux's sources at deps.lock's pin
-  # `linux-dts` (docs/design.md, the dependency table; docs/design-stopgap.md, "The
+  # `linux-dts` (docs/design.md, the dependency table; docs/design-fiasco.md, "The
   # Raspberry Pi 4"):
   #
   # * the board's tree, compiled from Linux's source with one edit, the serial aliases,

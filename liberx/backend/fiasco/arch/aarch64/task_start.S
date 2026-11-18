@@ -5,7 +5,7 @@
 
 /*
  * A task's ELF entry. The service starts its first thread here with the stack pointer
- * holding the record (docs/design-stopgap.md, "Thread creation"), as it starts every
+ * holding the record (docs/design-fiasco.md, "Thread creation"), as it starts every
  * thread at the trampoline. Only the task's image knows its stack and its C entry, so
  * these go in the record, and the trampoline does the rest; the argument registers are
  * the task's creator's.

@@ -830,7 +830,7 @@ class ProductionImageTest < Minitest::Test
   # The refusal boot reaches the root only if QEMU's device tree lies clear of the root's
   # place: bootstrap refuses a tree on it with place_overlap before the root runs. QEMU
   # virt puts the tree at half of RAM, at most 128 MiB into it, or right behind the single
-  # file where that lies higher (docs/design-platforms.md, "Boot handoff"), so the tree
+  # file where that lies higher (docs/design-platforms.md, "Boot"), so the tree
   # must stay clear for a file short of the root, one that ends on the root's place, as
   # the production image's does, and one that runs past the root's room. The root's
   # room ends 72 MiB into RAM, so a machine of 144 MiB is the smallest refusal machine.
@@ -920,8 +920,8 @@ class ProductionImageTest < Minitest::Test
   # The refusal boot proves root_memory_fits, which the root reaches only once it holds the
   # contiguous pool: one run, aligned to its own size, of up to CONTIGUOUS_POOL_MAX_BYTES.
   # The run is sought above the root's room and below the device tree, behind which
-  # bootstrap moves an archive the root lands on (docs/design-platforms.md, "Boot
-  # handoff"). Fiasco's kernel memory (Platform.fiasco_reserve) takes the top of the
+  # bootstrap moves an archive the root lands on (docs/design-platforms.md, "Boot").
+  # Fiasco's kernel memory (Platform.fiasco_reserve) takes the top of the
   # highest free region, the top of RAM (fiasco/kernel/src/kern/arm/kmem_alloc-arm.cpp,
   # Kmem_alloc::Kmem_alloc), so the run must end below it too. A machine without such a
   # run refuses the boot at the pool, and the root_memory refusal never shows.

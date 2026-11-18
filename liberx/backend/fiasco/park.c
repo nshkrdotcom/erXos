@@ -4,7 +4,7 @@
  */
 
 /*
- * The task's park record (docs/design-stopgap.md, "Interrupts and readiness"): the
+ * The task's park record (docs/design-fiasco.md, "Interrupts and readiness"): the
  * readiness of the task's home group, static data of which each task image has its own copy.
  * It holds the effects under park_table.c, which are the park lock and each executor's
  * semaphore, the one its umtx waits use, at 0 whenever its thread enters either wait;

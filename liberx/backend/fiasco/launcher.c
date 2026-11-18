@@ -4,7 +4,7 @@
  */
 
 /*
- * The test-task launcher in the root (docs/design-stopgap.md, "The call table"): a
+ * The test-task launcher in the root (docs/design-fiasco.md, "The call table"): a
  * task from a boot-image program, started, and later waited for. It uses the
  * ordinary calls; only the wait is the backend's own, as a task has no exit record.
  */

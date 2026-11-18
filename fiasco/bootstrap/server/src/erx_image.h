@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 // SPDX-License-Identifier: BSD-2-Clause
 //
-// bootstrap's one erXos function (docs/design-stopgap.md, "Boot handoff").
+// bootstrap's one erXos function (docs/design-fiasco.md, "Boot handoff").
 
 #pragma once
 

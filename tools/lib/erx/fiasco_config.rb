@@ -27,7 +27,7 @@ module Erx
     # counters for profiling (a difference the design records), and the
     # synchronized clock: wait deadlines are times of the architecture's
     # counter, which Timer::system_clock() reads only with it, a tick
-    # count in the information page without it (design-stopgap.md).
+    # count in the information page without it (design-fiasco.md, "Boot handoff").
     REQUIRED = %w[CONFIG_FPU CONFIG_PERFORMANCE CONFIG_PERF_CNT_USER CONFIG_SYNC_CLOCK].freeze
     # The fork switches FP state eagerly and leaves SVE trapped ("FP and SIMD
     # state"); the thread region is a constant of the non-hypervisor layout.

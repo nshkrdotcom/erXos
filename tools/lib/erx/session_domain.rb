@@ -300,7 +300,7 @@ module Erx
       true
     end
 
-    # The machine's end, whose console line (docs/design-stopgap.md, "The end path") names
+    # The machine's end, whose console line (docs/design-fiasco.md, "The end path") names
     # the kind of end asked for, a reset or a power-off, after the one log line that names
     # the end and the principal, root (docs/design-system.md, "A session's request").
     # `reboot` runs in root_1's own session, which holds the machine grant: a malformed

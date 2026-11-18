@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% What keeps the machine's watchdog from ending the machine (docs/design-stopgap.md,
+%% What keeps the machine's watchdog from ending the machine (docs/design-fiasco.md,
 %% "The watchdog"): a process at priority max that pets it from a normal scheduler, so
 %% a pet says that schedulers run and timers fire. The root never pets on its behalf.
 %% Only the system domain holds the machine's watchdog, so in any other domain

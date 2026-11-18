@@ -10,7 +10,7 @@ require_relative '../fixtures/generated_tree'
 
 # erx-gate: sanitizers
 
-# The time page's scale and the deadline's wait, on the host (docs/design-stopgap.md,
+# The time page's scale and the deadline's wait, on the host (docs/design-fiasco.md,
 # "Deadlines"): the driver holds them to exact arithmetic, and each seed below must
 # make it name what it broke. liberx/backend/fiasco/time_table.c is the core.
 class FiascoTimeTest < Minitest::Test

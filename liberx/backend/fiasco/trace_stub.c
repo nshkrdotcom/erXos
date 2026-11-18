@@ -4,7 +4,7 @@
  */
 
 /*
- * A task's side of the trace ring (docs/design-stopgap.md, "The trace ring"). Only the
+ * A task's side of the trace ring (docs/design-fiasco.md, "The trace ring"). Only the
  * root links the ring, in the way only the root links erx_watchdog_pet; a task links this
  * file instead, so its reader refuses and its parks and wakes record nothing.
  */

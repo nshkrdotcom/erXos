@@ -20,7 +20,7 @@
 #include "erx/core/boot_range.h"
 
 /*
- * What the kernel accepts from bootstrap (docs/design-stopgap.md, "Boot
+ * What the kernel accepts from bootstrap (docs/design-fiasco.md, "Boot
  * handoff"). The record lives in the kernel's own image, which only bootstrap
  * wrote before the kernel ran; these checks catch a first stage and a kernel
  * built apart, and a boot that skipped bootstrap's validator, whose record is

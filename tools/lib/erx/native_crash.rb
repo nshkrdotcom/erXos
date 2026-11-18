@@ -13,7 +13,7 @@ require_relative 'root_fault'
 require_relative 'runner'
 
 module Erx
-  # A root thread's fault on QEMU (docs/design-stopgap.md, "Faults, and the fault of
+  # A root thread's fault on QEMU (docs/design-fiasco.md, "Faults, and the fault of
   # the root task", "The end path"): test/guest/native_crash touches what it must
   # not, one case per image. A run that ended the machine proves little alone, so
   # the crash frame in its log is read back and held to what the guest said it would

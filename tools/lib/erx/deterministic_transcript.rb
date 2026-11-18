@@ -6,7 +6,7 @@ require_relative 'error'
 
 module Erx
   # Two deterministic-mode boots of one image must write the same serial transcript, byte
-  # for byte (docs/design-stopgap.md, "Deterministic mode"). The compared span starts at the
+  # for byte (docs/design-fiasco.md, "Deterministic mode"). The compared span starts at the
   # first line of erXos's banner and ends with the command shell's banner line: what comes
   # before erXos's banner is bootstrap's, and the harness ends the guest on a poll some time
   # after the command shell's line, so what follows it is cut wherever the poll fell.

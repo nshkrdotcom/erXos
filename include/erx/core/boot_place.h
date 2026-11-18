@@ -15,7 +15,7 @@
 #include "erx/core/boot_range.h"
 
 /*
- * What bootstrap decides before it changes anything (docs/design-stopgap.md,
+ * What bootstrap decides before it changes anything (docs/design-fiasco.md,
  * "Boot handoff"). erx_boot_load_plan finds the archive, validates its index,
  * checks and plans each executable bootstrap places, chooses where they go,
  * and where the device tree's copy and the handoff page go, and returns the
@@ -104,7 +104,7 @@ struct erx_boot_placed {
  * archive is where the archive lies once the plan is applied: every copy's
  * source, the reservation and the record name it. archive_loaded is where the
  * loader left it, the same range unless an image that runs at its link
- * addresses lands on it (docs/design-stopgap.md, "Boot handoff"); bootstrap
+ * addresses lands on it (docs/design-fiasco.md, "Boot handoff"); bootstrap
  * then moves the archive's bytes from archive_loaded.start to archive.start,
  * as memmove does, since the two may overlap, before any copy.
  *

@@ -14,7 +14,7 @@
 #include "liberx/backend/core/grow_table.h"
 
 /*
- * Object records and handle tables (docs/design-stopgap.md, "Capabilities in Fiasco's
+ * Object records and handle tables (docs/design-fiasco.md, "Capabilities in Fiasco's
  * object space"). The service keeps one table of object records and one handle table
  * per task. A handle is an entry's index plus one, so 0 stays ERX_CAP_NULL. An entry
  * names a record and the generation the record had when the entry was made. A record's

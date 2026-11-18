@@ -15,7 +15,7 @@
 /*
  * What the root service may do with a memory object: the pure decisions behind vm.c's
  * maps, copies and supplies and the service's create of a paged object
- * (docs/design-stopgap.md, "The call table"). They read only the object's traits and
+ * (docs/design-fiasco.md, "The call table"). They read only the object's traits and
  * the request, so the host checks them (test/fixtures/fiasco_vm_driver.c), and vm.c
  * acts only on ERX_OK.
  */

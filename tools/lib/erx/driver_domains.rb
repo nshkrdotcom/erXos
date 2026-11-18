@@ -81,7 +81,7 @@ module Erx
   #
   # The network domain holds the unit `net` and runs the network stack, which serves root's
   # session its grant, `net`, and the system domain its driver-control facet, `network_ctl`
-  # (docs/design-stopgap.md, the network domain). Its cells boot the development image with
+  # (docs/design-system.md, "The network domain"). Its cells boot the development image with
   # a network device, as the network device suite does, and type at the console's shells.
   # The harness plays a host on the guest's link (NetDevice::Link): the guest answering its
   # ARP request and ICMP echo (NetDevice.exchange) shows that the guest's link holds a

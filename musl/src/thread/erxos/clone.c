@@ -4,7 +4,7 @@
  */
 
 /*
- * A new thread over liberx (docs/design-stopgap.md, "Thread creation"). Only
+ * A new thread over liberx (docs/design-fiasco.md, "Thread creation"). Only
  * pthread_create's clone is offered: a thread in this task. Its starting registers go
  * in the caller's public UTCB, which erx_thread_create reads. Its word to clear and its
  * identifier are set before the start, since it can exit as soon as it runs.

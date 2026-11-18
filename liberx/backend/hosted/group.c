@@ -5,7 +5,7 @@
 
 /*
  * The process's one group of executors and its IRQ objects, over the park core
- * both backends run (docs/design-stopgap.md, "The park protocol"). A trigger has no
+ * both backends run (docs/design-fiasco.md, "The park protocol"). A trigger has no
  * dispatcher to go through here: the object fires in the caller's thread.
  */
 

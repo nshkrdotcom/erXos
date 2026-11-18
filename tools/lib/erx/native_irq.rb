@@ -11,7 +11,7 @@ require_relative 'qemu_cells'
 require_relative 'runner'
 
 module Erx
-  # Interrupts through the readiness interface on QEMU (docs/design-stopgap.md,
+  # Interrupts through the readiness interface on QEMU (docs/design-fiasco.md,
   # "Interrupts and readiness", "Verification"): test/guest/native_irq sets up a device
   # line and software objects, parks an executor, and asks for each character the
   # harness types, whose label and byte come back on the same serial line. Last, a holder

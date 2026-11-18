@@ -590,7 +590,7 @@ module Erx
     # keeps 54 MiB (Platform.fiasco_reserve). The re-grant image (Regrant) holds three
     # domains' budgets in root_memory and carries the session release beside them, so its
     # archive outgrows the room the medium machine leaves root_memory; such an archive
-    # asks for a larger machine, never a smaller root_memory (docs/design-stopgap.md,
+    # asks for a larger machine, never a smaller root_memory (docs/design-fiasco.md,
     # "The root startup rule").
     def machine(platform) = MediumBoot.machine(platform).with(memory_mib: 896)
 

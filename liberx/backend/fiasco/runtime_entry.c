@@ -7,7 +7,7 @@
  * The system's program on the native root: binds the boot archive as the release, as the
  * hosted entry does its mapped file, fills the boot information page from the handoff
  * record, the manifest and the kernel command line, and enters musl's start path, whose
- * main is in runtime_main.c (docs/design-stopgap.md, "Boot information").
+ * main is in runtime_main.c (docs/design-fiasco.md, "Boot information").
  */
 
 #include <stdalign.h>
@@ -259,7 +259,7 @@ release_read(const erx_boot_handoff_view_t *handoff, bool hostlink, erx_boot_man
 /*
  * The manifest's system_args, what its driver opens of the console's device entry, the boot
  * value and slot of the handoff, the boot image's build identifier, which the host link's hello
- * reports (docs/design-live.md, "The host link"), each device record (docs/design-stopgap.md, "Device records"),
+ * reports (docs/design-live.md, "The host link"), each device record (docs/design-fiasco.md, "Device records"),
  * then each erx.arg word of the kernel command line, in its order. A plain word joins the flag
  * before it, which the UART drivers expect. A manifest with no console entry, or one whose
  * UART is of no kind the root knows, has no such words, and the console's start then says why
@@ -489,7 +489,7 @@ framebuffer_facts(erx_dom_device_entry_t *entry, const erx_dt_t *tree)
 }
 
 /*
- * The root's own give of a device the system domain holds (docs/design-stopgap.md, "Device
+ * The root's own give of a device the system domain holds (docs/design-fiasco.md, "Device
  * records"), whose catalogue entry is entry. It makes in the root's own table the objects a
  * holder's creation makes: the register window over the pages of the device's registers,
  * its line's IRQ object and, when the entry admits DMA memory, its contiguous memory for the

@@ -25,7 +25,7 @@
 #define ERX_FIASCO_AREA_START	UINT64_C(0x4000000000)
 
 /*
- * The root task's own memory on Fiasco (docs/design-stopgap.md, "Budgets and the
+ * The root task's own memory on Fiasco (docs/design-fiasco.md, "Budgets and the
  * ownership of pages"). The results are those of the call table's row for these
  * calls; vm_table.h lists each refusal. The service alone runs the bodies, and the
  * root's first thread before the service runs, so nothing here takes a lock. The
@@ -46,7 +46,7 @@ uint64_t	erx_fiasco_vm_free_pages(void);
 uint64_t	erx_fiasco_vm_used_pages(void);
 /* How many pages the pool was built with, free or handed out. */
 uint64_t	erx_fiasco_vm_pool_pages(void);
-/* Pool pages for the service's own tables (docs/design-stopgap.md, "Table sizes"). */
+/* Pool pages for the service's own tables (docs/design-fiasco.md, "Table sizes"). */
 extern const erx_backend_grow_pages_t erx_fiasco_vm_records;
 
 /*
@@ -70,7 +70,7 @@ int	erx_fiasco_vm_body(uint32_t task, erx_backend_vm_op_t op, uint64_t addr, uin
 
 /*
  * The pages of the memory object whose record object.c took at this index, every page
- * taken at once (docs/design-stopgap.md, "Shared objects and the JIT alias"). No room
+ * taken at once (docs/design-fiasco.md, "Shared objects and the JIT alias"). No room
  * for it or no pages is ERX_ENOMEM, and then it holds nothing. object.c frees it.
  * With jit it is a JIT object (ERX_MEM_JIT), which no copy or supply reads or writes.
  */

@@ -458,7 +458,7 @@ erx_mem_seal(uint64_t mem)
 }
 
 /*
- * A child is a private copy here (docs/design-stopgap.md, "The call table"): the
+ * A child is a private copy here (docs/design-fiasco.md, "The call table"): the
  * service makes it, its parent and range checked, and erx_mem_copy fills it 64 pages a
  * request; a failed copy closes it, which leaves nothing of it.
  */
@@ -544,7 +544,7 @@ erx_budget_resize(uint64_t budget, uint64_t guarantee, uint64_t cap)
 	return (erx_fiasco_service_call(ERX_FIASCO_CALL_BUDGET_RESIZE, &request, sizeof(request), &reply));
 }
 
-/* No notice is ever sent: nothing counts a budget's spending (docs/design-stopgap.md, "Reporting a budget"). */
+/* No notice is ever sent: nothing counts a budget's spending (docs/design-fiasco.md, "Reporting a budget"). */
 int
 erx_budget_watch(uint64_t budget, uint64_t irq, uint64_t threshold)
 {

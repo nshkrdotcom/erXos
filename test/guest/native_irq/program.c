@@ -4,7 +4,7 @@
  */
 
 /*
- * The holder task of the interrupt suite (docs/design-stopgap.md, "Device records"),
+ * The holder task of the interrupt suite (docs/design-fiasco.md, "Device records"),
  * loaded from the boot image by test/guest/native_irq/guest.c. The root made a device's
  * objects and passed them, as the domain library does for a device another domain holds;
  * here the holder maps the register window and the contiguous run, asks the run's DMA

@@ -228,7 +228,7 @@ bad_paths(Longest) ->
     [Longest ++ "a", "", "virtio_mmio@a003e00", "/virtio_mmio@a003e00\e[2J", "/virtio mmio", "/virtio_mmio\n",
      [$/, 16#661], "/virtio_mmio@a003e00:0", [$/, 0]].
 
-%% The system_image record (docs/design-stopgap.md, "The booted slot"): the image's length,
+%% The system_image record (docs/design-fiasco.md, "The booted slot"): the image's length,
 %% the tree's offset and length in decimal, the salt and the root hash in lowercase hex.
 -define(ROOT, "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff").
 -define(SALT, "a5").

@@ -7,7 +7,7 @@
 #define ERX_CORE_EFFECTS_H
 
 /*
- * The effects a host of the cores provides (docs/design-stopgap.md,
+ * The effects a host of the cores provides (docs/design-fiasco.md,
  * "Interfaces"): each of them acts on the world the cores never touch.
  */
 

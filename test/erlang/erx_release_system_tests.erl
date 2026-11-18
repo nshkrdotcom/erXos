@@ -2,7 +2,7 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% The booted slot's system partition as the packer writes it, read as its storage
-%% domain reads it (docs/design-stopgap.md, "The booted slot"): over a RAM window
+%% domain reads it (docs/design-fiasco.md, "The booted slot"): over a RAM window
 %% (erx_erofs_tests:window/1) on the partitions test/host/release_medium_test.rb writes
 %% in ERX_RELEASE_SYSTEM, each mounted with erx_erofs:mount/3 under the layout
 %% erx_device_record:system_image/1 reads from the words of the `system_image` record,

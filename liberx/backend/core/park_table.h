@@ -12,7 +12,7 @@
 #include "erx/abi.h"
 
 /*
- * The park protocol's core (docs/design-stopgap.md, "The park protocol"), which
+ * The park protocol's core (docs/design-fiasco.md, "The park protocol"), which
  * both backends run: one state machine over the group's epoch, each slot's epoch,
  * the parked list in order, the ready list in order and the listed flags. It reads
  * no clock and calls no kernel. Each step says what its caller does once the lock is
@@ -80,7 +80,7 @@ erx_backend_park_result_t erx_backend_park_step(erx_backend_park_t *, const erx_
  * absorb blocks until an up already on its way arrives. up never blocks. trace records
  * the slot executor's own park (ERX_TRACE_EVENT_PARK, with its deadline) and the end of
  * that park (ERX_TRACE_EVENT_WAKE, with its status) on the trace ring, outside the park
- * lock (docs/design-stopgap.md, "The trace ring"). Only the step and the status mirror
+ * lock (docs/design-fiasco.md, "The trace ring"). Only the step and the status mirror
  * run under the lock.
  */
 typedef struct erx_backend_park_effects {

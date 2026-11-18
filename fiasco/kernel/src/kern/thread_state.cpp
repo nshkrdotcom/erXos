@@ -1,5 +1,5 @@
 // Modified by erXos: FP state is switched eagerly, so no thread owns the
-// FPU (docs/design-stopgap.md, "FP and SIMD state"). The notice makes this
+// FPU (docs/design-fiasco.md, "Eager FP switching"). The notice makes this
 // file's implementation part non-empty, so its header includes what it
 // names. Thread_sem_woken is erXos's too (Semaphore::wake_dequeued()).
 INTERFACE:

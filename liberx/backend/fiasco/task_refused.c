@@ -8,7 +8,7 @@
  * domain's runtime image (NativeRoot::DOMAIN_RUNTIME) and a session's program
  * (NativeRoot::PROGRAM), through api_names.c, link: each refuses or reports
  * its value unavailable, as the call table answers a call it does not offer
- * (docs/design-stopgap.md, "The call table"). The root's own bodies in group.c,
+ * (docs/design-fiasco.md, "The call table"). The root's own bodies in group.c,
  * irq.c, time_page.c, vm.c, watchdog_thread.c and runtime_entry.c read the root's
  * tables, which a task does not hold. A call the service comes to serve a task
  * moves from here to its stub in service_stubs.c. The domain library's entries,

@@ -83,7 +83,7 @@ module Erx
                    'apps' => %w[services max], 'package' => %w[enable], 'display' => %w[palette] }.freeze
       # The declarations that carry no source alias: the one machine, the one apps row
       # (docs/design-packaging.md, "The apps row") and the one system_image row
-      # (docs/design-stopgap.md, "The booted slot").
+      # (docs/design-fiasco.md, "The booted slot").
       NAMELESS = %w[machine apps system_image].freeze
       DIRECTIVES = { 'introduce' => 2, 'liveness' => 1, 'shell_principal' => 1 }.freeze
       IDENTIFIER = /\A[a-z0-9][a-z0-9_-]{0,62}\z/.freeze

@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 /*
- * The arithmetic of the time page and of deadlines (docs/design-stopgap.md,
+ * The arithmetic of the time page and of deadlines (docs/design-fiasco.md,
  * "Deadlines"): pure functions of their arguments, so the host tests them.
  */
 

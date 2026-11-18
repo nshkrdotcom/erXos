@@ -23,7 +23,7 @@
 %% served: format for another format, extent_count for more than one extent,
 %% extent_bounds for an extent that is not whole sectors inside that partition, and length for
 %% one that is not data_bytes long. Phase 1 has one block device, the one the service
-%% drives; the packer's check (docs/design-stopgap.md, "The Phase 1 manifest check") puts
+%% drives; the packer's check (docs/design-fiasco.md, "The Phase 1 manifest check") puts
 %% every image and its window on it, so the device fields are not read.
 %%
 %% A refusal names an image by its manifest name, which the reader checked as an

@@ -87,7 +87,7 @@ module Erx
     # and network domains take a whole CPU each and its web and display domains, which the
     # site manifest leaves out, the last 250 mcpu, 150 and 100; without them 250 mcpu
     # remain: two eighths, as SystemDomain's erts and peer take. Nothing enforces a grant at run time in Phase 1
-    # (docs/design-stopgap.md, property 13), and the share's CPUs, which set a runtime's
+    # (docs/design-fiasco.md, property 13 and FD15), and the share's CPUs, which set a runtime's
     # schedulers, are the users share's, so the domains run as with a larger grant.
     EIGHTH_SHARE = "share eighth\n  quota_ns 1250000\n  period_ns 10000000\n  cpuset 15\n  capacity_mcpu 125\n" \
                    "  capacity_first 0\n  slice_us 1000\n  grace_us 5\n  base 16\n  ceiling 31\n  flags none\n"
@@ -301,7 +301,7 @@ module Erx
     # without the domains the website leaves out, with a domain row and room for two domains (a medium machine's manifest,
     # with no growth of the system). The row, DOMAIN_ROW, is there so the image
     # carries the release and the runtime image it names, which is how a manifest makes
-    # its image carry them (docs/design-stopgap.md, "The production image"). The domain
+    # its image carry them (docs/design-fiasco.md, "The production image"). The domain
     # service starts the row at boot; the shell creates the cell's domains through the
     # service, each awaited before the next. By default the room is for two: the configured row, which
     # the build's planner plans against the principal and which runs while the shell starts,
@@ -461,7 +461,7 @@ module Erx
     # At the Erlang shell's banner, the person types an expression that waits for the
     # storage domain to run erx_storage, and so the block driver, and then, at that node
     # over erpc, opens the system partition's EROFS image on the system window, checked
-    # against the layout of the node's system_image record (docs/design-stopgap.md, "The
+    # against the layout of the node's system_image record (docs/design-fiasco.md, "The
     # booted slot"), mounts it with the EROFS reader itself, so nothing joins the
     # storage domain's namespace, and prints the MD5 of IMAGE_FILE as the reader reads it;
     # it must be the MD5 of the file the packer put in the image. A call that raises answers {image_md5, {Class, Reason}}.

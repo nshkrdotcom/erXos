@@ -12,7 +12,7 @@ require_relative 'qemu_cells'
 require_relative 'runner'
 
 module Erx
-  # The watchdog on QEMU (docs/design-stopgap.md, "The watchdog", "Verification"):
+  # The watchdog on QEMU (docs/design-fiasco.md, "The watchdog", "Verification"):
   # test/guest/native_watchdog pets past its deadlines and then spins, and the record
   # the watchdog thread writes is read back: its cause, and a time since the last pet
   # no shorter than the deadline the guest asked for; then the machine's end, a reset.

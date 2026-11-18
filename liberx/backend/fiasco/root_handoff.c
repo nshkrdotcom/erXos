@@ -5,7 +5,7 @@
 
 /*
  * A root task's one way to bootstrap's handoff record: the kernel information
- * page's user_ptr names it (docs/design-stopgap.md, "Boot handoff"). The system's
+ * page's user_ptr names it (docs/design-fiasco.md, "Boot handoff"). The system's
  * root reads it through erx_fiasco_root_open, a test's root directly, for the CPU
  * feature words of its C library's start.
  */

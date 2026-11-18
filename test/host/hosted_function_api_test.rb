@@ -14,7 +14,7 @@ require_relative '../fixtures/generated_tree'
 
 # erx-gate: sanitizers
 
-# The function-API set on liberx's hosted backend (docs/design-stopgap.md, "The call
+# The function-API set on liberx's hosted backend (docs/design-fiasco.md, "The call
 # table", "The hosted backend"), with and without each sanitizer: every line of the
 # transcript in order and a clean exit. The same source runs on native Fiasco through
 # tools/lib/erx/qemu_suites/function_api.rb. Each seed must make a case fail, so a green

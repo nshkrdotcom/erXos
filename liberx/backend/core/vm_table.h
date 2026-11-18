@@ -14,7 +14,7 @@
 #include "liberx/backend/core/grow_table.h"
 
 /*
- * The range table of a task (docs/design-stopgap.md, "The range table" and
+ * The range table of a task (docs/design-fiasco.md, "The range table" and
  * "Protection"): which addresses are reserved, and which of those pages are
  * committed, on which window page and with which protection. It decides what
  * erx_vm_reserve, _commit, _decommit, _release and erx_space_protect do, and

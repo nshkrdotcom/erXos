@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 /*
- * The function-API test set (docs/design-stopgap.md, "The call table"), which seeds
+ * The function-API test set (docs/design-fiasco.md, "The call table"), which seeds
  * the conformance roster. It reads no backend's identifier, no address a backend
  * chose and no handle's bits; its harness gives it somewhere to print.
  */

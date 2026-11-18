@@ -11,7 +11,7 @@
 #include "liberx/backend/fiasco/pm_wdt.h"
 
 /*
- * The watchdog thread (docs/design-stopgap.md, "The watchdog"): it sleeps about a
+ * The watchdog thread (docs/design-fiasco.md, "The watchdog"): it sleeps about a
  * second and steps kernel/core/watchdog.c over the pet word, and carries each step out
  * on board, the board's hardware watchdog, which has no device on a board without one. It takes no lock, so
  * a thread stopped under one cannot stop it, and it outranks every other thread.

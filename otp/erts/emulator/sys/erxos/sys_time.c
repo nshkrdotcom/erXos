@@ -113,7 +113,7 @@ sys_gettimeofday(SysTimeval *tv)
 
 /*
  * A group's CPU usage: erx_group_info's, where a backend measures it. No backend does
- * (docs/design-stopgap.md, "The hosted backend"), so statistics(runtime) fails with notsup
+ * (docs/design-fiasco.md, "The hosted backend"), so statistics(runtime) fails with notsup
  * rather than answer with a made-up value. The usage is one figure, all of it user time.
  */
 int

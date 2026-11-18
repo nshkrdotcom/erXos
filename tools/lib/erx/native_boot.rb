@@ -11,7 +11,7 @@ require_relative 'qemu_cells'
 require_relative 'runner'
 
 module Erx
-  # The system's image end to end on QEMU (docs/design-stopgap.md, "Verification",
+  # The system's image end to end on QEMU (docs/design-fiasco.md, "Verification",
   # "Native boot"): bootstrap places the kernel, sigma0 and the native root task;
   # the kernel prints erXos's banner; the root task reports the record it took
   # from the handoff page; and the root task ends the machine, so QEMU exits by

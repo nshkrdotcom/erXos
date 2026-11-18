@@ -124,7 +124,7 @@ limit budget_depth_max u32 16
 limit device_ranges_max u32 8
 limit device_irqs_max u32 8
 # The longest device-tree path of a manifest device, in bytes without its NUL:
-# the PATH word of its device record (docs/design-stopgap.md, "Device
+# the PATH word of its device record (docs/design-fiasco.md, "Device
 # records"). The manifest grammar bounds devices[].path by it
 # (abi/manifest.txt), and the manifest check holds every device-tree row of the
 # platform to it.
@@ -208,7 +208,7 @@ flags vm_flags u32
 flags space_flags u32
   bit jit 0
 # A paged object made with code may be mapped to run once sealed
-# (docs/design-stopgap.md, "The call table"); jit is erx_mem_create's alone.
+# (docs/design-fiasco.md, "The call table"); jit is erx_mem_create's alone.
 flags mem_flags u32
   bit jit 0
   bit code 1
@@ -255,7 +255,7 @@ enum exit_kind i64
 # (docs/design-programs.md, "The loader's bootstrap").
 # The values fill every start register an architecture file gives
 # (arch_start_args), which the stopgap's trampoline loads
-# (docs/design-stopgap.md, "The trampoline").
+# (docs/design-fiasco.md, "The trampoline").
 enum program_arg u32
   value budget 0
   value group 1
@@ -344,7 +344,7 @@ bytes boot_stand_in_root_path 17 value 626f6f742f73746f706761702d726f6f74
 bytes system_manifest_path 15 value 73797374656d2f6d616e6966657374
 # The flag every boot record rides on, without its dash: the argument word
 # "-erx_record" opens each record of a boot page's arguments and init reads them
-# as init:get_argument(erx_record) (docs/design-stopgap.md, "Boot information").
+# as init:get_argument(erx_record) (docs/design-fiasco.md, "Boot information").
 # It names no application, so the application controller never reads a record
 # word as an application's environment.
 bytes boot_record_flag 10 value 6572785f7265636f7264
@@ -670,13 +670,13 @@ layout erx_dump_header wire_le 8 256
   field length u64 16
   field slogan u8 24 count 232
 
-# How a machine ends (docs/design-stopgap.md, "The end path").
+# How a machine ends (docs/design-fiasco.md, "The end path").
 enum end u32
   value off 1
   value reset 2
 
 # The stopgap's contiguous pool, from which every device's memory is made
-# (docs/design-stopgap.md, "The pool"): one run of the smallest power of two
+# (docs/design-fiasco.md, "The pool"): one run of the smallest power of two
 # that holds the manifest's devices' memory, at least 2 ** fiasco_contig_order_min
 # bytes and at most 2 ** fiasco_contig_order_max. The root sizes it with these and
 # the packer counts it in what the boot keeps (tools/lib/erx/manifest.rb);
@@ -686,7 +686,7 @@ limit fiasco_contig_order_min u32 21
 limit fiasco_contig_order_max u32 24
 
 # The Phase 1 root service's wire, in a native UTCB's message registers
-# (docs/design-stopgap.md, "The root service"). A request's tag label is its
+# (docs/design-fiasco.md, "The root service"). A request's tag label is its
 # fiasco_call number and its first word names the calling thread; a layout's
 # size fixes the request's word count, which the service's decoder checks. A
 # reply is erx_fiasco_reply. Number 1 is the ABI's debug_log.
@@ -1049,7 +1049,7 @@ layout erx_fiasco_group_configure_request wire_le 8 24
   field cpuset u64 16
 
 # A task's dispatcher, which one of the task's own threads names once it has
-# started it (docs/design-stopgap.md, "Interrupts and readiness").
+# started it (docs/design-fiasco.md, "Interrupts and readiness").
 layout erx_fiasco_dispatcher_request wire_le 8 16
   field caller u64 0
   field thread u64 8

@@ -1,4 +1,4 @@
-/* Modified by erXos: a read-execute root section, for the boot archive (docs/design-stopgap.md, "Boot handoff"). */
+/* Modified by erXos: a read-execute root section, for the boot archive (docs/design-fiasco.md, "Boot handoff"). */
 /*
  * Copyright (C) 2008-2009 Technische Universität Dresden.
  * Author(s): Adam Lackorzynski <adam@os.inf.tu-dresden.de>

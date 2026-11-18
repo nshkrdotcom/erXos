@@ -12,7 +12,7 @@
 #include "liberx/backend/core/handles.h"
 
 /*
- * The service's object records and each task's handle table (docs/design-stopgap.md,
+ * The service's object records and each task's handle table (docs/design-fiasco.md,
  * "Capabilities in Fiasco's object space"), over the core in handles.c. Only the
  * service thread calls these. A memory object's pages are vm.c's, a gate's queue
  * fault_gate.c's, a space's task service_task.c's and a budget's values budget.c's,

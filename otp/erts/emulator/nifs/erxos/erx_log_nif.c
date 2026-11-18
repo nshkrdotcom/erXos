@@ -2,7 +2,7 @@
  * Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * The calls under erx_log (docs/design-stopgap.md, "The console"): a labelled line into the
+ * The calls under erx_log (docs/design-fiasco.md, "The console"): a labelled line into the
  * kernel log, a read from the caller's own cursor, and the console's take of the lines
  * nobody has taken. Both reads check each record with the log core's own reader and write
  * it as a line through the core's renderer, so the one escaping function of the log is the

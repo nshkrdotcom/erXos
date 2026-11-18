@@ -14,7 +14,7 @@
 #include "liberx/backend/core/grow_table.h"
 
 /*
- * Fault gates' core (docs/design-stopgap.md, "Fault gates"), which both backends run.
+ * Fault gates' core (docs/design-fiasco.md, "Fault gates"), which both backends run.
  * A gate is a queue of records, each an erx_fault with its space's label, and the
  * one thread bound to it. It carries records and nothing else.
  *

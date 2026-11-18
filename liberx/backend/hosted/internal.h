@@ -10,7 +10,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* What the hosted backend's files share (docs/design-stopgap.md, "The hosted backend"). */
+/* What the hosted backend's files share (docs/design-fiasco.md, "The hosted backend"). */
 
 /* Puts one line this backend built, its newline included, on the console, unescaped. */
 void	erx_hosted_note(const char *line);

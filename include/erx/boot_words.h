@@ -10,7 +10,7 @@
 
 /*
  * The longest of each boot record the root and the domain library write into
- * a boot page's arguments (docs/design-stopgap.md, "Boot information"), each
+ * a boot page's arguments (docs/design-fiasco.md, "Boot information"), each
  * word with its NUL. A writer sizes its buffer by its record's, and the domain
  * library's boot view reserves room for them in a configured row's strings
  * (liberx/system/dom_boot_view.c), so a length is never copied by hand.
@@ -68,7 +68,7 @@
 
 /*
  * -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT [record_volume], the system
- * window's holder's (docs/design-stopgap.md, "The booted slot"): three u64s, then the salt,
+ * window's holder's (docs/design-fiasco.md, "The booted slot"): three u64s, then the salt,
  * at most the row's array, and the root hash, each byte two lowercase hex digits, and the
  * record_volume window role's name, erx_mf_window_role_name's "record_volume", when the
  * holder holds that window too.

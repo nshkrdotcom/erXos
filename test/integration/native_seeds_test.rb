@@ -13,7 +13,7 @@ require_relative '../../tools/lib/erx/native_task'
 require_relative '../../tools/lib/erx/native_watchdog'
 require_relative '../fixtures/generated_tree'
 
-# The threads, watchdog, task and interrupt suites' seeded failures (docs/design-stopgap.md,
+# The threads, watchdog, task and interrupt suites' seeded failures (docs/design-fiasco.md,
 # "Verification"): each seed breaks one thing in a copy of the sources, and the suite's
 # run under TCG must say so, naming the case. A seed that makes no difference means its
 # case does not run the code it claims to. Each boots QEMU and those that lose a wake

@@ -11,7 +11,7 @@ require_relative 'qemu_cells'
 require_relative 'runner'
 
 module Erx
-  # The root task's memory end to end on QEMU (docs/design-stopgap.md,
+  # The root task's memory end to end on QEMU (docs/design-fiasco.md,
   # "Verification", "Memory"): test/guest/native_memory runs as the root over
   # the backend's five calls through the root service and reports each case on one
   # line. A page with too few rights faults and ends the machine with a crash record

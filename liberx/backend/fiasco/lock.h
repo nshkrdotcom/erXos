@@ -13,7 +13,7 @@
 #include <l4/sys/thread.h>
 
 /*
- * A backend lock (docs/design-stopgap.md, "Locks"): a spinlock whose failed
+ * A backend lock (docs/design-fiasco.md, "Locks"): a spinlock whose failed
  * attempt yields. None is held across a kernel call or a request, and no thread
  * holds two, so a holder always comes back.
  */

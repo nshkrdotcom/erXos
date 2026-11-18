@@ -5,7 +5,7 @@
 
 /*
  * The IRQ calls' bodies, on the service, which alone touches this table
- * (docs/design-stopgap.md, "Interrupts and readiness"). An IRQ object is an object
+ * (docs/design-fiasco.md, "Interrupts and readiness"). An IRQ object is an object
  * record of kind IRQ, any task's to make as a doorbell and the root's alone as a line,
  * and any holder's to trigger, ack and bind; its kernel object sits in one of the root's
  * slots, kept here with its bind. The root binds
@@ -196,7 +196,7 @@ erx_fiasco_irq_create_body(uint32_t task, const erx_fiasco_irq_create_request_t 
 /*
  * Whether the task may bind into the group record, or move or unbind an object bound
  * there: the root in any group it holds; any other task in the group it is the home of
- * (docs/design-stopgap.md, "Device records"), so a holder's driver binds the line it was
+ * (docs/design-fiasco.md, "Device records"), so a holder's driver binds the line it was
  * given to its own group and reaches no other domain's; and in a group it created, so a
  * session binds a program's doorbell into the program's group, whose home is the
  * program (docs/design-programs.md, "The channel"). A group's home is its creator or a

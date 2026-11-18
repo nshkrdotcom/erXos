@@ -285,7 +285,7 @@ size_t	erx_program_end_next(erx_program_end_t *end, erx_program_input_t input,
  * session keeps the only DESTROY, and no copy carries DUP or GIVE, so on erXos's kernel the
  * program cannot end, copy or hand on what the session made; on the stopgap the rights are
  * the session's discipline only (docs/design-programs.md, "A program is a port" and "The
- * channel"; docs/design-stopgap.md).
+ * channel"; docs/design-fiasco.md).
  */
 #define ERX_PROGRAM_INSTALL_DATA	((uint32_t)ERX_PROGRAM_ARG_DOORBELL + 1)
 _Static_assert(ERX_PROGRAM_ARG_HWCAP == ERX_PROGRAM_ARG_DOORBELL + 1 &&

@@ -14,7 +14,7 @@
 /*
  * What is wrong with a device-memory or entropy request whatever a backend then does
  * with it, in one place so that both backends refuse the same requests the same way
- * (docs/design-stopgap.md, "The call table"), and the store that keeps a result to its
+ * (docs/design-fiasco.md, "The call table"), and the store that keeps a result to its
  * length. The native service runs the checks on words another task sent.
  */
 

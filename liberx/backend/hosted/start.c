@@ -22,7 +22,7 @@
 #include "liberx/backend/runtime_entry.h"
 
 /*
- * The hosted entry (docs/design-stopgap.md, "The hosted backend"): main(ARCHIVE, ARGS...)
+ * The hosted entry (docs/design-fiasco.md, "The hosted backend"): main(ARCHIVE, ARGS...)
  * maps the boot archive, gathers what the page holds from its manifest and the host, fills
  * the page, and starts ERTS on it. Everything host-specific about a start is here.
  */

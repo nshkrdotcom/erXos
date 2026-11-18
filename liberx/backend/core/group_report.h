@@ -8,9 +8,9 @@
 
 /*
  * erx_group_configure and erx_group_info over a caller's UTCB, the same on both backends
- * (docs/design-stopgap.md, "Interrupts and readiness"). Of a grant only the CPU set is
+ * (docs/design-fiasco.md, "Interrupts and readiness"). Of a grant only the CPU set is
  * kept. The report, an erx_info_group, marks reported only what the backend has with its
- * full meaning (docs/design-stopgap.md, "Reporting kernel objects"): the kept set once one
+ * full meaning (docs/design-fiasco.md, "Reporting kernel objects"): the kept set once one
  * is configured, and the status page's counts; never capacity_mcpu or used_ns.
  *
  * It also holds the reporters' console line, apart from erx_group_info's report: the
@@ -138,7 +138,7 @@ erx_group_report_length(const char *text)
  * The group report's line, "<head>parked <parked> of <executors>\n", NUL-terminated in
  * line's size bytes; it returns the line's length without the NUL. A line that does not
  * fit writes only an empty string, when size allows one, and returns 0. The reporters on
- * both backends write it each time a count changes (docs/design-stopgap.md, "The command
+ * both backends write it each time a count changes (docs/design-fiasco.md, "The command
  * line"); the head is theirs and the rest fixed words and digits, so it needs no escape.
  */
 static inline size_t

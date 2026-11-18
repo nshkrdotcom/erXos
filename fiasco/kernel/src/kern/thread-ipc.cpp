@@ -1,5 +1,5 @@
 // Modified by erXos: a receive from the thread itself whose timeout hit
-// before it would wait yields the time slice (docs/design-stopgap.md, "Scheduling").
+// before it would wait yields the time slice (docs/design-fiasco.md, "Scheduling").
 INTERFACE [debug]:
 
 #include "tb_entry.h"

@@ -8,7 +8,7 @@ require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/generated_tree'
 
-# How each end of the machine ends it, on the host (docs/design-stopgap.md, "The end
+# How each end of the machine ends it, on the host (docs/design-fiasco.md, "The end
 # path"): the driver holds every cause to its end, and each seed below must make it
 # name the end it broke. liberx/backend/fiasco/end_how.c is the core.
 class FiascoEndTest < Minitest::Test

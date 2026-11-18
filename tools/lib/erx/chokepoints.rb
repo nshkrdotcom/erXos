@@ -10,8 +10,8 @@ require_relative 'stack_graph'
 
 module Erx
   # The chokepoint checks: every rule of the form "only X does Y" as data
-  # (docs/design-kernel.md, "Chokepoint checks"; docs/design-stopgap.md,
-  # "Verification and testing"). A rule names the files it reads, what it
+  # (docs/design-kernel.md, "Chokepoint checks"; docs/design-fiasco.md,
+  # "The chokepoint"). A rule names the files it reads, what it
   # forbids there and the sites allowed to do it anyway. The rules
   # themselves are declared in chokepoint_rules/, one file per group, loaded
   # by chokepoint_rules.rb; this file is the machinery that evaluates them.

@@ -11,7 +11,7 @@
  * program's spaces. The hosted process is the system domain alone, builds no
  * domain library (liberx/backend/core/dom_lib_none.c) and has no sub-space
  * group, so the NIF module and the gate worker call none of them. Each is ERX_ENOTSUP for every hosted caller, as
- * the call table answers a call it does not offer (docs/design-stopgap.md,
+ * the call table answers a call it does not offer (docs/design-fiasco.md,
  * "The hosted backend"): a hosted BeamAsm image, which none builds, would
  * find its code space (sys/erxos/erx_jit_memory.c) refused here.
  */

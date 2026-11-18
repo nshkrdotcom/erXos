@@ -3,7 +3,7 @@
 //
 // The effects around erx_boot_load_plan: what the device tree and the first
 // stage's own image say goes in, and the plan that comes out is applied in the
-// order the design gives (docs/design-stopgap.md, "Boot handoff"). Where things
+// order the design gives (docs/design-fiasco.md, "Boot handoff"). Where things
 // go is decided by the plan, the device tree's copy and the handoff page
 // included. What the plan cannot decide is still checked before any of the
 // archive's or an image's bytes move: the magic of the kernel's two views and

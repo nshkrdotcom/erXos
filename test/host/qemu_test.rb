@@ -159,7 +159,7 @@ class QemuTest < Minitest::Test
     end
   end
 
-  # The host link is the boot's to ask for (docs/design-stopgap.md, "The command line"): a plan
+  # The host link is the boot's to ask for (docs/design-fiasco.md, "The command line"): a plan
   # with the host link's serial line puts erx.hostlink=1 first on the kernel command line, and one
   # of NO_HOSTLINK has one serial line and no word, as the website's machine has.
   def test_the_hostlink_word_comes_with_the_hostlink_serial_line

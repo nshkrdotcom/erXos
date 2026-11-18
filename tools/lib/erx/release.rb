@@ -31,7 +31,7 @@ module Erx
   # The system release as an archive of its own: ReleaseFiles through Pack#build with the
   # development manifest of its board (platform, a Platform), so hosted and native run the same files; only the root differs.
   # Hosted, the root is a minimal static executable that never runs, since erx_pack_open
-  # and the packer require one (docs/design-stopgap.md, "The archive has a root that
+  # and the packer require one (docs/design-fiasco.md, "The archive has a root that
   # never runs").
   class Release
     # What an archive names by itself rather than by the release: the root and these

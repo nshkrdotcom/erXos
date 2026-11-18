@@ -31,7 +31,7 @@ module Erx
   # them, and whose data partition holds a fresh littlefs volume; sdcard.img.xz is the
   # card xz-compressed (compress), the form it is downloaded and written in; and
   # sdcard.img.receipt.json is their build record
-  # (docs/design-stopgap.md, "The Raspberry Pi 4"; docs/design-platforms.md, "Firmware").
+  # (docs/design-fiasco.md, "The Raspberry Pi 4"; docs/design-platforms.md, "Firmware").
   # The files are the firmware, unmodified, with its license; config.txt, written from
   # the platform record; the board's device tree, with its one marked edit, its source
   # and Linux's GPL-2.0 text (BoardTree), and the overlays config.txt names; TF-A's BL31

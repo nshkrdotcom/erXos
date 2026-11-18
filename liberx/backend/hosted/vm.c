@@ -5,7 +5,7 @@
 
 /*
  * The memory calls in a macOS process, the range table's effects over one mmapped
- * area (docs/design-stopgap.md, "The hosted backend"). A page's contents live at its
+ * area (docs/design-fiasco.md, "The hosted backend"). A page's contents live at its
  * own address, so the pool is only a count. Host pages hold several of the ABI's
  * pages on Apple Silicon: each host page's protection is the union of its pages',
  * and contents are cleaned lazily, so a commit of whole host pages touches nothing.
@@ -375,7 +375,7 @@ erx_vm_map(uint64_t space, uint64_t addr, uint64_t size, uint64_t mem, uint64_t 
 	return (ERX_EINVAL);
 }
 
-/* No device exists here, so a device's address would be made up: docs/design-stopgap.md, "The hosted backend". */
+/* No device exists here, so a device's address would be made up: docs/design-fiasco.md, "The hosted backend". */
 int
 erx_mem_create_physical(uint64_t budget, uint64_t resource, uint64_t base, uint64_t size, uint32_t attr, uint64_t *mem)
 {

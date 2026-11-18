@@ -8,7 +8,7 @@ require_relative '../../tools/lib/erx/production_image'
 require_relative '../../tools/lib/erx/runner'
 
 # An image carrying the domain release, read back from its archive's index
-# (docs/design-stopgap.md, "The production image"): the release is one run of whole
+# (docs/design-fiasco.md, "The production image"): the release is one run of whole
 # entries under domains/erxos/ without the system mark, which leaves the system run
 # whole, with a boot script for each name asked for and each application's files once,
 # and the domain runtime image is the interpreter ERTS at task.ld's fixed addresses,

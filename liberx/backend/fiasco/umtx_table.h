@@ -11,7 +11,7 @@
 #include <stdint.h>
 
 /*
- * The umtx table of one task (docs/design-stopgap.md, "The umtx table"): waiters
+ * The umtx table of one task (docs/design-fiasco.md, "The umtx table"): waiters
  * queued by word, in the order they came, and the wait and wake protocols over
  * them. It reads no clock and calls no kernel: the caller's effects lock the
  * table and move a thread's semaphore, so the host's tests run this same code.

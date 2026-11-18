@@ -4,7 +4,7 @@
  */
 
 /*
- * The root's writers of the trace ring (docs/design-stopgap.md, "The trace ring"). Every
+ * The root's writers of the trace ring (docs/design-fiasco.md, "The trace ring"). Every
  * write happens under the trace lock, which is held across no Fiasco call: the clock,
  * erx_fiasco_clock_ns, is the architecture's counter, read in user mode.
  */

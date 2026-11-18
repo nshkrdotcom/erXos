@@ -13,7 +13,7 @@
 #include "liberx/backend/core/park_table.h"
 
 /*
- * The task's park record, over the park core (docs/design-stopgap.md, "The park
+ * The task's park record, over the park core (docs/design-fiasco.md, "The park
  * protocol"): the readiness of the task's one home group, whose executors are the
  * task's, with its dispatcher and its entries' labels.
  */

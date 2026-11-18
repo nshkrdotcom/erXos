@@ -1,4 +1,4 @@
-// Modified by erXos: it boots from erXos's boot image (docs/design-stopgap.md, "Boot handoff").
+// Modified by erXos: it boots from erXos's boot image (docs/design-fiasco.md, "Boot handoff").
 #pragma once
 
 #include <l4/sys/types.h>
@@ -94,7 +94,7 @@ namespace L4_kernel_options
     l4_uint32_t  node;
     l4_uint32_t  erx_pad;
 
-    /// erXos's handoff record (docs/design-stopgap.md, "Boot handoff").
+    /// erXos's handoff record (docs/design-fiasco.md, "Boot handoff").
     l4_uint8_t   erx_handoff[2464];
   } __attribute__((packed));
 };

@@ -1,4 +1,4 @@
-/* Modified by erXos: it boots from erXos's boot image (docs/design-stopgap.md, "Boot handoff"). */
+/* Modified by erXos: it boots from erXos's boot image (docs/design-fiasco.md, "Boot handoff"). */
 /*
  * Copyright (C) 2008-2009 Technische Universität Dresden.
  * Author(s): Adam Lackorzynski <adam@os.inf.tu-dresden.de>

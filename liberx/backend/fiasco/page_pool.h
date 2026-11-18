@@ -11,14 +11,14 @@
 #include "erx/abi.h"
 
 /*
- * The pool of free pages (docs/design-stopgap.md, "The pool"). A page's identity
+ * The pool of free pages (docs/design-fiasco.md, "The pool"). A page's identity
  * is its address in the window, and the free pages are a list threaded through
  * the pages themselves, so the pool costs no memory of its own. A free page
  * holds its link and whatever its last holder left; it is zeroed when taken, so
  * what a taker sees never depends on who held the page before.
  *
  * held_pages counts the pages taken and not yet put back: the budget topic's
- * used (docs/design-stopgap.md, "Reporting a budget"). The service alone calls
+ * used (docs/design-fiasco.md, "Reporting a budget"). The service alone calls
  * the pool, one call at a time, so the count needs no lock of its own.
  *
  * This core touches only the pages it is handed, so it builds for the host.
@@ -43,7 +43,7 @@ void		erx_fiasco_pool_put(erx_fiasco_pool_t *, uintptr_t);
 uintptr_t	erx_fiasco_pool_take(erx_fiasco_pool_t *);
 
 /*
- * The contiguous pool (docs/design-stopgap.md, "The pool"): one flexpage's pages,
+ * The contiguous pool (docs/design-fiasco.md, "The pool"): one flexpage's pages,
  * handed out first fit, each run aligned to a page, on the claim, unverified against the
  * architecture's report of its writeback granule (TODO.md), that no cache-writeback
  * granule exceeds a page. A run is never given back: an unconfined device may still write it.

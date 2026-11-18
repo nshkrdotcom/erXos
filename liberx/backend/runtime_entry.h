@@ -14,7 +14,7 @@
 
 /*
  * What a backend's entry and sys/erxos share beside the call table
- * (docs/design-stopgap.md, "Boot information"): an entry fills the page and calls
+ * (docs/design-fiasco.md, "Boot information"): an entry fills the page and calls
  * erx_runtime_main, and ERTS's start reads only the page.
  */
 

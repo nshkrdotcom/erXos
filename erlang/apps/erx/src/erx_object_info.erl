@@ -4,7 +4,7 @@
 -module(erx_object_info).
 -moduledoc """
 erx_object_info and erx_info_partial of the system domain's own liberx
-(docs/design-stopgap.md, "Reporting kernel objects"). info/3 gives a
+(docs/design-fiasco.md, "Reporting kernel objects"). info/3 gives a
 report's bytes, which erx_schema:decode_report/2 takes apart, and the
 collector erx_kernel_records turns into records.
 """.

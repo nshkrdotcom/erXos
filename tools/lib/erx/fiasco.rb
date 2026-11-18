@@ -86,13 +86,13 @@ module Erx
       uart/src/uart_16550.cc uart/src/uart_16550_dw.cc uart/src/uart_bcm2835.cc
     ].freeze
     # The boards whose bootstrap is a build of its own, by platform record name, and the
-    # configuration of each (docs/design-stopgap.md, "The Raspberry Pi 4"). The Pi's is
+    # configuration of each (docs/design-fiasco.md, "The Raspberry Pi 4"). The Pi's is
     # Fiasco's generic platform, linked static at 2 MiB, with RAM at 0 and the mini UART's
     # 16550 driver; QEMU virt's is the main build's (user.defconfig).
     BOARD_BOOTSTRAPS = { 'raspi4b' => 'user-raspi4b.defconfig' }.freeze
     # Fiasco's own options, which bootstrap passes to the kernel. None: without
     # -serial_esc or -serial_input the kernel leaves the UART's interrupt free
-    # for the console driver (docs/design-stopgap.md, "The console").
+    # for the console driver (docs/design-fiasco.md, "The console").
     KERNEL_OPTIONS = ''
     # Where the inherited build leaves bootstrap's objects and images.
     BOOTSTRAP_OBJECTS = 'pkg/bootstrap/server/src/OBJ-arm64_armv8a-nofpu-plain'

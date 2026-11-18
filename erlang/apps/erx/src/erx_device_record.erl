@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The device records a domain's ERTS finds among its boot arguments (docs/design-stopgap.md,
+%% The device records a domain's ERTS finds among its boot arguments (docs/design-fiasco.md,
 %% "Device records"), one per device the domain drives, in one of two forms, each with its
 %% own word so neither is told from the other by counting:
 %%
@@ -100,7 +100,7 @@ system_image() ->
     system_image(records()).
 
 %% Pure, as find/3 is. The record is the booted slot's system partition as its storage
-%% domain opens it in erx_verity (docs/design-stopgap.md, "The booted slot"), a layout
+%% domain opens it in erx_verity (docs/design-fiasco.md, "The booted slot"), a layout
 %% whose image starts at the partition's byte 0. The domain library writes it,
 %% `-erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT [record_volume]`, only to
 %% the storage domain that serves `system`, so exactly one record is taken, of five

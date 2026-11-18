@@ -734,7 +734,7 @@ layout erx_trace_record shared 8 64
   visibility arg[] release
   sequence seq terminal 0xffffffffffffffff exhaustion @limit recovery none
 
-# What bootstrap tells the kernel (docs/design-stopgap.md, "Boot handoff").
+# What bootstrap tells the kernel (docs/design-fiasco.md, "Boot handoff").
 # boot_value and boot_slot are the pair bootstrap derives from /chosen/bootloader,
 # under the machine page's rule for pairs. cpu_id holds the boot CPU's identification
 # registers as bootstrap read them (kernel/arch/<arch>/cpu_id.c), one word for each

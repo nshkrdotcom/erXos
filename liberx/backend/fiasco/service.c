@@ -489,7 +489,7 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 }
 
 /*
- * erx_log_read and erx_log_take (docs/design-stopgap.md, "The console"). The window is an
+ * erx_log_read and erx_log_take (docs/design-fiasco.md, "The console"). The window is an
  * address in the root, whose address space the service shares, so it is written in place
  * and a task's read, whose address would name its own space, is refused.
  */
@@ -541,7 +541,7 @@ service_log_take(uint32_t task, const erx_fiasco_log_take_request_t *request, er
 
 /*
  * erx_object_info's topics but group, which erx_object_info answers locally
- * (docs/design-stopgap.md, "Reporting kernel objects"). The facts come from the service's
+ * (docs/design-fiasco.md, "Reporting kernel objects"). The facts come from the service's
  * own tables and the kernel, never from a task's memory, and the report is written in
  * place, as erx_log_read's records are, so only the root may ask.
  */
@@ -605,7 +605,7 @@ service_debug_log(uint32_t task, const erx_fiasco_debug_log_request_t *request)
 
 /*
  * A task's standard output and standard error, which reach the console as the program
- * wrote them (docs/design-stopgap.md, "The console"). The bytes stay in the caller's
+ * wrote them (docs/design-fiasco.md, "The console"). The bytes stay in the caller's
  * public UTCB, and this copy loads each word once. A program that wants a labelled,
  * escaped record calls erx_debug_log instead.
  */

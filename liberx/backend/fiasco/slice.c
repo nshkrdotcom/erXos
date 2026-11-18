@@ -5,7 +5,7 @@
 
 /*
  * Slices of the boot archive, erx_mem_copy, and erx_release_entry asked of the
- * service (docs/design-stopgap.md, "The call table"). A slice is a memory object over
+ * service (docs/design-fiasco.md, "The call table"). A slice is a memory object over
  * a run of whole archive entries whose pages are the archive's own, so a map of it
  * reads the archive's bytes (vm.c); its record keeps the run, from which a task's
  * erx_release_entry is answered, since a task holds no index. Only the service thread

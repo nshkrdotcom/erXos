@@ -14,7 +14,7 @@ require_relative 'release_medium'
 
 module Erx
   # The Raspberry Pi's card, the medium of abi/medium.txt as the firmware boots it
-  # (docs/design-stopgap.md, "The Raspberry Pi 4"; docs/design-platforms.md, "Slots and
+  # (docs/design-fiasco.md, "The Raspberry Pi 4"; docs/design-platforms.md, "Slots and
   # the boot-selection record"), written through MediumImage:
   #
   # * the record partition: the record volume (RecordVolume), as on QEMU's release

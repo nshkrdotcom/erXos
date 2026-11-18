@@ -49,7 +49,7 @@ erx_fiasco_root_open(erx_boot_handoff_view_t *handoff, erx_pack_view_t *pack)
 	root_tree_size = (size_t)handoff->tree.size;
 	/*
 	 * Touching each page of the tree's copy now, while sigma0 is still the
-	 * pager, maps it read-only by its sub-type (docs/design-stopgap.md, "Boot
+	 * pager, maps it read-only by its sub-type (docs/design-fiasco.md, "Boot
 	 * handoff", step 2): once the service is the root's pager, a fault on a
 	 * page it was never given ends the root. The range is page-aligned and
 	 * bounded, as erx_boot_handoff_accept checked.

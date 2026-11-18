@@ -7,7 +7,7 @@
  * The caller's side of a thread's life: the record table and the claim, which run
  * in the calling thread under the thread lock, the requests to the service, which
  * alone calls the kernel about a thread, and the reaper
- * (docs/design-stopgap.md, "Thread exit"), which ends what exits.
+ * (docs/design-fiasco.md, "Thread exit"), which ends what exits.
  */
 
 #include <stdatomic.h>
@@ -388,7 +388,7 @@ reaper_refused(const char *line)
 }
 
 /*
- * The order is the contract (docs/design-stopgap.md, "Thread exit"): once the
+ * The order is the contract (docs/design-fiasco.md, "Thread exit"): once the
  * deletion returns the thread never runs again, so its stack and range are free;
  * a joiner returns only after the clear, and frees the stack then; and the index
  * goes back last, so no new thread shares its identifier with the word just cleared.

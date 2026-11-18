@@ -7,7 +7,7 @@
  * The IRQ objects' and the ready list's row. function_api_irq_cases is what both
  * backends pass. function_api_hosted_irq_cases adds what holds only where an object
  * fires in the caller's thread, each fire counted, with no lines to bind
- * (docs/design-stopgap.md, "The hosted backend").
+ * (docs/design-fiasco.md, "The hosted backend").
  */
 
 #include <stdatomic.h>

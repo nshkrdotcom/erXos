@@ -4,7 +4,7 @@
  */
 
 /*
- * How each end of the machine ends it, on the host (docs/design-stopgap.md, "The end
+ * How each end of the machine ends it, on the host (docs/design-fiasco.md, "The end
  * path"): only a requested power-off turns it off, and every end nobody ordered resets
  * it, so that an update's trial boot falls back.
  */

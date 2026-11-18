@@ -14,7 +14,7 @@
 #include "liberx/backend/core/entropy_line.h"
 
 /*
- * The entropy calls' bodies (docs/design-stopgap.md, "The call table"): the kernel's
+ * The entropy calls' bodies (docs/design-fiasco.md, "The call table"): the kernel's
  * generator, kernel/core/rng.c, in the root. The service alone runs the bodies, and the
  * root's first thread the init before the service runs, so nothing here takes a lock.
  */

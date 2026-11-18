@@ -5,7 +5,7 @@
 
 /*
  * The kernel's log object, as the root task holds it from the start
- * (docs/design-stopgap.md, "Boot handoff"). Bytes go out as given: text
+ * (docs/design-fiasco.md, "Boot handoff"). Bytes go out as given: text
  * attributed to a source is escaped by its caller before it gets here, and a
  * program's own output is not filtered.
  */

@@ -1,4 +1,4 @@
-// Modified by erXos: the boot information carries the handoff page (docs/design-stopgap.md, "Boot handoff").
+// Modified by erXos: the boot information carries the handoff page (docs/design-fiasco.md, "Boot handoff").
 /*
  * Copyright (C) 2008-2009 Technische Universität Dresden.
  * Author(s): Adam Lackorzynski <adam@os.inf.tu-dresden.de>

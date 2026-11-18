@@ -2,7 +2,7 @@
  * Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * The calls under erx_watchdog (docs/design-stopgap.md, "The watchdog"). A pet runs on a
+ * The calls under erx_watchdog (docs/design-fiasco.md, "The watchdog"). A pet runs on a
  * normal scheduler, so it says that schedulers run and timers fire. Only the system
  * domain, whose boot page has ERX_BOOT_ROOT, holds the machine's watchdog.
  */

@@ -174,7 +174,7 @@ driver_console_dump(void)
 }
 
 /*
- * The handoff (docs/design-stopgap.md, "The console"): a line before it reaches the early
+ * The handoff (docs/design-fiasco.md, "The console"): a line before it reaches the early
  * console, lines after it reach only the console's take, a reader from the start sees every
  * line and a cursor past the newest record is refused, taking the log back writes only what
  * the console had not taken, and from then on a take finds nothing. Each step prints in
@@ -207,7 +207,7 @@ driver_handoff(void)
 }
 
 /*
- * Two readers on one log (docs/design-stopgap.md, "The console"): the console's take starts
+ * Two readers on one log (docs/design-fiasco.md, "The console"): the console's take starts
  * where the early console stopped, however often the UART is mapped, and loses no line and
  * shows none twice, while another reader from the start sees every line, also when it reads
  * ahead of the console. Neither that reader nor one whose window stops short of the newest

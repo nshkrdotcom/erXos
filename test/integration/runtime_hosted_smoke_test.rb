@@ -462,7 +462,7 @@ class RuntimeHostedSmokeTest < Minitest::Test
   # The system domain's release loads erx_domain_lib here as natively, and hosted mode builds
   # no domain library, so the module loads inert: no on_load fails as the release boots, each
   # entry refuses with enotsup, register/0 included, and the domain service runs with no library
-  # (docs/design-stopgap.md, "The hosted backend").
+  # (docs/design-fiasco.md, "The hosted backend").
   def test_the_domain_library_module_loads_and_refuses_without_a_library
     Dir.mktmpdir('erx-hosted-home-') do |home|
       spawn_shell(home) do |reader, writer, pid|

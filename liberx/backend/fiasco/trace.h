@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 /*
- * The root's writers of the trace ring (docs/design-stopgap.md, "The trace ring"), in
+ * The root's writers of the trace ring (docs/design-fiasco.md, "The trace ring"), in
  * fiasco/trace.c, which only the root links. erx_backend_trace_write
  * (core/trace_ring.h) records an event of the calling backend thread.
  */

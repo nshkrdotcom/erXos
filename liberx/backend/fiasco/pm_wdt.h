@@ -14,7 +14,7 @@
 
 /*
  * The board's hardware watchdog on the stopgap (docs/design-platforms.md, "The
- * watchdog"; docs/design-stopgap.md, "The Raspberry Pi 4"), which the root's watchdog
+ * watchdog"; docs/design-fiasco.md, "The Raspberry Pi 4"), which the root's watchdog
  * thread drives in the kernel platform layer's place: the device shim around
  * kernel/core/pm_wdt.c, and the only code of the root that touches the watchdog's
  * registers. No runtime holds its window: its unit is of no kind.

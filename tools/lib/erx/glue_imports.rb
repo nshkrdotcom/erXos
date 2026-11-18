@@ -7,7 +7,7 @@ require_relative 'error'
 
 module Erx
   # The allowlist of what the stopgap's glue may call in Fiasco
-  # (docs/design-stopgap.md, "Interfaces"). fiasco/erx_glue_imports.txt has
+  # (docs/design-fiasco.md, "Interfaces"). fiasco/erx_glue_imports.txt has
   # one `SYMBOL EFFECT FILE` per line: the symbol, what the glue uses it for,
   # and the glue file that may reference it. A glue object with an undefined
   # symbol its file does not list fails the build, so a deleted path or a raw
@@ -19,7 +19,7 @@ module Erx
     # The linker's own helpers and the cores' interface need no entry.
     IMPLICIT = /\A(?:erx_[a-z0-9_]{1,1000}|__stack_chk_[a-z]{1,16})\z/
     # The kernel-call route: its sources stay, and Fiasco's Modules.generic
-    # builds neither (docs/design-stopgap.md, "Boot handoff").
+    # builds neither (docs/design-fiasco.md, "Boot handoff").
     OUT_OF_BUILD = %w[erx_probe.cpp erx_syscall.cpp].freeze
     Entry = Data.define(:symbol, :effect, :file)
 

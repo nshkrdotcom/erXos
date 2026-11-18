@@ -12,7 +12,7 @@
 #include "erx/abi.h"
 
 /*
- * erx_object_info's reports on liberx's Phase 1 backends (docs/design-stopgap.md,
+ * erx_object_info's reports on liberx's Phase 1 backends (docs/design-fiasco.md,
  * "Reporting kernel objects"), the same on both. A backend gathers what it knows into
  * facts, from its own tables and never from a task's memory, and this core writes the
  * topic's report from them: a reported bit is set only for a field the backend has

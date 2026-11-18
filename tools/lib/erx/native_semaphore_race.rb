@@ -12,7 +12,7 @@ require_relative 'runner'
 
 module Erx
   # An up across CPUs racing a down's timeout, made certain rather than probable
-  # (docs/design-stopgap.md, "Verification"). test/guest/native_semaphore_race runs on a
+  # (docs/design-fiasco.md, "Verification"). test/guest/native_semaphore_race runs on a
   # kernel built with one more define, whose up pauses between dequeuing its waiter and
   # activating it, until the waiter is queued again or the hold runs out. No other image boots that kernel,
   # and its build is why make check-native-seeds runs this rather than the QEMU gate.

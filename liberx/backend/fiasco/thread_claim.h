@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 /*
- * Which thread index a create may take (docs/design-stopgap.md, "Claiming an
+ * Which thread index a create may take (docs/design-fiasco.md, "Claiming an
  * index"): the lowest whose record is free and whose UTCB's marker reads 0. The
  * kernel clears a marker some time after a deletion returns, and until then it
  * still writes that UTCB. The caller holds the thread lock across this and its

@@ -601,7 +601,7 @@ case_group_info_and_configure(void)
 }
 
 /*
- * Each topic's reported bits as docs/design-stopgap.md, "Reporting kernel objects", lists
+ * Each topic's reported bits as docs/design-fiasco.md, "Reporting kernel objects", lists
  * them: the machine's CPU count and uptime, its memory figures the pool's with
  * erx_info_partial naming both, a budget's used moving with a commit and a decommit with
  * its bit clear and erx_info_partial naming it alone, threads listed up to ERX_ERANGE, and

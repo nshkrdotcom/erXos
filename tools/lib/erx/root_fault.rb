@@ -5,7 +5,7 @@
 require_relative 'crash_frame'
 
 module Erx
-  # A root task's fault as the stopgap records it in a crash frame (docs/design-stopgap.md,
+  # A root task's fault as the stopgap records it in a crash frame (docs/design-fiasco.md,
   # "Faults, and the fault of the root task"): the cause fault, the space the root task's,
   # the thread unknown, since a fault names the task and not the thread, and for a page
   # fault the address with Fiasco's fault word in cause, whose bit 1 says the access was

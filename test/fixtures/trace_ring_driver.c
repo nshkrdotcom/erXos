@@ -4,7 +4,7 @@
  */
 
 /*
- * The trace ring and its lock-free reader on the host (docs/design-stopgap.md, "The
+ * The trace ring and its lock-free reader on the host (docs/design-fiasco.md, "The
  * trace ring", and its Verification row), driven by test/host/trace_ring_test.rb. Each
  * mode prints "MODE: ok" or names what it found broken and exits 1. Built with
  * liberx/backend/core/trace_ring.c and ERX_TRACE_RING_TEST_HOOKS, or, for the mode

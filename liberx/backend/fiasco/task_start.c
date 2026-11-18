@@ -4,7 +4,7 @@
  */
 
 /*
- * A task's side of its start (docs/design-stopgap.md, "Helper threads"): its first
+ * A task's side of its start (docs/design-fiasco.md, "Helper threads"): its first
  * thread readies its own record, starts the task's reaper and its dispatcher through
  * the ordinary calls, runs the program, and stops the task with the program's status.
  * A task reaches the service through the gate the root mapped at the pager's slot, and

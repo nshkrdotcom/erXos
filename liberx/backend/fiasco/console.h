@@ -10,7 +10,7 @@
 
 /*
  * The root task's way to the kernel's polled UART output, and the sleep of a thread
- * that has nothing left to do (docs/design-stopgap.md, "The console"). Neither
+ * that has nothing left to do (docs/design-fiasco.md, "The console"). Neither
  * takes a lock: the threads that call them take none around them.
  */
 void erx_fiasco_console_write(const char *, size_t);

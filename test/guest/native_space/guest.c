@@ -494,7 +494,7 @@ group_start(uint64_t space, uint64_t group, uint64_t argument)
 }
 
 /*
- * Groups as records (docs/design-stopgap.md, "Budgets and groups as records"). The
+ * Groups as records (docs/design-fiasco.md, "Budgets and groups as records"). The
  * root's first group is its home, as the root's dispatcher is the first thread made in
  * it, so a root thread in a second group is a second home group, refused, and the first
  * cannot be destroyed while the root has threads. A domain's group takes its task as
@@ -771,7 +771,7 @@ epoch_moves(uint64_t epoch)
 }
 
 /*
- * Doorbells between tasks (docs/design-stopgap.md, "Interrupts and readiness"). The
+ * Doorbells between tasks (docs/design-fiasco.md, "Interrupts and readiness"). The
  * root binds a bell to a domain group that has no home yet, so the bind waits, and
  * rings it before the task has a thread: the bind, made once the task's first thread
  * fixes the home and its dispatcher registers, delivers that ring. The root passes the
@@ -1248,7 +1248,7 @@ image_task_run(uint32_t entry, uint64_t argument)
 }
 
 /*
- * The program packed as an image entry (docs/design-stopgap.md, "The call table",
+ * The program packed as an image entry (docs/design-fiasco.md, "The call table",
  * erx_image_map): every task that runs it maps its code and read-only data from the
  * archive's own pages, through one slice the service makes at the entry's first map and
  * charges to the root, and copies only its writable data.

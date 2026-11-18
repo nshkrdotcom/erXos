@@ -10,7 +10,7 @@ module Erx
   # common part (config/manifest/development.txt) followed by the board's
   # (config/manifest/NAME-development.txt), with the website's made from it: what every tool that builds or
   # boots an image takes as a parameter in place of one board's constants
-  # (docs/design-stopgap.md, "The Raspberry Pi 4"). The record states the board's RAM, its
+  # (docs/design-fiasco.md, "The Raspberry Pi 4"). The record states the board's RAM, its
   # first address (ram_first) and size (ram_bytes, the development machine's RAM, which the harnesses give QEMU), the
   # part of it Fiasco keeps (fiasco_reserve), what the boot keeps besides from the rest
   # (root_withheld, in bytes, which the packer's archive check reads), and its device units,
@@ -101,7 +101,7 @@ module Erx
     # units and windows and the domains whose rows name them), which is no manifest alone.
     def manifest_path = "config/manifest/#{name}-development.txt"
     # The board's development manifest, the one text the packer admits and the board
-    # boots: the common part, then the board's (docs/design-stopgap.md, "The Phase 1
+    # boots: the common part, then the board's (docs/design-fiasco.md, "The Phase 1
     # manifest check"). The encoder sorts every table, so the order of the two parts
     # does not reach the image.
     def manifest_source(root) = [COMMON_MANIFEST_PATH, manifest_path].map { |path| File.binread(File.join(root, path)) }.join

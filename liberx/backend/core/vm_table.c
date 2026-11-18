@@ -55,7 +55,7 @@ static int	plan_reserve(const erx_backend_vm_table_t *, const erx_backend_vm_req
 		    erx_backend_vm_plan_t *);
 
 /*
- * docs/design-stopgap.md's table of protection changes, whole. Write means read
+ * docs/design-fiasco.md's table of protection changes, whole. Write means read
  * and write, execute means read and execute, and a map only adds rights.
  */
 static const erx_backend_vm_steps_t vm_steps[ERX_BACKEND_PAGE_STATES][ERX_BACKEND_PAGE_STATES] = {

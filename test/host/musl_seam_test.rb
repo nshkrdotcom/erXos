@@ -8,7 +8,7 @@ require 'tmpdir'
 require_relative '../../tools/lib/erx/musl'
 
 # Only liberx reaches the kernel: every CPU source of musl's that traps has a
-# replacement under the erxos arch (docs/design-stopgap.md, "musl over the backend").
+# replacement under the erxos arch (docs/design-fiasco.md, "musl over the backend").
 class MuslSeamTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
 

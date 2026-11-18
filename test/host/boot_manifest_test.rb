@@ -17,7 +17,7 @@ require_relative '../../tools/fuzz/manifest_seeds'
 # erx-gate: sanitizers
 
 # What the boot information page takes from the system manifest, the same on both entries
-# (docs/design-stopgap.md, "Boot information"): liberx/backend/core/boot_manifest.c over a
+# (docs/design-fiasco.md, "Boot information"): liberx/backend/core/boot_manifest.c over a
 # manifest Manifest.admit wrote from QEMU virt's development manifest, driven by
 # test/fixtures/boot_manifest_driver.c.
 class BootManifestTest < Minitest::Test
@@ -112,7 +112,7 @@ class BootManifestTest < Minitest::Test
     RUNTIME_LIMIT_FIELDS.map { |field| values.fetch(field) }
   end
 
-  # The device records (docs/design-stopgap.md, "Device records"), in the order of the device
+  # The device records (docs/design-fiasco.md, "Device records"), in the order of the device
   # table: the host link's UART, which machine.hostlink names by its path (docs/design-live.md,
   # "The host link"), and each device of a unit the system domain holds whose role and
   # compatible string are a row of device_kinds, each with the platform record's window, line
@@ -216,7 +216,7 @@ class BootManifestTest < Minitest::Test
     end
   end
 
-  # The host link is the boot's to ask for (docs/design-stopgap.md, "Device records"): without
+  # The host link is the boot's to ask for (docs/design-fiasco.md, "Device records"): without
   # erx.hostlink=1 its UART gives no record, so a machine with one UART, the website's, boots
   # with no host link, and the net device's record is the same either way.
   def test_the_hostlink_record_is_there_only_when_the_boot_asks_for_it
@@ -311,7 +311,7 @@ class BootManifestTest < Minitest::Test
     assert_equal 1, status.exitstatus, output
     assert_match(/\Arefused /, output)
   end
-  # The handoff (docs/design-stopgap.md, "The console"): the root hands the log to the console
+  # The handoff (docs/design-fiasco.md, "The console"): the root hands the log to the console
   # when its driver maps the console's page, the one the device NIF maps for the registers. On
   # QEMU virt the PL011 starts its page; the Raspberry Pi 4's mini UART is 0x40 into its own,
   # so the page, not the registers' base, is what the driver's map names.
@@ -489,7 +489,7 @@ class BootManifestTest < Minitest::Test
   end
 
   # The console's record names the CMSIS-SVD peripheral of its entry's compatible string,
-  # from the root's table of UART kinds (docs/design-stopgap.md, "The console"); an entry
+  # from the root's table of UART kinds (docs/design-fiasco.md, "The console"); an entry
   # of a compatible string no row names gets no record, so the console refuses the boot with
   # its reason rather than start a driver for a UART it does not know. The check refuses such
   # a manifest (test_a_console_of_no_uart_kind_is_refused_at_the_check), so this one is

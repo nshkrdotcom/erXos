@@ -17,7 +17,7 @@
 #include "liberx/backend/fiasco/umtx_table.h"
 
 /*
- * The thread table and the thread calls (docs/design-stopgap.md, "Thread
+ * The thread table and the thread calls (docs/design-fiasco.md, "Thread
  * creation"). "The task" below is the caller's.
  */
 

@@ -1,5 +1,5 @@
 // Modified by erXos: a thread this semaphore dequeued does not leave sys_down
-// before its activation has landed (docs/design-stopgap.md, "Thread creation").
+// before its activation has landed (docs/design-fiasco.md, "Thread creation").
 INTERFACE:
 
 #include <limits.h>

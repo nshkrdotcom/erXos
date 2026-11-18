@@ -5,7 +5,7 @@
 
 /*
  * The root task's entry. The kernel starts it with a stack pointer of 0
- * (docs/design-stopgap.md, "Boot handoff"), so the first instructions set one
+ * (docs/design-fiasco.md, "Boot handoff"), so the first instructions set one
  * inside the image; touching it faults to sigma0, which maps it one to one.
  */
 

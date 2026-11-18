@@ -15,7 +15,7 @@
 #include "liberx/backend/fiasco/vm.h"
 
 /*
- * The time page (docs/design-stopgap.md, the call table): one pool page, a memory
+ * The time page (docs/design-fiasco.md, the call table): one pool page, a memory
  * object of the root budget, that the service fills and writes. The root reads it
  * through the window; a task reads it at ERX_FIASCO_TIME_PAGE_ADDR, where the
  * service mapped it read-only at the task's creation. Reading it needs no call.

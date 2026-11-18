@@ -351,7 +351,7 @@ test_header_corruption(void)
 }
 
 /*
- * A holder domain's records (docs/design-stopgap.md, "Boot information"): -erx_record given per
+ * A holder domain's records (docs/design-fiasco.md, "Boot information"): -erx_record given per
  * device and -erx_record boot, as the domain library writes them, travel through a domain's page
  * and its vector unchanged; and the longest of each, names at 15 bytes, the path at
  * ERX_DEVICE_PATH_MAX bytes and every number at UINT64_MAX, takes exactly the room
@@ -468,7 +468,7 @@ system_image_row(void)
 
 /*
  * -erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT, which the domain library writes into
- * the system window's holder's page (docs/design-stopgap.md, "The booted slot"): the numbers in
+ * the system window's holder's page (docs/design-fiasco.md, "The booted slot"): the numbers in
  * decimal, the salt's salt_length bytes and the root hash in lowercase hex, and record_volume
  * after them for a holder of that window too, and nothing for one without. The longest, a
  * 32-byte salt, numbers of 2^64 - 1 and the window, fills ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX, and one byte

@@ -6,7 +6,7 @@ module Erx
   module ChokepointRules
     # erx_entropy_read leaves the generator's bytes in the caller's UTCB;
     # erx_entropy_take reads, moves the bytes out and zeroes the words that
-    # held them (docs/design-stopgap.md, "The call table"). The read is
+    # held them (docs/design-fiasco.md, "The call table"). The read is
     # declared only in its private header, so a caller that names it
     # without the header fails to build (test/host/hosted_function_api_test.rb).
     # This rule covers what the header cannot: an include of it, or a

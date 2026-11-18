@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 // SPDX-License-Identifier: BSD-2-Clause
 //
-// The kernel's side of bootstrap's handoff record (docs/design-stopgap.md, "Boot
+// The kernel's side of bootstrap's handoff record (docs/design-fiasco.md, "Boot
 // handoff"): it accepts the record through the C17 core, prints the
 // banner's lines for the boot image and the boot pair bootstrap derived from
 // /chosen/bootloader, and checks that a bootloader descriptor

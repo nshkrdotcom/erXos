@@ -4,7 +4,7 @@
  */
 
 /*
- * The root's side of the time page (docs/design-stopgap.md, the call table): the page
+ * The root's side of the time page (docs/design-fiasco.md, the call table): the page
  * is a memory object of the root budget, made before the service starts and kept by
  * erx_fiasco_object_keep, so no close or destroy ends it and its record, its window
  * page and every task's mapping of it hold until the machine ends. The service is its

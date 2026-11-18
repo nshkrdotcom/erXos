@@ -9,7 +9,7 @@
 /*
  * Who writes the debug log's records on the UART: the early console, as each is written,
  * or, once a console driver owns the UART, the system domain's console, which takes them
- * with erx_debug_log_take (docs/design-stopgap.md, "The console"). One position says what
+ * with erx_debug_log_take (docs/design-fiasco.md, "The console"). One position says what
  * has been taken, whichever of them took it, so a line reaches the UART exactly once and in
  * order across a change of taker. Every other reader reads with erx_debug_log_read from a
  * cursor of its own and moves nothing.

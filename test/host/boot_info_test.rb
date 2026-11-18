@@ -11,7 +11,7 @@ require_relative '../fixtures/generated_tree'
 
 # erx-gate: sanitizers
 
-# The boot information page and the command line (docs/design-stopgap.md, "Boot
+# The boot information page and the command line (docs/design-fiasco.md, "Boot
 # information" and "The command line"): liberx/backend/core/boot_info.c and
 # liberx/backend/fiasco/boot_args.c at every limit, with the holder records of
 # liberx/backend/core/boot_manifest.c, driven by
@@ -75,7 +75,7 @@ class BootInfoTest < Minitest::Test
   end
 
   # The words the domain library writes for the system window's holder are the words
-  # erx_device_record:system_image/1 reads (docs/design-stopgap.md, "The booted slot"):
+  # erx_device_record:system_image/1 reads (docs/design-fiasco.md, "The booted slot"):
   # the driver's record of a three-byte salt with a leading zero byte and the root hash
   # 0 to 31 reads back as that row, under stock's emulator (ERX_ERL and ERX_ERLC).
   def test_the_system_image_record_reads_back_in_erlang

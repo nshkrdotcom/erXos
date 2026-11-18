@@ -53,7 +53,7 @@ const char	*erx_fiasco_program_start(const erx_boot_handoff_view_t *handoff, con
 
 /*
  * Enters musl's start path with program as main and features as its AT_HWCAP and AT_HWCAP2,
- * on a stack of its own with a guard below it (docs/design-stopgap.md, "musl over the
+ * on a stack of its own with a guard below it (docs/design-fiasco.md, "musl over the
  * backend"). Needs the root service running. A start that comes back ends the machine.
  */
 _Noreturn void	 erx_fiasco_libc_root_start(int (*program)(int, char **, char **), erx_fiasco_cpu_features_t features);

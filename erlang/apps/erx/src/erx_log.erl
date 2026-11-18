@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The kernel log from Erlang (docs/design-stopgap.md, "The console"): a labelled line into
+%% The kernel log from Erlang (docs/design-fiasco.md, "The console"): a labelled line into
 %% it, a read from a cursor of the reader's own, and the log service's take of the lines
 %% nobody has taken. Both return each record as the line the log core rendered, so every byte of a
 %% record's text is already escaped, tab and newline included, and the line's own newline is

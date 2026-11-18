@@ -14,7 +14,7 @@
 
 /*
  * The function API of the kernel interface, as liberx's Phase 1 backends give it
- * (docs/design-stopgap.md, "The call table"): the same names, the same results and
+ * (docs/design-fiasco.md, "The call table"): the same names, the same results and
  * the same refusals on native Fiasco and in a macOS process, which
  * test/guest/function_api holds them to. A handle is opaque, and an address is a
  * value of the caller's own space.
@@ -75,7 +75,7 @@ int	erx_thread_read(uint64_t thread) ERX_WARN_UNUSED_RESULT;
 int	erx_thread_write(uint64_t thread) ERX_WARN_UNUSED_RESULT;
 int	erx_thread_set_urgency(uint64_t thread, uint64_t urgency) ERX_WARN_UNUSED_RESULT;
 int	erx_irq_route(uint64_t irq, uint64_t cpu) ERX_WARN_UNUSED_RESULT;
-/* No gate carries a message (docs/design-stopgap.md, "IPC gates and where transfer fits"). */
+/* No gate carries a message (docs/design-fiasco.md, "IPC gates and where transfer fits"). */
 int	erx_ipc_call(uint64_t gate, uint64_t tag, uint64_t send_by, uint64_t reply_by) ERX_WARN_UNUSED_RESULT;
 int	erx_ipc_send(uint64_t gate, uint64_t tag, uint64_t send_by) ERX_WARN_UNUSED_RESULT;
 int	erx_ipc_reply(uint64_t tag) ERX_WARN_UNUSED_RESULT;
@@ -164,7 +164,7 @@ int	erx_boot_tree(const void **bytes, size_t *size) ERX_WARN_UNUSED_RESULT;
  * ERX_ETYPE, and an offset past the end ERX_ERANGE.
  *
  * erx_mem_create_contiguous_in is the stopgap's create of a device's memory, which only the
- * root calls, and which erXos's kernel does not have (docs/design-stopgap.md, "The pool"):
+ * root calls, and which erXos's kernel does not have (docs/design-fiasco.md, "The pool"):
  * the kernel finds the device's DMA
  * window from the resource, and the stopgap, which has no resource objects, takes it as a
  * value from the device's tree facts. The run lies wholly inside the CPU addresses the range
@@ -225,7 +225,7 @@ typedef struct erx_log_read_result {
 } erx_log_read_result_t;
 
 /*
- * The kernel log has two reads (docs/design-stopgap.md, "The console"). Each copies whole
+ * The kernel log has two reads (docs/design-fiasco.md, "The console"). Each copies whole
  * records into the window of size bytes, which holds at least ERX_LOG_RECORD_MAX. The window
  * is the caller's own memory, which the service writes in place, so natively only the root
  * reads; a task is ERX_ENOTSUP. A short window is ERX_EINVAL. res is ignored.
@@ -248,7 +248,7 @@ int	erx_log_take(uint64_t res, void *window, uint64_t size, erx_log_read_result_
 	    ERX_WARN_UNUSED_RESULT;
 
 /*
- * A kernel object's report (docs/design-stopgap.md, "Reporting kernel objects"): writes
+ * A kernel object's report (docs/design-fiasco.md, "Reporting kernel objects"): writes
  * the topic's erx_info_<kind> into the window of size bytes, the caller's own memory.
  * Machine and cpu ignore object; group takes ERX_CAP_SELF or what erx_group_create
  * returned, budget ERX_CAP_SELF, the root's one budget, and thread ERX_CAP_SELF or a
@@ -279,7 +279,7 @@ typedef struct erx_trace_read_result {
 } erx_trace_read_result_t;
 
 /*
- * The root's trace ring (docs/design-stopgap.md, "The trace ring"): copies at most max of the
+ * The root's trace ring (docs/design-fiasco.md, "The trace ring"): copies at most max of the
  * whole records from cursor on into records[0 .. kept) and takes no lock. max and records
  * are checked first, whatever the cursor. A cursor of UINT64_MAX copies nothing and returns the ring's head as next. Any other cursor past the
  * head, or max 0 or over ERX_TRACE_READ_MAX, is ERX_EINVAL; a cursor at the head of an

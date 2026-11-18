@@ -14,7 +14,7 @@ require_relative 'qemu'
 require_relative 'runner'
 
 module Erx
-  # musl's libc-test against erXos's musl (docs/design-stopgap.md, "musl's own tests"):
+  # musl's libc-test against erXos's musl (docs/design-fiasco.md, "musl's own tests"):
   # each test program is linked with musl and the task's side of liberx and runs as a
   # task of test/guest/native_libc_test's root, many to a boot. Every test ends the run with
   # one result, and none is ever guessed: only the root's end line of this boot says how a

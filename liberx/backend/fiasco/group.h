@@ -14,7 +14,7 @@
 #include "erx/cdefs.h"
 
 /*
- * Groups as records and interrupts (docs/design-stopgap.md, "Budgets and groups as
+ * Groups as records and interrupts (docs/design-fiasco.md, "Budgets and groups as
  * records", "Interrupts and readiness"): the service's group records, and the root's
  * stubs of the group and IRQ calls. An IRQ object is an object record, which handles
  * name as they name every other.
@@ -65,7 +65,7 @@ void	erx_fiasco_group_free(uint32_t record);
 int	erx_fiasco_dispatcher_set_body(uint32_t task, uint64_t thread);
 
 /*
- * IRQ objects (docs/design-stopgap.md, "Interrupts and readiness"): kind is
+ * IRQ objects (docs/design-fiasco.md, "Interrupts and readiness"): kind is
  * ERX_IRQ_SOFT, a doorbell, which any task makes, or ERX_IRQ_LINE with selector the line,
  * which only the root makes, and resource is ignored. A line the kernel will not attach,
  * taken or not there, is ERX_EBUSY; an object past the machine's ERX_FIASCO_IRQS_MAX,

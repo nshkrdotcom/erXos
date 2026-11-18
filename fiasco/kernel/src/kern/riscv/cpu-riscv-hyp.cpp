@@ -1,5 +1,5 @@
 // Modified by erXos: lazy FP switching is deleted; FP state is switched
-// eagerly (docs/design-stopgap.md, "FP and SIMD state").
+// eagerly (docs/design-fiasco.md, "Eager FP switching").
 INTERFACE [riscv && cpu_virt && 32bit]:
 
 EXTENSION

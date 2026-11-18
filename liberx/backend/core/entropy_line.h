@@ -11,7 +11,7 @@
 #include "erx/core/rng_seed.h"
 
 /*
- * The root's banner line of what seeded its generator (docs/design-stopgap.md, "The
+ * The root's banner line of what seeded its generator (docs/design-fiasco.md, "The
  * call table" and "The Raspberry Pi 4"): a pure function of what went in, so the host
  * test judges every line. It names each source and its length, never its bytes.
  */

@@ -392,7 +392,7 @@ endif
 # erXos: the C17 cores' archive joins the kernel link. tools/erx build
 # fiasco builds it with LLVM and names it, and the glue's one erXos include
 # directory, the archive's copy of include/erx/core/, on the command line
-# (docs/design-stopgap.md, "Interfaces"). Only the glue's modules take
+# (docs/design-fiasco.md, "Interfaces"). Only the glue's modules take
 # ERX_GLUE_CXXFLAGS, so no inherited module reaches a core's header.
 ERX_CORE_ARCHIVE ?=
 ERX_CORE_INCLUDE ?=

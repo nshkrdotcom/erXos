@@ -13,7 +13,7 @@
 #include "erx/cdefs.h"
 
 /*
- * A table of fixed-size records in pages (docs/design-stopgap.md, "Table sizes"):
+ * A table of fixed-size records in pages (docs/design-fiasco.md, "Table sizes"):
  * a directory page holds the addresses of the record pages, and a table that fills
  * takes one more page. A record never moves, since its page stays where it was
  * taken, so a caller names records by index and may hold a pointer to one only until

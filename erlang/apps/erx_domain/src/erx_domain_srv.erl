@@ -549,7 +549,7 @@ handle_info(_Message, State) ->
 %% A request: its name and fields checked, then built as a configured row is. Its boot
 %% names the domain release's boot script, bin/<boot>.boot, which the service binds
 %% with -boot /bin/<boot> as init's first flag (boot_args/2), as the manifest's packer
-%% does for a configured row and a session template (docs/design-stopgap.md, "The
+%% does for a configured row and a session template (docs/design-fiasco.md, "The
 %% production image"), so args that name -boot are refused. Its facets
 %% name the system domain's grants, by facet name, each with its limits or none, which
 %% facets/2 checks; the domain gets a facet in front of each once it reports ready

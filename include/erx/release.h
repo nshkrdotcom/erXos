@@ -13,7 +13,7 @@
 
 /*
  * The one reader of the boot archive's index above the checks of erx_pack_open
- * (design-runtime.md, Files, and design-stopgap.md, the call table). Everything
+ * (design-runtime.md, Files, and design-fiasco.md, the call table). Everything
  * else learns the release from these entries, so erXos's kernel, which keeps
  * the index unmapped, changes only what is behind this call.
  */

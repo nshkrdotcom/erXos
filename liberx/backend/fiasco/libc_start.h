@@ -20,7 +20,7 @@
 void	erx_fiasco_libc_write(const void *, size_t);
 
 /*
- * The descriptor seam (docs/design-stopgap.md, "musl over the backend"): musl's syscall
+ * The descriptor seam (docs/design-fiasco.md, "musl over the backend"): musl's syscall
  * switch offers it every call, with the call's number and its six arguments, before any
  * row of its own. true when the build took the call, with *result its return, a value or
  * a negative errno; false leaves it to musl's rows. Every entry file defines it beside

@@ -1,5 +1,5 @@
 # Modified by erXos: lazy FP switching is not an option; FP state is
-# switched eagerly (docs/design-stopgap.md, "FP and SIMD state").
+# switched eagerly (docs/design-fiasco.md, "Eager FP switching").
 
 mainmenu "Fiasco configuration"
 

@@ -61,7 +61,7 @@ module Erx
                    ERX_(?:#{PROBE_PERIPHERALS.upcase})_\w+)\z/x
     )
     # On the stopgap the root reads the board's RNG200 in the platform layer's place, through its one
-    # device shim, which may name the RNG200's header and accessors alone (docs/design-stopgap.md,
+    # device shim, which may name the RNG200's header and accessors alone (docs/design-fiasco.md,
     # "The Raspberry Pi 4").
     RNG200_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/rng200.c',
                                         permits: %r{\A(?:#\s*include\s*"erx/hw/rng200\.h"|erx_rng200_\w+)\z})

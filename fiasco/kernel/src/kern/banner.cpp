@@ -1,4 +1,4 @@
-// Modified by erXos: it boots from erXos's boot image (docs/design-stopgap.md, "Boot handoff").
+// Modified by erXos: it boots from erXos's boot image (docs/design-fiasco.md, "Boot handoff").
 // Modified by erXos: the banner reports the boot image bootstrap validated.
 INTERFACE:
 

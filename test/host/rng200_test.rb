@@ -11,7 +11,7 @@ require_relative '../fixtures/generated_tree'
 
 # Judges the boot read of the RNG200, kernel/core/rng200.c, and the root's entropy line,
 # liberx/backend/core/entropy_line.c (docs/design-platforms.md, "Entropy sources";
-# docs/design-stopgap.md, "The Raspberry Pi 4"), through test/fixtures/rng200_driver.c:
+# docs/design-fiasco.md, "The Raspberry Pi 4"), through test/fixtures/rng200_driver.c:
 # a read whose FIFO fills is done after 32 bytes and never asks for more words than the
 # count gave; one whose count stays zero gives up at the 100 ms bound and not before;
 # and each banner line. Seeded faults in the read must each change a pinned answer.

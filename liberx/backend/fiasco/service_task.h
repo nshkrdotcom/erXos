@@ -18,7 +18,7 @@
 typedef struct erx_pack_view erx_pack_view_t;
 
 /*
- * The service's table of tasks (docs/design-stopgap.md, "Task exit", "Capabilities in
+ * The service's table of tasks (docs/design-fiasco.md, "Task exit", "Capabilities in
  * Fiasco's object space"): each task's capabilities in the root, its threads' states,
  * and the bodies of the calls that make and end one. Only the service touches a row,
  * so nothing here takes a lock, and a body runs to its end before the next receive.
@@ -43,7 +43,7 @@ typedef enum erx_fiasco_task_state {
 } erx_fiasco_task_state_t;
 
 /*
- * A task's place in the tree of spaces (docs/design-stopgap.md, "Spaces, parents and
+ * A task's place in the tree of spaces (docs/design-fiasco.md, "Spaces, parents and
  * exit records"), kept from its create until its deletion. The root is no task's child,
  * so 0 ends a list; a child is on its parent's list from its create to its deletion,
  * stopped or not. space is its space record's index plus one, the record every handle
@@ -70,7 +70,7 @@ typedef struct erx_fiasco_task {
 } erx_fiasco_task_t;
 
 /*
- * The table is pool pages that it takes as it fills (docs/design-stopgap.md, "Table
+ * The table is pool pages that it takes as it fills (docs/design-fiasco.md, "Table
  * sizes"), so a row exists for every index below its capacity; erx_fiasco_task gives
  * the row of an index the caller knows to have one, a live task's or a decoded space's.
  */
@@ -146,7 +146,7 @@ bool	erx_fiasco_task_created_by(uint32_t task, uint32_t caller);
 void	erx_fiasco_task_space_release(uint32_t record);
 int	erx_fiasco_task_mem_create_body(uint32_t caller, const erx_fiasco_mem_create_request_t *request, uint64_t *mem);
 /*
- * erx_mem_create_paged and erx_mem_seal (docs/design-stopgap.md, "The call table"):
+ * erx_mem_create_paged and erx_mem_seal (docs/design-fiasco.md, "The call table"):
  * erx_fiasco_vm_paged_rule's refusals, then the object's charge to its budget; a seal
  * of an object the caller holds, erx_fiasco_vm_object_seal's results; erx_mem_child's
  * child of a parent the caller holds, charged to its budget, erx_fiasco_vm_child_create's

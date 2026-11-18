@@ -11,7 +11,7 @@ require_relative '../../tools/lib/erx/native_runtime'
 require_relative '../../tools/lib/erx/production_image'
 require_relative '../../tools/lib/erx/release'
 
-# The release as tools/erx build runtime packed it (docs/design-stopgap.md, "The archive
+# The release as tools/erx build runtime packed it (docs/design-fiasco.md, "The archive
 # has a root that never runs"). A second pack through the same steps gives the same bytes,
 # and two archives holding the same release compare equal over their release files, the
 # root, the manifest and the notices excepted. So do the hosted archive and the production

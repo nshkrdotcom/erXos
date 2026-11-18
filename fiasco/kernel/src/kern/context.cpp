@@ -1,6 +1,6 @@
 // Modified by erXos: lazy FP switching is deleted; FP state is switched
-// eagerly (docs/design-stopgap.md, "FP and SIMD state"). activate() can add
-// state bits with Thread_ready (docs/design-stopgap.md, "Thread creation").
+// eagerly (docs/design-fiasco.md, "Eager FP switching"). activate() can add
+// state bits with Thread_ready (docs/design-fiasco.md, "Thread creation").
 INTERFACE:
 
 #include "types.h"

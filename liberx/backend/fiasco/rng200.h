@@ -11,7 +11,7 @@
 #include "liberx/backend/core/entropy_line.h"
 
 /*
- * The root's read of the board's RNG200 (docs/design-stopgap.md, "The Raspberry Pi
+ * The root's read of the board's RNG200 (docs/design-fiasco.md, "The Raspberry Pi
  * 4"), on the stopgap in place of the kernel's platform layer: the device shim around
  * kernel/core/rng200.c, and the only code of the root that touches the generator's
  * registers. window and path are the generator's row in the platform record, as the

@@ -6,8 +6,8 @@ require_relative 'error'
 require_relative 'host_path'
 
 module Erx
-  # The AArch64 ELF cross GCC and binutils that build the stopgap Fiasco
-  # (docs/design-stopgap.md). Hosts install them under one of two prefixes:
+  # The AArch64 ELF cross GCC and binutils that build Fiasco
+  # (docs/design-fiasco.md, "The release's Fiasco build"). Hosts install them under one of two prefixes:
   # Homebrew's aarch64-elf-gcc and aarch64-elf-binutils as `aarch64-elf-`,
   # FreeBSD's devel/aarch64-none-elf-gcc port as `aarch64-none-elf-`. find
   # decides the prefix once per build; the Fiasco build passes the Toolchain

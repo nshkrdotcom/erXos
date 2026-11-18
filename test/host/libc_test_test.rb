@@ -119,7 +119,7 @@ class LibcTestTest < Minitest::Test
     assert_equal(:failed, results.first.state)
   end
 
-  # The limit of trusting test programs (docs/design-stopgap.md, "musl's own tests").
+  # The limit of trusting test programs (docs/design-fiasco.md, "musl's own tests").
   def test_a_printed_line_with_no_end_from_the_root_can_fool_the_runner
     results = read(['erx: libc-test: run a/forged', 'erx: libc-test: end a/forged status 0'], %w[a/forged], machine: 'QEMU exited')
     assert_equal(:passed, results.first.state)

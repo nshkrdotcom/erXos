@@ -8,7 +8,7 @@ require_relative '../../tools/lib/erx/manifest'
 require_relative '../../tools/lib/erx/platform'
 require_relative '../fixtures/manifest_context'
 
-# Phase 1's manifest check (docs/design-stopgap.md): each kept property of
+# Phase 1's manifest check (docs/design-fiasco.md): each kept property of
 # design-system.md has a seeded violation here and each refusal a seeded record.
 # Every seed edits the real development manifest or the real platform record,
 # so a seed fails for its own reason and not for an unrelated difference.
@@ -87,7 +87,7 @@ class ManifestStopgapTest < Minitest::Test
   end
 
   # A device's path is the PATH of its device record, its name to its driver
-  # (docs/design-stopgap.md, "Device records"): a node path of at most
+  # (docs/design-fiasco.md, "Device records"): a node path of at most
   # device_path_max bytes. A path at the bound passes and one a byte longer, empty, relative or
   # holding an escape is refused.
   def test_a_device_tree_row_s_path_is_a_node_path_its_record_holds
@@ -699,14 +699,14 @@ class ManifestStopgapTest < Minitest::Test
   end
 
   # The network stack runs in the system domain in Phase 1, over the device its unit
-  # places there (docs/design-stopgap.md, "Device records").
+  # places there (docs/design-fiasco.md, "Device records").
   def test_a_network_device_is_admitted
     source, against = with_extra_device(role: 'network')
     admit(source, against)
   end
 
   # The display's device on QEMU virt, a virtio-mmio transport of the gpu role, is held as
-  # any unconfined DMA device is in a development build (docs/design-stopgap.md, "Device records").
+  # any unconfined DMA device is in a development build (docs/design-fiasco.md, "Device records").
   def test_a_gpu_device_is_admitted
     admit(*with_extra_device(role: 'gpu', dma: 'unconfined', flags: 1, dma_memory: 1_048_576))
   end
@@ -1196,7 +1196,7 @@ end
     refused(Erx::Manifest::Invalid, 8, 'system_image', @source + "system_image\n  input @artifact.release\n")
   end
 
-  # The release image (docs/design-stopgap.md, "The Phase 1 manifest check"): format
+  # The release image (docs/design-fiasco.md, "The Phase 1 manifest check"): format
   # erofs_unchecked, its extents from the artifact, every tree field zero.
   def test_the_release_image_is_recorded_without_a_tree
     view = @codec.open('manifest', admit.bytes)

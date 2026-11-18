@@ -51,7 +51,7 @@ require_relative 'source_revision'
 
 module Erx
   # The image the system boots from: bootstrap as the first stage, and an archive that
-  # Pack's one funnel builds and Phase 1's manifest check admits (docs/design-stopgap.md,
+  # Pack's one funnel builds and Phase 1's manifest check admits (docs/design-fiasco.md,
   # "The Phase 1 manifest check"). Test images come from BootImage instead, whose
   # structural recipe lives under test/fixtures; nothing here reaches that recipe.
   class ProductionImage
@@ -261,7 +261,7 @@ module Erx
 
       # The lowest place, in MiB into RAM, where QEMU virt puts the device tree: half of
       # RAM, at most 128 MiB into it; a single file ending higher moves the tree behind
-      # it (docs/design-platforms.md, "Boot handoff").
+      # it (docs/design-platforms.md, "Boot").
       def tree_floor_mib = [memory_mib / 2, 128].min
 
       # The machine of the refusal boot: this one with no more RAM than the image's
@@ -851,7 +851,7 @@ module Erx
     # Boots the production image under each accelerator and CPU count, after checking
     # the platform record's device paths against QEMU's own device tree. Any disagreement raises.
     class Run
-      # What the harness gives each accelerator's kernel command line (docs/design-stopgap.md,
+      # What the harness gives each accelerator's kernel command line (docs/design-fiasco.md,
       # "The watchdog"). HVF runs the defaults.
       TCG_WATCHDOG = '1,30,600'
       COMMAND_LINES = { 'tcg' => "erx.watchdog=#{TCG_WATCHDOG}" }.freeze
@@ -954,7 +954,7 @@ module Erx
       # The words of -erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
       # MEM_SIZE CLOCK COHERENT MAC, which the root adds for each device of a kind in a unit the system
       # domain holds, and of -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX, the
-      # host link's and the line grant's UART's physical record (docs/design-stopgap.md, "Device
+      # host link's and the line grant's UART's physical record (docs/design-fiasco.md, "Device
       # records"; held_record_words).
       GIVEN_RECORD_WORDS = 15
       DEVICE_RECORD_WORDS = 11
@@ -1035,7 +1035,7 @@ module Erx
 
       # The collectors of erx_kernel_records, in the order the boot types them, each with how
       # its answer starts: one record, or a listing's status and records. The Erlang shell
-      # writes each answer whole on one line with ~w (docs/design-stopgap.md, "Reporting
+      # writes each answer whole on one line with ~w (docs/design-fiasco.md, "Reporting
       # kernel objects"); the line typed for it starts io:format, so only the answer matches.
       KERNEL_RECORD_ANSWERS = { 'machine' => /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#\{/n, 'cpus' => /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?\{(?:ok|partial),\[/n,
                                 'group' => /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#\{/n, 'budget' => /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#\{/n,
@@ -1177,7 +1177,7 @@ module Erx
         %(io:format("~w~n",[erx_kernel_records:#{call}(#{argument})]).\r)
       end
 
-      # The kernel-object records at the Erlang shell, at the statuses design-stopgap.md's
+      # The kernel-object records at the Erlang shell, at the statuses design-fiasco.md's
       # "Reporting kernel objects" table gives. Of the attributes only the kernel could
       # report, just these are ok: the machine's build, boot_value, cpus_online and uptime,
       # and the system group's parked and ready. The group's cpuset would be ok once a set
@@ -1324,7 +1324,7 @@ module Erx
       end
       private_class_method :console_point
 
-      # The tracer's case on four CPUs (docs/design-stopgap.md, Verification, "Trace on four
+      # The tracer's case on four CPUs (docs/design-fiasco.md, Verification, "Trace on four
       # CPUs"). At the Erlang shell the person spawns a workload, which waits for a message
       # or 20 ms and loops, and starts erx:trace over it with the kernel's rows; the shell
       # prints {workload, Pid}. The kernel row is one unsupported line reported by kernel;
@@ -1475,7 +1475,7 @@ module Erx
       # SMOKE_CELLS under TCG: the plain boot to the command shell at one CPU, then the transcript.
       # The plain boot is of the website's machine, one UART, the console's: one serial line and
       # no erx.hostlink=1, so the root hands no host link record and no line group starts erx_hostlink
-      # (docs/design-stopgap.md, "The command line"). A record for the absent UART faults the
+      # (docs/design-fiasco.md, "The command line"). A record for the absent UART faults the
       # root task under TCG at erx_pl011's first read, as on the website; under HVF the same read
       # does not fault, so only this boot shows it. HVF's boots keep the host link.
       # Each name sits beside the boot that earns it, so dropping a boot drops its cell, and

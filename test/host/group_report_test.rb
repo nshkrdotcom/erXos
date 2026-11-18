@@ -10,7 +10,7 @@ require_relative '../fixtures/generated_tree'
 
 # erx-gate: sanitizers
 
-# The group report's pure part, on the host (docs/design-stopgap.md, "The command line"):
+# The group report's pure part, on the host (docs/design-fiasco.md, "The command line"):
 # the executor count and the line both backends' reporters write. The driver holds them
 # to exact text and to the buffer they are given, and each seed below must make it name
 # what it broke. liberx/backend/core/group_report.h is the core.

@@ -13,7 +13,7 @@
 #include "erx/core/watchdog.h"
 
 /*
- * The kernel command line (docs/design-stopgap.md, "The command line"), split on spaces.
+ * The kernel command line (docs/design-fiasco.md, "The command line"), split on spaces.
  * A word that does not start with erx. is a boot loader's, and ignored. Words of erx. are
  * erx.watchdog=P,D,B, erx.det=1, erx.group_report=1, erx.hostlink=1 and erx.arg=WORD; anything else starting
  * with erx. is a mistake that would otherwise go unseen, so it refuses the boot like a malformed one.

@@ -27,7 +27,7 @@
  * describes, which the host link's driver alone asks for (docs/design-live.md, "The host
  * link"), when the boot asks for the host link: a machine may have no UART at that path,
  * and a driver's first read of an absent device faults the system domain
- * (docs/design-stopgap.md, "Device records"). A line grant's uart names a third, by its
+ * (docs/design-fiasco.md, "Device records"). A line grant's uart names a third, by its
  * device row's index, which becomes the record line_kind describes, which the line
  * service alone asks for (docs/design-bluetooth.md, "The controller's line"). Every
  * physical record ends with its row's index, by which a service matches a grant to it.

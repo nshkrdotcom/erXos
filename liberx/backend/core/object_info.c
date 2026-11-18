@@ -5,7 +5,7 @@
 
 /*
  * The reports of erx_object_info on liberx's Phase 1 backends, and the fields they
- * count only partly (docs/design-stopgap.md, "Reporting kernel objects"). Per topic:
+ * count only partly (docs/design-fiasco.md, "Reporting kernel objects"). Per topic:
  *
  *   machine  build and boot_value, the boot handoff's, reported when the backend has one;
  *            cpus_online, the count of the kernel's map, reported when the map is known;

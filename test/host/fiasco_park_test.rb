@@ -12,7 +12,7 @@ require_relative '../fixtures/generated_tree'
 # erx-gate: sanitizers
 
 # The backends' park core and the Fiasco backend's thread claim, on the host
-# (docs/design-stopgap.md, "Verification", "Park", "Claim"): the drivers walk every
+# (docs/design-fiasco.md, "Verification", "Park", "Claim"): the drivers walk every
 # order, and each seed below must make its driver name what it broke.
 class FiascoParkTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)

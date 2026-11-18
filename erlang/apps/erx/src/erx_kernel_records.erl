@@ -36,7 +36,7 @@ mask. The pure core, record/5 and listing/4, takes the answers as data.
 
 %% The system domain's id, its node's creation (docs/design-domains.md: no
 %% node has a creation below 4): its group, budget and threads are the ones
-%% the root can name (docs/design-stopgap.md, "Reporting kernel objects").
+%% the root can name (docs/design-fiasco.md, "Reporting kernel objects").
 -define(SYSTEM_DOMAIN, 4).
 %% No machine has more CPUs, and no space more threads, than a listing reads.
 -define(MAX_CPUS, 64).
@@ -75,7 +75,7 @@ group(Domain) ->
 Domain's budget: the system domain's on ERX_CAP_SELF, the root's one
 budget, and another domain's own budget through the domain library, as
 for group/1, which the stopgap refuses as it does any other budget handle
-(docs/design-stopgap.md, "Reporting kernel objects").
+(docs/design-fiasco.md, "Reporting kernel objects").
 """.
 -spec budget(non_neg_integer()) -> erx_schema:record().
 budget(Domain) ->

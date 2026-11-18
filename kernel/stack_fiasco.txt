@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
 # The C17 cores' share of Fiasco's thread block on the stopgap, read by the
-# stack proof (tools/lib/erx/stack_proof_input.rb, docs/design-stopgap.md,
-# "The stack proof"). The proof bounds the cores' depth from each of their
+# stack proof (tools/lib/erx/stack_proof_input.rb, docs/design-fiasco.md,
+# "Interfaces"). The proof bounds the cores' depth from each of their
 # exported functions against the allowance of its role; Fiasco's and the
 # glue's use of the rest of the block is measured by the conformance
 # suite's watermark, never proven.

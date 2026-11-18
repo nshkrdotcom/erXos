@@ -5,7 +5,7 @@
 
 /*
  * What the service does about a task as a whole: its capabilities in the root, its
- * creation, its image, and its end (docs/design-stopgap.md, "Task exit"). The root
+ * creation, its image, and its end (docs/design-fiasco.md, "Task exit"). The root
  * holds a capability to everything it makes, in a run of slots per task past its
  * own; the task holds only its gate and its semaphores, which the root maps to it.
  *
@@ -604,7 +604,7 @@ task_live_child(uint32_t task)
 
 /*
  * A stop: the live task and every live space below it end, children first, each
- * child with ERX_EXIT_PARENT and the same stopper (docs/design-stopgap.md, "Task
+ * child with ERX_EXIT_PARENT and the same stopper (docs/design-fiasco.md, "Task
  * exit"). The walk goes down to a live space with no live child, ends it, and goes
  * back up to its parent; an ended space is never live again and a stopped one takes no
  * child, so each step ends one space, the walk is iterative whatever the tree's depth,
@@ -846,13 +846,13 @@ erx_fiasco_task_console_set(uint64_t page)
 
 /*
  * Device memory, a physical object or a contiguous run, comes from the root only
- * (docs/design-stopgap.md, "The call table"): the root's own drivers make theirs, and the
+ * (docs/design-fiasco.md, "The call table"): the root's own drivers make theirs, and the
  * domain library makes every other holder's and passes it, so a create from any other
  * task is ERX_ENOTSUP before its request is read. This body and the contiguous one below
  * are the only callers of task_fill_physical and task_fill_contiguous, and the service's
  * dispatch the only caller of the bodies, so the check in each covers every create.
  *
- * The handoff (docs/design-stopgap.md, "The console"): the console's driver maps the page that
+ * The handoff (docs/design-fiasco.md, "The console"): the console's driver maps the page that
  * holds its registers (erx_boot_console_page), and its first touch of a register
  * needs this reply, so it follows the last log record the service wrote to the UART, and a
  * failed map changes nothing.

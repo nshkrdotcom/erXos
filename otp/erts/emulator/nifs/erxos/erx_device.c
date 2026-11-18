@@ -1153,7 +1153,7 @@ erx_device_queue_create(const erx_device_t *device, uint32_t index, uint32_t siz
 	queue_record_t *record;
 	int status;
 
-	/* A physical device does no DMA, so it has no queue (docs/design-stopgap.md, "Device records"). */
+	/* A physical device does no DMA, so it has no queue (docs/design-fiasco.md, "Device records"). */
 	if (device->form == ERX_DEVICE_FORM_PHYSICAL)
 		return (ERX_ENOTSUP);
 	if (buffer_size == 0 || buffer_size > ERX_DEVICE_BUFFER_MAX || (form == QUEUE_REGISTER_RING ?

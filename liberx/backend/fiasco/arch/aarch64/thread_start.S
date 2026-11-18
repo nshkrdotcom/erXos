@@ -4,7 +4,7 @@
  */
 
 /*
- * A new thread's first instructions (docs/design-stopgap.md, "Thread creation").
+ * A new thread's first instructions (docs/design-fiasco.md, "Thread creation").
  * The kernel's start call carries an instruction pointer and a stack pointer and
  * no thread pointer, so the service starts every thread here with the stack
  * pointer holding its record. This stores the record where erx_utcb_self finds

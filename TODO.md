@@ -210,7 +210,7 @@ it; git history is the record of completed work.
   is only its load (`liberx/exec/load.c`, `erx_exec_load`: the object viewed and planned, the span
   reserved, segments mapped, copied and committed by a layout decided whole, relocations written), with no
   bootstrap around it (design-programs.md, "The loader's bootstrap" and "The executable's link";
-  design-stopgap.md, "An exec's entry"): the loader's window (`abi/protocols/prog.txt`, the task script's link
+  design-fiasco.md, "An exec's entry"): the loader's window (`abi/protocols/prog.txt`, the task script's link
   at its base and the load's reserve of its rest), the exec record's layout, register 7 and the executable's
   `erx_exec_release` (`liberx/exec/release.c`, from `erx_prog_enter`) are built, and not built are the
   record's writers (the port driver's create, write and map of it, which must map it at the ABI's
@@ -2401,14 +2401,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   document's headings, forms each anchor as the viewer does, and fails on a link whose file or anchor does not
   exist, with a seeded dangling anchor; a rule that links go through a constant, as `chokepoint_rules.rb`'s
   `design:` fields do, needs the same check over the interpolated strings.
-* [Low] comments, the C17 cores' seam with Fiasco's glue: [design-fiasco.md](docs/design-fiasco.md#interfaces)
-  "Interfaces" describes it, but `fiasco/kernel/src/Makeconf:395`, `include/erx/core/watchdog.h:11` and `tools/lib/erx/glue_imports.rb:10` cite a `docs/design-stopgap.md` "Interfaces" that does not exist,
-  and `test/host/stack_proof_claim.rb:5` cites a "B8" of that document. Point them at design-fiasco.md's
-  "Interfaces". So do the comments of about 190 files under `tools`, `test`, `liberx` and `erlang` that cite `docs/design-stopgap.md` sections now in
-  design-fiasco.md ("Device paths", "The command line", "Deterministic mode", "The stack proof", "The Raspberry Pi 4" and others;
-  find them with `grep -rn design-stopgap tools test liberx erlang`). The eager-FP notices of the fork (`fiasco/kernel/src/kern/fpu.cpp:1-2`,
-  `kern/arm/64/fpu-arm.cpp:1-2` and the other files that carry "lazy FP switching is deleted") cite only
-  design-kernel.md; point them at design-fiasco.md's "The release's Fiasco build" too.
 * [Medium] build, `tools/lib/erx/production_image.rb` (`archives`): the root's link records `libl4sys.p.a` and
   `libsigma0.a` with status `stopgap`, though the dependency table marks Fiasco's `l4re-core` parts `release`;
   the status sets of `tools/lib/erx/dependencies.rb:88` and `tools/lib/erx/toolchain_provenance.rb:72` admit
@@ -5231,7 +5223,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   machine, at every boot if it is reached at mount, while it runs in the system domain; in either
   R1 form it ends the port or the storage domain. Whether each of the two is a published downside or a
   residual that blocks R1 is an open decision
-  ([design-stopgap.md](docs/design-stopgap.md#open-decisions), "A crafted image that hangs or asserts").
+  ([design-stopgap.md](docs/design-stopgap.md#open-decisions), "A crafted image that loops or asserts").
 * [Medium] storage, `erx_lfs`: once the qid table is full, `listing/4` leaves out entries it
   cannot draw a qid for and numbers the next offset from the entries kept, so a listing
   repeats entries or ends early instead of answering `enfile`.
@@ -8685,7 +8677,7 @@ document's "residual risks accepted" paragraph.
 * [Medium] manifest check, line grants (`check_line_grants`, `tools/lib/erx/manifest.rb`): a grant naming a UART
   that is not a PL011, the Pi's mini UART, passes, and the root then writes no line record; refuse a line UART of
   any compatible but the PL011's row of `erx_uart_kinds`.
-* [Low] docs/design-stopgap.md, "Device records": the physical record is said to name the page run around its
+* [Low] docs/design-fiasco.md, "Device records": the physical record is said to name the page run around its
   registers after CLOCK; the root writes no such words.
 
 ## Planned features
