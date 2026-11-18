@@ -7559,7 +7559,7 @@ to the corpus and follow rc
   SPDX expression containing `BSD-2-Clause`; parse it with
   `Attribution`'s parser instead.
 * [Medium] build, the glue in Fiasco: the design compiles the glue with GCC's
-  `-fstack-usage` and checks it (B2, B3, B9, B11, the import allowlist);
+  `-fstack-usage` and checks it (B2, B3, B9, B11);
   `fiasco/kernel/src/erx/erx_handoff.cpp`, the glue, gets only
   `ERX_GLUE_CXXFLAGS` (`fiasco/kernel/src/Makeconf`). The glue checks
   package adds the flag beside the include path.
