@@ -7280,6 +7280,11 @@ to the corpus and follow rc
   check); the net_device suite's ntpd rows (`NetDevice::NTPD`) copy raspi4b-development.txt's (derive them
   through Manifest::Edit); erx_ntp_records and erx_time_records each map a missed answer to schema statuses
   their own way (one helper).
+* [Low] time, ntpd's schedule (`erlang/apps/erx_ntpd/src/erx_ntp_core.erl`,
+  [design-time.md](docs/design-time.md#schedule)): a run whose servers are IPv4 literals, or names the
+  hosts file holds, polls before the network has an address, so its quick rounds end and a network that
+  gets its address later is found only after the poll backoff, 128 s at first. The schedule watches no
+  network event; connecting it to the network domain's address changes would remove the quick rounds too.
 * [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
   [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
   through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:

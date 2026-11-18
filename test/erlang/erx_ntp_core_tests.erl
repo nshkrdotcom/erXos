@@ -8,7 +8,8 @@
 %% nine-entry case; a poll floor of 8 s fails the spacing property; and a
 %% wait of the 2 s burst gap after a clock answer, in place of the interval,
 %% which leaves the interval itself within bounds, fails the property at its
-%% spacing assertion (perform/3's poll clause).
+%% spacing assertion (perform/3's poll clause); and a 15 s wait in place of
+%% 2 s before the first poll fails late_network_test.
 -module(erx_ntp_core_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -87,9 +88,16 @@ reresolve_after_doubled_interval_test() ->
     {{wait, 128000}, S2} = erx_ntp_core:step({exchanged, {error, timeout}}, Silent),
     {{resolve, _}, _} = erx_ntp_core:step(woke, S2).
 
+%% A run that has polled no address yet retries a round that found none after
+%% 2 s, thirty times, then backs off from 15 s.
 resolve_backoff_test() ->
     {_, S0} = erx_ntp_core:start([<<"pool">>]),
-    {{wait, 15000}, S1} = erx_ntp_core:step({resolved, []}, S0),
+    Quick = lists:foldl(fun(_, S) ->
+                                {{wait, 2000}, Waiting} = erx_ntp_core:step({resolved, []}, S),
+                                {{resolve, _}, Next} = erx_ntp_core:step(woke, Waiting),
+                                Next
+                        end, S0, lists:seq(1, 30)),
+    {{wait, 15000}, S1} = erx_ntp_core:step({resolved, []}, Quick),
     {{resolve, _}, S2} = erx_ntp_core:step(woke, S1),
     {{wait, 30000}, _} = erx_ntp_core:step({resolved, []}, S2).
 
@@ -122,6 +130,9 @@ rate_doubles_and_other_kiss_is_discarded_test() ->
 %% Answer(Action, Resolutions), the resolutions asked so far this one included,
 %% as an event and the milliseconds it took; the actions asked, each with the
 %% simulated time it was asked at.
+%% An Answer of three arguments is also given the simulated time.
+simulate(Names, Answer, Steps) when is_function(Answer, 2) ->
+    simulate(Names, fun(Action, Resolutions, _Now) -> Answer(Action, Resolutions) end, Steps);
 simulate(Names, Answer, Steps) ->
     {Action, State} = erx_ntp_core:start(Names),
     simulate(Steps, Answer, Action, State, 0, 0, []).
@@ -133,7 +144,7 @@ simulate(Steps, Answer, Action, State, Now, Resolutions0, Trace) ->
                       {resolve, _} -> Resolutions0 + 1;
                       _ -> Resolutions0
                   end,
-    {Event, Ms} = Answer(Action, Resolutions),
+    {Event, Ms} = Answer(Action, Resolutions, Now),
     {Next, State1} = erx_ntp_core:step(Event, State),
     simulate(Steps - 1, Answer, Next, State1, Now + Ms, Resolutions, [{Now, Action} | Trace]).
 
@@ -160,6 +171,21 @@ silent_first_address_test() ->
     Trace = simulate([<<"pool">>], Answer, 40),
     ?assertMatch({_, {submit, _, ?B}}, lists:keyfind(first_sample(Trace), 1, Trace)),
     ?assert(first_sample(Trace) < 60000).
+
+%% A network that has no address for its first 20 s, and so answers no address
+%% for the name at once, then answers it: the address is first asked within 2 s
+%% of the network's address, not after the resolution backoff, and the clock
+%% has its sample after that address's burst.
+late_network_test() ->
+    Up = 20000,
+    Answer = fun({resolve, _}, _, Now) when Now < Up -> {{resolved, []}, 5};
+                ({resolve, _}, _, _Now) -> {{resolved, [?A]}, 50};
+                (Action, _, _Now) -> answer(Action, [])
+             end,
+    Trace = simulate([<<"pool">>], Answer, 60),
+    FirstAsked = hd([Now || {Now, {exchange, ?A, _}} <- Trace]),
+    ?assert(FirstAsked < Up + 2100),
+    ?assert(first_sample(Trace) < FirstAsked + 6100).
 
 %% A reachable literal before seven names whose resolution times out after 10 s:
 %% the literal's address is polled once it is resolved, not after the others.
@@ -280,7 +306,7 @@ submitting() ->
 %% first exchange; a kiss is one of the known atoms, never the server's bytes.
 status_test() ->
     {_, S0} = erx_ntp_core:start([<<"pool">>]),
-    ?assertEqual(#{servers => [<<"pool">>], addresses => [], denied => [], interval_s => 64, resolve_wait_s => 15,
+    ?assertEqual(#{servers => [<<"pool">>], addresses => [], denied => [], interval_s => 64, resolve_wait_s => 2,
                    samples => unknown, dropped => unknown, kisses => unknown, silent => unknown, last => unknown},
                  erx_ntp_core:status(S0)),
     {_, S1} = erx_ntp_core:step({resolved, [?A, ?B]}, S0),

@@ -40,7 +40,8 @@ Messages:
   Packets}`, an accepted connection's `{accept_refused, Conn, Segment}` and `charge_rst`, each
   against `credit`, and `{hint, NextHop}`;
 * from its erx_dhcp4: `{dhcp_attach, Pid}` once, then `{dhcp, Pid, erx_dhcp4_core:action()}`;
-  to it, `{erx_net_if, {reply, Msg} | {link, up | down}}`;
+  to it, `{erx_net_if, {reply, Msg} | {link, up | down}}`, the link's state first, at the
+  attach, and then each change;
 * `admin/2`, a call, for netadmin's requests (`counters`, `lease`, `status`).
 """.
 
@@ -124,7 +125,7 @@ message({hint, _NextHop} = Event, S) ->
     step(Event, S);
 message({dhcp_attach, Pid}, #state{dhcp = Old} = S) when is_pid(Pid) ->
     _ = [erlang:demonitor(Ref, [flush]) || {_, Ref} <- [Old]],
-    S#state{dhcp = {Pid, erlang:monitor(process, Pid)}};
+    step(dhcp_attached, S#state{dhcp = {Pid, erlang:monitor(process, Pid)}});
 message({dhcp, Pid, Action}, #state{dhcp = {Pid, _}} = S) ->
     Next = step({dhcp, Action}, S),
     ok = lease_moved(Action),

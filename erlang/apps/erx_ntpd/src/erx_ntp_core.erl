@@ -32,7 +32,10 @@ address, at once when that address has not been polled, else after the
 interval; once every address resolved so far has failed in a row, the
 next name is resolved at once, and once every name has been, the interval
 doubles and a new round starts after it. A round that ends with no usable
-address, none found or every one denied, starts again after 15 s,
+address, none found or every one denied, starts again after 2 s while the
+run has polled no address, at most 30 times, so a network that gets its
+address after ntpd starts is asked within 2 s of it when its names are
+resolved through DNS; otherwise after 15 s,
 doubling to 1024 s. `DENY` and `RSTR`
 remove the address for the rest of the run, `RATE` doubles the interval,
 and any other kiss is discarded.
@@ -50,6 +53,10 @@ is polled again, and the state stays bounded.
 -define(POLL_MIN_MS, 64000).
 -define(POLL_MAX_MS, 1024000).
 -define(RESOLVE_MIN_MS, 15000).
+%% The wait after a round that found no usable address while the run has
+%% polled none, and how many such rounds a run may have.
+-define(RESOLVE_QUICK_MS, 2000).
+-define(RESOLVE_QUICK, 30).
 -define(BURST, 4).
 -define(BURST_GAP_MS, 2000).
 %% The addresses a run remembers as polled: a bound, so a run of rotating
@@ -76,11 +83,12 @@ is polled again, and the state stays bounded.
 %% the round has resolved and not denied, the one in use first. failures:
 %% the polls without a sample in a row since the last sample or the round's
 %% start. denied never shrinks, so once it is full admitted/2 admits only
-%% polled addresses for the rest of the run.
+%% polled addresses for the rest of the run. quick_rounds: the rounds left that may
+%% start again after RESOLVE_QUICK_MS, 0 from the run's first poll on.
 -opaque state() :: #{names := [binary(), ...], unresolved := [binary()], stage := stage(),
                      addresses := [address()], polled := [address()], denied := [address()],
                      failures := non_neg_integer(), interval := pos_integer(),
-                     resolve_wait := pos_integer(), counts := counts(),
+                     resolve_wait := pos_integer(), quick_rounds := non_neg_integer(), counts := counts(),
                      last := none | {address(), atom()}}.
 %% What /proc/ntp shows of a run (status/1).
 -type status() :: #{servers := [binary()], addresses := [address()], denied := [address()],
@@ -115,6 +123,7 @@ servers(Flags) when is_binary(Flags) ->
 start([_ | _] = Names) ->
     new_round(#{names => Names, unresolved => Names, stage => resolving, addresses => [], polled => [],
             denied => [], failures => 0, interval => ?POLL_MIN_MS, resolve_wait => ?RESOLVE_MIN_MS,
+            quick_rounds => ?RESOLVE_QUICK,
             counts => #{samples => 0, dropped => 0, kisses => 0, silent => 0}, last => none}).
 
 -doc "The next action once the last one's result is Event, and the state to hand back with its result.".
@@ -155,20 +164,20 @@ interval(#{interval := Interval}) -> Interval.
 
 -doc """
 What /proc/ntp shows of the run: the names, the addresses in use, the
-address that last answered and how, the interval and the resolution
-backoff in seconds, and the reply counts. Before the first exchange the
+address that last answered and how, the interval and the wait after a
+round that finds no usable address in seconds, and the reply counts. Before the first exchange the
 counts and the last answer are `unknown`, so nothing claims more history
 than the run has.
 """.
 -spec status(state()) -> status().
 status(#{names := Names, addresses := Addresses, denied := Denied, interval := Interval,
-         resolve_wait := ResolveWait, counts := Counts, last := Last}) ->
+         counts := Counts, last := Last} = State) ->
     Exchanged = case Last of
                     none -> #{Key => unknown || Key := _ <- Counts#{last => none}};
                     _ -> Counts#{last => Last}
                 end,
     Exchanged#{servers => Names, addresses => Addresses, denied => Denied, interval_s => Interval div 1000,
-               resolve_wait_s => ResolveWait div 1000}.
+               resolve_wait_s => resolve_wait(State) div 1000}.
 
 %% One exchange's verdict. A kiss ends the poll; anything else that is no
 %% sample counts as dropped or silent and the burst goes on.
@@ -219,12 +228,12 @@ next(#{addresses := [Address | _], interval := Interval} = State) ->
 
 %% Every address resolved so far has failed in a row: the next name at once;
 %% once every name has been resolved, a new round after the doubled interval,
-%% or after the resolution backoff when the round ends with no usable
-%% address, none found or every one denied.
+%% or after the resolution wait when the round ends with no usable address,
+%% none found or every one denied.
 exhausted(#{unresolved := [_ | _]} = State) ->
     resolve(State);
-exhausted(#{addresses := [], resolve_wait := Wait} = State) ->
-    wait(Wait, new_round, State#{resolve_wait := double(Wait)});
+exhausted(#{addresses := []} = State) ->
+    wait(resolve_wait(State), new_round, resolved_none(State));
 exhausted(#{interval := Interval} = State) ->
     wait(double(Interval), new_round, State#{interval := double(Interval)}).
 
@@ -239,8 +248,16 @@ poll(#{addresses := [Address | _], polled := Polled} = State) ->
         true -> {{exchange, Address, poll}, State#{stage := {exchanging, Address, 0, none}}};
         false -> {{exchange, Address, poll},
                   State#{stage := {exchanging, Address, ?BURST - 1, none},
-                         polled := lists:sublist([Address | Polled], ?POLLED_MAX)}}
+                         polled := lists:sublist([Address | Polled], ?POLLED_MAX), quick_rounds := 0}}
     end.
+
+%% The wait after the next round that finds no usable address, and the state
+%% once a round has waited it: a quick round spent, or the backoff doubled.
+resolve_wait(#{quick_rounds := Quick}) when Quick > 0 -> ?RESOLVE_QUICK_MS;
+resolve_wait(#{resolve_wait := Wait}) -> Wait.
+
+resolved_none(#{quick_rounds := Quick} = State) when Quick > 0 -> State#{quick_rounds := Quick - 1};
+resolved_none(#{resolve_wait := Wait} = State) -> State#{resolve_wait := double(Wait)}.
 
 wait(Ms, Then, State) ->
     {{wait, Ms}, State#{stage := {waiting, Then}}}.
