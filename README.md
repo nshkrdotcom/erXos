@@ -487,7 +487,8 @@ tools/erx boot --medium build/production-image/qemu-virt/medium.img
 ```
 
 builds the QEMU release medium, the card's system packed for QEMU `virt`
-with the kiosk, and boots it as a person uses it: the display in QEMU's window
+with the kiosk and Doom, and boots it as a person uses it, on a 640 MiB
+machine (the suites keep 512 MiB): the display in QEMU's window
 with the virtio keyboard and tablet, user networking that reaches your
 network, your host's port 2222 forwarded to the guest's SSH port, and the
 serial console on your terminal; quit with Ctrl-A then X. QEMU boots an

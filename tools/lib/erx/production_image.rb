@@ -69,6 +69,8 @@ module Erx
     NOTICES_PATH = 'system/NOTICES'
     # What a machine keeps for the root's image past its place: the image is about 5 MiB.
     ROOT_ROOM_MIB = 8
+    # The RAM of the published QEMU medium's machine (Machine.published).
+    PUBLISHED_QEMU_MIB = 640
     LICENSE = 'LICENSE'
     # The trees imported into the source tree that the image builds from: BLAKE3 for the
     # root's reader of the archive and the entropy generator's mixing, ChaCha20 for that
@@ -218,7 +220,8 @@ module Erx
     # (kernel/core/boot_place.c, erx_boot_place_archive).
     # What the system growth leaves of the added RAM widens the room bootstrap keeps
     # for the archive. The production image boots on the development machine
-    # (Machine.development), the platform record's own; a test image whose suites need more memory or carry a
+    # (Machine.development), the platform record's own, and a published QEMU medium on
+    # Machine.published; a test image whose suites need more memory or carry a
     # larger archive (OracleQemu) names a larger one, and Pack's manifest check proves
     # the grown manifest against the platform record of that machine as it proves the
     # development one.
@@ -234,6 +237,17 @@ module Erx
       # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), and the root
       # at the development place.
       def self.site(platform) = development(platform).with(memory_mib: 256)
+
+      # The machine a published medium (build_medium's published) is packed for and boots
+      # on. A card's is its board's own. The QEMU medium carries the kiosk and the Doom
+      # example, whose archive leaves the root too little room in the record's 512 MiB, so
+      # its machine has PUBLISHED_QEMU_MIB, which `tools/erx boot --medium` gives QEMU, while
+      # the QEMU suites keep the record's.
+      def self.published(platform)
+        return development(platform) if BootPartition.boot_partition_medium?(platform)
+
+        development(platform).with(memory_mib: PUBLISHED_QEMU_MIB)
+      end
 
       def initialize(platform:, **numbers)
         raise Error, 'a machine is on a Platform' unless platform.is_a?(Platform)
@@ -406,21 +420,24 @@ module Erx
     PUBLISHED_APPS_DIRECTORY = 'build/published-apps'
 
     # `tools/erx pack`'s one build: Fiasco for platform (Fiasco#build_for), then the
-    # production image of platform's development machine, with its medium when medium
+    # production image of platform's development machine (the published medium's, with
+    # doom), with its medium when medium
     # is set, into packed_directory, cleared first, with the packages of apps
     # (ImageApps::Plan, `tools/erx pack --app`). A medium packed with no app of its
     # builder's is the published one, the kind the website offers (build_medium); nothing
     # on disk tells it from a builder's medium yet (TODO.md, "site, the QEMU virt download"). With
     # doom, the published medium carries the Doom example (build_medium), which must be
-    # fetched (DoomProgram.check_fetched, which build_medium runs first). Returns
+    # fetched (DoomProgram.check_fetched, which build_medium runs first), and is packed
+    # for the published medium's machine (Machine.published). Returns
     # build's or build_medium's result. The raspi4b suite boots what this leaves.
     def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4, apps: ImageApps.none, doom: false)
+      raise Error, 'only a published medium carries the Doom example' if doom && !medium
       check_card_apps(platform, apps) if medium
       fiasco = Fiasco.new(root: root, runner: runner, compiler: compiler)
       fiasco.build_for(platform, jobs: jobs)
       directory = clear_directory(root: root, path: File.join(root, packed_directory(platform)))
-      image = new(root: root, runner: runner, compiler: compiler, linker: linker, machine: Machine.development(platform),
-                  fiasco: fiasco)
+      machine = doom ? Machine.published(platform) : Machine.development(platform)
+      image = new(root: root, runner: runner, compiler: compiler, linker: linker, machine: machine, fiasco: fiasco)
       return image.build(directory: directory, apps: apps) unless medium
 
       image.build_medium(directory: directory, apps: apps, published: apps.empty?, doom: doom)

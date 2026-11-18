@@ -1138,13 +1138,15 @@ module Erx
     end
 
     # `tools/erx boot --medium PATH`: the release medium at PATH in QEMU as a person boots
-    # it (InteractiveBoot.medium_argv), on the development machine's RAM, which the medium
-    # was packed for; with --print, the plain qemu-system-aarch64 command instead, whose
+    # it (InteractiveBoot.medium_argv), on the published medium's machine
+    # (ProductionImage::Machine.published), whose RAM is at least what any medium
+    # `tools/erx pack --medium` writes was packed for; with --print, the plain
+    # qemu-system-aarch64 command instead, whose
     # kernel, device tree and disk lie in the tree until the next --medium. The guest
     # boots a copy of the medium (InteractiveBoot.medium_copy), where it keeps its /data
     # and SSH host key from boot to boot, so the medium at PATH stays as written.
     def self.boot_medium(request, platform:, accel:, runner:)
-      machine = ProductionImage::Machine.development(platform)
+      machine = ProductionImage::Machine.published(platform)
       files = InteractiveBoot.medium_boot(root: ROOT, runner: runner, medium: request.medium, machine: machine,
                                           cpus: request.cpus)
       argv = InteractiveBoot.medium_argv(platform: platform, accel: accel, cpus: request.cpus, kernel: files.kernel,
