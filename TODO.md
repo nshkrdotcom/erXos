@@ -2104,7 +2104,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] tooling, `tools/lib/erx/production_image.rb` (`device_path_problems`): the check of a platform record
   against a device tree reads QEMU virt's tree shape only, and runs only in the production image suite's
   device-path step, so a wrong `ram_first` or PL011 clock in a Raspberry Pi record is never checked against
-  the board's tree. Pi package 3 writes `config.txt`'s `init_uart_clock` from the record; check the Pi's
+  the board's tree. 1b-I's stage (a) writes `config.txt`'s `init_uart_clock` from the record; check the Pi's
   record against its device tree (nodes under `/soc`, the firmware's clocks) there.
 * [Medium] tooling, `tools/lib/erx/fiasco_provenance.rb` (`image_objects`, `MAPS`): the provenance audit
   covers the main build's bootstrap only and skips `build/fiasco/users-*`, so the Raspberry Pi 4's bootstrap
@@ -2169,7 +2169,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] production image, `ProductionImage#catalog`: the build record lists Fiasco's QEMU virt
   bootstrap even when the image's first stage is the board's (`Fiasco#first_stage_path`), and a build
   packs whatever board bootstrap is on disk.
-* [Medium] Pi package 5 (docs/plan.md, 1b-I (a) 5), the board pass, the framebuffer
+* [Medium] 1b-I's stage (a) (docs/research-rpi4-board-pass.md), the board pass, the framebuffer
   (`liberx/backend/fiasco/runtime_entry.c`, `framebuffer_give`): unverified is whether sigma0 grants the
   VideoCore's memory, the `framebuffer` row's window in `config/platforms/raspi4b.json`, as I/O memory, which
   `erx_mem_create_physical` needs; if not, the root stops with "the backend refused the framebuffer's pages".
@@ -2290,7 +2290,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   3), which `erx_mini_uart` sets; whether QEMU's model ignores them is unchecked. Probe by writing
   each IER bit alone and watching the interrupt line and IIR, then correct the file and the
   driver, and drop the bits if not needed.
-* [Low] Pi package 5 (docs/plan.md, 1b-I (a) 5), the board pass: confirm on silicon that the mini
+* [Low] 1b-I's stage (a) (docs/research-rpi4-board-pass.md), the board pass: confirm on silicon that the mini
   UART's receive interrupt needs IER's `RX_ERRATA` bits (`hw/svd/mini_uart/mini_uart.svd`), which
   `erx_mini_uart` sets as the BCM2835 errata asks and QEMU's model ignores, and drop them if not.
 * [Medium] hardware generator, `tools/lib/erx/hardware.rb`, no field arrays or shared enumerations:
@@ -2379,7 +2379,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   device's window, `virt.dtb`, the `qemu-virt/development` patterns), `tools/lib/erx/qemu.rb` (`cortex-a76`,
   the virtio-mmio bus arguments) and `ProductionImage::Run#check_device_paths` (`-cpu cortex-a72`) still hold
   QEMU virt's values. QEMU's `raspi4b` takes only its own 2 GiB and has no virtio-mmio; move each into the
-  platform record or `QemuPlan::MACHINES` when Pi package 4 runs a suite on the model.
+  platform record or `QemuPlan::MACHINES` when 1b-I's stage (a) runs a suite on the model.
 * [Low] tooling, `tools/lib/erx/native_root.rb` (`build_system_receipted`): the
   root's linked receipt does not name its place, the `--defsym` of
   `erx_fiasco_image_start` that `place_flags` adds; only the link map it binds
@@ -9884,10 +9884,10 @@ document's "residual risks accepted" paragraph.
   `erx-test:` lines and ends the machine through `erx_machine_end`, and the
   roster's first cases with their calls; the harness gives one deadline per
   configuration, not per case ([design-build.md](docs/design-build.md#images-and-guests)).
-* [Medium] bench, G1's guest workloads (`tools/erx bench timer`, `stop`,
+* [Medium] bench, track K's first guest measurements (`tools/erx bench timer`, `stop`,
   the null call, IPC, park and wake, boot time): they reuse the conformance
   harness's boot, deadline and guest endings, with results kept per
-  accelerator ([plan.md](docs/plan.md#m1-the-system-boots-on-fiasco)).
+  accelerator ([plan.md](docs/plan.md#track-k-erxoss-kernel)).
 
 * [High] kernel memory, file-backed memory objects with evictable clean
   pages, so that large-file `mmap` (LMDB, SQLite in mmap mode) and ML

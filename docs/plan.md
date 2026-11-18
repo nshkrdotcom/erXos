@@ -50,10 +50,7 @@ Ground rules:
   pass, refusals included; track K's conformance suite, written from the
   design against the `erx` backend, grows from that set and decides the
   switch together with Phase 1's own tests.
-* **The oracle runs on a schedule.** M0 verifies the test runner with focused
-  cases and controlled pass, failure, skip, timeout and interruption checks.
-  The complete stock reference runs are recorded before ERTS port changes
-  begin. From M3 on, OTP's `emulator`, `kernel`,
+* **The oracle runs on a schedule.** OTP's `emulator`, `kernel`,
   `stdlib` and `compiler` suites run on erXos, in the system domain until
   1b-A brings domains and in a test domain from then on, and are compared
   case by case with stock OTP 29.1.2 in the host's isolated Linux oracle
@@ -145,8 +142,8 @@ numbers are names; the table's order is the order.
 | Milestone | Demo | New code (estimate) | Needs | Gate |
 | --- | --- | --- | --- | --- |
 | **Phase 1** | | | | |
-| M0 The tree, the toolchain and the oracle | focused stock OTP 29.1.2 cases verify the offline Linux test runner; native Mac OTP supplies bootstrap tools; the frozen Fiasco set builds from the tree; `make check` regenerates every generated file into the build tree from checked-in inputs, and fails on a generated file found in the tree | 4,000 lines of Ruby | | G0 |
-| M1 The system boots on Fiasco | the near-stock Fiasco prints erXos's banner and starts `liberx`'s root entry as the root task under HVF; the root allocates, maps and reuses memory, runs threads with TLS and timed waits, runs a second task through a read-execute alias and ends it, takes an interrupt through the readiness interface, and ends the machine with a crash record on a stopped pet; the production image boots to the point where ERTS starts | 3,000 to 4,500 lines of C17 | M0, G0 | |
+| M0 The tree, the toolchain and the oracle | focused stock OTP 29.1.2 cases verify the offline Linux test runner; native Mac OTP supplies bootstrap tools; the frozen Fiasco set builds from the tree; `make check` generates every generated file into the build tree from checked-in inputs, and fails on a generated file found in the tree | 4,000 lines of Ruby | | G0 |
+| M1 The system boots on Fiasco | the near-stock Fiasco prints erXos's banner and starts `liberx`'s root entry as the root task under HVF; the production image boots to the point where ERTS starts | 3,000 to 4,500 lines of C17 | M0, G0 | |
 | Track H Hosted mode | the runtime runs as a Mac process under the sanitizers; once the Fiasco backend's rows between tasks have settled, domains and their connections run as Mac processes too, over the same backend rows as Fiasco's | 3,000 lines of C17 | M0 | |
 | M3 The shell is the operating system | `1>` on the serial console, from ERTS in the system domain in user mode, started by the root task | 8,000 lines of C, 1,000 of Erlang | M1, track H | G3 |
 | M4 The machine is an object | save in the editor on the Mac, run in the machine; follow a process to its source; ERTS and backend events on one timeline, the kernel's row unsupported | 10,000 lines of Erlang, 3,000 of Ruby, 2,000 of C | M3 | |
@@ -303,7 +300,7 @@ baseline conditions; unknown or unsupported results stay explicit.
 
 | Gate | When | Comparison and required evidence | Decision |
 | --- | --- | --- | --- |
-| GP, programs and pipes | track P, in hosted mode first and under HVF on Fiasco before the first part of track P is complete; Fiasco's numbers are provisional, since each object a program's start makes is one request to the backend's root service there | a program's start from the session's `spawn` to its `main` (`tools/erx bench spawn`) against the budget of [design-programs.md](design-programs.md#performance); a `make`-shaped workload of many short children over pipes with a paused pager, and `tools/erx bench pipe` with one writer and with 256 writers; latency, throughput, memory per program and per pipe, and the session's Erlang work per request | the channel's and the data area's defaults, completion batching in the handler, whether the pipe server keeps one ring per write end ([design-pipes.md](design-pipes.md#the-ring)); whether a program's start needs a cheaper path than one kernel call per object is decided at GK3, on erXos's kernel |
+| GP, programs and pipes | track P, in hosted mode first and under HVF on Fiasco before the first part of track P is complete; Fiasco's numbers are provisional, since each object a program's start makes is one request to the backend's root service there | a program's start from the session's `spawn` to its `main` (`tools/erx bench spawn`) against the budget of [design-programs.md](design-programs.md#performance) and against `posix_spawn` on Linux in a guest; a `make`-shaped workload of many short children over pipes with a paused pager, and `tools/erx bench pipe` with one writer and with 256 writers; latency, throughput, memory per program and per pipe, and the session's Erlang work per request | the channel's and the data area's defaults, completion batching in the handler, whether the pipe server keeps one ring per write end ([design-pipes.md](design-pipes.md#the-ring)); whether a program's start needs a cheaper path than one kernel call per object is decided at GK3, on erXos's kernel |
 
 GQ also measures the fill and the write-back cost of the session's shared
 mappings with `tools/erx bench mmap`
@@ -335,9 +332,6 @@ than building every later service before the usable slice.
 
 | Work | When | Required result |
 | --- | --- | --- |
-| Declaration model and generation checks | M0 | explicit ABI fragments with one qualified type/name namespace; complete-input validation, deterministic generation into the build tree, with a test that the tree depends only on its recorded inputs and an ASCII refusal; typed layouts and assertions; status/errno/fault/signal mapping infrastructure; valid-input builders, boundary mutations and fuzz entry points alongside each parser; invalid-schema tests, and refusal of a file checked in or edited at a generated output's path |
-| Startup from the packed manifest | M3 | the root task and `erx_manifest` read the system domain's records and its console device from the packed manifest through the generated readers; no second compiled configuration table |
-| Inspection and host-facing service bindings | M4 | `abi/inspection.txt` generates builders, C/Erlang/Ruby types/validators, path/field/status/unit tables and shell/host/`/proc` projections; host-exposed service operations generate Ruby clients; independent tests reject unknown keys and reply mismatches and preserve each status/reporter; generated docs and fuzz scaffolding land with the interfaces |
 | First generated service interface and the rest of the startup descriptors | 1b-A | console/service operations generate C/Erlang clients, admission/dispatch and bounded replies with scope policy in the handler; source checks refuse bypasses; the checked manifest's packed descriptors supply boot order, configured domains' devices, configured facets and watchdog liveness |
 | Cross-domain service and protocol consumers | 1b-A and each later service | generated serving paths authenticate lane origin, check the live facet scope and bound input/output before callbacks; hostile tests exercise forged origins, stale handles, denied targets and restricted inspection fields; the 9P profile keeps its independent standard oracle |
 | Command catalogs | track S | release metadata generates names, help and required facets, checked against callbacks without running target code; tests preserve name conflicts/precedence and bind metadata to loaded code across replacement and publication failures; a catalog grants no authority |
@@ -361,7 +355,6 @@ not establish correctness of its mechanism or implementation.
 
 | Work | When | Required result |
 | --- | --- | --- |
-| TLC setup | M0 | `make check-tla`, separate from `make check`; jar version/hash and JVM setup; private run directories, deadlines, complete expectation roster, caching with an uncached mode and runner failure tests |
 | Connection model and implementation mapping | 1b-A, before connections run under QEMU | TLC checks peer death, ordered delivery, unmapping and object retirement, including distinct peer incarnations; host tests cover the lane and teardown cores and failure traces; weak-memory ordering stays with `herd7` and conformance tests |
 | CBMC pilot | track K's pilot, beside Phase 1b, before GK2 | check actual C arithmetic, allocation failure and retirement with explicit input and unwind bounds; detect seeded defects; report unsupported constructs, cost and assumptions; adopt further use only if it adds useful evidence at maintainable cost; existing GK1/GK2 tests remain required regardless |
 | Host-link model and implementation mapping | M11, before the release build's host link is accepted | TLC checks session replacement, duplicate calls, expiry and credit; host traces check the actual pure core against an independent oracle; every invariant maps to a concrete check |
@@ -376,126 +369,13 @@ SPIN, Alloy or a new property-testing dependency.
 
 ## M0: The tree, the toolchain and the oracle
 
-**Goal.** The tree builds offline from pinned sources, the oracle runs in
-an isolated Linux container on the development host, native Mac OTP supplies
-the bootstrap compiler, the harness can boot and judge a guest under both
-accelerators, and every generated file has its generator.
-
-**Demo.** `make fetch` downloads and verifies every pinned source and the
-oracle's OCI toolchain image; `tools/erx oracle build` builds stock OTP
-29.1.2 for Linux in both flavours without external networking;
-`tools/erx oracle run emulator --suite binary_SUITE --case deep_bitstr_lists`
-runs a focused stock case and stores its result; `tools/erx build fiasco`
-builds the frozen Fiasco set
-from `fiasco/` and `tools/erx qemu --accel tcg` and `--accel hvf` boot it
-on `virt-11.1` to Fiasco's own banner; `make check` regenerates every generated file into
-the build tree from the checked-in inputs and fails on a generated file checked in at a generated path.
-
-**Scope.**
-
-* The skeleton: the top-level `Makefile`; `tools/erx` in Ruby, with a
-  deadline runner that starts subprocesses with argument vectors, runs them
-  under `gtimeout -k 10`, and kills their process group on expiry; `make
-  check` with the ASCII check.
-* `deps.lock` and `make fetch`: pinned URLs and SHA-256 hashes, unpacking
-  into separate directories under `build/third_party/`, plus the oracle's
-  platform-specific OCI image pinned by manifest digest in the local engine.
-* Imports, each with its license notices and an `ORIGIN.md` recording the
-  repository, the release or commit, and the SHA-256 of the import and of
-  every file in it:
-  OTP 29.1.2 into `otp/`, musl 1.2.6 into `musl/`, and into `fiasco/` the
-  frozen Fiasco set of
-  [design-kernel.md](design-kernel.md#the-current-implementation-the-modified-fiasco)
-  with its excluded parts removed; a license scan of the Fiasco set and the
-  link closure of `bootstrap` and `sigma0`, recorded.
-* The notices: every imported file's license in its `ORIGIN.md`, from its
-  SPDX header or, where it has none, from the import's review, marked as
-  reviewed; the build check that a changed file of an imported tree
-  carries erXos's change notice; the packer's provenance check and its
-  license allowlist over each image's closure, a slot's boot partition
-  included; each check with its seeded-violation test; and the packer's
-  `NOTICES` file ([design.md](design.md#licenses-and-notices)).
-* The oracle: stock OTP 29.1.2 built from the pinned tarball with its own
-  `configure`, in both flavours, and a Ruby tool that runs OTP's suites in
-  the [offline Linux context](design-host-oracle.md) and records results
-  case by case. M0 verifies this tool with representative cases and controlled
-  outcome fixtures; exhaustive suite runs are an ERTS-port prerequisite,
-  not an M0 exit condition. Native macOS builds supply bootstrap tools and
-  separate
-  native performance baselines; they do not stand in for Linux suite results.
-* The QEMU harness: QEMU `virt` as
-  [design-platforms.md](design-platforms.md#qemu-virt) configures it under
-  both accelerators, `-no-reboot`, serial output in logs, named lines
-  awaited under named deadlines, transcripts compared with expected ones.
-* The generators and the generated-tree tests: `abi/erx_abi.txt`, its explicit
-  inspection/service fragments and `abi/arch/aarch64.txt`, with the shared
-  declaration model, input/output inventories, generated reference tables
-  and test/fuzz scaffolding of [Generation work](#generation-work), and
-  their generator (decoders for the kernel,
-  calls for each `liberx` backend, the layouts of lanes, frames, the boot
-  information page, the crash record and the system manifest with its two
-  readers, a C one and the Erlang module `erx_manifest`, a Ruby module for
-  the packer);
-  the CMSIS-SVD generator, whose register accessors the device NIF alone
-  may reference; the system-register extractor; `abi/terminal.txt`; and
-  the architecture-term check, `make check-arch-terms` over
-  `hw/arch_terms/aarch64.txt`, with its seeded violation
-  ([design-kernel.md](design-kernel.md#chokepoint-checks)).
-* The boot-image format: test tooling writes deterministic `ERXPACK`
-  version 2 structural fixtures with `NOTICES`, checked by the host-built
-  C17 validator and its fuzz target. Production `tools/erx pack` arrives at
-  M1, with the Phase 1 manifest check, as specified below.
-* The TLA+/TLC runner and its tested expectation classification, private
-  work directories and hard deadlines, `make check-tla` as a separate gate,
-  tool version/hash pin and setup diagnostics
-  ([Verification work](#verification-work)).
-* `tools/erx bench`, recording every condition, with the host baselines on
-  OTP 29.1.2.
-
-**Structural image evidence.** M0's reproducibility output is labelled a
-**structural test fixture**, not an admitted boot image. It contains a valid
-non-JIT native root executable and a system manifest selecting native
-partial boot, with zero configured and zero partial-boot child domains.
-The fixture uses the canonical serializers and actual binary, executable
-and provenance validators. Its report names their results separately and
-records `root_startup = unsupported`, `policy_admission = unsupported`
-and `child_plan_instances = 0`. The empty child set requires no child
-planner call; it supplies no evidence about the initial root's stack,
-UTCB, kernel objects, private image memory or bootstrap allocations.
-
-Only test tooling writes these fixtures. They carry no new wire flag and
-cannot construct the production `Admitted` value or bypass its publisher.
-Production packing waits for M1's manifest check, whose root startup rule
-stands in for the real initial-root feasibility/charge plan until Track K.
-The root image's checked private-memory lower bound is still enforced;
-a sufficient declared baseline alone is not a startup proof. The separate
-M0 guest demo boots the frozen Fiasco set to its banner and does not claim
-to execute erXos's root interface.
-
-Independent populated binary fixtures exercise every manifest record and
-the C, Erlang and Ruby structural readers without claiming policy
-admission. Track K's first part supplies the production initial-root
-bootstrap/charge plan
-and `erx_dom_plan_configured` for both host admission checks and runtime
-creation. Any unavailable required sizing, planning or service consumer
-fails as unsupported. There is no temporary planner, weakened admission
-path or reduced target manifest format.
-
-**Exit criteria.** `make check` passes offline after `make fetch`; the
-oracle records a focused Linux stock case and correctly reports controlled
-passes, failures, skips, timeouts and interrupted/incomplete runs. It proves
-loopback peer operation and absence of external networking, and removes
-its container including daemonized test children on success or cancellation;
-the near-stock Fiasco boots to its own banner under HVF in the harness; a
-build twice from clean gives identical structural `ERXPACK` fixtures, with
-startup and policy admission explicitly unsupported; the fuzz target of the
-boot-image validator runs its budget clean.
-The TLC runner's tests pass, including targeted expected failures, wrong
-properties, parser errors, incomplete runs, cache invalidation and empty
-filters; the separate `check-tla` entry point reports missing tools as an
-error and performs no network access. Generation rejects invalid schemas
-before publishing output, regenerates the tree when an input or output
-changes, and refuses a generated file checked in or edited. Independent fixtures check generated parsers and mappings.
+**Exit.** `make check` passes offline after `make fetch`: OTP 29.1.2,
+musl 1.2.6 and the frozen Fiasco set live in the tree with their
+`ORIGIN.md` files, the oracle runs stock OTP 29.1.2 cases in its
+[offline Linux context](design-host-oracle.md), the QEMU harness boots
+the near-stock Fiasco to its banner under both accelerators, the TLC
+runner stands behind `make check-tla`, and every generated file is
+generated into the build tree from its checked-in inputs.
 
 **Gate G0.** The import: the license scan and link closure of the Fiasco
 set, which name the GPL-headed files Fiasco keeps
@@ -510,61 +390,18 @@ CLAUDE.md's rule for stopgaps requires. `lld` installed.
 
 ## M1: The system boots on Fiasco
 
-**Goal.** A near-stock Fiasco boots erXos's boot image and starts
+**Exit.** A near-stock Fiasco boots erXos's boot image and starts
 `liberx`'s root entry as the root task, and `liberx`'s Fiasco backend
 gives, over Fiasco's own calls in user mode, every function that ERTS,
-musl, the device NIF and the test tasks need
-([design-fiasco.md](design-fiasco.md)).
-
-**Demo.** The boot image boots through `bootstrap`; the kernel prints
-erXos's banner and `development build: trusted code only` and starts the
-root task; in a partial boot the root allocates, maps, protects, releases
-and reuses memory, runs threads with TLS, timed waits, park and wake, exit
-and join, runs a second task that executes code through a read-execute
-alias and ends with a status, takes the UART's interrupt and a software
-interrupt through the readiness interface, and ends the machine with a
-crash record when a pet stops; the production image boots to the point
-where ERTS starts. All under HVF, one and four CPUs.
-
-**Scope.** Fiasco built near-stock from the fork, with `sigma0` and
-`bootstrap`, the two banner lines, no serial input or JDB entry on the
-console; `bootstrap`'s loader for the ERXPACK image; the root entry as
-the root task, reading the manifest through its generated C reader; the
-backend: the physical pool from `sigma0` in the root's pool window, the
-range table, the VM calls and `erx_space_protect`, shared objects with the
-JIT alias, physical and contiguous objects with the DMA address, IRQ
-objects bound to a group's dispatcher with the ready list and
-`erx_group_take_ready`, threads with one semaphore each and TLS set by the
-start trampoline, park and wake under the group's park lock, the umtx
-table, exit through each task's reaper, the test-task launcher over
-`elf_plan.c` with the root service, one thread that serves a task's calls
-and receives its faults, the crash record and the machine's end, the
-watchdog thread,
-the time page, entropy and the debug log over the log capability; the
-generated encoder and decoder of the root service, with the decoder's fuzz
-target; the Phase 1 manifest check in the packer
-([design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)), whose
-root startup rule stands in for the production planner until track K
-brings it; the chokepoint that confines Fiasco's headers and capabilities
-to `liberx/backend/fiasco`, with its seeded violation; the hosted
-backend's matching functions and refusals.
-
-**Exit criteria.** Each demo step is a transcript test under HVF;
-a page committed, written, decommitted and committed again reads zeros; a
-page protected to no access and back reads its contents unchanged, and a
-stack made through `PROT_NONE` works; the pool's count returns to its
-value before a task ran; a stack and a UTCB slot are reused under a join
-loop; a touch of a decommitted page, a fault of the root and a stopped pet
-each end the machine with a crash record on the console whose cause names
-them; a fault in a test task ends the task with its record while the
-machine continues; the umtx table's and the park protocol's TSan models,
-the park protocol's check of a trigger between the empty check and the
-park, and the range table's host tests pass; every function of the backend
-has a test that the hosted backend passes with the same result, refusals
-included; `make check-reproducible` passes on the production image; the
-fuzz targets of the root service's decoder, the crash record's reader and
-the manifest's C reader run their budgets clean; a Fiasco header or
-capability outside the backend fails the build.
+musl, the device NIF and the test tasks need, each with a test that the
+hosted backend passes with the same result, refusals included
+([design-fiasco.md](design-fiasco.md)); a stopped pet, a fault of the
+root and a touch of a decommitted page each end the machine with a crash
+record whose cause names them, while a fault in a test task ends only that
+task. Until track K brings `erx_root_plan` with its charge evidence, the
+Phase 1 manifest check's root startup rule stands in for the initial
+root's feasibility and charge plan
+([design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)).
 
 ## M2: The execution contract holds
 
@@ -617,12 +454,6 @@ dirty schedulers.
 
 ## Track H: Hosted mode
 
-Before modifying ERTS for the port, record the complete stock OTP 29.1.2
-`emulator`, `kernel` and `stdlib` reference runs in interpreter and JIT modes.
-Keep case identities, outcomes, skips, environment details and incomplete
-records explicit. These reference runs are required for the ERTS comparison;
-they do not block M1.
-
 `liberx`'s hosted backend implements the kernel interface inside a macOS
 process: spaces are the process, threads are pthreads, memory objects are
 `mmap`ped regions, umtx waits are `os_sync_wait_on_address`, and groups and
@@ -640,171 +471,28 @@ planned feature in [TODO.md](../TODO.md). QEMU remains authoritative.
 
 ## M3: The shell is the operating system
 
-**Goal.** ERTS runs as the system domain in user mode on the contract,
-started by the root task, with only the changes it cannot run without.
-
-**Prerequisite.** The complete stock reference runs described in
-[hosted mode](#track-h-hosted-mode) are available before the ERTS port
-changes.
-
-**Demo.** `1>` on the serial console; the shell evaluates, line editing
-and history work, and `erlang:processes()` lists the system domain's
-processes; an idle machine shows every executor parked.
-
-**Scope.** The root-task entry's full boot, which builds the system
-domain's memory, threads and runtime group from the system manifest and
-starts ERTS on a system release whose manifest names no other domain
-([design-system.md](design-system.md#the-root-task)); the group carries
-the executors' parking and the interrupts' readiness, and Phase 1 enforces
-no grant on it ([design-fiasco.md](design-fiasco.md#the-call-table));
-the system manifest, the one file the build packs into the boot image to
-configure the system, with its Erlang reader, `erx_manifest`, and the
-fuzz target of that reader, read from the packed manifest's records
-([Generation work](#generation-work)); the Phase 1 manifest check in the
-packer, as
-[design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check) gives
-it, with no property added to it in Phase 1; the
-interpreter image, the runtime image that the system domain, the command
-domains and deterministic mode run; the adapter's first five changes
-(executors and workers, sleep over `erx_park`, wake over
-`erx_executor_wake`, no busy waiting, the safe point with capacity), with
-no cooperation flag enabled
-([design-runtime.md](design-runtime.md#scheduling)), among the 41 edits
-in 41 files that ERTS's own files take in all, of which M3 makes only
-those the shell needs
-([design-runtime.md](design-runtime.md#the-edits-outside-syserxos));
-threads, memory, time, files and crash handling in `sys/erxos`; files
-are the release file system, the namespace's mounts, the file protocol's
-frame profile with its term grammar generated from `abi/erx_abi.txt`,
-`erx_fs`'s core (the grant process, fids and their owners, open files
-with their owners, `lcreate`'s create-or-open, and `write` answering
-with `At`, and the reply checks), the preloaded `erx_file_remote` with
-the client's last-name, error, file-information and offset rules
-([design-files.md](design-files.md#erlang-clients-prim_file-and-erx_file_remote)),
-both for the operations `/tmp` needs: `version`, `attach`, `walk`,
-`lopen`, `lcreate`, `read`, `write`, `readdir`, `getattr`, `setattr`,
-`mkdir`, `symlink`, `link`, `readlink`, `unlinkat`, `renameat`,
-`statfs`, `fsync` (a no-op for `/tmp` that succeeds, as OTP's `sync` and
-`datasync` cases need), `flush` and `clunk`, with the grammar generated
-whole from its one table, so every other operation decodes and is
-answered too: `auth` with `enotsup`, as every server answers it,
-`remove` through `unlink` as `unlinkat` is, `mknod` with `eperm` and
-`xattrwalk` and `xattrcreate` with `enotsup` from `/tmp`'s callbacks,
-and `lock` and `getlock` with `enolck` until `erx_fs`'s locks arrive in
-M4; and `/tmp` as the domain's
-own `erx_fs` server ([design-tmp.md](design-tmp.md#where-tmp-runs));
-the watchdog process, `erx_watchdog`, petting
-from the system release; musl behind `liberx`; the console service and
-the console's driver, an Erlang process in the system domain over the
-device NIF, with no console NIF
-([design-runtime.md](design-runtime.md#the-console-and-standard-io)), the
-console's only input; `erx_console` copies raw bytes between that driver and
-the group's terminal-less `prim_tty`, with `isprint/1` and `wcwidth/1` made
-pure (edit 38), which is the system shell's permanent path: its tty stays raw
-with every flag clear, so `erx_tty` is no part of it, and M3 needs neither
-`erx_tty`, `erx_output`, a registered tty owner nor edit 35's trap, which come
-with the first session's tty in Track S; logging stays OTP's default handler
-over `user`, since only the system release's code runs here, and the log sink
-and edit 43 come with the first other domain in M5; the console has several
-writers, whose writes can
-interleave: the console service, a runtime's descriptors 1 and 2 through
-the seam's console write, and the kernel's log capability serving the root
-before the driver runs and the crash handler after it, on
-the UART that the system manifest names by its device-tree path, which
-the device service checks against `/chosen/stdout-path` at boot, refusing
-a manifest whose console differs
-([design-system.md](design-system.md#devices)); the build behind
-`tools/erx build runtime`; `prim_file`'s path resolution with its fuzz
-target.
-
-**Exit criteria.** The fast oracle subset passes in the system domain, and
-OTP's `emulator`, `kernel`, `stdlib` and `compiler` suites run under stock
-Common Test there and are compared case by case. Every case is the same as
-stock, a bug fixed or in `TODO.md`, an explained difference, or "cannot run
-in M3" with its reason (peer, spawn port, socket, C helper, load at run time,
-file system) named and shown by the run. The counts are recorded and no
-unexplained difference remains;
-musl's `libc-test` runs in a test task that the root builds with every
-failure a bug, a documented difference with a test, or an upstream bug
-recorded as such; a deterministic-mode boot to the shell gives a
-byte-identical transcript, under the recipe in
-[design-fiasco.md](design-fiasco.md#deterministic-mode); the
-manifest check fails the build on a seeded violation of each property in
-its scope and on a seeded record outside that scope; a manifest whose
-console differs from `/chosen/stdout-path` is refused at boot; the fuzz
-targets of the Erlang manifest reader, of the file protocol's frame
-grammar, which feeds both local messages and frames to `erx_fs`, and of
-`/tmp`'s tree, its sequence test, run their budgets clean.
+**Exit.** ERTS runs as the system domain in user mode, started by the
+root task, to `1>` on the serial console; OTP's `emulator`, `kernel`,
+`stdlib` and `compiler` suites run there under stock Common Test and are
+compared case by case with stock OTP 29.1.2, every difference fixed,
+explained or in `TODO.md`, and every case that cannot run yet shown with
+its reason.
 
 **Gate G3.** Measures: W1 of E-S1 (same-domain ping-pong and ring, spawn,
 switch) against stock OTP 29.1.2 on the host; footprint; boot time to the
 shell. Decides: the baseline every later change is measured against.
 The first run, taken at a high load average and so not yet a valid
-baseline, is
-in [research-g3-baseline.md](research-g3-baseline.md); `tools/erx bench g3
---accel
-hvf|tcg` measures it again.
+baseline, is in [research-g3-baseline.md](research-g3-baseline.md);
+`tools/erx bench g3 --accel hvf|tcg` measures it again.
 
 ## M4: The machine is an object
 
-**Goal.** The live machine, which every later milestone is debugged with.
-
-**Demo.** On the Mac, `erx watch` recompiles a changed module and hot-loads
-it into the running system domain through the install facet; `erx:i()`
-shows CPUs, threads, groups and processes with each value's reporter;
-`erx:source(Pid)` shows the line a process is executing; `erx:trace` shows
-ERTS scheduling and the backend's events (park, wake, interrupt delivery,
-task start and end) on one timeline, the kernel's row unsupported until
-erXos's kernel supplies its trace ring.
-
-**Scope.** The generated inspection schema and its C/Erlang/Ruby bindings,
-status/reporter-preserving renderers and `/proc` projections; generated
-Ruby clients for host-exposed service operations, with their bounded
-request/reply checks; the inspector, the tracer in the system domain
-(the trace facet served across domains and the relay come with M5's kernel
-part), the host link with its
-sessions and deframer (and their fuzz targets), on the UART that the
-system manifest
-names by its device-tree path, the code service with the install arena
-([design-live.md](design-live.md),
-[design-runtime.md](design-runtime.md#code-in-the-system-domain)); the
-code store in memory, with loads by hash, checked by the SHA-256
-primitive ([design-runtime.md](design-runtime.md#per-byte-primitives)),
-manifests, history and the missing-blob exchange
-([design-live.md](design-live.md#the-code-store)); the system domain's
-namespace, the
-9P2000.L byte codec `erx_9p` built from the frame profile, with its fuzz
-target, `erx_fs`'s locks in each tree's lock table, and
-`/proc` ([design-files.md](design-files.md)); the
-host link's files stream, stream 4, which `tools/erx files` relays to a
-UNIX socket on the Mac so that any 9P2000.L client there mounts the
-machine's `proc` tree
-([design-live.md](design-live.md#files-between-the-host-and-the-machine)),
-while the host-tree domain, which serves the Mac's tree at `/host`, is
-optional work of 1b-E ([M9](#m9-a-driver-is-an-erlang-process));
-the line escape with its table generated from OTP's Unicode data, at each
-display of labelled text, with a fuzz target
-([design-live.md](design-live.md#attributed-text)); the `shell_default`
-shortcuts and their collision test. The system domain runs the
-interpreter image; BeamAsm comes with M5's ordinary domains. Basic
-inspection also participates in the first integration checkpoint's full
-boot with one application domain over its connection, before M5 is
-complete.
-
-**Exit criteria.** The host-link tests (session replacement, at-most-once
-calls, credit, the 1,025th facet) pass; a module reloaded in a loop on four
-CPUs never runs stale code; a blob one bit off its hash
-never loads; every character class of the line escape has its test at each
-display; `file:read_file("/proc/processes/0.N.S/status")` in the
-system shell, `0.N.S` being a pid as `pid_to_list` writes it less its
-brackets, returns every status the inspector can report; every value only
-the kernel could report shows `unsupported` with its reporter, and budget
-`used` shows `partial` with reporter `root pool`, each with a test; a
-file read through `tools/erx files` equals its
-source on the machine; the fuzz targets of the deframer, `erx_path`,
-the 9P2000.L codec and each escaper run their budgets clean; the oracle's
-suites meet M3's standard on the interpreter image in the system domain, with
-the cases that need what M4 brings moved out of "cannot run".
+**Exit.** The live machine: `erx watch` on the Mac hot-loads a changed
+module into the running system domain through the install facet;
+`erx:i()`, `erx:source(Pid)` and `/proc` show the machine with each
+value's reporter; `erx:trace` puts ERTS's and the backend's events on
+one timeline; and every value only the kernel could report reads
+`unsupported` ([design-live.md](design-live.md)).
 
 ## M5: A wall around some processes
 
@@ -828,130 +516,80 @@ grants and the hostile runtime, which M5's kernel part adds.
 
 **Scope.**
 
-* **The log sink**: `erx_log_h` as the `default` handler in every domain, the
-  logger proxy, the console's escaped log lines, and edit 43 for
-  `logger_simple_h`, before any other domain's text can reach a log
-  ([design-live.md](design-live.md#the-console)).
-* **Connections and lanes**: the lane's ring and reader page in the ABI
-  file's layout, IRQ objects as doorbells, the wake handshake by published
-  positions, and the system domain making a connection at a domain's
-  creation and at each introduction
-  ([design-domains.md](design-domains.md#connections)).
-* **The funnel**, one C17 library in `liberx` linked by every runtime:
-  `erx_lane_take`, which copies a frame out of the ring once, and
-  `erx_funnel_check` over the domain's own export table, with safe
-  decoding in the system domain and lazy decoding everywhere; the
-  chokepoint check that only `erx_lane_take` reads a lane's pages
+* **The log sink** in every domain, before any other domain's text can
+  reach a log ([design-live.md](design-live.md#the-console)).
+* **Connections and lanes**, with the wake handshake by published
+  positions ([design-domains.md](design-domains.md#connections)).
+* **The funnel**, one C17 library in `liberx` linked by every runtime,
+  with the chokepoint check that only `erx_lane_take` reads a lane's pages
   ([design-domains.md](design-domains.md#the-funnel)).
-* **The peer in ERTS**: every domain a node named `<id>@<host>` under
-  stock distribution, `<D.N.S>` pids that print the domain id as the
-  creation, one distribution entry per connection keyed by the peer's
-  name as stock keys it, the `erx_connections` process of `erx` and the
-  `erx_lane` linked-in driver as the carrier, the busy-port rule when a
-  lane is full, the export table with its three writers (`erx:export/3`
-  narrowing only), unguessable references, and the receive boost's
-  plumbing (urgency in records); `erx_etf` in `liberx`
-  ([design-runtime.md](design-runtime.md#connections-in-erts),
+* **The peer in ERTS**: every domain a node under stock distribution, one
+  distribution entry per connection, and the export table with its
+  writers ([design-runtime.md](design-runtime.md#connections-in-erts),
   [design-domains.md](design-domains.md#exports)).
-* **Tracing across domains**: the trace facet and the trace relay in each
-  traced domain, tracing of cross-domain frames, and trace records on the
-  host link's events stream ([design-live.md](design-live.md#tracing)).
-* **The domain library and the system services**: the domain library's
-  full creation plan with undo, its fault thread and gate, end
-  classification and `{domain_down, D, Info}`, connection down, whose
-  objects are deleted once each party has unmapped them or ended and
-  never on a timer while a party lives
-  ([design-domains.md](design-domains.md#connections)), and the ordered
-  end of the machine; the domain service, which creates the domains the
-  system manifest configures and makes their
-  introductions, domain pids, facets, code facets,
-  `erx_domain:introduce/1,2`, with `erlang:disconnect_node/1` taking a
-  connection down; namespaces
-  built for every domain, with facets mounted as file servers, reached
-  through `erx_file_remote` ([design-files.md](design-files.md)); identifiers
-  checked by `erx_ident`
-  ([design-system.md](design-system.md#identifiers)); domain ids
-  allocated by the domain service, never reused within a boot
-  ([design-system.md](design-system.md#the-domain-library),
-  [design-system.md](design-system.md#creating-a-domain)); the system
-  domain's runtime started with `ERX_BOOT_INSTALLED_ONLY`, so it loads
-  only code from its release slice and its install arena
-  ([design-runtime.md](design-runtime.md#code-in-the-system-domain));
-  `/proc` with the previous boot's crash record under `[kernel, crash]`
-  where the platform keeps one ([design-files.md](design-files.md)).
-* **BeamAsm** in the BeamAsm image, the runtime image for ordinary
-  domains, built beside the interpreter image, with JIT objects mapped
-  twice in spaces allowed JIT objects, user-mode cache maintenance, the
-  code barrier, libc++ without exceptions, and the repaired error paths
-  ([design-runtime.md](design-runtime.md#beamasm)); the domain service
-  starts BeamAsm domains, and the system domain runs the interpreter image
-  and holds no JIT object.
-* **The kernel interface sub-spaces and programs need**, on erXos's kernel
-  with its conformance tests, as M5's kernel part: capability passing at a
-  rendezvous and by
-  `erx_cap_pass`, deleted memory whose mappings fault, `erx_mem_copy`, the
-  emptying of a stopped space's table, space parents
-  with stop propagation, sub-space creation by a domain allowed `SPACES`,
-  and vCPU upcalls
+* **Tracing across domains**: the trace facet, the trace relay in each
+  traced domain and tracing of cross-domain frames
+  ([design-live.md](design-live.md#tracing)).
+* **The domain library and the system services**: the creation plan with
+  undo, end classification and `{domain_down, D, Info}`, a connection's
+  objects deleted only once each party has unmapped them or ended and
+  never on a timer while a party lives, and the ordered end of the
+  machine; the domain service with introductions, facets and domain ids
+  never reused within a boot; namespaces for every domain; and the system
+  domain loading only code from its release slice and its install arena
+  ([design-domains.md](design-domains.md#connections),
+  [design-system.md](design-system.md#the-domain-library),
+  [design-files.md](design-files.md),
+  [design-runtime.md](design-runtime.md#code-in-the-system-domain)).
+* **BeamAsm** in the runtime image for ordinary domains; the system
+  domain runs the interpreter image and holds no JIT object
+  ([design-runtime.md](design-runtime.md#beamasm)).
+* **The kernel interface sub-spaces and programs need** (capability
+  passing, deleted memory whose mappings fault, `erx_mem_copy`, space
+  parents with stop propagation, sub-space creation by a domain allowed
+  `SPACES`, and vCPU upcalls), on erXos's kernel with its conformance
+  tests, as M5's kernel part
   ([design-kernel.md](design-kernel.md#passing-capabilities),
   [design-kernel.md](design-kernel.md#closing-and-deleting),
   [design-kernel.md](design-kernel.md#creating-spaces),
-  [design-kernel.md](design-kernel.md#vcpu-upcalls)), with the pass,
-  deletion, stop and upcall cores explored on the host
-  ([Track K](#track-k-erxoss-kernel)).
+  [design-kernel.md](design-kernel.md#vcpu-upcalls),
+  [Track K](#track-k-erxoss-kernel)).
 * **Tests**: the funnel's fuzz target and its differential test against
   `binary_to_term/1`; the fuzz targets of the lane reader, `erx_etf`, the
   system domain's safe decode and the facets' generated admission; the
-  hostile-runtime suite at the receiving funnel of
-  [design-domains.md](design-domains.md#verification-and-testing); the
-  root task's end tests of
-  [design-system.md](design-system.md#verification-and-testing).
+  hostile-runtime suite at the receiving funnel
+  ([design-domains.md](design-domains.md#verification-and-testing)); the
+  root task's end tests
+  ([design-system.md](design-system.md#verification-and-testing)).
 
-**On Fiasco (1b-A).** Every bullet of the scope lands on Fiasco
-Fiasco except two, tracing across domains and the kernel interface
-sub-spaces and programs need, which land on erXos's kernel as M5's
-kernel part, after M2. Until then the trace view of
+**On Fiasco (1b-A).** Every bullet of the scope lands on Fiasco except
+tracing across domains and the kernel interface sub-spaces and programs
+need, which are M5's kernel part, after M2; until then the trace view of
 [track D](#track-d-windows-widgets-and-the-web)'s part 1 traces its
-session's own domain. On Fiasco that interface's consumers use rows
-that the Fiasco backend adds behind the unchanged
-interface, the creations and passes among them called from the root,
-where the domain library runs, and
-the hosted backend, one process through 1b-A, adds only
-where they are cheap ([track H](#track-h-hosted-mode)): a memory object mapped into
-another task, its destruction revoking it in every task that mapped it;
-spaces created by the root, each with its budget, fault gate and label
-recorded, and an exit record with the exit status or a crash; IRQ objects
-created by the root and bound once to a group, whose deliveries reach the
-dispatcher of the group's home task, triggered and acked by any holder;
-`erx_cap_pass` from the root's table into a space it created, item by
-item until the first refusal; tables
-that grow from the root's pool, with each task's handle table sized by
-the `cap_limit` its creator gives; groups and budgets as records with
-nothing enforced or counted, a budget's destroy deleting everything
-charged to it; and release slices, `erx_image_map` and `erx_mem_copy`
-through the root service
-([design-fiasco.md](design-fiasco.md#the-call-table)). Sub-spaces
-created at a task's request and ended with their parent, creation and
-passing from a task other than the root, and paged objects, sealing,
-supply and `ERX_MEM_CODE` come with 1b-B, whose sessions are their first
-consumer ([track S](#track-s-the-command-shell-and-toybox)); device
-objects given to a holder domain come with 1b-E
-([M9](#m9-a-driver-is-an-erlang-process)); whether vCPU upcalls get a
-row is settled before 1b-D ([track P](#track-p-the-posix-lite-personality)).
-Passing at a
+session's own domain. On Fiasco that interface's consumers use rows the
+Fiasco backend adds behind the unchanged interface, the creations and
+passes among them called from the root, where the domain library runs
+([design-fiasco.md](design-fiasco.md#the-call-table)); the hosted backend,
+one process through 1b-A, adds them only where they are cheap
+([track H](#track-h-hosted-mode)). Sub-spaces created at a task's
+request, creation and passing from a task other than the root, and paged
+objects, sealing, supply and `ERX_MEM_CODE` come with 1b-B, whose
+sessions are their first consumer
+([track S](#track-s-the-command-shell-and-toybox)); device objects given
+to a holder domain come with 1b-E ([M9](#m9-a-driver-is-an-erlang-process));
+whether vCPU upcalls get a row is settled before 1b-D
+([track P](#track-p-the-posix-lite-personality)). Passing at a
 rendezvous, pauses, IPC gates above `liberx` and every budget and grant
 enforcement stay refused, each a recorded residual. The funnel's verdicts
-run unchanged in user mode; what Fiasco cannot promise is that a
-domain which bypasses `liberx` is stopped by anything
-([design-domains.md](design-domains.md#on-fiasco)).
-BeamAsm lands beside 1b-A, off its critical path, since it needs nothing
-of the kernel. The hostile suites' verdict cases are written in 1b-A;
-their bound and confinement cases and the budget criteria are written at
-M5's kernel part. On Fiasco the verdict cases, whose verdict is
-user-mode code's answer to what it reads, a funnel's to a malformed or
-forged frame, run and count; the cases that check a bound on memory, CPU
-or a neighbour's latency, the budget criteria and every case against a
-domain that bypasses `liberx` run on erXos's kernel alone
+run unchanged in user mode; what Fiasco cannot promise is that a domain
+which bypasses `liberx` is stopped by anything
+([design-domains.md](design-domains.md#on-fiasco)). BeamAsm lands beside
+1b-A, off its critical path, since it needs nothing of the kernel. The
+hostile suites' verdict cases, a funnel's answer to a malformed or forged
+frame, are written in 1b-A and run and count on Fiasco; the cases that
+check a bound on memory, CPU or a neighbour's latency, the budget
+criteria and every case against a domain that bypasses `liberx` are
+written at M5's kernel part and run on erXos's kernel alone
 ([design-fiasco.md](design-fiasco.md#what-phase-1-code-must-not-assume)).
 
 **Exit criteria, on Fiasco (1b-A).** The two-node differential
@@ -1060,82 +698,53 @@ pauses.
 **Scope.** The shell is Phase 1's, after M4, and runs there in the system
 domain with its authority, as the system shell does; the session domain,
 programs and executables from EROFS through sealed file objects follow
-1b-A, on Fiasco, as 1b-B, whose first slice is the session domain;
-the job control of programs follows M7, on erXos's kernel. littlefs runs
-as a NIF in the storage domain that 1b-E configures. Its sub-space port
-follows once this track's port driver exists; from then a crash injected
-into littlefs mid-write ends only that port, whose owner restarts it and
+1b-A, on Fiasco, as 1b-B, whose first slice is the session domain; the
+job control of programs follows M7, on erXos's kernel. littlefs runs as a
+NIF in the storage domain that 1b-E configures; its sub-space port follows
+once this track's port driver exists, and from then a crash injected into
+littlefs mid-write ends only that port, whose owner restarts it and
 remounts the volume with no acknowledged write lost. On Fiasco a
-program's budget and group are
-unenforced records, its doorbells are IRQ objects whose deliveries reach
-the dispatcher of the task that consumes them, the program's for its own,
-and the pipe server's and the session's creates and installs
-are requests to the backend's root service. The backend gains here the
-rows a session is the first to call: sub-spaces created at a task's
-request, each with its parent recorded and ended when its parent ends;
-spaces, IRQ objects, passes and image maps asked for by a task other than
-the root; and paged objects, sealing, supply and `ERX_MEM_CODE` for the
-code objects the domain service makes
-([design-fiasco.md](design-fiasco.md#the-call-table)). The narrowing of `within` is
-the handler's table and the servers' grants, user mode, and holds there,
-while that a program cannot escape `liberx` does not
+program's budget and group are unenforced records, and the backend gains
+here the rows a session is the first to call
+([design-fiasco.md](design-fiasco.md#the-call-table)). The narrowing of
+`within` is the handler's table and the servers' grants, user mode, and
+holds there, while that a program cannot escape `liberx` does not
 ([design-programs.md](design-programs.md#a-program-is-a-port)):
 
-* the shell in Erlang: tokenizer, parser, evaluator, the interactive
-  layer on `edlin`, job control, `erx_cmd` and the first Erlang commands,
-  and the parser's fuzz target; plan9port's rc built from its pinned
-  source as the oracle, with the corpus from `test.rc`, the parser checks
-  and `trip.rc`;
+* the shell in Erlang, with the parser's fuzz target, and plan9port's rc
+  built from its pinned source as the oracle, with the corpus from
+  `test.rc`, the parser checks and `trip.rc` ([design-shell.md](design-shell.md));
 * the session domain, which the domain service starts for a console
   line's login and the host link's, in a development build `root`'s, with
-  the shell and its command server in it; the principals, quotas and
-  logins of other principals follow in M10
+  the shell and its command server in it; the logins of other principals
+  follow in M10
   ([design-domains.md](design-domains.md#principals-sessions-and-quotas));
 * programs as ports of the session, over the sub-spaces 1b-B brings: the
-  port driver `erx_program`, which carves the program's budget from the
-  session's, creates a child group of the session's programs group, the
-  anchor space (its parent is the starter's anchor, or the session's own
-  space) and the image space below the anchor, maps the image through
-  `liberx`'s loader, creates the channel, installs the pipe ends and the
-  startup message and starts the first thread
+  port driver `erx_program`, the command server and a handler per program,
+  the channel protocol and the startup message with their fuzz targets,
+  the descriptor table, spawn and wait
   ([design-runtime.md](design-runtime.md#programs-as-ports),
-  [design-programs.md](design-programs.md#a-program-is-a-port)); the
-  command server and a handler per program, which serves every request on
-  the channel with the session's authority after checking the program's
-  own table, relays file requests over the session's connection and moves
-  file bytes through the data area the session supplies
-  ([design-programs.md](design-programs.md#the-handler)); the channel
-  protocol and the startup message with their fuzz targets; the handler's
-  narrowing of a program's namespace and the session's export; the descriptor table over pipe ends
-  and grants; the spawn planner, spawn and wait; the session's terminal
-  relay, which owns its tty, with the line discipline `erx_tty`, its
-  exhaustive model and its fuzz target
-  ([design-live.md](design-live.md#the-tty)); `erx_output`, the registered
-  tty owner and the normal halt's drain, with edits 35's trap and 42, in place
-  of the seam's console write for a process's output
-  ([design-runtime.md](design-runtime.md#the-console-and-standard-io));
-  the session's pipe server, `erx_pipe_srv`, which makes every ring
-  and every doorbell and installs every end, with the exploration of its
-  pipe core, and the pipe NIF ([design-pipes.md](design-pipes.md));
-  executables run from the EROFS
+  [design-programs.md](design-programs.md#a-program-is-a-port),
+  [design-programs.md](design-programs.md#the-handler)); the session's
+  terminal relay with the line discipline `erx_tty`, its exhaustive model
+  and its fuzz target, and `erx_output`
+  ([design-live.md](design-live.md#the-tty),
+  [design-runtime.md](design-runtime.md#the-console-and-standard-io));
+  the session's pipe server and the pipe NIF
+  ([design-pipes.md](design-pipes.md)); executables run from the EROFS
   images through the sealed file objects a program's session maps
   ([design-programs.md](design-programs.md#what-a-program-can-start));
-* the job control of programs through `erx_space_pause` and
-  `erx_space_resume` on the program's image space, the pauses coming from
-  track K's after-the-switch increment;
-* `rc` running programs in pipelines (`prog | wc`), in a stage of its own
-  after the pipes among programs: it needs the command server and
-  spawn, and the pipes are first tested from Erlang
+* the job control of programs, over the pauses of track K's
+  after-the-switch increment;
+* `rc` running programs in pipelines (`prog | wc`), after the pipes among
+  programs, which are first tested from Erlang
   ([design-shell.md](design-shell.md#pipelines));
 * toybox 0.8.15 and `wak` imported as erXos's code and built applet by
   applet, each with toybox's own tests in a test domain;
-* evi, the screen editor, run as `vi` ([design-vi.md](design-vi.md)), an estimated
-  2,500 lines of Erlang: it follows the session domain and its terminal
-  relay with `erx_tty`, and needs no program, pipe or toybox applet, so it
-  lands before them. It brings the command shell's terminal calls,
-  `erx_cmd:tty/2`, `watch/1`, the terminal form of `read/1`, `stop/1`,
-  the size report and a command's declared heap, `-erx_heap`, which the relay, the job table and the shell's
-  delivery of `winch` serve
+* evi, the screen editor, run as `vi` ([design-vi.md](design-vi.md)), an
+  estimated 2,500 lines of Erlang: it follows the session domain and its
+  terminal relay and needs no program, pipe or toybox applet, so it lands
+  before them, and brings the command shell's terminal calls
   ([design-shell.md](design-shell.md#interfaces)).
 
 **Exit criteria, the shell (Phase 1).** The shell's corpus agrees with
@@ -1269,33 +878,20 @@ executable runs through an `rx` grant and is refused through `ro` and
 `rw` ones; `erx_elf_plan` and the startup message's decoders run their
 fuzz budgets clean.
 
-**Exit criteria, the track.** musl's `libc-test` and the Open POSIX Test
-Suite pass,
-every case that needs `fork` or a facility the personality lacks recorded
-as unsupported and every other failure classified; a signal sent while the
-main thread computes, runs inside `liberx`, waits on a umtx word, waits
-for a reply, is in a call on its channel or is about to sleep is
-delivered each time, the call's case once the call returns, and its
-handler's return restores the thread exactly; a pipe's bytes stay readable
-after their writer ends; a crash of the session's pipe server makes reads
-fail with `EIO` and writes with `EPIPE`, never a false end of stream; a
-file write interrupted by a handler returns its count; `poll` over 500
-pipe ends reports exactly the ready ones; an executable runs through an
-`rx` grant and is refused through `ro` and `rw` ones; `system` and
-`popen` return the wait statuses of `rc`'s `$status`; `erx_elf_plan` and
-the startup message's decoders run their fuzz budgets clean.
+**Exit criteria, the track.** Those of the first part other than its
+cases without Fiasco's vCPU row, and: musl's
+`libc-test` and the Open POSIX Test Suite pass, every case that needs
+`fork` or a facility the personality lacks recorded as unsupported and
+every other failure classified; a signal sent while the main thread
+computes, runs inside `liberx`, waits on a umtx word, waits for a reply,
+is in a call on its channel or is about to sleep is delivered each time,
+the call's case once the call returns, and its handler's return restores
+the thread exactly; a file write interrupted by a handler returns its
+count; `poll` over 500 pipe ends reports exactly the ready ones; `system`
+and `popen` return the wait statuses of `rc`'s `$status`.
 
-**Gate GP.** Measures a program's start from the session's `spawn` to its
-`main` with `tools/erx bench spawn`, against the budget of
-[design-programs.md](design-programs.md#performance) and against
-`posix_spawn` on Linux in a guest, and the `make`-shaped workload of
-[Simplification experiments](#simplification-experiments), first in
-hosted mode and then under HVF, where its numbers on Fiasco are
-provisional. Decides the channel's and the data area's defaults, the
-handler's batching and whether the pipe server keeps one ring per write
-end. Whether a program's start needs a cheaper path than one kernel call
-per object is decided at GK3 on erXos's kernel, since on Fiasco each
-object is one request to the backend's root service.
+**Gate GP.** As [Simplification experiments](#simplification-experiments)
+states it.
 
 ## Track D: Windows, widgets and the web
 
@@ -1331,49 +927,13 @@ overlapping policy and a person's session that a start row starts
 under LVGL follows the window stack and the first slice of track P,
 since the LVGL program is a program of the kiosk's session over the
 session's pipes; the desktop needs neither LVGL nor track P. The pure
-cores the parts use build for the host and are written and tested there,
-with their fuzz targets, ahead of the part that integrates them
+cores the parts use (the widget tree's validator and difference, the web
+protocol's codecs, the screen's composition and its policies,
+`erx_memdraw` checked against 9front's `libmemdraw`, the draw protocol's
+core and codecs, the terminal's state machine and the desktop programs'
+cores) build for the host and are written and tested there, with their
+fuzz targets, ahead of the part that integrates them
 ([design-display.md](design-display.md#verification-and-testing)).
-
-For the web:
-
-* the widget tree's validator `erx_ui_schema`, over `abi/formats/ui.txt`,
-  and `erx_ui_model`'s numbering, difference and event check;
-* `erx_present`'s canonical texts over the inspection schema's `present`
-  marks;
-* `abi/protocols/web.txt` with its generated Erlang and TypeScript codecs.
-
-For the window stack:
-
-* the screen's composition `erx_screen_core` and the single policy
-  `erx_wm_single`;
-* `erx_winctl`, the parser of a window's `ctl` lines, and
-  `erx_pixels_core`, the allocator of a pixel area's pages;
-* `erx_memdraw`, the pixel primitives of 9front's `libmemdraw`, with an
-  image over memory it did not allocate, checked against `erx_draw_ref`,
-  a slow Erlang reference for compositing, and against 9front's
-  unmodified `libmemdraw` built for the host for every operation, shapes
-  included.
-
-For the kiosk:
-
-* the generated C reader of `ui.txt`'s binary form, and `erx-lvgl` built
-  for the host against a model screen that plays its session and the
-  display over the program's two pipes and a buffer both map.
-
-For the desktop:
-
-* the draw protocol's state machine `erx_draw_core` and its generated
-  decoder `erx_draw_codec`, with a C decoder of the same messages;
-* `erx_draw_image`, the Erlang decoder of image(6)'s compressed pixels
-  (the `Y` decoder), whose oracle is the 9front build's loader;
-* the overlapping policy `erx_wm_rio`;
-* the terminal's state machine `erx_vt`.
-
-For the desktop programs:
-
-* the cores of `stats`, `clock`, `month` and `files`, the theme's
-  generator, the glyph step and `erx_mask`.
 
 In this track W1 to W8 name design-web's invariants and G1 to G10
 design-display's, not the plan's gates or E-S1's workloads. Parts that
@@ -1382,98 +942,53 @@ land after M11 repeat M11's closure over what they add.
 1. **The web over the host link**, as 1b-C, after 1b-A, which brings the
    domain service, and the session domain, 1b-B's first slice, which
    brings `root`'s session domain, the session a browser's views run in;
-   nothing in it needs the kernel. The web domain, a configured
-   domain of the development manifest,
-   with the connection core `erx_web_conn`; the session's `erx_web_line`,
-   whose views fetch records, the kernel log and traces through the
-   session's own inspect and trace facets, a trace view tracing the
-   session's own domain alone; the host link's `web` facet, bound to
-   `root`'s session; `tools/erx web` with its loopback server, token,
-   cookie and `Origin` checks and its WebSocket relay; the client under
-   `web/`, built by `make web` offline from the packages `tools/erx fetch`
-   installs, with the generated escape, `MachineText`, `hrefOf` and the
-   content security policy; the client's chokepoint checks, and the ASCII
-   check over its `.ts` and `.tsx` sources
-   ([design-web.md](design-web.md#the-host-tools-front-end)). Tracing
-   across domains, the trace facet served across domains, the trace relay
-   and tracing of cross-domain frames come with M5's kernel part
-   ([M5](#m5-a-wall-around-some-processes)), and the manifest check's
-   refusal of the `web` facet in a release manifest with
-   [M11](#m11-security-closure).
-2. **Widgets on the web**, in 1b-C, after part 1. `erx_ui`, which opens
-   a user interface on the display its options name or on the session's
-   `display` variable and starts its widget server, `erx_ui_server`, in
-   the application's own session; the renderer behaviour and the browser
-   renderer `erx_ui_browser`, whose target is the session's line; the
-   line's `ui` and `uis` views and its table of open UIs; the readers of
-   `ui.txt`'s binary form in Erlang and TypeScript, with a browser's
-   events decoded by the connection core in the web domain
+   nothing in it needs the kernel. The web domain, the session's line,
+   the host link's `web` facet bound to `root`'s session, `tools/erx web`
+   and the client under `web/`, built by `make web` offline
+   ([design-web.md](design-web.md#the-host-tools-front-end)). A trace view
+   traces the session's own domain alone until M5's kernel part brings
+   tracing across domains ([M5](#m5-a-wall-around-some-processes)); the
+   manifest check's refusal of the `web` facet in a release manifest comes
+   with [M11](#m11-security-closure).
+2. **Widgets on the web**, in 1b-C, after part 1: `erx_ui` with its widget
+   server in the application's own session, and the browser renderer
    ([design-web.md](design-web.md#uis-the-browser-renderer),
    [design-display.md](design-display.md#choosing-a-display)). Its tests
    check the browser renderer alone; its parity test with LVGL comes with
    part 4, and with the Erlang renderer with part 7.
 3. **The window stack on QEMU `virt`**, in 1b-C, after the session domain,
-   track A's first part and 1b-E, in which a configured domain other than the system domain is
-   given its devices at its creation; it needs neither part 2 nor a
-   native program. The devices attach over virtio-mmio on Fiasco,
-   unconfined, and over virtio-pci behind the IOMMU from M9's kernel
-   part; the drivers' move is a device record and a DMA profile, not
-   driver code. The pixel area: `erx_dom_connect` with an area, the
-   Fiasco backend's row for an object two tasks map, `connection_up`'s
-   area, the connection agent's mapping and `erx_area`; the manifest's
-   display entry and the check's property 18. The display domain: the
-   virtio-gpu and virtio-input drivers in Erlang over the device NIF,
-   behind `erx_display`; `erx_screen` with the copy path, composing into
-   an image over the memory the device shows; `erx_winfs` with the window
-   tree, the `windows` interface of `abi/services/windows.txt`,
-   `erx_window` and the `present` command; the single policy. The client
-   library `erx_win` with `erx_pixels`, whose ranges go back, zeroed, only
-   once their owner has exited and every lease of them is returned. The display's session: a manifest start
-   row naming a principal and the display, from track A's first part,
-   whose keeper starts the session at boot step 5 and again within the
-   row's intensity, and the `session` parameter the domain service sets
-   on its grant. `erx_screen` sends frames to the driver without
-   waiting and holds only pending state. A test application of that
-   session draws with `erx_memdraw` into its window's buffer and
-   presents. The manifest check refuses an unconfined DMA device in the
-   display domain of a release manifest, while the Phase 1 manifest check
-   allows one in a development build. On Fiasco a compromise of the
-   display domain's Erlang reaches the GPU's DMA, a recorded residual,
-   and the direct path waits for virtio-pci behind the IOMMU
+   track A's first part and 1b-E, in which a configured domain other than
+   the system domain is given its devices at its creation; it needs
+   neither part 2 nor a native program. The pixel area, the display domain
+   with its virtio-gpu and virtio-input drivers in Erlang, the window
+   tree, the client library `erx_win`, and the display's session, which a
+   start row starts at boot
    ([design-display.md](design-display.md#the-pixel-area),
    [design-display.md](design-display.md#the-screen-and-its-one-path-to-the-device),
-   [design-display.md](design-display.md#a-displays-session)).
+   [design-display.md](design-display.md#a-displays-session)). The
+   devices attach over virtio-mmio on Fiasco, unconfined, and over
+   virtio-pci behind the IOMMU from M9's kernel part; the drivers' move
+   is a device record and a DMA profile, not driver code. The manifest
+   check refuses an unconfined DMA device in the display domain of a
+   release manifest, while the Phase 1 manifest check allows one in a
+   development build; on Fiasco a compromise of the display domain's
+   Erlang reaches the GPU's DMA, a recorded residual.
 4. **A kiosk on QEMU `virt`**, in 1b-C, in two steps. Part 4a, after
-   part 3, draws the kiosk, `examples/dashboard`, with `erx-lvgl`
-   on the host and checks the frame against its reference picture, with
-   a fixed board and no package; it needs no network. Part 4b, after part 4a, parts 2 and 3,
-   1b-B's sub-space ports and pipes, the first slice of 1b-D and track
-   A's second part, is the first boot of that interface on QEMU `virt`,
-   as the kiosk's app, a package added to the image. Part 4b needs LVGL
-   running on erXos beside the widget toolkit, which the start table of
-   track A's first part alone does not ship: a native
-   program with inherited pipe descriptors and `read`, `write` and `poll`
-   on them. `erx_ui_lvgl` in the application's session, and `erx-lvgl`,
-   LVGL as a native program of that session behind `erx_ui_renderer`: the
-   startup message's `mem` descriptor, by which the session maps the
-   window's buffer into the program; LVGL's direct mode into that buffer;
-   the generated C reader of `ui.txt`'s binary form, with its `screen`,
-   `input`, `repaint` and `presented` records and its `damage` reports.
-   Part 4b's kiosk session: `examples/dashboard`, a package added to the
-   image within the development manifest's `apps` row, so that no erXos
-   image list names an example, whose application
-   opens its UI with `erx_ui:open(#{renderer => lvgl})` and whose start
-   row is on the display, from track
-   A's second part, with `erx-lvgl` in the domain release beside `erx_ui`
-   ([design-packaging.md](design-packaging.md#the-sdk)); the application's restart by its supervisor
-   and the session's by the row's keeper. The LVGL program holds its
-   pipes and its buffer's pages and nothing else
-   ([design-display.md](design-display.md#kiosks-and-glasses)).
-   The kiosk is one package, `examples/dashboard`, whose quotes are
-   fetched over HTTPS ([its README](../examples/dashboard/README.md)). Part 4a's
-   host check and part 4b's package and boot bring it up on QEMU `virt`
-   with no network device, each quote showing `no data`; its live quotes
-   wait for 1b-G's network.
+   part 3, draws the kiosk, `examples/dashboard`, with `erx-lvgl` on the
+   host and checks the frame against its reference picture, with a fixed
+   board and no package; it needs no network. Part 4b, after part 4a,
+   parts 2 and 3, 1b-B's sub-space ports and pipes, the first slice of
+   1b-D and track A's second part, is the first boot of that interface
+   on QEMU `virt`, as the kiosk's app, a package added to the image:
+   `erx_ui_lvgl` in the application's session, and `erx-lvgl`, LVGL as a
+   native program of that session drawing into the window's buffer,
+   which holds its pipes and its buffer's pages and nothing else
+   ([design-display.md](design-display.md#kiosks-and-glasses),
+   [design-packaging.md](design-packaging.md#the-sdk)). The kiosk's
+   quotes are fetched over HTTPS
+   ([its README](../examples/dashboard/README.md)); with no network
+   device each quote shows `no data`, and its live quotes wait for 1b-G's
+   network.
 5. **Kiosks on boards**, after part 4 and M12's boards. The firmware
    framebuffer driver of the Raspberry Pi comes earlier, with 1b-I's
    stage (d) on Fiasco; this part adds a panel on a serial bus, on
@@ -1485,51 +1000,31 @@ land after M11 repeat M11's closure over what they add.
    Erlang renderer runs
    ([design-display.md](design-display.md#kiosks-and-glasses)).
 6. **A desktop on QEMU `virt`**, as 1b-F, after part 3, which brings the
-   display domain, its drivers and the window tree. The overlapping
-   policy with its menu, an overlay of the display's own; draw
-   connections in the session, `erx_draw_conn` with `erx_draw_core`,
-   `erx_draw_codec` and `erx_memdraw` over the window's buffer, and
-   `erx_draw` and `erx_font` for Erlang clients; the session's export of
-   one window's directory, `/dev/draw` among its files, into a program's
-   namespace; `/clipboard`; the terminal `erx_term` in the session's release,
-   the master of a tty of the session's terminal relay, with its sibling
-   windows; the desktop's session, a manifest start row naming `root`
-   and the display, whose template starts `erx_term_sup`;
-   the inspector's windows under `[domains, Id]` and
-   `/proc`
+   display domain, its drivers and the window tree: the overlapping policy
+   with its menu, draw connections in the session, a program's
+   `/dev/draw`, `/clipboard`, the terminal `erx_term` as the master of a
+   tty of the session's terminal relay, and the desktop's session, a start
+   row naming `root` and the display
    ([design-display.md](design-display.md#windows-and-the-window-system),
    [design-display.md](design-display.md#the-draw-connection),
    [design-display.md](design-display.md#the-terminal),
    [design-display.md](design-display.md#a-displays-session)).
-7. **Widgets and presentations on the desktop**, in 1b-F, after part 6.
-   The Erlang renderer `erx_ui_erlang` in the application's session,
-   drawing into its window's buffer through a draw connection, glyphs
-   from plan9port's `fixed` fonts; the LVGL renderer in a desktop's
-   window, the kiosk's program unchanged; presentations at a terminal:
-   `erx_render`'s links at a tty that declares `links`, the link parser in
-   `erx_vt`, and the input context from the command catalog's
-   `-erx_args`; the Erlang renderer's QEMU frame time as Gate GD's
+7. **Widgets and presentations on the desktop**, in 1b-F, after part 6:
+   the Erlang renderer in the application's session, the LVGL renderer in
+   a desktop's window, the kiosk's program unchanged, and presentations
+   at a terminal; the Erlang renderer's QEMU frame time is Gate GD's
    preview, deciding nothing
    ([design-display.md](design-display.md#presentations)).
 8. **Desktop programs**, in 1b-F, after part 7, which brings the Erlang
    renderer and the parity test, and part 6, which brings the terminal
-   from which the programs' commands run. The application `erx_desk` in
-   the desktop session's release, with `erx_desk_window` and the pure
-   cores of `stats`, `clock`, `month` and `files`, each an Erlang
-   command that opens one window; the widget format's additions,
-   `role`, `area`, `icon`, `icons`, `current`, `name`, list activation and the
-   `graph` kind with `none` samples, through the validator, the binary form, the readers
-   in Erlang, C and TypeScript, and the Erlang, LVGL and browser
-   renderers; `abi/theme.txt` and its generator, writing `erx_theme`,
-   `erx/theme.h` and `theme.ts` and checking the palette's contrast
-   rules; the glyph step, rasterising Inter 4.1 and erXos's icon set from
-   `display/icons/icons.txt` through FreeType, a host build tool, into
-   8-bit subfonts, LVGL fonts and the menu's glyph module;
-   `erx_mask`'s coverage masks in the Erlang renderer; the theme in
-   `erx_wm_rio`'s decorations, `erx_wm_menu` and `erx_screen`'s
-   background; `pad` read inside the node by every renderer
-   ([design-desktop-programs.md](design-desktop-programs.md)). Its
-   packages are listed after the exit criteria.
+   from which the programs' commands run: the application `erx_desk` with
+   `stats`, `clock`, `month` and `files`, each an Erlang command that
+   opens one window; the widget format's additions through the validator,
+   every reader and every renderer; the theme file and its generator; and
+   the glyph step, rasterising Inter 4.1 and erXos's icons through
+   FreeType ([design-desktop-programs.md](design-desktop-programs.md)).
+   `clock` is the first program a person sees and `month` the second; both
+   ship on `fixed` glyphs before the theme, which then restyles them.
 9. **The web on the network**, after part 2, M10's logins, M11's vault
    and 1b-G's network service with TLS. cowboy over TLS in the web domain;
    `erx_web_login`, its cookies and a session per login; the manifest
@@ -1727,211 +1222,6 @@ suite, a screenshot of `files` and `month 11 2026` equals the reference
 image under HVF, and stats' window presents at least twice in three
 seconds while clock's presents at most once.
 
-**Packages, desktop programs.** Part 8 is built as the packages below,
-each one agent's work of about 50 to 100 tool calls ending in one
-reviewed commit. Each runs the host tests it names while it is written;
-the QEMU cell it names runs once, before its commit. Every QEMU cell is
-the `display_domain` suite's one cell, HVF at one CPU
-(`tools/lib/erx/display_domain.rb`, references under
-`test/display/reference/`). clock is the first program a person sees and
-month the second; both ship on `fixed` glyphs before the theme, and the
-theme's packages then restyle them and re-record month's reference.
-Packages 8.1, 8.2, 8.3, 8.5, 8.6, 8.10, 8.16, 8.17 and 8.19 need no
-display and can start at once, in parallel.
-
-What part 8 builds on, outside its packages:
-
-| Dependency | What it gives part 8 | Where it is |
-| --- | --- | --- |
-| `erx_ui_layout`, the box model | every frame's layout | commit `2f14a5bf8`, on a branch, not on master |
-| `erx_png` and `erx_inflate` | the Erlang renderer's `image` nodes | commit `9ce010cc3`, on a branch, not on master |
-| `erx_font` and the `fixed` subfonts | the first glyphs, and the reader of the glyph step's `k8` subfonts | commit `0987b7b5a`, on a branch, not on master |
-| `erx_draw_core` | the draw connection's state machine | master |
-| `erx_draw_conn` and `erx_draw` | the Erlang renderer's drawing | part 6; work in progress at commit `aa818a2f4`, on a branch |
-| `erx_wm_rio`, `erx_wm_menu`, `erx_term`, the desktop's session, windows under `[domains, Id]` | the overlapping policy and its menu, the terminal the commands run from, and the QEMU cells' present counts | part 6; not written |
-| `erx_ui_erlang`, LVGL in a desktop window, the parity test | the renderer the four draw with | part 7; not written |
-| `erx_ui_lvgl` and `erx-lvgl` | the LVGL renderer | master |
-| `erx_text:escape_line/2`, the cut after the escape | control-heavy texts through LVGL | commit `d347ad93e`, on a branch ([open decision](design-desktop-programs.md#open-decisions) 1) |
-| `erx_ui_browser` | the browser renderer of the parity test | part 2; not written |
-| `erx_ui_host` | host reference frames | track A's second part; not written |
-
-1. **8.1 Padding inside the node.** `erx_ui_layout` reads `pad` inside:
-   a node's `Rect` is what its slot gives it and its `Content` that
-   rectangle less the pad on each side; the box model's rules 1 and 3
-   in design-display say so, and the branch's `TODO.md` item on the two
-   readings is deleted. Start: `erlang/apps/erx_ui/src/erx_ui_layout.erl`
-   and `test/erlang/erx_ui_layout_tests.erl` at `2f14a5bf8`;
-   `display/lvgl/erx_lvgl.c:616`, `pad_all`, which already reads it so.
-   Depends on: `erx_ui_layout`, rebased onto master and landed with this.
-   Tests: a padded node's `Content` is its `Rect` less its pads and its
-   hit rectangle is its `Rect`, over the layout's random trees, where a
-   seeded layout that ignores the pad fails; the three existing seeds
-   still fail. QEMU: none.
-2. **8.2 `erx:inspect/2` and the machine's load for every session.**
-   `erx:inspect(Path, Options)` as design-live's Erlang interface, over
-   `erx_inspector:inspect/2`; `idle_time` and `ready_threads` `visible
-   any`, and no `visible all` on `[cpus]`. Start:
-   `abi/inspection.txt:84-85` and `:170-171`;
-   `erlang/apps/erx/src/erx.erl:12`; `erx_inspector.erl:57`, `:317` and
-   `:350`; `test/erlang/erx_inspector_tests.erl:153` and `:262`;
-   `test/erlang/erx_schema_tests.erl:112`. Depends on: nothing. Tests: a
-   scoped facet reads `[cpus]` and `[cpus, 0]` with `idle_time` and
-   `ready_threads` alone, while `[groups]` stays `{error, scope}`, where
-   a seeded `visible all` left on `[cpus]` fails; `erx:inspect/2` answers
-   what `erx_inspector:inspect/2` does. QEMU: none.
-3. **8.3 The `[time]` record.** The kind `clock` at path `time`,
-   `visible any` but for `server` and `source`, `visible all`, with the
-   time page's attributes collected in the system domain, `state` among
-   them, and the clock service's attributes `unsupported` until that
-   service reports them; `/proc/time/status`.
-   Start: [design-time.md](design-time.md#what-proc-shows), the attribute
-   table; `abi/inspection.txt`; `erx_inspector.erl:317`. Depends on:
-   nothing; lands after 8.2, builds in parallel.
-   Tests: `state` for each page state, `unset`, `boot` and `set`, where a
-   seeded swap of `boot` and `unset` fails. QEMU: none; on Fiasco
-   `state` reads `unset`, which 8.4's cell shows.
-4. **8.4 clock, the first program.** The application `erx_desk`,
-   `erx_desk_sup`, `erx_desk_window` with the closed effect set, the
-   clock core and the `clock` command, on the widget format as it is
-   (every text in the default `body` role), and D1's source check. Start:
-   `erlang/apps/erx_ui/src/erx_ui.erl:27`;
-   `erlang/apps/erx_shell/src/erx_cmd.erl:53`, the command behaviour;
-   design-desktop-programs' clock and construction sections. Depends on:
-   parts 6 and 7, 8.1, 8.2; 8.3, without which clock shows the
-   `unsupported` token as designed. Tests: clock's states and ticks, the
-   window's lifetime with an inspector model, D5 over clock's trees, D6's
-   one tree a minute, and D1, each with its seeded fault from
-   design-desktop-programs. QEMU: `clock` opened in the desktop session
-   presents at most once in three seconds,
-   where a seeded once-a-second tick fails.
-5. **8.5 `erx_mask`.** The quarter disc, quarter ring, blurred shadow
-   parts, polyline stroke and area masks, in `erx_memdraw`. Start:
-   `erlang/apps/erx_memdraw/src/`. Depends on: nothing. Tests: the disc
-   of radius 1 to 32 within one part in a thousand of its area, the
-   stroke's column coverage, where a seeded half-pixel offset fails
-   both. QEMU: none.
-6. **8.6 The widget format's grammar.** `list NAME ELEMENT MAX [none]`
-   for integers and root enumerations, `within` and `parallel`, through
-   the reader, the validator and the Erlang, C and TypeScript codecs,
-   with the generator's refusal of `none` on a type that holds -2^31
-   and its check that every kind's largest insert fits one 64 KiB
-   update. Start: `tools/lib/erx/abi_ui.rb:215`,
-   `tools/lib/erx/abi_emit_ui.rb`, `abi_emit_ui_wire.rb`,
-   `abi_emit_ui_wire_ts.rb`. Depends on: nothing. Tests: over a test
-   declaration, a list of the wrong length, a value outside `within` and
-   a 241st value refused with reason and path; one list with `none`
-   round-trips identically through the three codecs; a seeded validator
-   without the `parallel` check fails. QEMU: none.
-7. **8.7 The six additions.** `role`, `area`, `icon`, `icons`, `current`,
-   the `graph` kind and list activation declared in
-   `abi/formats/ui.txt`, with fuzz seeds and parity corpus trees
-   generated from the declaration. Start: `abi/formats/ui.txt:18-96`.
-   Depends on: 8.6. Tests: the validator refuses `role` on a `row`,
-   `icons` of another length than `items` and a sample outside `min` and
-   `max`; the readers' fuzz targets take the new seeds. QEMU: none.
-8. **8.8 The renderers draw the additions.** `erx_ui_erlang` and
-   `erx-lvgl` draw `graph` with gaps (libmemdraw's lines, and `lv_chart`
-   with `LV_CHART_POINT_NONE`), `current` as a ring, `area` as a plain
-   rectangle and `icon` as its text alone, until the theme's packages;
-   the browser renderer the same when part 2 has it. Start:
-   `display/lvgl/erx_lvgl.c:430` and `:616`; `erx_ui_erlang` from part 7.
-   Depends on: 8.7, part 7. Tests: the parity test with the new kinds,
-   where a seeded LVGL reader that drops `none` samples fails. QEMU:
-   none.
-9. **8.9 month, the second program.** The month core and the `month`
-   command. Start: `otp/lib/stdlib/src/calendar.erl:297`, `:378` and
-   `:410`. Depends on: 8.4, 8.7, 8.8. Tests: every month from 1600 to
-   2400, every argument form and refusal, D3 for today, D6's midnight
-   tick, each with its seed. QEMU: `month 11 2026`'s screenshot equals a
-   new reference, with no today marked since Fiasco's clock is
-   unset, where a seeded grid that starts a day late fails.
-10. **8.10 The theme.** `abi/theme.txt`, its reader beside
-    `tools/lib/erx/abi_ui.rb` (loaded as `abi_model.rb`'s `validate_ui`
-    loads that one), and `erx_theme` in `erx_memdraw`, `erx/theme.h` and `theme.ts`,
-    with the WCAG 2 contrast ratio fetched at its pinned version and
-    cited. Depends on: nothing. Tests: D7 with a seeded `secondary` of
-    `B0B0B0`; a `contrast` row naming an undeclared colour refused;
-    byte-identical output over two runs. QEMU: none.
-11. **8.11 FreeType, `erx-raster` and the role subfonts.** FreeType
-    2.15.0 pinned in the fetch step and compiled out of tree; the C17
-    host program `erx-raster`; Inter 4.1 imported into
-    `display/fonts/inter/` with its license and origin file;
-    `Erx::Glyphs` writing one `k8` subfont per role. Start:
-    design-desktop-programs' type section and its dependency rows.
-    Depends on: 8.10, `erx_font`. Tests: a square glyph's coverage is
-    exact; output byte-identical over two runs; a role whose tabular
-    figures the font lacks is refused; every subfont parses with
-    `erx_font` and loads into `erx_draw_core`; a seeded one-pixel shift
-    fails the square test. QEMU: none.
-12. **8.12 Icons, kerning, LVGL fonts and the menu's glyphs.**
-    `display/icons/icons.txt`, the twenty icons drawn for erXos and
-    stroked through `erx-raster` at 16 and 32 pixels; the icons' SVG
-    path data in `theme.ts`; kerning: `erx-raster` reporting glyph
-    indices and the `GPOS` and `GDEF` tables, `Erx::Gpos` with its fuzz
-    target, each role's pairs in its
-    subfont's pair section, `erx_font`'s reading of it with `width/2`
-    and `runs/2`, and `erx_pen` in `erx_memdraw`; the LVGL font forms
-    of the roles, their pairs included, and of the icons; the `body`
-    role's generated menu module with `kern/2`. Start:
-    design-desktop-programs' kerning section. Depends on: 8.11.
-    Tests: every icon `ui.txt` names has paths, where a seeded missing
-    icon fails the generator; a straight stroke covers each column by
-    its width; the menu module loads with `erx_memdraw:load/3` on the
-    host; the kerning tests of design-desktop-programs' verification,
-    each with its seed. QEMU: none.
-13. **8.13 The Erlang renderer takes the theme.** Role subfonts, measured
-    and drawn in kerned runs, the theme's spacing where the tree gives
-    none, sections with `erx_mask` corners and shadow, icons, the
-    `current` ring and graph masks; clock takes the `display` role;
-    reference frames of clock and month under
-    `test/display/reference/desk/`. Depends on: 8.5, 8.8, 8.10, 8.11,
-    8.12, `erx_ui_host`. Tests: each frame equals its reference, where a
-    section radius one pixel off fails; the attributed-text corpus
-    draws its tokens. QEMU: month's reference re-recorded with the theme;
-    a seeded theme colour fails it.
-14. **8.14 LVGL and the browser take the theme.** `erx-lvgl` builds one
-    style per role from `erx/theme.h` in place of LVGL's default theme,
-    with the role and icon fonts; the browser takes `theme.ts`. Depends
-    on: 8.8, 8.10, 8.12, part 2's browser renderer. Tests: the parity
-    test over clock's and month's trees. QEMU: none.
-15. **8.15 The display takes the theme.** `erx_wm_rio`'s borders in
-    `line` and `accent`, `erx_wm_menu` in the `body` glyphs with the
-    `menu` radius and section shadow, `erx_screen`'s background in
-    `desktop`. Depends on: part 6, 8.5, 8.10, 8.12. Tests: G9's check
-    still passes, where a seeded dependency on `erx_font` fails it; the
-    policies' tests over the new colours. QEMU: the display's references
-    re-recorded.
-16. **8.16 The inspector's domain records.** `[domains]`, a domain's
-    record with `name`, `state` and `run_queue`, and its `group` and
-    `budget` collected; `connections` stays `unsupported`. Start:
-    `TODO.md`, the inspector item listing what is not collected;
-    `erx_inspector.erl:206`. Depends on: 8.2. Tests: a scoped facet
-    lists only its domains, where a seeded listing of every domain
-    fails. QEMU: none.
-17. **8.17 The stats core.** Derivation, the rings, pacing and stale
-    answers, on the host. Depends on: nothing. Tests: design-desktop-
-    programs' stats rows, each with its seed. QEMU: none.
-18. **8.18 stats.** The stats window and command. Depends on: 8.4,
-    8.7, 8.16, 8.17. Tests: D5 over stats' trees, and pacing with the
-    real effects against a slow inspector model. QEMU: stats presents at
-    least twice in three seconds, where a seeded stats that never
-    samples fails.
-19. **8.19 The files core.** Kinds, sorting, paging, acting by index,
-    the text test and the preview, on the host, with its tree on the
-    widget format as it is. Depends on: nothing.
-    Tests: design-desktop-programs' files rows, D4 and D5, each with its
-    seed. QEMU: none.
-20. **8.20 files.** The files window and command, the listing worker's
-    heap cap, `stat` and `read` effects and copy path, and the core's
-    tree with 8.7's additions: the list's `on_submit` for opening,
-    `icons` from the core's kinds, `area` on the three columns and the
-    toolbar, and `current` on the current folder's path button. Start:
-    `otp/erts/preloaded/src/erlang.erl:8109`, `max_heap_size`. Depends
-    on: 8.4, 8.7, 8.19. Tests: files' bounds and the window's lifetime,
-    each with its seed. QEMU: `files` on a folder of the suite's image
-    beside `month 11 2026`, the design's screenshot, where a seeded
-    sort that puts folders first fails.
-
 **Exit criteria, the web on the network.** Two principals logged in
 through cowboy each see their own `/proc` snapshots and `ended scope` for
 the other's domains (W1); one scripted client through the host tool and
@@ -2006,57 +1296,35 @@ runs at full parallelism: every worker these items cannot use takes the
 next available item of the plan.
 
 1. **The start table**, in 1b, after 1b-A, 1b-B's session domain and
-   M6's data partition, whose `etc` tree holds `start.conf`. `start` rows in
-   `abi/manifest.txt` and its reader; property 17; `erx_starter` with
-   one supervisor and keeper per enabled row, boot step 5; `erx_domain:start_session/2` with its
-   two forms of display, which this part lands as data, with host tests of
-   the mark and the merge and no display domain; the session mark in the domain service's grant
-   records, carried by every mint; `start.conf` at `/etc/start.conf`, read at
-   boot and at each command, with its parser and its fuzz target, and
-   the merge, which sets only rows the manifest declares and
-   refuses a display the row's template is not granted or another
-   enabled row holds; the start service's tree, `start`, at `/etc/start`
-   with `ctl` and its fuzz target;
-   `service`, whose `enable` and `disable` edit `/etc/start.conf`; `/proc/apps`. An app is a principal of the manifest with its own template
-   and release.
-2. **Packages added to an image**, after part 1
-   ([design-packaging.md](design-packaging.md)). The `apps`, `package`
-   and `signer` rows in `abi/manifest.txt`, the rows the build derives
-   from `apps`, and property 19; the `apps` budget and app principals'
-   elastic budgets under it; the domain library's app entries and
-   `erx_dom_plan_session` taking an app principal;
-   `erx_principal:register_app/1`; the package format in
-   `abi/formats/package.txt`, `erx_pkg_header:check_file/2` with its fuzz
-   target, `erx_app_admit` with its corpus, run on the host by the
-   packer; `erx_verity` reading an image from a file; the app's session
-   with its kept rows, `/app` and its record, sent after the ready answer;
-   `erx_app`, with `erx_prog_handler`'s `window` option and the monitor
-   its start returns; the `apps` row of both development manifests, left
-   out of the site manifest; the package process with the image's packages; the `apps`
-   tree's `system/`, mounted at `/apps`, and the shell's `mount` of a
-   package file; the session's export naming each mount's tree when it is
-   mounted; the start table's package rows; `/proc/packages`. The SDK: `tools/erx sdk
-   export`, `erx-app pack` and `test`, the declaration's parser
-   with its fuzz target, `erx_ui_host`; `tools/erx pack --app` and
-   `tools/erx app run`; `erx-lvgl` beside `erx_ui` in every image's
-   domain release; `examples/dashboard` built through the SDK alone, and
-   `examples/doom` as a submodule built only on request. The image's
-   packages lie in the slot's system partition and are read through the
-   `system` tree, so this part follows M6's `system` tree; the packer
-   refuses a boot image that holds one.
+   M6's data partition, whose `etc` tree holds `start.conf`: the
+   manifest's `start` rows and property 17; `erx_starter` with one
+   supervisor and keeper per enabled row; `start.conf`, read at boot and
+   at each command, and its merge, which sets only rows the manifest
+   declares and refuses a display the row's template is not granted or
+   another enabled row holds; the start service's tree with `ctl`;
+   `service`, whose `enable` and `disable` edit `/etc/start.conf`; and
+   `/proc/apps` ([design-apps.md](design-apps.md#the-start-table)). An app
+   is a principal of the manifest with its own template and release.
+2. **Packages added to an image**, after part 1: the `apps`, `package` and
+   `signer` rows and property 19, the package format and its admission,
+   the app's session with `/app`, the `apps` tree mounted at `/apps`,
+   `/proc/packages`, and the SDK with `erx-app pack` and `tools/erx pack
+   --app` ([design-packaging.md](design-packaging.md),
+   [design-packaging.md](design-packaging.md#the-sdk));
+   `examples/dashboard` built through the SDK alone, and `examples/doom`
+   as a submodule built only on request. The image's packages lie in the
+   slot's system partition and are read through the `system` tree, so
+   this part follows M6's `system` tree; the packer refuses a boot image
+   that holds a package.
 3. **Installing at run time**, after part 2, M6's data partition and
-   1b-E's storage domain. The `packages` tree of the storage service;
-   the `apps` tree's installed packages, whose close installs or
-   updates and whose `unlinkat` removes, each package with a qid path of
-   its own, with the fuzz target of its names; a tree's `clunk`
-   that answers an errno, and `cp` reporting a failed close; publication
-   by `erx_starter:packages/2` that answers once a dropped app's sessions
-   have ended; the package lifetime, `erx_pkg_io` and the bounded
-   recovery with its fuzz target; `erx_pkg_plan` with its crash and
-   failure tests over reordered writes. One check of
-   design-packaging.md lands later (TODO.md, security residuals): `purge` with the
-   storage service's `remove_app` and directories named by signer, at
-   M10.
+   1b-E's storage domain: the storage service's `packages` tree, the
+   `apps` tree's installed packages, whose close installs or updates and
+   whose `unlinkat` removes, publication that answers once a dropped app's
+   sessions have ended, and bounded recovery after a crash
+   ([design-packaging.md](design-packaging.md)). One check of
+   design-packaging.md lands later (TODO.md, security residuals): `purge`
+   with the storage service's `remove_app` and directories named by
+   signer, at M10.
 
 **Exit criteria, the start table.** The merge's host tests and their
 seeded faults (a row added for an undeclared principal, the display
@@ -2133,51 +1401,36 @@ the guest's power cut and the next boot.
 
 * **A block device.** The virtio-mmio block driver, an Erlang process
   under a supervisor in the system domain, over the device NIF
-  `erx_device` in its first form, on which M3's console driver already
-  runs: register reads and writes by name through the generated
-  accessors, a buffer pool in a DMA-mapped memory object, descriptors
-  posted and completed, and the line's IRQ object bound to the system
-  domain's group and delivered to the driver process as a process sink
   ([design-runtime.md](design-runtime.md#the-device-nif),
-  [design-system.md](design-system.md#drivers)); the driver parses the
-  device's descriptors in Erlang; ordinary interrupts and unconfined DMA,
-  Fiasco's driver profile, which M9's kernel part replaces with
-  virtio-pci behind
-  the IOMMU and M11 refuses unless configured; partition windows in the
-  block service, with the partition table, its four extended boot records
-  included, and its fuzz target
+  [design-system.md](design-system.md#drivers)), with ordinary interrupts
+  and unconfined DMA, Fiasco's driver profile, which M9's kernel part
+  replaces with virtio-pci behind the IOMMU and M11 refuses unless
+  configured; partition windows in the block service, with the partition
+  table and its fuzz target
   ([design-storage.md](design-storage.md#data-model)).
-* **Immutable code and files.** The block client, a local call in the
-  system domain, `erx_verity:read/3` as the one funnel, which checks each
-  block against its image's hash tree, through which the EROFS reader
-  reads blocks over a mount's fid or over the `system` window, and
-  CRC-32C among the per-byte primitives,
-  with its fuzz target
-  ([design-runtime.md](design-runtime.md#per-byte-primitives));
-  each slot's system partition in the EROFS format, which the storage
-  domain serves as the `system` tree with a read-only `erx_fs` backend
-  over the EROFS reader, and the file-backed EROFS mount,
-  `erx_ns:mount({erofs, Source}, ...)`: the EROFS reader
-  in Erlang, preloaded in every runtime image, with its fuzz target;
-  fsimg as the packer's host tool, which writes and verifies each image, and
-  the packer's disk image for QEMU, laid out by the ABI file's medium
-  layout, with each slot's boot and system partitions.
+* **Immutable code and files.** `erx_verity:read/3` as the one funnel,
+  which checks each block against its image's hash tree, through which
+  the EROFS reader reads every block; each slot's system partition in
+  EROFS, which the storage domain serves as the `system` tree; the
+  file-backed EROFS mount; CRC-32C among the per-byte primitives
+  ([design-runtime.md](design-runtime.md#per-byte-primitives)); fsimg as
+  the packer's host tool, which writes and verifies each image; and the
+  packer's disk image for QEMU, laid out by the ABI file's medium layout
+  ([design-storage.md](design-storage.md)).
 * **One practical data store.** littlefs as the stopgap read-write file
-  system behind `erx_fs`'s callback module, a NIF of the system domain that
-  a worker process calls on a dirty scheduler while the volume's owner
-  process serves its block requests through the block driver, with a fuzz
-  target for its images, on the data partition
+  system behind `erx_fs`'s callback module, with a fuzz target for its
+  images, on the data partition
   ([design-storage.md](design-storage.md#read-write-storage)); its
-  sub-space port form lands once track S's port driver (1b-B) exists, in the
-  storage domain, behind the same callback module; 0.2 ships the NIF form
-  in the storage domain, under its release contract
+  sub-space port form lands once track S's port driver (1b-B) exists, in
+  the storage domain, behind the same callback module; 0.2 ships the NIF
+  form in the storage domain, under its release contract
   ([design-stopgap.md](design-stopgap.md#release-contract)).
 * **Booting from the disk image.** The QEMU harness's normal boot, without
   trials: it plays the firmware, reads the record from the disk image with
   its slot parser, which has its fuzz target, boots the slot the record
-  names and writes the boot value into `/chosen`, from which the root task
-  builds the machine page, so the device service grants the storage
-  domain its read-only window on the booted slot's system partition
+  names and writes the boot value into `/chosen`, so the device service
+  grants the storage domain its read-only window on the booted slot's
+  system partition
   ([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record));
   the harness's trials follow with M12.
 
@@ -2219,7 +1472,7 @@ since the clock starts at the build's date and the published image is
 younger than the sources' certificates
 ([design-time.md](design-time.md#the-approximate-start)). From another machine, `ssh root@` the board, with the
 public key its user put in `authorized_keys` on the card's record
-partition, reaches `rc`. There root sets the exact time by hand. In the same
+partition, reaches `rc`. `ntpd` has set the exact time at boot; root can also set it by hand. In the same
 session `ps` and `top` show the session's `rc` and the programs it
 runs, and `erl`'s `erx:domains()` lists every domain of the machine,
 the kiosk's among them. A file synced under `/data` survives a power cut,
@@ -2256,21 +1509,17 @@ its code, and the item's work waits on it.
   boot, and root's `date` sets it exactly; a build without a date
   leaves it unset, and then every quote reads `no data: clock not set`
   ([its README](../examples/dashboard/README.md#the-clock)).
-* **The clock, set by hand.** With no time source the clock service
-  starts the wall clock at the build's date, approximate, which the live
-  quotes' TLS checks accept
-  ([design-time.md](design-time.md#the-approximate-start)). 0.1
-  builds the clock service of [design-time.md](design-time.md) without
-  its SNTP client, and no clock module: root sets the exact time by hand
-  with a command of its own, FreeBSD's `date` with a time argument, after
-  each boot. **No design**: the set-time mechanism is a section of
-  design-time.md, written first, which names its authority, its
-  grammar, its fuzz target and what a set by hand does to the clock
-  service's [steps](design-time.md#steps).
-  Root may instead set it with `ntpctl step`, from a server it names or
-  from ntpd's last sample, which sends the same `set`
-  ([design-time.md](design-time.md#setting-the-clock-from-a-server-once));
-  none runs at boot, whose path is ntpd's first sample.
+* **The clock.** With no time source the clock service starts the wall
+  clock at the build's date, approximate, which the live quotes' TLS
+  checks accept
+  ([design-time.md](design-time.md#the-approximate-start)). `ntpd` sets
+  it from an NTP server at boot on the Pi 4's image; root sets it by hand
+  with FreeBSD's `date` and a time argument
+  ([design-time.md](design-time.md#setting-the-clock-by-hand)), or with
+  `ntpctl step`, from a server it names or from ntpd's last sample
+  ([design-time.md](design-time.md#setting-the-clock-from-a-server-once)).
+  0.1 has no real-time clock module; the header that carries one is
+  1b-I's part (e).
 * **Doom on QEMU `virt`**, with keys from QEMU's virtio keyboard, and
   **on the Pi as its demo loop** with no keyboard, since the Pi has no
   keyboard before [track U](#track-u-usb): Doom's
@@ -2388,7 +1637,7 @@ its code, and the item's work waits on it.
   The release notes are a page the website publishes beside the
   downloads, its source under `site/`. They carry 0.1's known
   limitations: what it leaves to 0.2 and later (below); the Pi's clock, at
-  the build's date at each boot until root sets it, so a certificate that
+  the build's date at each boot until `ntpd` or root sets it, so a certificate that
   expired since the build is accepted until then; whoever can write the card can make
   themselves root; a requested off on the Pi reboots it, which only
   cutting the power turns off; and the security residuals a user of 0.1 is exposed
@@ -2402,15 +1651,15 @@ its code, and the item's work waits on it.
   the counter alone
   ([TODO.md](../TODO.md)).
 * **The board by hand**, on the 4 GB Pi with no rig: 1b-I's manual
-  passes and power-cut checklist, and a soak. **No design** for the
-  soak: its workload, its length and what it records are written first,
-  beside design-platforms.md's board passes; [its design](design-platforms.md#the-soak)
-  is written. Building it is four packages of about 50 to 100 calls each
-  (unverified until they run): the judge and the round's readers
-  (`tools/lib/erx/soak.rb`, a pure core, with `test/host/soak_test.rb`), the
-  board's driver (`tools/erx soak board` and `soak judge`, extending
-  `DevKey.ssh_argv` to take a destination and an identity path), the QEMU
-  run, and the runs themselves, whose records go to the history repository.
+  passes and power-cut checklist, and a soak, whose workload, length and
+  records are designed in
+  [design-platforms.md](design-platforms.md#the-soak). Building it is
+  four packages of about 50 to 100 calls each (unverified until they
+  run): the judge and the round's readers (`tools/lib/erx/soak.rb`, a
+  pure core, with `test/host/soak_test.rb`), the board's driver
+  (`tools/erx soak board` and `soak judge`, extending `DevKey.ssh_argv`
+  to take a destination and an identity path), the QEMU run, and the runs
+  themselves, whose records go to the history repository.
 * **Installing an app at run time**, track A's part 3
   ([design-packaging.md](design-packaging.md)), if it lands before
   0.1's other items are done; otherwise 0.2 takes it. It is not an exit
@@ -2489,8 +1738,7 @@ FD32's hardening, the system-call fuzz campaign and the upstream
 watch); M9's kernel part's devices, the rest of track P, M10's users,
 M12's updates and trial boots, track D's parts 5 and 9, and M11's
 closure on Fiasco, all as 0.2 takes them. Also after 0.1: playing Doom
-on the Pi, which needs [track U](#track-u-usb)'s USB keyboard; network time
-([design-time.md](design-time.md)); 1b-I's parts (e) and (f); the
+on the Pi, which needs [track U](#track-u-usb)'s USB keyboard; 1b-I's parts (e) and (f); the
 desktop of 1b-F; toybox's applets, the rest of 1b-B; 1b-H; track B; and
 track A's part 3 if it has not landed.
 
@@ -2645,59 +1893,33 @@ stopgap implements and then the rest of the interface, from
   tests, and `tools/erx bench` measures its paths, the existence lock's
   contention and `tools/erx bench stop` among them.
 * **The kernel's first part**, what the switch and M2 stand on, with the
-  decisions in C17 cores:
-  * capabilities with generations and per-type rights, with copies, closes,
-    `erx_cap_pass` in its creator's case and deletion, which frees an object
-    after an RCU grace period, as Fiasco does; budgets with guarantees, caps
-    and walls (K32), as space banks, whose deletion deletes every object
-    charged to them; capability transfer at
-    an IPC rendezvous lands in M5's kernel part, with this IPC designed to
-    add it without
-    reshaping the rendezvous;
-  * spaces, each with its parent, fault gate and label fixed at creation,
-    threads (executors and workers), private and shared memory objects and
-    the physical objects the kernel makes: the boot image, its slices
-    (`erx_image_slice`), the time page and groups' shared areas; ceilings
-    and reserves, W^X, faults to fault gates, `erx_space_stop` and exit
-    records that arrive only once no thread of the space can run (K18), a
-    stopped thread finishing the call it is in, or waking from its wait,
-    before it dies; sealed paged objects, contiguous objects and physical
-    objects created from device resources arrive with their first
-    consumers;
-  * IPC gates bound to one thread each, with labels and timeouts, a server
-    running at its own urgency and on its own group's grant from its first
-    instruction; IRQ objects bound to threads, or to groups with labels and
-    listed on the groups' ready lists, passing with `TRIGGER` and never with
-    `BIND`, so a holder can ring one and never take its deliveries; umtx;
-    the early console; the time page; entropy; `erx_machine_end`;
-  * the root task: the first space without parent or fault gate, the root
-    capabilities at the ABI file's well-known slots, the boot information
-    page flagged `ERX_BOOT_ROOT`, and the device-secret page with the status
-    `no_key` ([design-kernel.md](design-kernel.md#the-root-task));
-  * the watchdog: `erx_watchdog_pet` on the platform object, needing
-    `POWER`, armed when the root task starts under `erx.watchdog`'s period,
-    deadline and boot deadline, and the crash record, written to the early
-    console and followed by the end of the machine through the firmware, for
-    a missed deadline, a fault of the root task and its halt outside
-    `erx_machine_end` ([design-kernel.md](design-kernel.md#the-watchdog));
-  * groups in configuration C0: urgency levels, round robin within a level,
-    park and wake with epochs, the executor rule; the quota pool's C17 core
-    built and tested on the host, with target enforcement in configuration
-    C1 ([design-scheduler.md](design-scheduler.md#park-and-wake));
-  * above the kernel: `liberx`'s `erx` backend; `erx_root_main` building the
-    programs a development manifest's partial boot names as domains through
-    the domain library ([design-system.md](design-system.md#boot)); the
-    domain library's production `erx_dom_plan_configured` core for native
-    domains, built for the host as the packer's property-12 checker as well
-    as for the runtime, validated whole and undone step by step
-    ([design-system.md](design-system.md#the-domain-library)); the
-    production startup plan `erx_root_plan` with its charge evidence, run by
-    the packer and the kernel
-    ([design-kernel.md](design-kernel.md#the-startup-plan-and-its-charge-evidence)),
-    which replaces the Phase 1 root startup rule behind the packer's
-    `Admitted` value before gate GK3; the conformance suite for every call
-    in scope; the chokepoint checks that confine kernel calls to `liberx`;
-    the stack proof and chokepoint checks over the C17 cores.
+  decisions in C17 cores ([design-kernel.md](design-kernel.md)):
+  capabilities with generations and per-type rights, and budgets with
+  guarantees, caps and walls (K32), as space banks, whose deletion
+  deletes every object charged to them; spaces with their parents, fault
+  gates and labels fixed at creation, threads, memory objects, W^X, and
+  exit records that arrive only once no thread of the space can run
+  (K18); IPC gates, a server running at its own urgency and on its own
+  group's grant from its first instruction; IRQ objects, passing with
+  `TRIGGER` and never with `BIND`; umtx, the early console, the time page,
+  entropy and `erx_machine_end`; the root task
+  ([design-kernel.md](design-kernel.md#the-root-task)); the watchdog and
+  the crash record ([design-kernel.md](design-kernel.md#the-watchdog));
+  groups in configuration C0, with the quota pool's C17 core built and
+  tested on the host
+  ([design-scheduler.md](design-scheduler.md#park-and-wake)); and above
+  the kernel, `liberx`'s `erx` backend, the domain library's production
+  `erx_dom_plan_configured`, which the packer runs as its property-12
+  checker ([design-system.md](design-system.md#the-domain-library)), and
+  the production startup plan `erx_root_plan` with its charge evidence,
+  which replaces the Phase 1 root startup rule behind the packer's
+  `Admitted` value before gate GK3
+  ([design-kernel.md](design-kernel.md#the-startup-plan-and-its-charge-evidence));
+  the conformance suite for every call in scope; the chokepoint checks
+  that confine kernel calls to `liberx`; the stack proof and chokepoint
+  checks over the C17 cores. Capability transfer at an IPC rendezvous
+  lands in M5's kernel part, with this IPC designed to add it without
+  reshaping the rendezvous.
 
   Its criteria: the conformance suite passes under HVF on one and
   four CPUs; in each of those two configurations, two hostile native
@@ -2855,43 +2077,31 @@ The network driver restarts in its domain under a TCP connection of
 root's session, which echoes again once the link has its lease, and the
 ping runs from root's session through the network domain's `net` grant.
 
-**Scope, on Fiasco (1b-E).** The storage domain, which holds the
-block driver and the file systems from here, with littlefs as a NIF
-([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)),
-and the part of the device service that gives it its device; the device service in full, with the
-system manifest's placement of devices and its `/dev` tree
-([design-system.md](design-system.md#devices)); the device NIF in full:
-the device NIF's address rule, under which an unconfined device's memory
-is the system domain's for the boot and a confined device's is freed only
-after the kernel unbinds it from the device's window,
-receive as a copy into a fresh binary at completion, so no term aliases
-memory the device can write, transmit copies as per-byte C, interrupt
-acknowledgement, and
-the build check that register accessors are referenced only from the
-device NIF ([design-runtime.md](design-runtime.md#the-device-nif)); the
-block and network drivers in Erlang over virtio-mmio, each a
-row of Fiasco's device records, in the storage and network
+**Scope, on Fiasco (1b-E).** The storage domain, which holds the block
+driver and the file systems from here, with littlefs as a NIF
+([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain));
+the device service in full, with the system manifest's placement of
+devices and its `/dev` tree ([design-system.md](design-system.md#devices));
+the device NIF in full, receive copied into a fresh binary at completion
+so that no term aliases memory the device can write, with the build check
+that register accessors are referenced only from the device NIF
+([design-runtime.md](design-runtime.md#the-device-nif)); the block and
+network drivers in Erlang over virtio-mmio, in the storage and network
 domains that hold their devices, unconfined, written after sDDF's model
 of the driver-versus-policy split, with sDDF's published throughput as
-the oracle and nothing imported, and M6's block driver among them; the
-restart demo. The GPU and input drivers come with the display domain of
-track D's window stack (1b-C's part 3,
-[track D](#track-d-windows-widgets-and-the-web)). Drivers run in their own
-domains rather than the system
-domain, since that is the structure a person sees and the device
-service's first real exercise; the unconfined DMA residual is the same
-either way. No task other than the root creates a device object: the
-domain library creates each device's register window, line
-object and contiguous memory in the root and passes them to the holder,
-which maps the window and binds the line to its own group, and at the
-holder's end deletes the window's and the line's objects and keeps the
-memory for the restarted holder
-([design-fiasco.md](design-fiasco.md#device-records)); DMA stays
-unconfined, since QEMU `virt` as the harness starts it has no IOMMU. The
-Phase 1 manifest check allows these devices in development builds
-([design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)), and
-the device service's unconfined placement is
-[design-system.md](design-system.md#devices)'s on Fiasco.
+the oracle and nothing imported; the restart demo. The GPU and input
+drivers come with the display domain of track D's part 3
+([track D](#track-d-windows-widgets-and-the-web)). Drivers run in their
+own domains rather than the system domain, since that is the structure a
+person sees and the device service's first real exercise; the unconfined
+DMA residual is the same either way. No task other than the root creates
+a device object: the domain library creates each device's objects in the
+root, passes them to the holder, and at the holder's end keeps the memory
+for the restarted holder
+([design-fiasco.md](design-fiasco.md#device-records)). DMA stays
+unconfined, since QEMU `virt` as the harness starts it has no IOMMU, and
+the Phase 1 manifest check allows these devices in development builds
+([design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)).
 
 **Optional on Fiasco.** The host-tree domain of
 [design-live.md](design-live.md#files-between-the-host-and-the-machine),
@@ -3094,101 +2304,29 @@ also runs on QEMU's `raspi4b` model. Part (a) comes first; (b), (c), (d)
 and (e) each need only (a) on the board, and may go in any order or side
 by side; (f) needs (b) and (c).
 
-* **(a) A serial shell on the Pi, on QEMU's `raspi4b` first.** Its
-  packages, in order:
-  1. **BL31 on the model**, a timeboxed experiment, done. TF-A 2.15.0's
-     Pi 4 BL31, built from its pinned source with LLVM, boots under
-     QEMU's `raspi4b` with QEMU's generic loader in place of the
-     firmware: `-device loader` puts `bl31.bin` at address 0 with
-     `cpu-num=0`, a test image at the address BL31 enters and the
-     board's device tree where BL31 expects it, with BL31's stub header
-     patched on the host as the firmware patches it. The whole chain
-     runs: BL31 at EL3, the test image at EL2, PSCI's `CPU_ON` for the
-     other three CPUs, and a reset through the power-management
-     watchdog that ends QEMU under `-no-reboot`. It needs `-global
-     arm_gic.has-security-extensions=on`. The model's gate for stage (a)
-     therefore covers the entry state, PSCI, four CPUs and reset. The
-     result is in [research-rpi4-bl31-qemu.md](research-rpi4-bl31-qemu.md)
-     and the harness's configuration in
-     [design-platforms.md](design-platforms.md#bring-up-under-qemu).
-  2. **The platform as a parameter.** The per-board platform record and
-     `ProductionImage::Machine` are passed as a parameter through the
-     image build, the release build and the native and QEMU harnesses,
-     in place of the QEMU `virt` constants they hold: the record and
-     manifest paths of `ProductionImage` and `Release`
-     (`tools/lib/erx/production_image.rb`, `release.rb`), RAM's first
-     address in `NativeRoot` and `NativeCrash`, and the harness's machine
-     line (`qemu.rb`), which for `raspi4b` names the loader's devices of
-     package 1 and gives the console QEMU's second serial port. The
-     record gains RAM's first address and each PL011's clock, which
-     `erx_pl011` takes in place of QEMU `virt`'s 24 MHz, and
-     `ERX_ROOT_KIP_WINDOW` (`liberx/backend/fiasco/root_open.c`) moves
-     into the backend's address layout above all RAM. The package changes
-     no behaviour on QEMU `virt`: the QEMU suites it touches pass as
-     before.
-  3. **Fiasco on the Pi.** The Pi's `bootstrap` build, for Fiasco's
-     generic platform with RAM at 0, linked static at `0x200000`, where
-     the firmware loads it, with the mini UART as its console: Fiasco's 16550 and BCM2835 UART
-     drivers imported into `bootstrap`'s UART library, which holds only
-     the PL011's, and `CONFIG_DRIVERS_FRST_UART_DRV_8250` on; the kernel
-     build QEMU uses, which already carries the mini UART's driver; TF-A
-     2.15.0's BL31 built from its pinned source; the board's device tree,
-     compiled with its serial aliases swapped and its source beside
-     it, and for the model with the overlays of `config.txt` and the
-     memory node the firmware fills applied on the host; and the boot files
-     (the firmware, `config.txt` with `enable_uart=1` and
-     `dtoverlay=uart3`, the board's device tree, BL31 and the bootable
-     file) laid out by a host tool for the firmware's network boot and
-     for an SD card
-     ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)); and
-     the Pi's platform record. The host tool writes `config.txt`'s
-     `init_uart_clock` from the record's PL011 clock, so the record stays
-     the one source of that clock.
-  4. **The serial shell on the model.** The Pi's development manifest,
-     with the system domain alone, holding the
-     mini UART's unit, the console's, which shares its register page
-     with the auxiliary SPI controllers, and the PL011s' unit, the host
-     link's; a small Erlang driver for the mini UART in `erx_uart`,
-     beside `erx_pl011`, which keeps the baud divisor the firmware set,
-     touches only the mini UART's registers of the shared page, and
-     leaves the page's enable register, which also enables the auxiliary
-     SPI controllers, as it found it; a host test of the record's paths,
-     windows and lines against the board's device tree, as the
-     production image suite checks QEMU's; and the `raspi4b` suite,
-     below, which proves the stage on the model.
-  5. **The board.** The manual board pass, below; the boot probe of
-     [design-platforms.md](design-platforms.md#verification-and-testing)
-     on Fiasco, recorded in a research record before anything
-     depends on its results
-     ([research-rpi4-board-pass.md](research-rpi4-board-pass.md)); and the board's boot suite, which the build packs into the SD card's
-     boot partition. The card is put in the board and the
-     suite's transcript checks are run by hand, stage (a)'s demo once, with the
-     host link on UART3.
-* **(b) Storage on the SD controller.** An Erlang driver for the Pi's
-  SD host controller (`brcm,bcm2711-emmc2`, an SDHCI controller) as the
-  block driver's device process, the part
-  [design-storage.md](design-storage.md) makes differ per controller:
-  the card's initialisation and reads and writes by programmed I/O
-  first, then DMA once the device NIF cleans and invalidates for a device
-  that is not coherent. It rests on the block driver's split into a
-  transport, the device process of virtio-blk or of the SD controller,
-  and the service above it, the partition and window processes and the
-  write path, so the Pi adds a device process and nothing above it
-  moves. The write path's rule (U4) holds across the split: only
-  `erx_blk_write` hands a controller anything to do, a virtio request or
-  an SD command, since the device NIF owns the command register and
-  issues a command only through `erx_device:command/2`, which the build
-  check holds to `erx_blk_write` as it holds `erx_device:post/4`
-  ([design-storage.md](design-storage.md#the-sd-host-controller)). The storage domain holds the SD card, laid out on
-  the host as the ABI file's medium layout, with the slot's system
-  partition served as the `system` tree and littlefs at `/data`. The Pi medium
-  package brings fsimg's `place` option, which writes the record
+* **(a) A serial shell on the Pi, on QEMU's `raspi4b` first.** The Pi's
+  image boots to the shell on the mini UART under `raspi4b` and on a
+  board, with the host link on UART3. The BL31 experiment on the model is
+  [research-rpi4-bl31-qemu.md](research-rpi4-bl31-qemu.md), the board
+  pass and boot probe
+  [research-rpi4-board-pass.md](research-rpi4-board-pass.md), and the
+  harness's configuration
+  [design-platforms.md](design-platforms.md#bring-up-under-qemu).
+* **(b) Storage on the SD controller.** An Erlang driver for the Pi's SD
+  host controller (`brcm,bcm2711-emmc2`, an SDHCI controller) as the
+  block driver's device process, by programmed I/O first, then DMA once
+  the device NIF cleans and invalidates for a device that is not coherent.
+  It rests on the block driver's split into a transport and the service
+  above it, so the Pi adds a device process and nothing above it moves,
+  and the write path's rule (U4) holds across the split
+  ([design-storage.md](design-storage.md#the-sd-host-controller)). The
+  storage domain holds the SD card, laid out as the ABI file's medium
+  layout, with the slot's system partition served as the `system` tree
+  and littlefs at `/data`; fsimg's `place` option writes the record
   partition's FAT16 and slot A's FAT32 with their placed files
-  ([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record)),
-  and the packer's check of each placed file's cluster chain. Each DMA
-  device's entry in the platform record carries its bus offset and
-  reach, so the SD controller's pool lies in the first GiB it sees
-  ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)).
+  ([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record));
+  each DMA device's entry in the platform record carries its bus offset
+  and reach ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)).
 * **(c) Network on GENET.** An Erlang driver for the Pi's Ethernet
   controller (`brcm,bcm2711-genet-v5`) and its PHY, in the network
   domain, under 1b-G's network service and stack. GENET moves packets
@@ -3303,8 +2441,8 @@ by side; (f) needs (b) and (c).
 
 * **QEMU's `raspi4b`, under TCG, proves stage (a) first.** Agents
   develop stage (a) on it, and its suite runs with the landing gate when
-  the Pi's image or its boot changes: the Pi's image, loaded as package
-  1 settled, boots to the shell's prompt on the mini UART with the
+  the Pi's image or its boot changes: the Pi's image, loaded as the harness
+  configures it, boots to the shell's prompt on the mini UART with the
   development banner, and the console transcript of the production image
   suite's cases (a sum, a line with a mistake rubbed out, an output
   longer than the transmit FIFO) passes there; the seeded fault, a
@@ -3365,15 +2503,13 @@ by side; (f) needs (b) and (c).
 
 **Exit criteria.**
 
-* (a): after package 2 the QEMU `virt` suites pass unchanged; package
-  1's research record is written, with the chain's result; on
-  `raspi4b`, the Pi's image boots to the shell on the mini UART and
-  passes the console transcript, and fails it with the seeded driver;
-  the host test of the record against the board's device tree passes,
-  and fails on a record with one window moved; then, once, by hand
-  on the board, the Pi boots from its firmware to the shell on the mini UART with
-  the development banner, the host tool reaches it over UART3, and the
-  boot probe's research record is written.
+* (a): on `raspi4b`, the Pi's image boots to the shell on the mini UART
+  and passes the console transcript, and fails it with the seeded driver;
+  the host test of the record against the board's device tree passes, and
+  fails on a record with one window moved; once, by hand on the board,
+  the Pi boots from its firmware to the shell on the mini UART with the
+  development banner, the host tool reaches it over UART3, and the boot
+  probe's research record is written.
 * (b): QEMU's block suites pass unchanged after the split; by hand on
   the board, the power-cut checklist passes: in each of the ten cuts
   every file synced before the cut's mark survives whole, and the board
@@ -3568,41 +2704,21 @@ stores at once, and `msync` makes them durable.
 
 **Scope.**
 
-* `fork` by eager copy: the session's port driver copies the program's
-  sub-space with `erx_space_copy`, which only a sub-space's creator may
-  call, holds the parent while it copies, charges the session's budget for
-  the child's memory as it goes and decides each mapping by its object's
-  kind, the child's first thread starting at the entry and argument the
-  driver names; `liberx`'s fork with its prepare, parent and child steps
-  and `pthread_atfork`; the child's pipe ends installed by the pipe server
-  and its grants derived at the servers, all or none; `vfork` as `fork`;
-* the `exec` family: the quiesce, which parks the other workers once every
-  closed wait has ended; the session building the new image under the
-  program's anchor, with a channel of its own, while the old one waits,
-  and moving what the new image keeps once the old image has closed what
-  it does not hand over; the switch at the old image's exit record; the
-  program record in the handler, which keeps the program's identity, its
-  children and its signal reports across images, and to which the old
-  image hands its frozen descriptors in `{exec}`;
+* `fork` by eager copy of the program's sub-space with `erx_space_copy`,
+  which only a sub-space's creator may call, charged to the session's
+  budget as it goes; `liberx`'s fork with `pthread_atfork`; `vfork` as
+  `fork` ([design-programs.md](design-programs.md#the-second-tier));
+* the `exec` family: the session builds the new image under the
+  program's anchor while the old one waits, and the program record in the
+  handler keeps the program's identity, its children and its signal
+  reports across images;
 * shared libraries: `erx_exec` as the dynamic linker, from musl's adapted
-  to map file objects, with `dlopen`, `dlsym` and `dlclose`, a library's
-  writable segments as copy-on-write children of its sealed object;
+  to map file objects, with `dlopen`, `dlsym` and `dlclose`;
 * mappings of files: `MAP_PRIVATE` as copy-on-write children of sealed
-  objects, or a private copy of a file some program maps for writing; and
-  `MAP_SHARED` served by the session: one memory object per file that any
-  of its programs maps shared, owned by a mapper process of the session,
-  which fills it from the file server with ordinary reads before any
-  mapping covers the range, and maps it into each program that maps the
-  file. Every descriptor read, write and size change of the file by the
-  session's programs goes through that object, a write going to the
-  object and to the server together. The mapper learns from the kernel's
-  store tracking, `erx_mem_dirty`, which pages were stored to, and writes
-  those back with ordinary writes at three points: `msync`, where
-  `MS_ASYNC` starts the write-back and returns; every close of a mapping's
-  open (a program's last `munmap` of the file, its `exec` and its end);
-  and the last `close` of the file. A second session's mapping of the
-  file is its own copy, and an Erlang domain maps nothing shared
-  ([design-files.md](design-files.md#shared-mappings));
+  objects, and `MAP_SHARED` served by a mapper process of the session,
+  one memory object per file its programs map shared, written back at
+  `msync`, at every close of a mapping's open and at the last `close` of
+  the file ([design-files.md](design-files.md#shared-mappings));
 * pseudo-terminals that a program holds, over the session's line
   discipline, process groups and sessions, and `SIGWINCH`
   ([design-programs.md](design-programs.md#the-terminal));
@@ -3779,26 +2895,19 @@ and the check inside `erx_verity:read/3`, the funnel M6 built, so the
 reader parses only blocks that passed their image's tree (E1), with the
 hash-checking reader's fuzz target
 ([design-storage.md](design-storage.md#invariants)); credentials for
-principals: the vault in its first form, whose only credential is one
-passphrase slot per principal and whose only sealing backend is `none`,
-in its domain, without a crash area, created by the domain library with
-`ERX_DOM_SECRET` from the one release the boot image marks with
-`ERX_ENTRY_SEAL`, which receives the sealing page, with a master key per
-principal wrapped by the slot, the passphrase stretched by OpenSSL 3.5's
-Argon2id (provisional parameters, under a fixed ceiling) within its
-limits per name and per terminal and answered after one login envelope,
-each file changed only through its one owner and published with a
-checkpoint, and the `erx_seal` interface with its `none` backend, behind
-which the `device` and `tpm` backends join at M12; the vault's files on
-the vault's partition, served by a storage domain of its own whose only
-client is the vault, on littlefs, the stopgap until erXos's F2FS, so
-principals' files and the machine keys persist across boots from here;
-`tools/erx bench login` on QEMU under HVF, with TCG reported apart, which
-sets Argon2id's parameters against a budget of about a second; the fuzz
-target of the vault's file decoder; OpenSSL 3.5 pinned and built, and
-the small verifier, which the package check runs, checking
-update signatures ([design.md](design.md#dependencies)) once the SSH
-login facet's tests calling it directly pass on it
+principals: the vault in its first form, one passphrase slot per
+principal and the `none` sealing backend, behind the `erx_seal` interface
+that the `device` and `tpm` backends join at M12, in a domain of its own
+created from the one release the boot image marks for sealing, its files
+on the vault's partition served by a storage domain whose only client is
+the vault, on littlefs, the stopgap until erXos's F2FS
+([design-system.md](design-system.md#the-vault)); `tools/erx bench login`
+on QEMU under HVF, with TCG reported apart, which sets Argon2id's
+parameters against a budget of about a second; the fuzz target of the
+vault's file decoder; OpenSSL 3.5 pinned and built, and the small
+verifier, which the package check runs, checking update signatures
+([design.md](design.md#dependencies)) once the SSH login facet's tests
+calling it directly pass on it
 ([design-ssh.md](design-ssh.md#verification)).
 
 **Exit criteria.** No open CRITICAL or HIGH finding; every residual risk
@@ -3989,23 +3098,13 @@ timings, and slot images' sizes against the boards' media. Decides the
 default of `erx.trial_deadline`, the boot deadline of `erx.watchdog` on
 each board, and whether images need compression.
 
-**Gate GN-board.** Repeats GN-QEMU's measurements of
-[1b-G](#1b-g-networking-on-qemu) natively on the Pi 4: UDP echo rate and
-latency, and a TCP bulk transfer's throughput and CPU time, against a
-Linux peer and against Linux's stack on the same board, with the host,
-accelerator, compiler and flags recorded. The target is line rate at 1
-Gb/s, 81,274 full-size frames a
-second each way, 12.3 us a frame (computed from IEEE 802.3's framing).
-It separately tests minimum-size frames (about 1.49 million frames/s at
-1 Gb/s, 1e9 / (84 * 8), including preamble and inter-frame gap), invalid
-packets, reassembly and connection floods, full duplex and overload recovery.
-These are arithmetic offered-load targets, not measured throughput. Unowned
-traffic has a finite per-interface CPU and memory budget before a client
-can be identified; reserve control progress while dropping excess traffic.
-Report p50, p99 and p99.9 and peer progress under load on matched setups.
-Confirms GK3's decision whether TCP's fast path in erXos's stack is
-Erlang or native code ([design.md](design.md#networking)), or reopens it
-with the board's numbers.
+**Gate GN-board.** Repeats GN-QEMU's measurements and targets of
+[1b-G](#1b-g-networking-on-qemu) natively on the Pi 4, against a Linux
+peer and against Linux's stack on the same board, with the host,
+compiler and flags recorded. Confirms GK3's decision whether TCP's fast
+path in erXos's stack is Erlang or native code
+([design.md](design.md#networking)), or reopens it with the board's
+numbers.
 
 ## M13: erXos's F2FS
 
@@ -4108,44 +3207,27 @@ inspector shows, and a network domain killed under load comes back.
 
 **Scope.** The network stack's design is
 [design-network-stack.md](design-network-stack.md): FreeBSD's default
-TCP stack translated into Erlang, read from FreeBSD 15.1
-(`release/15.1.0-p6`, `95719d8a`) and pinned at FreeBSD 16.0-CURRENT
-(`main-n285245`, `975e3605`) with the changes between the two that the
-wire can see ported, its processes and packet path, grants and sockets,
-and its verification. TCP's fast path in native code, behind the same process
-interface, only if GK3 decides so on erXos's kernel. The work comes in
-two stages, the design's core and then its extensions
+TCP stack translated into Erlang at the releases that design pins, its
+processes and packet path, grants and sockets, and its verification.
+TCP's fast path in native code, behind the same process interface, only
+if GK3 decides so on erXos's kernel. The work comes in two stages, the
+design's core and then its extensions
 ([Scope](design-network-stack.md#scope)):
 
-* **First stage, the core.** Ethernet II; ARP; IPv4 with reassembly,
-  fragmentation on output and ICMP; IPv6 with extension headers,
-  reassembly, ICMPv6, neighbour discovery, duplicate address detection,
-  autoconfiguration with RFC 7217 identifiers and the narrow MLDv2
-  listener; static configuration and DHCPv4; loopback; UDP; TCP with the
-  design's defaults (syncache and cookies, RFC 5961, RFC 6528, SACK with
-  RFC 6675 recovery and PRR, limited transmit, IW10, window scaling,
-  timestamps and PAWS, ECN in FreeBSD's default mode, path MTU discovery,
-  keepalive and persist, buffer autosizing, TIME-WAIT with RFC 1337 and
-  RFC 6191, reassembly caps, NewReno and CUBIC); the grant, its limits and
-  its account; `gen_tcp`, `gen_udp` and `inet` through the `erx` socket
-  backend; the POSIX socket protocol; the resolver operation; the port
-  mapper; distribution to other machines, over TLS alone in release
-  builds; the decoders' fuzz targets and `decode_packet`'s, run on the
-  host's stock OTP; the explorer and the syncache properties; the two
-  packet-script runners, FreeBSD's TCP test suite with nplab's packetdrill
-  in a FreeBSD 15.1 guest and erXos's own runner, with erXos's own scripts
-  run on both; and the traffic tests against the FreeBSD guest and
-  Linux's stack. In this stage redirects are ignored, the multicast
-  options answer `{error, enotsup}`, and `socket:open` answers
-  `{error, enotsup}`, a documented difference with a test, with OTP's
-  socket suites expected failures, since `socket`
-  comes after `gen_tcp`, which `ssl`, `ssh` and distribution use instead.
-* **Second stage, the extensions.** The `socket` and `net` modules over an
-  Erlang `prim_socket`, and OTP's socket suites; raw ICMP sockets for
-  `ping`; checksum offload; one interface process per receive queue
-  where the device has several; the host cache; AccECN; ICMP and ICMPv6
-  redirects accepted as FreeBSD accepts them; 802.1Q VLANs; RFC 8981
-  temporary addresses; multicast with IGMP and full MLD.
+* **First stage, the core**: the link, IPv4 and IPv6 layers, UDP and TCP
+  with the design's defaults, the grant, `gen_tcp`, `gen_udp` and `inet`
+  through the `erx` socket backend, the POSIX socket protocol, the
+  resolver, the port mapper, distribution to other machines, over TLS
+  alone in release builds, the decoders' fuzz targets, the two
+  packet-script runners against a FreeBSD 15.1 guest, and the traffic
+  tests against the FreeBSD guest and Linux's stack. In this stage
+  redirects are ignored, the multicast options answer `{error, enotsup}`
+  and `socket:open` answers `{error, enotsup}`, each a documented
+  difference with a test, with OTP's socket suites expected failures,
+  since `ssl`, `ssh` and distribution use `gen_tcp`.
+* **Second stage, the extensions**: the `socket` and `net` modules and
+  OTP's socket suites, raw ICMP sockets for `ping`, and the rest of the
+  design's extensions.
 
 Outside M14, later, behind the stack's seams: RACK-TLP as a loss module,
 deferred, with the default stack as the
@@ -4272,28 +3354,13 @@ Phase 2:   M7 --> M2 --> M5's and M9's kernel parts --> G6 --> M8 --> M10 --> M1
            track D: part 5, kiosks on boards (after part 4 and M12); part 9, the web on the network (after part 2, M10, M11 and 1b-G)
 ```
 
-* Phase 1's critical path runs through M1, M3, M4 and M6; track H runs
-  beside M1 and carries ERTS's port before the QEMU boot of M3; the shell
-  follows M4.
-* Phase 1b runs in the order of its visible demos: 1b-A; the session
-  domain; 1b-E and 1b-G; 1b-C's parts 1 and 2; 1b-C's part 3; 1b-D,
-  with 1b-C's part 4 on its first slice, track A's part 2 and 1b-B's
-  sub-space ports and pipes, then toybox's applets; 1b-F last. 1b-A comes first because every other item is a domain or
-  runs in one. BeamAsm runs beside 1b-A, and 1b-H whenever capacity is
-  idle. 1b-I's serial shell follows Phase 1 on QEMU's `raspi4b`, and
-  passes once on the board by hand; each
-  of its later stages follows the QEMU item it brings to the board.
-* Track K's pilot starts before Phase 1 is complete and runs beside
-  Phase 1b, since its cores are host-built C17
-  with no shared seam and its calibration is needed whatever the order;
-  the kernel in full starts after 1b-A, so its conformance roster covers
-  the rows 1b-A's consumers use and each refusal of the backend names
-  what M7 must add. Nothing in Phase 1b changes the kernel interface,
-  only which rows Fiasco carries.
-* Phase 2's critical path runs through M7, M2, the kernel parts of M5 and
-  M9, G6, M8, M10, M11 and M12; the rest of track P follows its first
-  part, and track Q follows track P and M7; M13 and M14, already on QEMU,
-  reach the boards with M12.
+* The order within each phase is [the overview's](#overview). Track K's
+  pilot runs beside Phase 1b, since its cores are host-built C17 with no
+  shared seam and its calibration is needed whatever the order; the kernel
+  in full starts after 1b-A, so its conformance roster covers the rows
+  1b-A's consumers use and each refusal of the backend names what M7 must
+  add. Nothing in Phase 1b changes the kernel interface, only which rows
+  Fiasco carries.
 * Within Phase 1b, 0.1's items come first
   ([0.1](#01-the-preview)). Among them the
   two basic packaged apps, the offline kiosk and Doom on the virtio
@@ -4318,47 +3385,6 @@ Phase 2:   M7 --> M2 --> M5's and M9's kernel parts --> G6 --> M8 --> M10 --> M1
   codecs) and its fuzz targets are written and tested on the host
   ahead of the milestone that integrates it.
 
-## First pull requests
-
-Each is small, adds its tests, and leaves `make check` green.
-
-1. **Skeleton.** `Makefile`, `tools/erx` with `OptionParser` and the
-   deadline runner (`gtimeout -k 10`, process groups, closed standard
-   input, logs), the ASCII check, and `make check` running the Ruby tests.
-2. **Fetch.** `deps.lock` and `make fetch` with SHA-256 verification into
-   separate directories: the OTP 29.1.2 tarball, musl 1.2.6 and Arm's
-   machine-readable specification.
-3. **Imports.** OTP 29.1.2 into `otp/`, musl 1.2.6 into `musl/`, and the
-   frozen Fiasco set into `fiasco/`, each with its license notices and its
-   `ORIGIN.md` with every file's hash, the change-notice check, and the
-   license scan of the Fiasco set.
-4. **Oracle.** The host build of stock OTP 29.1.2 in both flavours and the
-   suite runner that stores results case by case.
-5. **QEMU harness.** Guests under deadlines with serial logs and awaited
-   lines, both accelerators, QEMU `virt` configured as
-   [design-platforms.md](design-platforms.md#qemu-virt) pins it; its first
-   subject is Fiasco's own banner.
-6. **ABI generator.** `abi/erx_abi.txt`, the Ruby generator, and the
-   generated header for status codes, rights and limits, with golden tests.
-7. **Hardware sources.** The SVD generator and the system-register
-   extractor with golden tests, the generated-tree tests, and the SVD file of QEMU
-   `virt`'s console UART as the first input.
-8. **Boot image.** `tools/erx pack` writing `ERXPACK`
-   deterministically, with its `NOTICES` file, the C17 validator built for
-   the host, and its fuzz target, landing together.
-9. **Benchmark harness.** `tools/erx bench` recording every condition, and
-   the host baselines with OTP 29.1.2.
-10. **Boot.** `bootstrap` loads an `ERXPACK` image and near-stock Fiasco
-    starts `liberx`'s root entry, which prints a line and ends the machine.
-11. **Memory.** The pool window, the range table, the VM calls and protect.
-12. **Threads.** Threads with TLS, umtx, park and wake, each task's reaper,
-    the watchdog.
-13. **A second task.** The launcher, the root service, a JIT object's two
-    aliases, a task's end.
-14. **An interrupt.** IRQ objects, the dispatcher, the ready list.
-15. **The production image.** The Phase 1 manifest check and a full boot to
-    the point where ERTS would start.
-
 ## Beyond the plan
 
 | Item | Why it waits | Decided |
@@ -4380,7 +3406,7 @@ Each is small, adds its tests, and leaves `make check` green.
 | Hosting a sub-space under a user-level kernel, through vCPU user mode | Fiasco's vCPU interface can run a sub-space's code on a thread of its creator, as L4Linux does; erXos's subset leaves that mode out | when a use appears |
 | An MSI translation service in the interrupt controller | QEMU `virt`'s MSI frame serves both accelerators ([design-platforms.md](design-platforms.md#msi-frames)) | with a board that needs it |
 | Unmapping the kernel from user-mode page tables | needed only on cores that Arm lists as affected by rogue data cache loads | with each board port, from Arm's list of affected cores |
-| The release process: who keeps the release signing key and how it is replaced; whether release builds offer a host link | erXos is a prototype and makes no releases | when erXos makes releases |
+| The release process: who keeps the release signing key and how it is replaced; whether release builds offer a host link | no release build exists yet | when erXos makes release builds |
 | Audio | not needed for the thesis | not planned |
 | GPU acceleration | the desktop and the kiosks run on software rendering first; OpenGL-class rendering needs research and a design of its own | planned, [Track D](#track-d-windows-widgets-and-the-web) part 10 |
 | USB | not needed for the thesis; wanted for keyboards, pointers and USB sticks on QEMU and the Raspberry Pi 4 | [Track U](#track-u-usb), in Phase 1b below the first two apps |
