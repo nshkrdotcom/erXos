@@ -453,6 +453,64 @@ lost_frame() ->
     ok = unanswered(Second),
     stop(World).
 
+the_keys_follow_a_front_window_while_its_frame_is_shown_test_() ->
+    {timeout, 60, fun front_keys/0}.
+
+%% docs/design-display.md, Verification, "Seen before pressed (G10)": keys under the
+%% single policy with the driver model holding the frame back. The kiosk's window is
+%% shown and takes the keys, and holds KEY_A down. A window of a grant minted with front
+%% and no session, as root's display_root grant is, opens over it; minting that grant
+%% changes neither the session nor the layout, so the first frame after the mkdir is the
+%% layout that shows the front window. While the driver model holds that frame, a key
+%% typed reaches neither window; once it is answered, the up of the kiosk's own down still
+%% reaches the hidden kiosk, and the next key reaches the front window alone, not the
+%% kiosk's read waiting behind it. Once the front window ends, a key typed while the
+%% frame of the layout that shows the kiosk's window again is held reaches nothing, and
+%% the first after its answer reaches the kiosk's read. "Shows" is the frame's layout:
+%% the window's own pixels come with the frame after (erx_screen, present_again).
+front_keys() ->
+    World = start(hold),
+    ok = held_and_answered(),
+    _ = give_area(?SESSION),
+    Kiosk = mint(?SESSION, #{session => true, windows => 1}),
+    {ok, _} = mkdir(Kiosk, <<"kiosk">>),
+    ok = present_held(Kiosk, <<"kiosk">>, 2),
+    KioskKbd = open(Kiosk, 3, <<"kiosk">>, <<"kbd">>, ?O_RDONLY),
+    _ = give_area(?FRONT),
+    Front = mint(?FRONT, #{windows => 1, front => true}),
+    ok = no_flush(),
+    Holder = spawn(fun() -> receive stop -> ok end end),
+    %% Held across the opening, well inside the 500 ms before it would repeat.
+    ok = key_a(),
+    ?assertEqual({ok, <<"ka", 0>>}, read(Kiosk, KioskKbd)),
+    ?assertEqual({ok, <<"ca", 0>>}, read(Kiosk, KioskKbd)),
+    {ok, _} = call(Front, Holder, {mkdir, 1, <<"doom">>, 8#755, 0}),
+    _ = flushed(),
+    FrontRead = call_async(Front, {read, open(Front, 2, <<"doom">>, <<"kbd">>, ?O_RDONLY), 0, 64}),
+    ok = type_b(),
+    ok = unanswered(FrontRead),
+    ok = answer_frame(),
+    ok = erx_winfs:input(<<"kbd">>, {key, up, 30}),
+    ?assertEqual({ok, <<"K", 0>>}, read(Kiosk, KioskKbd)),
+    ok = unanswered(FrontRead),
+    KioskRead = call_async(Kiosk, {read, KioskKbd, 0, 64}),
+    ok = type_a(),
+    ?assertEqual({ok, <<"ka", 0>>}, answered(FrontRead)),
+    ok = unanswered(KioskRead),
+    Holder ! stop,
+    _ = flushed(),
+    ok = type_a(),
+    ok = unanswered(KioskRead),
+    ok = answer_frame(),
+    ok = type_a(),
+    ?assertEqual({ok, <<"ka", 0>>}, answered(KioskRead)),
+    stop(World).
+
+%% KEY_B typed, evdev code 48: its down, then its up.
+type_b() ->
+    ok = erx_winfs:input(<<"kbd">>, {key, down, 48}),
+    erx_winfs:input(<<"kbd">>, {key, up, 48}).
+
 %% The driver model's next frame, answered.
 held_and_answered() ->
     _ = flushed(),

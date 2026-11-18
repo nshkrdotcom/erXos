@@ -1830,6 +1830,14 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_wm`'s rule that every rectangle lies within the screen.
 * [Low] `erlang/apps/erx_display/src/erx_input.erl`: `destination/1` ends in a catch-all, so a new route that
   should give the policy its gesture would silently go nowhere.
+* [Medium] `erlang/apps/erx_display/src/erx_input.erl` (`on_screen/2`), [The input router](docs/design-display.md#the-input-router),
+  "A key's down": a key's down passes when the displayed windows hold the policy's answer, whatever the table's
+  state of that window, so "no down reaches a hidden window" rests on every policy's `input/5` answering only a
+  window the table shows, which both policies do but `erx_wm`'s behaviour does not require. While the frame that
+  hides a window is held, a policy answering it would deliver the down. Make it hold by construction: the down
+  passes only when the window is both displayed and shown in the table, as a gesture's later events already
+  require (`deliver/5`); the design's rule and a router case with a stub policy that answers such a window
+  change with it.
 * [Medium] `test/host/display_domain_test.rb`: the suite has no cell under `rio`: keys typed at a clicked window
   keep reaching it while a second client makes, raises, hides and shows a window, with a seeded policy that picks
   each new window ([Verification and testing](docs/design-display.md#verification-and-testing), the window
