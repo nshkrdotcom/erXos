@@ -10,9 +10,13 @@
 //
 // Flow: boot.json (written by tools/build_site.rb, fetched past the cache)
 // names the image, its sizes and its SHA-256, the disk, and v64's module and core,
-// all under names that carry their digests. The image is downloaded with a progress bar,
-// decompressed with DecompressionStream, checked against the SHA-256 and
-// kept in memory, so Reset reboots without downloading again. The disk is
+// all under names that carry their digests. The image is downloaded with a progress bar
+// and kept in memory as it was published, gzip-compressed, so Reset reboots
+// without downloading again; each boot decompresses it with
+// DecompressionStream into a buffer of its own, checked against the
+// SHA-256, and hands that buffer to v64, so beside the one the machine
+// runs the page holds no decompressed copy (unless the host sent the image
+// with a Content-Encoding, when the browser keeps it decompressed). The disk is
 // published as the bytes it holds and where they go; it is checked the same
 // way and kept in memory, sparse, with the guest's writes, so files written
 // to /data survive Reset until the page is closed. Every file boot.json
@@ -28,7 +32,38 @@ const CPU_CORES = 1;
 const CMDLINE = "erx.watchdog=1,30,600";
 // ?jit=0 in the page's address runs v64 without its JIT, for telling a browser
 // that fails while the JIT compiles guest code from one that fails otherwise.
+// The arm64 core reads only its jit_switches, so the switch is a64_page.
 function jit_disabled() { return new URLSearchParams(location.search).get("jit") === "0"; }
+// v64 compiles each guest code page it finds hot into a WebAssembly module
+// of its own, and each module costs the browser far more than its code; at
+// v64's defaults a phone's tab runs out of memory during the boot. The
+// page compiles fewer pages (a64_page_hot: interpreted instructions on a
+// page before it is compiled; v64's default is 2000) and keeps at most
+// 8 MiB of their code, the least recently used going first
+// (a64_page_code_mb; v64's default is 160 and 8 its lowest, so a v64 that
+// raises the floor refuses it and the boot fails loudly). The trade is a
+// slower boot. v64's threshold is a64_page_hot << backoff, a u32: for
+// this value it truncates from a page's 17th compile to a still-large
+// threshold, so such a page recompiles sooner, which costs time only.
+const JIT_SWITCHES = { a64_page_hot: 1_000_000, a64_page_code_mb: 8 };
+// ?log=console also writes the guest's serial output to the browser's
+// console, one line per line, for a browser whose console outlives the tab.
+function log_to_console() { return new URLSearchParams(location.search).get("log") === "console"; }
+
+// A serial0-output-byte listener that hands emit each line the guest
+// writes, without its line end. Every byte that is not printable ASCII,
+// and the backslash, is shown as \xNN, so the guest's escape sequences,
+// format characters and invalid UTF-8 never reach the console as such.
+function serial_lines(emit) {
+    let line = "";
+    const shown = code => code < 0x20 || code > 0x7e || code === 0x5c
+        ? `\\x${code.toString(16).padStart(2, "0")}` : String.fromCharCode(code);
+    return byte => {
+        if(byte !== 0x0a) { line += byte === 0x0d ? "" : shown(byte); return; }
+        emit(line);
+        line = "";
+    };
+}
 const MANIFEST = "boot.json";
 // The bounds on what boot.json may ask the page to hold: the image and the
 // disk's published bytes must each fit in the guest's memory, and the
@@ -604,28 +639,65 @@ async function read_bounded(stream, limit, what, on_progress = () => undefined) 
     }
 }
 
+// Reads a stream that must hold exactly bytes bytes straight into one
+// ArrayBuffer of that length, with no Blob of the chunks beside it. A
+// longer stream is cancelled at the first byte too many.
+async function read_exact(stream, bytes, what) {
+    const content = new Uint8Array(bytes);
+    let received = 0;
+    for(const reader = stream.getReader();;) {
+        const { done, value } = await reader.read();
+        if(done) break;
+        if(value.byteLength > bytes - received) {
+            reader.cancel().catch(() => undefined);
+            throw new Error(`${what} download: too long`);
+        }
+        content.set(value, received);
+        received += value.byteLength;
+    }
+    if(received !== bytes) throw new Error(`${what} download: wrong length`);
+    return content.buffer;
+}
+
+// A file boot.json names, kept as the bytes the site published (gzip-
+// compressed or not) in a Blob, which nothing can change. content() makes
+// a fresh ArrayBuffer of what they hold and checks its length and SHA-256
+// every time, so each buffer the page hands on was checked. v64 keeps the
+// buffer it boots for its own resets (src/arm/cpu.js, boot_files) as long
+// as its machine object lives, so each machine gets a fresh one.
+class CheckedFile {
+    constructor(what, { source, gzipped, bytes, sha256 }) {
+        Object.assign(this, { what, source, gzipped, bytes, sha256 });
+    }
+
+    async content() {
+        const published = this.source.stream();
+        const stream = this.gzipped ? published.pipeThrough(new DecompressionStream("gzip")) : published;
+        const content = await read_exact(stream, this.bytes, this.what);
+        if(hex(await crypto.subtle.digest("SHA-256", content)) !== this.sha256)
+            throw new Error(`${this.what} download: checksum mismatch`);
+        return content;
+    }
+}
+
 // Downloads a file boot.json names, reporting the bytes received so far,
-// and returns its content after checking its length and SHA-256. A file
-// published gzip-compressed, which boot.json gives a compressed_bytes, is
-// decompressed here; a host that adds Content-Encoding hands over bytes the
-// browser already decompressed, and the gzip magic number tells the two
-// cases apart. Aborting signal stops the download.
+// and returns it as a CheckedFile with its first content, which is checked.
+// A file published gzip-compressed, which boot.json gives a
+// compressed_bytes, is decompressed in content(); a host that adds
+// Content-Encoding hands over bytes the browser already decompressed, and
+// the gzip magic number tells the two cases apart. Aborting signal stops
+// the download.
 async function fetch_checked(what, { file, bytes, sha256, compressed_bytes }, { on_progress, signal } = {}) {
     const size = n => Number.isSafeInteger(n) && n >= 0 && n <= MAX_DOWNLOAD_BYTES;
     if(!size(bytes) || !(compressed_bytes === undefined || size(compressed_bytes)))
         throw new Error(`boot manifest: the ${what}'s size is not one the page holds`);
     const response = await fetch(site_url(file), { signal });
     if(!response.ok) throw new Error(`${what} download: HTTP ${response.status}`);
-    const body = await read_bounded(response.body, Math.max(bytes, compressed_bytes ?? 0), what, on_progress);
-    const head = new Uint8Array(await body.slice(0, 2).arrayBuffer());
+    const source = await read_bounded(response.body, Math.max(bytes, compressed_bytes ?? 0), what, on_progress);
+    const head = new Uint8Array(await source.slice(0, 2).arrayBuffer());
     const gzipped = compressed_bytes !== undefined && head[0] === 0x1f && head[1] === 0x8b;
-    const content = gzipped
-        ? await (await read_bounded(body.stream().pipeThrough(new DecompressionStream("gzip")), bytes, what)).arrayBuffer()
-        : await body.arrayBuffer();
-    if(content.byteLength !== bytes) throw new Error(`${what} download: wrong length`);
-    if(hex(await crypto.subtle.digest("SHA-256", content)) !== sha256)
-        throw new Error(`${what} download: checksum mismatch`);
-    return content;
+    const checked = new CheckedFile(what, { source, gzipped, bytes, sha256 });
+    return { file: checked, content: await checked.content() };
 }
 
 // The machine's disk: byteLength bytes, of which only the chunks something
@@ -772,9 +844,9 @@ function fit_terminal(term, host) {
 }
 
 // The machine's whole lifecycle lives here: boot (download once, then
-// start), reset (destroy, start again from the cached image), a fault the
+// start), reset (destroy, start again from the kept image), a fault the
 // visitor injects, the machine's own end (it powers off, and Boot starts it
-// again from the cached image) and failure (say what failed, offer the
+// again from the kept image) and failure (say what failed, offer the
 // action that can recover). Each start makes a new session; listeners
 // check it against `current`, so output from a machine Reset destroyed
 // never reaches the terminal.
@@ -786,7 +858,9 @@ const machine = {
     term: null,
     current: null,
 
-    start() {
+    // Starts a machine on kernel, a checked buffer of the image that the
+    // machine then owns.
+    start(kernel) {
         const session = {};
         this.current = session;
         let stage = 0, tail = "", queued = [], flush_scheduled = false;
@@ -803,9 +877,13 @@ const machine = {
         session.emulator = new this.V86({
             cpu_type: "arm64", graphics_adapter: "none", cpu_cores: CPU_CORES,
             memory_size: RAM_MIB << 20, log_level: 0, wasm_path: site_url(this.manifest.emulator.wasm),
-            kernel: { buffer: this.image.slice(0) }, cmdline: CMDLINE, virtio_disks: virtio_disks(this.disk),
-            net_device: { ...NET_DEVICE }, jit_switches: { a64_page: 1 }, disable_jit: jit_disabled(), autostart: true,
+            kernel: { buffer: kernel }, cmdline: CMDLINE, virtio_disks: virtio_disks(this.disk),
+            net_device: { ...NET_DEVICE }, jit_switches: { ...JIT_SWITCHES, a64_page: jit_disabled() ? 0 : 1 }, autostart: true,
         });
+        if(log_to_console()) {
+            const log = serial_lines(line => console.log("%s", line));
+            session.emulator.add_listener("serial0-output-byte", byte => this.current === session && log(byte));
+        }
         session.emulator.add_listener("emulator-error", error => {
             if(this.current === session) this.fail(error);
         });
@@ -852,11 +930,13 @@ const machine = {
             const image = fetch_checked("image", { file: manifest.image, bytes: manifest.bytes, sha256: manifest.sha256,
                                                    compressed_bytes: manifest.compressed_bytes }, { on_progress, signal });
             const disk = fetch_checked("disk", manifest.disk ?? {}, { signal })
-                .then(content => make_disk(manifest.disk, content));
-            [this.image, { V86: this.V86 }, this.disk] = await Promise.all([image, v64, disk, xterm]);
+                .then(({ content }) => make_disk(manifest.disk, content));
+            let kernel;
+            [{ file: this.image, content: kernel }, { V86: this.V86 }, this.disk] =
+                await Promise.all([image, v64, disk, xterm]);
             this.term ??= open_terminal();
             show_keys(true);
-            this.start();
+            this.start(kernel);
             this.watch(this.current);
         } catch(error) {
             downloads.abort();
@@ -866,18 +946,28 @@ const machine = {
 
     async reset() {
         ui.reset.disabled = true;
-        const old = this.current;
-        this.current = null;
         try {
-            await old?.emulator.destroy();
+            await this.stop();
+            show_status("Unpacking the image");
+            const kernel = await this.image.content();
             this.term.reset();
-            this.start();
+            this.start(kernel);
             this.watch(this.current);
         } catch(error) {
             this.fail(error);
         } finally {
             ui.reset.disabled = false;
         }
+    },
+
+    // Destroys the running machine and forgets it. v64 keeps its RAM and
+    // the image it booted for as long as its machine object lives, so
+    // nothing here may hold the old session while the next image is made.
+    async stop() {
+        const old = this.current;
+        this.current = null;
+        await old?.emulator?.destroy();
+        if(old) old.emulator = null;
     },
 
     // The page's own listeners on a session, beside the terminal's in
@@ -1023,4 +1113,4 @@ function init() {
 if(page) init();
 
 export { parse_system_memory, seeded_numbers, disk_of, fault_availability, end_fault, FAULTS, FAULT_GROUPS, BOOT_LOG_LIMIT,
-         virtio_disks, virtio_slots, NET_DEVICE };
+         virtio_disks, virtio_slots, NET_DEVICE, CheckedFile, serial_lines };

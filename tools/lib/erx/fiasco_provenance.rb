@@ -76,7 +76,7 @@ module Erx
     # The linked sources a release kernel may not carry, each with its license
     # or 'no license'. A source carries an expression LicenseExpression.permissive?
     # accepts, or GCC's on a cross gcc header the external registry records
-    # (gcc_registry, GCC_HEADERS) (docs/design.md, the dependency table). A
+    # (gcc_registry, PackProvenance::GCC_HEADERS) (docs/design.md, the dependency table). A
     # record without a license passes only as configuration, which carries no
     # code, or as a file made from records the closure holds (ancestry), each of
     # which is checked as a source of its own.
@@ -87,7 +87,7 @@ module Erx
         license = source['license']
         if license
           next if LicenseExpression.permissive?(license)
-          next if license == GCC_LICENSE && toolchain.include?(path)
+          next if license == PackProvenance::GCC_LICENSE && toolchain.include?(path)
 
           [path, license]
         elsif source['role'] != 'configuration'
@@ -281,9 +281,7 @@ module Erx
     # release and the hash of its bytes. The build takes them from the cross
     # gcc's own include directory. Their notices are the tree's copies of GCC's
     # license texts, which do not vary between GCC releases.
-    GCC_LICENSE = 'GPL-3.0-or-later WITH GCC-exception-3.1'
     GCC_NOTICES = %w[COPYING3 COPYING.RUNTIME].map { |name| "config/provenance/notices/#{name}" }.freeze
-    GCC_HEADERS = %w[stdarg.h stdbool.h stddef.h].freeze
 
     def self.gcc_registry(root:, cross:)
       gcc = cross.program('gcc')
@@ -299,11 +297,11 @@ module Erx
         path = File.join(root, relative)
         { 'path' => path, 'sha256' => Digest::SHA256.hexdigest(BoundedFile.read(path, maximum: 1024 * 1024)) }.freeze
       end.freeze
-      GCC_HEADERS.map do |name|
+      PackProvenance::GCC_HEADERS.map do |name|
         header = File.realpath(File.join(installation, directories.first, name))
         raise Error, "#{gcc}'s #{name} leaves its installation" unless header.start_with?(installation + '/')
         { 'path' => header, 'sha256' => Digest::SHA256.hexdigest(BoundedFile.read(header, maximum: 1024 * 1024)),
-          'label' => "toolchain/gcc-#{release}/#{name}", 'license' => GCC_LICENSE, 'status' => 'stopgap',
+          'label' => "toolchain/gcc-#{release}/#{name}", 'license' => PackProvenance::GCC_LICENSE, 'status' => 'stopgap',
           'evidence' => "#{name}'s own GPL version 3 or later grant with GCC Runtime Library Exception 3.1",
           'notices' => notices }.freeze
       end.freeze

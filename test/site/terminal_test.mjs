@@ -3,7 +3,8 @@
 //
 // The pure parts of site/terminal.js under Node: the boot-log parse that
 // finds the system domain's memory for the Corrupt RAM fault, and the fault
-// table's groups and availability. fixtures/boot-160m.log is the serial
+// table's groups and availability, and the checked file the boot image is
+// kept as. fixtures/boot-160m.log is the serial
 // output of a boot on QEMU's virt (1 core, 160 MiB, erx.watchdog=1,30,600)
 // up to the root task's first report.
 // Run by test/host/site_faults_test.rb.
@@ -11,8 +12,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { parse_system_memory, seeded_numbers, disk_of, fault_availability, end_fault, FAULTS, FAULT_GROUPS, BOOT_LOG_LIMIT,
-         virtio_disks, virtio_slots, NET_DEVICE }
+         virtio_disks, virtio_slots, NET_DEVICE, CheckedFile, serial_lines }
     from "../../site/terminal.js";
 
 const real_log = readFileSync(new URL("fixtures/boot-160m.log", import.meta.url), "latin1");
@@ -284,4 +287,44 @@ test("only the disk's blank fillers share its page, and the network device has i
 
 test("the network device is virtio on v64's fake router, without a CORS proxy", () => {
     assert.deepEqual({ ...NET_DEVICE }, { type: "virtio", relay_url: "fetch" });
+});
+
+// The boot image as the page keeps it: the bytes the site published, which
+// content() makes into a fresh, checked buffer for each boot.
+const image_bytes = Uint8Array.from({ length: 300_000 }, (_, i) => (i * 7 + (i >> 9)) & 0xff);
+const sha256_of = bytes => createHash("sha256").update(bytes).digest("hex");
+const kept = (bytes, published = gzipSync(bytes)) =>
+    new CheckedFile("image", { source: new Blob([published]), gzipped: true, bytes: image_bytes.length,
+                               sha256: sha256_of(image_bytes) });
+
+test("the kept image decompresses to the checked bytes, a fresh buffer each time", async () => {
+    const image = kept(image_bytes);
+    const first = await image.content(), second = await image.content();
+    assert.ok(first instanceof ArrayBuffer, "v64 takes a whole ArrayBuffer");
+    assert.deepEqual(new Uint8Array(first), image_bytes);
+    assert.deepEqual(new Uint8Array(second), image_bytes);
+    assert.notEqual(first, second, "a machine Reset starts never shares the buffer of the one it replaced");
+});
+
+test("an image published uncompressed is kept and checked the same way", async () => {
+    const image = new CheckedFile("image", { source: new Blob([image_bytes]), gzipped: false, bytes: image_bytes.length,
+                                             sha256: sha256_of(image_bytes) });
+    assert.deepEqual(new Uint8Array(await image.content()), image_bytes);
+});
+
+test("a kept image that no longer holds the checked bytes is refused", async () => {
+    const other = image_bytes.map(b => b ^ 1);
+    await assert.rejects(kept(other).content(), /image download: checksum mismatch/);
+    await assert.rejects(kept(image_bytes.subarray(1)).content(), /image download: wrong length/);
+    await assert.rejects(kept(new Uint8Array([...image_bytes, 0])).content(), /image download: too long/);
+    const torn = gzipSync(image_bytes);
+    torn[torn.length - 6] ^= 0xff;
+    await assert.rejects(kept(image_bytes, torn).content());
+});
+
+test("the serial log hands on whole lines, with the guest's control characters shown as escapes", () => {
+    const lines = [];
+    const feed = serial_lines(line => lines.push(line));
+    for(const byte of Buffer.from("Starting kernel\r\n\x1b[1mbold\x9b\tend\\\xad\nno end yet", "latin1")) feed(byte);
+    assert.deepEqual(lines, ["Starting kernel", "\\x1b[1mbold\\x9b\\x09end\\x5c\\xad"]);
 });

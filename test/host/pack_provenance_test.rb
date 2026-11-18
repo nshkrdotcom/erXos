@@ -119,7 +119,7 @@ class PackProvenanceTest < Minitest::Test
     assert_nil resolver.audit_calls
   end
 
-  def test_fiasco_stopgap_license_blocks_release_images
+  def test_a_fiasco_gpl_source_outside_the_closed_table_is_refused
     resolver, receipt, image, audit = fiasco_fixture
     directory = File.join(@root, 'fiasco/kernel')
     FileUtils.mkdir_p(directory)
@@ -137,10 +137,10 @@ class PackProvenanceTest < Minitest::Test
     parsed['audit'] = reference(audit)
     File.write(receipt, JSON.generate(parsed))
     resolver.instance_variable_set(:@catalog, build_catalog.merge(Erx::BuildInputs.imported(root: directory)))
-    records = resolver.resolve(receipt: receipt, artifact: image, build_kind: 'development')
-    assert_equal 'stopgap', records.first.fetch('status')
-    assert_includes resolver.notices(records), 'Complete fixture GPL version 2 license text'
-    assert_raises(Erx::Error) { resolver.resolve(receipt: receipt, artifact: image, build_kind: 'release') }
+    %w[development release].each do |kind|
+      error = assert_raises(Erx::Error) { resolver.resolve(receipt: receipt, artifact: image, build_kind: kind) }
+      assert_match(/no permitted grant/, error.message, kind)
+    end
   end
 
   def test_gnu_script_scalars_are_not_file_contributions
@@ -475,9 +475,9 @@ class PackProvenanceTest < Minitest::Test
     assert_equal 'BSD-2-Clause', records.first.fetch('license')
     external.first['license'] = 'GPL-2.0-only'
     resolver = Erx::PackProvenance.new(root: @root, catalog: build_catalog, external: external)
-    assert_raises(Erx::Error) { resolver.resolve(receipt: receipt, artifact: @artifact, build_kind: 'release') }
-    assert_equal 'GPL-2.0-only', resolver.resolve(receipt: receipt, artifact: @artifact,
-                                                build_kind: 'development').first.fetch('license')
+    %w[release development].each do |kind|
+      assert_raises(Erx::Error) { resolver.resolve(receipt: receipt, artifact: @artifact, build_kind: kind) }
+    end
   end
 
   # The Doom example's archive, attributed whole under the label the image build gives it, as
@@ -489,8 +489,15 @@ class PackProvenanceTest < Minitest::Test
     archive = write(at, File.binread(@source))
     @receipt['compiles'] = [@receipt.fetch('compiles').first.merge('sources' => [reference(archive)],
                                                                     'dependency' => reference(write('root.d', "root.o: #{at}\n")))]
-    external = [{ 'path' => archive, 'sha256' => Digest::SHA256.file(archive).hexdigest,
-                  'label' => label, 'license' => license, 'status' => status, 'evidence' => 'example archive fixture',
+    resolve_registered(license: license, label: label, status: status, build_kind: build_kind, path: archive)
+  end
+
+  # Resolves the fixture's one input, the file at path (the fixture's source unless path
+  # names another the receipt compiles), registered as an external file under label,
+  # license and status.
+  def resolve_registered(license:, label:, status:, build_kind: 'development', path: @source)
+    external = [{ 'path' => path, 'sha256' => Digest::SHA256.file(path).hexdigest,
+                  'label' => label, 'license' => license, 'status' => status, 'evidence' => 'registered fixture',
                   'notices' => [{ 'path' => File.join(@root, 'LICENSE'),
                                   'sha256' => Digest::SHA256.file(File.join(@root, 'LICENSE')).hexdigest }] }]
     receipt = write('receipt.json', JSON.generate(@receipt))
@@ -499,9 +506,8 @@ class PackProvenanceTest < Minitest::Test
   end
 
   # The example status admits GPL-2.0 only for the Doom example's archive, in a development
-  # build: the same GPL bytes under another label, at another path or as permanent, another restricted
-  # license under the example's label, and a release build are refused. (A stopgap keeps
-  # the development build's admission, test_permissive_stopgap_is_allowed_in_release_provenance.)
+  # build: the same GPL bytes under another label, at another path or as permanent, another
+  # restricted license under the example's label, and a release build are refused.
   def test_only_the_example_archive_enters_under_gpl_2
     record = resolve_example(license: 'GPL-2.0-or-later AND BSD-3-Clause').first
     assert_equal ['GPL-2.0-or-later AND BSD-3-Clause', 'example'], record.values_at('declared_license', 'status')
@@ -514,6 +520,37 @@ class PackProvenanceTest < Minitest::Test
     refusals.each do |change, reason|
       error = assert_raises(Erx::Error) { resolve_example(license: 'GPL-2.0-or-later AND BSD-3-Clause', **change) }
       assert_match(reason, error.message, change.inspect)
+    end
+  end
+
+  # Seeded fault: a development build admits a license that is not permissive only from
+  # PackProvenance::RESTRICTED, so a GPL input that the table does not name is refused,
+  # as is one of the table's labels under another license or another status.
+  def test_a_gpl_stopgap_outside_the_closed_table_is_refused
+    refusals = [{ license: 'GPL-2.0-only', label: 'third_party/fixture/root.c' },
+                { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/fixture.cpp' },
+                { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/arm/jdb_object.cpp' },
+                { license: 'GPL-2.0-or-later', label: 'fiasco/kernel/src/kern/jdb_object.cpp' },
+                { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/jdb_object.cpp', status: 'permanent' },
+                { license: 'GPL-3.0-or-later', label: 'toolchain/gcc-16.2.0/stdarg.h' },
+                { license: 'FSFAP', label: 'fiasco/l4re-core/ldscripts/other.S' },
+                { license: Erx::PackProvenance::GCC_LICENSE, label: 'toolchain/gcc-16.2.0/limits.h' }]
+    refusals.each do |input|
+      error = assert_raises(Erx::Error) { resolve_registered(**{ status: 'stopgap' }.merge(input)) }
+      assert_match(/no permitted grant/, error.message, input.inspect)
+    end
+  end
+
+  # Each row of the table admits its input under its exact license in a development
+  # build, and no release build admits it.
+  def test_the_closed_table_admits_its_rows_in_development_builds_only
+    { 'toolchain/gcc-16.2.0/stddef.h' => Erx::PackProvenance::GCC_LICENSE,
+      'fiasco/l4re-core/ldscripts/kip_addr.S' => 'FSFAP',
+      'fiasco/kernel/src/kern/jdb_object.cpp' => 'GPL-2.0-only' }.each do |label, license|
+      record = resolve_registered(license: license, label: label, status: 'stopgap').first
+      assert_equal [label, license, 'stopgap'], record.values_at('path', 'declared_license', 'status')
+      error = assert_raises(Erx::Error) { resolve_registered(license: license, label: label, status: 'stopgap', build_kind: 'release') }
+      assert_match(/no permitted grant/, error.message)
     end
   end
 
