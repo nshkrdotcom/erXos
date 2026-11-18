@@ -89,12 +89,14 @@ resolved(_Depth, _Answer) -> error.
 -doc """
 What the name Name in the directory Dir names. Lookup answers the
 inspector for a path: `{exists, Path}` whether Path names something,
-`{listing, Path}` the record of the listing at Path. A directory below
-exists unless the inspector answers it as a path that names nothing
-(named/1). `status` is always there, and a marker only where the listing
-is partial or unknown.
+`{listing, Path}` the record of the listing at Path, and `{literals, Path}`
+which of the literal children the schema declares below Path name
+something. A literal child exists where Dir's literals answer holds it
+(literal_children/2), any other child unless the inspector answers it as a
+path that names nothing (named/1). `status` is always there, and a marker
+only where the listing is partial or unknown.
 """.
--spec walk(path(), binary(), fun((term()) -> erx_inspector:answer())) ->
+-spec walk(path(), binary(), fun((term()) -> erx_inspector:answer() | erx_inspector:literals())) ->
           {ok, node_()} | {error, enoent}.
 walk(Dir, <<"status">>, _Lookup) ->
     {ok, {status, Dir}};
@@ -104,13 +106,18 @@ walk(Dir, <<".unknown">>, Lookup) ->
     marker_node(unknown, Dir, Lookup);
 walk(Dir, Name, Lookup) ->
     case child(Dir, Name) of
-        {ok, Child} -> exists(Child, Lookup);
+        {ok, Child} -> found(Child, Dir, Lookup);
         error -> {error, enoent}
     end.
 
-exists(Path, Lookup) ->
-    case named(Lookup({exists, Path})) of
-        true -> {ok, path_node(Path)};
+%% The node of Child, a path one level below Dir, if it names something.
+found(Child, Dir, Lookup) ->
+    Named = case lists_entries(Dir) of
+                true -> named(Lookup({exists, Child}));
+                false -> lists:member(Child, literal_children(Dir, Lookup))
+            end,
+    case Named of
+        true -> {ok, path_node(Child)};
         false -> {error, enoent}
     end.
 
@@ -146,13 +153,15 @@ marker_present(_Marker, _Dir, _Children) -> {error, enoent}.
 -doc """
 The entries of the directory at Path, in order: `status`, then the paths
 below it. A path whose children the schema names lists each that a walk
-finds, asked of Lookup as walk/3 asks it, so the inspector's answers alone
-decide which literal children a tree shows and a listing never names one
-a walk refuses; a listing lists the ids of the inspector's answer for it,
+finds, from the one answer walk/3 asks of Lookup (literal_children/2), so
+the inspector's answer alone decides which literal children a tree shows
+and a listing never names one a walk refuses; a listing lists the ids of
+the inspector's answer for it,
 ListingAnswer, then `.partial` when the inspector gave only part of them,
 or holds only `.unknown` when it gave none.
 """.
--spec listing(path(), erx_inspector:answer() | none, fun((term()) -> erx_inspector:answer())) -> [entry()].
+-spec listing(path(), erx_inspector:answer() | none,
+              fun((term()) -> erx_inspector:answer() | erx_inspector:literals())) -> [entry()].
 listing(Path, ListingAnswer, Lookup) ->
     [{<<"status">>, {status, Path}} | below(Path, ListingAnswer, Lookup)].
 
@@ -161,8 +170,28 @@ below(Path, ListingAnswer, Lookup) ->
         true ->
             listed(Path, children(ListingAnswer));
         false ->
-            {literals, Literals} = declaration_children(Path),
-            [{name(Literal), Node} || Literal <- Literals, {ok, Node} <- [exists(Path ++ [Literal], Lookup)]]
+            [{name(lists:last(Child)), path_node(Child)} || Child <- literal_children(Path, Lookup)]
+    end.
+
+%% The literal children the schema declares below Dir that name something,
+%% in the schema's order, from the inspector's one literals answer for Dir,
+%% which gathers no record (docs/design-live.md, "The inspect service"). Only
+%% a declared literal is ever a child, whatever the answer holds; an answer
+%% that failed shows every declared one, as each child's own query would
+%% have failed, and one that names nothing (named/1) shows none.
+literal_children(Dir, Lookup) ->
+    case declaration_children(Dir) of
+        {literals, []} -> [];
+        {literals, Declared} -> [Dir ++ [Literal] || Literal <- reached(Declared, Lookup({literals, Dir}))]
+    end.
+
+%% The declared literals Answer says name something, in the schema's order.
+reached(Declared, {ok, Literals}) when is_list(Literals) ->
+    [Literal || Literal <- Declared, lists:member(Literal, Literals)];
+reached(Declared, Answer) ->
+    case named(Answer) of
+        true -> Declared;
+        false -> []
     end.
 
 listed(Path, {ok, Ids}) -> ids(Path, Ids);

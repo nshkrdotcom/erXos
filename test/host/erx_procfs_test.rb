@@ -20,6 +20,7 @@ class ErxProcfsTest < Minitest::Test
   TESTS = %w[test/erlang/erx_procfs_tests.erl].freeze
   CORE = 'erlang/apps/erx_files/src/erx_procfs_core.erl'
   TREE = 'erlang/apps/erx_files/src/erx_procfs.erl'
+  INSPECTOR = 'erlang/apps/erx/src/erx_inspector.erl'
 
   Fault = Data.define(:name, :file, :from, :to, :caught_by)
 
@@ -46,9 +47,13 @@ class ErxProcfsTest < Minitest::Test
     Fault.new(name: 'a domain without the facet shown a tree', file: CORE,
               from: 'named({error, no_facet}) -> false;', to: 'named({error, no_facet}) -> true;',
               caught_by: 'a_domain_without_the_facet_has_an_empty_tree_test'),
-    Fault.new(name: 'a literal child listed without asking the inspector', file: CORE,
-              from: '{ok, Node} <- [exists(Path ++ [Literal], Lookup)]]', to: 'Node <- [path_node(Path ++ [Literal])], Lookup =/= none]',
+    Fault.new(name: 'a literal child listed whatever the inspector answered', file: CORE,
+              from: '[Literal || Literal <- Declared, lists:member(Literal, Literals)];',
+              to: 'Declared;',
               caught_by: 'root_lists_what_the_scope_reaches_test'),
+    Fault.new(name: 'a literal child outside the scope answered', file: INSPECTOR,
+              from: 'declared_reachable(Child, erx_schema:resolve(Child), Scope) =/= error andalso',
+              to: 'Child =/= [] andalso', caught_by: 'literals_name_what_each_child_s_query_names_test'),
     Fault.new(name: 'a partial listing shown whole', file: CORE,
               from: "listed(Path, {partial, Ids}) -> ids(Path, Ids) ++ [{<<\".partial\">>, {partial, Path}}];",
               to: 'listed(Path, {partial, Ids}) -> ids(Path, Ids);',

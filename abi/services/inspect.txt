@@ -1,9 +1,11 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
-# The inspect interface (docs/design-live.md, "The inspect service"): the inspector's two
+# The inspect interface (docs/design-live.md, "The inspect service"): the inspector's three
 # queries from another domain, served by the system domain. inspect takes a path and
 # options and answers {ok, Record} or {error, Reason}; entries takes a path and answers
-# the records of a listing's entries, {ok, Records} or {partial, Records}.
+# the records of a listing's entries, {ok, Records} or {partial, Records}; literals takes
+# a path and answers the literal children the schema declares below it that name
+# something to the caller, {ok, Literals}, collecting no record.
 # inspect_reply_max bounds an answer's encoding in bytes: the inspector cuts a listing or
 # an append-only record's entries before it, and the generator refuses a schema whose
 # record without entries passes it. Every grantee of an inspect facet and the system
@@ -23,6 +25,7 @@ service inspect 7
   served_as message
   operation inspect 1
   operation entries 2
+  operation literals 3
 limit inspect_reply_max u32 262144
 limit inspect_max_frame_min u32 524288
 limit inspect_message_heap_min u32 131072

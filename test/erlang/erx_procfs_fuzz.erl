@@ -48,7 +48,8 @@ round_of({Dir, Name, Expected}) ->
 %% status file, a marker or nothing, and never raises.
 walked(Dir, Name, Said) ->
     Lookup = fun({exists, _Path}) -> {ok, exists};
-                ({listing, Path}) -> listing(Path)
+                ({listing, Path}) -> listing(Path);
+                ({literals, Path}) -> declared_literals(Path)
              end,
     case {erx_procfs_core:walk(Dir, Name, Lookup), Said} of
         {{ok, {dir, Child}}, {ok, Child}} -> ok;
@@ -60,6 +61,11 @@ walked(Dir, Name, Said) ->
         {{error, enoent}, error} -> ok;
         Other -> error({walk_disagrees, Dir, Name, Other})
     end.
+
+%% Every literal the schema declares below Path, as a facet of scope `all` answers it.
+declared_literals(Path) ->
+    {ok, #{children := {literals, Literals}}} = erx_schema:resolve(Path),
+    {ok, Literals}.
 
 %% Every listing is partial, so `.partial` is found below any directory that lists the
 %% inspector's entries.

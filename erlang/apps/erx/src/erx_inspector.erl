@@ -8,27 +8,34 @@ a path of abi/inspection.txt with the record of that path, each attribute
 from its reporter, and keeps from it only what the caller's scope may see.
 No caller outside the system domain names a scope: erx:i/0,1, the shell's
 commands, `/proc` and the web line's views ask through inspect/1,2,
-entries/1 and overview/0, which go through the domain's inspect facet,
+entries/1, literals/1 and overview/0, which go through the domain's
+inspect facet,
 whose scope the system domain fixed when it minted it
 (docs/design-live.md, "How a query travels").
 
-* inspect/1,2, entries/1 and overview/0 answer the caller's own domain
-  as it may see the machine. inspect/2 takes the query's options:
+* inspect/1,2, entries/1, literals/1 and overview/0 answer the caller's
+  own domain as it may see the machine. inspect/2 takes the query's options:
   `offset`, for a path the schema marks append-only, is the sequence
   number its entries start from, 0 when it is left out
   (docs/design-live.md, "Paths"), and `timeout` is the caller's own
   wait, which shortens the default one and is not sent.
 * inspect/3 and entries/2 are the core a query worker and a domain's
   agent run at a given scope: the record of one path, and the records of
-  a listing's entries, the listing's own status beside them.
+  a listing's entries, the listing's own status beside them. literals/2,3
+  answer which literal children of a path name something, from the
+  schema, the scope and what decides a path's existence before anything
+  is collected (collects/1), so they gather no record.
 * A scope is `all` or a list of domain ids. A path's owner is decided by
   construction: `[domains, D | _]` and `[processes, {pid, D, N, S}]` are
   D's, and every other path is the machine's. A path the
   schema marks `visible all` needs scope `all`, a domain's path needs its
   domain in the scope, and a path outside the scope gets the answer of a
   path that names nothing, `{error, scope}`, so a scoped caller cannot
-  learn whether it exists. Of the machine's paths a scoped caller reaches
-  only the machine's record, the CPUs, the domains, the processes and
+  learn whether it exists. A path whose domain this runtime does not
+  collect (collects/1) names nothing either, decided as the scope is,
+  before anything is collected; no collector of a literal path answers
+  `{error, scope}`, so a literal path's existence is decided there alone.
+  Of the machine's paths a scoped caller reaches only the machine's record, the CPUs, the domains, the processes and
   the clock.
 * Of a record it may reach, the caller sees the attributes whose
   visibility class its scope admits (scoped/3): `any` always, `owner`
@@ -61,11 +68,11 @@ that has no collector here is
 `{error, unsupported}`.
 """.
 
--export([inspect/1, inspect/2, entries/1, overview/0]).
--export([inspect/3, entries/2, route/4, proc_id/1, runtime_domain/0, is_system_runtime/0]).
+-export([inspect/1, inspect/2, entries/1, literals/1, overview/0]).
+-export([inspect/3, entries/2, literals/2, literals/3, collects/1, route/4, proc_id/1, runtime_domain/0, is_system_runtime/0]).
 -export([scoped/3, declared_reachable/3, listing/2, children/2, collects_domain/2]).
 -export([page/0, page_add/2, page_full/1, page_entries/2, view/1]).
--export_type([scope/0, query_scope/0, answer/0, entries/0, page/0]).
+-export_type([scope/0, query_scope/0, answer/0, entries/0, literals/0, page/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -78,6 +85,7 @@ that has no collector here is
 -type options() :: #{offset => non_neg_integer(), limit => pos_integer(), timeout => pos_integer()}.
 -type entries() :: {ok | partial, [erx_schema:record()]}
                    | {error, scope | unsupported | failed | no_facet | busy | badarg}.
+-type literals() :: {ok, [atom()]} | {error, scope | failed | no_facet | busy | badarg}.
 %% Whose a path is: the machine's, or a domain's by its id.
 -type owner() :: machine | {domain, non_neg_integer()}.
 %% A listing's page while it is built: its records, newest first, their
@@ -141,6 +149,16 @@ inspect(Path, Options) ->
 entries(Path) ->
     query({entries, Path}, ?CALLER_WAIT).
 
+-doc """
+The literal children the schema declares below Path that name something
+to the caller's domain, as inspect/1 asks: each that inspect/1 would not
+answer `{error, scope}`, found without collecting any record
+(docs/design-live.md, "The inspect service").
+""".
+-spec literals(term()) -> literals().
+literals(Path) ->
+    query({literals, Path}, ?CALLER_WAIT).
+
 query(Query, Wait) ->
     route(is_system_runtime(), erx:cap(inspect), Query, Wait).
 
@@ -157,7 +175,7 @@ a scope. The facet decodes the request and refuses what the interface
 does not take, so a path that is no data is `{error, badarg}` here too,
 and a request past its requests in flight is `{error, busy}`.
 """.
--spec route(boolean(), pid() | undefined, term(), pos_integer()) -> answer() | entries().
+-spec route(boolean(), pid() | undefined, term(), pos_integer()) -> answer() | entries() | literals().
 route(true, _Facet, Query, Wait) ->
     erx_inspect_worker:call(Query, all, #{view => fun view/1, query_max => min(Wait, ?ERX_INSPECT_QUERY_MAX)});
 route(false, undefined, _Query, _Wait) ->
@@ -206,6 +224,42 @@ path that is not a listing this inspector can enumerate.
 entries(Path, Scope) ->
     within(Path, Scope, fun(_Owner) -> seen(enumerate(Path, Scope), Scope) end).
 
+-doc """
+The literal children the schema declares below Path that name something
+to Scope in this runtime's core, as literals/3 finds them with collects/1.
+""".
+-spec literals(term(), scope()) -> literals().
+literals(Path, Scope) ->
+    literals(Path, Scope, fun collects/1).
+
+-doc """
+The literal children the schema declares below Path, in the schema's
+order, that name something to Scope: each the scope reaches, as
+inspect/3 decides it, and that Names, the answering runtime's own facts
+about what exists, admits. `{error, scope}` when Scope does not reach
+Path, and `{ok, []}` for a path whose children are entries. No record is
+collected, so it answers as quickly as the schema is read; it names
+nothing inspect/3 would refuse, since no collector of a literal path
+answers `{error, scope}`.
+""".
+-spec literals(term(), scope(), fun(([erx_schema:segment()]) -> boolean())) -> literals().
+literals(Path, Scope, Names) ->
+    Declaration = erx_schema:resolve(Path),
+    case declared_reachable(Path, Declaration, Scope) of
+        {ok, _Owner} ->
+            {ok, [Literal || Literal <- declared_literals(Declaration),
+                             literal_named(Path ++ [Literal], Scope, Names)]};
+        error ->
+            {error, scope}
+    end.
+
+%% Whether Scope reaches the literal path Child and Names admits it.
+literal_named(Child, Scope, Names) ->
+    declared_reachable(Child, erx_schema:resolve(Child), Scope) =/= error andalso Names(Child).
+
+declared_literals({ok, #{children := {literals, Literals}}}) -> Literals;
+declared_literals({ok, _Declaration}) -> [].
+
 %% Each entry as Scope may see it, under the owner of its own path.
 seen({Status, Records}, Scope) when is_list(Records) ->
     {Status, [scoped(Record, owner(Path), Scope) || #{path := Path} = Record <- Records]};
@@ -229,13 +283,30 @@ overview() ->
 
 %%% Scope: pure decisions.
 
-%% Runs Answer with the path's owner when Scope reaches Path, and answers
-%% {error, scope} otherwise, as for a path that names nothing.
+%% Runs Answer with the path's owner when Scope reaches Path and this
+%% runtime collects it, and answers {error, scope} otherwise, as for a
+%% path that names nothing.
 within(Path, Scope, Answer) ->
     case declared_reachable(Path, erx_schema:resolve(Path), Scope) of
-        {ok, Owner} -> Answer(Owner);
-        error -> {error, scope}
+        {ok, Owner} ->
+            case collects(Path) of
+                true -> Answer(Owner);
+                false -> {error, scope}
+            end;
+        error ->
+            {error, scope}
     end.
+
+-doc """
+Whether this runtime's core collects Path at all, decided from the path
+alone: a domain's path only where this runtime collects that domain's
+records (collects_domain/2), every other path always. inspect/3 and
+entries/2 answer `{error, scope}` for a path it refuses, before they
+collect anything.
+""".
+-spec collects([erx_schema:segment()]) -> boolean().
+collects([domains, Domain | _]) -> collects_domain(Domain, runtime_domain());
+collects(_Path) -> true.
 
 -doc """
 The owner of Path when Scope reaches it, given erx_schema:resolve/1's
@@ -329,9 +400,9 @@ query worker's to collect, for a domain its view holds living
 collects_domain(Domain, Runtime) ->
     Domain =:= Runtime andalso Domain =:= erx_kernel_records:system_domain().
 
-%% One clause per path shape this inspector collects; a domain path is
-%% collected only for the system domain, in its own runtime
-%% (collects_domain/2), and every other domain names nothing it reaches.
+%% One clause per path shape this inspector collects; a domain path
+%% reaches here only for the system domain, in its own runtime
+%% (collects/1).
 collect([kernel, log], _Scope, Options) ->
     case Options of
         #{offset := Offset} -> erx_log_records:log(Offset);
@@ -351,13 +422,10 @@ collect([processes, ProcId], _Scope) ->
     end;
 collect([cpus, _Index] = Path, Scope) ->
     entry(Path, enumerate([cpus], Scope));
-collect([domains, Domain | Rest] = Path, Scope) ->
-    case collects_domain(Domain, runtime_domain()) of
-        true -> system_domain(Path, Rest, Scope);
-        false -> {error, scope}
-    end;
+collect([domains, _Domain | Rest] = Path, Scope) ->
+    system_domain(Path, Rest, Scope);
 collect([kernel] = Path, _Scope) ->
-    literals(Path);
+    literal_listing(Path);
 collect([apps | _] = Path, _Scope) ->
     erx_app_records:collect(Path);
 collect([time], _Scope) ->
@@ -375,7 +443,7 @@ collect(Path, Scope) ->
 
 %% The record of a listing the schema extends by literal segments: those
 %% segments, from the declaration alone.
-literals(Path) ->
+literal_listing(Path) ->
     {ok, #{children := {literals, Children}}} = erx_schema:resolve(Path),
     erx_schema:validate_record(#{schema => erx_schema:schema(), path => Path, kind => listing,
                                  id => lists:last(Path), attrs => #{}, children => Children}).
@@ -394,11 +462,8 @@ system_domain(Path, _Rest, Scope) ->
 %% The records of a listing's entries.
 enumerate([cpus], _Scope) ->
     erx_kernel_records:cpus();
-enumerate([domains, Domain, threads], _Scope) ->
-    case Domain =:= erx_kernel_records:system_domain() of
-        true -> erx_kernel_records:threads();
-        false -> {error, scope}
-    end;
+enumerate([domains, _Domain, threads], _Scope) ->
+    erx_kernel_records:threads();
 enumerate([processes], Scope) ->
     Domain = runtime_domain(),
     {Status, Pids} = first_page(case covered(Scope, Domain) of

@@ -65,7 +65,8 @@ calls reach the system domain's own domain library.
 
 -include("generated/erx_abi.hrl").
 
--type query() :: {inspect, [erx_schema:segment()], map()} | {entries, [erx_schema:segment()]}.
+-type query() :: {inspect, [erx_schema:segment()], map()} | {entries, [erx_schema:segment()]}
+               | {literals, [erx_schema:segment()]}.
 -type view() :: [erx_domain_core:inspect_entry()].
 %% view gives the domains a scope covers, `all` or `{principal, P}`;
 %% query_max narrows the query's deadline, for a caller's own timeout
@@ -74,7 +75,7 @@ calls reach the system domain's own domain library.
 -type options() :: #{view := fun((all | {principal, pos_integer()}) -> {ok, view()} | unavailable),
                      kernel => fun((group | budget, pos_integer()) -> erx_schema:record()),
                      agent_wait => pos_integer(), query_max => pos_integer()}.
--type answer() :: erx_inspector:answer() | erx_inspector:entries().
+-type answer() :: erx_inspector:answer() | erx_inspector:entries() | erx_inspector:literals().
 -type worker() :: {pid(), reference(), reference()}.
 -export_type([query/0, view/0, options/0]).
 
@@ -142,7 +143,7 @@ await({Pid, Monitor, Reply}) ->
 
 run(Query, Scope, Reply, Caller, Options) ->
     Context = context(Scope, Options, monitor(process, Caller)),
-    Reply ! {Reply, leaving(answer(Query, Context))}.
+    Reply ! {Reply, leaving(Query, answer(Query, Context))}.
 
 %% The facet's worker: the first message it takes is the facet's forward of
 %% the request it admitted, or the facet's end. Only the facet holds the
@@ -156,7 +157,7 @@ served(Facet, Scope, Options) ->
 forwarded(Facet, Owner, Until, Scope, Options) ->
     receive
         {'$gen_call', {Facet, _Tag} = From, Query} ->
-            gen:reply(From, leaving(answer(Query, context(Scope, Options, Owner))));
+            gen:reply(From, leaving(Query, answer(Query, context(Scope, Options, Owner))));
         {'DOWN', Owner, process, Facet, _Reason} ->
             ok;
         _Dropped ->
@@ -207,7 +208,23 @@ answer({inspect, Path, Options}, #{scope := Scope} = Context) ->
         local -> erx_inspector:inspect(Path, Scope, Options)
     end;
 answer({entries, Path}, #{scope := Scope}) ->
-    erx_inspector:entries(Path, Scope).
+    erx_inspector:entries(Path, Scope);
+answer({literals, Path}, #{scope := Scope} = Context) ->
+    erx_inspector:literals(Path, Scope, fun(Child) -> exists(Child, Context) end).
+
+%% Whether the literal path Path, which the scope reaches, names something
+%% where the query would answer it, decided before anything is collected:
+%% a domain's group or budget while the view holds the domain living
+%% (root_object/3), every other path as the core decides it
+%% (erx_inspector:collects/1). route/2 sends an agent only a process's or a
+%% domain's own record, neither a literal path; one would be the agent's
+%% domain's while the view holds it living.
+exists(Path, Context) ->
+    case route(Path, Context) of
+        {root_object, Domain, _Object} -> living(Domain, Context);
+        {agent, Domain} -> living(Domain, Context);
+        local -> erx_inspector:collects(Path)
+    end.
 
 %% Where Path of another domain than this runtime's, within the scope, is
 %% answered:
@@ -228,12 +245,17 @@ route(Path, #{scope := Scope, self := Self}) ->
 %% Domain's group or budget as the scope sees it, while the view holds the
 %% domain living; any other domain names nothing. With the view unknown no
 %% domain is known to live, so it names nothing either.
-root_object(Domain, Object, #{domains := Domains, kernel := Kernel} = Context) ->
+root_object(Domain, Object, #{kernel := Kernel} = Context) ->
+    case living(Domain, Context) of
+        true -> {ok, scoped(Kernel(Object, Domain), Domain, Context)};
+        false -> {error, scope}
+    end.
+
+%% Whether the view holds Domain living: listed, and not ended.
+living(Domain, #{domains := Domains}) ->
     case lists:keyfind(Domain, 1, Domains) of
-        {Domain, Agent, _Service} when Agent =/= ended ->
-            {ok, scoped(Kernel(Object, Domain), Domain, Context)};
-        _ ->
-            {error, scope}
+        {Domain, Agent, _Service} -> Agent =/= ended;
+        false -> false
     end.
 
 kernel_record(group, Domain) -> erx_kernel_records:group(Domain);
@@ -541,21 +563,24 @@ runtime_reports(Kind, Key) ->
     {ok, #{reporters := Reporters}} = erx_schema:attribute(Kind, Key),
     lists:member(runtime, Reporters).
 
-%% The answer as it leaves: every record validated whole (V10). A record
-%% that fails is a fault of the inspector's: a listing drops it and is
-%% partial, and a single record is {error, failed}.
-leaving({ok, Record}) when is_map(Record) ->
+%% The answer to Query as it leaves: every record validated whole (V10). A
+%% record that fails is a fault of the inspector's: a listing drops it and
+%% is partial, and a single record is {error, failed}. A literals answer
+%% holds no record, only literals the schema declares.
+leaving({literals, _Path}, Answer) ->
+    Answer;
+leaving(_Query, {ok, Record}) when is_map(Record) ->
     case erx_schema:validate_record(Record) of
         {ok, Valid} -> {ok, Valid};
         {error, _Reason} -> {error, failed}
     end;
-leaving({Status, Records}) when is_list(Records) ->
+leaving(_Query, {Status, Records}) when is_list(Records) ->
     Valid = [Record || Record <- Records, element(1, erx_schema:validate_record(Record)) =:= ok],
     case length(Valid) =:= length(Records) of
         true -> {Status, Valid};
         false -> {partial, Valid}
     end;
-leaving({error, _Reason} = Error) ->
+leaving(_Query, {error, _Reason} = Error) ->
     Error.
 
 clock() ->
