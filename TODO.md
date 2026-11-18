@@ -8819,17 +8819,6 @@ document's "residual risks accepted" paragraph.
   design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
   takes the same shape.
 
-* [Medium] image license check, release builds (`tools/lib/erx/pack_provenance.rb`,
-  `PackProvenance::RESTRICTED`; `tools/lib/erx/fiasco_provenance.rb`,
-  `FiascoProvenance.non_permissive`): which non-permissive inputs a build may carry is
-  stated twice. The image check's closed table admits its rows in development builds
-  only, while the release kernel's link audit has its own exception for GCC's three
-  headers and none for l4re-core's `ldscripts/kip_addr.S` (FSFAP), which `sigma0` links.
-  A release image would be refused for the GCC headers and `kip_addr.S`, which fails
-  safe. Fix: give each row the build kinds it applies to (Doom and `jdb_object.cpp`
-  development only, the GCC headers and `kip_addr.S` every kind) and have the release audit read the same
-  table, matching the audit's paths to the table's labels.
-
 * [Medium] Fiasco, release builds (design-fiasco.md, "Boot handoff", the kernel): a
   release kernel is configured without JDB and the kernel's console input, so a panic reboots
   instead of waiting on the console (`tools/erx build release-kernel`, `FiascoConfig::RELEASE_UNSET`),
@@ -8856,7 +8845,7 @@ document's "residual risks accepted" paragraph.
   `CONFIG_PERF_CNT_USER`, user-mode access to the performance counters, which Fiasco's Kconfig
   marks for debugging only.
 * [Low] Fiasco, published images (`config/fiasco/kernel.defconfig`, `tools/lib/erx/fiasco_config.rb`,
-  `PackProvenance::RESTRICTED`): 0.1's published images carry the development kernel, with JDB, the kernel's
+  `LicenseAdmission::TABLE`): 0.1's published images carry the development kernel, with JDB, the kernel's
   console input and `jdb_object.cpp` (GPL-2.0-only), by decision. Once published images should drop it, a
   developer-only debugger kernel: a switch that builds a kernel with the debugger for a developer's own image,
   which the published build refuses, the published kernel built without it, and the closed table's

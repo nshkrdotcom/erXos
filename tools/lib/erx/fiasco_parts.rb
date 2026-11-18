@@ -20,6 +20,9 @@ module Erx
       'drivers-frst' => RELEASE
     }.freeze
     NAMES = STATUSES.keys.freeze
+    # Where the build reads the parts: the staged copy of Fiasco's inputs (FiascoInputs)
+    # that FiascoProvenance audits, relative to the tree, laid out as fiasco/ is.
+    INPUTS = 'build/fiasco/inputs/fiasco'
 
     module_function
 

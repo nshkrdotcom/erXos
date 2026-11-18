@@ -21,7 +21,10 @@ module Erx
     # public key and a name, facts and not a creative work, which no license covers, as
     # docs/design.md's dependency table records. Its notice document is the store's origin
     # record, a row for config/trust alone in config/provenance/import-notices.json.
-    PERMISSIVE = %w[BSD-2-Clause BSD-3-Clause MIT ISC 0BSD Apache-2.0 Zlib
+    # FSFAP, the FSF All Permissive License, permits copying and distribution with or
+    # without modification, without royalty, provided the copyright notice and the license
+    # notice are kept, which the file's own header carries into NOTICES.
+    PERMISSIVE = %w[BSD-2-Clause BSD-3-Clause MIT ISC 0BSD Apache-2.0 Zlib FSFAP
                     BSL-1.0 Unicode-3.0 Unicode-DFS-2016 LicenseRef-DJB-public-domain
                     LicenseRef-misc-fixed-public-domain
                     LicenseRef-RSA-PKCS3 LicenseRef-RSA-PKCS5v2-0 LicenseRef-root-certificate].freeze

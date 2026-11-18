@@ -551,28 +551,33 @@ class PackProvenanceTest < Minitest::Test
     end
   end
 
-  # Where the build reads each restricted row's input (PackProvenance::RESTRICTED), as the
-  # fixture places it: GCC's header in a cross gcc's include directory under outside, a
-  # directory outside the tree, and Fiasco's files in the staged copy of its inputs that
-  # FiascoProvenance audits.
-  def restricted_rows(outside)
-    [{ label: 'toolchain/gcc-16.2.0/stddef.h', license: Erx::PackProvenance::GCC_LICENSE, at: gcc_header(outside, 'stddef.h') },
-     { label: 'fiasco/l4re-core/ldscripts/kip_addr.S', license: 'FSFAP',
-       at: 'build/fiasco/inputs/fiasco/l4re-core/ldscripts/kip_addr.S' },
-     { label: 'fiasco/kernel/src/kern/jdb_object.cpp', license: 'GPL-2.0-only',
-       at: 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp' }]
+  # Where the build reads each row's input of the closed table (LicenseAdmission::TABLE)
+  # that the fixture places, and the build kinds that row names: GCC's three headers in a
+  # cross gcc's include directory under outside, a directory outside the tree, in every
+  # build, and Fiasco's debugger in the staged copy of its inputs that FiascoProvenance
+  # audits, in development builds only.
+  def table_rows(outside)
+    gcc = Erx::LicenseAdmission::GCC_HEADERS.map do |name|
+      { label: "toolchain/gcc-16.2.0/#{name}", license: Erx::LicenseAdmission::GCC_LICENSE,
+        at: gcc_header(outside, name), kinds: %w[development release] }
+    end
+    gcc + [{ label: 'fiasco/kernel/src/kern/jdb_object.cpp', license: 'GPL-2.0-only',
+             at: 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp', kinds: %w[development] }]
   end
 
   def gcc_header(outside, name) = File.join(outside, 'lib/gcc/aarch64-elf/16.2.0/include', name)
 
-  # Seeded fault: a development build admits a license that is not permissive only from
-  # PackProvenance::RESTRICTED, so a GPL input that the table does not name is refused,
-  # as is one of the table's labels under another license or another status (Fiasco's
-  # debugger registered as a stopgap or as permanent, not as release), each at the place
-  # its row reads it from.
+  # Seeded fault: a build admits a license that is not permissive only from
+  # LicenseAdmission::TABLE, so a GPL input that the table does not name is refused in
+  # every build kind, as is one of the table's labels under another license or another
+  # status (Fiasco's debugger registered as a stopgap or as permanent, not as release),
+  # each at the place its row reads it from, a fourth header of GCC's include directory,
+  # and GCC's exception on any file outside that directory: a clang resource header, or a
+  # GCC runtime file of l4re-core such as an old build linked.
   def test_a_gpl_input_outside_the_closed_table_is_refused
     Dir.mktmpdir('outside-toolchain-') do |outside|
       jdb = 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp'
+      gcc = Erx::LicenseAdmission::GCC_LICENSE
       refusals = [{ license: 'GPL-2.0-only', label: 'third_party/fixture/root.c', at: 'root.c' },
                   { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/fixture.cpp',
                     at: 'build/fiasco/inputs/fiasco/kernel/src/kern/fixture.cpp' },
@@ -582,36 +587,39 @@ class PackProvenanceTest < Minitest::Test
                   { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/jdb_object.cpp', status: 'permanent', at: jdb },
                   { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/jdb_object.cpp', status: 'stopgap', at: jdb },
                   { license: 'GPL-3.0-or-later', label: 'toolchain/gcc-16.2.0/stdarg.h', at: gcc_header(outside, 'stdarg.h') },
-                  { license: 'FSFAP', label: 'fiasco/l4re-core/ldscripts/other.S',
-                    at: 'build/fiasco/inputs/fiasco/l4re-core/ldscripts/other.S' },
-                  { license: Erx::PackProvenance::GCC_LICENSE, label: 'toolchain/gcc-16.2.0/limits.h',
-                    at: gcc_header(outside, 'limits.h') }]
-      refusals.each do |input|
+                  { license: gcc, label: 'toolchain/gcc-16.2.0/limits.h', at: gcc_header(outside, 'limits.h') },
+                  { license: gcc, label: 'toolchain/gcc-16.2.0/stdarg.h', status: 'stopgap', at: gcc_header(outside, 'stdarg.h') },
+                  { license: gcc, label: 'toolchain/llvm/include/stdarg.h',
+                    at: File.join(outside, 'lib/clang/21/include/stdarg.h') },
+                  { license: gcc, label: 'fiasco/l4re-core/libgcc/contrib/gcc-16/libgcc/crtstuff.c',
+                    at: 'build/fiasco/inputs/fiasco/l4re-core/libgcc/contrib/gcc-16/libgcc/crtstuff.c' }]
+      refusals.product(%w[development release]).each do |input, kind|
         error = assert_raises(Erx::Error) do
-          resolve_registered_at(input.fetch(:at), **{ status: 'release' }.merge(input.except(:at)))
+          resolve_registered_at(input.fetch(:at), build_kind: kind, **{ status: 'release' }.merge(input.except(:at)))
         end
-        assert_match(/no permitted grant/, error.message, input.inspect)
+        assert_match(/no permitted grant/, error.message, [input, kind].inspect)
       end
     end
   end
 
-  # Seeded fault: a restricted row names its input by where the build reads it as well as by
-  # its label, so a registration under the row's label and license that names other bytes,
+  # Seeded fault: a row names its input by where the build reads it as well as by its
+  # label, so a registration under the row's label and license that names other bytes,
   # such as the repository's copy of a Fiasco file the build compiles from its staged copy,
   # a header outside a cross gcc's include directory, or another release's or another
-  # header's file there, is refused.
-  def test_a_restricted_row_refuses_its_label_at_another_path
+  # header's file there, is refused in every build kind.
+  def test_a_table_row_refuses_its_label_at_another_path
     Dir.mktmpdir('outside-toolchain-') do |outside|
       elsewhere = { 'toolchain/gcc-16.2.0/stddef.h' => [File.join(outside, 'stddef.h'),
                                                         'lib/gcc/aarch64-elf/16.2.0/include/stddef.h',
                                                         File.join(outside, 'lib/gcc/aarch64-elf/15.1.0/include/stddef.h'),
                                                         gcc_header(outside, 'stdarg.h')],
-                    'fiasco/l4re-core/ldscripts/kip_addr.S' => ['fiasco/l4re-core/ldscripts/kip_addr.S'],
                     'fiasco/kernel/src/kern/jdb_object.cpp' => ['fiasco/kernel/src/kern/jdb_object.cpp'] }
-      restricted_rows(outside).each do |row|
-        ['root.c', *elsewhere.fetch(row.fetch(:label))].each do |at|
-          error = assert_raises(Erx::Error) { resolve_registered_at(at, status: 'release', **row.except(:at)) }
-          assert_match(/no permitted grant/, error.message, [row.fetch(:label), at].inspect)
+      table_rows(outside).product(%w[development release]).each do |row, kind|
+        ['root.c', *elsewhere.fetch(row.fetch(:label), [])].each do |at|
+          error = assert_raises(Erx::Error) do
+            resolve_registered_at(at, status: 'release', build_kind: kind, **row.slice(:label, :license))
+          end
+          assert_match(/no permitted grant/, error.message, [row.fetch(:label), at, kind].inspect)
         end
       end
     end
@@ -619,19 +627,38 @@ class PackProvenanceTest < Minitest::Test
 
   # Each row of the table admits its input under its exact license and the status of what
   # it is a part of, release for Fiasco and its build's GCC headers (docs/design.md's
-  # dependency table), at the place the build reads it, in a development build, and no
-  # release build admits it.
-  def test_the_closed_table_admits_its_rows_in_development_builds_only
+  # dependency table), at the place the build reads it, in the build kinds it names, and
+  # no other build kind admits it: each of GCC's three headers enters a release build, and
+  # Fiasco's debugger enters none.
+  def test_the_closed_table_admits_each_row_in_the_build_kinds_it_names
     Dir.mktmpdir('outside-toolchain-') do |outside|
-      restricted_rows(outside).each do |row|
-        label, license, at = row.values_at(:label, :license, :at)
-        record = resolve_registered_at(at, license: license, label: label, status: 'release').first
-        assert_equal [label, license, 'release'], record.values_at('path', 'declared_license', 'status')
-        error = assert_raises(Erx::Error) do
-          resolve_registered_at(at, license: license, label: label, status: 'release', build_kind: 'release')
+      table_rows(outside).product(%w[development release]).each do |row, kind|
+        label, license, at, kinds = row.values_at(:label, :license, :at, :kinds)
+        if kinds.include?(kind)
+          record = resolve_registered_at(at, license: license, label: label, status: 'release', build_kind: kind).first
+          assert_equal [label, license, 'release'], record.values_at('path', 'declared_license', 'status')
+        else
+          error = assert_raises(Erx::Error) do
+            resolve_registered_at(at, license: license, label: label, status: 'release', build_kind: kind)
+          end
+          assert_match(/no permitted grant/, error.message, [label, kind].inspect)
         end
-        assert_match(/no permitted grant/, error.message)
       end
+    end
+  end
+
+  # The FSF All Permissive License is permissive: l4re-core's ldscripts/kip_addr.S, which
+  # sigma0 links, another file under it and a permanent dependency under it enter every
+  # build kind, as no row of the table names them.
+  def test_the_fsf_all_permissive_license_enters_every_build
+    inputs = [{ label: 'fiasco/l4re-core/ldscripts/kip_addr.S', status: 'release',
+                at: 'build/fiasco/inputs/fiasco/l4re-core/ldscripts/kip_addr.S' },
+              { label: 'fiasco/l4re-core/ldscripts/other.S', status: 'release',
+                at: 'build/fiasco/inputs/fiasco/l4re-core/ldscripts/other.S' },
+              { label: 'third_party/fixture/root.c', status: 'permanent', at: 'root.c' }]
+    inputs.product(%w[development release]).each do |input, kind|
+      record = resolve_registered_at(input.fetch(:at), license: 'FSFAP', build_kind: kind, **input.slice(:label, :status)).first
+      assert_equal [input.fetch(:label), 'FSFAP'], record.values_at('path', 'license'), [input, kind].inspect
     end
   end
 

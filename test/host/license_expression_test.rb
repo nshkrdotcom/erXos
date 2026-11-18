@@ -38,6 +38,14 @@ class LicenseExpressionTest < Minitest::Test
     assert_raises(Erx::Error) { select('LicenseRef-Someone-public-domain') }
   end
 
+  # The FSF All Permissive License is permissive wherever it appears, alone or in a choice.
+  def test_the_fsf_all_permissive_license_is_permissive
+    assert Erx::LicenseExpression.permissive?('FSFAP')
+    assert_equal ['FSFAP'], select('FSFAP').fetch('grants')
+    assert_equal ['FSFAP'], select('GPL-2.0-only OR FSFAP').fetch('grants')
+    assert_equal ['MIT', 'FSFAP'], select('MIT AND FSFAP').fetch('grants')
+  end
+
   # erx-lvgl's liblvgl.a: MIT code and OFL-1.1 font data. OFL-1.1 is admitted for an input that
   # states its OFL content is font data, and for no other input.
   def test_ofl_is_admitted_only_for_an_input_that_states_font_data

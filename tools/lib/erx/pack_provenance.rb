@@ -7,6 +7,7 @@ require 'pathname'
 require_relative 'origin'
 require_relative 'archive_member'
 require_relative 'license_expression'
+require_relative 'license_admission'
 require_relative 'build_inputs'
 require_relative 'build_kind'
 require_relative 'import_notices'
@@ -21,85 +22,14 @@ module Erx
   class PackProvenance
     MAX_METADATA = 64 * 1024 * 1024
     # The statuses of a package of an image: permanent, or package-local for a package of
-    # a local test image (ImageApps::Plan#status), which a development build admits under
-    # any license, since no published image takes a builder's package. A dependency is
-    # registered under one of DependencyStatus::ALL.
-    PACKAGE_LOCAL = 'package-local'
-    PACKAGE_STATUSES = [DependencyStatus::PERMANENT, PACKAGE_LOCAL].freeze
-    # The one example an image carries (docs/design.md's dependency table, status example):
-    # Doom's archive, attributed whole under this label by the image build, with the WAD
-    # it links. It is the only input that may be registered example (example_archive?).
-    EXAMPLE_LABEL = 'doomgeneric libdoom.a'
-    # Where the image build writes that archive (DoomProgram), relative to the tree.
-    EXAMPLE_ARCHIVE = 'build/doom/libdoom.a'
-    EXAMPLE_LICENSES = ['GPL-2.0-or-later', 'GPL-2.0-or-later AND BSD-3-Clause'].freeze
-    # The cross compiler's freestanding headers that Fiasco's C and C++ include, which
-    # FiascoProvenance.gcc_registry registers under labels GCC_LABEL fills.
-    GCC_LICENSE = 'GPL-3.0-or-later WITH GCC-exception-3.1'
-    GCC_HEADERS = %w[stdarg.h stdbool.h stddef.h].freeze
-    GCC_LABEL = 'toolchain/gcc-%<release>s/%<name>s'
-    # A GCC release as its include directory and its headers' labels name it.
-    GCC_RELEASE = /[0-9][0-9.]{0,31}/
-    # Where the build reads such a header: the include directory of its cross gcc's
-    # installation, lib/gcc/TARGET/RELEASE/include, outside the tree.
-    GCC_HEADER_PATH = %r{\A/(?:[^/]+/)*lib/gcc/[^/]+/(?<release>#{GCC_RELEASE})/include/(?<name>#{Regexp.union(GCC_HEADERS)})\z}
-    # Where the build reads Fiasco's sources: the staged copy of its inputs (FiascoInputs)
-    # that FiascoProvenance audits, laid out as the repository's fiasco/ is.
-    FIASCO_INPUTS = 'build/fiasco/inputs/fiasco'
-    # One input a development build admits under a license that is not permissive: the
-    # status it is registered under, its label as its record names it, the license
-    # expressions it may carry, exactly as recorded, and where the build reads it. That is
-    # a path relative to the tree, with the label a literal, or, for a toolchain's files
-    # outside it, a Regexp the whole absolute path must match, with the label a format
-    # template its named captures fill, so the label always names the file the row admits.
-    Restricted = Data.define(:status, :label, :licenses, :path) do
-      # Whether this row names the input registered under input_status with input_label
-      # and license, read from input_path: relative to the tree within it, absolute outside.
-      def admits?(input_status:, input_label:, license:, input_path:)
-        status == input_status && licenses.include?(license) && label_at(input_path) == input_label
-      end
-
-      private
-
-      # The label of the input this row reads from input_path, nil if it reads none there.
-      # A Regexp row admits only a whole match, however its pattern is anchored.
-      def label_at(input_path)
-        case path
-        in String
-          label if path == input_path
-        in Regexp
-          match = path.match(input_path)
-          format(label, **match.named_captures(symbolize_names: true)) if match && match[0] == input_path
-        end
-      end
-    end
-    # The closed table of such inputs (docs/design.md, "Licenses and notices"). Every
-    # other input of every build, a stopgap's or a release component's included, must be
-    # permissive, so a copyleft file that comes back into a closure, such as another of
-    # Fiasco's GPL sources, fails the build however it is registered. Fiasco's rows, and
-    # its build's GCC headers, are release, as docs/design.md's dependency table marks
-    # them: a release component with a part under a license that is not permissive follows
-    # the stopgap rule on distribution (CLAUDE.md, Dependencies), which is what a
-    # development build's admission here gives it.
-    RESTRICTED = [
-      # Doom, the example, in 0.1's images with its source offered: the archive the image
-      # build writes (DoomProgram).
-      Restricted.new(status: DependencyStatus::EXAMPLE, label: EXAMPLE_LABEL, licenses: EXAMPLE_LICENSES, path: EXAMPLE_ARCHIVE),
-      # GCC's headers: macros and types only, and the GCC Runtime Library Exception 3.1
-      # lets code compiled with them be distributed under any terms, so they are
-      # permissive in effect for what includes them.
-      Restricted.new(status: DependencyStatus::RELEASE, label: GCC_LABEL, licenses: [GCC_LICENSE], path: GCC_HEADER_PATH),
-      # A linker script of l4re-core under the FSF All Permissive License, which permits
-      # copying and distribution with or without modification if the notice is kept: a
-      # permissive license the table names for this file alone.
-      Restricted.new(status: FiascoParts.status('l4re-core'), label: 'fiasco/l4re-core/ldscripts/kip_addr.S', licenses: ['FSFAP'],
-                     path: "#{FIASCO_INPUTS}/l4re-core/ldscripts/kip_addr.S"),
-      # Fiasco's kernel debugger, carried in development builds by decision, distributed
-      # under the website exception with its source offered (CLAUDE.md, Dependencies,
-      # stopgaps and release components); the release kernel leaves it out.
-      Restricted.new(status: FiascoParts.status('kernel'), label: 'fiasco/kernel/src/kern/jdb_object.cpp', licenses: ['GPL-2.0-only'],
-                     path: "#{FIASCO_INPUTS}/kernel/src/kern/jdb_object.cpp")
-    ].freeze
+    # a local test image (LicenseAdmission::PACKAGE_LOCAL). A dependency is registered
+    # under one of DependencyStatus::ALL.
+    PACKAGE_STATUSES = [DependencyStatus::PERMANENT, LicenseAdmission::PACKAGE_LOCAL].freeze
+    # The example's archive as the image build names it (DoomProgram, ProductionImage);
+    # LicenseAdmission owns them.
+    EXAMPLE_LABEL = LicenseAdmission::EXAMPLE_LABEL
+    EXAMPLE_ARCHIVE = LicenseAdmission::EXAMPLE_ARCHIVE
+    EXAMPLE_LICENSES = LicenseAdmission::EXAMPLE_LICENSES
     # compiler is the clang that built Fiasco's C17 cores, which Fiasco's audit records.
     def initialize(root:, catalog:, external: [], imports: {}, runner: nil, archive_program: 'llvm-ar', compiler: nil)
       @root = File.realpath(root)
@@ -383,7 +313,7 @@ module Erx
       end
       register_external(external)
       FiascoParts::STATUSES.each do |part, status|
-        [File.join(@root, 'fiasco', part), File.join(@root, FIASCO_INPUTS, part)].each do |directory|
+        [File.join(@root, 'fiasco', part), File.join(@root, FiascoParts::INPUTS, part)].each do |directory|
           @imports[directory] = status if File.directory?(directory) && @catalog.find_import(directory)
         end
       end
@@ -573,13 +503,15 @@ module Erx
         label = public_path
       end
       raise Error, 'invalid public provenance label' unless public_label?(label)
-      if status == DependencyStatus::EXAMPLE && !example_archive?(path, label: label, license: license)
+      read_from = path.delete_prefix(@root + '/')
+      # The example's archive is an external registration, never an import's file, so no
+      # other input can take the example status.
+      example_archive = @external.key?(path) && LicenseAdmission.example?(label:, license:, path: read_from)
+      if status == DependencyStatus::EXAMPLE && !example_archive
         raise Error, "#{label} (#{license}) cannot be registered as example: only #{EXAMPLE_LABEL} under " \
                      "#{EXAMPLE_LICENSES.join(' or ')}, at #{EXAMPLE_ARCHIVE}, is"
       end
-      selected = LicenseExpression.select(license, allow_restricted: BuildKind.development?(build_kind) &&
-                                                                     restricted_admitted?(status:, path:, label:, license:),
-                                                   font_data: font_data)
+      selected = LicenseAdmission.select(license, status:, label:, path: read_from, build_kind:, font_data:)
       if item
         profile_path = File.join(@root, ImportNotices::PROFILE)
         references = if @catalog.include_path?(profile_path)
@@ -756,22 +688,6 @@ module Erx
           raise Error, 'external source differs from its registration'
         end
       end
-    end
-
-    # Whether path is the example's archive: an external registration, never an import's
-    # file, that RESTRICTED's example row names (EXAMPLE_LABEL at EXAMPLE_ARCHIVE under one
-    # of EXAMPLE_LICENSES exactly), so no other input can take the example status.
-    def example_archive?(path, label:, license:)
-      @external.key?(path) && restricted_admitted?(status: DependencyStatus::EXAMPLE, path:, label:, license:)
-    end
-
-    # Whether a development build may admit the input at path, registered under status
-    # with label and license, although the license is not permissive: a package of a local
-    # test image, or a row of RESTRICTED.
-    def restricted_admitted?(status:, path:, label:, license:)
-      read_from = path.delete_prefix(@root + '/')
-      status == PACKAGE_LOCAL ||
-        RESTRICTED.any? { |row| row.admits?(input_status: status, input_label: label, license:, input_path: read_from) }
     end
 
     def leading_notice(bytes)

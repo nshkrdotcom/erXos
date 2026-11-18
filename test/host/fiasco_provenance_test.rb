@@ -228,33 +228,41 @@ class FiascoProvenanceTest < Minitest::Test
 
   # The seeded fault the release check exists for: jdb_object.cpp linked into
   # a release kernel, under the license its row in fiasco/kernel/ORIGIN.md
-  # records, is refused by name; permissive terms, a choice with a permissive
-  # branch, an exception to a permissive license and GCC's own headers pass.
-  # A record without a license passes only as configuration or as a file made
-  # from other records of the closure (a module's sources, a generator's code
-  # and the sources of the objects it reads); one made from nothing the
-  # closure records is refused as having no license.
+  # records, is refused by name; permissive terms, the FSF All Permissive
+  # License, a choice with a permissive branch, an exception to a permissive
+  # license and each of GCC's three headers, from a GCC include directory under
+  # the label its registration gives it, pass, as LicenseAdmission passes them
+  # for the image check. A record without a license passes only as configuration
+  # or as a file made from other records of the closure (a module's sources, a
+  # generator's code and the sources of the objects it reads); one made from
+  # nothing the closure records is refused as having no license.
   def test_a_release_kernel_refuses_each_source_a_release_may_not_carry
     repository = File.expand_path('../..', __dir__)
     license = Erx::Origin.new(root: File.join(repository, 'fiasco/kernel')).imported_file('src/kern/jdb_object.cpp').fetch('license')
-    jdb = 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp'
-    gcc = '/toolchain/include/stdarg.h'
-    sources = [{ 'path' => jdb, 'license' => license },
+    # The report names the kernel build's copy; the build read the staged input.
+    jdb = 'build/fiasco/kernel-release/src/jdb_object.cpp'
+    staged = 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp'
+    gcc = Erx::LicenseAdmission::GCC_HEADERS.map { |name| "/opt/cross/lib/gcc/aarch64-elf/16.2.0/include/#{name}" }
+    registered = gcc.to_h { |path| [path, "toolchain/gcc-16.2.0/#{File.basename(path)}"] }
+    sources = [{ 'path' => jdb, 'license' => license, 'status' => 'release',
+                 'source' => staged, 'original_source' => 'fiasco/kernel/src/kern/jdb_object.cpp' },
                { 'path' => 'kip.cpp', 'license' => 'MIT' },
+               { 'path' => 'kip_addr.S', 'license' => 'FSFAP' },
                { 'path' => 'fdt.c', 'license' => '(GPL-2.0-or-later OR BSD-2-Clause)' },
                { 'path' => 'stddef.h', 'license' => 'Apache-2.0 WITH LLVM-exception' },
-               { 'path' => gcc, 'license' => Erx::PackProvenance::GCC_LICENSE },
+               *gcc.map { |path| { 'path' => path, 'license' => Erx::LicenseAdmission::GCC_LICENSE, 'status' => 'release' } },
                { 'path' => 'build/fiasco/kernel-release/auto/main.cc', 'generated_from' => [{ 'path' => 'kip.cpp' }] },
                { 'path' => 'build/fiasco/kernel-release/globalconfig.h', 'role' => 'configuration', 'code' => [] },
                { 'path' => 'build/fiasco/kernel-release/tcboffset.h', 'role' => 'code', 'code' => [],
                  'objects' => [{ 'object' => { 'path' => 'tcboffset.o' }, 'sources' => [{ 'path' => 'fdt.c' }] }] }]
-    assert_equal [[jdb, 'GPL-2.0-only']], Erx::FiascoProvenance.non_permissive(sources, toolchain: [gcc])
-    assert_equal [[gcc, Erx::PackProvenance::GCC_LICENSE]], Erx::FiascoProvenance.non_permissive(sources.drop(1), toolchain: [])
+    assert_equal [[jdb, 'GPL-2.0-only']], Erx::FiascoProvenance.non_permissive(sources, build_kind: 'release', registered:)
+    assert_empty Erx::FiascoProvenance.non_permissive(sources, build_kind: 'development', registered:)
     orphan = { 'path' => 'orphan.h', 'role' => 'code', 'code' => [], 'objects' => [] }
     unrecorded = { 'path' => 'unrecorded.h', 'generated_from' => [{ 'path' => 'elsewhere.cpp' }] }
     unresolved = { 'path' => 'unresolved.c', 'state' => 'unresolved' }
     assert_equal [['orphan.h', 'no license'], ['unrecorded.h', 'no license'], ['unresolved.c', 'no license']],
-                 Erx::FiascoProvenance.non_permissive(sources.drop(1) + [orphan, unrecorded, unresolved], toolchain: [gcc])
+                 Erx::FiascoProvenance.non_permissive(sources.drop(1) + [orphan, unrecorded, unresolved],
+                                                      build_kind: 'release', registered:)
 
     auditor = Erx::FiascoProvenance.new(root: repository, runner: nil, kind: Erx::BuildKind::RELEASE)
     report = { 'state' => 'complete', 'unresolved' => [], 'sources' => sources.first(1) }
@@ -262,6 +270,65 @@ class FiascoProvenanceTest < Minitest::Test
     assert_includes error.message, "#{jdb} (GPL-2.0-only)"
     blocked = report.merge('state' => 'blocked', 'unresolved' => ['source has no origin: fixture.c'])
     assert_includes assert_raises(Erx::Error) { auditor.check_permissive(blocked) }.message, 'fixture.c'
+  end
+
+  # A release kernel's check takes each toolchain source's label from its
+  # registration (gcc_registry's), so a GCC header registered under its own
+  # label passes, and the same bytes registered under another header's label
+  # are refused.
+  def test_a_release_kernel_check_labels_a_toolchain_source_by_its_registration
+    repository = File.expand_path('../..', __dir__)
+    Dir.mktmpdir('cross-gcc-') do |cross|
+      header = File.join(cross, 'lib/gcc/aarch64-elf/16.2.0/include/stdarg.h')
+      FileUtils.mkdir_p(File.dirname(header))
+      File.write(header, "/* fixture */\n")
+      header = File.realpath(header)
+      source = { 'path' => header, 'license' => Erx::LicenseAdmission::GCC_LICENSE, 'status' => 'release' }
+      report = { 'state' => 'complete', 'unresolved' => [], 'sources' => [source] }
+      registration = { 'path' => header, 'label' => 'toolchain/gcc-16.2.0/stdarg.h' }
+      auditor = Erx::FiascoProvenance.new(root: repository, runner: nil, kind: Erx::BuildKind::RELEASE, external: [registration])
+      assert_nil auditor.check_permissive(report)
+      relabelled = registration.merge('label' => 'toolchain/gcc-16.2.0/stddef.h')
+      auditor = Erx::FiascoProvenance.new(root: repository, runner: nil, kind: Erx::BuildKind::RELEASE, external: [relabelled])
+      assert_includes assert_raises(Erx::Error) { auditor.check_permissive(report) }.message, header
+    end
+  end
+
+  # A GCC header's label has one source, the table's GCC row, which names the
+  # release its include directory resolves to; a file outside such a directory,
+  # or a fourth header there, has none.
+  def test_a_gcc_headers_label_comes_from_its_include_directory
+    include = '/opt/cross/lib/gcc/aarch64-elf/16.2.0/include'
+    assert_equal 'toolchain/gcc-16.2.0/stdbool.h', Erx::LicenseAdmission.gcc_label("#{include}/stdbool.h")
+    ["#{include}/limits.h", '/opt/llvm/lib/clang/21/include/stdarg.h', 'lib/gcc/aarch64-elf/16.2.0/include/stdarg.h'].each do |path|
+      assert_raises(Erx::Error, path) { Erx::LicenseAdmission.gcc_label(path) }
+    end
+  end
+
+  # The release check takes GCC's exception only for the three headers of the
+  # table's GCC row, read from a GCC include directory under the label that
+  # names them, whatever else the toolchain registers: the exception on a clang
+  # resource header, on a fourth header of GCC's include directory, on one of
+  # the three registered under another label or status, or with no
+  # registration, and on a GCC runtime file of l4re-core, is refused in every
+  # build kind.
+  def test_the_release_check_takes_gccs_exception_only_from_its_include_directory
+    gcc = Erx::LicenseAdmission::GCC_LICENSE
+    include = '/opt/cross/lib/gcc/aarch64-elf/16.2.0/include'
+    crtstuff = 'build/fiasco/inputs/fiasco/l4re-core/libgcc/contrib/gcc-16/libgcc/crtstuff.c'
+    refused = [[{ 'path' => '/opt/llvm/lib/clang/21/include/stdarg.h' }, 'toolchain/llvm/include/stdarg.h'],
+               [{ 'path' => "#{include}/limits.h" }, 'toolchain/gcc-16.2.0/limits.h'],
+               [{ 'path' => "#{include}/stdarg.h" }, 'toolchain/gcc-16.2.0/stddef.h'],
+               [{ 'path' => "#{include}/stdarg.h", 'status' => 'stopgap' }, 'toolchain/gcc-16.2.0/stdarg.h'],
+               [{ 'path' => "#{include}/stdarg.h" }, nil],
+               [{ 'path' => crtstuff, 'source' => crtstuff,
+                  'original_source' => 'fiasco/l4re-core/libgcc/contrib/gcc-16/libgcc/crtstuff.c' }, nil]]
+    refused.product(%w[development release]).each do |(fields, label), kind|
+      source = { 'license' => gcc, 'status' => 'release' }.merge(fields)
+      registered = label ? { source.fetch('path') => label } : {}
+      assert_equal [[source.fetch('path'), gcc]], Erx::FiascoProvenance.non_permissive([source], build_kind: kind, registered:),
+                   [source, label, kind].inspect
+    end
   end
 
   # A release kernel that passes gets the record that it passed, which names

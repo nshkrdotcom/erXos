@@ -18,7 +18,7 @@ require_relative 'core_archive'
 require_relative 'cross_toolchain'
 require_relative 'host_path'
 require_relative 'build_kind'
-require_relative 'license_expression'
+require_relative 'license_admission'
 
 module Erx
   # Audits the inherited build's recorded evidence. This is an evidence report,
@@ -75,21 +75,23 @@ module Erx
     # What a release kernel that passed its gate leaves beside itself.
     PASS_RECORD = 'license-check.json'
 
-    # The linked sources a release kernel may not carry, each with its license
-    # or 'no license'. A source carries an expression LicenseExpression.permissive?
-    # accepts, or GCC's on a cross gcc header the external registry records
-    # (gcc_registry, PackProvenance::GCC_HEADERS) (docs/design.md, the dependency table). A
-    # record without a license passes only as configuration, which carries no
-    # code, or as a file made from records the closure holds (ancestry), each of
-    # which is checked as a source of its own.
-    def self.non_permissive(sources, toolchain:)
+    # The linked sources a build of build_kind may not carry, each with its
+    # license or 'no license'. A source with a license passes as the image check
+    # passes an input (LicenseAdmission.admitted?): under its status, its public
+    # label (registered gives an external registration's, by its report path, and
+    # an imported source's is its original source) and where the build read it. A record
+    # without a license passes only as configuration, which carries no code, or
+    # as a file made from records the closure holds (ancestry), each of which is
+    # checked as a source of its own.
+    def self.non_permissive(sources, build_kind:, registered:)
       recorded = sources.to_h { |source| [source.fetch('path'), source] }
       sources.filter_map do |source|
         path = source.fetch('path')
         license = source['license']
         if license
-          next if LicenseExpression.permissive?(license)
-          next if license == PackProvenance::GCC_LICENSE && toolchain.include?(path)
+          label = registered.fetch(path) { source.fetch('original_source', path) }
+          read_from = source.fetch('source', path)
+          next if LicenseAdmission.admitted?(license, status: source['status'], label:, path: read_from, build_kind:)
 
           [path, license]
         elsif source['role'] != 'configuration'
@@ -220,7 +222,8 @@ module Erx
       unless report.fetch('state') == 'complete'
         raise Error, "the kernel's link audit is incomplete: #{report.fetch('unresolved').first(3).join('; ')}"
       end
-      refused = self.class.non_permissive(report.fetch('sources'), toolchain: @external.keys.map { |path| label(path) })
+      registered = @external.to_h { |path, entry| [label(path), entry.fetch('label')] }
+      refused = self.class.non_permissive(report.fetch('sources'), build_kind: @plan.kind, registered:)
       return if refused.empty?
 
       raise Error, 'the kernel links sources a release may not carry: ' +
@@ -294,16 +297,16 @@ module Erx
       directories = Dir.glob("lib/gcc/#{cross.target}/*/include", base: installation)
       raise Error, "cannot find one include directory of #{gcc} under #{installation}" unless directories.size == 1
       release = directories.first.split('/').fetch(3)
-      raise Error, "unexpected #{gcc} release directory: #{release}" unless /\A#{PackProvenance::GCC_RELEASE}\z/.match?(release)
+      raise Error, "unexpected #{gcc} release directory: #{release}" unless /\A#{LicenseAdmission::GCC_RELEASE}\z/.match?(release)
       notices = GCC_NOTICES.map do |relative|
         path = File.join(root, relative)
         { 'path' => path, 'sha256' => Digest::SHA256.hexdigest(BoundedFile.read(path, maximum: 1024 * 1024)) }.freeze
       end.freeze
-      PackProvenance::GCC_HEADERS.map do |name|
+      LicenseAdmission::GCC_HEADERS.map do |name|
         header = File.realpath(File.join(installation, directories.first, name))
         raise Error, "#{gcc}'s #{name} leaves its installation" unless header.start_with?(installation + '/')
         { 'path' => header, 'sha256' => Digest::SHA256.hexdigest(BoundedFile.read(header, maximum: 1024 * 1024)),
-          'label' => format(PackProvenance::GCC_LABEL, release:, name:), 'license' => PackProvenance::GCC_LICENSE,
+          'label' => LicenseAdmission.gcc_label(header), 'license' => LicenseAdmission::GCC_LICENSE,
           'status' => DependencyStatus::RELEASE,
           'evidence' => "#{name}'s own GPL version 3 or later grant with GCC Runtime Library Exception 3.1",
           'notices' => notices }.freeze

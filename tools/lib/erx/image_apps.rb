@@ -9,11 +9,11 @@ require_relative 'app_pack'
 require_relative 'bounded_file'
 require_relative 'dependency_status'
 require_relative 'error'
+require_relative 'license_admission'
 require_relative 'license_expression'
 require_relative 'manifest_frontend'
 require_relative 'oracle'
 require_relative 'package_key'
-require_relative 'pack_provenance'
 require_relative 'runtime'
 require_relative 'sdk'
 
@@ -86,7 +86,7 @@ module Erx
       # A package that names no license is permanent, and enters no image.
       def status(package)
         restricted = local && !package.license.empty? && !LicenseExpression.permissive?(package.license)
-        restricted ? PackProvenance::PACKAGE_LOCAL : DependencyStatus::PERMANENT
+        restricted ? LicenseAdmission::PACKAGE_LOCAL : DependencyStatus::PERMANENT
       end
 
       # Whether the image takes no package, no signer and is no local test image.
