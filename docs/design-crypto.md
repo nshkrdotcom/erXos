@@ -20,8 +20,8 @@ apps, which fetch data from servers on the internet, the kiosk's live
 quotes first ([design-quotes.md](design-quotes.md)). The architecture already
 decides the library: "OTP's `crypto`, `ssl` and `ssh` use OpenSSL 3.5"
 and "a small verifier keeps the full library out of the system domain"
-([design.md](design.md#decisions)); its dependency row says "in
-application domains and the vault's, never in the system domain". OTP's
+([design.md](design.md#decisions)); its dependency row says "never in
+the system domain's image". OTP's
 `crypto` is written against OpenSSL, and 3.5 is a long-term-support
 series, supported until 2030-04-08
 ([research](research-boards-storage.md#cryptography-libraries)).
