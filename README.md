@@ -517,8 +517,9 @@ the next `--medium`, and its disk is the copy. To log in over SSH, the medium ne
 
 **What to try.** In the SSH session or on the serial console:
 
-* `date` shows the clock, which starts at the build's date at every boot
-  unless `ntpd` sets it; set it by hand with FreeBSD's syntax, `date [[[[[cc]yy]mm]dd]HH]MM[.SS]`, for
+* `date` shows the clock. QEMU `virt` reads it from its real-time clock at
+  boot; on the Pi 4 it starts at the build's date at every boot until `ntpd`
+  sets it. Set it by hand with FreeBSD's syntax, `date [[[[[cc]yy]mm]dd]HH]MM[.SS]`, for
   example `date 202611161530`. It is not kept across a reboot.
 * `ps` and `top` list your session's processes; `erl` starts an Erlang
   shell where `erx:domains()` lists every domain of the machine.

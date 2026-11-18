@@ -64,10 +64,11 @@
       lists every domain of the machine. Your key comes from
       <code>authorized_keys</code> on the card's <code>ERXOS</code> volume,
       which the first boot copies into <code>/root/.ssh/authorized_keys</code>.</li>
-      <li><strong>The clock.</strong> It starts at the build's date at each
-      boot, so HTTPS works at once; on the Pi 4 <code>ntpd</code> then sets it
-      from <code>pool.ntp.org</code>, and root can set it with
-      <code>date</code>.</li>
+      <li><strong>The clock.</strong> On QEMU <code>virt</code> it is read
+      from the machine's real-time clock at boot. The Pi 4 has none, so its
+      clock starts at the build's date at each boot, which lets HTTPS work at
+      once, and <code>ntpd</code> then sets it from <code>pool.ntp.org</code>.
+      Root can set it with <code>date</code>.</li>
       <li><strong>Files that survive.</strong> <code>/data</code> is a
       littlefs volume on the card: a file you synced survives a power cut.
       Home directories are <code>/root</code> and <code>/home/NAME</code>.</li>
@@ -108,8 +109,8 @@
       and power it. The banner and the <code>%</code> prompt appear on the
       serial console (115200 baud) within a minute, then the kiosk on the
       screen.</li>
-      <li><code>ssh -p 2222 root@HOST</code>, then <code>date</code> to set
-      the time.</li>
+      <li><code>ssh -p 2222 root@HOST</code>, then <code>date</code> to see
+      the time <code>ntpd</code> set.</li>
     </ol>
     <p>For QEMU, from a clone run <code>make pack PLATFORM=qemu-virt</code>,
     then <code>tools/erx boot --medium build/production-image/qemu-virt/medium.img</code>:
@@ -154,15 +155,24 @@
       <li><strong>The host key may be weak.</strong> When a boot's random seed is
       only a counter, the SSH host key made at first boot comes from a weak seed
       (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#host-keys">host keys</a>).</li>
+      <li><strong>Network time is not authenticated.</strong> The NTP server
+      <code>ntpd</code> uses, or anyone on the path to it, sets the Pi's clock,
+      so it can hold it at the build's date and keep a certificate that
+      expired after the build accepted for the whole boot
+      (<a href="https://github.com/stass/erXos/blob/master/docs/design-time.md#security">time</a>).</li>
       <li><strong>DMA.</strong> The evidence of how each board's firmware leaves
       its DMA-capable devices at handover is not recorded.</li>
     </ul>
     <p>Behavior.</p>
     <ul>
-      <li><strong>The clock is approximate.</strong> It starts at the build's
-      date at each boot and no network time sets it. Until root runs
-      <code>date</code>, a certificate that expired after the build is
-      still accepted, and you set the time again after every boot.</li>
+      <li><strong>The Pi 4's clock is approximate until <code>ntpd</code>
+      sets it.</strong> It starts at the build's date at each boot, and
+      <code>ntpd</code> sets it from <code>pool.ntp.org</code> once the
+      network is up. Until then, and for as long as no NTP server answers, a
+      certificate that expired after the build is still accepted, and the
+      time <code>ntpd</code> sets is not authenticated (Security above); root can
+      set the time with <code>date</code>, which is not kept across a
+      reboot.</li>
       <li><strong>SSH is on port 2222</strong>, not 22, and gives an
       interactive session only: a command given to <code>ssh</code> is
       refused.</li>

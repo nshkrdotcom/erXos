@@ -26,8 +26,8 @@ it; git history is the record of completed work.
   ([plan.md](docs/plan.md)). It blocks no release: 0.2 ships on Fiasco, and
   what Fiasco lacks is published with it as the downsides of
   [design-fiasco.md](docs/design-fiasco.md#downsides-against-erxoss-kernel).
-  An erXos-authored clean-room header replaces Fiasco's GPL-2.0
-  `kobject_rpc.h` in every build; the one GPL-2.0 file a build carries is
+  The tree's `kobject_rpc.h` is erXos's MIT clean-room replacement of
+  Fiasco's GPL-2.0 original (`fiasco/kernel/ORIGIN.md`); the one GPL-2.0 file a build carries is
   the kernel debugger's `jdb_object.cpp`, which goes out only in 0.1's
   images, which keep the debugger, with its source offered, and which the
   release kernel's build leaves out (0.1's and

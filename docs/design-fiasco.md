@@ -50,7 +50,7 @@ call's result on Fiasco; where that result differs from erXos's kernel's, its la
 row of [Downsides against erXos's kernel](#downsides-against-erxoss-kernel) that says what is lost
 and what closes it; and [Security on Fiasco](#security-on-fiasco) cites those rows by name. Paths of
 Fiasco's kernel sources are relative to `fiasco/kernel/src/kern/`; nothing here rests on
-`kobject_rpc.h` or `jdb_object.cpp`, which no erXos document or agent reads.
+Fiasco's original `kobject_rpc.h` or `jdb_object.cpp`, which no erXos document or agent reads.
 
 ## Contract
 
@@ -2818,12 +2818,17 @@ and which widen what a thread can do with itself ([Who holds what](#who-holds-wh
 `UART_CHECKSUM` and every other option with no consumer. A release build that turns the debugger on
 fails the check. Development builds keep the debugger.
 
-**Patches.** Each is small, contained in the fork, and carries a test with a seeded failure:
+**Patches.** These are the changes the release's Fiasco build makes to what Fiasco's kernel does,
+each small and contained in the fork. An entry names its test where it has one, and says so where
+no test can drive the change:
 
-* **The clean-room interface header.** An erXos-authored, BSD-2-Clause header replaces
-  `kobject_rpc.h` in every build. It is written from what the MIT files that include it call and
-  from the IPC layouts of `l4sys` (MIT); no one reads the GPL header to write it, and no agent that
-  has read it writes it.
+* **The clean-room interface header.** The tree's `src/kern/kobject_rpc.h` is not Fiasco's: it is
+  an erXos-authored, MIT-licensed clean-room replacement of the GPL-2.0-only original, which the
+  fork removed without opening it (`fiasco/kernel/ORIGIN.md` records the file under `changes`), so
+  every build compiles the replacement. It is
+  written from the clean-room facts record (erxos-history `cleanroom/fiasco-gpl-facts.md`, commit
+  `2a1e35e`) and from what the MIT files that include it call; no one reads the GPL header to write
+  it, and no agent that has read it writes it.
 * **`jdb_object.cpp` out of the release kernel.** Upstream's `Modules.generic` lists the debugger's kernel object for every
   kernel, whatever `CONFIG_JDB` says, so turning the debugger off would leave the
   GPL-2.0 file compiled. The fork lists it only for a kernel built with the debugger (`fiasco/kernel/src/Modules.generic:62-63`), a one-line edit: no MIT file of
@@ -2863,12 +2868,54 @@ fails the check. Development builds keep the debugger.
   build turns them on is unverified. If carried, its case, on the Raspberry Pi 4's manual checklist: the kernel's boot
   log names the workarounds the firmware reported and the entry uses; seeded failure: the firmware's answer ignored, so
   the log names none and the case fails.
+* **The boot handoff.** The kernel boots from erXos's boot image and greets as erXos
+  (`arm/startup-arm.cpp`, `banner.cpp`, `koptions-def.h`, and `fiasco/kernel/src/erx/erx_handoff.cpp`
+  and `fiasco/kernel/src/abi/kip.cpp`),
+  as [Boot handoff](#boot-handoff) describes; every boot test drives it.
+* **An SError from user mode.** Upstream's SError vectors from user mode enter
+  `Thread::arm_serror_handler`, which counts the error and returns, so it ends nothing. The fork's
+  (`arm/64/ivt.S`) enter `Thread::arm_serror_user_entry`
+  (`arm/thread-arm.cpp`), which counts it and sends the running thread an exception carrying the
+  SError's syndrome, as `arm_esr_entry` does for an exception class it does not handle; a thread of
+  `sigma0`, which has no exception handler, only has it counted. The root takes the exception as
+  the fault kind `async_error`, so the error ends the task presumed its source, except in the root
+  and `sigma0` (FD33, and [Open decisions](#open-decisions), which says what happens there). `arm_esr_entry` also clears the exception record's fault
+  address, so no record carries an earlier frame's. QEMU `virt` raises no SError a guest can cause,
+  so no test drives the entry; `test/host/fiasco_exception_test.rb` tests the root's choice of fault
+  kind, and its seeded failure, every class taken as undefined, makes it fail.
+* **A kernel trap without the debugger.** Upstream's `Thread::call_nested_trap_handler` for a
+  kernel without JDB (`arm/thread-jdb.cpp`) dumps the trap state, kills the current thread and
+  returns to the faulting instruction, so the CPU traps again while the others run on. The fork's
+  dumps the state and panics, so a kernel trap is fatal on a release kernel as on a development
+  one, whose JDB stops every CPU ([Boot handoff](#boot-handoff)). Its test is the kernel-trap case
+  of [The backend's cases](#the-backends-cases), on a test kernel with a seeded trap; seeded
+  failure: upstream's handler, under which the trap dumps repeat.
+* **An unbound pin's interrupt.** `Irq_chip_gen::detach` masks and clears a pin without waiting
+  for a CPU that has already acknowledged its interrupt, so upstream's `Irq_chip::handle_irq`
+  (`irq_chip.cpp`) can dereference a null object when a domain's interrupt is detached as it fires.
+  The fork ends that interrupt at its chip and the chips upstream of it and returns, so the CPU's
+  priority drops. No test drives it: the race does not fire reliably, and the build has no
+  in-kernel test. A handler whose object was bound to the software chip by then still leaves that
+  CPU's interrupt unended, a hang `TODO.md` records under FD33's gaps.
+* **The yield.** A receive from the thread itself whose timeout hit before it would wait yields the
+  time slice (`thread-ipc.cpp`, [A yield](#scheduling)). Its test is the native task suite's
+  `yield` case: upstream's receive keeps the CPU to the end of its slice, so the case misses its
+  deadline.
+* **The semaphore's wake.** A semaphore's down waits for the activation of the up that dequeued it
+  (`semaphore.cpp`, [A semaphore's wake across CPUs](#thread-creation)). Its test is the case of
+  that name in [The backend's cases](#the-backends-cases).
+* **Test kernels' seeds.** Two defines, set only for a test kernel, compile seeds into the fork:
+  `ERX_TEST_KERNEL_TRAP` a kernel-mode load from an unmapped address once boot is done
+  (`kernel_thread.cpp`, for `native_kernel_trap.rb`), and `ERX_TEST_SEMAPHORE_WAKE_HOLD_US` a hold
+  of an up between its dequeue and its activation (`semaphore.cpp`, for
+  `native_semaphore_race.rb`). No other kernel builds them; `make check-native-seeds` runs both.
 
 Nothing else of erXos's kernel is built into Fiasco for the first release; the scheduler's stages
 come after it.
 
-**License.** With the header replaced and `jdb_object.cpp` out, the release kernel is Fiasco's MIT code
-and erXos's BSD-2-Clause additions. `bootstrap` and `sigma0` ship under the link closure their
+**License.** With the clean-room header in the GPL original's place and `jdb_object.cpp` out, the
+release kernel is Fiasco's MIT code, erXos's MIT clean-room header and erXos's BSD-2-Clause
+additions. `bootstrap` and `sigma0` ship under the link closure their
 import records (`fiasco/bootstrap/ORIGIN.md`, `fiasco/l4re-core/ORIGIN.md`), and a release build
 check fails if any file compiled or linked into the image's kernel, `bootstrap` or `sigma0` is
 recorded with a license that is not permissive; the check counts headers, since `kobject_rpc.h`
@@ -3165,13 +3212,35 @@ hooks.
   a published downside for 0.2, since no device of 0.2's platforms is confined (FD12) and a
   misbehaving DMA-capable device already reaches the whole machine; add to the hostile suites'
   Fiasco set an interrupt storm on a driver's line, whose pass is that the machine and the other
-  domains keep running, so the downside is measured rather than assumed. The source read adds to
-  the evidence: AArch64's asynchronous-error vectors (`arm/64/ivt.S:355-394`) enter
-  `Thread::arm_serror_handler` (`arm/thread-jdb.cpp:100-106`), which counts the error on its CPU
-  and returns, so Fiasco attributes, contains and stops nothing on an asynchronous error. The release
-  build has the same handler: it is in an unconditional `IMPLEMENTATION [arm]` section
-  (`arm/thread-jdb.cpp:96`), and `Modules.arm` lists `thread-jdb` among the architecture's thread
-  modules with no condition on the debugger (`Modules.arm:151-152`).
+  domains keep running, so the downside is measured rather than assumed. The fork's source adds to
+  the evidence ([Patches](#the-releases-fiasco-build)):
+  * **The entry.** AArch64's asynchronous-error vectors from user mode (`arm/64/ivt.S`, at `0x580`
+    and `0x780`) enter `Thread::arm_serror_user_entry` (`arm/thread-arm.cpp`), which counts the
+    error on its CPU and sends the running thread an exception carrying the SError's syndrome. The
+    vectors from kernel mode (`0x180` and `0x380`) enter `Thread::arm_serror_handler`
+    (`arm/thread-jdb.cpp`), which only counts it. The release build has both: `Modules.arm` turns
+    on `arm_esr_traps`, the section of `arm_serror_user_entry`, for every 64-bit kernel, and lists
+    `thread-jdb` with no condition on the debugger, where `arm_serror_handler` is in an
+    unconditional `IMPLEMENTATION [arm]` section.
+  * **What ends.** The root takes the exception as the fault kind `async_error`
+    (`liberx/backend/fiasco/arch/aarch64/exception.c`) and handles it as any fault of a domain's
+    task: the task ends, or the fault goes to its fault gate. In the root itself, an error while its
+    main or runtime threads run ends the machine; its service and watchdog threads, whose exception
+    handler is `sigma0`, resume with nothing recorded; and in `sigma0` the error is only counted.
+  * **Whom it is charged to.** Without error records the architecture names no source, so the
+    running thread's task is presumed the source. The kernel runs with SErrors masked, so one raised
+    while a CPU is in the kernel is taken at the next entry to user mode on that CPU and ends that
+    thread's task in the source's place, which may be another domain's.
+  * **What is tested.** No erXos test raises an SError, since QEMU `virt` raises none a guest can
+    cause; a host test checks the root's choice of fault kind. The fork ends an interrupt whose pin
+    was unbound after another CPU acknowledged it, but a handler already bound to the software chip
+    by then never ends that CPU's interrupt, a silent hang of the CPU that `TODO.md` records with the
+    rest of this row's gaps.
+
+  What a release would accept is then that an asynchronous error ends the task presumed its source
+  or the machine, or passes unrecorded in two of the root's threads, and that every other path of
+  Fiasco's interrupt and exception code, such as an interrupt storm on a line, rests on Fiasco's own
+  code with no erXos test driving it.
 
 Decided, and applied above:
 

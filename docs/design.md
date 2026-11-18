@@ -1881,7 +1881,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | OTP's Common Test controller, a reporting copy | exact case and job records for the host oracle ([design-build.md](design-build.md#oracle-and-protocol-models)) | Apache-2.0 | permanent, development only | [test/oracle/common_test/ORIGIN.md](../test/oracle/common_test/ORIGIN.md) |
 | Third-party code inside OTP: asmjit, PCRE2, zlib, zstd, Ryu | the JIT's assembler (BeamAsm image only), `re`, `zlib`, `zstd`, float printing | asmjit and zlib Zlib; PCRE2 BSD-3-Clause WITH PCRE2-exception; zstd BSD-3-Clause; Ryu Apache-2.0 | permanent; asmjit never in the system domain's image | part of `otp/` |
 | musl | the C library of every runtime and native program | MIT, with the parts listed in [research](research-c-library.md#musl-126) | permanent | [musl/ORIGIN.md](../musl/ORIGIN.md) |
-| Fiasco, with `bootstrap`, `sigma0`, `l4sys` and `mk` | the kernel of Phase 1 and of the first release, behind erXos's interface ([design-fiasco.md](design-fiasco.md)) | MIT, except the GPL-2.0 `kobject_rpc.h` and `jdb_object.cpp`, the first of which every build replaces and the second of which only a kernel with the debugger compiles ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)); Fiasco's other GPL and LGPL parts are excluded at import | **release**, replaced by erXos's kernel in Phase 2; 0.1's images carry a development kernel, with the debugger and `jdb_object.cpp`, by decision, under CLAUDE.md's exception for the website's images with their source offered, and 0.2's release the release kernel's build without them ([site/README.md](../site/README.md), [design-kernel.md](design-kernel.md)) | [kernel](../fiasco/kernel/ORIGIN.md), [bootstrap](../fiasco/bootstrap/ORIGIN.md), [l4re-core](../fiasco/l4re-core/ORIGIN.md), [mk](../fiasco/mk/ORIGIN.md) |
+| Fiasco, with `bootstrap`, `sigma0`, `l4sys` and `mk` | the kernel of Phase 1 and of the first release, behind erXos's interface ([design-fiasco.md](design-fiasco.md)) | MIT, except the GPL-2.0 `jdb_object.cpp`, which only a kernel with the debugger compiles; the tree's `kobject_rpc.h` is erXos's MIT clean-room replacement of Fiasco's GPL-2.0 original ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)); Fiasco's other GPL and LGPL parts are excluded at import | **release**, replaced by erXos's kernel in Phase 2; 0.1's images carry a development kernel, with the debugger and `jdb_object.cpp`, by decision, under CLAUDE.md's exception for the website's images with their source offered, and 0.2's release the release kernel's build without them ([site/README.md](../site/README.md), [design-kernel.md](design-kernel.md)) | [kernel](../fiasco/kernel/ORIGIN.md), [bootstrap](../fiasco/bootstrap/ORIGIN.md), [l4re-core](../fiasco/l4re-core/ORIGIN.md), [mk](../fiasco/mk/ORIGIN.md) |
 | `stdarg.h`, `stdbool.h` and `stddef.h` of the cross `aarch64-elf-gcc` | macros and types Fiasco's build includes; no GCC library is linked | GPL-3.0-or-later WITH GCC-exception-3.1 | **release**: inputs of Fiasco's build, allowed by name and hash in the release's link closure ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)) | named by release and SHA-256 in the build record |
 | Code translated from Fiasco into erXos's kernel | the kernel's design and know-how | MIT, notice kept per file and in `kernel/NOTICE-fiasco`; only from files whose effective license is permissive ([Licenses and notices](#licenses-and-notices)) | permanent | written in `kernel/` |
 | libfdt | device-tree parsing in the kernel, Fiasco and the root task | BSD-2-Clause (dual GPL-2.0-or-later) | permanent | [fiasco/libfdt/ORIGIN.md](../fiasco/libfdt/ORIGIN.md) |
@@ -1950,7 +1950,8 @@ whose effective license is permissive, judged by Fiasco's `LICENSE.spdx`,
 the file's own notice and its upstream history, never by a header alone:
 most of Fiasco's kernel sources carry no notice and take the MIT that
 `LICENSE.spdx` declares for the kernel package, while a file's own
-notice can say otherwise, as `kobject_rpc.h`'s does.
+notice can say otherwise, as the GPL-2.0 notice of Fiasco's own
+`kobject_rpc.h` does.
 GPL-2.0 counts a translation as a modification, so nothing is translated
 from a file under the GPL, or from one whose history shows code taken
 from such a file. Code translated from FreeBSD's network stack keeps the
@@ -2023,8 +2024,8 @@ copyleft license only for a file
   distributed, have an allowlist of their own that adds the licenses of
   the test tools they carry, such as the Open POSIX Test Suite's
   GPL-2.0-or-later, and the packer refuses to mark a test image as a
-release. The clean-room header replaces Fiasco's `kobject_rpc.h` in
-every build, and the kernel debugger's `jdb_object.cpp` is compiled only
+release. The tree's `kobject_rpc.h` is erXos's MIT clean-room
+replacement of Fiasco's GPL-2.0 original, and the kernel debugger's `jdb_object.cpp` is compiled only
 into a kernel with the debugger: development kernels, the published
 images' included, carry it by decision, and the release kernel leaves it
 out ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)).

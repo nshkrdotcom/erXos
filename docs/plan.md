@@ -380,10 +380,11 @@ generated into the build tree from its checked-in inputs.
 
 **Gate G0.** The import: the license scan and link closure of the Fiasco
 set, which name the GPL-headed files Fiasco keeps
-([design.md](design.md#dependencies)); since `kobject_rpc.h`, which every
-build includes, is one of them, any distribution outside the project, in
-source or binary form, rests on the clean-room header that replaces it
-in every build, brought forward from 0.2's release build
+([design.md](design.md#dependencies)); since every build includes
+`kobject_rpc.h`, whose Fiasco original is GPL-2.0, any distribution
+outside the project, in source or binary form, rests on the MIT
+clean-room header that takes its place in the tree, brought forward
+from 0.2's release build
 ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)), as
 CLAUDE.md's rule for stopgaps requires. The kernel debugger's
 `jdb_object.cpp`, which a kernel with the debugger compiles, goes out
@@ -1764,7 +1765,7 @@ neighbour answering. The release notes carry the downsides table.
   device of 0.2's platforms is behind an IOMMU, so a DMA-capable
   device's domain is in the trusted base (FD12); the release's
   Fiasco build (the debugger off and its configuration check, the
-  clean-room header that replaces `kobject_rpc.h`, the release kernel's
+  MIT clean-room `kobject_rpc.h` in the GPL original's place, the release kernel's
   build without `jdb_object.cpp`, the writable-or-executable patch, and the check that the image's link
   closure is all permissive, and the eager FP switch); the system-call
   fuzz campaign; and the upstream security watch. The build also

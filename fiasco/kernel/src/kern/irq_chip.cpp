@@ -1,5 +1,5 @@
 // Modified by erXos: an interrupt whose pin is unbound is ended at its chip
-// instead of dereferenced (TODO.md, "a device's input and a fault's reach").
+// instead of dereferenced (docs/design-fiasco.md, "An unbound pin's interrupt").
 INTERFACE:
 
 #include <cxx/bitfield>
