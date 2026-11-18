@@ -4,13 +4,15 @@
 
 require 'minitest/autorun'
 require_relative '../../tools/lib/erx/splash_mark'
+require_relative '../../tools/lib/erx/origin'
 
 # The splash's mark generator (tools/lib/erx/splash_mark.rb): the rasteriser
 # gives exact coverage bytes for a filled square, a square with a square
 # hole under the even-odd rule, and edges that cut pixels in half across
 # and down; and the path reader starts a subpath that follows Z at the
 # closed subpath's first point, as SVG's closepath says; it refuses a
-# coordinate too large for a float and a mark far taller than wide.
+# coordinate too large for a float and a mark far taller than wide; and the
+# generated module declares BSD-2-Clause, the license of the logo bitmap.
 class ErxSplashMarkTest < Minitest::Test
   MARK = Erx::SplashMark
 
@@ -54,5 +56,15 @@ class ErxSplashMarkTest < Minitest::Test
 
   def test_z_before_a_moveto_is_refused
     assert_raises(MARK::MarkError) { MARK.outline('<path fill-rule="evenodd" d="Z M 0 0 L 1 0 L 1 1 Z"/>') }
+  end
+
+  # The image's provenance record resolves a generated source by its own
+  # SPDX line, as pack_provenance.rb does, with no fallback; that header is
+  # what licenses the logo bitmap under BSD-2-Clause.
+  def test_the_generated_module_declares_bsd_2_clause
+    module_text = MARK.erlang(MARK.rasterise([square(0, 0, 1, 1)], width: 2))
+    review = { 'rules' => [], 'default_license' => 'NOASSERTION', 'default_evidence' => '' }
+    resolved = Erx::Attribution.for_file(MARK::OUTPUT, bytes: module_text, sidecar: nil, review: review)
+    assert_equal 'BSD-2-Clause', resolved.fetch('license')
   end
 end
