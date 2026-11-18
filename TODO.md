@@ -649,15 +649,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   not run without a seed` and ends as `ERX_END_OFF` before any domain starts, and the Pi 4 reads its RNG200 as
   [Entropy sources](docs/design-platforms.md#entropy-sources) says, with the release case "release entropy"
   ([design-fiasco.md](docs/design-fiasco.md#the-call-table)).
-* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/end.c`: `erx_machine_end` resets for every `how` but
-  `ERX_END_OFF`, `ERX_END_TRIAL` included, so no trial request is made. Refuse `ERX_END_TRIAL` with
+* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_MACHINE_END` case): `erx_machine_end`
+  answers `ERX_EINVAL` for every `how` but `ERX_END_OFF` and `ERX_END_RESET`, `ERX_END_TRIAL` included, so no trial
+  request is made. Refuse `ERX_END_TRIAL` with
   `ERX_ENOTSUP` while the boot value is `unknown` and otherwise make the platform's trial request before the
   reset, with the release case "trial" ([design-fiasco.md](docs/design-fiasco.md#the-end-path)).
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco/end.c` (`erx_fiasco_end_watchdog`) and `service.c`
-  (`service_fault`): a missed pet and a root fault power the machine off rather than reset it, so a hung or
-  faulted boot never reaches the committed slot and an unattended board stays off. Reset, as the end path
-  says, with a test that a missed pet ends with `erx: end reset`
-  ([design-fiasco.md](docs/design-fiasco.md#the-end-path)).
 * [High] 0.2 on Fiasco, `fiasco/kernel`: FD32's entry patch, the firmware's `SMCCC_ARCH_WORKAROUND_1` and `_3`
   at every entry from user mode and every switch between address spaces. Write it, time the null request on the
   Raspberry Pi 4 with and without it ([todo-performance.md](docs/todo-performance.md)), and carry it only if the
