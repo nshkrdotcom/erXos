@@ -112,7 +112,7 @@ module Erx
     LOGIN_KEY_DEFINER = 'tools/lib/erx/production_image.rb'
     LOGIN_KEY_ENTRY = /\blogin_key:/
     # Root files a test image adds to its trust store make it a test image
-    # (ProductionImage#build_medium; docs/design-crypto.md, "A test image adds roots").
+    # (ProductionImage::MediumKind.test; docs/design-crypto.md, "A test image adds roots").
     # Only the QEMU cells whose fixture serves HTTPS (TEST_ROOTS_BUILDERS) pass that
     # keyword, and only the trust store's own path through the build
     # (TEST_ROOTS_DEFINERS) carries it, so no other image's store holds a test root. The
@@ -122,9 +122,9 @@ module Erx
                              tools/lib/erx/trust_store.rb].freeze
     TEST_ROOTS_ENTRY = /\btest_roots:/
     # Programs a medium adds to its domain release make it a test image too
-    # (ProductionImage#build_medium's test_programs). Only the QEMU cell that starts one
+    # (ProductionImage::MediumKind.test's test_programs). Only the QEMU cell that starts one
     # from rc on the medium (TEST_PROGRAMS_BUILDERS, the kiosk suite's front cell) passes
-    # that keyword, and only the medium's build (TEST_PROGRAMS_DEFINER) takes it. The
+    # that keyword, and only the medium's kind and build (TEST_PROGRAMS_DEFINER) take it. The
     # check reads lines, as the test image one does, so it catches the keyword as written
     # in a call, not a name assembled from pieces.
     TEST_PROGRAMS_BUILDERS = %w[tools/lib/erx/kiosk.rb].freeze

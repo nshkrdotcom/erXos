@@ -36,7 +36,7 @@ module Erx
   #
   # The quotes cell (examples/dashboard/README.md, "The QEMU cell") boots the same package on a
   # test image whose trust store adds the root of an offline HTTPS fixture
-  # (QuotesFixture, ProductionImage#build_medium's test roots), with a network device on
+  # (QuotesFixture, a test medium's roots: ProductionImage::MediumKind.test), with a network device on
   # restricted user networking whose one guest forward, for erx_quotes_table's address
   # and port 443, relays each connection to the fixture (QemuPlan::Relay). The fixture
   # answers sol's first request with a body too big for erx_quotes, then every pair
@@ -117,9 +117,6 @@ module Erx
     FRONT_GAP_SECONDS = 1
     FRONT_LINE_SECONDS = 60
     FRONT_WAIT_SECONDS = 30
-    # A medium's build given no test programs.
-    NO_TEST_PROGRAMS = ProductionImage::Added.new(entries: [].freeze, inputs: [].freeze, imports: {}.freeze)
-
     module_function
 
     # The package at path with one bit of its header's root_hash flipped, written into
@@ -351,7 +348,8 @@ module Erx
       def front_boot(cell, package, fiasco, work, draw:, front:)
         build_date = self.build_date
         manifest = front ? @manifest : Manifest::Edit.without_parameter(@manifest, record: FRONT_GRANT, key: 'front')
-        boot(cell, package, fiasco, work, manifest: manifest, test_programs: front_program(fiasco)) do |shell, serial, socket, directory|
+        kind = ProductionImage::MediumKind.test(test_programs: front_program(fiasco))
+        boot(cell, package, fiasco, work, manifest: manifest, kind: kind) do |shell, serial, socket, directory|
           Kiosk.front_points(shell, serial: serial, socket: socket, directory: directory, draw: draw, build_date: build_date)
         end
       end
@@ -384,8 +382,9 @@ module Erx
         server = QuotesFixture::Server.new(context: context, answers: QUOTES_ANSWERS)
         begin
           relay = QemuPlan::Relay.new(network: QUOTES_NETWORK, address: QUOTES_ADDRESS, port: QUOTES_PORT, relay_port: server.start.port)
-          boot(cell, package, fiasco, work, test_roots: [TrustStore::TestRoot.new(path: File.join(roots, trusted ? 'fixture.pem' : 'other.pem'), source: File.join(@root, FIXTURE))],
-                                            nic: relay) do |shell, serial, _socket, _directory|
+          root = TrustStore::TestRoot.new(path: File.join(roots, trusted ? 'fixture.pem' : 'other.pem'), source: File.join(@root, FIXTURE))
+          kind = ProductionImage::MediumKind.test(test_roots: [root])
+          boot(cell, package, fiasco, work, kind: kind, nic: relay) do |shell, serial, _socket, _directory|
             Kiosk.at_shell(shell) do
               Kiosk.check_quotes(serial: serial, lines: trusted ? [QUOTES_TOO_BIG, *QuotesFixture.fresh_lines] : QuotesFixture.refused_lines)
             end
@@ -398,17 +397,19 @@ module Erx
       end
 
       # Boots package on the image's release medium at one CPU under HVF, built from
-      # manifest, with nic when given, a trust store adding test_roots and the domain
-      # release adding test_programs. The block is given the command shell's checkpoint,
-      # its wait raised for the longest cell's checks, with the serial log's path, the QMP
-      # socket and the cell's directory, and answers the points from the shell on.
-      def boot(cell, package, fiasco, work, manifest: @manifest, test_roots: [], test_programs: NO_TEST_PROGRAMS, nic: nil, &points)
+      # manifest, with nic when given, as a medium of kind (ProductionImage::MediumKind):
+      # the development medium, or a test medium whose trust store adds its roots or whose
+      # domain release adds its programs. The block is given the command shell's
+      # checkpoint, its wait raised for the longest cell's checks, with the serial log's
+      # path, the QMP socket and the cell's directory, and answers the points from the
+      # shell on.
+      def boot(cell, package, fiasco, work, manifest: @manifest, kind: ProductionImage::MediumKind.development, nic: nil, &points)
         directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(work, cell))
         production = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
                                          fiasco: fiasco)
         apps = ImageApps.plan([package], enable: [NAME], signers: [], local: false)
         built, written = production.build_medium(directory: File.join(directory, 'image'), manifest_source: manifest, apps: apps,
-                                                 test_roots: test_roots, test_programs: test_programs)
+                                                 kind: kind)
         medium = written.fresh(directory: directory)
         choice = BootRecord.read(medium)
         image = BootRecord.extract(medium, choice, output: File.join(directory, 'slot.boot'))

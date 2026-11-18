@@ -386,12 +386,20 @@ one package by its hash and no key, and no downloaded card ever trusts
 its builder's development key: the build refuses a card whose admitted
 manifest trusts a key (`ProductionImage.check_published_trust`), and refuses
 a package, signer or `--local` of its builder's
-(`ProductionImage.check_card_apps`), so what the card holds follows from
-the tree it was built from. QEMU's release medium, the page's QEMU virt
-download ([design-ssh.md](design-ssh.md#the-ssh-domain)), is the published
-medium too when `tools/erx pack --medium` packs it with no app of its
-builder's: it carries the same kiosk, enabled, and its build refuses the
-same trust. Since a package of the image is
+(`ProductionImage.check_medium`), so what the card holds follows from
+the tree it was built from. A medium's builder states its kind
+(`ProductionImage::MediumKind`), which nothing infers from the other
+options: *development*, a builder's own medium (`tools/erx pack
+--medium`, and every harness); *published*, the one the website offers
+(`tools/erx pack --published`, `make pack`); and *test*, a QEMU cell's
+development medium with test roots or programs added and marked as test
+code. QEMU's release medium, the page's QEMU virt
+download ([design-ssh.md](design-ssh.md#the-ssh-domain)), is the
+published kind: it carries the same kiosk, enabled, takes no app of its
+builder's, and its build refuses the same trust. A card is the website's
+whatever its kind, so a development card carries the kiosk alone too;
+only the published kind carries the Doom example
+([Examples](#examples)). Since a package of the image is
 authenticated by its hash and its signer and signature fields are not
 read ([The package](#the-package)), the kiosk is sealed by the
 *published package key*, an Ed25519 key whose seed is the SHA-256 of a
@@ -1769,9 +1777,21 @@ wants a renderer of its own ships it as its own program.
 
 ## Examples
 
-`examples/` holds app directories that no list of erXos's names: no
-release script, application list, manifest or test list. Each is built
-only as a third party would build it, through the SDK.
+`examples/` holds app directories that are not part of erXos: no
+release script, application list, manifest or test list names one, and
+erXos's own build compiles none into the system. A file of the build's tools, the board manifests or the host
+tests' build fixtures names an example only if it is one of the few
+that fetch, pack or build one, each listed with the design text that
+names it (`ExampleLists::EXEMPT`; `make check` refuses the name in any
+other): the fetch step below, the card's kiosk and the kiosk suite's,
+and Doom's build for the published media. An app example is packed as
+a third party packs one, through the SDK, which is how the gates pack
+and test `examples/dashboard` and how the card and the kiosk suite
+carry it; Doom alone is compiled by the published build itself, as a
+program of the domain release, and no gate builds it (below).
+A name is not source: the build names an example's directory and the
+files it compiles, and no line of an example's source enters the
+tree.
 
 * **`examples/dashboard/`**, the kiosk dashboard, erXos's own code under
   its license: `app.txt`, `lib/erx_dashboard/` and its host test, which
@@ -1802,8 +1822,12 @@ only as a third party would build it, through the SDK.
   `make check`, the landing gate or the milestone gate builds it. 0.1's
   published media carry it as `/bin/doom`, a program of the domain
   release, not as a package: the published build, `tools/erx pack
-  --medium`, compiles the fork's sources with Freedoom's WAD linked in
-  (`tools/lib/erx/doom_program.rb`). The media offer the gitlink's
+  --published` (the published kind of [the shipped
+  manifests](#the-apps-row), the only kind that carries it), compiles
+  the fork's sources with Freedoom's WAD linked in
+  (`tools/lib/erx/doom_program.rb`, which names the files it compiles).
+  A builder's `tools/erx pack --medium` and every harness pack a medium
+  without it, and need nothing of the fork. The media offer the gitlink's
   commit as their source, so the build refuses a fork that is missing
   or does not hold that commit, and compiles a snapshot of the commit
   written from its blobs under `build/`, never the checkout's working
@@ -1819,8 +1843,8 @@ only as a third party would build it, through the SDK.
   No erXos code includes it; only the published build compiles and
   links it, so working on erXos needs reading it only for that build.
 
-To the packer each is an app directory with an `app.txt`, as is a
-third party's anywhere on disk. The landing gate exports the SDK, packs
+To the packer each app example is an app directory with an `app.txt`,
+as is a third party's anywhere on disk. The landing gate exports the SDK, packs
 and host-tests `examples/dashboard` with nothing
 but the SDK on their paths, and checks that every call each example makes into erXos's
 modules is one of `public.txt`'s functions, so a change that breaks the

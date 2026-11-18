@@ -615,22 +615,24 @@ module Erx
 
     # Builds Fiasco and packs the production image into build/production-image/PLATFORM
     # (ProductionImage.pack_platform), QEMU virt's by default or with --platform NAME
-    # that board's; with --medium, also the medium that holds it: the release medium for
-    # QEMU (ReleaseMedium), or a board's boot partition and SD card image (BootPartition).
-    # With --probe header, instead the Raspberry Pi 4's header probe card (HeaderProbe),
-    # a card of its own that needs no Fiasco and no image; it is a medium already, so it
-    # takes no --medium. Each --app adds an app to the image (image_apps,
-    # docs/design-packaging.md, "Adding an app to an image"), into its medium's system
-    # partition, so --app implies --medium (pack_options); --enable NAME starts it at
-    # boot and --signer FILE trusts a deployer's key for packages installed later.
-    # --local makes it a local test image, which takes a package whose license is not
-    # permissive and never leaves this host (ImageApps::Plan); a board's card, the one the
-    # website offers, takes neither (ProductionImage#build_medium). A medium packed with no
-    # --app is the published one, which carries the Doom example as /bin/doom and so needs
-    # `tools/erx fetch --example doom` first (ProductionImage.pack_platform's doom).
+    # that board's; with --medium, also the development medium that holds it: the release
+    # medium for QEMU (ReleaseMedium), or a board's boot partition and SD card image
+    # (BootPartition). With --published, instead the medium the website offers, QEMU's or
+    # the board's card (ProductionImage::MediumKind.published): it carries the kiosk alone
+    # and the Doom example as /bin/doom, so it needs `tools/erx fetch --example doom`
+    # first, takes no app, signer or --local of its builder's, and QEMU's is packed for
+    # ProductionImage::Machine.published. With --probe header, instead the Raspberry Pi
+    # 4's header probe card (HeaderProbe), a card of its own that needs no Fiasco and no
+    # image; it is a medium already, so it takes neither. Each --app adds an app to the
+    # image (image_apps, docs/design-packaging.md, "Adding an app to an image"), into its
+    # medium's system partition, so --app implies --medium (pack_options); --enable NAME
+    # starts it at boot and --signer FILE trusts a deployer's key for packages installed
+    # later. --local makes it a local test image, which takes a package whose license is
+    # not permissive and never leaves this host (ImageApps::Plan). A board's card is the
+    # website's whatever its kind and takes no app, signer or --local either
+    # (ProductionImage.check_medium).
     def self.pack(arguments)
       pack_options(arguments) => { platform:, medium:, probe:, sources:, enable:, signers:, local: }
-      require_relative 'lib/erx/production_image'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       environment = host_environment(runner: runner)
       return pack_probe(runner: runner, environment: environment, platform: platform) if probe
@@ -638,7 +640,7 @@ module Erx
                         compiler: environment.fetch('ERX_CLANG'), linker: environment.fetch('ERX_LLD'))
       result = ProductionImage.pack_platform(root: ROOT, runner: runner, compiler: environment.fetch('ERX_CLANG'),
                                              linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium,
-                                             apps: apps, doom: medium && apps.empty?)
+                                             apps: apps)
       built, written = medium ? result : [result, nil]
       Terminal.puts("production image: #{built.single}; root_startup: #{built.report.fetch('manifest').fetch('root_startup')}")
       case written
@@ -659,10 +661,15 @@ module Erx
     # pack's options, parsed from arguments and checked whole before anything is built.
     PackOptions = Data.define(:platform, :medium, :probe, :sources, :enable, :signers, :local)
 
-    # The PackOptions of pack's arguments, parsed and checked. An image's packages lie in its medium's system
-    # partition, so an --app sets medium as --medium does; --probe takes neither.
+    # The PackOptions of pack's arguments, parsed and checked. medium is the medium's
+    # stated kind (ProductionImage::MediumKind), or nil for the image alone: --published
+    # gives the published kind, and otherwise --medium the development kind, as an --app
+    # does, since an image's packages lie in its medium's system partition. The published
+    # medium takes no app, signer or --local of its builder's, and --probe takes no medium.
     def self.pack_options(arguments)
+      require_relative 'lib/erx/production_image'
       medium = false
+      published = false
       local = false
       probe = nil
       sources = []
@@ -670,6 +677,7 @@ module Erx
       signers = []
       platform = platform_option(arguments) do |flags|
         flags.on('--medium') { medium = true }
+        flags.on('--published') { published = true }
         flags.on('--probe NAME', %w[header]) { |name| probe = name }
         flags.on('--app PATH') { |path| sources << File.expand_path(path) }
         flags.on('--enable NAME') { |name| enable << name }
@@ -677,10 +685,19 @@ module Erx
         flags.on('--local') { local = true }
       end
       no_arguments(arguments)
-      raise Error, 'pack: --probe packs a card of its own and takes no --medium' if probe && medium
-      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && (local || !(sources + enable + signers).empty?)
+      builders = local || !(sources + enable + signers).empty?
+      raise Error, 'pack: --probe packs a card of its own and takes no --medium or --published' if probe && (medium || published)
+      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && builders
+      if published && builders
+        raise Error, 'pack: --published packs the medium the website offers, which takes no app, signer or --local'
+      end
 
-      PackOptions.new(platform: platform, medium: medium || !sources.empty?, probe: probe, sources: sources.freeze,
+      kind = if published
+               ProductionImage::MediumKind.published
+             elsif medium || !sources.empty?
+               ProductionImage::MediumKind.development
+             end
+      PackOptions.new(platform: platform, medium: kind, probe: probe, sources: sources.freeze,
                       enable: enable.freeze, signers: signers.freeze, local: local)
     end
 
@@ -948,7 +965,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build release-kernel | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | netboot [--tftp DIR] [--platform NAME] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build release-kernel | build runtime | build rc-oracle | build glyphs | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium | --published] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | netboot [--tftp DIR] [--platform NAME] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N]')
       0
     end
 
@@ -1140,7 +1157,7 @@ module Erx
     # `tools/erx boot --medium PATH`: the release medium at PATH in QEMU as a person boots
     # it (InteractiveBoot.medium_argv), on the published medium's machine
     # (ProductionImage::Machine.published), whose RAM is at least what any medium
-    # `tools/erx pack --medium` writes was packed for; with --print, the plain
+    # `tools/erx pack --medium` or `--published` writes was packed for; with --print, the plain
     # qemu-system-aarch64 command instead, whose
     # kernel, device tree and disk lie in the tree until the next --medium. The guest
     # boots a copy of the medium (InteractiveBoot.medium_copy), where it keeps its /data

@@ -536,8 +536,10 @@ licenses in the image's `NOTICES`, and its source is erXos's fork,
 `examples/doom/doom` records. Keys come from QEMU's virtio keyboard; the
 Pi has no keyboard in 0.1. To build the published images yourself, run
 `tools/erx fetch --example doom` first, which fetches the fork and
-Freedoom's WAD; `tools/erx pack --medium` refuses without them, or with
-a fork that does not hold that commit.
+Freedoom's WAD; `make pack` (`tools/erx pack --published`) refuses without
+them, or with a fork that does not hold that commit. `tools/erx pack
+--medium` packs your own development medium, which carries no Doom and
+needs neither.
 <!-- unverified: the demo loop on the Pi 4 card (shown on QEMU's published medium only). -->
 
 ## Correctness and testing

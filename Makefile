@@ -38,12 +38,14 @@ generate:
 web:
 	$(RUBY) tools/erx build web
 
-# The production image and its medium for PLATFORM into build/production-image/PLATFORM/:
-# QEMU's release medium, or for raspi4b the SD card's boot/, sdcard.img and
-# sdcard.img.xz. With PROBE=header, the Raspberry Pi 4's header probe card into
-# build/probe-card/raspi4b-header/ instead (docs/research-rpi4-header-probe.md).
+# The production image and the published medium for PLATFORM, the one the website
+# offers, into build/production-image/PLATFORM/: QEMU's release medium, or for raspi4b
+# the SD card's boot/, sdcard.img and sdcard.img.xz. It carries the Doom example, which
+# must be fetched first (README.md, "Doom"). With PROBE=header, the Raspberry Pi 4's
+# header probe card into build/probe-card/raspi4b-header/ instead
+# (docs/research-rpi4-header-probe.md).
 pack:
-	$(RUBY) tools/erx pack --platform $(PLATFORM) $(if $(PROBE),--probe $(PROBE),--medium)
+	$(RUBY) tools/erx pack --platform $(PLATFORM) $(if $(PROBE),--probe $(PROBE),--published)
 
 # Every platform's image and medium: QEMU's release medium and the Raspberry Pi 4's SD card.
 check-reproducible:

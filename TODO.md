@@ -7686,14 +7686,20 @@ to the corpus and follow rc
   build twice. Give it a gate, or make `check-reproducible` rebuild the
   kernel.
 * [Medium] build gates, the published media and the Doom example
-  (`ProductionImage.pack_platform`'s `doom`): only `tools/erx pack --medium`
-  with no `--app` builds the published QEMU medium and the Pi 4 card with
-  `/bin/doom` and on their published machines
+  (`ProductionImage::MediumKind.published`): only `tools/erx pack
+  --published` (`make pack`) builds the published QEMU medium and the Pi 4
+  card with `/bin/doom` and on their published machines
   (`ProductionImage::Machine.published`, 640 MiB for QEMU); the
-  raspi4b suite and `make check-reproducible` build those media without
-  Doom, so no gate proves that the media as published still pack, fit their
-  machine and build reproducibly. Give one gate cell a fetched Doom fork
-  and have it pack both published media with Doom.
+  raspi4b suite and `make check-reproducible` build the development kind of
+  those media, without Doom, so no gate proves that the media as published
+  still pack, fit their machine and build reproducibly. Give one gate cell a
+  fetched Doom fork and have it pack both published media with Doom.
+* [Low] examples, `tools/lib/erx/doom_program.rb` (`DOOM_SOURCES`): the
+  Doom build lists the fork's files to compile as a copy of the fork
+  `Makefile`'s `SRC_DOOM` less the X11 platform part, and its platform layer
+  as `GLUE_SOURCES`, so the fork's `Makefile` and this list must change
+  together. Put the list in a file of the fork, a commit on its `erxos`
+  branch, that both its `Makefile` and `DoomProgram` read from the snapshot.
 
 * [Low] tests, `test/host/erx_starter_test.rb`: the suite takes about 4.5 minutes, most of it seeded fault 0 (the keeper not linking), under which nearly every case waits out EUnit's 5 s timeout. Fail the fault's cases fast instead of by timeout.
 * [Low] tests, `liberx/system/dom_apply.c` (`apply_given_words`): no host test checks the record words written for a framebuffer handed to a domain other than the system domain; placement, the apply steps and `erx_boot_framebuffer_words` itself (`boot_manifest_test.rb`) are tested, and the raspi4b suite's tcg-4cpu cell, one QEMU boot under TCG, checks the display domain's record through its driver's framebuffer line and, for the base and offset, only through its picture.
@@ -8722,7 +8728,7 @@ document's "residual risks accepted" paragraph.
   "a root only with a consumer" rule gives way to this for the system store; a kiosk or app may
   still pin its own roots.
 * [High] 0.1, Doom from `rc` ([plan.md](docs/plan.md#01-the-preview)): both published media carry `/bin/doom`
-  (`ProductionImage.pack_platform`'s `doom`), but `rc` gives a program no window yet, so `doom` typed at the QEMU
+  (`ProductionImage::MediumKind.published`), but `rc` gives a program no window yet, so `doom` typed at the QEMU
   medium's console prints nothing and ends with status 10, its `EXIT_OPEN` (a file of `/dev` did not open,
   `examples/doom/doom/doomgeneric/doomgeneric_erxos.c`). Neither the QEMU play with the virtio keyboard nor the
   Pi's demo loop runs until `rc` starts a program with a window of its own whose `/dev` holds `draw`, `ctl` and
@@ -9711,7 +9717,7 @@ document's "residual risks accepted" paragraph.
 * [Medium] site, the QEMU virt download ([site/README.md](site/README.md),
   [design-ssh.md](docs/design-ssh.md#the-ssh-domain)): the page offers the browser demo's gzip-compressed
   `image.boot` as its QEMU download; it is to offer the QEMU release medium packed from the development
-  manifest (`ProductionImage#build_medium`, `published`), with the SSH domain and no `authorized_keys`, and the QEMU
+  manifest (`ProductionImage::MediumKind.published`), with the SSH domain and no `authorized_keys`, and the QEMU
   command line that boots it, while the browser demo keeps its own image. The site takes the medium only with a
   build record written at pack time that names its SHA-256, as the card's does, so it never takes a medium a
   guest has booted, which holds the guest's SSH host key and `/data` (`tools/erx boot --medium` boots a copy, but

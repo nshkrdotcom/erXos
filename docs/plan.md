@@ -1533,7 +1533,8 @@ its code, and the item's work waits on it.
   source is offered with the images: erXos's fork at the commit the
   tree's gitlink records. `tools/erx fetch --example doom` fetches the
   fork and Freedoom's WAD, and the published build, `tools/erx pack
-  --medium`, links both into `/bin/doom` and refuses without them. Doom
+  --published` (`make pack`), links both into `/bin/doom` and refuses
+  without them. Doom
   as a package built from `examples/doom`, on 1b-D's first slice
   (`erx_exec` and the program protocol's 64-bit file calls), stays
   track A's full milestone

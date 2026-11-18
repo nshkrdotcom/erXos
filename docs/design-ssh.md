@@ -259,7 +259,7 @@ own terms; all are development builds:
   too.
 
 Both downloadable media are the published media of the development
-manifest (`ProductionImage#build_medium`, `published`), which carry the
+manifest (`ProductionImage::MediumKind.published`), which carry the
 kiosk, so they hold the SSH domain and the `record_volume` window, and their
 record volume holds no `authorized_keys` ([Login keys](#login-keys)).
 Until whoever writes the medium adds the file, the domain listens and

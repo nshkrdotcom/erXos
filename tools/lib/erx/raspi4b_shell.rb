@@ -378,13 +378,14 @@ module Erx
     def line(text) = /\A#{Regexp.escape(text)}\r*\n\z/n
 
     # The Pi's production image with its boot partition, as `tools/erx pack --medium
-    # --platform raspi4b` writes it (ProductionImage.pack_platform), booted from the
-    # partition's own kernel8.img and bl31.bin, so what the model boots is what the card
-    # holds; the model's tree stands in for the one the firmware would make from the
-    # partition's tree and overlays.
+    # --platform raspi4b` writes it (ProductionImage.pack_platform), the development card,
+    # which carries the kiosk as the published one does but not Doom, so the suite needs
+    # no example fetched; booted from the partition's own kernel8.img and bl31.bin, so
+    # what the model boots is what the card holds; the model's tree stands in for the one
+    # the firmware would make from the partition's tree and overlays.
     def build_inputs(jobs:)
       ProductionImage.pack_platform(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @platform,
-                                    medium: true, jobs: jobs)
+                                    medium: ProductionImage::MediumKind.development, jobs: jobs)
       located_inputs
     end
 

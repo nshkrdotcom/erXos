@@ -115,6 +115,54 @@ module Erx
     NOTHING_ADDED = Added.new(entries: [].freeze, inputs: [].freeze, imports: {}.freeze)
     private_constant :NOTHING_ADDED
 
+    # The kind of medium build_medium packs, which its caller states and nothing infers
+    # from what else it passes. What the medium carries follows from it (check_medium,
+    # build_medium):
+    # * development, a builder's own medium, which no website offers: its builder's apps
+    #   (ImageApps::Plan), on the machine its caller names. `tools/erx pack --medium` and
+    #   the harnesses pack it.
+    # * published, the medium the website offers (`tools/erx pack --published`, `make
+    #   pack`): its own apps (published_apps) and none of its builder's, trusting no
+    #   package key (check_published_trust), on Machine.published, and the one kind that
+    #   carries the Doom example (example_parts; docs/design.md's dependency table, status
+    #   example), which must be fetched first.
+    # * test, a QEMU cell's development medium with test code added and marked as test
+    #   code, as build_test_image marks its image, so the kernel's banner says so and only
+    #   a development build boots it: test_roots (TrustStore::TestRoot), root files its
+    #   trust store takes after the tree's (TrustStore.store; docs/design-crypto.md, "A
+    #   test image adds roots"), for a cell whose fixture serves HTTPS, or test_programs
+    #   (Added), programs its domain release takes, for a cell that starts one from rc. The
+    #   source checks let only those cells name either (Checks::TEST_ROOTS_ENTRY,
+    #   Checks::TEST_PROGRAMS_ENTRY), and new is private, so no positional construction
+    #   passes test code where the checks do not read it.
+    # A card, the medium of a board the firmware boots from a boot partition, is the
+    # website's whatever its kind: it carries the published medium's apps and trust and
+    # no test code, and Doom only when it is the published kind.
+    MediumKind = Data.define(:name, :test_roots, :test_programs) do
+      private_class_method :new, :[]
+
+      def self.development = new(name: :development)
+      def self.published = new(name: :published)
+      def self.test(test_roots: [], test_programs: NOTHING_ADDED)
+        new(name: :test, test_roots: test_roots, test_programs: test_programs)
+      end
+
+      def initialize(name:, test_roots: [].freeze, test_programs: NOTHING_ADDED)
+        raise Error, "a medium is development, published or test, not #{name.inspect}" unless
+          %i[development published test].include?(name)
+        raise Error, 'test programs are an Added of entries' unless test_programs.is_a?(Added)
+
+        adds = !test_roots.empty? || !test_programs.entries.empty?
+        raise Error, 'a test medium adds test code' if name == :test && !adds
+        raise Error, 'only a test medium adds test code' if name != :test && adds
+
+        super(name: name, test_roots: test_roots.dup.freeze, test_programs: test_programs)
+      end
+
+      def published? = name == :published
+      def test_code? = name == :test
+    end
+
     # An image carries one domain release (ReleaseFiles.domain) with a boot script for
     # each name its manifest's domain rows and session templates give as their release
     # (domain_boots), and with it the one runtime image every domain runs. The build's
@@ -241,7 +289,7 @@ module Erx
       # at the development place.
       def self.site(platform) = development(platform).with(memory_mib: 256)
 
-      # The machine a published medium (build_medium's published) is packed for and boots
+      # The machine a published medium (MediumKind.published) is packed for and boots
       # on. A card's is its board's own. The QEMU medium carries the kiosk and the Doom
       # example, whose archive leaves the root too little room in the record's 512 MiB, so
       # its machine has PUBLISHED_QEMU_MIB, which `tools/erx boot --medium` gives QEMU. The
@@ -424,27 +472,26 @@ module Erx
     PUBLISHED_APPS_DIRECTORY = 'build/published-apps'
 
     # `tools/erx pack`'s one build: Fiasco for platform (Fiasco#build_for), then the
-    # production image of platform's development machine (the published medium's, with
-    # doom), with its medium when medium
-    # is set, into packed_directory, cleared first, with the packages of apps
-    # (ImageApps::Plan, `tools/erx pack --app`). A medium packed with no app of its
-    # builder's is the published one, the kind the website offers (build_medium); nothing
-    # on disk tells it from a builder's medium yet (TODO.md, "site, the QEMU virt download"). With
-    # doom, the published medium carries the Doom example (build_medium), which must be
-    # fetched (DoomProgram.check_fetched, which build_medium runs first), and is packed
-    # for the published medium's machine (Machine.published). Returns
-    # build's or build_medium's result. The raspi4b suite boots what this leaves.
-    def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4, apps: ImageApps.none, doom: false)
-      raise Error, 'only a published medium carries the Doom example' if doom && !medium
-      check_card_apps(platform, apps) if medium
+    # production image into packed_directory, cleared first, with the packages of apps
+    # (ImageApps::Plan, `tools/erx pack --app`), and with its medium when medium, a
+    # MediumKind, is given: on Machine.published for the published kind, the website's
+    # (`tools/erx pack --published`), and on the development machine otherwise. What the
+    # kind does not take is refused before Fiasco builds (check_medium), and so is a
+    # published medium in a tree whose Doom example is not fetched (DoomProgram.check_fetched,
+    # which the one build runs again). Nothing on disk tells a published medium from a
+    # builder's yet (TODO.md, "site, the QEMU virt download"). Returns build's or
+    # build_medium's result. The raspi4b suite boots the development card this leaves.
+    def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4, apps: ImageApps.none)
+      machine = medium&.published? ? Machine.published(platform) : Machine.development(platform)
+      check_medium(medium, machine: machine, apps: apps) if medium
+      DoomProgram.check_fetched(root: root, runner: runner) if medium&.published?
       fiasco = Fiasco.new(root: root, runner: runner, compiler: compiler)
       fiasco.build_for(platform, jobs: jobs)
       directory = clear_directory(root: root, path: File.join(root, packed_directory(platform)))
-      machine = doom ? Machine.published(platform) : Machine.development(platform)
       image = new(root: root, runner: runner, compiler: compiler, linker: linker, machine: machine, fiasco: fiasco)
       return image.build(directory: directory, apps: apps) unless medium
 
-      image.build_medium(directory: directory, apps: apps, published: apps.empty?, doom: doom)
+      image.build_medium(directory: directory, kind: medium, apps: apps)
     end
 
     # The image and the medium that holds it, both in directory, which must be clean: by
@@ -452,44 +499,27 @@ module Erx
     # (BootPartition.boot_partition_medium?) gets that partition's files and the card, the ABI's medium for the board (PiMedium); any other
     # gets the release medium for QEMU (ReleaseMedium). A boot that creates a domain
     # (MediumBoot) names a larger machine and a manifest with room for it, whose domain
-    # row names the release and runtime image the image then carries. When published, the
-    # medium is the one the website offers, as a card always is: it carries its own apps
-    # (published_apps) and trusts no key (check_published_trust). A card takes no apps of
-    # its builder's (check_card_apps). doom adds the Doom example, /bin/doom of the domain
-    # release (example_parts), to a published medium alone: `tools/erx pack --medium` asks
-    # for it, and no harness does, so no test build needs the example fetched. The website's
-    # image (InteractiveBoot) goes through build, which takes no doom, so it never carries Doom.
-    #
-    # test_roots (TrustStore::TestRoot) are root files the trust store takes after the
-    # tree's (TrustStore.store;
-    # docs/design-crypto.md, "A test image adds roots"), for a QEMU cell whose fixture
-    # serves HTTPS. Any makes the image a test image, marked as test code
-    # (build_test_image), so the kernel's banner says so and only a development build
-    # boots it; the source check lets only the test harnesses name them
-    # (Checks::TEST_ROOTS_ENTRY), and every other image's store is the tree's alone.
-    # test_programs (Added) are programs a QEMU cell adds to the domain release, as
-    # build_test_image's added are (Programs::Run#added), for a cell that starts one from
-    # rc on the medium; any makes the image a test image the same way, the source check
-    # lets only that cell name them (Checks::TEST_PROGRAMS_ENTRY), and a published medium
-    # takes none.
-    def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none,
-                     published: false, test_roots: [], test_programs: NOTHING_ADDED, doom: false)
+    # row names the release and runtime image the image then carries. kind (MediumKind,
+    # development unless its caller states another) decides the rest, after check_medium
+    # refuses what it does not take: a medium that carries its own apps (own_apps?), the
+    # published one and any card, carries published_apps and trusts no key
+    # (check_published_trust); only the published kind carries the Doom example, /bin/doom
+    # of the domain release (example_parts), so no harness build needs the example
+    # fetched; and a test kind's roots and programs go to the one build, marked as test
+    # code. The website's image (InteractiveBoot) goes through build, which asks for no
+    # example, so it never carries Doom.
+    def build_medium(directory:, kind: MediumKind.development, machine: @machine,
+                     manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none)
       on_own_board(machine)
-      self.class.check_card_apps(machine.platform, apps)
+      self.class.check_medium(kind, machine: machine, apps: apps)
 
-      card = BootPartition.boot_partition_medium?(machine.platform)
-      publish = published || card
-      raise Error, 'only a published medium carries the Doom example' if doom && !publish
-      raise Error, 'test programs are an Added of entries' unless test_programs.is_a?(Added)
-      raise Error, 'a published medium carries no test programs' if publish && !test_programs.entries.empty?
-      DoomProgram.check_fetched(root: @root, runner: @runner) if doom
-      apps = published_apps if publish
-      test_code = !test_roots.empty? || !test_programs.entries.empty?
-      built = assemble(directory: directory, manifest_source: manifest_source, added: test_programs, test_code: test_code,
-                       machine: machine, domains: domain_boots(manifest_source), apps: apps, record: false,
-                       test_roots: test_roots, doom: doom)
-      self.class.check_published_trust(machine.platform, built.report.fetch('manifest')) if publish
-      if card
+      own = self.class.own_apps?(kind, machine.platform)
+      apps = published_apps if own
+      built = assemble(directory: directory, manifest_source: manifest_source, added: kind.test_programs,
+                       test_code: kind.test_code?, machine: machine, domains: domain_boots(manifest_source), apps: apps,
+                       record: false, test_roots: kind.test_roots, doom: kind.published?)
+      self.class.check_published_trust(machine.platform, built.report.fetch('manifest')) if own
+      if BootPartition.boot_partition_medium?(machine.platform)
         return [built, BootPartition.lay_out(root: @root, runner: @runner, platform: machine.platform, build_kind: BUILD_KIND,
                                              bootable: built.single, erofs: built.erofs,
                                              directory: built_directory(built), compiler: @compiler, linker: @linker)]
@@ -498,15 +528,28 @@ module Erx
       [built, release_medium(built)]
     end
 
-    # Refuses apps (ImageApps::Plan) of a builder's for a medium of platform when it is a
-    # card, the medium of a board the firmware boots from a boot partition, which the
-    # website offers: it carries the kiosk alone (published_apps), and no package, signer or
-    # --local of its builder's (docs/design-packaging.md, "The shipped manifests").
-    def self.check_card_apps(platform, apps)
-      return if apps.empty? || !BootPartition.boot_partition_medium?(platform)
+    # Whether a medium of kind (MediumKind) for platform carries its own apps
+    # (published_apps) and no builder's: the published kind, and a card, the medium of a
+    # board the firmware boots from a boot partition, which is the website's whatever its
+    # kind (docs/design-packaging.md, "The shipped manifests").
+    def self.own_apps?(kind, platform) = kind.published? || BootPartition.boot_partition_medium?(platform)
 
-      raise Error, "the #{platform.name} card is the one the website offers: it carries the kiosk alone and takes no " \
-                   'app, signer or --local'
+    # Refuses a medium of kind (MediumKind) on machine with apps (ImageApps::Plan) its
+    # kind does not take, before anything is built: the published kind on any machine but
+    # Machine.published, a medium that carries its own apps (own_apps?) with any package,
+    # signer or --local of its builder's, since it carries the kiosk alone, and a card with
+    # test code, since the website offers it.
+    def self.check_medium(kind, machine:, apps:)
+      platform = machine.platform
+      card = BootPartition.boot_partition_medium?(platform)
+      offered = card ? "the #{platform.name} card" : "the published #{platform.name} medium"
+      if kind.published? && machine != Machine.published(platform)
+        raise Error, "#{offered} is packed for its own machine (ProductionImage::Machine.published)"
+      end
+      raise Error, "#{offered} is the one the website offers: it carries no test code" if card && kind.test_code?
+      return if apps.empty? || !own_apps?(kind, platform)
+
+      raise Error, "#{offered} is the one the website offers: it carries the kiosk alone and takes no app, signer or --local"
     end
 
     # Refuses a published medium of platform, the card or QEMU's medium the website offers,
@@ -573,11 +616,15 @@ module Erx
     # "Where a package lies"), never in the archive, and their rows are appended to the
     # image's copy of the manifest source, which the board's file never holds.
     # With record, the image's build record is written beside the checked image.boot.
-    # doom adds the Doom example to the domain release (domain_parts).
+    # doom, which only the published medium asks for (MediumKind), adds the Doom example
+    # to the domain release (domain_parts), and needs it fetched: a tree without it is
+    # refused before this build begins (DoomProgram.check_fetched), whatever asked for it;
+    # `tools/erx pack` refuses it earlier still, before Fiasco builds (pack_platform).
     def assemble(directory:, manifest_source:, added:, test_code:, machine:, domains:, apps:, record:, test_roots: [], doom: false)
       raise Error, 'a test image gets no build record' if record && test_code
       self.class.check_test_scripts(domains, test_code: test_code)
       self.class.check_test_roots(test_roots, test_code: test_code)
+      DoomProgram.check_fetched(root: @root, runner: @runner) if doom
 
       manifest_source = "#{manifest_source}#{apps.rows}"
       directory = OutputDirectory.prepare(root: @root, path: directory)
@@ -684,7 +731,12 @@ module Erx
     # is a function of its inputs shows instead in a tree of the check's own, generated
     # into gen/ beside the images and compared file by file with build/gen, whose
     # differences count as differing parts. build/gen's stamp must be the same after
-    # both builds as at that comparison, so the builds read the tree it compared.
+    # both builds as at that comparison, so the builds read the tree it compared. Each
+    # build packs the development medium (MediumKind), so the check needs no example
+    # fetched, with the kiosk: a card carries its own, as every card does, and QEMU's
+    # medium takes the published one as its builder's app, so both compare the package's
+    # bytes. The published media, with Doom, are not compared (TODO.md, "the published
+    # media and the Doom example").
     def check_reproducible(directory:)
       directory = OutputDirectory.prepare(root: @root, path: directory)
       raise Error, 'a reproducibility check needs a clean directory' unless Dir.empty?(directory)
@@ -694,7 +746,8 @@ module Erx
       (first, first_medium), (second, second_medium) = %w[first second].map do |name|
         @runtime.clean
         Bl31.clean(root: @root) if BootPartition.boot_partition_medium?(@machine.platform)
-        build_medium(directory: File.join(directory, name), published: true)
+        card = BootPartition.boot_partition_medium?(@machine.platform)
+        build_medium(directory: File.join(directory, name), apps: card ? ImageApps.none : published_apps)
       end
       raise Error, 'build/gen was regenerated during the reproducibility check; run it again' unless generated_stamp == compared
 

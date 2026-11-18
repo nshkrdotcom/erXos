@@ -19,6 +19,11 @@ class ProductionImageTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   PLATFORM = Erx::Platform.development(ROOT)
   DEVELOPMENT = Erx::ProductionImage::Machine.development(PLATFORM)
+  KIND = Erx::ProductionImage::MediumKind
+  TEST_ROOT = Erx::TrustStore::TestRoot.new(path: 'build/fixture.pem', source: 'test/fixtures/quotes_fixture.rb')
+  TEST_PROGRAM = Erx::ProductionImage::Added.new(entries: [{ 'path' => 'bin/probe' }].freeze, inputs: [].freeze, imports: {}.freeze)
+  CLOCK = Erx::ImageApps::Package.new(path: '/p/clock.app', name: 'clock', memory: 1 << 22, sha256: "\xab".b * 32, license: 'MIT')
+
   TREE = <<~DTS
     /dts-v1/;
 
@@ -101,41 +106,114 @@ class ProductionImageTest < Minitest::Test
     end
   end
 
-  # The Raspberry Pi 4's card is the one the website offers: it carries the kiosk alone,
-  # which its own build adds, so it takes no app, signer or --local of its builder's,
-  # refused before anything is built; its manifest keeps the board's apps row, as QEMU's
-  # medium's does.
-  def test_a_card_takes_no_app_of_its_builders
-    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    assert_match(/^apps\n  memory [0-9]+\n  max 1\n  services display net\n/, pi.manifest_source(ROOT))
-
-    machine = Erx::ProductionImage::Machine.development(pi)
-    image = Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
-                                     runtime: nil, jit_runtime: nil)
-    [Erx::ImageApps.plan([], enable: [], local: true),
-     Erx::ImageApps.plan([Erx::ImageApps::Package.new(path: '/p/clock.app', name: 'clock', memory: 1 << 22,
-                                                     sha256: "\xab".b * 32, license: 'MIT')], enable: [])].each do |apps|
-      error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', apps: apps) }
-      assert_equal 'the raspi4b card is the one the website offers: it carries the kiosk alone and takes no app, ' \
-                   'signer or --local', error.message
+  # A medium is of one kind, which its builder states: development, published or test. A
+  # test medium adds test code, a root or a program at least, and no other kind adds any;
+  # its constructors alone make one, so a positional new cannot slip test code past the
+  # source checks (Checks::TEST_ROOTS_ENTRY, Checks::TEST_PROGRAMS_ENTRY).
+  def test_a_medium_is_of_one_kind_its_builder_states
+    test = KIND.test(test_roots: [TEST_ROOT])
+    assert_equal %i[development published test], [KIND.development, KIND.published, test].map(&:name)
+    assert_equal [false, true, false], [KIND.development, KIND.published, test].map(&:published?)
+    assert_equal [false, false, true], [KIND.development, KIND.published, test].map(&:test_code?)
+    assert_equal [TEST_PROGRAM, []], KIND.test(test_programs: TEST_PROGRAM).then { [it.test_programs, it.test_roots] }
+    {
+      -> { KIND.test } => 'a test medium adds test code',
+      -> { KIND.test(test_programs: []) } => 'test programs are an Added of entries',
+      -> { KIND.development.with(test_roots: [TEST_ROOT]) } => 'only a test medium adds test code',
+      -> { KIND.published.with(test_programs: TEST_PROGRAM) } => 'only a test medium adds test code',
+      -> { KIND.development.with(name: :builder) } => 'a medium is development, published or test, not :builder'
+    }.each do |make, message|
+      assert_equal message, assert_raises(Erx::Error) { make.call }.message
     end
-    Erx::ProductionImage.check_card_apps(pi, Erx::ImageApps.none)
-    Erx::ProductionImage.check_card_apps(PLATFORM, Erx::ImageApps.plan([], enable: [], local: true))
+    assert_raises(NoMethodError) { KIND.new(:test, [TEST_ROOT], TEST_PROGRAM) }
+    assert_raises(NoMethodError) { KIND[:test, [TEST_ROOT], TEST_PROGRAM] }
   end
 
-  # Test programs make a medium a test image, so a published medium, the one the website
-  # offers, and the Pi 4's card, which always is one, take none; both are refused before
-  # anything is built, as are test programs that are not an Added.
-  def test_a_published_medium_takes_no_test_program
-    added = Erx::ProductionImage::Added.new(entries: [{ 'path' => 'bin/probe' }].freeze, inputs: [].freeze, imports: {}.freeze)
-    [[PLATFORM, { published: true }], [Erx::Platform.load(root: ROOT, name: 'raspi4b'), {}]].each do |platform, published|
-      error = assert_raises(Erx::Error) do
-        medium_builder(platform).build_medium(directory: '/nonexistent', test_programs: added, **published)
-      end
-      assert_equal 'a published medium carries no test programs', error.message
+  # What each kind carries, as build_medium hands it to the one build (MediumProbe): a
+  # development medium its builder's apps alone; a test medium those and its test code,
+  # marked as test code; a published medium its own apps (published_apps) and the Doom
+  # example, on Machine.published. A card carries its own apps whatever its kind, and Doom
+  # only when published.
+  def test_each_medium_kind_carries_what_its_rule_gives
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    builders = Erx::ImageApps.plan([CLOCK], enable: [])
+    none = Erx::ImageApps.none
+    test = KIND.test(test_roots: [TEST_ROOT], test_programs: TEST_PROGRAM)
+    plain = { doom: false, test_code: false, test_roots: [], added: [] }
+    {
+      [PLATFORM, KIND.development, builders] => { apps: builders, **plain },
+      [PLATFORM, test, builders] => { apps: builders, doom: false, test_code: true, test_roots: [TEST_ROOT], added: ['bin/probe'] },
+      [PLATFORM, KIND.published, none] => { apps: :own, **plain, doom: true },
+      [pi, KIND.development, none] => { apps: :own, **plain },
+      [pi, KIND.published, none] => { apps: :own, **plain, doom: true }
+    }.each do |(platform, kind, apps), carried|
+      machine = kind.published? ? Erx::ProductionImage::Machine.published(platform) : Erx::ProductionImage::Machine.development(platform)
+      image = MediumProbe.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
+                              runtime: nil, jit_runtime: nil)
+      assert_equal carried, image.carried(kind: kind, apps: apps), "#{platform.name}'s #{kind.name} medium"
     end
-    error = assert_raises(Erx::Error) { medium_builder(PLATFORM).build_medium(directory: '/nonexistent', test_programs: []) }
-    assert_equal 'test programs are an Added of entries', error.message
+  end
+
+  # An image builder that stops at the one build and returns what build_medium handed it,
+  # its own apps (published_apps) named :own.
+  class MediumProbe < Erx::ProductionImage
+    OWN = Erx::ImageApps.plan([], enable: [], local: false)
+
+    def published_apps = OWN
+
+    def carried(kind:, apps:)
+      catch(:assembled) { build_medium(directory: '/nonexistent', kind: kind, manifest_source: '', apps: apps) }
+    end
+
+    private
+
+    def domain_boots(_manifest_source, given: []) = given
+
+    def assemble(apps:, doom:, test_code:, test_roots:, added:, **)
+      throw :assembled, { apps: apps.equal?(OWN) ? :own : apps, doom: doom, test_code: test_code, test_roots: test_roots,
+                          added: added.entries.map { it.fetch('path') } }
+    end
+  end
+
+  # What a medium's kind does not carry is refused before anything is built, by
+  # build_medium and by `tools/erx pack` (pack_platform, which derives the published
+  # medium's machine, so its refusal is the apps one): a published medium on another
+  # machine than Machine.published, or with an app, signer or --local of its builder's; a
+  # card, which is the website's whatever its kind, with either, or with test code. The
+  # card's manifest keeps the board's apps row, as QEMU's medium's does.
+  def test_a_medium_refuses_what_its_kind_does_not_carry
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    assert_match(/^apps\n  memory [0-9]+\n  max 1\n  services display net\n/, pi.manifest_source(ROOT))
+    local = Erx::ImageApps.plan([], enable: [], local: true)
+    builders = Erx::ImageApps.plan([CLOCK], enable: [])
+    card = 'the raspi4b card is the one the website offers: it carries the kiosk alone and takes no app, signer or --local'
+    published = Erx::ProductionImage::Machine.published(PLATFORM)
+    {
+      [KIND.published, DEVELOPMENT, Erx::ImageApps.none] =>
+        'the published qemu-virt medium is packed for its own machine (ProductionImage::Machine.published)',
+      [KIND.published, published, local] =>
+        'the published qemu-virt medium is the one the website offers: it carries the kiosk alone and takes no app, signer or --local',
+      [KIND.development, Erx::ProductionImage::Machine.development(pi), local] => card,
+      [KIND.development, Erx::ProductionImage::Machine.development(pi), builders] => card,
+      [KIND.published, Erx::ProductionImage::Machine.published(pi), builders] => card,
+      [KIND.test(test_programs: TEST_PROGRAM), Erx::ProductionImage::Machine.development(pi), Erx::ImageApps.none] =>
+        'the raspi4b card is the one the website offers: it carries no test code'
+    }.each do |(kind, machine, apps), message|
+      error = assert_raises(Erx::Error) do
+        medium_builder(machine.platform).build_medium(directory: '/nonexistent', kind: kind, machine: machine, manifest_source: '',
+                                                      apps: apps)
+      end
+      assert_equal message, error.message
+    end
+    [[PLATFORM, local], [pi, builders]].each do |platform, apps|
+      error = assert_raises(Erx::Error) do
+        Erx::ProductionImage.pack_platform(root: ROOT, runner: nil, compiler: '', linker: '', platform: platform,
+                                           medium: KIND.published, apps: apps)
+      end
+      assert_match(/is the one the website offers: it carries the kiosk alone/, error.message)
+    end
+    Erx::ProductionImage.check_medium(KIND.development, machine: DEVELOPMENT, apps: builders)
+    Erx::ProductionImage.check_medium(KIND.published, machine: published, apps: Erx::ImageApps.none)
   end
 
   # An image builder for platform's development machine that refuses before it builds.
@@ -161,17 +239,17 @@ class ProductionImageTest < Minitest::Test
   end
 
   # A published medium's build whose assembled image's manifest trusts a key: build_medium
-  # itself refuses it before it writes the medium, for the card, which is always the
-  # published medium, and for QEMU's when `tools/erx pack` asks for the published one. The
-  # image builder stands in for the steps around the check (PublishedTrustProbe), so the test
-  # fails if build_medium stops calling check_published_trust or packing its own apps.
+  # itself refuses it before it writes the medium, for the card, which carries its own apps
+  # whatever its kind, and for QEMU's published medium. The image builder stands in for
+  # the steps around the check (PublishedTrustProbe), so the test fails if build_medium
+  # stops calling check_published_trust or packing its own apps.
   def test_a_published_medium_build_refuses_a_manifest_that_trusts_a_key
-    { 'raspi4b' => {}, 'qemu-virt' => { published: true } }.each do |name, published|
+    { 'raspi4b' => KIND.development, 'qemu-virt' => KIND.published }.each do |name, kind|
       platform = Erx::Platform.load(root: ROOT, name: name)
       image = PublishedTrustProbe.new(root: ROOT, runner: nil, compiler: '', linker: '',
-                                 machine: Erx::ProductionImage::Machine.development(platform), fiasco: Object.new,
+                                 machine: Erx::ProductionImage::Machine.published(platform), fiasco: Object.new,
                                  runtime: nil, jit_runtime: nil)
-      error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', **published) }
+      error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', kind: kind) }
       assert_equal "the published #{name} medium trusts no package key, but its manifest trusts signer deployer", error.message
       assert_equal [:published_apps, :assemble_published], image.calls, name
     end
@@ -607,9 +685,9 @@ class ProductionImageTest < Minitest::Test
     refute(Erx::ReleaseFiles::RELEASE_SCRIPTS.keys.any? { |name| Erx::ProductionImage.domain_boot(name).test })
   end
 
-  # A test root (build_medium's test_roots) makes the image a test image, and the one
-  # build refuses one for an image without the test-code mark, so no production image
-  # trusts a test root.
+  # A test root (a test medium's, ProductionImage::MediumKind.test) makes the image a
+  # test image, and the one build refuses one for an image without the test-code mark, so
+  # no production image trusts a test root.
   def test_only_a_test_image_adds_a_trust_root
     root = Erx::TrustStore::TestRoot.new(path: 'build/fixture.pem', source: 'test/fixtures/quotes_fixture.rb')
     error = assert_raises(Erx::Error) { Erx::ProductionImage.check_test_roots([root], test_code: false) }

@@ -170,12 +170,46 @@ class DoomProgramTest < Minitest::Test
     assert_empty(asked.fetch(:added).entries.map { it.fetch('path') }.grep(%r{bin/doom\z}))
   end
 
-  # Only a published medium carries Doom, refused before anything is built.
+  # Doom follows from the published kind alone (ProductionImage::MediumKind): it is the
+  # one kind whose medium asks the one build for it, and both `tools/erx pack` and the
+  # build refuse a tree whose fork is not fetched before they build anything, here a tree
+  # with no fork at all standing in for the builder's.
   def test_only_a_published_medium_carries_doom
-    machine = Erx::ProductionImage::Machine.development(PLATFORM)
-    image = Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
-                                     runtime: nil, jit_runtime: nil)
-    error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', doom: true) }
-    assert_equal 'only a published medium carries the Doom example', error.message
+    kind = Erx::ProductionImage::MediumKind
+    added = Erx::ProductionImage::Added.new(entries: [{ 'path' => 'bin/probe' }].freeze, inputs: [].freeze, imports: {}.freeze)
+    asked = [kind.development, kind.test(test_programs: added), kind.published].to_h do |medium|
+      image = builder(Erx::ProductionImage::Machine.published(PLATFORM))
+      image.define_singleton_method(:domain_boots) { |_source, given: []| given }
+      image.define_singleton_method(:published_apps) { Erx::ImageApps.none }
+      image.define_singleton_method(:assemble) { |doom:, **| throw :assembled, doom }
+      [medium.name, catch(:assembled) { image.build_medium(directory: '/nonexistent', kind: medium, manifest_source: '') }]
+    end
+    assert_equal({ development: false, test: false, published: true }, asked)
+
+    # `tools/erx pack --published` refuses before Fiasco or the kiosk builds.
+    error = assert_raises(Erx::Error) do
+      Erx::ProductionImage.pack_platform(root: @root, runner: @runner, compiler: '', linker: '', platform: PLATFORM,
+                                         medium: kind.published)
+    end
+    assert_match(%r{\Athe published medium carries Doom, which is not fetched: run `tools/erx fetch --example doom`}, error.message)
+    assert_empty Dir.children(@root) - ['logs']
+
+    # The one build refuses too, whatever asked for Doom. An image builder reads the ABI
+    # from its tree when made, so the tree with no fork is put in its place afterwards.
+    unfetched = builder(Erx::ProductionImage::Machine.published(PLATFORM))
+    unfetched.instance_variable_set(:@root, @root)
+    unfetched.define_singleton_method(:domain_boots) { |_source, given: []| given }
+    unfetched.define_singleton_method(:published_apps) { Erx::ImageApps.none }
+    error = assert_raises(Erx::Error) do
+      unfetched.build_medium(directory: File.join(@root, 'medium'), kind: kind.published, manifest_source: '')
+    end
+    assert_match(%r{\Athe published medium carries Doom, which is not fetched: run `tools/erx fetch --example doom`}, error.message)
+    assert_empty Dir.children(@root) - ['logs']
+  end
+
+  # An image builder for machine whose runtimes are never built.
+  def builder(machine)
+    Erx::ProductionImage.new(root: ROOT, runner: @runner, compiler: '', linker: '', machine: machine, fiasco: Object.new,
+                             runtime: nil, jit_runtime: nil)
   end
 end

@@ -26,7 +26,7 @@ release archive (BSD-3-Clause) and its SHA-256, the value the release's signed
 checksum file lists for it; the archive's `freedoom1.wad` is the demo's WAD.
 
 `git clone` does not check the submodule out, and no gate, test build or check
-reads it; only the published build, `tools/erx pack --medium`, does
+reads it; only the published build, `tools/erx pack --published`, does
 (`tools/lib/erx/doom_program.rb`), and it refuses a checkout that is missing,
 at another commit than the gitlink's, or changed.
 `tools/erx fetch --example doom` clones it at the recorded commit, with no

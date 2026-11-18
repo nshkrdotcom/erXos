@@ -3,15 +3,16 @@
 # frozen_string_literal: true
 
 module Erx
-  # No list of the build names an example (docs/design-packaging.md, "Examples"): an app
-  # under examples/ is built only as a third party builds one, through the SDK, so no file
+  # No list of the build names an example (docs/design-packaging.md, "Examples"): no file
   # of the build's tools, the board manifests or the host tests' build fixtures (where
   # ErlangBuild lists the applications tests compile) names a path under examples/ or an
-  # example's application, a directory examples/*/lib/APP. The files of EXEMPT may: the
-  # harnesses and the recipe the design names that pack an example through the SDK, Doom's
-  # build for the published media (DoomProgram, the one example the build compiles, which
-  # names it only through Submodules), and this file, which names the directory to say
-  # what it scans for. Checks runs it over the tree's listing.
+  # example's application, a directory examples/*/lib/APP, but the few that fetch, pack
+  # or build one, EXEMPT, each with the design text that names it: the fetch step, the
+  # card's kiosk and the kiosk suite's, which pack an app example through the SDK as a
+  # third party does, Doom's build for the published media (DoomProgram, the one example
+  # the build compiles itself, which names the files it compiles and no line of their
+  # source), and this file, which names the directory to say what it scans for. Checks
+  # runs it over the tree's listing.
   module ExampleLists
     DIRECTORY = 'examples/'
     SCOPES = %w[tools/lib/erx/ config/manifest/ test/fixtures/].freeze

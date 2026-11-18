@@ -19,7 +19,7 @@ module Erx
   # release (docs/design.md's dependency table, status example): doomgeneric with erXos's
   # platform layer, from the example's fork checked out by `tools/erx fetch --example doom`
   # (ExampleFetch), and Freedoom's WAD, which the fork's wad.S links into the program. Only
-  # a published medium carries it (ProductionImage#build_medium's doom:), so no other build
+  # a published medium carries it (ProductionImage::MediumKind.published), so no other build
   # reads the fork and a tree without it builds every other image.
   #
   # The image's source offer names the fork at the commit the tree's gitlink records, so
@@ -200,8 +200,8 @@ module Erx
 
       # NativeRoot#build_task_receipted's result, with archive, libdoom.a's path. The fork
       # and the WAD are checked first (DoomProgram.check_fetched, which
-      # ProductionImage#build_medium runs), and the sources compiled are a snapshot of the
-      # pinned commit taken here (DoomProgram.snapshot).
+      # ProductionImage#assemble runs for the published medium), and the sources compiled
+      # are a snapshot of the pinned commit taken here (DoomProgram.snapshot).
       def call
         archive = library
         @native.build_task_receipted(name: NAME, sources: NativeRoot::PROGRAM, directory: @directory,
