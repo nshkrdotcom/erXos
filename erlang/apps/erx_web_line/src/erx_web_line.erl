@@ -12,21 +12,18 @@ what the session's user may and the line holds no scope of its own
 (docs/design-live.md, "How a query travels"; docs/design-web.md,
 "Overview").
 
-The line serves one peer, the web domain it was exported to, and none
-until then. The session names the line to the domain service in its ready
-report (erx_web_line_app), and the system domain, when the host opens its
-`web` facet, introduces the two domains and calls the line with
-`{export, Web}`: the line exports itself to domain Web with send and serves
-Web from then on, in place of any peer before it. The line takes that call
-only in the system domain's envelope, so no other domain, and no process
-of the session, chooses who reaches it (erx_domain:line/3).
-
-From its peer it takes a request only as a call in the peer's envelope whose
-caller and alias are names of the peer's (as erx_facet checks a grantee's
-calls), so a reply never goes to a third domain, and a view takes `next`
-and `stop` only in the peer's envelope; anything else from another domain
-is dropped. A process of this session may call the line and its views
-without an envelope, since it acts with the session's authority anyway.
+The line is an erx_session_line, which owns who reaches it: it serves one
+peer, the web domain the system domain exported it to when the host opened
+its `web` facet (erx_domain:line/3), and none until then, and it takes from
+that peer only calls in the peer's envelope whose caller and alias are names
+of the peer's, so a reply never goes to a third domain. The session names
+the line to the domain service in its ready report (erx_web_line_app). This
+module serves the calls the line admits (request/4) and the session's own
+messages to the line (info/3). A view takes `next` and `stop` only in the
+peer's envelope, as the peer was when the view opened; anything else from
+another domain is dropped. A process of this session may call the line and
+its views without an envelope, since it acts with the session's authority
+anyway.
 
 * `{open, Target}` starts a view and answers `{ok, View}`, the view's pid,
   which the reply hands out to the peer with send alone
@@ -55,19 +52,17 @@ The line holds one entry per open view; a view holds its last projection,
 at most one update of 64 KiB (W8).
 """.
 
+-behaviour(erx_session_line).
+
 -export([start_link/1]).
--export([line_init/2, view_init/1]).
+-export([init/1, request/4, info/3, view_init/1]).
 
 -export_type([config/0]).
 
-%% peer is the web domain's id, none until the system domain has the line
-%% exported, and system the system domain's. inspect answers a path's record
-%% as the session may see it, erx_inspector:inspect/1 or a host test's
-%% stand-in. exports answers export/3 and owner/1, erx_dist or a host test's
-%% stand-in.
--type config() :: #{peer => pos_integer() | none, system => pos_integer(),
-                    inspect => fun((list()) -> erx_inspector:answer()),
-                    exports => module()}.
+%% The line's keys, peer, system and exports, as erx_session_line:config() has them,
+%% and inspect, which answers a path's record as the session may see it,
+%% erx_inspector:inspect/1 or a host test's stand-in.
+-type config() :: #{inspect => fun((list()) -> erx_inspector:answer()), atom() => term()}.
 
 %% The views one line holds at once (docs/design-web.md, "Views on the line").
 -define(VIEWS, 64).
@@ -77,71 +72,53 @@ at most one update of 64 KiB (W8).
 -doc "Starts the line for Config, linked to the caller.".
 -spec start_link(config()) -> {ok, pid()}.
 start_link(Config) when is_map(Config) ->
-    Defaults = #{peer => none, inspect => fun erx_inspector:inspect/1, exports => erx_dist},
-    proc_lib:start_link(?MODULE, line_init, [self(), maps:merge(Defaults, Config)]).
+    erx_session_line:start_link(?MODULE, maps:merge(#{inspect => fun erx_inspector:inspect/1}, Config)).
 
--doc false.
-line_init(Parent, Config) ->
-    process_flag(trap_exit, true),
-    System = case Config of
-                 #{system := Id} -> Id;
-                 #{} -> erx_kernel_records:system_domain()
-             end,
-    proc_lib:init_ack(Parent, {ok, self()}),
-    line(Parent, Config#{system => System}, #{}).
-
-line(Parent, #{peer := Peer, system := System, exports := Exports} = Config, Views) ->
-    receive
-        {erx_origin, System, {'$gen_call', From, {export, Web}}} when is_integer(Web), Web > 0, Web =/= System ->
-            {Reply, Next} = export(Web, Config),
-            gen:reply(From, Reply),
-            line(Parent, Next, Views);
-        {erx_origin, Peer, {'$gen_call', {Caller, [alias | Alias]} = From, Request}} when is_pid(Caller), is_reference(Alias) ->
-            case Exports:owner(Caller) =:= Peer andalso Exports:owner(Alias) =:= Peer of
-                true -> line(Parent, Config, call(From, Request, Config, Views));
-                false -> line(Parent, Config, Views)
-            end;
-        {'$gen_call', {Caller, _Tag} = From, Request} when is_pid(Caller), node(Caller) =:= node() ->
-            line(Parent, Config, call(From, Request, Config, Views));
-        {'EXIT', Parent, Reason} ->
-            exit(Reason);
-        {'EXIT', View, _Reason} ->
-            line(Parent, Config, maps:remove(View, Views));
-        _Other ->
-            line(Parent, Config, Views)
-    end.
-
-%% The system domain's request to serve Web: the line exports itself to Web
-%% with send alone, as encoding its name in a frame for Web would, and serves Web
-%% from then on. A refused export leaves the peer as it was.
-%%
-%% The export changes whom the line serves, never what its views read: they
+%% The line's state: Inspect, which every view queries, and the open views, each by
+%% its pid. An export changes whom the line serves, never what its views read: they
 %% read through the session's inspect facet before it and after it alike.
-export(Web, #{exports := Exports} = Config) ->
-    case Exports:export(self(), [send], Web) of
-        ok -> {ok, Config#{peer := Web}};
-        {error, Reason} -> {{error, Reason}, Config}
-    end.
+-doc false.
+init(#{inspect := Inspect}) ->
+    #{inspect => Inspect, views => #{}}.
 
-call({Caller, _Tag} = From, Request, Config, Views) ->
-    {Reply, Next} = open(Request, Caller, Config, Views),
+%% A call from the peer Peer, which the line admitted. It takes the same path,
+%% serve/4, as a call from a process of the session's own (info/3).
+-doc false.
+request(From, Request, Peer, State) ->
+    serve(From, Request, Peer, State).
+
+%% The session's own messages to the line: a call from one of its processes, and the
+%% end of a view the line linked.
+-doc false.
+info({'$gen_call', {Caller, _Tag} = From, Request}, Peer, State) when is_pid(Caller), node(Caller) =:= node() ->
+    serve(From, Request, Peer, State);
+info({'EXIT', View, _Reason}, _Peer, #{views := Views} = State) ->
+    State#{views := maps:remove(View, Views)};
+info(_Message, _Peer, State) ->
+    State.
+
+%% A call the line serves, from its peer or from the session: open/4 decides it.
+serve({Caller, _Tag} = From, Request, Peer, State) ->
+    {Reply, Next} = open(Request, Caller, Peer, State),
     gen:reply(From, Reply),
-    Next.
+    State#{views := Next}.
 
-%% A request: what it is answered and the views the line then holds.
-open({open, _Target}, _Caller, _Config, Views) when map_size(Views) >= ?VIEWS ->
+%% A request: what it is answered and the views the line then holds. A view answers
+%% Caller and takes its requests in Peer's envelope.
+open({open, _Target}, _Caller, _Peer, #{views := Views}) when map_size(Views) >= ?VIEWS ->
     {{error, busy}, Views};
-open({open, {path, Names}}, Caller, Config, Views) ->
+open({open, {path, Names}}, Caller, Peer, #{inspect := Inspect, views := Views}) ->
     case inspector_path([], Names) of
         {ok, Path} ->
-            View = proc_lib:spawn_link(?MODULE, view_init, [Config#{conn => Caller, path => Path, last => none}]),
+            View = proc_lib:spawn_link(?MODULE, view_init, [#{conn => Caller, peer => Peer, inspect => Inspect,
+                                                               path => Path, last => none}]),
             {{ok, View}, Views#{View => Path}};
         error ->
             {{error, scope}, Views}
     end;
-open({open, _Target}, _Caller, _Config, Views) ->
+open({open, _Target}, _Caller, _Peer, #{views := Views}) ->
     {{error, unsupported}, Views};
-open(_Request, _Caller, _Config, Views) ->
+open(_Request, _Caller, _Peer, #{views := Views}) ->
     {{error, badarg}, Views}.
 
 %% Reads Names, untrusted /proc entry names, one at a time into the inspector's
@@ -170,7 +147,7 @@ view_init(#{conn := Conn} = View) ->
 view(View) ->
     receive
         Message ->
-            case request(Message, View) of
+            case asked(Message, View) of
                 next -> view(answer(View));
                 stop -> exit(normal);
                 other -> view(View)
@@ -178,12 +155,12 @@ view(View) ->
     end.
 
 %% What a message asks of the view: one more update, its end, or nothing.
-request({erx_origin, Peer, next}, #{peer := Peer}) -> next;
-request(next, #{}) -> next;
-request({erx_origin, Peer, stop}, #{peer := Peer}) -> stop;
-request(stop, #{}) -> stop;
-request({'DOWN', _Ref, process, Conn, _Reason}, #{conn := Conn}) -> stop;
-request(_Message, #{}) -> other.
+asked({erx_origin, Peer, next}, #{peer := Peer}) -> next;
+asked(next, #{}) -> next;
+asked({erx_origin, Peer, stop}, #{peer := Peer}) -> stop;
+asked(stop, #{}) -> stop;
+asked({'DOWN', _Ref, process, Conn, _Reason}, #{conn := Conn}) -> stop;
+asked(_Message, #{}) -> other.
 
 %% Queries until there is something new to send, sends it and returns the view
 %% with it as the last answer; ends the view when the query cannot be answered.
@@ -205,7 +182,7 @@ wait(Timer, View) ->
         {timeout, Timer, requery} ->
             answer(View);
         Message ->
-            case request(Message, View) of
+            case asked(Message, View) of
                 stop -> exit(normal);
                 _ -> wait(Timer, View)
             end

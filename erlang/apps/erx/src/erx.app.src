@@ -7,7 +7,8 @@
 %% of its device and its device record, the hold on a header pin, chip select or PWM
 %% channel, the decisions of a shared interrupt line's owner, the inspector and its
 %% collectors, the tracer and its ring reader, the pipe server's decisions, a
-%% keeper's set of waiting file requests (erx_fs_waits), erx's shell functions,
+%% keeper's set of waiting file requests (erx_fs_waits), the loop of a session's line
+%% to a front-end domain (erx_session_line), erx's shell functions,
 %% the package decoder and its hash tree layout, and the modules tools/gen_abi.rb
 %% and tools/gen_terminal.rb generate, the 9P2000.L codec erx_9p and the input records'
 %% codec erx_input_codec among them.
@@ -94,6 +95,7 @@
              erx_runtime_records,
              erx_schema,
              erx_service_sup,
+             erx_session_line,
              erx_source,
              erx_stdio,
              erx_syslog,

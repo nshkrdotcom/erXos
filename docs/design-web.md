@@ -212,7 +212,11 @@ tree, the values and the events, and that is what their tests compare.
 The **line** is the web domain's connection to one session domain: the
 session's process `erx_web_line`, exported to the web domain when the
 system domain first introduces the session to it, which opens the views
-of paths, traces and UIs. A session with a line has the display named
+of paths, traces and UIs. It is a line of `erx_session_line`, as the SSH
+domain's `erx_ssh_line` is ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)):
+that module takes the export only in the system domain's envelope and a
+request only in the web domain's, from a caller and alias of that
+domain's, and `erx_web_line` keeps only its own requests and views. A session with a line has the display named
 `web`: its applications' `erx_ui:open/1` opens there with the browser
 renderer. A session has at most one line, which ends with the session
 domain, so it has no lifetime of its own to track. The line itself is

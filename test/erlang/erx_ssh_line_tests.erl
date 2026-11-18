@@ -116,6 +116,27 @@ foreign_channel_test() ->
         persistent_term:erase({?MODULE, owner, Foreign})
     end.
 
+%% A call in the peer's envelope whose alias, or whose caller, is a third domain's is
+%% dropped unanswered, so a reply never goes there, and opens nothing.
+third_domain_caller_test() ->
+    Line = exported_line(),
+    Request = {open_tty, self(), shell, <<"vt100">>, 24, 80},
+    Alias = alias([reply]),
+    persistent_term:put({?MODULE, owner, Alias}, ?OTHER),
+    try
+        Line ! {erx_origin, ?PEER, {'$gen_call', {self(), [alias | Alias]}, Request}},
+        ?assertEqual(none, receive {[alias | Alias], Reply} -> Reply after 300 -> none end)
+    after
+        persistent_term:erase({?MODULE, owner, Alias})
+    end,
+    persistent_term:put({?MODULE, owner, self()}, ?OTHER),
+    try
+        ?assertEqual(none, call(Line, ?PEER, Request))
+    after
+        persistent_term:erase({?MODULE, owner, self()})
+    end,
+    ?assertEqual(none, opened()).
+
 %% Past ten open channels the line answers limited; a tty's end frees its place.
 limited_test() ->
     Line = exported_line(),

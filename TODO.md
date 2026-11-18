@@ -7680,6 +7680,8 @@ to the corpus and follow rc
 * [Low] tests, `test/host/erx_starter_test.rb`: the suite takes about 4.5 minutes, most of it seeded fault 0 (the keeper not linking), under which nearly every case waits out EUnit's 5 s timeout. Fail the fault's cases fast instead of by timeout.
 * [Low] tests, `liberx/system/dom_apply.c` (`apply_given_words`): no host test checks the record words written for a framebuffer handed to a domain other than the system domain; placement, the apply steps and `erx_boot_framebuffer_words` itself (`boot_manifest_test.rb`) are tested, and the raspi4b suite's tcg-4cpu cell, one QEMU boot under TCG, checks the display domain's record through its driver's framebuffer line and, for the base and offset, only through its picture.
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](docs/design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
+* [Medium] SSH, a job's messages through the session's line (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`; [design-ssh.md](docs/design-ssh.md#sessions-ttys-and-shells)): `open_job`'s channel sends the line `{job_input, Bytes}`, `job_eof`, `job_sent` and `job_hangup` in the SSH domain's envelope, none a call, but the line hands its callback only the peer's admitted calls and drops every other message in an envelope, so a job would wait for a `job_written` that never comes. Building `open_job` needs a callback beside `request/4` that gets the peer's other messages, and never a third domain's.
+* [Low] cross-domain call admission, written three times (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`; `erlang/apps/erx/src/erx_facet.erl`; `erlang/apps/erx_net/src/erx_net_admit.erl`): each checks that a call in domain D's envelope has a caller and an alias of D's. One predicate beside `erx_dist:owner/1` would make a change to the rule, such as erx_facet's size bound, one edit.
 * [Medium] USB, the bus core and the controller core (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
   a detach while Address Device is in flight releases the address-zero turn, which follows from the port's state,
   before the controller answers the command, so the next port's reset can start while the detached device's
@@ -8087,7 +8089,7 @@ to the corpus and follow rc
   and ends `partial` at `inspect_query_max`. Development builds run trusted code only; settle it with the
   scheduling of service work on erXos's own kernel.
 * [Medium] Web view scope, root's session through the host link's `web` facet
-  (`erlang/apps/erx_web_line/src/erx_web_line.erl`, `export/2`; [design-web.md's
+  (`erlang/apps/erx/src/erx_session_line.erl`, `export/2`; [design-web.md's
   Security](docs/design-web.md#security)): once the system domain exports root's session's line to the web
   domain, every view a browser opens reads at scope `all`, so a browser reaches the machine-wide paths
   (`/proc/kernel`, `/proc/cpus`, the kernel log, the machine record's `all` attributes), as the session's own

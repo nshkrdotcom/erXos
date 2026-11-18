@@ -5,6 +5,7 @@
 require 'open3'
 require 'optparse'
 require 'tmpdir'
+require_relative '../lib/erx/generated'
 
 # The fuzz target of erx_tty_link, the tty's side of the messages between a session's tty
 # and its master, whose messages from another domain are untrusted (docs/design-live.md,
@@ -21,6 +22,9 @@ module ErxTtyLinkFuzz
   # The SSH line core, whose requests the same target feeds (docs/design-ssh.md, "Sessions, ttys
   # and shells").
   LINE_SOURCE = File.join(ROOT, 'erlang/apps/erx_ssh_line/src/erx_ssh_line_core.erl')
+  # The core takes a shell's TERM from erx_text_tables, which the build generates from
+  # abi/terminal.txt into build/gen.
+  TEXT_TABLES = 'erlang/apps/erx/src/erx_text_tables.erl'
   # A broken guarantee: the text that keeps it, what replaces it, and the property that must
   # then fail, as the target names it.
   Seed = Data.define(:text, :broken, :property)
@@ -69,6 +73,7 @@ module ErxTtyLinkFuzz
   module_function
 
   def run(seed:)
+    Erx::Generated.ensure(root: ROOT)
     sources = TARGETS.keys.to_h { |path| [path, File.binread(path)] }
     output, status = fuzz(sources, seed: seed)
     abort(output[0, 4000]) unless status.success? && output.match?(/^fuzz: \d+ rounds ok$/)
@@ -96,7 +101,8 @@ module ErxTtyLinkFuzz
         File.join(work, File.basename(path)).tap { |copy| File.binwrite(copy, text) }
       end
       output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
-                                       *module_paths, TTY_SOURCE, TARGET_SOURCE, stdin_data: '')
+                                       *module_paths, TTY_SOURCE, Erx::Generated.path(TEXT_TABLES, root: ROOT),
+                                       TARGET_SOURCE, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

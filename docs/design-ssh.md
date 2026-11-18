@@ -822,7 +822,13 @@ Each reads through a cursor and has a fuzz target
 
 `erx_ssh_line` is the session's process that the SSH domain reaches,
 exported to it at the introduction, as `erx_web_line` is to the web
-domain. It takes two requests, each from a channel process of the SSH
+domain. Both are lines of one module, `erx_session_line`, which owns who
+reaches a line: it takes the export only in the system domain's
+envelope, and a call only in the peer's envelope from a caller and alias
+of the peer's. Each line keeps its own requests, and the other messages
+in the peer's envelope that its protocol names, such as a job's below;
+everything else from another domain is dropped. `erx_ssh_line` takes two
+requests, each from a channel process of the SSH
 domain, heard through that domain's envelope, and answers each `ok` or
 `{error, limited | badarg}`:
 
