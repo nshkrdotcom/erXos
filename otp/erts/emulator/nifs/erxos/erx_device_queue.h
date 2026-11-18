@@ -151,7 +151,7 @@ bool	erx_device_queue_complete(erx_device_queue_t *queue, uint32_t id, uint32_t 
 
 /*
  * The split ring as a descriptor form of the DMA handoff sequencer (docs/design-device-dma.md,
- * "Calls, observations and plans" and "The three descriptor forms"). Offsets are bytes from the
+ * "Calls, observations and plans" and "The descriptor forms"). Offsets are bytes from the
  * queue's first byte: its rings from 0, its pool at `pool_offset`, at or past the rings' end. Each
  * builder states, as plan steps, only what the core above decided; no builder names a cache
  * operation or a barrier, which erx_device_dma_order derives. The caller keeps the last state

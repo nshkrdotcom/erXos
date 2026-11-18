@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * The register ring, GENET's descriptor form of the DMA handoff sequencer
- * (docs/design-device-dma.md, "The three descriptor forms" and "Install and reset"; the facts
+ * (docs/design-device-dma.md, "The descriptor forms" and "Install and reset"; the facts
  * in docs/research-genet-bcm2711.md). It reads no hardware and no shared memory, needs nothing
  * of ERTS and builds for the host, where its tests and its fuzz target run.
  *

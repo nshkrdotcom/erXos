@@ -2450,9 +2450,11 @@ none is a name of the program protocol. `<signal.h>` defines `SIGTHR`,
 its other BSD names and FreeBSD defines them under `__BSD_VISIBLE`, so code that names them builds; `sigaction` of one fails
 with `EINVAL`, as FreeBSD's thread library refuses `SIGTHR`.
 
-**Linux's own names.** `SIGPOLL` stays, as an alias of `SIGIO`, which adds
-no number and no line to `kill -l`; `SIGIO` keeps FreeBSD's default action,
-to ignore, where Linux's terminates. `SIGPWR`, `SIGSTKFLT` and `SIGUNUSED`
+**Linux's own names.** `SIGPOLL` is an alias of `SIGIO` in the signal
+table ([`abi/signals.txt`](../abi/signals.txt)), which adds no number
+and no line to `kill -l`; whether it stays is open
+([Risks and open questions](#risks-and-open-questions)). `SIGIO` keeps
+FreeBSD's default action, to ignore, where Linux's terminates. `SIGPWR`, `SIGSTKFLT` and `SIGUNUSED`
 go. FreeBSD has none of them and erXos sends none. An alias would run a
 power-failure handler on another signal, as `SIGPWR` sharing a number with
 `SIGINFO` would run it at every `Ctrl-T`, and a number of its own would be
@@ -4500,7 +4502,8 @@ Two engineering questions, with the answers the design follows:
   tests recorded as unsupported; if they leave an applet's behaviour
   unchecked, write rc tests for that applet in the shell's corpus. The count
   from the first applets settles it.
-* **Does musl keep `SIGPOLL`?** FreeBSD defines no `SIGPOLL`; Linux makes
+* **Does musl keep `SIGPOLL`?** FreeBSD defines no `SIGPOLL` and names it
+  only in comments (`sys/sys/signal.h:234,338`, FreeBSD 95719d8a); Linux makes
   it an alias of `SIGIO`, and POSIX's XSI option names it. Recommended:
   keep it as an alias of `SIGIO` ([Signal numbers](#signal-numbers)): it
   adds no number and no line to `kill -l`, and code written for Linux that

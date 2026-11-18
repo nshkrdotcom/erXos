@@ -730,7 +730,7 @@ erx_device_bind_check(const erx_device_t *device, uint64_t line, erx_device_bind
  * ready is one the device may have forgotten, so nothing is posted on it and nothing
  * completed from it.
  *
- * A record runs one of the descriptor forms (docs/design-device-dma.md, "The three descriptor
+ * A record runs one of the descriptor forms (docs/design-device-dma.md, "The descriptor
  * forms"), which the device's peripheral fixes: virtio-mmio's split ring, whose rings lie in
  * the queue's memory before its pool, or GENET's register ring, whose descriptors are the
  * device's registers, so its queue's memory is its pool alone. Everything the effect layer

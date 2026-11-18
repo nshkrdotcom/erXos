@@ -2034,7 +2034,9 @@ and does not add application-state rollback.
   arena with `erx_code:install_beam/2`, and activates them as one batch
   with `code:atomic_load/1`, so either every module of the batch is
   current or none is. A failed check changes nothing; a failed atomic
-  load keeps the old code and reports which module failed. The overlay
+  load keeps the old code and reports which module failed. `erx_code`
+  serves one request at a time, so a second load into the system domain
+  waits until the first has returned and runs over the code it left. The overlay
   lives in the install arena until the machine ends; after a reboot the
   system domain runs its booted release and the host installs again,
   sending only the blobs the store lacks. Only the release slice and the

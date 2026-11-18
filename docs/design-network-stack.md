@@ -1211,6 +1211,7 @@ property of the transport, so a driver's restart never changes it:
 | Transport | Received frames | `finish` |
 | --- | --- | --- |
 | `erx_virtio_net` | with their network sum, from `erx_device:complete/3` | `copy`; `device` where the device offers `VIRTIO_NET_F_CSUM` with `VIRTIO_NET_F_HOST_TSO4` and `HOST_TSO6`, an extension ([Scope](#scope)) |
+| `erx_genet` | without a sum, which the interface's merge computes | `none` |
 | netmap | with their network sum, from its NIF's copy | `copy` |
 | `erx_tap` | with their network sum, summed by its NIF after the kernel's `read` | `copy` |
 | `erx_net_pipe` | without a sum, which the interface's merge computes; a test's `process` end may give one | `none`; `copy` in the `process` end's offload mode |
@@ -2413,7 +2414,7 @@ tap device or another medium (N12).
 
 | Seam | erXos's implementation | The portable one | Chosen by |
 | --- | --- | --- | --- |
-| the medium | the driver's transport `erx_virtio_net`, over the device NIF | the transport `erx_net_pipe`, over `gen_udp` or a test process; `erx_tap`, over a tap device; `erx_netmap`, over netmap's rings; `erx_net_ether`, a medium another domain lends, on erXos and on a host alike | each interface's entry in the `interfaces` key |
+| the medium | the driver's transport `erx_virtio_net` or `erx_genet`, over the device NIF | the transport `erx_net_pipe`, over `gen_udp` or a test process; `erx_tap`, over a tap device; `erx_netmap`, over netmap's rings; `erx_net_ether`, a medium another domain lends, on erXos and on a host alike | each interface's entry in the `interfaces` key |
 | the clock and entropy | `erx_net_clock` over ERTS's monotonic clock and `erx_bytes:entropy/1` | the same; in a test run, the virtual clock and its seeded generator | the `clock` key |
 | the per-byte primitives | `erx_bytes` of the `erx` application, BIFs of erXos's ERTS, those of the network over the C of `erx_net`'s `c_src/` | `erx_bytes` of `erx_net`'s `portable/` directory: the same C, loaded from `priv/erx_bytes_nif.so`, and `entropy/1` from `crypto:strong_rand_bytes/1` | the build: one of the two modules is present |
 | the runtime | `erx_net_erxos`: the request limit of erXos's ERTS, and `erx_facet` to run a grant | `erx_net_local`, in `portable/`: no envelopes, no limits, and a plain loop that runs a grant's callbacks | the `runtime` key |
@@ -2453,7 +2454,8 @@ Nothing else differs: the application, its supervisors, its
 configuration keys, its tables and every process module are the same,
 and no module asks where it runs. The source is laid out by seam: `src/`
 holds the stack, which names no module of erXos's but `erx_bytes`, which
-both builds provide; `erxos/` holds `erx_virtio_net` and `erx_net_erxos`,
+both builds provide; `erxos/` holds the transports `erx_virtio_net` and
+`erx_genet` with `erx_genet`'s cores and PHY, and `erx_net_erxos`,
 built only into erXos's images; `portable/` holds `erx_bytes`,
 `erx_net_local` and the host transports with their NIFs' loaders, built
 only outside erXos, so a network domain can never be configured with the
@@ -2623,6 +2625,7 @@ the driver's next end.
 | Transport | `link`, `lladdr` | `mtu` | `state` | `tx_limit` | `finish` |
 | --- | --- | --- | --- | --- | --- |
 | `erx_virtio_net` | `ethernet`; the device's address when it offers `VIRTIO_NET_F_MAC`, else a random locally administered unicast address drawn at `init` with `erx_net_clock:entropy/1`, as the virtio specification (section 5.1.5) asks a driver to generate | the device's `mtu` field when it offers `VIRTIO_NET_F_MTU`, else 1,500 | `VIRTIO_NET_S_LINK_UP` of the status field when the device offers `VIRTIO_NET_F_STATUS`, read again at each configuration-change interrupt; else always `up`, as the specification says to assume | the transmit queue's size | `copy`; `device` where the device offers `VIRTIO_NET_F_CSUM` with `VIRTIO_NET_F_HOST_TSO4` and `HOST_TSO6`, an extension |
+| `erx_genet` | `ethernet`; the device tree's address, which the device record carries, else the one the firmware left in the controller, else a random locally administered unicast address drawn at `init`, in FreeBSD's order (`gen_get_eaddr`, `if_genet.c:446-485`); a group or all-zero address is not used | 1,500 | `down` until the PHY reports the link up, then the PHY's latest report | the transmit ring's size | `none` |
 | `erx_net_loop` | `none`, `none` | 16,384, FreeBSD's `LOMTU` (`if_loop.c:80`) | always `up` | configured | `none` |
 | `erx_net_pipe` | `ethernet`; the configured address, which must be unicast with the locally administered bit set, else `init` fails with `{error, {lladdr, Addr}}` | configured, default 1,500, from 1,280 to 9,000, else `{error, {mtu, N}}` | `up` from `init`; the far end's end stops the pipe, and the driver tells the interface `down` while it waits out its hold | configured | `none`; `copy` in the `process` end's offload mode |
 | `erx_tap` | `ethernet`; the configured address, checked as the pipe's | configured, checked as the pipe's | `up` from `init`; an error of its descriptor ends the medium, and the driver tells the interface `down` while it waits out its hold | configured, default 256 | `copy` |
@@ -3744,6 +3747,7 @@ A run costs one `gb_trees` insert, as one segment does.
 | Transport | Where a run is cut | Copies of a payload byte | Calls |
 | --- | --- | --- | --- |
 | `erx_virtio_net` (erXos) | the device NIF posts each frame as one request in one pool buffer (the 12-byte `virtio_net_hdr`, then the frame), cut and summed as it copies, until the queue is full | one, into the pool buffer | one NIF call and one doorbell per run |
+| `erx_genet` (erXos) | the frame layer, `erx_net_frame:cut/1`; the device NIF copies each frame's pieces, at most four, into one pool buffer | one, into the pool buffer | one NIF call per frame |
 | `erx_netmap` (a host) | its NIF plans the slots from one snapshot of the ring, syncs at most once when it is full, and cuts each frame into its slot | one, into the slot | one NIF call per run; one sync per flush |
 | `erx_tap` (a host) | its NIF writes each frame's headers to scratch, sums the slice where it lies, and hands the kernel both in one `writev` | one, the kernel's; the payload is read once more to sum it | one NIF call per 64 frames, one system call per frame |
 | `erx_net_pipe`, `erx_net_loop` | the frame layer, `erx_net_frame:cut/1` | none of the stack's | Erlang work per frame |
@@ -4429,7 +4433,7 @@ recorded once, in each module's header and in
 | DHCP and the rest of the core | `erx_dhcp4_wire`, `erx_dhcp4_core` (from RFC 2131, 2132, 3396 and 3442, with `sbin/dhclient`'s option checks), `erx_net_rand` (the keyed generator each owner holds), `erx_net_grant_core` | P |
 | funnels | `erx_net_credit` (credited hand-over), `erx_net_clock` (the time, the one timer and the entropy of every process), `erx_net_admit` (the admission path, generated from `abi/services/net.txt`) | |
 | processes | `erx_net_if`, `erx_tcp_conn`, `erx_tcp_listen`, `erx_udp_sock`, `erx_icmp_sock`, `erx_net_grant`, `erx_net_tables`, `erx_dhcp4`, `erx_epmd`, `erx_net_tx` (the sockets' transmit edge), `erx_net_driver` | E |
-| seams | `erx_net_runtime` (the runtime seam's behaviour); erXos's `erx_virtio_net` and `erx_net_erxos` (in `erxos/`); the portable `erx_bytes` and `erx_net_local`, and the transports `erx_net_loop`, `erx_net_pipe`, `erx_tap` and `erx_netmap` with their NIF loaders (in `portable/`) | |
+| seams | `erx_net_runtime` (the runtime seam's behaviour); erXos's `erx_virtio_net`, `erx_genet` and `erx_net_erxos` (in `erxos/`); the portable `erx_bytes` and `erx_net_local`, and the transports `erx_net_loop`, `erx_net_pipe`, `erx_tap` and `erx_netmap` with their NIF loaders (in `portable/`) | |
 | C17 (in `c_src/`) | the per-byte primitives `erx_net_bytes`, `erx_inet_csum`, `erx_siphash`; `erx_tcp_cut` and `erx_tcp_merge` ([The fast path](#the-fast-path)); the host NIFs `erx_tap_nif.c`, `erx_netmap_nif.c` and `erx_netmap_ring.c` (the pure core that plans each netmap call) | |
 
 The packet-script runner `erx_net_script`, the virtual clock, the
@@ -6182,7 +6186,8 @@ the bytes, as the design requires ([design.md](design.md#decisions)).
   per-byte work but Erlang's entry to the kernel's generator in a domain
   that calls no OpenSSL: the network domain's runtime image maps OpenSSL,
   its release ships no `crypto`, and a build check proves that no module
-  of the stack calls `crypto`
+  of the stack calls `crypto` but the portable `erx_bytes`, which is
+  built only outside erXos
   ([Build checks](#build-checks),
   [design-crypto.md](design-crypto.md#domains-that-call-no-openssl)). The
   stack calls it, through `erx_net_clock`, only when an owner starts and
@@ -7103,7 +7108,8 @@ Each with a test proving it catches a violation:
   every random key passes the clock's seam;
 * the modules in `src/` of `erx_net` and `erx_net_client` call only
   `erts`, `kernel`, `stdlib`, their own application and `erx_bytes`; only
-  `erxos/` (`erx_virtio_net`, `erx_net_erxos`, `erx_net_client_erxos`)
+  `erxos/` (`erx_virtio_net`, `erx_genet` and its modules, `erx_net_erxos`,
+  `erx_net_client_erxos`)
   calls erXos's modules or BIFs; and no include or file name reaches a
   path outside the app directory (N12);
 * no `binary_to_atom`, `list_to_atom` or `binary_to_term` in `erx_net`;
@@ -7187,7 +7193,7 @@ These are settled; two questions remain open
    sockets spend, on requests and on packets, is charged to the grant's
    account, and socket processes' requests go straight to the sockets,
    which run the facet's generated admission path
-   ([The grant's account](#sockets-act-for-one-domain)). This extends the
+   ([Sockets act for one domain](#sockets-act-for-one-domain)). This extends the
    facet mechanism, whose account otherwise covers the facet's own work
    and the requests it forwards. Routing every socket request through the
    grant costs two more local hops per call and still leaves
@@ -7251,12 +7257,10 @@ These are settled; two questions remain open
    the wire or an interoperating peer can see and the fixes of real bugs
    are ported, each recorded with its FreeBSD commit in `NOTICE-freebsd`
    ([Provenance and notices](#provenance-and-notices)).
-10. **`erx_net_admit` is hand-written until the schema generator
-    exists,** with the generated module's exact signature, a stopgap in
-    `TODO.md` deleted when the generator over `abi/services` exists. Until
-    `erx_facet` exists, a grant on a host runs under `erx_net_local`'s
-    loop, which calls the same admission path, so the host route waits
-    for neither.
+10. **`erx_net_admit` is generated from the schema,** from
+    `abi/services/net.txt`, so its requests and their bounds have one
+    source ([The grant's contract](#the-grants-contract)). Outside erXos a grant runs
+    under `erx_net_local`'s loop, which calls the same admission path.
 11. **The stack is a package of its own.** The aim: "ideally we'd even
     structure our network stack as a separate package that can be used
     independently from erXos e.g. with tap/tun or

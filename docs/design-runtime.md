@@ -2978,7 +2978,7 @@ ADMA2 queue is armed, the word matches what was posted and the
 controller's fields the transfer relies on read back as installed and
 posted, which it checks under the device lock, and while that queue is
 armed or in flight it issues no other word
-([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)),
+([design-device-dma.md](design-device-dma.md#the-descriptor-forms)),
 so no command starts a DMA transfer the NIF did not set up. Which
 module may call it is the block driver's write-path rule
 ([design-storage.md](design-storage.md#data-model), U4).
@@ -3010,7 +3010,7 @@ coherent, the NIF cleans and invalidates what the device wrote before it
 reads it: the used index first, then the entries and each buffer's bytes
 it copies, once the index says they are done; GENET's register ring and SDHCI's
 ADMA2 table complete in their own forms, with the same answers
-([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)).
+([design-device-dma.md](design-device-dma.md#the-descriptor-forms)).
 The xHCI controllers' TRB ring form takes requests of its own through
 `post/4`, a transfer on an endpoint's queue or a command to the
 controller, and `complete/2` answers each with its completion
@@ -3021,7 +3021,7 @@ device returns it: it goes back to its pool only through `complete/2` or
 when the NIF itself resets the device, in `erx_device:negotiate(Dev,
 Wanted)`, which for every descriptor form is the form's reset, the
 device's report that it holds no descriptor, then the install
-([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms));
+([design-device-dma.md](design-device-dma.md#the-descriptor-forms));
 virtio's is described here. That one call runs virtio's initialisation (section 3.1.1 of
 the specification) whole, so no driver orders its steps. It marks every
 queue of the device not ready, so from then on nothing is posted on it or

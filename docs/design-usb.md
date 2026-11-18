@@ -10,7 +10,7 @@ the storage domains' file servers. It refines the drivers, devices and
 PCIe enumerator of [design-system.md](design-system.md#devices), the
 device NIF of [design-runtime.md](design-runtime.md#the-device-nif), the
 descriptor forms of
-[design-device-dma.md](design-device-dma.md#the-three-descriptor-forms),
+[design-device-dma.md](design-device-dma.md#the-descriptor-forms),
 the input records of [design-display.md](design-display.md#input-events)
 and the block service of [design-storage.md](design-storage.md#data-model).
 
@@ -884,6 +884,17 @@ of [The VL805's firmware](#the-vl805s-firmware) gives the controller its
 firmware after erXos's own bring-up. A board whose EEPROM names any
 other boot order is not an installation the board port supports. The
 cost is that erXos does not boot from USB or the network on the Pi 4.
+The one exception is development: a board on the desk that boots each
+build over Ethernet from the development host
+([design-platforms.md](design-platforms.md#netbooting-from-a-mac)) has
+the network ahead of the card in its boot order, which lets whatever
+answers DHCP and TFTP choose its kernel, and that kernel then reads the
+card's `/data`, the SSH host key and root's `authorized_keys` among it.
+The exception holds only on a desk network that is trusted; the board
+is not an installation, and it leaves the desk with the microSD-only
+boot order restored. What the boot firmware does to the VL805 when it
+boots from the network rather than the card is not recorded; probe B3
+reads the handover on the card's boot order alone.
 
 **Probe B3 reads what the firmware leaves.** At the PCIe domain's first
 start in a test build, before the bridge driver writes anything, with a
@@ -1099,24 +1110,24 @@ value the record gives, `bus << 20 | slot << 15 | function <<
 a status alone, since the tag's answer is empty (facts record,
 section 5). PL2's reason, that the mailbox can read the device key,
 still holds: no driver reaches the mailbox, and the caller chooses
-neither the tag nor the value. Its contract:
+neither the tag nor the value. The call's contract, its deadline of
+1 s, its answer checks, its one buffer page and its `ERX_EBUSY` beside
+a request in flight, is
+[design-kernel.md](design-kernel.md#firmware-requests)'s; what is the
+VL805's:
 
 * **Authority.** The resource is the bridge's own, carved with
   `ERX_CARVE_DEVICE` from the bridge's device entry, the one entry the
   platform record names with the notification, and carries `CARVE`, the
-  right `erx_dma_create` takes for a device. A resource never passes
-  ([design-kernel.md](design-kernel.md#rights)), so only the root task
-  holds one, and the call is the device service's: the bridge driver
+  right `erx_dma_create` takes for a device. Only the root task holds a
+  resource, so the call is the device service's: the bridge driver
   asks for it with `pci_bus:firmware/1`, a facet only the PCIe domain
   holds, and the device service makes the call through the domain
   library, `erx_domain_lib:pci_firmware/1`, with the resource the
   bridge's device record holds for its give, and answers with the
-  result ([design-pcie.md](design-pcie.md#facets)). No new capability reaches the PCIe domain, and the call
-  has the same caller in both phases. A resource that names another
-  device, or one of a platform whose record names no notification,
-  answers `ERX_ENOTSUP` before the mailbox is touched, as does an index
-  past its device's list, and
-  one without `CARVE` `ERX_ERIGHTS`. The call's other caller is the
+  result ([design-pcie.md](design-pcie.md#facets)). No new capability
+  reaches the PCIe domain, and the call has the same caller in both
+  phases. The call's other caller is the
   Bluetooth line's power cycle, two notifications of UART0's device on
   the Pi 4, which the device service makes from the same firmware worker
   through `erx_domain_lib:device_notify(Device, Index)`, for a device
@@ -1126,75 +1137,41 @@ neither the tag nor the value. Its contract:
   are uses of `erx_domain_lib:firmware/2`, the one library call over
   the firmware's requests, which the board sensors' readings use too
   ([design-board-sensors.md](design-board-sensors.md#the-kernel-call)).
-* **Deadline.** The kernel writes the request into its buffer, posts
-  it, and polls the mailbox for the answer for at most 1 s, as the
-  trial request and the key read are polled
-  ([design-platforms.md](design-platforms.md#trial-requests)), with a
-  preemption point between reads, so the wait holds no lock and masks
-  no interrupt (K13). The 1 s runs from the call's start and covers
-  the wait for room to post the request as well as the wait for its
-  answer. The call may wait, so an executor's is
-  `ERX_EWOULDBLOCK`. No answer within the deadline is `ERX_ETIMEDOUT`.
-  FreeBSD's property call waits 10 s (`bcm2835_mbox.c:244-247`); the
-  1 s is erXos's bound for every mailbox request, and probe B1 records
-  how long this one takes.
-* **The answer.** The mailbox's answer word carries the address of the
-  buffer it answers, which FreeBSD checks against its request's
-  (`bcm2835_mbox.c:348-351`). The kernel's one mailbox routine takes as
-  a request's answer only the word that names that request's own
-  buffer, and discards any other. It then checks the answer, each
-  field read once, and copies at most the tag's answer window, as
-  [design-board-sensors.md](design-board-sensors.md#the-kernel-call)
-  states for every firmware request. The call returns `ERX_OK` when the
-  response code reads success and the tag's response bit is set, as
-  FreeBSD checks them (`:352-374`); `ERX_ENOTSUP` when the response bit
-  is clear, the firmware ignoring the tag: this firmware does not
-  perform the notification; and `ERX_EPROTO` for an answer outside the
-  interface: a response code other than success, a first tag other
-  than the request's, or a response shorter than the tag's least
-  answer.
-* **One buffer, kept for the boot.** The request's buffer is the
-  kernel's own, a page of its data that no allocator receives and
-  nothing but firmware requests use, so the firmware's answer writes
-  only that page, whatever happened to the caller. After a timeout the
-  buffer is left to the firmware, as the key read leaves its page
-  ([design-platforms.md](design-platforms.md#device-secrets)): the
-  request may still be answered, and its answer would name the same
-  buffer as any later request's, so every later call of the boot answers
-  `ERX_ETIMEDOUT` at once without touching the mailbox, and a late
-  answer writes the fixed request's words into a page nothing reads.
-  The VL805 then stays out of the catalogue until the next boot, with
-  `vl805 firmware not loaded`, as when its firmware does not load. The
-  library call that meets `ERX_ETIMEDOUT` marks the bridge's catalogue
-  entry `firmware_lost` before it returns, and the library's intake
-  takes every function of a marked bridge as `not_ready`
+* **A timeout loses the VL805 for the boot.** After `ERX_ETIMEDOUT`
+  every later firmware request of the boot answers `ERX_ETIMEDOUT` at
+  once, so the VL805 stays out of the catalogue until the next boot,
+  with `vl805 firmware not loaded`, as when its firmware does not load.
+  The library call that meets `ERX_ETIMEDOUT` marks the bridge's
+  catalogue entry `firmware_lost` before it returns, and the library's
+  intake takes every function of a marked bridge as `not_ready`
   ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)), so a late
   answer that loads the firmware after all, and a later start of the
   PCIe domain that then finds it present and keeps the bridge without a
   notification, still give nothing in that boot. Nothing asks the
   kernel again to learn of the timeout.
-  FreeBSD frees its buffer after a timed-out read (`:424-436`), so a late
-  answer there writes freed memory; erXos never reuses the page.
-* **Concurrency.** The kernel serves one mailbox request at a time. A
-  notification that finds another request in flight answers `ERX_EBUSY`
-  at once and waits on no other caller; the device service makes every
-  call from its one firmware worker
+* **Against FreeBSD.** FreeBSD's property call waits 10 s
+  (`bcm2835_mbox.c:244-247`); the 1 s is erXos's bound for every
+  mailbox request, and probe B1 records how long this one takes.
+  FreeBSD also checks the answer word against its request's buffer
+  (`:348-351`), as erXos's kernel does, and its response code and the
+  tag's response bit (`:352-374`); it frees its buffer after a
+  timed-out read (`:424-436`), so a late answer there writes freed
+  memory, where erXos never reuses the page.
+* **Concurrency.** The device service makes every call from its one
+  firmware worker
   ([design-system.md](design-system.md#devices), "Firmware requests"),
-  so this arises only beside a trial request, or beside a call a
-  restarted device service's old worker left in the kernel. The trial
-  request, which never returns, waits out a notification in flight, at
-  most its deadline, before it posts its own, and a mailbox it cannot
-  take ends, as every failure of the trial request does, in the
-  watchdog's reset.
+  so `ERX_EBUSY` arises only beside a trial request, or beside a call a
+  restarted device service's old worker left in the kernel. A mailbox
+  the trial request cannot take ends, as every failure of the trial
+  request does, in the watchdog's reset.
 * **The caller's end.** The device service runs in the root task, whose
   end ends the machine (K31). A PCIe domain that ends while its request
   is served loses only the answer; its successor's bring-up asks again
   after its own PERST# cycle.
 
-On Fiasco the backend implements the call in the root task, which
-maps the mailbox's page and keeps a page of its own as the buffer, with
-the same deadline, answer match, rule after a timeout and results; the
-root is the trusted base and Fiasco reads no device secret. A call
+On Fiasco the backend implements the call in the root task with the
+same core and results; the root is the trusted base and Fiasco reads
+no device secret. A call
 that answers other than `ERX_OK` reports the function `not_ready`, with
 `vl805 firmware not loaded`, and `0x50` is not read again. The
 operation is what makes the bridge's reset path
@@ -1982,7 +1959,7 @@ full ring breaks the form, and its restart resets it.
 `negotiate/2` takes one step a call and answers `{error, ebusy}` while
 the controller has not yet reported what the last step asked, as the
 other forms' installs do
-([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)).
+([design-device-dma.md](design-device-dma.md#the-descriptor-forms)).
 Its steps, each completed by a later call: clear run and stop, then wait
 for halted, which the controller reaches within 16 ms (5.4.1, p. 393);
 write the reset bit, allowed only once halted (p. 394), then wait for

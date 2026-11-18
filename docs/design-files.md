@@ -3095,7 +3095,8 @@ program's port, within that slot, and answers the count, after which `liberx` co
 caller's buffer, never more than the count it asked for, and frees the
 slot. A `write` copies the caller's bytes
 into a slot first and the handler copies them out into the `write`
-request. A thread that finds no free slot waits for one, so a program's
+request. A request that names a slot past the program's `slots` is
+refused with `EINVAL`. A thread that finds no free slot waits for one, so a program's
 requests in flight are bounded by its slots, and the session, which sized
 the area, holds nothing per request beyond them. The same shape serves
 `getdents`, `readlink`, `getxattr` and every reply larger than a few
