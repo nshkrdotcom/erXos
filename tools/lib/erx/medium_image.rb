@@ -27,7 +27,11 @@ module Erx
     SECTOR_BYTES = BlockImage::SECTOR_BYTES
     # The data partition's length in the suite's medium: the layout's minimum and one
     # MiB more, so the length the medium chooses is not the minimum.
-    DATA_SECTORS = CODEC.constant('medium_data_sectors_min') + 2048
+    SUITE_DATA_SECTORS = CODEC.constant('medium_data_sectors_min') + 2048
+    # The data partition's length in a medium as packed, the Raspberry Pi's card and QEMU's
+    # release media alike: the layout's minimum, and the medium ends with it
+    # (docs/design-storage.md, "The boot medium's table").
+    PACKED_DATA_SECTORS = CODEC.constant('medium_data_sectors_min')
     # A bound on what the suite's checker reads: the layout and 4 GiB of data partition.
     MAX_SECTORS = CODEC.constant('medium_data_start') + (1 << 23)
     ROLES = %i[record boot_a boot_b vault data].freeze
@@ -55,7 +59,7 @@ module Erx
     # The windows of a medium whose data partition has data_sectors sectors, in the
     # order erx_blk_table admits them: every partition's but the two system partitions'.
     # The system window the boot value adds lies on one of those, so it is not listed.
-    def windows(data_sectors: DATA_SECTORS)
+    def windows(data_sectors: SUITE_DATA_SECTORS)
       [Window.new(role: :record, start: constant('record_start'), sectors: constant('record_sectors')),
        Window.new(role: :boot_a, start: constant('boot_a_start'), sectors: constant('boot_sectors')),
        Window.new(role: :boot_b, start: constant('boot_b_start'), sectors: constant('boot_sectors')),
@@ -71,9 +75,9 @@ module Erx
     end
 
     # The medium's length in sectors: through the end of the data partition.
-    def sectors(data_sectors: DATA_SECTORS) = constant('data_start') + data_sectors
+    def sectors(data_sectors: SUITE_DATA_SECTORS) = constant('data_start') + data_sectors
 
-    def logicals(data_sectors: DATA_SECTORS)
+    def logicals(data_sectors: SUITE_DATA_SECTORS)
       [Logical.new(ebr: constant('system_a_ebr'), type: 'system_type', start: constant('system_a_start'),
                    sectors: constant('system_sectors')),
        Logical.new(ebr: constant('system_b_ebr'), type: 'system_type', start: constant('system_b_start'),
@@ -89,7 +93,7 @@ module Erx
     # first entry starts relative to its own sector; its link to the next record starts
     # relative to the extended partition and spans that record and its partition; the
     # data partition's record has no link.
-    def records(data_sectors: DATA_SECTORS)
+    def records(data_sectors: SUITE_DATA_SECTORS)
       chain = logicals(data_sectors: data_sectors)
       extended = chain.first.ebr
       mbr = record([entry('record_type', constant('record_start'), constant('record_sectors')),
@@ -107,7 +111,7 @@ module Erx
     # written from it, a string or a FilePiece; each must lie inside one partition
     # (partitions) and overlap no other. The medium is written under a private name beside it and linked
     # to name whole, so a failed write leaves nothing at name. Returns its path.
-    def create(directory:, name:, pieces:, data_sectors: DATA_SECTORS)
+    def create(directory:, name:, pieces:, data_sectors: SUITE_DATA_SECTORS)
       raise Error, 'a disk image name is a plain file name' unless name.is_a?(String) && BlockImage::NAME.match?(name)
       raise Error, 'the disk image directory is not a directory' unless directory.is_a?(String) && File.directory?(directory)
 

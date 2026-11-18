@@ -17,7 +17,7 @@
 # medium's end, and the extended partition ends where it ends. Every boundary is a
 # multiple of 2048 sectors (1 MiB), and each partition starts where the record or
 # partition before it ends, so a slot's boot partition, its system partition and that
-# partition's record take 512 MiB, and the vault's and the data partition's sectors
+# partition's record take 256 MiB, and the vault's and the data partition's sectors
 # follow the two slots. Every entry's status is mbr_status_inactive. A boot partition
 # is one FAT32 volume (medium_boot_type), the firmware's; a system partition holds the
 # slot's EROFS image and the vault's and the data partition's hold their own file
@@ -65,23 +65,23 @@ limit medium_slot_b_partition u32 3
 bytes medium_record_a 64 value 5b616c6c5d0a747279626f6f745f615f623d310a626f6f745f706172746974696f6e3d320a5b747279626f6f745d0a626f6f745f706172746974696f6e3d330a
 bytes medium_record_b 64 value 5b616c6c5d0a747279626f6f745f615f623d310a626f6f745f706172746974696f6e3d330a5b747279626f6f745d0a626f6f745f706172746974696f6e3d320a
 limit medium_boot_a_start u32 24576
-limit medium_boot_b_start u32 286720
-limit medium_boot_sectors u32 262144
+limit medium_boot_b_start u32 417792
+limit medium_boot_sectors u32 393216
 limit medium_boot_type u8 0x0c
 limit medium_slot_boot_start u32 8192
 limit medium_extended_type u8 0x0f
 limit medium_link_type u8 0x05
-limit medium_system_a_ebr u32 548864
-limit medium_system_a_start u32 550912
-limit medium_system_b_ebr u32 1335296
-limit medium_system_b_start u32 1337344
-limit medium_system_sectors u32 784384
+limit medium_system_a_ebr u32 811008
+limit medium_system_a_start u32 813056
+limit medium_system_b_ebr u32 942080
+limit medium_system_b_start u32 944128
+limit medium_system_sectors u32 129024
 limit medium_system_type u8 0x83
-limit medium_vault_ebr u32 2121728
-limit medium_vault_start u32 2123776
+limit medium_vault_ebr u32 1073152
+limit medium_vault_start u32 1075200
 limit medium_vault_sectors u32 131072
 limit medium_vault_type u8 0x83
-limit medium_data_ebr u32 2254848
-limit medium_data_start u32 2256896
+limit medium_data_ebr u32 1206272
+limit medium_data_start u32 1208320
 limit medium_data_sectors_min u32 262144
 limit medium_data_type u8 0x83

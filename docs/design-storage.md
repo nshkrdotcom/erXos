@@ -433,13 +433,24 @@ medium layout of the ABI file:
 | 4, third logical | the vault's partition | the vault's storage domain alone |
 | 4, fourth logical | the data partition, last on the medium | the principals' storage domain |
 
-Each boot partition is 128 MiB and each system partition 383 MiB, so a
-slot's two partitions and its system partition's extended boot record
-take 512 MiB. The firmware reads entries 1 to 3 alone: the Raspberry Pi's
-bootloader names a boot partition by its number, counted from 1, and
-boots only a FAT partition ([references](#references)), so the system
-partitions, the vault's and the data partition lie where no firmware
-looks.
+A slot's partitions are sized from what they hold, with room for a
+release to double: each is at least twice the largest file of its kind
+that erXos packs, the boot image as placed in its boot partition and the
+release's EROFS image with its hash tree, rounded up so that a slot's two
+partitions and its system partition's extended boot record take 256 MiB.
+Each boot partition is 192 MiB and each system partition 63 MiB. The
+packer refuses a file that does not fit its partition, and when a release
+passes half of one, the layout grows by a change to the ABI file. The
+vault's partition is 64 MiB, and the data partition of a medium as packed
+is the layout's minimum, 128 MiB, room for what a fresh system and its
+first users write there, such as root's login keys, `/etc/start.conf`
+and installed packages. A medium as packed ends where its data partition
+ends, on a 1 MiB boundary, so writing a card copies only what its partitions
+hold: the Raspberry Pi 4's card is 718 MiB. The firmware reads entries 1
+to 3 alone: the Raspberry Pi's bootloader names a boot partition by its
+number, counted from 1, and boots only a FAT partition
+([references](#references)), so the system partitions, the vault's and
+the data partition lie where no firmware looks.
 
 The driver admits the table before it serves any window: it must equal
 the layout entry for entry, but for the data partition's length, or the
@@ -491,7 +502,7 @@ exchange:
   ([design-packaging.md](design-packaging.md#the-package)). It holds
   nothing secret, a rule of the packer, which writes nothing there but
   package files, since every app may read every package. The packer
-  refuses a system image larger than the system partition, 383 MiB,
+  refuses a system image larger than the system partition, 63 MiB,
   naming the packages that do not fit, though one package may be as large
   as `pkg_bytes_max`, 1 GiB. The storage domain that serves `system`
   serves it as the **`system` tree** ([The `system` tree](#the-system-tree)).

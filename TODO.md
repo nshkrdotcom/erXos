@@ -1123,7 +1123,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   whose `check_and_place` packs nothing). Make each mode an allowlist of the kinds it takes, every other
   kind refused, keeping each refused kind's property and reason in one table per mode.
 * [Medium] `tools/lib/erx/release_medium.rb`, `system_partition`: its refusal of an image and tree larger than
-  the system partition has no test, because reaching it takes an image near the partition's 383 MiB
+  the system partition has no test, because reaching it takes an image near the partition's 63 MiB
   (`medium_system_sectors`), which the function reads whole and hashes. Take the partition's size from
   `MediumImage` once and pass it through `system_partition`, `image_extent` and `image_extents`, which each read
   it today, and test the refusal on a small partition.
@@ -1886,7 +1886,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] `tools/lib/erx/raspi4b_shell.rb`, the SD model tests of docs/design-storage.md ("Verification and testing"):
   the `tcg-sd-card` cell identifies the card, reads the partition table, mounts littlefs, writes a file at root's
   `/data` and finds its bytes in the card's data partition, and writes and reads back two
-  blocks outside every partition, on the packed card only, a 2 GiB standard-capacity card. Still to come: the
+  blocks outside every partition, on the packed card only, padded to a 2 GiB standard-capacity card. Still to come: the
   `/data` file read back after the storage domain is killed and restarted, a 4 GiB
   high-capacity card, the seeded medium whose data partition holds a different file, and the recovery test under a write load.
 * [Low] `erlang/apps/erx_blk/src/erx_blk_sd_host.erl`: OUT_OF_RANGE is type X in Physical Layer Table 4-42 (p.120), so a card may report the last-sector out of range of a CMD18 in the next command's R1 instead of Auto CMD12's; the transfer machine exempts only Auto CMD12's, so such a card would fail the next request and restart the storage domain. The board probe should record whether a card does this; if one does, exempt OUT_OF_RANGE alone in the first R1 after such a read.
@@ -2507,7 +2507,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `domains/erxos/lib`; OpenSSL (3.3 MB) is linked into both the system domain's ERTS and the domains' ERTS;
   and `public_key`, `ssl`, `ssh` and `inets` hold 8.8 MB. Each is decided by the measurement in
   [docs/todo-performance.md](docs/todo-performance.md) ("every release in the boot image"). The packer
-  bounds a file by the partition (128 MiB), so this size packs.
+  bounds a file by the partition (192 MiB), so this size packs.
 * [Medium] desktop, the glyph step's glyph count (`tools/lib/erx/glyphs.rb`, `erx_draw_core.erl` `?MAX_GLYPHS`):
   `Erx::Glyphs` refuses only at font(7)'s field limits, so it would write a subfont of more than 4096 glyphs, the
   most a font cache holds, which `erx_font:parse/1` then refuses. No spec holds that limit (`abi/formats/draw.txt`
@@ -10070,10 +10070,19 @@ document's "residual risks accepted" paragraph.
   come from the file.
 * [Low] erx_blk_window: a request for more sectors than one device request carries (`erx_blk_request:max_sectors/0`)
   is refused with `einval` rather than split, so every client splits its own.
-* [Medium] abi/medium.txt: the medium layout's sizes (the record's partition 8 MiB, each slot 512 MiB (boot 128 MiB, system 383 MiB), the vault's
-  partition 64 MiB, the data partition at least 128 MiB, every boundary on 1 MiB) are settled, but not yet checked
-  against the slot images' sizes (the plan's decision gate on uncompressed slots) or the Pi firmware's needs of the
-  record's and the slots' FAT partitions; each slot's signature window is not in the layout yet.
+* [Medium] abi/medium.txt: the medium layout's sizes (the record's partition 8 MiB, each slot 256 MiB (boot 192 MiB,
+  system 63 MiB), the vault's partition 64 MiB, the data partition at least 128 MiB, every boundary on 1 MiB) follow
+  the rule of docs/design-storage.md ("The boot medium's table"), at least twice the largest boot image and EROFS image
+  erXos packs; nothing flags a release that passes half its partition, the point where the rule asks the
+  layout to grow (the packer refuses only one that does not fit). They are not yet checked against the Pi firmware's
+  needs of the record's and the slots' FAT partitions, and each slot's signature window is not in the layout yet.
+* [Medium] storage, the data partition: a medium as packed holds the layout's minimum data partition, 128 MiB,
+  and the medium ends there, so a card writes fast and the rest of a larger card lies unused. Grow the data
+  partition to the medium's end at first boot, as Raspberry Pi OS grows its root file system: rewrite the data
+  partition's extended boot record and the master boot record's extended entry, which the block driver already
+  admits at any length up to the medium's end (docs/design-storage.md, "The boot medium's table"), and grow the
+  littlefs volume. It needs its own design first: who may write the table (only the slot writer writes the
+  record and slots today), how a power cut midway is recovered, and how littlefs grows in place.
 * [Low] erx_blk_virtio: an interrupt storm costs a scheduler, bounded by the device's rate (Phase 1 residual).
 * [Low] erx_syslog ([design-log.md](docs/design-log.md#the-kernels-records)): kernel records the early console
   wrote before the log service's first take are not in `kernel/messages`; they are on the serial line and in

@@ -16,7 +16,7 @@
 
 -define(UNCHECKED, ?ERX_MF_IMAGE_FORMAT_EROFS_UNCHECKED).
 -define(SLOT_BYTES, (?ERX_MEDIUM_SYSTEM_SECTORS * 512)).
--define(AT, (128 bsl 20)).
+-define(AT, (32 bsl 20)).
 
 image(Extents) ->
     #{name => <<"release">>, format => ?UNCHECKED, data_bytes => lists:sum([Length || {_, Length} <- Extents]),

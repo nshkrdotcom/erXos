@@ -626,7 +626,7 @@ async function fetch_checked(what, { file, bytes, sha256, compressed_bytes }, { 
 }
 
 // The machine's disk: byteLength bytes, of which only the chunks something
-// wrote are held, every other byte reading as zero, so a 1.2 GiB medium
+// wrote are held, every other byte reading as zero, so a 718 MiB medium
 // costs the page only what has been written to it. v64 takes it as a disk
 // of its own (an object with load, get and set, as src/buffer.js in v64
 // describes) and writes the guest's writes into it, so a machine that

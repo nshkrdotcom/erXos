@@ -39,9 +39,9 @@ web:
 	$(RUBY) tools/erx build web
 
 # The production image and its medium for PLATFORM into build/production-image/PLATFORM/:
-# QEMU's release medium, or for raspi4b the SD card's boot/ and sdcard.img. With
-# PROBE=header, the Raspberry Pi 4's header probe card into build/probe-card/raspi4b-header/
-# instead (docs/research-rpi4-header-probe.md).
+# QEMU's release medium, or for raspi4b the SD card's boot/, sdcard.img and
+# sdcard.img.xz. With PROBE=header, the Raspberry Pi 4's header probe card into
+# build/probe-card/raspi4b-header/ instead (docs/research-rpi4-header-probe.md).
 pack:
 	$(RUBY) tools/erx pack --platform $(PLATFORM) $(if $(PROBE),--probe $(PROBE),--medium)
 

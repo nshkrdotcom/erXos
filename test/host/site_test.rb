@@ -550,8 +550,8 @@ class SiteTest < Minitest::Test
     end
   end
 
-  # GitHub refuses a release asset of 2 GiB or more, so the card is taken as sdcard.img.xz and
-  # unpacked by its own step, run here as the workflow runs it with a small bound. An xz that is
+  # The release holds the card as sdcard.img.xz, as make pack writes it, and the workflow
+  # unpacks it by its own step, run here as the workflow runs it with a small bound. An xz that is
   # damaged, cut short, not xz at all or unpacks past the bound fails the step.
   def test_the_workflow_unpacks_the_card_within_a_bound
     workflow = YAML.safe_load(File.read(File.join(REPO, '.github/workflows/site.yml')))
@@ -560,7 +560,7 @@ class SiteTest < Minitest::Test
     # The step needs bash (its [[ and pipefail), which is what a step without a shell runs.
     refute step.key?('shell'), 'a step shell'
     refute workflow.key?('defaults'), 'a default shell'
-    xz = ->(bytes) { Open3.capture2(*Erx::Site::XZ_ARGUMENTS, stdin_data: bytes, binmode: true).first }
+    xz = ->(bytes) { Open3.capture2(*Erx::BootPartition::XZ_ARGUMENTS, stdin_data: bytes, binmode: true).first }
     whole = xz.call('card' * 250)
     cases = { 'exactly at the bound' => [whole, true],
               'one byte past the bound' => [xz.call('card' * 250 + 'x'), false],

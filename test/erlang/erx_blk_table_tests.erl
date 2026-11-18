@@ -187,7 +187,7 @@ bad_records_are_refused_test() ->
 %% The layout itself: records and partitions in medium order, each starting where the one
 %% before it ends but for the gaps before the record partition and boot A, each boundary on
 %% 1 MiB, every logical partition 1 MiB after its record, a slot's two partitions and its
-%% system partition's record 512 MiB, every sector the MBR can address, and the MBR's
+%% system partition's record 256 MiB, every sector the MBR can address, and the MBR's
 %% entries ending where its signature starts.
 layout_is_consistent_test() ->
     Spans = [{0, 1}, {?ERX_MEDIUM_RECORD_START, ?ERX_MEDIUM_RECORD_SECTORS},
@@ -200,7 +200,7 @@ layout_is_consistent_test() ->
     lists:foreach(fun({{Start, Count}, {Next, _}}) -> ?assert(Start + Count =< Next) end, Pairs),
     lists:foreach(fun({{Start, Count}, {Next, _}}) -> ?assertEqual(Start + Count, Next) end, lists:nthtail(2, Pairs)),
     ?assert(lists:all(fun({Start, _}) -> Start rem 2048 =:= 0 end, tl(Spans))),
-    ?assertEqual(512 * 2048, ?ERX_MEDIUM_BOOT_SECTORS + 2048 + ?ERX_MEDIUM_SYSTEM_SECTORS),
+    ?assertEqual(256 * 2048, ?ERX_MEDIUM_BOOT_SECTORS + 2048 + ?ERX_MEDIUM_SYSTEM_SECTORS),
     ?assert(?ERX_MEDIUM_DATA_START + ?ERX_MEDIUM_DATA_SECTORS_MIN < 1 bsl 32),
     ?assertEqual(446, ?ERX_MBR_ENTRIES_OFFSET),
     ?assertEqual(510, ?ERX_MBR_SIGNATURE_OFFSET),

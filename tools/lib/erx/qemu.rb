@@ -244,8 +244,34 @@ module Erx
         super(path: path.dup.freeze)
       end
     end
+    # The sizes QEMU's SD card model is given: it takes an image of a power-of-two size up
+    # to 2 GiB, a standard-capacity card, and of a multiple of 512 KiB above, a
+    # high-capacity one (docs/research-sdhci-qemu-model.md); the harness gives it 2 GiB for
+    # a card that fits and 4 GiB for a larger one (docs/design-platforms.md, "The model's SD
+    # controller").
+    CARD_BYTES = [1 << 31, 1 << 32].freeze
 
     module_function
+
+    # The size QEMU's model is given for a card of bytes: the smallest of CARD_BYTES that
+    # holds it. Pure.
+    def card_bytes(bytes)
+      size = CARD_BYTES.find { |candidate| bytes <= candidate }
+      raise Error, "a card of #{bytes} bytes is larger than QEMU's SD model is given, #{CARD_BYTES.last} bytes" unless size
+
+      size
+    end
+
+    # Copies the card at from to a new file at to, the copy a guest boots and writes,
+    # padded with zeros to the model's size (card_bytes). A card ends at its last partition,
+    # so a writer copies no more than it holds; the model alone wants it longer, so the
+    # harness's copy, and nothing else, is padded. Returns to.
+    def card_copy(from, to:)
+      bytes = card_bytes(File.size(from))
+      FileUtils.cp(from, to)
+      File.truncate(to, bytes)
+      to
+    end
 
     # The guest's RAM in MiB when a plan names none: the platform record's (Platform#memory_mib).
     def memory_of(platform)

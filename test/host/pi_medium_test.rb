@@ -28,12 +28,14 @@ class PiMediumTest < Minitest::Test
   FAT32_LABEL = 71
   VOLUME_LABEL = 0x08
 
-  # The card is a power of two long and holds the layout's minimum data partition.
-  def test_the_card_is_a_power_of_two
-    sectors = Erx::MediumImage.sectors(data_sectors: PI.data_sectors)
-    assert_equal 1 << 31, sectors * Erx::MediumImage::SECTOR_BYTES
-    assert_operator PI.data_sectors, :>=, Erx::MediumImage.constant('data_sectors_min')
-    assert_equal 0, PI.data_sectors % 2048, 'the data partition ends on a MiB'
+  # The card ends where its last partition, the data partition at the layout's minimum,
+  # ends, on a MiB: 718 MiB, which a writer copies whole, and never QEMU's 2 GiB, to which
+  # only the harness's copy is padded (QemuPlan.card_copy).
+  def test_the_card_ends_at_its_data_partition
+    assert_equal Erx::MediumImage.constant('data_sectors_min'), Erx::MediumImage::PACKED_DATA_SECTORS
+    bytes = Erx::MediumImage.sectors(data_sectors: Erx::MediumImage::PACKED_DATA_SECTORS) * Erx::MediumImage::SECTOR_BYTES
+    assert_equal 718 << 20, bytes
+    assert_equal 0, bytes % (1 << 20), 'the card ends on a MiB'
   end
 
   def test_accepts_the_volumes_fsimg_writes
