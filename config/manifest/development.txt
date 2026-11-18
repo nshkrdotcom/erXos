@@ -137,7 +137,7 @@ limits session
   grant @share.session
   spaces @share.session
   lane 65536
-  connections 4
+  connections 6
   crash 0
   flags spaces
   runtime_limits @runtime_limits.session
@@ -227,12 +227,13 @@ facet storage_ctl
 # domain takes two connections, root's session and one more while a session is replaced,
 # and four more, one for each app of QEMU virt's apps row, whose template the build
 # grants packages,
-# and root's session four: data, net, and one more for each while its server is
-# replaced; a domain's system connection counts against no quota (life_connections,
+# and root's session six: data, net, the display, and one more for each while its
+# server is replaced; a domain's system connection counts against no quota (life_connections,
 # liberx/system/dom_life.c). The network domain takes two, as the storage domain does for sessions,
 # and four more, one for each app of QEMU virt's apps row, whose template the build
-# grants net; the display domain, whose display no source facet grants, takes one for
-# each app of the board's apps row, whose template the build grants the display (its
+# grants net; the display domain takes two for root's session, which display_root
+# grants the display, and one more while that session is replaced, and one for each
+# app of the board's apps row, whose template the build grants the display (its
 # limits, in the board's part). Each board's machine
 # record reckons its max_connections from these rows.
 service data
@@ -338,8 +339,9 @@ facet network_ctl
   period_ns 1000000000
   max_heap_size 65536
 # display: the display domain's window tree (docs/design-display.md, "A display's
-# session"), of the windows interface, and its display record. No facet grants it and no
-# start row names it, so the display shows its empty layout's background. The policy is
+# session"), of the windows interface, and its display record. No start row names it,
+# so the display shows its empty layout's background until a session's window opens
+# (a board's apps row starts the kiosk's). The policy is
 # single, the palette dark, for the kiosk's wall display (docs/design-display.md, ctl),
 # and the idle times 0, which the display_domain suite boots
 # (DisplayDomain.manifest); the domain library passes the idle times to the domain's
@@ -353,6 +355,27 @@ display display
   palette dark
   idle_dim_s 0
   idle_off_s 0
+# display_root: root's development grant on the display (docs/design-display.md,
+# "Root's development grant on a single display"), named display as the build names an
+# app's. It sets front, which property 18 allows on this row alone and in no release
+# build, so the newest window of a program root runs, from rc at the console or over
+# SSH, takes the single policy's screen while it lives, and the kiosk's window is shown
+# again when it ends. Its windows and pixels are the defaults, one window and
+# windows_pixels_default; the display domain's outer budget pays for that area and its
+# lane once for each session the system principal's domains quota lets live at once,
+# and its connections quota holds root's session and its replacement (each board's
+# limits). Its quantities are the windows interface's (abi/services/windows.txt).
+facet display_root
+  name "display"
+  grantee @session.system
+  service @service.display
+  operations none
+  max_request 131072
+  in_flight 16
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 262144
+  parameter front yes
 # log: the system log's write interface (docs/design-log.md, "The log facet"), served by
 # the system domain, where erx_syslog_sup registers as its server (erx_facet:serve/2).
 # No facet row grants it, so no other domain holds a log facet. A row that grants it

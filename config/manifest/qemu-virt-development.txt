@@ -53,10 +53,10 @@
 # manifest's system baseline and the block driver and littlefs in the system domain);
 # 1,000 more idle processes
 # add about 4 MiB, and the rest of the baseline over ERTS and /tmp, 5.8 MiB, is the
-# margin. The system principal's 188 MiB holds root's one session, whose limits'
+# margin. The system principal's 228 MiB and 20 KiB holds root's one session, whose limits'
 # memory is 36 MiB and outer 1 MiB, the storage domain, 30 MiB and outer 1 MiB, the
 # network domain, 36 MiB and outer 1 MiB, the web domain, 24 MiB and outer 1 MiB, the
-# display domain, 24 MiB and outer 33 MiB (see below), and 1 MiB for the outer budget of a domain
+# display domain, 24 MiB and outer 73 MiB and 36 KiB (see below), and 1 MiB for the outer budget of a domain
 # that has ended while another still holds a connection to it: that outer budget is the library's until the survivor answers the
 # connection's end (erx_domain_srv ended/3), and a session's next login or a
 # configured domain's restart is admitted before that answer arrives. One such budget
@@ -77,8 +77,10 @@
 # measured either, though the display_domain suite boots this row with a client; its
 # grant, the display share, is a tenth of one CPU, to be sized from measurement. Its
 # outer budget is 1 MiB and the four pixel areas of windows_pixels_default, 8 MiB, with
-# their 4 KiB lanes that the apps row's four apps hold, since no source session is
-# granted the display but the build grants the app template it: a grant
+# their 4 KiB lanes that the apps row's four apps hold, since the build grants the app
+# template the display, and five more for the sessions of root's template that the
+# system principal's domains quota lets live at once, which display_root grants it
+# (development.txt), 40 MiB and 20 KiB in all: a grant
 # adds its pixel area and lane to it (docs/design-system.md, "The manifest", property
 # 18), a connection to the domain's quota and one to max_connections, as the
 # display_domain suite adds them for its client (DisplayDomain.manifest). The two grants are what the
@@ -151,9 +153,9 @@
 #
 # The development machine admits the system domain, root's session and the storage, network,
 # web and display domains. Admission charges budgets, not use: the system baseline, 46 MiB,
-# the system principal's 188 MiB (root's session, 36 MiB and outer 1 MiB, the storage
+# the system principal's 228 MiB and 20 KiB (root's session, 36 MiB and outer 1 MiB, the storage
 # domain, 30 MiB and outer 1 MiB, the network domain, 36 MiB and outer 1 MiB, the web
-# domain, 24 MiB and outer 1 MiB, the display domain, 24 MiB and outer 33 MiB, and an
+# domain, 24 MiB and outer 1 MiB, the display domain, 24 MiB and outer 73 MiB and 36 KiB, and an
 # ended domain's outer 1 MiB), the apps row's 131 MiB and the devices' 10.375 MiB
 # promise all of root_memory but its 8 MiB margin. The network
 # domain's 36 MiB is its use rounded up to a whole MiB, 34 MiB, and 2 MiB of headroom:
@@ -225,21 +227,22 @@ limits web
   peer_held_total 4096
 # The display domain's limits, whose figures this part's opening comment explains (its
 # display domain paragraph): 24 MiB, outer 1 MiB and the apps row's four
-# pixel areas with their lanes, and one connection for each of the four apps.
+# pixel areas with their lanes and root's template's five, and one connection for each
+# of the four apps and two for root's session and its replacement.
 limits display
   memory 25165824
-  outer 34619392
+  outer 76582912
   grant @share.display
   spaces none
   lane 4096
-  connections 4
+  connections 6
   crash 0
   flags none
   runtime_limits @runtime_limits.display
   peer_held 4096
   peer_held_total 4096
 principal system
-  memory 197148672
+  memory 239112192
   grant @share.users
   domains 5
   names 64
@@ -255,9 +258,9 @@ apps
   max 4
   services display net
 # The web domain holds its system connection alone, which its quota of one never meets.
-# max_connections, 28, holds the sixteen of the four apps' sessions (each its system
-# connection, packages, the display and net) and the seven rows at rest (the system connections of root's
-# session and of the four configured domains, and the session's data and net), the three
+# max_connections, 30, holds the sixteen of the four apps' sessions (each its system
+# connection, packages, the display and net) and the eight rows at rest (the system connections of root's
+# session and of the four configured domains, and the session's data, net and display), the four
 # a replacement session makes beside its predecessor's closing rows, and the two a
 # restarted configured domain makes beside its own.
 machine
@@ -266,13 +269,13 @@ machine
   console "/pl011@9000000"
   hostlink "/pl011@9040000"
   platform "qemu-virt"
-  root_memory 402014208
+  root_memory 443977728
   system_baseline 48234496
   system_share @share.system
   users_share @share.users
   system_principal @principal.system
   max_domains 9
-  max_connections 28
+  max_connections 30
   system_lane 4096
   system_queue 16384
   peer_held 4096

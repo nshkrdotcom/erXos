@@ -952,6 +952,30 @@ class ManifestDomainsTest < Minitest::Test
             message: /sets session/)
   end
 
+  # Property 18's front clause: only the row granting the display to the system
+  # principal's template, root's, sets front, and only in a development build, since the
+  # newest window of a front grant takes a single display's screen. Seeds: a configured
+  # domain's row; another principal's template's row, which a check admitting any session
+  # template misses; and root's row in a release build.
+  def test_only_root_s_development_grant_sets_front
+    front = "  parameter pixels 4096\n  parameter front yes\n"
+    admit(with_windows(sb: front))
+    refused(Erx::Manifest::Invalid, 18, 'facet.parameter', with_windows(ob: front), message: /sets front/)
+    domain = with_windows + window_facet('ab', '@domain.alpha', '@service.b') + front
+    refused(Erx::Manifest::Invalid, 18, 'facet.parameter', domain, message: /sets front/)
+    release = Class.new(Erx::Manifest::Stopgap) { private def check_mode(development:, partial:) = nil }
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @platform),
+                                         build_kind: 'release')
+    check = lambda do |sb|
+      parsed = Erx::Manifest::Frontend.parse(with_windows(sb: sb).sub('flags development', 'flags none'),
+                                             version: @codec.constant('manifest_version'))
+      release.new(parsed, codec: @codec, context: context, planner: @planner, consumers: {}).check
+    end
+    check.call("  parameter pixels 4096\n")
+    error = assert_raises(Erx::Manifest::Invalid) { check.call(front) }
+    assert_equal [18, 'facet.parameter'], [error.property, error.field], error.message
+  end
+
   # Seed: a template's grant costs its pixel area and the display's side once for each
   # session its principal's domains quota allows, 2 for the system principal and 0 for
   # other. 127 pages and the side's page, twice, fill beta's 1 MiB outer budget; one

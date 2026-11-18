@@ -121,15 +121,16 @@ class ManifestEditTest < Minitest::Test
   # Taking the display domain out takes its records and those only it named, keeps the
   # share and runtime limits other records still name, and gives back its room: its
   # budgets from the principal and root_memory, its unit's DMA memory (4 and 3) from
-  # root_memory, and one domain and one connection.
+  # root_memory, one domain, and one connection with the two of root's display_root,
+  # its session's and a replacement session's.
   def test_without_domain_takes_its_records_and_gives_back_its_room
     gone = Edit.without_domain(SOURCE, 'display', units: UNITS)
     taken = records(SOURCE).keys - records(gone).keys
-    assert_equal [%w[display display], %w[domain display], %w[limits display], %w[runtime_limits display],
+    assert_equal [%w[display display], %w[domain display], %w[facet display_root], %w[limits display], %w[runtime_limits display],
                   %w[service display], %w[share display], %w[unit display]], taken.sort
     budget = value(SOURCE, 'limits display', 'memory') + value(SOURCE, 'limits display', 'outer')
     { ['principal system', 'memory'] => -budget, ['principal system', 'domains'] => -1,
-      %w[machine root_memory] => -budget - 7, %w[machine max_domains] => -1, %w[machine max_connections] => -1 }
+      %w[machine root_memory] => -budget - 7, %w[machine max_domains] => -1, %w[machine max_connections] => -3 }
       .each do |(record, field), change|
         assert_equal value(SOURCE, record, field) + change, value(gone, record, field), "#{record} #{field}"
       end
@@ -164,12 +165,12 @@ class ManifestEditTest < Minitest::Test
     assert_includes records(Edit.without_domain(source, 'display', units: UNITS)).keys, %w[share system]
   end
 
-  # A domain that is not there, whose service is granted to a session or another domain,
+  # A domain that is not there, whose service is granted to another domain,
   # which leaves a record naming one it took, or whose unit is on no platform unit, is
   # refused.
   def test_without_domain_refuses_what_it_cannot_take_whole
     [['absent', SOURCE, /no record "@domain.absent"/],
-     ['web', SOURCE.sub("facet web\n  grantee system\n", "facet web\n  grantee @session.system\n"), /granted by facet web/],
+     ['web', SOURCE.sub("facet web\n  grantee system\n", "facet web\n  grantee @domain.storage\n"), /granted by facet web/],
      ['display', "#{SOURCE}start system\n  display @service.display\n", /start system names a record/],
      ['display', "#{SOURCE}introduce @domain.storage @domain.display\n",
       /introduce @domain.storage @domain.display names a record/],
@@ -177,5 +178,16 @@ class ManifestEditTest < Minitest::Test
       error = assert_raises(Erx::Error) { Edit.without_domain(source, name, units: UNITS) }
       assert_match message, error.message
     end
+  end
+
+  # A facet granting the domain's service to a session template goes with the domain and
+  # gives back two of max_connections beside the domain's own one: its session's
+  # connection and the one a replacement session makes beside it.
+  def test_without_domain_takes_a_session_template_s_grant_with_its_connections
+    granted = SOURCE.sub("facet web\n  grantee system\n", "facet web\n  grantee @session.system\n")
+    connections = ->(text) { Erx::Manifest::Frontend.read(text).machine.decimal('max_connections') }
+    taken = Edit.without_domain(granted, 'web', units: UNITS)
+    assert_equal connections.(Edit.without_domain(SOURCE, 'web', units: UNITS)) - 2, connections.(taken)
+    refute_match(/^facet web$/, taken)
   end
 end

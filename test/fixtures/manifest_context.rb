@@ -153,7 +153,8 @@ module ManifestContextFixture
   # login_keys, which a sessionless source (ProductionImage.without_sessions) does not hold.
   SESSION_FACETS = [/^facet data_session\n(?:  .*\n)*/, /^facet net\n(?:  .*\n)*/, /^facet inspect\n(?:  .*\n)*/,
                     /^facet start\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/,
-                    /^facet root_clock\n(?:  .*\n)*/, /^facet login_keys_session\n(?:  .*\n)*/].freeze
+                    /^facet root_clock\n(?:  .*\n)*/, /^facet login_keys_session\n(?:  .*\n)*/,
+                    /^facet display_root\n(?:  .*\n)*/].freeze
   # A service the system domain serves (inspect, start, machine and clock, to session templates
   # alone; log and code_objects, which no facet row grants), by its server line, so a new
   # one goes with the rest.

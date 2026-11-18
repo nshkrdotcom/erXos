@@ -1940,7 +1940,7 @@ module Erx
       # The checkers that consume a service's declared parameters, by the name its
       # declarations give in checked_by, each with the keys it consumes (docs/design-abi.md,
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
-      # check_display_grants, which reads pixels and session, and range-checks windows and
+      # check_display_grants, which reads pixels, session and front, and range-checks windows and
       # clipboard as their declarations bound them. line_grant is property 8's line clause,
       # check_line_grants, which reads uart and flow and range-checks rate. net_grant is
       # property 15's parameter clause, check_net_ports, which reads a net facet's ports and
@@ -1952,7 +1952,7 @@ module Erx
       # facet of it is admitted, since nothing would check what it grants. Each checker
       # takes the facets of the services that name it (grant_checker), whatever their
       # interface.
-      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze,
+      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session front].freeze,
                          'line_grant' => %w[uart rate flow].freeze,
                          'net_grant' => %w[sockets buffers ports listen].freeze,
                          'files_grant' => %w[rights tree].freeze }.freeze
@@ -2167,7 +2167,9 @@ module Erx
       # Property 18's clauses on one display's grants: its server is a configured
       # domain whose row sets none of display_keys, no facet row of its service grants it to the system domain, whose
       # connections no introduction makes and so carry no pixel area, no facet row of
-      # its service sets session, and the grants' costs fit the
+      # its service sets session, only a row granting it to the system principal's session
+      # template, root's, sets front, and only in a development build, since the newest
+      # window of a front grant takes a single display's screen, and the grants' costs fit the
       # display domain's outer budget. Each grant costs its pixel area, its pixels or
       # windows_pixels_default, and the side the display reads for it, the display's own
       # lane, each rounded up to pages; a session template's grant costs that once for
@@ -2189,6 +2191,8 @@ module Erx
                   'facet.grantee') if facet.fetch('grantee_kind') == grantee_kind('system')
           invalid("facet #{facet.fetch('name')} sets session, which the domain service alone sets", 18, 'facet.parameter') if
             values.key?('session')
+          invalid("facet #{facet.fetch('name')} sets front, which only root's template's grant takes, in a development build",
+                  18, 'facet.parameter') if values.key?('front') && !front_grantee?(facet, tables)
           [grant_instances(facet, tables), values]
         end
         apps = grants.any? { |facet, _values| app_template?(facet, tables) }
@@ -2200,6 +2204,14 @@ module Erx
 
         invalid("display #{service.fetch('name')}'s grants#{' and the apps row\'s max apps' if apps} cost #{cost} bytes, " \
                 "past its domain's outer budget of #{limits.fetch('outer')}", 18, apps ? 'apps.max' : 'facet.parameter')
+      end
+
+      # Whether a facet row may set front: a development build's row granting the display to
+      # the system principal's session template, root's, and no other template's or domain's.
+      def front_grantee?(facet, tables)
+        BuildKind.development?(@context.build_kind) && facet.fetch('grantee_kind') == grantee_kind('session') &&
+          tables.fetch('sessions').fetch(facet.fetch('grantee')).fetch('principal') ==
+            reference(@source.machine, 'system_principal', 'principal')
       end
 
       # How many grants a facet row makes at once: one for a domain, for the app template
