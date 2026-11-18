@@ -2646,7 +2646,12 @@ its process, a child of the link supervisor
 ([Decisions](#decisions), 3). Its transaction ids and the randomised
 delays and retransmission times of RFC 2131 section 4.1 come from the
 generator in its state. As `dhclient` does, the client takes the first
-acceptable offer, makes no random wait before its first DISCOVER, counts
+acceptable offer, sends nothing until its link is up
+(`sbin/dhclient/dhclient.c:466-480`; it waits without the 11 s limit
+after which `dhclient` gives up), makes no random wait before its
+first DISCOVER, notes each lease it configures in the log as `dhcp: NAME
+bound to ADDRESS` (`dhclient` notes each binding, `dhclient.c:921`; a
+renewal that changes nothing configures nothing here), counts
 a lease shorter than a minute as a minute, and does not probe the
 offered address with ARP before using it: the interface announces the
 address with a gratuitous ARP when it configures it, and `erx_arp`
@@ -2908,8 +2913,9 @@ the last one it told the interface. While the two differ, it hands
 it tries again after each later message it handles and at a clock hint
 it arms 10 ms after each refusal, so a link that goes down and stays
 silent is still told once the interface has made room. Only the latest
-state is ever told, so a device that flaps its link fills nothing. The interface gives
-the change to its `erx_dhcp4`, which on `up` starts again from
+state is ever told, so a device that flaps its link fills nothing. The interface tells
+its `erx_dhcp4` the link's state when the client attaches, and gives it
+each change after, which on `up` starts again from
 INIT-REBOOT, as `dhclient` does on a link change (`state_reboot`,
 `sbin/dhclient/dhclient.c:302-309`), and does nothing else: FreeBSD's
 IPv6 does nothing on a link event outside its `EXPERIMENTAL` option

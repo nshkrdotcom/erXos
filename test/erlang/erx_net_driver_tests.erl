@@ -12,6 +12,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include("erx_net_frame.hrl").
+-include("erx_dhcp4_wire.hrl").
 -include("erx_ip4_wire.hrl").
 -include("erx_tcp_wire.hrl").
 
@@ -32,8 +33,8 @@ init(#{nothing_at_restart := Key} = Config) ->
 init(#{crash_at_start := true} = Config) ->
     self() ! {stub, crash},
     init(maps:remove(crash_at_start, Config));
-init(#{test := Test, room := Room, tx_limit := Limit}) ->
-    {ok, #{link => ethernet, lladdr => ?MAC, mtu => 1500, state => up, tx_limit => Limit,
+init(#{test := Test, room := Room, tx_limit := Limit} = Config) ->
+    {ok, #{link => ethernet, lladdr => ?MAC, mtu => 1500, state => maps:get(state, Config, up), tx_limit => Limit,
            finish => none},
      #{test => Test, room => Room}}.
 
@@ -368,6 +369,37 @@ nothing_at_restart_is_no_interface_test() ->
     ok = logger:remove_handler(?MODULE),
     _ = persistent_term:erase(Key),
     ?assertEqual(nothing, nothing(supervisor_report_start_error)).
+
+%% A DHCP client whose link is down when it starts, as a PHY still negotiating leaves it,
+%% sends nothing until the link comes up, and then its DISCOVER at once rather than after
+%% a retransmission's wait: dhclient waits for the link before it starts and starts again
+%% when the link comes up (sbin/dhclient/dhclient.c:302-309, 466-480).
+dhcp_starts_when_the_link_comes_up_test() ->
+    wait_gone(erx_net_tables),
+    Transport = {?MODULE, #{test => self(), room => 64, tx_limit => 4, state => down}},
+    {ok, Stack} = erx_net_sup:start_link(#{interfaces => [#{name => en0, ip4 => dhcp,
+                                                            transport => Transport}]}),
+    unlink(Stack),
+    ?assertEqual(none, dhcp_sent(300)),
+    {ok, Driver} = erx_net_tables:driver(en0),
+    Driver ! {stub, [{link, up}]},
+    ?assertEqual(discover, dhcp_sent(1000)),
+    ok = proc_lib:stop(Stack, shutdown, infinity),
+    flush().
+
+%% The type of the first DHCP message the stub sends within about Ms, or none: an IPv4
+%% datagram without options to UDP port 67.
+dhcp_sent(Ms) ->
+    receive
+        {sent, <<_:12/binary, 16#0800:16, 16#45, _:8/binary, 17, _:10/binary, _:16, 67:16, _:32,
+                 Payload/binary>>} ->
+            {ok, #dhcp4{options = #{message_type := Type}}} = erx_dhcp4_wire:decode(Payload),
+            Type;
+        {sent, _Other} ->
+            dhcp_sent(Ms)
+    after Ms ->
+        none
+    end.
 
 %% The interfaces supervisor's child for interface Name, beside the lo0 the stack starts.
 link_child(Interfaces, Name) ->

@@ -308,6 +308,14 @@ link_change_goes_to_the_client_only_under_dhcp_test() ->
     ?assertMatch({_, [{dhcp, {link, up}}]}, step({link, up}, started(#{ip4 => dhcp}))),
     ?assertMatch({_, []}, step({link, up}, started(static()))).
 
+%% The client is told the link's state when it attaches, so one that attaches while the
+%% link is down waits for it to come up.
+attached_client_is_told_the_link_test() ->
+    {Down, [{publish, Rows} | _]} = step(start, core(#{ip4 => dhcp}, (link())#{state := down})),
+    ?assertMatch({_, [{dhcp, {link, down}}]}, step(dhcp_attached, configured(Rows, Down))),
+    ?assertMatch({_, [{dhcp, {link, up}}]}, step(dhcp_attached, started(#{ip4 => dhcp}))),
+    ?assertMatch({_, []}, step(dhcp_attached, started(static()))).
+
 %% --- Passive open: the syncache in the step ------------------------------------------
 
 -define(LISTENER, #{rcv_buf => 65536, rcv_scale => 6}).

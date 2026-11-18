@@ -89,6 +89,7 @@ and its burst.
     | {hint, NextHop :: term()}
     | {config, Gen :: non_neg_integer(), erx_net_frame:snapshot()}
     | {link, up | down}
+    | dhcp_attached                                  % its erx_dhcp4 attached: tell it the link
     | {dhcp, erx_dhcp4_core:action()}                % from the interface's erx_dhcp4
     | {ifid, Ref :: reference(), {ok, binary()} | unavailable}
     | {accept_refused, Conn :: term(), erx_tcp:segment()}
@@ -251,6 +252,10 @@ step({link, State}, #core{dhcp = true} = Core, _Ctx) ->
     {Core#core{link = State}, [{dhcp, {link, State}}]};
 step({link, State}, Core, _Ctx) ->
     {Core#core{link = State}, []};
+step(dhcp_attached, #core{dhcp = true, link = Link} = Core, _Ctx) ->
+    {Core, [{dhcp, {link, Link}}]};
+step(dhcp_attached, Core, _Ctx) ->
+    {Core, []};
 step({dhcp, Action}, #core{dhcp = true} = Core, #{now := Now}) ->
     dhcp(Action, Core, Now);
 step({admin, Request, From}, Core, _Ctx) ->
