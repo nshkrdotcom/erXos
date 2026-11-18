@@ -1433,7 +1433,7 @@ meanwhile, or does not answer in time, has each value `missing`, which
 `ps` prints as `-`. `ps`, `top` and the `Ctrl-T` line read the session's
 programs so, in its own runtime and with no facet, with
 `inspect_agent_wait`, 500 ms, as the wait
-([design-live.md](design-live.md#the-command-shell)). The session's
+([design-shell.md](design-shell.md#text-commands)). The session's
 inspection agent answers `[domains, Self, programs]` and `[domains,
 Self, programs, N]`, `N` a process id, the same way, with the record's
 other attributes among the keys and half that deadline, so its own

@@ -16,79 +16,21 @@ which decide who may see and change what, in
 [design-domains.md](design-domains.md); programs as ports of their
 session in [design-programs.md](design-programs.md#a-program-is-a-port).
 
-Decisions every reader of this document needs:
-
-* **A terminal is a tty, as on UNIX and QNX.** A tty is one process's
-  `termios` state between the terminal and the opens that read and write
-  it. What a program writes reaches the terminal byte for byte, apart from
-  what its output flags ask for, such as newline to CR-LF. Nothing filters
-  it, so a program can send the terminal any escape code, as over `ssh` to
-  a UNIX box. A tty has many writers, and their output can interleave.
-* **The console carries bytes.** `erx_console` owns the serial line: it
-  connects one session's tty to it at a time and shows its own menu, login
-  prompt and log lines. Line editing is no part of it: OTP's `group`,
-  `edlin` and `prim_tty` in its terminal-less mode run in the shell's
-  domain, a program with its own line editor on a raw tty, as under OTP's
-  SSH daemon, so they work with no terminal descriptor and no terminfo.
-* **Text labelled with its source is escaped by whatever displays it**, as
-  `ls` escapes odd file names. A log line, a domain's name, an inspection
-  record and what the host tool prints from the guest pass through the
-  line escape, so one record is one line and cannot pass for another's.
-  `/proc`, which is inspector output, writes such text already escaped,
-  by an injective escape of its own. Data everywhere else stays exact,
-  `cat`, pipes and files included. The rules come from one source,
-  `abi/terminal.txt`, from which a generator produces each displayer's
-  tables, the kernel's an ASCII-only subset.
-* **Release consoles log in.** A release build's console starts with a
-  login, which the vault checks, and a session runs in its principal's
-  own domain; the console's menu reaches only the sessions of the
-  principal logged in at it; an Erlang shell in the system domain starts
-  only under the system-shell facet, which the console grants to a login
-  at a secure line and never to a session, in development builds to
-  `root`'s login at the UART.
-* **One schema, honest statuses.** An inspection record covers a kernel
-  object, a domain, a program or a process; every attribute carries a
-  status (`ok`, `partial`, `unknown`, `unsupported`, `timeout`, `error`),
-  and every value says who reported it: the kernel, a trusted service,
-  the runtime of the domain it describes, or, by its own name, a backend
-  that stands in for one of them. A compromised domain can lie
-  about its own processes, and the record says so.
-* **The pid space is the inspector's index.** Any process is
-  `[processes, ProcId]`, whatever domain it lives in. Its owner is the
-  domain its `proc_id()` names, so the inspector routes every query and checks every scope by
-  construction, never by asking a domain who owns what.
-* **A program is shown under its session.** A native program is a port of
-  its session's runtime and a sub-space of its session's domain; the
-  inspector lists it under `[domains, Id, programs]` with its name, never
-  as a domain, and `ps` in a session lists the session's process table.
-* **The host link is a session with a capability table.** COBS frames with
-  CRC-32C over the second serial port carry Erlang terms checked with the
-  frame grammar. What the host may do is the set of facets its session
-  holds, and the trees it may mount: everything in development builds,
-  the configured set in release builds.
-* **Files cross as 9P2000.L, both ways.** QEMU's virtio-9p mounts the
-  development host's tree in the machine, and a 9P2000.L client on the
-  host mounts an erXos tree through the host link's files stream, with
-  9P's fids and tags as the handles, through one codec.
-* **Code reaches the system domain only through the install facet.** Hot
-  loading into the system domain needs it; development builds give it to
-  the host link. Code for any other domain goes through that domain's code
-  facet and harms nobody else if it is malformed.
-* **Code is named by its hash.** Every module and native image is a blob
-  named by the SHA-256 of its bytes, loaded only after its bytes match;
-  manifests map names to hashes, and the host sends only the blobs the
-  target lacks.
-* **A command shell with rc's language, written in Erlang.** Each session can run a shell that speaks Plan 9's rc, with
-  emacs-style line editing and job control added; a command is a builtin, an
-  Erlang command or a program in one namespace, a command acts only through
-  the capabilities it was handed, and every pipe carries text, each
-  command behaving like FreeBSD's command of the same name.
-* **The machine is a file tree too.** `/proc` mirrors the inspector's
-  paths as read-only files, through the reader's inspect facet, so `cat`,
-  `ls` and `grep` read live state and gain nothing `erx:i/1` does not give.
-* **Text is UTF-8.** The line escape renders controls, bidirectional
-  overrides, invisible characters and invalid UTF-8 in labelled text as
-  visible tokens, from one table generated from Unicode's data.
+This document owns the tty, which carries a program's bytes unchanged but
+for what its `termios` asks ([The tty](#the-tty)); the console, which
+carries bytes and logs a person in on release builds
+([The console](#the-console)); the escaping of text labelled with its
+source ([Attributed text](#attributed-text)); the inspection schema and
+its honest statuses ([Inspection records](#inspection-records)), indexed
+by the pid space ([Paths](#paths)); `/proc` ([The /proc tree](#the-proc-tree));
+tracing; the host link and its session facet table
+([The host link](#the-host-link)); code named by its hash and installed
+into the system domain only through the install facet
+([The code store](#the-code-store)); and files crossing as 9P2000.L both
+ways ([Files between the host and the machine](#files-between-the-host-and-the-machine)).
+The command shell's language and commands are
+[design-shell.md](design-shell.md)'s. The [Invariants](#invariants) state
+each rule with how it is checked.
 
 ## Context
 
@@ -607,7 +549,9 @@ on the host:
   timer start names a fresh `{Open, Serial}`, so the end of a timer that was
   cancelled or replaced does nothing. A `poll` is ready at a complete line
   in cooked mode and at one byte in raw mode, whatever `VMIN` says, since
-  FreeBSD's `poll` counts the bytes a read could take (`ttydisc.h:72`).
+  FreeBSD's `poll` counts the bytes a read could take (`ttydisc.h:72`);
+  so a `poll` starts no `VTIME` timer and, with nothing to read, reports
+  nothing.
 * `set(Termios, Tty)` takes a new `termios`, checking it whole; a flag
   outside `erx_tty`'s table fails with `EINVAL`. The `termios` is an Erlang
   map of four flag lists, the character size, the special characters by name
@@ -1275,189 +1219,17 @@ Each session can run a command shell with rc's language beside its
 Erlang shell, both listed in the same `Ctrl-G` menu; the console starts
 the command shell first, and the shell's `erl` runs the Erlang shell above
 it; its language, commands, pipelines of text, jobs and terminal relay
-are [design-shell.md](design-shell.md). Each command shell runs on
-one of the session's ttys above, the console line's or, at a display,
-its terminal window's ([design-display.md](design-display.md#the-terminal)), and its Erlang commands reach the inspector, `/proc` and the code
-store below with the session's facets. Its commands print text as
-FreeBSD's commands of the same names do, with a value erXos does not
-measure printed as `-` ([Pipelines](design-shell.md#pipelines)); a
-process as a live value, with each value's status and reporter, is the
-Erlang shell's `erx:ps()` and `erx:i/1`.
-
-**`ps`** lists the session's own process table: its Erlang processes and
-its programs, the latter from the command server's process table and
-each program's handler
-([design-programs.md](design-programs.md#the-command-server)), so a session sees
-its programs without an inspect facet, as a UNIX user sees their own
-processes. It prints FreeBSD's default columns, `PID`, `TT`, `STAT`,
-`TIME` and `COMMAND` (`bin/ps/ps.c:156`), under FreeBSD's header line,
-and cuts the last column at the terminal's width when its output is a
-terminal, as FreeBSD's does (`bin/ps/ps.c:748-755`). `-o` takes a
-comma-separated list of FreeBSD's keywords in place of the default
-columns: `pid`, `tt`, `state` (or `stat`), `time`, `pcpu` (or `%cpu`),
-`rss`, `comm` and `command` (or `args`). An unknown keyword is reported
-as `ps: KEY: keyword not found` and left out, and `ps` ends with status 1,
-as FreeBSD's does (`bin/ps/keyword.c:440-444`). Each column, for the two
-kinds of process:
-
-| Keyword (header) | An Erlang process | A program |
-| --- | --- | --- |
-| `pid` (`PID`) | its pid, `<D.N.S>` | its process id |
-| `tt` (`TT`) | the terminal of the session's tty whose group is its group leader, else `-` | its controlling terminal: the terminal of the session's tty its job was started on, while it holds an open of that tty, else `-` |
-| `state` (`STAT`) | `R` when running, runnable or collecting garbage; `S` when waiting in `receive`; `T` when its job is stopped; `RE` when exiting; then `+` when it belongs to the foreground job | `R` when a thread runs or is runnable, `S` when every thread waits, `T` when paused; then `+` when it belongs to the foreground job |
-| `time` (`TIME`) | `-`: the runtime keeps no CPU time per process | its group's CPU time as `getrusage` reports it, as `M:SS.hh` (`bin/ps/print.c:500-520`) |
-| `pcpu` (`%CPU`) | `-`, for the same reason | its CPU time over the time since it started, as a percentage to one decimal |
-| `rss` (`RSS`) | its memory as `process_info/2` reports it, in KiB, rounded up | its sub-space's charges, in KiB |
-| `comm` (`COMMAND`) | its registered name, else its `proc_lib` label, else the function it started in, as the `Ctrl-T` line names it | its name |
-| `command` (`COMMAND`) | as `comm` | its arguments, joined by spaces |
-
-The terminal's name is abbreviated as FreeBSD abbreviates it
-(`bin/ps/print.c:345-364`). A value the session's table does not have,
-because the reporter could not answer, answered late or the process ended
-while it was read, prints `-` in its column, as FreeBSD's `ps` prints a
-column with no value (`bin/ps/ps.c:757-759`); so does a value erXos does
-not measure at all, such as an Erlang process's CPU time. No column ever
-shows a number for a value it does not have, and every row keeps its
-columns, so `ps -o pid,pcpu,comm | sort -rn -k2 | head` works as on
-FreeBSD: the header and the rows without a value sort among the zeros. A
-process's name and arguments are written through the field escape, as
-FreeBSD writes them through `strvis(3)`
-([Pipelines](design-shell.md#pipelines)).
-
-Rows come in FreeBSD's default order: processes without a terminal
-first, then by `PID`, programs by their process ids and then Erlang
-processes by the numbers of their pids. `-r` orders by `pcpu` and `-m` by
-`rss`, largest first, as FreeBSD's `-r` and `-m` do
-(`bin/ps/ps.c:1394-1419`); rows with equal values keep the default order.
-A row with no value for the key comes after every row that has one, still
-in the default order, which is where FreeBSD's `ps`, which counts a
-`%CPU` it cannot read as zero (`bin/ps/print.c:622-634`), puts it. So `ps -r` lists a session's
-busiest programs first and its Erlang processes after them; the busiest
-Erlang processes, by reductions, are `erx:ps()`'s to show. FreeBSD's `-m`
-orders by text, data and stack size, which erXos does not split, so its
-`-m` orders by the memory `rss` shows.
-
-**`top [-bn] [-d count] [-s time] [number]`** shows the table `ps` reads
-as FreeBSD's `top` (`usr.bin/top`) shows a machine's, display after
-display. A display is a header and a process table. The header has
-FreeBSD's lines where they map, each figure read through the
-session's inspect facet, at its scope
-([System values](#system-values-one-tree-many-views)):
-
-* `run queue: 0;  up 0+00:05:12    10:15:37`: the run queue of the
-  domain `top` runs in (its domain record's `run_queue`, the processes
-  and ports its runtime has ready and waiting for a scheduler), where FreeBSD's first line
-  has the last pid and the load averages; then the machine's `uptime` as
-  FreeBSD's `i_uptime()` writes it, `D+HH:MM:SS`, and the time of day,
-  last, so a terminal narrower than the line cuts it, where FreeBSD's
-  screen keeps it at the right edge. The
-  run queue is an instant's count of one runtime and is labelled as
-  such, never as a load average, which erXos does not keep.
-* A count of the processes and of those running, sleeping and stopped,
-  `57 processes:  2 running, 55 sleeping`, from the `STAT` `ps` shows
-  (`R`, `S`, `T`).
-* `Mem: 1906M Total, 1500M Free`: the machine's `memory_total` and
-  `memory_free`, as FreeBSD's `format_k()` writes a size.
-* `Domain 4 budget: 812K Used, 1024M Guarantee, 2048M Cap`: the `used`,
-  `guarantee` and `cap` of the budget of the domain `top` runs in,
-  labelled as that domain's, so a figure of one domain never reads as
-  the machine's. The domain is the one the inspector names for `top`'s
-  own process.
-
-A figure the inspector answers `ok` prints its number. A partial
-figure prints its number with its reporter named by the inspection
-schema's label, through the line escape: when every number of a line
-is partial under one reporter, the line's label names it once, and
-otherwise each partial figure names its own after it, so an `ok`
-number beside it never reads as partial. On the Fiasco kernel the
-memory figures and `used` are the `liberx` pool's partial counts, so
-the header reads `Mem (root pool): 118M Total, 74M Free` and `Domain
-4 budget (root pool): 44M Used, - Guarantee [unsupported], - Cap
-[unsupported]`; on erXos's
-kernel, which reports them whole, it reads `Mem: 118M Total, 74M
-Free`. A line with partial figures of two reporters reads `Mem: 118M
-Total (kernel), 74M Free (root pool)`. Any other figure prints `-`
-and says why in brackets: its status as `erx_render` writes it
-(`[unknown]`, `[unsupported]`, `[timeout 500]`, `[error]`), `[not
-reported]` for a figure its record does not hold, or the inspector's
-refusal of its path, `[not in scope]`, `[no inspect facet]`,
-`[inspector busy]` or `[failed]`. When every figure of a line is
-missing for one reason, the line's label says it once, `Domain 8
-budget [not in scope]: - Used, - Guarantee, - Cap`. So the header
-never shows as exact a number nobody reported whole, and no `-` hides
-why it is there. Naming a reporter and a reason is the
-header's alone, the one exception to the command shell's rule for
-values it does not have
-([design-shell.md](design-shell.md#invariants) SH3): the header's
-figures are rounded for a person to read, while a column of the
-table, like `ps`'s, keeps `-`, since a stage of a pipeline reads a
-column's number with nothing to say it is partial. The table has the
-columns of FreeBSD's that
-the table has values for: `PID`, `RES` (`rss`, as FreeBSD's
-`format_k()` writes a size, at most four digits and a unit), `STATE`
-(`RUN`, `SLEEP` or `STOP`), `TIME` (`time`, as FreeBSD's
-`format_time()` writes it, `M:SS`), `WCPU` and `COMMAND` (`comm`,
-through the field escape as `ps` writes it). FreeBSD's
-`USERNAME`, `THR`, `PRI`, `NICE`, `SIZE` and `C` are left out: every row
-is the session's own, and the rest have no value for an Erlang process.
-A row's `WCPU` is its share of a CPU over the last interval: the growth
-of its CPU time from the previous display's sample to this one, over the
-time between them, as a percentage to two decimals. For a process the
-previous display did not have, and on the first display, it is `pcpu`,
-its share since it started. FreeBSD's kernel keeps a decaying average
-for `WCPU`; erXos keeps none, and two samples give a recent share without
-one. A value the table lacks prints `-`, so an Erlang process's `TIME`
-and `WCPU` do. Rows are ordered by `WCPU`, largest first, and the rows
-without one follow in `ps`'s order, as under `ps -r`.
-
-At a terminal, without `-b` or `-n`, `top` starts each display with the
-terminal's home and clear sequences, written as its own output, and
-shows one every `time` seconds (`-s`, 2 by default) until it has shown
-`count` (`-d`, no limit by default) or `Ctrl-C` ends it, as it ends any
-command. `time` is a decimal number with an optional fraction, as
-`strtod(3)` reads one without an exponent, taken to the whole
-millisecond and at least 1 ms. It changes no terminal state, no mode,
-scrolling region or alternate screen, so an interrupt at any point
-leaves nothing to restore. The table has as many rows as fit the
-terminal's height under the header, with the last line left for the
-cursor so that nothing scrolls on a terminal of five lines or more:
-`LINES` when it is a positive number, as FreeBSD's termcap takes it,
-else the height the terminal reports, else 24. Each line is cut one column short of the terminal's width, as
-FreeBSD's screen is (`usr.bin/top/screen.c`), and never inside a UTF-8
-sequence. `top` takes no keys, so `Ctrl-C` ends it as it ends any
-command. FreeBSD's interactive commands, `q` among them, read the keyboard
-in the line discipline's non-canonical mode, which an Erlang command sets
-through `erx_cmd:tty/2` as `vi` does
-([design-vi.md](design-vi.md)); `top` does not offer them.
-
-With `-b` or `-n`, or when its output is not a terminal, `top` writes
-`count` displays, one by default, each after the first following a blank
-line, with no control sequence and nothing cut, and each shows at most
-18 processes, FreeBSD's `Nominal_TOPN` for output it cannot draw on.
-`number` caps the processes a display shows; `all`, `infinity`,
-`maximum` or a prefix of one shows them all, as FreeBSD's `atoiwi()`
-reads it. A `count` of 0 or none, a `time` that is not a positive number
-and a negative `number` are each reported with FreeBSD's warning, such as
-`top: warning: display count should be positive -- option ignored`, and
-ignored, and `top` runs on; any other option is a usage error. A display
-costs one read of the table, as `ps` does, and `top` sleeps between
-displays, so it loads the session as one `ps` per `time` does.
-
-**`ls [-1al] [file ...]`** lists a file by the name given and a directory
-by the names it holds, sorted byte by byte, without those that start with
-`.` unless `-a` is given, as FreeBSD's `ls` does. At a terminal it writes
-the names in columns across the terminal's width, sorted down the
-columns; elsewhere, or under `-1`, one name a line (`bin/ls/ls.c:247-256`).
-With more than one operand, files come first, and each directory's names
-follow an empty line and a line with its name and `:`. `-l`
-writes FreeBSD's long format: a `total` line for each directory, then for
-each name its mode, link count, owner, group, size, modification time
-and name, the time as FreeBSD formats it, with the hour and minute for
-a time within six months of now and the year otherwise. A value the file server does not report, such
-as an owner on a file system that keeps none, prints `-` in its column,
-so every line keeps its columns. A name is written through the line
-escape at a terminal and as its bytes elsewhere
-([Pipelines](design-shell.md#pipelines)).
+are [design-shell.md](design-shell.md), `ps`, `top` and `ls` among the
+commands ([Text commands](design-shell.md#text-commands)). Each command
+shell runs on one of the session's ttys above, the console line's or, at
+a display, its terminal window's
+([design-display.md](design-display.md#the-terminal)), and its Erlang
+commands reach the inspector, `/proc` and the code store below with the
+session's facets. Its commands print text as FreeBSD's commands of the
+same names do, with a value erXos does not measure printed as `-`
+([Pipelines](design-shell.md#pipelines)); a process as a live value,
+with each value's status and reporter, is the Erlang shell's `erx:ps()`
+and `erx:i/1`.
 
 ### Inspection
 
@@ -1647,7 +1419,7 @@ the web line's views all go through them, so each holder has one gate
 for every form of an inspector query. What a runtime holds of its own is
 not such a query: `ps` and the `Ctrl-T` line read the session's own
 process table and port table in its own runtime, with no facet
-([The command shell](#the-command-shell),
+([Text commands](design-shell.md#text-commands),
 [design-shell.md](design-shell.md#ctrl-t-status-and-the-info-request)),
 as a UNIX user sees their own processes, and a runtime's own
 `process_info/2` is stock OTP's. In the system domain no facet stands
@@ -2645,7 +2417,7 @@ grant's rights and bounds (V3).
 | `erx:i() -> ok` | the machine at a glance, through the caller's inspect facet: the machine's record, the root of every path, then each CPU, the caller's domain's group, budget and threads, and the processes, threads and processes a row each, every value with its reporter, within 80 columns |
 | `erx:i(Path) -> ok \| {error, scope \| unsupported}` | renders the record for `Path` in the shell, through the caller's inspect facet, every value with its reporter; a pid in `Path` becomes its `proc_id()` in the caller's own runtime, so no request carries a pid; `scope` for a path outside the facet's scope or one that names nothing |
 | `erx:domains() -> ok` | lists every domain the caller's inspect facet covers: id, name, principal, state, memory, CPU time and process count, each value marked with its reporter |
-| `erx:ps() -> ok` | lists every process of every domain the caller's inspect facet covers, by domain, and under a session its programs: pid or program number, registered name or program name, current function, reductions, memory and queue length, each marked with its reporter; the `ps` command prints FreeBSD's columns as text ([The command shell](#the-command-shell)) |
+| `erx:ps() -> ok` | lists every process of every domain the caller's inspect facet covers, by domain, and under a session its programs: pid or program number, registered name or program name, current function, reductions, memory and queue length, each marked with its reporter; the `ps` command prints FreeBSD's columns as text ([Text commands](design-shell.md#text-commands)) |
 | `erx:inspect(Path, Options) -> {ok, record()} \| {error, Reason}` | `Options` holds `offset`, `limit` and `timeout`; `Reason` includes `scope` and `no_facet` |
 | `erx:source(Pid \| {module(), atom(), arity()}) -> ok \| {error, Reason}` | prints the source lines around a process's current location or a function's first line; `{error, unsupported}` when the module's release carries no source |
 | `erx:trace(Spec) -> {ok, reference()} \| {error, Reason}` | starts a trace of processes, frames or kernel events, `Spec` as in [Tracing](#tracing), that prints in the shell; `Reason` is `badarg`, `no_facet` or `scope` for a refusal, and `{failed, Why}` when the trace process ends before it has started the trace, `Why` its exit reason; `erx:trace_stop(Ref)` ends it |
@@ -2700,9 +2472,8 @@ deadline it names.
 ## Compatibility and migration
 
 Until a release promises compatibility, nothing here owes any to an
-earlier build, and a change to a format replaces the old form outright,
-with no reader for an earlier version. Every format here carries a
-version, which serves only to make a mismatch fail loudly: host link
+earlier build ([design.md](design.md)). Every format carries
+a version, which serves only to make a mismatch fail loudly: host link
 frames (the version byte, 2), inspection records (`schema` 1), and the
 escape rules, which are generated with each build and checked by build
 identifier. One build produces every component of a boot; the host tool
@@ -2868,277 +2639,129 @@ development-only field never reaches a release projection. The generated
 reference tables and field projections are generated into the build tree and fall under the
 determinism test of the generated tree.
 
+Each area below names its oracles and fuzz targets, and the seeded
+faults that must make its tests fail where it has any.
+
 * **Exact output:** the test of V1, on the console and on the host tool's
-  `console` command. A seeded escaping step in `output/3` or in the console's
-  copy fails it. `prim_tty` from `init_ssh/3` here and in stock OTP 29.1.2 turns
-  the same requests, every printable and control character in `{putc, Binary}`
-  among them, into the same bytes; a seeded change to its caret rendering fails
-  it.
-* **The line discipline:** `erx_tty` explored exhaustively over its flags and
-  a small alphabet of bytes, and differentially against a host pseudo-terminal
-  with the same `termios`, comparing what a reader gets, what is echoed and
-  what the master gets. `ONLCR` applied with `OPOST` clear fails both. Its
-  `set/2`, `size/3` and `input/3` have a fuzz target. The exploration also drives
-  `read_wait/3`, `timer/2` and `read/3` as events, over each of
-  POSIX's four `VMIN` and `VTIME` cases and read counts below and above
-  `VMIN`. A `read_wait` that ignores its count fails the exploration's
-  model. `input/3` returns untaken exactly the bytes after the first key
-  that makes a signal, which an EUnit case and the fuzz target check; an
-  `input/3` that goes on past the key fails both. With no reader waiting,
-  passing the bytes back until none is left, each time with the room
-  `input/3` returned, gives the same state and the same actions, neighbouring
-  echoes joined, as passing the input a byte at a time; the fuzz target
-  checks it over random rooms, and echoes joined out of order fail it. It
-  checks of every call that the room returned is what the echo left, and
-  a dropped piece of echo that drops the rest of its call fails that.
-  Repeated `VREPRINT` and `VINTR` with `NOFLSH`, fed back as the relay feeds it,
-  echo no more than the room; a bound of each call's own fails that case.
-  A signal key at room 0 echoes after its flush and returns the whole room
-  less that echo and the output the master has not taken, which the fuzz
-  target checks of every call; a flush that keeps the room fails both, and
-  one that also gives back the output not taken fails the case. A `VREPRINT` with room for the line up to a
-  `^A` echoes nothing after it; FreeBSD's walk past the drop fails that
-  case. A waiting reader is
-  told once per call, after its last key, as FreeBSD's `ttydisc_rint_done`
-  wakes readers once after a run of `ttydisc_rint` calls
-  (`sys/kern/tty_ttydisc.c:1294-1305`), so with `VMIN` 2 and `VTIME` 1 a
-  byte at a time starts and cancels a timer that one call of both bytes
-  never starts. `erx_tty_modes`' `adopt/2` is checked
-  exhaustively over the flags of `erx_tty`'s table against libedit's
-  masks, with and without `ICANON` in what a job left; an `adopt/2`
-  without its masks fails it.
-* **Cooked and raw:** an Erlang test command, reading through `erx_cmd`
-  ([design-shell.md](design-shell.md#interfaces)), that reads a line in
-  cooked mode, with `VERASE` and `VKILL` typed; one that turns off `ECHO`
-  and reads a password that is not echoed; one that goes raw, reads single
-  keys and draws; `Ctrl-Z` from a program that clears `ICANON` and `ECHO`
-  and keeps `ISIG`, after which the shell's prompt works, and `fg`, after
-  which the program's settings are back. With the shell's restore removed,
-  the prompt test fails. A command made raw as `cfmakeraw` makes it reads
-  `Ctrl-Z` as a byte; with `ISIG` ignored by `input/3` in the `Ctrl-Z`
-  case the program is never stopped, and that case fails. The same reads
-  by C programs run with the signal handshake that lets programs read the
-  terminal ([design-programs.md](design-programs.md#the-terminal)).
-* **Timed reads:** a blocking read by an Erlang command with `VMIN` 0 and
-  `VTIME` 1 returns no bytes after its timeout with no input, and a `poll`
-  by a program with the same settings reports nothing and starts no timer. In the exploration, `read_wait` that starts no
-  timer leaves the first test waiting past its deadline, and `poll` that starts
-  one fails the second. A cooked line past 4,095 bytes keeps its end and
-  drops the rest with a count; with the bound removed the model's state grows
-  past its limit.
-* **Many writers:** two programs and an Erlang process in their session
-  writing numbered records at once: each writer's bytes arrive complete and in
-  order, whatever lands between them. With the owner taking the end of a
-  write before its start, the test fails. 4 KiB of newlines under `ONLCR` reaches
-  the master as 8 KiB in frames of at most 4 KiB; with the room counted before
-  `output/3` the console refuses the frame and the test fails. A background job's
-  write arrives, and `tcsetattr` with `TOSTOP` fails with `EINVAL` in the first
-  tier. A log record written during a flood of program output arrives as one
-  whole line, since the driver writes each write whole.
-* **The tty's messages:** a seeded master that drops a `{tty_taken, N}` leaves
-  the tty going on within 2 s; with the repeat removed, its writers wait past
-  the deadline. A resize lost the same way arrives with the repeat. A
-  `{tty_size, 24, 0}` leaves the old size and a count, with `size/3`'s check
-  removed `prim_tty` fails with `badarith`. Output over 4 KiB, an `N` out of
-  order, input over 4 KiB and each message's wrong shape are refused as the
-  table says, each with a seeded receiver that skips its check. The messages
-  have a fuzz target.
-* **A stopped tty:** a session detached by the menu whose program goes on
-  writing waits in `write` past 4 KiB, loses nothing and goes on when it is
-  connected. With the room reported while the tty holds 4 KiB, the program's
-  write returns while detached and the test fails. While it waits, a caught
-  `SIGALRM` runs its handler and `write` returns the count taken, or `EINTR`
-  with none, and another thread's `exec` goes through; with the wait made a
-  request outstanding, both fail by their deadlines. During the menu and a login
-  prompt a program's write reaches no byte of the line, and a program's read
-  gets no byte typed there.
-* **Attributed text:** the test of V9; a domain whose name and log records
-  carry control sequences appears in the menu, the log and `erx inspect` with
-  each shown as tokens, and with the escape removed from any one of those the
-  comparison fails. A test re-derives the classes from OTP's Unicode data, and
-  the host tool's source check has a seeded print that skips its printer.
-  `erx_text` and the host tool's twin answer one shared file of vectors, at
-  least one for each class, and a `/proc` file of a domain whose names hold
-  every class shows no raw control under `cat` and unescapes to the names'
-  exact bytes. The field escape's fuzz target checks that unescaping
-  inverts it over random bytes and refuses what it does not write.
-* **Logs:** a domain that floods log records past its rate, sends records
-  of other shapes or oversized text, or writes control characters in them
-  leaves one escaped line per accepted record under its own id and
-  principal, whatever name it chose, and a count of the rest; a program's
-  log lines appear under its session's id. A log event with a newline and an
-  escape sequence, raised before `erx_log_h` is added, prints through
-  `logger_simple_h` as one line with both as tokens; with edit 43 removed, the
-  comparison fails. A release check refuses a system configuration that names
-  `logger_std_h` on a standard device, and has a seeded violation. The console's
-  two decoders of log records, for the kernel's records from `erx_log_read` and for the
-  domains' records from their facets, have fuzz targets.
-* **Inspection tests:** one per status and per reporter; the collector
-  of `erx_object_info` over constructed reports, one per row of its
-  table, a partial bit on an attribute with no backend, an attribute the
-  layout has no field for, a `derived` attribute over a partial input,
-  and each kind of refusal, `ERX_ERANGE` ending a listing among them,
-  each paired with a
-  seed that flips one bit or the status and must change the attribute;
-  a host test that every bit of each backend's `erx_info_partial`
-  names an attribute listing a backend for `kernel`, failing on a seeded
-  bit for `guarantee`; scope tests for
-  facets limited to some domains; a record for every path kind against a
-  domain whose agent lies, which must appear marked `runtime`, and whose
-  listing of another domain's processes is dropped; a session's program with a
-  running child, before and after it execs, listed under the session as a
-  port with its sub-space's charges from the kernel, its child as another
-  program of the session, and neither anywhere under `[domains]` (V8); a
-  session whose agent misnames a program, whose record still shows the
-  kernel's object id and charges; a `[domains, Id, connections]` record whose
-  doorbell counts come from the kernel and whose frame counts are marked
-  `runtime`. The trace merger with a source that stops answering, which
-  delays the stream by at most 100 ms, and a source whose event arrives
-  late, which is printed marked `late`.
-* **The inspect service and the runtime agent:** each test names the
-  seeded fault that must make it fail:
-  * `erx_domain_core:inspect_scope/4` over every combination of `root`
-    or another principal, the development flag set or clear, and a
-    grantee holding `start` or not, on the host; seeded: `all` for
-    every principal of a development build; `[apps]` among the trees
-    of a grantee that does not hold `start`.
-  * In a release build, an administrator's session whose template
-    holds `start` reads `/proc/apps` and `/proc/apps/clock`, and
-    `service clock status`, `service -e` and `service -c` answer
-    from them, while `[domains, Id]` of `clock`'s session and
-    `[groups]` answer `{error, scope}`; a session whose template
-    holds no `start` gets `{error, scope}` for `[apps]`; seeded: a
-    scope that ignores its trees, which refuses the administrator's
-    `[apps]`; a resolver that lets a tree's paths reach the
-    domains they name, which answers the administrator's
-    `[domains, Id]`.
-  * A holder cannot widen its scope: a request that carries a scope, in
-    its options or as an extra argument, is refused with `{error,
-    badarg}`, and `root`'s session in a release build gets `{error,
-    scope}` for `[kernel, log]` and `enoent` for `/proc/kernel/log`;
-    seeded: an admission path that takes a scope from the options.
-  * In `root`'s session of a development build, `dmesg`, `cat
-    /proc/status`, `erx:i([])` and the browser's log view all read
-    through the one facet, and a non-root session's `dmesg` fails, its
-    `/proc/kernel/log` being `enoent`; seeded:
-    a session start that mints the facet with the session's own domain
-    as its scope, which fails the first, and one that mints `all` for
-    every session, which fails the second.
-  * A principal's scope follows its domains: a command domain started
-    after the session's facet was minted is in scope, and a domain of
-    another principal and a domain id never used answer the same
-    `{error, scope}`; seeded: a scope fixed as a list at the mint.
-  * A session of a template whose manifest has no `inspect` row holds no
-    inspect facet, and a session of the default manifest's template
-    finds it in its ready answer; seeded: a template grant of a system
-    service that the domain service skips. A domain that holds none gets
-    `{error, no_facet}` from `erx:i([])` and `enoent` for
-    `/proc/status`; seeded: a runtime that invents a scope of its own
-    domain when it holds none. A session that holds none still runs `ps` and sees its own processes and programs, and its
-    `Ctrl-T` line shows its foreground job; seeded: a `ps` that queries
-    the inspector, which then fails with `no_facet`.
-  * An agent that never answers: the record of one of its processes
-    arrives within the deadline and a margin, its kernel attributes `ok`
-    and its runtime attributes `{timeout, 500}`, while a query of
-    another session through its own facet answers at its usual time;
-    seeded: a wait with no deadline, and a facet that runs its requests
-    in its own process, one after another, which delays the second.
-  * An agent answers only the system domain and only about itself: a
-    question from an introduced peer is dropped and counted, a question
-    about another domain's path is answered `{error, scope}`, and a
-    lying agent's listing of another domain's processes is dropped; seeded:
-    an agent that answers any origin. A session's agent answers
-    `[processes, P, source]` for a process of its own; seeded: an agent
-    that takes exactly `[processes, Pid]`, which answers `{error,
-    scope}`.
-  * An answer must agree with its question: an agent that answers a
-    question about one of its processes with a schema-valid record whose
-    path names another of its processes, whose id names another domain,
-    or whose attributes include one the schema does not let `runtime`
-    report, has the answer dropped whole and the attributes read
-    `{error, invalid}`; seeded: a worker that checks the answer with
-    `erx_schema:validate_record/1` alone, which takes all three.
-  * The agent's pid belongs to the reporting incarnation: a ready report
-    naming as `inspect` a pid of another domain, or one with the
-    incarnation's creation on another domain's node, leaves the domain
-    without an agent, logged and counted; seeded: a check of the
-    creation alone, which takes the second.
-  * A query worker stays within its bounds: `[processes]` at scope `all`
-    over eight domains of 1,000 processes each arrives `partial` at
-    whichever cut comes first, 1,000 entries or `inspect_reply_max`
-    encoded bytes, with the worker's peak heap below
-    `inspect_worker_heap`; a domain that floods the worker's pid while
-    it answers leaves the answer whole and the worker's message queue
-    never longer than one message; a query over domains
-    whose agents all stall answers by `inspect_query_max` with its
-    listing `partial`. Seeded: a worker that asks every domain before
-    it builds the page, which OTP ends at its heap limit, so the request
-    answers `{error, failed}`; a worker that takes only its answer by a
-    selective receive, which leaves the flood on its heap; and a worker
-    with no deadline of its own.
-  * Answers stay within their bound: a listing whose records pass
-    `inspect_reply_max` before 1,000 entries arrives `partial` at a
-    grantee whose `max_frame` is the floor, with every entry it holds
-    whole; seeded: the byte cut removed, after which the funnel drops
-    the answer and the query reads as a timeout. The schema generator
-    fails on a kind whose largest record passes `inspect_reply_max`,
-    with a seeded kind holding a longer text.
-  * The query decoder has a fuzz target
-    (`tools/fuzz/erx_inspect_query.rb`), which checks that it accepts
-    exactly the requests within the Bounds, never raises and creates no
-    atom; seeded: the bound on a path's length removed.
-* **Tracing:** a trace of a process whose messages carry atoms the system
-  domain does not hold, rendered in the traced domain and shown in the
-  shell; a frame trace of a conversation between two traced domains, each
-  frame appearing in its receiver's trace with the lane's peer, including
-  a malformed frame shown as refused; a scoped trace facet that sees no
-  frame received by a domain outside its scope. The merger's pure core,
-  in host tests over scripted sources: an `unsupported` row does not hold
-  the stream, which a seeded merger that counts it as a source fails by
-  holding every event for 100 ms; an `overwritten` count reaches the
-  stream, which a seeded merger that drops it fails. The conversion, over
-  a scripted clock pair: an OTP event lands at its `erx_clock_ns` time,
-  which a seeded sign error fails. The decoder: an event value the table
-  does not hold gives `{unknown, Value}` and a set `cpu_unknown` gives
-  `cpu=unknown`, which a decoder seeded to name the value `park`, or to
-  print the stored CPU, fails. `erx:trace/1` with 17 selections, an
-  unknown key, no selection and `kernel` false, `frames` with no
-  selection, no trace facet, and `kernel` under a scoped facet, each with
-  its refusal, which a seeded check removed fails; an unknown domain id
-  and an existing one outside the facet's scope give the same `{error,
-  scope}`, which a check seeded to answer `badarg` for the unknown id
-  fails. `erx_trace_ring:read/3` with a bignum cursor raises `badarg`,
-  which a BIF seeded to truncate it fails. A traced process scheduled in a function whose name holds an
-  escape sequence and a newline, whose line shows them escaped, which a
-  printer seeded to skip `erx_text:escape_line/1` fails. The trace
-  process's decisions, in host tests: a receiver that never acknowledges
-  gets 256 entries of 1,000 and then one `dropped` entry per row with the
-  count, which a window seeded to stay open, or to drop without
-  reporting, fails; a hundred acknowledgements open the window to 256
-  and no further, which a window seeded without its cap fails; a row's
-  `dropped` entry is not reported while the window is shut, goes out
-  after an entry held from before its round and never ahead of it, and,
-  when it finds the window shut, is counted again with its count, which
-  a report seeded to skip the merger, to ignore the shut window or to
-  count it as one fails; a round's
-  batch past 4,096 session messages counts the rest as dropped; a
-  `trace_ts` tuple of the wrong shape, and a stop, acknowledgement,
-  timer or monitor message with another reference, are ignored, which a
-  check seeded to take them fails; a full read is read again and a
-  refused ring is read no more. A process spawned with
-  `{erx_untraced, true}` under a trace session over every process, with
-  call tracing of the function it calls, is never seen, where one spawned
-  without it is, and its mailbox still shows in `process_info`, on the
-  hosted runtime. Fiasco's
-  ring and its four-CPU case are in
+  `console` command; seeded: an escaping step in `output/3` or in the
+  console's copy. `prim_tty` from `init_ssh/3` here and in stock OTP
+  29.1.2, the oracle, turns the same requests, every printable and
+  control character in `{putc, Binary}` among them, into the same bytes;
+  seeded: a change to its caret rendering.
+* **The line discipline:** `erx_tty` explored exhaustively over its flags
+  and a small alphabet of bytes, and differentially against a host
+  pseudo-terminal with the same `termios`, comparing what a reader gets,
+  what is echoed and what the master gets; the exploration also drives
+  `read_wait/3`, `timer/2` and `read/3` over each of POSIX's four `VMIN`
+  and `VTIME` cases. `set/2`, `size/3` and `input/3` have a fuzz target,
+  which checks that feeding untaken bytes back with the returned room
+  gives the same state and actions as a byte at a time, that the room
+  returned is what the echo left, and that a signal key at room 0 echoes
+  after its flush. `erx_tty_modes`' `adopt/2` is checked exhaustively
+  against libedit's masks. Seeded: `ONLCR` applied with `OPOST` clear; a
+  `read_wait` that ignores its count; an `input/3` that goes on past a
+  signal key; echoes joined out of order; a dropped piece of echo that
+  drops the rest of its call; a bound of each call's own on repeated
+  `VREPRINT` and `VINTR` under `NOFLSH`; a flush that keeps the room, and
+  one that also gives back the output not taken; FreeBSD's walk past the
+  drop on a `VREPRINT` with room up to a `^A`; an `adopt/2` without its
+  masks. A waiting reader is told once per call, after its last key, as
+  FreeBSD's `ttydisc_rint_done` wakes readers once after a run of
+  `ttydisc_rint` calls (`sys/kern/tty_ttydisc.c:1294-1305`).
+* **Cooked and raw**, by Erlang commands through `erx_cmd`
+  ([design-shell.md](design-shell.md#interfaces)) and by C programs with
+  the signal handshake
+  ([design-programs.md](design-programs.md#the-terminal)): cooked lines
+  with `VERASE` and `VKILL`, unechoed passwords, raw keys, and `Ctrl-Z`
+  and `fg` around a program that changed the modes. Seeded: the shell's
+  restore removed, which breaks the prompt; `ISIG` ignored by `input/3`,
+  under which `Ctrl-Z` never stops the program.
+* **Timed reads:** `VMIN` 0 and `VTIME` 1 for a blocking read and a
+  `poll`. Seeded: a `read_wait` that starts no timer; a `poll` that
+  starts one; the 4,095-byte bound on a cooked line removed, which grows
+  the model's state past its limit.
+* **Many writers:** two programs and an Erlang process writing numbered
+  records at once, each writer's bytes arriving complete and in order.
+  Seeded: the owner taking the end of a write before its start; the room
+  counted before `output/3`, which makes 4 KiB of newlines under `ONLCR`
+  overflow a frame.
+* **The tty's messages**, which have a fuzz target. Seeded: a master that
+  drops a `{tty_taken, N}` or a resize, with the repeat removed; `size/3`'s
+  check removed, under which `{tty_size, 24, 0}` makes `prim_tty` fail
+  with `badarith`; a receiver that skips each of the table's checks.
+* **A stopped tty:** a detached session's program waits in `write` past
+  4 KiB, loses nothing, takes a caught signal and lets another thread
+  `exec`. Seeded: the room reported while the tty holds 4 KiB; the wait
+  made a request outstanding.
+* **Attributed text:** the test of V9, through the menu, the log,
+  `erx inspect` and `/proc`. A test re-derives the character classes from
+  OTP's Unicode data; `erx_text` and the host tool's twin answer one
+  shared file of vectors; the field escape's fuzz target checks that
+  unescaping inverts it and refuses what it does not write. Seeded: the
+  escape removed from any one display; a host-tool print that skips its
+  printer, caught by the source check.
+* **Logs:** a domain that floods, malforms or poisons its records leaves
+  one escaped line per accepted record under its own id and principal,
+  and a count of the rest. The console's two decoders of log records
+  have fuzz targets. Seeded: edit 43 removed, under which `logger_simple_h`
+  prints a newline raw; a system configuration that names
+  `logger_std_h` on a standard device, which the release check refuses.
+* **Inspection:** one test per status and per reporter; the collector of
+  `erx_object_info` over constructed reports, one per row of its table;
+  scopes; a domain whose agent lies, which appears marked `runtime`; a
+  session's program and its child under the session alone (V8). Seeded:
+  a flipped bit or status for each collector row; a backend bit for
+  `guarantee` that names no `kernel` attribute. The trace merger delays
+  the stream by at most 100 ms for a source that stops answering and
+  marks a late event `late`.
+* **The inspect service and the runtime agent.** Seeded, each failing its
+  case:
+  * `erx_domain_core:inspect_scope/4`, over every principal, build flag
+    and `start` grant: `all` for every principal of a development build;
+    `[apps]` among the trees of a grantee without `start`;
+  * in a release build: a scope that ignores its trees; a resolver that
+    lets a tree's paths reach the domains they name;
+  * an admission path that takes a scope from a request's options;
+  * a session start that mints the facet with the session's own domain
+    as its scope, and one that mints `all` for every session;
+  * a scope fixed as a list at the mint, which misses a later command
+    domain;
+  * a template grant the domain service skips; a runtime that invents a
+    scope when it holds no facet; a `ps` that queries the inspector;
+  * a wait with no deadline, and a facet that serves its requests in its
+    own process one after another;
+  * an agent that answers any origin; an agent that takes exactly
+    `[processes, Pid]`;
+  * a worker that checks an agent's answer with
+    `erx_schema:validate_record/1` alone, which takes an answer about
+    another process, another domain or an attribute `runtime` may not
+    report;
+  * a check of the agent pid's creation alone;
+  * a query worker that asks every domain before it builds the page; one
+    that takes only its answer by a selective receive; one with no
+    deadline of its own;
+  * the byte cut at `inspect_reply_max` removed; a schema kind whose
+    largest record passes it, which the generator refuses;
+  * the query decoder's fuzz target (`tools/fuzz/erx_inspect_query.rb`)
+    checks that it accepts exactly the requests within the Bounds, never
+    raises and creates no atom; seeded: the bound on a path's length
+    removed.
+* **Tracing:** traces of processes and frames across domains, scoped
+  facets, and the trace process's flow control, with the merger, the
+  clock conversion and the decoder as pure cores in host tests. Seeded:
+  a merger that counts an `unsupported` row as a source, and one that
+  drops an `overwritten` count; a sign error in the conversion; a decoder
+  that names an unknown value `park` or prints a CPU marked unknown; each
+  refusal of `erx:trace/1` removed; an unknown domain id answered
+  `badarg` rather than `scope`; an `erx_trace_ring:read/3` that truncates
+  a bignum cursor; a printer that skips `erx_text:escape_line/1`; a
+  window that stays open, drops without reporting, or has no cap; a
+  `dropped` report that skips the merger, ignores the shut window or
+  counts as one; a check that takes a malformed `trace_ts` or a message
+  with another reference. A process spawned with `{erx_untraced, true}`
+  is never seen. Fiasco's ring and its four-CPU case are in
   [design-fiasco.md](design-fiasco.md#verification).
-* **Host link:** session replacement; a recorded hello and its calls
-  replayed after a machine reset with entropy `good`, which match no
-  session; a retried call executed once; 64 calls executing when a 65th
-  arrives, which gets `{error, busy}`; a duplicate whose reply was not
-  kept; an expired identifier refused; a lost frame in a fragmented
-  message; credit exhaustion; the 1,025th facet; a closed facet's number
-  refused. The session protocol (hello, calls, the window, expiry,
+* **Host link:** the session protocol (hello, calls, the window, expiry,
   replacement) is a pure state machine. An independent TLA+/TLC model
   checks its contract, and a host test explores the implementation over every
   interleaving of two sessions, lost frames and duplicates against an
@@ -3148,74 +2771,44 @@ determinism test of the generated tree.
   decoder, each with a persisted corpus.
   Tests inject equal and unequal 128-bit session identifiers, fresh hello
   nonces, and near-exhausted frame/call counters: a counter never wraps
-  into a prior request. The harness checks owner-only socket access, and
+  into a prior request, and a hello replayed after a machine reset
+  matches no session. The harness checks owner-only socket access, and
   release configuration refuses an unauthenticated network bridge. CRC
   success is never treated as peer authentication.
-* **Files with the host:** Linux's 9P2000.L client in the oracle guest
-  mounts the `proc` and `data` trees through `tools/erx files` and runs a
-  file-semantics corpus; an `attach` of an unlisted tree fails with
-  `enoent`; a host-link session replaced while fids are open, after which
-  the bridge holds none; a message cut by a damaged frame, which only a
-  flush ends; `erx_9p`'s fuzz target over the files stream's bytes; under
-  QEMU, the machine mounts a host directory at `/host` and runs OTP's
-  `file_SUITE` over it, and a fake 9P server whose replies are malformed
-  fails each request with `eio` and nothing more. Seeded failures: a
-  bridge that keeps its fids across a session's replacement, which the
-  replacement case catches, and one that skips the `Aname` check, which
-  the unlisted tree catches. A recorded-frame test
-  establishes behavior for its chosen identifiers, not a proof that a
-  random collision cannot occur.
-* **Logins:** a release build's console shows a login and starts the
-  session in the principal's domain; a principal the manifest does not
-  name gets no system shell, and neither does one it names who logs in at
-  a line that is not secure (V6); a release build's host-link `console`
-  starts a login; a
-  wrong passphrase is refused, and a sixth failure within 60 s is
-  answered as limited, per name in each class of terminal and per line,
-  and five failures from the network leave the same name's login at
-  the UART unlimited; each line's menu shows and reaches only its
-  principal's sessions, a locked line reaches none of them
-  until the same principal logs in there, and a logout ends the sessions
-  started there.
-* **Code:** a hot load into the system domain from the host in a
-  development build; a refused load without the install
-  facet; `code:load_binary/3` of a module from outside installed storage
-  refused in the system domain with `{error, not_installed}`; an atomic
-  load of a batch with one bad module, after which no module of the batch
-  changed; an overlay surviving a domain restart; an overlay dropped when
-  its release changes, on a normal boot and on a trial; an overlay of the
-  system configuration that never reaches the data partition; a load that
-  the domain refuses; two loads into one domain at once; a module larger
-  than one host-link frame; the decoder of overlays and stores read back
-  from the data partition, with a fuzz target.
-* **The machine reset:** a system-domain fault injected in a QEMU test,
-  after which the guest reboots into the committed slot, `[kernel, crash]`
-  shows the record, in the form the build writes, to the system shell on
-  a platform that keeps one and `unsupported` on one that does not, any
-  other caller gets `{error, scope}`,
-  and the host tool reports its session ended with the
-  outcome of its outstanding calls unknown, then reconnects.
+* **Files with the host:** the oracle is Linux's 9P2000.L client in the
+  oracle guest, which mounts the `proc` and `data` trees through
+  `tools/erx files` and runs a file-semantics corpus; under QEMU, OTP's
+  `file_SUITE` runs over a host directory at `/host`, and a fake 9P
+  server's malformed replies fail each request with `eio` and nothing
+  more. `erx_9p` has a fuzz target over the files stream's bytes. Seeded:
+  a bridge that keeps its fids across a session's replacement; one that
+  skips the `Aname` check. A recorded-frame test establishes behavior for
+  its chosen identifiers, not a proof that a random collision cannot
+  occur.
+* **Logins:** the release console's login, the secure-line rule (V6),
+  the failure limit per name, class of terminal and line, and each
+  line's menu (V7). Seeded: a console that grants the system-shell facet
+  at a line that is not secure; one that moves a terminal connected at
+  another line.
+* **Code:** hot loads with and without the install facet, atomic
+  batches, overlays across restarts and release changes, and the
+  decoder of overlays and stores read back from the data partition,
+  which has a fuzz target.
+* **The machine reset:** a system-domain fault injected under QEMU, after
+  which the guest reboots into the committed slot, `[kernel, crash]`
+  answers only the system shell, and the host tool reports its
+  outstanding calls' outcome unknown and reconnects.
 * **QEMU transcript tests** for the console prompt, `erx:i/1`,
   `erx:source/1` and a host-side `erx watch` load, under HVF.
-* **`/proc`:** each status rendered in a file; a scoped tree's `enoent`
-  for an existing process outside its scope and for a missing one, with
-  equal timing; a snapshot that stays fixed while the process changes; a
-  directory past 1,000 entries and its `.partial` file; a listing the
-  inspector cannot get and its `.unknown` file; module and program names
-  with `/`, `..`, a leading `.` and control characters, which the encoding
-  makes plain entries; a reader that opens 256 snapshots, which its grant
-  holds within 16 MiB, and a 257th open, which fails with `emfile`; values
-  with tabs, newlines and control characters, which stay exact in the
-  file; a program of a session reading `/proc` through a fid its
-  handler walked from the session's. The decoder of `/proc` names has a
-  fuzz target, checking that every name it accepts encodes back to itself
-  and that no two names decode alike.
-* **The code store:** a blob one bit off its hash refused in every
-  flavour of load; `erx watch` sending only missing blobs; history and a
-  rollback, across a domain's restart; an overlay that survives a reboot;
-  a principal that asks for another principal's blob is told it is
-  missing, and storing a blob another principal holds takes as long as
-  storing a new one.
+* **`/proc`:** statuses, scopes with equal timing for out-of-scope and
+  missing processes, snapshots, `.partial` and `.unknown` files, names
+  the encoding makes plain, and the 256-snapshot bound (`emfile`). The
+  decoder of `/proc` names has a fuzz target, checking that every name it
+  accepts encodes back to itself and that no two names decode alike.
+* **The code store:** a blob one bit off its hash is refused in every
+  flavour of load, `erx watch` sends only missing blobs, and a principal
+  that asks for another's blob is told it is missing, with storing a blob
+  another principal holds taking as long as storing a new one.
 
 ## Performance
 

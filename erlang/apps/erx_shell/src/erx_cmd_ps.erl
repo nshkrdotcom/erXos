@@ -4,7 +4,7 @@
 -module(erx_cmd_ps).
 -moduledoc """
 `ps [-mr] [-o keyword[,keyword...]]`: FreeBSD's ps (bin/ps) over the
-session's own process table (docs/design-live.md, "The command shell").
+session's own process table (docs/design-shell.md, "Text commands").
 
 The table is the session's Erlang processes; in Phase 1 the session runs
 in the system domain, so that is this runtime's processes, and no

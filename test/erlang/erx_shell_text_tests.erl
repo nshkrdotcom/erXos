@@ -5,7 +5,7 @@
 -moduledoc """
 EUnit cases of the command shell's text commands (docs/design-shell.md,
 "Pipelines", "Text commands" and "Verification and testing";
-docs/design-live.md, "The command shell"): `sort`'s keys, numbers and
+docs/design-shell.md, "Text commands"): `sort`'s keys, numbers and
 last comparison, `grep`'s translator, options and statuses, `ps`'s
 columns and missing values over a fixed table, `ls`'s columns and long
 format, and whole lines run by the runner, at a terminal and through a

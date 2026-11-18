@@ -2309,7 +2309,7 @@ its code, and the item's work waits on it.
 * **`ps` and `top` over SSH**: the command shell's `ps` and `top` in
   root's SSH session list the session's own process table, its `rc` and
   the programs it runs, as a UNIX user's `ps` lists their own processes
-  ([design-live.md](design-live.md#the-command-shell)). The machine-wide
+  ([design-shell.md](design-shell.md#text-commands)). The machine-wide
   view is `/proc`, and `erl`'s `erx:i()` and `erx:domains()`, through
   the session's inspect facet, whose scope a development build makes
   `all` for root's session
