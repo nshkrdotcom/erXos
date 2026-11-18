@@ -121,7 +121,10 @@ module Erx
     #   (DOMAIN_IMAGE_ONLY), which it only loads, so that a principal can run OTP's ssh
     #   daemon in its own session (docs/design-ssh.md, "Stages", stage 1) and fetch over
     #   HTTPS (docs/design-crypto.md, "Releases"), and no session runs ssh's supervisors
-    #   unasked;
+    #   unasked. It also starts the client side of the display, erx_win with the pixel
+    #   primitives: a session template may hold a display's grant (root's display_root),
+    #   and its programs' window buffers come from erx_win's allocator, erx_pixels, which
+    #   runs in every release that holds one (docs/design-display.md, "The pixel area");
     # * storage: the block driver, littlefs's volume (docs/design-stopgap.md, "littlefs
     #   in the storage domain") and F2FS's codec (docs/design-f2fs.md), so no system
     #   domain loads the driver of a device the manifest gives the storage domain,
@@ -173,7 +176,8 @@ module Erx
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
-                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_web_line', 'erx_ssh_line'].freeze,
+                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, 'erx_memdraw', 'erx_win', 'erx_net_client', 'erx_web_line',
+                                      'erx_ssh_line'].freeze,
                         'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage', 'erx_f2fs'].freeze,
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,

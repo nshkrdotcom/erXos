@@ -264,11 +264,16 @@ class ReleaseFilesTest < Minitest::Test
   # shell, the web line and erx_session beside what every domain boots through, and
   # starts the shell and the line, which init's ready report names, but only loads
   # erx_session, which the session template's -eval starts once init holds the domain's
-  # facets.
-  def test_the_session_script_boots_the_shell_and_erx_session
+  # facets. It starts the client side of the display, erx_win with the pixel primitives,
+  # since a session template's grant on a display (root's display_root) needs the
+  # allocator a program's window is allocated from (docs/design-display.md, "The pixel
+  # area").
+  def test_the_session_script_boots_the_shell_erx_session_and_the_client_side
     domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('session')]))
+    release = boot_release_file('session')
+    assert_match(/\{erx_memdraw,"#{VERSION}"\},\{erx_win,"#{VERSION}"\},/, release, 'the session script starts the client side')
     assert_match(/\{erx_shell,"#{VERSION}"\},\{erx_web_line,"#{VERSION}"\},\{erx_ssh_line,"#{VERSION}"\},\{erx_session,"#{VERSION}",load\}\]\}\.\n\z/,
-                 boot_release_file('session'), 'the session script starts the line and only loads erx_session')
+                 release, 'the session script starts the line and only loads erx_session')
   end
 
   # The app script, which the app template boots (docs/design-packaging.md, "The apps

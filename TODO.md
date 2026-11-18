@@ -2458,6 +2458,24 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] display, no build check holds that a release holding a display's grant starts
+  erx_win (`tools/lib/erx/release_files.rb` RELEASE_SCRIPTS, docs/design-display.md "The pixel
+  area"): the session script lacked it while root's template held display_root, every build
+  check passed, and a program's first open of /dev/draw crashed its handler at run time. A
+  manifest check that every row or template granted a facet of a `windows` service names a
+  script that starts erx_memdraw and erx_win (with a seeded test planting the old session
+  script), or the client side in SESSION_BASE, would make it hold by construction.
+* [Medium] display, a handler crashes instead of refusing with `ENODEV` when erx_win's code
+  loads but its allocator is not running (`erx_win:own/4` -> `erx_pixels:alloc/2`, a
+  gen_server call that exits noproc; `erx_session_export:open_window/1` and
+  `erx_prog_handler:window/1` map only `undef`): rc then prints `Done(no status)` and the
+  program gets no errno, against docs/design-display.md's ENODEV for a domain without the
+  client side. One owner should answer "no allocator" (`{error, none}` from erx_pixels when it
+  is not registered, which open_window/1 already maps), and erx_prog_handler:lend/2's undef
+  catch should be narrowed to erx_pixels itself as window/1's is. It fails safely (the
+  handler owns the window and its fids). Also unexplained: how erx_win's code loaded in a
+  session whose script did not hold it, when release_files.rb says a script's applications
+  alone are on its code path.
 * [Medium] dashboard, its slow work can start before its first frame is drawn
   (`examples/dashboard/lib/erx_dashboard/src/erx_dashboard.erl`, `erx_ui_lvgl_core`): the dashboard
   starts the quotes, the ground picture and the dial once `erx_ui:tree/2` answers, but an idle
