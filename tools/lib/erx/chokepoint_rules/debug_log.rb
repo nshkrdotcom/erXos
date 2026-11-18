@@ -20,7 +20,6 @@ module Erx
                   Chokepoints::Site.new(glob: 'test/fixtures/crash_driver.c'),
                   Chokepoints::Site.new(glob: 'tools/fuzz/crash_fuzz.c'),
                   Chokepoints::Site.new(glob: 'include/erx/core/effects.h'),
-                  Chokepoints::Site.new(glob: 'fiasco/kernel/src/erx/erx_syscall.cpp'),
                   Chokepoints::Site.new(glob: 'liberx/backend/hosted/log.c'),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/end.c'),
                   Chokepoints::Site.new(glob: 'test/fixtures/dispatch_driver.c'),

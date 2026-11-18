@@ -808,13 +808,13 @@ has a seeded violation.
 
 erXos's C17 code reaches Fiasco's kernel through one seam. Inside the kernel, the cores Fiasco links
 (`erx_cores.a`, the policy of its patches among them) are called only from the glue under
-`fiasco/kernel/src/erx/` (`erx_handoff.cpp`, `erx_probe.cpp`, `erx_syscall.cpp`), and what the
-glue may reference of Fiasco is one allowlist, `fiasco/erx_glue_imports.txt`: a line per symbol,
-with the effect that needs it and the glue file that may hold the reference. The build check
-`tools/lib/erx/glue_imports.rb` fails a glue object with an undefined symbol its file does not list,
-so a new path into Fiasco, a raw allocator among them, cannot be reached by adding a call; the
-cores' own `erx_` functions need no entry. The kernel stack proof and the kernel-side chokepoints
-check the cores. Above the kernel, the seam is the function API of
+`fiasco/kernel/src/erx/` (`erx_handoff.cpp`), and what the glue may reference of Fiasco is one
+allowlist, `fiasco/erx_glue_imports.txt`: a line per symbol, with the effect that needs it and the
+glue file that may hold the reference. Every source in that directory is glue and is built, and the
+build check `tools/lib/erx/glue_imports.rb` fails a glue object with an undefined symbol its file
+does not list, so a new path into Fiasco, a raw allocator among them, cannot be reached by adding a
+call; the cores' own `erx_` functions need no entry. The kernel stack proof and the kernel-side
+chokepoints check the cores. Above the kernel, the seam is the function API of
 [Ownership and authority](#ownership-and-authority) and the chokepoint above.
 
 ## Boot handoff
@@ -909,11 +909,9 @@ The kernel's own changes are `erx_handoff.cpp`: it accepts the record, refusing 
 slot that are not one of the machine page's pairs, prints the banner (`development build: trusted
 code only`, the build identifier, the index hash, then `erx: boot value <unknown|normal|trial> slot
 <none|a|b>`, from a fixed table) and panics if no bootloader descriptor covers the archive. The
-fork's kernel-call route, `erx_probe` and `erx_syscall`, is out of its build (`Modules.generic:112`),
-and its sources stay in `fiasco/kernel/src/erx/` for erXos's kernel to draw on. The kernel greets as
-erXos (`kip.cpp`) and starts `sigma0` and then the root (`std_workload.cpp`), with capabilities at
-`L4_BASE_TASK_CAP`, `L4_BASE_FACTORY_CAP`, `L4_BASE_THREAD_CAP`, `L4_BASE_PAGER_CAP` (a gate to
-`sigma0`), `L4_BASE_LOG_CAP`, `L4_BASE_ICU_CAP` (also the platform control object) and
+kernel greets as erXos (`kip.cpp`) and starts `sigma0` and then the root (`std_workload.cpp`), with
+capabilities at `L4_BASE_TASK_CAP`, `L4_BASE_FACTORY_CAP`, `L4_BASE_THREAD_CAP`, `L4_BASE_PAGER_CAP`
+(a gate to `sigma0`), `L4_BASE_LOG_CAP`, `L4_BASE_ICU_CAP` (also the platform control object) and
 `L4_BASE_SCHEDULER_CAP`; a stack pointer of 0; one page of UTCB slots (`std_workload.cpp:95`);
 Fiasco's default priority, on the boot CPU.
 

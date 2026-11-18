@@ -9,31 +9,31 @@ require_relative '../../tools/lib/erx/glue_imports'
 # on its allowlist, fed the seeded violations the design names.
 class GlueImportsTest < Minitest::Test
   M = Erx::GlueImports
-  ENTRIES = M.parse("# comment\n\nprintf console erx_probe.cpp\n_ZN5Timer6clockEv clock erx_syscall.cpp\n")
+  ENTRIES = M.parse("# comment\n\nprintf console erx_handoff.cpp\n_ZN5Timer6clockEv clock erx_seeded.cpp\n")
 
   def test_a_listed_symbol_passes
-    assert_empty M.violations(entries: ENTRIES, undefined: { 'erx_probe.cpp' => ['printf'],
-                                                             'erx_syscall.cpp' => ['_ZN5Timer6clockEv'] })
+    assert_empty M.violations(entries: ENTRIES, undefined: { 'erx_handoff.cpp' => ['printf'],
+                                                             'erx_seeded.cpp' => ['_ZN5Timer6clockEv'] })
   end
 
   def test_the_cores_interface_needs_no_entry
-    assert_empty M.violations(entries: [], undefined: { 'erx_syscall.cpp' => ['erx_dispatch'] })
+    assert_empty M.violations(entries: [], undefined: { 'erx_seeded.cpp' => ['erx_dispatch'] })
   end
 
   def test_the_raw_allocator_is_refused
-    refused = M.violations(entries: [], undefined: { 'erx_syscall.cpp' => ['_ZN9Kmem_alloc5allocEm'] })
-    assert_equal ['erx_syscall.cpp: _ZN9Kmem_alloc5allocEm is not in erx_glue_imports.txt'], refused
+    refused = M.violations(entries: [], undefined: { 'erx_seeded.cpp' => ['_ZN9Kmem_alloc5allocEm'] })
+    assert_equal ['erx_seeded.cpp: _ZN9Kmem_alloc5allocEm is not in erx_glue_imports.txt'], refused
   end
 
   def test_a_symbol_listed_for_another_file_is_refused
-    refused = M.violations(entries: ENTRIES, undefined: { 'erx_probe.cpp' => %w[printf _ZN5Timer6clockEv],
-                                                          'erx_syscall.cpp' => ['_ZN5Timer6clockEv'] })
-    assert_equal ['erx_probe.cpp: _ZN5Timer6clockEv is not in erx_glue_imports.txt'], refused
+    refused = M.violations(entries: ENTRIES, undefined: { 'erx_handoff.cpp' => %w[printf _ZN5Timer6clockEv],
+                                                          'erx_seeded.cpp' => ['_ZN5Timer6clockEv'] })
+    assert_equal ['erx_handoff.cpp: _ZN5Timer6clockEv is not in erx_glue_imports.txt'], refused
   end
 
   def test_an_entry_nothing_references_is_refused
-    refused = M.violations(entries: ENTRIES, undefined: { 'erx_probe.cpp' => ['printf'], 'erx_syscall.cpp' => [] })
-    assert_equal ['erx_syscall.cpp: _ZN5Timer6clockEv is listed in erx_glue_imports.txt and no longer referenced'],
+    refused = M.violations(entries: ENTRIES, undefined: { 'erx_handoff.cpp' => ['printf'], 'erx_seeded.cpp' => [] })
+    assert_equal ['erx_seeded.cpp: _ZN5Timer6clockEv is listed in erx_glue_imports.txt and no longer referenced'],
                  refused
   end
 
@@ -42,15 +42,11 @@ class GlueImportsTest < Minitest::Test
     assert_includes error.message, ':1'
   end
 
-  def test_the_kernel_call_route_stays_out_of_the_build
-    assert_equal ['erx_handoff.cpp'], M.built_glue(%w[erx_syscall.cpp erx_handoff.cpp erx_probe.cpp])
-  end
-
   def test_nm_output_is_read_as_undefined_symbols
     assert_equal %w[printf erx_dispatch], M.undefined_symbols(<<~LISTING)
-      erx_syscall.o:
+      erx_handoff.o:
                        U printf
-      0000000000000000 T _ZN11Erx_syscall5enterEP10Trap_state
+      0000000000000000 T _ZN11Erx_handoff4initEv
                        U erx_dispatch
                        U printf
     LISTING

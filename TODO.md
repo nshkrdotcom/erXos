@@ -760,11 +760,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] Fiasco backend, `liberx/backend/fiasco/vm.c`: the page index's size counts the window, contiguous and device pages but not the archive pages a slice adds, one index entry each per live slice, so enough live slices fill the index and `page_find` spins on the service thread. One slice per domain cannot reach it; before a session slices per command, count live slice pages against a cap and refuse past it with `ERX_ENOMEM`, as `vm_device_pages_used` does, and correct `vm_table.h`'s "committing never finds it full".
 * [Low] Fiasco backend, `erx_mem_child`: the child's handle is in its caller's table before the eager copy fills it, so a thread of the same task that closes the parent's handle and makes another object under the same number between the two calls has the child filled from that object. Make the creation and the copy one service request.
 * [Low] Fiasco backend, `liberx/backend/fiasco/service_wire.c`: the decoder copies a call's words into `decoded.request` without checking them against `ERX_FIASCO_WIRE_WORDS_MAX`; `erx_fiasco_mem_copy_request` fills all seven, so a longer layout would overflow it. Refuse past the maximum in the decoder, or assert every layout's size.
-* [Low] Fiasco backend, `fiasco/kernel/src/erx/erx_probe.cpp` and `erx_syscall.cpp`
-  are reference text for erXos's kernel, out of the build: `erx_syscall.cpp`
-  names `Space::erx_log`, which is gone, so it no longer compiles.
-  `tools/lib/erx/glue_imports.rb`'s `OUT_OF_BUILD` repeats
-  `Modules.generic` by hand.
 * [Medium] Fiasco backend, native boot's seeded failures: `user_ptr` left 0, the
   archive's sub-type removed and shutdown removed were each run by hand and
   failed as [the verification table](docs/design-fiasco.md#verification) says;
@@ -7547,7 +7542,7 @@ to the corpus and follow rc
   `Attribution`'s parser instead.
 * [Medium] build, the glue in Fiasco: the design compiles the glue with GCC's
   `-fstack-usage` and checks it (B2, B3, B9, B11, the import allowlist);
-  `fiasco/kernel/src/erx/erx_handoff.cpp`, the one glue module built, gets only
+  `fiasco/kernel/src/erx/erx_handoff.cpp`, the glue, gets only
   `ERX_GLUE_CXXFLAGS` (`fiasco/kernel/src/Makeconf`). The glue checks
   package adds the flag beside the include path.
 * [Medium] Fiasco kernel, FP state: the fork switches FP state eagerly,
@@ -9911,9 +9906,7 @@ document's "residual risks accepted" paragraph.
   trap but the ABI's, read with `llvm-nm` and `llvm-objdump`; it also
   closes the include-path gap the text rules cannot see, an `-I` flag
   reaching l4sys's headers); the linked-kernel call-site reader the raw
-  allocator and pmem converter rules need; the glue-imports allowlist over
-  the glue's GCC objects (`erx_handoff.cpp` already exists, and its imports
-  are unchecked until then); and the vector route. Each fails the check as
+  allocator and pmem converter rules need; and the vector route. Each fails the check as
   soon as a file it awaits lands, except the files it lists as existing
   ([design-kernel.md](docs/design-kernel.md#chokepoint-checks)). The
   object leg's stated reason, that no build produces liberx's target

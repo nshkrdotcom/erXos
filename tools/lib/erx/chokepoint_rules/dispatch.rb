@@ -34,7 +34,6 @@ module Erx
           sites: [Chokepoints::Site.new(glob: 'kernel/core/dispatch.c'),
                   Chokepoints::Site.new(glob: 'kernel/core/dispatch_impl.h'),
                   Chokepoints::Site.new(glob: 'include/erx/core/dispatch.h'),
-                  Chokepoints::Site.new(glob: 'fiasco/kernel/src/erx/erx_syscall.cpp'),
                   Chokepoints::Site.new(glob: 'liberx/backend/hosted/log.c'),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/log.c'),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/service.c'),
