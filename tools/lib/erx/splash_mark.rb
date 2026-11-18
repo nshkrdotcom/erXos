@@ -26,6 +26,8 @@ module Erx
     OUTPUT = 'erlang/apps/erx_display/src/erx_splash_mark.erl'
     MAX_SOURCE_BYTES = 65_536
     MARK_WIDTH = 384
+    # The tallest mask, in widths: a taller one is a malformed source.
+    MAX_ASPECT = 4
     SUBROWS = 16
     # Straight pieces a cubic is flattened into.
     CUBIC_STEPS = 16
@@ -66,6 +68,8 @@ module Erx
     end
 
     # Walks the tokens through a cursor; a command's numbers may repeat it.
+    # As SVG's closepath says, a subpath that follows Z without a moveto
+    # starts at the closed subpath's first point.
     def polygons(tokens)
       cursor = 0
       command = nil
@@ -77,7 +81,7 @@ module Erx
           cursor += 1
           raise MarkError, "#{SOURCE}: command #{command} is not one of #{ARITY.keys.join(' ')}" unless ARITY.key?(command)
         end
-        raise MarkError, "#{SOURCE}: numbers before the first command" if command.nil?
+        raise MarkError, "#{SOURCE}: numbers with no command" if command.nil?
 
         arity = ARITY.fetch(command)
         numbers = tokens[cursor, arity]
@@ -87,9 +91,10 @@ module Erx
 
         cursor += arity
         points = numbers.map(&:to_f).each_slice(2).to_a
+        raise MarkError, "#{SOURCE}: a number too large for a coordinate" unless points.flatten.all?(&:finite?)
         case command
         when 'M'
-          done << current unless current.empty?
+          done << current
           current = [points.first]
           command = 'L'
         when 'L', 'C'
@@ -97,12 +102,15 @@ module Erx
 
           command == 'L' ? current << points.first : current.concat(cubic(current.last, *points))
         when 'Z'
-          done << current unless current.empty?
-          current = []
+          raise MarkError, "#{SOURCE}: Z before a moveto" if current.empty?
+
+          done << current
+          current = [current.first]
           command = nil
         end
       end
-      (done + [current]).reject(&:empty?)
+      # A lone moveto, or the start a final Z leaves, bounds no area.
+      (done + [current]).select { |polygon| polygon.size > 1 }
     end
 
     def cubic(start, first, second, last)
@@ -114,26 +122,29 @@ module Erx
       end
     end
 
-    # The polygons scaled so their bounding box is MARK_WIDTH wide, filled
+    # The polygons scaled so their bounding box is WIDTH pixels wide, filled
     # even-odd.
-    def rasterise(polygons)
+    def rasterise(polygons, width: MARK_WIDTH)
       xs, ys = polygons.flatten(1).transpose
       raise MarkError, "#{SOURCE}: the path encloses no area" if xs.nil? || xs.max == xs.min || ys.max == ys.min
 
-      scale = MARK_WIDTH / (xs.max - xs.min)
+      scale = width.fdiv(xs.max - xs.min)
       height = ((ys.max - ys.min) * scale).ceil
+      raise MarkError, "#{SOURCE}: the mark is more than #{MAX_ASPECT} times as tall as wide" if height > MAX_ASPECT * width
       edges = polygons.flat_map do |polygon|
         placed = polygon.map { |x, y| [(x - xs.min) * scale, (y - ys.min) * scale] }
         placed.zip(placed.rotate).filter_map { |(x0, y0), (x1, y1)| Edge.new(x0:, y0:, x1:, y1:) unless y0 == y1 }
       end
-      rows = (0...height).map { |row| coverage_row(row, edges.select { |e| [e.y0, e.y1].min < row + 1 && [e.y0, e.y1].max > row }) }
-      Mask.new(width: MARK_WIDTH, height: height, pixels: rows.join.b)
+      rows = (0...height).map do |row|
+        coverage_row(row, edges.select { |e| [e.y0, e.y1].min < row + 1 && [e.y0, e.y1].max > row }, width:)
+      end
+      Mask.new(width:, height:, pixels: rows.join.b)
     end
 
     # One row of the mask as bytes: the even-odd spans of each of its
     # SUBROWS lines, each line's covered length added to its pixels.
-    def coverage_row(row, edges)
-      cover = Array.new(MARK_WIDTH, 0.0)
+    def coverage_row(row, edges, width:)
+      cover = Array.new(width, 0.0)
       SUBROWS.times do |sub|
         y = row + (sub + 0.5) / SUBROWS
         crossings = edges.filter_map do |e|
@@ -146,10 +157,10 @@ module Erx
     end
 
     def add_span(cover, from, to)
-      from = from.clamp(0.0, MARK_WIDTH.to_f)
-      to = to.clamp(0.0, MARK_WIDTH.to_f)
+      from = from.clamp(0.0, cover.size.to_f)
+      to = to.clamp(0.0, cover.size.to_f)
       (from.floor...to.ceil).each do |pixel|
-        cover[pixel] += [to, pixel + 1].min - [from, pixel].max if pixel < MARK_WIDTH
+        cover[pixel] += [to, pixel + 1].min - [from, pixel].max
       end
     end
 
