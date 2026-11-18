@@ -90,7 +90,7 @@ start(Mode, Policy) ->
                                          minted => fun(Tag, Reply) -> Test ! {minted, Tag, Reply} end,
                                          area => fun area_of/1, clients => own, provide => false,
                                          policy => Policy}),
-    {ok, Screen} = erx_screen:start_link({?MODULE, ?DRIVER}),
+    {ok, Screen} = erx_screen:start_link({?MODULE, ?DRIVER}, light),
     true = unlink(Winfs),
     true = unlink(Screen),
     #{driver => Driver, image => Image, winfs => Winfs, screen => Screen}.
@@ -442,7 +442,7 @@ push_counts() ->
     ok = no_flush(),
     {ok, <<16#11, 16#22, 16#33, _, Next:3/binary, _/binary>>} =
         erx_memdraw:read(Screen, {0, 0, 2, 1}),
-    <<R, G, B, _>> = <<(erx_screen:background()):32>>,
+    <<R, G, B, _>> = <<(erx_theme:color(light, desktop)):32>>,
     ?assertEqual(<<B, G, R>>, Next),
     %% A window that is made hidden, and its present, show nothing new.
     _ = give_area(?OTHER),

@@ -33,18 +33,18 @@ class ErxThemeTest < Minitest::Test
     [{ 'theme 1' => 'theme 1 2' }, /expected theme VERSION/],
     [{ '  hairline 1' => '    hairline 1' }, /two-space indentation/],
     [{ '  hairline 1' => "  hairline 1\n  margin 3" }, /unknown theme member margin/],
-    [{ 'color desktop    D9DAD5' => 'color "desktop"  D9DAD5' }, /takes no quoted token/],
+    [{ 'color desktop    DADBD6' => 'color "desktop"  DADBD6' }, /takes no quoted token/],
     [{ '  hairline 1' => '' }, /needs one hairline row/],
     [{ '  hairline 1' => "  hairline 1\n  hairline 2" }, /needs one hairline row/],
     [{ '  shadow section 0 2 12 10' => '' }, /the theme needs a shadow row/],
     [{ '  unit 4' => '  unit 0' }, /unit must lie in 1\.\./],
     [{ '  unit 4' => '  unit 4 px' }, /expected unit PIXELS/],
     [{ 'color window     F6F5F2' => "color window     F6F5F2 0D0F2A\n  color Wall       F6F5F2" }, /invalid theme name "Wall"/],
-    [{ 'color desktop    D9DAD5' => "color desktop    D9DAD5 0D0F2A\n  color desktop    D9DAD6" }, /color desktop is declared twice/],
-    [{ 'color desktop    D9DAD5' => 'color desktop    d9dad5' }, /not six upper-case hexadecimal digits/],
-    [{ 'color desktop    D9DAD5 0D0F2A' => 'color desktop    D9DAD5 0D0F2A 00' }, /expected color NAME LIGHT_RRGGBB DARK_RRGGBB/],
-    [{ 'color desktop    D9DAD5 0D0F2A' => 'color desktop    D9DAD5' }, /expected color NAME LIGHT_RRGGBB DARK_RRGGBB/],
-    [{ 'color desktop    D9DAD5 0D0F2A' => 'color desktop    D9DAD5 0d0f2a' }, /not six upper-case hexadecimal digits/],
+    [{ 'color desktop    DADBD6' => "color desktop    DADBD6 0D0F2A\n  color desktop    D9DAD6" }, /color desktop is declared twice/],
+    [{ 'color desktop    DADBD6' => 'color desktop    dadbd6' }, /not six upper-case hexadecimal digits/],
+    [{ 'color desktop    DADBD6 0D0F2A' => 'color desktop    DADBD6 0D0F2A 00' }, /expected color NAME LIGHT_RRGGBB DARK_RRGGBB/],
+    [{ 'color desktop    DADBD6 0D0F2A' => 'color desktop    DADBD6' }, /expected color NAME LIGHT_RRGGBB DARK_RRGGBB/],
+    [{ 'color desktop    DADBD6 0D0F2A' => 'color desktop    DADBD6 0d0f2a' }, /not six upper-case hexadecimal digits/],
     [{ 'semibold Inter-SemiBold.ttf' => 'semibold Inter-SemiBold.ttf light Inter-Light.ttf' },
      /font weight light is not one of/],
     [{ 'semibold Inter-SemiBold.ttf' => 'semibold Inter-SemiBold.ttf medium Inter-Book.ttf' },
@@ -118,6 +118,15 @@ class ErxThemeTest < Minitest::Test
     end
     assert_match(/abi\/theme\.txt:\d+: contrast secondary on window is 1\.99 in the light palette, below 4\.5/,
                  error.message)
+  end
+
+  # The splash's version line is `secondary` on `desktop`: one step darker
+  # than the light palette's desktop colour fails that row.
+  def test_d7_secondary_on_a_darker_desktop_fails
+    error = assert_raises(Erx::ABI::SchemaError) do
+      theme_of(seeded('color desktop    DADBD6' => 'color desktop    D9DAD5'))
+    end
+    assert_match(/contrast secondary on desktop is 4\.49 in the light palette, below 4\.5/, error.message)
   end
 
   # D7 in the dark palette: a dark `secondary` too dim for its surfaces

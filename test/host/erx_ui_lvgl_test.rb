@@ -12,7 +12,8 @@ require_relative '../../tools/lib/erx/lvgl'
 # erx-lvgl on the host through test/erlang/erx_ui_lvgl_shell.erl (docs/design-display.md,
 # "The widget server"): an apply is written and answered, a click sent while a report is
 # open waits for its answer, a window grown past its buffer gets a screen clipped to it and runs on,
-# and a close ends the shell with no fault.
+# a close ends the shell with no fault, and a window's first frame is its first tree: no
+# present before the tree is applied, then one of the whole window showing the tree.
 class ErxUiLvglTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   LAUNCHER = File.join(ROOT, 'test/fixtures/erx_lvgl_buffer.rb')
@@ -35,6 +36,7 @@ class ErxUiLvglTest < Minitest::Test
       assert_match(/grown => \{\{240,160\},normal\}/, output)
       assert_match(/closed => \{normal,\[\]\}/, output)
       assert_match(/killed => \{renderer_down,\{shutdown,\{renderer_down,\{exit,137\}\}\}\}/, output)
+      assert_match(/first_frame => \{0,1,true,true\}/, output)
     end
   end
 end

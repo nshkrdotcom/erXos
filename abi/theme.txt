@@ -50,11 +50,11 @@ theme 1
   color series_cpu 0E7A6B 7FE7F2
   color series_mem 5B53C6 A79CFF
   color series_msg B8620B FFB547
-  color desktop    D9DAD5 0D0F2A
+  color desktop    DADBD6 0D0F2A
   # The WCAG 2 contrast ratio each foreground meets on each background
   # named, in each palette.
-  contrast text      on window surface sunken 7.0
-  contrast secondary on window surface sunken 4.5
+  contrast text      on window surface sunken desktop 7.0
+  contrast secondary on window surface sunken desktop 4.5
   contrast on_accent on accent 4.5
   # The icons' definition file and the pixel sizes they are rasterised at.
   icons display/icons/icons.txt sizes 16 32

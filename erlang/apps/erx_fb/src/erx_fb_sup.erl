@@ -58,10 +58,12 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    Display = display(erx_device_record:find(gpu, virtio_mmio), erx_device_record:framebuffers()),
+    PaletteName = os:getenv(binary_to_list(?ERX_DISPLAY_PALETTE_KEY_BYTES)),
+    Display = display(erx_device_record:find(gpu, virtio_mmio), erx_device_record:framebuffers(),
+                      screen_palette(PaletteName)),
     Winfs = winfs(os:getenv(binary_to_list(?ERX_DISPLAY_KEY_BYTES)),
                   os:getenv(binary_to_list(?ERX_DISPLAY_POLICY_KEY_BYTES)),
-                  os:getenv(binary_to_list(?ERX_DISPLAY_PALETTE_KEY_BYTES))),
+                  PaletteName),
     Inputs = inputs(erx_device_record:find(input, virtio_input)),
     {ok, {#{strategy => rest_for_one, intensity => ?INTENSITY, period => ?PERIOD_S,
             auto_shutdown => any_significant}, Winfs ++ Display ++ Inputs}}.
@@ -91,6 +93,11 @@ winfs(_Display, _Policy, _Palette) ->
 policy("single") -> {erx_wm_single, #{}};
 policy("rio") -> {erx_wm_rio, #{}}.
 
+%% The palette the screen fills in: the display's, or with a display that names no
+%% window system and so no palette, the theme's first.
+screen_palette(Name) when is_list(Name) -> palette(Name);
+screen_palette(false) -> hd(erx_theme:palettes()).
+
 %% The theme's palette of a mf_display_palette member, by its name.
 palette(Name) ->
     {value, Palette} = lists:search(fun(Palette) -> atom_to_list(Palette) =:= Name end, erx_theme:palettes()),
@@ -98,17 +105,17 @@ palette(Name) ->
 
 %% The driver and screen of the domain's display record, the virtio-gpu's or the firmware
 %% framebuffer's, or none, with a line saying why.
-display({ok, [Spec]}, {ok, []}) ->
-    [driver(erx_virtio_gpu, Spec, [erx_virtio_gpu, erx_virtio_gpu_core]), screen(erx_virtio_gpu)];
-display({ok, []}, {ok, [Record]}) ->
-    [driver(erx_firmware_fb, Record, [erx_firmware_fb, erx_firmware_fb_core]), screen(erx_firmware_fb)];
-display({ok, []}, {ok, []}) ->
+display({ok, [Spec]}, {ok, []}, Palette) ->
+    [driver(erx_virtio_gpu, Spec, [erx_virtio_gpu, erx_virtio_gpu_core]), screen(erx_virtio_gpu, Palette)];
+display({ok, []}, {ok, [Record]}, Palette) ->
+    [driver(erx_firmware_fb, Record, [erx_firmware_fb, erx_firmware_fb_core]), screen(erx_firmware_fb, Palette)];
+display({ok, []}, {ok, []}, _Palette) ->
     _ = erx_log:debug(["erx_fb: no display device record; no screen"]),
     [];
-display({ok, _Gpus}, {ok, _Framebuffers}) ->
+display({ok, _Gpus}, {ok, _Framebuffers}, _Palette) ->
     _ = erx_log:debug(["erx_fb: more than one display device record"]),
     [];
-display(_Gpus, _Framebuffers) ->
+display(_Gpus, _Framebuffers, _Palette) ->
     _ = erx_log:debug(["erx_fb: the display device record is malformed"]),
     [].
 
@@ -132,10 +139,10 @@ driver(Module, Record, Modules) ->
       type => worker,
       modules => Modules}.
 
-screen(Driver) ->
+screen(Driver, Palette) ->
     #{id => erx_screen,
-      start => {erx_screen, start_link, [{Driver, erx_fb}]},
+      start => {erx_screen, start_link, [{Driver, erx_fb}, Palette]},
       restart => permanent,
       shutdown => 2000,
       type => worker,
-      modules => [erx_screen, erx_screen_core]}.
+      modules => [erx_screen, erx_screen_core, erx_splash, erx_splash_mark]}.

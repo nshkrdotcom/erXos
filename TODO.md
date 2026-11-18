@@ -8987,10 +8987,9 @@ document's "residual risks accepted" paragraph.
 
 * [Medium] desktop, the display's palette beyond `erx-lvgl` ([design-desktop-programs.md](docs/design-desktop-programs.md#colour)):
   a display's manifest entry chooses its palette, which reaches `erx_fb_sup`, every window's `ctl` and
-  `erx-lvgl`, but three drawers keep the light one. `erx_wm_rio`'s borders take `erx_theme:color(light, ...)`
-  and want the palette in the window manager's configuration from `erx_fb_sup`; `erx_screen` fills where no
-  window is with a hard-coded slate blue (`erx_screen.erl` `?BACKGROUND`), not the theme's `desktop` colour
-  of the display's palette; and the dashboard's clock (`examples/dashboard`, `erx_dashboard.erl`
+  `erx-lvgl` and `erx_screen`, but two drawers keep the light one. `erx_wm_rio`'s borders take
+  `erx_theme:color(light, ...)` and want the palette in the window manager's configuration from `erx_fb_sup`;
+  and the dashboard's clock (`examples/dashboard`, `erx_dashboard.erl`
   `?PALETTE`) draws in the light palette because `erx_ui` does not answer the palette of the window it
   opened, which `erx_win:info/1` holds. Reference pictures in the dark palette come with the first program
   that runs in it.
