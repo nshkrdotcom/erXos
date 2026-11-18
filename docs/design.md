@@ -1880,7 +1880,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | OTP's Common Test controller, a reporting copy | exact case and job records for the host oracle ([design-build.md](design-build.md#oracle-and-protocol-models)) | Apache-2.0 | permanent, development only | [test/oracle/common_test/ORIGIN.md](../test/oracle/common_test/ORIGIN.md) |
 | Third-party code inside OTP: asmjit, PCRE2, zlib, zstd, Ryu | the JIT's assembler (BeamAsm image only), `re`, `zlib`, `zstd`, float printing | asmjit and zlib Zlib; PCRE2 BSD-3-Clause WITH PCRE2-exception; zstd BSD-3-Clause; Ryu Apache-2.0 | permanent; asmjit never in the system domain's image | part of `otp/` |
 | musl | the C library of every runtime and native program | MIT, with the parts listed in [research](research-c-library.md#musl-126) | permanent | [musl/ORIGIN.md](../musl/ORIGIN.md) |
-| Fiasco, with `bootstrap`, `sigma0`, `l4sys` and `mk` | the kernel of Phase 1 and of the first release, behind erXos's interface ([design-fiasco.md](design-fiasco.md)) | MIT, except the GPL-2.0 `kobject_rpc.h` and `jdb_object.cpp`, which every build replaces and leaves out ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)); Fiasco's other GPL and LGPL parts are excluded at import | **release**, replaced by erXos's kernel in Phase 2; no kernel is built with the debugger or `jdb_object.cpp`; 0.1's images and 0.2's release carry the shipped kernel's build, 0.1's under CLAUDE.md's exception for the website's images, each with its source offered ([site/README.md](../site/README.md), [design-kernel.md](design-kernel.md)) | [kernel](../fiasco/kernel/ORIGIN.md), [bootstrap](../fiasco/bootstrap/ORIGIN.md), [l4re-core](../fiasco/l4re-core/ORIGIN.md), [mk](../fiasco/mk/ORIGIN.md) |
+| Fiasco, with `bootstrap`, `sigma0`, `l4sys` and `mk` | the kernel of Phase 1 and of the first release, behind erXos's interface ([design-fiasco.md](design-fiasco.md)) | MIT, except the GPL-2.0 `kobject_rpc.h` and `jdb_object.cpp`, the first of which every build replaces and the second of which only a kernel with the debugger compiles ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)); Fiasco's other GPL and LGPL parts are excluded at import | **release**, replaced by erXos's kernel in Phase 2; 0.1's images carry a development kernel, with the debugger and `jdb_object.cpp`, by decision, under CLAUDE.md's exception for the website's images with their source offered, and 0.2's release the release kernel's build without them ([site/README.md](../site/README.md), [design-kernel.md](design-kernel.md)) | [kernel](../fiasco/kernel/ORIGIN.md), [bootstrap](../fiasco/bootstrap/ORIGIN.md), [l4re-core](../fiasco/l4re-core/ORIGIN.md), [mk](../fiasco/mk/ORIGIN.md) |
 | `stdarg.h`, `stdbool.h` and `stddef.h` of the cross `aarch64-elf-gcc` | macros and types Fiasco's build includes; no GCC library is linked | GPL-3.0-or-later WITH GCC-exception-3.1 | **release**: inputs of Fiasco's build, allowed by name and hash in the release's link closure ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)) | named by release and SHA-256 in the build record |
 | Code translated from Fiasco into erXos's kernel | the kernel's design and know-how | MIT, notice kept per file and in `kernel/NOTICE-fiasco`; only from files whose effective license is permissive ([Licenses and notices](#licenses-and-notices)) | permanent | written in `kernel/` |
 | libfdt | device-tree parsing in the kernel, Fiasco and the root task | BSD-2-Clause (dual GPL-2.0-or-later) | permanent | [fiasco/libfdt/ORIGIN.md](../fiasco/libfdt/ORIGIN.md) |
@@ -2006,7 +2006,8 @@ hold by construction:
   that thousands of files share costs one copy. A license allowlist
   check fails the build when a closure holds a license outside it, so an
   excluded file, such as one of Fiasco's excluded GPL parts, cannot come
-  back unnoticed. The allowlist admits a copyleft license only for a file
+  back unnoticed. Beyond the closed table below, the allowlist admits a
+copyleft license only for a file
   that the packer places on its own, outside every executable and every
   EROFS image: the Pi 4's device tree, which ships with its source beside
   it; it admits the Raspberry Pi firmware's binary license for the
@@ -2021,17 +2022,21 @@ hold by construction:
   distributed, have an allowlist of their own that adds the licenses of
   the test tools they carry, such as the Open POSIX Test Suite's
   GPL-2.0-or-later, and the packer refuses to mark a test image as a
-release. No Fiasco build carries Fiasco's GPL-headed files: the clean-room
-header replaces `kobject_rpc.h` in every build, and `jdb_object.cpp` is
-compiled into no kernel ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)).
+release. The clean-room header replaces Fiasco's `kobject_rpc.h` in
+every build, and the kernel debugger's `jdb_object.cpp` is compiled only
+into a kernel with the debugger: development kernels, the published
+images' included, carry it by decision, and the release kernel leaves it
+out ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)).
 A development build admits a license that is not permissive only from
 one closed table, `PackProvenance::RESTRICTED`, whose every row names
 one input by its status, its label and its exact license: Doom's
 archive, the `example`, under GPL-2.0-or-later; the cross compiler's
 three freestanding headers that Fiasco includes, under GPL-3.0-or-later
 with the GCC Runtime Library Exception, which lets code compiled with
-them go out under any terms; and l4re-core's `ldscripts/kip_addr.S`,
-under the FSF All Permissive License. Beyond the table it admits only a
+them go out under any terms; l4re-core's `ldscripts/kip_addr.S`, under
+the FSF All Permissive License; and `jdb_object.cpp`, under
+GPL-2.0-only, which goes out only in the website's images with its
+source offered. Beyond the table it admits only a
 local test image's own packages (`package-local`), which no published
 image takes, so a copyleft file that comes back into any other closure,
 a stopgap's included, fails the build. The only development images that

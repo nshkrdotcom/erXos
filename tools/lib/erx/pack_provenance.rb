@@ -50,8 +50,8 @@ module Erx
     end
     # The closed table of such inputs (docs/design.md, "Licenses and notices"). Every
     # other input of every build, a stopgap's included, must be permissive, so a copyleft
-    # file that comes back into a closure, such as one of Fiasco's GPL sources, fails the
-    # build however it is registered.
+    # file that comes back into a closure, such as another of Fiasco's GPL sources, fails
+    # the build however it is registered.
     RESTRICTED = [
       # Doom, the example, in 0.1's images with its source offered.
       Restricted.new(status: EXAMPLE, label: EXAMPLE_LABEL, licenses: EXAMPLE_LICENSES),
@@ -63,7 +63,11 @@ module Erx
       # A linker script of l4re-core under the FSF All Permissive License, which permits
       # copying and distribution with or without modification if the notice is kept: a
       # permissive license the table names for this file alone.
-      Restricted.new(status: STOPGAP, label: 'fiasco/l4re-core/ldscripts/kip_addr.S', licenses: ['FSFAP'])
+      Restricted.new(status: STOPGAP, label: 'fiasco/l4re-core/ldscripts/kip_addr.S', licenses: ['FSFAP']),
+      # Fiasco's kernel debugger, carried in development builds by decision, distributed
+      # under the website exception with its source offered (CLAUDE.md, Dependencies,
+      # stopgaps and release components); the release kernel leaves it out.
+      Restricted.new(status: STOPGAP, label: 'fiasco/kernel/src/kern/jdb_object.cpp', licenses: ['GPL-2.0-only'])
     ].freeze
     PACKAGE_STATUSES = [PERMANENT, PACKAGE_LOCAL].freeze
     # compiler is the clang that built Fiasco's C17 cores, which Fiasco's audit records.

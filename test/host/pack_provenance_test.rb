@@ -516,16 +516,19 @@ class PackProvenanceTest < Minitest::Test
   end
 
   # Seeded fault: a development build admits a license that is not permissive only from
-  # PackProvenance::RESTRICTED, so a GPL stopgap input that the table does not name is
-  # refused, as is one of the table's labels under another license.
+  # PackProvenance::RESTRICTED, so a GPL input that the table does not name is refused,
+  # as is one of the table's labels under another license or another status.
   def test_a_gpl_stopgap_outside_the_closed_table_is_refused
     refusals = [{ license: 'GPL-2.0-only', label: 'third_party/fixture/root.c' },
                 { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/fixture.cpp' },
+                { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/arm/jdb_object.cpp' },
+                { license: 'GPL-2.0-or-later', label: 'fiasco/kernel/src/kern/jdb_object.cpp' },
+                { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/jdb_object.cpp', status: 'permanent' },
                 { license: 'GPL-3.0-or-later', label: 'toolchain/gcc-16.2.0/stdarg.h' },
                 { license: 'FSFAP', label: 'fiasco/l4re-core/ldscripts/other.S' },
                 { license: Erx::PackProvenance::GCC_LICENSE, label: 'toolchain/gcc-16.2.0/limits.h' }]
     refusals.each do |input|
-      error = assert_raises(Erx::Error) { resolve_registered(**input, status: 'stopgap') }
+      error = assert_raises(Erx::Error) { resolve_registered(**{ status: 'stopgap' }.merge(input)) }
       assert_match(/no permitted grant/, error.message, input.inspect)
     end
   end
@@ -534,7 +537,8 @@ class PackProvenanceTest < Minitest::Test
   # build, and no release build admits it.
   def test_the_closed_table_admits_its_rows_in_development_builds_only
     { 'toolchain/gcc-16.2.0/stddef.h' => Erx::PackProvenance::GCC_LICENSE,
-      'fiasco/l4re-core/ldscripts/kip_addr.S' => 'FSFAP' }.each do |label, license|
+      'fiasco/l4re-core/ldscripts/kip_addr.S' => 'FSFAP',
+      'fiasco/kernel/src/kern/jdb_object.cpp' => 'GPL-2.0-only' }.each do |label, license|
       record = resolve_registered(license: license, label: label, status: 'stopgap').first
       assert_equal [label, license, 'stopgap'], record.values_at('path', 'declared_license', 'status')
       error = assert_raises(Erx::Error) { resolve_registered(license: license, label: label, status: 'stopgap', build_kind: 'release') }
