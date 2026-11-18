@@ -8746,10 +8746,22 @@ document's "residual risks accepted" paragraph.
   design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
   takes the same shape.
 
+* [Medium] image license check, release builds (`tools/lib/erx/pack_provenance.rb`,
+  `PackProvenance::RESTRICTED`; `tools/lib/erx/fiasco_provenance.rb`,
+  `FiascoProvenance.non_permissive`): which non-permissive inputs a build may carry is
+  stated twice. The image check's closed table admits its rows in development builds
+  only, while the release kernel's link audit has its own exception for GCC's three
+  headers and none for l4re-core's `ldscripts/kip_addr.S` (FSFAP), which `sigma0` links.
+  A release image would be refused for the GCC headers and `kip_addr.S`, which fails
+  safe. Fix: give each row the build kinds it applies to (Doom development only, the
+  GCC headers and `kip_addr.S` every kind) and have the release audit read the same
+  table, matching the audit's paths to the table's labels.
+
 * [Medium] stopgap kernel, release builds (design-stopgap.md, "Boot handoff", the kernel): a
-  release kernel is configured without JDB and the kernel's console input, so a panic reboots
-  instead of waiting on the console (`tools/erx build release-kernel`, `FiascoConfig::RELEASE_UNSET`),
-  but no image packs it: every image is a development build (`ProductionImage::BUILD_KIND`);
+  kernel is configured without JDB and the kernel's console input (`config/fiasco/kernel.defconfig`,
+  refused otherwise by `FiascoConfig::FORBIDDEN`), so a panic reboots instead of waiting on the
+  console; the release kernel (`tools/erx build release-kernel`) is the same configuration with the
+  release-rule link audit, but no image packs it: every image is a development build (`ProductionImage::BUILD_KIND`);
   the release image build must take `Fiasco#build_release_kernel`'s kernel and extend the
   provenance audit (`fiasco_provenance.rb`, which reads `build/fiasco/kernel`) and the build
   memo to it. A panic before `Psci::init` and `Dt::init` in `Startup::stage2`, the handoff
