@@ -2465,6 +2465,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] build, the display client check (`tools/lib/erx/manifest.rb` `display_releases`,
+  `tools/lib/erx/release_files.rb` `check_display_clients`): it resolves which rows and
+  templates hold a display's grant a second time, outside the manifest checker, so a
+  disagreement with the checker passes silently. Make it a clause of property 18 in the
+  checker (`check_display_grants`), with the checker's context recording which applications
+  each release script starts (`applications - LOADED`), and delete the second resolution.
 * [Medium] programs, the first-open window (`erlang/apps/erx/src/erx_prog_handler_core.erl`, the
   shared export test near line 820): the handler knows the display's export by its mount depth
   alone, so a writable grant of another provider mounted at `/dev` gets a window, or ENODEV, when
