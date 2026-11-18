@@ -13,7 +13,8 @@ module Erx
   # whose license keeps it out of erXos's tree is a git submodule pinned by its
   # gitlink, and the downloads it needs (Freedoom's WAD for Doom) are pinned in a
   # deps.lock in the submodule's own repository, in the form of erXos's deps.lock.
-  # Only this step obtains either; no gate or build step names an example (ExampleLists),
+  # Only this step obtains either; no gate or build step names an example (ExampleLists)
+  # but the published media's build of Doom (DoomProgram),
   # and the submodule's `update = none` keeps a recursive clone from obtaining it.
   #
   # The submodule is untrusted data: nothing of it runs. Its deps.lock is parsed by

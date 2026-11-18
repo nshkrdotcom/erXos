@@ -30,6 +30,8 @@ module Erx
     # stopgaps keep the development build's admission above.
     EXAMPLE = 'example'
     EXAMPLE_LABEL = 'doomgeneric libdoom.a'
+    # Where the image build writes that archive (DoomProgram), relative to the tree.
+    EXAMPLE_ARCHIVE = 'build/doom/libdoom.a'
     EXAMPLE_LICENSES = ['GPL-2.0-or-later', 'GPL-2.0-or-later AND BSD-3-Clause'].freeze
     DEPENDENCY_STATUSES = [PERMANENT, 'stopgap', EXAMPLE].freeze
     PACKAGE_STATUSES = [PERMANENT, PACKAGE_LOCAL].freeze
@@ -499,7 +501,7 @@ module Erx
       raise Error, 'invalid dependency provenance status' unless statuses.include?(status)
       if status == EXAMPLE && !example_archive?(path, label: label, license: license)
         raise Error, "#{label} (#{license}) cannot be registered as example: only #{EXAMPLE_LABEL} under " \
-                     "#{EXAMPLE_LICENSES.join(' or ')} is"
+                     "#{EXAMPLE_LICENSES.join(' or ')}, at #{EXAMPLE_ARCHIVE}, is"
       end
       selected = LicenseExpression.select(license, allow_restricted: BuildKind.development?(build_kind) && status != PERMANENT,
                                                    font_data: font_data)
@@ -690,9 +692,11 @@ module Erx
     end
 
     # Whether path is the example's archive: an external registration, never an import's
-    # file, under EXAMPLE_LABEL and one of EXAMPLE_LICENSES exactly.
+    # file, of the file at EXAMPLE_ARCHIVE, under EXAMPLE_LABEL and one of EXAMPLE_LICENSES
+    # exactly, so no other input can take the example status by its label.
     def example_archive?(path, label:, license:)
-      @external.key?(path) && label == EXAMPLE_LABEL && EXAMPLE_LICENSES.include?(license)
+      @external.key?(path) && path == File.join(@root, EXAMPLE_ARCHIVE) && label == EXAMPLE_LABEL &&
+        EXAMPLE_LICENSES.include?(license)
     end
 
     def leading_notice(bytes)

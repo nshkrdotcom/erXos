@@ -481,9 +481,15 @@ class PackProvenanceTest < Minitest::Test
   end
 
   # The Doom example's archive, attributed whole under the label the image build gives it, as
-  # the one input of an image registered as example.
-  def resolve_example(license:, label: Erx::PackProvenance::EXAMPLE_LABEL, status: 'example', build_kind: 'development')
-    external = [{ 'path' => @source, 'sha256' => Digest::SHA256.file(@source).hexdigest,
+  # the one input of an image registered as example, at the path the image build writes it
+  # (EXAMPLE_ARCHIVE) unless at names another.
+  def resolve_example(license:, label: Erx::PackProvenance::EXAMPLE_LABEL, status: 'example', build_kind: 'development',
+                      at: Erx::PackProvenance::EXAMPLE_ARCHIVE)
+    FileUtils.mkdir_p(File.join(@root, File.dirname(at)))
+    archive = write(at, File.binread(@source))
+    @receipt['compiles'] = [@receipt.fetch('compiles').first.merge('sources' => [reference(archive)],
+                                                                    'dependency' => reference(write('root.d', "root.o: #{at}\n")))]
+    external = [{ 'path' => archive, 'sha256' => Digest::SHA256.file(archive).hexdigest,
                   'label' => label, 'license' => license, 'status' => status, 'evidence' => 'example archive fixture',
                   'notices' => [{ 'path' => File.join(@root, 'LICENSE'),
                                   'sha256' => Digest::SHA256.file(File.join(@root, 'LICENSE')).hexdigest }] }]
@@ -493,13 +499,14 @@ class PackProvenanceTest < Minitest::Test
   end
 
   # The example status admits GPL-2.0 only for the Doom example's archive, in a development
-  # build: the same GPL bytes under another label or as permanent, another restricted
+  # build: the same GPL bytes under another label, at another path or as permanent, another restricted
   # license under the example's label, and a release build are refused. (A stopgap keeps
   # the development build's admission, test_permissive_stopgap_is_allowed_in_release_provenance.)
   def test_only_the_example_archive_enters_under_gpl_2
     record = resolve_example(license: 'GPL-2.0-or-later AND BSD-3-Clause').first
     assert_equal ['GPL-2.0-or-later AND BSD-3-Clause', 'example'], record.values_at('declared_license', 'status')
     refusals = { { label: 'third_party/fixture/root.c' } => /registered as example/,
+                 { at: 'build/other/libdoom.a' } => /registered as example/,
                  { license: 'GPL-3.0-or-later' } => /registered as example/,
                  { license: 'GPL-2.0-only' } => /registered as example/,
                  { status: 'permanent' } => /no permitted grant/,

@@ -1799,13 +1799,20 @@ only as a third party would build it, through the SDK.
   publishes the downloads, parsed and verified as `deps.lock`'s sources
   are, under `build/examples/doom`, a root of their own, and takes only
   file, tar and zip downloads; no part of
-  `make check`, the landing gate or the milestone gate builds it; `tools/erx app run examples/doom/doom` runs
-  it on request. It never ships: its license keeps it out of every image
-  erXos distributes (step 4 of [Adding an app to an
-  image](#adding-an-app-to-an-image)). Nothing erXos builds, tests or
-  distributes depends on it, so the dependency table has no row for it.
-  No erXos code includes or links it, so working on erXos never needs
-  reading it.
+  `make check`, the landing gate or the milestone gate builds it. 0.1's
+  published media carry it as `/bin/doom`, a program of the domain
+  release, not as a package: the published build, `tools/erx pack
+  --medium`, compiles the fork's sources with Freedoom's WAD linked in
+  (`tools/lib/erx/doom_program.rb`) and refuses a checkout that is
+  missing, at another commit than the gitlink's, or changed, since the
+  media offer the gitlink's commit as their source. Its row in the
+  dependency table has the status `example`, which the image build admits
+  for its archive alone ([design.md](design.md#dependencies)); every
+  other package that is not permissive stays out of every image but a
+  local one (step 4 of [Adding an app to an
+  image](#adding-an-app-to-an-image)).
+  No erXos code includes it; only the published build compiles and
+  links it, so working on erXos needs reading it only for that build.
 
 To the packer each is an app directory with an `app.txt`, as is a
 third party's anywhere on disk. The landing gate exports the SDK, packs
@@ -2471,8 +2478,8 @@ Decisions:
     is the program's one end report, so no second launcher and no second
     end message exist ([design-programs.md](design-programs.md#the-handler)).
 13. **Doom is a demo app under `examples/`**, a submodule whose gitlink
-    is all the tree holds; it never ships, and since nothing in erXos
-    depends on it, the dependency table has no row for it
+    is all the tree holds; 0.1's published media carry it as `/bin/doom`
+    under the dependency status `example`, with its source offered
     ([Examples](#examples)).
 14. **No policy per signer**: the `apps` row offers its services to every
     app, and the builder's lever is which signer keys the image trusts.

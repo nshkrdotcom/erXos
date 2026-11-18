@@ -5,8 +5,9 @@ the git submodule `doom/` beside this file: erXos's fork of doomgeneric, under
 GPL-2.0-or-later. erXos's commits on top of upstream's hold the platform layer,
 in `doomgeneric/` beside upstream's own platform layers; the app's `app.txt`; its
 build; and `deps.lock`, which pins Freedoom's WAD. No part of it is erXos's
-tree, and it never ships: its license keeps it out of every image erXos
-distributes.
+tree. 0.1's published images carry it as `/bin/doom`, an example under the
+dependency status `example` ([design.md](../../docs/design.md#dependencies)),
+with its source offered at the fork's commit below.
 
 | | |
 | --- | --- |
@@ -24,8 +25,11 @@ from, with erXos's commits on top. The fork's `deps.lock` pins Freedoom's
 release archive (BSD-3-Clause) and its SHA-256, the value the release's signed
 checksum file lists for it; the archive's `freedoom1.wad` is the demo's WAD.
 
-`git clone` does not check the submodule out, and no gate, build or check reads it.
+`git clone` does not check the submodule out, and no gate, test build or check
+reads it; only the published build, `tools/erx pack --medium`, does
+(`tools/lib/erx/doom_program.rb`), and it refuses a checkout that is missing,
+at another commit than the gitlink's, or changed.
 `tools/erx fetch --example doom` clones it at the recorded commit, with no
 history, and fetches its downloads against their SHA-256 into
 `build/examples/doom`; nothing of either runs. A checkout that is there is left as
-it is. `tools/erx app run examples/doom/doom` then runs the demo on request.
+it is.

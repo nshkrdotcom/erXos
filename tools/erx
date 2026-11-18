@@ -625,7 +625,9 @@ module Erx
     # boot and --signer FILE trusts a deployer's key for packages installed later.
     # --local makes it a local test image, which takes a package whose license is not
     # permissive and never leaves this host (ImageApps::Plan); a board's card, the one the
-    # website offers, takes neither (ProductionImage#build_medium).
+    # website offers, takes neither (ProductionImage#build_medium). A medium packed with no
+    # --app is the published one, which carries the Doom example as /bin/doom and so needs
+    # `tools/erx fetch --example doom` first (ProductionImage.pack_platform's doom).
     def self.pack(arguments)
       pack_options(arguments) => { platform:, medium:, probe:, sources:, enable:, signers:, local: }
       require_relative 'lib/erx/production_image'
@@ -636,7 +638,7 @@ module Erx
                         compiler: environment.fetch('ERX_CLANG'), linker: environment.fetch('ERX_LLD'))
       result = ProductionImage.pack_platform(root: ROOT, runner: runner, compiler: environment.fetch('ERX_CLANG'),
                                              linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium,
-                                             apps: apps)
+                                             apps: apps, doom: medium && apps.empty?)
       built, written = medium ? result : [result, nil]
       Terminal.puts("production image: #{built.single}; root_startup: #{built.report.fetch('manifest').fetch('root_startup')}")
       case written
