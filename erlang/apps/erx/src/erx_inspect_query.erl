@@ -9,13 +9,14 @@ inspector, pure, so its fuzz target (test/erlang/erx_inspect_query_fuzz.erl)
 runs it alone.
 
 A request is the term the funnel decoded from the grantee's frame, in safe
-mode, so every atom in it already existed. It is one of the interface's two
+mode, so every atom in it already existed. It is one of the interface's three
 operations:
 
 * `{inspect, Path, Options}`, where Options is a map holding at most
   `offset`, a sequence number below 2^64, and `limit`, a page of 1 to
   1,000 entries;
-* `{entries, Path}`.
+* `{entries, Path}`;
+* `{literals, Path}`.
 
 Path is a proper list of at most 16 segments, each an atom that is a
 literal of a path abi/inspection.txt declares, an integer below 2^64, a
@@ -45,9 +46,9 @@ decode({inspect, Path, Options}) ->
         true -> {ok, {inspect, Path, Options}};
         false -> {error, badarg}
     end;
-decode({entries, Path}) ->
+decode({Operation, Path}) when Operation =:= entries; Operation =:= literals ->
     case path(Path, 0, literals()) of
-        true -> {ok, {entries, Path}};
+        true -> {ok, {Operation, Path}};
         false -> {error, badarg}
     end;
 decode(_Request) ->

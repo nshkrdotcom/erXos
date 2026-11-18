@@ -48,11 +48,11 @@ round_of(Request, Literals) ->
         {_, true} -> error({refused_in_bounds, Request, Said})
     end.
 
-%% The Bounds, restated: one of the two operations, a proper path of at most 16
+%% The Bounds, restated: one of the three operations, a proper path of at most 16
 %% segments, and options holding at most offset and limit.
 in_bounds({inspect, Path, Options}, Literals) ->
     path_in_bounds(Path, Literals) andalso options_in_bounds(Options);
-in_bounds({entries, Path}, Literals) ->
+in_bounds({Operation, Path}, Literals) when Operation =:= entries; Operation =:= literals ->
     path_in_bounds(Path, Literals);
 in_bounds(_Request, _Literals) ->
     false.
@@ -91,14 +91,14 @@ request(Literals) ->
         5 -> mutate_path(Good, Literals);
         6 -> mutate_options(Good);
         7 -> mutate_shape(Good);
-        8 -> {pick([inspect, entries]), long_path(), #{}};
+        8 -> {pick([inspect, entries, literals]), long_path(), #{}};
         9 -> noise(3)
     end.
 
 good() ->
     Path = path(),
     case rand:uniform(2) of
-        1 -> {entries, Path};
+        1 -> {pick([entries, literals]), Path};
         2 -> {inspect, Path, maps:from_list(lists:sublist([{offset, pick([0, ?U64 - 1, rand:uniform(1000)])},
                                                            {limit, pick([1, ?MAX_LIMIT, rand:uniform(?MAX_LIMIT)])}],
                                                           rand:uniform(3) - 1))}
@@ -130,7 +130,7 @@ part() -> pick([0, ?U32 - 1, rand:uniform(?U32) - 1]).
 long_path() ->
     [pick([0, <<"x">>, {pid, 0, 1, 0}]) || _ <- lists:seq(1, ?MAX_SEGMENTS - 1 + rand:uniform(4))].
 
-mutate_path({entries, Path}, Literals) -> {entries, mutated(Path, Literals)};
+mutate_path({Operation, Path}, Literals) -> {Operation, mutated(Path, Literals)};
 mutate_path({inspect, Path, Options}, Literals) -> {inspect, mutated(Path, Literals), Options}.
 
 mutated(Path, Literals) ->
@@ -157,11 +157,11 @@ bad_segment() ->
 
 %% Atoms that exist but name no path segment, some of them a scope's.
 stray_atoms(Literals) ->
-    [Atom || Atom <- [all, own, scope, true, undefined, pid, ok, error, inspect, entries, offset, limit],
+    [Atom || Atom <- [all, own, scope, true, undefined, pid, ok, error, inspect, entries, literals, offset, limit],
              not lists:member(Atom, Literals)].
 
-mutate_options({entries, Path}) ->
-    {entries, Path, #{}};
+mutate_options({Operation, Path}) ->
+    {Operation, Path, #{}};
 mutate_options({inspect, Path, Options}) ->
     case rand:uniform(6) of
         1 -> {inspect, Path, Options#{scope => pick([all, own, {domain, 1}])}};
@@ -190,7 +190,7 @@ noise(Depth) ->
         2 -> [noise(Depth - 1) || _ <- lists:seq(1, rand:uniform(4) - 1)];
         3 -> list_to_tuple([noise(Depth - 1) || _ <- lists:seq(1, rand:uniform(4) - 1)]);
         4 -> #{noise(0) => noise(Depth - 1)};
-        5 -> {pick([inspect, entries]), noise(Depth - 1)}
+        5 -> {pick([inspect, entries, literals]), noise(Depth - 1)}
     end.
 
 pick(Choices) -> lists:nth(rand:uniform(length(Choices)), Choices).
