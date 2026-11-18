@@ -475,6 +475,19 @@ scripts live in `~/erxos-scratch/tools/`.
   rewrite makes a property expensive, ask first whether to keep the
   property, then how. Design, simplicity and external reviews ask of every
   costly mechanism: "what if we did not need this?"
+* **Checks stay few and earn their place.**
+  * Derive, don't declare: a fact the build can compute is never written by
+    hand and then checked for agreement.
+  * Each rule names the failure it prevents (a security hole, a failed
+    boot, a crash); one only its own test needs is deleted, and an unbuilt
+    feature gets no rules.
+  * Authority is an allow-list: what may be held or granted is marked, so
+    anything new is refused until allowed.
+  * Fix a finding by subtraction first (derive, narrow a type, delete a
+    path), and add a check only when that fails.
+  * Rules have names, not numbers, and refusals say plainly what is wrong.
+  * A checker or policy module past about 1,000 lines gets a simplicity
+    pass before it grows further.
 * **No new mechanism without a design that names it.** Before adding a
   facet, protocol, process kind, registry, flag or special case, find the
   mechanism the design documents already give for the job and use it. A
@@ -497,7 +510,8 @@ scripts live in `~/erxos-scratch/tools/`.
   * A **drift review** runs about once a day of active landing, or every
     fifteen or so landings: a Fable pass over the diff since the last one
     that lists the new concepts, which of them duplicate an existing
-    abstraction or contradict a design document, and what can be deleted.
+    abstraction or contradict a design document, what can be deleted, and
+    each check added since with the failure it prevents.
     Its findings come to me as conform, generalization or delete. A
     generalization folds things that do the same job into one, existing or
     better, abstraction and deletes the copies.
