@@ -2177,7 +2177,7 @@ presents succeed and reach no pixel of the screen, its `wctl` reads
 report it hidden, and its `mouse` and `kbd` receive nothing until it
 is shown. While the display has no session, or its session has no live
 window, the screen shows only the background `erx_screen` fills, with
-the splash over it until the first window is shown
+the splash over it until the first window's first frame is presented
 ([The splash](#the-splash)).
 
 The policy refuses every `wctl` request with `EINVAL`, so no window
@@ -2639,8 +2639,8 @@ is a timer for power, not for drawing.
 
 #### The splash
 
-From its start until its first layout that shows a window, `erx_screen`
-shows the **splash** over the background: the erXos wordmark in the
+From its start until the first window's first frame is presented,
+`erx_screen` shows the **splash** over the background: the erXos wordmark in the
 palette's `text` colour, centred across the screen with its middle a
 little above the screen's, and below it three dots in `secondary`, the
 quiet sign that the system is still starting. The background is the
@@ -2656,16 +2656,20 @@ the wordmark is an 8-bit coverage mask the build rasterises from the
 checked-in `erxos-logo.svg` into the generated module `erx_splash_mark`
 (`tools/lib/erx/splash_mark.rb`), so the screen draws one colour through
 the mask and three dots with `erx_memdraw`, as part of the frame that
-paints its first layout. A screen too small to hold the whole splash
+paints the background at its start. A screen too small to hold the whole splash
 shows the background alone, never a clipped mark.
 
-The first layout that shows a window ends the splash: the screen takes
-its core afresh, its contents unknown, so that layout's plan repaints
-every pixel, and no part of the splash outlives it whatever the policy
-places. After that the screen fills only the background where no window
-is, also when every window has gone. A screen started again behind a
-restarted driver shows the splash only if its first layout shows no
-window.
+While the splash is on, the screen holds each layout without drawing
+it and asks each window it shows to present, so the splash stays until
+there is a window's frame to replace it, never a bare background
+between. The first present of a window the held layout shows ends the
+splash: the screen takes its core afresh, its contents unknown, so the
+held layout's plan repaints every pixel, that window's frame among
+them, and no part of the splash outlives it whatever the policy places.
+After that the screen fills only the background where no window is,
+also when every window has gone. A screen started again behind a
+restarted driver shows the splash again until a window presents, which
+the screen asks each shown window to do at its start.
 
 ### The window process
 

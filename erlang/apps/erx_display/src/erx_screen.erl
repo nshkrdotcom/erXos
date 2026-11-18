@@ -11,10 +11,14 @@ through `erx_display:flush_request/3`. Its decisions are
 filling and copying with `erx_memdraw`, and hands the driver each plan's
 pushed rectangles as one frame.
 
-At start it reads the driver's `info/1`, attaches to `erx_winfs`
-(erx_winfs:attach/2), which answers the layout, paints the whole screen
-from it and asks every shown window to present again, since it holds no
-image of any buffer. After that it takes:
+At start it reads the driver's `info/1`, paints the whole screen with
+the background and the splash over it, attaches to `erx_winfs`
+(erx_winfs:attach/2), which answers the layout, and asks every shown
+window to present again, since it holds no image of any buffer. Until a
+shown window first presents, the screen keeps the splash and holds each
+layout without drawing it; that present repaints the whole screen from
+the layout held (docs/design-display.md, "The splash"). After that it
+takes:
 
 * a **layout** from `erx_winfs`, the shown windows topmost first: the
   core's plan fills the decorations and background, and copies the part
@@ -91,7 +95,8 @@ restart.
                                                    {pos_integer(), pos_integer()}}},
                 monitors = #{} :: #{pid() => reference()},
                 %% Whether the splash may be on the screen: from the start until
-                %% the first layout that shows a window.
+                %% the first present of a window the layout shows. Meanwhile the
+                %% layout is held, not drawn, and the core holds the empty layout.
                 splash = true :: boolean()}).
 
 -doc """
@@ -134,8 +139,10 @@ init({{Module, Name}, Palette}) ->
             {ok, Core} = erx_screen_core:new(Rect, Ground, false),
             State = #state{driver = Driver, screen = Screen, rect = Rect, partial = Partial,
                            chan = Code, ground = Ground, core = Core},
-            {Push, Laid} = apply_layout(erx_winfs:attach(Rect, Chan), State),
-            {ok, send(Push, splash(Push, Laid, Palette))}
+            {Push, Painted} = draw_layout([], State),
+            ok = splash(Painted, Palette),
+            {[], Held} = apply_layout(erx_winfs:attach(Rect, Chan), Painted),
+            {ok, send(Push, Held)}
     end.
 
 -doc false.
@@ -222,16 +229,26 @@ answer_or_hold(Froms, Push, #state{answers = Answers} = State) ->
 
 %% Layouts -------------------------------------------------------------------
 
+%% Takes Layout. While the splash may be on the screen the layout is only held, and
+%% each window it shows is asked to present; the screen keeps the splash until one
+%% does (end_splash/1). After that it is drawn.
+apply_layout(Layout, #state{splash = true} = State) ->
+    _ = [Proc ! {erx_screen, present_again} || #{proc := Proc} <- Layout],
+    {[], State#state{layout = Layout}};
+apply_layout(Layout, State) ->
+    draw_layout(Layout, State).
+
+%% Ends the splash with the held layout: the core is taken afresh, its contents
+%% unknown, so the layout's plan repaints every pixel, the presented window's image
+%% among them, and no part of the splash outlives it.
+end_splash(#state{layout = Layout, rect = Rect, ground = Ground} = State) ->
+    {ok, Core} = erx_screen_core:new(Rect, Ground, false),
+    draw_layout(Layout, State#state{splash = false, core = Core}).
+
 %% Brings the screen to Layout: the core's fills, and each window's copies from the
 %% image the screen holds of it, the background where it holds none or where the
 %% buffer does not reach. A window shown without an image is asked to present again.
-%% The first layout that shows a window while the splash may be on the screen takes
-%% the core afresh, its contents unknown, so its plan repaints every pixel and no
-%% part of the splash outlives it.
-apply_layout([_ | _] = Layout, #state{splash = true, rect = Rect, ground = Ground} = State) ->
-    {ok, Core} = erx_screen_core:new(Rect, Ground, false),
-    apply_layout(Layout, State#state{splash = false, core = Core});
-apply_layout(Layout, #state{core = Core} = State) ->
+draw_layout(Layout, #state{core = Core} = State) ->
     case erx_screen_core:layout(Layout, Core) of
         {ok, #{fill := Fills, copy := Copies, push := Push}, Core1} ->
             Shown = maps:from_list([{Id, Entry} || #{id := Id} = Entry <- Layout]),
@@ -283,11 +300,14 @@ copy_window(Id, Rects, #{proc := Proc, rect := {X0, Y0, _, _}},
 %% Presents ------------------------------------------------------------------
 
 %% A present of a window the layout shows from the presenting process: its image is
-%% kept, and the core's rectangles are copied from it; any other copies nothing.
+%% kept, and the core's rectangles are copied from it, or, the first while the splash
+%% is on, it ends the splash; any other copies nothing.
 present(Id, {{Proc, _}, Image, {Width, Height}, Rects}, #state{layout = Layout} = State) ->
+    Kept = State#state{images = (State#state.images)#{Id => {Proc, Image, {Width, Height}}}},
     case [Entry || #{id := I, proc := P} = Entry <- Layout, I =:= Id, P =:= Proc] of
+        [_] when State#state.splash ->
+            end_splash(Kept);
         [#{rect := {X0, Y0, _, _}}] ->
-            Kept = State#state{images = (State#state.images)#{Id => {Proc, Image, {Width, Height}}}},
             Bounds = {X0, Y0, X0 + Width, Y0 + Height},
             Placed = case Rects of
                          [] -> [Bounds];
@@ -330,16 +350,10 @@ fill(Screen, Fills) ->
                           {ok, _Touched} = erx_memdraw:draw(Screen, R, Source, {0, 0}, opaque, {0, 0}, ?SOVERD, dst)
                   end, Fills).
 
-%% The splash over the background the screen's first layout painted, when that layout
-%% showed no window (a layout that shows one has ended the splash) and its plan
-%% pushed the screen: each of erx_splash's draws, a colour through a mask, inside
-%% the rectangles that first frame already pushes. The splash stays until a layout
-%% shows a window.
-splash([], State, _Palette) ->
-    State;
-splash(_Push, #state{splash = false} = State, _Palette) ->
-    State;
-splash(_Push, #state{screen = Screen, rect = Rect} = State, Palette) ->
+%% The splash over the background the screen's start painted: each of erx_splash's
+%% draws, a colour through a mask, inside the whole screen that first frame pushes.
+%% The splash stays until a shown window's first present (end_splash/1).
+splash(#state{screen = Screen, rect = Rect}, Palette) ->
     Draws = erx_splash:plan(Rect, Palette, mark()),
     lists:foreach(fun({{X, Y}, {Width, Height, Coverage}, Color}) ->
                           Bounds = {0, 0, Width, Height},
@@ -348,8 +362,7 @@ splash(_Push, #state{screen = Screen, rect = Rect} = State, Palette) ->
                           {ok, Source} = erx_memdraw:alloc(?FILL_CHAN, {0, 0, 1, 1}, ?EVERYWHERE, true, Color),
                           {ok, _} = erx_memdraw:draw(Screen, {X, Y, X + Width, Y + Height}, Source, {0, 0},
                                                      Mask, {0, 0}, ?SOVERD, dst)
-                  end, Draws),
-    State.
+                  end, Draws).
 
 %% The wordmark's mask, from the generated module.
 mark() ->

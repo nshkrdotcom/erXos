@@ -5,7 +5,8 @@
 %% host (test/host/erx_screen_test.rb): the start fills the screen image with the
 %% background and hands the driver one frame that covers it, no driver is no screen, a
 %% driver that cannot flush part of the screen gets the whole of it, and a driver that
-%% ends while it holds the frame leaves the screen to its supervisor. This module is
+%% ends while it holds the frame leaves the screen to its supervisor; the splash stays
+%% until a shown window first presents, which repaints the whole screen. This module is
 %% also the stand-in driver's callback module, as erx_screen calls one: info/1. Its
 %% process answers a frame only as erx_display:flush_request/3 sends it, so a screen that
 %% sends the driver a frame of another shape shows nothing.
@@ -118,7 +119,7 @@ pixels(Screen, {W, H}) ->
     {ok, Pixels} = erx_memdraw:read(Screen, {0, 0, W, H}),
     [{B, G, R} || <<B, G, R, _>> <= Pixels].
 
-the_splash_shows_until_a_window_is_shown_and_none_of_it_stays_test() ->
+the_splash_shows_until_a_window_presents_and_none_of_it_stays_test() ->
     Size = {640, 400},
     {Driver, Screen} = driver(true, ok, Size),
     {ok, Pid} = start(),
@@ -132,11 +133,23 @@ the_splash_shows_until_a_window_is_shown_and_none_of_it_stays_test() ->
     gen_server:cast(erx_screen, {layout, []}),
     receive {flushed, _, _} -> error(empty_layout_flushed) after 200 -> ok end,
     ?assertEqual(length(Marked), length([P || P <- pixels(Screen, Size), P =/= Ground])),
-    %% The first window, small and in a corner, repaints the whole screen.
+    %% The first layout that shows a window, small and in a corner, asks it to present
+    %% and keeps the splash: nothing is drawn or flushed until it does.
     gen_server:cast(erx_screen, {layout, [#{id => 1, proc => self(), rect => {0, 0, 16, 16}, decorations => []}]}),
     receive {erx_screen, present_again} -> ok after 5000 -> error(no_present_again) end,
-    _ = flushed(),
-    ?assertEqual([], [P || P <- pixels(Screen, Size), P =/= Ground]),
+    receive {flushed, _, _} -> error(window_layout_flushed_before_its_present) after 200 -> ok end,
+    ?assertEqual(length(Marked), length([P || P <- pixels(Screen, Size), P =/= Ground])),
+    %% Its first present, of a zeroed buffer, repaints the whole screen in one frame:
+    %% the window's black pixels and the ground everywhere else.
+    {ok, Area, _Page} = erx_memdraw:test_area(65536, write),
+    {ok, Request} = erx_screen:present_request(1, #{area => Area, offset => 0, width => 16, height => 16,
+                                                    rects => []}),
+    {Rects, _} = flushed(),
+    ?assertEqual(640 * 400, lists:sum([area(R) || R <- Rects])),
+    ?assertEqual({reply, ok}, gen_server:receive_response(Request, 5000)),
+    Shown = lists:zip([{X, Y} || Y <- lists:seq(0, 399), X <- lists:seq(0, 639)], pixels(Screen, Size)),
+    ?assertEqual([{0, 0, 0}], lists:usort([P || {{X, Y}, P} <- Shown, X < 16, Y < 16])),
+    ?assertEqual([Ground], lists:usort([P || {{X, Y}, P} <- Shown, X >= 16 orelse Y >= 16])),
     stop(Pid),
     kill(Driver).
 
