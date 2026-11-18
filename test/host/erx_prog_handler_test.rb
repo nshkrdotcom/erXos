@@ -181,11 +181,23 @@ class ErxProgHandlerTest < Minitest::Test
                  replacement: 'lists:member(Point, Names)', caught_by: 'export_names_test_')
   }.freeze
 
+  # Seeded runs at once: each compiles and runs the suites in its own directory; one after
+  # another they come near the host tests' per-file deadline.
+  MUTANT_JOBS = 6
+
   def test_seeded_faults_are_caught
+    sources = MUTANTS.values.map(&:file).uniq.to_h { |file| [file, File.read(File.join(ROOT, file))] }
     MUTANTS.each do |name, mutant|
-      source = File.read(File.join(ROOT, mutant.file))
-      assert_equal 1, source.scan(mutant.original).size, "mutant #{name} must edit exactly one place"
-      text, ok = run_eunit({ mutant.file => source.sub(mutant.original) { mutant.replacement } })
+      assert_equal 1, sources.fetch(mutant.file).scan(mutant.original).size,
+                   "mutant #{name} must edit exactly one place"
+    end
+    runs = MUTANTS.each_slice(MUTANT_JOBS).flat_map do |slice|
+      slice.map do |name, mutant|
+        seeded = sources.fetch(mutant.file).sub(mutant.original) { mutant.replacement }
+        Thread.new { [name, mutant, *run_eunit({ mutant.file => seeded })] }
+      end.map(&:value)
+    end
+    runs.each do |name, mutant, text, ok|
       refute ok, "seeded fault not caught: #{name}"
       # Verbose EUnit names every case, so only the named case's failure line counts.
       assert_match(/#{mutant.caught_by}.*\*failed\*/, text, "seeded fault not caught by its case: #{name}")
