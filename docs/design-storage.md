@@ -287,22 +287,18 @@ largest request at the specification's own limits: 64 blocks written at
 p.95), is 16.25 s, and a read of 64 blocks at 100 ms each (4.6.2.1,
 p.95) 6.4 s.
 
-**Choosing the transport.** `erx_blk:start_link/0` reads the domain's
-device records (`erx_device_record`) and starts the device process of
-the one record whose role is `block`, chosen by the record's CMSIS-SVD
-peripheral from a two-row table: `virtio_blk` starts `erx_blk_virtio`,
-`sdhci` starts `erx_blk_sd`. A new controller is one row and one module.
-The record's peripheral comes from the device-kinds table
-(`include/erx/device_kinds.h`), which maps a manifest device's role and
-compatible string to its record: `virtio,mmio` to `block virtio_blk`,
-and `brcm,bcm2711-emmc2` to `block sdhci`. A domain with no block record
-has no device process and no line in the log, since a machine without a
-disk is a configuration, not a fault. A domain with more than one is
-refused with one line naming them and has no device process, since the
-manifest gives a storage domain one block device. Every start and
-restart of a device process runs its transport's whole start sequence,
-which resets the controller, so a restarted process finds nothing its
-predecessor left half done.
+**Choosing the transport.** `erx_blk:start_link/0` starts the device
+process of the domain's one device record whose role is `block`, chosen
+by the record's CMSIS-SVD peripheral (from the device-kinds table
+`include/erx/device_kinds.h`) through a two-row transport table,
+`virtio_blk` to `erx_blk_virtio` and `sdhci` to `erx_blk_sd`, so a new
+controller is one row of it and one module. A domain with no block record has no device
+process and no line in the log, since a machine without a disk is a
+configuration, not a fault. A domain with more than one is refused with
+one line naming them, since the manifest gives a storage domain one
+block device. Every start and restart runs its transport's whole start
+sequence, which resets the controller, so a restarted process finds
+nothing its predecessor left half done.
 
 **The write path.** All of the driver's writes to the medium go through
 the write path, which applies the trial rule (U4). What makes a
@@ -347,36 +343,20 @@ is [design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)'s,
 for a later mode of this driver.
 
 Since the NIF refuses the register to `write/3`, a module that holds
-the register's name, in a map, a table or a message, still cannot issue
-a command; what remains is to keep the two issuing calls in
-`erx_blk_write`. The build check over the driver applications' Erlang
-sources that holds `erx_device:post/4` there
-(`tools/lib/erx/chokepoint_rules/device.rb`) holds `erx_device:command/2` the
-same way, and makes the only way to reach either a call it can see:
-outside comments and strings, in every driver module but the issuing
-sites, it fails on
-
-* `erx_device:post` or `erx_device:command`, as a call, a fun or an
-  import;
-* `erx_device` anywhere but as the module of a remote call whose
-  function is a literal name, `erx_device:read(...)`, so the name is
-  never a value: not an argument of `apply/3`, `erlang:apply/3`,
-  `spawn/3` or any other function that calls a module it is handed, not
-  in a variable, a macro, a fun, a map or a record, and a call whose
-  function is a variable, `erx_device:F(...)`, fails too; and
-* `list_to_atom/1`, `list_to_existing_atom/1`, `binary_to_atom/1,2`,
-  `binary_to_existing_atom/1,2` and `binary_to_term/1,2`, the functions
-  that make an atom from data, which a driver module has no use for.
-
-With the module's name never a value and never made from data, a
-driver module reaches `erx_device` only by literal calls, and the first
-rule sees every one that issues. Outside the driver applications no
-module names `erx_device` at all (`tools/lib/erx/chokepoint_rules/device.rb`).
-Like the source checks it extends, this one catches a slip between
-trusted modules, not a module that builds the name from pieces outside
-the driver applications and hands it in; what keeps a device from
-other domains is that its capability is installed only in its driver's
-domain.
+the register's name still cannot issue a command; what remains is to
+keep the two issuing calls in `erx_blk_write`. The build check over the
+driver applications' Erlang sources
+(`tools/lib/erx/chokepoint_rules/device.rb`) holds `erx_device:post/4`
+and `erx_device:command/2` there, and makes the only way to reach
+either a call it can see: outside the issuing sites no driver module
+names either call, uses `erx_device` other than as the literal module of
+a remote call with a literal function name (never as a value handed to
+`apply/3` or the like), or makes an atom or term from data; outside the
+driver applications no module names `erx_device` at all. Like the source
+checks it extends, this one catches a slip between trusted modules, not
+a module that builds the name from pieces outside the driver
+applications and hands it in; what keeps a device from other domains is
+that its capability is installed only in its driver's domain.
 
 **The block service.** The window processes are the driver's face to
 every client, and together they are the block service: one window per
@@ -436,21 +416,20 @@ medium layout of the ABI file:
 A slot's partitions are sized from what they hold, with room for a
 release to double: each is at least twice the largest file of its kind
 that erXos packs, the boot image as placed in its boot partition and the
-release's EROFS image with its hash tree, rounded up so that a slot's two
-partitions and its system partition's extended boot record take 256 MiB.
-Each boot partition is 192 MiB and each system partition 63 MiB. The
-packer refuses a file that does not fit its partition, and when a release
-passes half of one, the layout grows by a change to the ABI file. The
-vault's partition is 64 MiB, and the data partition of a medium as packed
-is the layout's minimum, 128 MiB, room for what a fresh system and its
-first users write there, such as root's login keys, `/etc/start.conf`
-and installed packages. A medium as packed ends where its data partition
-ends, on a 1 MiB boundary, so writing a card copies only what its partitions
-hold: the Raspberry Pi 4's card is 718 MiB. The firmware reads entries 1
-to 3 alone: the Raspberry Pi's bootloader names a boot partition by its
-number, counted from 1, and boots only a FAT partition
-([references](#references)), so the system partitions, the vault's and
-the data partition lie where no firmware looks.
+release's EROFS image with its hash tree. The packer refuses a file that
+does not fit its partition, and when a release passes half of one, the
+layout grows by a change to the medium layout,
+[abi/medium.txt](../abi/medium.txt), which holds every partition's
+start, length and type. The data partition of a medium as packed is the
+layout's minimum, room for what a fresh system and its first users
+write there, such as root's login keys, `/etc/start.conf` and installed
+packages, and a medium as packed ends where its data partition ends, on
+a 1 MiB boundary, so writing a card copies only what its partitions
+hold. The firmware reads entries 1 to 3 alone: the Raspberry Pi's
+bootloader names a boot partition by its number, counted from 1, and
+boots only a FAT partition ([references](#references)), so the system
+partitions, the vault's and the data partition lie where no firmware
+looks.
 
 The driver admits the table before it serves any window: it must equal
 the layout entry for entry, but for the data partition's length, or the
@@ -536,36 +515,28 @@ exchange:
   `tools/erx build fsimg` builds for the host out of tree, refused at any
   other version and run as a subprocess by argument vector. The packer
   describes the image to fsimg as an mtree manifest, with no staging
-  tree: each file with `uid=0 gid=0`, mode 0644 (0755 for a directory),
-  its size, its SHA-256 digest and the path of its contents. It runs
-  `fsimg cW -F erofs -R -e 0 -o cluster=4096 -o compression=none
-  -o uuid=UUID`, which gives 4096-byte blocks (the same on every host,
-  whatever its page size), every time fixed at 0, every file owned by
-  root, no extended attributes (so a host's own attributes never reach an
-  image or make two builds differ), no compression, a UUID that is a
-  version 4 UUID derived from the SHA-256 of the image's sorted paths and
-  file digests, and the same bytes for the same inputs (`-R`). The `W`
-  of `cW` makes fsimg verify the staged image in a second worker before it
-  publishes it, so a failed verification publishes nothing: that
-  verification is the check every build makes of every image. The packer
-  then computes each self-checking file's hash tree itself and writes it
-  after the file's image; the system partition's image gets none.
-  `make check-reproducible` compares the images' bytes across two
-  builds. fsimg is BSD-2-Clause, never linked and never part of an image.
+  tree, and asks for 4096-byte blocks on every host, every time fixed at
+  0, every file owned by root with fixed modes, no extended attributes (so
+  a host's own attributes never reach an image), no compression, a UUID
+  derived from the SHA-256 of the image's sorted paths and file digests,
+  and reproducible output, so the same inputs give the same bytes, which
+  `make check-reproducible` compares across two builds. fsimg verifies
+  the staged image in a second worker before it publishes it, so a failed
+  verification publishes nothing: that is the check every build makes of
+  every image. The packer then computes each self-checking file's hash
+  tree itself and writes it after the file's image. fsimg is
+  BSD-2-Clause, never linked and never part of an image.
   The reader is erXos's own Erlang, written from the format's
   documentation and its MIT-licensed on-disk header, `erofs_fs.h`, never
-  from Linux's GPL driver. The writer and the reader therefore share no
-  code, so a misreading of the format on either side shows as a
-  disagreement between them: fsimg's verification checks every image
-  the packer writes against fsimg's own reading of the format, and the
-  reader is checked against fsimg's images through its tests over
-  fixture images and its fuzz target. No third implementation checks
-  either. erXos's EROFS images need not be readable by Linux, and
-  no Linux tool checks them. Images are uncompressed: the boards' media
-  have room for uncompressed slots, an estimate that a
-  decision gate of [plan.md](plan.md#decision-gates) checks against the
-  slot images' sizes, and LZ4's decompressor, whose library is
-  BSD-2-Clause, would join the per-byte primitives if they do not.
+  from Linux's GPL driver. The writer and the reader share no code, so a
+  misreading of the format on either side shows as a disagreement between
+  them; no third implementation checks either, and no Linux tool checks
+  erXos's EROFS images, which need not be readable by Linux. Images are
+  uncompressed: the boards' media have room for uncompressed slots, an
+  estimate that a decision gate of [plan.md](plan.md#decision-gates)
+  checks against the slot images' sizes, and LZ4's decompressor, whose
+  library is BSD-2-Clause, would join the per-byte primitives if they do
+  not.
 * The **data partition** holds what changes: the files of principals and
   services, in a read-write file system, and in each principal's own
   directory that principal's hot-loaded blobs and the overlays of its
@@ -772,33 +743,24 @@ items.
   it.
 
 **Registers.** `hw/svd/sdhci/sdhci.svd` describes the controller in
-32-bit words, each named for the 8- and 16-bit registers it holds:
-`dma_address` (`0x00`), `blksizecnt` (block size and count, `0x04`),
-`arg` (`0x08`), `cmdtm` (transfer mode and command, `0x0C`), `resp0` to
-`resp3` (`0x10` to `0x1C`), `data` (the buffer data port, `0x20`),
-`present` (`0x24`), `control0` (host control 1, power, block gap and
-wakeup, `0x28`), `control1` (clock control, timeout and software reset,
-`0x2C`), `interrupt` (normal and error status, `0x30`), `irpt_mask`
-(status enable, `0x34`), `irpt_en` (signal enable, `0x38`), `control2`
-(Auto CMD12 error status and host control 2, `0x3C`), `capabilities`
-(`0x40`), `adma_address` (`0x58`) and `slotisr_ver` (slot interrupt
-status and host version, `0xFC`) (offsets, `sdhci.h:102-332`). The
-controller takes 32-bit accesses only: a narrower register is changed by
-reading its word, replacing its part and writing the word back (facts
-record, "Register access: width and spacing", point 1;
-`bcm2835_sdhci.c:431-563`). Writing the word at `0x0C` issues the
-command, so the transfer mode is only ever written with its command, and
-`blksizecnt` is written just before it (points 2 and 3). The device NIF
-owns `dma_address`, `adma_address` and `cmdtm`: a programmed-I/O driver
-never writes the first two, and the third only through
-`erx_device:command/2` ([The write path](#data-model)). It owns the stop
-at block gap and continue requests in `control0` always, and while an
-ADMA2 transfer is in flight `blksizecnt` and the transfer's end in
-`interrupt` and `irpt_mask` too
-([design-device-dma.md](design-device-dma.md#register-ownership)). The driver keeps
-the version 3.00 register set on a later controller: host version 4
-enable and preset value enable stay clear, as the reset for all leaves
-them (Host Controller p.96-100), so `0x00` stays the SDMA
+32-bit words, each named for the 8- and 16-bit registers it holds
+(offsets, `sdhci.h:102-332`). The controller takes 32-bit accesses
+only: a narrower register is changed by reading its word, replacing its
+part and writing the word back (facts record, "Register access: width
+and spacing", point 1; `bcm2835_sdhci.c:431-563`). Writing the word at
+`0x0C`, `cmdtm`, issues the command, so the transfer mode is only ever
+written with its command, and `blksizecnt` is written just before it
+(points 2 and 3). The device NIF owns `dma_address`, `adma_address` and
+`cmdtm`: a programmed-I/O driver never writes the first two, and the
+third only through `erx_device:command/2`
+([The write path](#data-model)). It owns the stop at block gap and
+continue requests in `control0` always, and while an ADMA2 transfer is
+in flight `blksizecnt` and the transfer's end in `interrupt` and
+`irpt_mask` too
+([design-device-dma.md](design-device-dma.md#register-ownership)). The
+driver keeps the version 3.00 register set on a later controller: host
+version 4 enable and preset value enable stay clear, as the reset for
+all leaves them (Host Controller p.96-100), so `0x00` stays the SDMA
 address and `0x06` the 16-bit block count.
 
 Two register writes that reach this controller family within two card
@@ -887,14 +849,9 @@ acts, data error bits included where FreeBSD ignores them for a command
 with neither data nor busy; that command's other data events are not
 its own and are ignored, as FreeBSD ignores them (`sdhci.c:2242-2249`); any
 other event out of its track's order fails the command, a buffer event
-of a busy command included (`sdhci.c:2254-2260`). FreeBSD sources read
-at `release/15.1.0`: `sys/dev/sdhci/sdhci.c` (SHA-256
-`4551b7d7842dfb2ffcdc2a565686a6dad5d6aa74606abd9cdc647e98d29eb500`),
-`sys/dev/sdhci/sdhci.h`
-(`363ed505d9ec77603b1b0d46e689da80600e72ce5948d5b2efe70571059b2b78`)
-and `sys/arm/broadcom/bcm2835/bcm2835_sdhci.c`
-(`28c9af6fa2f549dbfc5bd239b0edd592da2df83833e021f76ff599826d8de56f`),
-whose BCM2711 configuration carries no quirk (`bcm2835_sdhci.c:129-135`).
+of a busy command included (`sdhci.c:2254-2260`). The FreeBSD sources
+cited are those of [References](#references), whose BCM2711
+configuration carries no quirk (`bcm2835_sdhci.c:129-135`).
 
 **The start sequence.** Every start and every restart runs it whole:
 
@@ -2170,260 +2127,154 @@ own files, are recorded in [design.md](design.md#residual-risks).
 
 ## Verification and testing
 
-The block driver: a host test of the device service's window derivation
-(PW1); a QEMU test that every window refuses sectors outside it with
-`erange`; the build check that only the driver's modules reference
-`erx_device`, and the one that only the driver's write path names the
-NIF's two issuing calls, each with a seeded violation that it catches:
-a test module that calls `erx_device:command/2` directly, one that
-passes `erx_device` and `command` to `erlang:apply/3`, one that calls
-`M:command/2` with `M` bound to `erx_device`, and one that makes the
-module's name with `list_to_existing_atom/1`; the device NIF's test that
-`erx_device:write/3` answers `badarg` for `cmdtm` taken from a map, and
-that `erx_device:command/2` answers `badarg` for a word that turns DMA
-on, whose seeded faults drop the `ownedByNif` mark and the DMA check; a
-host test of the device process's deadline decision, in which a request
-past its wait limit is answered `{error, {device, deadline}}` with no
-register touched and an issued one past its in-flight bound ends the
-process, with the seeded fault of timing the wait from the issue rather
-than the acceptance, and a check that the wait limit and the in-flight
-bound together stay below the timeout of `erx_blk`'s calls, that below the
-window's and that below littlefs's port's; a QEMU test that a trial boot's driver refuses every write but
-the record's, whatever its clients ask; a test of the same storage
-service against a local window and against one exported from a driver
-domain of its own, which must pass both unchanged; a controller that
-returns a malformed completion, whose device process fails and ends the
-storage domain, since `erx_blk_sup` restarts nothing, after which the
-domain service restarts the domain and the driver drives the device
-again ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain));
-and a kill of the driver's domain
-while clients hold windows, after which every client sees `eio`, the
-domain service restarts the domain, and the clients' windows return.
+**The block driver.** A host test of the device service's window
+derivation (PW1), and a QEMU test that every window refuses sectors
+outside it with `erange`. The build checks that only the driver's modules reference
+`erx_device` and that only the write path names the NIF's two issuing
+calls, seeded with a direct call to `erx_device:command/2`, the module
+and function handed to `erlang:apply/3`, a call through a variable bound
+to `erx_device`, and the name made with `list_to_existing_atom/1`. The
+device NIF's tests that `erx_device:write/3` refuses `cmdtm` taken from a
+map and that
+`erx_device:command/2` refuses a word that turns DMA on, seeded by
+dropping the `ownedByNif` mark and the DMA check. A host test of the
+deadline decision (a request past its wait limit answered with no
+register touched, an issued one past its in-flight bound ending the
+process), seeded by timing the wait from the issue rather than the
+acceptance, and a check that the bounds stay below `erx_blk`'s timeout,
+that below the window's and that below littlefs's port's. A QEMU test
+that a trial boot's driver refuses every write but the record's (U4). The
+same storage service passes unchanged against a local window and one
+exported from a driver domain of its own. A controller that returns a
+malformed completion ends the storage domain, which the domain service
+restarts, after which the driver drives the device again; a kill of the driver's domain while clients hold windows gives
+every client `eio` until the restarted domain's windows return. QEMU's
+block suites pass on `erx_blk_virtio` and fail with the transport table's
+two rows swapped; a virtio flush posts a flush request through
+`erx_blk_write`, and a device that does not offer the flush feature
+fails the start.
 
-The transport split: QEMU `virt`'s block suites pass unchanged on
-`erx_blk_virtio`, and fail with a seeded fault that swaps the
-`virtio_blk` and `sdhci` rows of the transport table, which leaves the
-virtio disk undriven; a virtio flush posts a flush request through
-`erx_blk_write`, and the block suite's start fails on a device that does
-not offer the flush feature.
+**The SD controller.** The identification state machine is a protocol
+state machine, tested on the host exhaustively over every state and event;
+the other pure parts have property or known-value tests, the effects are
+tested against a recording stand-in for the device NIF, and QEMU's
+`raspi4b` model (programmed I/O only, [design-platforms.md](design-platforms.md#bring-up-under-qemu))
+runs the driver whole. Each check and the seeded fault it must catch:
 
-The SD controller, each test paired with the fault that proves it ran:
+| Check | Seeded fault |
+| --- | --- |
+| CMD8's timeout returns the command-line reset, the data-line reset and CMD55; CMD55's illegal-command bit is accepted after it alone; a timeout anywhere else refuses | the timeout treated as a refusal; the resets dropped |
+| the expected timeout on the `raspi4b` model with a version 1 card (`sd-card`'s `spec_version=1`) on a 1 GiB image identifies a standard-capacity card, its `info/0` detail records CMD8's timeout, and a synced file survives a storage domain restart | the timeout handled as an operational failure |
+| a card is admitted exactly when *Admitting a card* allows, every admitted capacity a whole number of sectors whose last address fits 32 bits | any `READ_BL_LEN` accepted (fails at 15, a 64 GiB card addressed in bytes); the agreement check dropped |
+| the CSD, SCR, SD status, General Information and Performance Enhancement parsers give known values, CSD capacities equal to the model's for 2 and 4 GiB images | the R2 parser's one-byte shift dropped |
+| the cache step skips a card without bit 330, refuses one without CMD48, flushes and clears an enabled cache, and refuses one that still reads enabled | the read-back skipped |
+| the divider's clock is at most the target and the next smaller divisor exceeds it | `<` in place of `=<` |
+| no two register writes but `data`'s are less than 6 us apart, the command's included | the spacing set to zero |
+| a set 1.8 V signalling enable refuses the start before any reset or command | the check dropped |
+| the command's wait takes command complete and the data track in either order, ignores a data end on a command with neither data nor busy, and fails an out-of-order event | the data track held until command complete |
+| an Auto CMD12 R1 error fails a multi-block transfer, out of range excused only on a CMD18 ending at the last sector | out of range ignored on every transfer |
+| every word `erx_blk_write` builds outside its write functions is one of CMD0, 2, 3, 7, 8, 9, 12, 13, 16, 17, 18, 48, 49 and 55 and ACMD6, 13, 41 and 51, a list the test holds apart from the SD table, so CMD24 and CMD25 are built only by the write functions, and CMD49 writes only the Performance Enhancement register; on a trial boot value the SD write answers `erofs` touching no register | CMD24 added to the SD table under an identification step; the trial check removed |
+| `sd_issue/2` writes the clear, `blksizecnt`, `arg` and command in order and refuses after 10 ms of inhibit; `sd_feed/3` writes only the plan's bytes; the argument rule admits CMD16 with 512 and CMD49 with the cache rule's writes | CMD49's argument unchecked; a feed past the plan's blocks; the inhibit wait skipped |
+| on the `raspi4b` model, 4 GiB (high capacity) and 2 GiB (standard capacity, [research-sdhci-qemu-model.md](research-sdhci-qemu-model.md#qemus-sd-card-model-how-it-sizes-a-medium)) images identify, mount `/data` and read a synced file back after a storage domain restart | a medium whose data partition holds a different known file |
+| a device process killed under a write load: clients see `eio`, the domain restarts, the card identifies from the state it was left in, the load resumes | CMD0 left out of the start sequence |
 
-* The identification state machine, a protocol state machine, is tested
-  on the host exhaustively over every state and every event (each
-  response, a command timeout, each error). CMD8's timeout returns the
-  command-line reset, the data-line reset and CMD55, in that order, and
-  CMD55's R1 with the illegal-command bit set is accepted after it and
-  refused anywhere else; a timeout in every other state is a refusal.
-  The seeded faults treat CMD8's timeout as a refusal, and the
-  standard-capacity path's cases fail; and drop the resets from its
-  actions, and its case fails.
-* The expected timeout on QEMU's `raspi4b` model, with the medium on a
-  card of the model's specification version 1 (`sd-card`'s
-  `spec_version=1`, which QEMU 11.1.3's `-device sd-card,help` lists)
-  on a 1 GiB image: the device process identifies a standard-capacity
-  card, its `info/0` detail records CMD8's timeout, and a file written
-  and synced to `/data` reads back after the storage domain restarts.
-  The seeded fault handles CMD8's timeout as an operational failure, and
-  the boot has no device process. Whether the reset is what lets the
-  next command issue on the board's controller, which holds command
-  inhibit from version 4.10, the board probe records.
-* The admission of a card, a property test over every structure,
-  capacity bit, `READ_BL_LEN`, `C_SIZE` and `C_SIZE_MULT`: a pair is
-  admitted exactly when the rule of *Admitting a card* allows it, and
-  every admitted card's capacity is the specification's formula, a whole
-  number of sectors, with its last sector's byte address below 2^32
-  when addressed in bytes and its last sector's number below 2^32 when
-  addressed in blocks. The seeded faults accept any `READ_BL_LEN`, and
-  the property fails at 15, a 64 GiB card addressed in bytes; and drop
-  the agreement check, and it fails at structure 0 with the capacity bit
-  set.
-* The parsers on known values: a CSD of each structure gives the
-  capacity QEMU's model reports for a 2 GiB and a 4 GiB image, and an
-  SCR, an SD status, a General Information naming the Performance
-  Enhancement function and a Performance Enhancement register set give
-  their fields; the seeded fault drops the R2 parser's one-byte shift,
-  and every CSD case fails.
-* The cache step on the host, over scripted answers: a card whose SD
-  status lacks bit 330 skips it; one with bit 330 and no CMD48 in its
-  SCR is refused; one whose Cache Enable reads set is flushed, written
-  clear and read back; and one whose Cache Enable still reads set after
-  the write is refused. The seeded fault skips the read-back, and the
-  last case is admitted.
-* The divider, a property test: for every base clock and target the
-  chosen clock is at most the target and the next smaller divisor would
-  exceed it; the seeded fault compares with `<` in place of `=<`, and
-  the property fails at the targets the base divides exactly.
-* The register spacing on the host, against a recording stand-in for the
-  device NIF: no two writes other than to `data` are less than 6 us
-  apart, the command's included, and writes to `data` are not delayed;
-  the seeded fault sets the spacing to zero, and the test fails.
-* The 1.8 V check on the host: a `control2` word with 1.8 V signalling
-  enabled refuses the start before any reset or command; the seeded
-  fault drops the check, and the test sees the reset written.
-* The identification command's wait on the host: command complete and
-  the data track in either order, in one word or several; a data end on
-  a command with neither data nor busy ignored; an out-of-order event,
-  a second command complete and a busy command's buffer event failing
-  it; every decoded word ending in continue, done or fail. Over the
-  recording stand-in, identification passes CMD7 with its transfer
-  complete in the word before its command complete, and with a data
-  end in CMD9's word. The seeded fault holds the data track until
-  command complete, and both tests fail, each under its own fault.
-* The transfer's checks on the host: an Auto CMD12 R1 with an error bit
-  fails a multi-block read or write, and one with only out of range
-  fails it unless it is a CMD18 that ended at the card's last sector;
-  the seeded fault ignores out of range on every transfer, and the
-  write case passes where it must fail.
-* The write path on the host: every word `erx_blk_write`'s SD table
-  builds outside its write function is one of CMD0, 2, 3, 7, 8, 9, 12,
-  13, 16, 17, 18, 48, 49 and 55 and ACMD6, 13, 41 and 51, CMD49 writing
-  only the card's Performance Enhancement register and no sector; the
-  seeded fault adds CMD24 to the table under an initialisation step, and
-  the test fails. On a trial boot value the SD write function answers
-  `erofs` and touches no register; the seeded fault removes the trial
-  check, and the test fails.
-* The issuing of a plan on the host, against the same recording stand-in
-  for the device NIF: `sd_issue/2` writes `interrupt`'s one-to-clear
-  bits, `blksizecnt` (for a data command only), `arg` and the command
-  in that order, refuses with `{device, inhibit}` once inhibit
-  has stayed set for 10 ms, and keeps the spacing across consecutive
-  issues; `sd_feed/3` writes exactly the plan's checked bytes of the
-  block it names; and the argument rule admits CMD16 only with 512 and
-  CMD49 only with the cache rule's two writes. The seeded faults leave
-  CMD49's argument unchecked, let a feed run past the plan's blocks and
-  skip the wait for inhibit, and each fails its test.
-* On QEMU's `raspi4b` model (programmed I/O only: its capabilities offer
-  no DMA, [design-platforms.md](design-platforms.md#bring-up-under-qemu)),
-  booted with the medium as EMMC2's card: the device process identifies
-  the card, the partition process reads the table, littlefs mounts at
-  `/data`, and a file written and synced is read back after the storage
-  domain is killed and restarted. It runs on a 4 GiB image, a
-  high-capacity card, and on a 2 GiB image, which the model presents as
-  standard capacity
-  ([research-sdhci-qemu-model.md](research-sdhci-qemu-model.md#qemus-sd-card-model-how-it-sizes-a-medium)). The seeded fault boots the model
-  with a medium whose data partition holds a different known file, and
-  the read-back check fails, which shows the bytes came from the card.
-* Recovery on the model: the device process is killed while a write load
-  runs; clients see `eio`, the storage domain ends and the domain service
-  restarts it, the new device process identifies the card from the
-  transfer state the model's card was left in, and the load resumes; the
-  seeded fault leaves CMD0 out of the start sequence, and the restart
-  fails to identify the card.
-* Fuzz targets, one per parser of what the card or the controller
-  writes: the R1, R3, R6 and R7 words, the R2 words with the CSD, the
-  SCR, the SD status, the General Information, the Performance
-  Enhancement register set and the `interrupt` decode. Each returns a
-  value or a refusal for every input and never raises, and the CSD and
-  OCR target checks the admission's properties above on every pair it
-  admits. The seeded fault accepts any `READ_BL_LEN`, and the target
-  finds an admitted card whose last byte address does not fit 32 bits.
-* On the board, by hand: the card identifies at default speed, `/data`
-  mounts, and the power-cut checklist of
-  [plan.md](plan.md#1b-i-the-raspberry-pi-4-on-fiasco) passes; the
-  [board probe](#the-board-probe) records its items and its timed slow
-  read settles the base clock.
+On the board, by hand: the card identifies at default speed, `/data`
+mounts, the power-cut checklist of
+[plan.md](plan.md#1b-i-the-raspberry-pi-4-on-fiasco) passes, and the
+[board probe](#the-board-probe) records its items.
 
-The littlefs port: a crash injected into littlefs mid-write, after which
-the port restarts, the block driver and every other window live on, the
-volume mounts, and littlefs's own mount check finds a consistent volume
-whose last acknowledged `fsync` is present; a port that stops answering,
-ended at the owner's deadline with the same outcome.
+**littlefs.** A crash injected mid-write restarts the port while the
+block driver and every other window live on, and littlefs's mount check
+finds a consistent volume whose last acknowledged `fsync` is present; a
+port that stops answering, ended at the deadline of the process that
+owns it, has the same outcome.
+A write acknowledged through a file still open, a checkpoint and a power
+cut leave the write on the medium.
 
-An independent TLA+ model checked with TLC covers the update protocol
-and the slot writer's rules. Abstract operations and the mechanism's
-persistence steps have explicit scopes, targeted broken configurations
-and reachability witnesses. Each invariant maps to an implementation
-check; [Protocol verification](design-verification.md) defines the suite
-and the mapping discipline. The model records firmware and medium
-assumptions without substituting them for board conformance.
-
-The actual update state machine and the slot writer's rules are explored
+**Updates.** An independent TLA+ model checked with TLC covers the update
+protocol and the slot writer's rules, with explicit scopes, targeted
+broken configurations and reachability witnesses, each invariant mapped
+to an implementation check
+([Protocol verification](design-verification.md)); it records firmware
+and medium assumptions without substituting them for board conformance.
+The actual state machine and the slot writer's rules are explored
 exhaustively on the host against an independent oracle, with a power cut
 after every write and every reset, writes lost from the medium's volatile
-cache, a torn record sector,
-an unreadable record, a torn reset count, a flag set but never used, a
-firmware that boots either slot normally whatever the record names, a
-spare cut short at every write, and a deadline that passes at every step,
-checking that a commit happens only from the trial state and only after
-a healthy trial; the reset count reaches rescue
-after exactly the fourth unordered end in a row, from every interleaving
-of ends, ordered ends and logins, and a torn count errs toward rescue.
-A QEMU test acknowledges a write, prepares a trial, cuts the power before
-any later checkpoint, and checks that the trial's mount without
-roll-forward finds the write; one cuts a spare's write short and finds the
-spare reported not bootable and no trial requested; and the commit's
-three answers are
-each driven by a medium that writes, refuses and stalls. The driver's
-admission is tested with a boot medium whose table differs from the
-layout in one field, which it refuses, boot media of two sizes, whose data
-partitions run to each one's end, which it admits, and removable media
-whose entries overlap or pass the end, which it serves without them.
+cache, a torn or unreadable record, a torn reset count, a flag set but
+never used, a firmware that boots either slot whatever the record names,
+a spare cut short at every write, and a deadline that passes at every
+step: a commit happens only from the trial state after a healthy trial,
+the reset count reaches rescue after exactly the fourth unordered end in
+a row from every interleaving of ends, ordered ends and logins, and a
+torn count errs toward rescue. QEMU tests: a write acknowledged, a trial
+prepared and the power cut before any later checkpoint, after which the
+trial's mount without roll-forward finds the write; a
+spare's write cut short leaves the spare not bootable and no trial
+requested; and the commit's three answers come from a medium that
+writes, refuses and stalls. The driver refuses a boot medium whose table
+differs from the layout in one field, admits media of two sizes whose
+data partitions run to each one's end, and serves removable media
+without entries that overlap or pass the end.
 
-Preparation tests fail or time out each vault and storage reply, including
-one storage service after another has frozen, and deliver replies after
-the deadline. The selected end is always a normal reset on failure, no
-trial flag is written, and no service resumes between preparation and
-reset. Successful preparation alone permits a trial. Forced ordinary
-shutdown reports incomplete durability, while successful `fsync` and vault
-checkpoint operations retain their specified recovery guarantees.
-They also acknowledge a write, close its fid and freeze: the normal
-recovery and the trial's read-only mount both find that write, and no
-write reaches the medium after the freeze acknowledgement.
+**Preparation and freeze.** Tests fail or time out each vault and storage
+reply, one storage service after another has frozen included, and deliver
+replies after the deadline: the end is always a normal reset, no trial
+flag is written, no service resumes between preparation and reset, and
+only a successful preparation permits a trial. A forced ordinary shutdown
+reports incomplete durability, while a successful `fsync` and vault
+checkpoint keep their recovery guarantees. A write acknowledged, its fid
+closed and storage frozen is found by the normal recovery and by the
+trial's read-only mount, and no write reaches the medium after the freeze
+is acknowledged.
 
-Admission tests flood a storage service from one client while another
-reads, and find the second client's latency bounded by the service's
-scheduling and the first client blocked on its own lane; the service's
-group alone is charged for both, and the inspector's per-client statistic
-attributes the work.
+**Admission.** One client floods a storage service while another reads:
+the second's latency stays bounded by the service's scheduling, the first
+blocks on its own lane, the service's group alone is charged, and the
+inspector's per-client statistic attributes the work.
 
-The FAT server has a power-cut harness of its own, which cuts after every
-write and every flush, and around both changes of the dirty flag, reorders
-the writes between flushes, as F2FS's harness does, and checks each image
-with fsimg's verify (`fsimg W`): a clean flag never comes with a change half made, no name
-and no chain reaches a cluster the FAT does not allocate, no cluster lies
-in two chains or under two names, and no file that an earlier batch
-committed changes, but for the files of the batch being committed, whose
-bytes may be old or new block by block. Its layouts include files whose
-old last cluster's entry and new run's entries lie in different sectors of
-the FAT, a chain that grows and one that shrinks in one batch, and a FAT12
-volume, which mounts read-only. A test also checks littlefs's checkpoint:
-a write acknowledged through a file still open, a checkpoint, and a power
-cut leave the write on the medium. Its name matching is compared with
-Windows' rules over cases that include letters of the Basic Multilingual
-Plane with and without simple uppercase forms and Deseret letters in both
-cases.
+**FAT.** The FAT server's power-cut harness cuts after every write and
+every flush and around both changes of the dirty flag, reorders the
+writes between flushes as F2FS's harness does, and checks each image with
+fsimg's verify: a clean flag never comes with a change half made, no name
+or chain reaches a cluster the FAT does not allocate, no cluster lies in
+two chains or under two names, and no file an earlier batch committed
+changes, but for the batch being committed, whose bytes may be old or new
+block by block. Its layouts include a chain whose old last entry and new
+run lie in different FAT sectors, a chain that grows and one that shrinks
+in one batch, and a FAT12 volume, which mounts read-only. Name matching
+is compared with Windows' rules over Basic Multilingual Plane letters with
+and without simple uppercase forms and Deseret letters in both cases.
+fsimg creates the images the server reads and verifies those it writes;
+nothing of FAT is checked against Linux.
 
-erXos's F2FS is checked by Linux's F2FS driver and `fsck.f2fs` in a Linux
-guest, with images made both ways, and by the power-cut harness against
-the crash states of its design
-([design-f2fs.md](design-f2fs.md#verification)). The EROFS images are written and checked
-by fsimg: its verification runs on every image the packer writes, and
-`test/host/release_medium_test.rb` reads the system partition's image
+**EROFS and the `system` tree.** fsimg's verification runs on every image
+the packer writes, and a host test reads the system partition's image
 back out of the medium with fsimg and finds each image package's file in
-it, byte for byte; seeded: a packer that leaves a package out of the
-partition fails it. A QEMU test reads a multi-block file of an image
-package through the storage domain's `system` grant and mounts the
-package from it; seeded: a flipped byte in that package's image on the
-medium makes the read through the mount answer `eio`. The EROFS reader is checked
-by its EUnit tests over fixture images that `tools/erofs_fixtures.rb`
-writes with fsimg, from a tree it declares: `compact.img` (fsimg's
-default, compact inodes), `extended.img` (every entry but the root owned
-by uid and gid 70000, which makes fsimg write their inodes extended) and `lz4.img`
-(`-o compression=lz4`, which the reader refuses with `enotsup`); by its
-fuzz target, `tools/fuzz/erx_erofs.rb`; and by running on the host's
-stock OTP over an image's file and in a domain under QEMU. The FAT server
-is checked by fsimg, which creates the images it reads and verifies the
-images it writes. Nothing of EROFS or FAT is checked against Linux.
+it byte for byte, seeded with a packer that leaves a package out. A QEMU
+test reads a multi-block file of an image package through the `system`
+grant and mounts it, seeded with a flipped byte in that package's image,
+which reads `eio` (E1). The EROFS reader has EUnit tests over fixture
+images fsimg writes from a declared tree (compact inodes, extended
+inodes, and an LZ4 image the reader refuses with `enotsup`), its fuzz
+target (`tools/fuzz/erx_erofs.rb`), and runs on the host's stock OTP and
+in a domain under QEMU. Nothing of EROFS is checked against Linux.
+erXos's F2FS is checked by Linux's F2FS driver and `fsck.f2fs` in Linux
+guests and by its power-cut harness
+([design-f2fs.md](design-f2fs.md#verification)).
 
-Fuzz targets cover the partition table with its four extended
-boot records, EROFS, F2FS, FAT and littlefs images, the hash-checking
-reader, the driver's completion decoder, update manifests, the
-boot-selection record and the QEMU harness's slot parser, each built for
-the host (`make check-fuzz`): the Erlang decoders run on the host's stock
-OTP, the C parsers natively. Runs on the boards check what QEMU cannot:
-each board's trial request across its reset, a damaged record, and the
-firmware's watchdog settings
+**Fuzz targets** cover the partition table with its four extended boot
+records, EROFS, F2FS, FAT and littlefs images, the hash-checking reader,
+the driver's completion decoder, the SD controller's response,
+register-set and `interrupt` decoders (each returning a value or a
+refusal for every input, the CSD and OCR target checking the admission's
+properties on every pair it admits, so the seeded fault that accepts any
+`READ_BL_LEN` makes it find an admitted card whose last byte address does
+not fit 32 bits), update manifests, the boot-selection
+record and the QEMU harness's slot parser, each built for the host
+(`make check-fuzz`): the Erlang decoders on the host's stock OTP, the C
+parsers natively. Runs on the boards check what QEMU cannot: each board's
+trial request across its reset, a damaged record, and the firmware's
+watchdog settings
 ([design-platforms.md](design-platforms.md#trial-requests),
 [plan.md](plan.md#m12-storage-networking-boards)).
 
@@ -2672,17 +2523,17 @@ outside this design are decided
   [research-sdhci-bcm2711.md](research-sdhci-bcm2711.md), facts and
   working principles without code, written by an agent that writes no
   erXos code for this driver. The facts record cites FreeBSD
-  14.3.0-RELEASE at `8c9ce319fef765890ce518cab85d3a470b669849`, while this design cites `release/15.1.0`,
-  below; both were fetched and compared for this design. The files either cites differ only
-  in build interfaces (headers, `DEVICE_UNIT_ANY`, `bus_attach_children`), sysctl
-  types, a quirks sysctl, two early returns for SPI-mode buses in `mmc.c` and a
-  local renamed in `mmcsd.c`'s `mmcsd_task` (lines 1425-1482), which no citation reaches; no
-  fact this design or the record cites differs, though line numbers shift by a
-  few lines. The 14.3.0 hashes: `sdhci.c` `f610ce62058120de45448333be459373e992d753c4a384d8222839459b3b1abc`, `sdhci_fdt.c`
-  `71439ab0aafdf17b5249d87f56fa1a0f3d66e29672d199b27fd960bd0fcd59e8`, `mmc.c` `738725016981e017ed31497938b4fd7744246c7046ba6a2962005931e4ba5dfa`, `mmcreg.h` `74ff2ab498265ad51188205858899a0122089a47c9924e61a3002808deb47829`,
-  `mmcsd.c` `896acbb6e1e7689a006e1232f2c2ec6371b64af3931dba5c57916c5aa1c5557d`, `bcm2835_sdhci.c` `2928861d93c34d42a5cde74bf523e5f1018ee68de3c5c35f33620d2059952a92`, and `sdhci.h`
-  identical; `sdhci_fdt.c`, which neither cites for EMMC2, was reworked. The code reference is FreeBSD's SD stack
-  at `release/15.1.0`,
+  14.3.0-RELEASE at `8c9ce319fef765890ce518cab85d3a470b669849`, while
+  this design cites `release/15.1.0`; both were compared for this design.
+  The cited files differ only in build interfaces (headers,
+  `DEVICE_UNIT_ANY`, `bus_attach_children`), sysctl types, a quirks
+  sysctl, two early returns for SPI-mode buses in `mmc.c` and a local
+  renamed in `mmcsd.c`'s `mmcsd_task` (lines 1425-1482), so no fact this
+  design or the record cites differs, though line numbers shift by a few
+  lines; `sdhci_fdt.c`, which neither cites for EMMC2, was reworked. The
+  14.3.0 hashes are the facts record's, and its `mmcsd.c`'s is
+  `896acbb6e1e7689a006e1232f2c2ec6371b64af3931dba5c57916c5aa1c5557d`. The code reference is
+  FreeBSD's SD stack at `release/15.1.0`,
   fetched from github.com/freebsd/freebsd-src and read as data:
   `sys/dev/sdhci/sdhci.c` (SHA-256
   `4551b7d7842dfb2ffcdc2a565686a6dad5d6aa74606abd9cdc647e98d29eb500`),
