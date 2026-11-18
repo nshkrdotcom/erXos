@@ -259,8 +259,8 @@ class ProductionImageTest < Minitest::Test
 
   # libbeam.a holds littlefs's objects (lfs.o and lfs_util.o, in the emulator's OS_OBJS), so
   # its attribution names littlefs's license beside OTP's; compiler-rt's builtins carry LLVM's
-  # license, L4Re's user libraries carry the MIT text, and nothing linked is GPL; every
-  # notice named is a tree file.
+  # license, L4Re's user libraries carry the MIT text and Fiasco's status, release, and
+  # nothing linked is GPL; every notice named is a tree file.
   def test_emulator_archive_carries_the_littlefs_notice
     fiasco = Struct.new(:boot_core_archive) do
       def user_library(name) = "/fiasco/#{name}"
@@ -287,6 +287,7 @@ class ProductionImageTest < Minitest::Test
     assert_equal ['Apache-2.0 WITH LLVM-exception', 'permanent'], [builtins.license, builtins.status]
     assert_equal 'compiler-rt/LICENSE.TXT', builtins.notices.first[%r{compiler-rt/LICENSE\.TXT\z}]
     Erx::Fiasco::USER_LIBRARIES.each_key { |name| assert_includes archives.fetch(name).notices, 'otp/LICENSES/MIT.txt', name }
+    Erx::Fiasco::USER_LIBRARIES.each_key { |name| assert_equal 'release', archives.fetch(name).status, name }
     refute archives.values.any? { |archive| archive.license.include?('GPL') }, 'no archive the image links is GPL'
     makefile = File.read(File.join(ROOT, 'otp/erts/emulator/Makefile.in'))
     assert_match %r{^LFS_DIR = \$\(ERX_TREE\)/littlefs$}, makefile
@@ -509,7 +510,7 @@ class ProductionImageTest < Minitest::Test
   # The kernel records boot types erl at the command shell, each collector in turn at the
   # Erlang shell, and the summary last. No selector takes the echo of its own typed line,
   # nor the shell's redraw of it, both lines of a real transcript, and the summary's line
-  # must carry the stopgap table's statuses exactly: each mutant line, one status off, is
+  # must carry the statuses of design-fiasco.md's table exactly: each mutant line, one status off, is
   # refused.
   def test_the_kernel_records_boot_reads_each_collector_and_holds_the_summary_to_the_table
     run = Erx::ProductionImage::Run

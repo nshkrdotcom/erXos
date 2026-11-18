@@ -530,7 +530,7 @@ module Erx
         end
         normalize_units(rows)
         device_memory = rows.fetch('devices').sum { |device| device.fetch('dma_memory') }
-        # The stopgap's contiguous pool holds every device's memory at once (RootStartup.contiguous_pool_bytes).
+        # The Fiasco backend's contiguous pool holds every device's memory at once (RootStartup.contiguous_pool_bytes).
         if device_memory > RootStartup::CONTIGUOUS_POOL_MAX_BYTES
           invalid("device memory exceeds the #{RootStartup::CONTIGUOUS_POOL_MAX_BYTES >> 20} MiB contiguous pool", 4, 'devices.dma_memory')
         end

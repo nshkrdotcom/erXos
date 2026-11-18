@@ -9,7 +9,7 @@ require_relative 'lib/erx/fiasco'
 require_relative 'import_origins'
 
 module Erx
-  # Attribution for the frozen stopgap pins. Publisher package declarations
+  # Attribution for the frozen Fiasco pins. Publisher package declarations
   # cover files without their own notice; explicit per-file grants win.
   module FiascoOrigins
     module_function

@@ -2044,7 +2044,7 @@ which goes out only in the website's images with its source offered.
 Beyond the table it admits only a
 local test image's own packages (`package-local`), which no published
 image takes, so a copyleft file that comes back into any other closure,
-a stopgap's included, fails the build. The only development images that
+a stopgap's or a release component's included, fails the build. The only development images that
 leave the project are the ones the website offers, the demo image and
 the board cards, which the site serves with a link to the erXos source
 they were built from, a release tag or commit, so what they carry goes

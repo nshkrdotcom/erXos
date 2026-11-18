@@ -24,8 +24,8 @@ module Erx
         # (K3, K32): its records are defined only in its private header, which
         # only the core and its host driver include, and every other file
         # names a record's tag only to refer to it; budget-counters below
-        # reads which functions of the core write them. It reads the stopgap
-        # kernel's tree, glue and inherited sources alike.
+        # reads which functions of the core write them. It reads Fiasco's
+        # tree, glue and inherited sources alike.
         Chokepoints::Forbidden.new(
           name: 'budget-records-private',
           rule: "only kernel/core/budget.c, its host driver and kernel/core/page.c, which moves a reserve's " \

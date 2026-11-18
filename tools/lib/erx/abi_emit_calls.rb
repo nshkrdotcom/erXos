@@ -625,7 +625,7 @@ module Erx
         match[1].to_i
       end
 
-      # The stopgap's transport: the same trap as the erx backend's, under
+      # The Fiasco backend's transport: the same trap as the erx backend's, under
       # the names the fiasco backend's generated calls forward to.
       def fiasco_trap_source(schema)
         trap_source(schema, prefix: 'erx_fiasco', header: 'liberx/backend/fiasco/generated/calls.h')

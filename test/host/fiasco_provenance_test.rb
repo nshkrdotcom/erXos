@@ -72,11 +72,33 @@ class FiascoProvenanceTest < Minitest::Test
       expected = Digest::SHA256.file(copyright).hexdigest
       auditor.instance_variable_set(:@generation, { 'recipes' => { logical => expected } })
       auditor.send(:attribute, source)
-      notice = auditor.instance_variable_get(:@sources).fetch(source).fetch('notices').first
+      record = auditor.instance_variable_get(:@sources).fetch(source)
+      assert_equal 'release', record.fetch('status'), 'l4re-core is a part of Fiasco, a release component'
+      notice = record.fetch('notices').first
       assert_equal logical, notice.fetch('path')
       assert_equal expected, notice.fetch('sha256')
     end
   end
+  # A file of each part is recorded under its part's status (docs/design.md's dependency
+  # table): libfdt, which outlives Fiasco, permanent; Fiasco's own parts release.
+  def test_each_part_records_its_files_under_its_own_status
+    { 'libfdt' => 'permanent', 'kernel' => 'release', 'drivers-frst' => 'release' }.each do |name, status|
+      Dir.mktmpdir do |temporary|
+        root = File.realpath(temporary)
+        part = File.join(root, 'fiasco', name)
+        FileUtils.mkdir_p(part)
+        source = File.join(part, 'fixture.c')
+        File.write(source, "/* SPDX-License-Identifier: MIT */\nint fixture;\n")
+        Erx::Origin.new(root: part).write(repository: 'https://example.invalid/fixture', revision: 'fixture', archive_sha256: 'a' * 64,
+          review: { 'rules' => [], 'default_license' => 'MIT', 'default_evidence' => 'fixture package grant' })
+        auditor = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil)
+        auditor.instance_variable_set(:@sources, {})
+        auditor.send(:attribute, source)
+        assert_equal status, auditor.instance_variable_get(:@sources).fetch(source).fetch('status'), name
+      end
+    end
+  end
+
   def test_missing_build_metadata_is_a_domain_error
     Dir.mktmpdir do |root|
       auditor = Erx::FiascoProvenance.new(root: root, kind: Erx::BuildKind::DEVELOPMENT, runner: nil)
@@ -582,6 +604,7 @@ class FiascoProvenanceTest < Minitest::Test
       assert_equal %w[stdarg.h stdbool.h stddef.h].map { |name| "toolchain/gcc-16.2.0/#{name}" }, records.map { |record| record.fetch('label') }
       assert_equal %w[stdarg.h stdbool.h stddef.h].map { |name| File.join(File.realpath(include_dir), name) }, records.map { |record| record.fetch('path') }
       assert_equal [Digest::SHA256.hexdigest("/* stddef.h */\n")], records.last(1).map { |record| record.fetch('sha256') }
+      assert_equal %w[release] * 3, records.map { |record| record.fetch('status') }
       assert_equal [File.join(root, 'config/provenance/notices/COPYING3'), File.join(root, 'config/provenance/notices/COPYING.RUNTIME')],
                    records.first.fetch('notices').map { |notice| notice.fetch('path') }
     end

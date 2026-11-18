@@ -62,8 +62,8 @@ module Erx
       # has written that line before the end path writes to it, the shell's process
       # aborts the runtime, erlang:halt(abort). On erXos musl's abort ends in a store to
       # address 0 (TODO.md, the liberx Fiasco backend's halt item), a fault of the system
-      # domain, which on the stopgap is the root task: the end path writes the crash
-      # record on the console and ends the machine. The stopgap keeps no crash region, so
+      # domain, which on Fiasco is the root task: the end path writes the crash
+      # record on the console and ends the machine. The Fiasco backend keeps no crash region, so
       # the console log is where the record is read after the machine's end (judge).
       LOADERS = 4
       LOAD_MS = 2000

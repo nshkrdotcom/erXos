@@ -36,11 +36,11 @@ module Erx
     # rules and the sanitizer gate also hold to their own requirements.
     CORE_PATTERNS = %w[kernel/core/*.c kernel/sched/*.c].freeze
     PATTERNS = [*CORE_PATTERNS, 'kernel/crypto/*/*.c', 'build/gen/kernel/generated/*.c'].freeze
-    # Cores the stopgap links into bootstrap, not into the kernel.
+    # Cores Fiasco links into bootstrap, not into the kernel.
     BOOTSTRAP_SOURCES = %w[kernel/core/boot_place.c kernel/core/pack.c].freeze
-    # Cores the stopgap's kernel does not link, which the root task links in user mode:
+    # Cores Fiasco's kernel does not link, which the root task links in user mode:
     # the device-tree reader, which reaches the tree through libfdt built with every
-    # check on (docs/design-device-tree.md, "The reader"). The stopgap kernel reads
+    # check on (docs/design-device-tree.md, "The reader"). Fiasco reads
     # no tree of erXos's and links its own libfdt, so the reader waits for erXos's
     # kernel to be linked into one.
     ROOT_TASK_SOURCES = %w[kernel/core/dt.c].freeze

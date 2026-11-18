@@ -6,6 +6,7 @@ require 'digest'
 require 'fileutils'
 require 'json'
 require_relative 'asn1_specifications'
+require_relative 'dependency_status'
 require_relative 'domain_image_apps'
 require_relative 'domain_startup'
 require_relative 'erlang_apps'
@@ -70,7 +71,7 @@ module Erx
     # The imported trees the release's files come from, as a pack registers them
     # (PackProvenance): OTP for the applications, and the trust store's roots for
     # public_key's cacerts.pem (trust_store).
-    IMPORTS = { 'otp' => 'permanent', TrustStore::DIRECTORY => 'permanent' }.freeze
+    IMPORTS = { 'otp' => DependencyStatus::PERMANENT, TrustStore::DIRECTORY => DependencyStatus::PERMANENT }.freeze
     # A file of the release: its path in the archive, the built file and what it came from.
     ReleaseFile = Data.define(:path, :artifact, :sources)
 

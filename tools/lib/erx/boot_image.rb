@@ -14,7 +14,7 @@ require_relative 'toolchain_provenance'
 require_relative '../../../test/fixtures/structural_pack'
 
 module Erx
-  # A bootable file for the stopgap from what the build holds: bootstrap as the
+  # A bootable file for Fiasco from what the build holds: bootstrap as the
   # first stage and an archive of the kernel, sigma0 and, for a guest test, a
   # root task that bootstrap places. The archive is the structural recipe's,
   # never admitted: production packing waits for the root startup, so its

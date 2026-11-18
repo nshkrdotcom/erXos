@@ -10,7 +10,7 @@ module Erx
     DEVICE_NIFS = 'otp/erts/emulator/nifs/erxos'
     ERX_DEVICE = 'erlang/apps/erx/src/erx_device.erl'
     ERX_IRQ_LINE = 'erlang/apps/erx/src/erx_irq_line.erl'
-    # The generated ABI header lists the stopgap backend's calls by name
+    # The generated ABI header lists the Fiasco backend's calls by name
     # (?ERX_FIASCO_CALL_MEMBERS): it defines the calls and calls none, so it
     # is a site of the line-call rule.
     ERX_ABI_HEADER = 'erlang/apps/erx/include/generated/erx_abi.hrl'
@@ -60,12 +60,12 @@ module Erx
       permits: /\A(?:erx_(?:#{PROBE_PERIPHERALS})_\w+_(?:read|get)|erx_mini_uart_io_write|
                    ERX_(?:#{PROBE_PERIPHERALS.upcase})_\w+)\z/x
     )
-    # On the stopgap the root reads the board's RNG200 in the platform layer's place, through its one
+    # On Fiasco the root reads the board's RNG200 in the platform layer's place, through its one
     # device shim, which may name the RNG200's header and accessors alone (docs/design-fiasco.md,
     # "The Raspberry Pi 4").
     RNG200_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/rng200.c',
                                         permits: %r{\A(?:#\s*include\s*"erx/hw/rng200\.h"|erx_rng200_\w+)\z})
-    # On the stopgap the root's watchdog thread drives the board's hardware watchdog in the
+    # On Fiasco the root's watchdog thread drives the board's hardware watchdog in the
     # platform layer's place (docs/design-platforms.md, "The watchdog"): its one device shim
     # names the watchdog's header and accessors alone, and its pure core only the header, the
     # field setters and the field values, so no register is read or written outside the shim.
@@ -129,7 +129,7 @@ module Erx
         # import check, and a header and a call are all a bypass of erx_device needs.
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-headers',
-          rule: "only the kernel platform layer, the header probe and the root's RNG200 and watchdog shims and the watchdog's core on the stopgap include a generated peripheral header",
+          rule: "only the kernel platform layer, the header probe and the root's RNG200 and watchdog shims and the watchdog's core on Fiasco include a generated peripheral header",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,

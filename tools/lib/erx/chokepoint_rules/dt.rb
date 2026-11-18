@@ -5,7 +5,7 @@
 module Erx
   module ChokepointRules
     # The device-tree reader is the one way into a tree (docs/design-device-tree.md,
-    # "The reader"): outside the stopgap's own fiasco/ tree, only the reader and
+    # "The reader"): outside Fiasco's own fiasco/ tree, only the reader and
     # erXos's kernel's own tree user include libfdt.h, so every other reader of a
     # tree goes through erx_dt_accept's checks.
     DT_CORE = 'kernel/core/dt.c'

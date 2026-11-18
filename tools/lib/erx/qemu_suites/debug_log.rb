@@ -5,7 +5,7 @@
 require_relative '../debug_log_probe'
 require_relative '../qemu_gate'
 
-# The first kernel call on the stopgap, end to end: the probe's transcript on
+# The first kernel call on Fiasco, end to end: the probe's transcript on
 # the real trap path under HVF at each CPU count must equal the
 # hosted backend's and the expected one (tools/lib/erx/debug_log_probe.rb).
 # DebugLogProbe::Run raises on the first disagreement, which the gate reports

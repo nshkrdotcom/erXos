@@ -8,7 +8,7 @@ module Erx
     EXEC_FILES = %w[liberx/exec/load.c liberx/exec/load.h liberx/exec/load_plan.c liberx/exec/load_plan.h
                     liberx/exec/range.h liberx/exec/release.c liberx/exec/release.h].freeze
 
-    # erXos's own C, the stopgap kernel's glue and erXos's C inside ERTS, which links liberx.
+    # erXos's own C, Fiasco's glue and erXos's C inside ERTS, which links liberx.
     EXEC_SCOPE = Chokepoints::Scope.new(own: true, extra: [GLUE, 'otp/erts/emulator/nifs/erxos/**/*',
                                                           'otp/erts/emulator/sys/erxos/**/*'])
 
@@ -16,13 +16,13 @@ module Erx
       rules: [
         # An executable file reaches a program only through erx_exec, which
         # plans its bytes once and maps by that plan, so a header rule is
-        # written once. Beside it the stopgap's erx_image_map plans a file
+        # written once. Beside it the Fiasco backend's erx_image_map plans a file
         # entry of the boot archive, the host tools plan for the packer and
         # the fuzz target, and the loader's host driver plans for its test.
         Chokepoints::Forbidden.new(
           name: 'elf-reader-callers',
           rule: "only erx_exec's load (#{EXEC_LOAD}) and pure core call erx_elf_plan or erx_elf_relocation in " \
-                "a program, beside the stopgap's erx_image_map of a file entry, the host planner, the fuzz " \
+                "a program, beside the Fiasco backend's erx_image_map of a file entry, the host planner, the fuzz " \
                 "target and the loader's host driver",
           design: 'docs/design.md#chokepoint-checks',
           scope: EXEC_SCOPE,

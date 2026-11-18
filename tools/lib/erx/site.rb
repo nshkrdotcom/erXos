@@ -46,7 +46,7 @@ module Erx
   # it, once card_record finds it is the card's, of the commit the page
   # links with no changes, and names no host path.
   #
-  # The image and the card carry GPL-2.0 code, the stopgap kernel's and the
+  # The image and the card carry GPL-2.0 code, the development Fiasco kernel's and the
   # board's device tree, so the page links the erXos source they were built
   # from, a release tag or a commit, beside each download (docs/design.md,
   # "Licenses and notices").

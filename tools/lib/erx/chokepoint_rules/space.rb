@@ -13,8 +13,8 @@ module Erx
         # A space's tree and run state are changed only in kernel/core/space.c
         # (K27): struct erx_space is defined there and nowhere else, and every
         # other file names its tag only to refer to it, so no caller can link a
-        # child, reorder a list or move a run state back. It reads the stopgap
-        # kernel's tree, glue and inherited sources alike.
+        # child, reorder a list or move a run state back. It reads Fiasco's
+        # tree, glue and inherited sources alike.
         Chokepoints::Forbidden.new(
           name: 'space-records-private',
           rule: "only #{SPACE_CORE} defines struct erx_space, and no other file names it but to refer to it",

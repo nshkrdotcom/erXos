@@ -14,6 +14,7 @@ require_relative 'build_kind'
 require_relative 'build_path'
 require_relative 'compiler_rt'
 require_relative 'crash_frame'
+require_relative 'dependency_status'
 require_relative 'deterministic_transcript'
 require_relative 'dev_key'
 require_relative 'device_kinds'
@@ -22,6 +23,7 @@ require_relative 'dom_planner'
 require_relative 'doom_program'
 require_relative 'error'
 require_relative 'fiasco'
+require_relative 'fiasco_parts'
 require_relative 'fiasco_provenance'
 require_relative 'generated'
 require_relative 'image_apps'
@@ -77,8 +79,9 @@ module Erx
     # generator's stream, libfdt for its device-tree reader, musl for the HWCAP_* bits the
     # CPU feature decoder (cpu_features.c) takes from its header, and the releases' own
     # (ReleaseFiles::IMPORTS): OTP for their beams and the trust store's roots.
-    IMPORTS = { 'kernel/crypto/blake3' => 'permanent', 'kernel/crypto/chacha20' => 'permanent',
-                'fiasco/libfdt' => 'permanent', 'musl' => 'permanent', **ReleaseFiles::IMPORTS }.freeze
+    IMPORTS = { 'kernel/crypto/blake3' => DependencyStatus::PERMANENT, 'kernel/crypto/chacha20' => DependencyStatus::PERMANENT,
+                'fiasco/libfdt' => FiascoParts.status('libfdt'), 'musl' => DependencyStatus::PERMANENT,
+                **ReleaseFiles::IMPORTS }.freeze
 
     # The emulator's archive, which holds littlefs's objects beside ERTS's own
     # (otp/erts/emulator/Makefile.in's OS_OBJS), so its attribution carries
@@ -174,7 +177,7 @@ module Erx
     # notices, from doom, the program DoomProgram::Program#call built.
     def self.example_parts(doom, codec:)
       library = Archive.new(path: doom.fetch(:archive), label: PackProvenance::EXAMPLE_LABEL, license: DoomProgram::LICENSE,
-                            status: PackProvenance::EXAMPLE, notices: DoomProgram::NOTICES)
+                            status: DependencyStatus::EXAMPLE, notices: DoomProgram::NOTICES)
       Added.new(entries: [program_entry(DoomProgram::NAME, doom, codec: codec)].freeze, inputs: doom.fetch(:inputs),
                 imports: {}.freeze, archives: [library].freeze)
     end
@@ -188,7 +191,7 @@ module Erx
       return NOTHING_ADDED unless release.applications.include?(TOOLKIT_APPLICATION)
 
       lvgl = yield
-      library = Archive.new(path: lvgl.fetch(:archive), label: 'lvgl liblvgl.a', license: Lvgl::Program::LICENSE, status: 'stopgap',
+      library = Archive.new(path: lvgl.fetch(:archive), label: 'lvgl liblvgl.a', license: Lvgl::Program::LICENSE, status: DependencyStatus::STOPGAP,
                             notices: Lvgl::Program::NOTICES, font_data: Lvgl::Program::FONT_DATA)
       Added.new(entries: [program_entry(Lvgl::Program::NAME, lvgl, codec: codec)].freeze, inputs: lvgl.fetch(:inputs),
                 imports: {}.freeze, archives: [library].freeze)
@@ -1041,7 +1044,7 @@ module Erx
                                 'group' => /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#\{/n, 'budget' => /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#\{/n,
                                 'threads' => /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?\{(?:ok|partial),\[/n }.freeze
       # The five records again, each without its {kernel,unsupported} attributes, so what is
-      # left is what the stopgap reports: for a listing its status, its length and the
+      # left is what the Fiasco backend reports: for a listing its status, its length and the
       # attributes any of its records reports.
       KERNEL_RECORD_SUMMARY = 'U=fun(R)->lists:sort([{K,V}||K:=V<-maps:get(attrs,R),V=/={kernel,unsupported}]) end,' \
                               'L=fun({S,Rs})->{S,length(Rs),lists:usort(lists:append([U(R)||R<-Rs]))} end,' \
@@ -2060,21 +2063,21 @@ module Erx
 
       [*otp_archives([erts.crypto.table, *erts.crypto.nifs], flavour: 'emu'),
        *otp_archives([jit.crypto.table, *jit.crypto.nifs], flavour: 'jit'),
-       Archive.new(path: erts.crypto.libcrypto, label: 'openssl libcrypto', license: 'Apache-2.0', status: 'permanent',
+       Archive.new(path: erts.crypto.libcrypto, label: 'openssl libcrypto', license: 'Apache-2.0', status: DependencyStatus::PERMANENT,
                    notices: ['openssl/LICENSE.txt'])]
     end
 
     def archives(erts)
       [*otp_archives([erts.system_table, *erts.otp_archives], flavour: 'emu'),
-       Archive.new(path: erts.libc, label: 'musl libc', license: 'MIT', status: 'permanent', notices: [Musl::NOTICE]),
+       Archive.new(path: erts.libc, label: 'musl libc', license: 'MIT', status: DependencyStatus::PERMANENT, notices: [Musl::NOTICE]),
        Archive.new(path: erts.builtins, label: 'llvm compiler-rt builtins', license: CompilerRt::LICENSE,
-                   status: 'permanent', notices: [CompilerRt.notice(root: @root, runner: @runner)]),
+                   status: DependencyStatus::PERMANENT, notices: [CompilerRt.notice(root: @root, runner: @runner)]),
        *Fiasco::USER_LIBRARIES.map do |name, library|
          Archive.new(path: @fiasco.user_library(name), label: "fiasco/l4re-core #{name}", license: library.license,
-                     status: 'stopgap', notices: @fiasco.user_library_notices(name))
+                     status: FiascoParts.status('l4re-core'), notices: @fiasco.user_library_notices(name))
        end,
        Archive.new(path: @fiasco.boot_core_archive, label: 'kernel/core boot cores',
-                   license: 'BSD-2-Clause', status: 'permanent', notices: [LICENSE])]
+                   license: 'BSD-2-Clause', status: DependencyStatus::PERMANENT, notices: [LICENSE])]
     end
 
     # The BeamAsm build's own archives: ERTS's BeamAsm flavour, asmjit's Zlib license
@@ -2087,7 +2090,7 @@ module Erx
        *jit.cxx_archives.map do |path|
          name = File.basename(path)
          Archive.new(path: path, label: "llvm #{name}", license: 'Apache-2.0 WITH LLVM-exception',
-                     status: 'permanent', notices: [File.join(tree, LIBCXX_NOTICES.fetch(name))])
+                     status: DependencyStatus::PERMANENT, notices: [File.join(tree, LIBCXX_NOTICES.fetch(name))])
        end]
     end
 
@@ -2099,7 +2102,7 @@ module Erx
                            else
                              ['Apache-2.0', ['otp/LICENSE.txt']]
                            end
-        Archive.new(path: path, label: "otp #{flavour} #{name}", license: license, status: 'permanent', notices: notices)
+        Archive.new(path: path, label: "otp #{flavour} #{name}", license: license, status: DependencyStatus::PERMANENT, notices: notices)
       end
     end
 

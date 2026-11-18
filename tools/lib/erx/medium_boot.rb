@@ -247,7 +247,7 @@ module Erx
     DOMAIN_LIB_DEATH = 'fun(Id)->case [DlDInfo||#{id:=DlDId,info:=DlDInfo}<-erx_domain_core:deaths(1,' \
                        'maps:get(core,sys:get_state(erx_domain_srv))),DlDId=:=Id] of ' \
                        '[DlDInfo1|_]->{domain_down,Id,DlDInfo1};[]->noproc end end'
-    # DlFree: the machine's free memory in bytes, as the stopgap's page pool reports it.
+    # DlFree: the machine's free memory in bytes, as the Fiasco backend's page pool reports it.
     DOMAIN_LIB_FREE = 'fun()->#{attrs:=#{memory_free:={_,{partial,DlFreeB}}}}=erx_kernel_records:machine(),DlFreeB end'
     # DlCost: what a domain named Name with the request fields of Spec changed by Fields
     # takes from the machine's free memory once its create has answered, which comes after

@@ -95,6 +95,14 @@ class DependenciesTest < Minitest::Test
     assert_raises(Erx::Error) { parse([source.merge('unknown' => 'field')]) }
   end
 
+  # A lock entry takes any status of docs/design.md's dependency table, and no other.
+  def test_each_status_of_the_dependency_table_is_admitted
+    %w[permanent release stopgap example].each do |status|
+      assert_equal status, parse([source.merge('status' => status)]).first.fetch('status')
+    end
+    assert_raises(Erx::Error) { parse([source.merge('status' => 'tools')]) }
+  end
+
   def test_duplicates_fail
     assert_raises(Erx::Error) { parse([source, source]) }
   end

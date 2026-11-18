@@ -6,6 +6,7 @@ require 'digest'
 require_relative 'json_input'
 require_relative 'origin'
 require_relative 'bounded_file'
+require_relative 'dependency_status'
 
 module Erx
   module ToolchainProvenance
@@ -69,7 +70,7 @@ module Erx
       end
       raise Error, 'invalid toolchain license' unless document['license'].is_a?(String)
       Attribution.validate_expression(document.fetch('license'))
-      unless %w[permanent stopgap].include?(document['status']) &&
+      unless DependencyStatus::ALL.include?(document['status']) &&
              document['evidence'].is_a?(String) && !document['evidence'].empty? &&
              document['evidence'].ascii_only? && !document['evidence'].match?(/[\x00-\x1f\x7f]/)
         raise Error, 'invalid toolchain provenance attribution'

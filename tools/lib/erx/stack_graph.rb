@@ -66,7 +66,7 @@ module Erx
                            :indirect_calls, :indirect_branches)
     # functions maps each Name to its Function; externals lists the global
     # names called or jumped to that no input object defines, such as the
-    # stopgap's erx_effect_* leaves.
+    # Fiasco backend's erx_effect_* leaves.
     Graph = Data.define(:functions, :externals) do
       def fetch_function(id)
         functions.fetch(id) { raise StackGraphError, "stack graph has no function #{Terminal.escape(id)}" }

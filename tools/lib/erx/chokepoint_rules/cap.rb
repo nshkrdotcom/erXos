@@ -60,7 +60,7 @@ module Erx
         # else erx_cap_table_t is an incomplete type, so no file can write a
         # member or store a page of its own in the directory. This rule keeps
         # that header to the core and its host tests, and refuses any other
-        # definition of the record. It reads the stopgap kernel's tree, glue
+        # definition of the record. It reads Fiasco's tree, glue
         # and inherited sources alike.
         Chokepoints::Forbidden.new(
           name: 'cap-table-private',
@@ -86,7 +86,7 @@ module Erx
         # erx_cap_slot_clear is named only in the cores, its declaration in
         # include/erx/cap.h and the core's host tests, so the call graph that
         # cap-slot-clear-callers reads sees every caller (K21, K25). It reads
-        # the stopgap kernel's tree, glue and inherited sources alike.
+        # Fiasco's tree, glue and inherited sources alike.
         Chokepoints::Forbidden.new(
           name: 'cap-slot-clear-named',
           rule: 'only the cores, include/erx/cap.h and the capability core\'s host tests name erx_cap_slot_clear',

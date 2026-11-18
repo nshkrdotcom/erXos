@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
-# Checks the stopgap kernel's resolved configuration (globalconfig.out) against
+# Checks Fiasco's resolved configuration (globalconfig.out) against
 # the fork's rules (tools/lib/erx/fiasco_config.rb). `tools/erx build fiasco`
 # runs the same check after every configuration step, and `tools/erx build
 # release-kernel` with the release rules; this script checks a file by hand,
@@ -32,7 +32,7 @@ end
 path = ARGV.first || File.join(Erx::Fiasco.kernel_directory(root: root, kind: kind), 'globalconfig.out')
 begin
   Erx::FiascoConfig.check(path, kind: kind)
-  Erx::Terminal.puts("#{path}: the stopgap #{kind} kernel configuration follows the fork's rules")
+  Erx::Terminal.puts("#{path}: the Fiasco #{kind} kernel configuration follows the fork's rules")
 rescue Erx::Error => error
   Erx::Terminal.puts(error.message)
   exit 1

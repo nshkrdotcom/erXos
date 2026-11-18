@@ -2396,11 +2396,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   document's headings, forms each anchor as the viewer does, and fails on a link whose file or anchor does not
   exist, with a seeded dangling anchor; a rule that links go through a constant, as `chokepoint_rules.rb`'s
   `design:` fields do, needs the same check over the interpolated strings.
-* [Medium] build, `tools/lib/erx/production_image.rb` (`archives`): the root's link records `libl4sys.p.a` and
-  `libsigma0.a` with status `stopgap`, though the dependency table marks Fiasco's `l4re-core` parts `release`;
-  the status sets of `tools/lib/erx/dependencies.rb:88` and `tools/lib/erx/toolchain_provenance.rb:72` admit
-  only `permanent` and `stopgap`, two copies of one fact. Give the status set one source that includes
-  `release`, record both archives as `release`, and test a record with an unknown status refused.
 * [Low] Fiasco backend, the host link's boot word: the host link is opt-in through
   `erx.hostlink=1` (`liberx/backend/fiasco/boot_args.c`,
   `liberx/backend/core/boot_manifest.c`), because the root takes the host

@@ -11,6 +11,7 @@ require_relative 'sources'
 require_relative 'json_input'
 require_relative 'output_directory'
 require_relative 'bounded_file'
+require_relative 'dependency_status'
 
 module Erx
   module DependencySchema
@@ -86,7 +87,7 @@ module Erx
         raise Error, 'invalid decoded image pin'
       end
       raise Error, 'invalid source commit' if source.fetch('kind') == 'git' && !/\A[0-9a-f]{40}\z/.match?(source.fetch('commit'))
-      raise Error, 'invalid dependency status' unless %w[permanent stopgap].include?(source.fetch('status'))
+      raise Error, 'invalid dependency status' unless DependencyStatus::ALL.include?(source.fetch('status'))
       raise Error, 'invalid source host' if source.fetch('kind') == 'zip' && !HOSTS.key?(source.fetch('host'))
 
       if source.fetch('kind') == 'oci'

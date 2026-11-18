@@ -13,7 +13,7 @@ module Erx
     ERX_TRAP = /\A#{Regexp.escape(TRAP_OPCODE)}[ \t]+##{Regexp.escape(TRAP_IMMEDIATE)}\z/
 
     # What keeps Fiasco's interface behind its backend and the glue, with the
-    # stopgap's own pending rules: the seam every core and domain sits above.
+    # Fiasco backend's own pending rules: the seam every core and domain sits above.
     declare_group(
       # The liberx files of the backends and their cores that the object leg
       # has not read yet.
@@ -360,7 +360,7 @@ module Erx
         ),
         Chokepoints::Forbidden.new(
           name: 'seam-only-from-glue',
-          rule: "the glue alone of the stopgap kernel's sources includes erXos's headers",
+          rule: "the glue alone of Fiasco's sources includes erXos's headers",
           design: "#{FIASCO}#interfaces",
           scope: Chokepoints::Scope.new(own: false, extra: ['fiasco/kernel/**/*'], except: [GLUE]),
           pattern: %r{#{INCLUDE}[<"]erx/}i,

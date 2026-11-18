@@ -7,6 +7,7 @@ require 'openssl'
 require_relative 'abi_source'
 require_relative 'app_pack'
 require_relative 'bounded_file'
+require_relative 'dependency_status'
 require_relative 'error'
 require_relative 'license_expression'
 require_relative 'manifest_frontend'
@@ -85,7 +86,7 @@ module Erx
       # A package that names no license is permanent, and enters no image.
       def status(package)
         restricted = local && !package.license.empty? && !LicenseExpression.permissive?(package.license)
-        restricted ? PackProvenance::PACKAGE_LOCAL : PackProvenance::PERMANENT
+        restricted ? PackProvenance::PACKAGE_LOCAL : DependencyStatus::PERMANENT
       end
 
       # Whether the image takes no package, no signer and is no local test image.

@@ -6,6 +6,8 @@ require 'json'
 require 'tmpdir'
 require 'fileutils'
 require_relative 'pack_provenance'
+require_relative 'dependency_status'
+require_relative 'fiasco_parts'
 require_relative 'runner'
 require_relative 'bounded_file'
 require_relative 'toolchain_provenance'
@@ -22,7 +24,7 @@ module Erx
   # Audits the inherited build's recorded evidence. This is an evidence report,
   # missing source records prevent a successful build record.
   class FiascoProvenance
-    PARTS = %w[kernel mk l4re-core bootstrap libfdt drivers-frst].freeze
+    PARTS = FiascoParts::NAMES
     # The executables a development build's image packs beside its kernel, and
     # their link maps, under build/fiasco. A release kernel is audited alone.
     USER_MAPS = {
@@ -64,7 +66,7 @@ module Erx
       kernel = Fiasco.kernel_directory(root: root, kind: kind)
       if BuildKind.development?(kind)
         Plan.new(kind: kind, kernel: kernel, users: true, pinned: true, check: :receipt,
-                 distribution: 'project-only: non-permissive stopgap Fiasco')
+                 distribution: 'project-only: Fiasco with parts that are not permissive')
       else
         Plan.new(kind: kind, kernel: kernel, users: false, pinned: false, check: :permissive, distribution: nil)
       end
@@ -301,7 +303,8 @@ module Erx
         header = File.realpath(File.join(installation, directories.first, name))
         raise Error, "#{gcc}'s #{name} leaves its installation" unless header.start_with?(installation + '/')
         { 'path' => header, 'sha256' => Digest::SHA256.hexdigest(BoundedFile.read(header, maximum: 1024 * 1024)),
-          'label' => format(PackProvenance::GCC_LABEL, release:, name:), 'license' => PackProvenance::GCC_LICENSE, 'status' => 'stopgap',
+          'label' => format(PackProvenance::GCC_LABEL, release:, name:), 'license' => PackProvenance::GCC_LICENSE,
+          'status' => DependencyStatus::RELEASE,
           'evidence' => "#{name}'s own GPL version 3 or later grant with GCC Runtime Library Exception 3.1",
           'notices' => notices }.freeze
       end.freeze
@@ -739,7 +742,7 @@ module Erx
         raise Error, "derived source differs from its origin: #{label(path)}" unless digest(source) == digest(path)
         @sources[path] = reference(path).merge('origin' => reference(File.join(part_root, 'ORIGIN.md')),
                                               'source' => label(source), 'original_source' => "fiasco/#{part}/#{relative}", 'license' => item.fetch('license'),
-                                              'evidence' => item.fetch('evidence'), 'status' => 'stopgap')
+                                              'evidence' => item.fetch('evidence'), 'status' => FiascoParts.status(part))
         if part == 'l4re-core' && relative.start_with?('libc/musl/contrib/musl/')
           logical = 'fiasco/l4re-core/libc/musl/contrib/musl/COPYRIGHT'
           notice = project_input(logical)

@@ -193,7 +193,7 @@ module Erx
     end
 
     # An integration test runs in `make check` unless it is excused here: these
-    # rebuild the stopgap kernel, boot it under QEMU, need the stock OTP
+    # rebuild Fiasco, boot it under QEMU, need the stock OTP
     # suites' runtime, need the hosted runtime built, or need Arm's register
     # archive fetched, or build OpenSSL. check ensures the rc oracle first (ensure_rc_oracle),
     # so the tests that read plan9port's rc run in it.
@@ -1403,7 +1403,7 @@ module Erx
       results.values.all?(&:passed?) ? 0 : 1
     end
 
-    # The bootable file on the stopgap: good images in both forms under HVF, as
+    # The bootable file on Fiasco: good images in both forms under HVF, as
     # the gate's boot_image suite runs them, and each damage the boot checks
     # claim to catch.
     def self.check_boot_image(input_arguments)
@@ -1425,7 +1425,7 @@ module Erx
       0
     end
 
-    # The debug-log probe on the stopgap kernel under HVF, as the gate runs it, each
+    # The debug-log probe on Fiasco under HVF, as the gate runs it, each
     # transcript compared with the hosted backend's and the expected one.
     def self.check_debug_log(input_arguments)
       arguments = input_arguments.dup

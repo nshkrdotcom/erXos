@@ -15,7 +15,7 @@ module Erx
         # made (K4), and no mapping is writable with executable: struct
         # erx_mapping is defined in kernel/core/map.c and nowhere else, and every
         # other file names its tag only to refer to it, so only the core's plans
-        # write a record. It reads the stopgap kernel's tree, glue and inherited
+        # write a record. It reads Fiasco's tree, glue and inherited
         # sources alike.
         Chokepoints::Forbidden.new(
           name: 'map-records-private',

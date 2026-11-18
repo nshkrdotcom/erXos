@@ -83,6 +83,17 @@ class ToolchainProvenanceTest < Minitest::Test
     assert_equal File.realpath(File.join(@installation, 'LICENSE')), records.first.fetch('notices').first.fetch('path')
   end
 
+  # A profile takes any status of docs/design.md's dependency table, and no other;
+  # each file's record carries it.
+  def test_a_profile_takes_a_status_of_the_dependency_table
+    %w[permanent release stopgap example].each do |status|
+      @document['status'] = status
+      assert_equal [status], registry.map { |item| item.fetch('status') }
+    end
+    @document['status'] = 'unknown'
+    assert_raises(Erx::Error) { registry }
+  end
+
   def test_malformed_attribution_is_typed
     [nil, [], 12].each do |license|
       @document['license'] = license

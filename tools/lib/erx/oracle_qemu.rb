@@ -7,6 +7,7 @@ require 'fileutils'
 require 'json'
 require_relative 'abi'
 require_relative 'bounded_file'
+require_relative 'dependency_status'
 require_relative 'fiasco'
 require_relative 'json_input'
 require_relative 'oracle'
@@ -37,8 +38,8 @@ module Erx
   #
   # The events reach the host on the console's serial line, which they share
   # with the kernel's, the root's and ERTS's own C output, and
-  # erlang:display_string/2 is C output too: its write(2) reaches the stopgap's
-  # console write, which hands the kernel at most one call's worth
+  # erlang:display_string/2 is C output too: its write(2) reaches the Fiasco
+  # backend's console write, which hands the kernel at most one call's worth
   # (L4_VCON_WRITE_SIZE, 488 bytes) at a time, so another thread's write can
   # land inside a longer event line, a case start with a long log path among
   # them. Each event frame carries a sequence number, its length and a
@@ -80,7 +81,7 @@ module Erx
     STAND_INS = { 'common_test' => %w[priv/jquery-latest.js priv/jquery-migrate.js priv/jquery.tablesorter.min.js]
                                      .to_h { |path| [path, JQUERY] } }.freeze
     # The patched test_server_ctrl's imported tree, which the reporter compiles.
-    IMPORTS = { 'test/oracle/common_test' => 'permanent' }.freeze
+    IMPORTS = { 'test/oracle/common_test' => DependencyStatus::PERMANENT }.freeze
     LEFT_OUT = { 'common_test' => %w[priv/tile1.jpg], 'sasl' => %w[src/deps/deps.mk] }.freeze
 
     Outcome = Data.define(:result, :report, :seconds)

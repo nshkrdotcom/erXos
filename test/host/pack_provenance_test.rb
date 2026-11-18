@@ -334,7 +334,7 @@ class PackProvenanceTest < Minitest::Test
 
   # A package an image takes (ImageApps) is attributed whole under the license its header
   # declares, judged as an archive's but always as permanent, so a development build that
-  # admits a stopgap's restricted license still refuses a package's, and a package that
+  # admits a release component's restricted license still refuses a package's, and a package that
   # names no license.
   def resolve_package(license, status: 'permanent', build_kind: 'development')
     package = write('clock.app', 'package bytes')
@@ -462,6 +462,22 @@ class PackProvenanceTest < Minitest::Test
     assert_equal 'BSD-3-Clause OR GPL-2.0-only', record.fetch('declared_license')
   end
 
+  def test_permissive_release_component_is_allowed_in_release_provenance
+    external = [{ 'path' => @source, 'sha256' => Digest::SHA256.file(@source).hexdigest,
+                  'label' => 'third_party/fixture/root.c', 'license' => 'MIT',
+                  'status' => 'release', 'evidence' => 'reviewed permissive fixture',
+                  'notices' => [{ 'path' => File.join(@root, 'LICENSE'),
+                                  'sha256' => Digest::SHA256.file(File.join(@root, 'LICENSE')).hexdigest }] }]
+    receipt = write('receipt.json', JSON.generate(@receipt))
+    resolver = Erx::PackProvenance.new(root: @root, catalog: build_catalog, external: external)
+    records = resolver.resolve(receipt: receipt, artifact: @artifact, build_kind: 'release')
+    assert_equal %w[release MIT], records.first.values_at('status', 'license')
+    external.first['status'] = 'tools'
+    resolver = Erx::PackProvenance.new(root: @root, catalog: build_catalog, external: external)
+    error = assert_raises(Erx::Error) { resolver.resolve(receipt: receipt, artifact: @artifact, build_kind: 'release') }
+    assert_match(/invalid dependency provenance status/, error.message)
+  end
+
   def test_permissive_stopgap_is_allowed_in_release_provenance
     external = [{ 'path' => @source, 'sha256' => Digest::SHA256.file(@source).hexdigest,
                   'label' => 'third_party/fixture/root.c', 'license' => 'BSD-2-Clause',
@@ -535,11 +551,11 @@ class PackProvenanceTest < Minitest::Test
     end
   end
 
-  # Where the build reads each stopgap row's input (PackProvenance::RESTRICTED), as the
+  # Where the build reads each restricted row's input (PackProvenance::RESTRICTED), as the
   # fixture places it: GCC's header in a cross gcc's include directory under outside, a
   # directory outside the tree, and Fiasco's files in the staged copy of its inputs that
   # FiascoProvenance audits.
-  def stopgap_rows(outside)
+  def restricted_rows(outside)
     [{ label: 'toolchain/gcc-16.2.0/stddef.h', license: Erx::PackProvenance::GCC_LICENSE, at: gcc_header(outside, 'stddef.h') },
      { label: 'fiasco/l4re-core/ldscripts/kip_addr.S', license: 'FSFAP',
        at: 'build/fiasco/inputs/fiasco/l4re-core/ldscripts/kip_addr.S' },
@@ -551,9 +567,10 @@ class PackProvenanceTest < Minitest::Test
 
   # Seeded fault: a development build admits a license that is not permissive only from
   # PackProvenance::RESTRICTED, so a GPL input that the table does not name is refused,
-  # as is one of the table's labels under another license or another status, each at the
-  # place its row reads it from.
-  def test_a_gpl_stopgap_outside_the_closed_table_is_refused
+  # as is one of the table's labels under another license or another status (Fiasco's
+  # debugger registered as a stopgap or as permanent, not as release), each at the place
+  # its row reads it from.
+  def test_a_gpl_input_outside_the_closed_table_is_refused
     Dir.mktmpdir('outside-toolchain-') do |outside|
       jdb = 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp'
       refusals = [{ license: 'GPL-2.0-only', label: 'third_party/fixture/root.c', at: 'root.c' },
@@ -563,6 +580,7 @@ class PackProvenanceTest < Minitest::Test
                     at: 'build/fiasco/inputs/fiasco/kernel/src/kern/arm/jdb_object.cpp' },
                   { license: 'GPL-2.0-or-later', label: 'fiasco/kernel/src/kern/jdb_object.cpp', at: jdb },
                   { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/jdb_object.cpp', status: 'permanent', at: jdb },
+                  { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/jdb_object.cpp', status: 'stopgap', at: jdb },
                   { license: 'GPL-3.0-or-later', label: 'toolchain/gcc-16.2.0/stdarg.h', at: gcc_header(outside, 'stdarg.h') },
                   { license: 'FSFAP', label: 'fiasco/l4re-core/ldscripts/other.S',
                     at: 'build/fiasco/inputs/fiasco/l4re-core/ldscripts/other.S' },
@@ -570,19 +588,19 @@ class PackProvenanceTest < Minitest::Test
                     at: gcc_header(outside, 'limits.h') }]
       refusals.each do |input|
         error = assert_raises(Erx::Error) do
-          resolve_registered_at(input.fetch(:at), **{ status: 'stopgap' }.merge(input.except(:at)))
+          resolve_registered_at(input.fetch(:at), **{ status: 'release' }.merge(input.except(:at)))
         end
         assert_match(/no permitted grant/, error.message, input.inspect)
       end
     end
   end
 
-  # Seeded fault: a stopgap row names its input by where the build reads it as well as by
+  # Seeded fault: a restricted row names its input by where the build reads it as well as by
   # its label, so a registration under the row's label and license that names other bytes,
   # such as the repository's copy of a Fiasco file the build compiles from its staged copy,
   # a header outside a cross gcc's include directory, or another release's or another
   # header's file there, is refused.
-  def test_a_stopgap_row_refuses_its_label_at_another_path
+  def test_a_restricted_row_refuses_its_label_at_another_path
     Dir.mktmpdir('outside-toolchain-') do |outside|
       elsewhere = { 'toolchain/gcc-16.2.0/stddef.h' => [File.join(outside, 'stddef.h'),
                                                         'lib/gcc/aarch64-elf/16.2.0/include/stddef.h',
@@ -590,25 +608,27 @@ class PackProvenanceTest < Minitest::Test
                                                         gcc_header(outside, 'stdarg.h')],
                     'fiasco/l4re-core/ldscripts/kip_addr.S' => ['fiasco/l4re-core/ldscripts/kip_addr.S'],
                     'fiasco/kernel/src/kern/jdb_object.cpp' => ['fiasco/kernel/src/kern/jdb_object.cpp'] }
-      stopgap_rows(outside).each do |row|
+      restricted_rows(outside).each do |row|
         ['root.c', *elsewhere.fetch(row.fetch(:label))].each do |at|
-          error = assert_raises(Erx::Error) { resolve_registered_at(at, status: 'stopgap', **row.except(:at)) }
+          error = assert_raises(Erx::Error) { resolve_registered_at(at, status: 'release', **row.except(:at)) }
           assert_match(/no permitted grant/, error.message, [row.fetch(:label), at].inspect)
         end
       end
     end
   end
 
-  # Each row of the table admits its input under its exact license, at the place the build
-  # reads it, in a development build, and no release build admits it.
+  # Each row of the table admits its input under its exact license and the status of what
+  # it is a part of, release for Fiasco and its build's GCC headers (docs/design.md's
+  # dependency table), at the place the build reads it, in a development build, and no
+  # release build admits it.
   def test_the_closed_table_admits_its_rows_in_development_builds_only
     Dir.mktmpdir('outside-toolchain-') do |outside|
-      stopgap_rows(outside).each do |row|
+      restricted_rows(outside).each do |row|
         label, license, at = row.values_at(:label, :license, :at)
-        record = resolve_registered_at(at, license: license, label: label, status: 'stopgap').first
-        assert_equal [label, license, 'stopgap'], record.values_at('path', 'declared_license', 'status')
+        record = resolve_registered_at(at, license: license, label: label, status: 'release').first
+        assert_equal [label, license, 'release'], record.values_at('path', 'declared_license', 'status')
         error = assert_raises(Erx::Error) do
-          resolve_registered_at(at, license: license, label: label, status: 'stopgap', build_kind: 'release')
+          resolve_registered_at(at, license: license, label: label, status: 'release', build_kind: 'release')
         end
         assert_match(/no permitted grant/, error.message)
       end

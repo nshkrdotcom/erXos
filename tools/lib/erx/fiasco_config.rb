@@ -7,7 +7,7 @@ require_relative 'bounded_file'
 require_relative 'build_kind'
 
 module Erx
-  # The configuration check of the stopgap kernel (docs/design-fiasco.md,
+  # The configuration check of the Fiasco kernel (docs/design-fiasco.md,
   # "Boot handoff", the kernel), and the one statement of how a release
   # kernel's configuration differs from a development one's. It reads the
   # resolved configuration, globalconfig.out, which Fiasco's Kconfig writes
@@ -76,7 +76,7 @@ module Erx
       found = violations(BoundedFile.read(path, maximum: MAX_BYTES), kind: kind)
       return if found.empty?
 
-      raise Violation, "stopgap #{kind} kernel configuration #{path} breaks the fork's rules: #{found.join('; ')}"
+      raise Violation, "Fiasco #{kind} kernel configuration #{path} breaks the fork's rules: #{found.join('; ')}"
     end
 
     # The release kernel's defconfig: the development defconfig's text with

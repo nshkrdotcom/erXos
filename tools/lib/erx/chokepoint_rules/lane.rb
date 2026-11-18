@@ -47,7 +47,7 @@ module Erx
         # reach them, so this text rule keeps every other typed reader and
         # writer out, the funnel's pure check and the lane port driver
         # included. It reads erXos's own C, the imports below kernel/
-        # included, the stopgap kernel's tree with its glue, and inherited
+        # included, Fiasco's tree with its glue, and inherited
         # OTP and musl. It cannot see untyped pointer arithmetic on a side's
         # address (the reader record's side pointers, or the mapping that
         # produced them), nor a name a macro pastes together

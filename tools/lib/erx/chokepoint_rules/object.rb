@@ -27,7 +27,7 @@ module Erx
         # which only the store and its host tests include, and in the
         # capability table's CBMC harness, which stubs the store and which
         # only cbmc builds; every other file names the tag only to refer to
-        # it, so no other code writes a header's state, counts or slot list. It reads the stopgap kernel's
+        # it, so no other code writes a header's state, counts or slot list. It reads Fiasco's
         # tree, glue and inherited sources alike.
         Chokepoints::Forbidden.new(
           name: 'object-records-private',
@@ -52,7 +52,7 @@ module Erx
         # The two writers of the state word are named only in the store, its
         # header and its host tests, and each in the one core that calls it,
         # so the call graph the rules below read sees every caller. It reads
-        # the stopgap kernel's tree, glue and inherited sources alike.
+        # Fiasco's tree, glue and inherited sources alike.
         Chokepoints::Forbidden.new(
           name: 'object-state-writers-named',
           rule: "only #{OBJECT_CORE}, include/erx/object.h, the store's host tests and #{CAP_HARNESS} name " \

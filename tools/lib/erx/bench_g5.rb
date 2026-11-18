@@ -16,7 +16,7 @@ require_relative 'production_image'
 require_relative 'qemu'
 
 module Erx
-  # Gate G5's BeamAsm measurements on the stopgap (docs/plan.md, G5): in ordinary domains
+  # Gate G5's BeamAsm measurements on Fiasco (docs/plan.md, G5): in ordinary domains
   # the domain service creates, BeamAsm's speedup over the interpreter on the same
   # workload, each flavour's footprint, and the time to load the release when the domain
   # starts. The image is MediumBoot's, whose manifest makes the image carry both runtime

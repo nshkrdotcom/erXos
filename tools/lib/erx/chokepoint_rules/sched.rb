@@ -22,7 +22,7 @@ module Erx
         # the ready queues are written only in kernel/sched/sched.c (S5, S6):
         # the records are defined only in the core's private header, which only
         # the core and its host tests include, and every other file names a
-        # record's tag only to refer to it. It reads the stopgap kernel's tree,
+        # record's tag only to refer to it. It reads Fiasco's tree,
         # glue and inherited sources alike.
         Chokepoints::Forbidden.new(
           name: 'sched-records-private',

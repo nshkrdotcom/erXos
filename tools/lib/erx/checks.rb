@@ -206,7 +206,7 @@ module Erx
       check_origin_unwraps(listed)
       check_attach_fields(listed)
       # The chokepoint rules read the same listing, imports included, since
-      # the glue lives inside the stopgap kernel's imported tree; an import
+      # the glue lives inside Fiasco's imported tree; an import
       # below kernel/ they read as erXos's own C (chokepoint_upstream?).
       # They read the generated tree too, each file under the path it
       # mirrors, so a rule's scope and sites hold for a generated file as for

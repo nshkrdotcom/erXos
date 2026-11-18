@@ -39,7 +39,7 @@ module Erx
   # report of the failure table's row; the root's stop then ends the machine. The machine
   # must end by itself (Qemu#run's machine_end). That no domain is left running follows
   # from it, since every domain's space is a child of the system domain's; the cell does
-  # not look for one. Nor does it read a crash record: on the stopgap kernel the root's
+  # not look for one. Nor does it read a crash record: on Fiasco the root's
   # own stop writes none (TODO.md, the liberx Fiasco backend's halt item). The re-grant
   # boot (Regrant) ends with the system domain killed under load, whose fault does write
   # one, and reads it back.

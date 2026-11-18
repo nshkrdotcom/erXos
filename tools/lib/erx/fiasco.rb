@@ -14,6 +14,7 @@ require_relative 'boot_file'
 require_relative 'json_input'
 require_relative 'sources'
 require_relative 'fiasco_inputs'
+require_relative 'fiasco_parts'
 require_relative 'fiasco_config'
 require_relative 'build_kind'
 require_relative 'core_archive'
@@ -163,9 +164,8 @@ module Erx
     def build(jobs: 4)
       raise Error, 'jobs must be between 1 and 64' unless jobs.is_a?(Integer) && jobs.between?(1, 64)
       raise Error, 'set ERX_CLANG to an installed LLVM clang; see README.md' if @compiler.to_s.empty?
-      required = %w[kernel mk l4re-core bootstrap libfdt drivers-frst]
       raise Error, 'imported Fiasco source root must not be a symlink' if File.symlink?(@source)
-      required.each do |name|
+      FiascoParts::NAMES.each do |name|
         path = File.join(@source, name)
         raise Error, "missing or external imported Fiasco part: #{name}" unless File.directory?(path) && !File.symlink?(path)
       end

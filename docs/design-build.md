@@ -289,10 +289,11 @@ licenses of its selected members. Every closure member resolves to an
 origin inventory, a pinned fetched artifact or an erXos source notice;
 unknown provenance fails. The packer combines that closure with the files
 it packs, checks the appropriate license allowlist and emits `NOTICES`.
-It refuses a release image containing non-permissive stopgap code,
-including the Fiasco kernel, as
+It refuses a release image containing non-permissive code of a stopgap
+or of a release component, including the Fiasco kernel's debugger, as
 [Licenses and notices](design.md#licenses-and-notices) requires.
-Permissive stopgaps pass the same license allowlist as permanent dependencies.
+Permissive stopgaps and release components pass the same license allowlist
+as permanent dependencies.
 
 The trusted builder supplies an immutable input catalog alongside its build
 record. The catalog names the exact source files, notice documents, dependency

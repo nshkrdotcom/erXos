@@ -16,7 +16,7 @@ module Erx
   # describes the private copy, never a later view of repository contents.
   class FiascoInputs
     # The inherited parts and their configuration, and the erXos sources the
-    # stopgap kernel links: the C17 cores, their headers and the stack
+    # Fiasco kernel links: the C17 cores, their headers and the stack
     # proof's declarations (CoreArchive), with the generated C they include
     # and compile (Generated), which the caller brings up to date. Only the
     # generated C is captured: the tree's stamp and its other outputs would

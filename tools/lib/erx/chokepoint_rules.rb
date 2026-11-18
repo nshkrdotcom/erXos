@@ -32,7 +32,7 @@ module Erx
   # A core with nothing to police says so, with the reason, in a group of its
   # own.
   module ChokepointRules
-    # The glue: erXos's C++ inside the stopgap kernel's tree.
+    # The glue: erXos's C++ inside Fiasco's tree.
     GLUE = 'fiasco/kernel/src/erx/**/*'
     FIASCO_BACKEND = 'liberx/backend/fiasco/**/*'
     # erXos's own C-family sources and the glue.
@@ -169,7 +169,7 @@ module Erx
     # other file names its record's tag but to refer to it. Everywhere else
     # the layout is an incomplete type, so a member, an offset or an
     # accessor of it does not compile, and this rule keeps it so. It reads
-    # the stopgap kernel's tree, glue and inherited sources alike. Its seed
+    # Fiasco's tree, glue and inherited sources alike. Its seed
     # is built from the layout too: includes from other files, by other
     # paths and in other cases, and definitions of the record in each form,
     # the owner's included.
