@@ -1797,7 +1797,12 @@ neighbour answering. The release notes carry the downsides table.
   0.2's platforms is nowhere); the rest of track P, on Fiasco's vCPU row;
   M10's users, their CPU held by bands rather than shares; M12's
   boards, storage and updates, with littlefs on the boards' data
-  partitions; track D's parts 5 and 9; and M11's
+  partitions, and a card image that holds only what is written: the
+  populated partitions first, the image ending after boot A, and first
+  boot setting up the rest, data taking the rest of the card (`TODO.md`);
+  track D's parts 5 and 9; the system trust store from Mozilla NSS's
+  root list, as FreeBSD's `secure/caroot` and `certctl(8)` (`TODO.md`);
+  and M11's
   closure in its Fiasco form
   ([design-fiasco.md](design-fiasco.md#the-security-closure)). Track Q
   follows 0.2, since its copy-on-write children, store tracking and
