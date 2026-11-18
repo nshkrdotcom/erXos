@@ -48,7 +48,7 @@ module Erx
 
       # Whether this row names the input registered under input_status with input_label
       # and license, found at input_path relative to the tree (nil outside it).
-      def admits?(input_status, input_label, license, input_path)
+      def admits?(input_status:, input_label:, license:, input_path:)
         named = label.is_a?(Regexp) ? label.match?(input_label) : label == input_label
         status == input_status && licenses.include?(license) && named && (path.nil? || path == input_path)
       end
@@ -554,7 +554,7 @@ module Erx
                      "#{EXAMPLE_LICENSES.join(' or ')}, at #{EXAMPLE_ARCHIVE}, is"
       end
       selected = LicenseExpression.select(license, allow_restricted: BuildKind.development?(build_kind) &&
-                                                                     restricted_admitted?(status, path, label, license),
+                                                                     restricted_admitted?(status:, path:, label:, license:),
                                                    font_data: font_data)
       if item
         profile_path = File.join(@root, ImportNotices::PROFILE)
@@ -738,16 +738,16 @@ module Erx
     # file, that RESTRICTED's example row names (EXAMPLE_LABEL at EXAMPLE_ARCHIVE under one
     # of EXAMPLE_LICENSES exactly), so no other input can take the example status.
     def example_archive?(path, label:, license:)
-      @external.key?(path) && restricted_admitted?(EXAMPLE, path, label, license)
+      @external.key?(path) && restricted_admitted?(status: EXAMPLE, path:, label:, license:)
     end
 
     # Whether a development build may admit the input at path, registered under status
     # with label and license, although the license is not permissive: a package of a local
     # test image, or a row of RESTRICTED.
-    def restricted_admitted?(status, path, label, license)
+    def restricted_admitted?(status:, path:, label:, license:)
       relative = path.delete_prefix(@root + '/') if path.start_with?(@root + '/')
       status == PACKAGE_LOCAL ||
-        RESTRICTED.any? { |row| row.admits?(status, label, license, relative) }
+        RESTRICTED.any? { |row| row.admits?(input_status: status, input_label: label, license:, input_path: relative) }
     end
 
     def leading_notice(bytes)
