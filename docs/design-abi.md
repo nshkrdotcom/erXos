@@ -1654,12 +1654,32 @@ knows the rate, so a row of a clocked kind carries a nonzero clock,
 every other row's clock is 0, and the manifest check refuses a row that
 disagrees.
 
-A PCIe function names its host bridge by device-tree path and its bus,
-device and function; its `base` and `size` are zero, since configuration
-space gives them, and so is its `line`, except at a place a closed
+A PCIe function, selector 2, names its host bridge by device-tree path
+and its bus, device and function. `base`, `size` and `line` belong to
+the selector's `dt` case and are inactive for a function, since
+configuration space gives them, except `line` at a place a closed
 bridge's platform record lists, where it is the INTx line the bridge's
 `interrupt-map` routes for that place's pin
-([design-pcie.md](design-pcie.md#the-closed-bus)).
+([design-pcie.md](design-pcie.md#the-closed-bus)). A host bridge's row
+carries the closed flag when its platform record lists every place on
+it, and then those places, each a bus, device, function and pin. A
+device's `dma_limit` is a device address, exclusive, 0 for none, which
+the packer copies from a bridge's unit into each `pci` row behind it, and
+the function's DMA facts are cut at it
+([design-pcie.md](design-pcie.md#dma)). On QEMU `virt` the manifest's
+platform part carries `msi_frame`, the MSI frame's base, the interrupt
+id of its first line and the count, for the backend that may not read
+the frame's own registers
+([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)).
+
+A platform's firmware requests reach the system domain in the manifest
+beside the device records, each as a record of its name, its belonging
+(a device row, or the machine), its tag and its argument, in the order of
+the platform record's `firmware_requests`, so a row's index is its
+position among those of its device or the machine; the generator derives
+a machine row's tag and argument from its reading and checks every
+device row against its tag's declaration in `abi/formats/vc_property.txt`
+([design-board-sensors.md](design-board-sensors.md#the-requests)).
 
 Only an unconfined DMA device has nonzero `dma_memory`; its size is
 page-aligned and is reserved for that device for the boot. A device's

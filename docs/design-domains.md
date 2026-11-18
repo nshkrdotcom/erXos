@@ -2227,7 +2227,14 @@ queue quota.
   its own, and those the service's processes spend serving each request it
   forwarded, which the service's generated serving path reads around the
   request and returns with the reply, and those of the processes it
-  starts to act for the grantee (below). While the share lasts, the facet
+  starts to act for the grantee (below). A call one of the service's
+  processes makes on a dirty I/O scheduler counts at its elapsed time, as
+  the runtime charges it
+  ([design-runtime.md](design-runtime.md#nifs-and-blocking)), and a
+  request one of them hands to another process of the service, as the
+  device service hands a firmware request to its worker, is charged that
+  process's reductions too, which it returns with its answer
+  ([design-board-sensors.md](design-board-sensors.md#concurrency-and-failure)). While the share lasts, the facet
   takes the grantee's requests; once it is spent, the facet takes none
   until the next period, and the rest wait in the facet's queue and then
   in the grantee's lane. A request's cost reaches the account only with

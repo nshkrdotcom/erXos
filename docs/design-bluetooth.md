@@ -624,7 +624,9 @@ device has a power line.
 * **Authority.** The line service asks the device service,
   `erx_devices:power(Device, off | on)`, a call inside the system
   domain. The device service makes the kernel call through the domain
-  library, `erx_domain_lib:device_notify(Device, Index)`, with the
+  library, `erx_domain_lib:device_notify(Device, Index)`, a use of
+  `erx_domain_lib:firmware/2` for a device's row
+  ([design-board-sensors.md](design-board-sensors.md#the-requests)), with the
   resource UART0's device record holds, carved with `ERX_CARVE_DEVICE`
   from the entry the record names with notifications, as `pci_firmware/1`
   makes it for a bridge ([design-pcie.md](design-pcie.md#facets)). So the

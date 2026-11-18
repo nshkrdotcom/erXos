@@ -5432,7 +5432,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   is the `{forget, Node}` effect the hold bookkeeping item above considers, so one change closes both.
 
 * [Medium] `abi/manifest.txt`: the `devices[].selector` choice does not make `base`, `size` and `line` inactive for
-  selector 2, so a PCIe row with any of them nonzero is admitted, where `docs/design-abi.md` says they are zero; and
+  selector 2, so a PCIe row with any of them nonzero is admitted, where `docs/design-abi.md` makes them inactive; and
   nothing refuses a device-tree row whose `base + size` wraps. Add the three fields to the choice's `dt` case, decide
   the overflow rule, and give each refusal a fixture case in `test/host/abi_binary_test.rb` and
   `test/host/manifest_reader_test.rb`.
@@ -9045,11 +9045,79 @@ document's "residual risks accepted" paragraph.
   full-speed devices with control, bulk and interrupt transfers. It serves QEMU `raspi4b` alone, since a real
   Pi 4's DWC2 is the USB-C power connector's, so it comes after Track U's parts
   ([plan.md](docs/plan.md#track-u-usb)); its design keeps the three rules the USB design records.
-  ([plan.md](docs/plan.md#track-u-usb)); its design keeps the three rules the USB design records.
 * [Low] USB, SuperSpeed hubs ([design-usb.md](docs/design-usb.md#outside-this-design)): the bus core gives up a
   hub at SuperSpeed at its device descriptor (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
   design of its own, with the VL805's bulk-out burst quirk for mass storage behind such a hub that the design lists
   beside it.
+* [Medium] board sensors, [design-board-sensors.md](docs/design-board-sensors.md): not built. No erXos code reaches
+  the firmware mailbox at run time, and the device service's process and firmware worker, through which every
+  firmware request is made ([design-system.md](docs/design-system.md#devices), "Firmware requests"), do not exist:
+  `erx_devices` hands on the domain library's catalogue and keeps no state. Both come with whichever of the
+  VL805's notification, the Bluetooth power line and the sensor driver lands first; probes S1 and S2 come first.
+* [Medium] board sensors, `abi/formats/vc_property.txt` and `abi/inspection.txt`
+  ([design-board-sensors.md](docs/design-board-sensors.md#the-requests)): `vc_property.txt` does not exist and the
+  schema has no `sensors` kind. Add the property buffer's layout, the closed tag set, `fw_reading`, `fw_throttle` with
+  its span and `board_sensor_period`; add the kind `sensors` at `[sensors]`, the units `mdegC`, `uV` and `Hz`, and
+  `@fw_throttle`.
+* [Medium] ABI, `abi/erx_abi.txt` and `abi/manifest.txt` ([design-kernel.md](docs/design-kernel.md#firmware-requests),
+  [design-board-sensors.md](docs/design-board-sensors.md#the-requests)): no status `proto` (`ERX_EPROTO`), no
+  `erx_firmware_request` in the machine family, and no firmware request record (name, belonging, tag, argument) in
+  the system manifest from the platform record's `firmware_requests`. Add the three.
+* [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
+  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): no rows for the PCIe and USB kinds. Add `pci_ecam`
+  (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration`, and `qemu-xhci` and
+  the VL805 by PCI identity and position with role `usb`, each with its SVD peripheral; the PCIe-arm item under the
+  domain library (`dom_boot_view.c`, `boot_devices`) lands with it.
+* [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#what-the-usb-domain-claims)): no
+  `usb` device role and no `drive` field in `erx_mf_window`. Add both, the field set exactly when the window's device
+  has the `usb` role, and property 9 of the manifest check: at most `usb_drives_max` drives per controller, each
+  (device, drive, partition) once, and a release build's USB domain holding its controller's unit alone and serving
+  no file system.
+* [Medium] system manifest, `abi/manifest.txt` ([design-abi.md](docs/design-abi.md#devices-and-partition-windows),
+  [design-pcie.md](docs/design-pcie.md#dma)): no `dma_limit` in `erx_mf_device`, no closed flag with its listed places
+  and pins on a bridge's row, and no `msi_frame` platform part on QEMU `virt`. Add them, with the packer's copies from
+  the platform record; the `dt`-case item under Bugs covers `base`, `size` and `line`.
+* [Medium] USB, `abi/inspection.txt` ([design-usb.md](docs/design-usb.md#failure-handling)): no `usb` kind. Declare
+  `[usb, Controller]`, `[usb, Controller, ports, Route]`, `[usb, Controller, devices, Route]` and the other paths
+  Failure handling lists, shown under `/proc/usb`.
+* [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
+  [design-generation.md](docs/design-generation.md#register-inputs)): no `xhci/xhci.svd`, no ECAM file and no BCM2711
+  bridge file. Write `xhci.svd` from FreeBSD's `xhcireg.h` and the xHCI specification's register chapters, its three
+  movable clusters marked with the capability field their base comes from and its owned registers marked; the
+  BCM2711 bridge's registers from the facts record's register map and `bcm2838_pci.c`; and the ECAM and BCM2711
+  configuration-space views (8-, 16- and 32-bit accesses at a computed offset, bounded by the window), with the
+  generator's support for both extensions.
+* [Medium] USB, `tools/lib/erx/chokepoint_rules/device.rb` ([design-usb.md](docs/design-usb.md#the-block-transport)):
+  `device-posters` names neither `erx_xhci` as a poster of `erx_device:post/4` nor `erx_blk_write` as the one caller
+  of `erx_usb_pipe:bulk_out/3`, and nothing holds `erx_device` to `erx_xhci` within `erlang/apps/erx_usb/`. Add the
+  three, each with a seeded violation.
+* [Low] USB, `abi/formats/evdev.txt` ([design-usb.md](docs/design-usb.md#the-usage-table)): the key codes FreeBSD's
+  `evdev_usb_scancodes` maps that the file lacks (keypad keys, F13 to F24, `KEY_102ND`, `KEY_COMPOSE` and the others).
+  Add them, since the file holds every code erXos reads.
+* [Medium] docs, design-system.md: the edits design-usb, design-pcie and design-board-sensors require of it are not
+  made. A `usb` device role and a `drive` field in `erx_mf_window` with manifest property 9
+  ([design-usb.md](docs/design-usb.md#what-the-usb-domain-claims)); a USB device as a sub-device of its controller's
+  unit that enters no catalogue; the bridge's `pci_bus:firmware/1` request made through
+  `erx_domain_lib:pci_firmware/1`, marking `firmware_lost` at a timeout
+  ([design-usb.md](docs/design-usb.md#the-vl805s-firmware)); the device service's PCIe process, its core and
+  monitors, the hold of `pci` rows at boot, `/dev`'s PCIe fields and `erx_domain:await_grant/2`
+  ([design-pcie.md](docs/design-pcie.md#facets)); and the device service's `firmware_rows/1` and `firmware_read/1`
+  through its firmware worker, the sensor driver among its callers
+  ([design-board-sensors.md](docs/design-board-sensors.md#concurrency-and-failure)).
+* [Low] docs, design-live.md "The /proc tree": `/proc/sensors/status` is not among its paths
+  ([design-board-sensors.md](docs/design-board-sensors.md#procsensors-and-the-inspector)).
+* [Low] docs, design-scheduler.md "Service work" (under the review freeze): a call a service's process makes on a dirty
+  I/O scheduler counts at its elapsed time, and a request one of its processes hands to another is charged that
+  process's reductions too, returned with its answer, as design-domains.md's admission by measured reductions says.
+* [Medium] docs, design-storage.md: the transport is reached by its pid (`erx_blk_bot` per medium is not registered),
+  but "The transport" still calls it the device process registered as `erx_blk`, and the transport contract's calls
+  (`erx_blk:read(Sector, Count)`, `{error, no_device}` when no device process runs) take no pid. Restate the contract
+  over a transport pid and say what `no_device` means for a dead pid.
+* [Medium] docs, the firmware request contract is written out in design-kernel.md "Firmware requests",
+  design-usb.md "The VL805's firmware" and design-board-sensors.md "The kernel call", and the copies already differ
+  (the zero response word's exception, the UTCB tail's zeroing, the cache clean before posting). Make design-kernel
+  the one owner; design-usb keeps the VL805's tag, authority path and `firmware_lost`, design-board-sensors the rows,
+  the request layout and the checks.
 * [Low] apps, [design-packaging.md](docs/design-packaging.md#the-apps-row): a setting for the apps group's
   CPU share of `users`. The apps group takes what the principals' shares leave, each app an equal part, with
   no field of the `apps` row to set it; a builder who wants apps held to a smaller share has no lever.

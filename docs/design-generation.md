@@ -248,7 +248,16 @@ registers keep their own names. The copied registers lead both tables at the sam
 indices, and the table records the peripheral a kind derives from, so the device NIF
 treats every kind as its transport. The virtio-mmio transport is such a cluster, and
 each device kind a peripheral that copies it and adds its configuration fields
-(`hw/svd/virtio_mmio/virtio_mmio.svd`). Other inheritance fails. An access
+(`hw/svd/virtio_mmio/virtio_mmio.svd`). Other inheritance fails.
+A PCIe bridge's configuration space is a peripheral of its own, for the
+ECAM window and for the BCM2711 bridge's index and data registers alike,
+whose view takes 8-, 16- and 32-bit accesses at an offset computed from
+a function's place and the register, each access bounded by the window
+([design-pcie.md](design-pcie.md#the-bridge-seam)). A cluster whose base
+the controller reports, as xHCI's are, names in an extension the
+capability register and field its base comes from, and the generator
+checks that both exist
+([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)). An access
 sequence a device's specification prescribes and SVD cannot express is
 declared in the device's `vendorExtensions` in erXos's own namespace and
 emitted as one function per sequence, with its barriers

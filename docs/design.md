@@ -619,7 +619,7 @@ owning design states its rules with their mechanism. The index:
 
 | Rule | Protects | Owner |
 | --- | --- | --- |
-| the kernel's own rules: capability slots, UTCB and record accessors, memory windows, user addresses, the charging funnel, no FP or SIMD, `musttail`-only recursion, the early console, the firmware mailbox | the kernel's invariants, the reach of firmware requests | [design-kernel.md](design-kernel.md#chokepoint-checks), [design-board-sensors.md](design-board-sensors.md#the-construction-the-firmwares-requests-are-rows-of-the-platform-record) |
+| the kernel's own rules: capability slots, UTCB and record accessors, memory windows, user addresses, the charging funnel, no FP or SIMD, `musttail`-only recursion, the early console, the firmware mailbox, which after boot sends only rows of the checked platform record, each tag in a closed set and read back at most its window | the kernel's invariants, the reach of firmware requests | [design-kernel.md](design-kernel.md#chokepoint-checks), [design-board-sensors.md](design-board-sensors.md#the-construction-the-firmwares-requests-are-rows-of-the-platform-record) |
 | an architecture's terms appear only in its layer and its documents (`make check-arch-terms`) | portability | [design-kernel.md](design-kernel.md#chokepoint-checks) |
 | only `liberx` issues kernel calls; only its `fiasco` backend touches Fiasco | the kernel seam | [design-kernel.md](design-kernel.md#chokepoint-checks) |
 | only the backend's charging file makes a Fiasco call that charges a quota (`fiasco-charge`) | every refusal of kernel memory is `ERX_ENOMEM`, undone | [design-fiasco.md](design-fiasco.md#the-chokepoint) |

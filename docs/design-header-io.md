@@ -109,7 +109,7 @@ Further facts that shape the design:
   22 to 27 in ALT4 for the ARM's JTAG (same file). The firmware sets no
   pins from an overlay
   ([design-platforms.md](design-platforms.md#raspberry-pi-4-model-b)).
-* **The tree writes `config.txt` today** (`tools/lib/erx/boot_partition.rb`):
+* **erXos writes `config.txt`** (`tools/lib/erx/boot_partition.rb`):
   `enable_uart=1`, which puts GPIO 14 and 15 in ALT5; the host link's
   pins as a hard-coded table, `OVERLAY_PINS` (`gpio=4=a4,pn`,
   `gpio=5=a4,pu`, line 79); and, on a development card only,
@@ -187,20 +187,6 @@ QEMU 11.1.3, `qemu-system-aarch64 -M raspi4b -S` with the monitor's
 Which `i2c-bus.N` is which base, how the interrupts are wired, whether
 the flash's chip select is connected and whether GPIO output reads back
 on GPLEV are not shown; the QEMU suite below settles them.
-
-### What erXos does today
-
-Nothing drives the header. The Pi 4's platform record
-(`config/platforms/raspi4b.json`) has the console's, the host link's, the
-network's, the SD controller's and the framebuffer's units, and its
-development manifest (`config/manifest/raspi4b-development.txt`) places
-them in the system, network, storage and display domains; there is no
-devices domain yet. The placement table of
-[design-platforms.md](design-platforms.md#what-the-manifest-says) puts
-I2C and the SPI controllers outside the mini UART's unit in the devices
-domain, a TPM module with the SPI controller it sits on in the vault's
-domain, and the GPIO controller in no domain. `config.txt` sets the
-console's, the host link's and JTAG's pins as above.
 
 ## The construction: one map of the header
 
@@ -990,25 +976,25 @@ units (property 8); a `gpio` row's `pins` outside the map's `gpio` rows;
 host. Each case is paired with a seeded fault that must make it fail,
 so the case is known to reach the code it tests.
 
-| Test | Passes when | Seeded fault that must fail it |
-| --- | --- | --- |
-| `erx_hold`, exhaustive over two grants, two resources and every order of open, close, end and operation up to depth 6 | at most one holder per resource; `ebusy` exactly when another grant holds it; a resource with no handle of its holder is released exactly once; an operation is applied exactly when its handle is an open handle of the current holder, so the order end(A), open(B), operation(A) refuses the last | releasing at the first close instead of the last, which a grant with two handles exposes; the operation check removed, which that order exposes |
-| `erx_gpio_core` register writes | `out 1` on GPIO 17 changes only bits 21 to 23 of GPFSEL1 and sets bit 17 of GPSET0; `pull up` on GPIO 21 changes only bits 10 and 11 of PUP_PDN_CNTRL_REG1; `out 1` on GPIO 21 leaves GPFSEL2's bits for GPIO 28 and 29 as read | a function shift of `3 * (pin rem 10) + 1`; a GPFSEL write that is not a read-modify-write, which zeroes GPIO 28 and 29 |
-| `erx_gpio_core` served set | every request for a pin outside `PINS` is refused, for every pin 0 to 27 and each of the map's rows | the `PINS` check removed |
-| `erx_gpio_core` events | a GPEDS0 value with bits inside and outside `PINS` clears and counts only those inside | clearing the whole register |
-| `erx_bsc_core` repeated start, against a BSC model that ends a write with a stop as soon as DLEN bytes have left an empty FIFO and READ and ST are not pending, with any number of idle polls inserted between any two steps | a `reg8` read gives a repeated start and the read's bytes, for every insertion | the register address written to the FIFO before the first ST, as in DS 3.3.2, which the model ends with a stop when polls are inserted before READ and ST |
-| `erx_bsc_core` errors | a status with ERR answers `eio`, CLKT `etimedout`, and a status that never shows work `etimedout` at the stall limit | ERR ignored; the stall limit removed, which the test's own timeout catches |
-| the stall limit, `erx_spi_core` against a model controller with a clock | a 4096-byte transfer at 10 MHz with a 20 ms pause of the driver in its middle completes; a controller that stops moving bytes fails at 10 ms plus four FIFO times | the stall clock counted from the transfer's start instead of the last poll that found work, which fails the paused healthy transfer |
-| `erx_spi_core` transfer | against a register model that loops MOSI to MISO, every length from 1 to 200 returns what was sent | one byte dropped when the FIFO refills |
-| `erx_spi_core` held transfer | three chunks keep TA set from the first to `done`; a deadline clears TA and both FIFOs and answers `etimedout` | TA cleared between chunks |
-| the `data` response | a 4-byte response read as 1 byte and then 3 returns all four in order; a write with bytes unread answers `ebusy` | the rest dropped after a short read |
-| the vault's TPM framing step, with the vault's TPM design, against a model TPM that inserts 0 to 3 wait states on reads and writes | each transaction carries its data once, after the last wait state | the data sent right after the header without looking at the last bit |
-| `erx_pwm_core` | 27 MHz, 20 ms period, 1.5 ms duty gives RNG 540000 and DAT 40500; 100 ns gives 3 ticks (2.7); duty above period and zero ticks are refused | rounding down instead of to nearest, which the 100 ns case exposes |
-| `erx_rtc_ds3231` | known register images, in 24-hour and 12-hour mode, decode to their seconds and encode back in 24-hour mode with the century bit clear; 12 AM is hour 0, 12 PM hour 12, 11 PM hour 23; a non-decimal nibble, 60 seconds, February 30, month 13 and a set century bit are `eio`; OSF gives `einval`; the status written after a set clears OSF and writes A1F and A2F as 1 | the nibble check removed; 12 AM taken as hour 12; the century bit ignored |
-| the header map reader | the Pi 4's map is accepted and gives the `config.txt` lines and the `PINS` mask above | for each refusal of the reader, one map that breaks only it: a missing pin, a function not the pin's, the console on GPIO 13, `SDA1` on an SPI0 row, SPI0 without SCLK, a `gpio` row with a function, a driven bus that no row names |
-| the `config.txt` writer | the Pi 4's card has `gpio=2-3=a0,pn`, SPI0's and UART3's lines, none for GPIO 18 and 19, `core_freq=500`, `core_freq_fixed=1`, and `enable_jtag_gpio=1` on a development card only | `jtag` rows written as `gpio=` lines on a release card |
-| property 8's pin controller clause | the Pi 4's development manifest passes, with `gpio` given to no domain | the same manifest giving `gpio` to the devices domain, which fails naming property 8 and the unit |
-| `gpio_grant` and `rtc_grant` | the development manifest passes | a `pins` holding GPIO 14; two `rtc` rows with different addresses; an `rtc` row whose `bus` names SPI0 |
+| Test | Seeded fault that must fail it |
+| --- | --- |
+| `erx_hold`, exhaustive over two grants, two resources and every order of open, close, end and operation up to depth 6 | releasing at the first close instead of the last, which a grant with two handles exposes; the operation check removed, which the order end(A), open(B), operation(A) exposes |
+| `erx_gpio_core` register writes | a function shift of `3 * (pin rem 10) + 1`; a GPFSEL write that is not a read-modify-write, which zeroes GPIO 28 and 29 |
+| `erx_gpio_core` served set | the `PINS` check removed |
+| `erx_gpio_core` events | clearing the whole register |
+| `erx_bsc_core` repeated start, against a BSC model that ends a write with a stop as soon as DLEN bytes have left an empty FIFO and READ and ST are not pending, with any number of idle polls inserted between any two steps | the register address written to the FIFO before the first ST, as in DS 3.3.2, which the model ends with a stop when polls are inserted before READ and ST |
+| `erx_bsc_core` errors | ERR ignored; the stall limit removed, which the test's own timeout catches |
+| the stall limit, `erx_spi_core` against a model controller with a clock | the stall clock counted from the transfer's start instead of the last poll that found work, which fails the paused healthy transfer |
+| `erx_spi_core` transfer | one byte dropped when the FIFO refills |
+| `erx_spi_core` held transfer | TA cleared between chunks |
+| the `data` response | the rest dropped after a short read |
+| the vault's TPM framing step, with the vault's TPM design, against a model TPM that inserts 0 to 3 wait states on reads and writes | the data sent right after the header without looking at the last bit |
+| `erx_pwm_core`, with a case of 100 ns at 27 MHz giving 3 ticks | rounding down instead of to nearest, which the 100 ns case exposes |
+| `erx_rtc_ds3231` | the nibble check removed; 12 AM taken as hour 12; the century bit ignored |
+| the header map reader | for each refusal of the reader, one map that breaks only it: a missing pin, a function not the pin's, the console on GPIO 13, `SDA1` on an SPI0 row, SPI0 without SCLK, a `gpio` row with a function, a driven bus that no row names |
+| the `config.txt` writer | `jtag` rows written as `gpio=` lines on a release card |
+| property 8's pin controller clause | the same manifest giving `gpio` to the devices domain, which fails naming property 8 and the unit |
+| `gpio_grant` and `rtc_grant` | a `pins` holding GPIO 14; two `rtc` rows with different addresses; an `rtc` row whose `bus` names SPI0 |
 
 **Fuzz targets**, landing with the parsers: the trees' `ctl` lines and
 walk names, one target over the grammars; the RTC's register decoder;

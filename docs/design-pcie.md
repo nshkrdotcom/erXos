@@ -15,8 +15,7 @@ MSI frames and PCIe bridges of
 [design-platforms.md](design-platforms.md#pcie-bridges), the
 `ERX_IRQ_MSI` object of [design-kernel.md](design-kernel.md#irq-objects)
 and the device records of
-[design-fiasco.md](design-fiasco.md#device-records), and says where
-each of them changes.
+[design-fiasco.md](design-fiasco.md#device-records).
 
 Decisions every reader needs:
 
@@ -134,35 +133,6 @@ record" by section. No Linux, QEMU or U-Boot source was read for this
 design. The PCI specifications were not obtained; every register offset
 and bit used here is FreeBSD's `pcireg.h`, and a statement that rests on
 the specifications alone is marked unverified.
-
-### What the tree does today
-
-No PCIe domain exists. Property 3 of the manifest says the Raspberry Pi
-4 drives no bridge ([design-system.md](design-system.md#the-manifest)),
-and its Phase 1 row allows no holder of configuration space and places
-no `pci` device on QEMU `virt`
-([design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)).
-The manifest already has a `pci` selector: a row names its host bridge
-by device-tree path and its bus, device and function
-(`abi/manifest.txt`, `erx_mf_device`; the choice at `:452-461`), with
-`base`, `size` and `line` zero ([design-abi.md](design-abi.md)). The
-domain library's boot view gives such a row no range, no line and no
-kind, so it is held and not driven (`liberx/system/dom_boot_view.c`,
-`boot_devices`, `:363-442`; a `TODO.md` item). `erx_irq_create` of
-`ERX_IRQ_MSI` is `ERX_ENOTSUP` on Fiasco
-(`liberx/backend/fiasco/irq.c:188`). Fiasco's give makes a
-device's memory with `erx_mem_create_contiguous_in` inside the DMA range
-of the device's catalogue facts, CPU addresses `cpu` through `last`
-seen by the device from `bus` (`liberx/system/dom_apply.c:420-425`,
-`erx_boot_dma_range`; `liberx/backend/api.h:166-181`). The device-tree
-reader does not take a PCI host bridge's three-cell `dma-ranges`, so a
-PCIe function gets no DMA range
-([design-device-tree.md](design-device-tree.md#the-reader)), and it reads
-no bridge's `ranges`, `bus-range` or `interrupt-map`. The device service,
-`erx_devices`, hands on the library's catalogue and keeps no state. The
-QEMU harness starts `virt` with its MSI frame under TCG
-([design-platforms.md](design-platforms.md#msi-frames)) and attaches no
-PCIe function (`tools/lib/erx/qemu.rb`).
 
 ### The consumers
 
@@ -1414,34 +1384,6 @@ the VL805's snapshot gives its header type, BARs and pin, and the root
 port's BARs (probe B4); the keep-or-reset decision is logged at each
 start; the USB design's probes B1, B2, B5 and B8 settle the firmware,
 the line, the DMA limit and the abort's kind.
-
-## Changes to other designs
-
-Made in their owning documents with this design:
-
-| Document | Change |
-| --- | --- |
-| [design.md](design.md) | the index row; SD1's summary: MSI except on a closed bus |
-| [design-shared-devices.md](design-shared-devices.md) | the closed bus's exception to "MSI only" in the decisions, the unit rule's line relation, the PCIe INTx paragraph and SD1; a closed bus is one whose platform record lists every place on it with its pin |
-| [design-system.md](design-system.md) | property 3: the Pi 4 drives its bridge, and a `pci` row's line only at a closed bridge's listed place; the PCIe paragraph: the BCM2711's access, the layout and setting, the closed bus, the give enabling nothing, the holder's requests through `pci`, the restart's rule; Resets: a PCIe function's reset after its `open`, and `reset` through `pci`; Security: the enumerator's crash ends its domain |
-| [design-platforms.md](design-platforms.md) | the Pi 4's PCIe bridge driven by the PCIe domain as a closed bus, in the platform table, the placement table, the Pi 4's section and PCIe bridges; the VL805 driven through the PCIe domain in the bus masters row; a PCIe function's DMA range cut at its `dma_limit`; the MSI frame's range on Fiasco |
-| [design-usb.md](design-usb.md) | its sections on the PCIe domain, the BCM2711 bridge, the Pi 4's interrupt and the Phase 1 part, and its VL805 firmware section, cite this design for what they share: the give programs no MSI and enables nothing, `open` and `master` do; the BCM2711's access refuses every place its platform record does not list; the notification is `pci_bus:firmware/1`, which the device service makes through `erx_domain_lib:pci_firmware/1`; a VL805 whose firmware stays absent is reported `not_ready` and stays out of the catalogue until a later start of the PCIe domain finds it loaded, which after a timed-out notification is the next boot, by the bridge's `firmware_lost` in the library, which the device service's call marks and the intake reads, so no keep of the bridge at a later start admits it; its contiguous memory is made from its DMA facts with `erx_mem_create_contiguous_in`, not with a limit passed to `erx_mem_create_contiguous` |
-| [design-fiasco.md](design-fiasco.md) | property 3's Phase 1 row: one `pcie` domain on QEMU `virt` and the Pi 4 |
-| [design-abi.md](design-abi.md) | a `pci` row's `line` at a closed bridge's listed place |
-| [design-kernel.md](design-kernel.md) | `ERX_IRQ_MSI`: the enumerator writes an MSI route, the holder's NIF an MSI-X table; `erx_dma_ranges` reads a PCI host bridge's three-cell `dma-ranges` |
-| [design-device-tree.md](design-device-tree.md) | the reader takes a PCI host bridge's three-cell `dma-ranges`, and its fixture translates a function through them |
-
-Required of other documents, each their own revision:
-
-| Document | Change |
-| --- | --- |
-| [design-device-tree.md](design-device-tree.md) | the reader takes a PCI host bridge's three-cell `ranges`, its `bus-range` and its `interrupt-map` by pin, with fuzz seeds; the DMA facts of a `pci` row cut at its `dma_limit` |
-| `abi/manifest.txt`, [design-abi.md](design-abi.md) | `dma_limit` in `erx_mf_device`, a device address, exclusive; the closed flag on a bridge's row and its listed places and pins; the manifest's `msi_frame` platform part on QEMU `virt`; the `dt` case's `base`, `size` and `line` made inactive for selector 2 except `line` at a closed bridge's place (the `TODO.md` item) |
-| [design-fiasco.md](design-fiasco.md) | `ERX_IRQ_MSI` over the frame's lines; the given record of a PCIe function (its place, a window per BAR with its hardware size, an MSI-X route's doorbell and table); the give in the root |
-| [design-runtime.md](design-runtime.md#the-device-nif) | the NIF writes every MSI-X table entry from its record, entry 0 live and the rest masked, and reads entry 0 back; it opens a record with several BAR windows |
-| [design-generation.md](design-generation.md#register-inputs) | SVD files for the ECAM window and the BCM2711 bridge whose configuration-space views take 8-, 16- and 32-bit accesses at a computed offset, bounded by the window |
-| [design-system.md](design-system.md) | the device service's PCIe process, its core and its monitors; the hold of `pci` rows at boot; `/dev`'s PCIe fields; `erx_domain:await_grant/2`, the wait for a configured grant to the system domain bound to the server's incarnation ([Facets](#facets)), answered beside `erx_domain:system_namespace/0`'s callers |
-| `include/erx/device_kinds.h` | rows `pci_ecam` (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`), role `configuration` |
 
 ## Alternatives considered
 

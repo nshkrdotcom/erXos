@@ -377,6 +377,10 @@ host bridge's own `dma-ranges`, as
   and `2^64 - 1`. The range is present only when exactly one window
   remains. Which RAM inside it holds DMA memory is decided where the
   memory is made ([Facts into records](#facts-into-records)), not here.
+  For a PCIe function the range is then cut at its row's `dma_limit`, a
+  device address, exclusive: `last` becomes the highest CPU address whose
+  device address lies below it, so a bridge that translates keeps its
+  offset ([design-pcie.md](design-pcie.md#dma)).
 
 Its status is `ok`, `no_node`, `coherence` (as above), `cells` (a cell
 count other than 1 or 2), `malformed` (an entry not a whole number of
@@ -387,6 +391,19 @@ that RAM backs). A row naming the root as a device's node has no bus and
 is `malformed`; a path that is not absolute, or names no node, is
 `no_node`. Any status but `ok` makes both DMA facts absent, so a
 device never has a range without its coherence.
+
+**A PCI host bridge.** For a host bridge's row the reader also takes the
+bridge's `ranges`, whose child addresses take the same three cells as
+its `dma-ranges`, an entry of I/O space skipped; its `bus-range`; and its
+`interrupt-map`, each entry matched under its `interrupt-map-mask`, which
+for the BCM2711 keeps only the pin, so a closed bus's place
+takes the line the map routes for its position's pin. They are the
+windows, bus span and lines of the bridge's record that the device
+service hands the PCIe domain ([design-pcie.md](design-pcie.md#records),
+[design-pcie.md](design-pcie.md#the-closed-bus)), and the image suites
+check the line a closed bridge's platform record gives each place
+against the map in the platform's tree
+([design-abi.md](design-abi.md#devices-and-partition-windows)).
 
 **What the reader cannot check.** The reader checks the tree's encoding
 and that what it reads fits together; it cannot check that the hardware
@@ -564,7 +581,10 @@ ran.
   fixtures for every status the reader names (coherence marks on a bus
   or both on a node, `dma-coherent = <0>`, a missing `dma-ranges` level,
   two memory ranges with no non-empty level, a PCI host bridge's
-  three-cell `dma-ranges`, a level split 1,024 ways). The card's tree
+  three-cell `dma-ranges`, a level split 1,024 ways, a host bridge's
+  three-cell `ranges` with a memory and an I/O entry, an `interrupt-map`
+  with and without an entry for a place's pin, a PCIe function's range
+  cut at its `dma_limit`). The card's tree
   leaves the memory node as zeros, so every DMA device there reads
   `ranges` until the firmware fills it. A test fails on any manifest DMA
   device whose facts are absent in its platform's tree, so a board tree
@@ -572,7 +592,8 @@ ran.
   nearest marked ancestor; the marks tested for presence only; the
   translation through the level above the first non-empty one dropped;
   the windows cut to RAM; a PCIe function's walk started above its host
-  bridge; the windows' bound removed, which overruns the walk's array
+  bridge; the map's pin match dropped, so a closed place takes the first
+  entry's line; the windows' bound removed, which overruns the walk's array
   under ASan.
 * **The firmware's edits**, over fixtures made from the card's tree (a
   different `emmc2bus` range, `local-mac-address`, a zero placeholder
@@ -584,7 +605,8 @@ ran.
   test run over the whole property instead of the bytes given.
 * **The fuzz target**, `tools/fuzz/dt_fuzz.c`, landing with the reader:
   arbitrary bytes into `erx_dt_accept`, and an accepted view into
-  `erx_dt_device`, `erx_dt_framebuffer`, `erx_dt_registers` and
+  `erx_dt_device`, the host bridge's `ranges`, `bus-range` and
+  `interrupt-map` reads, `erx_dt_framebuffer`, `erx_dt_registers` and
   `erx_dt_seeds`, under ASan and UBSan, with the platforms' trees, the
   fixtures and a truncated and a nested tree as its corpus, each in a
   buffer of exactly its length. Seeds: `fdt_check_header` called before

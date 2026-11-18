@@ -2727,6 +2727,12 @@ the name its driver gives it and the NIF does not read
 ([design-fiasco.md](design-fiasco.md#device-records)), whether it is
 coherent, and which descriptor forms of the ABI file it uses
 ([design-device-dma.md](design-device-dma.md#device-addresses-and-reach)).
+A PCIe function's record carries a register window for each placed
+memory BAR, each with its BAR's hardware size, and, for an MSI-X route,
+its doorbell, data and the table's BAR, offset and size; at open the NIF
+writes every entry of the table from the record, entry 0 live and the
+rest masked, and reads entry 0 back
+([design-pcie.md](design-pcie.md#interrupts)).
 
 **What the NIF keeps.** The NIF keeps one record for each device the
 domain holds, a small integer its driver names it by, for the boot, since the manifest gives each device one
@@ -2783,7 +2789,14 @@ registers and adds the configuration fields its driver uses
 and the device kinds table names that peripheral for the kind's records, which the NIF opens as that peripheral and no other. A field
 the peripheral does not declare cannot be reached, and a read-only one cannot be
 written, so the input driver can write only `select` and `subsel`, each one
-byte, as virtio 1.2 sections 4.2.2.2 and 5.8.5.1 require. Every
+byte, as virtio 1.2 sections 4.2.2.2 and 5.8.5.1 require. A cluster whose base
+the controller reports, as xHCI's operational, runtime and doorbell registers
+are, is marked in the SVD source with the register and field its base comes
+from; at open the NIF reads each base once, checks that the cluster lies wholly
+inside the window and refuses the record with `{error, einval}` otherwise, and
+follows the controller's extended-capability list once, at most 64 entries,
+each forward of the last, so every name then resolves to a fixed offset
+([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)). Every
 register of a peripheral the NIF drives carries a mark in the SVD source,
 `ownedByNif`, saying whether the NIF owns it, and the generator refuses a
 register without the mark. The NIF owns every register through which a
@@ -2998,6 +3011,10 @@ reads it: the used index first, then the entries and each buffer's bytes
 it copies, once the index says they are done; GENET's register ring and SDHCI's
 ADMA2 table complete in their own forms, with the same answers
 ([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)).
+The xHCI controllers' TRB ring form takes requests of its own through
+`post/4`, a transfer on an endpoint's queue or a command to the
+controller, and `complete/2` answers each with its completion
+([design-usb.md](design-usb.md#the-trb-ring-form)).
 
 **The reset rule.** A posted buffer belongs to its queue until the
 device returns it: it goes back to its pool only through `complete/2` or

@@ -783,6 +783,20 @@ least, each spaced. A driver that resets the controller itself calls
 `negotiate/2` before its next DMA transfer; until then `command/2`
 refuses, since it reads back the fields the reset cleared.
 
+**The TRB ring form (xHCI).** A fourth form, which the USB host
+controllers use, is defined with its driver in
+[design-usb.md](design-usb.md#the-trb-ring-form) and keeps this design's
+rules: its regions each start on a granule and name their one writer,
+the controller's scratchpad pages never read by the CPU; each queue has
+states and accepts in each only the commands its table lists; its device
+and endpoint contexts are built from bounded parameters alone; a post
+publishes in two steps; its transfer rings are padded so that the
+enqueue position never rests on a link TRB; its completion knows a
+transfer's stages and each queue's stop span; its event ring is bounded;
+its address width is read from the controller's `AC64`; and its
+`negotiate/2` takes one step a call, answers `{error, ebusy}` until its
+last, and opens both of the controller's interrupt gates.
+
 ## The architecture layer
 
 Generic code names cache maintenance and barriers only: `erx_dma_clean`
@@ -857,6 +871,7 @@ adds:
 | `complete/2`, `post/4` | `{error, broken}` | the device reported an index or a length beyond its bound, or an ADMA2 transfer reported an error, until `negotiate/2` |
 | `negotiate/2` | `{error, ebusy}` | the device's idle report does not show yet, or, for ADMA2, the install has writes left |
 | `write/3`, `write_field/4` | `badarg` | a write that would change an owned field |
+| `post/4`, `complete/2`, `negotiate/2` on the TRB ring form | `{error, halted}`, `badarg`, `{error, broken}`, `{error, erange}` | as [design-usb.md](design-usb.md#the-trb-ring-form) lists them: a queue whose state refuses the request; a command or context outside its bounded parameters; an event that fails the form's checks or passes the ring's bound, until `negotiate/2`; memory above the address width `AC64` gives |
 | the root at boot | gives the device no DMA memory, with a line naming it | the tree gives the device no single window that RAM backs, marks coherence on a bus above it or both ways on its node, or its DMA memory would lie outside the range |
 
 ## Verification
