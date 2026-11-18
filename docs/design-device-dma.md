@@ -10,7 +10,7 @@ either. This document says how the device NIF
 ([design-runtime.md](design-runtime.md#the-device-nif)) keeps the CPU and
 such a device in agreement, how it learns the address at which a device
 sees memory, which registers the NIF must own so that no driver can aim a
-device at memory, and the three descriptor forms the NIF drives. It
+device at memory, and the descriptor forms the NIF drives. It
 refines the DMA envelope of
 [design-kernel.md](design-kernel.md#dma-and-the-iommu) and the device
 NIF; the AArch64 instructions are in
@@ -617,7 +617,7 @@ interrupt enables again after it
 `sdhci.c:385-404`). Which other fields each reset clears no source read
 here lists in full, and the design does not need it to.
 
-## The three descriptor forms
+## The descriptor forms
 
 Each form is a pure core beside `erx_device_queue` whose round function
 returns its observations and decisions. `queue_create/4`, `post/4`, `post_frame/5`,

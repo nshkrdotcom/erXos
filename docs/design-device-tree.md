@@ -220,8 +220,8 @@ A failure of any step, or a packed tree longer than
 does. `ERX_BOOT_TREE_MAX` is 1 MiB, a limit of `abi/kernel.txt`, many
 times the packed tree of either platform.
 
-The handoff record gains two fields after its last, `tree_start` and
-`tree_size`, each a `u64`;
+The handoff record carries the copy as two fields, `tree_start` and
+`tree_size`, each a `u64` ([`abi/kernel.txt`](../abi/kernel.txt));
 `erx_boot_handoff_accept` refuses, with the reason `tree_range`, a start
 that is not page-aligned, a length of 0 or above `ERX_BOOT_TREE_MAX`, or a
 range whose end overflows. The view it returns carries the range. In its
@@ -613,7 +613,7 @@ ran.
   `fdt_check_full`; the header's `totalsize` passed to `fdt_check_full`
   instead of `size`; the reader built with the Fiasco kernel copy's
   assumption mask.
-* **The handoff.** `boot_handoff_fuzz.c` covers the two new fields; a
+* **The handoff.** `boot_handoff_fuzz.c` covers `tree_start` and `tree_size`; a
   host test refuses an unaligned start, a zero length and an overflowing
   end with `tree_range`. Seed: the alignment test removed.
 * **The chokepoint.** The build check of `libfdt.h`'s includers. Seed: a

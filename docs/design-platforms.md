@@ -409,7 +409,7 @@ and an Ethernet header, or more than the buffer, are dropped. The device NIF
 consumes every descriptor, so a bad frame never stalls the ring, and
 refuses a producer index more than a ring ahead and a length past the
 buffer as controller faults
-([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)).
+([design-device-dma.md](design-device-dma.md#the-descriptor-forms)).
 A clause 22 MDIO operation polls while busy up to 1,000 times 10 us apart,
 then reports `read_failed` or `timeout`. The PHY's state machine refuses
 any PHY but the BCM54213PE (OUI `0x18c086`, model `0x0a`), sets the
@@ -695,7 +695,7 @@ to keep:
    reset rule). For every descriptor form, `negotiate/2` writes the
    device's reset first and installs nothing until the device's own
    report that it holds no descriptor
-   ([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)):
+   ([design-device-dma.md](design-device-dma.md#the-descriptor-forms)):
    * virtio's status read back as 0, which by the virtio 1.2
      specification, csd01, sections 2.4.1 and 2.4.2, tells that the
      device has finished its reset and does not touch its queues until
@@ -1750,7 +1750,9 @@ has the steps.
 order, whatever answers DHCP and TFTP on the board's network chooses the
 kernel it runs, and that kernel then reads the card's `/data`, the SSH host
 key among it, and root's `authorized_keys`, so a board leaves the desk with
-the bootloader's SD card boot order restored.
+the bootloader's SD card boot order restored. It is the one exception to
+the installation's microSD-only boot order
+([design-usb.md](design-usb.md#the-bcm2711-bridge)).
 
 A network boot loads no slot's partition, so the boot is taken to name no
 slot and come up as an unknown boot ([The booted

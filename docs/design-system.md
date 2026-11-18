@@ -3675,7 +3675,10 @@ domain has a name at the machine's host, and a name binds to a principal
 for the boot at its first use: the domain service refuses a creation
 whose name a living domain holds, or another principal has bound, with
 `{error, name_taken}`. The name is free again for its principal at the
-domain's end, and never for another principal within the boot. The
+domain's end, and never for another principal within the boot. A name
+binds for the boot rather than being assigned to a principal in the
+manifest, so naming needs no administration, at the cost that a name
+need not mean the same principal across boots. The
 manifest's configured domains bind theirs to the system principal at
 boot, so no principal can take `storage` or `vault`. Each principal
 binds at most its `names` quota of names, 64 by default
@@ -4493,9 +4496,10 @@ seeded faults.
   one clause: a `hostile` unconfined device given to a storage domain
   that also holds data windows, `web` listed among the host link's
   facets, a plain-HTTP listener for the web domain, and an unconfined
-  device given to the web domain; property 13's leaves the reserve on the
-  whole of `system` but not on the CPUs of the system domain's own
-  threads. The boot order over chains, trees and cycles,
+  device given to the web domain; property 13's gives the configured
+  service domains rates that sum to more than `system`'s rate less
+  `system_reserve`, and its seeded faults drop the reserve from the sum
+  and skip the fit of each grant to `system`. The boot order over chains, trees and cycles,
   the cycle refused; the generated C and Erlang readers give the same
   records over every shipped manifest and refuse the whole file at each
   out-of-range offset, count, index and string. Seed: a manifest packed by
@@ -4827,22 +4831,6 @@ Fiasco's kernel, `bootstrap` and `sigma0`
 
 Open questions, with recommended answers:
 
-* **Which devices share the devices domain on each board?** The default
-  manifests put every slow device there, and every unconfined DMA device
-  in a domain of its own, at one ERTS instance each. Recommended: the
-  platform layer's DMA contract names which devices are unconfined
-  ([design-platforms.md](design-platforms.md#qemu-virt)), each board's
-  release build's manifest follows it mechanically, and a board whose
-  unconfined devices are many takes the cost in memory rather than merge
-  them, since a merged domain is the whole machine.
-* **How do domains get their names?** Options: (a) a name binds to the
-  principal that first uses it, for the boot, within the principal's
-  `names` quota, which the design does; (b) an administrator assigns
-  names to principals in the manifest, and a principal creates domains
-  only under its own. (a) needs no administration and bounds the atoms
-  the system domain makes; (b) keeps a name meaning the same principal
-  across boots, at the cost of a manifest change per name. Recommended:
-  (a), with the configured domains' names reserved by the manifest.
 * **Should the crash record be kept across a warm reset where RAM
   survives one?** On the Raspberry Pi boards RAM is not cleared by a
   reset, but nothing promises its contents. Recommended: keep the record

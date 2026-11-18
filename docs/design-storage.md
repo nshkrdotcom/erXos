@@ -265,7 +265,13 @@ driver's log line, never from a controller's bytes, and never reaches a
 client. A window answers its client `einval` for `bad_count`, `erofs` for
 `erofs`, `enotsup` for `no_flush`, so a file system can tell a medium
 that cannot flush from one whose flush failed, and `eio` for every other
-error. The maximum request is the
+error. Two checks bound a request's sectors: the window checks them
+against its own sectors before the transport sees the request and
+answers `erange` for any outside it
+([Interfaces](#interfaces)); the transport checks them against the
+medium's capacity, so its `out_of_range` reaches a window only when the
+window itself lies past the medium's end, and the window answers that
+`eio`, as a device error. The maximum request is the
 transport's: 8 sectors on virtio, the sectors one pool buffer holds
 beside its header and status byte; 64 sectors on the SD controller,
 32 KiB, the most whose write a card within its specification finishes
@@ -355,7 +361,7 @@ build check's `device-posters` rule below holds as it holds
 The transfer-mode half of every command word it builds leaves DMA off,
 and `erx_device:command/2` refuses a word that turns it on, so no
 command starts a DMA transfer. DMA through the controller's ADMA2 tables
-is [design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)'s,
+is [design-device-dma.md](design-device-dma.md#the-descriptor-forms)'s,
 for a later mode of this driver.
 
 Since the NIF refuses the register to `write/3`, a module that holds
@@ -501,7 +507,8 @@ exchange:
   ([design-packaging.md](design-packaging.md#the-package)). It holds
   nothing secret, a rule of the packer, which writes nothing there but
   package files, since every app may read every package. The packer
-  refuses a system image larger than the system partition, 63 MiB,
+  refuses a system image larger than the system partition, whose size
+  is the medium layout's ([`abi/medium.txt`](../abi/medium.txt)),
   naming the packages that do not fit, though one package may be as large
   as `pkg_bytes_max`, 1 GiB. The storage domain that serves `system`
   serves it as the **`system` tree** ([The `system` tree](#the-system-tree)).
@@ -702,7 +709,7 @@ the card protocol of the Physical Layer Specification. Its first mode
 moves data by programmed I/O through the controller's data port at
 default speed, and nothing below turns DMA on; a later mode moves data
 through ADMA2 tables as
-[design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)
+[design-device-dma.md](design-device-dma.md#the-descriptor-forms)
 describes, when the controller's record carries DMA memory, which it
 does on both kernels when the device tree the firmware hands over gives
 EMMC2 a range ([design-device-tree.md](design-device-tree.md)), and the

@@ -7,8 +7,8 @@ interface of its mailbox. This document says who asks the firmware, how
 often, how its answers are checked, where the readings appear
 (`/proc/sensors`), who acts on them (the console's warnings; no thermal
 policy), and how QEMU's model and the board check them. It extends the
-firmware notification of
-[design-usb.md](design-usb.md#the-vl805s-firmware) and keeps PL2 of
+firmware request of
+[design-kernel.md](design-kernel.md#firmware-requests) and keeps PL2 of
 [design-platforms.md](design-platforms.md#invariants): no driver reaches
 the firmware.
 
@@ -185,7 +185,7 @@ that `erx_firmware_request` sends
 ([design-bluetooth.md](design-bluetooth.md#the-power-line)), and that
 call already serves one request at a time, against one buffer, with one
 deadline and one rule after a timeout
-([design-usb.md](design-usb.md#the-vl805s-firmware)). A sensor reading
+([design-kernel.md](design-kernel.md#firmware-requests)). A sensor reading
 differs from a notification in one thing only: its answer is wanted. So
 this design does not add a second route to the firmware. It widens the
 row and the call:
@@ -327,7 +327,7 @@ manifest, beside the device records
 ([design-abi.md](design-abi.md#devices-and-partition-windows)), as a
 record of name, belonging, tag and argument, and reach the kernel by the
 path the notifications take; that path is the kernel's firmware request
-([design-usb.md](design-usb.md#the-vl805s-firmware)), and this design adds
+([design-kernel.md](design-kernel.md#firmware-requests)), and this design adds
 nothing to it.
 
 **The throttle word comes through gencmd.** The one route to it that a
@@ -349,61 +349,34 @@ checks the same tags on its firmware.
 
 ## The kernel call
 
-`erx_firmware_request(resource (CARVE), index)` keeps every clause of
-the contract [design-usb.md](design-usb.md#the-vl805s-firmware) gives
-it: its authority (a resource carries no right to pass, so only the root
-task holds one, and the device service calls through the domain
-library), its poll of at most 1 s with preemption points between reads,
-its executor refusal, its match of the answer to its buffer, its one
-buffer page kept for the boot, its rule that after one `ERX_ETIMEDOUT`
-every later call of the boot answers `ERX_ETIMEDOUT` at once, and its
-`ERX_EBUSY` beside a request in flight. The 1 s runs from the call's
-start and covers the wait for room to post the request as well as the
-wait for its answer. It changes what a request is and what it returns:
+`erx_firmware_request(resource (CARVE), index)` is the kernel call of
+[design-kernel.md](design-kernel.md#firmware-requests), which owns its
+contract: its authority, the rows a resource names, its deadline, its
+one buffer page and its rule after a timeout, its `ERX_EBUSY` beside a
+request in flight, and the checks of the answer and their results. This
+design adds the rows (above), the request the mailbox core writes from
+a row, and the firmware interface the checks follow.
 
-1. **The rows.** A resource carved from a device entry names that
-   device's rows; the root resource names the machine's. An index past
-   the named list, and a resource that names neither, answer
-   `ERX_ENOTSUP`.
-2. **The request.** The kernel's mailbox core writes the buffer from the
-   row and its tag's declaration: the buffer's size and code 0, the tag,
-   the value buffer's size (the larger of the request and the window),
-   a request word of 0, the row's argument bytes, zeroes to the end of
-   the value buffer, and the end tag.
-3. **The answer's checks**, after the answer word names the buffer, each
-   field read once, in this order. The response code must be
-   `0x80000000`; `0x80000001`, the firmware's error parsing the buffer
-   (wiki, lines 29-30), and any other code answer `ERX_EPROTO`. The
-   first tag's identifier must still be the row's tag, so a response
-   that put an unsolicited tag first is refused as `ERX_EPROTO` rather
-   than searched. A response word without bit 31 is the firmware
-   ignoring the tag (wiki, line 5) and answers `ERX_ENOTSUP`, except a
-   word of 0 on a tag declared to take it as performed. A length, bits
-   30-0, below the tag's least answer answers `ERX_EPROTO`. So
-   `ERX_ENOTSUP` says the firmware does not perform this request, and
-   `ERX_EPROTO`, a status this design adds to the ABI's list, says its
-   answer broke the interface.
-4. **The copy.** The call returns `ERX_OK` with `n`, the smaller of the
-   response length and the tag's window, and the first `n` bytes of the
-   value buffer in the caller's UTCB, the bytes after `n` in its last
-   word zero. A longer response is the truncation the interface defines
-   (wiki, lines 7-10), not an error. The window is at most 64 bytes,
-   well inside the UTCB's 504.
+**The request.** The kernel's mailbox core writes the buffer from the
+row and its tag's declaration: the buffer's size and code 0, the tag,
+the value buffer's size (the larger of the request and the window), a
+request word of 0, the row's argument bytes, zeroes to the end of the
+value buffer, and the end tag.
 
-The answer is device-written memory, so the core reads it through the
-same once-per-field accessors the notification's response word needs.
-Before posting, the core cleans the whole buffer from the data cache,
-from its size word to its end tag; after the answer, it invalidates the
-same span, the response code, the tag's header and the whole window
-included, before reading any of it. Nothing past the tag's window is
-read, and the window lies inside the core's own buffer page.
+**The interface the checks follow.** `0x80000001` is the firmware's
+error parsing the buffer (wiki, lines 29-30); a response word without
+bit 31 is the firmware ignoring the tag (wiki, line 5); a response
+longer than the window is the truncation the interface defines (wiki,
+lines 7-10). `ERX_EPROTO`, the status for an answer that broke the
+interface, is a status this design adds to the ABI's list. The window
+is at most 64 bytes, well inside the UTCB's 504, and lies inside the
+core's own buffer page. The answer is device-written memory, so the
+core reads it through the same once-per-field accessors the
+notification's response word needs.
 
 The core is the mailbox core of
 [design-usb.md](design-usb.md#verification): C17, built for the host,
-used by Fiasco's root backend and by erXos's kernel alike. On
-Fiasco the backend implements the call in the root task over the
-mailbox page it maps, with the same core
-([design-usb.md](design-usb.md#the-vl805s-firmware), "On Fiasco").
+used by Fiasco's root backend and by erXos's kernel alike.
 
 ## The sensor driver
 

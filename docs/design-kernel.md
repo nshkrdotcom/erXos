@@ -2745,7 +2745,8 @@ platform record the build checked
   ([design-board-sensors.md](design-board-sensors.md#the-requests)).
   `index` chooses one row of the named list. An index past it, and a
   resource or platform that names no rows, answer `ERX_ENOTSUP`; a
-  resource without `CARVE`, `ERX_ERIGHTS`. A resource never passes
+  resource without `CARVE`, `ERX_ERIGHTS`; each before the mailbox is
+  touched. A resource never passes
   ([Rights](#rights)), so only the root task holds one, and the system
   domain's device service makes every call from its one firmware worker.
 * **The deadline.** The kernel writes the request into its buffer, posts
@@ -2767,18 +2768,33 @@ platform record the build checked
   platform's trial request
   ([design-platforms.md](design-platforms.md#trial-requests)) waits out a
   request in flight, at most its deadline, before it posts its own.
-* **The answer** is memory the firmware wrote, read once per field after
-  the buffer's span is invalidated from the data cache. A response code
-  other than success, a first tag other than the row's, or a length below
-  the tag's least answer is `ERX_EPROTO`; a tag the firmware ignored is
-  `ERX_ENOTSUP`. Otherwise the call returns `ERX_OK` with `n`, the
-  smaller of the response length and the row's window, and the first `n`
-  bytes of the answer in the caller's UTCB; a notification's window is
-  empty, so it returns a status alone.
+* **The answer** is memory the firmware wrote. Before posting, the
+  kernel cleans the whole buffer from the data cache, from its size word
+  to its end tag; after the answer it invalidates the same span and
+  reads each field once, in this order. A response code other than
+  success, `0x80000001` (the firmware's error parsing the buffer)
+  included, is `ERX_EPROTO`; so is a first tag other than the row's,
+  which is refused rather than searched for. A response word without
+  bit 31 is the firmware ignoring the tag and answers `ERX_ENOTSUP`,
+  except a word of 0 on a tag whose declaration takes it as performed
+  ([design-board-sensors.md](design-board-sensors.md#the-requests)). A
+  length, bits 30-0, below the tag's least answer is `ERX_EPROTO`.
+  So `ERX_ENOTSUP` says the firmware does not perform the request, and
+  `ERX_EPROTO` that its answer broke the interface. Otherwise the call
+  returns `ERX_OK` with `n`, the smaller of the response length and the
+  row's window, and the first `n` bytes of the answer in the caller's
+  UTCB, the bytes after `n` in its last word zero; a longer response is
+  the truncation the interface defines, not an error. Nothing past the
+  window is read. A notification's window is empty, so it returns a
+  status alone.
 
-The mailbox core that lays out a request from its tag's declaration and
-checks the answer is C17, built for the host, and the same core serves
-Fiasco's root backend ([design-fiasco.md](design-fiasco.md#the-call-table)).
+The mailbox core that lays out a request from its tag's declaration
+([design-board-sensors.md](design-board-sensors.md#the-kernel-call))
+and checks the answer is C17, built for the host, and the same core
+serves Fiasco's root backend, which implements the call in the root
+task over the mailbox page it maps, with a page of its own as the
+buffer and the same deadline, answer match, rule after a timeout and
+results ([design-fiasco.md](design-fiasco.md#the-call-table)).
 
 ### The boot image
 

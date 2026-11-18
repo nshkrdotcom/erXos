@@ -606,11 +606,10 @@ host link's ([design-shared-devices.md](design-shared-devices.md#open-decisions)
 
 #### The power line
 
-Power is the device service's, through the one kernel call that the USB
-and PCIe designs define for the firmware's notifications,
-`erx_firmware_request` ([design-usb.md](design-usb.md#the-vl805s-firmware)),
-under its contract unchanged but for one argument: the index of one of
-the notifications the platform record lists for the resource's device,
+Power is the device service's, through the one kernel call for the
+firmware's requests, `erx_firmware_request`
+([design-kernel.md](design-kernel.md#firmware-requests)), whose
+`index` names one of the notifications the platform record lists for the resource's device,
 the VL805's one being index 0. The Pi 4's record lists two for UART0's
 device entry, `/soc/serial@7e201000`: index 0 turns the controller off
 and index 1 turns it on, each the tag `0x00038041` with the expander pin

@@ -353,8 +353,8 @@ Eshell V17.1.1 (type help(). for help)
 * OTP's `ssl` and `inets` are in every domain release, with a trust store
   of five root certificates, which every release with `public_key` carries
   as `priv/cacerts.pem` for `public_key:cacerts_get/0`. Host tests fetch over HTTPS from
-  loopback `ssl` servers with no internet; no QEMU suite fetches from the
-  network yet.
+  loopback `ssl` servers with no internet; the kiosk suite's quotes cell
+  fetches over HTTPS from an offline fixture, never from the internet.
 
 **Display and input**
 
@@ -400,8 +400,9 @@ Eshell V17.1.1 (type help(). for help)
   package boots on QEMU with no network, each quote showing why it has
   no data. Its quotes come from `erx_quotes`, with pure cores for
   retry holds, body parsing and the board; host tests
-  and a fuzz target check them. A real fetch on a target waits on the
-  network suite.
+  and a fuzz target check them. On the Pi 4 the quotes are fetched live
+  over the board's Ethernet; on QEMU the kiosk suite's quotes cell fetches
+  them over a guest network device from an offline HTTPS fixture.
 
 * `erx_desk`, the desktop application, runs a window of its own and a
   `clock` command that reads the clock's state before the wall clock; its
