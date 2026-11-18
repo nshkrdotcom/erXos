@@ -51,7 +51,7 @@ module Erx
     # characters.
     def font_seeds(root:)
       program = Raster.locate(root: root)
-      theme = Glyphs.theme(root: root)
+      theme = ABI::Theme.read(root: root)
       ascii = (0x20..0x7e).map { |point| format('U+%04X', point) }
       Dir.mktmpdir('erx-gpos-fuzz-') do |work|
         runner = Runner.new(owner_root: work, log_dir: File.join(work, 'logs'))

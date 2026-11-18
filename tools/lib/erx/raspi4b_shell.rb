@@ -3,16 +3,17 @@
 # frozen_string_literal: true
 
 require 'fileutils'
+require_relative 'abi_theme'
 require_relative 'bl31'
 require_relative 'boot_partition'
 require_relative 'board_tree'
 require_relative 'generated_abi'
+require_relative 'manifest_frontend'
 require_relative 'native_root'
 require_relative 'output_directory'
 require_relative 'pi_medium'
 require_relative 'platform'
 require_relative 'production_image'
-require_relative 'ppm'
 require_relative 'qemu'
 require_relative 'qmp'
 require_relative 'raspi4b_firmware_fb'
@@ -35,8 +36,9 @@ module Erx
   # harness's stand-in for the firmware's framebuffer setup (Raspi4bFirmwareFb), which asks the
   # model's mailbox for a 640x480 screen and writes the answer into the tree's
   # simple-framebuffer node. Once the system's command shell is up, the screen read through QMP
-  # must be the empty layout's background, every pixel erx_screen's BACKGROUND
-  # (await_background). The serial log must then hold the root's framebuffer line (ROOT_LINE)
+  # must be the splash over the background, since no window ever presents, so at least three
+  # quarters of its pixels are the background, the theme's desktop colour in the display's
+  # palette (await_background). The serial log must then hold the root's framebuffer line (ROOT_LINE)
   # and each configured domain's line (CONFIGURED_LINES), the display domain's being its
   # driver's framebuffer line, exactly once with no restart of that domain: a driver that
   # ended the domain at each start would log its line again at each restart.
@@ -149,10 +151,10 @@ module Erx
     FB_STRIDE = FB::WIDTH * 4
     ROOT_LINE = "erx: device tree: #{FB::PARENT}: framebuffer #{FB::WIDTH}x#{FB::HEIGHT} #{FB_STRIDE} #{FB::FORMAT}".freeze
     DRIVER_LINE = "erx_fb: framebuffer #{FB::WIDTH}x#{FB::HEIGHT} stride #{FB_STRIDE} #{FB::FORMAT}".freeze
-    # The empty layout's background, the one colour the screen shows with no window: erx_screen's
-    # BACKGROUND, read from its source as 0xRRGGBBAA.
-    SCREEN_SOURCE = 'erlang/apps/erx_display/src/erx_screen.erl'
-    BACKGROUND_DEFINE = /^-define\(BACKGROUND, 16#(?<rgb>[0-9a-f]{6})[0-9a-f]{2}\)\.$/
+    # The least share of the screen the background shows under the splash: erx_splash's mark
+    # and dots fit in 384 by 189 pixels, under a quarter of FB's 640 by 480, so a screen
+    # painted only in part, or in other colours, falls short of it.
+    BACKGROUND_SHARE = 3r / 4
     # How long the screen may take to show the background once the release's shell is up, and
     # how often it is read until then.
     SCREEN_SECONDS = 120
@@ -313,26 +315,32 @@ module Erx
       raise Error, 'raspi4b: the display domain ended' if serial.match?(self.class.end_line_head('display'))
     end
 
-    # The screen as erx_screen fills it with no window: every pixel the background.
-    def background_screen
-      source = File.read(File.join(@root, SCREEN_SOURCE))
-      rgb = source[BACKGROUND_DEFINE, :rgb] or raise Error, "raspi4b: #{SCREEN_SOURCE} defines no BACKGROUND as 16#RRGGBBAA"
-      Ppm::Image.new(width: FB::WIDTH, height: FB::HEIGHT, pixels: [rgb].pack('H6') * (FB::WIDTH * FB::HEIGHT))
+    # The background's colour as hex rrggbb: the desktop colour of abi/theme.txt in the
+    # palette the Pi's manifest gives its display.
+    def background_colour
+      manifest = Manifest::Frontend.read(@platform.manifest_source(@root))
+      palette = manifest.records.fetch('display').first.reference('palette')
+      format('%06x', ABI::Theme.read(root: @root).palette(palette).fetch('desktop'))
     end
 
-    # Reads the screen through QMP until it is background_screen, or raises the last mismatch
-    # once SCREEN_SECONDS have passed.
+    # The image's colours, each as hex rrggbb, with the number of pixels of each.
+    def colour_counts(image) = image.pixels.unpack1('H*').scan(/.{6}/).tally
+
+    # Reads the screen through QMP until it is FB's size and at least BACKGROUND_SHARE of
+    # its pixels are the background, or raises the last mismatch once SCREEN_SECONDS have
+    # passed.
     def await_background(socket)
-      expected = background_screen
+      background = background_colour
       deadline = Qmp.monotonic + SCREEN_SECONDS
       client = Qmp.connect(socket)
       loop do
         image = client.screendump_image(File.join(File.dirname(socket), 'screen.ppm'))
-        return if image == expected
+        sized = [image.width, image.height] == [FB::WIDTH, FB::HEIGHT]
+        return if sized && colour_counts(image).fetch(background, 0) >= BACKGROUND_SHARE * image.width * image.height
         if Qmp.monotonic > deadline
-          colours = image.pixels.unpack('C*').each_slice(3).tally.max_by(4) { |_, count| count }
-          raise Error, "raspi4b: the screen is #{image.width}x#{image.height}, not #{FB::WIDTH}x#{FB::HEIGHT} of the " \
-                       "background #{expected.pixels.byteslice(0, 3).unpack1('H6')}; its commonest colours: #{colours.inspect}"
+          commonest = colour_counts(image).max_by(4) { |_, count| count }
+          raise Error, "raspi4b: the screen is #{image.width}x#{image.height}, not #{FB::WIDTH}x#{FB::HEIGHT} with " \
+                       "#{BACKGROUND_SHARE} of it the background #{background}; its commonest colours: #{commonest.inspect}"
         end
 
         sleep SCREEN_POLL_SECONDS

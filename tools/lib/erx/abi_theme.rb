@@ -74,6 +74,14 @@ module Erx
 
       module_function
 
+      # The theme of the tree at ROOT, for a reader of the theme alone, such as
+      # the glyph step or a test harness reading a palette's colour.
+      def read(root:)
+        source = File.read(File.join(root, SOURCE))
+        declarations = Syntax.parse(source, path: SOURCE).select { |item| item.kind == 'theme' }
+        validate(declarations, palettes: palettes(root: root))
+      end
+
       # The palettes' names of the tree at ROOT, the default first: the members
       # of abi/manifest.txt's mf_display_palette in value order, which the ABI
       # model validates. For a reader of the theme alone, such as the glyph step.
