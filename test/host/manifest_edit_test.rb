@@ -165,12 +165,14 @@ class ManifestEditTest < Minitest::Test
     assert_includes records(Edit.without_domain(source, 'display', units: UNITS)).keys, %w[share system]
   end
 
-  # A domain that is not there, whose service is granted to another domain,
+  # A domain that is not there, whose service is granted to another domain or another
+  # principal's template,
   # which leaves a record naming one it took, or whose unit is on no platform unit, is
   # refused.
   def test_without_domain_refuses_what_it_cannot_take_whole
     [['absent', SOURCE, /no record "@domain.absent"/],
      ['web', SOURCE.sub("facet web\n  grantee system\n", "facet web\n  grantee @domain.storage\n"), /granted by facet web/],
+     ['web', SOURCE.sub("facet web\n  grantee system\n", "facet web\n  grantee @session.other\n"), /granted by facet web/],
      ['display', "#{SOURCE}start system\n  display @service.display\n", /start system names a record/],
      ['display', "#{SOURCE}introduce @domain.storage @domain.display\n",
       /introduce @domain.storage @domain.display names a record/],
@@ -180,7 +182,7 @@ class ManifestEditTest < Minitest::Test
     end
   end
 
-  # A facet granting the domain's service to a session template goes with the domain and
+  # A facet granting the domain's service to root's template goes with the domain and
   # gives back two of max_connections beside the domain's own one: its session's
   # connection and the one a replacement session makes beside it.
   def test_without_domain_takes_a_session_template_s_grant_with_its_connections

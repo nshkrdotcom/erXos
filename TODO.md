@@ -8094,6 +8094,13 @@ to the corpus and follow rc
   (design-storage.md), which waits for track S's port driver (1b-B), so no build
   yet ends only a port on a littlefs crash. A device that fails six times in ten minutes
   keeps the domain down too.
+* [Medium] Domain service, a display domain's end keeps its outer budget: root's session holds a
+  connection to the display domain on every development board (display_root), so its end keeps
+  the domain's whole outer budget as remains (`erx_dom_retire_record`, `liberx/system/dom_life.c`),
+  73 MiB on QEMU virt and 49 MiB on the Raspberry Pi 4, until root's session answers, and the
+  system principal's 1 MiB for an ended domain's outer budget does not hold the restart: the display
+  stays down until reboot. Keep only what the survivor maps (the lanes) as remains, or size the
+  reserve from the largest outer budget a session connects to.
 * [Low] Domain service, a refused restart is not retried (`erx_domain_srv.erl`
   `start_configured/2`): a configured domain's restart that the library refuses, such as
   `no_memory` while more than one ended domain's outer budget still waits for its peer's

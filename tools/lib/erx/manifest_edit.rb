@@ -76,12 +76,14 @@ module Erx
       # in units, the platform record's units, which the domain library charges to the
       # system's budget), one domain from max_domains, and the domain's system connection
       # from max_connections (which the manifest reckons in its comments, one per
-      # configured domain); and each facet granting one of its services to a session
-      # template gives back two of max_connections, its session's connection and the one a
-      # replacement session makes beside it, as the manifest reckons root's display_root.
+      # configured domain); and when root's template, the system principal's, is granted
+      # one of its services, two of max_connections, its session's one connection to the
+      # domain and the one a replacement session makes beside it, as the manifest reckons
+      # root's display_root.
       #
-      # Refused: a domain that is not there; one whose service another domain is granted,
-      # since what such a grant takes of max_connections and its server's connections is
+      # Refused: a domain that is not there; one whose service another domain or another
+      # principal's template is granted, since what such a grant takes of max_connections
+      # and its server's connections is
       # the manifest's own reckoning, in its comments; a removal that leaves
       # a record naming a record it took out (a facet granted to the domain, an
       # introduction, a start row on its display); and a unit placed on no unit of units.
@@ -95,10 +97,10 @@ module Erx
         services = held.select { |record| record.kind == 'service' }
         facets = all.select { |record| record.kind == 'facet' && services.any? { |service| names?(record, reference_of(service)) } }
         displays = all.select { |record| record.kind == 'display' && services.any? { |service| service.name == record.name } }
-        foreign = facets.find { |facet| facet.reference('grantee').start_with?('@domain.') }
-        raise Error, "domain #{name}'s service is granted by facet #{foreign.name}, to another domain" if foreign
+        foreign = facets.find { |facet| !%w[system @session.system].include?(facet.reference('grantee')) }
+        raise Error, "domain #{name}'s service is granted by facet #{foreign.name}, not to the system domain or root" if foreign
 
-        sessions = facets.count { |facet| facet.reference('grantee').start_with?('@session.') }
+        root = facets.any? { |facet| facet.reference('grantee') == '@session.system' } ? 1 : 0
 
         definitions = [limits, defined_by(all, limits.reference('grant')), defined_by(all, limits.reference('runtime_limits'))]
         remaining = removed(source, with_unused_definitions([source.machine, *all], [domain, *held, *facets, *displays], definitions))
@@ -107,7 +109,7 @@ module Erx
         dma = held.select { |record| record.kind == 'unit' }.sum { |unit| unit_dma(unit, units) }
         changes = { [principal.header, 'memory'] => -budget, [principal.header, 'domains'] => -1,
                     %w[machine root_memory] => -(budget + dma), %w[machine max_domains] => -1,
-                    %w[machine max_connections] => -1 - (2 * sessions) }
+                    %w[machine max_connections] => -1 - (2 * root) }
         Frontend.render(changed(remaining, changes) { |value, added| value + added })
       end
 

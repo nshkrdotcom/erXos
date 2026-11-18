@@ -53,7 +53,7 @@
 # manifest's system baseline and the block driver and littlefs in the system domain);
 # 1,000 more idle processes
 # add about 4 MiB, and the rest of the baseline over ERTS and /tmp, 5.8 MiB, is the
-# margin. The system principal's 228 MiB and 20 KiB holds root's one session, whose limits'
+# margin. The system principal's 228 MiB and 36 KiB holds root's one session, whose limits'
 # memory is 36 MiB and outer 1 MiB, the storage domain, 30 MiB and outer 1 MiB, the
 # network domain, 36 MiB and outer 1 MiB, the web domain, 24 MiB and outer 1 MiB, the
 # display domain, 24 MiB and outer 73 MiB and 36 KiB (see below), and 1 MiB for the outer budget of a domain
@@ -62,8 +62,10 @@
 # configured domain's restart is admitted before that answer arrives. One such budget
 # is the bound as long as one domain at a time ends and the survivor answers before its
 # peer ends a second time; a second leftover refuses the next start
-# (TODO.md, "a refused restart is not retried"). The web and display domains each hold
-# a connection to the system domain alone, so their ends leave no such budget. With it
+# (TODO.md, "a refused restart is not retried"). The web domain holds a connection to
+# the system domain alone, so its end leaves no such budget; the display domain, which
+# root's session holds a connection to, leaves its whole outer budget, which this 1 MiB
+# does not hold (TODO.md, "a display domain's end keeps its outer budget"). With it
 # the baseline leaves root_memory the block device's 1 MiB, the network
 # device's 256 KiB, the gpu's 9 MiB, the keyboard's and the tablet's 64 KiB each and the
 # 8 MiB margin no one is promised: the domain
@@ -153,7 +155,7 @@
 #
 # The development machine admits the system domain, root's session and the storage, network,
 # web and display domains. Admission charges budgets, not use: the system baseline, 46 MiB,
-# the system principal's 228 MiB and 20 KiB (root's session, 36 MiB and outer 1 MiB, the storage
+# the system principal's 228 MiB and 36 KiB (root's session, 36 MiB and outer 1 MiB, the storage
 # domain, 30 MiB and outer 1 MiB, the network domain, 36 MiB and outer 1 MiB, the web
 # domain, 24 MiB and outer 1 MiB, the display domain, 24 MiB and outer 73 MiB and 36 KiB, and an
 # ended domain's outer 1 MiB), the apps row's 131 MiB and the devices' 10.375 MiB

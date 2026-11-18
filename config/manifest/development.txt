@@ -231,7 +231,7 @@ facet storage_ctl
 # server is replaced; a domain's system connection counts against no quota (life_connections,
 # liberx/system/dom_life.c). The network domain takes two, as the storage domain does for sessions,
 # and four more, one for each app of QEMU virt's apps row, whose template the build
-# grants net; the display domain takes two for root's session, which display_root
+# grants net; the display domain takes one for root's session, which display_root
 # grants the display, and one more while that session is replaced, and one for each
 # app of the board's apps row, whose template the build grants the display (its
 # limits, in the board's part). Each board's machine
@@ -340,8 +340,8 @@ facet network_ctl
   max_heap_size 65536
 # display: the display domain's window tree (docs/design-display.md, "A display's
 # session"), of the windows interface, and its display record. No start row names it,
-# so the display shows its empty layout's background until a session's window opens
-# (a board's apps row starts the kiosk's). The policy is
+# so the display shows its empty layout's background until the display's session or a
+# front grant opens a window (a board's kiosk start row makes the first). The policy is
 # single, the palette dark, for the kiosk's wall display (docs/design-display.md, ctl),
 # and the idle times 0, which the display_domain suite boots
 # (DisplayDomain.manifest); the domain library passes the idle times to the domain's
