@@ -1113,9 +1113,8 @@ and bound, and the manifest property that consumes them holds as written, as
 property 18 does for `windows`. Every release the production image
 starts lies in its boot image, which holds what the rule of
 [design-storage.md](design-storage.md#data-model) allows it, and the
-slot's system partition holds the image builder's packages. Phase 1's `erx_verity` passes a package's
-blocks through unchecked; the hash check is a residual recorded
-in `TODO.md` ([design-packaging.md](design-packaging.md#phase-1)). QEMU `virt`'s record is
+slot's system partition holds the image builder's packages.
+QEMU `virt`'s record is
 [config/platforms/qemu-virt.json](../config/platforms/qemu-virt.json) and its
 development manifest is the records every board takes,
 [config/manifest/development.txt](../config/manifest/development.txt),
