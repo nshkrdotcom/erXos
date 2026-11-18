@@ -2469,6 +2469,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] programs, the first-open window (`erlang/apps/erx/src/erx_prog_handler_core.erl`, the
+  shared export test near line 820): the handler knows the display's export by its mount depth
+  alone, so a writable grant of another provider mounted at `/dev` gets a window, or ENODEV, when
+  its `draw` file is opened, instead of that file. No manifest declares such a grant. Identify
+  the resolved provider instead of inferring it from the mount point.
 * [Medium] display, no build check holds that a release holding a display's grant starts
   erx_win (`tools/lib/erx/release_files.rb` RELEASE_SCRIPTS, docs/design-display.md "The pixel
   area"): the session script lacked it while root's template held display_root, every build
@@ -7766,6 +7771,16 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Medium] build, Doom's source identity (`tools/lib/erx/doom_program.rb`, the clean-checkout
+  check near line 77): a matching HEAD and a clean `git status` are taken as the pinned commit,
+  then the working files are compiled, so a file marked `assume-unchanged` carries edited bytes
+  while the source offer names the original commit. Compile a snapshot of the pinned commit, or
+  check each input against its blob.
+* [Medium] build, the closed license table's stopgap rows (`tools/lib/erx/pack_provenance.rb`
+  RESTRICTED: the GCC headers, `kip_addr.S`, `jdb_object.cpp`) match a registration by its label
+  alone, so a registration under such a label admits whatever bytes it names, in development
+  builds and from our own tooling only. Give each row its path, as Doom's row has
+  (`jdb_object.cpp` is read from `fiasco/` or `build/fiasco/inputs/`).
 * [Medium] apps, an app's directory ([design-packaging.md](docs/design-packaging.md#invariants), PK4): until
   the storage service roots an app's `data` grant at `apps/NAME/SIGNER/` (`tree apps`), apps hold no `data`
   grant (the files-service item under Major initiatives) and the directory half of PK4's QEMU test waits; and
