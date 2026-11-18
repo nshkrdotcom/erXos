@@ -568,14 +568,15 @@ holds them, and could not run `ssl`: its image has no `crypto` NIF (K1).
 | --- | --- | --- |
 | GTS Root R4 | Kraken and Coinbase: a leaf from Google Trust Services' WE1 | Google Trust Services |
 | GlobalSign Root CA | the same chains, which carry GTS Root R4 cross-signed by it, for a validator that ends the path there | GlobalSign |
-| ISRG Root X1 | Cboe: Let's Encrypt's YE1, Root YE, ISRG Root X2 cross-signed by X1 | Internet Security Research Group |
+| ISRG Root X1 | Let's Encrypt's chains (YE1, Root YE, ISRG Root X2 cross-signed by X1), checked against Cboe | Internet Security Research Group |
 | ISRG Root X2 | the same chain, ending at X2 | Internet Security Research Group |
-| DigiCert Global Root G3 | FRED: DigiCert Global G3 TLS ECC SHA384 2020 CA1 | DigiCert |
+| DigiCert Global Root G3 | DigiCert's ECC chains (DigiCert Global G3 TLS ECC SHA384 2020 CA1), checked against FRED | DigiCert |
 
 The chains are those the servers sent to a live request; Kraken's, the
 one source the kiosk asks, is in
 [`examples/dashboard`](../examples/dashboard/README.md#where-the-data-comes-from),
-and the other rows have no consumer in the tree (`TODO.md`). Which of
+and the other rows are kept as common public roots, so a client of a
+host they sign needs no change to the store. Which of
 two anchors of one chain OTP's path validation ends at is not relied on:
 the store holds both.
 

@@ -8719,11 +8719,6 @@ document's "residual risks accepted" paragraph.
   set, which [design-desktop-programs.md](docs/design-desktop-programs.md#the-theme-one-declaration) and
   [design-abi.md](docs/design-abi.md#theme) declare (`press` 120 ms, `state` 160 ms, `reveal` 200 ms, each
   `ease_out`), nor the generator's check of them.
-* [Medium] crypto, the trust store's roots (`config/trust/`,
-  [design-crypto.md](docs/design-crypto.md#the-trust-store)): the table justifies ISRG Root X1 and X2 by Cboe and
-  DigiCert Global Root G3 by FRED, quote sources the kiosk no longer asks; only Kraken's chain (GTS Root R4,
-  GlobalSign Root CA) has a consumer. Either name the client that needs each of the other roots or drop them,
-  which narrows the authorities every client trusts.
 * [Low] find and act, rules written by a program given the whole namespace
   ([design-find-act.md](docs/design-find-act.md#security)): such a program holds the session's files but
   no right beyond files unless `within -f` names one, yet a binding or route it writes to
@@ -8958,10 +8953,6 @@ document's "residual risks accepted" paragraph.
 * [Low] `examples/dashboard` (`erx_quotes_table`): Kraken's address, 104.16.14.28 (one of
   `api.kraken.com`'s Cloudflare addresses), is hardcoded and may change; a change shows
   `cannot connect` or `certificate rejected` until the row's `address` is updated.
-
-* [Low] `config/trust/` (design-crypto.md "The trust store"): ISRG Root X1, ISRG Root X2 and DigiCert
-  Global Root G3 were added for the Cboe and FRED quote sources, which the dashboard no longer has; they now
-  serve no consumer in the tree. Remove them and their rows, or name the consumer that keeps them.
 
 * [Medium] `erx_quotes` tests: the effect process's own paths (an unknown request dropped, a redirect
   followed within the round, a request httpc refuses at once, the tick) have no test; the HTTPS test
