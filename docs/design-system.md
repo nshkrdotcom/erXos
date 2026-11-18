@@ -647,7 +647,7 @@ violation fails the build with the property, the record and the field:
     other than read-only is granted to one of two grantees: the system
     domain, whose start service writes the file for `service enable` and
     `disable`, or a session template that a facet row also grants the
-    start service's tree, `start`; so only the start service and who may
+    start service's tree, `start`, read-write; so only the start service and who may
     command the start table may rewrite its settings
     ([design-apps.md](design-apps.md#the-start-table)). No session
     template's environment sets `ERX_START_FLAGS`, and every session
@@ -663,7 +663,8 @@ violation fails the build with the property, the record and the field:
     unmapped, which admits `start` rows for `my-app` and `my_app`; a
     `start` row for a principal named `9lives`; a
     board source that grants `etc` read-write to a session template
-    holding no `start`, and one that grants it to a configured domain
+    holding no `start`, one that grants it read-write to a template
+    whose `start` grant is read-only, and one that grants it to a configured domain
     other than the system domain, which a check that admits any domain
     misses; a check that admits a writable `etc` grant to templates
     holding `start` alone, which refuses every manifest whose system
@@ -1431,8 +1432,10 @@ caller ever hands the planner a specification or an origin:
   takes an index into the checked manifest's session templates, the
   name the domain service chose and the session's default display, a
   service name or none; its environment gains, after the template's
-  words, `principal=N`, the template's principal's number, and
-  `display=NAME`; everything else (principal, images,
+  words, `principal=N`, the template's principal's number,
+  `display=NAME`, and `serves=svc` where the template declares
+  `serves svc` ([design-app-trees.md](design-app-trees.md#serving-erx_svc));
+  everything else (principal, images,
   arguments, complete limits and flags) is the template's and its limits
   record's, so a session is its template by construction. A template
   whose limits lack `ERX_DOM_SPACES` is `ERX_EINVAL`. It sets

@@ -436,21 +436,24 @@ data partition's storage service, as the `packages` tree is
 ([design-storage.md](design-storage.md#interfaces)), which holds the
 machine's own settings files and nothing of any principal. Its facet,
 `etc`, is granted read-write to the system domain, whose start service
-reads the file and writes it for `enable` and `disable`, and read-write to every session template the manifest
-grants the start service's tree, `start`: the build derives both rows
+reads the file and writes it for `enable` and `disable`, and to every session template the manifest
+grants the start service's tree, `start`, read-write where that grant
+is read-write and read-only otherwise: the build derives both rows
 from the manifest's `start` grants, as it derives the `apps` rows
 ([design-packaging.md](design-packaging.md#the-apps-row)), so whoever
-may command the start table may edit its settings, and no one else.
+may command the start table, through a writable `start` grant, may edit
+its settings, whoever may only read the table reads them, and no one
+else writes them.
 The manifest check holds the build to that: property 17 admits a
 writable grant of `etc`, whichever row gave it, to two kinds of
 grantee alone, the system domain, whose start service is the file's
 writer for `enable` and `disable`, and a session template that holds
-`start`, and refuses a resolved manifest that gives one to any other
+a writable `start`, and refuses a resolved manifest that gives one to any other
 template or configured domain; property 19 keeps
 `etc` out of what an app may need
 ([design-system.md](design-system.md#the-manifest),
 [design-packaging.md](design-packaging.md#the-builds-check)). A
-session holding the facet mounts it at `/etc`, read-write, and the
+session holding the facet mounts it at `/etc`, with its grant's rights, and the
 start service's tree at `/etc/start` within it. Until the `etc` grant
 exists, the file lies in the volume's `etc/` directory, at
 `/data/etc/start.conf`, through the `data` grants of the system domain
@@ -870,8 +873,8 @@ that domain's namespace at the point where a session mounts its grant
 | `service NAME disable` | writes `disable NAME` to `ctl`, which sets `NAME_enable="NO"` in `/etc/start.conf`, and answers `NAME disabled in /etc/start.conf` (`rc.subr:1456-1459`); a row that runs runs on, kept by its supervisor, until `service NAME stop` or the next boot |
 | `service NAME start`, `stop`, `restart` | writes its line to `ctl` and answers from the write's errno alone, as [How a command is judged](#how-a-command-is-judged) decides it: `enotsup` as rc.subr(8) does, `Cannot 'start' NAME. Set NAME_enable to YES in /etc/start.conf or use 'onestart' instead of 'start'.`, with the command's own name for `stop` and `restart`, and status 0 (`rc.subr:1335-1342`); `ealready` as `NAME already running?` and `esrch` as `NAME not running?`, each with status 1; `enoent` as `NAME is configured in the system manifest` for a configured domain of `/proc/apps`'s boot order, and `NAME does not exist in the system manifest` otherwise. It makes no decision from what `/proc/apps` shows of the row |
 | `service NAME onestart [display=D]`, `onestop`, `onerestart` | writes the `one` form to `ctl`, which acts on a row whether or not it is enabled, and answers its errno as above |
-| `service NAME status`, `onestatus` | shows the row's state and reason from `/proc/apps`, the row as the boot or its own last command applied it, or `installed`; a session `onestart` started belongs to no row and is not shown; then, for a row that runs, the app's own words, the lines of `/svc/NAME/status` its parser accepts, as a FreeBSD script's `status_postcmd` adds its own, read at a deadline ([design-app-trees.md](design-app-trees.md#what-the-commands-show)); the exit status is the row's |
-| `service NAME CMD [ARG ...]`, for any other CMD | refuses an rc.subr keyword it does not offer (`rcvar`, `enabled`, `delete`, `describe`, `extracommands`) with its usage line; otherwise, for a row that runs, writes `CMD ARG ...` to the app's own `/svc/NAME/ctl`, as a FreeBSD script's `extra_commands` run its own verbs, and answers from that write alone, status 0 when it succeeds and 1 otherwise ([design-app-trees.md](design-app-trees.md#what-the-commands-show)) |
+| `service NAME status`, `onestatus` | shows the row's state and reason from `/proc/apps`, the row as the boot or its own last command applied it, or `installed`; a session `onestart` started belongs to no row and is not shown; then, while a session of the row serves its tree, kept or started by `onestart`, the app's own words, the lines of `/svc/NAME/status` its parser accepts, as a FreeBSD script's `status_postcmd` adds its own, read at a deadline ([design-app-trees.md](design-app-trees.md#what-the-commands-show)); the exit status is the row's |
+| `service NAME CMD [ARG ...]`, for any other CMD | refuses, with its usage line, a word that carries an rc.subr prefix (`fast`, `force`, `one`, `quiet`) or is an rc.subr keyword (`rcvar`, `enabled`, `delete`, `describe`, `extracommands`, `poll`) and is not one of its own verbs; otherwise, for a row whose session serves its tree, kept or started by `onestart`, writes `CMD ARG ...` to the app's own `/svc/NAME/ctl`, as a FreeBSD script's `extra_commands` run its own verbs, and answers from that write alone, status 0 when it succeeds and 1 otherwise ([design-app-trees.md](design-app-trees.md#what-the-commands-show)) |
 | `service -e` | prints the configured domains in boot order, then each row of the table whose `NAME_enable` is `YES` in `/etc/start.conf` as the command reads it, judged by `erx_start_settings:judge/2`, or whose declared default is `YES` where the file sets none: the configured state, as FreeBSD's `service -e` loads each script's variable from `rc.conf` itself (`usr.sbin/service/service.sh:148-160`); `/proc/apps` shows the applied state, each row as the boot or its own last command applied it, and what runs |
 | `service -c [FILE]` | judges `/etc/start.conf`, or FILE, prints each problem with its line and the row's own name beside its variable, and exits 1 if there is one and 0 otherwise; it checks row names only where `/proc/apps` lists the rows and says so where it does not ([Checking before it counts](#the-start-table)) |
 | `service NAME purge` | removes the data of a name that no installed package holds, admitted or refused, so a name a refused package holds keeps its data until `rm` removes the package, every signer's but the image's own, `apps/NAME/image`, which no purge removes; for a name of the image's packages, the data of every installed package the name held, shadowed or not: purging a shadowed package's name removes its data while the package itself stays on the data partition until it is removed ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)) |

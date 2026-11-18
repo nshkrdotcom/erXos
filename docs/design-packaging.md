@@ -611,7 +611,7 @@ the packages are well formed**, beside the eighteen of
    17 checks the resolved
    manifest for the last whatever the rows' source, since every writable
    grant of the `etc` tree must belong to the system domain or to a
-   template that holds `start`
+   template that holds a writable `start`
    ([design-system.md](design-system.md#the-manifest));
    when it names `inspect`, the scope `erx_domain_core:inspect_scope/4`
    gives an app principal is its own, with no machine tree, never `all`,
@@ -1239,7 +1239,9 @@ third from the package the entry was registered from:
   `code_objects` facet"), and no others; each mint computes its parameters from
   the session's principal, the app's, as every mint does
   ([design-system.md](design-system.md#facets-a-configured-domain-serves));
-* its environment holds its default display, which its planning sets
+* its environment holds its default display, which its planning sets,
+  and `serves=svc` when the app's entry records that its package
+  declares it ([design-app-trees.md](design-app-trees.md#serving-erx_svc)),
   ([design-apps.md](design-apps.md#starting-a-session)), and the domain
   service sends it the app's record, in a message of its own after the
   ready answer: the place of the package's file, `{Facet, Names}`, the
@@ -1308,7 +1310,10 @@ gives the name when the package is committed, the one check 4 found,
 since the package process alone admits and registers, one package at a
 time. It answers `{ok, Admitted}`, the indices of the facet rows kept,
 the `packages` and `system` rows and one for each need, the start row's
-display, the declared memory and the signer, which registration records
+display, the declared memory, its `serves`, which the registry entry
+keeps for the session's plan
+([design-app-trees.md](design-app-trees.md#serving-erx_svc)), and the
+signer, which registration records
 for check 4 to compare, or `{error, Reason}`, the first of these that fails:
 
 1. the manifest has an `apps` row: `no_apps`;

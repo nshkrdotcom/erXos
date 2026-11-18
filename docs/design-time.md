@@ -1275,9 +1275,9 @@ The arguments choose the source of a step, and nothing else does
 
   `peers` writes one line for each address in use, the current one
   marked `current`, then one for each denied address, marked `denied`.
-  The command first reads `/proc/apps/ntpd`, and writes `ntpctl: ntpd
-  is not running`, status 1, unless its state is `running`. It then
-  reads the file through `erx_svc_client:read/2` and parses it with
+  The command reads the file through `erx_svc_client:read/2`, writes
+  `ntpctl: ntpd is not running`, status 1, when no session of ntpd's
+  row serves it, kept or started by `onestart`, and parses it with
   `erx_svc_status:parse/1`
   ([design-app-trees.md](design-app-trees.md#reading-with-a-deadline)):
   an attribute the file leaves out is written `[unknown]` and one on a
@@ -1485,7 +1485,7 @@ that proves it ran.
 | `date` set | a set answers `{ok, {stepped, _}}` and writes the named time; each error answer of [Failure paths](#failure-paths) gives its text and status 1; a context without `clock` refuses a set and still reads and runs `-j` | a run that looks up the grant before it parses refuses `-j` without one |
 | `ntpctl` forms | `step` alone, `step` with one and with eight servers, `-s status` and `-s peers` parse; nine servers, an empty one, a 254-byte one, one with a space or an escape, `-s all`, `-s Sensors`, an abbreviation and a bare server are refused | accepting a ninth operand passes the nine-server case |
 | `ntpctl step`'s sources | ntpd's sample is `/proc/time`'s `sample_wall_offset_ns` and `server` while `/proc/apps/ntpd` is running; a sample stepped to, held or refused as `panic` is applied and one refused as `floor` is not; a row not running, no row, a record with no sample, one that cannot be read and a verdict or time with no value each give their line and set nothing; each step line names its source, and ntpd's its verdict and age | dropping the running check steps from a stopped ntpd's sample; dropping the floor clause applies the floor sample |
-| `ntpctl -s` | `status` and `peers` write `/svc/ntpd/status`'s values, a missing one as `[unknown]` and one on a line the parser refuses as `[invalid]`; a `/proc/apps/ntpd` not `running` writes `ntpd is not running`, and a read past `svc_wait_max` writes `timed out`, each status 1 | a formatter that writes a missing attribute as an empty value prints `servers` with nothing after it |
+| `ntpctl -s` | `status` and `peers` write `/svc/ntpd/status`'s values, a missing one as `[unknown]` and one on a line the parser refuses as `[invalid]`; no `/svc/ntpd` writes `ntpd is not running`, an ntpd that `onestart` started is read as a kept one,, and a read past `svc_wait_max` writes `timed out`, each status 1 | a formatter that writes a missing attribute as an empty value prints `servers` with nothing after it |
 | `ntpctl` exchange | `erx_ntp_exchange:classify/4` passes over a datagram that does not decode, answers another nonce or another version, and gives `erx_ntp_sample:check/4`'s sample, drop or kiss for its own answer, as for ntpd | removing the nonce comparison accepts the foreign-nonce reply |
 
 The setter's range has a test of its own on Fiasco, in the native

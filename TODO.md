@@ -35,22 +35,24 @@ it; git history is the record of completed work.
   [design.md](docs/design.md#dependencies)). The import also records the
   link closure of L4Re's `bootstrap` and `sigma0`, their `drivers-frst`
   UART support, and the license of each library in it.
-* [Medium] apps, an app's own tree ([design-app-trees.md](docs/design-app-trees.md)): build `/svc/NAME`; `service NAME CMD` lands with the first app whose tree has a `ctl`, since ntpd's has none; the administrator's documentation says that `cat` of an app's file shows its bytes unescaped.
-* [Low] apps, `service` ([design-apps.md](docs/design-apps.md#interfaces)): rc.subr's `enabled`, `rcvar`, `describe` and `delete` are refused with the usage line, so a script testing `service NAME enabled` reads every row as disabled; offer them from `/etc/start.conf` as FreeBSD does (`libexec/rc/rc.subr:1126`, 1188-1191).
+* [Medium] apps, an app's own tree ([design-app-trees.md](docs/design-app-trees.md)): build `/svc/NAME`:
   `erx_svc` (the SDK's tree server and mint, started before a session's ready report when its template or
   package declares `serves svc`), `erx_svc_status` (format and parser, with its fuzz target) and
   `erx_svc_client` (reads and commands at `svc_wait_max`, with the chokepoint source check); the `serves` field
   in `abi/manifest.txt`'s session template and `abi/formats/package.txt`'s declaration, and the manifest
   check refusing a facet row of `svc`; the limits `svc_wait_max`, `svc_status_max` and `svc_ctl_max` in
-  `abi/services/files.txt`; the domain service's session providers and derived `svc` grants
+  `abi/services/files.txt`; the domain service's session providers (a keeper's `Start` with `row`, the plan's `serves=svc`) and derived `svc` grants, with their connections counted by the manifest check
   ([design-system.md](docs/design-system.md#facets-a-configured-domain-serves)); the namespace's
-  `{facets, svc}` provider, the entry field `nosymfollow` with `eacces` in the resolver, the `/svc` point in
+  `{facets, svc}` provider, under which the resolver follows no link (`eacces`), the `/svc` point in
   `erx_ns`'s table and an empty `/svc` in the release slice; `service NAME status` showing the app's words;
   ntpd serving `/svc/ntpd/status` and `ntpctl -s` reading it; and deleting the `ntp` kind, its path and the
   types `ntp_servers`, `ntp_last` and `net_addresses` from `abi/inspection.txt` (ntpd's denied-address bound
   becomes `erx_ntp_core`'s own), `erx_ntp_records`, the inspector's `[ntp]` clause, with the schema
   generator's check that a `runtime`-reported kind sits only under a domain or process id. The tests are the
-  design's Verification list, each with its seeded fault.
+  design's Verification list, each with its seeded fault. `service NAME CMD` lands with the first app whose
+  tree has a `ctl`, since ntpd's has none; the administrator's documentation says that `cat` of an app's file
+  shows its bytes unescaped.
+* [Low] apps, `service` ([design-apps.md](docs/design-apps.md#interfaces)): rc.subr's `enabled`, `rcvar`, `describe`, `delete` and `poll`, and the `fast`, `force` and `quiet` forms of every verb, are refused with the usage line, so a script testing `service NAME enabled` reads every row as disabled; offer them from `/etc/start.conf` as FreeBSD does (`libexec/rc/rc.subr:1094-1126`, 1176, 1188-1191).
 * [High] apps, [design-packaging.md](docs/design-packaging.md): the packaging design awaits an outside
   review of its update path, its `mount` and its `/etc/rc.conf`; then Track A's parts 2 and 3 build it
   ([plan.md](docs/plan.md#track-a-apps)). An app names its needs, memory and code, and one `apps` row bounds

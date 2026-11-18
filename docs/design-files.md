@@ -332,14 +332,9 @@ of each slot's system partition
                    provider := provider(),
                    root := [name()],       % for a bind: where in the provider
                                            % or grant the entry starts; else []
-                   rights := rights(),     % the grant enforces them for the
+                   rights := rights()}.    % the grant enforces them for the
                                            % domain, the handler for each
                                            % program
-                   nosymfollow := boolean()}.
-                                           % true: no link in a tree this
-                                           % entry reaches is followed; a
-                                           % bind or a program's table
-                                           % keeps it, nothing clears it
 
 -type provider() :: release                % the domain's release slice,
                                            % read-only
@@ -358,7 +353,8 @@ of each slot's system partition
                   | {facets, svc}          % a directory of the registry's
                                            % svc facets, each name the root
                                            % of an app's tree (design-app-
-                                           % trees.md), mounted at /svc
+                                           % trees.md), mounted at /svc; no
+                                           % link under it is followed
                   | ended.                 % a grant that has ended: every
                                            % request answers eio, unsent
 
@@ -383,7 +379,8 @@ place held as one binary in `prim_file`'s NIF that only `set_cwd` writes
 session's handler keeps one table for each program, in its own state, of
 the same type, its entries on the providers of its starter's, so a
 program's sub-space holds no namespace at all. The resolver reads only an
-entry's `point` and `root`; the rest is its callers'. The table is a
+entry's `point` and `root`, and whether its provider is `{facets, svc}`,
+under which it follows no link; the rest is its callers'. The table is a
 term read in place from the persistent term by every resolution, so a
 domain's file state costs one copy of it, a few KiB for a typical domain
 and bounded by the limits above, and nothing on any server until it
@@ -1272,11 +1269,13 @@ mount's root names whatever the reader's namespace holds there, often
 nothing. Local providers follow links only through the resolver: the EROFS
 reader answers its walks and link reads as a grant does, and the release
 file system holds no links. A link that lies in a tree reached through
-an entry with `nosymfollow` is never followed: where the resolver would
+the provider `{facets, svc}`, through which a session reaches an app's
+tree, is never followed: where the resolver would
 follow it, it answers `eacces`, as FreeBSD's `vfs_lookup` answers on a
 `nosymfollow` mount, and an operation that acts on the link itself acts
-on it. A session's `/svc` entry, through which a session reaches an app's tree, carries
-it ([design-app-trees.md](design-app-trees.md#links)).
+on it. A bind or a program's table on that provider keeps the rule, and
+no mount names an app's grant otherwise
+([design-app-trees.md](design-app-trees.md#links)).
 
 **The last name's link.** A link before a path's last name is always
 followed. Whether a link that is the last name is followed, and what the
@@ -1434,10 +1433,12 @@ trailing `/` are dropped as for any path, so `/a//b/` is `/a/b`, and one
 holding `.` or `..` is refused with `einval`, since it names an entry
 rather than a directory to resolve.
 `erx_ns:mount({Pid, Rights}, To, Options)` adds an entry for a grant's
-pid, a process of the domain's own runtime, with the tree its options
+pid, a process of the domain's own runtime, refusing any other pid with
+`einval`, with the tree its options
 name and the lesser of the rights they ask and `Rights` (below).
 `erx_ns:mount({facet, Name}, To, Options)` adds an entry for the facet
-`Name`, with the same options, whose provider names the facet and holds
+`Name`, an atom, refusing any other term with `einval`, with the same
+options, whose provider names the facet and holds
 no pid (below, "A facet's mount"); it is the only way a grant
 of another domain is mounted.
 **Rights beneath an entry.** An entry's rights never exceed the rights
