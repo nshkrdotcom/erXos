@@ -303,6 +303,40 @@ ls_line_test() ->
                        ?assertMatch(<<"ls: missing: ", _/binary>>, Err)
                end).
 
+%% A listing reads its directory's names and no entry's attributes unless
+%% -l shows them, as FreeBSD's ls asks fts for names alone (bin/ls/ls.c):
+%% under /proc each attribute read is an inspector query, so an ls that read
+%% them would make `ls /proc` cost a query per entry.
+ls_reads_attributes_only_for_long_test() ->
+    with_files([{"a", <<>>}, {"b", <<>>}, {"c", <<>>}],
+               fun(Dir) ->
+                       ?assertEqual(1, attribute_reads(<<"ls">>, Dir)),
+                       ?assertEqual(1, attribute_reads(<<"ls -1a">>, Dir)),
+                       ?assertEqual(4, attribute_reads(<<"ls -l">>, Dir))
+               end).
+
+%% How many times running Source in Dir reads the attributes of Dir or of a
+%% file below it.
+attribute_reads(Source, Dir) ->
+    erlang:trace_pattern({file, read_link_info, 2}, true, [global]),
+    erlang:trace(all, true, [call]),
+    try
+        {<<>>, _Out, <<>>} = run_line(Source, Dir),
+        erlang:trace(all, false, [call]),
+        Ref = erlang:trace_delivered(all),
+        receive {trace_delivered, all, Ref} -> ok end,
+        length([Path || {trace, _Pid, call, {file, read_link_info, [Path, _Options]}} <- traces(),
+                        string:prefix(Path, Dir) =/= nomatch])
+    after
+        erlang:trace(all, false, [call]),
+        erlang:trace_pattern({file, read_link_info, 2}, false, [global])
+    end.
+
+traces() ->
+    receive {trace, _, _, _} = Trace -> [Trace | traces()]
+    after 0 -> []
+    end.
+
 %% Lines a reader keeps hold only their own bytes: a megabyte of 100-byte
 %% lines through a pipe into sort stays within the stage's heap limit,
 %% which a line sharing the pipe's 64 KiB buffer would exceed at 128 KB.
