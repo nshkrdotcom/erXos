@@ -783,7 +783,7 @@ open(#core{opens = Opens, pending = Pending} = C, Slot, Case, Path, Flags, Mode)
         map_size(Opens) + Opening >= ?ERX_PROG_FDS_MAX ->
             file_reply(C, Case, Slot, {error, emfile});
         true ->
-            case first_draw(C, Path) of
+            case first_draw(C, Path, Flags) of
                 no -> relay_open(C, Slot, Case, Path, Flags, Mode);
                 {refused, Errno} -> file_reply(C, Case, Slot, {error, Errno});
                 {open, Named} ->
@@ -798,9 +798,14 @@ relay_open(#core{table = Table, cwd = Cwd} = C, Slot, Case, Path, Flags, Mode) -
 %% or {refused, Errno} for a table a window start refuses (refusal/2). Path
 %% names /dev/draw from the working directory, with no `..`, which only the
 %% resolver takes, and the deepest entry of the table that holds that place
-%% lies at /dev or above it, so the open meets the shared /dev.
-first_draw(#core{first = {first, Named}, table = Table, cwd = Cwd}, Path) ->
-    case place(Path, Cwd) =:= [<<"dev">>, <<"draw">>] andalso shared_dev(Table) of
+%% lies at /dev or above it, so the open meets the shared /dev. Its last name
+%% is `draw` itself and it opens no directory, so the open the window's /dev
+%% then serves can be granted.
+first_draw(#core{first = {first, Named}, table = Table, cwd = Cwd}, Path, Flags) ->
+    Draws = place(Path, Cwd) =:= [<<"dev">>, <<"draw">>]
+        andalso lists:last(binary:split(Path, <<"/">>, [global])) =:= <<"draw">>
+        andalso Flags band ?ERX_P9_O_DIRECTORY =:= 0,
+    case Draws andalso shared_dev(Table) of
         false ->
             no;
         true ->
@@ -809,7 +814,7 @@ first_draw(#core{first = {first, Named}, table = Table, cwd = Cwd}, Path) ->
                 Errno -> {refused, Errno}
             end
     end;
-first_draw(_C, _Path) ->
+first_draw(_C, _Path, _Flags) ->
     no.
 
 shared_dev(Table) ->

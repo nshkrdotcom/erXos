@@ -472,9 +472,10 @@ displays() ->
             end
     end.
 
-%% The program's display variable, as its spec's environment names it, if it does.
+%% The program's display variable, as its spec's environment names it, if it does;
+%% an empty one names none.
 display_variable(#{env := Env}) when is_list(Env) ->
-    case [Value || <<"display=", Value/binary>> <- Env] of
+    case [Value || <<"display=", Value/binary>> <- Env, Value =/= <<>>] of
         [Value | _] -> #{display => Value};
         [] -> #{}
     end;

@@ -446,6 +446,12 @@ first_window_test_() ->
      ?_assertEqual([{open, 8, <<"/dev/ctl">>, 0, none, ?TABLE, [<<"data">>]}], Relayed(running(), <<"/dev/ctl">>)),
      ?_assertEqual([{open, 8, <<"/dev/kbd">>, 0, none, ?TABLE, [<<"data">>]}], Relayed(running(), <<"/dev/kbd">>)),
      ?_assertEqual([{first_window, none}], Relayed(running(), <<"//dev/./draw">>)),
+     %% An open the window's /dev would refuse opens no window.
+     ?_assertMatch([{open, 8, <<"/dev/draw/">>, _, _, _, _}], Relayed(running(), <<"/dev/draw/">>)),
+     ?_assertMatch([{open, 8, <<"/dev/draw/.">>, _, _, _, _}], Relayed(running(), <<"/dev/draw/.">>)),
+     ?_assertMatch([{open, 8, <<"/dev/draw">>, _, _, _, _}],
+                   element(2, erx_prog_handler_core:step(running(),
+                                                         ?ASK(8, {file, lopen, <<"/dev/draw">>, ?ERX_P9_O_DIRECTORY})))),
      ?_assertMatch([{open, 8, <<"../dev/draw">>, _, _, _, _}], Relayed(running(), <<"../dev/draw">>)),
      ?_assertMatch([{open, 8, <<"dev/draw">>, _, _, _, _}], Relayed(running(), <<"dev/draw">>)),
      %% A program with a buffer gets no window.

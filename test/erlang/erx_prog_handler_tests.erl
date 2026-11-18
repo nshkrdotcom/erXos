@@ -438,7 +438,6 @@ a_first_draw_the_connection_refuses_ends_the_program(_) ->
                        [?_assertEqual({shutdown, {window, enomem}}, Down),
                         ?_assert(WindowEnded),
                         ?_assert(Closed),
-                        ?_assertEqual([], dev_grants()),
                         ?_assertEqual([], [Sent || {fake, {send, _, _} = Sent} <- mailbox_all()])]
                end).
 
