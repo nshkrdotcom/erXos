@@ -43,15 +43,20 @@ class ErxAppBuildTest < Minitest::Test
   end
 
   # +deterministic keeps the host's paths out of the beams, so the same sources packed
-  # from two directories give the same bytes, sealed by the development package key.
+  # from two directories give the same bytes, sealed by the development package key. The
+  # third is packed from a working directory whose path is a string prefix of the
+  # package's but not its parent, by which stock erlc would shorten the sources' paths.
   def test_the_dashboard_packs_alike_from_any_directory_with_the_development_key
     Dir.mktmpdir('erx-app-build-') do |work|
-      packages = [File.join(work, 'one/dashboard'), File.join(work, 'two/deeper/dashboard')].map do |directory|
+      # The real path: erlc compares the sources with its working directory as getcwd gives it.
+      work = File.realpath(work)
+      directories = %w[one/dashboard two/deeper/dashboard one-sibling/dashboard].map { File.join(work, it) }
+      packages = directories.map do |directory|
         FileUtils.mkdir_p(File.dirname(directory))
         FileUtils.cp_r(DASHBOARD, directory)
-        File.binread(pack(directory, output: File.dirname(directory)))
+        Dir.chdir(File.join(work, 'one')) { File.binread(pack(directory, output: File.dirname(directory))) }
       end
-      assert_equal packages.first, packages.last
+      assert_equal 1, packages.uniq.size
       assert packages.first.include?(self.class.signer.public_key), 'the package is sealed by the development key'
       ebin = File.join(work, 'one/dashboard/lib/erx_dashboard/ebin')
       assert File.file?(File.join(ebin, 'erx_dashboard_view.beam'))

@@ -247,8 +247,11 @@ module Erx
       include = part_kind(directory, "#{relative}/include") == :directory ? ['-I', File.join(home, 'include')] : []
       work = Dir.mktmpdir('.ebin-', home)
       begin
+        # Stock erlc shortens a source path by its working directory as a string prefix
+        # (compile.erl's shorten_filename/1), so it runs from a parent of its sources.
         runner.run([sdk.erlc, *ERLC_FLAGS, '-o', work, '-pa', work, *sdk.ebins.flat_map { |ebin| ['-pa', ebin] }, *include, *modules],
-                   name: "erlc-#{application.tr('_', '-')}", deadline: DEADLINE, env: Oracle::CLEAN_ERLANG_ENV)
+                   name: "erlc-#{application.tr('_', '-')}", deadline: DEADLINE, chdir: directory,
+                   env: Oracle::CLEAN_ERLANG_ENV)
         File.write(File.join(work, "#{application}.app"),
                    ErlangApps.with_modules(BoundedFile.read(resource, maximum: RESOURCE_MAX),
                                            modules.map { |host| File.basename(host, '.erl') }))

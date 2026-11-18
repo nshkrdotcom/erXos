@@ -137,9 +137,11 @@ module Erx
       @sysroot.write(work)
       host = File.join(work, 'host', 'erlang', 'ebin')
       FileUtils.mkdir_p(host)
+      # Stock erlc shortens a source path by its working directory as a string prefix
+      # (compile.erl's shorten_filename/1), so it runs from a parent of its sources.
       @runner.run([@erlc, '+deterministic', '-I', File.join(@root, HOST_INCLUDE), '-o', host,
                    *HOST_MODULES.map { File.join(@root, it) }],
-                  name: 'sdk-host-bytes', deadline: DEADLINE, env: Oracle::CLEAN_ERLANG_ENV)
+                  name: 'sdk-host-bytes', deadline: DEADLINE, chdir: @root, env: Oracle::CLEAN_ERLANG_ENV)
     end
 
     def owners
