@@ -52,11 +52,13 @@ with_dev(Case) ->
                        end).
 
 %% The window, its connection and the tree's grant, as erx_session_export:start_window/1 makes
-%% them but for the window's name, Name, which the cases walk to, the tree's end, which
+%% them, presented once, but for the window's name, Name, which the cases walk to, the tree's end, which
 %% with_dev/1 brings about rather than the test process's, and the link to the connection; fid 1 is attached to the root.
 dev(Name) ->
     ok = erx_fs_version:init(),
     {ok, Window} = erx_win:open(?SERVICE, #{name => Name}),
+    %% Its frame on the screen, so the keys the cases type reach it.
+    ok = erx_win:present(Window, []),
     {ok, Conn} = erx_draw_conn:start(#{window => Window}),
     Args = #{window => #{window => Window, conn => Conn, display => ?SERVICE,
                          clipboard => erx_win:clipboard(?SERVICE)}},

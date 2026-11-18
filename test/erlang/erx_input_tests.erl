@@ -16,6 +16,9 @@
 %%   * pointer: a hidden window receives only the events of the records that let a
 %%     button or touch go, and once every source has ended every window's last event
 %%     holds no button (pointer_while_hidden, pointer_held_at_end).
+%% Every key's down that reaches a window reaches one the screen shows: the `frame`
+%% action answers the frame of the table's layout, `{shown, D}`, so `focus` moves the
+%% table ahead of the screen until a frame follows (key_not_displayed).
 %% A random run checks that every pointer event lies inside the screen of its step
 %% (pointer_outside_screen), with records before the first screen and screen changes.
 -module(erx_input_tests).
@@ -33,12 +36,19 @@
 -define(CONFIG, #{keymap => us, repeat_delay => 500, repeat_period => 126, chord => [?CHORD]}).
 
 %% The world one sequence runs in: the router, its view, the clock, the sources' pids,
-%% the last wake and what each window received, newest first, with its state then.
+%% the last wake, what each window received, newest first, with its state then, and the
+%% ids of the windows the screen shows. It starts with the first frame answered.
 world() ->
     Sources = #{s1 => spawn(fun() -> ok end), s2 => spawn(fun() -> ok end)},
     World = #{state => erx_input:new(?CONFIG), session => <<"a">>, at => 0, sources => Sources,
-              wake => none, got => [], screen => ?SCREEN, action => screen},
-    step({screen, ?SCREEN}, World).
+              wake => none, got => [], screen => ?SCREEN, action => screen, displayed => []},
+    frame(step({screen, ?SCREEN}, World)).
+
+%% The frame of the table's layout answered: the screen now shows the table's shown windows.
+frame(World) ->
+    #{windows := Windows} = view(World),
+    Displayed = [{Id, Rect} || #{id := Id, rect := Rect, state := shown} <- Windows],
+    step({shown, Displayed}, World#{displayed := [Id || {Id, _} <- Displayed]}).
 
 view(#{session := Session, screen := Screen}) ->
     Windows = [#{id => Id, dir => {Dir, <<"w">>}, rect => Screen,
@@ -46,17 +56,26 @@ view(#{session := Session, screen := Screen}) ->
                || {Id, Dir} <- [{1, <<"a">>}, {2, <<"b">>}]],
     #{windows => Windows, session => Session, policy => erx_wm_single, policy_state => #{}}.
 
-step(In, #{state := State, got := Got, wake := Wake} = World) ->
+step(In, #{state := State, got := Got, wake := Wake, displayed := Displayed} = World) ->
     View = #{windows := Windows} = view(World),
     {Next, [{policy_state, #{}} | Outs]} = erx_input:step(In, View, State),
     {Got1, Wake1} = lists:foldl(
                       fun({to, Id, #{event := Event}}, {G, Wk}) ->
                               {ok, #{state := WindowState}} = erx_wm:fetch(Id, Windows),
+                              ok = on_screen(Id, Event, Displayed),
                               {[{Id, WindowState, Event, maps:get(action, World)} | G], Wk};
                          ({wake, At}, {G, _}) -> {G, At};
                          (_Other, Acc) -> Acc
                       end, {Got, Wake}, Outs),
     World#{state := Next, got := Got1, wake := Wake1}.
+
+on_screen(Id, {key, down, _, _, _, _} = Event, Displayed) ->
+    case lists:member(Id, Displayed) of
+        true -> ok;
+        false -> error({key_not_displayed, Id, Event})
+    end;
+on_screen(_Id, _Event, _Displayed) ->
+    ok.
 
 %% One action of a run, at a clock 300 ms on from the last.
 act(Action, #{at := At0, sources := Sources} = World0) ->
@@ -67,7 +86,8 @@ act(Action, #{at := At0, sources := Sources} = World0) ->
         {Source, Record} ->
             step({record, maps:get(Source, Sources), atom_to_binary(Source), At, Record}, World);
         tick -> step({tick, At}, World);
-        focus -> World#{session := next_session(maps:get(session, World))}
+        focus -> World#{session := next_session(maps:get(session, World))};
+        frame -> frame(World)
     end.
 
 next_session(<<"a">>) -> <<"b">>;
@@ -89,7 +109,7 @@ finish(World) -> act({gone, s2}, act({gone, s1}, World)).
 keys_alphabet() ->
     [{s1, {key, down, ?A}}, {s1, {key, up, ?A}}, {s1, {key, down, ?SHIFT}}, {s1, {key, up, ?SHIFT}},
      {s1, {key, down, ?CHORD}}, {s1, {key, up, ?CHORD}}, {s2, {key, down, ?A}}, {s2, {key, up, ?A}},
-     focus, {s1, release}, {gone, s1}, tick].
+     focus, frame, {s1, release}, {gone, s1}, tick].
 
 check_keys(#{got := Got, wake := Wake}) ->
     Keys = [{Id, State, Event} || {Id, State, {key, _, _, _, _, _} = Event, _} <- lists:reverse(Got)],
@@ -190,6 +210,74 @@ before_the_screen_test() ->
     View = view(#{session => <<"a">>, screen => ?SCREEN}),
     {S1, [{policy_state, #{}}]} = erx_input:step({record, self(), <<"k">>, 0, {key, down, ?A}}, View, S0),
     ?assertEqual(1, erx_input:dropped(S1)).
+
+%% The table ahead of the screen ------------------------------------------------
+
+%% docs/design-display.md, "The input router", "A key's down": under the single policy,
+%% while the table has chosen a window whose frame the screen has not answered, a key's
+%% down reaches neither that window nor the one leaving the screen, and the first after
+%% {shown, D} reaches the window D shows. A key held before the change still goes up at
+%% the window its down went to.
+
+%% The shown window ends and the table shows the session's next one.
+a_key_reaches_no_window_while_the_next_is_not_yet_shown_test() ->
+    Before = single([{1, <<"a">>, shown}, {2, <<"a">>, hidden}], <<"a">>),
+    After = single([{2, <<"a">>, shown}], <<"a">>),
+    {S, Got} = run([{key(down, ?A), Before},
+                    {key(up, ?A), Before},
+                    {key(down, ?A), After},
+                    {key(up, ?A), After},
+                    {shown(2), After},
+                    {key(down, ?A), After}], shown_first(Before)),
+    ?assertEqual([{1, down, ?A}, {1, up, ?A}, {2, down, ?A}], Got),
+    ?assertEqual(1, erx_input:dropped(S)).
+
+%% The table chooses a window the screen does not show yet, as when the display's session
+%% moves; Shift, held on the window leaving the screen, goes up there.
+a_key_reaches_neither_window_until_the_chosen_one_is_shown_test() ->
+    Before = single([{1, <<"a">>, shown}, {2, <<"b">>, hidden}], <<"a">>),
+    After = single([{1, <<"a">>, hidden}, {2, <<"b">>, shown}], <<"b">>),
+    {S, Got} = run([{key(down, ?SHIFT), Before},
+                    {key(down, ?A), After},
+                    {key(up, ?A), After},
+                    {key(up, ?SHIFT), After},
+                    {shown(2), After},
+                    {key(down, ?A), After}], shown_first(Before)),
+    ?assertEqual([{1, down, ?SHIFT}, {1, up, ?SHIFT}, {2, down, ?A}], Got),
+    ?assertEqual(1, erx_input:dropped(S)).
+
+%% Before the first frame is answered the screen shows no window, so no key reaches one.
+no_key_before_the_first_frame_test() ->
+    View = single([{1, <<"a">>, shown}], <<"a">>),
+    {S0, _} = erx_input:step({screen, ?SCREEN}, View, erx_input:new(?CONFIG)),
+    {S, Got} = run([{key(down, ?A), View}, {key(up, ?A), View}], S0),
+    ?assertEqual([], Got),
+    ?assertEqual(1, erx_input:dropped(S)).
+
+%% A view of the single policy over Windows, {Id, Dir, State}, with Session the display's.
+single(Windows, Session) ->
+    #{windows => [#{id => Id, dir => {Dir, <<"w">>}, rect => ?SCREEN, state => State}
+                  || {Id, Dir, State} <- Windows],
+      session => Session, policy => erx_wm_single, policy_state => #{}}.
+
+%% A router with the screen, whose first frame shows window 1.
+shown_first(View) ->
+    {S, _} = run([{{screen, ?SCREEN}, View}, {shown(1), View}], erx_input:new(?CONFIG)),
+    S.
+
+shown(Id) -> {shown, [{Id, ?SCREEN}]}.
+
+%% A key's record with the test process as the keyboard, so every step's downs and ups match.
+key(Edge, Code) -> {record, self(), <<"kbd">>, 0, {key, Edge, Code}}.
+
+%% Each input stepped over its view, from State: the state after and the keys delivered,
+%% {Window, Edge, Code}, in order.
+run(Steps, State) ->
+    lists:foldl(fun({In, View}, {S, Got}) ->
+                        {S1, [{policy_state, _} | Outs]} = erx_input:step(In, View, S),
+                        {S1, Got ++ [{Id, Edge, Code}
+                                     || {to, Id, #{event := {key, Edge, Code, _, _, _}}} <- Outs]}
+                end, {State, []}, Steps).
 
 %% Random ----------------------------------------------------------------------
 

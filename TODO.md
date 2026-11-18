@@ -9022,7 +9022,8 @@ document's "residual risks accepted" paragraph.
   ([design-display.md](docs/design-display.md#the-window-tree)); the clipboard served only through the
   keyboard window's grant within `windows_clipboard_ms` of a key or button there, a copy replacing the
   clipboard whole at its close, and the manifest check's refusal of `clipboard` for a configured domain on a `single` display;
-  `erx_input`'s "seen before pressed" on every gesture's first down, from `erx_screen`'s `{shown, D}`
+  `erx_input`'s "seen before pressed" on every gesture's first down, from the displayed windows, with
+  `erx_screen`'s `{shown, D}` carrying each window's time of the last frame in which it gained pixels
   ([design-display.md](docs/design-display.md#the-input-router)); `erx_png` reading the
   colour-space chunks as sRGB; the theme's sizes as
   logical pixels at the window's scale. Each is small and lands with the next change to its module.

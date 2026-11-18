@@ -22,6 +22,8 @@ and a `gen_server` would act on a `system` message from it. It takes:
 * calls of its own domain's processes, in `gen_server`'s call shape: the
   tree's callbacks, which run in the grants, and
   attach/2, the screen's;
+* shown/1's notices from the screen of what each answered frame shows,
+  which the input router takes;
 * input/2's records, the `DOWN`s of its grants, holders, screen and
   input sources, its repeat timer, and the `EXIT`s of its window
   processes, its grants' supervisor and its parent.
@@ -83,7 +85,7 @@ applied here, whole or not at all.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/1, start_link/3, attach/2, input/2, mint_request/3]).
+-export([start_link/1, start_link/3, attach/2, shown/1, input/2, mint_request/3]).
 %% The process.
 -export([winfs_init/2, loop/1]).
 %% The erx_fs callbacks of the tree.
@@ -202,6 +204,22 @@ attach(Rect, Chan) ->
     end.
 
 -doc """
+For `erx_screen`, when the driver takes a frame: hands the input router
+the windows that frame shows, `{shown, Shown}`. Asynchronous, so the
+screen waits on nothing; a notice naming a screen other than the one
+attached, as one sent before that screen ended, is dropped, and so is
+every notice with no window system. With no screen, and from a new
+screen's attach until its first frame is taken, the router holds no
+window displayed.
+""".
+-spec shown(erx_input:displayed()) -> ok.
+shown(Shown) ->
+    case whereis(?MODULE) of
+        undefined -> ok;
+        Pid -> Pid ! {shown, self(), Shown}, ok
+    end.
+
+-doc """
 For an input driver: routes one record of its device, named Device in the
 device table, and returns once it is routed; dropped with no window
 system. The caller is the record's source.
@@ -239,6 +257,8 @@ loop(#winfs{options = #{system := System, service := Service}, parent = Parent, 
             {'$gen_call', {Pid, _} = From, Request} when is_pid(Pid) ->
                 {Answer, Called} = handle_call(Request, Pid, State),
                 {Called, {From, Answer}};
+            {shown, Screen, Shown} ->
+                {take_shown(Screen, Shown, State), noreply};
             {timeout, Timer, erx_input_tick} when Timer =:= State#winfs.timer ->
                 {route({tick, now_ms()}, State#winfs{timer = none}), noreply};
             {'DOWN', Ref, process, Pid, _} ->
@@ -410,7 +430,9 @@ attach_screen(Rect, Chan, Depth, Pid, #winfs{screen = Old} = State) ->
     case screen_rect(Routed) of
         Rect when Rect =/= none ->
             ok = demonitor_screen(Old),
-            Arranged = arrange(Routed#winfs{chan = Chan, depth = Depth, screen = none}),
+            %% A new screen starts at the splash, which shows no window.
+            Blank = route({shown, []}, Routed),
+            Arranged = arrange(Blank#winfs{chan = Chan, depth = Depth, screen = none}),
             Layout = layout(Arranged),
             {{ok, Layout}, Arranged#winfs{screen = {Pid, erlang:monitor(process, Pid)},
                                           layout = Layout}};
@@ -548,12 +570,20 @@ perform({wake, At}, #winfs{timer = Old} = State) ->
                             _ -> erlang:start_timer(At, self(), erx_input_tick, [{abs, true}])
                         end}.
 
+%% What the attached screen's taken frame shows goes to the router; a notice naming any
+%% other process, as a screen that has since ended, is dropped.
+take_shown(Screen, Shown, #winfs{screen = {Screen, _}} = State) ->
+    route({shown, Shown}, State);
+take_shown(_Screen, _Shown, State) ->
+    State.
+
 now_ms() -> erlang:monotonic_time(millisecond).
 
 %% Ends ----------------------------------------------------------------------
 
 down(Ref, Pid, #winfs{screen = {Pid, Ref}} = State) ->
-    State#winfs{screen = none};
+    %% With no screen no window is displayed.
+    route({shown, []}, State#winfs{screen = none});
 down(Ref, Pid, #winfs{sources = Sources} = State) when map_get(Pid, Sources) =:= Ref ->
     route({gone, Pid, now_ms()}, State#winfs{sources = maps:remove(Pid, Sources)});
 down(Ref, Pid, #winfs{grants = Grants, windows = Windows} = State) ->
