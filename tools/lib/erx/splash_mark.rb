@@ -48,10 +48,15 @@ module Erx
     module_function
 
     def generation(root:)
-      text = BoundedFile.read(File.join(root, SOURCE), maximum: MAX_SOURCE_BYTES)
+      text = source(root:)
       GenerationPlan.new(files: { OUTPUT => erlang(rasterise(outline(text))).freeze },
                          reads: { SOURCE => Digest::SHA256.hexdigest(text) }, globs: {})
     end
+
+    # The Mask the generated module holds, for a check of the drawn splash.
+    def mask(root:) = rasterise(outline(source(root:)))
+
+    def source(root:) = BoundedFile.read(File.join(root, SOURCE), maximum: MAX_SOURCE_BYTES)
 
     # The logo's one path as closed polygons of [x, y] points, in its units.
     def outline(text)

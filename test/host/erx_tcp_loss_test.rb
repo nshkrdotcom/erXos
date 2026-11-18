@@ -11,8 +11,8 @@ require_relative 'erx_net_eunit'
 # IsLost's byte threshold taken as "at least" instead of "more than", which the
 # byte-map property must catch (docs/design-network-stack.md, "The send log,
 # loss and congestion: properties and a FreeBSD oracle"), and over copies seeded
-# with the faults of the runs property (docs/design-network-fastpath.md,
-# Verification, test 3): a SACK block that splits a segment, the extension rule
+# with the faults of the runs property (docs/design-network-stack.md,
+# "Tests", "The send log's rules"): a SACK block that splits a segment, the extension rule
 # taking a range of another segment size, a block marking a segment it covers in
 # part.
 class ErxTcpLossTest < Minitest::Test

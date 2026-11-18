@@ -9,7 +9,7 @@ require 'tmpdir'
 require_relative '../../tools/lib/erx/sanitizer_environment'
 require_relative '../fixtures/generated_tree'
 
-# GENET's register ring (docs/design-device-dma.md, "The three descriptor forms"): the form's
+# GENET's register ring (docs/design-device-dma.md, "The descriptor forms"): the form's
 # pure core, erx_device_genet, driven with a stand-in controller through the check and the
 # sequencer over the hosted model of a non-coherent cache
 # (test/fixtures/erx_device_genet_model_harness.c), clean under the address and undefined

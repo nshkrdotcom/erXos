@@ -22,20 +22,15 @@ and a `ctl` file for one-shot control". The decision row of
 
 ### What exists
 
-* **ntpd's state is an inspection kind.** `abi/inspection.txt` declares
-  a kind `ntp` at the machine path `[ntp]`, reported by `runtime`, and
-  ntpd's runtime collects it (`erlang/apps/erx/src/erx_ntp_records.erl`,
-  which asks `erx_ntpd:status/1`). The inspector answers `[ntp]` in the
-  system domain's own runtime, where no ntpd runs
-  (`erlang/apps/erx/src/erx_inspector.erl`, `collect([ntp], _)`), so
-  every attribute reads `unsupported` and `ntpctl -s` writes
-  `ntpctl: /proc/ntp: unsupported`
-  (`erlang/apps/erx_shell/src/erx_cmd_ntpctl.erl`, `no_value/1`).
-  Routing the path to ntpd's session needs the inspector to find an
-  app's domain and an agent bound that admits a machine path, which no
-  design names. And `erx_ntpd:status/1` asks ntpd's main loop, which
-  answers only while it waits, so a read during a resolution or an
-  exchange times out.
+* **An app's state does not fit an inspection kind.** A kind `ntp` at
+  the machine path `[ntp]`, reported by `runtime`, is answered in the
+  system domain's own runtime, where no ntpd runs, so every attribute
+  reads `unsupported` and `ntpctl -s` writes
+  `ntpctl: /proc/ntp: unsupported`. Routing the path to ntpd's session
+  would need the inspector to find an app's domain and an agent bound
+  that admits a machine path, which no design names. And ntpd's status
+  call asks its main loop, which answers only while it waits, so a read
+  during a resolution or an exchange times out.
 * **Every other kind a runtime reports is about that runtime's own
   domain**: `domain`, `module` and `process`, at paths under a domain id
   or a process id. `ntp` is the one kind a runtime reports at a machine

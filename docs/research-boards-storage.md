@@ -14,6 +14,11 @@ chooses nothing: the choices are the user's and live in
 and [design-shell.md](design-shell.md). Findings here are never edited in
 place; a re-check gets a new record.
 
+**Superseded premise.** erXos does not take lwIP as a network stack: its
+stack is FreeBSD's redesigned in Erlang
+([design-network-stack.md](design-network-stack.md)). The license facts
+under "Network stacks" still apply to FreeBSD's code.
+
 **Date:** 2026-10-30.
 **Host:** Apple M4 Max, macOS 27.0.1.
 **Sources read** over HTTP, from the installed QEMU, and from local copies

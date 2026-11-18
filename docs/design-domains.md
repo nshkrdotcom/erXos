@@ -12,7 +12,8 @@ party in between; each runtime validates what arrives with one **funnel**
 and checks it against its own **export table**, which says which of its
 processes each peer may signal; links, monitors and exits keep Erlang's
 semantics across domains with no record per process outside the owning
-runtime; and every page a domain reads is paid for by that domain. The
+runtime; and every page of a connection is paid for by the domain that
+reads it, or on a domain's system connection by the domain. The
 architecture is in [design.md](design.md); runtimes and the ERTS adapter in
 [design-runtime.md](design-runtime.md); the kernel's objects in
 [design-kernel.md](design-kernel.md); CPU groups and grants in
@@ -20,105 +21,25 @@ architecture is in [design.md](design.md); runtimes and the ERTS adapter in
 library and domain creation in [design-system.md](design-system.md); the
 inspector and the console in [design-live.md](design-live.md).
 
-Decisions every reader of this document needs:
+Four transports share this one model. Messages inside a runtime never
+leave it; messages between domains are frames on connections, and only
+frames carry pids; native code that needs no Erlang semantics calls
+through the kernel's IPC gates, within one domain and its sub-spaces,
+since no domain holds a gate of another; and a program's channel and its
+pipes are rings of the same layout as a lane, between a session and its
+sub-spaces ([design-programs.md](design-programs.md#the-channel),
+[design-pipes.md](design-pipes.md#the-ring)). Every wake-up between
+spaces is an IRQ object, bound to the side that waits and rung by the
+other. A sub-space a domain builds belongs to that domain: it has no
+domain id, pid, export table, facet or connection, and what runs in it
+is paid for by its domain and ends with it
+([Sub-spaces and programs](#sub-spaces-and-programs)).
 
-* **Every domain is a node, and a pid carries its owner.** Each domain is
-  an Erlang node named by its identifier at the machine's host name,
-  `web@erxos` or `system@erxos`, with its domain id as the node's
-  creation. A connection between two domains is a stock distribution
-  connection between their nodes, so `node()`, `nodes()`,
-  `monitor_node/2`, `erpc` and the `rpc` calls that spawn keep stock
-  semantics, within the authority the two domains export to each other;
-  registered names, and with them `global`, `pg` and the tools that send
-  to `rex`, stay within each domain, and no tick
-  supervises a connection. A pid is its owner's node name and creation
-  with a number and a serial; domain ids are never reused within a boot,
-  so a pid never names two processes, and a runtime allocates pids from
-  its own process table with no call to anyone. The one difference in how
-  identity looks is decided: a pid prints as `<D.N.S>`, with
-  its owner's domain id, in every domain. A domain that other machines
-  reach keeps its node name on the network
-  ([design.md](design.md#networking)).
-* **Introduced domains share a connection; nothing stands between them.** A
-  connection is two lanes, one per direction. A lane is a ring that the
-  sending domain alone writes, a reader page that the receiving domain alone
-  writes, and a doorbell, an IRQ object bound to the receiver's group that
-  the sender may only ring. The system domain creates a connection when it
-  introduces two domains, in the cases [Introduction and connection
-  down](#introduction-and-connection-down) lists, and it alone can delete
-  one. Every page of a connection between two domains is charged to a
-  child budget, one per connection, of the outer budget of the domain
-  that reads it, so a sender never makes a receiver pay for what the
-  receiver is willing to take, and the receiver's policy sizes the lane
-  it reads; a domain's connection to the system domain is charged
-  wholly to the domain's.
-* **Identity is the lane.** A receiver knows the sending domain by the lane
-  a frame arrived on; no field of a frame is trusted for identity, and a
-  frame whose sending pid names another domain is malformed.
-* **The funnel is the receiver's.** Each runtime copies a frame out of the
-  lane once, into private memory, before it looks at it; validates its
-  structure with a bounded, iterative, positive grammar and its authority
-  against the domain's own export table; and decodes it, in the system
-  domain in ERTS's safe mode, which never creates an atom. The funnel is one
-  C17 library in `liberx`, linked by every runtime.
-* **A pid is a name, not an authority.** Who may message, link to, monitor,
-  exit or spawn into a domain's processes is that domain's export table,
-  which its own runtime alone writes, in exactly three cases: when it
-  encodes one of its own pids or aliases into a frame for a peer, which
-  gives the peer `send`, enough to message, call and monitor the process;
-  when a peer spawns a process into it, which gives the spawner every right
-  on the child; and when one of its processes exports a name explicitly,
-  the only way a peer comes to hold `link` or `exit` on any other process.
-  No peer widens what it holds, and a peer that passes a name on gives the
-  third party nothing. To a peer, a process it holds no export of behaves
-  exactly like a dead one, answered by the target's own runtime behind
-  everything that runtime sent before. A privileged service acts on a
-  target only through a handle its facet minted from the facet's own scope,
-  never from a name a request carries.
-* **A domain speaks only for its own processes.** A runtime can report the
-  exit only of its own processes, and a receiving runtime acts on an exit or
-  `DOWN` only for a link or monitor it holds. When a domain ends, the system
-  domain tells each of its peers, and each peer drains what the dead domain
-  published before it fires its own links and monitors.
-* **Flow control is the ring.** A sender whose lane is full waits in its own
-  runtime, in its own memory; in ERTS that is the busy rule stock
-  distribution already has, so a call to a stalled peer blocks the caller
-  and nobody else. A receiver drains a lane at its own pace and spends its
-  own CPU validating what it drains. A malformed frame ends the connection
-  from the receiver's side, and the peer sees `noconnection` on everything
-  it had across that connection; a domain whose connection to the system
-  domain ends is stopped, since it has no services without it. That is the
-  whole protocol-error rule.
-* **Stopping a domain never needs its runtime.** The kernel stops a domain
-  whatever it is doing, and the kernel's rule that a space never outlives
-  its parent ends every domain with the system domain. A `kill` of one
-  process is carried to the target's runtime, which honours it as ERTS does;
-  stopping the domain is the enforcement that depends on nothing the runtime
-  says.
-* **Nobody runs on another's CPU.** A receiver validates and decodes on its
-  own grant; a facet in the system domain runs on the system domain's grant,
-  capped by policy, and admits its grantee's requests only within the
-  grantee's share of measured reductions per period. What the system domain
-  holds for a domain is a sum fixed when it admits the domain: the lane it
-  reads from the domain, the one record it is reading, its queue to the
-  domain, what it holds for the domain's processes and each facet's queue
-  quota and `max_heap_size` ([Flow control](#flow-control)).
-* **Four transports, one model.** Messages inside a runtime never leave it;
-  messages between domains are frames on connections; native code that
-  needs no Erlang semantics calls through the kernel's IPC gates, within
-  one domain and its sub-spaces, since no domain holds a gate of another;
-  and a program's channel and its pipes are rings of the same layout as a
-  lane, between a session and its sub-spaces
-  ([design-programs.md](design-programs.md#the-channel),
-  [design-pipes.md](design-pipes.md#the-ring)). Only frames carry pids.
-  Every wake-up between spaces is an IRQ object, bound to the side that
-  waits and rung by the other.
-* **A sub-space belongs to its domain.** A domain may build address spaces
-  of its own ([design-kernel.md](design-kernel.md#creating-spaces)). A
-  sub-space has no domain id, pid, export table, facet or connection; what
-  runs in it is paid for by its domain and ends with it. A native program is
-  a sub-space of its session and a port of the session's runtime
-  ([design-programs.md](design-programs.md#a-program-is-a-port)).
+The properties every reader needs are the invariants
+([Invariants](#invariants)); who may act on whose processes is
+[Exports](#exports) and [Authority](#authority); and the closed list of
+what differs from stock nodes is
+[Compatibility and migration](#compatibility-and-migration).
 
 ## Context
 
@@ -607,15 +528,12 @@ from the **outer budget** of the party that reads it (D16). A domain's
 outer budget is the part of its budget for what another domain maps, the
 crash area charged to it directly; the domain holds no capability to it or
 to any of its children, and only the system domain charges to them and
-destroys them ([design-system.md](design-system.md#ending-a-domain)). The
-system domain destroys a connection's child once both parties have let go
-of the connection (`erx_dom_disconnect`), and an ended domain's outer
-budget once no child remains: at the domain's retire, right after its end
-(`erx_dom_retire`), or else as the domain's remains with its last
-connection, so an object never vanishes under a peer that still maps it,
-and a survivor that never lets go keeps one connection's child budget
-and the outer budget it was carved from, but no other connection's lanes
-and nothing of the domain itself. X's side is created from Y's child and sized
+destroys them ([design-system.md](design-system.md#ending-a-domain)). It
+destroys a connection's child only once both parties have let go of the
+connection, and an ended domain's outer budget only once no child
+remains, so an object never vanishes under a peer that still maps it
+([Introduction and connection down](#introduction-and-connection-down)).
+X's side is created from Y's child and sized
 by Y's `lane` limit, since Y is who reads the ring in it; and the bell
 bound to X's group is created from X's child, since X is who waits on it.
 Per object:
@@ -669,49 +587,18 @@ servers, that a space never maps memory another space can delete
 ([design-kernel.md](design-kernel.md#closing-and-deleting)), applied to
 two equals.
 
-```c
-/*
- * A lane's ring header: page 0 of its producer's side.  The producer
- * alone writes it; the consumer copies each field once and validates the
- * copy before it uses it.
- */
-typedef struct erx_lane_hdr {
-	_Atomic uint64_t	wpos;		/* bytes published since creation, a
-						 * multiple of 16; stored with release
-						 * order, loaded by the consumer with
-						 * acquire order */
-	_Atomic uint64_t	need;		/* the consumer's position the producer
-						 * waits for: ring the producer's bell
-						 * when a store of rpos moves from
-						 * below need to need or past it */
-} erx_lane_hdr_t;				/* then zeros to 4 KiB */
-
-/*
- * A lane's reader page: page 1 of its consumer's side.  The consumer
- * alone writes it; the producer copies each field once and validates it.
- * A use may append fields after these two, ahead of the zeros; these two
- * and the wake handshake do not change.
- */
-typedef struct erx_lane_rpage {
-	_Atomic uint64_t	rpos;		/* bytes consumed since creation, a
-						 * multiple of 16; stored with release
-						 * order, loaded by the producer with
-						 * acquire order */
-	_Atomic uint64_t	wake;		/* the producer's position the consumer
-						 * waits for: ring the consumer's bell
-						 * when a store of wpos moves from
-						 * below wake to wake or past it */
-} erx_lane_rpage_t;				/* then zeros to 4 KiB */
-
-/* A record in a lane's data area: this header, then len bytes padded to 16. */
-typedef struct erx_lane_rec {
-	uint32_t		len;		/* bytes of the body */
-	uint32_t		kind;		/* the kinds a use defines; ERX_REC_FRAME
-						 * on a connection or a channel */
-	uint64_t		zero;		/* zero on a connection; a use may define
-						 * it (a pipe's write-order stamp) */
-} erx_lane_rec_t;				/* 16 bytes */
-```
+The ring header (`erx_lane_hdr`), the reader page (`erx_lane_rpage`)
+and the record header (`erx_lane_rec`) are layouts of
+[abi/erx_abi.txt](../abi/erx_abi.txt), which names each field's writer
+and memory order. The producer alone writes the ring header: `wpos`, the
+bytes published since the lane was created, and `need`, the consumer's
+position it waits for. The consumer alone writes the reader page: `rpos`,
+the bytes consumed, and `wake`, the producer's position it waits for.
+Each page is zeros after its fields up to 4 KiB. A record is a 16-byte
+header, `len` (the body's bytes), `kind` (`ERX_REC_FRAME` on a connection
+or a channel) and a `zero` word, then the body padded to 16. Each party
+copies each field of the other's page once and validates the copy before
+it uses it.
 
 Positions count bytes since the lane was created and never wrap in practice
 (2^64 bytes); a position's offset in the data area is the position masked by
@@ -818,23 +705,13 @@ frames, slot `i`'s at `16 * connections + i * ERX_LANE_CTL_SLOT` from the
 table's start, the whole rounded up to a page. `ERX_LANE_CTL_SLOT` is a
 multiple of 16.
 
-```c
-/*
- * A control table's index entry for one slot.  The system domain alone
- * writes it; the domain copies each field once and validates the copy
- * before it uses it.
- */
-typedef struct erx_lane_ctl {
-	_Atomic uint64_t	seq;		/* records written into the slot since
-						 * the table was created; stored with
-						 * release order after len and the
-						 * frame, loaded by the domain with
-						 * acquire order */
-	uint32_t		len;		/* bytes of the slot's frame, 8 to
-						 * ERX_LANE_CTL_SLOT */
-	uint32_t		zero;
-} erx_lane_ctl_t;				/* 16 bytes */
-```
+An index entry (`erx_lane_ctl` in [abi/erx_abi.txt](../abi/erx_abi.txt))
+holds `seq`, the records written into the slot since the table was
+created, stored with release order after `len` and the frame and loaded
+by the domain with acquire order; `len`, the bytes of the slot's frame, 8
+to `ERX_LANE_CTL_SLOT`; and a zero word. The system domain alone writes
+the entry, and the domain copies each field once and validates the copy
+before it uses it.
 
 The system domain writes a record into a slot by writing the frame and
 `len`, then storing `seq` plus one with release order, and then ringing
@@ -991,33 +868,14 @@ other domain and no service maps it. It is not a structure of its own: a
 name's **holders**, the peers given the name and what each holds on it,
 live on the name's own record in the runtime, a pid's on its process, an
 alias's on the alias's local state, and the domain's name on the runtime's
-record of the domain:
-
-```c
-#define ERX_RIGHT_SEND	0x1	/* messages, alias sends, monitors */
-#define ERX_RIGHT_LINK	0x2	/* links */
-#define ERX_RIGHT_EXIT	0x4	/* exit/2 including kill, group_leader/2 */
-#define ERX_RIGHT_SPAWN	0x8	/* on the domain name: spawn into the domain */
-#define ERX_RIGHT_INTRODUCE	0x10	/* on a domain pid: introduce its domain */
-
-typedef struct erx_export_holder {
-	uint32_t	peer;		/* a domain that was given the name */
-	uint8_t		rights;		/* ERX_RIGHT_*: what it holds on it */
-	uint8_t		pad[3];
-} erx_export_holder_t;
-
-/*
- * A name's holders: one field of the record that owns the name, a
- * process, an alias's local state or the domain's own record, and freed
- * with that record.  Private to the runtime.
- */
-typedef struct erx_exports {
-	uint16_t		nholders;
-	uint16_t		cap;		/* holders allocated */
-	uint32_t		closed;		/* the name has ended: holds nothing, written never again */
-	erx_export_holder_t	*holders;	/* one per peer given the name */
-} erx_exports_t;
-```
+record of the domain. The rights are the `right` flags of
+[abi/erx_abi.txt](../abi/erx_abi.txt): `send` (messages, alias sends,
+monitors), `link`, `exit` (`exit/2`, `kill` included, and
+`group_leader/2`), `spawn` (on the domain's name: spawn into the domain)
+and `introduce` (on a domain pid: introduce its domain). A name's holders
+are a list of (peer domain, rights) in one field of the record that owns
+the name, freed with that record, and marked closed once the name has
+ended, after which nothing writes it again.
 
 An export therefore exists only while its name does: a process's exit and
 an alias's end clear the field at the transition that ends the process or
@@ -1099,64 +957,26 @@ process.
 The system domain's record of a domain is Erlang state of the domain
 service, sized for what Erlang needs; the C that creates and ends the domain
 is the domain library, which keeps the kernel capabilities
-([design-system.md](design-system.md#the-domain-library)):
-
-```erlang
--record(domain, {id          :: pos_integer(),   % its node's creation
-                 node        :: node(),          % Name@Host
-                 principal   :: pos_integer(),
-                 pid         :: pid(),              % the domain pid
-                 spec        :: erx_domain:spec(),
-                 limits      :: #{atom() => non_neg_integer()},
-                 handle      :: reference(),        % the domain library's
-                 connections :: #{pos_integer() => connection_id()},
-                                                    % by peer domain id
-                 facets      :: [grant_record()],
-                 state       :: booting | running | ending}).
-
--record(connection, {id      :: connection_id(),
-                     a       :: pos_integer(),      % the two domains
-                     b       :: pos_integer(),
-                     objects :: reference(),        % the four objects, held
-                                                    % by the domain library
-                     state   :: up | {closing, [pos_integer()]}}).
-                                                    % peers still to unmap
-```
+([design-system.md](design-system.md#the-domain-library)). The domain
+service keeps, for each domain, its id (its node's creation), its node
+name, its principal, its domain pid, its specification and limits, the
+domain library's handle on it, its connections by peer domain id, its
+facet grants and its state (`booting`, `running` or `ending`); and for
+each connection, its two domains, the domain library's handle on its
+objects, and its state, `up` or closing with the parties still to unmap.
 
 A runtime's record of a connection is in `liberx`, one for each connection
-the domain has, indexed by the bell's label:
-
-```c
-typedef struct erx_connection {
-	uint32_t		peer;		/* the other domain's id */
-	uint32_t		label;		/* the label the system domain bound this
-						 * domain's bell with; the record's index */
-	erx_cap_t		side;		/* this domain's side: READ, WRITE, MAP */
-	erx_cap_t		peer_side;	/* the peer's side: READ, MAP */
-	erx_cap_t		peer_bell;	/* the peer's bell: TRIGGER */
-	erx_lane_hdr_t		*hdr;		/* own ring header, writable */
-	uint8_t			*data;		/* own data area, writable; out_size bytes */
-	erx_lane_rpage_t	*rpage;		/* own reader page, writable */
-	const erx_lane_hdr_t	*peer_hdr;	/* the peer's ring header, read-only */
-	const uint8_t		*peer_data;	/* the peer's data area; in_size bytes */
-	const erx_lane_rpage_t	*peer_rpage;	/* the peer's reader page, read-only */
-	uint64_t		out_size, in_size;	/* from the system domain's word */
-	uint64_t		wpos;		/* own write position, the one copy
-						 * that is ever stored to hdr->wpos */
-	uint64_t		rpos_seen;	/* the peer's rpos as last validated */
-	uint64_t		rpos;		/* own read position */
-	uint64_t		wpos_seen;	/* the peer's wpos as last validated */
-	erx_open_rec_t		writing;	/* the record being written, if any */
-	erx_open_rec_t		reading;	/* the record being read, if any:
-						 * its header, bytes copied, and its
-						 * private buffer or discard mode */
-	erx_funnel_state_t	funnel;		/* the explicit stack of the payload pass */
-	void			*entry;		/* ERTS's distribution entry, or the
-						 * native mailbox binding */
-	uint8_t			state;		/* UP, or DOWN with its reason */
-	erx_connection_counters_t	counters;	/* frames, bytes, drops by reason */
-} erx_connection_t;
-```
+the domain has, indexed by the label its bell was bound with. It holds
+the peer's id; the domain's three capabilities (its own side with `READ`,
+`WRITE` and `MAP`, the peer's side with `READ` and `MAP`, the peer's bell
+with `TRIGGER`); the mappings of both sides; the two data areas' sizes,
+from the system domain's word; its own write and read positions, the one
+copy of each that is ever stored to its pages; the peer's positions as it
+last validated them; the record it is writing and the one it is reading,
+with the header, the bytes copied and the private buffer or discard mode;
+the funnel's explicit stack; ERTS's distribution entry or the native
+mailbox binding; its state, up or down with its reason; and its counters
+of frames, bytes and drops by reason.
 
 Every value a runtime reads from the peer's pages is validated against its
 own copy before use: the peer's `wpos` must satisfy `rpos <= wpos <= rpos +
@@ -1939,18 +1759,11 @@ budget cannot fund its child for the connection.
 
 The domain library builds a connection as one plan validated whole before
 anything is applied
-([design-system.md](design-system.md#the-domain-library)): it carves a
-child for the connection from each domain's outer budget, or from the
-domain's alone on its connection to the system domain; creates both sides,
-each from the reader's child and sized by the reader's `lane`, both
-bells, each from the child of the domain that waits on it, or all four
-from the domain's child on its system connection, and, for a display and
-a client of it, the pixel area, from the display's child and sized by the
-manifest; binds each bell to that
-domain's group with the next label below `ERX_LABEL_SPLIT` from the
-counter the domain service keeps for that domain
-([Connections](#connections)); gives each party its capabilities,
-without `DESTROY`; and only then the domain service records the
+([design-system.md](design-system.md#the-domain-library)): it carves the
+connection's children, creates its objects from them and binds its bells
+with labels below `ERX_LABEL_SPLIT`, as [Connections](#connections)
+says, and gives each party its capabilities, without `DESTROY`; and only
+then the domain service records the
 connection and tells each party `connection_up`, through the party's
 domain pid, naming the peer's id and node name, the slots, the label,
 the two sizes and the pixel area if any, in the order of **The control table**
@@ -2196,27 +2009,25 @@ init with `send` and the domain's name with `spawn` to the system domain
 and to its spawner, both named in its boot information, so no frame
 either sends from the start is dropped as one to a name never exported. Init then runs the domain's boot
 script: a small release with `kernel`, `stdlib`, `erx` and `erx_files`
-at the least, `erx`'s `erx_connections` being the connection agent; the
-code server, which loads the release's modules from the domain's slice and
-the modules that arrive through the domain's code facet
-([design-live.md](design-live.md#the-code-store)); a `user` that writes with
-`erlang:display_string/2`, which reaches the domain's tty or, where it has none,
-its log ([design-runtime.md](design-runtime.md#the-console-and-standard-io)); a
-logger proxy, which sends the domain's log records to
-the console facet ([design-live.md](design-live.md#the-console)); and the
-inspection agent, `erx_inspect_agent`, which answers the inspector about
-the domain's own runtime ([design-live.md](design-live.md#the-runtime-agent)).
-Init reports ready to the domain pid, naming the agents, the connection
-agent among them, and the mints its services provide ([design-system.md](design-system.md#facets-a-configured-domain-serves)), in `{erx_ready, #{connections => Agent, inspect => InspectAgent, provides => Provides}}`, which leaves `inspect` out when no agent is registered, a map other
-agents join as they come to exist, which exports them to the system domain by that
-message; the domain pid keeps the connection agent's pid, and the domain
-service the inspection agent's, each only when the reporting incarnation
-owns it, node and creation both, by the check a provider's mint passes
+at the least, with `erx`'s `erx_connections` as the connection agent and
+`erx_inspect_agent` as the inspection agent
+([design-live.md](design-live.md#the-runtime-agent)); its code server
+loads modules as [Atoms, code, ETS and names](#atoms-code-ets-and-names)
+says, and its `user` and logger proxy are those of
+[design-runtime.md](design-runtime.md#the-console-and-standard-io) and
+[design-live.md](design-live.md#the-console).
+Init reports ready to the domain pid, naming the agents and the mints its
+services provide, in `{erx_ready, #{connections => Agent, inspect =>
+InspectAgent, provides => Provides}}`, which leaves `inspect` out when no
+agent is registered and which other agents join as they come to exist;
+the message exports them to the system domain. The domain pid keeps the
+connection agent's pid, and the domain service the inspection agent's,
+each only when the reporting incarnation owns it, node and creation both,
+by the check a provider's mint passes
 ([design-system.md](design-system.md#facets-a-configured-domain-serves)),
-and passes the report's provides to the domain service, which from then
-on sends the domain, through the domain pid, the connection-control
-records its connections need, the `connection_up` of its creator's
-connection first.
+and from then on the domain service sends the domain, through the domain
+pid, the connection-control records its connections need, the
+`connection_up` of its creator's connection first.
 The domain service answers init with the facets the spec's `facets`
 names, minted for this domain, which that message exports to it, and
 `erx:cap(Name)` returns them: the domain pid sends the answer to the
@@ -2386,10 +2197,6 @@ scaffolding come from the same declarations, with independent hostile
 fixtures checking origin, scope and reply mismatches
 ([design-generation.md](design-generation.md#service-interfaces)).
 
-**Spawners.** A parent keeps over a child in another
-domain, a sandbox included, what ERTS gives it over any child: it can
-message the child, link to it and kill it.
-
 ### Facets
 
 A facet is a process that stands for one grant of one service to one grantee
@@ -2420,7 +2227,14 @@ queue quota.
   its own, and those the service's processes spend serving each request it
   forwarded, which the service's generated serving path reads around the
   request and returns with the reply, and those of the processes it
-  starts to act for the grantee (below). While the share lasts, the facet
+  starts to act for the grantee (below). A call one of the service's
+  processes makes on a dirty I/O scheduler counts at its elapsed time, as
+  the runtime charges it
+  ([design-runtime.md](design-runtime.md#nifs-and-blocking)), and a
+  request one of them hands to another process of the service, as the
+  device service hands a firmware request to its worker, is charged that
+  process's reductions too, which it returns with its answer
+  ([design-board-sensors.md](design-board-sensors.md#concurrency-and-failure)). While the share lasts, the facet
   takes the grantee's requests; once it is spent, the facet takes none
   until the next period, and the rest wait in the facet's queue and then
   in the grantee's lane. A request's cost reaches the account only with
@@ -2618,21 +2432,18 @@ the table holds. So a facet enters a domain's
 table only as a declared instance, by construction, and a need that
 has no interface of its own finds no way in: it is an inspection path,
 a file in its owner's tree, or a protocol with a design and an
-interface of its own ([design.md](design.md#decisions), "Every route
+interface of its own ([design.md](design.md#decisions), "Every service entry point
 between domains starts at a declared facet").
 
-**The exempt names, a stopgap.** Two facet names the code uses have
-no declared interface yet: `console` and `web_line`. The facet
-table check lets each appear only in the files its exemption lists,
-beside the TODO.md item that declares or removes it
-(`FacetNames::UNDECLARED`). The list only shrinks: a name leaves it
-when its interface is declared or its use is replaced, and no name is
-ever added to it; the check fails a list whose length is not its
-bound, which is lowered with each name that leaves and never raised.
-No exempt name is in the
-funnel's table, which holds only the manifest's service names. The
-funnel hands on one of them, `console`, as a literal of its own, with
-any process of the system domain, removed with its TODO.md item.
+**The exempt name, a stopgap.** One facet name has no declared
+interface: `console`. The facet table check lets it appear only in the
+files its exemption lists, beside the TODO.md item that declares or
+removes it, and the list only shrinks: the check fails a list whose
+length is not its bound (`FacetNames::UNDECLARED`, `EXEMPTIONS_MAX`),
+which is lowered with each name that leaves and never raised. It is not
+in the facet funnel's table of service names; the funnel hands it on as
+a literal of its own, with any process of the system domain, until its
+TODO.md item removes it.
 
 The services of the live machine are reached through facets of
 interfaces `abi/services` declares: `inspect`
@@ -2759,14 +2570,9 @@ service. It has:
 
 * a name, and an identifier checked once when the principal is created
   ([design-system.md](design-system.md#identifiers));
-* in release builds, credentials, which the vault checks: a passphrase is
-  right when it opens one of the principal's credential slots, each of which
-  wraps, with AES-256-GCM, the master key that seals the principal's keys,
-  under a key derived from the passphrase by Argon2id and from the machine's
-  sealing backend. The sealed file is the only check and a secret, kept on
-  the vault's own partition, never in the release or the boot image, and the
-  vault answers a login only with matched, did not match, limited or
-  unavailable ([design-system.md](design-system.md#the-vault));
+* in release builds, credentials, which the vault checks; it answers a
+  login only with matched, did not match, limited or unavailable
+  ([design-system.md](design-system.md#the-vault));
 * a budget and a group sized by the administrator;
 * quotas: the number of domain slots its domains may hold; `names`, the
   number of domain names it may bind in a boot ([Domain ids, pids and
@@ -2946,37 +2752,32 @@ domain ([Connections](#connections)).
 ### Lanes and frames in the ABI
 
 The ring header, reader page, record, control-table entry and frame
-layouts are fixed binary layouts and live in `abi/erx_abi.txt`, from which
-`liberx` and the peer's C
-code are generated ([design-kernel.md](design-kernel.md#the-abi-file)),
-pinned with `_Static_assert`, so every runtime agrees on them by
-construction. The same lane layout serves a program's channel, which
-carries frames as a connection does
-([design-programs.md](design-programs.md#the-channel)), and a pipe's ring
-([design-pipes.md](design-pipes.md#the-ring)). A use extends the layout in
-three places and nowhere else: the record's `kind` carries the kinds the
-use defines, the record's `zero` word, which a connection leaves zero,
-carries what the use defines (a pipe's stamp, the write order a read end
-merges several writers' lanes by), and a use may append fields after those
-of `erx_lane_rpage_t` on the reader page (a pipe's `erx_pipe_rpage_t` is
-`erx_lane_rpage_t` followed by its `sleepers` word). The lane's fields,
-its checks and its wake handshake do not change. The constants:
+header are fixed binary layouts in `abi/erx_abi.txt`, from which
+`liberx` and the peer's C code are generated
+([design-kernel.md](design-kernel.md#the-abi-file)), pinned with
+`_Static_assert`, so every runtime agrees on them by construction. So
+are the lane's limits: the range of a data area (`lane_min`, `lane_max`),
+the offsets of a side's reader page and data area (`lane_side_rpage`,
+`lane_side_data`), the longest record body (`frame_max`), the longest
+control term (`ctl_max`), a control slot's room (`lane_ctl_slot`, which a
+host test that encodes the longest `connection_up` pins), the frame's
+record kind (`rec_frame`) and the split of a group's labels
+(`label_split`), each generated as its name in capitals with the prefix
+`ERX_` (`lane_side_data` is `ERX_LANE_SIDE_DATA`). The layouts are little-endian, as the machine is, and
+terms inside frames are the external term format. The funnel, the lane
+writer, the export table and `erx_etf` are portable C17 and build for
+the host, where their unit tests, fuzz targets and exhaustive models run.
 
-| Name | Value | Meaning |
-| --- | --- | --- |
-| `ERX_LANE_MIN`, `ERX_LANE_MAX` | 4 KiB, 16 MiB | the range of a lane's data area; a `lane` limit lies in it |
-| `ERX_LANE_SIDE_RPAGE`, `ERX_LANE_SIDE_DATA` | 4 KiB, 8 KiB | the offsets in a side of its reader page and its data area; the ring header is at 0 |
-| `ERX_FRAME_MAX` | 16 MiB | the longest record body any lane carries; a `max_frame` limit lies below it, and a runtime never writes more |
-| `ERX_CTL_MAX` | 4 KiB | the longest control term; the funnel reads it whole before anything else |
-| `ERX_LANE_CTL_SLOT` | a multiple of 16 | the room of one control slot's frame: the longest connection-control record, a `connection_up` naming a peer of the longest node name, with its frame header and control term, which a host test that encodes that record pins |
-| `ERX_REC_FRAME` | the record kind of a frame, on a connection and on a program's channel | |
-| `ERX_LABEL_SPLIT` | 2^31 | splits every group's label space: labels below it are the system domain's, for connection bells; labels at or above it are the domain's own runtime's |
-
-The system domain picks each connection bell's label below
-`ERX_LABEL_SPLIT` ([Connections](#connections)), tells the consumer in
-`connection_up`, and the consumer keys its connection records by it, so a
-delivery from its group's ready list names the connection exactly
-([design-scheduler.md](design-scheduler.md#park-and-wake)).
+The same lane layout serves a program's channel, which carries frames as
+a connection does ([design-programs.md](design-programs.md#the-channel)),
+and a pipe's ring ([design-pipes.md](design-pipes.md#the-ring)). A use
+extends the layout in three places and nowhere else: the record's `kind`
+carries the kinds the use defines, the record's `zero` word, which a
+connection leaves zero, carries what the use defines (a pipe's stamp, the
+write order a read end merges several writers' lanes by), and a use may
+append fields after those of the reader page, ahead of its zeros (a
+pipe's reader page adds its `sleepers` word). The lane's fields, its
+checks and its wake handshake do not change.
 
 ### Messages between the domain service and a runtime
 
@@ -3293,16 +3094,13 @@ domain](#domain-ids-pids-and-references)):
 | Any other signal from the system domain to such a domain | the connection ends, and with it the domain |
 | A fun from another domain | travels, and runs if the receiving domain has its module loaded, as between nodes |
 
-Nothing here owes compatibility to its own earlier forms: until a release
-promises it, a change to a layout or a protocol of this document replaces
-the old form outright, with no conversion and no reader for an old version.
-The lane, record and frame layouts are part of the ABI: the kernel and every
-runtime come from one tree, and the domain library refuses a runtime image
-built for another ABI version
-([design-kernel.md](design-kernel.md#image-manifests)), so a mismatch fails
-loudly and a frame carries no version field. Nothing in this document
-persists across a boot: export tables, connections and domain ids live as
-long as the machine runs.
+The lane, record and frame layouts are part of the ABI: the kernel and
+every runtime come from one tree, and the domain library refuses a
+runtime image built for another ABI version
+([design-kernel.md](design-kernel.md#image-manifests)), so a mismatch
+fails loudly and a frame carries no version field. Nothing in this
+document persists across a boot: export tables, connections and domain
+ids live as long as the machine runs.
 
 ## Failure handling, diagnostics and debuggability
 
@@ -3487,420 +3285,214 @@ domain is the trusted base, as the kernel is.
 
 ## Verification and testing
 
-Every check below is paired with a seeded failure, a mutation of the code
-under test kept beside the test that the check must catch, so a check that
+Every check is paired with a seeded failure, a mutation of the code under
+test kept beside the test that the check must catch, so a check that
 passes proves the code it covers ran. Build checks have a negative fixture
-for the same reason.
+for the same reason. The invariants table names how each invariant is
+checked; the seeded failures this section names are those that guard a property
+subtle enough to pass unnoticed.
 
-* **Unit and property tests, host build, under ASan and UBSan:** the lane's
-  position checks against every out-of-range `wpos` and `rpos`, including
-  values that overflow when added to the size; the record and frame header
-  arithmetic with overflowing lengths; a record read as it is published, cut
-  at every 16-byte boundary and across the data area's end, against the same
-  record published whole; the grammar's acceptance and refusal of every tag;
-  the target rule and the sender rule, with the new leader of `GROUP_LEADER`
-  and `From` of a `SPAWN_REQUEST` as sending pids, and a third domain's
-  `GroupLeader` in a spawn request kept as data; the decoded-size
-  computation against ERTS's own size pass; the explicit stack's tail
-  positions; the funnel's verdict table, each row driven from a frame that
-  has, and one that lacks, the right it names, each over-limit
-  substitution, and an `exit/2` that both lacks the right and is over a
-  limit, which has no effect; a payload buffer that grows only as bytes
-  arrive; `erx_funnel_check` as a pure function over the corpus, with no
-  shared memory in reach; the export table: the three writers, encoding
-  giving `send` alone, a control term's sender included, a spawn giving
-  every right, encoding a name toward a peer that already holds it, which
-  changes nothing, `erx:export/3` widening and narrowing, the end of
-  holders at process exit, at every OTP alias deactivation mode, and at a
-  connection's end, and a table at `exports` live entries; the busy rule
-  at the entry's queue limit and the system domain's drop and end at
-  `system_queue`; the control table's reader, `erx_lane_ctl_take`, with
-  the host's lane fixture as the system domain: every slot written once
-  and taken once, and a slot written twice before the reader looks,
-  which it counts as rewritten and takes once, as the newer record, and
-  a `len` out of range, which it refuses; seeded failure: a reader that
-  takes every change of `seq` as one record, under which the slot written
-  twice goes uncounted; the runtime's `peer_held`
-  accounting and its choice of the connection to end; the domain
-  service's introduction checks against `erx:exports/1` of each domain
-  pid.
-* **Exhaustive exploration of the protocols**, as pure state machines in
-  `liberx`'s functional core. An independent TLA+/TLC model checks the
-  connection's lifetime and ordering contract, with every invariant mapped
-  to concrete implementation checks under
-  [Protocol verification](design-verification.md). Host exploration compares
-  the actual cores with independent expected outcomes:
+**Host tests**, unit and property tests under ASan and UBSan, cover the
+pure parts: the lane's position checks against every out-of-range and
+overflowing `wpos` and `rpos`; record and frame header arithmetic; a
+record read as it is published, cut at every 16-byte boundary and across
+the data area's end, against the same record published whole; the
+grammars, the target rule and the sender rule; the decoded-size
+computation against ERTS's own size pass; `erx_funnel_check` as a pure
+function, each row of its verdict table driven with and without the
+right it names; the export table's three writers and every end of a
+holder, OTP's alias deactivation modes included; the busy rule and the
+system domain's drop and end at `system_queue`; `peer_held`; and the
+control table's reader, `erx_lane_ctl_take`. Seeded failure: a control
+reader that takes every change of `seq` as one record, under which a
+slot written twice before the reader looks goes uncounted.
 
-  * one lane, with every interleaving of writes of one, two and partial
-    records, reads, wake positions published and crossed, and the two
-    fences, checking that no wait is lost, that a record read in parts
-    equals the record written, that `rpos` never passes `wpos`, and that a
-    party rings only when its store crossed the published position;
-  * one connection between a domain and a peer that ends, followed by a
-    later domain of the peer's name introduced to the same domain, with
-    every interleaving of frames in both lanes, the peer's stop, the
-    domain service's `connection_up` and `connection_down` and their
-    answers, the finish and the deletion, checking D9, D16 and D17: every
-    frame the dead peer published is delivered, nothing is delivered
-    after the `{domain_down, D, Info}`, no object is deleted while a live
-    party that has not answered maps it, every connection whose parties
-    have let go is deleted, at most one control record per peer name is
-    outstanding, no control slot is written while a record in it is
-    unanswered, the later `connection_up` never reaches the domain while
-    its entry for the name is up, and a runtime that answers
-    `connection_unmapped` never touches a deleted page; seeded failures:
-    a domain service that sends a connection's `connection_down` before
-    the answer to its `connection_up`, under which two records about one
-    peer name are outstanding, and a finish that reads the write position
-    again after it starts, under which a live peer's later frame is
-    delivered after the `connection_down`;
-  * cross-domain links and monitors between three domains with every signal
-    kind, links and monitors of dead and unexported processes, a death and a
-    connection ended by a malformed frame, checking that every answer about
-    a process arrives after everything that process sent first.
-* **Weak memory.** The two wake handshakes, the producer's store of `wpos`,
-  fence and load of `wake` against the consumer's store of `wake`, fence and
-  load of `wpos`, and the consumer's store of `rpos`, fence and load of
-  `need` against the producer's store of `need`, fence and load of `rpos`,
-  are litmus tests checked with herd7 under the memory model of each
-  architecture erXos runs on, AArch64's first, each together with the same
-  protocol without its fences, which must fail. So are the two
-  publications, the producer's writes of a record then its release store
-  of `wpos` against the consumer's acquire load of `wpos` then its loads of
-  the record, and the consumer's loads of a record then its release store
-  of `rpos` against the producer's acquire load of `rpos` then its writes
-  over that room, each together with the same protocol with its acquire
-  load made relaxed, which must fail by showing a byte that is stale or
-  overwritten. A control slot's publication, the system domain's writes
-  of a frame and `len` then its release store of `seq` against the
-  domain's acquire load of `seq` then its loads of the frame, has the
-  first one's shape and is checked by it. The first is checked under the
-  C11 model (RC11) as well;
-  the second's relaxed form is load buffering, which RC11 forbids for
-  every access order, so it is checked under each architecture's model
-  alone. `make check-litmus` runs them (`test/litmus/`). A
-  host test under
-  ThreadSanitizer runs a producer and a consumer over one lane while a third
-  thread rewrites the producer's pages, and checks that the consumer's
-  copies are whole or refused and that no read races a write.
-* **Differential tests.** Every payload the complete two-stage funnel
-  accepts decodes with `binary_to_term(Bin, [used])` to the same term from
-  its unchanged original bytes and uses exactly its length. The corpus
-  includes distinct pid and reference map keys, nested compound keys,
-  duplicate semantic keys encoded differently, empty and deeply nested maps,
-  and records at every part boundary of a lane. Structural acceptance alone
-  is never counted as success. Native semantic acceptance and rejection are
-  compared case by case with the pinned OTP oracle. A scenario suite of
-  sends, links, monitors, exits with every reason shape, spawns with link
-  and monitor, aliases, group leaders and unlink races runs between two
-  domains on erXos and between two stock OTP 29.1.2 nodes on the host; every
-  difference outside the compatibility table is a bug.
-* **Fuzz targets** (`make check-fuzz`): the funnel over a corpus of valid
-  frames and their mutations, fed whole and in parts at random boundaries,
-  checking that the verdict is one of the table's and that budgets return to
-  their baselines; the lane reader over mutated ring headers, record
-  headers, reader pages and control-table entries; `liberx`'s `erx_etf`
-  decoder; the system domain's safe decode, checking that its atom count
-  never changes; and the facets'
-  generated admission over mutated requests.
-* **Hostile runtimes** under QEMU, with HVF. Each is a native
-  test domain that holds a connection with the domain under test and does
-  one of these:
-  * floods frames at a facet, at a process that never reads, and at many
-    destinations at once: the receiver's memory stays within each target's
-    queue quota and one frame where it has one, its `max_heap_size` where
-    it has none, and its own budget; the flooder blocks on its own lane,
-    and an innocent peer's latency to the same receiver holds; a facet
-    that never reads holds at most its quota and one frame, measured
-    before any collection, and its grantee's lane fills. Seeded failure: a
-    funnel that ignores the quota, under which the facet's undecoded bytes
-    pass that bound before its next collection;
-  * fills a process of the receiver with casts up to its queue quota while
-    that process makes a `gen_server:call` to the hostile domain, whose
-    reply comes behind the casts: the call returns the reply, and the
-    casts are decoded into the process's queue and count toward its
-    `max_heap_size`. Seeded failure: a runtime that waits without
-    decoding, under which the call times out;
-  * forges senders, pids, aliases, references and domain ids, in control
-    terms and in payloads: every frame with a sending pid of another domain
-    ends the connection, and every name of another domain in a payload stays
-    data;
-  * forges link exits, `DOWN`s, unlinks and spawn replies;
-  * names pids and aliases of the receiver's that were never exported to it,
-    and ones a third domain passed it: each is answered as a dead process,
-    in order with what the receiver sent before, and the timing matches a
-    dead process's;
-  * writes positions out of range, records with bad headers, unknown tags,
-    terms with duplicate map keys, and frames past every limit: the
-    malformed ones end the connection at the first bad byte, the over-limit
-    ones are dropped and counted, and a frame after an over-limit one is
-    delivered;
-  * rewrites its ring header and published bytes while the receiver reads
-    them: the receiver's copies are whole or refused, and nothing else
-    changes;
-  * rings its peer's bell without pause, from many domains on every CPU,
-    while another domain ends: the end is handled within a bounded number of
-    the receiver's steps, and each ring costs the receiver at most one look;
-  * publishes wake positions it never waits for, and never publishes them
-    while it waits: at most one needless ring per crossing, and a waiter
-    that follows the handshake is always rung;
-  * never drains the lane the receiver writes: the receiver's senders to it
-    suspend at the busy limit, `nosuspend` returns `nosuspend` and, with
-    `notify`, the sender receives one `{erx_lane_ready, Node}` when the
-    peer drains again or the connection ends, senders to other domains
-    carry on, and a system-domain process never suspends;
-    the system domain holds at most `system_queue` for it, drops its
-    messages past that, ends its connection, and so the domain, at the
-    first other signal past it, and still writes every connection-control
-    record into its control table;
-  * opens a record of the receiver's `max_frame` and trickles its bytes, on
-    many connections at once: the receiver holds what has arrived and no
-    more;
-  * answers `connection_mapped`, `connection_unmapped` and
-    `connection_lost` for connections it is not a party to and out of
-    turn for its own, and sends malformed answers: its domain pid drops
-    and counts the malformed ones, the domain service the others, each
-    against the hostile domain, and nothing else changes;
-  * ignores `connection_down`: the connection stays closing and counted
-    against the hostile domain's `connections` until it ends, the dead
-    domain's remains with it, and nothing else changes: the dead domain
-    is retired and restarts as if the hostile domain had answered; one that answers `connection_unmapped` and keeps its
-    mappings faults on its next access, in its own domain;
-  * holds many processes of the receiver with links and monitors, and floods
-    unlinks at it, until `peer_held` and `peer_held_total` end its
-    connection and not an innocent domain's;
-  * sends facets requests with dense lists, compound maps and large decode
-    scratch requirements, and requests past their grant's `max_request`,
-    from many domains at once: the oversized ones are dropped undecoded,
-    each facet stays within its `max_heap_size`, and the system domain's
-    memory, measured at its peak before each collection, stays within the
-    sum of [Flow control](#flow-control) for each admitted domain;
-  * sends a facet requests whose cost grows with state it built in the
-    service: the reductions spent on its requests per period stay within
-    its share plus the requests it had in flight when the share ran out,
-    the overrun is repaid in the next period, and another grantee's
-    requests are served meanwhile;
-  * links to, exits and sets the group leader of processes of the receiver
-    whose pids it was handed in replies: the link is answered with
-    `noproc`, the exit and the group leader have no effect, and a monitor
-    of the same process works;
-  * sends `{system, From, Req}` for `terminate`, `suspend`, `get_state`,
-    `replace_state`, `install` and `change_code` to a `gen_server`, a
-    `gen_statem`, a `gen_event` manager and a plain `sys` loop of the
-    receiver whose pids it was handed: none answers, each runs on, and
-    `sys:get_state/1` called from its own domain shows its state
-    unchanged. Seeded failure: edit 16 delivering raw, under which the
-    first `terminate` ends its target (D18);
-  * calls a server of the receiver started without `{erx_serve, any}`, and
-    one started with it with a `From` that names a process, and then an
-    alias, of a third domain: no call is answered and the third domain
-    receives nothing. Seeded failure: a served unwrap without the check of
-    `From`, under which the third domain's process receives the reply;
-  * sends `net_kernel` `gen_server` calls of `{spawn, M, F, A, Gleader}`
-    and `{disconnect, Node}`, and `erx_dist`'s connection owner a
-    `{NetKernelPid, disconnect}`: nothing is spawned and no connection
-    ends;
-  * sends tuples shaped as `{erx_origin, D, Msg}` with `D` the receiver's
-    own domain and the system domain's: each arrives wrapped once more;
-  * spawns into a domain that has not exported `spawn` to it, into one whose
-    export table it has filled, and into one that never answers: the first
-    fails with `noconnection`, the second with `system_limit` and no child
-    runs, and the third waits until the caller's own timeout;
-  * stops with frames published and unread in its lane: every one arrives at
-    each peer, then the death;
-  * monitors and links processes it was never given, and processes that sent
-    it messages and then died, and checks that every answer arrives after
-    those messages.
-* **The control table** between the system domain and an ERTS domain
-  under QEMU, each case with its seeded failure:
-  * a domain whose lane from the system domain is full, since system
-    processes flood one of its processes, which sits at its queue quota
-    and never receives, so the funnel pauses that lane and the system
-    side's port pauses its output, still gets every connection-control
-    record the domain service sends it, delivered to its connection agent
-    as `{erx_origin, 4, Msg}` from the domain pid, and its lane port's
-    count of control records taken grows by one for each; seeded failure:
-    a domain pid that sends each record as an ordinary message, under which
-    the record waits behind the paused port and never arrives;
-  * a system process other than the domain pid that calls the control
-    command on the system side's port gets `badarg`, and no slot changes,
-    so the domain's count of control records taken stays where it was;
-    seeded failure: a lane driver without its caller check, under which
-    the stray call writes a slot and the agent receives the record.
-* **Origins** between two ERTS domains under QEMU, each case with its
-  seeded failure:
-  * a message to a pid and one to an alias from the other domain arrive
-    wrapped, the receiver's own domain's arrive bare; seeded failure: an
-    edit 16 that skips alias targets, under which the alias message
-    arrives bare;
-  * a server started with `{erx_serve, any}` answers `gen_server:call/3`,
-    `gen_statem:call/3`, `send_request/2` followed by `receive_response/2`
-    and by `check_response/2`, and takes a cast, and
-    `erx:owner(element(1, From))` in its `handle_call` is the caller's
-    domain; the same server started without the option leaves the call
-    unanswered and gets it in `handle_info`; seeded failure: a `gen`
-    without its wrapped-reply clause, under which every call times out;
-  * a process spawned into the other domain, with a shell's `group` and
-    then an application master as its group leader, gets from
-    `io:format/2` and `io:get_line/1` what a local process gets, and a
-    file opened in one domain and handed to a process of the other reads
-    and writes as it does locally; seeded failure: a `group` without its
-    unwrap, under which `io:format/2` never returns;
-  * the source check on OTP's modules fails on a seeded extra module that
-    matches the envelope;
-  * the oracle run records, case by case, the cases of `gen_server_SUITE`,
-    `gen_statem_SUITE`, `gen_event_SUITE`, `sys_SUITE`, `supervisor_SUITE`,
-    `proc_lib_SUITE` and `io_SUITE` that cross nodes and differ, each tied
-    to its row of the compatibility table; the list comes from the run,
-    not from this document.
-* **Hostile clients** of each system service send requests naming pids they
-  do not hold and reply targets in other domains; they expect refusals, no
-  answer at all for a reply target in another domain, and other clients'
-  requests are served on time. A domain H that grantee G
-  introduced to G's facet, to G's pid and to a reply alias of G's asks the
-  facet, with `From` set to G's pid and that alias, for an exit signal to a
-  process that H holds with send and G holds with exit: H's frame never
-  reaches the facet, since the facet's pid was exported to G alone, and when
-  the test exports it to H as well the facet drops and counts the request as
-  not from its grantee, so the process lives either way. A reply to one of a
-  facet's forwards that comes from a domain other than the service's, or
-  comes twice, and a `'DOWN'` tuple sent as a message, are dropped and
-  counted as requests not from the grantee; an attenuating facet's request through the facet behind
-  it, and a request to a facet of a service in the system domain, are each
-  answered, the reply coming without an envelope and taken by its tag; the
-  facet behind an attenuating facet exits, and the attenuating facet exits
-  with the same reason, while a command domain's end, which ends its facets,
-  leaves its starter's facet serving; a session's own facet, run by the same
-  behaviour, drops the requests of every domain but its grantee; a revoked facet, whose
-  attenuating facets end with it, whose queued requests get no answer and
-  whose caller's monitor fires, while a request it forwarded before
-  completes at the service; a callback that reaches an authority-consuming
-  effect without a handle fails the build check.
-* **Node identity**, under QEMU and in the hosted build, each with its
-  seeded failure:
-  * two domains the system domain connects: each one's `node()` is its
-    name at the machine's host and `erlang:system_info(creation)` its
-    id; `nodes()` lists exactly the domains connected to it before an
-    introduction, after it and after the connection ends, and
-    `monitor_node/2` and `net_kernel:monitor_nodes/1` deliver `nodeup`
-    and `nodedown` for each; `net_kernel:connect_node/1` toward a domain
-    it has no connection with returns `false`. Seeded failure: a carrier
-    whose setup reports success, under which the connect returns `true`
-    and a send waits on a node that never comes up;
-  * a monitor of a process of another domain fires `DOWN` with the
-    process's own exit reason when the process exits while the
-    connection stays up. Seeded failure: the peer's flag set without
-    `DIST_MONITOR_NAME`, under which ERTS never sends `MONITOR_P` and
-    the monitor fires only when the connection ends;
-  * a domain ends and a later domain of the same name is introduced to
-    the same peer: the later one has a new creation, `nodedown` then
-    `nodeup` reach the peer in that order, and a frame from the peer to
-    a pid of the ended domain is answered as for a dead process, the
-    connection staying up, and the peer's monitor of that pid gets
-    `DOWN` with `noproc`, its link raises `noproc` and, trapping exits,
-    gets an exit of `noproc`, each from its own runtime. Seeded
-    failures: a target rule that requires the receiver's creation, under
-    which the message ends the connection, and a runtime that sends the
-    monitor, under which the later domain's answer ends it;
-  * creating a domain under a name a live domain holds, or one another
-    principal bound earlier in the boot, fails with `name_taken`, and a
-    principal past its `names` gets `quota` and leaves the system
-    domain's atom count unchanged. Seeded failure: a domain service
-    that makes the name's atom before its quota check, under which the
-    count grows;
-  * `{Name, Node} ! Msg` toward another domain leaves no frame in the
-    lane and counts a drop, and `monitor(process, {Name, Node})` gets
-    `DOWN` with `noproc` at once; a hostile runtime that writes a
-    `REG_SEND` ends its connection. Seeded failure: a peer that writes
-    the `REG_SEND`, under which a correct sender's connection ends;
-  * `rpc:call/4`, `rpc:cast/4` and `erpc:call/4` into a domain that
-    exported `spawn` to the caller's run the call, and `rpc:call/4` and
-    `erpc:call/4` into one that did not return `{badrpc, nodedown}` and
-    raise `{erpc, noconnection}`; `rpc:block_call/4`, `rpc:abcast/2`,
-    `rpc:sbcast/2`, `rpc:server_call/4` and `rpc:multi_server_call/2`
-    toward a connected domain give the answers the compatibility table
-    lists and leave no frame in the lane. Seeded failure: a sender without
-    the drop of registered-name operations, under which `block_call`'s
-    request reaches the lane and the receiving funnel ends the connection;
-  * `net_adm:ping/1` returns `pong` for the creator's node and the system
-    domain's and `pang` for a domain with no connection, and every
-    connection stays up. Seeded failure: stock `ping/1`, under which the
-    ping of the system domain's node returns `pang` and ends the domain;
-  * `pid_to_list/1` of a local pid, a peer's pid and a pid of an ended
-    domain prints each with its own domain id, the last also once a later
-    domain of the ended one's name is connected, and `list_to_pid/1` of
-    the first two returns the same pid while the third, whose domain no
-    connection names, is `badarg`. Seeded failures: the stock printing of
-    the channel number, under which the local pid prints as `<0.N.S>`, and
-    printing the distribution entry's creation, under which the ended
-    domain's pid prints the later domain's id;
-  * a domain starved of CPU for twice `net_ticktime`, with `net_ticktime`
-    at its minimum in it, in its creator and in the system domain, keeps
-    both connections and runs on once it gets CPU again. Seeded failure:
-    an `erx_dist` whose connection owner acts on `net_kernel`'s ticks as
-    `dist_util` does, under which the starved domain's system connection
-    ends and the domain stops.
-* **Connections:** a domain created by another gets exactly two
-  connections, to the system domain and to its creator, and each party's
-  capability table holds no `DESTROY` on any of their objects; an
-  introduction by a domain that holds `introduce` on one of the two domain
-  pids and not the other, or holds both with `send` alone, as a domain pid
-  read from an inspector's listing gives it, is refused with `badarg`, as
-  is one naming a domain that does not exist (seeded failure: a domain
-  service that checks `send`, under which the holder of `send` alone
-  introduces the two); `erlang:disconnect_node/1` and a malformed frame
-  end a connection the same way, with `noconnection` at both ends and the
-  objects deleted after both parties unmapped; a domain whose connection
-  to the system domain ends, by either party, is stopped; two domains
-  introduced again get fresh lanes that start empty, with no holder of the
-  earlier connection left; a domain at `connections` is refused an
-  introduction with `system_limit`; a domain whose creator sends to its
-  init and spawns into it at once has none of those frames dropped.
-* **Domain pids:** `erx_domain:stop(Domain, kill)`, a supervisor's brutal
-  kill of a domain pid and a fault in one each stop the domain, and its
-  monitors see the domain pid's exit; a domain pid ended any other way ends
-  its domain too; a holder of the domain pid without the exit right cannot
-  stop the domain.
-* **Soak:** a million `gen_server` calls into another domain from
-  short-lived processes, and as many from one long-lived process, a tenth of
-  whose calls time out, and as many short-lived callee processes that each
-  hand their pid out once and exit; every answered call returns, and the
-  callee's export table stays at its live names (D13).
-* **Invariant tests:** D1 by creating and ending domains in a loop; D2 with
-  the `list_to_pid` property, the name-taken refusals and the later
-  domain of an ended domain's name; D3 with the build check on readers of a lane's pages; D4 with
-  the hostile runtimes that forward names and forge senders, and the build
-  check on service callbacks; D5 with a fresh-atom frame and the `names`
-  quota; D6 with forged
-  exits; D7 with runtimes that never return or never drain; D9 with
-  three-domain interleavings; D12 with floods past each receiver limit; D13
-  with the soak; D16 with the capability-table check, the budget
-  baselines and a survivor that never answers `connection_down`; D17 by killing a domain mid-burst on every CPU; D18 with the hostile runtimes' `sys` requests and forged `From`s and the source check on OTP's modules.
-* **The connection protocol under QEMU:** a domain whose init delays its
-  ready report while its creator writes a spawn request into their
-  connection: the domain's `connection_up` waits in the domain service's
-  record, the spawn runs once the domain has reported ready and mapped,
-  and `create/1` returns first; seeded failure: a domain service that
-  hands the domain pid the record before the report, which the domain
-  pid, knowing no agent yet, cannot send, so the spawn never runs. The
-  domain's peer, handed the domain pid, sends it `{erx_connection_lost,
-  Peer, disconnect}` for the domain's live connection to `Peer`, as its
-  creator in another domain could, and, handed the agent's pid, sends the
-  agent `{erx_connection_down, Peer, noconnection}`: both are dropped and
-  counted, and the connection carries frames on; seeded failures: a domain pid without its origin
-  check and an agent without its origin check, under each of which the
-  connection goes down.
-* **Sub-spaces and programs:** a domain that ends with sub-spaces nested
-  three deep while its connections carry traffic, whose peers see one death,
-  for the domain, behind everything it sent; a program that tries to write a
-  frame finds no lane to write it in.
-* **Transcript tests:** a domain's lifecycle from the shell; a spawn with a
-  link into a domain that then crashes, delivering `{domain_down, D,
-  crash}`; forged pids inside a domain doing nothing.
-* **Concurrency:** the lane protocol and the funnel on the hosted build
-  under ThreadSanitizer, with every executor of a domain ringing one connection's bell at once.
-* **Determinism:** a deterministic-mode transcript of a domain's life is
-  byte-identical across runs.
+**Exhaustive exploration.** The lane, the connection's lifetime and
+cross-domain links and monitors are pure state machines in `liberx`'s
+functional core, explored on the host against independent expected
+outcomes, and an independent TLA+/TLC model checks the connection's
+lifetime and ordering contract, with every invariant mapped to concrete
+implementation checks under
+[Protocol verification](design-verification.md). The lane model checks
+that no wait is lost, that a record read in parts equals the record
+written, that `rpos` never passes `wpos`, and that a party rings only
+when its store crossed the published position. The connection model
+(a peer that ends, then a later domain of its name introduced to the same
+domain) checks D9, D16 and D17 and the control table's rules: every frame
+the dead peer published is delivered and nothing after its
+`{domain_down, D, Info}`, no object is deleted while a live party that
+has not answered maps it, every connection whose parties have let go is
+deleted, at most one control record per peer name is outstanding, no
+slot is rewritten while its record is unanswered, and the later
+`connection_up` never arrives while the entry for the name is up. Seeded
+failures: a domain service that sends `connection_down` before the answer
+to `connection_up`, under which two records about one peer name are
+outstanding; and a finish that reads the write position again after it
+starts, under which a live peer's later frame is delivered after the
+`connection_down`. The three-domain model checks that every answer about
+a process arrives after everything that process sent first.
+
+**Weak memory.** The two wake handshakes and the two publications (a
+record before its release store of `wpos`; the consumer's loads before
+its release store of `rpos`) are litmus tests checked with herd7 under
+the memory model of each architecture erXos runs on, AArch64's first,
+and the first publication under RC11 as well; the second publication's relaxed
+form is load buffering, which RC11 forbids, so it is checked under each
+architecture's model alone. A control slot's publication has the first
+publication's shape and is checked by it. Seeded failures: each handshake
+without its fences, and each publication with its acquire load made
+relaxed, must fail, the latter by showing a stale or overwritten byte.
+`make check-litmus` runs them (`test/litmus/`). A host test under
+ThreadSanitizer runs a producer and a consumer over one lane while a
+third thread rewrites the producer's pages, and checks that the
+consumer's copies are whole or refused and that no read races a write;
+another rings one connection's bell from every executor of a domain at
+once.
+
+**Oracles.** Every payload the complete two-stage funnel accepts decodes
+with `binary_to_term(Bin, [used])` to the same term from its unchanged
+bytes and uses exactly its length; the corpus includes pid and reference
+map keys, compound keys, duplicate keys encoded differently, deep maps
+and records at every part boundary of a lane, and structural acceptance
+alone never counts as success. Native semantic acceptance and refusal are
+compared case by case with the pinned OTP. A scenario suite of sends,
+links, monitors, exits with every reason shape, spawns with link and
+monitor, aliases, group leaders and unlink races runs between two domains
+on erXos and between two stock OTP 29.1.2 nodes on the host; every
+difference outside the compatibility table is a bug. The oracle run
+records, case by case, the cases of OTP's `gen_server`, `gen_statem`,
+`gen_event`, `sys`, `supervisor`, `proc_lib` and `io` suites that cross
+nodes and differ, each tied to its row of the compatibility table; the
+list comes from the run, not from this document.
+
+**Fuzz targets** (`make check-fuzz`): the funnel over valid frames and
+their mutations, fed whole and in parts at random boundaries, checking
+that each verdict is one of the table's and that budgets return to their
+baselines; the lane reader over mutated ring headers, record headers,
+reader pages and control-table entries; `liberx`'s `erx_etf` decoder; the
+system domain's safe decode, checking that its atom count never changes;
+and the facets' generated admission over mutated requests.
+
+**Hostile runtimes** under QEMU, with HVF, are native test domains that
+hold a connection with the domain under test and attack it: floods at a
+facet, at a process that never reads and at many destinations, and
+records whose bytes trickle in on many connections (the receiver holds
+within each target's quota plus one frame, its `max_heap_size` where it
+has no quota, and its budget, and an innocent peer's latency holds);
+casts up to a process's quota while that process calls the hostile
+domain; forged senders, pids, aliases, references, domain ids, link
+exits, `DOWN`s, unlinks and spawn replies; names never exported or passed
+on by a third domain (answered as a dead process, in order and with a
+dead process's timing); out-of-range positions, bad headers, unknown
+tags, duplicate map keys and frames past every limit; pages rewritten
+while read; bells rung without pause from every CPU while another domain
+ends (the end is handled within a bounded number of the receiver's
+steps, and each ring costs the receiver at most one look), and wake
+positions published but never waited for; a lane never
+drained (senders suspend at the busy limit, `nosuspend` and `notify`
+behave as specified, no system process suspends, and every
+connection-control record still arrives); answers of the connection
+protocol for others' connections or out of turn; an ignored
+`connection_down` (the connection stays closing, counted against the
+hostile domain, while the dead domain is retired and restarts) and
+mappings kept after `connection_unmapped` (a fault in its own domain);
+links and monitors until `peer_held` and `peer_held_total` end its own
+connection and no innocent one; oversized and costly facet requests from
+many domains (each facet within its heap limit and the grantee's share,
+and the system domain within [Flow control](#flow-control)'s sum per
+admitted domain); links, exits and group-leader changes on pids handed
+out in replies; `sys` requests and calls to unserved servers;
+`net_kernel` and `erx_dist` control messages; forged envelopes; and
+spawns into domains that do not export `spawn`, whose table is full, or
+that never answer. Seeded failures:
+
+* a funnel that ignores the queue quota, under which a facet's undecoded
+  bytes pass its bound before its next collection;
+* a runtime that waits at its quota without decoding, under which a call
+  whose reply comes behind the casts times out;
+* edit 16 delivering raw, under which the first `sys` `terminate` ends its
+  target (D18);
+* a served unwrap without the check of `From`, under which a third
+  domain's process receives the reply.
+
+**Between ERTS domains under QEMU**, each with its seeded failure:
+
+* the control table: a domain whose lane from the system domain is
+  paused at a queue quota still gets every connection-control record,
+  from the domain pid in the system domain's envelope (seeded: a domain
+  pid that sends records as ordinary messages, which then never arrive);
+  a system process other than the domain pid that calls the control
+  command gets `badarg` and no slot changes (seeded: a lane driver
+  without its caller check, under which the stray call writes a slot);
+* origins: messages to a pid and to an alias from another domain arrive
+  wrapped (seeded: an edit 16 that skips alias targets); a server started
+  with `{erx_serve, any}` answers calls and `send_request/2`, and one
+  without leaves the call unanswered (seeded: a `gen` without its
+  wrapped-reply clause, under which every call times out); a process
+  spawned into another domain does io through its spawner's group leader
+  and uses a file handed across (seeded: a `group` without its unwrap,
+  under which `io:format/2` never returns); the source check on OTP's
+  modules fails on a seeded extra module that matches the envelope;
+* node identity: `node()`, `nodes()`, `monitor_node/2` and
+  `net_kernel:monitor_nodes/1` track introductions and ends, and
+  `net_kernel:connect_node/1` toward an unconnected domain returns `false`
+  (seeded: a carrier whose setup reports success); a monitor of a remote
+  process fires with its exit reason while the connection stays up
+  (seeded: the flag set without `DIST_MONITOR_NAME`, under which it fires
+  only when the connection ends); a later domain of an ended domain's
+  name gets a new creation, and frames, monitors and links of the ended
+  domain's pids get dead-process answers from the asker's own runtime
+  (seeded: a target rule that requires the receiver's creation, and a
+  runtime that sends the monitor, each of which ends the connection); a
+  name taken or past `names` is refused with the atom count unchanged
+  (seeded: a domain service that makes the atom before its quota check);
+  operations on registered names of another domain leave no frame and
+  give the compatibility table's answers (seeded: a peer that writes the
+  `REG_SEND`, under which a correct sender's connection ends, and a
+  sender without the drop of registered-name operations, under which
+  `block_call`'s request reaches the lane and the receiving funnel ends
+  the mutated sender's own connection);
+  `net_adm:ping/1` answers from `nodes()` (seeded: stock `ping/1`, under
+  which the ping of the system domain's node returns `pang` and ends the
+  domain); pid text carries each pid's own domain id (seeded: the stock
+  channel-number printing, and printing the distribution entry's
+  creation); a domain starved of CPU for twice `net_ticktime` keeps its
+  connections (seeded: an `erx_dist` that acts on `net_kernel`'s ticks as
+  `dist_util` does, under which the starved domain is stopped);
+* connections: a created domain gets exactly two connections and no
+  `DESTROY` on their objects; an introduction without `introduce` on both
+  domain pids, or naming a domain that does not exist, is refused with
+  `badarg` (seeded: a domain service that checks `send`); a disconnect and
+  a malformed frame end a connection alike; ending the system connection
+  ends the domain; a reintroduced pair gets fresh, empty lanes;
+* the connection protocol: a domain whose init delays its ready report
+  gets its creator's spawn once it has reported and mapped (seeded: a
+  domain service that hands the domain pid the record before the report,
+  under which the spawn never runs); a peer handed the domain pid or the
+  agent's pid that sends them connection-protocol messages is dropped and
+  counted (seeded: a domain pid, and an agent, without its origin check,
+  under which the connection goes down);
+* domain pids: a `kill`, a supervisor's brutal kill or a fault of a domain
+  pid stops its domain, and a holder without the exit right cannot.
+
+**Hostile clients** of each system service name pids they do not hold and
+reply targets in other domains, and expect refusals, no answer toward
+another domain, and other clients served on time; the cases follow the
+facet rules of [Facets](#facets) and [Authority](#authority), among them
+a domain that a grantee introduced to its facet asking, with `From` set
+to the grantee's pid and alias, for an exit signal the grantee holds the
+right for (the facet never receives it, or drops it as not from its
+grantee); and a callback that reaches an authority-consuming effect
+without a handle fails the build check.
+
+**Soak, transcripts and determinism.** A million cross-domain
+`gen_server` calls, from short-lived and long-lived callers with a tenth
+timing out, against callees that hand their pid out once and exit, leave
+the export table at its live names (D13). Transcript tests cover a
+domain's lifecycle from the shell, a spawn with a link into a domain that
+then crashes, and a domain that ends with sub-spaces nested three deep
+while it carries traffic. A deterministic-mode transcript of a domain's
+life is byte-identical across runs.
 
 ## Performance
 
@@ -3944,21 +3536,6 @@ loopback 57 us ([research](research-baselines.md)).
 
 Each result records host, accelerator, QEMU version, compiler, flags,
 workload and baseline; TCG numbers are never compared with HVF numbers.
-
-## Portability
-
-Nothing here depends on a board. The lane and record layouts are
-little-endian, as the machine is; terms inside frames are the external term
-format. The funnel, the lane writer, the export table and `erx_etf` are
-portable C17 and build for the host, where their unit tests, fuzz targets,
-exhaustive models and the hosted build run them.
-
-## Dependencies
-
-No new dependencies: the boundary reuses ERTS's distribution layer, part of
-OTP 29.1.2, and `liberx`; the lane follows the single-producer,
-single-consumer shared-memory queue that the seL4 Device Driver Framework
-uses between components, as a model and nothing imported.
 
 ## Alternatives considered
 
@@ -4148,35 +3725,10 @@ own domain.
 | A runtime that never answers `connection_down` keeps a dead peer's lane memory | low | low | bounded by that runtime's own `connections` quota; the inspector shows the connection closing and the party that holds it; it holds one outer budget's size of the dead peer's principal's memory, so a principal at its memory ceiling cannot restart the dead domain until the runtime lets go, while the dead domain's record and its place in its principal's `domains` go at its end |
 | The domain service is on the path of every introduction | low | low | introductions happen at creation and at grants, not per message; the domain library's plan is bounded work |
 
-Open question for the user: how a principal comes to hold a domain name.
-The design binds a name to the principal whose domain first takes it, for
-the boot, within that principal's `names` (sessions and command domains
-take pooled names instead,
-[design-system.md](design-system.md#identifiers)), which keeps the system
-domain's atom table bounded and keeps a node name meaning one principal's
-domains; the alternative is names the administrator assigns to each
-principal in the configuration, which closes squatting and makes the atom
-bound exact at the cost of a configuration step per name. The
-recommendation is binding by first use, with the configured domains' names
-held from boot.
-
-The decisions on every domain being a node,
-spawners' rights, pid text, names as exports, origins and sockets are
-recorded where they apply: every domain is a node named by its identifier at the machine's
-host, its creation its domain id ([Domain ids, pids and
-references](#domain-ids-pids-and-references)); a spawner holds every right
-on its child in another domain ([Authority](#authority)); every pid prints
-as `<D.N.S>`, local pids included, a documented difference from stock OTP
-([Domain ids, pids and references](#domain-ids-pids-and-references));
-a process's own pid, placed in a frame by its owner, exports it, with
-`send` alone ([Exports](#exports)); every message from another domain
-arrives as `{erx_origin, D, Msg}`, with no flag of the receiving process,
-and only the owner of each protocol takes the envelope off its own shapes
-([The peer](#the-peer)); and every network socket has a socket process in
-its owner's domain, the protocol's owner on that side, which alone talks
-to the network domain for it and gives its owner `gen_tcp`'s and
-`gen_udp`'s stock messages, so active-mode code works unchanged in every
-domain ([design-network-stack.md](design-network-stack.md#the-socket-process)).
+How a principal comes to hold a domain name, bound by first use within
+its `names` quota as this design does or assigned by the administrator
+in the configuration, is an open question of
+[design-system.md](design-system.md#risks-and-open-questions).
 
 ## References
 

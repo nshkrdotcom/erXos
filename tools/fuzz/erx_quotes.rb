@@ -6,7 +6,7 @@ require 'open3'
 require 'optparse'
 require 'tmpdir'
 
-# The fuzz target of the dashboard's live quotes (examples/dashboard, docs/design-quotes.md,
+# The fuzz target of the dashboard's live quotes (examples/dashboard/README.md,
 # "The fuzz target"): erx_quotes_fuzz drives the body reader, over each source of the table
 # (erx_quotes_table), the history reader with its join into a series (erx_quotes_core), and the
 # answer classifier with untrusted input, compiled from source and run alone on stock's

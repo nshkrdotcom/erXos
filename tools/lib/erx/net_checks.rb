@@ -48,7 +48,7 @@ module Erx
   #   list_to_binary/1, binary:copy/1,2, binary:list_to_bin/1 or
   #   erlang:iolist_to_iovec/1 only in the functions COPY_SITES lists, so a
   #   payload byte is copied only where the fast path's design says
-  #   (docs/design-network-fastpath.md, "Copies");
+  #   (docs/design-network-stack.md, "Copies");
   # * origin: in erx_net and erx_net_client, only erx_net_admit and
   #   erx_sock_admit name the atom erx_origin, bare or quoted, so only they take
   #   apart the envelope of a message from another domain (D18).
@@ -130,7 +130,7 @@ module Erx
     BRACKET = /<<|>>|[()\[\]{},]/
 
     # The modules a TCP payload passes through, by file name, and the calls that
-    # copy one (docs/design-network-fastpath.md, "Copies").
+    # copy one (docs/design-network-stack.md, "Copies").
     PAYLOAD_MODULE = /\A(?:erx_tcp(?:_[a-z0-9_]+)?|erx_net_(?:frame|tx|driver|if|input|pipe|loop)|erx_tap|erx_netmap|erx_virtio_net|erx_genet(?:_core)?|erx_gen_tcp(?:_core)?)\.erl\z/
     COPY_CALL = /(?<![A-Za-z0-9_@])(?:(?:erlang\s*:\s*)?(?:iolist_to_binary|list_to_binary|iolist_to_iovec)|binary\s*:\s*(?:copy|list_to_bin))(?![A-Za-z0-9_@])/
     # The functions that may copy, each with its reason: a small piece copied out

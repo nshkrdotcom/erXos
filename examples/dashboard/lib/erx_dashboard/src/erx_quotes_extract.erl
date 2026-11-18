@@ -3,8 +3,8 @@
 
 -module(erx_quotes_extract).
 -moduledoc """
-The one reader of a live quote's response bytes (docs/design-quotes.md,
-"Reading a body" and "Reading a history"): value/2 takes a source row of
+The one reader of a live quote's response bytes (examples/dashboard/README.md,
+"Security"): value/2 takes a source row of
 the table and the body httpc delivered and answers the price and change
 it carries, or `bad_data`; history/2 takes a row with a `history` and
 the body of a history request, and answers the entries it carries, or

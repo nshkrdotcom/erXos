@@ -3,8 +3,8 @@
 
 -module(erx_quotes_core).
 -moduledoc """
-The live quotes' state machine (docs/design-quotes.md, "A quote's
-state" and "Algorithms"): new/2 starts every quote with no value,
+The live quotes' state machine (examples/dashboard/README.md,
+"How the quotes behave"): new/2 starts every quote with no value,
 tick/3 starts the rounds that are due, and outcome/5 takes a source's
 answer. Each returns the next state and the actions the effect process
 carries out, `{fetch, Quote, Source, Url}` and `render`. Times are

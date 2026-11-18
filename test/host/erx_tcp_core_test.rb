@@ -30,7 +30,7 @@ class ErxTcpCoreTest < Minitest::Test
   HP_PAWS = 'andalso not_older(SegTs, Ts) andalso not Closed'
   HP_NO_PAWS = 'andalso (not_older(SegTs, Ts) orelse true) andalso not Closed'
   # The finished pure ACK restarts the retransmission timer as process_ack does
-  # (docs/design-network-fastpath.md, Verification, test 6).
+  # (docs/design-network-stack.md, "Tests", "Header prediction equals the general stages").
   HP_REXMT = 'rexmt_after_ack(Ack, rtt(Seg, spurious_rto(Seg, Tcb1#tcb{sendlog'
   HP_NO_REXMT = '(fun(_, T, _) -> T end)(Ack, rtt(Seg, spurious_rto(Seg, Tcb1#tcb{sendlog'
   # Header prediction takes nothing once the owner has closed (TF_CLOSED), whose data the

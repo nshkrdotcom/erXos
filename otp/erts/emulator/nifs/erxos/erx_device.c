@@ -730,7 +730,7 @@ erx_device_bind_check(const erx_device_t *device, uint64_t line, erx_device_bind
  * ready is one the device may have forgotten, so nothing is posted on it and nothing
  * completed from it.
  *
- * A record runs one of the descriptor forms (docs/design-device-dma.md, "The three descriptor
+ * A record runs one of the descriptor forms (docs/design-device-dma.md, "The descriptor
  * forms"), which the device's peripheral fixes: virtio-mmio's split ring, whose rings lie in
  * the queue's memory before its pool, or GENET's register ring, whose descriptors are the
  * device's registers, so its queue's memory is its pool alone. Everything the effect layer
@@ -871,7 +871,7 @@ status_bit(const erx_device_peripheral_t *virtio, const erx_device_register_t *s
  * The registers of a virtio-mmio device: those the NIF only reads by name, and those it owns
  * by their generated index in virtio_mmio's table. The device's peripheral is virtio_mmio or
  * a kind whose table begins with virtio_mmio's registers at the same indices
- * (docs/design-hardware-generation.md, "Register inputs"). False for any other peripheral.
+ * (docs/design-generation.md, "Register inputs"). False for any other peripheral.
  */
 static bool
 virtio_registers(const erx_device_t *device, virtio_registers_t *regs)

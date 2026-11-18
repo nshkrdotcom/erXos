@@ -166,39 +166,21 @@ it; git history is the record of completed work.
   `erx_principal:register_app/1` and `erx_starter:packages/2` (docs/design-packaging.md, "Verification and testing"). Add a `pkg-reach` rule
   allowing `erx_domain:system_namespace/0` and `erx_domain_lib:apps/0`, and a publishers rule.
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
-  and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
-  (`erx_domain_srv:grant_facets/4`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
-  the app template, the session template naming no principal (`mf_none`), sized into the principal and
-  held tables, and `erx_domain_lib:apps/0` answers them; no manifest has the template yet, since the
-  check derives none (the property 19 item), so the view refuses any manifest with an `apps` row
-  today. The session's plan (`erx_domain_core:app_session/4`, from the registry's record, which keeps
-  the admission's rows) and the library's entry (`erx_domain_lib:app_session/6` over
-  `erx_dom_lib_app_session`) exist; no caller uses them yet. What remains: the domain service's
-  start of an app's session from its `erx_principal:app/2` record, which needs the app template's
-  facet rows by index (the library's `grants`, in facet-table order) and a mint core that grants a
-  session a subset of its template's rows, where `erx_domain_mints` grants every session of a
-  template all of them; `machine_principal` and the mints' parameters naming an app principal,
-  which the manifest's names do not hold, and a `tree apps` grant's root `apps/NAME/SIGNER/`, whose
-  signer is the registry record's and outside the plan, so the plan's PK10 comparison does not cover
-  it; the record in the ready answer, whose place, layout and
-  applications the registry does not keep; the app
-  principal's CPU group under an apps group, which Fiasco's flat groups leave out;
-  `erx_ns:mount/3` of an image file through `erx_verity`, which
-  held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps`
-  row, so QEMU virt's development image boots with four app entries (`erx_domain_lib:apps/0`'s max 4 at
-  the system's Erlang shell under HVF), and no app's session is started from them yet. What remains: the library entry and NIF over
-  `erx_dom_plan_app_session` and the domain service's start of an app's session from its
-  `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
-  and the inspect scope; the app principal's CPU group under an apps group, which Fiasco's flat groups
-  leave out; the session plan
-  in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
-  its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
-  `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
-  `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
-  `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
-  does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
-  `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
-  `{not_supported, program}` until then).
+  and the `app` script exist. The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps`
+  row and the app template, the session template naming no principal (`mf_none`), sized into the principal and
+  held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps` row, so
+  QEMU virt's development image boots with four app entries (`erx_domain_lib:apps/0`'s max 4 at the system's
+  Erlang shell under HVF). The session's plan (`erx_domain_core:app_session/4`, from the registry's record,
+  which keeps the admission's rows) and the library's entry (`erx_domain_lib:app_session/6` over
+  `erx_dom_lib_app_session` and `erx_dom_plan_app_session`) exist, and `erx_domain:start_app/2` starts a session
+  from them (its test is the item below). What remains: a mint core that grants a session a subset of its
+  template's rows, where `erx_domain_mints` grants every session of a template all of them; the app's name
+  from the app's pool and its principal number known to the mints and the inspect scope, since
+  `machine_principal` and the mints' parameters name no app principal, which the manifest's names do not
+  hold; a `tree apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the
+  plan, so the plan's PK10 comparison does not cover it; the session plan's rows as `packages` and the kept
+  needs, and its host test with the three seeded faults; and the app principal's CPU group under an apps group,
+  which Fiasco's flat groups leave out.
 * [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
   `erx_domain_mints_srv_tests:app_session/0` is written and not run: in its fixture the start is answered
   before the kept row is installed, because configured domain `a` ends after its introduction to the
@@ -329,7 +311,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   taken at a load average of 44 to 55, and find why stock OTP on the host
   is slower than the guest at the same four operations under HVF.
 * [High] network, the fast path
-  ([docs/design-network-fastpath.md](docs/design-network-fastpath.md)): one connection over
+  ([docs/design-network-stack.md](docs/design-network-stack.md#the-fast-path)): one connection over
   the FreeBSD test host's tap sends at 890 Mbit/s and receives at 1,143, against lwIP's 6,537 and 6,809 on the
   same tap, held there by the connection's per-segment step. The targets are two thirds of
   lwIP's bulk throughput each way over the same medium, and for request-reply a third of
@@ -355,7 +337,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
        The packages that add `runs`, `run_frames`, `units`, `unit_segments` and
        `frames_dropped` must make `admin(counters)` return every counter they keep, zeros
        included; the fast-path check is `--require-fast-path` until then and becomes the
-       default (`docs/design-network-fastpath.md`, "Benchmarks and targets") once they exist.
+       default (`docs/design-network-stack.md`, "Benchmarks and targets") once they exist.
      * [Medium] `net_bench_freebsd.rb`'s remote lock: a stale lock's takeover is check then
        act (two runners can both take it); an interrupted run releases it while its remote
        peer and client live on to their own deadlines; `run_deadline` leaves out the ssh kill
@@ -507,9 +489,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   push carries `{data, [binary()]}`, at most 64 binaries and one piece in all. Package 4 also
   ends the tap helper's items under Bugs by subsystem.
 * [Medium] display, GPU acceleration (OpenGL-class) for the desktop and kiosk apps, design after
-  research ([plan.md](docs/plan.md#track-d-windows-widgets-and-the-web), part 10). A research record
-  first (the Raspberry Pi's V3D and QEMU's virtio-gpu 3D modes, Mesa or what replaces it, how a client's
-  driver reaches a render service), then a design of the render service. The display's side is fixed in
+  research ([plan.md](docs/plan.md#track-d-windows-widgets-and-the-web), part 10). The research record
+  is [research-gpu.md](docs/research-gpu.md) (the Raspberry Pi's V3D and QEMU's virtio-gpu 3D modes, Mesa or what replaces it, how a client's
+  driver reaches a render service); next is a design of the render service. The display's side is fixed in
   [design-display.md](docs/design-display.md#graphics-hardware), "What a render service owes the
   display": a client presents only a buffer whose jobs have ended, a buffer stays a range of the client's
   pixel area, the present's answer releases it, and an accepted job keeps its ranges and the area alive
@@ -649,15 +631,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   not run without a seed` and ends as `ERX_END_OFF` before any domain starts, and the Pi 4 reads its RNG200 as
   [Entropy sources](docs/design-platforms.md#entropy-sources) says, with the release case "release entropy"
   ([design-fiasco.md](docs/design-fiasco.md#the-call-table)).
-* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/end.c`: `erx_machine_end` resets for every `how` but
-  `ERX_END_OFF`, `ERX_END_TRIAL` included, so no trial request is made. Refuse `ERX_END_TRIAL` with
+* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_MACHINE_END` case): `erx_machine_end`
+  answers `ERX_EINVAL` for every `how` but `ERX_END_OFF` and `ERX_END_RESET`, `ERX_END_TRIAL` included, so no trial
+  request is made. Refuse `ERX_END_TRIAL` with
   `ERX_ENOTSUP` while the boot value is `unknown` and otherwise make the platform's trial request before the
   reset, with the release case "trial" ([design-fiasco.md](docs/design-fiasco.md#the-end-path)).
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco/end.c` (`erx_fiasco_end_watchdog`) and `service.c`
-  (`service_fault`): a missed pet and a root fault power the machine off rather than reset it, so a hung or
-  faulted boot never reaches the committed slot and an unattended board stays off. Reset, as the end path
-  says, with a test that a missed pet ends with `erx: end reset`
-  ([design-fiasco.md](docs/design-fiasco.md#the-end-path)).
 * [High] 0.2 on Fiasco, `fiasco/kernel`: FD32's entry patch, the firmware's `SMCCC_ARCH_WORKAROUND_1` and `_3`
   at every entry from user mode and every switch between address spaces. Write it, time the null request on the
   Raspberry Pi 4 with and without it ([todo-performance.md](docs/todo-performance.md)), and carry it only if the
@@ -1184,7 +1162,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `restarts`, `restart_period_s` and `flags`, on the data partition's `etc` tree: a service directory with a
   facet `etc`, read-write to the system domain and to the templates that hold `start` (rows the build derives,
   and an entry of the facet table), mounted at `/etc`. The `etc` grant waits for grants rooted at a service
-  directory (the facet parameters of design-apps.md, "Phase 1"); until then the file is
+  directory; until then the file is
   `/data/etc/start.conf`, through the `data` grants of the system domain and root's session. Code to change:
   * the reader and judgement: `erx_start_conf:read/1`, the literal `sh` subset of "The file's syntax", with a
     host test against the host's `sh` and a fuzz target, replacing `parse_rc_conf/1` and `erx_rc_conf_fuzz`; a
@@ -2108,7 +2086,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] tooling, `tools/lib/erx/production_image.rb` (`device_path_problems`): the check of a platform record
   against a device tree reads QEMU virt's tree shape only, and runs only in the production image suite's
   device-path step, so a wrong `ram_first` or PL011 clock in a Raspberry Pi record is never checked against
-  the board's tree. Pi package 3 writes `config.txt`'s `init_uart_clock` from the record; check the Pi's
+  the board's tree. 1b-I's stage (a) writes `config.txt`'s `init_uart_clock` from the record; check the Pi's
   record against its device tree (nodes under `/soc`, the firmware's clocks) there.
 * [Medium] tooling, `tools/lib/erx/fiasco_provenance.rb` (`image_objects`, `MAPS`): the provenance audit
   covers the main build's bootstrap only and skips `build/fiasco/users-*`, so the Raspberry Pi 4's bootstrap
@@ -2173,7 +2151,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] production image, `ProductionImage#catalog`: the build record lists Fiasco's QEMU virt
   bootstrap even when the image's first stage is the board's (`Fiasco#first_stage_path`), and a build
   packs whatever board bootstrap is on disk.
-* [Medium] Pi package 5 (docs/plan.md, 1b-I (a) 5), the board pass, the framebuffer
+* [Medium] 1b-I's stage (a) (docs/research-rpi4-board-pass.md), the board pass, the framebuffer
   (`liberx/backend/fiasco/runtime_entry.c`, `framebuffer_give`): unverified is whether sigma0 grants the
   VideoCore's memory, the `framebuffer` row's window in `config/platforms/raspi4b.json`, as I/O memory, which
   `erx_mem_create_physical` needs; if not, the root stops with "the backend refused the framebuffer's pages".
@@ -2294,7 +2272,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   3), which `erx_mini_uart` sets; whether QEMU's model ignores them is unchecked. Probe by writing
   each IER bit alone and watching the interrupt line and IIR, then correct the file and the
   driver, and drop the bits if not needed.
-* [Low] Pi package 5 (docs/plan.md, 1b-I (a) 5), the board pass: confirm on silicon that the mini
+* [Low] 1b-I's stage (a) (docs/research-rpi4-board-pass.md), the board pass: confirm on silicon that the mini
   UART's receive interrupt needs IER's `RX_ERRATA` bits (`hw/svd/mini_uart/mini_uart.svd`), which
   `erx_mini_uart` sets as the BCM2835 errata asks and QEMU's model ignores, and drop them if not.
 * [Medium] hardware generator, `tools/lib/erx/hardware.rb`, no field arrays or shared enumerations:
@@ -2383,7 +2361,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   device's window, `virt.dtb`, the `qemu-virt/development` patterns), `tools/lib/erx/qemu.rb` (`cortex-a76`,
   the virtio-mmio bus arguments) and `ProductionImage::Run#check_device_paths` (`-cpu cortex-a72`) still hold
   QEMU virt's values. QEMU's `raspi4b` takes only its own 2 GiB and has no virtio-mmio; move each into the
-  platform record or `QemuPlan::MACHINES` when Pi package 4 runs a suite on the model.
+  platform record or `QemuPlan::MACHINES` when 1b-I's stage (a) runs a suite on the model.
 * [Low] tooling, `tools/lib/erx/native_root.rb` (`build_system_receipted`): the
   root's linked receipt does not name its place, the `--defsym` of
   `erx_fiasco_image_start` that `place_flags` adds; only the link map it binds
@@ -2463,11 +2441,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   Fiasco state area in the task's second kernel-user area. Read both before the vCPU row lands, and arm a thread only
   after its start, as the thread-start path of [Signals in liberx](docs/design-programs.md#signals-in-liberx) does.
 * [Medium] network, `erx_net_admit` ([design-network-stack.md](docs/design-network-stack.md#the-grants-contract)):
-  the admission path of grants and sockets is hand-written, with the
-  generated module's exact signature, until the schema generator over
-  `abi/services` exists; replace it with the module generated from
-  `abi/services/net.txt` then. Until a network grant is an `erx_facet`, a grant on a host
-  runs under `erx_net_local`'s loop.
+  generate the admission path of grants and sockets from `abi/services/net.txt`. The module is
+  hand-written with the generated module's exact signature, since no generator over `abi/services`
+  emits an Erlang admission module.
 * [Medium] Fiasco backend, `liberx/backend/fiasco/group.c` (`erx_object_info`, `erx_group_info`) and `service.c`
   (`service_object_info`): the group topic answers only the root's own group, and any other group handle the
   root holds is `ERX_ENOTSUP` (design-fiasco.md, "Reporting kernel objects"), so `[domains, D, group]` of
@@ -2482,6 +2458,15 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] dashboard, its slow work can start before its first frame is drawn
+  (`examples/dashboard/lib/erx_dashboard/src/erx_dashboard.erl`, `erx_ui_lvgl_core`): the dashboard
+  starts the quotes, the ground picture and the dial once `erx_ui:tree/2` answers, but an idle
+  renderer core answers once its operations are written, before it draws, so a slow renderer can
+  receive both trees before its first frame, and `erx_dashboard: shown` is logged before the frame
+  is on screen. erx_ui tells an opener nothing when its window presents. The fix is a design
+  question for docs/design-display.md "The widget server": a `{ui_shown, Window}` message to the
+  opener on the first present, or a first `tree/2` answer that waits for it. Measure the Pi's time
+  from `shown` to the first frame first; fix only if the gap is visible.
 * [Low] tests, the manifest edits of the domain tests (`test/fixtures/manifest_context.rb`, `DOMAIN_ROWS`
   and `SESSION_FACETS`; `test/host/manifest_stopgap_test.rb`, `dom_planner_test.rb` and
   `boot_manifest_test.rb`, their login_keys rows): each test removes the development manifest's
@@ -3969,8 +3954,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   rio defines as whether the window takes the keyboard is filled from whether the window is shown, so
   every shown window reads `current`, and a change of the current window gives no window a new `wctl`
   record. Report the overlapping policy's current window there and send the record on a change;
-  find and act's palette needs both to close when another window is picked
-  ([design-find-act.md](docs/design-find-act.md#changes-to-other-designs)).
+  find and act's palette needs both to close when another window is picked (the [Medium] find and act item
+  under "Planned features").
 * [Medium] shell, `$home` (`erlang/apps/erx_shell/src/erx_shell.erl:205`, docs/design-shell.md "The
   language"): design-shell lists `$home` among rc's variables, but no design says what it holds for a
   session and the interactive shell sets none (scripts get `/` or `/var/empty` from
@@ -5387,12 +5372,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   heart_SUITE's, global_group_SUITE's and error_logger_warn_SUITE's rows are the same. Carry a failure class (such as
   `not_alive`, or `badarg` from `open_port`) in the case events and let a row name the class it expects, so a
   different failure is reported.
-* [Medium] `tools/lib/erx/production_image.rb`, QEMU suite: M3's demo has an idle machine show every executor
-  parked, and only the hosted suite checks it (`test/integration/runtime_hosted_smoke_test.rb`, through
-  `ERX_HOSTED_GROUP_REPORT`). On Fiasco the park table keeps the count in the group status page
-  (`liberx/backend/core/park_table.c`), but nothing reads it out: no BIF, and no reporter like the hosted
-  backend's `group_report_main`. Add a user-mode reporter to `liberx/backend/fiasco` behind a kernel command-line
-  word, and a checkpoint of `parked N of N` at the shell.
 * [Low] `tools/lib/erx/interpreter_image.rb`: the check reads the linked program's symbol table, so a link that
   discards locals (`-x`, hidden visibility turned local) could hide C++ while keeping `erl_start`. The root's link
   strips debug information only. Check the lld link map's input members as well, which no stripping changes.
@@ -5436,7 +5415,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   is the `{forget, Node}` effect the hold bookkeeping item above considers, so one change closes both.
 
 * [Medium] `abi/manifest.txt`: the `devices[].selector` choice does not make `base`, `size` and `line` inactive for
-  selector 2, so a PCIe row with any of them nonzero is admitted, where `docs/design-abi.md` says they are zero; and
+  selector 2, so a PCIe row with any of them nonzero is admitted, where `docs/design-abi.md` makes them inactive; and
   nothing refuses a device-tree row whose `base + size` wraps. Add the three fields to the choice's `dt` case, decide
   the overflow rule, and give each refusal a fixture case in `test/host/abi_binary_test.rb` and
   `test/host/manifest_reader_test.rb`.
@@ -6150,7 +6129,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   holds a link with the sender (a bit of `erx_funnel_hold_t` from the same
   lookup), and only then queues the conditional `LINK` for the target to
   re-judge. The ERTS side has no edit yet either: stock
-  `ERTS_SIG_Q_OP_LINK` always inserts, so design-runtime.md's edit table
+  `ERTS_SIG_Q_OP_LINK` always inserts, so design-runtime.md's list of edits
   needs a LINK signal that creates nothing unless a link (in any state)
   exists and otherwise sends the `noproc` exit, which the lane driver
   (RT6a) uses for `ERX_FUNNEL_DELIVER_IF_LINKED`.
@@ -7736,6 +7715,11 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Medium] apps, an app's directory ([design-packaging.md](docs/design-packaging.md#invariants), PK4): until
+  the storage service roots an app's `data` grant at `apps/NAME/SIGNER/` (`tree apps`), apps hold no `data`
+  grant (the files-service item under Major initiatives) and the directory half of PK4's QEMU test waits; and
+  `service NAME purge` answers `enotsup` until the storage service offers `remove_app`.
+
 * [Low] storage, a host writing beside the boot-selection record (`erlang/apps/erx_storage/src/erx_fat_read.erl`;
   [design-storage.md](docs/design-storage.md#removable-media-fat)): a computer that writes the `ERXOS` volume,
   copying `authorized_keys` or its own metadata (macOS's `.Trashes`, `._` files, `.fseventsd`), may put clusters
@@ -8645,6 +8629,25 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] storage, a card image that holds only what is written, after 0.1
+  ([design-storage.md](docs/design-storage.md), `abi/medium.txt`, the image packer): order the
+  partitions with the populated ones first (record, system A, boot A), end the image after boot
+  A's last used cluster, and let the partition table describe boot B, system B, the vault and
+  data beyond the image's end; first boot formats the vault and data (data taking the rest of the
+  card), and the B slots stay empty until an update writes one. A reused card holds old bytes
+  there, so the record carries a first-boot mark and no such partition is read before it is
+  formatted. About 100 MiB to write instead of 718 MiB. Needs a short design first, and a QEMU
+  test that boots a truncated image on a card full of old bytes. Covers growing the data partition
+  at first boot.
+* [Medium] crypto, the system trust store for 0.2
+  ([design-crypto.md](docs/design-crypto.md#the-trust-store)): ship Mozilla NSS's root list as the
+  system's trust store, as FreeBSD's base does (`secure/caroot`: roots split from NSS's
+  `certdata.txt` into `trusted/`, removed ones moved to `untrusted/`, refreshed when Mozilla's list
+  changes; `certctl(8)` builds `/etc/ssl/certs` and `/etc/ssl/cert.pem` and takes an administrator's
+  additions and blocks). Needs a short design first: where the store lives and how an app's
+  session sees it, the import with its source record, and the `certctl` equivalent. The store's
+  "a root only with a consumer" rule gives way to this for the system store; a kiosk or app may
+  still pin its own roots.
 * [High] 0.1, Doom's demo loop on the Pi ([plan.md](docs/plan.md#01-the-preview)): no card can hold Doom, since
   Doom reaches an image only through `tools/erx pack --app --local` and the card build refuses `--local` and every
   package of its builder's ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image),
@@ -8701,6 +8704,23 @@ document's "residual risks accepted" paragraph.
   returns actions, as `erx_bt_hci_core` is, and explore it. With it: the reset waits for the old driver through the
   link the start makes rather than a monitor it takes, the fresh driver's start blocks the keeper while it programs
   the UART, and the heap bound's slack (`start_link/1`) is a round number, not derived from the grant's largest write.
+* [Medium] find and act, changes its design needs in other designs ([design-find-act.md](docs/design-find-act.md)),
+  not yet made in them:
+  * The inspection schema: a segment type `app_name` for `apps *app_name`, marked `present app`.
+  * design-shell: `service` declares `-erx_args([app])`; commands that take a pid, a domain or another
+    presentation first declare it, so the Services offers find them. The variables a session's shell starts
+    with, `$home` among them, are one value both the shell and `erx_act_run` start from (the [Medium] shell item
+    on `$home`). A job whose evaluator a session process other than a terminal's shell starts with
+    `erx_job:spawn/1`, an act, is ended as any job is and listed by no terminal's `jobs`.
+  * design-files: narrowing for a program refuses, with `EACCES`, a writable root that lies within the session's
+    `lib` directory or contains it, judged on the root's path on its grant; the same holds for a command domain
+    that `within` narrows.
+  * design-apps: which sessions may read the start table's row names in a release build (the [Medium] item on
+    `[apps]` below).
+* [Low] display theme, transitions (`abi/theme.txt`): the theme has no `transition` rows and no `ui_transition`
+  set, which [design-desktop-programs.md](docs/design-desktop-programs.md#the-theme-one-declaration) and
+  [design-abi.md](docs/design-abi.md#theme) declare (`press` 120 ms, `state` 160 ms, `reveal` 200 ms, each
+  `ease_out`), nor the generator's check of them.
 * [Low] find and act, rules written by a program given the whole namespace
   ([design-find-act.md](docs/design-find-act.md#security)): such a program holds the session's files but
   no right beyond files unless `within -f` names one, yet a binding or route it writes to
@@ -8750,9 +8770,22 @@ document's "residual risks accepted" paragraph.
   statistics dump to the console (`jdb_kobject`, `CONFIG_JDB_KMEM_STATS`) to the debugger
   kernel object `jdb_object` that every kernel has; and `CONFIG_PERF_CNT_USER`, user-mode
   access to the performance counters, which Fiasco's Kconfig marks for debugging only.
-
-## Planned features
-
+* [Medium] WiFi, the vault purpose for network keys
+  ([design-wifi.md](docs/design-wifi.md#credentials)): design-system.md
+  does not yet list the vault purpose `{wpa, Service}`, with facet
+  `wpa_key` for the WiFi domain and `wpa_admin` for the administrator's
+  session template, taking the seven operations of design-wifi
+  Credentials and kept as a sealed section of the machine's file. Add it
+  to design-system.md#the-vault when the WiFi holder is built.
+* [Medium] WiFi, who may enroll a network over Bluetooth
+  ([design-bluetooth.md](docs/design-bluetooth.md),
+  [design-wifi.md](docs/design-wifi.md#credentials)): design-wifi grants
+  `wpa_admin` only to root's session template and keeps every passphrase
+  in the session that typed it, while Bluetooth provisioning has the
+  passphrase typed on a phone and handed on by a provisioning app.
+  Decide with the provisioning design: name that app's template as a
+  second `wpa_admin` grantee and state the passphrase path, or route
+  provisioning through root's session.
 * [Medium] apps, who may read the start table's row names in a release build ([design-apps.md](docs/design-apps.md),
   [design-find-act.md](docs/design-find-act.md#decisions), decision 3): `[apps]` is visible only at scope `all`, so a
   release build's palette lists no apps and `service -e` cannot read `declared_enable`; design-apps decides which
@@ -8891,15 +8924,17 @@ document's "residual risks accepted" paragraph.
   through the image's trust store ([design-crypto.md](docs/design-crypto.md#https-clients)).
 
 * [Medium] `examples/dashboard`: the live dashboard's reference frame, `dashboard-live` under
-  `test/display/reference/` (the dashboard's tree for a fixed time and a fixed live board), is not recorded;
-  design-quotes.md's frame test row names it.
+  `test/display/reference/`, is not recorded: `erx_ui_host` with the Erlang renderer draws the dashboard's tree
+  for a fixed time and a fixed live board, one quote in each state of the status line, `clock not set` among
+  them, and the host test compares it with the picture; seeded fault: a stale value shown without `stale`
+  changes the frame.
 
 * [Medium] `erx_quotes_core` (`trying`): a round in flight has no deadline, so a request httpc never
   answers (a handler killed without replying) keeps its quote from fetching until the source restarts.
   Fix by construction: a deadline in `trying` that `tick/3` ends as `timeout`, and requests keyed by quote.
   A history request has the same gap the other way: `history_at` moves on when it is asked, so a
   history httpc never answers leaves its entry in `erx_quotes`'s `requests` for good, one more each
-  hour, past the six-request bound of design-quotes.md ("Memory"); keying requests by `{Kind, Quote}`
+  hour, past the six-request bound of the dashboard's [README](examples/dashboard/README.md#how-the-quotes-behave); keying requests by `{Kind, Quote}`
   makes a new request replace the old one and drop its answer.
 
 * [Medium] `erx_quotes`, `erx_quotes_view`: both take apart `erx_quotes_core:state()` (the table's source
@@ -8910,17 +8945,13 @@ document's "residual risks accepted" paragraph.
   `erx_quotes` starts at run time but no `.app` file declares; settle whether the `.app` names them.
 
 * [Medium] `kiosk/hvf-1cpu-quotes` (`test/fixtures/quotes_fixture.rb`, `tools/lib/erx/kiosk.rb`): the
-  fixture answers only Kraken's Ticker requests, not the OHLC history request design-quotes.md ("The
+  fixture answers only Kraken's Ticker requests, not the OHLC history request the dashboard's [README](examples/dashboard/README.md#the-qemu-cell) ("The
   QEMU cell") names, so each quote's history fails with a 404 and the cell does not check the
-  `quotes: QUOTE history N entries` lines the design says it passes on.
+  `quotes: QUOTE history N entries` lines the cell passes on.
 
 * [Low] `examples/dashboard` (`erx_quotes_table`): Kraken's address, 104.16.14.28 (one of
   `api.kraken.com`'s Cloudflare addresses), is hardcoded and may change; a change shows
   `cannot connect` or `certificate rejected` until the row's `address` is updated.
-
-* [Low] `config/trust/` (design-crypto.md "The trust store"): ISRG Root X1, ISRG Root X2 and DigiCert
-  Global Root G3 were added for the Cboe and FRED quote sources, which the dashboard no longer has; they now
-  serve no consumer in the tree. Remove them and their rows, or name the consumer that keeps them.
 
 * [Medium] `erx_quotes` tests: the effect process's own paths (an unknown request dropped, a redirect
   followed within the round, a request httpc refuses at once, the tick) have no test; the HTTPS test
@@ -9027,11 +9058,78 @@ document's "residual risks accepted" paragraph.
   full-speed devices with control, bulk and interrupt transfers. It serves QEMU `raspi4b` alone, since a real
   Pi 4's DWC2 is the USB-C power connector's, so it comes after Track U's parts
   ([plan.md](docs/plan.md#track-u-usb)); its design keeps the three rules the USB design records.
-  ([plan.md](docs/plan.md#track-u-usb)); its design keeps the three rules the USB design records.
 * [Low] USB, SuperSpeed hubs ([design-usb.md](docs/design-usb.md#outside-this-design)): the bus core gives up a
   hub at SuperSpeed at its device descriptor (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
   design of its own, with the VL805's bulk-out burst quirk for mass storage behind such a hub that the design lists
   beside it.
+* [Medium] board sensors, [design-board-sensors.md](docs/design-board-sensors.md): not built. No erXos code reaches
+  the firmware mailbox at run time, and the device service's process and firmware worker, through which every
+  firmware request is made ([design-system.md](docs/design-system.md#devices), "Firmware requests"), do not exist:
+  `erx_devices` hands on the domain library's catalogue and keeps no state. Both come with whichever of the
+  VL805's notification, the Bluetooth power line and the sensor driver lands first; probes S1 and S2 come first.
+* [Medium] board sensors, `abi/formats/vc_property.txt` and `abi/inspection.txt`
+  ([design-board-sensors.md](docs/design-board-sensors.md#the-requests)): `vc_property.txt` does not exist and the
+  schema has no `sensors` kind. Add the property buffer's layout, the closed tag set, `fw_reading`, `fw_throttle` with
+  its span and `board_sensor_period`; add the kind `sensors` at `[sensors]`, the units `mdegC`, `uV` and `Hz`, and
+  `@fw_throttle`.
+* [Medium] ABI, `abi/erx_abi.txt` and `abi/manifest.txt` ([design-kernel.md](docs/design-kernel.md#firmware-requests),
+  [design-board-sensors.md](docs/design-board-sensors.md#the-requests)): no status `proto` (`ERX_EPROTO`), no
+  `erx_firmware_request` in the machine family, and no firmware request record (name, belonging, tag, argument) in
+  the system manifest from the platform record's `firmware_requests`. Add the three.
+* [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
+  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): no rows for the PCIe and USB kinds. Add `pci_ecam`
+  (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration`, and `qemu-xhci` and
+  the VL805 by PCI identity and position with role `usb`, each with its SVD peripheral; the PCIe-arm item under the
+  domain library (`dom_boot_view.c`, `boot_devices`) lands with it.
+* [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#what-the-usb-domain-claims)): no
+  `usb` device role and no `drive` field in `erx_mf_window`. Add both, the field set exactly when the window's device
+  has the `usb` role, and property 9 of the manifest check: at most `usb_drives_max` drives per controller, each
+  (device, drive, partition) once, and a release build's USB domain holding its controller's unit alone and serving
+  no file system.
+* [Medium] system manifest, `abi/manifest.txt` ([design-abi.md](docs/design-abi.md#devices-and-partition-windows),
+  [design-pcie.md](docs/design-pcie.md#dma)): no `dma_limit` in `erx_mf_device`, no closed flag with its listed places
+  and pins on a bridge's row, and no `msi_frame` platform part on QEMU `virt`. Add them, with the packer's copies from
+  the platform record; the `dt`-case item under Bugs covers `base`, `size` and `line`.
+* [Medium] USB, `abi/inspection.txt` ([design-usb.md](docs/design-usb.md#failure-handling)): no `usb` kind. Declare
+  `[usb, Controller]`, `[usb, Controller, ports, Route]`, `[usb, Controller, devices, Route]` and the other paths
+  Failure handling lists, shown under `/proc/usb`.
+* [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
+  [design-generation.md](docs/design-generation.md#register-inputs)): no `xhci/xhci.svd`, no ECAM file and no BCM2711
+  bridge file. Write `xhci.svd` from FreeBSD's `xhcireg.h` and the xHCI specification's register chapters, its three
+  movable clusters marked with the capability field their base comes from and its owned registers marked; the
+  BCM2711 bridge's registers from the facts record's register map and `bcm2838_pci.c`; and the ECAM and BCM2711
+  configuration-space views (8-, 16- and 32-bit accesses at a computed offset, bounded by the window), with the
+  generator's support for both extensions.
+* [Medium] USB, `tools/lib/erx/chokepoint_rules/device.rb` ([design-usb.md](docs/design-usb.md#the-block-transport)):
+  `device-posters` names neither `erx_xhci` as a poster of `erx_device:post/4` nor `erx_blk_write` as the one caller
+  of `erx_usb_pipe:bulk_out/3`, and nothing holds `erx_device` to `erx_xhci` within `erlang/apps/erx_usb/`. Add the
+  three, each with a seeded violation.
+* [Low] USB, `abi/formats/evdev.txt` ([design-usb.md](docs/design-usb.md#the-usage-table)): the key codes FreeBSD's
+  `evdev_usb_scancodes` maps that the file lacks (keypad keys, F13 to F24, `KEY_102ND`, `KEY_COMPOSE` and the others).
+  Add them, since the file holds every code erXos reads.
+* [Medium] docs, design-system.md: the edits design-usb, design-pcie and design-board-sensors require of it are not
+  made. A `usb` device role and a `drive` field in `erx_mf_window` with manifest property 9
+  ([design-usb.md](docs/design-usb.md#what-the-usb-domain-claims)); a USB device as a sub-device of its controller's
+  unit that enters no catalogue; the bridge's `pci_bus:firmware/1` request made through
+  `erx_domain_lib:pci_firmware/1`, marking `firmware_lost` at a timeout
+  ([design-usb.md](docs/design-usb.md#the-vl805s-firmware)); the device service's PCIe process, its core and
+  monitors, the hold of `pci` rows at boot, `/dev`'s PCIe fields and `erx_domain:await_grant/2`
+  ([design-pcie.md](docs/design-pcie.md#facets)); and the device service's `firmware_rows/1` and `firmware_read/1`
+  through its firmware worker, the sensor driver among its callers
+  ([design-board-sensors.md](docs/design-board-sensors.md#concurrency-and-failure)).
+* [Medium] docs, design-live.md "Overlays": two loads into one domain other than the system domain at once
+  have no stated outcome: whether the code service holds a second candidate overlay until the first is
+  published or discarded, or refuses it, so that no published overlay is written from a stale base. State it
+  in the load's three steps and test it when the code facet is built.
+* [Low] docs, design-live.md "The /proc tree": `/proc/sensors/status` is not among its paths
+  ([design-board-sensors.md](docs/design-board-sensors.md#procsensors-and-the-inspector)).
+* [Low] docs, design-scheduler.md "Service work" (under the review freeze): a call a service's process makes on a dirty
+  I/O scheduler counts at its elapsed time, and a request one of its processes hands to another is charged that
+  process's reductions too, returned with its answer, as design-domains.md's admission by measured reductions says.
+* [Medium] docs, design-storage.md: the transport is reached by its pid (`erx_blk_bot` per medium is not registered),
+  but "The transport" still calls it the device process registered as `erx_blk`, and the transport contract's calls
+  (`erx_blk:read(Sector, Count)`, `{error, no_device}` when no device process runs) take no pid. Restate the contract
+  over a transport pid and say what `no_device` means for a dead pid.
 * [Low] apps, [design-packaging.md](docs/design-packaging.md#the-apps-row): a setting for the apps group's
   CPU share of `users`. The apps group takes what the principals' shares leave, each app an equal part, with
   no field of the `apps` row to set it; a builder who wants apps held to a smaller share has no lever.
@@ -9047,7 +9145,7 @@ document's "residual risks accepted" paragraph.
 * [Low] bootstrap, boot lines: print `/chosen/bootloader/build-timestamp` from the device tree
   (`rpi-eeprom-update` of `raspberrypi/rpi-eeprom` at `3831e51dba65f4493f3f88c1d049de73165c082e`, l.48), so a
   board report shows the bootloader version, which the Pi 4's A/B card needs to be 2022-12-01 or later
-  ([design-platforms.md](docs/design-platforms.md#trying-a-card-on-a-board)). It helps only once the firmware
+  ([guide](docs/guide/raspberry-pi-4.md#update-the-bootloader-once)). It helps only once the firmware
   has started erXos's code; an older bootloader prints nothing.
 * [Low] kernel and pipes, a pass reservation spanning a hand-off's batches
   ([design-kernel.md](docs/design-kernel.md#passing-capabilities),
@@ -9166,12 +9264,12 @@ document's "residual risks accepted" paragraph.
 * [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):
   the group keeps every line its editor returns, so a long session, or a paste or peer that sends many lines, grows
   the group without end, though edit 73 of [design-runtime.md](docs/design-runtime.md) bounds each line. Keep the
-  most recent lines only, with the bound in design-runtime.md's edit table and a test that measures the whole group
+  most recent lines only, with the bound in design-runtime.md's list of edits and a test that measures the whole group
   after many lines, beside design-shell.md's "A line that never ends".
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
   request, right after the signal and errno table package, which gives `SIGINFO` its number.
-* [Low] live inspection, `ps` and `top` ([design-live.md](docs/design-live.md)): the `time` and `pcpu` columns of an
+* [Low] live inspection, `ps` and `top` ([design-shell.md](docs/design-shell.md#text-commands)): the `time` and `pcpu` columns of an
   Erlang process show its reductions, labelled as reductions, instead of `-`; real CPU time per process comes
   later as an opt-in scheduler flag.
 * [Medium] desktop, the release of `erx_desk` (`tools/lib/erx/release_files.rb`, `RELEASE_SCRIPTS`):
@@ -9763,10 +9861,10 @@ document's "residual risks accepted" paragraph.
   `erx-test:` lines and ends the machine through `erx_machine_end`, and the
   roster's first cases with their calls; the harness gives one deadline per
   configuration, not per case ([design-build.md](docs/design-build.md#images-and-guests)).
-* [Medium] bench, G1's guest workloads (`tools/erx bench timer`, `stop`,
+* [Medium] bench, track K's first guest measurements (`tools/erx bench timer`, `stop`,
   the null call, IPC, park and wake, boot time): they reuse the conformance
   harness's boot, deadline and guest endings, with results kept per
-  accelerator ([plan.md](docs/plan.md#m1-the-system-boots-on-fiasco)).
+  accelerator ([plan.md](docs/plan.md#track-k-erxoss-kernel)).
 
 * [High] kernel memory, file-backed memory objects with evictable clean
   pages, so that large-file `mmap` (LMDB, SQLite in mmap mode) and ML

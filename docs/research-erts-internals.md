@@ -9,6 +9,10 @@ configure) are summarised in
 [The operating-system layer](#the-operating-system-layer). Findings are
 never edited in place; a re-check gets a record of its own.
 
+**Superseded premise.** erXos does not run ERTS inside its kernel: every runtime,
+the system domain's ERTS included, runs in user mode
+([design-runtime.md](design-runtime.md), [design.md](design.md#trust-placement)).
+
 **Date:** 2026-10-29.
 **Host:** Apple M4 Max, macOS 27.0.1 (Darwin 27.0.0); Homebrew LLVM clang
 23.1.4 for the toolchain probe.

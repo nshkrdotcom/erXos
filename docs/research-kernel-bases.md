@@ -13,6 +13,16 @@ judgement appears once, attributed. QEMU facts measured on the same host are
 in [research-baselines.md](research-baselines.md). Findings here are never
 edited in place; a re-check gets a new record.
 
+**Superseded premise; trimmed record.** The premise above, ERTS running
+inside the kernel at EL1, is superseded: every runtime, the system
+domain's ERTS included, runs in user mode
+([design.md](design.md#trust-placement),
+[design-runtime.md](design-runtime.md)). This copy drops the sections on
+Little Kernel, FreeBSD, NetBSD and rump kernels, OpenBSD, RTEMS and GRiSP,
+NuttX, Zephyr and the other kernels; the full record is
+`~/erxos-history/docs-archive/research-kernel-bases.md`, history commit
+`e38149b`.
+
 **Date:** 2026-10-29.
 **Host:** Apple M4 Max, macOS 27.0.1.
 **Sources read** (cloned or downloaded at the versions under
@@ -304,70 +314,6 @@ server, about 2,070 with 10-word messages), which the survey equates to about
 recovery at 1.9 to 23.3 microseconds on a 1 GHz Cortex-A9. Mapping one page
 costs 759 to 3,796 cycles across the measured AArch64 boards.
 
-## Little Kernel
-
-LK master `e7cefb16` (no release tags; master reached `d3d8ddf8`, an 88-line
-thread-pinning fix, during the survey without changing a finding).
-
-* **License.** MIT (`LICENSE`; about 1,120 MIT-style headers). In the arm64
-  subset, `kernel/semaphore.c` and its header are Apache-2.0 (Christopher
-  Anderson, 2012) without SPDX tags; libc `strtol.c`, `strtoll.c`, `qsort.c`,
-  `atof.c` and `sys/cdefs.h` are BSD-3-Clause, `bsearch.c` ISC-style;
-  `lib/libc/string` cites a "NewOS License" absent from the tree
-  (unverified); libfdt is `(GPL-2.0-or-later OR BSD-2-Clause)`.
-* **Language and boot.** C (`--std=gnu11`) and assembly; a C++17 subset
-  (`engine.mk:84`), in the arm64 subset only in `lib/fdtwalk` (1,405 lines);
-  optional Rust. `platform/qemu-virt-arm` boots an ELF linked 1 MiB above RAM
-  and reads the DTB at the start of RAM (`platform.c:66`), where QEMU's ELF
-  path writes it; there is no Image header (the survey's estimate that one is
-  a small change is unverified). `MEMSIZE ?= 0x08000000   # 512MB` is 128 MiB.
-* **GIC.** One v2 and v3 driver (1,567 lines; v3 from Trusty, `b6c72e5d`):
-  system registers, affinity routing, SGIs via `ICC_SGI1R_EL1`. Every SPI
-  goes to affinity 0 (`gic_v3.c:344-346`); no ITS, LPIs or affinity API;
-  extended INTIDs, `ICC_CTLR_EL1.RSS` and the DS=1 branch are open comments.
-  The version comes from the DT (`helpers.cpp:424`), not
-  `ID_AA64PFR0_EL1.GIC`. CI boots arm64 with `-6s4` and no GIC version
-  (`run-qemu-boot-tests.py:23-28`), so QEMU picks GICv2; v3 is untested.
-* **SMP.** PSCI (150 lines) uses HVC when entered at EL1 and SMC at EL2,
-  ignoring the DT; x18 holds per-CPU data; `SMP_MAX_CPUS` defaults to 8, with
-  32-bit masks. The EL2 drop leaves `CNTHCTL_EL2` and `ICC_SRE_EL2` unset.
-* **MMU, VM, EL0.** `mmu.c` (996 lines): 4K, 16K and 64K granules, a written
-  TLB discipline, 16-bit ASIDs, a 30 GiB physmap. `pmm.c` (515) has one
-  global mutex; `vmm.c` (940) commits eagerly, with no demand paging, VMOs,
-  VM-level protect or partial unmap of large pages. EL0 landed on 2026-09-05
-  (`77522239`, `bf9cad64`): `arch_enter_uspace` (`arch.c:146-185`) zeroes x0
-  to x30 and EL0 exceptions reach weak hooks, with no syscall layer, PAN or
-  user copy, and an unused fault-fixup table (`asm_macros.h:167`). lkuser
-  (`bd4ec158`, about 1,170 lines of C++) covers arm32 and RISC-V only.
-* **Threads, locks, timers.** `thread.c` (1,360): 32 priorities, a 5-tick
-  quantum ("XXX make this smarter", `:502`), single-CPU pinning. One run
-  queue and one spinlock, `thread_lock` (`thread.c:53`), guard all run
-  queues, thread states and wait queues; mutexes take it on every acquire and
-  release, without priority inheritance; spinlocks are unfair. Timers sit on
-  per-CPU lists under one `timer_lock`; `lk_time_t` counts milliseconds in 32
-  bits (`sys/types.h:33`), while `ethr_event_twait` takes nanoseconds. The
-  unmerged `wip/preempt-disable` branch splits both locks. Stacks have no
-  guard pages.
-* **FP and TLS.** Kernel threads may use FP, restored lazily on the first
-  trap; other code builds with `-mgeneral-regs-only`
-  (`arch/arm64/rules.mk:112`). TLS is four fixed `tls[]` slots, `TPIDR_EL1`
-  the thread and x18 the CPU; BEAMAsm never uses x18 (`beam_asm.hpp:179`).
-* **Build, size, quality.** GNU make, GCC 15.2.0 or clang 20 in CI, Python
-  only for symbols and tests. Core 17,258 lines, support 20,232 (libc, heap,
-  dlmalloc, libfdt), repository 192,396. Kernel and contract tests, UBSan and
-  CodeQL in CI; 892 commits in the year to 2026-10-27, 774 by Geiselbrecht.
-  `atomic_cmpxchg` is a stub returning 0; MSI setup hard-codes doorbell
-  `0x08020040` and CPU 0 (`platform.c:196-209`), QEMU's v2m frame under both
-  accelerators (inferred).
-* **HVF and relatives.** No report of LK under HVF; `do-qemuarm` passes
-  `gic_version=2,accel=hvf` (`:239-240`), which `virt-11.1` refuses. Trusty
-  (MIT) supplied the GICv3 driver; NVIDIA TLK adds user mode at Secure-EL1
-  ("MIT/FreeBSD" per TF-A, unverified); Zircon was "born as a branch of LK".
-* The survey assessed LK as the best fit for running ERTS threads as kernel
-  threads as it stands, its scheduler reducible to a switching service for
-  per-CPU ERTS contexts, with the risks of no Image header, untested GICv3,
-  global locks, millisecond timeouts, unguarded stacks and immature EL0 code.
-
 ## Zircon
 
 Fuchsia main `78197f39`, `releases/f32` `6a563ae1`, and spot checks of
@@ -410,211 +356,6 @@ Fuchsia main `78197f39`, `releases/f32` `6a563ae1`, and spot checks of
   conventions and object model conflicting and its upstream moving to Rust,
   and as a design reference for handles, VMAR ceilings, user copy, ASIDs,
   restricted mode and priority inheritance.
-
-## FreeBSD
-
-FreeBSD `releng/15.1` at `95719d8a895b` (release/15.1.0-p6).
-
-* **Whole kernel.** No C++ in `sys/`; arm64 kernel code builds with
-  `-mgeneral-regs-only`, `-ffixed-x18` and `-mbranch-protection=standard`
-  (`sys/conf/kern.mk:142-148`), uses FP only between `fpu_kern_enter()` and
-  `fpu_kern_leave()`, and runs on 4-page stacks (`param.h:100-105`);
-  `MAXCPU` is 1024. Scheduling, racct/rctl, Capsicum, jails, VFS and sockets
-  key on `struct proc`, `struct thread` and descriptors, which are reused
-  integers without generation; Capsicum rights only shrink
-  (`sys_capability.c:230-262`); `copyin` clears PAN (`asm.h:97-104`);
-  `do_serror()` panics (`trap.c:815-829`). `sys/` has 33,248 files.
-* **Build, QEMU, HVF.** bmake; on macOS `tools/build/make.py` (Python 3)
-  bootstraps bmake with Homebrew LLVM, and FreeBSD's CI cross-builds arm64
-  GENERIC on `macos-latest` (`brew install bmake libarchive llvm@18`).
-  aarch64 is Tier 1; GENERIC has `std.virt`, GICv3 and ITS; SMMU support is
-  only `options IOMMU`. FreeBSD 15 runs in text mode on an M4 Max under UTM
-  4.7.5 with HVF (UTM issue 7598), 14.3 on an M4 Pro (issue 6918).
-
-| Piece | Lines | License | Depends on | Extraction (survey) |
-| --- | --- | --- | --- | --- |
-| pmap | 10,268 + 466 | 4-clause UC text plus a 2-clause section; UC's 1999-07-22 letter in `COPYRIGHT` rescinds only UC's clause | `vm_page`, `vm_object`, `vm_map`, `vm_reserv`, UMA, vmem, locks; `pmap(9)` | very hard |
-| GICv3 and ITS | 5,728 (`gic_v3.c` 1,713, `gicv3_its.c` 2,335) | BSD-2-Clause text | newbus, KOBJ `pic_if`, `msi_if`, `gic_if`; INTRNG (1,958); OFW, ACPI | moderate |
-| generic timer; PSCI; PL011 | 953; 867; 672 | BSD-3-Clause; BSD-2-Clause; BSD-2-Clause | eventtimers, timecounters; newbus, OFW; uart(4) | rewriting cheaper |
-| virtio (42 files) | 22,351 (`virtqueue.c` 879, `if_vtnet.c` 4,656, `virtio_blk.c` 1,679) | BSD-2-Clause, BSD-3-Clause | `virtqueue.c`: sglist, malloc, KOBJ; vtnet: ifnet, mbuf, UMA, netmap; blk: GEOM | easy to moderate (`virtqueue.c`), hard (vtnet, blk) |
-| SMMUv3 (`sys/arm64/iommu`) | 4,947 + 2,254 | BSD-2-Clause | newbus, KOBJ, IOMMU and busdma, `vm_page` | moderate to hard |
-| network | 372,645 | mostly BSD-3/BSD-2; BSD-4 in `in_cksum.c`, `if_media`, `if_bridge`, `bridgestp`; ISC, MIT-style, CMU | epoch, mbuf, UMA, ifnet, VNET, sockets | very hard |
-| file systems | UFS 45,061; msdosfs 8,475; tmpfs 6,250 | UFS BSD-3/BSD-2; msdosfs BSD-4-Clause with the TooLs GmbH clause; tmpfs BSD-2-Clause; OpenZFS CDDL | VFS, buffer cache, `vm_object` | hard |
-
-* pmap holds break-before-make, the ASID and VMID allocator, TLBI helpers
-  and the errata table behind FreeBSD-SA-26:31.arm64 (CVE-2025-10263, a
-  write landing after its permission is revoked on Cortex-A76 to X925 and
-  Neoverse N1, N2, V1, V2, V3). `gic_v3_fdt.c` adds a device for every
-  compatible GIC child (`:284-343`) and gicv2m attaches under `gic`
-  (`sys/arm/arm/gic_fdt.c:322`, `:363`), so QEMU's v2m frame would attach
-  under a GICv3 (inferred; run time unverified).
-* The survey assessed FreeBSD as a poor whole-kernel base, needing a deep
-  fork, and its pieces as references: pmap, the GICv3 and ITS drivers,
-  `virtqueue.c` and the SMMUv3 driver.
-
-## NetBSD and rump kernels
-
-NetBSD `netbsd-11` at `3b308647b144` (11.0_STABLE); trunk metadata
-`4a74c4f51700`.
-
-* **Rump kernels** "provide portable, componentized, kernel quality drivers
-  such as file systems, POSIX system call handlers, PCI device drivers, a
-  SCSI protocol stack, virtio and a TCP/IP stack" (`rumpkernel(7)`) from
-  unmodified NetBSD sources plus 39,184 lines of glue. They manage no MMU
-  (`pmap_enter` panics); host threads hold one of `RUMP_NCPU` virtual CPUs
-  (default 2); `RUMP_MEMLIMIT` caps memory; aarch64 uses `arch/generic`.
-* **rumpuser** (`rumpuser.h` rev 1.117, `RUMPUSER_VERSION` 17) has 62
-  hypercalls, 8 of them the syscall proxy; the other 54 cover init, memory,
-  files and block I/O, clocks, parameters, threads and locks. There are 13
-  upcalls; a hypercall must release its rump CPU before blocking. Devices add
-  10 `rumpcomp_pci_*` calls and virtif's 4 calls and one upcall.
-* **Components:** 27 network libraries (TCP/IP, IPv6, IPsec, NPF, bridge,
-  VLAN, WireGuard, virtif), 28 file systems (ffs, msdos, ext2fs, tmpfs, nfs,
-  cd9660, udf; libzfs is CDDL) and 42 device libraries (PCI, virtio, SCSI,
-  USB), over 245,072 lines of networking and 40,750 of ffs, ufs and ext2fs.
-* **License.** BSD-2-Clause text without SPDX tags; advertising clauses
-  remain in 24 `sys/netinet` files (Cisco in SCTP; UC and US Naval Research
-  Laboratory in TCP), 5 in `netinet6`, 5 in `sys/net` and 10 in msdosfs
-  (TooLs GmbH); some files are ISC; no GPL.
-* **Activity and hosting.** Trunk has 24 commits touching `sys/rump` in 2026,
-  the latest on 2026-10-02, and NetBSD's network tests drive rump servers;
-  rumprun was last committed on 2020-05-11. `build.sh` needs a POSIX host
-  with C and C++ compilers. Genode builds rump with its own makefiles and
-  implements rumpuser in 1,562 lines of C++ (ext2, FAT, ISO9660; arm_64);
-  Data61 ported rumprun to seL4 on x86. The BSD survey estimated an erXos
-  rumpuser layer at 1.5 to 3k lines of C17 (an estimate).
-* **arm64 pieces** (BSD-2-Clause): pmap 2,779 lines (tied to UVM); `gicv3.c`
-  954, `gicv3_its.c` 1,111, `gicv3_fdt.c` 480, `gic_v2m.c` 377; virtio core
-  1,603, PCI 1,347, MMIO 512; LDTR/STTR with PAN; MAXCPUS 256; no SMMU
-  driver. `gicv3_fdt.c` sets up v2m frames only when the GIC node itself has
-  `msi-controller` and `mbi-ranges` (`:176-180`, `:268-312`), otherwise only
-  `arm,gic-v3-its` children, and only the GICv2 driver matches
-  `arm,gic-v2m-frame` (`gic_fdt.c:121-123`), so QEMU's v2m frame would not
-  attach under a GICv3 (inferred; untested).
-* **HVF.** 10.1 failed on an M4 Air under UTM 4.7.4 (issue 6918); 11.0 RC1
-  boots on an M1 Max under UTM 4.7.5; no NetBSD 11 on an M4 is reported.
-* The survey assessed rump kernels as a good fit for networking and storage
-  in EL0 domains behind the rumpuser hypercalls, and NetBSD's arm64 drivers
-  as references, its v2m code especially (qualified above).
-
-## OpenBSD
-
-* OpenBSD 8.0 (`sys.tar.gz` checked against the release's SHA256 file).
-  `agintc.c` (2,166 lines, rev 1.66, ISC) holds the GICv3 distributor,
-  redistributors and ITS over autoconf, bus_dma, FDT and evcount; only the
-  GICv2 driver matches `arm,gic-v2m-frame` (`ampintc.c:905`), so with HVF's
-  vGIC `agintc` has no MSI (inferred; INTx fallback unverified).
-* ISC: `agtimer.c` 372, `psci.c` 370, `pluart.c` 902, pmap 2,420 (UVM, pool)
-  and `smmu.c` 2,454 (3,577 with its companions) for SMMU v1/v2 and v3 (v3
-  from 7.8, on FDT from 7.9) over bus_dma, pool and extent. BSD-2-Clause:
-  `dev/pv/virtio.c` 1,075, needing only the device framework, atomics,
-  malloc and bus_dma; `virtio_pci.c` 1,246, `virtio_mmio.c` 560, `if_vio.c`
-  2,184. `copy.S` uses LDTR/STTR; MAXCPUS is 256. HVF: 7.1 and 7.5 on an M2
-  (QEMU 7.1.0, astreknet); nothing for the M4.
-* The survey assessed OpenBSD's drivers as the best fork candidates for
-  compact drivers: `agintc.c`, `smmu.c` and the virtio core.
-
-## RTEMS and GRiSP
-
-* RTEMS 6.2 (`be446b02`; main `402de13a`) is mostly BSD-2-Clause (2,262 SPDX
-  tags in cpukit and the AArch64 BSPs); 183 files keep the historical
-  GPL-2.0+ license with linking exception (shell, libfs, old CPU ports,
-  ns16550, `sapi/src/panic.c`, `rtems/src/clockgetuptimeseconds.c`); the
-  engineering manual requires BSD-2-Clause for contributions and says the
-  old code is being relicensed, rewritten or removed.
-* The `a53` and `a72` QEMU BSPs use `virt,gic-version=3`, the GICv3 driver,
-  PL011 and the generic timer (`spec/build/bsps/aarch64/a72/grp.yml`);
-  `bsp.h:59-63` hard-codes GICD `0x08000000`, GICR `0x080A0000` and PL011
-  `0x9000000`, QEMU's map and the HVF vGIC bases. No GICv2m code, no HVF
-  evidence, and no SMP in any QEMU BSP: in 6.2 only ZynqMP links the PSCI SMP
-  sources, grouped on main as `objsmppsci` for Xen and ZynqMP; wiring them in
-  looks small (inferred; unverified).
-* One address space, no EL0 processes, static MMU maps (a paravirtualised
-  mode runs RTEMS itself at EL0); a futex handler and SMP schedulers (EDF SMP
-  by default, priority, simple, strong-APA, clustered). Score 34k lines plus
-  42k of headers, POSIX 20k, AArch64 port about 3.9k; waf (Python), RSB.
-* GRiSP (`9dfbeb5`) carries `00100-rtems.patch` for OTP 23 to 29; for OTP 29
-  it is 2,484 lines, about 20 of them ERTS C changes (a section name in
-  `io.c` and `sys.h`, a crash-dump stub in `sys.c`, `IOV_MAX` in
-  `prim_socket_nif.c`, the PowerPC lwsync test in `ethread.c`), the rest
-  build system and crypto configuration. GRiSP 2 runs RTEMS 5 on a Cortex-A7
-  (`--enable-static-nifs`, `erl_xcomp_poll=no`); upstream OTP master
-  (30.0-rc0) has no `__rtems__` in ERTS.
-* The survey assessed RTEMS as the closest fit for running ERTS threads as
-  kernel threads, GRiSP already running full ERTS on it, with the single
-  address space without EL0 processes as the main risk.
-
-## NuttX
-
-* Apache NuttX 13.1.0 (`2b5c0de5`) is Apache-2.0. `qemu-armv8a` has GICv3 by
-  default (`arch/arm64/Kconfig:460-464`), GICv2 as an option, and SMP with
-  PSCI. `arm64_gicv2m.c` (158 lines) builds only with `ARM64_GICV2M` (off by
-  default, needs `PCI_MSIX`), only the GICv2 driver initialises it
-  (`arm64_gicv2.c:872-874`), and no qemu-armv8a configuration enables it; the
-  GICv3 driver (1,040 lines) has no MSI path.
-* The documented `-accel hvf` run (M1, macOS 12.6.1) uses `netnsh_smp_hv`
-  with `CONFIG_ARM64_GIC_VERSION=2`, which `virt-11.1` refuses under HVF; a
-  GICv3 configuration on HVF is unverified. `knsh` (`CONFIG_BUILD_KERNEL`,
-  `CONFIG_ARCH_ADDRENV`) runs EL0 processes with their own page tables.
-  `sched/` (58k lines) has no futex; virtio drivers use OpenAMP 2025.10.0
-  with 19 NuttX patches. Make with kconfig-frontends (C) or kconfiglib
-  (Python), or CMake; no ERTS port.
-* The survey assessed NuttX as the best fit for the EL0 phases (GICv3, SMP,
-  EL0 processes, broad virtio), against a deep POSIX task model and no ERTS
-  port; it counted GICv2m as an asset, which the check above qualifies.
-
-## Zephyr
-
-* Zephyr 4.5.0 (`41d10b59`) is Apache-2.0. `qemu_cortex_a53` runs
-  `virt,gic-version=3` with `secure=on` unless `CONFIG_ARMV8_A_NS`
-  (`board.cmake:9-13`), and its static DTS declares an ITS at `0x8080000`
-  (`qemu-virt-a53.dtsi:75-85`), which the HVF vGIC lacks; the `/smp` variant
-  has 2 non-secure CPUs; there is no HVF evidence. `USERSPACE` gives EL0
-  threads and memory domains with per-domain page tables and ASIDs, plus
-  `k_futex`; virtio-mmio is version 2 only. Kernel 24.8k lines, `arch/arm64`
-  9.5k; CMake 3.28+, Python 3.12+, dtc, Ninja, west and the Zephyr SDK.
-* The survey assessed Zephyr as offering clean primitives, ARMv8-A userspace
-  and the largest community, against heavy tooling, a static Secure-default
-  board that needs edits for HVF, and partial POSIX.
-
-## Other kernels
-
-From the broad survey; sizes in lines, with headers.
-
-| Kernel | License (SPDX) | Language | QEMU `virt`, GIC, SMP | HVF evidence | VM and EL0 | Size | Build |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Unikraft 0.21.0 | BSD-3-Clause; Buildroot-derived Makefile and kconfig GPL-2.0 | C | KVM platform on `virt`; GICv2 and v3; SMP-safe locks, multicore scheduling unverified; virtio-mmio v1 and v2, PCI, 9p, virtiofs | KraftKit detects `hvf`; an arm64 guest is unverified | single address space | arch/arm 2.9k, plat 2.1k, GIC 2.8k | GNU Make, Kconfig |
-| TF-A 2.15.0 libraries | BSD-3-Clause | C | GICv3 init asserts `IS_IN_EL3()` in 14 places, its register helpers (0.85k) do not; `xlat_tables_v2` (2.75k) has TTBR0 only, no ASIDs, no locking | firmware | - | as left | Make, TF-A headers |
-| RT-Thread 5.3.0 | Apache-2.0 | C | `qemu-virt64-aarch64`: GICv2 and v3, ITS, GICv2m (`pic-gicv2m.c`, unverified), 4-CPU SMP, PSCI | none; `qemu.py` defaults to GICv2 with `its=on` | RT-Smart processes with own address spaces | src 33.6k, aarch64 9.1k, lwp 43.8k | SCons (Python), Kconfig |
-| HelenOS 0.14.1 | BSD-3-Clause-style per file; some GPL third-party code | C | `virt`, HiKey960; GICv2 only; arm64 SMP a stub | none | microkernel | generic 40k, arm64 5.2k | Meson |
-| managarm | MIT | C++ kernel; some Rust user space | GICv2 and v3; SMP code | not checked | asynchronous microkernel | thor 38.9k, arm 4.9k | Meson |
-| SerenityOS | BSD-2-Clause | C++ | `virt` with `-cpu max`; GICv2 and v3; no AArch64 SMP | `Meta/run.py` uses HVF on macOS | UNIX processes | kernel 152k, aarch64 13.1k | CMake, Ninja, Python |
-| Plan 9 Foundation | MIT | Plan 9 C | no arm64 kernel | - | - | - | mk |
-| 9front | MIT (exceptions listed) | Plan 9 C | `sys/src/9/arm64` conf `qemu`: GICv3, PSCI SMP, virtio-pci | none found | processes | port 70.7k, arm64 4.6k | mk |
-| Inferno 4th edition | MIT (bulk) | C, Limbo | native ports 32-bit only; inferno64 is hosted arm64 | - | Dis VM in the kernel; `os/port/dis.c` hands one interpreter between kprocs | os/port 45k, libinterp 34.6k | mk |
-| Barrelfish | MIT | C, Haskell | `a57_qemu` CPU driver with `gic_v3.c`; last commit 2020-03-20 | none | multikernel | kernel 56k, armv8 9.4k | Hake (GHC 8.0.2) |
-| Nanos 0.1.56 | Apache-2.0 | C | `virt`; GICv2 with v2m or GICv3 with ITS, chosen from `ID_AA64PFR0_EL1.GIC` (`src/aarch64/gic.c:539-549`), which reads 0 under HVF; PSCI SMP | Makefile defaults to `-accel hvf` with `gic-version=2` | one Linux-ABI process at EL0 | kernel 12.2k, aarch64 4.9k | Make |
-| Eclipse ThreadX 6.5.2 | MIT; GICv3 sample files under an Arm EULA | C | ARMv8-A SMP ports; FVP samples; no `virt` BSP | none | Modules port for Cortex-A35 (isolation unverified) | common 43k | CMake |
-| FreeRTOS 11.3.2 | MIT | C | `ARM_AARCH64` ports, single core | none | none | 16.6k | any |
-| OP-TEE OS 4.11.0 | BSD-2-Clause (mostly) | C | `qemu_armv8a`: 4 cores, GICv3 optional, S-EL1 | needs `secure=on`, TCG only | S-EL0 trusted applications | kernel 13.3k, arm 21.9k | Make |
-| Hafnium 2.15.0 | BSD-3-Clause | C | `virt,gic_version=3` at EL2; SMMUv3 (stage 2) | EL2, so nested only | stage-2 VMs | 54.9k | GN, Ninja |
-| Genode base-hw 26.02 | AGPL-3.0 with Genode linking exception | C++ | `virt_qemu_arm_v8a`, GICv3 | not checked | components at EL0 | not measured | Genode tools |
-| NOVA | GPL-2.0 with a hypercall-API note | C++ | QEMU virt; GICv2, v3 and ITS; SMMUv2 and v3; EL2 | EL2 | - | aarch64 12.4k | Make |
-| L4Re Microkernel (Fiasco) | MIT since 2025-09-15; bundled parts BSD-3-Clause, Zlib, LGPL-2.1-or-later, GPL-2.0-only | C++ | `virt`: GICv2, v3, ITS, MSI; SMMUv2 and v3 | not checked | microkernel | src/kern 141k, arm 48k | GNU make, gcc 11+ or clang 10+, Perl |
-| Xen 4.22.0 | GPL-2.0-only | C | GICv3; SMMUv3 (tech preview); EL2 | EL2 | - | not measured | Make |
-| Linux | GPL-2.0 WITH Linux-syscall-note | - | license note only | - | - | - | - |
-| OSv | BSD-3-Clause | C++ | GICv2 and v3 on master (v0.57.0: GICv2 only) | - | single address space | aarch64 8.6k | - |
-| ToaruOS | NCSA | C | `virt` and RPi 400; GICv2 only; SMP | - | processes | aarch64 5.5k | - |
-| Bao 2.0.0 | Apache-2.0 | C | `qemu-aarch64-virt`; GICv2 and v3; SMMUv2 only; EL2 | EL2 | static partitions | 36.9k | Make |
-
-* Redox (Rust): a scheme is "a uniquely named service that is provided by some driver or daemon program", reached with file-like operations.
-* Theseus (Rust): its README aims at "easier and more arbitrary live evolution and runtime flexibility", with kernel components swapped at run time.
-* Hubris (Rust): no task is created at run time, a supervisor restarts faulted tasks, and IPC `send` lends memory through leases.
-* Tock (Rust): a per-process "grant" region, which the process "can neither read nor write", holds kernel state for that process.
-
-The survey assessed RT-Thread as the runner-up to its three bases; Unikraft,
-TF-A's helpers, OP-TEE, Hafnium and Bao as sources of parts; L4Re as a good
-reference in C++; and the rest as poor fits or prior art.
 
 ## Libraries for later subsystems
 

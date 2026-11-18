@@ -19,6 +19,7 @@ require_relative 'qmp'
 require_relative 'raspi4b_firmware_fb'
 require_relative 'runner'
 require_relative 'session_domain'
+require_relative 'splash_mark'
 
 module Erx
   # The serial shell on QEMU's raspi4b model (docs/plan.md, 1b-I, "QEMU's raspi4b, under
@@ -38,10 +39,11 @@ module Erx
   # simple-framebuffer node. Once the system's command shell is up, the screen read through QMP
   # must be the splash over the background, since no window ever presents, so at least three
   # quarters of its pixels are the background, the theme's desktop colour in the display's
-  # palette (await_background). The serial log must then hold the root's framebuffer line (ROOT_LINE)
-  # and each configured domain's line (CONFIGURED_LINES), the display domain's being its
-  # driver's framebuffer line, exactly once with no restart of that domain: a driver that
-  # ended the domain at each start would log its line again at each restart.
+  # palette, and the splash's mark is drawn in the theme's text colour (await_splash). The
+  # serial log must then hold the root's framebuffer line (ROOT_LINE) and each configured
+  # domain's line (CONFIGURED_LINES), the display domain's being its driver's framebuffer line,
+  # exactly once with no restart of that domain: a driver that ended the domain at each start
+  # would log its line again at each restart.
   #
   # Seeded by hand: the stand-in's node naming x8b8g8r8 while the model shows x8r8g8b8 keeps
   # both lines (they name the format the tree gives) but swaps the screen's red and blue, and
@@ -155,7 +157,7 @@ module Erx
     # and dots fit in 384 by 189 pixels, under a quarter of FB's 640 by 480, so a screen
     # painted only in part, or in other colours, falls short of it.
     BACKGROUND_SHARE = 3r / 4
-    # How long the screen may take to show the background once the release's shell is up, and
+    # How long the screen may take to show the splash once the release's shell is up, and
     # how often it is read until then.
     SCREEN_SECONDS = 120
     SCREEN_POLL_SECONDS = 2
@@ -163,6 +165,27 @@ module Erx
     # what ended it and what the service does next (erx_domain_srv's log_end). Interpolated
     # as a Regexp into an /x pattern, it keeps its own flags, so its spaces stay literal.
     def self.end_line_head(name) = /erx_domain: configured domain #{Regexp.escape(name)} \(domain \d+\) ended, /n
+
+    # Whether image shows the splash: FB's size, at least BACKGROUND_SHARE of its pixels the
+    # background colour, and the mark drawn. The mark's fully covered pixels are drawn in the
+    # text colour, so the pixels of that colour number at least half of them and lie within
+    # a box of the mark's size; a screen of the background alone, or with text elsewhere,
+    # fails. Colours are hex rrggbb.
+    def self.splash_shown?(image, background:, text:, mark:)
+      return false unless [image.width, image.height] == [FB::WIDTH, FB::HEIGHT]
+
+      colours = colours(image)
+      return false unless colours.count(background) >= BACKGROUND_SHARE * colours.size
+
+      inked = colours.each_with_index.filter_map { |colour, i| i if colour == text }
+      return false if inked.empty? || inked.size * 2 < mark.pixels.count("\xff".b)
+
+      xs, ys = inked.map { |i| i.divmod(image.width).reverse }.transpose
+      xs.max - xs.min < mark.width && ys.max - ys.min < mark.height
+    end
+
+    # The image's pixels, each as hex rrggbb, top row first.
+    def self.colours(image) = image.pixels.unpack1('H*').scan(/.{6}/)
     # The line each configured domain of the Pi's manifest leaves on the model by the time
     # tcg-4cpu halts. tcg-4cpu boots with no card on EMMC2's bus, so the storage domain's SD
     # device process finds no card and logs a record of its space saying so. The model has
@@ -299,7 +322,7 @@ module Erx
     def screen_checkpoints(socket)
       shell_checkpoints.map do |point|
         case point.fetch(:name)
-        when 'system-shell' then point.merge(verify: ->(_text) { await_background(socket) }).freeze
+        when 'system-shell' then point.merge(verify: ->(_text) { await_splash(socket) }).freeze
         when 'system-erlang-shell' then point.merge(seconds: point.fetch(:seconds) + SCREEN_SECONDS).freeze
         else point
         end
@@ -315,32 +338,31 @@ module Erx
       raise Error, 'raspi4b: the display domain ended' if serial.match?(self.class.end_line_head('display'))
     end
 
-    # The background's colour as hex rrggbb: the desktop colour of abi/theme.txt in the
-    # palette the Pi's manifest gives its display.
-    def background_colour
+    # Colour ROLE of abi/theme.txt as hex rrggbb, in the palette the Pi's manifest gives its
+    # display.
+    def theme_colour(role)
       manifest = Manifest::Frontend.read(@platform.manifest_source(@root))
       palette = manifest.records.fetch('display').first.reference('palette')
-      format('%06x', ABI::Theme.read(root: @root).palette(palette).fetch('desktop'))
+      format('%06x', ABI::Theme.read(root: @root).palette(palette).fetch(role))
     end
 
-    # The image's colours, each as hex rrggbb, with the number of pixels of each.
-    def colour_counts(image) = image.pixels.unpack1('H*').scan(/.{6}/).tally
-
-    # Reads the screen through QMP until it is FB's size and at least BACKGROUND_SHARE of
-    # its pixels are the background, or raises the last mismatch once SCREEN_SECONDS have
-    # passed.
-    def await_background(socket)
-      background = background_colour
+    # Reads the screen through QMP until it shows the splash (splash_shown?) on the theme's
+    # `desktop` colour with its mark in `text`, the mark the build generates from its logo,
+    # or raises the last mismatch once SCREEN_SECONDS have passed.
+    def await_splash(socket)
+      background = theme_colour('desktop')
+      text = theme_colour('text')
+      mark = SplashMark.mask(root: @root)
       deadline = Qmp.monotonic + SCREEN_SECONDS
       client = Qmp.connect(socket)
       loop do
         image = client.screendump_image(File.join(File.dirname(socket), 'screen.ppm'))
-        sized = [image.width, image.height] == [FB::WIDTH, FB::HEIGHT]
-        return if sized && colour_counts(image).fetch(background, 0) >= BACKGROUND_SHARE * image.width * image.height
+        return if self.class.splash_shown?(image, background:, text:, mark:)
         if Qmp.monotonic > deadline
-          commonest = colour_counts(image).max_by(4) { |_, count| count }
-          raise Error, "raspi4b: the screen is #{image.width}x#{image.height}, not #{FB::WIDTH}x#{FB::HEIGHT} with " \
-                       "#{BACKGROUND_SHARE} of it the background #{background}; its commonest colours: #{commonest.inspect}"
+          commonest = self.class.colours(image).tally.max_by(4) { |_, count| count }
+          raise Error, "raspi4b: the screen is not the splash, #{FB::WIDTH}x#{FB::HEIGHT} with #{BACKGROUND_SHARE} " \
+                       "of it the background #{background} and the #{mark.width}x#{mark.height} mark in #{text}: " \
+                       "it is #{image.width}x#{image.height}, its commonest colours #{commonest.inspect}"
         end
 
         sleep SCREEN_POLL_SECONDS

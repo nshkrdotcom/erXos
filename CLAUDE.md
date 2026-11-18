@@ -313,12 +313,14 @@ Third-party components are allowed when they pay for themselves.
     because the browser runs only JavaScript. Its own tests and fuzz
     harness run under Node and Playwright. TypeScript never runs on the
     target or in host tooling.
-  * Python only for the Bumble Bluetooth test peer; never on the target
-    or in build tooling.
+  * Python only for the Bumble Bluetooth test peer; never on the target,
+    and in build tooling only as Mesa's own generators.
   * `make`, minimal POSIX shell and linker scripts for build glue.
   * Inherited code keeps its languages and may be edited: OTP's BeamAsm JIT
     and asmjit (C++) with OTP's Perl generators and autoconf machinery, and
-    Fiasco (C++), the release kernel, with its Perl preprocessor and make system.
+    Fiasco (C++), the release kernel, with its Perl preprocessor and make system,
+    and Mesa (C and C++), with its Meson build and Python and Mako
+    generators, which run only in the build.
     Thin C shims onto inherited C++ are allowed. Inherited build machinery
     stays behind erXos's top-level build, so replacing it later is a change
     behind one seam.
@@ -1063,6 +1065,8 @@ within about 20 percent of the length, write plain code.
     decision gates.
   * [docs/style.md](docs/style.md) is the code style guide.
   * [TODO.md](TODO.md) is the index of open work outside the roadmap.
+  * [docs/guide/](docs/guide/README.md) is the user guide: how to build,
+    write, boot and use erXos.
   * Research records (`docs/research-*.md`, measurement and conformance
     reports) are point-in-time reports.
 * **For every major feature, write `docs/design-<feature>.md` first** and

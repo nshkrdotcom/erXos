@@ -12,7 +12,7 @@
 
 /*
  * The merge of received TCP segments, the core of erx_bytes:tcp_merge/1
- * (docs/design-network-fastpath.md, "The merge"): FreeBSD's large receive offload rule
+ * (docs/design-network-stack.md, "The merge"): FreeBSD's large receive offload rule
  * (tcp_lro_rx_common and tcp_lro_condense, tcp_lro.c) over one batch of Ethernet frames. It
  * decides only which frames belong together; it writes no header and copies no byte, and every
  * value TCP acts on is decoded again by Erlang from the frames themselves.

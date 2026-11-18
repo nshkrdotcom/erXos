@@ -185,7 +185,7 @@ credit_is_taken_as_items_arrive() ->
     ?assertEqual(256, erx_net_credit:free(Credit)).
 
 %% Five messages of one in-order segment each, queued while the connection is busy, are
-%% stepped as one event (docs/design-network-fastpath.md, "One step per mailbox"): its one
+%% stepped as one event (docs/design-network-stack.md, "One step per mailbox"): its one
 %% output pass acknowledges all five in one ACK, where a step per message would acknowledge
 %% every second segment and the fifth on the delayed-ACK timer, and each message's unit
 %% comes back.

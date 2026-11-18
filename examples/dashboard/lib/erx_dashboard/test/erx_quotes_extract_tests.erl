@@ -3,8 +3,8 @@
 
 -module(erx_quotes_extract_tests).
 -moduledoc """
-EUnit cases of the body reader (docs/design-quotes.md, "Verification and
-testing", the extract test): bodies in the shape of each source of the
+EUnit cases of the body reader (examples/dashboard/README.md,
+"Testing"): bodies in the shape of each source of the
 table, generated here, give the price and change they carry; a missing
 key, a wrong type, a 33-byte decimal, `0` and a negative price give
 `bad_data`. The history reader takes a generated day of Kraken OHLC

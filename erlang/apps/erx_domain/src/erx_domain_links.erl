@@ -4,8 +4,8 @@
 -module(erx_domain_links).
 -moduledoc """
 The domain service's pure core for the connection protocol
-(docs/design-domains.md, "Connections", "The reserve", and "Introduction and
-connection down"; specs/tla/Connection.tla). It decides which control
+(docs/design-domains.md, "Connections" and "Introduction and connection
+down"; specs/tla/Connection.tla). It decides which control
 records go to which domain and when a connection's objects are deleted. It
 makes no call: each step returns {State, Actions}, the next state and the
 actions to perform, in order, and the domain service performs them.

@@ -200,7 +200,7 @@ read for this design.
   in every domain, and `erlang:system_time/1` within about a minute;
   Erlang monotonic time and timers do not move.
 * **UDP and DNS in an app.** A session that holds `net` opens
-  `gen_udp` sockets through `erx_gen_udp`, IPv4 only for now, with
+  `gen_udp` sockets through `erx_gen_udp`, IPv4 only, with
   `connect/3`, and the stack draws every ephemeral port at random
   (`erlang/apps/erx_net_client/src/erx_gen_udp.erl`). `inet_res` resolves
   names over the grant's name servers, and `inet_db`'s random draws come
@@ -488,7 +488,7 @@ every refusal and error and goes on polling.
 * **`erx_clock_nif:set_offset(OffsetNs)`** returns `ok` or `{error,
   Status}` for `erx_time_set_offset`'s status.
 
-`otp/erts/emulator/sys/erxos/imports.txt` gains a section
+`otp/erts/emulator/sys/erxos/imports.txt` holds a section
 `[only_erx_clock_nif] erx_time_set_offset`, so no other object of the
 runtime can call it, and a check over the system release's call graph
 allows `erx_clock_nif:set_offset/1` only in `erx_clock`, with a seeded
@@ -914,7 +914,7 @@ in `TODO.md`.
 
 ## What /proc shows
 
-`abi/inspection.txt` gains a kind `clock`, visible to every scope, at
+`abi/inspection.txt` declares a kind `clock`, visible to every scope, at
 path `time`, so `cat /proc/time/status` reads it. Five attributes are
 visible only to the whole-machine scope (`visible all`): `server`, the
 address the client samples, `source`, the id of the domain whose facet
@@ -1074,12 +1074,9 @@ date [-jnu] [[[[[cc]yy]mm]dd]HH]MM[.SS] [+format]
   a number's time), `-v` (adjustments) and `-z` (an output zone), and
   FreeBSD's securelevel limit, which erXos does not have.
 
-The decisions are pure: `erx_cmd_date:parse/1` takes the arguments to
-`{ok, {read, Format}}`, `{ok, {set, Operand, Format, Set}}`, `{error, usage}` or
-`{error, illegal_time}`; `target/2` takes a parsed operand and the current wall time to the
-named time in nanoseconds; `format/2` takes a format and a wall time to
-bytes. `run/2` does the effects: it reads the clocks, asks the clock
-service, and writes.
+Parsing, the named time and formatting are pure functions of
+`erx_cmd_date`; `run/2` alone reads the clocks, asks the clock service
+and writes.
 
 ### Who may set it
 
@@ -1301,14 +1298,9 @@ The arguments choose the source of a step, and nothing else does
 Failures are written to standard error after `ntpctl: `. Every name and
 address written passes the field escape (`erx_text:escape_field/1`).
 
-The decisions are pure: `erx_cmd_ntpctl:parse/1` takes the arguments to
-a request or `{error, usage}`; `ntpd_sample/2` takes the answers of
-`/proc/apps/ntpd` and `/proc/time` to the sample or the line saying why
-there is none; `stepped/2` gives a step's line and `show/2` the lines of
-`-s`; `erx_ntp_wire` encodes the request and decodes a reply; and
-`erx_ntp_sample:check/4` takes a decoded reply, the nonce, `m1` and `m4`
-to a sample, a kiss or the check that dropped it. `run/2` reads the
-inspector, resolves, asks and sets. `erx_ntp_exchange`, `erx_ntp_wire`
+Parsing, the choice of ntpd's sample, the lines written, the wire codec
+and the reply checks are pure; `run/2` alone reads the inspector,
+resolves, asks and sets. `erx_ntp_exchange`, `erx_ntp_wire`
 and `erx_ntp_sample` are modules of the `erx` library application,
 which every runtime carries, so ntpd and the command share one
 server-list rule, one resolution and one exchange rather than copies.
@@ -1451,7 +1443,7 @@ gets every request checked against the grant's `operations`, an empty
 list admitting nothing, and `erx_facet:start/3` refuses a grant that
 lists operations to a callback without that map. A row of `operations
 none` of any other service therefore admits every request its facet
-admits, as before the rows named operations, and the boot refuses
+admits, and the boot refuses
 operations on a row a configured domain serves or a tree grant, since
 nothing there checks them. The range check of
 `erx_time_set_offset` is the body's own and holds on Fiasco as on
@@ -1474,142 +1466,127 @@ sets the clock.
 
 ## Verification and testing
 
-Host tests run the pure modules under EUnit; each names the seeded fault
-that proves it ran.
+Host tests run the pure modules under EUnit, over fixed vectors and, for
+the schedule, generated event sequences and simulated time. They cover
+the era conversion either side of 2036-02-07 06:28:16, the offset and
+delay arithmetic, each reply check and kiss code, the root distance,
+every row of [Steps](#steps), a restarted service, the approximate
+start and the real-time clock at boot over unset, approximate, boot and
+set pages, the schedule's spacing, bursts, re-resolution and denied
+list, T-R1's first-sample minute, the flags reader, the facet's bounds
+for `sample` and `set`, `date`'s operands, formats and set, and
+`ntpctl`'s forms, its sources, its `-s` output and its exchange. Each
+names the seeded fault that proves it ran:
 
-| Test | Passes when | Seeded failure |
-| --- | --- | --- |
-| era conversion | timestamps with the top bit set map to 1968-2036 and clear to 2036-2104, on vectors either side of 2036-02-07 06:28:16 | treating every timestamp as era 0 fails the 2036 vectors |
-| offset at boot | `m1`, `m4` of a few seconds of uptime and `t2`, `t3` in 2026, 56 years apart, give the exact `W` | taking `(T2 - T1) + (T3 - T4)` in 64-bit 32.32 fixed point, as RFC 5905 section 8 warns against past 34 years, wraps by 2^32 s |
-| offset and delay | fixed vectors give `W` and `delay` to the nanosecond | dropping the `div 2` doubles `W` |
-| reply checks | each of checks 1 to 9 refuses a reply built to break only it, with its reason | removing the nonce comparison accepts the foreign-nonce reply |
-| kiss-o'-death | `DENY` and `RSTR` remove the address, `RATE` doubles its interval, `XFOO` and `INIT` are discarded; a kiss with LI 3 and zero timestamps is still acted on; a kiss with a foreign nonce is dropped | running check 4 before the kiss branch ignores the LI-3 `RATE`; believing a kiss before the nonce check silences the server on the foreign-nonce kiss |
-| distance | a reply with root delay -4 s, dispersion 2 s and measured delay 0.1 s is refused; one with root delay -4 s, dispersion 0 and measured delay 0.1 s has distance 0.05 s | adding the signed root delay unclamped accepts the first |
-| decide | every row of [Steps](#steps), over `Cold`, the floor, the three distance bands and the three `excess` values | dropping the two-sample rule steps on a single 200 ms sample; dropping the floor row steps a cold clock to 1999 |
-| restart | a record emptied as a restarted service's is, with `Cold` false, refuses a sample 2000 s off | deciding cold from an empty record instead of the page steps it |
-| approximate start | `start/2` steps a cold page reading before the floor, at 1970 or a real-time clock's earlier reading, to the floor, and leaves a cold page at or past the floor, every page changed this boot and every page when the floor is 0; `state/2` reads each page's state; an approximate page meets a sample 2000 s or 56 years off as a cold one does and one before the floor is refused; the floor is the record's | a start without the floor's comparison moves a boot clock past the floor back to it; a start over any page renews it on a page set below the floor; dropping the approximate clause refuses the 2000 s sample as panic; a constant floor admits a sample the record's later floor refuses |
-| schedule | over generated event sequences, no two polls to an address closer than 64 s, a burst only on an address's first poll, re-resolution not before the TTL, and an error answer leaves the interval unchanged; in simulated time, the first sample within T-R1's minute behind a silent address and from a reachable name listed before names whose resolution times out, and a name first answered 20 s into the run asked within 2 s of that; and no denied address polled again past the denied list's bound | a floor of 8 s fails the spacing property; admitting any address not denied once the denied list is full fails the bound case; a 15 s wait in place of 2 s before the first poll fails the late-network case |
-| flags | `ERX_START_FLAGS` values give their server lists; empty, nine entries, a bad label and a 254-byte name end with their reasons | accepting a ninth entry passes the nine-entry case |
-| facet decode | every bound is refused one past its edge, `W` at `time_offset_max + 1` and `Distance` at `clock_distance_max_ns` included, for `sample` and `set` alike | dropping `W`'s upper bound accepts `time_offset_max + 1` |
-| `date` operands | every even count of 2 to 12 digits, with and without `.SS`, gives its named time from a fixed current time; each field at its bound passes and one past it is refused; a non-digit at each position, a second dot, a one- or three-digit `.SS`, an empty operand, every odd count of 1 to 13 digits and 14 digits are refused; `yy` 68 and 69 fall either side of the pivot; month and day `00`, `0229` and `0230` in a leap and a common year, and second 60 and 61 normalize as `mktime(3)` does; `+format` before and after the operand, `-j` and `-u`, and every flag not offered | a pivot of 70 makes `69` 2069; dropping the month bound accepts `13` |
-| `date` format | each conversion of [The command](#the-command) on fixed times (a leap day, a Sunday, midnight and noon, a year before 2000), each padding flag, an unknown conversion and a `%` at the end | `%e` padded with `0` fails the single-digit day |
-| `date` set | a set answers `{ok, {stepped, _}}` and writes the named time; each error answer of [Failure paths](#failure-paths) gives its text and status 1; a context without `clock` refuses a set and still reads and runs `-j` | a run that looks up the grant before it parses refuses `-j` without one |
-| `ntpctl` forms | `step` alone, `step` with one and with eight servers, `-s status` and `-s peers` parse; nine servers, an empty one, a 254-byte one, one with a space or an escape, `-s all`, `-s Sensors`, an abbreviation and a bare server are refused | accepting a ninth operand passes the nine-server case |
-| `ntpctl step`'s sources | ntpd's sample is `/proc/time`'s `sample_wall_offset_ns` and `server` while `/proc/apps/ntpd` is running; a sample stepped to, held or refused as `panic` is applied and one refused as `floor` is not; a row not running, no row, a record with no sample, one that cannot be read and a verdict or time with no value each give their line and set nothing; each step line names its source, and ntpd's its verdict and age | dropping the running check steps from a stopped ntpd's sample; dropping the floor clause applies the floor sample |
-| `ntpctl -s` | `status` and `peers` write `/svc/ntpd/status`'s values, a missing one as `[unknown]` and one on a line the parser refuses as `[invalid]`; no `/svc/ntpd` writes `ntpd is not running`, an ntpd that `onestart` started is read as a kept one,, and a read past `svc_wait_max` writes `timed out`, each status 1 | a formatter that writes a missing attribute as an empty value prints `servers` with nothing after it |
-| `ntpctl` exchange | `erx_ntp_exchange:classify/4` passes over a datagram that does not decode, answers another nonce or another version, and gives `erx_ntp_sample:check/4`'s sample, drop or kiss for its own answer, as for ntpd | removing the nonce comparison accepts the foreign-nonce reply |
+* treating every timestamp as era 0 fails the 2036 vectors;
+* taking `(T2 - T1) + (T3 - T4)` in 64-bit 32.32 fixed point, as RFC
+  5905 section 8 warns against past 34 years, wraps the boot offset by
+  2^32 s; dropping the `div 2` doubles `W`;
+* removing the nonce comparison accepts a foreign-nonce reply, in ntpd's
+  checks and in `ntpctl`'s exchange alike; running check 4 before the
+  kiss branch ignores an LI-3 `RATE`; believing a kiss before the nonce
+  check silences the server on a foreign-nonce kiss;
+* adding the signed root delay unclamped accepts a reply whose distance
+  is out of bounds;
+* dropping the two-sample rule steps on a single 200 ms sample; dropping
+  the floor row steps a cold clock to 1999; deciding cold from an empty
+  record instead of the page steps a restarted service 2000 s;
+* an approximate start without the floor's comparison moves a boot clock
+  past the floor back to it; a start over any page renews it on a page
+  set below the floor; dropping the approximate clause refuses a 2000 s
+  sample as panic; a constant floor admits a sample the record's later
+  floor refuses; the real-time clock's floor check, its refusal over a
+  boot clock and its refusal over a set clock, each removed;
+* a poll floor of 8 s fails the spacing property; admitting any address
+  not denied once the denied list is full fails its bound; a 15 s wait
+  in place of 2 s before the first poll misses a name first answered
+  20 s into the run;
+* accepting a ninth entry passes the nine-server case, of `ntpd_flags`
+  and of `ntpctl step` alike; dropping `W`'s upper bound accepts
+  `time_offset_max + 1` at the facet;
+* a `date` pivot of 70 makes `69` 2069; dropping the month bound
+  accepts `13`; `%e` padded with `0` fails the single-digit day; looking
+  up the grant before parsing refuses `-j` without one;
+* `ntpctl step` without the running check steps from a stopped ntpd's
+  sample, and without the floor clause applies a sample refused as
+  `floor`; a `-s` formatter that writes a missing attribute as an empty
+  value prints `servers` with nothing after it.
 
-The setter's range has a test of its own on Fiasco, in the native
-guest's time case (`test/guest/native_space/guest.c`): offsets of 0 and
-`time_offset_max` are stored and read back exactly by `erx_time_offset`,
-and `time_offset_max + 1` and -1 answer `ERX_EINVAL` and leave the page
-and its `seq` unchanged; the case also checks that `seq` is zero, so
-`cold` true, before its first set and false after. *Seeded failure:* a
-body that stores `offset_ns` less a monotonic reading fails the exact
-read-back.
+The setter's range is tested on Fiasco in the native guest's time case
+(`test/guest/native_space/guest.c`): 0 and `time_offset_max` read back
+exactly, `time_offset_max + 1` and -1 answer `ERX_EINVAL` and leave the
+page and its `seq` unchanged, and `cold` is true before the first set
+and false after. *Seeded failure:* a body that stores `offset_ns` less a
+monotonic reading fails the exact read-back.
 
 Fuzz targets, run by `make check-fuzz`:
 
-* **`erx_ntp_wire_fuzz`** feeds arbitrary binaries of up to 1 KiB to
-  `erx_ntp_wire:decode/1` and every accepted reply to the core's checks
-  against a fixed outstanding exchange. Properties: nothing raises; an
-  accepted header re-encodes to its 48 bytes; every accepted timestamp
-  converts within 1970 to 2104; every accepted sample's distance is below
-  `clock_distance_max_ns`. Seeds are generated by the test from the
-  encoder: a valid reply, each kiss code, a reply with a MAC, one byte
-  short, a negative root delay. *Seeded failure:* removing the length
-  check makes a 47-byte seed raise.
-* **`erx_clock_facet_fuzz`** feeds arbitrary terms, as the funnel decodes
-  them, to `erx_clock_facet:decode/1`, as `erx_log_facet_fuzz` does.
-  *Seeded failure:* accepting a `Stratum` of 0 fails the property that an
-  accepted sample is within every bound.
-* **`erx_ntpd_flags_fuzz`** feeds arbitrary binaries of up to 2 KiB, as
-  `ERX_START_FLAGS`, to the client's flags reader. Properties: nothing
-  raises; an accepted list has at most 8 entries, each within the
-  server-list rule. *Seeded failure:* dropping the 253-byte bound accepts
-  a generated 254-byte name.
-* **`erx_cmd_date_fuzz`** feeds `erx_cmd_date:parse/1` argument lists of
-  up to four arbitrary binaries of up to 32 bytes, biased toward digits,
-  dots, `+` and `-`, and each accepted operand to `target/2` against
-  fixed current times. Properties: nothing raises; an accepted operand
-  has an even count of 2 to 12 digits and at most one `.`, followed by
-  two digits, and each field within its bound; its
-  time, written back as `%Y%m%d%H%M.%S` and parsed again, names the same
-  time; `format/2` of every generated format writes bytes and never
-  raises. *Seeded failure:* dropping the `.SS` length check accepts a
-  generated `1200.5`.
+* **`erx_ntp_wire_fuzz`**: binaries of up to 1 KiB to
+  `erx_ntp_wire:decode/1`, and every accepted reply to the core's checks
+  against a fixed outstanding exchange. Nothing raises, an accepted
+  header re-encodes to its 48 bytes, every accepted timestamp converts
+  within 1970 to 2104, and every accepted sample's distance is below
+  `clock_distance_max_ns`. Seeds are generated from the encoder.
+  *Seeded failure:* removing the length check makes a 47-byte seed raise.
+* **`erx_clock_facet_fuzz`**: arbitrary terms, as the funnel decodes
+  them, to `erx_clock_facet:decode/1`. *Seeded failure:* accepting a
+  `Stratum` of 0 fails the property that an accepted sample is within
+  every bound.
+* **`erx_ntpd_flags_fuzz`**: binaries of up to 2 KiB, as
+  `ERX_START_FLAGS`, to the client's flags reader; an accepted list has
+  at most 8 entries, each within the server-list rule. *Seeded failure:*
+  dropping the 253-byte bound accepts a 254-byte name.
+* **`erx_cmd_date_fuzz`**: argument lists to `erx_cmd_date:parse/1`, and
+  each accepted operand to `target/2`; an accepted operand is within the
+  grammar and its bounds, its time written back as `%Y%m%d%H%M.%S` and
+  parsed again names the same time, and `format/2` never raises.
+  *Seeded failure:* dropping the `.SS` length check accepts `1200.5`.
 
-The QEMU `virt` suite runs the client end to end. The harness's network
-plan already joins a raw-frame `dgram` backend to the guest's link
-(`tools/lib/erx/qemu.rb`, `nic_arguments`), and its test peer answers
-ARP for `HOST_IP` and builds checksummed UDP replies from it
-(`tools/lib/erx/net_device_name_server.rb`, which answers DNS on port
-53). That peer gains an NTP answer on port 123, so one peer serves both;
-the NTP answer is a function from the request and a script to a reply:
-the request's transmit timestamp as the originate, receive and transmit
-times from a clock the script sets, and the script's LI, stratum and
-kiss code. The guest's test manifest enables ntpd with
-`ntpd_flags="10.0.2.100"`, the peer's address, and the cases are:
+The QEMU `virt` suite runs the client end to end against the harness's
+test peer on the guest's link (`tools/lib/erx/net_device_name_server.rb`),
+which answers DNS on port 53 and NTP on port 123 from a clock and an LI,
+stratum and kiss code the test script sets; the guest's test manifest
+enables ntpd against the peer. Its cases and seeded faults:
 
-* **Bootstrap.** The peer's clock reads 2030-01-01 plus the time since
-  the run began; within one burst `/proc/time/status` is `set`,
-  `os:system_time(second)` in another domain is within 1 s of the peer's
-  clock at once, and `erlang:system_time(second)` there within 75 s.
-  *Seeded failure:* a decoder that reads the transmit timestamp from the
-  reference field's offset leaves the guest's time away from the peer's.
-* **Restart.** After the bootstrap the peer's clock jumps two hours
-  ahead and the test kills the ntpd session and then the clock service;
-  the start table and the supervisor restart them, every later sample is
-  refused `panic`, `refused` counts them, and the guest's time stays
-  within 1 s of where it was. *Seeded failure:* a clock service that
-  decides `Cold` from its empty record steps the clock two hours.
-* **Held and stepped.** The peer moves 500 ms ahead: the first sample is
-  held, the next stepped. *Seeded failure:* the decision without the
-  two-sample rule steps on the first.
-* **ntpctl.** After ntpd's step, root's `ntpctl step` steps from ntpd's
-  sample of the peer and says so; the peer then answers 2030, `ntpctl
-  step 10.0.2.100` steps from it, and `date` reads 2030 (`net_device`).
-* **ntpd's tree.** While the harness's name server delays ntpd's
-  resolution by 8 s, root's `ntpctl -s status` answers at once with
-  `servers` and the counts, and `ls /svc/ntpd` shows `status` alone.
-  *Seeded failure:* `erx_svc`'s read asking ntpd's loop for its status
-  makes the command write `timed out`.
-* **Kiss.** The peer answers `RATE`, then `DENY`: the next request comes
-  one doubled interval later, then none. *Seeded failure:* a kiss check
-  after check 4, with the peer's kiss carrying LI 3, ignores both.
-* **Refusals.** A session without the facet row has no `clock` name;
-  `ntpd_flags=""` ends the row with `no servers` and leaves it down.
-* **The real-time clock at boot.** On QEMU `virt`, whose PL031 the
-  harness starts at the host's time, root's session runs
-  `date +%Y%m%d%H` before any set, and it writes the host's hour when the
-  boot began or the next one (`session_domain`). `erx_clock_core`'s
-  cases decide `{rtc, Wall}` over unset, approximate, boot and set pages
-  and readings either side of the floor. *Seeded failures:* the floor
-  check removed, the refusal over a boot clock removed, and the refusal
-  over a set clock removed.
-* **Set by hand.** With ntpd off, root's session runs `date
-  203001011200`; `date +%Y%m%d%H%M` there and `os:system_time(second)`
-  in another domain read the new time within a second, and
-  `/proc/time/status` is `set`. A session of a template without the
-  `clock` row gets `eperm`'s text and status 1, and the clock does not
-  move. *Seeded failure:* a manifest that grants root's template no
-  `clock` row fails the set.
+* **Bootstrap**: the first burst sets the clock to the peer's 2030,
+  within 1 s, at once for `os:system_time/1` in another domain and within 75 s for
+  `erlang:system_time/1`. *Seeded:* reading the transmit timestamp from
+  the reference field's offset.
+* **Restart**: the peer jumps two hours, ntpd and the clock service are
+  killed and restarted, every later sample is refused `panic`, and the
+  guest's time stays within 1 s of where it was.
+  *Seeded:* deciding `Cold` from the empty record.
+* **Held and stepped**: a 500 ms offset is held once, then stepped.
+  *Seeded:* no two-sample rule.
+* **ntpctl**: `ntpctl step` steps from ntpd's sample, and `ntpctl step
+  ADDRESS` from the peer.
+* **ntpd's tree**: while resolution is delayed, `ntpctl -s status`
+  answers at once and `/svc/ntpd` holds `status` alone. *Seeded:*
+  `erx_svc`'s read asking ntpd's loop for its status writes `timed out`.
+* **Kiss**: `RATE` doubles the interval, then `DENY` stops the requests.
+  *Seeded:* the kiss check after check 4, with LI 3.
+* **Refusals**: a session without the facet row has no `clock` name, and
+  `ntpd_flags=""` ends the row with `no servers`.
+* **The real-time clock at boot**: `date` before any set writes the
+  host's hour, from the PL031 the harness starts at the host's time.
+* **Set by hand**: root's `date 203001011200` moves the clock in every
+  domain and `/proc/time/status` says `set`; a session without the
+  `clock` row gets `eperm`. *Seeded:* root's template without the row.
 
-The network runs against real NTP use the stack's development-host
-peers
-([design-network-stack.md](design-network-stack.md#the-stack-on-a-development-host)):
-the client and the stack run on the host's own OTP over a tap device on
-the FreeBSD x86-64 test host, with the clock facet replaced by a recorder
-of samples. FreeBSD's ntpd in the jail `erxpeer0` is the interoperability
-oracle. A jail shares its host's clock, so the expected `W` is the host's
-own wall time minus monotonic time: the first sample agrees within 10 ms,
-and a second run agrees again. *Seeded failure:* swapping `t2` and `m1`
-in the offset fails the agreement.
+The oracle for real NTP is FreeBSD's ntpd, in a jail of the FreeBSD
+x86-64 test host, with the client and the stack running on the host's
+own OTP over a tap device
+([design-network-stack.md](design-network-stack.md#the-stack-on-a-development-host))
+and the clock facet replaced by a recorder of samples. A jail shares its
+host's clock, so the first sample's `W` agrees with the host's wall time
+minus monotonic time within 10 ms, on two runs. *Seeded failure:*
+swapping `t2` and `m1` in the offset. FreeBSD's `date -j` over the same
+operands is the oracle for `date`'s normalization.
 
-The Raspberry Pi 4 checklist: with Ethernet and DHCP, set `ntpd_flags`
-to a reachable server and `service ntpd enable`; within a minute
-`/proc/time/status` is `set`, and a new file's time in `ls -l` matches a
-reference clock within a second.
+On the Raspberry Pi 4, by hand: with Ethernet and DHCP and ntpd enabled
+against a reachable server, `/proc/time/status` is `set` within a
+minute, and a new file's time in `ls -l` matches a reference clock
+within a second.
 
 ## Alternatives considered
 
@@ -1802,5 +1779,5 @@ These were open and are settled as stated here:
   RFC 8633 (NTP best practices; sections 3.2, 3.6, 4.3 and 5.2), SHA-256
   `fb275c82378be983511db4fcd533a92a54028c7762be2d9bc0d6fa5c06dc5a84`.
 * The research record behind this design:
-  `/Users/stas/erxos-scratch/notes/research-pi4-peripherals.md`, section 5,
+  `~/erxos-history/notes/research-pi4-peripherals.md` (history commit `e38149b`), section 5,
   written 2026-11-14.

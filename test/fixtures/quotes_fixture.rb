@@ -5,7 +5,7 @@
 require 'openssl'
 require 'socket'
 
-# The offline HTTPS fixture of the live quotes' QEMU cell (docs/design-quotes.md, "The
+# The offline HTTPS fixture of the live quotes' QEMU cell (the dashboard example's README, "The
 # QEMU cell"): a TLS server on the host's loopback that answers Kraken's Ticker requests
 # for the pairs of erx_quotes_table with canned bodies in Kraken's shape, under a chain
 # made here for api.kraken.com. The guest reaches it through QEMU's guest forward for the

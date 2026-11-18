@@ -35,7 +35,7 @@ size(#sndbuf{size = Size}) -> Size.
 The `Len` bytes at offset `Off` from the front as at most `Max` sub-binaries, one for each
 binary the range meets, so shorter when the buffer ends first or the range meets more
 binaries than `Max`. A run's payload is at most the 64 binaries that the C which cuts it
-walks (docs/design-network-fastpath.md, "A run").
+walks (docs/design-network-stack.md, "A run").
 """.
 -spec range(buf(), non_neg_integer(), non_neg_integer(), pos_integer() | infinity) -> [binary()].
 range(#sndbuf{chunks = Chunks}, Off, Len, Max)

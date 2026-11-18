@@ -1080,13 +1080,6 @@ does nothing to such a row, which shows `installed` as it did before
 the restart. So a restart starts and stops no row that was applied,
 and starts a row of an install or an update only by its own command.
 
-## Compatibility and migration
-
-The `start` row and `start.conf`'s grammar owe nothing to earlier forms
-([design.md](design.md#decisions), "No backward compatibility in
-development"). `start.conf` lines the grammar does not hold are skipped and
-reported.
-
 ## Failure handling, diagnostics and debuggability
 
 | Failure | Detected by | What happens |
@@ -1162,46 +1155,98 @@ and no more; the data partition, and so `start.conf`; the storage domain.
   principal a start row names can also be enrolled and logged in to at a
   console line is the login design's; the gap is recorded in `TODO.md`.
 
-## Phase 1
-
-Phase 1 runs trusted code, and builds this design against its target
-interfaces. It defers enforcement that rests on parts that arrive
-later, and reports each as it is:
-
-| Deferred | Until | Meanwhile |
-| --- | --- | --- |
-| rooting an app's `data` grant at its own directory | facet parameters and the apps' directories | an app holds no `data` grant: the check refuses an `apps` row that names a files service, and property 19 grants the whole volume to no template but root's |
-| budgets and quotas as limits | erXos's kernel | they are records the build checked |
-
 ## Verification and testing
 
-Each test is paired with the seeded fault that proves it runs the code
-it guards.
+Each test is paired with a seeded fault that proves it runs the code it
+guards; the faults below are the ones each test must catch.
 
-**Host tests.**
+**The approach.** The merge, the settings judgement and the command
+judgement are pure functions, tested on the host; the command judgement
+exhaustively, every command of
+[How a command is judged](#how-a-command-is-judged) against every row
+state, the table's last column, a read that fails, included. The
+reader's oracle is the host's `sh`: for each fixture of a corpus of
+files with no problems, every variable must give the value `sh` prints
+for it after sourcing the fixture; files with problems (`x="$(reboot)"`,
+`x=$y`, `x=a; reboot`, `export x=1`, `x+=1`, `x=a#b`, a line ending in
+`\`, an `if` around an assignment) are checked against an expected list
+without `sh`, and nothing runs. The start service runs whole over a
+fixture `etc` tree, with a stub domain service and, for its races with
+the package process, a stub `erx_pkg_io` that holds a request; an edit's
+durability runs over the storage power-cut harness's simulated medium
+([design-storage.md](design-storage.md#read-write-storage)).
 
-| Test | Passing case | Seeded fault |
-| --- | --- | --- |
-| the merge | settings replace defaults; `NO` disables; a bad line and a line for an undeclared name are skipped and reported; a second enabled row on one display is refused with the first's name; a row whose display its template is not granted is refused with `{no_grant, D}`, whether the declaration or a `start.conf` line gave it the display, and a row declared enabled on a granted display whose line names one it is not granted is refused, not started on its declared display | a merge that adds a row for an undeclared principal; the display rule dropped; the grant check dropped; a judgement that skips a line naming a display the principal is not granted, which starts that row on its declared display |
-| `start.conf`'s names | `a_b_enable` sets `enable` of the row `a_b`, `x_restart_period_s` sets `restart_period_s` of the row `x`, `my_app_enable` sets `enable` of the row `my-app`, and `zz_enable`, `x_colour`, `x_enable_` and `my-app_enable` are each a problem that sets nothing, reported with the row's own name where it names one; with `any` for the names, `zz_enable` passes and `x_colour` is still a problem | a split at the last `_`, which reads `x_restart_period_s` as the field `s` of a row `x_restart_period`; a judgement that does not check the field name, which applies `x_colour` (a variable naming an undeclared field accepted); a judgement that compares the variable with the row's name unmapped, which skips `my_app_enable` |
-| `start.conf`'s flags | `ntpd_flags` of 1,024 bytes with spaces and `=` sets the row's flags byte for byte, and `ntpd_flags=""` clears them; a value of 1,025 bytes, one holding `\`, one holding `$` and one holding a tab are each skipped and reported, and the row keeps its declared flags | an off-by-one bound, which accepts the 1,025-byte value; a parser that splits the value at spaces, which changes the 1,024-byte value |
-| the reader, `erx_start_conf:read/1` | blank lines, comments, `NAME=` with nothing, double-quoted, single-quoted and bare values, and a trailing comment after a blank each read as `sh` reads them; for each fixture of a corpus of files with no problems, every variable gives the value the host's `sh` prints for it after sourcing the fixture, and no other file is ever sourced; `x="$(reboot)"`, `x=$y`, `x=a; reboot`, `export x=1`, `x+=1`, `x=a#b`, a line ending in `\`, and the lines `if false; then` and `fi` around an assignment are each a problem, checked against the expected list without `sh`, and nothing runs; a last line with no newline, `clock_restarts=1`, is read as `sh` reads it, giving 1 | a reader that accepts `$` inside double quotes, which accepts `x=$y`; a reader that refuses a last line with no newline, which skips `clock_restarts=1`; a reader that ends a bare value at `#` with no blank before it, which reads `x=a#b` as `a` where `sh` reads `a#b` |
-| `service -c` | over a fixture file with two problems, one of them `my_app_colour`: prints both with their line numbers, the second with `my-app` beside it, and exits 1; over a clean file exits 0 and prints nothing; with a stub inspection that refuses `[apps]`, a file with a line for a name with no row prints the `row names not checked` line and exits 0, and one with a bad value exits 1 | a check that prints the problems and exits 0; a check that, refused `[apps]`, judges against no rows, which reports every line as a name with no row |
-| a keeper's flags | with a stub domain service: a row's keeper passes its applied flags as `Start`'s `flags` at its first start and at a restart within its intensity, and a `onestart` passes the row's flags read at that command; a row with none passes the empty string | a keeper that passes `flags` only at the first start, which the stub sees start the restarted session without them |
-| the edit, `erx_start_settings:set/3` | a file with comments, a variable set on two lines and one set nowhere: both lines are replaced, the missing one appended, and every other byte kept | an edit that replaces only the first line that sets the variable, which leaves the later one standing |
-| an edit at the bound, through the real start service over a fixture `etc` tree | a file whose `service clock disable` result is exactly `start_conf_max` bytes is written, and the next read takes its settings; a file one byte longer before the edit answers `efbig`, and the file is byte for byte as it was, with no temporary file left in `/etc` | the size check dropped, which writes a file the next read takes as `too_long`; an off-by-one bound, which refuses the edit that fits exactly |
-| a part-written file, through the real start service over a fixture `etc` tree | `clock` declared `enable YES` and the file cut before its `clock_enable="NO"`: `service clock start` starts it; `dash` declared `enable NO` and the file cut before its `dash_enable="YES"`: `service dash start` answers `enotsup`; `clock_restarts=10` cut to `clock_restarts=1`: `service clock restart` applies 1, and `/proc/apps` shows it; a cut inside a quotation is a problem | a command that takes a field the file does not set from the row's last applied record rather than its declaration, which answers `enotsup` to `clock`'s start; a reader that refuses a last line with no newline, which keeps the declared intensity |
-| `service NAME disable` across a power cut | over the storage power-cut harness's simulated medium ([design-storage.md](design-storage.md#read-write-storage)), with no checkpoint after the rename but the one the final sync waits for: a cut at each write before the command reports finds the old text or the new one, whole, and a cut after it reports finds the new text | the command without the final sync, after which a cut after its report finds the old text and the row enabled at the next boot |
-| one row for each command, through the real start service over a fixture `etc` tree | `clock` and `kiosk` enabled and running, and the file edited to disable `clock` and enable `dash`, declared `enable NO`: the edit alone starts and stops nothing; `service kiosk restart` restarts `kiosk` alone, while `clock` runs on and `dash` stays disabled; `service clock stop` then ends `clock` and leaves it disabled, and `service dash start` starts `dash` | a command that applies the whole file, which ends `clock` and starts `dash` at `kiosk`'s restart; a command that acts without reading the file, which answers `enotsup` to `dash`'s start |
-| a row's supervisor | with a stub domain service: an ended session is started again; one end more than the intensity leaves the row down and the other rows up; a keeper on a display asks the stub's `display_settled/1` before each start of its session, its first and every restart | a keeper that does not link to its session; a keeper that waits only before its first start, which the stub sees start a session unasked |
-| judging a command, `erx_start_table:command/3`, every command of the table in [How a command is judged](#how-a-command-is-judged) against every row state | each cell's answer, action and record; a `start` of a running row the read finds disabled answers `enotsup` and leaves it running, and a `stop` of it answers `ok` and records it disabled; a `start` refused for its display records nothing; a `start` on the display of a stopped row is admitted, and on a kept row's display refused with that row's name; a `restart` of a kept row on its own display is admitted; `display=` on a `onestart` of an enabled row answers `einval`; and, for a read that cannot read the file, the table's last column against every row state: `start`, `restart`, `onestart` and `onerestart` answer `eio` and record nothing, a `stop` of a kept row ends its session and records it stopped with its applied settings, and a `stop` of a disabled row's `onestart` session ends it and leaves the row disabled | a judgement made from the table before the read, which answers `enotsup` to a `start` after an edit to `YES`; `one` forms judged as ordinary ones, which refuse `onestart` of a disabled row; a display check that counts the row itself, which refuses the `restart`; holders taken from the rows recorded enabled rather than the rows kept, which refuses the start on the stopped row's display; an unreadable file judged as a file with no settings, which starts a row declared `enable YES` whose record is disabled; the `eio` refusal applied to every command, which refuses the `stop` of the kept row |
-| a read that fails at a command, through the real start service over a fixture `etc` tree whose reads are then made to fail | `kiosk` enabled and running, `clock` declared `enable YES` and disabled by the file: `service clock start` answers `eio` and starts nothing, `service kiosk stop` ends `kiosk` and `/proc/apps` shows it stopped; once reads succeed again, `service kiosk start` starts it | a command that reads a failed read as a file with no settings, which starts `clock`; a start service that answers `eio` to every command whose read fails, which leaves `kiosk` running |
-| a purge while an update approaches its publication, through the real start service and package process, with a stub `erx_pkg_io` that holds the update's rename of `clock.app` | `service other purge` written to `ctl` while the rename is held: once it is released, the update's publication is answered, its `cp` closes with status 0, and then the purge answers `ok`, with `remove_app other` sent after the publication; meanwhile `/proc/apps` answers at once | a table that takes `purge` among its commands and calls the package process, which leaves the publication and the purge each waiting for the other, and the test sees neither answer by its deadline |
-| a restart of the table's process, the same way | `clock` stopped by `service clock stop`, `kiosk` running, and the file then edited to enable `clock` and disable `kiosk`; the table's process killed: on its restart `clock` is still stopped, `kiosk`'s session runs on, the same domain, and `erx_starter_rc` has made no read; and the table's process killed again while a stub `erx_pkg_io` holds an install's rename: the restarted table answers `/proc/apps` at once, and once the rename is released it takes the install's publication and then the set, and shows the installed app `installed`, its session not started though the file enables it; and the table's process killed once more, after the boot has applied the manifest's rows and before the boot's package set arrives: the restarted table applies the file to the set's rows when the set arrives, so an installed app the file enables starts | a restarted table that applies the file as a boot does, which starts `clock` and ends `kiosk`; a restarted table that calls the package process for its set, which waits behind the held install while the install's publication waits for the table, so the restart never ends; a restarted table that ignores the boot mark and applies the file to every row it holds no record for, which starts the app of the held install |
-| publications, through the real start service and package process over a fixture `etc` tree whose file enables `clock` and `dash` | the boot's package set, arriving after the manifest's rows are applied, starts the installed `dash`; a copy of `clock.app` into `/apps` closes with status 0 and leaves `clock` `installed` with no session; `service clock start` starts it; a newer `clock.app` copied over the running `clock` ends its session before the rename and leaves the row `installed`, and `service clock restart` runs the new package; `dash` runs on throughout | a publication that applies the file to the rows it adds, which starts `clock` at its install and again at its update; the boot's set taken as a later publication, which leaves `dash` `installed` after the boot |
-| losing the store, through the real start service's application over a fixture `etc` tree whose file enables `clock` | `clock` `installed` by a copy into `/apps`; `erx_starter_records` killed: the start service's application ends, which in the host test stands for the machine's reset, and no session of `clock` was started first; the same with the keepers' branch killed | a keepers' branch its top supervisor restarts, which applies the file again and starts `clock` |
-| a manual edit to `YES`, through the real start service over a fixture `etc` tree | `clock` declared `enable NO`, the file edited to `clock_enable="YES"` with no command since: `/proc/apps` shows `clock` disabled, and `service clock start` starts it as a kept row, which the supervisor starts again when its session is killed | the shell's check of `/proc/apps` before writing `ctl`, which answers "Cannot 'start'" and writes nothing |
-| a manual edit to `NO`, the same way | `clock` enabled and running, the file edited to `clock_enable="NO"`: `/proc/apps` still shows it running; `service clock start` prints rc.subr's "Cannot 'start' clock ... use 'onestart'" with status 0, and `clock` runs on, started again by its supervisor when its session is killed; `service clock stop` then ends it, and `/proc/apps` shows it disabled | a start service that ends the kept session of a row its read finds disabled, as applying the whole file would, which leaves no session of `clock` after the `start`; the shell's check of `/proc/apps`, which sends `start` from its cached `running` and answers `already running?` |
+**Host tests and their seeded faults.**
+
+* the merge: one that adds a row for an undeclared principal; the
+  display rule dropped; the grant check dropped; a judgement that skips a
+  line naming a display the principal is not granted, which starts that
+  row on its declared display where it must be refused;
+* `start.conf`'s names: a split at the last `_`, which reads
+  `x_restart_period_s` as the field `s` of a row `x_restart_period`; a
+  judgement that does not check the field name, which applies
+  `x_colour`; one that compares the variable with the row's name
+  unmapped, which skips `my_app_enable` for the row `my-app`;
+* `start.conf`'s flags: an off-by-one bound, which accepts a 1,025-byte
+  value; a parser that splits the value at spaces, which changes a
+  1,024-byte value that must be kept byte for byte;
+* the reader: one that accepts `$` inside double quotes, which accepts
+  `x=$y`; one that refuses a last line with no newline, which skips
+  `clock_restarts=1`; one that ends a bare value at `#` with no blank
+  before it, which reads `x=a#b` as `a` where `sh` reads `a#b`;
+* `service -c`: a check that prints the problems and exits 0; one that,
+  refused `[apps]`, judges against no rows, which reports every line as
+  a name with no row where it must print `row names not checked`;
+* a keeper's flags: a keeper that passes `flags` only at the first
+  start, which restarts the session without them;
+* the edit, `erx_start_settings:set/3`: one that replaces only the first
+  line that sets the variable, which leaves a later one standing;
+* an edit at the bound: the size check dropped, which writes a file the
+  next read takes as `too_long`; an off-by-one bound, which refuses an
+  edit whose result is exactly `start_conf_max`;
+* a part-written file: a command that takes a field the file does not
+  set from the row's last applied record rather than its declaration;
+  a reader that refuses a last line with no newline, which keeps the
+  declared intensity;
+* `service NAME disable` across a power cut, which must find the old
+  text or the new one whole, and the new one once the command has
+  reported: the command without its final sync;
+* one row for each command: a command that applies the whole file,
+  which ends and starts other rows at one row's `restart`; a command that
+  acts without reading the file, which answers `enotsup` to a start the
+  file has enabled;
+* a row's supervisor: a keeper that does not link to its session; a
+  keeper that asks `display_settled/1` only before its first start;
+* judging a command: a judgement made from the table before the read;
+  `one` forms judged as ordinary ones, which refuse `onestart` of a
+  disabled row; a display check that counts the row itself, which
+  refuses its `restart`; holders taken from the rows recorded enabled
+  rather than the rows kept, which refuses a start on a stopped row's
+  display; an unreadable file judged as a file with no settings, which
+  starts a row declared `enable YES` whose record is disabled; the `eio`
+  refusal applied to every command, which refuses the `stop` of a kept
+  row;
+* a read that fails at a command: a command that reads the failure as a
+  file with no settings, which starts a row the file disabled; a start
+  service that answers `eio` to every command whose read fails, which
+  cannot stop a running row;
+* a purge while an update approaches its publication: a table that
+  takes `purge` among its commands and calls the package process, which
+  leaves the publication and the purge each waiting for the other;
+* a restart of the table's process: a restarted table that applies the
+  file as a boot does; one that calls the package process for its set,
+  which deadlocks behind a held install; one that ignores the boot mark
+  and applies the file to every row it holds no record for;
+* publications: a publication that applies the file to the rows it
+  adds, which starts an app at its install and its update; the boot's
+  set taken as a later publication, which leaves an enabled installed
+  app `installed` after the boot;
+* losing the store: a keepers' branch its top supervisor restarts,
+  which applies the file again and starts a row no command started;
+* a manual edit to `YES` and to `NO`: the shell's check of `/proc/apps`
+  before writing `ctl`, which refuses a start the file has since
+  enabled, or answers `already running?` from its cached state; a start
+  service that ends the kept session of a row its read finds disabled.
 
 **The manifest check.** One seeded manifest for each clause of property
 17: a `start` row for a principal with no template; rows for
@@ -1233,34 +1278,20 @@ variable left out of the reserve, which admits the third.
 
 * a manifest with an app and an enabled row boots to that app's
   session, with no login, holding exactly its template's grants;
-  seeded: the row disabled, and the test finds no session;
-* a kiosk manifest: the app's UI is on the display's screenshot after
-  boot; the session is killed and the UI returns, while a second
-  session holding a grant on the display stays hidden; killed past its
-  intensity, `/proc/apps` shows the row down;
-* a kiosk with its display domain killed: the display domain restarts,
-  the kiosk's session, still running, gets its grant again and its UI
-  returns on the screenshot, while the second session's window stays
-  hidden; seeded: a domain service whose re-mint drops the session
-  mark, which leaves the background;
-* `service enable` and `disable` change `/etc/start.conf`, start and stop
-  nothing, at their own row or at a `service` command for another row,
-  and survive a reboot, which starts the enabled row; after an enable,
-  `service -e` lists the row while `/proc/apps` shows it disabled,
-  until `service NAME start` starts it; after a disable of a running
-  row it runs on until `service NAME stop`; an enable on a display a
-  kept row holds, and one on a display the template is not granted,
-  makes `service NAME start` answer the refusal and start nothing, and
-  after a reboot leaves the row `refused` with its reason at
-  `/proc/apps`; a line written into `/etc/start.conf` with an editor
-  changes nothing until the row's own `service` command; a native
-  program run from the administrator's session rewrites `/etc/start.conf`,
-  and a native program's listing of `/etc` shows `start.conf` beside
-  `passwd`; seeded: the merge's
-  grant check removed, which starts a session that shows nothing;
-  `enable` writing `start NAME` to `ctl`, which starts the row before
-  `start`; a start service that applies the whole file at each
-  command, which starts the enabled row at another row's command;
+  seeded: the row disabled;
+* a kiosk: its UI returns after its session is killed while a second
+  session on the display stays hidden, and the row is down past its
+  intensity; with the display domain killed, the kiosk's session gets
+  its grant again and its UI returns; seeded: a domain service whose
+  re-mint drops the session mark;
+* `service enable` and `disable` change `/etc/start.conf` and start and
+  stop nothing until the row's own command or a reboot, refusals of a
+  held or ungranted display appear at the row's `start` and after a
+  reboot, an editor's change waits for the row's command, and a native
+  program can rewrite and list `/etc`; seeded: the merge's grant check
+  removed, which starts a session that shows nothing; `enable` writing
+  `start NAME` to `ctl`; a start service that applies the whole file at
+  each command;
 * a session whose template holds no `start` grant finds no
   `/etc/start`, no `/etc/start.conf` and no `/apps`, and its
   `erx:cap(start)` is undefined;
@@ -1268,19 +1299,11 @@ variable left out of the reserve, which admits the third.
 * a kiosk booted five times without an ordered end, its app reaching
   ready each time, never reaches the rescue configuration; seeded: a
   keeper that does not clear the count;
-* the states the inspector shows, each with a test: a row that is
-  `refused` with its reason, `down`, `disabled`, `stopped` after
-  `service NAME stop`, and `installed` after a run-time install; and `start_conf` shown `failed`, with the manifest's
-  enabled rows running, on a boot whose machine has no data partition,
-  where `service NAME start` of a manifest row that runs nothing
-  answers `eio` and `service NAME stop` of one that runs ends it;
-  seeded: a boot that refuses as a command does, which starts no row.
-
-A user's session reaches the data volume only through its home, since
-property 19 grants `data`, the whole volume, to no session template
-but root's, so it finds no `etc/`; root's session, the administrator's,
-reaches `etc/` as FreeBSD's root does; no configured domain holds
-`data`.
+* the states the inspector shows, each with a test: `refused` with its
+  reason, `down`, `disabled`, `stopped`, `installed`, and `start_conf`
+  `failed` on a machine with no data partition, where the manifest's
+  enabled rows still run; seeded: a boot that refuses as a command does,
+  which starts no row.
 
 **Fuzz targets**, each landing with its parser: the `ctl` line grammar,
 and `start.conf`'s reader with the settings judgement over it, checking

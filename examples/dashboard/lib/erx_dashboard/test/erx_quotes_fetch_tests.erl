@@ -3,8 +3,8 @@
 
 -module(erx_quotes_fetch_tests).
 -moduledoc """
-The live source end to end without the internet (docs/design-quotes.md,
-Q-R7, "HTTPS on the host"): erx_quotes, with its request unchanged,
+The live source end to end without the internet (examples/dashboard/README.md,
+"Testing"): erx_quotes, with its request unchanged,
 fetches over HTTPS from `ssl` servers this test runs on the loopback,
 with chains public_key:pkix_test_data/1 makes and their roots named by
 public_key's `cacerts_path`, and sends boards as a dashboard gets them.
@@ -80,8 +80,8 @@ settled(Expected, Last, Deadline) ->
 
 %% A server chain whose peer certificate names `Host`, as ssl's server
 %% options, and its root certificate. The keys are ECDSA P-256 with SHA-256
-%% signatures, as every source's were (docs/design-quotes.md, "What the
-%% sources offer").
+%% signatures, as every source's were (examples/dashboard/README.md, "Where the
+%% data comes from").
 chain(Host) ->
     Name = #'Extension'{extnID = ?'id-ce-subjectAltName', critical = false,
                         extnValue = [{dNSName, Host}]},

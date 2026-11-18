@@ -4,7 +4,7 @@
 -module(erx_quotes_view).
 -moduledoc """
 What the dashboard's quotes panel shows of the live quotes, as a pure
-function (docs/design-quotes.md, "What the screen shows"): board/2 turns
+function (examples/dashboard/README.md, "What it shows"): board/2 turns
 the core's state and the current monotonic time into the board the
 dashboard draws (erx_dashboard_view), one quote per row of the table,
 in its order, under a credit naming every source the table asks
@@ -107,8 +107,8 @@ quote's name and one line naming it, its state (`waiting`, `no_data`,
 it (erx_dashboard_view:price/2) or `--`, and the reason its last round failed, or else the
 source that gave its value (`none` before any). Ages are left out, so a
 line changes only when the quote's state, price, source or reason does;
-erx_quotes logs each change (docs/design-quotes.md, "Verification and
-testing").
+erx_quotes logs each change (examples/dashboard/README.md, "The QEMU
+cell").
 """.
 -spec lines(erx_quotes_core:state(), integer()) -> [{atom(), binary()}].
 lines(#{table := #{quotes := Rows}, quotes := Quotes}, Now) ->

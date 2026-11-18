@@ -1,59 +1,42 @@
 # Pipes
 
-A **pipe** carries bytes one way, from its write ends to its read ends, and
-erXos builds it in user space, in `liberx` and in each session, from kernel
-objects that exist for other reasons: memory objects and IRQ objects used
-as doorbells. Each write end writes into a **lane** of its own, a
-single-producer, single-consumer **ring** and a **reader page**, so writers
-never share memory; the read ends merge the lanes in write order; and
-every end is made and installed by the session's pipe server, for exactly
-one holder, so the session knows every holder of every pipe and end of
-stream and broken pipe follow from its records, whatever the holders do or
-however they end. The key idea is that every pipe has a **home**, the
-session its programs belong to: its pipe server creates the pipe's
-objects, installs each end into the one program or process that holds it,
-and tells each holder, through that holder's channel, which other ends
-exist, while bytes travel only through the lanes, never through the
-session or the kernel. Programs' standard streams and POSIX pipes
+A **pipe** carries bytes one way, from its write ends to its read ends.
+erXos builds it in user space, in `liberx` and in each session, from
+kernel objects that exist for other reasons: memory objects, and IRQ
+objects used as doorbells. Programs' standard streams and POSIX pipes
 ([design-programs.md](design-programs.md)) and Erlang commands that meet
 programs in a pipeline
 ([design-runtime.md](design-runtime.md#the-console-and-standard-io),
-[design-shell.md](design-shell.md#pipelines)) all use these pipes. The
-lane is also the shape of every other byte stream in the system: a
-program's channel to its session
-([design-programs.md](design-programs.md#the-channel)) and each direction
-of a connection between two domains are lanes of the same layout, which
+[design-shell.md](design-shell.md#pipelines)) all use these pipes. Each
+write end writes a **lane** of its own, the byte-stream shape that a
+program's channel ([design-programs.md](design-programs.md#the-channel))
+and each direction of a connection between domains also use, which
 [design-domains.md](design-domains.md#connections) defines with its wake
-handshake, and a pipe adds to it only what merging several writers
-needs. The kernel's objects are in [design-kernel.md](design-kernel.md); a
-program's creation, its channel and its table in
+handshake; a pipe adds to it only what merging several writers needs. The
+kernel's objects are in [design-kernel.md](design-kernel.md); a program's
+creation, its channel and its table in
 [design-programs.md](design-programs.md#a-program-is-a-port).
 
 Decisions every reader of this document needs:
 
-* **Pipes are not kernel objects**. The kernel
-  provides memory objects and IRQ objects used as doorbells; `liberx` and
-  the session do the rest, and the data path makes no kernel call while
-  the other side is awake.
+* **Pipes are not kernel objects.** `liberx` and the session build them,
+  and the data path makes no kernel call while the other side is awake.
 * **One lane per write end.** A writer writes only its own ring, which its
-  readers map read-only, so a hostile writer can corrupt only its own
-  records, a hostile reader can corrupt no writer's, and a write of at most
-  `PIPE_BUF` bytes is one record, read whole.
+  readers map read-only, so writers never share memory, and a write of at
+  most `PIPE_BUF` bytes is one record, read whole. The read ends merge the
+  lanes in write order.
 * **The session is every pipe's home.** Its pipe server creates every
   lane, lock page and doorbell, installs each end into its one holder, and
   tells each holder of every other end; a program never installs an end
-  and never hands one to another program: it receives ends the session
-  made for it.
-* **End of stream follows from the session's records.** Only the session
-  installs ends, so it knows every holder; a holder's close and a holder's
-  death both reach it, by a notice on the holder's channel or, for a
-  program, from the pipe NIF once the program's anchor is released, and
-  it tells the other holders. No field
-  of shared memory decides end of stream or broken pipe.
-* **Several readers share one stream.** Read ends share the lanes and a
-  reader lock, as POSIX processes share a pipe. A pipe has any number of
-  write ends, bounded only by the session's quotas, so a pipe with many
-  writers blocks a writer and never a spawn; it has at most 64 read ends.
+  or hands one on. Bytes travel only through the lanes, never through the
+  session or the kernel.
+* **End of stream and broken pipe follow from the session's records**,
+  never from a field of shared memory: the session knows every holder,
+  and a holder's close or death reaches it and is reported to the others.
+* **Several readers share one stream**, through the lanes and a reader
+  lock, as POSIX processes share a pipe. A pipe has any number of write
+  ends, bounded only by the session's quotas, so a writer can block but
+  never a spawn; it has at most 64 read ends.
 
 ## Context
 
@@ -214,13 +197,13 @@ last mappings go.
 
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
-| **PI1.** Every pipe end has exactly one holder, which the session knows | only the session's pipe server makes an end, and it installs the end's capabilities into one holder's table through that holder's handler, or hands them to a session process, recording the holder as it does; a program's table takes capabilities only from its session ([design-programs.md](design-programs.md#invariants), P1), and every copy the session installs lacks `DUP` and `GIVE`, so a holder cannot copy an end or hand one on at a rendezvous; a program's `dup` shares one end object in its own table, and an end another program receives is one the pipe server made for it | a copy of a lane or a doorbell with `DUP` or `GIVE`; an end installed by anyone but the pipe server; a holder recorded wrongly | the pipe server's model, in which every end has one recorded holder after every event; a domain test that tries to copy an end's capabilities with `erx_cap_dup` and to pass them at a rendezvous, and gets `ERX_ERIGHTS` each time |
-| **PI2.** A reader sees the end of the stream once, and only once, no write end remains and every byte written has been read | a write end's close reaches the pipe server as a notice from the holder's `liberx`, which its handler forwards, or as the holder's gone, which for a program the pipe NIF sends only once the program's anchor is released and no image of it runs ([Hand-offs](#hand-offs)), and the pipe server tells every read end's holder in order on its channel; a write end is made only for a child, a deposit or a redeemer of a write end its requester holds, so once no write end remains none can appear; the pipe server lets go of a lane only after every read end has reported it drained, and never deletes one, so a gone writer's bytes stay readable; a reader returns 0 only when it holds no lane whose writer is open and finds every lane whose writer is gone drained, and a read end that has found such a lane drained counts it drained from then on, so records that a writer which kept its ring publishes after it said it closed never follow the end of the stream | a write end made from a closed end; a lane let go before every reader drained it; a reader that reads a lane it has found gone and drained; a read that returns 0 while a lane holds a record or while a writer is open | the pipe core's exploration; domain tests: `echo hi \| cat`, a writer that faults mid-stream, a writer that closes and goes on publishing, two writers in two programs, and a write end inherited by a program as it ends |
-| **PI3.** A writer gets `EPIPE` once, and only once, no read end remains | a read end's close or its holder's death reaches the pipe server, which tells every writer `{pipe_reader_gone, ...}`, and each writer counts its read ends from those reports alone; read ends are made only for a child, a deposit or a redeemer of a read end its requester holds, so none appears once none remains; a writer fails with `EPIPE` only on a count of zero or when the pipe is lost, both from its handler's reports, which no reader can write | a read end made from nothing; a count lowered while its read end remains; `EPIPE` taken from a field a reader can write | the pipe core's exploration; domain tests: a reader that faults while its writer waits for room, `yes \| head -1`, and a co-reader that rewrites a lane's read position, which stops its writer but never sends it `SIGPIPE` |
-| **PI4.** Writers never share memory, no reader can write a writer's records, and nothing in shared memory makes a party crash, loop or touch memory out of bounds | each write end writes only its own ring, which every read end maps read-only; a write end maps its lane's reader page read-only and nothing else of the pipe; every party copies each field it reads from a page others write once into private memory and validates the copy with checked arithmetic before use; every loop is bounded by the pipe's limits and the party's own records, never by a value read from shared memory | a reader with a writable mapping of a ring; a field used twice from shared memory; a check after use; a loop bounded by a value read from a page | the ring checks' fuzz targets; a hostile-writer domain test that rewrites its header and records at random while a reader reads; a reader that tries to write a ring, which faults on its read-only mapping |
-| **PI5.** A write of at most `PIPE_BUF` bytes reaches the readers contiguously | it is one record, published by one store of the write position; a read that takes part of a record leaves the rest as the lock page's current record, and every reader finishes the current record before it takes another | a record split before its publication; a reader that switches lanes inside a record | the exploration with 4,096-byte writes; a domain test with 100 writers writing 4,096-byte lines, whose lines all arrive whole |
-| **PI6.** One writer's bytes arrive in the order written; of two writes by different writers, a record whose write returned before the other write began is read first; and no writer delays another's record without bound | each writer has its own lane, read in order; a write that published a record reads the clock after its last store of `wpos` and reads it again until the clock has passed that reading before it returns or waits, so a write that begins after it stamps its records above every stamp of the earlier write and every mark a reader took before a copy that missed its records, even on a clock that returns one reading for a whole tick; the pipe server stores a write end's number in the lock page's `wends` before it installs the end anywhere, and a reader that finds a record copies `wends` and, when it names a write end whose report the reader has not applied, waits for that report, which is already on its own channel, before it picks, so it picks only with every lane that existed before the record it found; the reader merges the lanes by an order key that puts every record after each record that happened before it; and a batch never grows, so another writer's later bytes delay a record by at most two lanes' capacity for each read end ([Reading and merging](#reading-and-merging)) | a reader that misses a lane which became readable before the record it picked; a write that returns before the clock has passed its last publication, after which a later write can stamp the same reading and win the tie by its write end number; a write end installed before its number is in `wends`; a reader that picks while `wends` names a write end it has not applied; a mark taken after a look that did not include its record; a batch that grows after it opens | the exploration, which checks the bound after every event, and, with a clock that may repeat a reading, the order of writes that returned before others began, with a seeded writer that returns without waiting for the clock, which it catches; domain tests: `{date; uname} \| cat`, whose lines arrive in that order every time; a child writer that writes a line and exits, after which its parent writes one, while the reader's event executor is held back from applying the child's lane, whose lines arrive in that order, with a seeded reader that ignores the lock page's `wends`, which the test catches; and a writer that stamps every record 0 and never lets its ring empty while another writer's records arrive within the bound |
-| **PI7.** No wakeup is lost | a waiter publishes the position or bit it waits for, fences and checks again before it sleeps; a party that publishes data, room or the lock fences and then rings each waiter whose published position its store crossed or whose bit it finds set ([design-domains.md](design-domains.md#connections)); every peer holds the trigger right on an end's doorbell from before the end's holder can wait on it, since the session installs the end and its peers' trigger rights before the holder runs or before it answers the request that made the end. A peer learns the new end's doorbell only from its handler's report, so a waiter may publish before the peer can ring it; the peer therefore rings the new end's doorbell once as it applies the report, and the waiter wakes and checks again. The session's reports of a gone end reach the holder through its channel, whose doorbell wakes the event executor, which wakes the end's waiters ([Waiting and doorbells](#waiting-and-doorbells)) | a check before what the waiter published is visible; a doorbell that forgets a ring; an end whose holder can run before its peers hold its doorbell; a report of a new end applied without its ring; a report of a gone end that wakes no waiter | the exploration over the memory model's orders, with reports of new ends interleaved and, as a seeded failure, the ring on a report removed; a stress test of a writer and a reader that sleep on every turn, which never stalls; a read end that joins and sleeps before its writer applies the report of it, and one that waits for the reader lock before a co-reader applies the report of it, each of which wakes |
+| **PI1.** Every pipe end has exactly one holder, which the session knows | only the session's pipe server makes an end, and it installs the end's capabilities into one holder's table through that holder's handler, or hands them to a session process, recording the holder as it does; a program's table takes capabilities only from its session ([design-programs.md](design-programs.md#invariants), P1), and every copy the session installs lacks `DUP` and `GIVE`, so a holder cannot copy an end or hand one on at a rendezvous; a program's `dup` shares one end object in its own table, and an end another program receives is one the pipe server made for it | a copy of a lane or a doorbell with `DUP` or `GIVE`; an end installed by anyone but the pipe server; a holder recorded wrongly | the pipe server's model, in which every end has one recorded holder after every event; a domain test that tries to copy an end's capabilities and to pass them at a rendezvous, and gets `ERX_ERIGHTS` each time |
+| **PI2.** A reader sees the end of the stream once, and only once, no write end remains and every byte written has been read | a write end's close reaches the pipe server as a notice from the holder's `liberx`, which its handler forwards, or as the holder's gone, which for a program the pipe NIF sends only once the program's anchor is released and no image of it runs ([Hand-offs](#hand-offs)), and the pipe server tells every read end's holder in order on its channel; a write end is made only for a child, a deposit or a redeemer of a write end its requester holds, so once no write end remains none can appear; the pipe server lets go of a lane only after every read end has reported it drained, and never deletes one, so a gone writer's bytes stay readable; a reader returns 0 only when it holds no lane whose writer is open and finds every lane whose writer is gone drained, and a read end that has found such a lane drained counts it drained from then on, so records that a writer which kept its ring publishes after it said it closed never follow the end of the stream | a write end made from a closed end; a lane let go before every reader drained it; a reader that reads a lane it has found gone and drained; a read that returns 0 while a lane holds a record or while a writer is open | the pipe core's exploration; domain tests of writers that end before the reader reads, fault mid-stream, or close and go on publishing, and of a write end inherited by a program as it ends |
+| **PI3.** A writer gets `EPIPE` once, and only once, no read end remains | a read end's close or its holder's death reaches the pipe server, which tells every writer `{pipe_reader_gone, ...}`, and each writer counts its read ends from those reports alone; read ends are made only for a child, a deposit or a redeemer of a read end its requester holds, so none appears once none remains; a writer fails with `EPIPE` only on a count of zero or when the pipe is lost, both from its handler's reports, which no reader can write | a read end made from nothing; a count lowered while its read end remains; `EPIPE` taken from a field a reader can write | the pipe core's exploration; domain tests of a reader that faults while its writer waits for room, `yes \| head -1`, and a co-reader that rewrites a lane's read position, which stops its writer but never sends it `SIGPIPE` |
+| **PI4.** Writers never share memory, no reader can write a writer's records, and nothing in shared memory makes a party crash, loop or touch memory out of bounds | each write end writes only its own ring, which every read end maps read-only; a write end maps its lane's reader page read-only and nothing else of the pipe; every party copies each field it reads from a page others write once into private memory and validates the copy with checked arithmetic before use; every loop is bounded by the pipe's limits and the party's own records, never by a value read from shared memory | a reader with a writable mapping of a ring; a field used twice from shared memory; a check after use; a loop bounded by a value read from a page | the ring checks' fuzz targets; domain tests of a hostile writer that rewrites its header and records at random, and of a reader that tries to write a ring and faults |
+| **PI5.** A write of at most `PIPE_BUF` bytes reaches the readers contiguously | it is one record, published by one store of the write position; a read that takes part of a record leaves the rest as the lock page's current record, and every reader finishes the current record before it takes another | a record split before its publication; a reader that switches lanes inside a record | the exploration with 4,096-byte writes; a domain test of 100 writers of 4,096-byte lines |
+| **PI6.** One writer's bytes arrive in the order written; of two writes by different writers, a record whose write returned before the other write began is read first; and no writer delays another's record without bound | each writer has its own lane, read in order; a write that published a record reads the clock after its last store of `wpos` and reads it again until the clock has passed that reading before it returns or waits, so a write that begins after it stamps its records above every stamp of the earlier write and every mark a reader took before a copy that missed its records, even on a clock that returns one reading for a whole tick; the pipe server stores a write end's number in the lock page's `wends` before it installs the end anywhere, and a reader that finds a record copies `wends` and, when it names a write end whose report the reader has not applied, waits for that report, which is already on its own channel, before it picks, so it picks only with every lane that existed before the record it found; the reader merges the lanes by an order key that puts every record after each record that happened before it; and a batch never grows, so another writer's later bytes delay a record by at most two lanes' capacity for each read end ([Reading and merging](#reading-and-merging)) | a reader that misses a lane which became readable before the record it picked; a write that returns before the clock has passed its last publication, after which a later write can stamp the same reading and win the tie by its write end number; a write end installed before its number is in `wends`; a reader that picks while `wends` names a write end it has not applied; a mark taken after a look that did not include its record; a batch that grows after it opens | the exploration, which checks the bound after every event and, on a clock that may repeat a reading, the order of writes, with a seeded writer that returns without waiting for the clock; domain tests of `{date; uname} \| cat`, of a child's line and then its parent's while the reader is held back from applying the child's lane, with a seeded reader that ignores `wends`, and of a writer that stamps every record 0 |
+| **PI7.** No wakeup is lost | a waiter publishes the position or bit it waits for, fences and checks again before it sleeps; a party that publishes data, room or the lock fences and then rings each waiter whose published position its store crossed or whose bit it finds set ([design-domains.md](design-domains.md#connections)); every peer holds the trigger right on an end's doorbell from before the end's holder can wait on it, since the session installs the end and its peers' trigger rights before the holder runs or before it answers the request that made the end. A peer learns the new end's doorbell only from its handler's report, so a waiter may publish before the peer can ring it; the peer therefore rings the new end's doorbell once as it applies the report, and the waiter wakes and checks again. The session's reports of a gone end reach the holder through its channel, whose doorbell wakes the event executor, which wakes the end's waiters ([Waiting and doorbells](#waiting-and-doorbells)) | a check before what the waiter published is visible; a doorbell that forgets a ring; an end whose holder can run before its peers hold its doorbell; a report of a new end applied without its ring; a report of a gone end that wakes no waiter | the exploration over the memory model's orders, with reports of new ends interleaved and, as a seeded failure, the ring on a report removed; a stress test of a writer and a reader that sleep on every turn; domain tests of ends that join and sleep before their peers apply the report of them |
 | **PI8.** The pipe server never trusts shared memory | its records of pipes, ends and holders live in Erlang, and it decides from them and from events alone: requests and notices on channels, which arrive in order from one writer each, and end records from the kernel; it touches a page others write only to free the reader lock a gone read end held, by one compare-and-swap of `owner`, which no waiter writes, and to store a new write end's number in the lock page's `wends`, which it never reads | a decision taken from a field of a ring, a reader page or the lock page | review of `erx_pipe:step/2`, which takes no shared field as input; the model's tests |
 
 The kernel's invariants that these rest on, the pass sets that bind every
@@ -284,25 +267,11 @@ where every other lane keeps zeros:
   reader page of every lane, then one word, `sleepers`, that names the
   read ends waiting for data. A connection's lane has one consumer, which
   waits on one bell; a pipe's lane has up to 64 read ends, each with a
-  doorbell bound to its own holder's group. `wake` tells a write end when
+  doorbell bound to its own holder's group, and bit `r` of `sleepers` is
+  set and cleared by read end `r` alone. `wake` tells a write end when
   to ring, and `sleepers` whom: without it, a write end would ring every
   read end at each crossing, and wake programs that hold a read end and
   do not read it.
-
-```c
-/*
- * A pipe lane's reader page: the reader page of every lane, then the
- * pipe's extension.  The read ends alone write it; the write end maps it
- * read-only and copies each field once before use.
- */
-typedef struct erx_pipe_rpage {
-	_Atomic uint64_t rpos;		/* the reader page of every lane: */
-	_Atomic uint64_t wake;		/* rpos and wake, stored by the read
-					 * end that holds the reader lock */
-	_Atomic uint64_t sleepers;	/* bit r: read end r waits for data;
-					 * set and cleared by read end r */
-} erx_pipe_rpage_t;			/* then zeros to 4 KiB */
-```
 
 Positions count bytes since the ring was created and never wrap in
 practice (2^64 bytes); a position's offset in the data area is the
@@ -358,25 +327,13 @@ bytes before they are copied changes only its own data.
 
 ### The lock page
 
-```c
-/*
- * A pipe's lock page, shared by its read ends.  The pipe server maps it
- * too, only to store wends and to free the lock a gone read end held.
- */
-typedef struct erx_pipe_lock {
-	_Atomic uint32_t owner;		/* the reader lock: 0 when free, else
-					 * 1 + the holder's index */
-	_Atomic uint32_t wends;		/* the highest write end number made;
-					 * the pipe server alone stores it */
-	_Atomic uint64_t waiters;	/* bit r: read end r waits for the
-					 * lock */
-	_Atomic uint32_t cur;		/* the write end whose record is
-					 * claimed, by its number, or
-					 * ERX_PIPE_NONE */
-	_Atomic uint32_t cur_off;	/* bytes of its payload claimed */
-	_Atomic uint64_t cur_pos;	/* the record's position in its lane */
-} erx_pipe_lock_t;			/* then zeros to 4 KiB */
-```
+A pipe's lock page, `erx_pipe_lock` in `abi/erx_abi.txt`, is shared by
+its read ends and holds the reader lock `owner` (0 when free, else 1 +
+the holder's index), `wends`, `waiters` (bit `r`: read end `r` waits for
+the lock), and the current record: `cur`, the write end whose record is
+claimed, by its number, or `ERX_PIPE_NONE`, `cur_off`, the bytes of its
+payload claimed, and `cur_pos`, its position in its lane. The pipe server
+maps it only to store `wends` and to free the lock a gone read end held.
 
 Read ends share this page as POSIX processes share a pipe's read side, so
 a hostile co-reader can disturb the stream it shares, never another
@@ -420,38 +377,18 @@ since write ends are numbered from 1.
 A pipe end is one of the descriptor kinds of a program's descriptor table
 ([design-programs.md](design-programs.md#descriptors-and-files)):
 
-```c
-typedef struct erx_pipe_end {
-	erx_prog_obj_t	 obj;		/* the descriptor table's head: the
-					 * kind, the count of references */
-	pthread_mutex_t	 lock;		/* the end's lock */
-	erx_pipe_kind_t	 kind;		/* ERX_PIPE_READ or ERX_PIPE_WRITE */
-	uint32_t	 pipe;		/* the pipe server's names */
-	uint32_t	 end;
-	erx_cap_t	 peers[ERX_PIPE_READERS_MAX];
-					/* the trigger right on each read end's
-					 * doorbell, by index: every read
-					 * end's for a write end, the other
-					 * read ends' for a read end */
-	union {
-		erx_pipe_wend_t	 w;	/* the core's write state, with its
-					 * private write position, its count
-					 * of read ends, O_NONBLOCK and lost;
-					 * its lane, mapped */
-		erx_pipe_rend_t	 r;	/* the core's read state, with its
-					 * index, O_NONBLOCK and lost; the
-					 * lock page; per write end, by
-					 * number: the lane, whether its
-					 * writer is open or gone, the
-					 * writer's doorbell while it is
-					 * open, the lane's batches, and a
-					 * {drained} owed */
-	} u;
-} erx_pipe_end_t;
-```
+An end object, `erx_pipe_end_t`, holds the descriptor table's head (the
+kind and the count of references), the end's lock, whether it is a read
+or a write end, the pipe server's names for its pipe and end, the
+trigger right on each read end's doorbell by index (every read end's for
+a write end, the other read ends' for a read end), and the core's state.
+A write end's state holds its private write position, its count of read
+ends, `O_NONBLOCK`, `lost` and its mapped lane; a read end's its index,
+`O_NONBLOCK`, `lost`, the lock page and, per write end by number, the
+lane, whether its writer is open or gone, the writer's doorbell while it
+is open, the lane's batches and a `{drained}` owed.
 
-The `kind` selects the member, and only code that checks it touches the
-union. A program's `dup` makes two descriptors of one end object; the end
+Only code that checks the kind touches a kind's state. A program's `dup` makes two descriptors of one end object; the end
 object lives while a descriptor or a call in progress holds it, and its
 mappings and capabilities close with its last reference, after which
 `liberx` sends its handler the notice `{closed, Pipe, End}`. An end's own
@@ -1682,61 +1619,46 @@ executor never does.
 
 ### The program protocol
 
-Messages between a program and its handler on the program's channel,
-part of the program protocol's frame profile in the ABI file
-([design-programs.md](design-programs.md#the-program-protocol)). A
-**notice**, `{erx_prog, 1, Notice}`, is a frame from a program that its
-handler takes without an answer, and a **report**, `{erx_prog, 1,
-Report}`, a frame from the handler that the program takes without an
-answer; both travel on the channel in order and without loss:
+The pipe's messages on a program's channel belong to the program
+protocol ([design-programs.md](design-programs.md#the-program-protocol)),
+whose frame profile, [`abi/protocols/prog.txt`](../abi/protocols/prog.txt),
+declares the shapes and bounds of the `pipe` request, the `closed` and
+`drained` notices, the pipe reports and the descriptors below; the second
+tier's `deposit`, `redeem`, `discard` and `withdraw` are given below and in
+[Deposits](#deposits). A
+**notice** is a frame from a program that its handler takes without an
+answer, and a **report** a frame from the handler that the program takes
+without an answer; both travel on the channel in order and without loss.
+What each means:
 
 | Message | Kind | Meaning | Answer |
 | --- | --- | --- | --- |
-| `{pipe, [cloexec \| nonblock]}` | request | make a pipe | `{ok, ReadDescriptor, WriteDescriptor}`; `{error, enfile \| emfile \| enomem}` |
-| `{closed, Pipe, End}` | notice | the program's last reference to its end `End` went: its mappings and capabilities are closed; due once for each end a frame to the program named, a repeat ending the program with `SIGSYS` ([design-programs.md](design-programs.md#the-program-protocol)) | none |
-| `{drained, Pipe, End, Writer}` | notice | the read end `End` drained the lane of write end `Writer`, which is gone, and unmapped and closed it; due once for each frame to the program that names `Writer` gone to `End`, a repeat ending the program with `SIGSYS` | none |
-| `{deposit, Descriptor, Stream}` | request | the second tier's `SCM_RIGHTS`: hold an end for the end of a `{pipe, End}` descriptor, one for each end of a `{socketpair, ReadEnd, WriteEnd}` descriptor, or the open of a file, terminal or directory descriptor, for whichever read end of `Stream`, a write end the requester holds, meets the ticket ([Deposits](#deposits)) | `{ok, Ticket}`; or `{error, ebadf \| emfile \| enomem \| etoomanyrefs}`, `etoomanyrefs` when 16 deposits made through `Stream` are open |
-| `{withdraw, Stream, Ticket}` | request | a `sendmsg` could not publish a ticket it was given; `Stream` is the write end the deposit was made through | `ok`, also for a deposit already closed |
-| `{redeem, Stream, Ticket}` | request | take a deposit; `Stream` is a read end the requester holds | `{ok, Descriptor}`; `{error, ebadf}` for a ticket unknown, redeemed or of another pipe; `{error, emfile \| enomem}` when the install is refused before the pass; a program whose pass is refused is stopped and reads no answer ([Hand-offs](#hand-offs)) |
-| `{discard, Stream, Ticket}` | request | a `read`, or a `recvmsg` without room for descriptors, skipped a deposit; `Stream` is a read end the requester holds | `ok`, also for a deposit already closed |
-| `{pipe_writer, Pipe, End, Writer, Ring, RPage, Size, Doorbell, State}` | report | a write end joined the pipe of read end `End`: `Ring`, `RPage` and `Doorbell`, the trigger right, are values in the program's table, and the read end raises its count of write ends to `Writer` ([The lock page](#the-lock-page)). `State` is `open`, and the read end rings `Doorbell` once as it applies the report ([Waiting and doorbells](#waiting-and-doorbells)); or `gone`, when the handler owed the join and merged the writer's gone into it ([design-programs.md](design-programs.md#the-channel)), and the read end closes `Doorbell`, takes the lane as gone, drains it and lets it go | none |
-| `{pipe_writer_gone, Pipe, End, Writer}` | report | the write end `Writer` of the pipe of end `End` is gone; a read end closes its copy of the writer's doorbell, drains the lane and then lets it go | none |
-| `{pipe_reader, Pipe, End, Rix, Doorbell, State}` | report | a read end at index `Rix` joined the pipe of end `End`: `Doorbell`, its trigger right, is a value in the program's table. `State` is `open`, and the end rings `Doorbell` once as it applies the report; or `gone`, when the handler merged the read end's gone into its owed join, and the end closes its copy of `Doorbell` at once and counts no read end for it | none |
-| `{pipe_reader_gone, Pipe, End, Rix}` | report | the read end at index `Rix` of the pipe of end `End` is gone; a write end lowers its count of read ends, and every holder closes its copy of the doorbell | none |
-| `{pipe_lost, Pipe, End}` | report | an install the end needed failed: the end counts as lost, its reads failing with `EIO` and its writes with `EPIPE` from then on ([Failure handling](#failure-handling-diagnostics-and-debuggability)) | none |
+| `pipe` | request | make a pipe, with `cloexec` or `nonblock` | the program's two new ends, as descriptors; `enfile`, `emfile` or `enomem` |
+| `closed` | notice | the program's last reference to an end went, and its mappings and capabilities are closed; due once for each end a frame named to the program, a repeat ending the program with `SIGSYS` | none |
+| `drained` | notice | a read end drained a gone writer's lane and unmapped and closed it; due once for each frame that named that writer gone to the end, a repeat ending the program with `SIGSYS` | none |
+| `deposit` | request | the second tier's `SCM_RIGHTS`: hold an end, a socketpair's two ends or the open of a file, terminal or directory descriptor for whichever read end of `Stream`, a write end the requester holds, meets the ticket ([Deposits](#deposits)) | the ticket; `ebadf`, `emfile`, `enomem`, or `etoomanyrefs` when 16 deposits made through `Stream` are open |
+| `withdraw` | request | a `sendmsg` could not publish a ticket it was given, through the write end the deposit was made through | `ok`, also for a deposit already closed |
+| `redeem` | request | take a deposit through a read end the requester holds | the descriptor; `ebadf` for a ticket unknown, redeemed or of another pipe; `emfile` or `enomem` when the install is refused before the pass; a program whose pass is refused is stopped and reads no answer ([Hand-offs](#hand-offs)) |
+| `discard` | request | a `read`, or a `recvmsg` without room for descriptors, skipped a deposit | `ok`, also for a deposit already closed |
+| `pipe_writer` | report | a write end joined the pipe of one of the program's read ends, with its ring, reader page, size and doorbell's trigger right as values in the program's table; the read end raises its count of write ends to the writer's number ([The lock page](#the-lock-page)). When open, the read end rings the doorbell once as it applies the report ([Waiting and doorbells](#waiting-and-doorbells)); when gone, because the handler owed the join and merged the writer's gone into it ([design-programs.md](design-programs.md#the-channel)), the read end closes the doorbell, takes the lane as gone, drains it and lets it go | none |
+| `pipe_writer_gone` | report | a write end of the pipe is gone; a read end closes its copy of the writer's doorbell, drains the lane and then lets it go | none |
+| `pipe_reader` | report | a read end joined at an index, with its doorbell's trigger right. When open, the end rings the doorbell once as it applies the report; when gone, merged as above, the end closes the doorbell at once and counts no read end for it | none |
+| `pipe_reader_gone` | report | the read end at an index is gone; a write end lowers its count of read ends, and every holder closes its copy of the doorbell | none |
+| `pipe_lost` | report | an install the end needed failed: the end is lost, its reads failing with `EIO` and its writes with `EPIPE` ([Failure handling](#failure-handling-diagnostics-and-debuggability)) | none |
 | `pipe_server_lost` | report | the session's pipe server ended: every pipe end the program holds is lost, and `liberx` wakes every worker waiting on one ([The pipe server](#the-pipe-server)) | none |
 
-A spawn's or a fork's descriptors name a pipe end to inherit as
-`{pipe, End}` and a socketpair as `{socketpair, ReadEnd, WriteEnd}`, and
-the startup message names each pipe and socketpair descriptor of the
-program:
-
-```erlang
-%% Descriptor = {pipe, write, PipeEnd, W}
-%%            | {pipe, read, PipeEnd, R}
-%%            | {socketpair, PipeEnd, R, PipeEnd, W}  % read end, then write
-%%            | ...
-%% PipeEnd = {Pipe :: pos_integer(), End :: pos_integer()}
-%% W = #{wend := pos_integer(), ring := Cap, rpage := Cap,
-%%       size := 16384 | 65536,
-%%       readers := [{Rix :: 0..63, Doorbell :: Cap}]}        % at most 64
-%% R = #{rix := 0..63, lock := Cap,
-%%       wends := pos_integer(),        % the pipe's wends at the install
-%%       writers := [{Wend :: pos_integer(), Ring :: Cap, RPage :: Cap,
-%%                    Size :: 16384 | 65536,
-%%                    {open, Doorbell :: Cap} | gone}],  % no copy of a gone writer's doorbell
-%%       readers := [{Rix :: 0..63, Doorbell :: Cap}]}        % at most 63
-%% Cap = a capability value in the program's own table
-```
-
-The decoders reject a value named twice, an index or a write end number
-out of range or named twice, a size other than the two, and a list longer
-than its bound: a write end's descriptor holds at most 2 + 64 = 66
-capabilities, a read end's at most 1 + 63 + 3 w for a pipe with w write
-ends, and the whole startup message at most its profile's bound, which
-bounds w ([design-programs.md](design-programs.md#the-startup-message)).
-They are generated from the frame profile, in `liberx` and in the handler,
-and each has a fuzz target.
+A spawn's or a fork's descriptors name a pipe end to inherit, or a
+socketpair's two ends, and the startup message gives each pipe end of the
+program as a descriptor that carries every value its holder needs: a write
+end's number, its ring and reader page with the ring's size, and each read
+end's index and doorbell; a read end's index, the lock page, the pipe's
+`wends` at the install, each write end's lane, size and, while it is open,
+doorbell (no copy of a gone writer's), and each co-reader's index and
+doorbell. The decoders, generated from the profile in `liberx` and in the
+handler, reject a value named twice, an index or write end number out of
+range or named twice, and a list past its bound, and each has a fuzz
+target; the startup message's own bound bounds a read end's write ends
+([design-programs.md](design-programs.md#the-startup-message)).
 
 An end's `O_NONBLOCK` stays with the program that set it: an inherited
 end never carries it, since it is another end, and an `exec` keeps it, as
@@ -1751,81 +1673,64 @@ The design relies on four contracts of the session's port driver and
 handlers, which [design-programs.md](design-programs.md#the-handler)
 defines:
 
-* **Installs.** A program's handler installs capabilities of the session's
-  table into its program's table, into a program being built before it
+* **Installs.** A handler installs into its program's table by the port
+  driver's take of a [hand-off](#hand-offs), through the session's own
+  capability to that image's space, into a program being built before it
   runs and into a running one before the reply or report that names the
-  values, through the session's own capability to that image's space,
-  which names one image, by the port driver's take of a
-  [hand-off](#hand-offs), which also binds the end's doorbell to the
-  program's group; a failed install into a running program fails
-  the request or loses that end alone when it is refused before the pass,
-  and stops the program when the pass is refused, so no copy of it
-  outlives the failure in a running image; nothing is ever installed into
-  an image that has gone, since the session's capability to a stopped
-  space refuses it (`ERX_EDEAD`).
+  values. A failed install into a running program fails the request or
+  loses that end alone when it is refused before the pass, and stops the
+  program when the pass is refused, so no copy outlives the failure in a
+  running image; nothing is installed into an image that has gone, since
+  the session's capability to a stopped space refuses it (`ERX_EDEAD`).
 * **Ends of programs.** A program's ends are gone when its holder entry
   has no hold left, which follows the release of its anchor however the
-  program ended, so no close is ever missed and none comes while the
-  program runs ([Hand-offs](#hand-offs)).
-* **Order.** A program's channel delivers the handler's reports in the
-  order sent and the program's requests and notices in the order sent,
-  and nothing on it is lost or repeated, so the pipe server's records and
-  each holder's view of its pipes agree without numbering or
-  reconciliation.
+  program ended, so no close is missed and none comes while the program
+  runs ([Hand-offs](#hand-offs)).
+* **Order.** A program's channel delivers the handler's reports, and the
+  program's requests and notices, in the order sent, without loss or
+  repeat, so the pipe server's records and each holder's view agree
+  without numbering or reconciliation.
 * **Credit.** The port driver passes a program's requests and notices on
-  only within the program's credit: one request per reply slot, one
-  `{closed}` per end the program was given and one `{drained}` per writer
-  named gone to it; a frame beyond it ends the program with `SIGSYS`
-  ([design-programs.md](design-programs.md#the-program-protocol)). So
-  the pipe server holds at most one message of a program per credit.
+  only within its credit: one request per reply slot, one `{closed}` per
+  end the program was given and one `{drained}` per writer named gone to
+  it; a frame beyond it ends the program with `SIGSYS`
+  ([design-programs.md](design-programs.md#the-program-protocol)). So the
+  pipe server holds at most one message of a program per credit.
 
 ### The kernel
 
-* **IRQ objects as doorbells.** Their creator, the only holder of the bind
-  right, since no pass carries it, binds one to a thread or a scheduling
-  group with a label; any number of holders of the trigger right ring it;
-  a trigger that comes before the holder waits is kept, and triggers that
-  come meanwhile count once; a ring of a deleted one fails with
-  `ERX_ESTALE` ([design-kernel.md](design-kernel.md#irq-objects)).
-* **Memory objects.** A copy with a rights mask is a slot of its own, a
-  mapping keeps its object until it is unmapped, and only a holder of
-  `DESTROY` can delete an object, after which every access to a mapping
-  of it faults; the pipe server holds the only `DESTROY` and never uses it
-  on a pipe's memory
-  ([design-kernel.md](design-kernel.md#closing-and-deleting)).
-* **Installs into a sub-space.** A space's creator alone installs
-  capabilities into it, with `erx_cap_pass`, and a capability installed
-  that way carries no `DUP` or `GIVE` unless the creator's mask keeps them
-  ([design-kernel.md](design-kernel.md#passing-capabilities), K17).
-* **The time page** gives a monotonic clock in nanoseconds, readable in
-  user mode without a kernel call and consistent across CPUs
-  ([design-kernel.md](design-kernel.md#port-contract)); the kernel's
-  entropy generator gives the tickets.
+Pipes rely on the kernel objects [Context](#context) lists, with these
+rules of [design-kernel.md](design-kernel.md): only an IRQ object's
+creator binds it, since no pass carries the bind right, a trigger that
+comes before the holder waits is kept and triggers meanwhile count once,
+and a ring of a deleted one fails with `ERX_ESTALE`
+([IRQ objects](design-kernel.md#irq-objects)); only a holder of `DESTROY`
+deletes a memory object, which the pipe server alone holds and never uses
+on a pipe's memory
+([closing and deleting](design-kernel.md#closing-and-deleting)); a space's
+creator alone installs into it, with `erx_cap_pass`, and an install
+carries no `DUP` or `GIVE` unless the creator's mask keeps them
+([passing capabilities](design-kernel.md#passing-capabilities), K17); and
+the time page's monotonic clock is consistent across CPUs
+([port contract](design-kernel.md#port-contract)). The kernel's entropy
+generator gives the tickets.
 
 ### The ABI file
 
-`abi/erx_abi.txt` holds, beside the lane's own layouts `erx_lane_hdr`,
-`erx_lane_rpage` and `erx_lane_rec`
+`abi/erx_abi.txt` holds, beside the lane's own layouts
 ([design-domains.md](design-domains.md#lanes-and-frames-in-the-abi)),
-the pipe's layouts `erx_pipe_rpage` and `erx_pipe_lock`, the record kinds
-`ERX_REC_DATA` and `ERX_REC_CONTROL`, the limits
-`ERX_PIPE_BUF` (4,096) and `ERX_PIPE_READERS_MAX` (64), a control
-record's `ERX_PIPE_TICKET` (8) and `ERX_PIPE_CONTROL_MAX` (128),
-`ERX_PIPE_NONE` (0, which a fresh page of zeros reads), the two ring
-sizes `ERX_PIPE_RING_FIRST` (65,536) and `ERX_PIPE_RING_NEXT` (16,384),
-the data area's offset in a ring's memory object past its header page,
-`ERX_PIPE_RING_DATA` (4,096), and the frame profiles of the messages above
-([design-kernel.md](design-kernel.md#the-abi-file)).
+the pipe's layouts (its reader page and lock page), the record kinds, the
+limits this document names (`PIPE_BUF`, the 64 read ends, a control
+record's ticket and size, the two ring sizes and the data area's offset
+past a ring's header page) and `ERX_PIPE_NONE`, 0, which a fresh page of
+zeros reads ([design-kernel.md](design-kernel.md#the-abi-file)).
 
 ## Compatibility and migration
 
-Pipes keep the POSIX behaviour programs see; what differs is where they
-live. Nothing of a pipe persists across a boot, and its layouts and frames
-belong to the ABI version, which `liberx` and the session's runtime share
-by construction, so a change to any replaces the old form outright, with
-no reader kept for an earlier one, and a party built for another ABI
-version is refused ([design.md](design.md#compatibility)). Documented
-differences, each pinned by a test:
+Nothing of a pipe persists across a boot, and its layouts and frames
+belong to the ABI version ([design.md](design.md#compatibility)). Pipes
+keep the POSIX behaviour programs see, with these documented differences,
+each pinned by a test:
 
 * a pipe has at most 64 read ends, and a spawn or a fork that would make
   another fails with `EMFILE`, where UNIX has no such limit;
@@ -1924,181 +1829,82 @@ readers, which any pipe has.
 
 ## Verification and testing
 
+Nothing in a pipe depends on an architecture or a board: the rings use C17
+atomics and fences, compare-and-swap and atomic or and and, and the time
+page's clock. In hosted mode `liberx`'s hosted backend provides memory
+objects and doorbells inside a macOS process
+([design-runtime.md](design-runtime.md#hosted-mode)), so the cores below and
+the pipe server run on every host.
+
 * **Pure cores on the host.** `erx_ring_check`, `erx_pipe_wstep`,
   `erx_pipe_rstep` and `erx_pipe:step/2`, explored as
   [The pipe core](#the-pipe-core) describes, under ASan and UBSan, with
   properties: no byte lost, duplicated or reordered within a writer; every
   record of at most `PIPE_BUF` bytes read contiguously; of two writes,
   one that returned before the other began read first, on a clock that
-  may repeat a reading; the end of the stream
-  and `EPIPE` exactly when PI2 and PI3 say; no wakeup lost; no field read
-  twice from shared memory, checked by an instrumented accessor. Each
-  property has a seeded failure: a model with one fence removed, a reader
+  may repeat a reading; the end of the stream and `EPIPE` exactly when PI2
+  and PI3 say; no wakeup lost; no field read twice from shared memory,
+  checked by an instrumented accessor; and, over every order of inherit,
+  closed, gone, drained, exec, deposit, redeem, discard and withdraw
+  events, every recorded holder, a redeemer included, holding every lane
+  and doorbell its end needs from the moment it can run. Seeded failures
+  the exploration must catch: a model with one fence removed, a reader
   that advances `rpos` before its copy, a writer that publishes before its
-  payload is written, and a pipe server that forgets to tell one reader of
-  a gone writer, each of which the exploration must catch.
-* **Hand-offs.** Host tests of the pipe NIF's hand-off table in the
-  hosted build: the owner's take answers the hand-off once and a second
-  take answers none; a take for another owner answers none and leaves the
-  hand-off to its owner's take; `hand_drop` lets a held hand-off go and
-  does nothing to one taken; an owner that exits lets its hand-off go,
-  and the pipe server's close of an object then closes its capability.
-  The seeded failure drops the owner comparison from the take, and the
-  test of a take for another owner fails. A hosted test in which a second
-  process calls each of the program port's commands on a handler's port,
-  `install/2` with the number of the handler's hand-off among them, gets
-  `einval` from each, before and after its `port_connect/2`, which is
-  refused, and the handler's own install then succeeds; the seeded
-  failure drops the driver's flag that refuses `port_connect/2`, and the
-  second process's `port_connect/2` succeeds and the driver answers its
-  commands, while its install of the handler's hand-off stays `einval`,
-  since the pipe NIF answers the hand-off only to the handler. `copies/1`'s host
-  test finds `MAP` on every memory copy and `DUP`, `GIVE` and `DESTROY` on
-  none; the seeded failure drops `MAP` from a lane's copies.
-  `erx_program:start/1` refuses
-  with `badarg`, before any port opens, a descriptor whose `{hand, I}`
-  are not exactly 1 to its hand-off's count, each once, and a number of 0
-  or past 2^64 - 1; a start whose driver answers another count of values
-  fails with `einval` and closes the port; the seeded failure skips the
-  count check and the test sees a startup message with a value missing.
-  The handler's decisions are one pure function, and its host test feeds
-  reports before and after the start: those before are written after the
-  startup message, in order; the seeded failure writes them at once and
-  the test fails on the order.
-* **Program holders.** Host tests of the holder entries: the NIF sends
-  `{erx_pipe_holder_gone, Pid}` once, after both the owner's and the
-  port's holds are gone, in either order, and a second
-  `program_holder(Pid)` is refused; the seeded failure sends it at the
-  owner's exit, and the test that lets the owner go first sees it while
-  the port still holds. A take of a hand-off for another program, and a
-  take after the port's hold was released, answer no hand-off and leave
-  the hold as it was; each seeded failure drops one of the two checks,
-  and its test takes the hand-off. `hand_make` takes
-  `pipe_hand_copies_max` copies and `prog_fds_max` hand-offs and refuses
-  one more of either with `badarg`; each seeded failure drops one bound.
-  The driver's end machine, a pure core, lets the
-  port's hold go only after the anchor's release; the seeded failure
-  swaps the two, and its host test fails on the order. `erx_pipe_srv`
-  answers `badarg` to an event naming a program from a process that is
-  not its entry's owner and changes no record; the seeded failure skips
-  the check, and the test's end is closed. `erx_pipe:step/2` with
-  `{exec}`: a program holding two write ends of one pipe keeps one, and
-  its reader is told `pipe_writer_gone` for the other alone and never
-  counts zero write ends; the seeded failure closes every end before it
-  hands off the kept one, and the reader's count reaches zero. A pipe
-  server restarted over the same NIF numbers its first pipe above every
-  number made before it; the seeded failure starts at 1, and the NIF
-  refuses the test's first `make_lock`.
-* **Hand-offs between domains.** QEMU tests in which a
-  session process starts the boot image's test program `pipe-echo` with a
-  pipe's read end as standard input and another's write end as standard
-  output: the program writes `ready` and blocks on standard input, the
-  session writes only after it reads `ready`, and the echo arrives, so the
-  doorbell was bound before the program waited (seeded failure: the driver
-  skips the bind, and the read of the echo reaches its deadline); the
-  session closes its write end, the program reads the end of the stream
-  and exits 0, and the session's read end then reads `eof` (seeded
-  failure: the pipe server drops `{gone, {program, _}}`, and the read
-  reaches its deadline); the program closes standard output and then
-  waits on standard input, and the session reads `eof` while the program
-  still runs, through the forwarded `{closed}` (seeded failure: the
-  handler drops the notice); and the handler is killed while the program
-  runs, and the session reads `eof` (seeded failure: the driver never
-  lets the port's hold go, and the read reaches its deadline).
+  payload is written, a writer that returns without waiting for the clock,
+  and a pipe server that forgets to tell one reader of a gone writer.
+* **Hand-offs and program holders**, host tests in the hosted build of the
+  pipe NIF's hand-off table and holder entries, the program driver's end
+  machine, `copies/1`, `erx_program:start/1`'s descriptor checks, the
+  handler's decisions and `erx_pipe_srv`'s owner check. Each rule of
+  [Hand-offs](#hand-offs) has a seeded failure its test catches: a take
+  without the owner or program comparison, or after the port's hold was
+  released; a driver that accepts `port_connect/2`, whose second process
+  still gets `einval` for the handler's hand-off; `MAP` dropped from a
+  lane's copies; `hand_make` without its bound on copies or on
+  hand-offs; a start that skips the count check; reports written before
+  the startup message; `{erx_pipe_holder_gone, Pid}` sent at the owner's
+  exit while the port still holds; the port's hold let go before the
+  anchor's release; an event from a process that is not the entry's
+  owner accepted; an `{exec}` that closes every end before it hands off
+  the kept one, so the reader counts zero write ends; and a restarted pipe
+  server that numbers its pipes from 1.
+* **Hand-offs between domains**, QEMU tests in which a session process
+  runs the boot image's test program `pipe-echo` between two pipes, with
+  seeded failures for each step of a program's ends: the driver skips the
+  doorbell's bind, the pipe server drops `{gone, {program, _}}`, the
+  handler drops a forwarded `{closed}`, and the driver never lets the
+  port's hold go after the handler is killed; each turns the expected echo
+  or `eof` into a deadline.
 * **Build checks of the hand-offs.** Each "only" of
   [Hand-offs](#hand-offs) is a chokepoint check with a seeded violation
   that the check's test plants, beside `pipe-makers`, which keeps
   `erx_pipe_nif`'s `make_lock`, `make_lane` and `make_bell` to
   `erx_pipe_srv` (PI1, `tools/lib/erx/chokepoint_rules/pipe.rb`):
   `pipe-makers` gains `hand_make`, so only `erx_pipe_srv` makes a
-  hand-off (seed: a call in `erx_prog_handler.erl`); `pipe-hand-take`
-  keeps `erx_pipe_hand_take` and `erx_pipe_holder_release` in ERTS to the
-  program driver, as `program-installs` keeps `erx_cap_pass` there (seed:
-  a call in `erx_gate.c`); `pipe-holders` keeps
-  `erx_pipe_nif:program_holder` and `holder_drop` to `erx_prog_handler`
-  (seed: a call in `erx_pipe_srv.erl`); and `pipe-holder-gone` keeps the
-  atom `erx_pipe_holder_gone` to `erx_pipe_nif.c`, which sends it, and
-  `erx_pipe_srv.erl`, which receives it, so no process can say a program
-  is gone (seed: `erx_prog_handler.erl` sending it).
+  hand-off; `pipe-hand-take` keeps `erx_pipe_hand_take` and
+  `erx_pipe_holder_release` in ERTS to the program driver, as
+  `program-installs` keeps `erx_cap_pass` there; `pipe-holders` keeps
+  `erx_pipe_nif:program_holder` and `holder_drop` to `erx_prog_handler`;
+  and `pipe-holder-gone` keeps the atom `erx_pipe_holder_gone` to
+  `erx_pipe_nif.c`, which sends it, and `erx_pipe_srv.erl`, which receives
+  it, so no process can say a program is gone.
 * **Fuzz targets.** The consumer's check over arbitrary header and record
   bytes and positions; the producer's check over arbitrary `rpos`; the
   lock page's checks; the decoders of the pipe requests, notices, reports
   and descriptors, in `liberx` and in the handler (`make check-fuzz`).
-* **Domain tests**, each a QEMU test: `echo hi | cat`, whose writer ends
-  before the reader reads; two writers in two programs, with the end of
-  the stream only after both end; a writer that faults mid-record; a
-  reader that faults while its writer waits for room, whose writer gets
-  `EPIPE` and `SIGPIPE` at once; `yes | head -1`; a hostile writer that
-  rewrites its header and records at random while a second writer's stream
-  arrives intact; a reader that tries to write a ring and faults; a writer
-  that stamps every record 0 and never lets its ring empty, while another
-  writer's records arrive within the service bound; a co-reader that
-  rewrites a lane's read position, which stops the writer without
-  `SIGPIPE`; `(cat f1; cat f2) | (head -1; cat)`, which prints every line
-  once, in order; `{date; uname} | cat`, in that order every time; 100
-  writers writing 4,096-byte lines, each arriving whole; 100 writers
-  started one after another under a reader that reads only after 10 s,
-  every line arriving; `make 2>&1 | less` with the pager paused, whose
-  64th and 200th children spawn and whose writes wait for room, and every
-  install into the pager succeeds up to the `pipes` quota; a 65th
-  read end, which fails with `EMFILE`; 10,000 sequential inherited write
-  ends under one reader, whose lanes are let go as they drain and whose
-  memory returns; `poll` over 500 pipe ends, reporting exactly the ready
-  ones; `close` of an end another thread reads; each `O_NONBLOCK` case of
-  PR1; a program that tries to copy an end's capabilities and to pass them
-  at a rendezvous; a program at the session's `pipes` quota; `SCM_RIGHTS`
-  of a pipe end, which the sender keeps; a socketpair's end sent over
-  itself and closed, after which both peers see the end of the stream; a
-  `read` that skips a control record, whose deposit closes; a write whose
-  bytes look like a ticket, which reads as data; two writers of one
-  stream, one preempted between stamping its control record and its first
-  data record while the other writes, whose descriptors arrive with their
-  own bytes; a writer that fills its ring before its reader first waits,
-  and a reader that waits before its writer's first write, each of which
-  wakes; a `pipe` followed by a `fork` whose child inherits both ends, and
-  a pipeline of three forked stages sharing one pipe, each of which
-  completes; an `exec` of a reader while a sibling forks a writer of its
-  pipe, whose new image reads that writer's records (P11 of
-  [design-programs.md](design-programs.md#invariants)); an `exec` of a
-  reader with a gone writer's lane half read, whose new image reads the
-  rest; a writer that joins a pipe while a forked child that holds a read
-  end of it is built but not yet started, whose lane the child holds when
-  it starts; an install into a process that fails, which reports the end
-  lost to that holder alone, and a pass refused into a program whose
-  table is full, which stops that program alone; a refused bind into a
-  running program, which loses that end and leaves the program running; and a crash of the pipe server, after
-  which blocked readers and writers wake with `EIO` and `EPIPE`. The
-  exploration of `erx_pipe:step/2` checks, over every order of inherit,
-  closed, gone, drained, exec, deposit, redeem, discard and withdraw
-  events, that every recorded holder, a redeemer included, holds every
-  lane and doorbell its end needs from the moment it can run.
-* **Deposits, the reader lock and doorbells**, each a QEMU test: a reader
-  that ends holding the reader lock while three co-readers wait, all of
-  which go on; a reader that ends after claiming a record's last bytes,
-  whose record no co-reader reads again; a `sendmsg` under `O_NONBLOCK`
-  into a full ring, which fails with `EAGAIN` before it deposits anything;
-  a `sendmsg` of two descriptors whose second deposit fails, whose first
-  is withdrawn, so the pipe whose write end it deposited reaches its end
-  of stream once the sender closes its own; a read end redeemed after a
-  writer joined its pipe, which reads that writer's bytes; a write end
-  redeemed after a reader began to wait, which wakes that reader; a writer
-  that deposits 16 times without publishing, whose next deposit fails with
-  `ETOOMANYREFS` while a co-writer's `sendmsg` passes a descriptor; a
-  signal, and `alarm` with `siglongjmp`, during a redemption, whose
-  handler runs once the redemption ends, after which the reader lock is
-  free and the co-readers read on; a sender killed between its deposit and
-  its publication, whose deposit closes when its lane drains; a file
-  queued on stream P whose read end is then sent over stream Q and closed,
-  which Q's reader redeems before it receives the file through P;
-  `tail -f log | while read l; do cmd; done`, where each `cmd` that reads
-  standard input takes a read index in turn and is woken by `tail`; a pipe
-  whose ends one program holds, which installs nothing beyond the
-  program's own; a write end kept across `exec` and then closed, whose
-  readers' later rings of its doorbell wake none of that program's
-  waiters; a reader stopped inside the reader lock by a test hook, whose
-  co-reader in another job waits until it continues; and a crash of the
-  pipe server while a program waits on a pipe whose ends it alone holds,
-  which wakes with `EIO`.
+* **Domain tests**, in QEMU, cover each behaviour this document states:
+  each case of PR1, `O_NONBLOCK` included; PR4's sharing (pipelines of
+  forked and spawned stages, `make 2>&1 | less` with the pager paused past
+  its 64th child, a 65th read end, thousands of sequential inherited
+  write ends whose memory returns); the end of the stream and `EPIPE`
+  under closes, faults and kills of either side; PI6's ordering, with a
+  seeded reader that ignores `wends`; PI7's wakeups across joins; the
+  hostile writer, reader and co-reader of [Security](#security); `poll`
+  over hundreds of ends; `exec` and `fork` across a pipe's life; every
+  path of [Deposits](#deposits) and the reader lock, redemptions under
+  signals and `siglongjmp` included; refused installs and binds; and a
+  crash of the pipe server, after which blocked readers and writers wake
+  with `EIO` and `EPIPE`.
 * **Oracle.** The same scripted single-reader workloads run against the
   development host's pipes, and the byte streams, counts and error codes
   are compared; the Open POSIX Test Suite's pipe cases run with the
@@ -2156,21 +1962,6 @@ accelerator, QEMU version, compiler, flags, workload and baseline; TCG
 numbers are never compared with HVF numbers. The budgets above are
 refuted if a single small write costs more than 1 us without a doorbell or
 bulk throughput falls below 1 GB/s.
-
-## Portability
-
-The rings use C17 atomics and fences, 32-bit compare-and-swap on the
-reader lock, 64-bit atomic or and and on the wait masks, and the time
-page's clock; nothing depends on an architecture or a board. In hosted
-mode, `liberx`'s hosted backend provides memory objects and doorbells
-inside a macOS process
-([design-runtime.md](design-runtime.md#hosted-mode)), and the pipe core's
-model runs on every host.
-
-## Dependencies
-
-No dependencies of their own: pipes use `liberx`, the session's runtime
-and kernel objects that exist for other purposes.
 
 ## Alternatives considered
 

@@ -7,41 +7,15 @@ rate, escapes its text, and hands the resulting line to two consumers:
 the console, which writes it on its lines, and the store, which appends
 it to files. Everything else reads the files: the system domain serves
 them at `/var/log` as an ordinary file tree, so `cat /var/log/messages`,
-`tail -f /var/log/messages` and `grep` work as on UNIX. This document is
-the contract: who writes, what a line is, where it is kept, who may
-read what, what happens under load and failure, and how it is tested.
-
-Decisions every reader needs:
-
-* **Writing is one facet with one operation.** A domain's logger events
-  go to its **log facet**, an instance of the `log` interface, whose one
-  operation is `write`. The facet forwards each `write` to whichever
-  `erx_syslog` is running, so a restart of the service ends no facet. A
-  domain with no terminal still logs ([Writing](#writing)).
-* **The line is the service's.** The service renders every line from the
-  time it took it, the level, the grantee's id, principal and name, and
-  the text through the line escape. Nothing a domain sends chooses its
-  time, its source or an unescaped byte ([The line](#the-line)).
-* **Reading is files.** `erx_logfs`, a read-only tree with fixed names,
-  serves the stored bytes as they are at `/var/log`. There is no read
-  operation and no log command: UNIX's tools are the readers
-  ([The file tree](#the-file-tree)).
-* **A consumer asks for each batch.** The console and the store's writer
-  each receive lines only as the answer to their own request, so each
-  holds at most one batch and the service keeps no record of a batch it
-  has sent ([Consumers and backlogs](#consumers-and-backlogs)).
-* **Each batch is written by a process of its own**, which opens the
-  files as the namespace resolves them then, ends a cut last line,
-  rotates, appends, syncs, closes and ends. Nothing is kept between
-  batches, and a failed batch is counted and never repeated
-  ([The writer](#the-writer)).
-* **The kernel ring has one consumer.** The service is the only caller
-  of `erx_log:take/0`, which moves the ring's one taken position that the
-  early console also moves; the inspector reads without taking
-  ([The kernel's records](#the-kernels-records)).
-* **The kernel's lines are stored apart**, in a directory only the
-  system domain's `/var/log` shows, as `/proc/kernel/log` answers only
-  scope `all` ([The store](#the-store)).
+`tail -f /var/log/messages` and `grep` work as on UNIX; there is no read
+operation and no log command. This document is
+the contract: who writes ([Writing](#writing)), what a line is
+([The line](#the-line)), where it is kept ([The store](#the-store)), who
+may read what ([The file tree](#the-file-tree)), what happens under load
+and failure ([Consumers and backlogs](#consumers-and-backlogs),
+[The writer](#the-writer)), and how it is tested. The kernel's ring has
+one consumer, the service ([The kernel's records](#the-kernels-records)),
+and the kernel's lines are stored apart, where only scope `all` reaches.
 
 ## Context
 
@@ -136,15 +110,18 @@ domain.
 
 ## Invariants
 
-| Invariant | Why it holds | What would break it | How it is checked |
-| --- | --- | --- | --- |
-| **L1.** A line's time and source are the service's | `write` carries a list of levels and texts and nothing else; the log facet's callback forwards it as `{write, Grantee, Records}`, with the grantee bound when the facet was minted, and the service takes the principal and name for that id from the domain service; the service reads the time when it takes the batch | a `write` with a source or time field; a facet that forwards a source from the request | a domain whose text imitates another domain's line head appears under its own id, principal and name; a seeded facet that copies a source from the request fails it |
-| **L2.** No line holds a byte the line escape would not pass | `erx_syslog_core:line/5` is the one function that turns a domain's text into a line, and passes the name and the text through `erx_text:escape_line/1`; the kernel's lines arrive escaped by the kernel, as printable ASCII ([design-kernel.md](design-kernel.md#console-log-and-panic)); the console and the writer receive only lines the core made, and the writer stores nothing else | a second renderer; a consumer handed a record instead of a line | every C0 and C1 control, `Cf`, `Zl`, `Zp`, default-ignorable and invalid UTF-8 class, and every CSI, OSC, DCS, APC, PM and SOS form, as a record's text, reads as tokens on the console's line and in `/var/log/messages`; with the escape removed from `line/5` the test fails |
-| **L3.** No writer waits on a consumer | a consumer receives a batch only as the answer to its own request for the next one, so it holds at most one; lines for it wait in its backlog, which is bounded by bytes and drops its oldest lines past the bound, counted; a `write` is answered when the service has taken it, never when a consumer has | a write answered after a consumer has written the lines; an unbounded backlog; a batch sent without a request | a console driver that never answers and a store that never answers, while domains write at their rate for a minute: every `write` answers within its facet's deadline and the service's heap stays within its bound; a seeded unbounded backlog fails on memory |
-| **L4.** Each kernel record is taken once, by the log service | `erx_syslog` is the only caller of `erx_log:take/0`, which a build check holds; the take and the early console move the ring's one taken position, so a restarted service takes on from where the last take stopped and nothing the early console wrote is taken again ([design-fiasco.md](design-fiasco.md#the-console)) | a second caller of `take/0` | a serial transcript across the handoff holds each kernel record once; the service killed between takes doubles no kernel line on the console or in `kernel/messages`; the build check with a seeded caller in `erx_console` |
-| **L5.** No session's tree reaches a kernel line | the writer appends kernel lines only to `kernel/messages` and the domains' lines only to `messages`; a session's grant of `erx_logfs` serves a fixed set of names, `messages` and its archives, and never lists the store, so `kernel` is not a name in it; only the system domain's own grant serves `kernel` ([The store](#the-store)) | the writer appending a kernel line to `messages`; a session's grant that serves the store's listing or `kernel` | a session's `ls /var/log` lists no `kernel` and its `grep -r . /var/log` finds no kernel line, while the system shell reads `/var/log/kernel/messages`; a seeded tree that serves the store's directory listing fails |
-| **L6.** A failing medium costs only the stored files | `erx_syslog` calls no file operation; every file call is made by a process the writer starts for one step and waits for, whose failure, error or deadline, is a value to the writer, which counts the batch's lines and goes on; the store's backlog is bounded like the console's | a file call in `erx_syslog`; a writer that crashes on a file error | the data partition's server made to fail every request and then to stop answering, for ten minutes: the console lines go on, every `write` answers, the log holds one `failed` line of the writer's, and once the server answers again the store holds `writing again, N lines not stored` and a batch that begins with `lines missed` |
-| **L7.** No line is written twice, and no line is joined to another | the writer hands each batch to one process, once; each batch's process opens the files afresh and appends a newline first when a file's last byte is not one; nothing of it outlives it | a writer that retries a failed batch; files kept open across batches; an append before the repair | a server stand-in that applies a write and drops its reply, one that fails a write part way and one that fails the sync: no line appears twice in the store and each cut line ends in a newline; a seeded writer that retries its batch fails on the duplicate, and a seeded batch process that skips the repair fails on the joined line |
+Each is checked by the [Verification](#verification-and-testing) row
+that names it.
+
+| Invariant | Why it holds | What would break it |
+| --- | --- | --- |
+| **L1.** A line's time and source are the service's | `write` carries a list of levels and texts and nothing else; the log facet's callback forwards it as `{write, Grantee, Records}`, with the grantee bound when the facet was minted, and the service takes the principal and name for that id from the domain service; the service reads the time when it takes the batch | a `write` with a source or time field; a facet that forwards a source from the request |
+| **L2.** No line holds a byte the line escape would not pass | `erx_syslog_core:line/5` is the one function that turns a domain's text into a line, and passes the name and the text through `erx_text:escape_line/1`; the kernel's lines arrive escaped by the kernel, as printable ASCII ([design-kernel.md](design-kernel.md#console-log-and-panic)); the console and the writer receive only lines the core made, and the writer stores nothing else | a second renderer; a consumer handed a record instead of a line |
+| **L3.** No writer waits on a consumer | a consumer receives a batch only as the answer to its own request for the next one, so it holds at most one; lines for it wait in its backlog, which is bounded by bytes and drops its oldest lines past the bound, counted; a `write` is answered when the service has taken it, never when a consumer has | a write answered after a consumer has written the lines; an unbounded backlog; a batch sent without a request |
+| **L4.** Each kernel record is taken once, by the log service | `erx_syslog` is the only caller of `erx_log:take/0`, which a build check holds; the take and the early console move the ring's one taken position, so a restarted service takes on from where the last take stopped and nothing the early console wrote is taken again ([design-fiasco.md](design-fiasco.md#the-console)) | a second caller of `take/0` |
+| **L5.** No session's tree reaches a kernel line | the writer appends kernel lines only to `kernel/messages` and the domains' lines only to `messages`; a session's grant of `erx_logfs` serves a fixed set of names, `messages` and its archives, and never lists the store, so `kernel` is not a name in it; only the system domain's own grant serves `kernel` ([The store](#the-store)) | the writer appending a kernel line to `messages`; a session's grant that serves the store's listing or `kernel` |
+| **L6.** A failing medium costs only the stored files | `erx_syslog` calls no file operation; every file call is made by a process the writer starts for one step and waits for, whose failure, error or deadline, is a value to the writer, which counts the batch's lines and goes on; the store's backlog is bounded like the console's | a file call in `erx_syslog`; a writer that crashes on a file error |
+| **L7.** No line is written twice, and no line is joined to another | the writer hands each batch to one process, once; each batch's process opens the files afresh and appends a newline first when a file's last byte is not one; nothing of it outlives it | a writer that retries a failed batch; files kept open across batches; an append before the repair |
 
 ## Data model
 
@@ -676,10 +653,9 @@ is lost, as for any consumer.
 
 ## Phase 1
 
-Phase 1 runs on Fiasco, with other domains from M5
-([plan.md](plan.md)). Everything here is Erlang in the system domain and
-unchanged by erXos's kernel. The kernel ring is Fiasco's, polled
-since it offers no signal; its rate is per space and its ring shared, so
+Everything here is Erlang in the system domain, so erXos's kernel
+changes none of it. On Fiasco the kernel ring is Fiasco's, polled since
+it offers no signal; its rate is per space and its ring shared, so
 one space can push every record out in seconds, which the `kernel log
 records lost` lines and the sequence gaps show. Before the data
 partition exists the store is in the system domain's `/tmp`.
@@ -815,10 +791,6 @@ for [todo-performance.md](todo-performance.md):
 | the service tracking each batch until its consumer acknowledges it | an acknowledgement can arrive at a service restarted since, which has no record of its batch; with the consumer asking for each batch, the service keeps nothing to go stale |
 | retrying a failed append | a write past one request, or one whose reply is lost, may have reached the file, so a retry writes lines twice and can join a cut line to a whole one; giving the batch up and counting it loses at most that batch |
 | checking each stored byte against the line escape as `/var/log` serves it | a classifier in every read, against a medium that in Phase 1 only trusted domains write; a release manifest that grants no session the whole volume, so a user's session holds only its home, closes the same gap where it opens |
-
-## Open decisions
-
-None.
 
 ## References
 

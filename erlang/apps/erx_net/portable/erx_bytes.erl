@@ -97,7 +97,7 @@ siphash24(Key, Data) ->
 
 -doc """
 The merge of one batch of received Ethernet frames, FreeBSD's large receive offload rule
-(docs/design-network-fastpath.md, "The merge"): each frame is a binary, or `{sum, Sum, Frame}`
+(docs/design-network-stack.md, "The merge"): each frame is a binary, or `{sum, Sum, Frame}`
 with `Sum` the network sum its transport's copy computed, the sum of its bytes after the
 Ethernet header. In-order TCP segments of one flow whose checksums are right become one unit
 `{merged, N, First, Last, Payload}`: its `N` frames' first and last, each as `{sum, Sum,
