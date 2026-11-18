@@ -13,10 +13,10 @@ when the case says.
 run/1 returns what test/host/erx_ui_lvgl_test.rb checks:
 
 * `first`: the first present's size, after apply/2 returned. The apply
-  runs in a process of its own while this one answers every present:
-  the program may report its first screen before it reads the tree, and
-  an apply that comes while a report is open returns only once the
-  report is answered (erx_ui_lvgl_core).
+  runs in a process of its own while this one answers any present, a
+  tolerance only: an apply that came while a report was open would
+  return only once the report is answered (erx_ui_lvgl_core), and the
+  program reports nothing before its first tree.
 * `held`: the hits that came while that present was unanswered and a
   click was sent, none, since the shell takes the window's input only
   while no report is open; `hit`, the click's hit once it is answered.
@@ -27,6 +27,13 @@ run/1 returns what test/host/erx_ui_lvgl_test.rb checks:
   program refuse it, and the UI end as `renderer_down`.
 * `closed`: stop/1 after the first frame: the shell ends normally and the
   widget server hears nothing.
+* `first_frame`: a window's first frame is its first tree: the presents
+  made in the ?SILENT_MS before the tree is applied, none; the presents
+  made after, until the program is silent, one, of the whole window; and
+  whether the buffer then shows the tree, a row through the button that
+  is not all the window's ground. A program that renders before its first
+  `commit` presents its empty screen within ?SILENT_MS of its start, on a
+  host where it starts within that time, and fails the first count.
 """.
 
 -export([run/1]).
@@ -38,6 +45,7 @@ run/1 returns what test/host/erx_ui_lvgl_test.rb checks:
 -define(BUTTON_Y, 5 + 30 + 40 div 2).
 -define(WAIT_MS, 60000).
 -define(HOLD_MS, 300).
+-define(SILENT_MS, 1000).
 
 -spec run(#{program := file:filename(), ruby := file:filename(), launcher := file:filename()}) -> map().
 run(Paths) ->
@@ -61,7 +69,38 @@ run(Paths) ->
     Closed = receive {'EXIT', Shell2, Why} -> Why after ?WAIT_MS -> error(close_hung) end,
     Heard = hits(?HOLD_MS),
     #{first => {W, H}, held => Held, hit => Hit, grown => Grown, closed => {Closed, Heard},
-      killed => killed(Paths, Buffer)}.
+      killed => killed(Paths, Buffer), first_frame => first_frame(Paths, Buffer)}.
+
+%% A window's first frame: the presents in the ?SILENT_MS before the tree
+%% is applied, and those after it: the first, waited for as long as the
+%% program takes, and any until it is silent for ?SILENT_MS.
+first_frame(Paths, Buffer) ->
+    ok = file:write_file(Buffer, binary:copy(<<0>>, 4 * ?WIDTH * ?HEIGHT)),
+    Shell = start(Paths, Buffer),
+    Before = presents(Shell, ?SILENT_MS),
+    {ok, Shell} = applied(Shell),
+    {present, Shell, _, _, First} = next_present(),
+    erx_ui_lvgl:shown(Shell),
+    After = [First | presents(Shell, ?SILENT_MS)],
+    ok = erx_ui_lvgl:stop(Shell),
+    receive {'EXIT', Shell, normal} -> ok after ?WAIT_MS -> error(close_hung) end,
+    {length(Before), length(After), After =:= [[{0, 0, ?WIDTH, ?HEIGHT}]], button_drawn(Buffer)}.
+
+%% The rectangles of each present until Ms pass without one, each answered.
+presents(Shell, Ms) ->
+    receive
+        {present, Shell, _, _, Rects} -> erx_ui_lvgl:shown(Shell), [Rects | presents(Shell, Ms)];
+        {'EXIT', Shell, Why} -> error({down, Why})
+    after Ms -> []
+    end.
+
+%% Whether the row through the button holds a pixel other than the window's
+%% ground, the pixel at the window's corner.
+button_drawn(Buffer) ->
+    {ok, Pixels} = file:read_file(Buffer),
+    <<Ground:4/binary, _/binary>> = Pixels,
+    Row = binary:part(Pixels, 4 * ?WIDTH * ?BUTTON_Y, 4 * ?WIDTH),
+    [Pixel || <<Pixel:4/binary>> <= Row, Pixel =/= Ground] =/= [].
 
 %% Input queued ahead of the program's end: the shell is suspended, sent a
 %% click, and the program killed, so the shell writes to a port that has

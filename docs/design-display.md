@@ -3763,6 +3763,18 @@ opener and ends with it. On a tree the server:
    node takes the event, gives the term and detail the server sends the
    owner as `{ui, Window, Term, Detail}`.
 
+**A window's first frame is its first tree.** A renderer draws and
+presents nothing before it has applied the `commit` of the first tree,
+nor a frame between a tree's first operation and its `commit`. So a
+window never presents an empty screen while its application builds the
+tree, and its first present shows the whole first tree; the screen's
+splash, which the first window's first frame ends
+([The splash](#the-splash)), gives way to the application's content,
+never to a plain window. A window whose application sends no tree
+presents nothing: while it is the only window shown the splash stays,
+and otherwise its rectangle shows the background, as for any window
+that has not presented.
+
 Validation, the diff, the layout and the drawing all run in the
 application's domain, on its CPU grant and in its memory, so a tree
 costs the display nothing but the presents it leads to. The schema still
@@ -3921,7 +3933,11 @@ record when the whole window must be drawn again, and a `presented`
 record when a frame it reported has been shown or dropped.
 
 The program maps each kind to an LVGL object, sets its properties and
-renders in LVGL's direct mode into the mapped buffer, which has the
+renders in LVGL's direct mode into the mapped buffer. It runs no LVGL
+timer, so starts no refresh, before its first `commit`, nor between a
+tree's first operation and its `commit`, so its first report is the
+first tree over the whole screen, which the first `screen` record
+invalidated. The buffer has the
 layout LVGL's own draw buffers have at a stride aligned to 32 bits ([Windows
 and buffers](#windows-and-buffers)). One refresh of LVGL calls the
 program's flush callback once for each area it redrew, and LVGL's
@@ -5892,6 +5908,12 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
     `presented` record: the model screen compares the buffer's bytes at
     both ends of that interval; a program that tells LVGL the last
     flush is done at once fails;
+  * a window's first frame is its first tree: `erx_ui_lvgl` over the
+    real program on the host presents nothing in the second before the
+    tree is applied, then one present of the whole window whose buffer
+    shows the tree; a program that renders before its first `commit`
+    presents its empty screen first and fails, on a host where the
+    program starts within that second;
   * a driver restart is followed by exactly one push of the whole screen
     from the application's buffer, and no record reaches the program; an
     `erx_screen` that does not monitor the driver fails;

@@ -31,6 +31,8 @@
  * Invariants:
  * - nothing renders while a delta is open: between the first operation and
  *   its commit, LVGL's timers do not run, so no frame shows half a change;
+ * - nothing renders before the first commit: the first frame is the first
+ *   tree, so the window never presents the empty screen;
  * - nothing draws in the buffer while a damage report is unanswered: from
  *   the report until its presented record, LVGL's timers do not run, so no
  *   refresh starts, though records the server wrote before it read the
@@ -181,7 +183,11 @@ static const erx_theme_palette_t *palette = &palettes[0].colors;
 static lv_indev_t *pointer, *keypad, *encoder;
 static ui_node_t *root;
 static bool applying;		/* events come from the server's records */
-static bool uncommitted;	/* an operation since the last commit */
+/*
+ * An operation since the last commit, or no commit yet: the window's first
+ * frame is its first tree, never the empty screen.
+ */
+static bool uncommitted = true;
 static uint64_t consumed;	/* input bytes read, for diagnostics */
 
 static struct {

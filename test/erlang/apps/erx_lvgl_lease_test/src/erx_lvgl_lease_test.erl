@@ -20,10 +20,10 @@ starts the renderer at ?WIDTH by ?HEIGHT with a buffer of ?BYTES, applies a
 tree, a column of a label and a button that takes clicks, waits for the
 program's first report after the apply returned, presented at that size,
 answers it and stops the renderer. The apply runs in a process of its own
-while this one answers every present: the program reports its first
-screen as soon as it has read it, and the renderer answers an apply that
-comes while a report is open only once the report is answered
-(erx_ui_lvgl_core). The first round also clicks the button between the
+while this one answers any present, a tolerance only: the renderer would
+answer an apply that came while a report was open only once the report
+is answered (erx_ui_lvgl_core), and the program reports nothing before
+its first tree. The first round also clicks the button between the
 report and its answer and waits for the click's hit. The rounds lend ?ROUNDS times
 ?BYTES, more than the session's whole pixel area, so they pass only if a
 stopped program's range rejoins the free list once its lease is returned
