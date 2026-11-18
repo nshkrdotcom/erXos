@@ -241,8 +241,9 @@ module Erx
       # The machine a published medium (build_medium's published) is packed for and boots
       # on. A card's is its board's own. The QEMU medium carries the kiosk and the Doom
       # example, whose archive leaves the root too little room in the record's 512 MiB, so
-      # its machine has PUBLISHED_QEMU_MIB, which `tools/erx boot --medium` gives QEMU, while
-      # the QEMU suites keep the record's.
+      # its machine has PUBLISHED_QEMU_MIB, which `tools/erx boot --medium` gives QEMU. The
+      # kiosk suite, which boots the same manifest, runs on it too; the other QEMU suites
+      # keep the record's.
       def self.published(platform)
         return development(platform) if BootPartition.boot_partition_medium?(platform)
 
