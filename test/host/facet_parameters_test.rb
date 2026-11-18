@@ -21,18 +21,19 @@ require_relative '../../tools/lib/erx/host_os'
 # test/fixtures/erx_domain_terms_harness.c loaded into stock's emulator (ERX_ERL and
 # ERX_ERLC, which make check supplies), under test/erlang/erx_facet_parameters_tests.erl:
 # the grant's limits carry each parameter by name, erx_domain_mints charges the display
-# the row's pixel area, and the view refuses each forged parameter row of FORGED. The
+# the row's pixel area, and the view refuses each forged parameter row of parameter_forgeries. The
 # line-grant seed (Erx::ManifestSeeds.line_grant) takes the same road: its grant's uart
 # reaches the terms as the index of its UART's device row, and the manifest's reader, which
 # the view reads through, refuses a uart one past the device table. The net-grant seed
 # (Erx::ManifestSeeds.net_grant) carries sets: its grant's ports, a full set of 16, and
 # listen reach the terms as lists in ascending order, and the view refuses each forgery of
-# NET_FORGED. The operations seed (Erx::ManifestSeeds.operations_grant), root's template granted both
+# NET_FORGED. The operations seed (Erx::ManifestSeeds.operations_grant), root's template granted two
 # of inspect's operations, takes the same road: the grant's limits carry their names in
-# number order, and the view refuses each forgery of FORGED_OPERATIONS, the last naming
+# number order, and the view refuses each forgery of operation_forgeries, one naming
 # operations on a service a configured domain serves. Seeded faults that drop a parameter
 # or an operation on the way, admit a value out of bound, an undeclared operation or an
-# operation of a configured domain's service, or let a set pass unsorted or past its most,
+# operation of a configured domain's service, a parameter of another key or kind than its
+# declaration's, or let a set pass unsorted or past its most,
 # must each fail a case.
 class FacetParametersTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
@@ -53,9 +54,9 @@ class FacetParametersTest < Minitest::Test
 
   # The grant's packed parameter rows are windows (key 1), pixels (2) and clipboard (3), the
   # display facet's only ones, 32 bytes each: key u32 at 0, kind u32 at 4, scalar u64 at 8.
-  # Each forgery edits the rows, given as an array of their bytes, and the view must refuse it.
+  # Each forgery edits the rows, given as an array of their bytes, and the view must refuse it;
+  # parameter_forgeries adds the one that renames a row to a key the interface does not declare.
   FORGED = {
-    'undeclared' => ->(rows) { rows[2][0, 4] = [5].pack('V') },
     'out-of-order' => ->(rows) { rows[0], rows[1] = rows[1], rows[0] },
     'stated-twice' => ->(rows) { rows[1] = rows[0].dup },
     'other-kind' => ->(rows) { rows[0][4, 4] = [2].pack('V') },
@@ -72,13 +73,16 @@ class FacetParametersTest < Minitest::Test
 
   # The operations seed's grant of inspect packs inspect (1) and entries (2), 4 bytes
   # each: operation u32 at 0. Each forgery edits the rows, or, for configured-server, the
-  # inspect service's row, and the view must refuse it.
+  # inspect service's row, and the view must refuse it; operation_forgeries adds the one that
+  # renames a row to an operation the interface does not declare.
   FORGED_OPERATIONS = {
-    'undeclared' => ->(rows) { rows[1] = [3].pack('V') },
     'out-of-order' => ->(rows) { rows[0], rows[1] = rows[1], rows[0] },
     'named-twice' => ->(rows) { rows[1] = rows[0].dup },
     'configured-server' => :configured_server
   }.freeze
+
+  # The ABI layout of a row of each of a facet's tables.
+  ROW_LAYOUTS = { 'parameters' => 'erx_mf_parameter', 'operations' => 'erx_mf_operation' }.freeze
 
   def test_a_packed_row_reaches_the_mint
     assert_match(/^  All 7 tests passed\.$/, run_cases)
@@ -112,6 +116,10 @@ class FacetParametersTest < Minitest::Test
        OPERATIONS_CASE],
     'the terms leave the operations out' =>
       [TERMS, 'for (uint32_t at = facet->noperations; at-- > 0;)', 'for (uint32_t at = 0; at-- > 0;)', OPERATIONS_CASE],
+    'the view takes a row of another key as its declaration\'s' =>
+      [VIEW, 'if (row.key != declared[at].number)', 'if (false)', FORGED_CASE],
+    'the view takes a row of another kind than its declaration\'s' =>
+      [VIEW, 'if (row->kind != parameter->kind)', 'if (false)', FORGED_CASE],
     'the view takes a set past its most' =>
       [VIEW, 'of < declared[at].most && matched < count', 'matched < count', FORGED_CASE],
     'the view takes a set unsorted' =>
@@ -142,21 +150,6 @@ class FacetParametersTest < Minitest::Test
     )
   end
 
-  # The operations manifest with its operation rows edited by forge, or, for
-  # :configured_server, its inspect service served by configured row 0.
-  def forged_operations(forge)
-    view = codec.open('manifest', operations_manifest)
-    return configured_server(view) if forge == :configured_server
-
-    table = view.header.fetch('facet_operations')
-    # inspect's two rows, then root_clock's set, which the forges leave alone.
-    assert_equal 3, table.fetch('count')
-    offset = table.fetch('offset')
-    rows = Array.new(2) { |index| operations_manifest.byteslice(offset + (index * 4), 4).b }
-    forge.call(rows)
-    operations_manifest.b.tap { |copy| copy[offset, 8] = rows.join }
-  end
-
   def configured_server(view)
     assert_operator view.count('domains'), :>, 0
     index = view.count('services').times.find { |at| view.fetch('services', at).fetch('interface') == codec.constant('service_inspect') }
@@ -184,25 +177,52 @@ class FacetParametersTest < Minitest::Test
     line_manifest.b.tap { |copy| copy[offset, encoded.bytesize] = encoded }
   end
 
-  # The parameter rows of the one facet of bytes named facet that states any, as their
-  # offset and count.
-  def parameter_span(bytes, facet)
-    view = codec.open('manifest', bytes)
-    rows = view.count('facets').times.map { |index| view.fetch('facets', index) }
-               .select { |row| view.string(row.fetch('name')) == facet && row.fetch('parameters').fetch('count').positive? }
-    assert_equal 1, rows.size
-    rows.first.fetch('parameters')
+  # The ABI's declaration of the service named name (abi_contracts.rb).
+  def declaration(name) = codec.schema.services.find { |service| service.fetch(:name) == name }
+
+  # FORGED, and the forgery that renames the grant's last row, clipboard (3), to the key one
+  # past the windows interface's last declared parameter: the rows stay in order and the key
+  # alone is undeclared, whatever abi/services/windows.txt declares.
+  def parameter_forgeries
+    undeclared = declaration('windows').fetch(:parameters).values.map { |parameter| parameter.fetch(:number) }.max + 1
+    FORGED.merge('undeclared' => ->(rows) { rows[2][0, 4] = [undeclared].pack('V') })
   end
 
-  # The manifest bytes with the count parameter rows of parameter_span(bytes, facet)
-  # edited by forge.
-  def forged(bytes, facet, count, forge)
-    span = parameter_span(bytes, facet)
-    assert_equal count, span.fetch('count')
-    offset = span.fetch('offset')
-    rows = Array.new(count) { |index| bytes.byteslice(offset + (index * 32), 32).b }
+  # FORGED_OPERATIONS, and the forgery that renames the grant's last row, entries (2), to the
+  # operation one past inspect's last declared one: the rows stay in order and the operation
+  # alone is undeclared.
+  def operation_forgeries
+    undeclared = declaration('inspect').fetch(:operations).values.max + 1
+    FORGED_OPERATIONS.merge('undeclared' => ->(rows) { rows[1] = [undeclared].pack('V') })
+  end
+
+  # The operations manifest with its inspect grant's operation rows edited by forge, or,
+  # for :configured_server, its inspect service served by configured row 0.
+  def forged_operations_manifest(forge)
+    return configured_server(codec.open('manifest', operations_manifest)) if forge == :configured_server
+
+    forged(operations_manifest, 'inspect', 2, forge, table: 'operations')
+  end
+
+  # The rows of table, 'parameters' or 'operations', of the one facet of bytes named facet
+  # that has any there, as their byte offset and count.
+  def span(bytes, facet, table)
+    view = codec.open('manifest', bytes)
+    rows = view.count('facets').times.map { |index| view.fetch('facets', index) }
+               .select { |row| view.string(row.fetch('name')) == facet && row.fetch(table).fetch('count').positive? }
+    assert_equal 1, rows.size, "one facet #{facet} with #{table}"
+    rows.first.fetch(table)
+  end
+
+  # The manifest bytes with the count rows of span(bytes, facet, table) edited by forge.
+  def forged(bytes, facet, count, forge, table: 'parameters')
+    rows_at = span(bytes, facet, table)
+    assert_equal count, rows_at.fetch('count')
+    offset = rows_at.fetch('offset')
+    size = codec.layout_size(ROW_LAYOUTS.fetch(table))
+    rows = Array.new(count) { |index| bytes.byteslice(offset + (index * size), size).b }
     forge.call(rows)
-    bytes.b.tap { |copy| copy[offset, count * 32] = rows.join }
+    bytes.b.tap { |copy| copy[offset, count * size] = rows.join }
   end
 
   # The cases' output, with the harness built from sources, each path's text as given
@@ -210,12 +230,12 @@ class FacetParametersTest < Minitest::Test
   def run_cases(sources = {})
     Dir.mktmpdir('erx-facet-parameters-') do |work|
       File.binwrite(File.join(work, 'manifest.bin'), manifest)
-      FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(manifest, Erx::DisplayDomain::SERVICE, 3, forge)) }
+      parameter_forgeries.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(manifest, Erx::DisplayDomain::SERVICE, 3, forge)) }
       NET_FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(net_manifest, 'net', 18, forge)) }
       File.binwrite(File.join(work, 'net.bin'), net_manifest)
       File.binwrite(File.join(work, 'line.bin'), line_manifest)
       File.binwrite(File.join(work, 'operations.bin'), operations_manifest)
-      FORGED_OPERATIONS.each { |name, forge| File.binwrite(File.join(work, "forged-operations-#{name}.bin"), forged_operations(forge)) }
+      operation_forgeries.each { |name, forge| File.binwrite(File.join(work, "forged-operations-#{name}.bin"), forged_operations_manifest(forge)) }
       File.write(File.join(work, 'line-uart'), line_uart.to_s)
       File.binwrite(File.join(work, 'unreadable-device-past-the-table.bin'), line_past_the_table)
       ErlangBuild.compile(work, applications: %w[erx_domain], tests: TESTS)

@@ -15,7 +15,7 @@
 %% configured domains' manifest with alpha granted the line, its uart the
 %% device row whose index line-uart holds, and the reader refuses
 %% unreadable-device-past-the-table.bin, its uart one past the device table.
-%% operations.bin is the development manifest with root's template granted both
+%% operations.bin is the development manifest with root's template granted two
 %% of inspect's operations, which reach the grant's limits by name in number
 %% order; each forged-operations-NAME.bin forges its operation rows, or names
 %% them on a service a configured domain serves, and the view refuses it. net.bin is

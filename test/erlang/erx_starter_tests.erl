@@ -104,7 +104,9 @@ display_manifest() ->
 %% granted home, a files service the build derives, and screen, a windows
 %% service, so screen is the one display clock may draw on: a row rc.conf moves
 %% to home is refused with {no_grant, <<"home">>}, and one it moves to screen
-%% starts.
+%% starts. Root's template, the system principal's, is granted the windows
+%% service display by display_root (config/manifest/development.txt), and the
+%% table names that grant and no other.
 only_a_granted_windows_service_is_a_display_test() ->
     Path = os:getenv("ERX_STARTER_MANIFEST"),
     ?assertNotEqual(false, Path),
@@ -112,7 +114,7 @@ only_a_granted_windows_service_is_a_display_test() ->
     {ok, #{rows := Rows, grants := Grants}} = erx_starter:manifest_table({ok, Packed}),
     ?assertEqual([#{principal => <<"clock">>, enable => true, display => none, restarts => 1, period => 600}],
                  Rows),
-    ?assertEqual(#{<<"clock">> => [<<"screen">>]}, Grants),
+    ?assertEqual(#{<<"clock">> => [<<"screen">>], <<"system">> => [<<"display">>]}, Grants),
     {ok, Home} = erx_start_table:parse_rc_conf(<<"clock_display=home\n">>),
     ?assertMatch({[#{principal := <<"clock">>, status := {refused, {no_grant, <<"home">>}}}], []},
                  erx_start_table:merge(Rows, Home, Grants)),

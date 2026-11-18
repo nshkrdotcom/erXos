@@ -96,8 +96,8 @@ module Erx
       Manifest.admit(source: source, codec: codec, context: context, planner: planner).bytes
     end
 
-    # The development manifest with its grant of inspect to root's template naming both of
-    # the interface's operations, out of number order, as the check packs it.
+    # The development manifest with its grant of inspect to root's template naming two of
+    # the interface's operations, INSPECT_OPERATIONS, out of number order, as the check packs it.
     def operations_grant(source, codec, platform)
       granted = source.sub("  service @service.inspect\n  operations none\n", "  service @service.inspect\n  operations #{INSPECT_OPERATIONS}\n")
       raise Error, 'the development manifest has no inspect grant of operations none' if granted == source
