@@ -248,8 +248,15 @@ registers keep their own names. The copied registers lead both tables at the sam
 indices, and the table records the peripheral a kind derives from, so the device NIF
 treats every kind as its transport. The virtio-mmio transport is such a cluster, and
 each device kind a peripheral that copies it and adds its configuration fields
-(`hw/svd/virtio_mmio/virtio_mmio.svd`). Other inheritance or access-sequence
-extensions fail until their semantic consumer is implemented. Registers fit their address block and cannot
+(`hw/svd/virtio_mmio/virtio_mmio.svd`). Other inheritance fails. An access
+sequence a device's specification prescribes and SVD cannot express is
+declared in the device's `vendorExtensions` in erXos's own namespace and
+emitted as one function per sequence, with its barriers
+([Hardware register sources](design-kernel.md#hardware-register-sources));
+each extension element, `ownedByNif` included, joins the profile with
+its first consumer, and the generator refuses every element of that
+namespace it does not implement, so an extension is never accepted
+without its semantics. Registers fit their address block and cannot
 overlap. Fields fit their register, cannot overlap, and every enumerated
 value fits its field. Names and generated symbols are unique.
 
