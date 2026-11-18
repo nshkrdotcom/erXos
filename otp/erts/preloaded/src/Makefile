@@ -18,7 +18,7 @@
 # limitations under the License.
 #
 # Modified by erXos: prim_socket, prim_net and socket_registry are removed, from erts.app too;
-# erx_file_remote, erx_path, erx_verity, erx_verity_tree, erx_erofs, erx_erofs_file, erx_program and the generated erx_9p_grammar, erx_prog and erx_prog_grammar are added, and the erXos ABI's Erlang header, which erXos's build generates into $(ERX_GEN), is on the include path. No prebuilt beams are kept: erXos's runtime build runs the opt target, which compiles every module into $(EBIN), and the emulator embeds them from there; the copy target, which refreshed them, is removed.
+# erx_file_remote, erx_path, erx_facets, erx_verity, erx_verity_tree, erx_erofs, erx_erofs_file, erx_program and the generated erx_9p_grammar, erx_prog and erx_prog_grammar are added, and the erXos ABI's Erlang header, which erXos's build generates into $(ERX_GEN), is on the include path. No prebuilt beams are kept: erXos's runtime build runs the opt target, which compiles every module into $(EBIN), and the emulator embeds them from there; the copy target, which refreshed them, is removed.
 #
 # %CopyrightEnd%
 
@@ -37,6 +37,7 @@ PRE_LOADED_ERL_MODULES = \
 	erx_file_remote \
 	erx_9p_grammar \
 	erx_path \
+	erx_facets \
 	erx_verity \
 	erx_verity_tree \
 	erx_erofs \

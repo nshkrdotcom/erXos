@@ -27,6 +27,11 @@ module ErlangBuild
   # Every application ErlangApps knows, in its dependency order, so an application's
   # behaviours are compiled before the modules of a later one that implement them.
   ORDER = [*Erx::ErlangApps::APPLICATIONS, *Erx::ErlangApps::TEST_ONLY].freeze
+  # The preloaded modules of erXos's that stock's emulator lacks and every application
+  # may call, compiled with every set of applications: the facet registry, erx_facets,
+  # which erx:cap/1 and every reader of a facet's grant reach. A preloaded module that
+  # only some cases reach (erx_path, the EROFS reader) is one of those tests' modules.
+  PRELOADED = %w[otp/erts/preloaded/src/erx_facets.erl].freeze
   # Test modules are not held to the build's deprecation warnings; -Werror still holds.
   TEST_FLAGS = %w[-Werror +debug_info].freeze
   REPLACED_FLAGS = (Erx::ErlangApps::FLAGS - %w[-Werror]).freeze
@@ -95,6 +100,7 @@ module ErlangBuild
     Erx::Generated.ensure(root: ROOT)
     Dir.mktmpdir('erx-erlang-build').tap do |beams|
       at_exit { FileUtils.rm_rf(beams) }
+      erlc(beams, Erx::ErlangApps::FLAGS, PRELOADED)
       applications.each { |application| erlc(beams, Erx::ErlangApps::FLAGS, modules(application)) }
     end
   end

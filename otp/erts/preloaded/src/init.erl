@@ -1260,9 +1260,9 @@ do_boot(Init,Flags,Start) ->
 %% domain, whose boot page names no domain pid, and a runtime that is no node, which
 %% runs no agent and has no system connection up, report nothing. The boot process,
 %% which reports, then waits for the domain service's answer, the domain's facets by
-%% name, which its agent keeps as the persistent term {erx, facets}, which erx:cap/1
+%% name, which its agent keeps in the domain's facet registry, erx_facets, which erx:cap/1
 %% reads, and hands init as {erx_facets, Facets}, which init's boot_loop/2 passes on
-%% to it, so -eval and every -s and -run find them. The agent is the term's one
+%% to it, so -eval and every -s and -run find them. The agent is the registry's one
 %% writer, so no facet installed later is lost to this answer. An answer that has not
 %% come in ?FACETS_TIMEOUT milliseconds is logged, and the boot goes on without
 %% waiting for it. The report also carries, as provides, the mints the domain's

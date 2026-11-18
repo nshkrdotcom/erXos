@@ -288,7 +288,7 @@ perform([Action | Rest], H) ->
 
 act({resolve, Image, Table}, H) ->
     %% Each facet's mount is read as the grant the registry holds now, as an open reads it.
-    Granted = erx_path:with_facets(Table, persistent_term:get({erx, facets}, #{})),
+    Granted = erx_facets:table(Table),
     {event, {resolved, erx_prog_handler_core:resolve_image(Image, Granted, fun prim_file:erx_walk/2)}, H};
 act(holder, #h{spec = #{pid := Pid}} = H) ->
     {event, {holder, erx_pipe_nif:program_holder(Pid)}, H};

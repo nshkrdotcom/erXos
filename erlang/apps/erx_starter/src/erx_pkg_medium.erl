@@ -20,7 +20,7 @@ erx_pkg_io calls it.
 * **The image's packages** lie at `apps/NAME.app` in the booted slot's
   system partition, which the storage domain serves read-only as the
   `system` tree, rooted at `apps/` (erx_storage_system). The system domain
-  reads each through its grant of the `system` facet (erx:cap(system)),
+  reads each through its grant of the `system` facet (erx_facets:file_grant/2),
   walked by name with the file client, erx_file_remote, as erx_ns walks the
   record's place, so no path of the namespace and nothing of the partition
   outside `apps/` is reached. While the grant is not in place every read
@@ -121,9 +121,9 @@ found({resume, _, {_Kinds, ok}}) -> {error, einval}.
 %% Act on the system domain's read-only grant of the system tree, or enoent while
 %% its facet registry holds none.
 on_system(Act) ->
-    case erx:cap(system) of
-        Pid when is_pid(Pid) -> Act({Pid, <<"system">>, ro});
-        _ -> {error, enoent}
+    case erx_facets:file_grant(system, ro) of
+        {ok, Grant} -> Act(Grant);
+        {error, _} = Error -> Error
     end.
 
 %% The file client gives a name it can decode as characters, and one it

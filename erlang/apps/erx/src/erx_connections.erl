@@ -20,8 +20,6 @@
 -module(erx_connections).
 -moduledoc false.
 
--include("generated/erx_abi.hrl").
-
 -export([start/2, open_side/2, close_side/2, dropped/0, connection/1, area/1, app/0,
          app_held/0]).
 %% A domain's agent past its system connection's hand-over, and the system domain's agent,
@@ -382,8 +380,9 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
         {erx_origin, SystemId, {erx_connection_down, Peer, Reason}} when is_integer(Peer) ->
             records(Env, connection_down(Env, Peer, Reason, Held), Dropped);
         {erx_origin, SystemId, {erx_facets, Facets, Granted}} when is_map(Facets) ->
-            Valid = #{Name => Facet || Name := Facet <- Facets, is_atom(Name), is_facet(Facet)},
-            register_facets(Valid),
+            Valid = #{Name => Facet || Name := Facet <- Facets,
+                                       is_atom(Name), erx_facets:is_facet(Facet)},
+            ok = erx_facets:install(Valid),
             %% Kept before init hears of the facets, so the applications init then starts
             %% find the names erx:granted/0 reads.
             persistent_term:put({erx, granted}, lists:usort(names(Granted))),
@@ -392,7 +391,7 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
         {erx_origin, SystemId, {erx_app, App}} when is_map(App), element(1, map_get(app, Env)) =:= waiting ->
             records(app_came(App, Env), Held, Dropped);
         {erx_origin, SystemId, {erx_facets_install, Tag, Name, Facet}} when is_integer(Tag), is_atom(Name) ->
-            case is_facet(Facet) of
+            case erx_facets:is_facet(Facet) of
                 true ->
                     install(Env, Tag, Name, Facet),
                     records(Env, Held, Dropped);
@@ -445,29 +444,19 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
 %% A facet a configured domain minted for this domain, installed under Name in the
 %% domain's registry, replacing an older pid of that name, and acknowledged to the domain
 %% pid with the installation's tag (docs/design-system.md, "Facets a configured domain
-%% serves"). The registry is the persistent term {erx, facets}, which erx:cap/1 reads.
+%% serves"). The agent is the registry's one writer in a domain (erx_facets:install/1),
+%% for the ready answer's facets and every installation alike, so no installation is
+%% lost to a write that read the registry before it.
 install(#{domain_pid := DomainPid}, Tag, Name, Facet) ->
-    register_facets(#{Name => Facet}),
+    ok = erx_facets:install(#{Name => Facet}),
     DomainPid ! {erx_facets_installed, Tag},
     ok.
-
-%% A facet as the system domain sends it: a pid, or a files facet's pid with its grant's
-%% rights, which the domain service took from the manifest's facet row
-%% (docs/design-files.md, "Rights beneath an entry"). The registry keeps it as it came.
-is_facet({Pid, Rights}) -> is_pid(Pid) andalso lists:keymember(Rights, 1, ?ERX_FILES_RIGHTS_MEMBERS);
-is_facet(Facet) -> is_pid(Facet).
 
 %% The atoms of List, the ready answer's names of the facets the manifest grants the
 %% domain, ignoring any other element and an improper tail.
 names([Name | Rest]) when is_atom(Name) -> [Name | names(Rest)];
 names([_ | Rest]) -> names(Rest);
 names(_) -> [].
-
-%% The agent is the registry's one writer in a domain, the answer to the ready report's
-%% facets and every installation, so no installation is lost to a write that read the
-%% registry before it.
-register_facets(Facets) ->
-    persistent_term:put({erx, facets}, maps:merge(persistent_term:get({erx, facets}, #{}), Facets)).
 
 %% The app's record has come: each asker waiting for it is answered, and it is kept for
 %% those who ask later (app/0).

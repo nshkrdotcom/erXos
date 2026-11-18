@@ -455,7 +455,13 @@ facet_mount_refusals() ->
 
 %% The table as a resolution uses it, prim_file:erx_table/0's.
 at_use() ->
-    erx_path:with_facets(table(), persistent_term:get({erx, facets}, #{})).
+    erx_facets:table(table()).
+
+%% The table erx_facets:table/1 makes of Table over the registry Registry, which the
+%% case leaves holding nothing.
+with_registry(Table, Registry) ->
+    persistent_term:put({erx, facets}, Registry),
+    try erx_facets:table(Table) after persistent_term:erase({erx, facets}) end.
 
 %% A pid of another node, which this node is not connected to.
 remote_pid() ->
@@ -479,12 +485,12 @@ flush() ->
 
 %% Every pair of the rights files_rights defines is ordered, so a facet entry asked any
 %% of them over a grant of any of them is on the grant, and a member the ABI gains fails
-%% here until erx_path orders it; a grant of rights outside the ABI answers eio.
+%% here until erx_path:lesser/2 orders it; a grant of rights outside the ABI answers eio.
 every_pair_of_the_abis_rights_is_ordered_test() ->
     Members = [Rights || {Rights, _} <- ?ERX_FILES_RIGHTS_MEMBERS],
     Pid = self(),
     Entry = fun(Asked) -> #{point => [<<"d">>], provider => {facet, data, <<"data">>}, root => [], rights => Asked} end,
     [?assertMatch([#{provider := {grant, Pid, <<"data">>}}],
-                  erx_path:with_facets([Entry(Asked)], #{data => {Pid, Granted}}))
+                  with_registry([Entry(Asked)], #{data => {Pid, Granted}}))
      || Asked <- Members, Granted <- Members],
-    ?assertMatch([#{provider := ended}], erx_path:with_facets([Entry(rw)], #{data => {Pid, bogus}})).
+    ?assertMatch([#{provider := ended}], with_registry([Entry(rw)], #{data => {Pid, bogus}})).

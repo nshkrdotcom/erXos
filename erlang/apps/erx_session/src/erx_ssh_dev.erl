@@ -274,16 +274,16 @@ canonical(Blobs) ->
 %% The tree's `root` through the session's grant of login_keys, read from its start
 %% for at most MEDIUM_READ bytes, without read-ahead.
 medium_file() ->
-    case erx:cap(login_keys) of
-        Pid when is_pid(Pid) ->
-            case erx_file_remote:open({Pid, <<"login_keys">>, ro}, {target, [<<"root">>]}, [read, binary]) of
+    case erx_facets:file_grant(login_keys, ro) of
+        {ok, Grant} ->
+            case erx_file_remote:open(Grant, {target, [<<"root">>]}, [read, binary]) of
                 {ok, Fd} ->
                     try read_at_most(Fd, ?MEDIUM_READ, []) after file:close(Fd) end;
                 {resume, _, _} -> {error, einval};
                 {error, _} = Error ->
                     Error
             end;
-        undefined ->
+        {error, _} ->
             {error, no_grant}
     end.
 

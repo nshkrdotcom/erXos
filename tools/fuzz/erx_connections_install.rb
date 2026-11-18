@@ -5,6 +5,7 @@
 require 'open3'
 require 'optparse'
 require 'tmpdir'
+require_relative '../lib/erx/generated'
 
 # The fuzz target of a domain's connection agent, erx_connections, as the installer of
 # facets a configured domain minted for its domain (test/erlang/erx_connections_install_fuzz.erl):
@@ -12,11 +13,16 @@ require 'tmpdir'
 # domains' envelopes and bare, with every registry write and acknowledgement checked
 # against a model. Compiled from source and run on stock's emulator (ERX_ERL and ERX_ERLC,
 # the oracle's). It runs the agent as it is, then a copy that installs from any domain's
-# envelope, which the target must catch.
+# envelope, which the target must catch. The agent writes the registry through its owner,
+# erx_facets, a preloaded module stock's emulator lacks, compiled beside it.
 module ErxConnectionsInstallFuzz
   ROOT = File.expand_path('../..', __dir__)
+  Erx::Generated.ensure(root: ROOT)
   AGENT = 'erlang/apps/erx/src/erx_connections.erl'
+  REGISTRY = 'otp/erts/preloaded/src/erx_facets.erl'
   FUZZ = 'test/erlang/erx_connections_install_fuzz.erl'
+  # Where the ABI's generated Erlang header, which the registry includes, lies.
+  INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
   ENVELOPE = '{erx_origin, SystemId, {erx_facets_install, Tag, Name, Facet}}'
   ANY_ENVELOPE = '{erx_origin, _AnyDomain, {erx_facets_install, Tag, Name, Facet}}'
   DEADLINE_SECONDS = '300'
@@ -41,8 +47,8 @@ module ErxConnectionsInstallFuzz
     Dir.mktmpdir('erx-connections-install-fuzz') do |work|
       agent_path = File.join(work, File.basename(AGENT))
       File.binwrite(agent_path, agent_text)
-      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', work, agent_path, File.join(ROOT, FUZZ),
-                                       stdin_data: '')
+      sources = [agent_path, File.join(ROOT, REGISTRY), File.join(ROOT, FUZZ)]
+      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-I', INCLUDE, '-o', work, *sources, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

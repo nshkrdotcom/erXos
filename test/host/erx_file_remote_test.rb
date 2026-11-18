@@ -12,7 +12,8 @@ require_relative '../../tools/lib/erx/generated'
 # included, and a module the code server would have to load then halts the node. The
 # generated erx_9p_grammar, which checks every request it sends and every reply, is
 # preloaded and held to the same rule, as is erx_path, the resolver of every path, which
-# calls nothing but BIFs and the callbacks its caller hands it, and so are the EROFS
+# calls nothing but BIFs and the callbacks its caller hands it, the facet registry,
+# erx_facets, which puts the grant beneath each facet entry, and so are the EROFS
 # reader, erx_erofs, its open files, erx_erofs_file, and its funnel, erx_verity, with the tree's layout,
 # erx_verity_tree, which serve paths in the calling process. xref, on stock's emulator (ERX_ERL and ERX_ERLC,
 # which make check supplies), lists each module's calls to other modules; each must be a
@@ -25,6 +26,7 @@ class ErxFileRemoteTest < Minitest::Test
   SOURCES = { 'erx_file_remote' => 'otp/erts/preloaded/src/erx_file_remote.erl',
               'erx_9p_grammar' => 'build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl',
               'erx_path' => 'otp/erts/preloaded/src/erx_path.erl',
+              'erx_facets' => 'otp/erts/preloaded/src/erx_facets.erl',
               'erx_verity' => 'otp/erts/preloaded/src/erx_verity.erl',
               'erx_verity_tree' => 'otp/erts/preloaded/src/erx_verity_tree.erl',
               'erx_erofs' => 'otp/erts/preloaded/src/erx_erofs.erl',

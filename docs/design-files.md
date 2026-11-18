@@ -1404,7 +1404,7 @@ construction rather than by a check at each use:
   the grant's facet row, which the domain service takes from the
   manifest and no reply of the server's sets (above). A resolution
   gives the entry the lesser of the rights its mount asked and the
-  facet's (`erx_path:with_facets/2`): `ro` lies below `rw` and `rx`,
+  facet's (`erx_facets:table/1`): `ro` lies below `rw` and `rx`,
   and `rw` and `rx`, which no grant holds together, meet at `ro`. A
   facet's mount compares the rights it asks with nothing, since the
   grant may not have arrived yet: a session that mounts `{facet, data}` at `/x` with
@@ -1526,10 +1526,10 @@ one whose grant ended meanwhile answers `DOWN` at once.
 through a facet's mount, never by its pid: the entry's provider is
 `{facet, Name, Tree}`, and the table a resolution uses is the term with
 each such entry, binds of it included, read at that moment against the
-domain's facet registry, the term `{erx, facets}` that `erx:cap/1`
+domain's facet registry, `erx_facets`, which `erx:cap/1` also
 reads ([design-system.md](design-system.md#facets-a-configured-domain-serves)):
 on the grant the registry holds for `Name`, or `ended` when it holds
-none (`erx_path:with_facets/2`, which `prim_file:erx_table/0` applies
+none (`erx_facets:table/1`, which `prim_file:erx_table/0` applies
 to the term at each resolution). A domain mounts a facet only where the
 manifest grants it one: the domain service names, in a domain's ready
 answer, the facets of configured domains the manifest grants the

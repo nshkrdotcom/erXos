@@ -2315,6 +2315,23 @@ installs the result in the grantee's capability registry, under the
 service's name; the facet row's own name names the row in the manifest
 alone.
 
+**The registry.** A domain's capability registry is one value with one
+owner, `erx_facets`, a preloaded module, since every resolution of a path
+reads it: each facet under its name, as its pid, or for a facet of a files
+service as its pid with its grant's rights
+([design-files.md](design-files.md#namespaces)). Only that module knows
+the shape. Its one writer, `erx_facets:install/1`, is called by the
+domain's connection agent and, for the system domain's own registry,
+which is local, by the domain service. Its readers read it at use:
+`erx:cap/1`; a resolution, which puts each facet's grant beneath its
+mount with the lesser of the two rights (`erx_facets:table/1`), so a
+re-grant serves the next lookup; and a reader that opens a files facet's
+tree by name, whose handle `erx_facets:file_grant/2` makes read-only and
+which keeps the grant it opened on, as an image mount does. So nothing
+a reader takes from the registry carries more than its grant's rights.
+Two build checks hold this: the registry's key appears in no other
+module, and no other module calls its writer.
+
 **Providers.** A configured domain's services each name a **mint**, a
 process of the domain that mints facets of one service, with
 `erx_facet:provide(Name, Mint)`, before its init reports ready, and the

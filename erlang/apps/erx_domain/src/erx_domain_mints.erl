@@ -157,7 +157,7 @@ serves the display's service.
                | {deadline, tag()}.
 -type action() :: {introduce, tag(), ServerId :: id(), GranteeId :: id()}
                 | {mint, tag(), Mint :: pid(), name(), GranteeId :: id(), Limits :: map()}
-                | {install, tag(), GranteeId :: id(), name(), Facet :: erx:facet()}
+                | {install, tag(), GranteeId :: id(), name(), Facet :: erx_facets:facet()}
                 | {arm, tag(), Milliseconds :: pos_integer()}
                 | {disarm, tag()}
                 | {refused, atom(), Detail :: tuple()}

@@ -961,11 +961,11 @@ erx_tmp_limit() ->
 
 %% erXos: the runtime's namespace table as a resolution uses it (design-files.md,
 %% Building, binding and mounting): the mounts, each of a facet on the grant the
-%% domain's facet registry, the term {erx, facets}, holds for it now, or ended when it
-%% holds none (erx_path:with_facets/2). It is read at each resolution, so a re-grant
+%% domain's facet registry, erx_facets, holds for it now, or ended when it
+%% holds none (erx_facets:table/1). It is read at each resolution, so a re-grant
 %% serves the next lookup.
 erx_table() ->
-    erx_path:with_facets(erx_mounts(), persistent_term:get({erx, facets}, #{})).
+    erx_facets:table(erx_mounts()).
 
 %% erXos: the mounts as erx_ns keeps them: the persistent term erx_ns's process alone
 %% writes, or until it writes one the boot table, the domain's local entries. These are

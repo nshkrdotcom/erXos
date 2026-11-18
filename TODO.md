@@ -267,7 +267,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   handler's spec.
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
   an image package's place on the `system` grant is written in `erx_principal:place/2` and again in
-  `erx_pkg_medium` (`place/2`, `on_system/1`, beside `erx_ns:facet_grant/1`'s grant tuple; one owner wanted); the
+  `erx_pkg_medium` (`place/2`, `on_system/1`, the grant tuple itself is `erx_facets:file_grant/2`'s alone); the
   `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console
   facet through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
@@ -3804,13 +3804,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] session, `erx_session_export` (`displays/0`), the displays a session holds: a program's
   first open of `/dev/draw` opens its window on the display its `display` variable names or on the
   session's only display ([design-display.md](docs/design-display.md#choosing-a-display)), which needs
-  the names of the `windows` grants among the session's facets. The registry (`{erx, facets}`) keeps
+  the names of the `windows` grants among the session's facets. The registry (`erx_facets`) keeps
   each facet under its service's name and records no interface, and a windows grant is a bare pid like
   a `net` or `clock` facet, so `displays/0` answers the facet named `display`, the name every manifest
   gives its one `windows` service. A session holding a second display under another name gets no window
   on it (`ENODEV`), and one holding both opens on `display` rather than refusing. Have the domain
   service mark the `windows` grants in what it installs (`erx_domain_mints:installed_facet/3`, which
-  already knows `windows`), and read them here.
+  already knows `windows`), keep the mark in `erx_facets:facet/0`, which alone knows a facet's shape,
+  and read it here through an `erx_facets` reader.
 * [Medium] session, `erx_session_export`: the export serves the fixed tree alone. The tree of each of
   the session's local providers, named from the session's counter when it is mounted
   (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands
@@ -8664,7 +8665,7 @@ document's "residual risks accepted" paragraph.
   they stay in the caller's mailbox, the code server's included, and each receive
   rescans them. Bound what a caller keeps from a server (a deadline, or dropping what
   arrives at the alias that is not its reply) with a test of a flooding server.
-* [Medium] Namespace, a facet's mount (`erx_path:with_facets/2`, design-files.md, "A facet's
+* [Medium] Namespace, a facet's mount (`erx_facets:table/1`, design-files.md, "A facet's
   mount"): every lookup under a facet's mount, `/data` among them, goes to whatever pid the
   domain's registry holds for the facet, which a server domain minted, so a server that stalls,
   floods or answers as no file server holds its clients as the two `erx_file_remote` items above

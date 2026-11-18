@@ -36,7 +36,8 @@ module Erx
   # * a facet name the Erlang sources use that is no manifest service's public name,
   #   under which its grantees hold its facets: a grant in a create spec handed to
   #   erx_domain:create/1 or in start_session/2's Start, less its display and
-  #   default_display, which name services and are no facets, a lookup (erx:cap/1, erx_cmd:facet/2, a
+  #   default_display, which name services and are no facets, a lookup (erx:cap/1,
+  #   erx_facets:find/1 and file_grant/2, erx_cmd:facet/2, a
   #   key read from erx:caps/0), a command's -erx_needs, a
   #   mount of {facet, Name}, a
   #   server's mint (erx_facet:provide/2 and serve/2, erx_driver_ctl's start_mint and
@@ -98,6 +99,7 @@ module Erx
       /(?<![A-Za-z0-9_@])erx_domain\s*:\s*start_session\s*(?<args>\((?:[^()]|\g<args>)*\))/,
       /(?<![A-Za-z0-9_@])facets\s*=>\s*\#(?<map>\{(?:[^{}]|\g<map>)*\})/,
       /(?<![A-Za-z0-9_@])erx\s*:\s*cap\s*\(\s*(?<name>#{NAME})\s*\)/,
+      /(?<![A-Za-z0-9_@])erx_facets\s*:\s*(?:find|file_grant)\s*\(\s*(?<name>#{NAME})\s*[,)]/,
       /(?<![A-Za-z0-9_@])erx_cmd\s*:\s*facet\s*\(\s*[A-Z_][A-Za-z0-9_@]*\s*,\s*(?<name>#{NAME})\s*\)/,
       /\#\{(?<names>[^{}]*?)\}\s*=\s*erx\s*:\s*caps\s*\(/,
       /\{\s*erx_facet_mint\s*,\s*[A-Za-z_][A-Za-z0-9_@]*\s*,\s*(?<name>#{NAME})\s*,/,

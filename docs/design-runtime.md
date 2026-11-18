@@ -407,7 +407,7 @@ edit 8 hands both agents to the system domain with `send` as the frame is
 encoded, and `erx_facet:provide/2` refuses a mint after the report
 ([design-system.md](design-system.md#facets-a-configured-domain-serves)).
 `init` then waits at most five seconds for the domain's facets by name, which
-the connection agent, the one writer of the persistent term `{erx, facets}`,
+the connection agent, the one writer of the domain's facet registry (`erx_facets`),
 keeps there before `-eval`, `-s` and `-run` look for them; a domain whose
 answer is late boots on without it, and the system domain and a runtime that
 is no node report nothing and wait for nothing. 68. Once its shutdown is

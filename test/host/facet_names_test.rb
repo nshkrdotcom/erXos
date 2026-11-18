@@ -100,8 +100,10 @@ class FacetNamesTest < Minitest::Test
       i(S, M) -> erx_driver_ctl:mint_request(S, rogue, M).
       j() -> erx_ns:mount({facet, rogue}, <<"/r">>, []).
       k(T) -> erx_storage_mint:start_link(rogue, erx_storage_system, T).
+      l() -> erx_facets:find(rogue).
+      m() -> erx_facets:file_grant(rogue, ro).
     ERL
-    assert_equal (1..12).map { |line| [MODULE, line] }, found(source)
+    assert_equal (1..14).map { |line| [MODULE, line] }, found(source)
   end
 
   # A create spec that hands a domain a facet by a name the table does not list, and a

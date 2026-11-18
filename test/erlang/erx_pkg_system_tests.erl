@@ -24,12 +24,13 @@ header_hash(Bytes) ->
     {ok, #{header_length := Length}} = erx_pkg_header:decode(byte_size(Bytes), Bytes),
     crypto:hash(sha256, binary:part(Bytes, 0, Length)).
 
-%% A read-only grant of the stand-in system tree, its root holding dashboard.app.
+%% A read-only grant of the stand-in system tree, its root holding dashboard.app, as the
+%% registry holds the facet of a files service: with its grant's rights.
 system_grant(Bytes) ->
     {ok, Grant} = erx_fs:start_link(erx_fs_test_tree, [{name, <<"system">>},
                                                       {file, <<"dashboard.app">>, Bytes}], ro),
     unlink(Grant),
-    Grant.
+    erx_facets:files(Grant, ro).
 
 %% The table the registration and publication stubs log into.
 stubs_log() ->

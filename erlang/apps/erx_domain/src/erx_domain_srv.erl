@@ -1624,7 +1624,8 @@ mint_act({mint, Tag, Mint, Name, GranteeId, Limits}, #{core := Core, mint_config
     Pid ! {Ref, mint, Mint, {erx_facet_mint, Tag, Name, GranteeId, principal_name(GranteeId, State), Limits}},
     State;
 mint_act({install, Tag, ?SYSTEM_ID, Name, Facet}, State) ->
-    persistent_term:put({erx, facets}, (persistent_term:get({erx, facets}, #{}))#{Name => Facet}),
+    %% The system domain's registry is local, and the service is its one writer.
+    ok = erx_facets:install(#{Name => Facet}),
     mints({installed, ?SYSTEM_ID, Tag}, State);
 mint_act({install, Tag, GranteeId, Name, Facet}, #{core := Core} = State) ->
     %% The core installs only in a grantee that is ready and has not ended.

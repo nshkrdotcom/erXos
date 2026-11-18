@@ -126,14 +126,14 @@ own(Grants, Args) ->
 owned({ok, Pid}) -> {ok, facet(Pid, ?OWN)}.
 
 -doc """
-The facet of the grant Pid as the grantee's registry holds it (erx:facet/0):
-the pid with the rights of its facet row's Limits, the rights the grant serves
-(grant_options/1), which no reply of the server's sets (docs/design-files.md,
-"Rights beneath an entry").
+The facet of the grant Pid as the grantee's registry holds it
+(erx_facets:files/2): the pid with the rights of its facet row's Limits, the
+rights the grant serves (grant_options/1), which no reply of the server's
+sets (docs/design-files.md, "Rights beneath an entry").
 """.
--spec facet(pid(), map()) -> erx:facet().
+-spec facet(pid(), map()) -> erx_facets:facet().
 facet(Pid, Limits) ->
-    {Pid, rights(Limits)}.
+    erx_facets:files(Pid, rights(Limits)).
 
 %% The rights a facet row's Limits give its grant, rw where the row states none
 %% (abi/services/files.txt).

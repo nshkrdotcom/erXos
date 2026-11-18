@@ -348,7 +348,7 @@ new(_Pid, _Fds, _Files) ->
 -doc """
 Resolve, step 4 of "Starting a program", for an executable file: the
 absolute `Path` through `Table`, the starter's namespace with each
-facet's grant in place (erx_path:with_facets/2), each provider walked by
+facet's grant in place (erx_facets:table/1), each provider walked by
 `Walk`, erx_path's `walk` callback. It answers `{ok, Entry, Names}`: the
 entry the file lies on, whose provider is the grant it is read through,
 and the file's names from the provider's root, which the filler opens.
