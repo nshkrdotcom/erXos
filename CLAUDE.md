@@ -289,8 +289,14 @@ Third-party components are allowed when they pay for themselves.
   browser-side dependency of the web client may have a TypeScript API
   instead. A permanent copyleft dependency needs explicit agreement first.
   OFL-1.1 is allowed for font data only.
+* **Examples.** A demo program that is never part of the system, such as
+  Doom in 0.1's images, is marked `example`. It may be copyleft when I
+  have agreed to it, ships only in the images I name, with its source
+  offered, and enters only through the image license check's one entry
+  for it; none of its source enters erXos's tree.
 * Record every dependency, with its purpose, license and status (`permanent`,
-  `release` or `stopgap`), in the dependency table of [docs/design.md](docs/design.md).
+  `release`, `stopgap` or `example`), in the dependency table of
+  [docs/design.md](docs/design.md).
 * External tools are invoked as subprocesses, never linked: the compilers
   and linkers, QEMU, the stock host OTP build that bootstraps the cross
   build and serves as the behavioral oracle, `dtc`, and the LLVM binary
