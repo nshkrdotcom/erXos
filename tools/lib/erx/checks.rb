@@ -120,6 +120,15 @@ module Erx
     TEST_ROOTS_DEFINERS = %w[tools/lib/erx/production_image.rb tools/lib/erx/release_files.rb
                              tools/lib/erx/trust_store.rb].freeze
     TEST_ROOTS_ENTRY = /\btest_roots:/
+    # Programs a medium adds to its domain release make it a test image too
+    # (ProductionImage#build_medium's test_programs). Only the QEMU cell that starts one
+    # from rc on the medium (TEST_PROGRAMS_BUILDERS, the kiosk suite's front cell) passes
+    # that keyword, and only the medium's build (TEST_PROGRAMS_DEFINER) takes it. The
+    # check reads lines, as the test image one does, so it catches the keyword as written
+    # in a call, not a name assembled from pieces.
+    TEST_PROGRAMS_BUILDERS = %w[tools/lib/erx/kiosk.rb].freeze
+    TEST_PROGRAMS_DEFINER = 'tools/lib/erx/production_image.rb'
+    TEST_PROGRAMS_ENTRY = /\btest_programs:/
     # Each rule that only some tools sources may name an entry point: its pattern, the
     # sources allowed to match it and the refusal, which names the place.
     NamedOnly = Data.define(:pattern, :allowed, :refusal)
@@ -129,7 +138,9 @@ module Erx
       NamedOnly.new(pattern: LOGIN_KEY_ENTRY, allowed: [*LOGIN_KEY_BUILDERS, LOGIN_KEY_DEFINER].freeze,
                     refusal: "a development login key is packed only by #{LOGIN_KEY_BUILDERS.join(' and ')}"),
       NamedOnly.new(pattern: TEST_ROOTS_ENTRY, allowed: [*TEST_ROOTS_BUILDERS, *TEST_ROOTS_DEFINERS].freeze,
-                    refusal: "a test root is added only by #{TEST_ROOTS_BUILDERS.join(' and ')}")
+                    refusal: "a test root is added only by #{TEST_ROOTS_BUILDERS.join(' and ')}"),
+      NamedOnly.new(pattern: TEST_PROGRAMS_ENTRY, allowed: [*TEST_PROGRAMS_BUILDERS, TEST_PROGRAMS_DEFINER].freeze,
+                    refusal: "a test program is added to a medium only by #{TEST_PROGRAMS_BUILDERS.join(' and ')}")
     ].freeze
 
     # Decides what the log of `git ls-files -z` says: the sorted, distinct

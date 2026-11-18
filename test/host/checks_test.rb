@@ -233,6 +233,25 @@ class ChecksTest < Minitest::Test
     assert checks.run
   end
 
+  # Only the kiosk's front cell adds test programs to a medium, through the medium's
+  # build, so no medium another builder makes carries one. Seeded: test programs passed by
+  # the pack or the website's builder are refused.
+  def test_only_the_front_cell_adds_test_programs_to_a_medium
+    write('tools/lib/erx/production_image.rb', "def build_medium(directory:, test_programs: none)\nend\n")
+    write('tools/lib/erx/kiosk.rb', "image.build_medium(directory: d,\n  test_programs: added)\n")
+    assert checks.run
+    { 'tools/build_site.rb' => "image.build_medium(directory: d, test_programs: added)\n",
+      'tools/lib/erx/production_image_pack.rb' => "build_medium(directory: d,\n    test_programs: added)\n" }
+      .each do |relative, source|
+        path = write(relative, source)
+        error = assert_raises(Erx::Error) { checks.run }
+        assert_equal "a test program is added to a medium only by #{Erx::Checks::TEST_PROGRAMS_BUILDERS.join(' and ')}: " \
+                     "#{relative}:#{source.lines.size}", error.message
+        File.unlink(path)
+      end
+    assert checks.run
+  end
+
   def test_ignored_files_and_agent_worktrees_are_not_source_inputs
     write('.gitignore', "/build/\n/.claude/\n")
     write('build/fiasco/inputs/uart.h', "/* \xc3\xa9 */\n".b)
