@@ -2774,8 +2774,9 @@ the index run's hash with it and `index_hash` read as zeros), and
 byte strings; each holds its path (1 to 4,096 bytes in the string
 table), its kind (file, executable image or empty directory), its marks
 (`ERX_ENTRY_SYSTEM`, `ERX_ENTRY_SEAL`; others zero), a page-aligned data
-offset and size (0 for a directory), an image's manifest offset from
-its data (0 for every other kind), and the BLAKE3 hash of its file run, the data followed by
+offset and size (0 for a directory), a manifest offset that is always 0,
+because an image's manifest starts its data and no other kind has one
+(the reader refuses any other value), and the BLAKE3 hash of its file run, the data followed by
 zeros to the next page boundary.
 
 **Integrity, not authenticity.** The hashes detect a damaged medium, a
