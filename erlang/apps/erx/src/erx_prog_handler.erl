@@ -411,8 +411,10 @@ driver(Port, Call, Ended) ->
 %% A window's buffer of Bytes in Peer's area, allocated and lent with the
 %% handler as the range's owner and the lease's holder (docs/design-display.md,
 %% "The pixel area"). The allocator is the display client's, in erx_win: in a
-%% domain whose release lacks it, or while it is not running, the buffer is
-%% refused with enodev, as the domain has no display to lend from. A lend
+%% domain whose release lacks it, or where it is not running (alloc/2's none),
+%% or with no area to Peer, the buffer is refused with enodev, as the domain has
+%% no display to lend from. Of undefs, only that of erx_pixels where it is not
+%% loaded means the same; any other undef is a fault of the code, raised again. A lend
 %% refused after the alloc leaves the range allocated; the refusal ends the
 %% handler, and the allocator frees an exited owner's ranges.
 lend(Peer, Bytes) ->
@@ -422,11 +424,10 @@ lend(Peer, Bytes) ->
                 {ok, Lease, Pages} -> {reserved, {mem, Lease, Pages, Offset}};
                 {error, Errno} -> {refused, Errno}
             end;
-        {error, none} -> {refused, einval};
+        {error, none} -> {refused, enodev};
         {error, Errno} -> {refused, Errno}
     catch
-        error:undef -> {refused, enodev};
-        exit:{noproc, _} -> {refused, enodev}
+        error:undef:Stack -> absent(erx_pixels, Stack, {refused, enodev})
     end.
 
 log_end(_Pid, normal) ->
@@ -447,11 +448,7 @@ window(Display) ->
         {ok, DevGrant} -> {windowed, DevGrant};
         {error, Errno} -> {refused, Errno}
     catch
-        error:undef:Stack ->
-            case {Stack, erlang:module_loaded(erx_session_export)} of
-                {[{erx_session_export, _, _, _} | _], false} -> {refused, enodev};
-                _ -> erlang:raise(error, undef, Stack)
-            end
+        error:undef:Stack -> absent(erx_session_export, Stack, {refused, enodev})
     end.
 
 %% The window of a program's first open of /dev/draw, on the display Named
@@ -475,12 +472,19 @@ first_window(Named) ->
 displays() ->
     try erx_session_export:displays()
     catch
-        error:undef:Stack ->
-            case {Stack, erlang:module_loaded(erx_session_export)} of
-                {[{erx_session_export, _, _, _} | _], false} -> [];
-                _ -> erlang:raise(error, undef, Stack)
-            end
+        error:undef:Stack -> absent(erx_session_export, Stack, [])
     end.
+
+%% Returns Answer when the undef raised with Stack is a call of Module where Module
+%% is not loaded, as in a domain whose code path lacks it; otherwise raises the undef
+%% again, since any other undef is a fault of the code.
+absent(Module, [{Module, _, _, _} | _] = Stack, Answer) ->
+    case erlang:module_loaded(Module) of
+        false -> Answer;
+        true -> erlang:raise(error, undef, Stack)
+    end;
+absent(_Module, Stack, _Answer) ->
+    erlang:raise(error, undef, Stack).
 
 %% The program's display variable, as its spec's environment names it, if it does;
 %% an empty one names none.

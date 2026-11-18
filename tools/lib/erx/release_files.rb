@@ -147,8 +147,10 @@ module Erx
     #   reads, and a client domain's own script takes the same applications.
     # * ssh, the SSH domain's (docs/design-ssh.md, "The SSH domain"): asn1, crypto,
     #   public_key and ssh (docs/design-ssh.md lists no more). Only this script, session's,
-    #   app's and wifi's name crypto, so no other domain has it on its code path. No
-    #   manifest names it; the native domain tests boot it (NativeDomain).
+    #   app's and wifi's name crypto, so no other domain's script loads it; a domain boots
+    #   in interactive mode, so it can still load any application of the one domain
+    #   release on a call (docs/design-fiasco.md, `domains/erxos/...`). No manifest names
+    #   it; the native domain tests boot it (NativeDomain).
     # * app, an app's session, which the app template boots (docs/design-packaging.md,
     #   "The apps row"): the client side of the display as client's without the desktop's
     #   programs (erx_desk), the network client, asn1, crypto, public_key, ssl and inets,

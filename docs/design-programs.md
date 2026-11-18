@@ -663,8 +663,8 @@ handler allocates that buffer's range and lends it to the program
 itself, so the range is the handler's, as the buffer of every program is
 ([design-display.md](design-display.md#the-pixel-area)), and the starter,
 which holds the window, names the range's offset in the window's
-presents. A domain without the display client's pixel allocator refuses
-a buffer with `ENODEV`.
+presents. A domain without the display client's pixel allocator, or
+with no pixel area to `Peer`, refuses a buffer with `ENODEV`.
 
 The spec's `window => Display` starts the program with a window of its
 own on `Display`, a display whose `windows` grant the session holds, for

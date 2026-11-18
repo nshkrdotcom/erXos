@@ -17,9 +17,11 @@ of the answers the test queued, then `ok`; install/2 fills each `{hand, I}` with
 `100 * I`, plus 1,000 for each install before it, as the driver gives
 each copy a slot of its own, or answers the error the test set, or each of the answers, `ok` or an
 error, the test queued as a list, then `ok`; alloc/2 names its caller,
-the range's owner, and fails with `undef`, as a call of a module the
-release lacks does, when the test set `pixels` to `absent`; lend/2 never
-answers when the test set `lend` to `never`.
+the range's owner, and, when the test set `pixels` to `absent`, unloads the
+stand-in and fails with `undef` as the call of a module the release lacks
+does, or, set to `stopped`, answers `{error, none}` as erx_pixels does where
+its code is loaded but no allocator runs; lend/2 never answers when the test
+set `lend` to `never`.
 """.
 
 -export([setup/1, set/2, start/1, send/2, install/2, stop/3, alloc/2, lend/2, unlend/1]).
@@ -78,8 +80,18 @@ alloc(Peer, Bytes) ->
     tell({alloc, Peer, Bytes, self()}),
     case conf(pixels) of
         present -> {ok, 4096};
-        absent -> erlang:error(undef, [Peer, Bytes])
+        absent -> unloaded(erx_pixels, alloc, [Peer, Bytes]);
+        stopped -> {error, none}
     end.
+
+%% Fails as a call of Module:Function(Args) does where the release lacks Module: its code
+%% not loaded and the undef raised at the call. The stand-in loads again at its next call.
+%% Its functions tail-call this module, so no caller runs its code and the purges hold.
+unloaded(Module, Function, Args) ->
+    _ = code:purge(Module),
+    true = code:delete(Module),
+    true = code:soft_purge(Module),
+    erlang:raise(error, undef, [{Module, Function, Args, []}]).
 
 lend(Peer, Offset) ->
     tell({lend, Peer, Offset}),

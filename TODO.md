@@ -2481,17 +2481,15 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   manifest check that every row or template granted a facet of a `windows` service names a
   script that starts erx_memdraw and erx_win (with a seeded test planting the old session
   script), or the client side in SESSION_BASE, would make it hold by construction.
-* [Medium] display, a handler crashes instead of refusing with `ENODEV` when erx_win's code
-  loads but its allocator is not running (`erx_win:own/4` -> `erx_pixels:alloc/2`, a
-  gen_server call that exits noproc; `erx_session_export:open_window/1` and
-  `erx_prog_handler:window/1` map only `undef`): rc then prints `Done(no status)` and the
-  program gets no errno, against docs/design-display.md's ENODEV for a domain without the
-  client side. One owner should answer "no allocator" (`{error, none}` from erx_pixels when it
-  is not registered, which open_window/1 already maps), and erx_prog_handler:lend/2's undef
-  catch should be narrowed to erx_pixels itself as window/1's is. It fails safely (the
-  handler owns the window and its fids). Also unexplained: how erx_win's code loaded in a
-  session whose script did not hold it, when release_files.rb says a script's applications
-  alone are on its code path.
+* [Low] display, a window opened where no connection agent runs answers `noproc`, which is no
+  errno (`erx_win:own/4` passes `erx_area:open/1`'s `{error, noproc}` up through `erx_win:open/2`,
+  and `erx_session_export:open_window/1` maps only `none` to `ENODEV`): a program's first open
+  of /dev/draw would fail with it. `erx_pixels` answers `none` for every refusal of
+  `erx_area:open/1`; the window path should too, in the one place that opens the area.
+* [Low] display, "an undef of a module that is not loaded means the domain lacks it" has two
+  copies (`erx_prog_handler`'s `absent/3` and `erx_session_export:open_window/1`), and both
+  read a beam that fails to load as one that is absent; one helper in `erx`, which both
+  applications depend on, could tell them apart by `code:which/1`.
 * [Medium] dashboard, its slow work can start before its first frame is drawn
   (`examples/dashboard/lib/erx_dashboard/src/erx_dashboard.erl`, `erx_ui_lvgl_core`): the dashboard
   starts the quotes, the ground picture and the dial once `erx_ui:tree/2` answers, but an idle

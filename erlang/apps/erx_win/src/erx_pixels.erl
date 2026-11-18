@@ -53,11 +53,16 @@ start_link() ->
 A range of whole pages, at least Bytes, of the pixel area this domain shares
 with the display domain Peer, zeroed and owned by the caller: `{ok, Offset}`,
 `{error, enomem}` when no free run is long enough, or `{error, none}` when the
-domain has no area to Peer.
+domain has no area to Peer, as it has none where no allocator runs: a domain
+can load this module without starting erx_win, whose code lies in the one
+domain release every domain boots from.
 """.
 -spec alloc(pos_integer(), pos_integer()) -> {ok, non_neg_integer()} | {error, enomem | none}.
 alloc(Peer, Bytes) when is_integer(Peer), Peer > 0, is_integer(Bytes), Bytes > 0 ->
-    gen_server:call(?MODULE, {alloc, Peer, Bytes}, infinity).
+    try gen_server:call(?MODULE, {alloc, Peer, Bytes}, infinity)
+    catch
+        exit:{noproc, {gen_server, call, _}} -> {error, none}
+    end.
 
 -doc """
 A lease of the caller's whole range at Offset of Peer's area, held by the

@@ -11,8 +11,9 @@ process is the starter: it makes a pipe and starts a program with its
 ends. A start hands the program an end of each kind with the starter as
 holder; an end the starter does not hold is refused with everything
 undone; a holder entry the NIF cannot make
-answers its errno; a buffer where no allocator runs is refused with
-everything undone; a refused start drops every hand-off, gives back the lease and
+answers its errno; a buffer where the release lacks the allocator is refused
+with everything undone, and one where its code is loaded and no allocator
+runs with enodev; a refused start drops every hand-off, gives back the lease and
 lets the holder entry go; a buffer is allocated and lent by the handler
 and its offset answered; a start whose lend never answers is refused at
 its deadline, its handler killed with what it held; the program's notice reaches the pipe server as
@@ -41,6 +42,7 @@ handler_test_() ->
      [fun start_hands_each_end_to_the_program/1,
       fun a_holder_entry_the_nif_cannot_make_is_its_errno/1,
       fun a_buffer_without_an_allocator_is_refused/1,
+      fun a_buffer_where_no_allocator_runs_is_enodev/1,
       fun an_end_of_another_process_is_refused/1,
       fun refused_start_undoes_everything/1,
       fun buffer_is_lent_by_the_handler/1,
@@ -157,6 +159,18 @@ a_holder_entry_the_nif_cannot_make_is_its_errno(_) ->
 
 a_buffer_without_an_allocator_is_refused(_) ->
     erx_prog_handler_fakes:set(pixels, absent),
+    {ok, R, _W} = erx_pipe_srv:pipe(),
+    Answer = start(spec([{0, {pipe, R}}, {3, {buffer, 5, 8192}}])),
+    Calls = nif_calls(),
+    Started = receive {fake, {start, _, _}} = M -> M after 200 -> none end,
+    [?_assertEqual({error, enodev}, Answer),
+     ?_assertMatch([_], [N || {hand_drop, N} <- Calls]),
+     ?_assert(lists:member({holder_drop, ?PID}, Calls)),
+     ?_assertEqual(none, Started)].
+
+%% erx_pixels's code loaded and no allocator running: the domain has no area to lend from.
+a_buffer_where_no_allocator_runs_is_enodev(_) ->
+    erx_prog_handler_fakes:set(pixels, stopped),
     {ok, R, _W} = erx_pipe_srv:pipe(),
     Answer = start(spec([{0, {pipe, R}}, {3, {buffer, 5, 8192}}])),
     Calls = nif_calls(),

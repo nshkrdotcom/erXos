@@ -121,6 +121,12 @@ eventually(Fun, Expected, Tries) ->
         _ -> timer:sleep(10), eventually(Fun, Expected, Tries - 1)
     end.
 
+%% Where no allocator runs, as in a domain that has erx_win's code but did not
+%% start it, an alloc answers that the domain has no area rather than exiting.
+no_allocator_is_no_area_test() ->
+    ?assertEqual(undefined, whereis(erx_pixels)),
+    ?assertEqual({error, none}, erx_pixels:alloc(7, ?PAGE)).
+
 %% A request no client function makes, sent by any process, is refused and
 %% leaves the allocator running.
 raw_requests_are_refused_test() ->

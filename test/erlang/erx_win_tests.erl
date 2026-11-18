@@ -15,7 +15,8 @@
 %% kbd reads a typed rune and label takes a write; a kbd read too short for the head
 %% record fails with einval and leaves it for the next read; the single policy refuses
 %% resize/2; an area with no room for a second buffer answers enomem and leaves no
-%% window behind; no grant answers none.
+%% window behind; no grant answers none, as does a grant with no allocator running, which
+%% leaves no window behind.
 %% A window opened with buffer => none over a full area allocates nothing, answers its
 %% peer, rectangle and channel, refuses image/1, lease/2 and present/2, and presents a
 %% range of the area it does not own through present/3, at the range's own size after
@@ -257,6 +258,19 @@ no_room_test() ->
 
 no_grant_test() ->
     ?assertEqual({error, none}, erx_win:open(no_such_display, #{})).
+
+%% A domain that holds the grant and erx_win's code but runs no allocator has no pixel
+%% area for a buffer: the open answers none and leaves no window behind.
+no_allocator_test() ->
+    with(fun(#{grant := Grant}) ->
+        Pixels = whereis(erx_pixels),
+        kill(Pixels),
+        ?assertEqual({error, none}, erx_win:open(?SERVICE, #{name => <<"first">>})),
+        Root = erlang:unique_integer([positive]),
+        Dir = erlang:unique_integer([positive]),
+        {ok, _} = call(Grant, {attach, Root, ?NOFID, <<>>, <<"windows">>, 0}),
+        ?assertMatch({error, _}, call(Grant, {walk, Root, Dir, [<<"first">>]}))
+    end).
 
 %% A range allocated by someone else, as a program's handler lends one, and the area
 %% filled behind it: an open that allocated anything would answer enomem.

@@ -341,9 +341,11 @@ started with one, the draw connection on it and its `/dev` are made by
 `erx_session_export:start_window/1`, in the session's application,
 which the display domain's release does not ship, called in the
 handler's process ([The window tree](#the-window-tree), "A program's
-`/dev`"). In a domain whose release lacks the client side, the display
-domain's among them, the handler refuses a buffer and a window with
-`ENODEV`, so the name loads no client module there; the check allows
+`/dev`"). In a domain that runs no allocator and holds no `windows`
+grant, the display domain among them, the handler refuses a buffer and
+a window with `ENODEV`, from the allocator's and the window's `none`, and
+where a module of the client side is not on the code path at all, from
+its `undef`; nothing of the client side runs there. The check allows
 that one module that one name and refuses it in any other.
 
 ## Invariants
@@ -534,7 +536,9 @@ pure free list, `erx_pixels_core`, for each display's area it has open.
 `erx_area:open/1` takes, answers `{ok, Offset}`, the offset of a range
 of whole pages of that display's area, zeroed, `{error, enomem}` when no
 free run is long enough, or `{error, none}` when the domain has no area
-to `Peer`. The range belongs to
+to `Peer`, as where no allocator runs: every domain boots from the one
+domain release and can load `erx_pixels` without having started
+`erx_win`. The range belongs to
 the process that asked, which `erx_pixels` monitors, and its owner may
 lend it whole to one holder at a time: to a program it starts, with
 `lend(Peer, Offset)`, or to the draw connection that draws in its
