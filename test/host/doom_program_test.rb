@@ -12,8 +12,8 @@ require_relative '../../tools/lib/erx/production_image'
 require_relative '../../tools/lib/erx/runner'
 
 # The Doom example in the published media (DoomProgram): the build refuses a fork that is
-# not fetched, at another commit than the gitlink's, or changed, and the image takes
-# /bin/doom with libdoom.a attributed as the example.
+# not fetched or lacks the gitlink's commit, compiles that commit's own bytes, and the image
+# takes /bin/doom with libdoom.a attributed as the example.
 class DoomProgramTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   PLATFORM = Erx::Platform.development(ROOT)
@@ -28,25 +28,29 @@ class DoomProgramTest < Minitest::Test
     FileUtils.remove_entry(@root)
   end
 
-  def git(directory, *arguments)
+  def git(directory, *arguments, input: '')
     out, status = Open3.capture2e('git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c',
-                                  'commit.gpgsign=false', *arguments, stdin_data: '')
+                                  'commit.gpgsign=false', *arguments, stdin_data: input)
     raise out unless status.success?
 
     out.chomp
   end
 
-  # A superproject at @root whose gitlink pins the fork's first commit, the fork checked out
-  # beside it with a second commit, and the WAD where the fetch puts it. Returns both
-  # commits.
+  # The pinned commit's files, and the second commit's.
+  PINNED_FILES = { 'LICENSE' => 'license', 'doomgeneric/doom.c' => 'committed', 'doomgeneric/doom.h' => 'header' }.freeze
+  LATER_FILES = { 'LICENSE' => 'later license', 'doomgeneric/doom.c' => 'later' }.freeze
+
+  # A superproject at @root whose gitlink pins the fork's first commit (PINNED_FILES), the
+  # fork checked out beside it at a second commit (LATER_FILES), and the WAD where the
+  # fetch puts it. Returns both commits.
   def superproject
     fork = File.join(@root, FORK)
-    FileUtils.mkdir_p(fork)
+    FileUtils.mkdir_p(File.join(fork, 'doomgeneric'))
     git(fork, 'init', '-q')
-    commits = %w[first second].map do |text|
-      File.write(File.join(fork, 'LICENSE'), text)
-      git(fork, 'add', 'LICENSE')
-      git(fork, 'commit', '-q', '-m', text)
+    commits = [PINNED_FILES, LATER_FILES].map do |files|
+      files.each { |name, text| File.write(File.join(fork, name), text) }
+      git(fork, 'add', *files.keys)
+      git(fork, 'commit', '-q', '-m', files.fetch('doomgeneric/doom.c'))
       git(fork, 'rev-parse', 'HEAD')
     end
     git(@root, 'init', '-q')
@@ -59,12 +63,19 @@ class DoomProgramTest < Minitest::Test
 
   def check = Erx::DoomProgram.check_fetched(root: @root, runner: @runner, wad_sha256: Digest::SHA256.hexdigest('IWAD'))
 
+  # Every file below directory, by its path there, with its bytes.
+  def files_below(directory)
+    Dir.glob('**/*', File::FNM_DOTMATCH, base: directory).reject { File.directory?(File.join(directory, it)) }
+       .to_h { [it, File.binread(File.join(directory, it))] }
+  end
+
   def test_the_build_refuses_an_example_not_fetched
     error = assert_raises(Erx::Error) { check }
     assert_match(/not fetched: run `tools\/erx fetch --example doom`/, error.message)
   end
 
-  # The source offer names the gitlink's commit, so only that commit, unchanged, builds.
+  # The source offer names the gitlink's commit, so a checkout of any other commit, or
+  # one git status shows changed, is refused before anything is built.
   def test_the_build_takes_only_the_pinned_commit_unchanged
     first, second = superproject
     error = assert_raises(Erx::Error) { check }
@@ -80,6 +91,55 @@ class DoomProgramTest < Minitest::Test
     assert_match(/-dirty, not the commit/, error.message)
   end
 
+  # What the build compiles is the pinned commit's blobs, whatever the checkout holds,
+  # though check_fetched passes it: a file marked assume-unchanged and one marked
+  # skip-worktree carry edits git status does not see, an ignored file sits among the
+  # sources, a filter the checkout's own attributes and configuration name would rewrite
+  # every file git writes out, and a replace object stands in for one of the commit's
+  # blobs.
+  def test_the_build_compiles_the_pinned_commits_bytes
+    first, = superproject
+    fork = File.join(@root, FORK)
+    git(fork, 'checkout', '-q', first)
+    git(fork, 'update-index', '--assume-unchanged', 'doomgeneric/doom.c')
+    File.write(File.join(fork, 'doomgeneric/doom.c'), 'edited')
+    git(fork, 'update-index', '--skip-worktree', 'LICENSE')
+    File.write(File.join(fork, 'LICENSE'), 'edited')
+    File.write(File.join(fork, '.git/info/exclude'), "stdio.h\n")
+    File.write(File.join(fork, 'doomgeneric/stdio.h'), 'shadow')
+    File.write(File.join(fork, '.git/info/attributes'), "* filter=rewrite\n")
+    File.open(File.join(fork, '.git/config'), 'a') { it.write("[filter \"rewrite\"]\n\tsmudge = sed s/^/rewritten/\n") }
+    git(fork, 'replace', git(fork, 'rev-parse', "#{first}:doomgeneric/doom.h"), git(fork, 'hash-object', '-w', 'LICENSE'))
+    assert_empty git(fork, 'status', '--porcelain'), 'the fixture checkout reads as clean'
+    check
+
+    source = Erx::DoomProgram.snapshot(root: @root, runner: @runner)
+    assert_equal Erx::DoomProgram.source_directory(@root), source
+    assert_equal PINNED_FILES, files_below(File.dirname(source))
+    # A file an earlier snapshot holds does not outlive the next one.
+    File.write(File.join(source, 'stale.c'), 'stale')
+    Erx::DoomProgram.snapshot(root: @root, runner: @runner)
+    assert_equal PINNED_FILES, files_below(File.dirname(source))
+  end
+
+  # The snapshot writes only regular files at plain paths: a pinned commit holding a
+  # repository directory under any case of `.git`, or a symbolic link, is refused, and
+  # nothing of it is written.
+  def test_the_snapshot_refuses_what_is_not_a_plain_file
+    superproject
+    fork = File.join(@root, FORK)
+    blob = git(fork, 'hash-object', '-w', '--stdin', input: 'x')
+    config = git(fork, 'mktree', input: "100644 blob #{blob}\tconfig\n")
+    ["040000 tree #{config}\t.GIT\n", "120000 blob #{blob}\tlink\n"].each do |line|
+      commit = git(fork, 'commit-tree', git(fork, 'mktree', input: line), '-m', 'odd')
+      git(@root, 'update-index', '--cacheinfo', "160000,#{commit},#{FORK}")
+      git(@root, 'commit', '-q', '-m', 'repin')
+      error = assert_raises(Erx::Error) { Erx::DoomProgram.snapshot(root: @root, runner: @runner) }
+      assert_match(/pinned commit holds .*, which is not a regular file at a plain path/, error.message)
+      assert_empty files_below(File.join(@root, Erx::DoomProgram::SNAPSHOT))
+    end
+  end
+
   # /bin/doom is a program of the domain release, and its archive is attributed whole as
   # the example, with the GPL-2.0 text and Freedoom's license as its notices.
   def test_the_image_takes_bin_doom_as_the_example
@@ -92,7 +152,7 @@ class DoomProgramTest < Minitest::Test
     archive = parts.archives.first
     assert_equal ['/b/libdoom.a', Erx::PackProvenance::EXAMPLE_LABEL, 'example'], [archive.path, archive.label, archive.status]
     assert_includes Erx::PackProvenance::EXAMPLE_LICENSES, archive.license
-    assert_equal ["#{FORK}/LICENSE", File.join(File.dirname(Erx::DoomProgram::WAD), 'COPYING.txt')], archive.notices
+    assert_equal [File.join(Erx::DoomProgram::SNAPSHOT, 'LICENSE'), File.join(File.dirname(Erx::DoomProgram::WAD), 'COPYING.txt')], archive.notices
   end
 
   # The website's image (InteractiveBoot, `tools/erx boot --without-web`: the site's machine

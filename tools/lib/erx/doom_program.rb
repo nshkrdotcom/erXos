@@ -4,6 +4,7 @@
 
 require 'digest'
 require 'fileutils'
+require 'tmpdir'
 require_relative 'compile_memo'
 require_relative 'error'
 require_relative 'example_fetch'
@@ -22,8 +23,10 @@ module Erx
   # reads the fork and a tree without it builds every other image.
   #
   # The image's source offer names the fork at the commit the tree's gitlink records, so
-  # the build refuses a checkout at any other commit, or one with changes (check_fetched).
-  # No file of the fork enters the tree: its sources are compiled where the checkout lies.
+  # the build refuses a checkout at any other commit, or one with changes (check_fetched),
+  # and compiles that commit's own files, written from git's objects into a snapshot in
+  # the build tree (snapshot), never the checkout's working files, which can differ from
+  # the commit where git status does not show it. No file of the fork enters the tree.
   module DoomProgram
     NAME = 'doom'
     EXAMPLE = Submodules::TREE.examples.fetch(NAME)
@@ -38,10 +41,27 @@ module Erx
     # the one input registered example (PackProvenance#example_archive?).
     ARCHIVE = PackProvenance::EXAMPLE_ARCHIVE
     OBJECTS = 'build/doom/obj'
+    # The pinned commit's files (snapshot), which the build compiles and whose LICENSE the
+    # image's notices take.
+    SNAPSHOT = 'build/doom/source'
+    # git as SourceRevision runs it, with replace objects off, so no object of the fork's
+    # refs/replace stands in for one the commit names.
+    GIT = [*SourceRevision::GIT, '--no-replace-objects'].freeze
+    # A record of `git ls-tree -r -z`: a regular file's blob and its path. The file's mode,
+    # which nothing the build runs needs, is not kept.
+    TREE_ENTRY = /\A100(?:644|755) blob (\h{40})\t(.+)\z/m
+    # A part of a path the snapshot writes: plain ASCII, so no two parts that differ in
+    # bytes can name one file on a case-insensitive or normalizing filesystem except by
+    # case, which creating each file exclusively catches (write_blob). `.`, `..` and `.git`
+    # in any case are refused besides.
+    PATH_PART = /\A[A-Za-z0-9._+-]+\z/
+    # The header `git cat-file --batch` writes before each object's bytes.
+    BATCH_HEADER = /\A(\h{40}) blob (\d+)\n\z/
+    Entry = Data.define(:oid, :path)
     # The archive holds doomgeneric (GPL-2.0-or-later; the fork's LICENSE is the GPL-2.0
     # text) and the WAD (BSD-3-Clause; Freedoom's COPYING.txt).
     LICENSE = 'GPL-2.0-or-later AND BSD-3-Clause'
-    NOTICES = [File.join(EXAMPLE.path, 'LICENSE'), File.join(File.dirname(WAD), 'COPYING.txt')].freeze
+    NOTICES = [File.join(SNAPSHOT, 'LICENSE'), File.join(File.dirname(WAD), 'COPYING.txt')].freeze
 
     # doomgeneric's portable sources (its Makefile's SRC_DOOM) less the X11 platform part,
     # whose job erXos's doomgeneric_erxos.c does.
@@ -59,12 +79,16 @@ module Erx
 
     module_function
 
-    def source_directory(root) = File.join(root, EXAMPLE.path, 'doomgeneric')
+    # Where the build reads Doom's sources: their directory in the snapshot.
+    def source_directory(root) = File.join(root, SNAPSHOT, 'doomgeneric')
 
     # Refuses a published build in a tree whose fork is not fetched, is checked out at a
-    # commit other than the gitlink's, or holds changes, or whose WAD is not WAD_SHA256's:
-    # the image's source offer names the gitlink's commit, so the bytes built must be that
-    # commit's and the release's. wad_sha256 is a test's stand-in for WAD_SHA256.
+    # commit other than the gitlink's, or holds changes, or whose WAD is not WAD_SHA256's,
+    # before anything is built. The bytes compiled are the gitlink's commit whatever the
+    # checkout holds (snapshot); this refusal is the published build's diagnostic for a
+    # checkout that does not match it, which the image's record would otherwise mark as a
+    # tree that differs from its commit (SourceRevision) and refuse to publish without
+    # naming the fork. wad_sha256 is a test's stand-in for WAD_SHA256.
     def check_fetched(root:, runner:, wad_sha256: WAD_SHA256)
       fork = File.join(root, EXAMPLE.path)
       unless File.exist?(File.join(fork, '.git')) && File.file?(File.join(root, WAD))
@@ -82,8 +106,34 @@ module Erx
                    'published medium offers as its source: check that commit out, with no changes'
     end
 
+    # Writes the pinned commit's files into SNAPSHOT under root, made afresh, each with the
+    # bytes of its blob in the fork's object store, and answers source_directory. What the
+    # build compiles is then that commit, as the fetch verified its objects, by
+    # construction: neither the checkout's working files (an edit under assume-unchanged
+    # or skip-worktree, an ignored file) nor what git does when it writes a file out (the
+    # filters and line-end conversion that the checkout's own attributes and configuration
+    # name, which `git archive` applies too) reach it.
+    def snapshot(root:, runner:)
+      commit = pinned_commit(root: root, runner: runner)
+      directory = File.join(root, SNAPSHOT)
+      FileUtils.rm_rf(directory)
+      FileUtils.mkdir_p(directory)
+      Dir.mktmpdir('erx-doom-snapshot-') do |work|
+        listing, wanted, answers = %w[listing wanted answers].map { File.join(work, it) }
+        fork_git(['ls-tree', '-r', '-z', '--full-tree', commit], root: root, runner: runner, name: 'doom-tree', stdout: listing)
+        entries = File.binread(listing).split("\0").map { tree_entry(it) }
+        File.write(wanted, entries.map { "#{it.oid}\n" }.join)
+        fork_git(%w[cat-file --batch], root: root, runner: runner, name: 'doom-blobs', stdin: wanted, stdout: answers)
+        File.open(answers, 'rb') do |batch|
+          entries.each { write_blob(batch, it, directory: directory) }
+          raise Error, "git cat-file answered more than the #{entries.size} blobs of #{commit}" unless batch.eof?
+        end
+      end
+      source_directory(root)
+    end
+
     def pinned_commit(root:, runner:)
-      result = runner.run([*SourceRevision::GIT, 'rev-parse', '--verify', "HEAD:#{EXAMPLE.path}"],
+      result = runner.run([*GIT, 'rev-parse', '--verify', "HEAD:#{EXAMPLE.path}"],
                           name: 'doom-gitlink', deadline: SourceRevision::DEADLINE, chdir: root, env: GitEnvironment.isolated)
       commit = File.binread(result.fetch('log')).chomp
       raise Error, "the tree's gitlink for #{EXAMPLE.path} is not a commit: #{commit.dump}" unless commit.match?(/\A\h{40}\z/)
@@ -91,6 +141,41 @@ module Erx
       commit
     end
     private_class_method :pinned_commit
+
+    def fork_git(arguments, root:, runner:, name:, stdin: nil, stdout: nil)
+      runner.run([*GIT, *arguments], name: name, deadline: SourceRevision::DEADLINE, chdir: File.join(root, EXAMPLE.path),
+                                     env: GitEnvironment.isolated, stdin: stdin, stdout: stdout)
+    end
+    private_class_method :fork_git
+
+    # A regular file of the commit's tree, at a path of PATH_PART parts below the snapshot.
+    def tree_entry(record)
+      oid, path = TREE_ENTRY.match(record)&.captures
+      unless oid && path.split('/', -1).all? { |part| PATH_PART.match?(part) && !%w[. ..].include?(part) && !part.casecmp?('.git') }
+        raise Error, "#{EXAMPLE.path}'s pinned commit holds #{record.dump}, which is not a regular file at a plain path"
+      end
+
+      Entry.new(oid: oid, path: path)
+    end
+    private_class_method :tree_entry
+
+    # Reads entry's blob from batch, `git cat-file --batch`'s answer, as a cursor: the
+    # header naming the object, its type and size, then the bytes and a newline. The file
+    # is created exclusively, so two paths that name one file fail instead of overwriting.
+    def write_blob(batch, entry, directory:)
+      oid, size = BATCH_HEADER.match(batch.gets("\n").to_s)&.captures
+      bytes = batch.read(size.to_i) if oid == entry.oid
+      unless bytes&.bytesize == size.to_i && batch.read(1) == "\n"
+        raise Error, "git cat-file did not answer #{entry.oid}, #{entry.path}'s blob"
+      end
+
+      path = File.join(directory, entry.path)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.open(path, File::WRONLY | File::CREAT | File::EXCL | File::BINARY) { it.write(bytes) }
+    rescue SystemCallError => error
+      raise Error, "cannot write #{entry.path} of #{EXAMPLE.path}'s pinned commit into #{SNAPSHOT}: #{error.message}"
+    end
+    private_class_method :write_blob
 
     # /bin/doom, linked as a task over libdoom.a and archives, musl's libc.a and the
     # compiler's runtime, by native (NativeRoot), into directory.
@@ -106,7 +191,8 @@ module Erx
 
       # NativeRoot#build_task_receipted's result, with archive, libdoom.a's path. The fork
       # and the WAD are checked first (DoomProgram.check_fetched, which
-      # ProductionImage#build_medium runs).
+      # ProductionImage#build_medium runs), and the sources compiled are a snapshot of the
+      # pinned commit taken here (DoomProgram.snapshot).
       def call
         archive = library
         @native.build_task_receipted(name: NAME, sources: NativeRoot::PROGRAM, directory: @directory,
@@ -119,7 +205,7 @@ module Erx
       # libdoom.a from Doom, the glue and wad.S, with the task code generation and musl's
       # headers.
       def library
-        source = DoomProgram.source_directory(@root)
+        source = DoomProgram.snapshot(root: @root, runner: @runner)
         objects = File.join(@root, OBJECTS)
         FileUtils.mkdir_p(objects)
         memo = CompileMemo.new(root: @root, runner: @runner)

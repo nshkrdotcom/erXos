@@ -7766,11 +7766,12 @@ to the corpus and follow rc
 
 ## Security residuals
 
-* [Medium] build, Doom's source identity (`tools/lib/erx/doom_program.rb`, the clean-checkout
-  check near line 77): a matching HEAD and a clean `git status` are taken as the pinned commit,
-  then the working files are compiled, so a file marked `assume-unchanged` carries edited bytes
-  while the source offer names the original commit. Compile a snapshot of the pinned commit, or
-  check each input against its blob.
+* [Low] build, the source revision of a tree holding the Doom fork (`tools/lib/erx/source_revision.rb`):
+  its `git status` recurses into `examples/doom/doom` and runs there under the fork's own
+  configuration and attributes, so a clean filter they name runs, and a fork checked out away from
+  its gitlink marks the tree dirty although the build compiles only the gitlink's commit
+  (`DoomProgram.snapshot`); `DoomProgram.check_fetched` refuses that checkout first. Leaving the
+  examples out of the status would make both hold by construction and let the refusal go.
 * [Medium] apps, an app's directory ([design-packaging.md](docs/design-packaging.md#invariants), PK4): until
   the storage service roots an app's `data` grant at `apps/NAME/SIGNER/` (`tree apps`), apps hold no `data`
   grant (the files-service item under Major initiatives) and the directory half of PK4's QEMU test waits; and
