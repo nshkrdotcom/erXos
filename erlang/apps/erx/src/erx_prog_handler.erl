@@ -52,6 +52,14 @@ this module, which the display domain's release ships, names none of the
 window library's modules; its one client name is the pixel allocator's,
 erx_pixels, G9's one exception (docs/design-display.md, G9).
 
+A program started with neither a window nor a buffer gets the same window at
+its first open of `/dev/draw` (docs/design-programs.md, "The handler";
+erx_prog_handler_core): on the display its `display` variable names, or the
+session's only display (erx_session_export:displays/0). No display refuses the
+open with `enodev` and the program runs on; a window that fails once its
+opening began ends the handler `{shutdown, {window, Errno}}`, and the program
+with it.
+
 start/1 waits 30 seconds for the handler's answer; start/2, the tests'
 seam, takes the wait in milliseconds. Past it, the start kills the
 handler and answers `{error, timeout}`: a handler stuck in a call to the
@@ -209,10 +217,11 @@ serve(#{starter := Starter, key := Key} = Init) ->
 %% serve/1's monitor of the starter stays, and the loop reads its 'DOWN'
 %% as a stop.
 init(Starter, #{pid := Pid} = Spec) ->
-    Files = (maps:with([window, image], Spec))#{table => erx_file_description:table(),
-                                         within => maps:get(within, Spec, all),
-                                         cwd => maps:get(cwd, Spec, undefined),
-                                         slots => erx_program:slots(Spec)},
+    Files = (maps:merge(maps:with([window, image], Spec), display_variable(Spec)))#{
+              table => erx_file_description:table(),
+              within => maps:get(within, Spec, all),
+              cwd => maps:get(cwd, Spec, undefined),
+              slots => erx_program:slots(Spec)},
     case erx_prog_handler_core:new(Pid, maps:get(fds, Spec, []), Files) of
         {ok, Core, Actions} ->
             H = #h{core = Core, starter = Starter, spec = maps:without([fds, within, window], Spec),
@@ -292,6 +301,8 @@ act({lend, Peer, Bytes}, H) ->
     {event, lend(Peer, Bytes), H};
 act({window, Display}, H) ->
     {event, window(Display), H};
+act({first_window, Named}, H) ->
+    {event, {first_window, first_window(Named)}, H};
 act({start, Fds}, #h{spec = Spec} = H) ->
     %% A spec of the wrong shape is the starter's, refused as einval.
     Started = try erx_program:start(Spec#{fds => Fds})
@@ -432,6 +443,44 @@ window(Display) ->
                 _ -> erlang:raise(error, undef, Stack)
             end
     end.
+
+%% The window of a program's first open of /dev/draw, on the display Named
+%% chooses among those the session holds (erx_prog_handler_core:display/2): enodev
+%% for none, decided before anything opens, else the window's /dev tree as
+%% window/1 opens it, or its refusal, which comes once the opening has begun.
+first_window(Named) ->
+    case erx_prog_handler_core:display(Named, displays()) of
+        {ok, Display} ->
+            case window(Display) of
+                {windowed, DevGrant} -> {ok, DevGrant};
+                {refused, Errno} -> {failed, Errno}
+            end;
+        {error, enodev} = Refused ->
+            Refused
+    end.
+
+%% The displays the session holds (erx_session_export:displays/0), none in a domain
+%% without the session's application. Only the undef of erx_session_export where it
+%% is not loaded says so; any other undef is a fault of the code, raised again.
+displays() ->
+    try erx_session_export:displays()
+    catch
+        error:undef:Stack ->
+            case {Stack, erlang:module_loaded(erx_session_export)} of
+                {[{erx_session_export, _, _, _} | _], false} -> [];
+                _ -> erlang:raise(error, undef, Stack)
+            end
+    end.
+
+%% The program's display variable, as its spec's environment names it, if it does;
+%% an empty one names none.
+display_variable(#{env := Env}) when is_list(Env) ->
+    case [Value || <<"display=", Value/binary>> <- Env, Value =/= <<>>] of
+        [Value | _] -> #{display => Value};
+        [] -> #{}
+    end;
+display_variable(_Spec) ->
+    #{}.
 
 %% A monitor of the pipe server, or none while it is between restarts.
 watch_pipes() ->

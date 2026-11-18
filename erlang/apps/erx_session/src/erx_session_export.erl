@@ -69,7 +69,7 @@ allow answers `ebadf`, as on UNIX.
 
 -include("generated/erx_abi.hrl").
 
--export([start_window/1]).
+-export([start_window/1, displays/0]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, write/4, make/4,
          readdir/4, statfs/1, clunk/2]).
 
@@ -133,6 +133,17 @@ start_window(Display) ->
                              clipboard => erx_win:clipboard(Display)}},
         {ok, _} ?= tree(erx_fs:start_link(?MODULE, Args, rw, #{client => own, ends_with => self()}))
     end.
+
+-doc """
+The displays whose `windows` grant the domain holds, by the name its registry
+gives each (docs/design-display.md, "Choosing a display"). The registry names a
+facet after its service and does not record its interface, so this answers
+`display`, the name every manifest gives its one display's `windows` service, when
+the domain holds a facet of that name (TODO.md, "the displays a session holds").
+""".
+-spec displays() -> [atom()].
+displays() ->
+    [display || erx:cap(display) =/= undefined].
 
 %% The window, or enodev in a domain that holds no grant of Display or whose release
 %% lacks the display client, whose erx_win is then not loaded; any other undef is a

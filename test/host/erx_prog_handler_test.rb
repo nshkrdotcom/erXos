@@ -56,6 +56,13 @@ class ErxProgHandlerTest < Minitest::Test
     'a /dev tree grant that does not end with the handler' =>
       Mutant.new(file: EXPORT, original: '#{client => own, ends_with => self()}', replacement: '#{client => own}',
                  caught_by: 'a_refused_windowed_start_ends_what_it_made'),
+    'a first window that fails once opening answers the errno and keeps the handler' =>
+      Mutant.new(file: CORE,
+                 original: "first_window(C, _Slot, _Case, _Path, _Flags, _Mode, {failed, Errno}) when is_atom(Errno) ->\n" \
+                           '    {C#core{phase = {ended, {shutdown, {window, Errno}}}, queue = queue:new()}, []}.',
+                 replacement: "first_window(C, Slot, Case, _Path, _Flags, _Mode, {failed, Errno}) when is_atom(Errno) ->\n" \
+                              '    file_reply(C, Case, Slot, {error, Errno}).',
+                 caught_by: 'a_first_draw_the_connection_refuses_ends_the_program'),
     'a window check against the export names of a program without a window' =>
       Mutant.new(file: CORE, original: '|| Dir := Names <- exported(Window), Name <- Names]',
                  replacement: '|| Dir := Names <- exported(), Name <- Names]', caught_by: 'window_test_'),

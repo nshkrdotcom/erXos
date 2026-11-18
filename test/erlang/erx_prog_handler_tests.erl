@@ -58,7 +58,11 @@ fun an_end_behind_a_closed_port_keeps_its_status/1,
       fun starters_exit_stops_the_program/1,
       fun pipe_server_loss_reaches_the_program/1,
       fun a_window_without_a_display_is_enodev/1,
-      fun a_refused_windowed_start_ends_what_it_made/1]}.
+      fun a_refused_windowed_start_ends_what_it_made/1,
+      fun a_first_draw_without_a_display_is_enodev_and_retried/1,
+      fun a_first_draw_the_connection_refuses_ends_the_program/1,
+      fun window_names_before_draw_are_enoent/1,
+      fun opens_behind_the_first_draw_meet_its_tree/1]}.
 
 setup() ->
     erx_pipe_fake_nif:setup(self()),
@@ -392,6 +396,116 @@ a_refused_windowed_start_ends_what_it_made(_) ->
     [?_assertEqual({error, enomem}, Answer),
      ?_assertEqual(3, length(Monitors)),
      ?_assertEqual([ended, ended, ended], Ended)].
+
+%% A window at a program's first open of /dev/draw (docs/design-programs.md, "The
+%% handler"), over the stand-ins: the session's display is the facet `display` of its
+%% registry, and every window, connection and open is told to the test.
+-define(OPEN(Slot, Path), {erx_prog, 1, Slot, {file, lopen, Path, 2}}).
+-define(REPLY(Slot, Reply), {erx_prog, 1, Slot, Reply}).
+
+%% With no display, the open is enodev, the program runs on, and an open once the
+%% session holds one opens the window and then draw on the program's own /dev.
+a_first_draw_without_a_display_is_enodev_and_retried(_) ->
+    first_draw(fun() ->
+                       {H, Port, []} = started([]),
+                       H ! {erx_channel, Port, ?OPEN(4, <<"/dev/draw">>)},
+                       NoDisplay = fake(send),
+                       Alive = is_process_alive(H) andalso not closed(Port, 5),
+                       persistent_term:put({erx, facets}, #{display => self()}),
+                       H ! {erx_channel, Port, ?OPEN(5, <<"/dev/draw">>)},
+                       Windows = told(opened),
+                       Relayed = told(open),
+                       [?_assertEqual({send, Port, ?REPLY(4, {error, enodev})}, NoDisplay),
+                        ?_assert(Alive),
+                        ?_assertMatch([_], Windows),
+                        ?_assertMatch([{<<"/dev/draw">>, [#{provider := {grant, _, <<"export">>}}]}], Relayed)]
+               end).
+
+%% A display that grants the window and then refuses its draw connection ends the
+%% handler, naming the errno, and the program with it; the window and its /dev end
+%% with the handler, and the open is never answered.
+a_first_draw_the_connection_refuses_ends_the_program(_) ->
+    first_draw(fun() ->
+                       persistent_term:put({erx, facets}, #{display => self()}),
+                       persistent_term:put(erx_draw_conn, true),
+                       {H, Port, []} = started([]),
+                       H ! {erx_channel, Port, ?OPEN(4, <<"/dev/draw">>)},
+                       [Window] = told(opened),
+                       Watch = monitor(process, Window),
+                       Down = down(H),
+                       WindowEnded = receive {'DOWN', Watch, process, Window, _} -> true after ?WAIT -> false end,
+                       Closed = closed(Port, 200),
+                       [?_assertEqual({shutdown, {window, enomem}}, Down),
+                        ?_assert(WindowEnded),
+                        ?_assert(Closed),
+                        ?_assertEqual([], [Sent || {fake, {send, _, _} = Sent} <- mailbox_all()])]
+               end).
+
+%% Before draw, ctl and kbd go to the shared /dev, which answers enoent, and open no
+%% window.
+window_names_before_draw_are_enoent(_) ->
+    first_draw(fun() ->
+                       persistent_term:put({erx, facets}, #{display => self()}),
+                       {H, Port, []} = started([]),
+                       H ! {erx_channel, Port, ?OPEN(4, <<"/dev/ctl">>)},
+                       Ctl = fake(send),
+                       H ! {erx_channel, Port, ?OPEN(5, <<"/dev/kbd">>)},
+                       Kbd = fake(send),
+                       Windows = told(opened),
+                       [?_assertEqual({send, Port, ?REPLY(4, {error, enoent})}, Ctl),
+                        ?_assertEqual({send, Port, ?REPLY(5, {error, enoent})}, Kbd),
+                        ?_assertEqual([], Windows)]
+               end).
+
+%% Opens sent behind the first open of draw, ctl and kbd as Doom sends them, wait
+%% while its window opens and then go to the program's own /dev; a second draw opens
+%% no second window.
+opens_behind_the_first_draw_meet_its_tree(_) ->
+    first_draw(fun() ->
+                       persistent_term:put({erx, facets}, #{display => self()}),
+                       {H, Port, []} = started([]),
+                       [H ! {erx_channel, Port, ?OPEN(Slot, Path)}
+                        || {Slot, Path} <- [{4, <<"/dev/draw">>}, {5, <<"/dev/ctl">>}, {6, <<"/dev/kbd">>},
+                                            {7, <<"/dev/draw">>}]],
+                       Relayed = [told_one(open) || _ <- lists:seq(1, 4)],
+                       Windows = told(opened),
+                       [?_assertMatch([_], Windows),
+                        ?_assertMatch([{<<"/dev/draw">>, [_]}, {<<"/dev/ctl">>, [_]}, {<<"/dev/kbd">>, [_]},
+                                       {<<"/dev/draw">>, [_]}], Relayed),
+                        ?_assertEqual(1, length(lists:usort([Dev || {_, Dev} <- Relayed])))]
+               end).
+
+%% Case with the stand-ins telling the test, and the registry and the connection's
+%% refusal cleared after it.
+first_draw(Case) ->
+    ok = erx_fs_version:init(),
+    persistent_term:put(erx_win, self()),
+    try Case()
+    after
+        [persistent_term:erase(Key) || Key <- [erx_win, {erx, facets}, erx_draw_conn]]
+    end.
+
+%% Every event of Kind the stand-ins told within 200 ms, as the window opened or as
+%% the open's path and the program's entries at /dev.
+told(Kind) ->
+    case told_one(Kind, 200) of
+        none -> [];
+        Event -> [Event | told(Kind)]
+    end.
+
+told_one(Kind) -> told_one(Kind, ?WAIT).
+
+told_one(opened, Wait) ->
+    receive {erx_win, {opened, Window}} -> Window after Wait -> none end;
+told_one(open, Wait) ->
+    receive
+        {erx_win, {open, Path, Table}} -> {Path, [Entry || #{point := [<<"dev">>]} = Entry <- Table]}
+    after Wait -> none
+    end.
+
+%% Every message waiting, the stand-ins' reports among them.
+mailbox_all() ->
+    receive Message -> [Message | mailbox_all()] after 100 -> [] end.
 
 %% The live grants of erx_fs, found by their initial call.
 dev_grants() ->

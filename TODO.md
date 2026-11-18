@@ -3783,6 +3783,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   reads at the display grant. Bound what one program's tree may hold on the session's grant (a share of
   the pool per tree, or a grant of the display per windowed program), as the clipboard item above needs
   too.
+* [Medium] session, `erx_session_export` (`displays/0`), the displays a session holds: a program's
+  first open of `/dev/draw` opens its window on the display its `display` variable names or on the
+  session's only display ([design-display.md](docs/design-display.md#choosing-a-display)), which needs
+  the names of the `windows` grants among the session's facets. The registry (`{erx, facets}`) keeps
+  each facet under its service's name and records no interface, and a windows grant is a bare pid like
+  a `net` or `clock` facet, so `displays/0` answers the facet named `display`, the name every manifest
+  gives its one `windows` service. A session holding a second display under another name gets no window
+  on it (`ENODEV`), and one holding both opens on `display` rather than refusing. Have the domain
+  service mark the `windows` grants in what it installs (`erx_domain_mints:installed_facet/3`, which
+  already knows `windows`), and read them here.
 * [Medium] session, `erx_session_export`: the export serves the fixed tree alone. The tree of each of
   the session's local providers, named from the session's counter when it is mounted
   (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands

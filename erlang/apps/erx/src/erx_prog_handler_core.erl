@@ -117,6 +117,26 @@ and `enomem` for every other refusal: a full capability table refuses the
 driver's pass, which stops the program, so `emfile` comes only from
 `liberx`'s own descriptor table.
 
+**A window at the first open of `/dev/draw`** (docs/design-programs.md,
+"The handler"). A program started with neither a window nor a buffer gets
+a window when it opens `/dev/draw` and its table resolves that open to the
+shared `/dev`, which holds no `draw`: the open's path, read from the
+working directory, is `/dev/draw` with no `..`, and no entry of the table
+lies below `/dev` there. A table a window start would refuse (refusal/2:
+`EACCES` for an entry at `/dev` that cannot write) refuses the open and
+keeps nothing. Otherwise the action `{first_window, Named}`, `Named` the
+program's `display` variable or `none`, has the effect side choose the
+display (display/2) and open the window as for `window => Display`. Its
+answer comes back within the same step, so every frame the program sent
+meanwhile waits in the handler's mailbox and then meets the new tree. A
+display the session does not hold answers the open `ENODEV` and keeps
+nothing, and a later open tries again. A window opened puts the program's
+own `/dev` in its table and relays the open there; it is the one window,
+since the table then resolves `/dev/draw` to that tree. A failure once the
+opening began ends the handler `{shutdown, {window, Errno}}`, and the
+program with it, so the window, its buffer, the connection and the tree go
+back through their owner's end.
+
 Every other event the core does not expect in its phase leaves the state
 as it was and does nothing: the handler's mailbox is reached only by
 session code and the program's own driver.
@@ -125,7 +145,7 @@ session code and the program's own driver.
 -include("generated/erx_abi.hrl").
 -include_lib("kernel/include/file.hrl").
 
--export([new/3, step/2, phase/1, exported/0, exported/1, resolve_image/3]).
+-export([new/3, step/2, phase/1, exported/0, exported/1, resolve_image/3, display/2]).
 -export_type([core/0, event/0, action/0, starter_fd/0, files/0]).
 
 %% A descriptor as the starter names it: a pipe end the starter holds, or a
@@ -160,18 +180,19 @@ session code and the program's own driver.
                | {file_opened, slot(), {ok, description()} | {error, atom()}}
                | {file_done, slot(), {ok, binary()} | eof | ok | {error, atom()}}
                | {file_copied, slot(), ok | {error, atom()}}
+               | {first_window, {ok, DevGrant :: pid()} | {error, enodev} | {failed, atom()}}
                | ignored.
 
 %% What the starter hands for the program's files: its namespace table
 %% (prim_file:erx_mounts/0), the narrowing, `all` for the whole table or each
 %% absolute path the program reaches with its rights there, the program's
 %% working directory, its data area's slots, for a program with a window,
-%% the display it is opened on, the name of the session's grant of it, and the
+%% the display it is opened on, the name of the session's grant of it, the
 %% program's image as the spec names it, which is resolved through the table when
-%% it is an absolute path.
+%% it is an absolute path, and the program's `display` variable, when it has one.
 -type files() :: #{table := erx_path:table(), within := all | [{binary(), erx_abi_enums:files_rights()}],
                    cwd := binary(), slots := 1..?ERX_PROG_DATA_SLOTS_MAX, window => atom(),
-                   image => term()}.
+                   image => term(), display => binary()}.
 -type slot() :: non_neg_integer().
 %% An open-file description, a session process the effect side made.
 -type description() :: pid().
@@ -189,6 +210,7 @@ session code and the program's own driver.
                 | {inherit, term()}
                 | {lend, pos_integer(), pos_integer()}
                 | {window, atom()}
+                | {first_window, none | binary()}
                 | {start, [program_fd()]}
                 | {answer, {ok, [{0..1023, non_neg_integer()}]} | {error, atom()}}
                 | {hand_drop, pos_integer()}
@@ -212,7 +234,8 @@ session code and the program's own driver.
                 | {clunk, description(), slot()}.
 
 %% The reason the handler exits with once it has ended.
--type reason() :: normal | program_lost | {shutdown, {program_exit, erx_prog:status()}}.
+-type reason() :: normal | program_lost | {shutdown, {program_exit, erx_prog:status()}}
+                | {shutdown, {window, atom()}}.
 
 %% What waits to reach the program, oldest first: a frame to send, or a
 %% hand-off to install, whose filled report is then sent.
@@ -232,6 +255,13 @@ session code and the program's own driver.
                %% reserving: the display the program's window is still to be
                %% opened on, or none.
                window = none :: none | {window, atom()},
+               %% running: whether an open of /dev/draw opens the program's window,
+               %% for one started with neither a window nor a buffer that has none
+               %% yet: {first, Named}, Named its display variable or none; or the
+               %% open whose window is being opened.
+               first = never :: never | {first, none | binary()}
+                              | {opening, slot(), file_lopen | file_lcreate, binary(), non_neg_integer(),
+                                 none | non_neg_integer(), none | binary()},
                queue = queue:new() :: queue:queue(outgoing()),
                %% The head of the queue is out: sent and not yet answered, or
                %% answered busy and owed until the program frees room; or a
@@ -286,7 +316,8 @@ table holds an entry at `/dev` itself that cannot write.
 -spec new(term(), term(), files()) -> {ok, core(), [action()]} | {error, einval | enoent | eacces}.
 new(Pid, Fds, #{table := Table, within := Within, cwd := Cwd, slots := Slots} = Files)
   when ?IS_PID(Pid), is_list(Fds), is_integer(Slots), Slots >= 1, Slots =< ?ERX_PROG_DATA_SLOTS_MAX,
-       not is_map_key(window, Files) orelse is_atom(map_get(window, Files)) ->
+       not is_map_key(window, Files) orelse is_atom(map_get(window, Files)),
+       not is_map_key(display, Files) orelse is_binary(map_get(display, Files)) ->
     %% A display may take any name, none included, so its absence is not an atom.
     Window = case Files of
                  #{window := Display} -> {window, Display};
@@ -299,7 +330,7 @@ new(Pid, Fds, #{table := Table, within := Within, cwd := Cwd, slots := Slots} = 
         {_, _, {error, _} = Refused} -> Refused;
         {true, {ok, Place}, {ok, Narrowed}} ->
             C = #core{pid = Pid, todo = Fds, window = Window, table = Narrowed, cwd = Place,
-                      slots = Slots},
+                      slots = Slots, first = first(Window, Fds, Files)},
             case Files of
                 #{image := <<"/", _/binary>> = Image} ->
                     {ok, C#core{phase = resolving}, [{resolve, Image, Table}]};
@@ -398,6 +429,32 @@ exported({window, Display}) when is_atom(Display) ->
     #{dev := Devices} = Names = exported(),
     Names#{dev := Devices ++ [<<"draw">>, <<"ctl">>, <<"kbd">>, <<"mouse">>, <<"wctl">>, <<"label">>,
                               <<"clipboard">>]}.
+
+%% Whether the program may get a window at its first open of /dev/draw: only
+%% one started with neither a window nor a buffer.
+first(none, Fds, Files) ->
+    case [Buffer || {_, {buffer, _, _}} = Buffer <- Fds] of
+        [] -> {first, maps:get(display, Files, none)};
+        [_ | _] -> never
+    end;
+first({window, _}, _Fds, _Files) -> never.
+
+-doc """
+The display a program's window opens on at its first open of `/dev/draw`
+(docs/design-display.md, "Choosing a display"), of `Displays`, the displays
+the session holds: the one its `display` variable `Named` names, or, for
+`Named` `none`, the session's only display, the one it holds when it holds
+exactly one; else `{error, enodev}`. A name is matched against the
+displays held, so no name makes an atom.
+""".
+-spec display(none | binary(), [atom()]) -> {ok, atom()} | {error, enodev}.
+display(none, [Display]) -> {ok, Display};
+display(none, _Displays) -> {error, enodev};
+display(Named, Displays) when is_binary(Named) ->
+    case [Display || Display <- Displays, atom_to_binary(Display) =:= Named] of
+        [Display | _] -> {ok, Display};
+        [] -> {error, enodev}
+    end.
 
 %% A window and a buffer are two ways to draw, and a spec names at most one.
 drawn_once(none, _Fds) -> true;
@@ -649,8 +706,23 @@ step(#core{phase = running, pending = Pending} = C, {file_copied, Slot, Result})
         {{{copied, Case, _}, Rest}, {error, Errno}} -> file_reply(C#core{pending = Rest}, Case, Slot, {error, Errno});
         _ -> {C, []}
     end;
+step(#core{phase = running, first = {opening, Slot, Case, Path, Flags, Mode, Named}} = C,
+     {first_window, Result}) ->
+    first_window(C#core{first = {first, Named}}, Slot, Case, Path, Flags, Mode, Result);
 step(C, _Event) ->
     {C, []}.
+
+%% The answer to a first window: an open the effect side refused before anything
+%% opened fails and keeps nothing; a window opened puts the program's own /dev in its
+%% table and relays the open there, where no later open of /dev/draw meets the shared
+%% /dev; a window that failed once its opening began ends the handler.
+first_window(C, Slot, Case, _Path, _Flags, _Mode, {error, enodev}) ->
+    file_reply(C, Case, Slot, {error, enodev});
+first_window(#core{table = Table} = C, Slot, Case, Path, Flags, Mode, {ok, DevGrant})
+  when is_pid(DevGrant) ->
+    relay_open(C#core{first = never, table = window_dev(Table, DevGrant)}, Slot, Case, Path, Flags, Mode);
+first_window(C, _Slot, _Case, _Path, _Flags, _Mode, {failed, Errno}) when is_atom(Errno) ->
+    {C#core{phase = {ended, {shutdown, {window, Errno}}}, queue = queue:new()}, []}.
 
 %% A stop of the program with Status, asked once: the action end_program.
 stop(#core{stopping = false} = C, Status) -> {C#core{stopping = true}, [{end_program, Status}]};
@@ -700,8 +772,9 @@ from_program(#core{opens = Opens} = C, {erx_prog, _, Slot, {file, clunk, Open}})
     end.
 
 %% An lopen or an lcreate, relayed to be resolved over the program's
-%% namespace from its working directory, or refused.
-open(#core{opens = Opens, pending = Pending, table = Table, cwd = Cwd} = C, Slot, Case, Path, Flags, Mode) ->
+%% namespace from its working directory, or refused; or, for the program's
+%% first open of /dev/draw, its window opened first.
+open(#core{opens = Opens, pending = Pending} = C, Slot, Case, Path, Flags, Mode) ->
     Opening = length([P || P <- maps:values(Pending), P =:= file_lopen orelse P =:= file_lcreate]),
     if
         Flags band bnot ?OPEN_FLAGS =/= 0; Flags band ?ERX_P9_O_ACCMODE =:= ?ERX_P9_O_ACCMODE;
@@ -710,7 +783,54 @@ open(#core{opens = Opens, pending = Pending, table = Table, cwd = Cwd} = C, Slot
         map_size(Opens) + Opening >= ?ERX_PROG_FDS_MAX ->
             file_reply(C, Case, Slot, {error, emfile});
         true ->
-            relay(C, Slot, Case, {open, Slot, Path, Flags, create_mode(Flags, Mode), Table, Cwd})
+            case first_draw(C, Path, Flags) of
+                no -> relay_open(C, Slot, Case, Path, Flags, Mode);
+                {refused, Errno} -> file_reply(C, Case, Slot, {error, Errno});
+                {open, Named} ->
+                    {C#core{first = {opening, Slot, Case, Path, Flags, Mode, Named}}, [{first_window, Named}]}
+            end
+    end.
+
+relay_open(#core{table = Table, cwd = Cwd} = C, Slot, Case, Path, Flags, Mode) ->
+    relay(C, Slot, Case, {open, Slot, Path, Flags, create_mode(Flags, Mode), Table, Cwd}).
+
+%% Whether an open of Path opens the program's window first: no; {open, Named};
+%% or {refused, Errno} for a table a window start refuses (refusal/2). Path
+%% names /dev/draw from the working directory, with no `..`, which only the
+%% resolver takes, and the deepest entry of the table that holds that place
+%% lies at /dev or above it, so the open meets the shared /dev. Its last name
+%% is `draw` itself and it opens no directory, so the open the window's /dev
+%% then serves can be granted.
+first_draw(#core{first = {first, Named}, table = Table, cwd = Cwd}, Path, Flags) ->
+    Draws = place(Path, Cwd) =:= [<<"dev">>, <<"draw">>]
+        andalso lists:last(binary:split(Path, <<"/">>, [global])) =:= <<"draw">>
+        andalso Flags band ?ERX_P9_O_DIRECTORY =:= 0,
+    case Draws andalso shared_dev(Table) of
+        false ->
+            no;
+        true ->
+            case refusal({window, none}, Table) of
+                none -> {open, Named};
+                Errno -> {refused, Errno}
+            end
+    end;
+first_draw(_C, _Path, _Flags) ->
+    no.
+
+shared_dev(Table) ->
+    case deepest_entry(Table, [<<"dev">>, <<"draw">>]) of
+        #{point := Point} -> length(Point) =< 1;
+        none -> true
+    end.
+
+%% The place Path names from Cwd, read lexically: each empty or `.` name
+%% dropped, and none for a path with a `..`.
+place(Path, Cwd) ->
+    Names = [Name || Name <- binary:split(Path, <<"/">>, [global]), Name =/= <<>>, Name =/= <<".">>],
+    case {lists:member(<<"..">>, Names), Path} of
+        {true, _} -> none;
+        {false, <<"/", _/binary>>} -> Names;
+        {false, _} -> Cwd ++ Names
     end.
 
 %% The mode an open creates its file with: none, a lookup, for one with O_DIRECTORY.
