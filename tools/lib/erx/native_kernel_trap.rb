@@ -3,15 +3,14 @@
 # frozen_string_literal: true
 
 require_relative 'boot_image'
-require_relative 'build_kind'
 require_relative 'fiasco'
 require_relative 'platform'
 require_relative 'qemu'
 require_relative 'runner'
 
 module Erx
-  # A kernel trap on a release kernel ends the machine (docs/design-fiasco.md, "The
-  # kernel"). A kernel built from the release configuration with one more define loads
+  # A kernel trap ends the machine (docs/design-fiasco.md, "The
+  # kernel"). A kernel built from the fork's configuration with one more define loads
   # from an unmapped address in kernel mode once boot is done; its run under QEMU
   # with -no-reboot must print the trap's panic and then end through PSCI's system
   # reset, which makes QEMU exit. A kernel that only kills the faulting thread and
@@ -43,14 +42,14 @@ module Erx
         @build = File.join(@root, 'build/native-kernel-trap')
       end
 
-      # Boots the image under accel on one CPU, on the release test kernel built from
+      # Boots the image under accel on one CPU, on the test kernel built from
       # the tree's sources, and returns the serial log's path. The real kernel's build must
       # have run, or does when build is true. A run that does not end the machine
       # after the panic raises.
       def call(accel:, jobs: 4, build: true)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
         fiasco.build(jobs: jobs) if build
-        kernel = fiasco.build_test_kernel(name: 'kernel-trap', defines: DEFINES, kind: BuildKind::RELEASE, jobs: jobs)
+        kernel = fiasco.build_test_kernel(name: 'kernel-trap', defines: DEFINES, jobs: jobs)
         image = BootImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, kernel: kernel)
                          .build(directory: File.join(@build, 'image'))
         Qemu.new(root: @root, runner: @runner)

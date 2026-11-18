@@ -4,20 +4,17 @@
 
 require_relative 'error'
 require_relative 'bounded_file'
-require_relative 'build_kind'
 
 module Erx
   # The configuration check of the stopgap kernel (docs/design-stopgap.md,
-  # "Boot handoff", the kernel), and the one statement of how a release
-  # kernel's configuration differs from a development one's. It reads the
+  # "Boot handoff", the kernel), for every build kind alike. It reads the
   # resolved configuration, globalconfig.out, which Fiasco's Kconfig writes
   # after every `select` and `depends on` has been applied, never the
   # defconfig, since a `select` can set what the defconfig leaves unset.
   #
   # Required options must read `=y`. Forbidden options must be absent or
   # `# CONFIG_X is not set`; any assignment of one is a violation, whatever
-  # its value. A release kernel's configuration must also leave the options
-  # RELEASE_UNSET names unset. Kconfig writes nothing else, so a line of any
+  # its value. Kconfig writes nothing else, so a line of any
   # other shape, or an option named twice, is refused rather than guessed at.
   module FiascoConfig
     # A well-formed resolved configuration that breaks the rules.
@@ -31,15 +28,13 @@ module Erx
     REQUIRED = %w[CONFIG_FPU CONFIG_PERFORMANCE CONFIG_PERF_CNT_USER CONFIG_SYNC_CLOCK].freeze
     # The fork switches FP state eagerly and leaves SVE trapped ("FP and SIMD
     # state"); the thread region is a constant of the non-hypervisor layout.
-    FORBIDDEN = %w[CONFIG_LAZY_FPU CONFIG_ARM_SVE CONFIG_CPU_VIRT].freeze
-    # What a release kernel leaves out (design-stopgap.md, the kernel): the kernel debugger and
-    # the kernel's own console input. With either built in, a panic waits on
+    # No kernel has the kernel debugger or the kernel's own console input
+    # (design-fiasco.md, the kernel): with either built in, a panic waits on
     # the console with interrupts off (JDB, which selects INPUT, and
-    # terminate.cpp's Exit_question::ask with INPUT); with neither, it
-    # resets once PSCI is known (design-stopgap.md, the kernel). These are the release defconfig's only differences
-    # (release_defconfig), and the check refuses them in the resolved file,
-    # where a select can set them again.
-    RELEASE_UNSET = %w[CONFIG_JDB CONFIG_INPUT].freeze
+    # terminate.cpp's Exit_question::ask with INPUT); with neither, it resets
+    # once PSCI is known. The defconfig leaves both unset, and the check
+    # refuses them in the resolved file, where a select can set them again.
+    FORBIDDEN = %w[CONFIG_LAZY_FPU CONFIG_ARM_SVE CONFIG_CPU_VIRT CONFIG_JDB CONFIG_INPUT].freeze
     MAX_BYTES = 1024 * 1024
     MAX_LINES = 16_384
     NAME = /CONFIG_[A-Za-z0-9_]{1,128}/
@@ -52,47 +47,28 @@ module Erx
 
     module_function
 
-    # The violations of the rules above in the resolved configuration of a
-    # kernel of build kind kind (BuildKind), one diagnostic per rule broken;
-    # empty when the configuration is the fork's. Raises Error when the text
-    # is not a resolved configuration at all, or kind is not a build kind.
-    def violations(bytes, kind:)
-      forbidden = BuildKind.development?(kind) ? FORBIDDEN : FORBIDDEN + RELEASE_UNSET
+    # The violations of the rules above in a resolved kernel configuration,
+    # one diagnostic per rule broken; empty when the configuration is the
+    # fork's. Raises Error when the text is not a resolved configuration at all.
+    def violations(bytes)
       values = assigned_values(bytes)
       missing = REQUIRED.reject { |name| values[name] == 'y' }.map do |name|
         "#{name} must be y, found #{values.key?(name) ? values[name].inspect : 'unset'}"
       end
-      present = forbidden.select { |name| values.key?(name) }.map do |name|
+      present = FORBIDDEN.select { |name| values.key?(name) }.map do |name|
         "#{name} must be unset, found #{values[name].inspect}"
       end
       missing + present
     end
 
-    # Checks the resolved configuration at path of a kernel of build kind
-    # kind; raises Violation naming every rule broken, so one run reports
-    # all of them, and Error when the file is unreadable or not a resolved
-    # configuration.
-    def check(path, kind:)
-      found = violations(BoundedFile.read(path, maximum: MAX_BYTES), kind: kind)
+    # Checks the resolved kernel configuration at path; raises Violation
+    # naming every rule broken, so one run reports all of them, and Error
+    # when the file is unreadable or not a resolved configuration.
+    def check(path)
+      found = violations(BoundedFile.read(path, maximum: MAX_BYTES))
       return if found.empty?
 
-      raise Violation, "stopgap #{kind} kernel configuration #{path} breaks the fork's rules: #{found.join('; ')}"
-    end
-
-    # The release kernel's defconfig: the development defconfig's text with
-    # each option RELEASE_UNSET names written as not set after it. The
-    # development defconfig must not name those options, so the release's
-    # differences are stated only in RELEASE_UNSET and no line of the result
-    # overrides another.
-    def release_defconfig(development)
-      named = options(development).map(&:name) & RELEASE_UNSET
-      unless named.empty?
-        raise Error, "the development kernel defconfig names #{named.join(', ')}, which only a release kernel's configuration sets"
-      end
-
-      text = development.b
-      text += "\n" unless text.empty? || text.end_with?("\n")
-      text + RELEASE_UNSET.map { |name| "# #{name} is not set\n" }.join
+      raise Violation, "stopgap kernel configuration #{path} breaks the fork's rules: #{found.join('; ')}"
     end
 
     # Maps each assigned option to its value. Unset options are recorded as
