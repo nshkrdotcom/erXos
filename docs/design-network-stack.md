@@ -8378,7 +8378,7 @@ missing, into a stack that otherwise believes nothing a device says
 * aloha, https://github.com/yamt/aloha, commit `0aa96f14`.
 * The research records this design rests on:
   [the mapping of FreeBSD's stack to Erlang](research-freebsd-net-mapping.md)
-  and [the assessment of aloha](research-aloha.md).
+  and the assessment of aloha, `~/erxos-history/docs-archive/research-aloha.md` (history commit `e38149b`).
 * pkt, https://github.com/msantos/pkt.
 * Erlang/OTP 29.1.2: `lib/kernel/src/gen_tcp.erl`, `inet.erl`,
   `inet_int.hrl`, `gen_tcp_socket.erl`, `erl_epmd.erl`.

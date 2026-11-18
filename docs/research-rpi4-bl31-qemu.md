@@ -5,9 +5,12 @@ A point-in-time record of the experiment of stage (a), package 1 of
 model". It was run on 2026-11-12 on an Apple Silicon macOS host with QEMU
 11.1.3 under TCG, TF-A v2.15.0 (the tag commit `da738d5e`) and Homebrew's
 LLVM (clang and lld) as the compiler, with Homebrew's GNU sed, `dtc` and
-Ruby. The experiment's files are in `~/erxos-scratch/rpi4-spike/` and
-`~/erxos-scratch/tools/rpi4_patch_stub.rb`. They are not in the tree and
-are not kept in it; this record quotes only the lines that matter. The
+Ruby. The experiment's files (the payload sources, the built payloads,
+the run logs and the stub patcher `rpi4_patch_stub.rb`, without the TF-A
+source tree) are in `~/erxos-history/rpi4-spike-2026-11-12/` at history
+commit `e38149b` (`rpi4-spike/` below; `tools/rpi4_patch_stub.rb` is at its
+top), not in the tree; this record quotes only the lines that
+matter. The
 settings the harness needs are in
 [design-platforms.md](design-platforms.md#bring-up-under-qemu).
 

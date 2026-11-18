@@ -3830,7 +3830,7 @@ parent gives it a slot; the size of its `Rect` is a function of its
 natural size, its `align` and its slot's size, and where the slot lies is
 its parent's choice alone. This is Flutter's contract of constraints
 down, sizes up and the parent placing
-([research-ui-toolkits.md](research-ui-toolkits.md#flutter-and-impeller)). So a
+(`~/erxos-history/docs-archive/research-ui-toolkits.md` at history commit `e38149b`, section "Flutter and Impeller"). So a
 subtree whose properties and slot size are unchanged lays out to the
 same rectangles moved with its slot, which is the cache a later
 `erx_ui_layout` can keep, if layout shows in a profile, with no change
@@ -6253,7 +6253,10 @@ Decisions:
     window's time is the last frame in which it gained pixels, so a pick
     that raises the window under the pointer costs the next click
     nothing. The pointer's rule is a move since the window came under
-    it, the touch's 200 ms, both from research-ui-synthesis.md's D3.
+    it, the touch's 200 ms, both from research-ui-synthesis.md's D3, whose
+    question and reasons are in the full record,
+    `~/erxos-history/docs-archive/research-ui-synthesis.md`, history
+    commit `e38149b`.
 25. **A copy replaces the clipboard in one step.** The writes of a fid
     opened for writing build a copy of the fid's own, at most
     `windows_clipboard_bytes`, one such fid for each grant at a time, and

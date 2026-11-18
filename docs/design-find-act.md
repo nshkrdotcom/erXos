@@ -23,8 +23,8 @@ toolkit, the terminal and the reserved chord are
 start service are [design-apps.md](design-apps.md); the inspector is
 [design-live.md](design-live.md). The survey that asked for this layer
 is [research-ui-synthesis.md](research-ui-synthesis.md), with its inputs
-[research-ui-ux-ideas.md](research-ui-ux-ideas.md) and
-[research-ui-secure.md](research-ui-secure.md).
+`~/erxos-history/docs-archive/research-ui-ux-ideas.md` (history commit `e38149b`) and
+`~/erxos-history/docs-archive/research-ui-secure.md` (history commit `e38149b`).
 
 Decisions every reader of this document needs:
 
@@ -103,7 +103,7 @@ The consumers, each a person at a desktop session today:
   and every later program copies it (synthesis, section 3, item 12).
 
 What the systems the survey read teach, as that record reports them
-([research-ui-ux-ideas.md](research-ui-ux-ideas.md)):
+(the archived `research-ui-ux-ideas.md`):
 
 | System | What erXos takes | What it leaves |
 | --- | --- | --- |
@@ -248,7 +248,7 @@ In the tree:
 
 Outside this design: handing a value to an app that runs as another
 principal, which is the powerbox of
-[research-ui-secure.md](research-ui-secure.md) section 6.5 and needs a
+the archived `research-ui-secure.md` section 6.5 and needs a
 design of its own; "what is this?" for any pixel and the reserved
 chord's overlay, which are the identity and inspection designs of the
 synthesis (section 3, items 13 and 14); notifications; the web client,
@@ -654,7 +654,7 @@ the core takes a Return or a click as a pick only when:
   fill its input, since filtering runs nothing;
 * for a click, the pointer moved onto that offer's row after the row
   last changed: the pick rule of pointer re-entry that synthesis D3
-  accepted for windows ([research-ui-secure.md](research-ui-secure.md)
+  accepted for windows (the archived `research-ui-secure.md`
   section 6.1), applied to the palette's own rows, so a row that appears or
   changes under a resting pointer takes no click until the pointer
   leaves it and comes back;
@@ -868,7 +868,7 @@ diagnostic from `act -r` or the palette.
 * **Handing an app a value waits for the powerbox.** Opening a person's
   file in an app of another principal needs a grant from one session to
   another, a new cross-domain facet
-  ([research-ui-secure.md](research-ui-secure.md), section 6.5). When
+  (the archived `research-ui-secure.md`, section 6.5). When
   that design adds a command to the session's namespace, routes reach it
   as they reach any command; nothing here changes.
 * **An app's own presentations stay in the app.** An app's widget
@@ -1245,8 +1245,10 @@ palette follows whatever that design decides.
 ## References
 
 * [research-ui-synthesis.md](research-ui-synthesis.md): sections 1, 2.4,
-  2.6 and 3, decision D5 and section 8.
-* [research-ui-ux-ideas.md](research-ui-ux-ideas.md): "Presentations
+  2.6, 3 and 8; decision D5 as put for decision is in the full record,
+  `~/erxos-history/docs-archive/research-ui-synthesis.md`, history
+  commit `e38149b`.
+* the archived `research-ui-ux-ideas.md`: "Presentations
   and commands", "Object and document desktops", "Find and act",
   "Current platforms", ranks 1, 2 and 10; its sources as fetched on
   2026-11-15, among them Rob Pike, "Plumbing and Other Utilities",
@@ -1254,7 +1256,7 @@ palette follows whatever that design decides.
   `af88d34db2de942bd3a8226491807d9e10ccc7c43c0909908d3ca4e5251d2d15`,
   read as text at
   `~/erxos-scratch/sources/ui-survey/ux-ideas/txt/plumb.txt`.
-* [research-ui-secure.md](research-ui-secure.md): sections 4.11, 4.12,
+* the archived `research-ui-secure.md`: sections 4.11, 4.12,
   6.2, 6.4 and 6.5.
 * [design-display.md](design-display.md): Presentations, The terminal,
   Links and the input context, Windows and the window system, The

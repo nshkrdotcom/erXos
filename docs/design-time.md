@@ -1802,5 +1802,5 @@ These were open and are settled as stated here:
   RFC 8633 (NTP best practices; sections 3.2, 3.6, 4.3 and 5.2), SHA-256
   `fb275c82378be983511db4fcd533a92a54028c7762be2d9bc0d6fa5c06dc5a84`.
 * The research record behind this design:
-  `/Users/stas/erxos-scratch/notes/research-pi4-peripherals.md`, section 5,
+  `~/erxos-history/notes/research-pi4-peripherals.md` (history commit `e38149b`), section 5,
   written 2026-11-14.

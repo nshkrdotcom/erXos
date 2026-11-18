@@ -3,7 +3,7 @@
 A point-in-time record that draws the five records of the erXos UI survey into one answer.
 
 * Date: 2026-11-15. Host: Apple Silicon macOS development host. Nothing was run or measured here.
-* Inputs, cited below by letter and section:
+* Inputs, cited below by letter and section; C, R, T, U and S are archived in `~/erxos-history/docs-archive/` at history commit `e38149b`:
   * **C**: `research-ui-compositors.md` (display servers, compositors, window systems)
   * **R**: `research-ui-rendering.md` (rendering, images, fonts)
   * **T**: `research-ui-toolkits.md` (toolkits and application models)
@@ -171,7 +171,7 @@ not faster copies. Whether there are enough planes is **unverified** (section 6)
 ## 3. The programme, ranked
 
 "Consumer" is what breaks or stays worse without the item. "New?" says whether it is a new
-mechanism that needs a design section before code. "Decide" points to section 5.
+mechanism that needs a design section before code. "Decide" points to section 5, whose questions are in the full record, and to section 8, which records the decisions.
 
 ### Now: cheap, and it helps build or judge the basic desktop
 
@@ -247,62 +247,11 @@ desktop; their designs can be written in parallel, because none blocks the basic
 
 ## 5. Decisions needed
 
-Each is stated as a question, with the options and a recommendation. The records' own
-recommendations are cited; no advisor pass was run for this synthesis.
-
-**D1. Text: whole-pixel pen for good, or glyph phases?** Options: (a) whole pixels, as K builds
-now; (b) three or four phases per text glyph, a positioned-glyph draw message, text subfonts 3-4x
-wider, an LVGL font change. Recommendation: K's own: land (a), then judge (b) by eye in the type
-session (item 2) together with hinting and the coverage curve. R 8.4 level 1 is off the table.
-A HarfBuzz test oracle (K decision 2): not now.
-
-**D2. The scale model.** Options: (a) none until a dense panel exists; (b) reserve now: theme in
-units, a rational scale in `ctl`, ship 1x; (c) build 2x sets now. Recommendation: (b). It is a
-field and a renaming while there are four programs; (c) has no panel to check against. Open
-inside (b): whether a 4K monitor on a Pi is in scope for the first desktop; if yes, (c) follows
-soon.
-
-**D3. Tighten the clipboard and the pick in the accepted design?** Options: (a) leave both as
-recorded residuals; (b) clipboard reads and writes only from the current window within 500 ms of
-a key or button down, and a press picks a window only after pointer re-entry (a delay on touch).
-Recommendation: (b), stated in the design now. It changes accepted behaviour in one known way:
-a configured domain that reads `/clipboard` with no window (design-display.md:4376) loses that
-read. Sub-question: is that loss intended? S 7(c) thinks it may be right; nothing settles it.
-
-**D4. Does erXos move?** Options: (a) keep "nothing animates"; (b) allow transitions as in 2.6,
-widgets first, windows only on a measurement; (c) full compositor animation. Recommendation: (b).
-It keeps the idle guarantee and keeps applications out of any frame loop. (c) fails on the CPU
-arithmetic (C 4.8: a moving 800x600 window is about 115 MB/s). A caution against over-reading
-both records: neither cites a source for "slick comes largely from transitions". Sharp type, no
-tearing and immediate response come first and are prerequisites for motion anyway (items 1, 2,
-4, 10).
-
-**D5. Scope: is find-and-act part of the erXos desktop, and when?** Options: (a) not planned;
-(b) design it after the basic desktop, as the desktop's main distinguishing feature; (c) start
-the design now, in parallel. Recommendation: (c) for the design document only, (b) for code. A
-dependent choice: the route rules' language (Plan 9's plumbing grammar, awklog or Datalog) needs
-approval under the language rule; no recommendation without the design.
-
-**D6. How is identity shown without a title bar?** Options: (a) names only in the reserved-chord
-overlay and the menu; (b) also a principal mark on the border when principals mix (a second
-hairline or corner tab, since border colour already means "current"); (c) a title bar. This is
-partly a visual-direction choice. Recommendation: (a) first, (b) designed with the login work;
-not (c).
-
-**D7. Who may read a window's widget tree?** Options: (a) nobody outside the window's domain
-(today); (b) the window's own principal and the person at the display, secret inputs excluded;
-(c) any holder of an inspection grant. Recommendation: (b), written into the design before the
-path exists.
-
-**D8. Default window policy.** Options: (a) overlap (rio) stays the default; (b) a scrollable
-strip becomes the default; (c) strip added as a third policy, overlap default. Recommendation:
-(c), and only after P1. The earlier direction (a Finder-like browser, a look in the family of
-OS X) presumes overlap, and U's evidence for tiling is old or unverified.
-
-**D9. Imported generated C (Wuffs) and other new dependencies.** No decision is needed today: no
-consumer exists for a second codec, a shaper or a font server. When JPEG is needed, the
-recommendation is Wuffs' generated C as imported code under the "inherited code keeps its
-languages" rule, after confirming it has a JPEG decoder (**unverified**, R 7).
+All nine questions, D1 to D9, were decided as recommended; section 8
+records the decisions. Each question with its options, its recommendation
+and the reasons is in the full record,
+`~/erxos-history/docs-archive/research-ui-synthesis.md`, history commit
+`e38149b`. Section 6 lists the probes those recommendations rested on.
 
 ## 6. Unverified points a decision rests on, and the cheapest probe
 
@@ -337,7 +286,7 @@ a file handed to an app by picking it, and a desktop on which any pixel can be a
 
 ## 8. Decisions taken
 
-On 2026-11-15 every recommendation of section 5 was accepted as written:
+On 2026-11-15 every recommendation of section 5 (in the full record) was accepted as written:
 D1 the whole-pixel kerned pen now, glyph phases judged later in a type
 session; D2 the scale reserved, 1x shipped; D3 the clipboard and pick rules
 tightened, windowless configured domains losing clipboard reads; D4 bounded
