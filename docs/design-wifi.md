@@ -274,7 +274,7 @@ the right to enroll a network with the administrator alone, so that a
 break of the parsers cannot add a network that outlives it.
 
 What each behaviour rests on is in [Lineage](#lineage): the survey of
-other stations ([research-wifi-designs.md](research-wifi-designs.md),
+other stations (`~/erxos-history/docs-archive/research-wifi-designs.md` at history commit `e38149b`,
 "the survey" below) and the facts record of iwd
 ([research-wifi-iwd.md](research-wifi-iwd.md), "iwd fact N" below).
 
@@ -3196,7 +3196,7 @@ reaches GPIO 34 to 39 (*BCM2711 ARM Peripherals*, 5.3, p.77).
 ## Lineage
 
 Which idea came from which system, and what erXos does differently.
-The evidence is the survey ([research-wifi-designs.md](research-wifi-designs.md))
+The evidence is the survey (the archived `research-wifi-designs.md`)
 and the facts record of iwd ([research-wifi-iwd.md](research-wifi-iwd.md)),
 the only window this design has onto iwd.
 
@@ -3422,7 +3422,7 @@ BSD-3-Clause:
 | `wpa_supplicant/sme.c` | `5a01a850c08d7ce637644c33e165c5ebb38fb71567b2779ba51e8947e7c4afc8` |
 
 **Other stations,** read as data on 2026-11-15. The survey
-[research-wifi-designs.md](research-wifi-designs.md) lists every file
+the archived `research-wifi-designs.md` lists every file
 read from wpa_supplicant, OpenBSD, FreeBSD, 9front, Fuchsia, Zephyr and
 the vendors' documents with its SHA-256, and this design cites those
 files as the survey does. Two it cites for a construction of its own:

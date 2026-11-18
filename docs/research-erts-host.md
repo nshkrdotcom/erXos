@@ -6,10 +6,15 @@ from their sources, and of what earlier systems did when they hosted BEAM
 somewhere unusual. It settles which host facilities are mandatory, which a
 build option or emulator flag removes, what a minimal Linux-compatible
 system-call surface for ERTS looks like, and what Erlang distribution assumes
-about its peers. [design.md](design.md) and `design-substrate.md` (a design
+about its peers. [design.md](design.md) and an earlier substrate design (one
 this record served, since superseded) use these findings; the measured
 numbers are in [research-baselines.md](research-baselines.md). Findings here
 are never edited in place; a re-check gets a new record.
+
+**Trimmed record.** This copy drops the list of releases current on
+2026-10-29 and the table of findings against the preliminary hypotheses;
+the full record is `~/erxos-history/docs-archive/research-erts-host.md`,
+history commit `e38149b`.
 
 **Date:** 2026-10-29.
 **Host:** Apple M4 Max, macOS 27.0.1 (26A434).
@@ -30,17 +35,6 @@ from them was run):
 
 Paths below are relative to the root of each source tree; `erts/...` and
 `lib/...` are OTP, `src/...` and `arch/...` are musl.
-
-## Releases current on 2026-10-29
-
-* **OTP.** The download page names 29.1.2 as the latest release. The 29 line
-  has 29.0 through 29.0.6, 29.1, 29.1.1 and 29.1.2; the previous line ends at
-  28.5.0.8, and 27 at 27.3.4.19. 29.1.2 fixes five CVEs according to its
-  README. Homebrew on the primary host has 28.4.2.
-* **musl.** 1.2.6 is the latest release. The site lists advisories that
-  affect 1.2.6 and publishes patches for them: CVE-2026-107891 (`regcomp`
-  with untrusted regular expressions), CVE-2026-40200 and CVE-2026-6042. A
-  build of 1.2.6 applies all three.
 
 ## What the emulator starts
 
@@ -341,7 +335,7 @@ the C stack.
 
 Derived from the reading above: what a static, interpreter-flavor ERTS
 linked with musl 1.2.6, with the forker removed, can reach on a node with no
-network and no spawned ports. The substrate of `design-substrate.md` (since
+network and no spawned ports. The substrate of that earlier design (since
 superseded) was to count the calls each domain actually makes and report
 any it does not implement, turning this derived list into a measured one on
 the first boot.
@@ -661,14 +655,3 @@ Findings:
 * [Q3] qemu-devel, "Re: HVF EL2 support" (2025-07-16),
   https://www.mail-archive.com/qemu-devel@nongnu.org/msg1127946.html
 
-## Findings against the preliminary hypotheses
-
-| Hypothesis | Finding |
-| --- | --- |
-| ERTS is POSIX-hosted and always multithreaded | holds: at least 7 threads (9 measured), pthreads, private futexes, reserve-then-commit `mmap` with a 1 GiB literal area, epoll with a wakeup pipe and `timerfd`, file I/O for code loading, `clock_gettime`, signal handlers that only write to a pipe, and `fork`/`execv` of `erl_child_setup` at boot, the one hard blocker, which needs a patch |
-| ERTS cannot be the system scheduler, so the kernel schedules threads and ERTS schedules processes | holds: ERTS's schedulers are its own threads; no flag hands scheduling to the host |
-| a domain maps naturally to an ERTS node, crossing domains is distribution, distribution assumes trust | holds, with the evidence quoted under "Trust" and "What a receiving node checks" |
-| no verifier is needed if untrusted BEAM runs only in hardware-isolated domains | holds for cross-domain safety: OTP itself says malicious BEAM can break the VM, so isolation must come from the address space, not from checking bytecode; it does not hold inside one node |
-| the POSIX substrate can live in user space with a patched musl system-call layer | feasible: musl has one inline system-call primitive and five assembly sites, and its start-up order leaves a safe point for the hook |
-| the interpreter build avoids C++ | holds, with `CXX=false` and built-in Ryu |
-| nothing close to an Erlang-native microkernel OS exists | does not hold: Kry10 KOS runs one BEAM per seL4 protection domain joined by distribution over kernel IPC (closed, ARMv7, uniprocessor, static configuration); none of the systems surveyed publishes a design that makes trust boundaries between such nodes explicit, creates nodes at run time, or carries kernel capabilities in Erlang messages ([Prior art](#prior-art)) |

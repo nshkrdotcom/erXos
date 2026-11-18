@@ -507,9 +507,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   push carries `{data, [binary()]}`, at most 64 binaries and one piece in all. Package 4 also
   ends the tap helper's items under Bugs by subsystem.
 * [Medium] display, GPU acceleration (OpenGL-class) for the desktop and kiosk apps, design after
-  research ([plan.md](docs/plan.md#track-d-windows-widgets-and-the-web), part 10). A research record
-  first (the Raspberry Pi's V3D and QEMU's virtio-gpu 3D modes, Mesa or what replaces it, how a client's
-  driver reaches a render service), then a design of the render service. The display's side is fixed in
+  research ([plan.md](docs/plan.md#track-d-windows-widgets-and-the-web), part 10). The research record
+  is [research-gpu.md](docs/research-gpu.md) (the Raspberry Pi's V3D and QEMU's virtio-gpu 3D modes, Mesa or what replaces it, how a client's
+  driver reaches a render service); next is a design of the render service. The display's side is fixed in
   [design-display.md](docs/design-display.md#graphics-hardware), "What a render service owes the
   display": a client presents only a buffer whose jobs have ended, a buffer stays a range of the client's
   pixel area, the present's answer releases it, and an accepted job keeps its ranges and the area alive

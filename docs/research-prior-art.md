@@ -8,6 +8,10 @@ with the page or section of its primary source. Systems that host BEAM itself
 are in [research-erts-host.md](research-erts-host.md#prior-art). Findings here
 are never edited in place; a re-check gets a new record.
 
+**Superseded premise.** erXos does not run ERTS in a kernel at EL1: every runtime,
+the system domain's ERTS included, runs in user mode
+([design-runtime.md](design-runtime.md), [design.md](design.md#trust-placement)).
+
 **Date:** 2026-10-29.
 **Host:** Apple M4 Max, macOS 27.0.1 (26A434).
 **Sources read** (read only; no script, makefile or binary from them was run):

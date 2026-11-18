@@ -82,15 +82,15 @@ them comes from three facts records, written by separate facts writers
 who read the GPL sources and recorded interface facts in their own words:
 
 * part 1, the on-disk format, 70 facts
-  (`~/erxos-scratch/notes/research-f2fs-format.md`, 2026-11-15, SHA-256
+  (`~/erxos-history/notes/research-f2fs-format.md` at history commit `e38149b`, 2026-11-15, SHA-256
   `594e13e7756fc73ece9398c33ea16d764ce98274be7e11810f96e6520c0e1830`),
   cited here as [F n];
 * part 2, writing, checkpoints and recovery, 85 facts and 20 crash states
-  (`research-f2fs-recovery.md`, SHA-256
+  (`~/erxos-history/notes/research-f2fs-recovery.md` at history commit `e38149b`, SHA-256
   `fe95b138e0d549a57b014a95410b245329691903f5de6d22bc6ba494590f94fb`),
   cited as [R n] and its crash states as [C n];
 * part 3, what f2fs-tools makes and checks, 94 facts
-  (`research-f2fs-tools.md`, SHA-256
+  (`~/erxos-history/notes/research-f2fs-tools.md` at history commit `e38149b`, SHA-256
   `c58e6dc69876181768cf707c6d573fb754b8351f01cd1bc2adb89d655e4ce9ae`),
   cited as [T n].
 
@@ -1975,7 +1975,7 @@ f2fs-tools formula and that Apple's container kernel is built without
 F2FS are unverified: no probe record checks them.
 
 **What is known of it.** A probe on 2026-11-14 (record
-`~/erxos-scratch/notes/probe-f2fs-host-2026-11-14/README.md`, SHA-256
+`~/erxos-history/notes/probe-f2fs-host-2026-11-14/README.md` at history commit `e38149b`, SHA-256
 `e999749a0ec64c7226df1d525602af5639ea4ada400d843bc0d32fef194b4a4f`,
 with its logs beside it) booted Ubuntu 26.04.1 LTS's arm64 cloud image
 of release 20260927 (SHA-256
@@ -2407,7 +2407,7 @@ tests.
 ## References
 
 * The F2FS facts records, parts 1 to 3, and the research record
-  `~/erxos-scratch/notes/research-f2fs.md` (2026-11-14, SHA-256
+  `~/erxos-history/notes/research-f2fs.md` (history commit `e38149b`, 2026-11-14, SHA-256
   `5a2d7523ec6459ffaeaaca8712b5b2c213c1e0fe56c6181ae9f2d6050a536d21`),
   with their sources' versions and hashes.
 * Fuchsia `src/storage/f2fs_reader`, commit
@@ -2415,7 +2415,7 @@ tests.
   `checkpoint.rs`, `README.md`, `testdata/f2fs.img.zst`,
   `scripts/mk_test_img.sh`, and the repository's `LICENSE`.
 * The host-testing probe record,
-  `~/erxos-scratch/notes/probe-f2fs-host-2026-11-14/README.md`
+  `~/erxos-history/notes/probe-f2fs-host-2026-11-14/README.md` at history commit `e38149b`
   (2026-11-14, SHA-256
   `e999749a0ec64c7226df1d525602af5639ea4ada400d843bc0d32fef194b4a4f`),
   with the Ubuntu image, kernel and package versions, the corpora's
