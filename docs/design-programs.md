@@ -696,6 +696,34 @@ display's errno, as `erx_win:open/2` answers it
 for a session at its `windows` quota, and `ENOMEM` for a pixel area
 with no run long enough for the window's buffer.
 
+**A window at the first open of `/dev/draw`.** A program started with
+neither a window nor a buffer, every program `rc` starts among them,
+gets a window when it asks for one by drawing: when the program's table
+resolves an open of `/dev/draw` to the session's shared `/dev`, which
+holds no `draw`, the handler first gives the program a window as for
+`window => Display`, on the display the program's `display` variable
+names or else on the session's only display
+([design-display.md](design-display.md#choosing-a-display)), and then
+opens `draw` on the program's new `/dev`, which stands in for the shared
+one in its table from then on. Nothing else changes: the window, the
+connection and the tree are those above, held by the handler and ending
+with it. Before that open the program's `/dev` is the shared one, so an
+open of `/dev/ctl`, `/dev/kbd` or another window name answers `ENOENT`,
+as for any program without a window, and opens no window: only `draw`
+says the program will draw, and a window that is never drawn would
+still take a screen whose grant is front
+([design-display.md](design-display.md#windows-and-the-window-system)).
+The handler opens at most one window for a program: an open of a
+`/dev` name that arrives while the window is being opened waits as a
+pending request behind it and is then served on the new tree. A
+refused window fails the open with the errno a refused `window =>
+Display` start gives, `ENODEV` for a session with no `windows` grant on
+the display or with no `display` and no only display, `EACCES` for a
+table whose entry at exactly `/dev` cannot write, `EDQUOT` and `ENOMEM`
+as the display answers; nothing is kept, so a later open tries again.
+A program holding a buffer gets no window, as a spec naming both is
+refused, and its open of `/dev/draw` answers `ENOENT`.
+
 `start/1` answers `{ok, Handler, Monitor, Offsets}`: `Monitor` is a
 monitor of the handler that `start/1` made in the caller before it sent
 the handler the start, so before the handler could end, and `Offsets`

@@ -644,15 +644,22 @@ violation fails the build with the property, the record and the field:
     domain's outer budget, since the display pays for every pixel area it
     maps and every side it reads; no facet row sets the `session`
     parameter, which the domain service alone sets
-    ([design-display.md](design-display.md#the-pixel-area)); and no
-    facet row turns `clipboard` on for a configured domain on a display
+    ([design-display.md](design-display.md#the-pixel-area)); only a facet
+    row granting a display to the system principal's session template,
+    root's, sets the `front` parameter, and only in a development build,
+    since the newest window of a front grant takes a single display's
+    screen ([design-display.md](design-display.md#windows-and-the-window-system));
+    and no facet row turns `clipboard` on for a configured domain on a display
     whose policy is `single`, which never shows a configured domain's
     window, so that grant could never hold the window taking the
     keyboard and use the clipboard
     ([design-display.md](design-display.md#the-window-process)). Seeded
     violations: a check that counts a template's row once, which admits
     a template whose sessions together pass the budget; a facet row
-    that sets `session`; a `windows` service with no `display`
+    that sets `session`; a configured domain's row that sets `front`;
+    another principal's template's row that sets `front`, which a check
+    that admits any session template misses; root's row with `front` in
+    a release build; a `windows` service with no `display`
     record, whose grants no sum would count; a check that sums
     each display alone, which admits a domain serving two displays
     whose grants together pass its budget; a facet row granting a

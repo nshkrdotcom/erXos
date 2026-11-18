@@ -350,7 +350,7 @@ that one module that one name and refuses it in any other.
 
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
-| **G1.** A client reaches only its own windows' pixels and input | a client's pixels lie in its own pixel area, which only that client's domain writes and only the display maps, read-only: the display maps no client's area into another domain and writes no pixel into any client's memory, so no path carries one client's pixels to another; a `present` names a range of the presenter's own area and is checked against that area's size, so it cannot name another client's memory; a window's files are a grant rooted at the client's directory of `erx_winfs`; a program is given a mapping of its own window's buffer and fids on its own window's directory, never the area or the grant ([Narrowing](design-files.md#narrowing-for-a-program)); a draw connection names images by ids it allocated and by image 0, its window, and the protocol has no message that names another connection's image; the router delivers each input event to one window: the policy chooses it for what starts something, what follows a down goes only to the window that got the down, and a window that has since been hidden receives of that only the ups ([The input router](#the-input-router)); under the single policy only the one shown window is chosen | an area mapped into a second client; a present checked against another grant's area; a program handed its session's whole area; a draw message that names or attaches to another connection's image; a grant rooted above the client's directory; a down, a repeat or a pointer move delivered to a hidden window | a client that presents every offset and size at and past the ends of its area, each one outside refused with `EINVAL` and nothing shown; two sessions whose grants list only their own windows; a program given one window that walks `..` and sibling names and reaches nothing, and whose writes outside its buffer's mapping fault in its own sub-space; a draw connection that sends every message type with every id of another connection, each refused with `ENOENT`; under the single policy with a second window of the named session and a window of another domain made, each of the two is hidden, its `kbd` receives nothing and its `wctl` write of `show` fails with `EINVAL`, where a seeded delivery to a hidden window fails it; when the shown window ends, the session's second window is shown and the other domain's stays hidden, and when that ends too the screen holds only the background until the session makes another, where a seeded policy that shows the most recent window or any domain's window fails it |
+| **G1.** A client reaches only its own windows' pixels and input | a client's pixels lie in its own pixel area, which only that client's domain writes and only the display maps, read-only: the display maps no client's area into another domain and writes no pixel into any client's memory, so no path carries one client's pixels to another; a `present` names a range of the presenter's own area and is checked against that area's size, so it cannot name another client's memory; a window's files are a grant rooted at the client's directory of `erx_winfs`; a program is given a mapping of its own window's buffer and fids on its own window's directory, never the area or the grant ([Narrowing](design-files.md#narrowing-for-a-program)); a draw connection names images by ids it allocated and by image 0, its window, and the protocol has no message that names another connection's image; the router delivers each input event to one window: the policy chooses it for what starts something, what follows a down goes only to the window that got the down, and a window that has since been hidden receives of that only the ups ([The input router](#the-input-router)); under the single policy only the one shown window is chosen | an area mapped into a second client; a present checked against another grant's area; a program handed its session's whole area; a draw message that names or attaches to another connection's image; a grant rooted above the client's directory; a down, a repeat or a pointer move delivered to a hidden window | a client that presents every offset and size at and past the ends of its area, each one outside refused with `EINVAL` and nothing shown; two sessions whose grants list only their own windows; a program given one window that walks `..` and sibling names and reaches nothing, and whose writes outside its buffer's mapping fault in its own sub-space; a draw connection that sends every message type with every id of another connection, each refused with `ENOENT`; under the single policy with a second window of the named session and a window of another domain made, each of the two is hidden, its `kbd` receives nothing and its `wctl` write of `show` fails with `EINVAL`, where a seeded delivery to a hidden window fails it; when the shown window ends, the session's second window is shown and the other domain's stays hidden, and when that ends too the screen holds only the background until the session makes another, where a seeded policy that shows the most recent window of a grant without `front` or any domain's window fails it; a window of a `front` grant is shown over the session's and its end shows the session's again, where a seeded policy that ignores `front` fails it |
 | **G2.** Every image has one writer, no reader faults or leaves its image, and every pixel loop runs over a clipped rectangle | the screen image is written only by `erx_screen`; a client's buffer is written only by the client's domain, and in the display domain is read only by `erx_screen` and by the driver while a frame `erx_screen` handed it is outstanding, during which `erx_screen` writes no image of that frame; the display's mapping of an area is read-only, and the area is deleted only after the display has unmapped it ([The pixel area](#the-pixel-area)), so a read of it never faults, whatever the client does or however it ends; a buffer's size and layout are the display's own record, made from a checked `present`, and nothing of them is read from the area, so a client that writes while the display reads changes pixels of its own window and nothing else; an image is a NIF resource, freed by its destructor when no term refers to it, and `erx_memdraw` has no other free, so a window's end, a resize and an `f` drop a reference and never free memory another process holds; an image over an area keeps the area mapped while it lives; only `erx_memdraw:wrap/4` makes an image over memory it did not allocate, and it checks the range against the memory's size with checked arithmetic; every pixel loop of `erx_memdraw` walks a rectangle one of its checkers produced: a draw, the `erx_clip_t` that only `erx_draw_clip` produces from the operation's rectangles and the images' bounds; a load or read, a rectangle `rows_of` checked inside its image; an allocation's fill and a snapshot, the whole image `badrect` admitted | a second writer of the screen image; a read of a buffer whose area has been unmapped; a layout field read from the area; an explicit free of an image; an image over a range that passes its memory's end; a loop over an unclipped rectangle | the build checks over `erx_memdraw`'s sources and the call direction (Chokepoints); the differential test against the reference renderer with rectangles far outside every image; the display suite in hosted mode under ThreadSanitizer and ASan, with clients drawing, presenting, resizing and ending, and a client's domain killed while `erx_screen` composes from its buffer, where a seeded unmap of an area before its last image is freed makes ASan report, and a seeded `wrap/4` without its bound check fails the range cases |
 | **G3.** What a client makes the display domain spend is bounded by its grant | memory: the grant's `pixels` is the size of the client's pixel area, charged when the connection is made and never grown, and its `windows` bounds the client's window processes, each of which holds one present, at most 16 rectangles, a label and at most 4 KiB of pending `mouse` and of pending `kbd`, and a grant that carries `clipboard` has at most one copy of at most `windows_clipboard_bytes` while a fid is open for writing; the display holds no image, font or tree of a client; a write carries at most the file protocol's 64 KiB, and a `ctl` or `wctl` line at most 1,024 bytes; `erx_screen` never waits on the driver, so its mailbox drains while a frame is with the device, and what it holds meanwhile is state, not a queue: the newest layout, which replaces the one before, and at most one waiting present for each live window, dropped when the window ends ([The screen](#the-screen-and-its-one-path-to-the-device)). CPU: a window has one present in flight; `erx_screen` gathers the presents that arrive while the device is busy into one frame and copies for each window at most its present's 16 rectangles, each clipped to the window's visible region, once a frame, so a client that presents as fast as it is answered costs one such copy for each frame of the device and delays no other window by more | a buffer the display allocates for a client; a window with two presents composed in one frame; a second copy for one grant; an unbounded queue; a layout kept for each change instead of the newest; a waiting present kept after its window's end; a call to the driver that blocks `erx_screen`; a layout change that asks a client for work | a client that makes windows past its quota, refused with `EDQUOT`, with the domain's memory unchanged; against a driver model that never answers, a client that writes 100,000 `wctl` moves and makes and removes 100,000 windows leaves `erx_screen`'s message queue empty between messages and its heap within the bound computed from the windows quota, where a seeded `erx_screen` that calls the driver synchronously, or that keeps every layout, fails the bound; a client that floods presents from one window while another window's one present is answered within two frames, where a seeded window process that sends its next present before the last is answered fails it; the queue bounds of the data model |
 | **G4.** A presentation grants nothing | a presentation is a type and a canonical text; the terminal emulator's only actions on one are to insert its text as keyboard input and to highlight the presentations of the types an input context names; a widget's only action is the `{select, Type, Value}` event to its application; and each hands a presentation to the session's act service, which only opens the palette ([design-find-act.md](design-find-act.md#gestures-on-a-value)); none carries a facet, a grant or a capability, and the command that then runs is checked by the shell's facets as any typed command is ([Authority](design.md#authority)) | a terminal that calls a service for a clicked link; a widget server that performs the action a presentation names | a session without an inspect facet clicks a pid presentation and the inserted `i` command fails with `no_facet`; the link parser's fuzz target; a source check that `erx_term` and `erx_ui_server` call no facet and no evaluator |
@@ -1021,9 +1021,10 @@ not reach the window shows the background. So a client that presents a
 frame drawn for the size its window had a moment ago shows that frame
 clipped until its next, and a resize needs no handshake.
 
-**A program's `/dev`.** A program that draws is started with a window,
-which its starter asks for with the `window` option of
-`erx_prog_handler:start/1`
+**A program's `/dev`.** A program that draws has a window, which its
+starter asks for with the `window` option of
+`erx_prog_handler:start/1`, or which its handler opens at the program's
+first open of `/dev/draw`, the way a program started from `rc` gets one
 ([design-programs.md](design-programs.md#the-handler)):
 its handler makes the window with itself as the holder, so the window
 ends with the program, starts a draw connection on it, and gives the
@@ -2097,24 +2098,39 @@ rectangle and draws no decoration. `erx_winfs` passes every `place`,
 derived at the call from its grants: the live grant most recently minted with
 `session` set ([A display's session](#a-displays-session)), and which
 window it shows is derived, never stored: from every window table
-`erx_winfs` hands it, the shown window is the live window of that
-directory with the lowest id. So the first window the session makes is
-shown, and when it ends, the session's next oldest live window is shown
-in its place, with no event of a window's end for the policy to miss.
+`erx_winfs` hands it, the shown window is the newest live window marked
+**front**, or, when the table holds none, the live window of the
+display's session's directory with the lowest id. A window is marked
+front when the grant it was made through carries the `front` parameter,
+which only a facet row sets, and the manifest check allows only on the
+row granting a display to the system principal's session template,
+root's, in a development build (property 18 of [The
+manifest](design-system.md#the-manifest)). `erx_winfs` records the mark
+with the window when it makes it, from the grant, whose parameters do
+not change while it lives, and a window ends with its grant, so the
+mark is a fact of the window as its directory is, and the policy's pick
+stays a pure function of the table and the session. So the first window
+the session makes is shown; a program root runs that opens a window
+takes the screen while that window lives; and when a window ends, the
+pick over the table that remains shows the next newest front window, or
+the session's oldest live window, the dashboard of a board's kiosk
+among them, with no event of a window's end for the policy to miss and
+nothing to restore.
 Which session is the display's is decided by the start table and
-carried by the mint, never by who opens a window first: while the
+carried by the mint, and which grants are front by the manifest, never
+by who opens a window first: while the
 display's session restarts, another session that holds a grant on the
 display opens only hidden windows, and the new session's grant is the
 display's from its mint; while the display domain restarts, the
 display's session's grant is minted again with the mark, so it is the
 display's on the new incarnation too.
 
-Every other window, a later window of that session or a window of any
-other domain, is made and kept hidden: its `mkdir` succeeds, its
+Every other window, an older front window, a later window of that
+session or a window of any other domain, is made and kept hidden: its `mkdir` succeeds, its
 presents succeed and reach no pixel of the screen, its `wctl` reads
 report it hidden, and its `mouse` and `kbd` receive nothing until it
-is shown. While the display has no session, or its session has no live
-window, the screen shows only the background `erx_screen` fills, with
+is shown. While no front window lives and the display has no session,
+or its session has no live window, the screen shows only the background `erx_screen` fills, with
 the splash over it until the first window's first frame is presented
 ([The splash](#the-splash)).
 
@@ -4077,7 +4093,9 @@ on a display edits nothing of the board's:
 * **Facet rows say who may draw there, and how much.** A facet row of
   the display's service grants its tree to a configured domain or to a
   session template, an app's among them, with the grant's quotas,
-  `windows`, `pixels` and `clipboard`, as its parameters. A session holds
+  `windows`, `pixels` and `clipboard`, as its parameters, and on a
+  development board root's row also `front` (below, "Root's development
+  grant on a single display"). A session holds
   the rows its plan gave it: a template's session every row of its
   template, so every session of a template that the display is granted
   to holds one, and an app's session the rows its admission kept
@@ -4144,16 +4162,35 @@ what starts, restarts and bounds every session the start table keeps:
   the display, by a row its plan gave it, reaches it whether or not it is the display's
   session: under the overlapping policy its windows are ordinary
   windows, as an X client's are on any display it may open, and under
-  the single policy they stay hidden. A person's login at the UART
-  whose template is granted the display can so open windows there, as
-  an X client opens windows on any display that admits it: in a
-  development build, `root`'s login at the UART on a desktop board
-  whose `root` template is granted the display holds a grant there,
-  opens no terminal on it, since its start names no display, and opens
-  a window there when a program asks, which the overlapping policy
-  shows beside the display's session's windows. A session that holds
-  no such grant answers `erx_ui:open/1` with
-  `{error, no_display}`.
+  the single policy they stay hidden unless their grant is front. A
+  person's login at the UART whose template is granted the display can
+  so open windows there, as an X client opens windows on any display
+  that admits it: in a development build, `root`'s login at the UART on
+  a desktop board whose `root` template is granted the display holds a
+  grant there, opens no terminal on it, since its start names no
+  display, and opens a window there when a program asks, by its first
+  open of `/dev/draw` ([design-programs.md](design-programs.md#the-handler)),
+  which the overlapping policy shows beside the display's session's
+  windows. A session that holds no such grant answers `erx_ui:open/1`
+  with `{error, no_display}`.
+* **Root's development grant on a single display.** A development
+  board whose display runs the single policy, a kiosk's or a
+  dashboard's, grants that display to root's template by a facet row of
+  its own with `front` set and the defaults otherwise: one window and a
+  pixel area of `windows_pixels_default`. So root, at the UART or in
+  `rc` over SSH, types `doom` and its window takes the screen; the
+  kiosk's app keeps running behind it, its window hidden and its input
+  withheld; and when Doom ends, its window ends with its handler and the
+  kiosk's window is shown again. A second windowed program root starts
+  meanwhile is refused with `EDQUOT` by the one-window quota, as any
+  grant's is. The display pays for the row as for any template's grant
+  (property 18): a pixel area and a lane for each session the system
+  principal's `domains` quota lets live at once, five of each, 40 MiB
+  and 20 KiB more in the display domain's outer budget on each board,
+  and a connection to its quota for root's session and one for its
+  replacement. Root's session is introduced to the display at its
+  start, as every session holding a grant is, so its area exists while
+  root's session does, whether or not a program draws.
 * **An app a person starts** runs in a session of its own principal,
   never in the person's: `service APP onestart display=D`, or a
   launcher's `start APP display=D` written to `/etc/start/ctl`, starts the
@@ -4195,7 +4232,15 @@ so an app written for one display runs on any board; a web login sets
 `web`; a configured domain takes it from its manifest entry; and a login
 at the serial console or over the host link sets none. A user changes it
 as any environment variable, for the domain or for one program it
-starts, as on UNIX.
+starts, as on UNIX. A program's handler, when it opens a window at the
+program's first open of `/dev/draw`
+([design-programs.md](design-programs.md#the-handler)), takes the same
+rule at the program: the display its `display` variable names, or,
+where its environment names none, the **only display** of the session,
+the one display it holds where it holds exactly one, as an app's
+session whose start names none takes it. So `doom` typed in `rc` over
+SSH opens on a board's one display, though the login set no default
+and so opened no terminal there.
 
 `erx_ui:open(Options)` looks up `Options`' `display`, or the default when
 `Options` names none. `web` opens on the web line with the browser
@@ -4635,8 +4680,10 @@ the draw server applies no kerning and its messages stay Plan 9's
 **The window tree**, as the data model lists it, served by `erx_winfs`
 through the file protocol and declared as the interface `windows` in
 `abi/services/windows.txt`, with the grant's parameters `windows`,
-`pixels` and `clipboard`, `session`, which no facet row sets and the
-domain service sets for the display's session alone, and `principal`,
+`pixels` and `clipboard`, `front`, which property 18 allows only on
+root's row in a development build, `session`, which no facet row sets
+and the domain service sets for the display's session alone, and
+`principal`,
 the grantee's principal, which the domain service sets on every mint;
 the constants `windows_clipboard_bytes`, `windows_clipboard_ms` and
 `windows_pick_ms`; `ctl`'s read, the display's line and the last
@@ -4980,9 +5027,16 @@ the window and the reason.
   declares, and only to displays their templates are granted
   ([design-apps.md](design-apps.md#security)).
   Under the single policy no client takes the screen by opening a
-  window first, or by asking: the shown window belongs to the session
-  whose grant the domain service marked, and only a start row's keeper
-  makes the domain service mark one. Under the overlapping policy no
+  window first, or by asking, unless the manifest made its grant front:
+  the shown window is the newest window of a front grant, or else
+  belongs to the session whose grant the domain service marked, and
+  only a start row's keeper makes the domain service mark one. `front`
+  is a facet row's parameter, which no request, start row or
+  `start.conf` sets, and property 18 of the manifest check refuses it on
+  every row but one granting a display to the system principal's
+  session template, and on that row too in a release build, so the one
+  client that can take a development board's screen is root, who holds
+  the machine already, and none can in a release. Under the overlapping policy no
   client takes the keyboard by asking, by making a window or by
   outlasting another: keys go only to the window the user last picked
   with a click or the menu, while it is shown. Under either policy a
@@ -5436,6 +5490,28 @@ change nothing; pointer gestures start with
   tells LVGL the last flush is done at once; a program that renders
   before its first `commit`; an `erx_screen` that does not monitor the
   driver.
+* **A front window.** `erx_wm_single`'s pick, a pure function of the
+  table and the session, is tested on the host over every table of up
+  to four windows whose ids are drawn from 1 to 4 and whose grant is the
+  display's session's, a front grant's or another's, with the session
+  set or `none`, against four properties: the shown window is in the
+  table or is `none`; a window that is neither front nor the session's
+  is never shown; while a front window lives the shown window is front
+  and no front window has a higher id; and with none, the shown window
+  is the session's lowest id, or `none` when the session has no window.
+  Seeded: a pick that shows the oldest front window, one that ignores
+  `front`, and one that shows the newest window of any grant, each
+  failing one property. `erx_winfs` records a window's mark from its
+  grant: two grants minted with and without `front` make one window
+  each, and only the first is front; seeded, an `erx_winfs` that marks
+  every window. Under QEMU, the `qemu-virt` development image boots to
+  its dashboard, `rc` over SSH runs `doom`, two screenshots taken a
+  second apart differ from the dashboard's and from each other, and
+  once `kill` ends Doom the next screenshot is the dashboard's frame
+  from before Doom, the offline dashboard drawing the same frame each
+  time; seeded, a manifest whose root row
+  lacks `front`, under which the screenshots stay the dashboard's and
+  the check fails.
 * **Power.** G6 at the driver: no device request between two changes,
   on the desktop and on a kiosk under LVGL. Seeded: LVGL's animations
   on; a timer that repaints with no change.
@@ -5854,6 +5930,23 @@ Decisions:
     display hold counts with the grant's `pixels`, and a program that
     writes the clipboard and reads it back before closing reads the old
     bytes.
+26. **Root takes a development board's single screen by a manifest
+    mark.** Root's program shows over a kiosk's app because root's grant
+    carries `front`, a facet row parameter property 18 allows on root's
+    row alone and in no release build, and the single policy's pick
+    reads it from the window table; the window opens at the program's
+    first open of `/dev/draw` ([design-programs.md](design-programs.md#the-handler)).
+    So `rc` takes no flag, a program declares nothing, and when the
+    window ends the pick shows the kiosk's window again with nothing
+    stored. Not chosen: a `window` option in `rc` or a declaration in
+    each program, which every program and script would have to carry;
+    a `wctl` request to take the screen, which would let any client
+    take it; and making root's session the display's, which would take
+    the screen from the kiosk while root is logged in, not while a
+    program draws. It costs the display a pixel area for each session
+    the system principal may have, which property 18 sums as for any
+    template's grant, and a board whose single screen root can take
+    while it is developed.
 
 ## References
 
