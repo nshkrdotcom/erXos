@@ -377,6 +377,10 @@ host bridge's own `dma-ranges`, as
   and `2^64 - 1`. The range is present only when exactly one window
   remains. Which RAM inside it holds DMA memory is decided where the
   memory is made ([Facts into records](#facts-into-records)), not here.
+  For a PCIe function the range is then cut at its row's `dma_limit`, a
+  device address, exclusive: `last` becomes the highest CPU address whose
+  device address lies below it, so a bridge that translates keeps its
+  offset ([design-pcie.md](design-pcie.md#dma)).
 
 Its status is `ok`, `no_node`, `coherence` (as above), `cells` (a cell
 count other than 1 or 2), `malformed` (an entry not a whole number of
@@ -387,6 +391,19 @@ that RAM backs). A row naming the root as a device's node has no bus and
 is `malformed`; a path that is not absolute, or names no node, is
 `no_node`. Any status but `ok` makes both DMA facts absent, so a
 device never has a range without its coherence.
+
+**A PCI host bridge.** For a host bridge's row the reader also takes the
+bridge's `ranges`, whose child addresses take the same three cells as
+its `dma-ranges`, an entry of I/O space skipped; its `bus-range`; and its
+`interrupt-map`, each entry matched under its `interrupt-map-mask`, which
+for the BCM2711 keeps only the pin, so a closed bus's place
+takes the line the map routes for its position's pin. They are the
+windows, bus span and lines of the bridge's record that the device
+service hands the PCIe domain ([design-pcie.md](design-pcie.md#records),
+[design-pcie.md](design-pcie.md#the-closed-bus)), and the image suites
+check the line a closed bridge's platform record gives each place
+against the map in the platform's tree
+([design-abi.md](design-abi.md#devices-and-partition-windows)).
 
 **What the reader cannot check.** The reader checks the tree's encoding
 and that what it reads fits together; it cannot check that the hardware
@@ -580,14 +597,19 @@ ran.
   child count on a level that is not the function's host bridge gives
   `cells`; a PCIe function under a host bridge with two-cell
   `dma-ranges` is translated by them; 1,024 child entries onto one parent range under a
-  level that splits it 1,024 ways gives `ranges`. Seeds: the reader
+  level that splits it 1,024 ways gives `ranges`; a host bridge's
+  three-cell `ranges` with a memory and an I/O entry give one window; an
+  `interrupt-map` whose entry for the listed place's pin gives that place
+  its line, and one with no entry for that pin gives none; a PCIe
+  function's range is cut at its `dma_limit`. Seeds: the reader
   takes the nearest marked ancestor's coherence, and the parent-bus
   fixture reads as coherent; the marks tested for presence only, and
   `dma-coherent = <0>` reads as coherent; the translation through the
   level above the first non-empty one dropped, which a fixture with two
   nested `dma-ranges` catches; the windows cut to RAM, and the two-range
   fixture gives `ranges`; a PCIe function's walk started above its host
-  bridge, and its fixture is not translated; the windows' bound removed,
+  bridge, and its fixture is not translated; the map's pin match dropped,
+  and the closed place takes the first entry's line; the windows' bound removed,
   and the splitting fixture overruns the walk's array under ASan.
 * **The firmware's edits.** Fixture trees made from the card's tree: one
   whose `emmc2bus` range differs, one with `local-mac-address`, one with a
@@ -606,7 +628,8 @@ ran.
   fixture gives 1024 zero bytes as a seed.
 * **The fuzz target**, `tools/fuzz/dt_fuzz.c`, landing with the reader:
   arbitrary bytes into `erx_dt_accept`, and an accepted view into
-  `erx_dt_device` for fixed paths, `erx_dt_framebuffer`, `erx_dt_registers` and `erx_dt_seeds`, under ASan and
+  `erx_dt_device` for fixed paths, the host bridge's `ranges`, `bus-range` and `interrupt-map` reads,
+  `erx_dt_framebuffer`, `erx_dt_registers` and `erx_dt_seeds`, under ASan and
   UBSan, with the platforms' trees, the fixtures and a truncated and a
   nested tree as its corpus, each handed over in a buffer of exactly its
   length. Seeds: acceptance that calls `fdt_check_header` before

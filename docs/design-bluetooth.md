@@ -152,9 +152,11 @@ and the system domain's services each start the owner of their own UART's
 line. The vault's machine file holds machine keys; no facet stores a
 grantee's state. The firmware notification, `erx_firmware_request`, is
 the USB design's narrow kernel call, which the device service makes
-through the domain library for the VL805 alone
+through the domain library's `erx_domain_lib:firmware/2` for the VL805,
+this line and the board sensors alike
 ([design-usb.md](design-usb.md#the-vl805s-firmware),
-[design-pcie.md](design-pcie.md#facets)); none of it is built yet. The HID parser and fold, `erx_hid_desc` and
+[design-pcie.md](design-pcie.md#facets),
+[design-board-sensors.md](design-board-sensors.md#the-kernel-call)). The HID parser and fold, `erx_hid_desc` and
 `erx_hid_core`, are the USB design's ([design-usb.md](design-usb.md#hid)).
 
 ### Sources
@@ -652,7 +654,9 @@ device has a power line.
 * **Authority.** The line service asks the device service,
   `erx_devices:power(Device, off | on)`, a call inside the system
   domain. The device service makes the kernel call through the domain
-  library, `erx_domain_lib:device_notify(Device, Index)`, with the
+  library, `erx_domain_lib:device_notify(Device, Index)`, a use of
+  `erx_domain_lib:firmware/2` for a device's row
+  ([design-board-sensors.md](design-board-sensors.md#the-requests)), with the
   resource UART0's device record holds, carved with `ERX_CARVE_DEVICE`
   from the entry the record names with notifications, as `pci_firmware/1`
   makes it for a bridge ([design-pcie.md](design-pcie.md#facets)). So the

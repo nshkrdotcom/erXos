@@ -196,13 +196,18 @@ and the spare's bytes, which a party reads for itself.
 **The block driver.** The driver is an Erlang application under a
 supervisor, `erx_blk_sup`, in the domain that holds the block device. It
 has two layers. The **transport** is one **device process**, registered
-as `erx_blk`, which owns the controller through the device NIF, receives
+as `erx_blk` when a device record starts it, which owns the controller through the device NIF, receives
 its interrupts as messages and acknowledges them
 ([design-runtime.md](design-runtime.md#the-device-nif)), and moves
 sectors: `erx_blk_virtio` drives a virtio-mmio block device through its
 ring, posting descriptors from a pool of DMA buffers the domain holds,
 and `erx_blk_sd` drives an SD card through an SD host controller
-([The SD host controller](#the-sd-host-controller)). The **service**
+([The SD host controller](#the-sd-host-controller)). A USB mass-storage
+medium's transport, `erx_blk_bot`, is started by the USB domain's BOT
+function, one for each ready medium, and is not registered
+([design-usb.md](design-usb.md#the-block-transport)): the service reaches
+every transport by its pid, so one block service serves a device
+record's transport and a medium's alike. The **service**
 above it names no controller: a **partition process**, which reads and
 parses the partition table with binary matching and checked bounds,
 fuzzed on the host; and one **window process** per window. Between
@@ -237,9 +242,10 @@ calls, so nothing above it depends on the controller:
   that refuses SYNCHRONIZE CACHE
   ([design-usb.md](design-usb.md#the-scsi-subset)); virtio and the SD
   controller never answer it;
-* `erx_blk:info()`: `{ok, #{transport, capacity, max_sectors, detail}}`,
-  the transport's name (`virtio_mmio` or `sdhci`), the medium's length
-  in sectors of 512 bytes, the most sectors one request moves, and a map
+* `erx_blk:info()`: `{ok, #{transport, capacity, max_sectors, flush, detail}}`,
+  the transport's name (`virtio_mmio`, `sdhci` or `usb_bot`), the medium's length
+  in sectors of 512 bytes, the most sectors one request moves, whether the
+  medium flushes, and a map
   of what the transport reports about itself for the log and the
   inspector (virtio's version and features; the card's type, bus width
   and clock).
@@ -252,7 +258,9 @@ boot (U4); `{error, busy}` when the device process's backlog is full;
 `{error, no_device}` when no device process runs; `{error, no_flush}`
 from `flush()` on a medium that cannot flush; and
 `{error, {device, Detail}}` for a request the controller or the medium
-failed, where `Detail` is built from fixed atoms and integers for the
+failed, `{device, no_sense}` among them for a USB command whose sense
+failed ([design-usb.md](design-usb.md#the-block-transport)),
+where `Detail` is built from fixed atoms and integers for the
 driver's log line, never from a controller's bytes, and never reaches a
 client. A window answers its client `einval` for `bad_count`, `erofs` for
 `erofs`, `enotsup` for `no_flush`, so a file system can tell a medium
@@ -340,6 +348,14 @@ only by its SDIO builders and issued only on a record of kind `sdio`, as
 the SD table's commands are issued only on a `block` record
 ([design-wifi.md](design-wifi.md#commands-go-through-erx_blk_write)).
 No SDIO command writes a medium, so none passes the trial check.
+For a USB medium the act is a CBW whose command writes the medium and
+the data phase that follows it on bulk-out, so `erx_blk_write` has one
+function per BOT act: the CBW, built from its SCSI table with the trial
+check before any WRITE, and the data phase of a write whose CBW it
+built. The BOT engine names a request and never a CBW's bytes, and these
+functions are the only callers of `erx_usb_pipe:bulk_out/3`, which the
+build check's `device-posters` rule below holds as it holds
+`erx_device:post/4` ([design-usb.md](design-usb.md#the-block-transport)).
 The transfer-mode half of every command word it builds leaves DMA off,
 and `erx_device:command/2` refuses a word that turns it on, so no
 command starts a DMA transfer. DMA through the controller's ADMA2 tables
@@ -390,7 +406,11 @@ copies the frame out of its lane once, into its own memory, and the
 storage domain supplies no memory beyond the lane the client's budget
 paid for ([design-domains.md](design-domains.md#connections)). A client
 in the driver's own domain receives the NIF's binary itself, with no copy
-beyond the NIF's one. A window answers one request at a time per client in
+beyond the NIF's one. A USB drive's holder is handed a **drive grant**
+instead, a process of the USB domain that answers one request, `window`:
+the pid of the window of its partition on the medium the drive holds
+now, `{error, no_medium}` or `{error, no_partition}`
+([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)). A window answers one request at a time per client in
 order, so a client's own requests in flight bound what the service holds
 for it, and a client that stops reading its lane blocks only its own
 window.
@@ -1596,7 +1616,12 @@ of the first build's matches.
 
 The **FAT server**, `erx_fat`, serves one FAT partition as files, in a
 storage domain of its own that holds only that partition's window (PW1),
-as an `erx_fs` callback module. It reads FAT12, FAT16
+as an `erx_fs` callback module. On a USB drive it holds the drive's grant
+instead and mounts on access: when a client first walks its tree it asks
+the grant for the window and mounts what the window serves, its root an
+empty read-only directory while the drive holds no medium, and it
+unmounts when the window ends
+([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)). It reads FAT12, FAT16
 and FAT32 as Microsoft's specification describes them, the type following
 from the volume's count of clusters, with long names, and writes FAT16 and
 FAT32, mounting FAT12 read-only (Durability, below); exFAT is not

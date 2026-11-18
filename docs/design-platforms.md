@@ -300,6 +300,12 @@ off and on, and its patch, `BCM4345C0.hcd`, ships in the boot image
 ([design-bluetooth.md](design-bluetooth.md#the-hardware)). The VideoCore's message interface shares the
 mailbox's page, which the kernel keeps, so it goes to no driver (PL2,
 [research](research-boards-storage.md#checks-against-local-copies)). The
+firmware requests the kernel sends for the board are the rows of its
+platform record's `firmware_requests`: the VL805's notification, index 0
+of the PCIe bridge's entry; UART0's two power notifications; and the
+nine machine readings the sensor driver polls
+([Device secrets](#device-secrets),
+[design-board-sensors.md](design-board-sensors.md#the-requests)). The
 devices erXos drives use wired interrupts. No IOMMU is described, so its
 Ethernet controller (`brcm,bcm2711-genet-v5`) and its SD controller
 (`brcm,bcm2711-emmc2`) are unconfined, and a release build's system
@@ -863,6 +869,20 @@ functions' DMA to device addresses below
 960 MiB
 ([research-brcmstb-pcie.md](research-brcmstb-pcie.md), sections 2 and
 3; [design-pcie.md](design-pcie.md#the-bridge-seam)).
+The PCIe domain's bridge driver brings the BCM2711's bridge up in the
+vendor's order, from its resets and PERST# through the link's training
+to its inbound window, programmed from the tree's `dma-ranges`, and
+ends the bring-up with the VL805's firmware notification. It makes every
+access below the root port between two reads of the link's state,
+keeping the value only when the link stayed up, reaches bus 0 only at
+the root port, device 0, function 0, and bus 1 only at the listed place.
+The bridge raises its endpoints' INTA to INTD on SPIs 143 to 146, so the
+VL805's line is SPI 143, as the tree says and probe B2 confirms
+([design-usb.md](design-usb.md#the-bcm2711-bridge)); its own two interrupts, SPIs 147 and 148, are
+lines of its unit, held by the PCIe domain and left masked, since its MSI
+decoder stays unused
+([design-usb.md](design-usb.md#the-bcm2711-bridge),
+[design-usb.md](design-usb.md#interrupts)).
 The BCM2712's root
 complex (`brcm,bcm2712-pcie`) reaches configuration space through an index
 and a data register of its own rather than ECAM, and aborts an access
@@ -1303,7 +1323,11 @@ request its one-shot `tryboot` flag
   [research](research-boards-storage.md#booting-a-chosen-partition-on-the-raspberry-pi)).
   Each slot's `config.txt` leaves `kernel_watchdog_partition` unset, so a
   watchdog reset boots the slot `autoboot.txt` names, as every other reset
-  does. Setting the EEPROM is part of installing erXos on a board, and
+  does. Setting the EEPROM is part of installing erXos on a board, and on
+  the Raspberry Pi 4 the installation sets its boot order to the microSD
+  card alone, never USB mass storage or the network, so the boot firmware
+  never drives the VL805 ([design-usb.md](design-usb.md#the-bcm2711-bridge)),
+  and
   each board's port records the bootloader version its trial path needs; the
   Raspberry Pi 4's is 2022-12-01 ([the card's checklist](#trying-a-card-on-a-board)).
 * **The reset count**, the count of consecutive unordered ends
@@ -1358,7 +1382,12 @@ final line on the early console tells the harness, which plays the
 firmware. A mailbox error, a timeout or a `SYSTEM_RESET` that returns ends
 in the watchdog's reset
 ([design-kernel.md](design-kernel.md#console-log-and-panic),
-[design-storage.md](design-storage.md#system-updates)). A Pi 4 of revision
+[design-storage.md](design-storage.md#system-updates)). The kernel serves
+one mailbox request at a time, so a trial request that finds a firmware
+request in flight, a notification or a sensor reading, waits it out, at
+most that request's 1 s deadline, before it posts its own, and one that
+cannot take the mailbox ends in the watchdog's reset
+([design-kernel.md](design-kernel.md#firmware-requests)). A Pi 4 of revision
 1.0 or 1.1 with a write-protected EEPROM drops the request, and the
 machine boots the committed slot
 ([design.md](design.md#failure-handling)).
@@ -1664,6 +1693,12 @@ event to BL31's banner of the next boot in the console log:
   firmware's halt mark, so its write replaces the 4 s arm and the reset it
   makes is the halt. A board that stays halted fails the design, not the
   board; record which.
+* **The firmware's sensors read live values.** Once per change to the
+  sensors or the mailbox core, `/proc/sensors/status` is read at idle and
+  after a CPU-bound load on every core, and a low bench supply must bring
+  `under-voltage detected` on the console and back at 5.1 V
+  `under-voltage cleared`
+  ([design-board-sensors.md](design-board-sensors.md#verification)).
 
 #### The SD card and Ethernet on a board
 

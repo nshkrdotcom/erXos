@@ -2835,6 +2835,61 @@ hardware watchdog is never reloaded from the root task's pet: a pet-fed
 hardware watchdog could fire before the kernel's deadline, with no crash
 record, and would make ERTS's boot race the board's timeout.
 
+### Firmware requests
+
+`erx_firmware_request(resource (CARVE), index)` is the one way anything
+outside the kernel asks a board's firmware for anything. The firmware's
+mailbox can read the board's key, so only the kernel reaches it
+([design-platforms.md](design-platforms.md#device-secrets), PL2), and the
+caller chooses neither the request nor its argument, only a row of the
+platform record the build checked
+([design-board-sensors.md](design-board-sensors.md#the-construction-the-firmwares-requests-are-rows-of-the-platform-record)):
+
+* **The rows.** Each row is a tag from a closed set, with the one
+  argument the record gives and a fixed answer window of at most 64
+  bytes. A resource carved with `ERX_CARVE_DEVICE` from a device entry
+  the platform record names with requests names that device's rows, such
+  as a PCIe bridge's notification that has the USB controller behind it
+  load its firmware ([design-usb.md](design-usb.md#the-vl805s-firmware));
+  the root resource names the machine's rows, such as the sensor readings
+  ([design-board-sensors.md](design-board-sensors.md#the-requests)).
+  `index` chooses one row of the named list. An index past it, and a
+  resource or platform that names no rows, answer `ERX_ENOTSUP`; a
+  resource without `CARVE`, `ERX_ERIGHTS`. A resource never passes
+  ([Rights](#rights)), so only the root task holds one, and the system
+  domain's device service makes every call from its one firmware worker.
+* **The deadline.** The kernel writes the request into its buffer, posts
+  it and polls for the answer for at most 1 s from the call's start, the
+  wait for room to post included, with a preemption point between reads,
+  so the wait holds no lock and masks no interrupt (K13). The call may
+  wait, so an executor's is `ERX_EWOULDBLOCK`. No answer in time is
+  `ERX_ETIMEDOUT`.
+* **One buffer, kept for the boot.** The buffer is a page of the
+  kernel's own data that no allocator receives and nothing but these
+  requests uses, so the firmware's answer writes only that page. After a
+  timeout the page is left to the firmware: a late answer would name the
+  same buffer as a later request's, so every later call of the boot
+  answers `ERX_ETIMEDOUT` at once without touching the mailbox.
+* **One request at a time.** One mailbox routine serves every request,
+  one at a time, and takes as a request's answer only the word that names
+  that request's own buffer. A call that finds another request in flight
+  answers `ERX_EBUSY` at once and waits on no other caller; the
+  platform's trial request
+  ([design-platforms.md](design-platforms.md#trial-requests)) waits out a
+  request in flight, at most its deadline, before it posts its own.
+* **The answer** is memory the firmware wrote, read once per field after
+  the buffer's span is invalidated from the data cache. A response code
+  other than success, a first tag other than the row's, or a length below
+  the tag's least answer is `ERX_EPROTO`; a tag the firmware ignored is
+  `ERX_ENOTSUP`. Otherwise the call returns `ERX_OK` with `n`, the
+  smaller of the response length and the row's window, and the first `n`
+  bytes of the answer in the caller's UTCB; a notification's window is
+  empty, so it returns a status alone.
+
+The mailbox core that lays out a request from its tag's declaration and
+checks the answer is C17, built for the host, and the same core serves
+Fiasco's root backend ([design-fiasco.md](design-fiasco.md#the-call-table)).
+
 ### The boot image
 
 The boot image is an indexed archive of every file and executable image
@@ -7829,8 +7884,9 @@ in the ABI file:
 | `ERX_ERANGE` | an address, offset or memory window outside its space, object or resource; a hole met by a part of `erx_space_protect`, the parts before it applied |
 | `ERX_ENOMEM` | the budget's cap, the room of its ancestors, or physical memory cannot cover what the call needs |
 | `ERX_ELIMIT` | a count limit: capabilities, slots a receive reserves, items a message carries, mappings, threads, holds on a space, executors per group, group depth, space depth, MSIs; object-identity or mutable-record sequence exhaustion |
-| `ERX_EBUSY` | a resource in use: a line with an IRQ object, a stream with a window, a register page with an MMIO object, an executor for a group whose executors belong to another space that has not stopped, a paged object not yet sealed, a seal of an object that has writers; a copy of a space whose source is not quiesced |
+| `ERX_EBUSY` | a resource in use: the firmware's mailbox while another request is in flight; a line with an IRQ object, a stream with a window, a register page with an MMIO object, an executor for a group whose executors belong to another space that has not stopped, a paged object not yet sealed, a seal of an object that has writers; a copy of a space whose source is not quiesced |
 | `ERX_ETIMEDOUT` | the deadline passed |
+| `ERX_EPROTO` | a firmware answer that breaks the interface its request's tag declares ([Firmware requests](#firmware-requests)) |
 | `ERX_EFAULT` | a umtx word's address that no valid user-readable translation of the caller's space maps, or whose translation maps a page the kernel's direct map does not cover, found before the call changed anything, so touching the word and repeating the call is safe ([Umtx](#umtx)) |
 | `ERX_EEXIST` | the range is in use; a copy's target that is not empty when the copy starts, or gains a mapping or a capability where the copy would place its own |
 | `ERX_ENOTSUP` | an unknown call; an image built for another ABI version; a copy of a space that maps a JIT object; `ERX_END_TRIAL` while the boot value is `unknown` ([Console, log and panic](#console-log-and-panic)); on Fiasco, a call it leaves out, such as `erx_space_pause` ([The current implementation](#the-current-implementation-the-modified-fiasco)) |
@@ -7867,7 +7923,7 @@ errors). Calls that may wait are marked with the executor rule.
 | resources and DMA | `erx_resource_carve(budget (ALLOC), resource (CARVE), kind, selector)`, `erx_dma_create(resource (CARVE), budget (ALLOC))`, `erx_dma_map(window (MAP), iova, size, mem (MAP), offset, prot)`, `erx_dma_unmap(window (MAP), iova, size)`, `erx_dma_bind(window (BIND), irq (TRIGGER))` | none waits |
 | log and trace | `erx_debug_log(len)`, its text in the caller's UTCB, `erx_log_read(res (TRACE), cursor, window)`, `erx_log_take(res (TRACE), window)`, `erx_trace_read(res (TRACE), cpu, cursor, window)` | none waits; each reader writes whole records into its window and returns the next cursor and the count of records lost ([Console, log and panic](#console-log-and-panic), [Trace ring](#trace-ring)) |
 | time and entropy | `erx_time_set_offset(time_page (WRITE), offset_ns)`, `erx_entropy_read(len)`, `erx_entropy_add(res (CARVE), len, flags)`, their bytes in the caller's UTCB | crediting needs `ENTROPY` |
-| machine | `erx_machine_end(res (POWER), how)`, `erx_watchdog_pet(res (POWER))` | `how` is `ERX_END_OFF`, `ERX_END_RESET`, `ERX_END_PANIC` or `ERX_END_TRIAL`; the end returns only to fail `ERX_END_TRIAL` with `ERX_ENOTSUP`; a pet never waits and moves the deadline `D` seconds ahead ([The watchdog](#the-watchdog)) |
+| machine | `erx_machine_end(res (POWER), how)`, `erx_watchdog_pet(res (POWER))`, `erx_firmware_request(resource (CARVE), index)` (executor: refuse) | a firmware request sends one row of the platform record and waits at most 1 s ([Firmware requests](#firmware-requests)); `how` is `ERX_END_OFF`, `ERX_END_RESET`, `ERX_END_PANIC` or `ERX_END_TRIAL`; the end returns only to fail `ERX_END_TRIAL` with `ERX_ENOTSUP`; a pet never waits and moves the deadline `D` seconds ahead ([The watchdog](#the-watchdog)) |
 
 ### The ABI file
 
@@ -8447,7 +8503,7 @@ of evidence that checks it:
 | no FP or SIMD in the kernel outside the FP save and restore routines (K10) | disassembly |
 | system registers and inline assembly only in generated accessors and listed helpers, in the kernel and in erXos's user-mode C | `inline-asm`, `sysreg-read`; disassembly by symbol |
 | TLB and cache maintenance only in the architecture layer's maintenance helpers | disassembly |
-| exception returns only in the exit path and the boot entry's drop; firmware calls only in the one firmware-call routine; a firmware mailbox's registers referenced only from the platform's trial request, its boot-time key read and the Raspberry Pi 4's VL805 firmware notification ([design-usb.md](design-usb.md#the-vl805s-firmware)) | disassembly, relocations |
+| exception returns only in the exit path and the boot entry's drop; firmware calls only in the one firmware-call routine; a firmware mailbox's registers referenced only from the platform's trial request, its boot-time key read and the one firmware request routine, which serves the Raspberry Pi 4's VL805 firmware notification ([design-usb.md](design-usb.md#the-vl805s-firmware)) and every other row of the platform record ([Firmware requests](#firmware-requests)) | disassembly, relocations |
 | a board's key is read once, at boot, from the boot-only section the kernel unmaps before it starts the root task | relocations of the linked image |
 | the kernel touches no PCIe configuration space: the generator emits no kernel accessor for a bridge | relocations, the generator |
 | device registers only through generated accessors | syntax trees (`volatile` only in generated headers) |
