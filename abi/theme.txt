@@ -53,7 +53,7 @@ theme 1
   color desktop    D9DAD5 0D0F2A
   # The WCAG 2 contrast ratio each foreground meets on each background
   # named, in each palette.
-  contrast text      on window surface sunken 7.0
+  contrast text      on window surface sunken desktop 7.0
   contrast secondary on window surface sunken 4.5
   contrast on_accent on accent 4.5
   # The icons' definition file and the pixel sizes they are rasterised at.

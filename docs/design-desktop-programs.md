@@ -412,7 +412,7 @@ theme 1
   color series_mem 5B53C6 A79CFF
   color series_msg B8620B FFB547
   color desktop    D9DAD5 0D0F2A
-  contrast text      on window surface sunken 7.0
+  contrast text      on window surface sunken desktop 7.0
   contrast secondary on window surface sunken 4.5
   contrast on_accent on accent 4.5
   icons display/icons/icons.txt sizes 16 32
