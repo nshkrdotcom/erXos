@@ -409,8 +409,9 @@ Eshell V17.1.1 (type help(). for help)
   and `kill %1`). Its window shows over the kiosk dashboard through
   root's `front` display grant, which only development builds give, and
   the dashboard returns when Doom ends. A key's down and repeat reach a
-  window only while it is on the screen. The kiosk QEMU suite boots on
-  640 MiB, as the published QEMU medium does.
+  window only while it is on the screen. The kiosk QEMU suite, and every
+  other suite that boots the board's manifest, boots on 640 MiB, as the
+  published QEMU medium does.
 
 * `erx_desk`, the desktop application, runs a window of its own and a
   `clock` command that reads the clock's state before the wall clock; its
@@ -499,7 +500,8 @@ tools/erx boot --medium build/production-image/qemu-virt/medium.img
 
 builds the QEMU release medium, the card's system packed for QEMU `virt`
 with the kiosk and Doom, and boots it as a person uses it, on a 640 MiB
-machine (the suites keep 512 MiB): the display in QEMU's window
+machine, which every development and release image of QEMU `virt` is packed
+for: the display in QEMU's window
 with the virtio keyboard and tablet, user networking that reaches your
 network, your host's port 2222 forwarded to the guest's SSH port, and the
 serial console on your terminal; quit with Ctrl-A then X. QEMU boots an

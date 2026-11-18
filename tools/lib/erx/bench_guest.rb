@@ -114,7 +114,7 @@ module Erx
     # The transcript for any exchanges typed at the Erlang shell, the first at its banner,
     # on platform's board.
     def transcript(steps, platform:)
-      boot = Qemu.boot_transcript(memory_mib: platform.memory_mib).map do |point|
+      boot = Qemu.boot_transcript(memory_mib: ProductionImage::Machine.board(platform).memory_mib).map do |point|
         point.fetch(:name) == FIRST_LINE_AT ? point.merge(type: ProductionImage::Run::ERL_LINE).freeze : point
       end
       raise Error, "the boot transcript has no #{FIRST_LINE_AT} point to type at" unless
@@ -149,7 +149,8 @@ module Erx
     # QEMU's run, returning the error that ended it (or nil) instead of raising it.
     def boot(root:, runner:, plan:, image:, points:, directory:, platform:)
       Qemu.new(root: root, runner: runner)
-          .run(platform: platform, accel: plan.accel, cpus: 1, image: image, memory_mib: platform.memory_mib,
+          .run(platform: platform, accel: plan.accel, cpus: 1, image: image,
+               memory_mib: ProductionImage::Machine.board(platform).memory_mib,
                checkpoints: points, command_line: ProductionImage::Run::COMMAND_LINES[plan.accel],
                directory: directory)
       nil

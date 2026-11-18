@@ -17,7 +17,8 @@ require_relative 'web_build'
 require_relative 'web_guest'
 
 module Erx
-  # Root's session domain on the development machine (docs/design-live.md, "The console";
+  # Root's session domain on the board manifest's machine (ProductionImage::Machine.board;
+  # docs/design-live.md, "The console";
   # docs/design-domains.md, "Principals, sessions and quotas"). It boots the production
   # image itself, whose development manifest carries the system principal's session
   # template, and types at the UART as a person would. Each boot has a fresh copy of the
@@ -443,7 +444,7 @@ module Erx
         @compiler = compiler
         @linker = linker
         @qemu = qemu
-        @machine = ProductionImage::Machine.development(platform)
+        @machine = ProductionImage::Machine.board(platform)
         @manifest = platform.manifest_source(@root)
       end
 

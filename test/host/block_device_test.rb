@@ -11,6 +11,8 @@ require_relative '../../tools/lib/erx/block_device'
 class BlockDeviceTest < Minitest::Test
   Device = Erx::BlockDevice
   Image = Erx::BlockImage
+  # The RAM of the machine the suite boots on, which its banner reports.
+  MEMORY_MIB = Erx::ProductionImage::Machine.board(Erx::Platform.development(File.expand_path('../..', __dir__))).memory_mib
 
   def good_log(lines = Device.expected_lines)
     "Hello\r\nerXos\r\n#{lines.map { |line| "#{line}\r\n" }.join}shell>\r\n"
@@ -49,7 +51,7 @@ class BlockDeviceTest < Minitest::Test
   # The test module reaches the guest only in a test image: the boot checks the banner's
   # test-image line, and the kernel command line starts the module from its directory.
   def test_the_boot_is_a_test_image_that_runs_the_test_module
-    names = Device.checkpoints.map { |point| point.fetch(:name) }
+    names = Device.checkpoints(memory_mib: MEMORY_MIB).map { |point| point.fetch(:name) }
     assert_includes names, Erx::Qemu::TEST_IMAGE_BANNER.fetch(:name)
     assert_equal 'erx.arg=-pa erx.arg=/test/blk erx.arg=-run erx.arg=erx_blk_check erx.arg=main', Device.command_line('hvf')
     assert_equal "#{Erx::ProductionImage::Run::COMMAND_LINES.fetch('tcg')} erx.arg=-pa", Device.command_line('tcg')[/\A\S+ \S+/]
@@ -80,7 +82,7 @@ class BlockDeviceTest < Minitest::Test
   end
 
   def test_the_checkpoints_end_on_the_last_driver_line
-    last = Device.checkpoints.last
+    last = Device.checkpoints(memory_mib: MEMORY_MIB).last
     assert_equal 'block-done', last.fetch(:name)
     assert_match last.fetch(:pattern), "blk: done\r\n"
     refute_match last.fetch(:pattern), "blk: wrote sector 7\r\n"
@@ -88,13 +90,13 @@ class BlockDeviceTest < Minitest::Test
 
   # The command shell's prompt ends no line, so the driver's next line can follow it.
   def test_a_command_shell_prompt_may_open_a_driver_line
-    assert_match Device.checkpoints.last.fetch(:pattern), "% blk: done\r\n"
+    assert_match Device.checkpoints(memory_mib: MEMORY_MIB).last.fetch(:pattern), "% blk: done\r\n"
     prompted = good_log.sub("blk: done\r\n", "% blk: done\r\n").sub('blk: read sector 4 ok', '% blk: read sector 4 ok')
     refute_equal good_log, prompted
     assert_nil Device.line_difference(prompted)
     failed = prompted.sub('% blk: read sector 4 ok', '% blk: read sector 4 failed')
     assert_match(/line 7: .*got "blk: read sector 4 failed"/, Device.line_difference(failed))
-    refute_match Device.checkpoints.last.fetch(:pattern), "%% blk: done\r\n"
+    refute_match Device.checkpoints(memory_mib: MEMORY_MIB).last.fetch(:pattern), "%% blk: done\r\n"
   end
 
   def test_the_power_cut_lines_are_the_documented_sequence

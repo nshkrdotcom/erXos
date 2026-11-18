@@ -40,7 +40,9 @@
 # background. A boot that attaches no gpu leaves the gpu's transport empty, and the
 # domain runs without a screen (erx_virtio_gpu). Fixed
 # medium roles carry partition 0, as docs/design-abi.md says. The machine is
-# QEMU virt with the platform record's RAM (config/platforms/qemu-virt.json).
+# QEMU virt with more RAM than the platform record's (config/platforms/qemu-virt.json),
+# whose 512 MiB leave beside this root_memory too little room for the production
+# image's archive (ProductionImage::Machine.board).
 # root_memory holds what the budgets below promise and an 8 MiB margin no one is
 # promised; what RAM less fiasco_reserve leaves beside it is bootstrap's and the boot
 # archive's, and the packer prints both figures for each image it builds. The system

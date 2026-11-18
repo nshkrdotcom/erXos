@@ -261,9 +261,9 @@ module Erx
 
     # The machine the image is packed and checked on, and boots on: the website's
     # (Machine.site, the RAM the website gives its guest) when without_web, else the
-    # development machine.
+    # board's manifest's (Machine.board).
     def machine(platform:, without_web:)
-      without_web ? ProductionImage::Machine.site(platform) : ProductionImage::Machine.development(platform)
+      without_web ? ProductionImage::Machine.site(platform) : ProductionImage::Machine.board(platform)
     end
 
     # Builds the kernel and the image into its directory under root, replacing the

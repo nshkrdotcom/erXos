@@ -5,7 +5,7 @@
 require_relative '../qemu_gate'
 require_relative '../session_domain'
 
-# Root's session domain on the development machine, under HVF at each CPU count
+# Root's session domain on the board manifest's machine, under HVF at each CPU count
 # (tools/lib/erx/session_domain.rb): root_1, the session the console's login starts at
 # boot, takes the UART; its shells answer, a 64 KiB burst survives the menu toggling,
 # halt(3) ends it with one line and the login's next session takes the line, and from

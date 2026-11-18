@@ -140,7 +140,6 @@ module Erx
                      'blk: dev status ok', 'blk: dev ctl reset ok', 'blk: dev ctl bogus refused',
                      'blk: read sector 0 again ok'].freeze
     DISK_NAME = 'disk.img'
-    MEMORY_MIB = 512
     # Seconds the guest has, after its banner, to print the line "blk: done".
     GUEST_SECONDS = 120
     # The command shell's prompt (DEFAULT_PROMPT in erlang/apps/erx_shell/src/erx_shell.erl),
@@ -321,9 +320,9 @@ module Erx
     end
 
     # The checkpoints of one boot: the usual banner with its test-image line, then the
-    # test module's last line, within seconds of the banner.
-    def checkpoints(seconds: GUEST_SECONDS)
-      [*Qemu.boot_transcript(memory_mib: MEMORY_MIB, test_image: true),
+    # test module's last line, within seconds of the banner, on a machine of memory_mib.
+    def checkpoints(memory_mib:, seconds: GUEST_SECONDS)
+      [*Qemu.boot_transcript(memory_mib: memory_mib, test_image: true),
        { name: 'block-done', pattern: /^(?:#{Regexp.escape(PROMPT)})?blk: done\r?\n/n, seconds: seconds }.freeze].freeze
     end
 
@@ -337,7 +336,7 @@ module Erx
       def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                      compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''), platform: Platform.development(root))
         @root = File.expand_path(root)
-        @platform = platform
+        @machine = ProductionImage::Machine.board(platform)
         @runner = runner
         @compiler = compiler
         @linker = linker
@@ -447,8 +446,8 @@ module Erx
       def boot(accel, image, directory:, disk:, arguments:, expected:, seconds: GUEST_SECONDS)
         serial = File.join(directory, 'serial.log')
         begin
-          Qemu.new(root: @root, runner: @runner).run(platform: @platform, accel: accel, image: image, memory_mib: MEMORY_MIB, directory: directory,
-                                                     checkpoints: BlockDevice.checkpoints(seconds: seconds), disks: [QemuPlan::Disk.new(path: disk)],
+          Qemu.new(root: @root, runner: @runner).run(platform: @machine.platform, accel: accel, image: image, memory_mib: @machine.memory_mib, directory: directory,
+                                                     checkpoints: BlockDevice.checkpoints(memory_mib: @machine.memory_mib, seconds: seconds), disks: [QemuPlan::Disk.new(path: disk)],
                                                      command_line: BlockDevice.command_line(accel, arguments: arguments))
         rescue TranscriptTimeout => error
           # A driver that fails stops printing before "blk: done": say which step.
@@ -479,7 +478,7 @@ module Erx
                   'receipt' => receipt }
         added = ProductionImage::Added.new(entries: [entry], inputs: [beam, source, receipt], imports: {})
         ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker,
-                            machine: ProductionImage::Machine.development(@platform), fiasco: fiasco)
+                            machine: @machine, fiasco: fiasco)
                        .build_test_image(directory: directory, added: added).single
       end
 

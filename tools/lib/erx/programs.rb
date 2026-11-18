@@ -576,7 +576,7 @@ end
         @compiler = compiler
         @linker = linker
         @qemu = qemu
-        @machine = ProductionImage::Machine.development(platform)
+        @machine = ProductionImage::Machine.board(platform)
         @manifest = platform.manifest_source(@root)
         @build = File.join(@root, 'build/programs')
         @schema = ABI::Generator.plan(root: @root).schema

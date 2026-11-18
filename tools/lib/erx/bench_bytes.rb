@@ -94,7 +94,8 @@ module Erx
       line = "io:format(\"BYTES ~s~n\",[json:encode(#{MODULE}:run(#{PLAN.iterations},#{PLAN.samples}))]).\r"
       steps << BenchGuest::Exchange.new('measure', line, MEASUREMENT, PLAN.wait_seconds)
       Qemu.new(root: @root, runner: @runner)
-          .run(platform: @platform, accel: 'hvf', cpus: 1, image: image, memory_mib: @platform.memory_mib,
+          .run(platform: @platform, accel: 'hvf', cpus: 1, image: image,
+               memory_mib: ProductionImage::Machine.board(@platform).memory_mib,
                checkpoints: BenchGuest.transcript(steps, platform: @platform), directory: directory)
       nil
     rescue Error => error

@@ -322,7 +322,7 @@ module Erx
       def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                      compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''), platform: Platform.development(root))
         @root = File.expand_path(root)
-        @platform = platform
+        @machine = ProductionImage::Machine.board(platform)
         @runner = runner
         @compiler = compiler
         @linker = linker
@@ -358,7 +358,7 @@ module Erx
         directory = ProductionImage.clear_directory(root: @root,
                                                     path: File.join(@root, 'build/driver-domains/network-image'))
         ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker,
-                            machine: ProductionImage::Machine.development(@platform), fiasco: fiasco)
+                            machine: @machine, fiasco: fiasco)
                        .build(directory: directory).single
       end
 
@@ -374,9 +374,9 @@ module Erx
         nic = QemuPlan::Nic.new(frames_port: link.frames_port, peer_port: link.peer_port, echo_port: echo.port)
         lease = ->(_line) { NetDevice.exchange(link) }
         session = SessionDomain.session_shell('root_1-shell', ProductionImage::Run::CTRL_G).merge(verify: lease).freeze
-        checkpoints = [*Qemu.boot_transcript(memory_mib: @platform.memory_mib), ProductionImage::Run::SLOGAN,
+        checkpoints = [*Qemu.boot_transcript(memory_mib: @machine.memory_mib), ProductionImage::Run::SLOGAN,
                        ProductionImage::Run::RELEASE_SHELL, session, *DriverDomains.network_checkpoints(lease)]
-        Qemu.new(root: @root, runner: @runner).run(platform: @platform, accel: accel, image: image, memory_mib: @platform.memory_mib,
+        Qemu.new(root: @root, runner: @runner).run(platform: @machine.platform, accel: accel, image: image, memory_mib: @machine.memory_mib,
                                                    directory: directory, checkpoints: checkpoints, nic: nic,
                                                    command_line: ProductionImage::Run::COMMAND_LINES[accel])
         failed = echo.stop

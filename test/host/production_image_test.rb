@@ -132,8 +132,8 @@ class ProductionImageTest < Minitest::Test
   # What each kind carries, as build_medium hands it to the one build (MediumProbe): a
   # development medium its builder's apps alone; a test medium those and its test code,
   # marked as test code; a published medium its own apps (published_apps) and the Doom
-  # example, on Machine.published. A card carries its own apps whatever its kind, and Doom
-  # only when published.
+  # example, each on Machine.board, as pack_platform packs it. A card carries its own
+  # apps whatever its kind, and Doom only when published.
   def test_each_medium_kind_carries_what_its_rule_gives
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
     builders = Erx::ImageApps.plan([CLOCK], enable: [])
@@ -147,7 +147,7 @@ class ProductionImageTest < Minitest::Test
       [pi, KIND.development, none] => { apps: :own, **plain },
       [pi, KIND.published, none] => { apps: :own, **plain, doom: true }
     }.each do |(platform, kind, apps), carried|
-      machine = kind.published? ? Erx::ProductionImage::Machine.published(platform) : Erx::ProductionImage::Machine.development(platform)
+      machine = Erx::ProductionImage::Machine.board(platform)
       image = MediumProbe.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
                               runtime: nil, jit_runtime: nil)
       assert_equal carried, image.carried(kind: kind, apps: apps), "#{platform.name}'s #{kind.name} medium"
@@ -176,9 +176,9 @@ class ProductionImageTest < Minitest::Test
   end
 
   # What a medium's kind does not carry is refused before anything is built, by
-  # build_medium and by `tools/erx pack` (pack_platform, which derives the published
-  # medium's machine, so its refusal is the apps one): a published medium on another
-  # machine than Machine.published, or with an app, signer or --local of its builder's; a
+  # build_medium and by `tools/erx pack` (pack_platform, which packs every medium on the
+  # board machine, so its refusal is the apps one): a published medium on another
+  # machine than Machine.board, or with an app, signer or --local of its builder's; a
   # card, which is the website's whatever its kind, with either, or with test code. The
   # card's manifest keeps the board's apps row, as QEMU's medium's does.
   def test_a_medium_refuses_what_its_kind_does_not_carry
@@ -187,15 +187,15 @@ class ProductionImageTest < Minitest::Test
     local = Erx::ImageApps.plan([], enable: [], local: true)
     builders = Erx::ImageApps.plan([CLOCK], enable: [])
     card = 'the raspi4b card is the one the website offers: it carries the kiosk alone and takes no app, signer or --local'
-    published = Erx::ProductionImage::Machine.published(PLATFORM)
+    published = Erx::ProductionImage::Machine.board(PLATFORM)
     {
       [KIND.published, DEVELOPMENT, Erx::ImageApps.none] =>
-        'the published qemu-virt medium is packed for its own machine (ProductionImage::Machine.published)',
+        "the published qemu-virt medium is packed for its board's machine (ProductionImage::Machine.board)",
       [KIND.published, published, local] =>
         'the published qemu-virt medium is the one the website offers: it carries the kiosk alone and takes no app, signer or --local',
       [KIND.development, Erx::ProductionImage::Machine.development(pi), local] => card,
       [KIND.development, Erx::ProductionImage::Machine.development(pi), builders] => card,
-      [KIND.published, Erx::ProductionImage::Machine.published(pi), builders] => card,
+      [KIND.published, Erx::ProductionImage::Machine.board(pi), builders] => card,
       [KIND.test(test_programs: TEST_PROGRAM), Erx::ProductionImage::Machine.development(pi), Erx::ImageApps.none] =>
         'the raspi4b card is the one the website offers: it carries no test code'
     }.each do |(kind, machine, apps), message|
@@ -247,7 +247,7 @@ class ProductionImageTest < Minitest::Test
     { 'raspi4b' => KIND.development, 'qemu-virt' => KIND.published }.each do |name, kind|
       platform = Erx::Platform.load(root: ROOT, name: name)
       image = PublishedTrustProbe.new(root: ROOT, runner: nil, compiler: '', linker: '',
-                                 machine: Erx::ProductionImage::Machine.published(platform), fiasco: Object.new,
+                                 machine: Erx::ProductionImage::Machine.board(platform), fiasco: Object.new,
                                  runtime: nil, jit_runtime: nil)
       error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', kind: kind) }
       assert_equal "the published #{name} medium trusts no package key, but its manifest trusts signer deployer", error.message
@@ -967,14 +967,14 @@ class ProductionImageTest < Minitest::Test
     assert_operator site.memory_mib, :<, DEVELOPMENT.memory_mib
   end
 
-  # The published QEMU medium, which carries Doom, is packed for 640 MiB; the card keeps
-  # its board's RAM, and the QEMU record, which the suites boot on, keeps its own.
-  def test_the_published_qemu_medium_has_640_mib_and_the_card_its_boards_ram
-    published = Erx::ProductionImage::Machine.published(PLATFORM)
-    assert_equal [640, DEVELOPMENT.root_mib], [published.memory_mib, published.root_mib]
+  # QEMU virt's board machine, which every image of the board's manifest but the
+  # website's is packed for, has 640 MiB beside the record's 512; a card's is its record's.
+  def test_qemu_virts_board_machine_has_640_mib_and_a_cards_its_records_ram
+    board = Erx::ProductionImage::Machine.board(PLATFORM)
+    assert_equal [640, DEVELOPMENT.root_mib], [board.memory_mib, board.root_mib]
     assert_equal 512, PLATFORM.memory_mib
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    assert_equal Erx::ProductionImage::Machine.development(pi), Erx::ProductionImage::Machine.published(pi)
+    assert_equal Erx::ProductionImage::Machine.development(pi), Erx::ProductionImage::Machine.board(pi)
   end
 
   # The room line prints the room root_memory leaves the archive.

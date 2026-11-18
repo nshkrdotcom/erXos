@@ -2225,9 +2225,21 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   never overlaps its source. On `raspi4b`, whose tree is fixed 126 MiB past the file's start, a single file whose
   archive ends within the root's length past the root's place (64 MiB) moves onto its own tail. Add a `raspi4b`
   cell with an archive sized into that window of about 2 MiB.
+* [Medium] platforms, QEMU `virt`'s record RAM (`config/platforms/qemu-virt.json`,
+  `ProductionImage::BOARD_QEMU_MIB`): the record's 512 MiB leave beside the development
+  manifest's `root_memory` (423.41 MiB) room for an archive of about 34 MiB, and the production
+  image's is about 67 MiB, so every pack of the board's manifest, `tools/erx boot`, the benches
+  and every QEMU suite that boots it run on the board machine (`Machine.board`, 640 MiB). The
+  record's RAM is still what `Platform#memory_mib` and `QemuPlan.memory_of` (QEMU's default `-m`)
+  give, and what the hosted runtime release's manifest check (`release.rb`, `platform.record`)
+  proves against, with a few MiB to spare (unverified); docs/design-fiasco.md ("The root startup rule"),
+  design-packaging.md and design-build.md say the production image is packed on the record's own
+  machine. Raise the record's `ram_bytes` and `fiasco_reserve` to the board machine's, which
+  makes `Machine.board` the record's own on every board and deletes `BOARD_QEMU_MIB`, or shrink
+  the manifest's budgets.
 * [Medium] image build, the single file's bound on QEMU `virt` (`ProductionImage::Machine#check_single_file`): the
   check accepts a file up to the end of RAM, but a moved archive goes behind the device tree QEMU puts right behind
-  the file, so a boot needs RAM for the archive twice and, on the 512 MiB development machine, one with an archive
+  the file, so a boot needs RAM for the archive twice and, on a 512 MiB machine, one with an archive
   over about 250 MiB passes the build and stops at boot with `archive_no_room`. Model the move in the check: when
   the file passes the root's place on a loader that puts the tree behind the file, require the file, the tree's
   slack, the archive again, the kernel and `sigma0`, and the tree's copy and the handoff page, which the plan keeps
@@ -7692,10 +7704,9 @@ to the corpus and follow rc
 * [Medium] build gates, the published media and the Doom example
   (`ProductionImage::MediumKind.published`): only `tools/erx pack
   --published` (`make pack`) builds the published QEMU medium and the Pi 4
-  card with `/bin/doom` and on their published machines
-  (`ProductionImage::Machine.published`, 640 MiB for QEMU); the
-  raspi4b suite and `make check-reproducible` build the development kind of
-  those media, without Doom, so no gate proves that the media as published
+  card with `/bin/doom`; the raspi4b suite and `make check-reproducible`
+  build the development kind of those media, on the same board machines
+  (`ProductionImage::Machine.board`, 640 MiB for QEMU) but without Doom, so no gate proves that the media as published
   still pack, fit their machine and build reproducibly. Give one gate cell a
   fetched Doom fork and have it pack both published media with Doom.
 * [Low] examples, `tools/lib/erx/doom_program.rb` (`DOOM_SOURCES`): the
@@ -9731,7 +9742,7 @@ document's "residual risks accepted" paragraph.
   kiosk and no `/bin/doom`, is served. A published tree is QEMU's own dump for one machine (its RAM, CPU count and,
   unverified, the accelerator and QEMU version it was dumped under), so the command must pin those, and the pack
   would run QEMU, which it does not yet. The published medium carries Doom and is packed for 640 MiB
-  (`ProductionImage::Machine.published`), so its command takes `-m 640`, a display and the virtio keyboard,
+  (`ProductionImage::Machine.board`), so its command takes `-m 640`, a display and the virtio keyboard,
   as `tools/erx boot --medium --print` gives them.
 * [Medium] `tools/lib/erx/raspi4b_shell.rb` (`located_inputs`): the raspi4b suite boots the card it packed in
   `build/production-image/raspi4b/` in place, so a card taken from there after the suite ran may hold what its guest
