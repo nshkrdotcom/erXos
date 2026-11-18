@@ -4,7 +4,7 @@ The [build and host tooling design](design-build.md) defines process
 deadlines, source provenance and the build's evidence boundaries.
 The [host oracle design](design-host-oracle.md) defines isolated Linux suite
 execution, its container lifetime and its separate native host baselines.
-The [hardware generation design](design-hardware-generation.md) defines
+The [generated interfaces design](design-generation.md#hardware-and-terminal-sources) defines
 register inputs, terminal tables and their generation checks.
 
 > In erXos, Erlang's process is the operating system's process: one process
@@ -196,8 +196,8 @@ evidence, not additional design contracts.
 | [design-web.md](design-web.md) | the web: a TypeScript and React client in the browser that receives only typed data over one WebSocket protocol generated from `abi/protocols/web.txt`, records, logs and traces fetched in the principal's session with its own facets, the browser as one more display behind the widget interface, served by the application's own widget server in its session, rendering for its own medium and chosen by name, URLs as inspector paths and presentation URIs, two front ends for one protocol (`tools/erx web` over the host link, cowboy in the web domain) |
 | [design-log.md](design-log.md) | the system log: the log service in the system domain, the kernel log ring's one taker, which stamps, rate-limits and escapes every domain's records, written through a write-only log facet, and hands each line to the console and to the store; the store as files on the data partition, or in the system domain's `/tmp` without one, rotated as newsyslog rotates them, served read-only at `/var/log` as an ordinary file tree, with the kernel's lines in a directory no session's tree reaches |
 | [design-time.md](design-time.md) | network time: an SNTP client as the app `ntpd`, off unless `ntpd_enable` says so, which reduces each exchange to the wall offset the server implies against the kernel's monotonic clock and sends it through a `clock` facet to the system domain's clock service, the one setter of the wall clock, which steps without limit only while the time page shows a cold start, never before the release's floor date, and then above 128 ms, shown at `/proc/time`; no default server, the operator's list in `ntpd_flags` |
-| [design-generation.md](design-generation.md) | one-source interface bindings, inspection and diagnostics, catalogs, reference tables and test scaffolding |
-| [design-abi.md](design-abi.md) | declaration grammar, validated layouts, bounded binary readers, numeric assignments and generated-output inventory |
+| [design-generation.md](design-generation.md) | one-source interface bindings, inspection and diagnostics, catalogs, register and terminal tables, reference tables and test scaffolding |
+| [design-abi.md](design-abi.md) | declaration grammar, validated layouts, bounded binary readers and numeric assignments |
 | [design-verification.md](design-verification.md) | pure protocol cores, independent TLA+/TLC models, model-to-code evidence, and verification tool boundaries |
 | [plan.md](plan.md) | milestones, exit criteria and decision gates |
 | [style.md](style.md) | code style |

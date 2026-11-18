@@ -7931,7 +7931,7 @@ generated emitter carries still passes through the log sink's escaper.
 
 Device registers and system registers each have one checked-in source,
 and `tools/gen_hw.rb` generates every accessor from it into `build/gen/`
-([hardware generation](design-hardware-generation.md#register-inputs)).
+([hardware generation](design-generation.md#register-inputs)).
 
 **Device registers** are described in CMSIS-SVD files under `hw/svd/`,
 one per device erXos code touches: each platform's UARTs, interrupt
