@@ -8629,6 +8629,7 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] Fiasco, one-shot timer and tickless idle, after 0.1 (`config/fiasco/kernel.defconfig`, [design-fiasco.md](docs/design-fiasco.md)): the kernel is built `CONFIG_PERIODIC` with a 1 ms tick (`SCHED_GRANULARITY` 1000) and no tickless idle, so every CPU takes 1000 timer interrupts a second even when idle, and CPU time is charged by whole ticks (the backend reports no idle time for that reason). Fiasco offers one-shot mode on ARM when `SYNC_CLOCK` is on (`kern/arm/Kconfig:14-15`), which selects fine-grained CPU time, and tickless idle. Build with `CONFIG_ONE_SHOT_PARAM` so `-oneshot-timer` picks the mode at boot; measure idle host CPU of a QEMU guest and the QEMU suites in both modes, run it on the Pi 4, then make one-shot with tickless idle the default and report idle time from the fine-grained counts.
 * [Medium] storage, a card image that holds only what is written, after 0.1
   ([design-storage.md](docs/design-storage.md), `abi/medium.txt`, the image packer): order the
   partitions with the populated ones first (record, system A, boot A), end the image after boot
