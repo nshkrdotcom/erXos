@@ -292,8 +292,8 @@ Eshell V17.1.1 (type help(). for help)
   and, if its grant carries it, `clipboard`) from its handler; host tests
   cover it over stand-ins of the window and draw connection (the window and
   the draw connection each have a keeper of their `kbd` and `mouse` reads),
-  and no QEMU
-  cell runs a program that draws. The file tree a program will see (`/bin`, `/dev`
+  and the kiosk suite's front cell runs a program that draws, on root's
+  `front` display grant, over the dashboard. The file tree a program will see (`/bin`, `/dev`
   with `null`, `zero`, `urandom` and `tty`, a name that answers `ENXIO` as
   a file, and `/etc/passwd` and
   `/etc/group`) is written as a file server that nothing starts yet.
@@ -404,6 +404,14 @@ Eshell V17.1.1 (type help(). for help)
   over the board's Ethernet; on QEMU the kiosk suite's quotes cell fetches
   them over a guest network device from an offline HTTPS fixture.
 
+* Doom, the example game, is `/bin/doom` in the Pi 4 card and the QEMU
+  release medium. Root's session starts it from `rc` (`doom`, or `doom &`
+  and `kill %1`). Its window shows over the kiosk dashboard through
+  root's `front` display grant, which only development builds give, and
+  the dashboard returns when Doom ends. A key's down and repeat reach a
+  window only while it is on the screen. The kiosk QEMU suite boots on
+  640 MiB, as the published QEMU medium does.
+
 * `erx_desk`, the desktop application, runs a window of its own and a
   `clock` command that reads the clock's state before the wall clock; its
   pure cores have host tests.
@@ -412,7 +420,10 @@ Eshell V17.1.1 (type help(). for help)
 
 * The website runs a demo in the browser on an AArch64 emulator, with a
   menu of hardware faults, and offers the Pi 4 card and a QEMU image for
-  download.
+  download. The page holds one copy of the image. `?jit=0` turns the
+  arm64 JIT off, the JIT compiles fewer pages and holds its code to
+  8 MiB, and `?log=console` mirrors the guest's console lines to the
+  browser console.
 * The checks are described under [Correctness and testing](#correctness-and-testing).
 
 **Not built yet**
