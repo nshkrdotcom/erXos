@@ -2458,6 +2458,16 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] build, the manifest checker's release artifacts (`tools/lib/erx/release_files.rb`
+  `domain_artifacts`, `ProductionImage` `assemble`, `Release#build`): the archive's boot scripts
+  and the `started` lists the checker reads agree only because both callers pass the same boots
+  to both, and `domain_artifacts` compares only the scripts' names. Have the domain release's
+  parts return their own artifacts, so what property 18's display client clause reads is what
+  the archive boots by construction.
+* [Low] build, property 18 (`tools/lib/erx/manifest.rb` `check_display_grants`): the converse of
+  the display client clause, docs/design-display.md's "the display domain's release does not
+  hold" `erx_win`, is checked nowhere; with `started` in the checker's context it is a few lines
+  and a seeded test.
 * [Low] programs, a narrowing to `/dev` (`erlang/apps/erx/src/erx_prog_handler_core.erl`,
   `narrowed_at/4`): where no entry of the starter's table stands at `/dev`, `within [/dev]` makes
   an entry at `/dev` on the provider above it, such as the release slice's root, so the program
