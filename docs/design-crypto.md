@@ -10,14 +10,14 @@ it is [design-system.md](design-system.md#the-vault); TLS for the web is
 session or an app makes HTTPS requests, with `ssl`, `inets`' HTTP client
 and the image's trust store ([HTTPS clients](#https-clients)); the first
 app that does is the kiosk's live quotes of
-[design-quotes.md](design-quotes.md).
+[`examples/dashboard`](../examples/dashboard/README.md).
 
 ## Context
 
 Four uses need cryptography: the web domain's TLS listener, the vault's
 Argon2id, HKDF and AES-256-GCM, SSH, and HTTPS clients in sessions and
 apps, which fetch data from servers on the internet, the kiosk's live
-quotes first ([design-quotes.md](design-quotes.md)). The architecture already
+quotes first ([`examples/dashboard`](../examples/dashboard/README.md)). The architecture already
 decides the library: "OTP's `crypto`, `ssl` and `ssh` use OpenSSL 3.5"
 and "a small verifier keeps the full library out of the system domain"
 ([design.md](design.md#decisions)); its dependency row says "never in
@@ -572,8 +572,10 @@ holds them, and could not run `ssl`: its image has no `crypto` NIF (K1).
 | ISRG Root X2 | the same chain, ending at X2 | Internet Security Research Group |
 | DigiCert Global Root G3 | FRED: DigiCert Global G3 TLS ECC SHA384 2020 CA1 | DigiCert |
 
-The chains are those the servers sent to a live request
-([design-quotes.md](design-quotes.md#what-the-source-offers)). Which of
+The chains are those the servers sent to a live request; Kraken's, the
+one source the kiosk asks, is in
+[`examples/dashboard`](../examples/dashboard/README.md#where-the-data-comes-from),
+and the other rows have no consumer in the tree (`TODO.md`). Which of
 two anchors of one chain OTP's path validation ends at is not relied on:
 the store holds both.
 
@@ -658,7 +660,7 @@ unset clock from the wall clock alone: no machine erXos runs on reads a
 time before 2000 once its clock is set, unless root set it there by hand, and the live quotes show
 `clock not set` when a certificate is refused as outside its validity
 while the wall clock reads before 2000
-([design-quotes.md](design-quotes.md#refusals-and-error-results)).
+([`examples/dashboard`](../examples/dashboard/README.md#the-clock)).
 
 #### Reaching the network
 
@@ -732,7 +734,7 @@ for the resolver.
   host, this machine's listeners included; so the example above turns it
   off, and a client whose answers must come from the host it named
   follows redirects itself, as the live quotes do, within the same
-  origin ([design-quotes.md](design-quotes.md#one-request)).
+  origin ([`examples/dashboard`](../examples/dashboard/README.md#security)).
 * **Response size.** `inets`' edit bounds what a server can make `httpc`
   hold, head and body, at the one place every byte enters (K8), for a
   request that gives its limits in the fourth argument; a request that
@@ -789,7 +791,7 @@ Each test names the seeded failure that proves it ran.
 | known-answer vectors | AES-GCM, ChaCha20-Poly1305, X25519, Ed25519 and ML-KEM-768 vectors from their specifications through `crypto` on QEMU | one vector's expected tag changed: the test fails |
 | `ssl`'s suites and `inets`' `httpc_SUITE` through `make check-oracle` | every case agrees with stock OTP 29.1.2, but those whose answer `inets`' edit changes, a chunked overflow's error and the bounds it adds, each a documented difference with a test below | erXos's `ssl` built with `?ALL_SUPPORTED_VERSIONS` cut to `tlsv1.3`: the TLS 1.2 cases differ from the oracle |
 | the store's reader, a host test | the store the build writes from `config/trust/` is its files joined in name order, and stock OTP's `public_key:pem_decode/1` reads from it one self-signed CA certificate per file; a fixture directory holding a file of two certificates, one holding a private key and one of 9 KiB is refused, naming each file | a reader that takes a file's first block accepts the two-certificate file |
-| the store on QEMU | in a session of the interpreter image, `public_key:cacerts_get/0` returns one certificate per file of `config/trust/`, and the quotes cell connects through it ([design-quotes.md](design-quotes.md#verification-and-testing)) | `public_key` built without its `{unix, erxos}` row: the call raises `failed_load_cacerts` |
+| the store on QEMU | in a session of the interpreter image, `public_key:cacerts_get/0` returns one certificate per file of `config/trust/`, and the quotes cell connects through it ([`examples/dashboard`](../examples/dashboard/README.md#the-qemu-cell)) | `public_key` built without its `{unix, erxos}` row: the call raises `failed_load_cacerts` |
 | `httpc_bound`, EUnit | a head whose count is exactly `max_header_size` takes the next segment, and one whose count is a byte more refuses it; a body's count of exactly `max_body_size`, the arriving segment included, is accepted and one byte more refused; `nolimit` refuses nothing | comparing the head's count with `>=` refuses the head whose count is exactly `max_header_size` |
 
 **`inets`' bounds against a server.** EUnit cases with erXos's `inets`

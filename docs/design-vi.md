@@ -62,7 +62,7 @@ ships it in `contrib/nvi`, BSD-licensed, read for this design at tag
 files and SHA-256 in [References](#references)). nvi's manual names what
 a new user needs (`man/vi.1:167-318`, "FAST STARTUP"): `h j k l`, the
 arrow keys, `/`, `a i o O`, escape, `yy p dd x`, `:w`, `:w file`, `:q`
-and `:q!`. The first version takes that list, the motions and operators
+and `:q!`. [Commands](#commands) takes that list, the motions and operators
 that make it useful, undo, search and substitution.
 
 The session's terminal is a tty owned by the session's terminal relay
@@ -80,7 +80,7 @@ built and `vi` names this command in the session and in every program's
 
 ## Requirements
 
-* **VI-R1.** The commands of [The first version](#the-first-version)
+* **VI-R1.** The commands of [Commands](#commands)
   behave like nvi's in ordinary editing: for each script of the oracle
   corpus, a file and the keys of an editing session, `vi` writes the same
   file as nvi, apart from the differences listed there. nvi's exact
@@ -103,14 +103,14 @@ built and `vi` names this command in the session and in every program's
 * **VI-R6.** `vi` changes the terminal's modes and draws only while its
   job is in the foreground.
 
-Non-goals of the first version: visual mode, macros and named buffers
+Non-goals: visual mode, macros and named buffers
 (registers other than the one unnamed buffer), marks, more than one file
 or window, tags, `:set` and `.exrc`, key maps and abbreviations,
 recovery files, the ex scripting language and `:g`, filtering through
 programs (`!`), `ex` as a line editor, and a search used as an operator's
 motion (`d/re`).
 
-## The first version
+## Commands
 
 **Starting.** `vi` or `vi FILE`. Any other argument is a usage error.
 
@@ -730,7 +730,7 @@ screen rows each have a fuzz target.
 **Host tests of the core** (`erx_vi_*`, no I/O):
 
 * **The key parser, exhaustively:** every key string of up to five keys
-  over an alphabet of the first version's command keys, a digit other
+  over an alphabet of the command keys of [Commands](#commands), a digit other
   than `0`, Escape and one key no command uses. Each string parses to
   commands and `more` with nothing left over, every complete command is
   in the command table, every proper prefix of a command answers `more`,
@@ -751,7 +751,7 @@ screen rows each have a fuzz target.
   ([design-shell.md](design-shell.md#verification-and-testing)), and in
   `vi` on the host through `erx_vi` alone. The written files compare byte
   for byte; each difference is a listed difference with its test or a
-  bug. Scripts cover every command of the first version, counts, undo
+  bug. Scripts cover every command of [Commands](#commands), counts, undo
   with `.`, wrapping searches and substitution with `&` and groups.
   Seeded: `p` of lines that puts them above the cursor's line, where
   nvi appends them after it (`man/vi.1:275-276`).
@@ -860,7 +860,7 @@ the [performance watch list](todo-performance.md).
 * **`vi` from a program or under `within`.** A command domain's streams
   are copied bytes, so `tty/2` answers `enotty` there and `vi` refuses:
   `xargs vi` and `within /etc -- vi start.conf` do not work.
-  Recommendation: accept it for the first version; a narrowed editor
+  Recommendation: accept it; a narrowed editor
   needs a tty open that crosses to the command domain, a design of its
   own.
 * **A write guard that sees every change.** The guard misses a change

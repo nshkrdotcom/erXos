@@ -3965,8 +3965,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   rio defines as whether the window takes the keyboard is filled from whether the window is shown, so
   every shown window reads `current`, and a change of the current window gives no window a new `wctl`
   record. Report the overlapping policy's current window there and send the record on a change;
-  find and act's palette needs both to close when another window is picked
-  ([design-find-act.md](docs/design-find-act.md#changes-to-other-designs)).
+  find and act's palette needs both to close when another window is picked (the [Medium] find and act item
+  under "Planned features").
 * [Medium] shell, `$home` (`erlang/apps/erx_shell/src/erx_shell.erl:205`, docs/design-shell.md "The
   language"): design-shell lists `$home` among rc's variables, but no design says what it holds for a
   session and the interactive shell sets none (scripts get `/` or `/var/empty` from
@@ -8702,6 +8702,39 @@ document's "residual risks accepted" paragraph.
   returns actions, as `erx_bt_hci_core` is, and explore it. With it: the reset waits for the old driver through the
   link the start makes rather than a monitor it takes, the fresh driver's start blocks the keeper while it programs
   the UART, and the heap bound's slack (`start_link/1`) is a round number, not derived from the grant's largest write.
+* [Medium] find and act, changes its design needs in other designs ([design-find-act.md](docs/design-find-act.md)),
+  not yet made in them:
+  * design-display: G4 names a third action: the terminal and the widget server hand a presentation to the
+    session's act service, which only opens the palette; the chokepoint row "`erx_term` and `erx_ui_server` call
+    no facet" adds "and no evaluator". The terminal's button 3 on a link offers it. The renderer behaviour gains
+    the `{act, NodeId}` report, which the Erlang renderer makes on button 3 and the widget server forwards, naming
+    its type with `atom_to_binary/1`. `erx_win:kbd/1` consults the bindings table and answers
+    `{ok, Key, Window}`, its handle carrying the trigger held and the names of the display and the window. A
+    `wctl` read's `current` field reports the policy's current window, and a change of the current window gives
+    each window it touches a new `wctl` record (the [Low] display item on `wctl`'s `current` field). Decision 2's
+    `give` command for `wctl`, whose source window must be current and have had a key or button down within
+    500 ms: the one exception to the rule that a new window is current only once the person clicks it, the
+    display's to judge and implement.
+  * The inspection schema: a segment type `app_name` for `apps *app_name`, marked `present app`.
+  * design-shell: `service` declares `-erx_args([app])`; commands that take a pid, a domain or another
+    presentation first declare it, so the Services offers find them. The variables a session's shell starts
+    with, `$home` among them, are one value both the shell and `erx_act_run` start from (the [Medium] shell item
+    on `$home`). A job whose evaluator a session process other than a terminal's shell starts with
+    `erx_job:spawn/1`, an act, is ended as any job is and listed by no terminal's `jobs`.
+  * design-files: narrowing for a program refuses, with `EACCES`, a writable root that lies within the session's
+    `lib` directory or contains it, judged on the root's path on its grant; the same holds for a command domain
+    that `within` narrows.
+  * design-apps: which sessions may read the start table's row names in a release build (the [Medium] item on
+    `[apps]` below).
+* [Low] display theme, transitions (`abi/theme.txt`): the theme has no `transition` rows and no `ui_transition`
+  set, which [design-desktop-programs.md](docs/design-desktop-programs.md#the-theme-one-declaration) and
+  [design-abi.md](docs/design-abi.md#theme) declare (`press` 120 ms, `state` 160 ms, `reveal` 200 ms, each
+  `ease_out`), nor the generator's check of them.
+* [Medium] crypto, the trust store's roots (`config/trust/`,
+  [design-crypto.md](docs/design-crypto.md#the-trust-store)): the table justifies ISRG Root X1 and X2 by Cboe and
+  DigiCert Global Root G3 by FRED, quote sources the kiosk no longer asks; only Kraken's chain (GTS Root R4,
+  GlobalSign Root CA) has a consumer. Either name the client that needs each of the other roots or drop them,
+  which narrows the authorities every client trusts.
 * [Low] find and act, rules written by a program given the whole namespace
   ([design-find-act.md](docs/design-find-act.md#security)): such a program holds the session's files but
   no right beyond files unless `within -f` names one, yet a binding or route it writes to
@@ -8892,15 +8925,17 @@ document's "residual risks accepted" paragraph.
   through the image's trust store ([design-crypto.md](docs/design-crypto.md#https-clients)).
 
 * [Medium] `examples/dashboard`: the live dashboard's reference frame, `dashboard-live` under
-  `test/display/reference/` (the dashboard's tree for a fixed time and a fixed live board), is not recorded;
-  design-quotes.md's frame test row names it.
+  `test/display/reference/`, is not recorded: `erx_ui_host` with the Erlang renderer draws the dashboard's tree
+  for a fixed time and a fixed live board, one quote in each state of the status line, `clock not set` among
+  them, and the host test compares it with the picture; seeded fault: a stale value shown without `stale`
+  changes the frame.
 
 * [Medium] `erx_quotes_core` (`trying`): a round in flight has no deadline, so a request httpc never
   answers (a handler killed without replying) keeps its quote from fetching until the source restarts.
   Fix by construction: a deadline in `trying` that `tick/3` ends as `timeout`, and requests keyed by quote.
   A history request has the same gap the other way: `history_at` moves on when it is asked, so a
   history httpc never answers leaves its entry in `erx_quotes`'s `requests` for good, one more each
-  hour, past the six-request bound of design-quotes.md ("Memory"); keying requests by `{Kind, Quote}`
+  hour, past the six-request bound of the dashboard's [README](examples/dashboard/README.md#how-the-quotes-behave); keying requests by `{Kind, Quote}`
   makes a new request replace the old one and drop its answer.
 
 * [Medium] `erx_quotes`, `erx_quotes_view`: both take apart `erx_quotes_core:state()` (the table's source
@@ -8911,9 +8946,9 @@ document's "residual risks accepted" paragraph.
   `erx_quotes` starts at run time but no `.app` file declares; settle whether the `.app` names them.
 
 * [Medium] `kiosk/hvf-1cpu-quotes` (`test/fixtures/quotes_fixture.rb`, `tools/lib/erx/kiosk.rb`): the
-  fixture answers only Kraken's Ticker requests, not the OHLC history request design-quotes.md ("The
+  fixture answers only Kraken's Ticker requests, not the OHLC history request the dashboard's [README](examples/dashboard/README.md#the-qemu-cell) ("The
   QEMU cell") names, so each quote's history fails with a 404 and the cell does not check the
-  `quotes: QUOTE history N entries` lines the design says it passes on.
+  `quotes: QUOTE history N entries` lines the cell passes on.
 
 * [Low] `examples/dashboard` (`erx_quotes_table`): Kraken's address, 104.16.14.28 (one of
   `api.kraken.com`'s Cloudflare addresses), is hardcoded and may change; a change shows

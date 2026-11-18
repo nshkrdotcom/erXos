@@ -3,8 +3,8 @@
 
 -module(erx_quotes_http).
 -moduledoc """
-What an answer of httpc means for a live quote (docs/design-quotes.md,
-"One request" and "Refusals and error results"): classify/4 turns the
+What an answer of httpc means for a live quote (examples/dashboard/README.md,
+"Reasons"): classify/4 turns the
 result httpc delivers for a request into a body to read, a redirect to
 follow within the origin asked, or one of the closed set of reasons,
 with the `Retry-After` delay a 429 or 503 answer named. word/1 is the
@@ -32,7 +32,7 @@ lower-case header names, `{error, {failed_connect, [{to_address, _},
 -define(MAX_HOPS, 3).
 -define(MAX_RETRY_AFTER_MS, 3600000).
 %% 2000-01-01T00:00:00Z in seconds of the epoch: a wall clock before it
-%% has not been set (docs/design-quotes.md, "The clock").
+%% has not been set (examples/dashboard/README.md, "The clock").
 -define(CLOCK_SET_AFTER, 946684800).
 -define(REDIRECTS, [301, 302, 303, 307, 308]).
 -define(CERTIFICATE_ALERTS, [bad_certificate, unsupported_certificate,
@@ -177,7 +177,7 @@ connect_reason({tls_alert, {Alert, _Description}}, _Wall) ->
 connect_reason(_Reason, _Wall) ->
     failed.
 
--doc "The screen's words for a reason (docs/design-quotes.md, \"Refusals and error results\").".
+-doc "The screen's words for a reason (examples/dashboard/README.md, \"Reasons\").".
 -spec word(reason()) -> binary().
 word(no_net) -> <<"no network">>;
 word(connect) -> <<"cannot connect">>;

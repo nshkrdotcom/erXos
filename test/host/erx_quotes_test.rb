@@ -8,8 +8,8 @@ require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
-# The live quotes of examples/dashboard on the host (docs/design-quotes.md, "Verification
-# and testing"): the pure modules' EUnit cases, and the live source fetching end to end
+# The live quotes of examples/dashboard on the host (examples/dashboard/README.md,
+# "Testing"): the pure modules' EUnit cases, and the live source fetching end to end
 # over HTTPS from ssl servers on the loopback, reached by address, with no internet and no
 # name resolved. The example's modules compile from its own
 # directory over erx and erx_ui (ErlangBuild), with warnings as errors, on stock's emulator

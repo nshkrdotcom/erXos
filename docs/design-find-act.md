@@ -77,11 +77,11 @@ does in "find and act, identity and inspection", and asks for one design
 in which a table of typed commands, routes from presentation types, a
 palette, a context menu and bindings are one mechanism, not a plumber
 beside a command table (section 2.6, "Commands"; section 4). Decision D5
-of that record, accepted on 2026-11-15, starts the design now and its
+of that record, accepted on 2026-11-15, starts the design and puts its
 code after stats, clock, month and files run on the desktop
 (section 8).
 
-The consumers, each a person at a desktop session today:
+The consumers, each a person at a desktop session:
 
 * **Launching.** stats, clock, month, files and a terminal start only
   from a shell, and an installed app only by typing `service NAME
@@ -122,17 +122,15 @@ presentations arrive typed, so that half of the plumber is not needed
 for them, and what remains of a plumb rule, "a value of this type goes
 to that command", is a route over the typed table.
 
-## What exists today
-
-In the design:
+## What it builds on
 
 * **A typed command table.** A command module declares its name and
   help, the facets it needs with `-erx_needs` and the presentation types
   of its arguments with `-erx_args([pid, ...])`; the build emits each
   release's catalog from them, and a session builds its command
   namespace from the catalogs of the releases it holds
-  ([design-display.md](design-display.md#presentations), lines
-  1617-1620; [design-shell.md](design-shell.md#interfaces),
+  ([design-display.md](design-display.md#presentations);
+  [design-shell.md](design-shell.md#interfaces),
   [design-generation.md](design-generation.md#configuration-and-command-catalogs)).
 * **Half of CLIM's argument loop, inside a terminal.** While the shell
   edits a command whose argument types it knows, it writes an input
@@ -163,62 +161,6 @@ In the design:
 * **Registered names stay in their domain**
   ([design-domains.md](design-domains.md#frames), "Registered names
   stay inside their domain").
-
-In the tree:
-
-* The shell's evaluator takes its variables as a map,
-  `erx_shell_eval:new(Vars, Runner, State)`
-  (`erlang/apps/erx_shell/src/erx_shell_eval.erl:145`), and runs a whole
-  source with `run_source/2` (`:183`). Text that comes from a value is
-  `lit` and "never a pattern" (`:68-74`), so a variable's value is
-  neither split nor globbed. `new/3` adds only `ifs` and `status` to
-  the map it is given (`:145`), and the interactive shell starts with
-  `prompt` and `*` alone
-  (`erlang/apps/erx_shell/src/erx_shell.erl:205`): no `home` is set,
-  though design-shell lists `$home` among rc's variables.
-* The runner's state is a working directory, standard streams, the
-  command table and a reader of the session's facets, read for each
-  command (`erlang/apps/erx_shell/src/erx_shell_runner.erl:99-122`).
-  It runs a subshell and each isolated command under a monitor and a
-  background block unmonitored (`:155-163`, `:279-283`); the job tags
-  by which design-shell ends a job whole, `erx_job:spawn/1` among them
-  ([design-shell.md](design-shell.md#job-control), "Jobs and their
-  tags"), are not in the tree.
-* rc's tokenizer, `erx_shell_lex`, reads bytes into tokens that each
-  carry their byte offset, makes no atom from its input and never
-  raises (`erlang/apps/erx_shell/src/erx_shell_lex.erl:1-55`). The
-  parser bounds a unit to 4,096 bytes and 256 levels of nesting, and
-  `next_bounded/3` parses in a process whose heap is fixed at 8 MiB
-  (`erx_shell_parse.erl:77`, `:96-98`, `:204`). Both have a fuzz target,
-  `test/erlang/erx_shell_parse_fuzz.erl`.
-* Stock OTP's term reader interns before it checks: `erl_scan` makes an
-  atom of every atom and variable name it scans
-  (`otp/lib/stdlib/src/erl_scan.erl:788`), and `erl_parse:parse_term/1`
-  builds a binary's value from its size and unit fields as it normalises
-  the term (`otp/lib/stdlib/src/erl_parse.yrl:1497`, `:1960-1966`), so a
-  few bytes of `<<...>>` ask for an allocation of any size.
-* The command table is built from `-erx_command` attributes
-  (`erlang/apps/erx_shell/src/erx_shell_namespace.erl:63`); no module
-  declares `-erx_args` yet.
-* `erx_win:kbd/1` reads one `kbd` record for any Erlang client of a
-  window (`erlang/apps/erx_win/src/erx_win.erl:186-189`), decoded by
-  `erx_win_core:kbd/1` into `{typed, Char}`, `{down, Keys}` or `{up,
-  Keys}` (`erx_win_core.erl:63`, `:107`).
-* A `wctl` read already has rio's `current` or `notcurrent` field
-  (`erlang/apps/erx_display/src/erx_wctl.erl:36-39`, read by
-  `erx_win_core:wctl/1` into `current`, `erx_win_core.erl:58`), but
-  `erx_window` fills it from whether the window is shown, not from the
-  policy's current window (`erlang/apps/erx_display/src/erx_window.erl:101`),
-  and a change of the current window makes no new `wctl` record.
-* `erx_present:type/1` reads a presentation's name from a binary and
-  makes no atom; a widget's `present` property carries the name as an
-  atom (`tools/lib/erx/abi_emit_present.rb:279-287`).
-* `erx_vt:link_at/3` answers the link's type and text under a cell
-  (`erlang/apps/erx_win/src/erx_vt.erl:246`). The terminal process
-  `erx_term`, the overlapping policy and the Erlang renderer are not in
-  the tree.
-* `erx_desk` holds the files and stats cores only. Nothing of find and
-  act exists.
 
 ## Requirements
 
@@ -682,7 +624,7 @@ the one open there. The palette ends on Escape, after an act that
 needs nothing shown, when its window ends, and, while it runs no act,
 when another window becomes current, which it learns from its window's
 `wctl` read once design-display reports the current window there
-([Changes to other designs](#changes-to-other-designs)). A palette that
+([`TODO.md`](../TODO.md), "Planned features"). A palette that
 runs an act or shows a result stays until the person ends it, so
 clicking elsewhere while a line runs does not end the line.
 
@@ -790,7 +732,7 @@ Each sends only when a process is registered as `erx_act` in its
 runtime, so in a session without find and act the gesture does nothing.
 Neither calls a facet or the evaluator.
 
-files gains an "Open with" toolbar button, enabled while an item is
+files has an "Open with" toolbar button, enabled while an item is
 selected, which calls `erx_act:offer({path, Path}, Where)` with the
 item's exact path from its core, never its shown name
 ([design-desktop-programs.md](design-desktop-programs.md#names-and-contents-are-untrusted)).
@@ -1070,53 +1012,6 @@ answered, all after a key. It is unmeasured; the watch list holds it
 `tools/erx bench` workload from the bound key's down to the palette's
 first present answer, under QEMU and on a Raspberry Pi 4.
 
-## Changes to other designs
-
-Find and act needs these changes elsewhere, made when this design is
-accepted:
-
-* **design-display.** G4 names the third action: the terminal and the
-  widget server hand a presentation to the session's act service, which
-  only opens the palette; the chokepoint row "`erx_term` and
-  `erx_ui_server` call no facet" adds "and no evaluator". The terminal's
-  button 3 on a link offers it. The renderer behaviour gains the
-  `{act, NodeId}` report, which the Erlang renderer makes on button 3,
-  and the widget server forwards, naming its type with
-  `atom_to_binary/1`. `erx_win:kbd/1` consults the bindings table and
-  answers `{ok, Key, Window}`, its handle carrying the trigger held and
-  the names of the display and the window. A `wctl` read's existing
-  `current` field reports the policy's current window, and a change of
-  the current window gives each window it touches a new `wctl` record,
-  so a client learns it; `erx_window` today fills the field from the
-  window's shown state (`erx_window.erl:101`). Decision 2's `give`
-  command for `wctl`, with its rule that the source window must be
-  current and have been given a key or button down within 500 ms: the
-  accepted rule that a new window is current only once the person
-  clicks it gains this one exception, which is the display's to judge
-  and to implement.
-* **The inspection schema.** A segment type `app_name` for `apps
-  *app_name`, marked `present app`.
-* **design-shell.** `service` declares `-erx_args([app])`; commands that
-  take a pid, a domain or another presentation first declare it, so the
-  Services offers find them; the catalog carries each command's help and
-  `-erx_args`, which design-display already says. The variables a
-  session's shell starts with, `$home` among them, are one value both
-  the shell and `erx_act_run` start from. A job whose evaluator a
-  session process other than a terminal's shell starts with
-  `erx_job:spawn/1`, an act, is ended as any job is and listed by no
-  terminal's `jobs`.
-* **design-files.** Narrowing for a program refuses, with `EACCES`, a
-  writable root that lies within the session's `lib` directory or
-  contains it, judged on the root's path on its grant; the same holds
-  for a command domain that `within` narrows.
-* **design-desktop-programs.** files' toolbar gains "Open with".
-* **design-apps.** Which sessions may read the start table's row names
-  (`[apps]`, `[apps, Name]`) in a release build, where no session holds
-  scope `all`: the palette's `app` list and `service -e` both need it,
-  and the palette lists whatever that design makes readable
-  ([decision 3](#decisions)).
-* **design.md** lists this document in its map.
-
 ## Alternatives considered
 
 | Alternative | Why not |
@@ -1167,7 +1062,7 @@ the same four rules of [Rules](#rules):
 | Plan 9's plumbing language, the part that applies: `type is`, `plumb start`, with `name matches` for files | a reader of a grammar half of whose verbs (`plumb to`, `plumb client`, `src`, `wdir`, `attr`, the click attribute) mean nothing here, so it would look like Plan 9's without being it | familiarity to Plan 9 users; the best fit if untyped text is ever plumbed, since its regular expressions and winnowing are built for that. When untyped text plumbing becomes a goal, it is the better outer syntax for that day |
 | awklog | a Datalog engine in AWK for rules with no join; on the target it would run under toybox's `wak` as a program, or the person's file would need a host step | nothing these rules use; awklog's place is a host-side check |
 | Datalog, Soufflé or an engine in Erlang | Soufflé is a host C++ tool; an Erlang engine is a new module for the same nothing | nothing these rules use, as for awklog |
-| Erlang terms, one tuple a statement | stock OTP's reader cannot be used: `erl_scan` makes an atom of every atom and variable name before any check, and atoms are never collected, so reloads of bad files grow the table without bound; `erl_parse:parse_term/1` builds a binary's value from its size fields, so a few bytes ask for any allocation ([What exists today](#what-exists-today)). It therefore needs a scanner and a parser of its own for a subset of Erlang's term syntax, with their own fuzz target, and the person writes Erlang's quoting around rc's | the system's own language for configuration; the term shapes as the format. Once the reader must make no atom and refuse before it builds, it is no longer "a shape check over terms" but a new scanner and parser with nothing to reuse |
+| Erlang terms, one tuple a statement | stock OTP's reader cannot be used: `erl_scan` makes an atom of every atom and variable name before any check, and atoms are never collected, so reloads of bad files grow the table without bound; `erl_parse:parse_term/1` builds a binary's value from its size fields, so a few bytes ask for any allocation (`otp/lib/stdlib/src/erl_scan.erl:788`; `otp/lib/stdlib/src/erl_parse.yrl:1497`, `:1960-1966`). It therefore needs a scanner and a parser of its own for a subset of Erlang's term syntax, with their own fuzz target, and the person writes Erlang's quoting around rc's | the system's own language for configuration; the term shapes as the format. Once the reader must make no atom and refuse before it builds, it is no longer "a shape check over terms" but a new scanner and parser with nothing to reuse |
 
 **2. A bound key or a gesture hands the keyboard to the palette through
 the source window's `wctl`, in a narrow form.** A new window is current
@@ -1208,8 +1103,7 @@ source. The condition on the target keeps the keyboard from being handed
 to an older window, such as the session's shell, so the person's typing
 cannot be steered into it; it is one window id kept with the pick, since
 window ids only grow. This changes the display's accepted focus rule, so
-it is listed under [Changes to other designs](#changes-to-other-designs)
-for design-display. The alternatives:
+it is recorded for design-display in [`TODO.md`](../TODO.md), "Planned features". The alternatives:
 
 * **No change: the person clicks the palette before using it.** Rejected:
   the palette and the context menu each cost an extra click on every use,
