@@ -21,81 +21,38 @@ architecture is in [design.md](design.md); the kernel in
 [design-domains.md](design-domains.md); the console, inspector and host
 connection in [design-live.md](design-live.md).
 
-Decisions every reader of this document needs:
+The decisions that shape the rest, each owned by the section linked:
 
-* **The system domain is the root task.** The kernel starts one user-mode
-  task, and `liberx`'s root-task entry builds the system domain's memory,
-  threads and group from the root capabilities and starts ERTS, which
-  boots the system release on the interpreter: no JIT object, no
-  writable-then-executable view and no C++ exist in the system domain.
-  Policy and mechanism for domains live in one place: Erlang policy over a
-  C17 domain library. Nothing in the machine has authority the system
-  domain did not pass on.
-* **One manifest is the configuration.** Every configured domain, with its
-  principal, image, budget, grant, devices, facets and introductions, is a
-  record of one file that the build checks and packs into the boot image.
-  The check proves properties over it, such as that no domain parsing
-  hostile input holds an unconfined device, and fails the build on a
-  violation. The root-task entry, the domain service and the device
-  service read that one file through readers generated from its layout in
-  the ABI source, and nothing else configures the machine.
-* **Authority starts at the system domain.** It creates every domain, so
-  it alone holds domains' spaces with `CAPS`, and only it installs
-  capabilities into a domain's table: a domain's initial capabilities, its
-  devices and its connections. Every capability it installs is a copy of
-  one of its own. No introduction carries an IPC gate, so no capability
-  passes from one domain to another. A domain that the system domain lets
-  hold `SPACES` creates sub-spaces of its own, as any L4 task holding a
-  factory creates tasks, fills them from what it holds, and ends them with
-  itself; a session's programs are such sub-spaces.
+* **The system domain is the root task**, ERTS on the interpreter in user
+  mode, with no JIT object, writable-then-executable view or C++
+  ([The root task](#the-root-task), A11). Nothing in the machine has
+  authority the system domain did not pass on.
+* **One manifest is the configuration**, checked by the build and read
+  through generated readers by every party that configures the machine
+  ([The manifest](#the-manifest), A10).
+* **Authority starts at the system domain.** Only a space's creator
+  installs into its table, no introduction carries an IPC gate, and a
+  domain holding `SPACES` builds sub-spaces of its own
+  ([Authority](#authority), [Sub-spaces](#sub-spaces), A1, A7).
 * **Lifetime by construction.** Every domain's space is a child of the
-  system domain's space, and a space never outlives its parent. So when
-  the system domain ends, every domain ends with it, and nothing is left
-  to reconcile: a fault in the system domain, a halt of it outside an
-  ordered shutdown, or a missed watchdog deadline ends the machine through
-  the firmware interface, as `erx.panic` says, with a crash record written
-  first. The system domain is restarted the way OTP's `heart` restarts a
-  node: by starting the machine again.
-* **Every domain's end is seen in one place.** The system domain serves
-  the fault gate of every domain's space, so faults, halts, crashes and
-  stops arrive there as records, which the domain library classifies and
-  the domain service turns into the domain's end. A sub-space's records
-  go to the gate its creator named.
-* **A domain's end is one destroy.** Each domain has two budgets: its
-  own, which pays for what only the domain uses, and its outer budget,
-  which pays for what other parties map. Ending a domain is destroying
-  its own budget, which deletes every object charged to it at once, as
-  destroying an EROS space bank does: every capability to them fails the
-  one lookup and every mapping of them faults. Nothing another party
-  uses is charged there, so nothing waits before the destroy. Each
-  connection's pages sit on a child budget of the outer budget, carved
-  for that connection and destroyed once both parties have let go; the
-  domain itself is released at its retire, right after its end, and its
-  outer budget goes then, or, while a survivor still maps a connection's
-  pages, with the last such connection.
-* **A domain is built whole or not at all.** The domain library validates
-  a creation into a plan before it creates any object, and undoes what it
-  applied if a later step fails, by destroying the domain's two budgets.
-* **Drivers are Erlang.** A driver is an Erlang process under a
-  supervisor, in a domain that holds its device's capabilities; the C
-  beneath it is a device shim that parses nothing. Which domain holds
-  which device is the manifest's. The console is such a driver, in the
-  system domain, so only the system domain and the session connected to
-  it read what the operator types.
-* **Services do bounded control on their own grant.** No thread ever runs
-  on another group's time. A service admits requests per client, in that
-  client's facet process, and what it holds for a client is bounded by
-  that process and the client's lane.
-* **The system domain is trusted, and runs in user mode.** Its authority
-  over another domain's processes is what that domain exports to it, as
-  any peer's is; its authority over the domain itself, its space, budget,
-  group and connections, is its creator's. It decides policy, and loads
-  code only from its release and the install facet. A defect in it cannot
-  corrupt the
-  kernel, but it holds the root authority, so a defect in it is a defect
-  of the whole machine, as a kernel defect is; what keeps that risk small
-  is the oracle, the sanitizers, and the construction rules that bind its
-  C.
+  system domain's, so the system domain's end ends every domain; it is
+  restarted as OTP's `heart` restarts a node, by starting the machine
+  again ([Boot](#boot), A6, A8).
+* **Every domain's end is seen in one place, and is one destroy** of the
+  domain's own budget; what others map sits on child budgets of its outer
+  budget ([Ending a domain](#ending-a-domain), A2, A5).
+* **A domain is built whole or not at all**
+  ([Creating a domain](#creating-a-domain), A4).
+* **Drivers are Erlang** over a device shim that parses nothing, in the
+  domain the manifest names ([Devices](#devices), A9).
+* **Services do bounded control on their own grant**: no thread runs on
+  another group's time ([Resource policy](#resource-policy)).
+* **The system domain is trusted.** Its authority over another domain's
+  processes is what that domain exports to it, and over the domain itself
+  its creator's. A defect in it cannot corrupt the kernel, but it holds
+  the root authority, so it is a defect of the whole machine; the oracle,
+  the sanitizers and the construction rules that bind its C keep that
+  risk small ([Security](#security)).
 
 ## Context
 
@@ -332,38 +289,23 @@ manifest holds:
 * **In a development build only**, the native programs of a partial boot
   ([Boot](#boot)).
 
-The packer generates the configured-domain, device, facet, boot-order
-and watchdog-liveness descriptor arrays in this packed manifest. The
-boot and service code reads those arrays through the generated readers;
-no separate compiled configuration table repeats them. A generated host
-report describes the checked configuration and cannot configure a boot.
-Dynamic creation still goes through the domain library's whole-plan
-validation and Erlang policy
+**The packed form** is the layout `erx_manifest_t` of
+`abi/manifest.txt`, whose rules
+[design-abi.md](design-abi.md#system-manifest-representation) states: a
+header, fixed-record arrays and a string table, reached only through
+checked indices, spans and string references, never a native pointer.
+Two readers are generated from it: a C reader in `liberx`, which the
+root-task entry uses before ERTS starts, and the Erlang module
+`erx_manifest`, which the system services use. The packer writes every
+descriptor array the boot reads (configured domains, devices, facets,
+boot order, liveness), so no compiled configuration table repeats them;
+domain records refer to complete named limit records, so no runtime
+default or second table can supply missing configuration; and a unit
+owns its devices' one holder field. A generated host report describes
+the checked configuration and cannot configure a boot
 ([design-generation.md](design-generation.md#configuration-and-command-catalogs)).
-
-**The packed form** is a layout of the ABI source, `erx_manifest_t`, read
-through readers generated from it: a C reader in `liberx`, which the
-root-task entry uses before ERTS starts, and an Erlang module,
-`erx_manifest`, which the system services use. The complete
-[binary representation](design-abi.md#system-manifest-representation)
-defines the fixed header, every record table, their canonical order and
-their bounds. The header is followed by fixed-record arrays and a string
-table. A record reference is a checked index; a span names complete
-records within its table by a file offset and count; a string uses an
-offset within the string table and a byte length. No reader follows a
-native pointer from the file.
-
-The records cover principals, configured domains, named domain and
-runtime limits, lane classes, units and devices, role-based partition
-windows, displays, services, facets with typed bounded scope parameters,
-introductions, read-only images' paths and hash-tree metadata, boot order,
-liveness, system-shell principals, the console lines' `secure`
-attributes and partial-boot programs. A unit owns its devices' one
-holder field. Domain records refer to complete named
-limit records, so neither a runtime default nor a second compiled table
-can supply missing configuration. `erx_share_t` is the 48-byte wire
-representation of the scheduler's existing `erx_grant_t`: exact quota,
-period, CPU set, hints and urgency bounds, not another kind of share.
+Dynamic creation still goes through the domain library's whole-plan
+validation and Erlang policy.
 
 A reader that finds an offset, count or index out of range, a version
 other than its own, or a string that is not what its field requires,
@@ -717,17 +659,21 @@ violation fails the build with the property, the record and the field:
     display to the system domain; and a configured domain's row with
     `clipboard` on a `single` display.
 
+Property 19, which holds the board's own domains to their proof with
+every installed app present, is the packaging design's
+([design-packaging.md](design-packaging.md#the-builds-check)).
+
 Each property has a test that seeds one violation into a manifest and
 expects the build to fail with that property's diagnostic.
 
-The manifest check has one normalized input from the Ruby reader and the
-platform placement records. The relational-rule evaluation described in
+The check's one normalized input is the Ruby reader's, with the
+platform placement records; budget and grant arithmetic is exact and in
+Ruby. The awklog evaluation of
 [Protocol verification](design-verification.md#focused-tool-evaluations)
-compares awklog with the Ruby implementation without changing these
-properties or the manifest format. Checked exact budget and grant
-arithmetic stays in Ruby. Facet edges grant particular operations, not
-universal transitive authority; runtime admission and capability checks
-continue to enforce every dynamic use. The roadmap owns tool adoption.
+compares a relational form of these rules with the Ruby check without
+changing them. Facet edges grant particular operations, not transitive
+authority; runtime admission and capability checks enforce every dynamic
+use.
 
 ### The domain service's record
 
@@ -787,115 +733,49 @@ with that row, so every remains row is named by a connection row, and
 the rows, which each name two ids, bound the remains at twice
 `max_connections`: a retire always finds a free one.
 
-```c
-typedef struct erx_dom_origin {
-	uint32_t	kind;		/* ERX_DOM_REQUEST, ERX_DOM_CONFIGURED,
-					 * ERX_DOM_PARTIAL_BOOT or ERX_DOM_SESSION */
-	uint32_t	record;		/* REQUEST: ERX_MF_NONE; otherwise the
-					 * index in the origin's manifest table */
-} erx_dom_origin_t;
+The records are declared in `include/erx/dom.h`. The fields the design
+relies on, among others there:
 
-typedef enum erx_dom_state {
-	ERX_DOM_BUILDING,	/* plan being applied */
-	ERX_DOM_BUILT,		/* built; first thread waiting for erx_dom_start */
-	ERX_DOM_RUNNING,
-	ERX_DOM_ENDED		/* stopped; own budget destroyed; reported;
-				 * outer budget and crash area kept until
-				 * the retire, which frees the record */
-} erx_dom_state_t;
-
-typedef struct erx_dom {
-	uint32_t	id;		/* the domain id; 0 for a free record */
-	uint32_t	principal;
-	erx_dom_origin_t origin;	/* immutable creation source and manifest row */
-	erx_dom_state_t	state;
-	uint32_t	flags;		/* ERX_DOM_SECRET, ERX_DOM_SPACES */
-	erx_cap_t	budget;		/* its own budget, carved from its
-					 * principal's: what only it uses */
-	erx_cap_t	outer;		/* its outer budget, carved beside it: the
-					 * parent of its connections' child
-					 * budgets, and its crash area; neither
-					 * it nor a child given to the domain */
-	erx_cap_t	space, group;
-	erx_cap_t	spaces_group;	/* ERX_DOM_SPACES: its sub-space group; else ERX_CAP_NULL */
-	erx_cap_t	crash;		/* its crash area, charged to its outer
-					 * budget; ERX_CAP_NULL for a secret domain */
-	erx_cap_t	bootinfo;	/* its boot information page */
-	erx_cap_t	sealing;	/* its mapping of the sealing page; ERX_CAP_NULL
-					 * unless its release is the one marked
-					 * ERX_ENTRY_SEAL */
-	erx_cap_t	first_thread;
-	uint32_t	system_connection;	/* the number of its connection to the system domain */
-	erx_grant_t	grant;		/* its group's grant: a living configured
-					 * domain's is one of the admitted service
-					 * grants */
-	erx_dom_end_t	stop;		/* the stop the library made: FAULT with the
-					 * kind, or STOPPED; NONE until it stops
-					 * the space */
-	erx_fault_t	fault;		/* the fault record a FAULT stop came from;
-					 * zero for any other stop */
-	erx_dom_end_t	end;		/* classified end, once ERX_DOM_ENDED */
-	erx_fault_t	record;		/* the record that ended it */
-} erx_dom_t;
-
-typedef struct erx_dom_remains {
-	uint32_t	id;		/* the retired domain's id, which a
-					 * connection row names; 0 for a free row */
-	uint32_t	principal;	/* whose memory the outer budget stays
-					 * carved from */
-	erx_cap_t	outer;		/* the retired domain's outer budget: the
-					 * parent of the child budgets of the
-					 * connections that name id, and of
-					 * nothing else */
-	uint64_t	bytes;		/* its size, which its destroy gives back
-					 * to the principal */
-} erx_dom_remains_t;
-
-typedef struct erx_dom_connection {
-	uint32_t	number;		/* 0 for a free row */
-	uint32_t	a, b;		/* domain ids; a is 4 for a connection to the system domain */
-	erx_cap_t	budget_a;	/* a's child budget for this connection,
-					 * carved from a's outer budget: the side
-					 * a reads and a's bell; ERX_CAP_NULL
-					 * when a is 4 */
-	erx_cap_t	budget_b;	/* b's, likewise; when a is 4 it holds
-					 * both sides and both bells */
-	erx_cap_t	side_a;		/* a's side: one memory object a writes and b
-					 * maps read-only (the ring header and data
-					 * area of a -> b, the reader page of b -> a);
-					 * sized by b's lane and charged to
-					 * budget_b */
-	erx_cap_t	side_b;		/* b's side, likewise; charged to budget_a,
-					 * or to budget_b when a is 4 */
-	erx_cap_t	bell_a;		/* ERX_IRQ_SOFT bound to a's group; b holds
-					 * TRIGGER alone; charged to budget_a, or
-					 * to budget_b when a is 4 */
-	erx_cap_t	bell_b;		/* bound to b's group; charged to budget_b */
-	erx_cap_t	area;		/* the connection's pixel area, or ERX_CAP_NULL:
-					 * one memory object that area_reader maps
-					 * read-only and the other party writes;
-					 * charged to area_reader's child budget */
-	uint32_t	area_reader;	/* a or b; 0 without an area */
-	bool		closing;	/* connection_down told; the child budgets
-					 * are destroyed once each party has
-					 * unmapped the objects or ended, never
-					 * on a timer */
-} erx_dom_connection_t;
-
-typedef struct erx_dom_device {
-	uint32_t	index;		/* its catalogue entry's: the manifest's
-					 * device row */
-	uint32_t	holder;		/* the living domain it is given to; 0 for none */
-	erx_cap_t	resource;	/* the carved resource; charged to the holder's own budget */
-	erx_cap_t	windows[ERX_DEVICE_RANGES_MAX];	/* its register windows; likewise */
-	erx_cap_t	irqs[ERX_DEVICE_IRQS_MAX];	/* its lines' or MSIs' IRQ objects; likewise */
-	erx_cap_t	dma;		/* confined: its DMA window, likewise; else ERX_CAP_NULL */
-	erx_cap_t	memory;		/* unconfined: its contiguous memory, made at
-					 * its first give, charged to the system
-					 * domain and kept for the boot; else
-					 * ERX_CAP_NULL */
-} erx_dom_device_t;
-```
+* **A domain record** holds the domain's id (0 for a free record), its
+  principal, its **origin** (request, configured row, partial-boot row or
+  session template, with the manifest index for all but a request; set by
+  the library's origin constructor and immutable), its state (`BUILDING`
+  while the plan applies, `BUILT` with its first thread waiting,
+  `RUNNING`, and `ENDED`: stopped, own budget destroyed and reported, the
+  outer budget and crash area kept until the retire frees the record), its
+  `ERX_DOM_SECRET` and `ERX_DOM_SPACES` flags, and the library's handles
+  to its own budget, its outer budget, its space, group and sub-space
+  group, its crash area (none for a secret domain), its boot information
+  page, its mapping of the sealing page (only for the release marked
+  `ERX_ENTRY_SEAL`), its first thread, and the number of its connection
+  to the system domain. It keeps the domain's grant (a living configured
+  domain's counts against `system`'s reserve until the domain ends); the
+  stop the library made, with the fault record it came from; and the
+  classified end with the record that ended it. Neither the outer budget
+  nor any child of it is ever given to the domain.
+* **A remains row** holds a retired domain's id, which a connection row
+  names, the principal whose memory its outer budget stays carved from,
+  that outer budget, the parent of the child budgets of the connections
+  that name the id and of nothing else, and its size, which its destroy
+  gives back to the principal.
+* **A connection row** holds its number, the two domain ids `a` and `b`
+  (`a` is 4 for a connection to the system domain), each party's child
+  budget for the connection, carved from that party's outer budget (for
+  a connection to the system domain, `b`'s holds everything), each side,
+  one memory object its writer writes and the other party maps read-only,
+  sized by its reader's lane and charged to its reader's child budget,
+  each party's bell, a soft IRQ object bound to that party's group and
+  charged to its child budget, of which the peer holds `TRIGGER` alone,
+  an optional pixel area charged to the child budget of its reader, and
+  `closing`, set once `connection_down` is told: the child budgets are
+  destroyed once each party has unmapped the objects or ended, never on a
+  timer.
+* **A device record** holds its catalogue index, which is its manifest
+  device row, its living holder (0 for none), the carved resource, its
+  register windows, its IRQ objects and, if confined, its DMA window, all
+  charged to the holder's own budget; and, if unconfined, its contiguous
+  memory, made at its first give, charged to the system domain and kept
+  for the boot.
 
 The label of a domain's space, on each of its records, is the domain's id,
 so the fault thread finds the record from the label alone. A sub-space has
@@ -903,32 +783,18 @@ no record here: it belongs to the domain that created it
 ([Sub-spaces](#sub-spaces)).
 
 **A classified end** is one of four, computed by a pure function from the
-records alone: an exit record names the thread that stopped the space
-and that thread's space, and only the library, in the system domain's
-space, holds a capability that stops a domain's space, so a stop the
-library made tells itself from one the domain made by the stopper's space,
-whichever came first. A record's noted stop is `NONE` until the library
-stops its space, so a zeroed record notes none:
-
-```c
-typedef enum erx_dom_end_kind {
-	ERX_DOM_END_NONE,	/* no end yet: a record's stop until the library
-				 * stops its space */
-	ERX_DOM_END_HALT,	/* the space stopped itself with a halt status */
-	ERX_DOM_END_CRASH,	/* the space stopped itself with ERX_EXIT_CRASH */
-	ERX_DOM_END_FAULT,	/* a thread faulted; the library stopped the space */
-	ERX_DOM_END_STOPPED	/* the library stopped it on request */
-} erx_dom_end_kind_t;
-
-typedef struct erx_dom_end {
-	erx_dom_end_kind_t	kind;
-	int64_t			status;	/* HALT: the status; FAULT: the fault kind */
-} erx_dom_end_t;
-```
-
-The domain service turns it into the `Info` of `{domain_down, D, Info}`:
-`{halt, Status}`, `crash`, `{fault, Kind}` or `stopped`
-([design-domains.md](design-domains.md#links-monitors-and-exits)).
+records alone: `HALT`, the space stopped itself with a halt status;
+`CRASH`, it stopped itself with `ERX_EXIT_CRASH`; `FAULT`, a thread
+faulted and the library stopped the space, with the fault kind; and
+`STOPPED`, the library stopped it on request. An exit record names the
+thread that stopped the space and that thread's space, and only the
+library, in the system domain's space, holds a capability that stops a
+domain's space, so a stop the library made tells itself from one the
+domain made by the stopper's space, whichever came first. A record's
+noted stop is `NONE` until the library stops its space, so a zeroed
+record notes none. The domain service turns the end into the `Info` of
+`{domain_down, D, Info}`: `{halt, Status}`, `crash`, `{fault, Kind}` or
+`stopped` ([design-domains.md](design-domains.md#links-monitors-and-exits)).
 
 ### The crash record
 
@@ -1367,48 +1233,24 @@ charged to an outer budget or a child of one. The rule holds by construction: th
 draw every install from `erx_dom_grants`, which has no row for a foreign
 gate, and the library's host test runs a seeded plan that installs one,
 which must fail.
-
-A creation specification is the domain service's description of the
-domain, a fixed layout constructed from an admitted request, a checked
-configured-domain row or a checked partial-boot row. Its creation origin
-is authority provenance, not a field accepted from a request:
-
-```c
-typedef struct erx_dom_spec {
-	uint32_t	version;	/* 1 */
-	uint32_t	id;		/* allocated by the domain service; nonzero, unused */
-	uint32_t	principal;
-	erx_dom_origin_t origin;	/* set by the library's origin constructor */
-	uint32_t	flags;		/* ERX_DOM_SECRET: the vault's: no crash
-					 * area; required for the release the
-					 * boot image marks with ERX_ENTRY_SEAL,
-					 * whose domain alone gets the sealing page;
-					 * ERX_DOM_SPACES: it holds SPACES, with a
-					 * sub-space group of grant `spaces` */
-	uint32_t	release;	/* index of the release's first file in the boot image */
-	uint32_t	release_files;	/* number of files in its slice */
-	uint32_t	runtime;	/* index of the runtime image file */
-	uint64_t	memory;		/* its own budget's guarantee and cap, bytes */
-	uint64_t	outer;		/* its outer budget's guarantee and cap, bytes: its
-					 * connections' child budgets and its
-					 * crash area */
-	erx_grant_t	grant;		/* the domain group's grant */
-	erx_grant_t	spaces;		/* ERX_DOM_SPACES: the sub-space group's grant, within `grant` */
-	erx_runtime_limits_t runtime_limits; /* complete per-domain startup values */
-	uint32_t	lane;		/* data area of the lane the domain reads */
-	uint32_t	connections;	/* the domain's connections quota, which
-					 * also gives the control table on the
-					 * system domain's side its slots */
-	uint32_t	system_lane;	/* data area of the lane the system domain
-					 * reads; both lanes of the system
-					 * connection are charged to the domain's
-					 * child budget for that connection */
-	uint32_t	crash;		/* crash area size; zero for none */
-	uint32_t	args_len;	/* NUL-separated arguments follow */
-	uint32_t	env_len;	/* NUL-separated environment follows; args_len +
-					 * env_len <= ERX_BOOT_STRINGS_MAX (2,048) */
-} erx_dom_spec_t;
-```
+A creation specification, `erx_dom_spec_t` in `include/erx/dom.h`, is
+the domain service's description of the domain, a fixed layout
+constructed from an admitted request, a checked configured-domain row, a
+checked partial-boot row or a session template. It carries the domain's
+id, allocated by the domain service and unused; its principal; its
+origin, set by the library's origin constructor, which is authority
+provenance and never a field accepted from a request; its flags,
+`ERX_DOM_SECRET` for the vault's (no crash area, required for the
+release marked `ERX_ENTRY_SEAL`, whose domain alone gets the sealing
+page) and `ERX_DOM_SPACES` (it holds `SPACES`, with a sub-space group);
+its release slice and runtime image, as boot-image indices; the
+guarantee and cap of its own budget and of its outer budget; its group's
+grant and its sub-space group's, within it; its complete runtime limits;
+the data areas of the lane it reads and of the lane the system domain
+reads from it, both charged to its child budget for the system
+connection; its `connections` quota, which also sizes the control table
+on the system domain's side; its crash area's size; and its arguments
+and environment, which together fit `ERX_BOOT_STRINGS_MAX`.
 
 The library has one planning entry per source, each of which constructs
 the specification from that source itself and then plans it, so no
@@ -1823,18 +1665,8 @@ session serves them from memory objects of its own budget
 
 **The `code_objects` facet.** `abi/services/code_objects.txt` declares
 the interface a session reaches the domain service's code objects
-through:
-
-```text
-service code_objects 14
-  served_as message
-  operation create 1
-  operation drop 2
-limit code_objects_max u32 16
-limit code_objects_max_request u32 1024
-```
-
-`create` takes the object's size in bytes, a positive integer, and
+through, with its two operations and the limits `code_objects_max` and
+`code_objects_max_request`. `create` takes the object's size in bytes, a positive integer, and
 answers `{ok, Number, Cap}`, the object's number and the session's value
 of its copy, or the library's refusal, `{error, enomem}` for the
 session's budget, `{error, elimit}` beyond `code_objects_max` and
@@ -2368,104 +2200,55 @@ holder cannot weaken the end. Its request makes the same ordered end the
 system domain's own does, with the same preparation and deadline, and
 the log names the holder's principal.
 
-**Manifest rows.** The records every development manifest takes
-(`config/manifest/development.txt`, which both boards' manifests
-follow with their own parts) add, beside `start`:
-
-```text
-service machine
-  server system
-  interface files
-facet machine
-  grantee @session.system
-  service @service.machine
-  operations none
-  max_request 131072
-  in_flight 1
-  reductions 100000
-  period_ns 1000000000
-  max_heap_size 65536
-```
-
+**Manifest rows.** Every development manifest
+(`config/manifest/development.txt`, which both boards' manifests follow)
+declares the `machine` service, served by the system domain as a `files`
+instance, and one facet row granting it to `@session.system`. Its
 `max_request` is `files_max_frame_min`, as for every `files` grant
-(property 16). One write in flight is enough for a file that takes one
-word. The grant holds only its fids, so `max_heap_size` is 512 KiB.
-`reductions` and `period_ns` are the values every facet row carries,
-the `apps` row's. They bind no `erx_fs` grant (`erx_fs_grants`), so no
-CPU limit holds a writer back: what bounds repeated requests is the
-first begin, after which every write is answered `ebusy` and logs
-nothing, and the grant's one write in flight. The
-grant travels on the session's system connection, so `max_connections`
-does not change. No `abi/services` file is added: `abi/services/files.txt`
-declares the interface, and the facet table check (FacetNames) takes the
-row from these two manifest records, whose comment cites this section. The
-name `machine` appears in code in five places, each a name the table
-then holds: the commands' `-erx_needs`, the tree's place in `erx_ns`,
-where a session mounts its facet and the system domain its own grant,
-the mint's clause in `erx_domain_srv` that gives the grant its
-principal, the tree's `erx_facet:serve(machine, Pid)`, and its
-`erx_ns:mount_own(machine, Grant)`.
+(property 16); one write in flight is enough for a file that takes one
+word; and the grant holds only its fids, so its `max_heap_size` is
+small. Its `reductions` and `period_ns` are the values every facet row
+carries, and no CPU limit binds an `erx_fs`
+grant, so what bounds repeated requests is the first begin, after which
+every write is answered `ebusy` and logs nothing, and the grant's one
+write in flight. The grant travels on the session's system connection,
+so `max_connections` does not change, and no `abi/services` file is
+added: `abi/services/files.txt` declares the interface, and the facet
+table check (FacetNames) takes the row from these manifest records.
 
 **Verification.** Host tests, and one case of a native guest, each with
 its seeded fault:
 
-* **The `ctl` parse.** `reset`, `reset\n`, `off` and `off\n` give their
-  end. `trial`, `reset\n\n`, `Reset`, `reset now`, an empty write and a
-  write of 64 KiB give `einval`. Seeds: a parser that also accepts
-  `trial` fails the `trial` case, and one that takes a second newline
-  fails `reset\n\n`. The parse has a fuzz target, landing with it.
-* **The coordinator's entry.** A first request begins the end and logs
-  `rebooted by clock` for a grant made for principal `clock`. A second
-  request gets `busy` and logs nothing. The update service's `trial`
-  logs `trial boot requested by root`. Seeds: a coordinator that answers
-  `ok` to the second request fails the `busy` case, and a log line that
-  names the system principal instead of the request's fails the `clock`
-  case.
-* **The mint**, in `erx_domain_srv`, which builds the ready answer's
-  grants of the system domain's services (`erx_domain_mints` leaves those
-  out), over `erx_domain_fake_lib` (`test/erlang/erx_domain_tests.erl`).
-  The manifest's `machine` row grants `clock`'s template and not root's:
-  a session of `clock` has a ready answer that holds one `machine` grant
-  started with the principal argument `clock`, and root's session's
-  holds none. Seeds: a mint that passes the system principal instead of
-  the one it computed for the grantee fails the `clock` case, and one
-  that gives the system domain's services to every template fails
-  root's.
-* **The commands' decision.** `reboot` and `reboot -q` write `reset\n`,
-  and `halt` and `halt -p` write `off\n`, to `/machine/ctl`; after an
-  accepted end the command waits in the system domain and exits 0
-  anywhere else. An unknown option is a usage error. Seeds: `halt`
-  mapped to `reset` fails, and so does a command that waits outside the
-  system domain.
-* **The system domain's own mount.** Serving the tree names its grants
-  the `machine` service and mounts one grant of them at `/machine` in the
-  system domain's namespace, which a second start replaces. Seed: a
-  start that leaves the own grant unmounted fails.
-* **Fiasco's root check**, a case of the native task guest
-  (`test/guest/native_task`), since the Fiasco backend's service has no
-  host build: a task's `erx_machine_end(res, ERX_END_RESET)` returns
-  `ERX_ENOTSUP`, and the task's next line still reaches the console.
-  Seed: with the check removed, QEMU exits at the call and the case
-  fails.
+* **The `ctl` parse**, which has a fuzz target: only the two ends, each
+  with at most one newline, are accepted. Seeds: a parser that also
+  accepts `trial`, and one that takes a second newline.
+* **The coordinator's entry**: one begin and one log line naming the
+  grant's principal, then `busy` with no line. Seeds: a coordinator that
+  answers `ok` to a second request, and a log line that names the system
+  principal instead of the request's.
+* **The mint** in `erx_domain_srv`, over a manifest whose `machine` row
+  grants a test principal's template and not root's. Seeds: a mint that
+  passes the system principal instead of the grantee's, and one that
+  gives the system domain's services to every template.
+* **The commands' decision**: `reboot` and `reboot -q` write `reset\n`,
+  `halt` and `halt -p` write `off\n`, an unknown option is a usage
+  error, and only the system domain's shell waits. Seeds: `halt` mapped to `reset`, and a command that waits
+  outside the system domain.
+* **The system domain's own mount.** Seed: a start that leaves the own
+  grant unmounted.
+* **Fiasco's root check**, in the native task guest, since the Fiasco
+  backend's service has no host build: a task's `erx_machine_end` returns
+  `ERX_ENOTSUP`. Seed: with the check removed, QEMU exits at the call.
 
-The QEMU suite `machine_end` has two 1-CPU cells. Each boots the
-development manifest with the apps suite's principal `clock`
-(`tools/lib/erx/apps.rb`), whose template holds no `machine` row:
-
-* **reboot.** `clock_1`'s test application reports that it holds no
-  `machine` grant, and that its write of `reset` to `/machine/ctl` gave
-  `enoent`. `root_1` then still answers a command. `root_1` runs
-  `reboot`, the kernel log shows `rebooted by root` and the preparation's
-  lines, and QEMU exits under `-no-reboot` within the ending record's
-  deadline. Seeds: a manifest whose `machine` row also grants `clock`'s
-  template makes `clock_1`'s write end the machine before `root_1`'s
-  command, and the cell fails. A `ctl` that answers `ok` without calling
-  the coordinator leaves QEMU running past the deadline, and the cell
-  fails.
-* **halt.** `root_1` runs `halt`, and the log shows `powered off by
-  root` before QEMU exits. The harness cannot tell a power-off from a
-  reset under `-no-reboot` (`TODO.md`, tooling, `machine_end`), so the
-  log line is what tells the two cells' ends apart.
+The QEMU suite `machine_end` has two 1-CPU cells, `reboot` and `halt`,
+each its own boot of the development manifest with a principal whose
+template holds no `machine` row: that session finds no `/machine` and
+root's session still answers, and root's command logs its line before
+QEMU exits, within the ending record's deadline for `reboot`. Seeds: a manifest that also
+grants the other template, whose write then ends the machine first, and
+a `ctl` that answers `ok` without calling the coordinator. The harness
+cannot tell a power-off from a reset under `-no-reboot` (`TODO.md`,
+tooling, `machine_end`), so the log line tells the two ends apart.
 
 ### Granting a running domain
 
@@ -3224,48 +3007,46 @@ fixed within a boot.
 ### Devices
 
 The device service, `erx_devices`, owns the machine's devices on behalf of
-the system domain. At boot it reads the root resource's device list
-through `erx_object_info` and builds a catalogue: path, compatible string,
-register ranges, interrupt lines, and whether a device is confined
+the system domain. This section owns which domain holds a device, how it
+is given and what its holder's drivers may do;
+[design-shared-devices.md](design-shared-devices.md) owns the unit rule
+and the sharing of a page or a line inside a domain. At boot the device
+service reads the root resource's device list through `erx_object_info`
+and builds a catalogue: path, compatible string, register ranges,
+interrupt lines, and whether a device is confined
 ([design-kernel.md](design-kernel.md#resources-dma-windows-and-consoles)).
+A catalogue entry's index is its manifest device row; on erXos's kernel
+the carve finds the device in the root resource by the entry's
+device-tree path, not by its position in the list.
+
 Each device goes to the one domain the manifest names for it, as part of
 that domain's creation: for each unit the manifest places on the
 configured row, `erx_dom_plan_configured` adds a **give**, planned by
-`erx_dom_plan_unit_give` and applied whole by one step of the
-creation's plan. A give carves the resources of the unit's devices and
-creates, all from the holder's own budget, the unit's register windows
-as physical memory objects with device attributes, one over each run of
-consecutive pages its register ranges cover, its IRQ objects, one for
-each distinct line its devices name, and, for each confined device, its
-DMA window; devices that share a page or a line share that window or
-that IRQ object, which the domain library installs under one handle
-([design-shared-devices.md](design-shared-devices.md#the-unit-rule)). For
+`erx_dom_plan_unit_give` and applied whole by one step of the creation's
+plan. A give carves the resources of the unit's devices and creates from
+the holder's own budget the unit's register windows, its IRQ objects and,
+for each confined device, its DMA window, one object per page run and per
+line as [the unit rule](design-shared-devices.md#the-unit-rule) says; for
 an unconfined device it gives the device's contiguous memory instead
-(below). A device of no kind gets only its resource: no window, DMA
-window, memory or IRQ object of its own
-([design-shared-devices.md](design-shared-devices.md#the-unit-rule)); and it gives the holder its capabilities
+(What a device keeps, below); a device of no kind gets only its
+resource. It then gives the holder its capabilities
 ([Authority](#authority)). A give is its own plan, not steps in the
-creation's, because every unit's objects use the same object numbers and so cannot share the creation's object namespace; a
-creation holds up to eight. No device service has to give at the right
-moment. The planner gives a device only to a domain of the row its unit
-is placed on, and refuses a give with `ERX_EBUSY` while a living domain
-holds the device, so a second domain of the row is refused while the
-first lives. On success the device's record names the holder and its
-objects; at the holder's end the window, line, resource and DMA objects
-are destroyed and the record names no holder, while the contiguous
-memory stays the device's for the boot, and the row's next creation
-installs that memory again instead of making new. A catalogue entry's
-index is its manifest device row. On erXos's kernel the carve finds the
-device in the root resource by the entry's device-tree path, not by its
-position in the resource's list. `erx_domain_lib:devices/0` returns the
+creation's, because every unit's objects use the same object numbers and
+so cannot share the creation's object namespace; a creation holds up to
+eight. No device service has to give at the right moment. The planner
+gives a device only to a domain of the row its unit is placed on, and
+refuses a give with `ERX_EBUSY` while a living domain holds the device,
+so a second domain of the row is refused while the first lives. On
+success the device's record names the holder and its objects; at the
+holder's end the window, line, resource and DMA objects are destroyed
+and the record names no holder. `erx_domain_lib:devices/0` returns the
 catalogue with each entry's holder: `{ok, [#{index, unit, row, role,
 holder}]}`, where `row` is a configured row or `system`, `role` is
-`block`, `net` or `none`, and `holder` is a domain id, `system` or `none`.
-The `PHYS` right on contiguous
-memory goes only to the domain of the device the memory is for, and is
-stripped from every other capability to that memory. A device the
-manifest does not name goes to no domain, and a PCIe function among them
-keeps its bus mastering off.
+`block`, `net` or `none`, and `holder` is a domain id, `system` or
+`none`. The `PHYS` right on contiguous memory goes only to the domain of
+the device the memory is for, and is stripped from every other
+capability to that memory. A device the manifest does not name goes to
+no domain, and a PCIe function among them keeps its bus mastering off.
 
 **The machine is held to the manifest's marks.** The manifest marks each
 DMA device confined or unconfined, and its check reasons from those marks
@@ -3369,13 +3150,10 @@ which connects one session's tty to the line at a time and copies its
 bytes without reading them
 ([design-live.md](design-live.md#the-console)). So no domain can read a
 passphrase typed at the login prompt, and a domain writes to the operator
-only through a connected session's tty. On the Raspberry Pi 4 the
-console's unit is the mini UART's, which shares its page and its line
-with the auxiliary SPI controllers, and the host link's is the PL011s'
-unit, which share a page and a line; both
-go to the system domain, which drives neither the auxiliary SPI
-controllers nor the PL011s the host link does not use
-([design-platforms.md](design-platforms.md#raspberry-pi-4-model-b)). The
+only through a connected session's tty. Where the console's or the host
+link's unit holds other devices, as on the Raspberry Pi 4, the system
+domain holds them too and drives none of them
+([design-shared-devices.md](design-shared-devices.md#context)). The
 kernel shares the console's UART in time and keeps no register page of it:
 it writes the UART by polling, at the address its platform build fixes
 and through a mapping it makes for those writes, during its boot and at
@@ -3385,44 +3163,35 @@ a panic or the machine's end, and the driver owns it otherwise
 **On Fiasco.** The device service, the manifest's placement, the
 drivers and their supervisors are the same code. In a give, the domain
 library creates the unit's register windows, its lines' IRQ objects and,
-at the first give, each device's contiguous memory, all in the root, from the catalogue
-entry at the give's index, which is the manifest's device row (neither
-backend has a resource object, so the give's resource step makes
-nothing), and passes them to the holding domain, whose
-driver maps the window and binds the line to its own group, so the line's
-deliveries reach that task's readiness dispatcher; no device object is
-created from a task other than the root
-([Device records](design-fiasco.md#device-records)). At the holder's end
-the library deletes the window's and the line's objects and keeps the
-contiguous memory for the restarted holder, as this section says of any
-unconfined device. QEMU `virt`, as the harness starts it, has no IOMMU
-and attaches its devices over virtio-mmio, so every DMA device on the
-stopgap is unconfined. The catalogue is the manifest's device table:
-the domain library's boot view builds an entry per device, placed on its
-unit's holder, checks the units against the devices' register pages and
-lines, and refuses the whole view when devices that share a page or a
-line are in two unit rows, or when a device is marked confined,
-since Fiasco lists no IOMMU stream; the manifest check builds the same view, so such a
-manifest fails the build, and no domain is created from a placement the
-view did not admit. The development manifest gives the block and network devices each
-a domain of its own: the block device to the storage domain, which
-runs the block driver and the file systems, littlefs as a NIF behind the
-`erx_fs` seam until the sub-space port replaces it; the network device to
-the network domain, which runs the network stack and its virtio-net
-driver. Of the devices, the system domain holds only the UARTs of the console and
-the host link. A manifest that configures a display domain gives it
-virtio-gpu and virtio-input; the development manifest configures none.
-The Phase 1 manifest check allows these unconfined devices in a development build, and
-property 9 refuses them in a release manifest as it does on erXos's kernel;
-Fiasco builds no release. In the storage domain a driver's end ends the domain, whose restart gives
-the device back; other drivers die and restart under their supervisors as
-this section describes. Every driver's DMA reaches all memory,
-so a driver, or a domain that parses hostile bytes beside one, can reach
-every domain through its device. DMA windows, MSIs and the lifetime of
-device buffers are erXos's kernel's
-([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)), and moving
-a device to virtio-pci behind the IOMMU then changes its device record and
-its DMA profile, not its driver.
+at the first give, each device's contiguous memory, all in the root,
+from the catalogue entry at the give's index (neither backend has a
+resource object, so the give's resource step makes nothing), and passes
+them to the holding domain, whose driver maps the window and binds the
+line to its own group, so the line's deliveries reach that task's
+readiness dispatcher; no device object is created from a task other than
+the root ([Device records](design-fiasco.md#device-records)). At the
+holder's end the library deletes the window's and the line's objects and
+keeps the contiguous memory for the restarted holder. Fiasco lists no
+IOMMU stream, and QEMU `virt`, as the harness starts it, attaches its
+devices over virtio-mmio, so every DMA device there is unconfined: the
+domain library's boot view, which the manifest check builds too,
+refuses a device marked confined, as it refuses a unit split across
+rows, so such a manifest fails the build. The development manifest gives
+the block device to the storage domain, which runs the block driver and
+the file systems (littlefs as a NIF behind the `erx_fs` seam), the
+network device to the network domain, and virtio-gpu and virtio-input to
+a display domain where it configures one; the system domain holds only
+the console's and the host link's UARTs. The manifest check admits these
+unconfined devices in a development build, and property 9 refuses them
+in a release manifest. In the storage domain a driver's end ends the
+domain, whose restart gives the device back; other drivers restart under
+their supervisors. Every driver's DMA reaches all memory, so a driver,
+or a domain that parses hostile bytes beside one, can reach every domain
+through its device; DMA windows, MSIs and the lifetime of device buffers
+are erXos's kernel's
+([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)),
+and moving a device to virtio-pci behind the IOMMU changes its device
+record and its DMA profile, not its driver.
 
 #### Drivers
 
@@ -3479,13 +3248,9 @@ Through the NIF:
   ([design-kernel.md](design-kernel.md#irq-objects)). A process's exit
   unbinds only the lines still bound under its own label, so a late exit
   never undoes a successor's binding. A line that two devices of a unit
-  name is shared, as the devices' records say, and is bound once, by the
-  line's **owner**, a supervised Erlang process that tells each driver
-  joined to it of every firing, acknowledges the line once all of them
-  have answered or exited, and tells them again if the line fired in the
-  meantime; the drivers join it
-  instead of binding and report done instead of acknowledging, through
-  `erx_irq_line`, the one module that binds or acknowledges a line
+  name is shared and is bound once, by the line's **owner**, which the
+  drivers join instead of binding, all through `erx_irq_line`, the one
+  module that binds or acknowledges a line
   ([design-shared-devices.md](design-shared-devices.md#lines-inside-a-domain)).
   No dirty scheduler blocks in an
   interrupt wait, and interrupt-to-handler latency passes through the
@@ -3591,33 +3356,25 @@ targets from the domain library, re-reads configuration space, keeps
 every function that reads as its setting and turns every other one off
 with its layout written, so it changes no running function and raises
 none ([design-pcie.md](design-pcie.md#the-plan)). The kernel keeps the
-register pages of the devices of `hw/kernel_devices.txt` and no page of
-the console's UART, which it writes by polling, at the address its
-platform build fixes, at boot and at a panic or an end.
+register pages of the devices of `hw/kernel_devices.txt`; the console's
+UART it only writes by polling (The console, above).
 
-**Units.** Devices that cannot be given apart form one **unit**: those
-whose register ranges share a page, since a page has at most one MMIO
-object, those whose interrupts arrive on one line, since a line has at
-most one IRQ object, and those behind one PCIe function, as the Raspberry
-Pi 5's I/O controller's are
-([design-platforms.md](design-platforms.md#pcie-bridges)). A unit is
-closed under sharing a page and sharing a line, so no page and no line
-is ever held by two domains; a sub-device never crosses a domain as
-registers or a line, and another domain reaches what it does only through
-a file tree or a facet its holder serves
-([design-shared-devices.md](design-shared-devices.md)).
-The manifest gives devices by unit, and the check proves each unit given
-whole to one domain (property 1). At boot the device service computes the
-units from the catalogue's register ranges and lines and the kernel's
-listing, so no list of units is trusted unchecked, and gives a unit that
-the machine's listing splits across the manifest's domains to no domain,
-with a diagnostic; a manifest whose own units split a page or a line never gets that far,
-since the domain library's boot view, which the manifest check runs too,
-refuses it whole. A unit goes to one
-domain, whose drivers reset its devices together. The domain library
-holds the placement as well: a give, `erx_dom_plan_unit_give`, gives a
-device only to a domain of the configured row the manifest places its unit on, never to
-a requested or session domain or to another row's.
+**Units.** Devices that cannot be given apart, because they share a
+register page or an interrupt line or sit behind one PCIe function, form
+one **unit**, given whole to one domain, so no page and no line is ever
+held by two domains; another domain reaches a sub-device's function only
+through a file tree or a facet its holder serves
+([the unit rule](design-shared-devices.md#the-unit-rule)). The manifest
+gives devices by unit, and the check proves each unit given whole
+(property 1); the domain library's boot view, which the manifest check
+runs too, refuses a manifest whose own units split a page or a line. At
+boot the device service computes the units again from the catalogue and
+the kernel's listing, so no list of units is trusted unchecked, and gives
+a unit that the machine splits across the manifest's domains to no
+domain, with a diagnostic. A unit's holder's drivers reset its devices
+together, and a give places a device only on a domain of the configured
+row the manifest places its unit on, never on a requested or session
+domain or another row's.
 
 **Partition windows.** The block driver serves each partition of its
 medium as a window ([design-storage.md](design-storage.md#data-model)).
@@ -4486,21 +4243,15 @@ seconds (1, 5 and 60), off in deterministic mode
 
 ## Compatibility and migration
 
-Nothing here owes compatibility to an earlier build. The manifest, the
-boot information page, the lanes' ring header and reader page, the crash
-record and the creation specification carry versions and are fixed
-layouts in `abi/erx_abi.txt`;
-the kernel, `liberx` and the runtimes are built from one tree, so a
-mismatch is a build error, not a runtime negotiation, and a version field
-serves only to make a mismatch fail loudly. The one state that outlives a
-boot is the vault's files ([The vault](#the-vault)), and the crash record
-where a platform keeps one across a warm reset. Each vault file carries
-its format's version, and a file of any other version is refused with a
-diagnostic, its principal answered `unavailable`, and never read under
-another layout; a crash record of another build is reported as unreadable
-and dropped. No build converts either or reads an earlier format: an
-installation that changes the vault's format re-creates the vault's
-partition, as a fresh installation does.
+Nothing here owes compatibility to an earlier build. The layouts this
+document uses carry versions only so that a mismatch fails loudly; the
+kernel, `liberx` and the runtimes are built from one tree. The state
+that outlives a boot is the vault's files and, where a platform keeps
+one, the crash record. A vault file of another format version is refused
+with a diagnostic and its principal answered `unavailable`, never read
+under another layout, and an installation that changes the format
+re-creates the vault's partition; a crash record of another build is
+reported as unreadable and dropped.
 
 ## Failure handling, diagnostics and debuggability
 
@@ -4698,350 +4449,164 @@ domain.
 
 ## Verification and testing
 
-Every passing case below has a seeded failure beside it: a build check is
-run once against a planted violation, a model once against a mutated
+Every passing case has a seeded failure beside it: a build check is run
+once against a planted violation, a model once against a mutated
 transition, a QEMU test once against a test-build hook that breaks the
 property, and each must fail, so that a passing suite proves the code
-under test ran.
+under test ran. The invariants table names the check of each invariant;
+this section gives the approach, the oracles, the fuzz targets and the
+seeded faults.
 
-* **Pure functions on the host:** the planning entries and the other
-  plans over valid and invalid specifications, with every field at and
-  beyond its bounds, and with a seeded plan that names another parent or
-  another fault gate, which the A6 and A2 checks must catch;
-  `erx_dom_classify` over every record kind, status and stopper, including
-  a domain's own stop racing the library's; `erx_dom_record_step` over
-  every order of fault records, exit records and stops for one domain;
-  the pure end decision over each boot value, requested end and set of
-  preparation outcomes, with missing and late replies;
-  `erx_policy:capacity/1` with properties (the runs' shares on a CPU never
-  sum past one CPU; a group's capacity never exceeds its demand; every run
-  lies in its group's cpuset; the same grants give the same runs in any
-  order), each property once against a mutated placement step.
-* **Creation origin and CPU parent:** a valid configured service whose
-  grant exceeds its principal's user CPU share but fits `system` plans
-  its group under `system` while charging its two budgets to that
-  principal; the same grant from a dynamic request is refused. A forged
-  origin field in a public request fails decoding; a mismatched manifest
-  row fails planning; a partial-boot plan has its principal CPU parent
-  and no connection; a restart preserves the configured origin with a
-  new domain id. Seeded apply code that substitutes the principal group
-  for a planned service parent fails the plan-conformance test. The
-  constructor and caller source checks each have a planted violation.
-* **Startup limits:** independently chosen, non-default values for every
-  runtime limit survive source normalization, whole-plan validation and
-  boot-page projection for configured, requested and system runtimes.
-  A missing, out-of-range or above-ceiling value prevents start. A hook
-  that opens a peer lane before the complete limit record is installed
-  fails the startup-order check; no fallback runtime default makes it pass.
-* **Configuration headroom:** `erx_policy`'s grant rule over random service
-  grants, periods and cpusets, checking the normalized rate and overlap
-  inequalities of property 13, refusing the rest with `{error, quota}`,
-  and that it
-  agrees with the manifest check's property 13 on every shipped manifest;
-  seeded failure: a rule that sums rates without the cpuset term, which
-  accepts a grant set that the random cases find leaves the reserve's
-  CPUs overassigned. These are configuration tests, not a scheduler
-  supply proof. Separately, under QEMU, every service domain spins at its full grant
-  while the watchdog process keeps petting and the domain service answers
-  within the period; seeded failure: a manifest built around the check
-  that gives the services all of `system`, under which the watchdog's
-  deadline passes.
-* **The manifest check:** for each of its fourteen properties a manifest
-  that violates it in one place, which must fail the build with that
-  property's diagnostic, beside the shipped manifests, which must pass,
-  among them, for property 9, a release build's manifest that gives a
-  device marked `hostile` and unconfined to a storage domain that also
-  holds data windows, one that lists `web` among the host's facets, one
-  that gives the web domain a plain-HTTP listener and one that gives it an
-  unconfined device, and for property 13, one whose service grants leave
-  the reserve on the whole of `system` but not on the CPUs of the system
-  domain's own threads;
-  the check's boot order over manifests whose facets form a chain, a tree
-  and a cycle, the cycle refused; a manifest packed by hand around the
-  check, which the source check over the packer's paths catches. The
-  generated C and Erlang readers over every shipped manifest give the
-  same records, and over a manifest with each offset, count, index and
-  string out of range in turn refuse the whole file.
-* **Undo:** a host test injects a failure at each step of a creation, and
-  a QEMU test injects one at each step through a test-build hook; every
-  object is destroyed when the undo returns, and the principal's budget
-  returns to its baseline once the destroyed records' grace period has
-  passed and the reaper has run, which the test drives; a domain whose
-  init process never reports ready, after which nothing of it remains; a hook that charges one object of the creation to a
-  budget other than the domain's two, which the budget check catches; a
-  seeded plan that installs another domain's IPC gate into the domain,
-  which the library's host test must refuse.
-* **The root task and its end, under QEMU with HVF:** boot to
-  the login prompt and to the system shell; kill the system domain under
-  load, with domains, sessions and programs running, and find the crash
-  record on the console, every domain stopped, and the machine ended as
-  `erx.panic` says; the same for `erlang:halt/1` with a string from a
-  system process and for a stopped watchdog pet, whose crash record names
-  the watchdog; on
-  each board, a system domain killed during a trial, which boots the
-  committed slot; a configured domain killed repeatedly, restarted within
-  its intensity, and beyond it the machine ended when it is `required` and
-  left down when it is not; the previous boot's crash record read by the
-  inspector where the platform keeps one, in its brief form in a release
-  build, with no register but the program counter, no stack and no text,
-  in its full form in a development build, and refused to every caller
-  but the system shell, a session of a system-shell principal among them,
-  and on every console line before a login; a development
-  build's manifest with a partial boot of two native programs, which run,
-  write to the kernel log through the early console, end, and end the
-  machine, the root-task entry petting the watchdog throughout; a manifest
-  whose `root_memory` exceeds the machine's root budget, which ends the
-  boot with a crash record naming both sizes, and a hook that skips the
-  comparison, which the test catches; a JIT object's creation in the
-  system domain, refused, and a hook that boots a root image carrying
-  `ERX_IMAGE_JIT`, which the manifest check must refuse first; the domain
-  service killed while domains run, which ends the machine with the crash
-  record on the console and no domain running, and a hook that makes it a
-  `permanent` child, under which the supervisor restarts it and the test
-  finds the machine still running; a test-build hook that faults the system
-  domain at every boot, after which the fifth boot comes up in the rescue
-  configuration, with no network domain and no user domain, a login clears
-  the count, and the next boot is a normal one.
-* **Names:** `node()` in a domain is its `Name@Host` and its creation is
-  its domain id, the system domain's 4; a second living domain under a
-  name, refused with `{error, name_taken}`, and the name taken again by
-  its principal once the first has ended, as a node with a new creation,
-  while a stale pid of the first names nothing; a name bound by one
-  principal, refused to another for the rest of the boot; a principal
-  past its `names` quota, refused with `{error, quota}`, and a hook that
-  skips the quota, after which the hostile-domain test finds the system
-  domain's atom table past its bound; a principal that starts and ends
-  1,000 sessions and command domains one after another, whose names stay
-  within `alice_1` and `alice_2` and whose system domain's atom count
-  stays flat, and a hook that numbers pooled names from a counter instead
-  of the lowest free number, after which the same test finds the atom
-  count growing and the quota refusing; a creation that asks for
-  `alice_3` by name, refused with `{error, name_taken}`.
-* **Connections:** a domain whose peer ends, whose runtime takes what the
-  peer published, sees `{domain_down, D, Info}` on everything across the
-  connection and answers `connection_down` with `connection_unmapped`,
-  after which the connection's objects are gone and both sides' charges
-  are back; a peer whose dead partner's own budget is destroyed while the
-  peer still writes the side the dead domain read, which runs on until it
-  unmaps, and a hook that charges that side to the reader's own budget,
-  after which the same test faults the peer; a peer that never answers,
-  which keeps that connection's child budget, and with it the dead
-  domain's outer budget as its remains, within its own `connections`
-  quota, and is shown closing in the inspector, while the dead domain, a
-  configured one, restarts at once, the outer budget never destroyed on a
-  timer and the principal's budget back at its baseline once the peer
-  unmaps,
-  while the dead domain's other connections' children are destroyed as
-  their parties let go, and a hook that charges every connection's sides
-  to the outer budget directly, after which the test finds the other
-  connections' pages still charged once their parties have let go; a
-  survivor that rings the dead domain's bell after the disconnect and gets
-  `ERX_ESTALE`; a domain introduced to two others, whose sides are charged
-  to child budgets of their readers' outer budgets, one per connection,
-  and sized by their specs; a client that fills its lane to a service and
-  blocks itself while another client's requests are served;
-  `erx_dom_connect` for a domain that is neither built nor running,
-  refused with `ERX_EINVAL`, and beyond `max_connections`, refused with
-  `ERX_ELIMIT`.
-* **Ending:** 10,000 short domains created and ended one after another,
-  each destroyed at its exit record and retired once its crash area is
-  read and its system connection gone, after which the principal's and the
-  system domain's budgets are back at their baselines; a domain that
-  crashes with a dump, whose own budget is destroyed before the domain
-  service reads the crash area, and whose dump is still read whole, and
-  a hook that charges the crash area to the own budget, after which the
-  read fails; a domain that logs a line and then halts at once, whose line
-  reaches the console, and a hook that has the console facet link the
-  domain's logger proxy without trapping exits, under which the line is
-  lost; a vault that faults with keys loaded, after which the
-  system domain's `INSPECT` on its space fails at once and no stopped
-  space of it remains; a domain with sub-spaces three deep whose destroy
-  returns every charge of every sub-space in the one call; a domain's
-  attempt to reach its outer budget or a child of it, to which it holds
-  no capability.
-* **Devices:** an Erlang virtio block driver and an Erlang virtio network
-  driver over the device NIF under QEMU, against the stock OTP file and
-  socket suites that reach them, and against sDDF's published throughput
-  for the same device as the oracle gate G9 compares with; a hostile
-  device model that writes malformed descriptors, lengths past a buffer
-  and stale addresses, which crashes the driver process, which its
-  supervisor restarts, and corrupts no memory, checked under ASan in
-  hosted mode; a received buffer whose bytes `complete/2` copies into a
-  fresh binary, after which the buffer is back in its pool and a model
-  device that rewrites it leaves the binary unchanged
-  ([design-runtime.md](design-runtime.md#invariants), R9); interrupt
-  delivery as a message under HVF, with the latency `tools/erx
-  bench irq` measures for G9; a device given to a second domain while the
-  first holds it, refused with `ERX_EBUSY`, and given to the first's
-  restarted instance as soon as the first's exit record has been handled;
-  an unconfined device whose domain ends, whose restarted holder gets the
-  same memory and resets the device before its NIF posts anything, a post
-  before `negotiate/2` refused, and that memory never charged to or
-  mapped by any other domain; a confined device whose domain ends, whose
-  DMA aborts at the IOMMU at once; a device the manifest marks confined on
-  a machine whose device tree shows no stream for it, given to no domain
-  with a diagnostic; a manifest that splits a unit, whose devices go to no
-  domain; a manifest whose `hostlink` path equals its `console` path,
-  refused by the check; a manifest whose `console` path is not the UART
-  `/chosen/stdout-path` names, which ends the boot with both paths in the
-  kernel log, and a hook that skips the comparison, after which the boot
-  goes on and the test fails; a function whose bus mastering the
-  enumerator enables before its DMA window exists, whose DMA aborts at the
-  IOMMU; the enumerator's process killed while drivers run, whose restart
-  leaves every function running; a BAR outside the bridge's windows or
-  overlapping another device, which `erx_dom_plan_unit_give` refuses with
-  `ERX_EINVAL`; a native shim in a sub-space port that faults, whose
-  driver domain runs on and restarts it; a register access that aborts on
-  the bus, which ends the devices domain, which the domain service
-  restarts, its drivers resetting their devices; the console driver killed
-  in the system domain, restarted by its supervisor with the login prompt
-  back; a manifest that gives the console's UART unit to any domain but
-  the system domain, refused by the check; a check over the driver
-  applications' BEAM files that only the console's driver writes the
-  console UART's transmit register, with a seeded violation; the driver
-  table's emptiness checked against the tree: a native driver outside a
-  sub-space port, or one without a row, fails the build.
-* **Shutdown:** `init:stop/0` and `init:reboot/0` in the system domain end
-  QEMU with `-no-reboot`. Record normal completion latency separately from
-  deadline behaviour: preparation can use 2 s for the vault and 5 s for
-  storage; the ending record's absolute 10 s deadline bounds a failed
-  coordinator. Kill or hang the coordinator after each preparation
-  boundary, and kill the vault or a storage domain while ending is
-  latched: no domain is created or restarted, the deadline cannot be
-  extended, and the machine resets. A rejected begin leaves every service
-  running normally; a freeze that succeeds before a different service
-  times out, and a refusal after preparation, both end by a normal reset
-  with incomplete durability reported; the vault's `stop/0` called once
-  per ordered end under each sealing row, and a hook that skips it under
-  `tpm`, after which the next start counts a failure in swtpm.
-  `erlang:halt(0)`, `erlang:halt(3)` and `erlang:halt("bye")` from a
-  system process, each in a boot of its own: the first two log `powered
-  off by root` and the preparation's lines before QEMU exits, and the
-  third writes the crash record with the slogan `bye` and logs no
-  `powered off` line. Seed: a system release that passes only status 0
-  to the coordinator turns `halt(3)` into a crash record, and that case
-  fails. A session's request through the `machine` tree has its own
-  tests and QEMU suite ([A session's request](#a-sessions-request)).
-* **Authority:** a domain's attempts to pass capabilities into another
-  domain's space, carve the root resource, allocate from the root budget
-  or pet the watchdog fail with `ERX_ERIGHTS`; the kernel refuses
-  `erx_cap_pass` into a space the caller did not create, and passes a
-  space's capability on with `INSPECT` alone; a sub-space group's grants
-  stay within the domain's; the build check that confines the library's
-  `erx_cap_pass` to `erx_dom_install`, with the system domain's own table
-  as its source, and the check that `erx_dom_connect` makes no gate, each
-  with a seeded violation; a client's attempt to delete the connection's
-  memory, which fails with `ERX_ERIGHTS`; a session
-  that maps an unsealed code object executable, refused, and seals it and
-  maps it, which runs.
-* **Sub-spaces:** a domain without `SPACES` whose `erx_space_create` fails
-  with `ERX_ERIGHTS`; a domain with it that builds sub-spaces three deep,
-  each running a thread, and then faults: every sub-space stops with it,
-  their faults never reach the system domain, and the destroy of the
-  domain's own budget deletes every sub-space with it and returns their
-  charges; a sub-space whose creator names a fault gate it does not serve,
-  which fails; a sub-space asked for JIT objects by a creator whose own
-  space allows none, which fails; a session whose programs are three
-  generations deep, whose end stops all of them before its own exit
-  record.
-* **Admission:** a client that sends a service requests of the largest
-  admitted size at the lane's full rate, while a second client's requests
-  are answered within the service's budget; a request whose decoded shape
-  exceeds its schema, refused by the decoder before any heap is built; a
-  commit descriptor that names stale state, refused at the funnel with no
-  partial mutation published; a facet process at its `max_heap_size`,
-  killed and restarted, after which the client's next request is served
-  and the service's other clients never stalled; the inspector's
-  per-client CPU statistic against the service's reductions.
-* **Vault:** each purpose signs its protocol's exact input and refuses
-  everything else, including input one byte off the shape, a trailing
-  byte, a session identifier or transcript hash of the wrong length, and
-  an algorithm that is not the key's; a TLS facet signs a 48-byte
-  transcript hash of a SHA-384 cipher suite under `rsa_pss_rsae_sha256`,
-  and a 32-byte one under Ed25519; a grant naming a key for another
-  purpose is refused; OTP's `ssh` client and daemon and `ssl` in TLS 1.3
-  authenticate through key facets against stock OTP 29.1.2 peers on the
-  development host; a wrong passphrase opens no slot and is answered only
-  as a mismatch; the vault's Argon2id, through OpenSSL, matches RFC 9106's
-  Argon2id test vector; a slot whose associated data names another
-  principal, another index, another backend or weaker parameters does not
-  open; a file with two passphrase slots is refused by its decoder; a slot
-  below the configured parameters is re-wrapped after the principal's next
-  login and opens with the same passphrase afterwards; a slot whose
-  parameters exceed the ceiling does not open and costs one derivation
-  against the dummy; a file wholly forged under `none` on a machine
-  configured for `device` or `tpm` does not match from the host link or
-  the network and is never
-  re-wrapped there, while at the UART only the passphrase it was sealed
-  under moves it; a machine file of another
-  backend is replaced by fresh machine keys; a re-wrap computed before a
-  passphrase change publishes nothing, so the old passphrase never opens
-  the file again; a passphrase change answered before a power cut is the
-  file the next start reads; a stranger, a principal with a wrong
-  passphrase, and principals whose slots have older or configured
-  parameters all answer after the same login envelope; six failed logins
-  within 60 s from the network get
-  `limited` while the UART and the host link still log the principal in,
-  and a flood of network logins spread over many principals
-  leaves a UART login's time unchanged; a name that is no
-  principal's, and a principal that has not enrolled tried from the
-  network, get did not match, in the time a wrong passphrase takes, and
-  six failures for a name that is no principal's get `limited` exactly as
-  a principal's do; a principal without a file enrols at the UART and
-  nowhere else, not at the host link or the network; the system domain
-  grants the tree of the
-  vault's storage domain to the vault alone, a principals' storage domain
-  finds no key file, and re-creating the data partition leaves every key
-  file and machine key in place; a passphrase change rewrites one slot and
-  leaves the sealed keys' bytes as they were, after which the file opens
-  only with the new passphrase, and a change without the old passphrase is
-  refused; the vault destroys a principal's key objects when its last
-  session ends; its domain has no crash area; every token release appears
-  in the log; with its partition unmounted, or its backend silent, every
-  login and enrolment gets `unavailable`; on a trial boot a login works,
-  one due for a re-wrap included, which leaves its slot as it was, an
-  enrolment or a passphrase change gets `unavailable`, and every change
-  the vault confirmed before the trial is seen in it; a principal whose
-  file was deleted enrols afresh at the UART, as one that never
-  enrolled; an SSH user facet signs `rsa-sha2-256` and `rsa-sha2-512`
-  user-authentication data for an RSA key and refuses `ssh-rsa`; the
-  domain library maps the sealing page into the domain of the release
-  marked `ERX_ENTRY_SEAL` and into no other, refuses that domain without
-  `ERX_DOM_SECRET` or while another holds the sealing page, and after boot
-  the system domain's space maps neither the device-secret page nor the
-  sealing page, checked by a walk of its mappings. Under QEMU with swtpm
-  behind `tpm-tis-device`, the `tpm` backend, with the TPM's driver in the
-  vault's domain: wrong passphrases spend the TPM's tries and strangers'
-  names spend none; network and window failures stop at the reserve while
-  the UART still logs in; a response altered between the TPM and the vault
-  fails its HMAC; once the TPM is cleared every slot it sealed fails to
-  open; a TPM that returns another storage key than the machine's file
-  records gets `unavailable` before any command that carries a value, and
-  a slot sealed under one storage key does not open under another; no file
-  holds the lockout authorization, so a party that can send the TPM any
-  command and read the whole medium cannot reset its count of failures;
-  and a fresh installation over a TPM an earlier installation provisioned
-  serves logins, offers the clear at the UART, and after it provisions the
-  TPM as at a first start. On each board, under `device`: a file copied to
-  another board opens no slot, and a board whose key was never provisioned,
-  or whose read failed, has no device secret and no sealing page, and its
-  vault answers `unavailable`.
-* **Identifiers:** `erx_ident`'s property test against a reference
-  regular expression, with every byte value at every position and
-  lengths 0, 1, 63 and 64; the build check seeded with a record built
-  outside its owning module must fail.
-* **Hostile domains:** a domain that never reads its lane from the system
-  domain, one that floods its lane to it, one that never answers
-  `connection_down`, one that rings its bells in a loop, one that sends
-  records whose bytes trickle in, and one that holds links and monitors
-  with system processes up to `peer_held`; the system domain stays
-  responsive, its memory within the sum it reserved for each admitted
-  domain, and every other domain is served; `max_domains` such domains at
-  once, which the system domain's budget holds; a domain that sends its
-  domain pid `connection_lost`, `connection_mapped` and
-  `connection_unmapped` naming connections it is not a party to, and
-  malformed ones, each dropped and counted, with the domain service still
-  running and every other connection up.
+* **Pure functions on the host.** The planning entries over valid and
+  invalid specifications, every field at and beyond its bounds;
+  `erx_dom_classify` over every record kind, status and stopper, a
+  domain's own stop racing the library's among them; `erx_dom_record_step`
+  over every order of records and stops for one domain; the end decision
+  over each boot value, requested end and set of preparation outcomes,
+  with missing and late replies; `erx_policy:capacity/1` by properties
+  (shares on a CPU never past one CPU, capacity never past demand, runs
+  within their cpusets, order-independence). Seeds: a plan that names
+  another parent or another fault gate (A6, A2); each capacity property
+  against a mutated placement step.
+* **Creation origin, CPU parent and limits.** A configured service whose
+  grant passes its principal's user share but fits `system` is planned
+  under `system` and charged to its principal, and the same grant from a
+  request is refused; a forged origin fails decoding and a mismatched row
+  fails planning; a restart keeps the origin with a new id. Every runtime
+  limit, at independently chosen values, survives normalization,
+  validation and boot-page projection for configured, requested and
+  system runtimes, and a missing, out-of-range or above-ceiling value
+  prevents the start. Seeds: apply code that substitutes the principal's
+  group for the planned parent; a planted violation of each origin
+  constructor and caller source check; a hook that opens a peer lane
+  before the limit record is installed.
+* **Configuration headroom.** `erx_policy`'s grant rule over random
+  grants, periods and cpusets agrees with property 13 on every shipped
+  manifest; under QEMU every service domain spins at its full grant while
+  the watchdog keeps petting. These are configuration tests, not a
+  scheduler supply proof. Seeds: a rule that sums rates without the
+  cpuset term; a manifest built around the check that gives the services
+  all of `system`, under which the watchdog's deadline passes.
+* **The manifest check.** For each property a manifest that violates it
+  in one place fails the build with that property's diagnostic, and the
+  shipped manifests pass. Property 9's seeded release manifests each break
+  one clause: a `hostile` unconfined device given to a storage domain
+  that also holds data windows, `web` listed among the host link's
+  facets, a plain-HTTP listener for the web domain, and an unconfined
+  device given to the web domain; property 13's leaves the reserve on the
+  whole of `system` but not on the CPUs of the system domain's own
+  threads. The boot order over chains, trees and cycles,
+  the cycle refused; the generated C and Erlang readers give the same
+  records over every shipped manifest and refuse the whole file at each
+  out-of-range offset, count, index and string. Seed: a manifest packed by
+  hand around the check, which the source check over the packer's paths
+  catches.
+* **Undo.** A failure injected at each step of a creation, on the host
+  and through a QEMU test-build hook, leaves nothing once the undo
+  returns, and the principal's budget back at its baseline after the
+  reaper runs; a domain whose init never reports ready leaves nothing.
+  Seeds: a hook that charges one object of the creation to a third
+  budget; a plan that installs another domain's IPC gate.
+* **The root task and its end, under QEMU with HVF.** Boot to the login
+  and the system shell; the system domain killed under load, halted with
+  a string and left unpetted, each ending the machine by `erx.panic` with
+  the crash record and no domain running; on each board, a system domain
+  killed during a trial, which boots the committed slot; a configured
+  domain ended repeatedly, within and beyond its intensity; the previous
+  crash record in its brief and full forms, refused to every caller but
+  the system shell; a partial boot of two native programs. Seeds: a hook
+  that skips the `root_memory` comparison; a root image carrying
+  `ERX_IMAGE_JIT`, which the manifest check refuses first; a hook that
+  makes the domain service a `permanent` child, under which the machine
+  survives its kill; a hook that faults the system domain at every boot,
+  after which the fifth boot is rescue.
+* **Names.** Node names, creations and `name_taken`; a name bound to one
+  principal for the boot; 1,000 sessions one after another reuse the
+  lowest pooled names and keep the atom count flat. Seeds: a hook that
+  skips the `names` quota, after which the hostile-domain test finds the
+  atom table past its bound; a hook that numbers pooled names from a
+  counter.
+* **Connections and ending.** Under QEMU: a peer's end seen everywhere
+  across the connection and its charges returned; a peer that writes the
+  side a dead domain read runs on until it unmaps; a peer that never
+  answers keeps one child budget and the remains, within its own
+  `connections` quota, while the dead configured domain restarts at once;
+  a bell rung after the disconnect gets `ERX_ESTALE`; 10,000 short domains
+  leave every budget at its baseline; a crash dump is read whole after
+  the own budget's destroy; a line logged just before a halt reaches the
+  console; sub-spaces three deep return every charge in one destroy.
+  Seeds: a hook that charges a side to its reader's own budget, which
+  faults the peer; one that charges every side to the outer budget
+  directly, which leaves other connections' pages charged; one that
+  charges the crash area to the own budget; one that links the logger
+  proxy without trapping exits, which loses the line.
+* **Devices.** Erlang virtio block and network drivers over the device
+  NIF under QEMU, against the stock OTP file and socket suites that
+  reach them and against sDDF's published throughput, the oracle gate G9
+  compares with; a hostile device model writing malformed descriptors,
+  lengths past a buffer and stale addresses, which crashes the driver
+  process and corrupts nothing, under ASan in hosted mode; a received
+  buffer rewritten by a model device after `complete/2`, which leaves the
+  binary unchanged (R9); interrupt latency by `tools/erx bench irq`;
+  the refusals and placements of A9 and of the boot checks (a second
+  holder, a mark the fabric does not confirm, a split unit, a `console`
+  path that is not `/chosen/stdout-path`'s); an unconfined device's
+  restarted holder given the same memory; a confined device's DMA and a
+  function enabled before its window aborting at the IOMMU; the
+  enumerator, a native shim, a bus abort and the console driver each
+  ending only what they should. Seeds: a hook that skips the console path
+  comparison; a check over the driver applications' BEAM files that only
+  the console's driver writes the console UART's transmit register; a
+  native driver outside a sub-space port, or without a row of the driver
+  table, which fails the build.
+* **Shutdown.** `init:stop/0`, `init:reboot/0` and `erlang:halt/0,1`
+  end QEMU under `-no-reboot`, normal latency recorded apart from
+  deadline behaviour; the coordinator killed or hung after each
+  preparation boundary, and the vault or a storage domain killed while
+  ending is latched, end by the ending record's reset at its deadline,
+  with no domain created and no deadline extended; a rejected begin
+  leaves every service running; a freeze that succeeds before another
+  service times out, and a refusal after preparation, end by a normal
+  reset with incomplete durability reported. Seeds: a hook that skips the vault's `stop/0` under
+  `tpm`, after which swtpm counts a failure; a release that passes only
+  status 0 to the coordinator, which turns `halt(3)` into a crash record.
+  A session's request has its own tests ([A session's
+  request](#a-sessions-request)).
+* **Authority, sub-spaces and admission.** Each `ERX_ERIGHTS` refusal A1
+  and A7 promise; sub-spaces three deep that stop with their creator,
+  whose faults never reach the system domain; a creator that names a
+  fault gate it does not serve, or asks JIT objects it lacks, refused; an
+  unsealed code object refused an executable mapping; a client flooding
+  a service at its lane's full rate while another is served within the
+  service's budget; a request past its schema refused before any heap is
+  built; a facet process killed at its `max_heap_size` with no other
+  client stalled; the inspector's per-client CPU statistic against the
+  service's reductions. Seeds: the source checks of A1, A5 and A7, each with its
+  planted violation.
+* **Vault.** Oracles: OTP's `ssh` and `ssl` in TLS 1.3 against stock OTP
+  29.1.2 peers, RFC 9106's Argon2id test vector, and swtpm behind
+  `tpm-tis-device` for the `tpm` backend. Cases: each purpose's exact
+  input and nothing else; each slot's binding to principal, index,
+  backend and parameters; re-wraps, passphrase changes and power cuts;
+  one login envelope for strangers, wrong passphrases and every slot's
+  parameters; the network's rate limit, which never slows a UART login;
+  enrolment at the UART alone; `unavailable` with the partition or backend
+  gone and for changes on a trial boot; the sealing page mapped into the
+  vault's domain alone, and after boot neither the device-secret page
+  nor the sealing page in the system domain's space, checked by a walk
+  of its mappings; under `tpm`, tries spent only on wrong passphrases, the
+  reserve for local lines, an altered response failing its HMAC, a
+  substituted storage key refused before any value is sent, and no
+  stored lockout authorization; on each board, a file copied to another
+  board opening no slot.
+* **Identifiers.** `erx_ident`'s property test against a reference
+  regular expression, every byte value at every position, lengths 0, 1,
+  63 and 64. Seed: a record built outside its owning module.
+* **Hostile domains.** Domains that never read their lane, flood it,
+  never answer `connection_down`, ring their bells in a loop, trickle
+  records, hold links and monitors up to `peer_held`, or forge connection
+  messages, `max_domains` of them at once: the system domain stays
+  responsive within its reservation, and every other domain is served.
 * **Fuzz targets**, built for the host: the manifest's generated C and
   Erlang readers, over packed manifests and their mutations, since the
   boot image is untrusted until the boot validator has checked it; the
@@ -5241,7 +4806,7 @@ control; erXos runs the interpreter there.
 **L4Re's `moe` and `ned` as the root task.** They implement L4Re's own
 object model and loader, which erXos does not use; Fiasco keeps only
 Fiasco's kernel, `bootstrap` and `sigma0`
-([design-kernel.md](design-kernel.md#the-current-implementation-the-modified-fiasco)).
+([design-fiasco.md](design-fiasco.md)).
 
 ## Risks and open questions
 

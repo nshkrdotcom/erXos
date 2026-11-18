@@ -186,24 +186,16 @@ bridge driver reaches no other place, so every function that can raise
 a line its tree routes sits at a place known when the manifest is
 written, whatever the manifest selects. A row at such a place names the
 line its place's pin routes, the line joins the construction's line
-relation, and the unit is given whole as any other; a tree that routes a
-place's pin to one of the bridge's own lines makes the bridge and the
-place one unit across two domains, which the boot view refuses. The Raspberry Pi 4's
-bus is the only closed one; every other PCIe function interrupts by MSI
-([design-pcie.md](design-pcie.md#the-closed-bus)).
-
-The Raspberry Pi 4's bus is the one exception, because the fan-out
-cannot arise there. Its bridge has one root port and one soldered
-endpoint position, bus 1, device 0, and no MSI frame erXos drives: the
-bridge's MSI decoder shares its register page with the windows the PCIe
-domain programs. The platform record names that position and the INTx
-line its pin routes, so every function that can raise the line is known
-when the manifest is written; the line and those functions form one
-unit by the construction above, given whole to one domain, and the line
-is a direct line of that unit, made as any device-tree unit's line is.
-The enumerator keeps the root port's own INTx disabled. No other
-platform's record names such a bus, so every other PCIe function
-interrupts by MSI ([design-usb.md](design-usb.md#interrupts)).
+relation as a direct line of the unit, and the unit is given whole as
+any other; a tree that routes a place's pin to one of the bridge's own
+lines makes the bridge and the place one unit across two domains, which
+the boot view refuses. The Raspberry Pi 4's bus is the only closed one:
+one root port, one soldered endpoint position, bus 1, device 0, and no
+MSI frame erXos drives, since the bridge's MSI decoder shares its
+register page with the windows the PCIe domain programs. The enumerator
+keeps the root port's own INTx disabled. Every other PCIe function
+interrupts by MSI ([design-pcie.md](design-pcie.md#the-closed-bus),
+[design-usb.md](design-usb.md#interrupts)).
 
 ## Pages inside a domain
 
@@ -492,23 +484,41 @@ belongs with the rest of the hostile-driver work
 Each passing case is paired with a seeded fault that proves the code
 under test ran.
 
-| Test | Passes when | Seeded fault, which must fail it |
-| --- | --- | --- |
-| the boot view's unit check, on a fixture of two devices on different pages and one line, placed in two units | the view is refused, naming both devices and the line | the line comparison removed: the view is accepted |
-| the same check on a fixture of two adjacent virtio-mmio transports, 0x200 apart in one page, each on a line of its own, placed in two units | refused for the shared page | the page comparison removed: accepted |
-| the NIF's host harness (`test/fixtures/erx_device_harness.c`), two physical PL011 records 0x200 apart in one page, each writing and reading back a register | both open over one physical object and one mapping, and each read returns its own record's value | the overlap refusal restored in the open: the second open is `ebusy` |
-| the same harness, two physical records naming one line, with the fake kernel refusing a second IRQ object on a line | both open, and the harness counts one IRQ object | the line table keyed by record: the second open fails |
-| the same harness, a record whose line is marked shared and one whose line is direct | `irq_bind/2` of the shared line is `{error, shared}` and `irq_bind_owner/2` binds it; the reverse holds for the direct line | the mark ignored by `irq_bind/2`: the shared line binds directly |
-| a hosted test of two stand-in records on one soft line | a trigger reaches the process bound through the first; an owner bind through the second is `{error, ebusy}`; a rebind through the first moves the line | one binding per record: the second bind succeeds |
-| `erx_irq_line_core`, every sequence of up to eight events over four members and the three states | SD4; every member in `W` told once per round; a firing during a round followed by a round that tells every member; `held` only while no member was told; and the named traces: A and B told, A done, the line fires, B done, which acknowledges and then tells A and B; a join and then that member's down, in `idle`, in a round and in `held`, which leaves no member and, from a round or `held`, acknowledges | acknowledging at the first `done`; `Again` dropped, so the named trace tells A nothing more; a `down` that leaves `W` unchanged; a join in `held` that does not add its member, so its `down` leaves the line masked; a firing with no member acknowledged at once |
-| `erx_irq_line:owners/1` over sets of one to four drivers with shared and direct lines | each shared line named by any driver gets one owner, and no direct line does | one owner per record: a driver's two records on one line give two owners |
-| a hosted test of two stand-in drivers joined to one owner, with a call trace on `erx_device:irq_ack/2` | each trigger reaches both drivers; the trace shows the acknowledgement only after the second answer; a trigger after the first answer gives both drivers a second notice after the acknowledgement; a killed driver answers by its exit | the owner acknowledging at the first answer: the trace shows it early; the owner ignoring a trigger during a round: no second notice |
-| a hosted test that kills the owner after `irq_holder/2` returns and before the join | attach returns `{error, unbound}` within the test's deadline and no handle | the join as a plain send and receive with no monitor: attach hangs past the deadline |
-| the source check that only `erx_irq_line` calls `erx_device:irq_bind/2`, `irq_bind_owner/2` and `irq_ack/2` | passes on the tree | a driver module calling `irq_bind/2` directly |
+* **The boot view's unit check**, over fixtures of two devices placed in
+  two units that share only a line, and two adjacent virtio-mmio
+  transports that share only a page: each is refused, naming both
+  devices. Seeds: the line comparison removed; the page comparison
+  removed.
+* **The device NIF's host harness**, two records 0x200 apart in one
+  page and two naming one line, with the fake kernel refusing a second
+  IRQ object on a line: both open over one mapping and one IRQ object,
+  and each reads its own registers; `irq_bind/2` refuses a shared line
+  and `irq_bind_owner/2` a direct one. Seeds: the overlap refusal
+  restored in the open; the line table keyed by record; the mark ignored
+  by `irq_bind/2`.
+* **A hosted test of two stand-in records on one soft line**: a second
+  binder through another record is `ebusy`, and a rebind through the
+  first moves the line. Seed: one binding per record.
+* **`erx_irq_line_core`**, explored exhaustively over every sequence of
+  up to eight events, four members and the three states, against SD4 and
+  the named traces of [Lines inside a domain](#lines-inside-a-domain).
+  Seeds: acknowledging at the first `done`; `Again` dropped; a `down` that
+  leaves `W` unchanged; a join in `held` that does not add its member; a
+  firing with no member acknowledged at once.
+* **`erx_irq_line:owners/1`** over one to four drivers. Seed: one owner
+  per record.
+* **Hosted owner tests** with stand-in drivers on a soft line and a call
+  trace on `irq_ack/2`: the acknowledgement follows the last answer, a
+  firing during a round is told again, a killed driver answers by its
+  exit, and an owner killed between `irq_holder/2` and the join gives
+  `{error, unbound}`. Seeds: acknowledging at the first answer; ignoring
+  a firing during a round; a join with no monitor, which hangs.
+* **The source check** that only `erx_irq_line` binds and acknowledges
+  lines. Seed: a driver module calling `irq_bind/2`.
 
-QEMU `virt` gives no device a shared line, so the hosted test's stand-in
-is the line test, and the Raspberry Pi 4's PL011s and auxiliary block are
-checked by hand on the board.
+QEMU `virt` gives no device a shared line, so the hosted tests stand in
+for it, and the Raspberry Pi 4's PL011s and auxiliary block are checked
+by hand on the board.
 
 ## Performance
 
