@@ -6,7 +6,8 @@
 %% background and hands the driver one frame that covers it, no driver is no screen, a
 %% driver that cannot flush part of the screen gets the whole of it, and a driver that
 %% ends while it holds the frame leaves the screen to its supervisor; the splash stays
-%% until a shown window first presents, which repaints the whole screen. This module is
+%% until a shown window first presents, which repaints the whole screen; each frame's
+%% answer tells erx_winfs the windows it shows, none under the splash. This module is
 %% also the stand-in driver's callback module, as erx_screen calls one: info/1. Its
 %% process answers a frame only as erx_display:flush_request/3 sends it, so a screen that
 %% sends the driver a frame of another shape shows nothing.
@@ -163,6 +164,47 @@ the_splash_shows_until_a_window_presents_and_none_of_it_stays_test() ->
     ?assertEqual([Ground], lists:usort([P || {{X, Y}, P} <- Shown, X >= 16 orelse Y >= 16])),
     stop(Pid),
     kill(Driver).
+
+%% What the screen shows (docs/design-display.md, "What the screen shows"): when the
+%% driver takes a frame erx_winfs is sent {shown, D}, the windows of the layout that frame
+%% shows, topmost first, with their rectangles; the splash's frame shows none.
+each_answer_tells_winfs_what_the_screen_shows_test() ->
+    Winfs = winfs_stand_in(),
+    {Driver, _Screen} = driver(true, ok),
+    {ok, Pid} = start(),
+    _ = flushed(),
+    ?assertEqual([], shown()),
+    Layout = [#{id => 2, proc => self(), rect => {0, 0, 4, 4}, decorations => []},
+              #{id => 1, proc => self(), rect => {2, 0, 8, 4}, decorations => []}],
+    gen_server:cast(erx_screen, {layout, Layout}),
+    receive {erx_screen, present_again} -> ok after 5000 -> error(no_present_again) end,
+    {ok, Area, _Page} = erx_memdraw:test_area(65536, write),
+    {ok, Request} = erx_screen:present_request(2, #{area => Area, offset => 0, width => 4, height => 4,
+                                                    rects => []}),
+    _ = flushed(),
+    ?assertEqual({reply, ok}, gen_server:receive_response(Request, 5000)),
+    ?assertEqual([{2, {0, 0, 4, 4}}, {1, {2, 0, 8, 4}}],
+                 shown()),
+    stop(Pid),
+    kill(Driver),
+    kill(Winfs).
+
+%% A stand-in for erx_winfs, registered under its name: it answers the screen's attach
+%% with no layout and passes each {shown, D} on to the test.
+winfs_stand_in() ->
+    Test = self(),
+    Pid = spawn(fun Serve() ->
+                        receive
+                            {'$gen_call', From, {attach, _Rect, _Chan}} -> gen_server:reply(From, {ok, []});
+                            {shown, _Screen, D} -> Test ! {shown, D}
+                        end,
+                        Serve()
+                end),
+    true = register(erx_winfs, Pid),
+    Pid.
+
+shown() ->
+    receive {shown, D} -> D after 5000 -> error(not_told) end.
 
 the_splash_plan_is_centred_and_within_the_screen_test_() ->
     Mark = {384, 135, binary:copy(<<255>>, 384 * 135)},

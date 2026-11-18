@@ -18,8 +18,6 @@ class ErxInputTest < Minitest::Test
   SOURCE = 'erlang/apps/erx_display/src/erx_input.erl'
   TEST = 'erx_input_tests'
   DEADLINE = '600'
-  # A broken rule: its text, what replaces it, and the property that must fail, by the
-  # name the cases raise.
   # A broken rule: its text, what replaces it, the case it must fail, in EUnit's terms,
   # and the name of the property the case raises.
   Mutant = Data.define(:text, :broken, :test, :property)
@@ -46,6 +44,11 @@ class ErxInputTest < Minitest::Test
               '    {answer(Route, Asked), S#input{repeats = maps:remove(Window, S#input.repeats)}}.',
       test: KEYS_RUN, property: /key_order/
     ),
+    key_by_the_table: Mutant.new(
+      text: 'false -> on_screen(ask(Event, Step, S), S)',
+      broken: 'false -> ask(Event, Step, S)',
+      test: KEYS_RUN, property: /key_not_displayed/
+    ),
     clamp_to_the_edge: Mutant.new(
       text: 'place({X0, Y0, X1, Y1}, {X, Y}) -> {clamp(X, X0, X1 - 1), clamp(Y, Y0, Y1 - 1)}.',
       broken: 'place({X0, Y0, X1, Y1}, {X, Y}) -> {clamp(X, X0, X1), clamp(Y, Y0, Y1 - 1)}.',
@@ -66,6 +69,8 @@ class ErxInputTest < Minitest::Test
   def test_an_end_that_forgets_keys_fails_the_keys_run = assert_mutant_fails(:end_forgets_keys)
 
   def test_an_up_the_policy_routes_fails_the_keys_run = assert_mutant_fails(:up_asks_the_policy)
+
+  def test_a_key_routed_by_the_table_alone_fails_the_keys_run = assert_mutant_fails(:key_by_the_table)
 
   def test_a_clamp_to_the_edge_fails_the_screen_property = assert_mutant_fails(:clamp_to_the_edge)
 

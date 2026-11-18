@@ -36,7 +36,13 @@ takes:
 
 A frame's request returns at once and its answer, or the driver's end,
 arrives as a message, so the screen never waits on the driver, and while
-a frame is out the screen writes nothing into the screen image. What
+a frame is out the screen writes nothing into the screen image. When
+the driver takes a frame the screen tells `erx_winfs` the windows it
+shows, `{shown, D}` (erx_winfs:shown/1), which the input router holds
+each key to; under the splash a frame shows none, and a frame refused
+or lost with the driver shows nothing new. It does so before it answers
+the frame's presents, so a client that hears its present answered with
+a frame types into a window the router knows is on the screen. What
 arrives meanwhile is **pending state** of fixed size: one layout, which a
 later one replaces, and one waiting present for each window, a window
 having at most one in flight. When the frame is answered, the screen
@@ -197,6 +203,9 @@ handle_info(Message, State = #state{frame = Frame}) when Frame =/= none ->
         no_reply ->
             {noreply, State};
         {reply, ok} ->
+            %% The device took the frame: the router learns what it shows before any
+            %% of its presents is answered.
+            ok = erx_winfs:shown(displayed(State)),
             {noreply, frame_over(State)};
         {reply, Refused} ->
             _ = erx_log:debug(["erx_screen: the driver refused a frame: ", io_lib:format("~0p", [Refused])]),
@@ -222,6 +231,12 @@ frame_over(#state{answers = Answers, pending_layout = Pending, waiting = Waiting
                           {P ++ PushAcc, [From | FromAcc], S1}
                   end, {LayoutPush, [], Laid}, Waiting),
     answer_or_hold(Froms, Push, Presented).
+
+%% The windows the frame out shows: none under the splash, which the frame's layout is
+%% not drawn over, and the layout's otherwise, since a layout that arrives while the
+%% frame is out waits, as pending, until frame_over/1 has taken the answer.
+displayed(#state{splash = true}) -> [];
+displayed(#state{layout = Layout}) -> [{Id, Rect} || #{id := Id, rect := Rect} <- Layout].
 
 %% Presents that pushed nothing are answered now; the rest with the frame.
 answer_or_hold(Froms, [], State) ->

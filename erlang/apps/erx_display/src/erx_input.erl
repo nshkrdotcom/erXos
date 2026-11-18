@@ -15,7 +15,9 @@ display; for each source, the process that sends records, its device's
 name and what it holds: each key with the window its down went to and
 the runes and modifiers of that down, each button by its evdev code,
 each touch slot; the gesture's destination while anything is held; the
-locks that are on; and each window's repeating key. The buttons a
+locks that are on; each window's repeating key; and the **displayed**
+windows, those the frame the screen last answered shows, from the last
+`{shown, D}`, none before the first. The buttons a
 pointer event carries and the modifiers that select a layer are derived
 from what the sources hold at each step, never stored.
 
@@ -25,6 +27,10 @@ event, and a pointer event or wheel step while nothing is held. What
 follows goes where the start went, by the record of the start, not by
 asking again:
 
+* a key's down the policy sends to a window passes only while the
+  displayed windows hold it, and is otherwise dropped and counted, so
+  while the table has moved ahead of the screen a key reaches neither
+  the window leaving the screen nor the one the table has chosen;
 * a key's up goes to the window its down went to, whatever that
   window's state, and stops that window's repeat;
 * a key's repeat goes to the window its down went to, and only while it
@@ -49,7 +55,7 @@ window sees an up or a move it saw no down for.
 -compile({nowarn_redefined_builtin_type, {record, 0}}).
 
 -export([new/1, step/3, screen/1, dropped/1]).
--export_type([config/0, state/0, record/0, in/0, view/0, out/0]).
+-export_type([config/0, state/0, record/0, in/0, view/0, out/0, displayed/0]).
 
 -type code() :: 0..?ERX_EVDEV_KEY_MAX.
 -type slot() :: 0..?ERX_INPUT_TOUCH_SLOT_MAX.
@@ -72,7 +78,13 @@ abi/formats/input.txt declares, with its bounds and its binary form.
 -type in() :: {record, Source :: pid(), Device :: binary(), At :: integer(), record()}
             | {gone, Source :: pid(), At :: integer()}
             | {tick, At :: integer()}
-            | {screen, erx_wm:rect()}.
+            | {screen, erx_wm:rect()}
+            | {shown, displayed()}.
+-doc """
+What the screen shows: the shown windows of the frame the device last
+took, topmost first, each with its rectangle.
+""".
+-type displayed() :: [{erx_wm:window_id(), erx_wm:rect()}].
 -doc "The window table, the display's session and the policy, as erx_winfs holds them.".
 -type view() :: #{windows := [erx_wm:window()], session := erx_wm:session(),
                   policy := module(), policy_state := term()}.
@@ -110,6 +122,8 @@ new table, the timer.
                 %% repeats.
                 repeats = #{} :: #{erx_wm:window_id() => {pid(), code(), integer()}},
                 wake = none :: integer() | none,
+                %% The windows the frame the screen last answered shows.
+                displayed = [] :: displayed(),
                 dropped = 0 :: non_neg_integer()}).
 -opaque state() :: #input{}.
 
@@ -158,6 +172,8 @@ dropped(#input{dropped = Dropped}) -> Dropped.
 
 take({screen, {X0, Y0, X1, Y1} = Rect}, Step, S) when X0 < X1, Y0 < Y1 ->
     {Step, S#input{screen = Rect, pointer = place(Rect, S#input.pointer)}};
+take({shown, Displayed}, Step, S) when is_list(Displayed) ->
+    {Step, S#input{displayed = Displayed}};
 take({tick, At}, Step, S) when is_integer(At) ->
     tick(At, Step, S);
 take({gone, Source, At}, Step, S) when is_pid(Source), is_integer(At) ->
@@ -317,16 +333,16 @@ key(up, Code, _Row, Source, At, Step, S) ->
     end.
 
 %% A key's down types at the layer the modifiers held and the locks select; a lock's down
-%% toggles its lock. The chord is decided before the policy is asked. Where the down went
-%% is recorded, and a down that went to a window and types a rune becomes that window's
-%% repeating key.
+%% toggles its lock. The chord is decided before the policy is asked, and the policy's
+%% answer passes only to a window on the screen. Where the down went is recorded, and a
+%% down that went to a window and types a rune becomes that window's repeating key.
 key_down(Code, Row, #source{keys = Keys} = Src, Source, At, Step, S) ->
     {Typed, Unshifted, Modifier} = runes(Row, modifiers(S), S#input.locks),
     Mods = lists:usort([Rune || {Rune, _} <- [Modifier], Rune =/= none] ++ mods(S)),
     Event = event(Source, At, {key, down, Code, Typed, Unshifted, Mods}, S),
     {Route, Asked} = case chord(Code, S) of
                          true -> {{wm, chord}, Step};
-                         false -> ask(Event, Step, S)
+                         false -> on_screen(ask(Event, Step, S), S)
                      end,
     Dest = case Route of {to, Window, _} -> Window; _ -> none end,
     Held = #{dest => Dest, typed => Typed, unshifted => Unshifted, modifier => Modifier,
@@ -334,6 +350,16 @@ key_down(Code, Row, #source{keys = Keys} = Src, Source, At, Step, S) ->
     Pressed = put_source(Source, Src#source{keys = Keys#{Code => Held}},
                          S#input{locks = toggle(Row, S#input.locks)}),
     {answer(Route, Asked), repeat_from(Dest, Typed, Source, Code, At, Pressed)}.
+
+%% The policy's answer to a key's down, passed only to a window the displayed windows
+%% hold; to any other it is dropped and counted, and the down goes nowhere.
+on_screen({{to, Window, _}, #step{drops = Drops} = Asked} = Routed, #input{displayed = Displayed}) ->
+    case lists:keymember(Window, 1, Displayed) of
+        true -> Routed;
+        false -> {drop, Asked#step{drops = Drops + 1}}
+    end;
+on_screen(Routed, _S) ->
+    Routed.
 
 %% A key's up goes to its down's window, whatever that window's state, and stops that
 %% window's repeat; a down that went nowhere has no up to send.

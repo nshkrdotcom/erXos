@@ -15,7 +15,11 @@
 %% responsive, the screen's mailbox drained and its frame the one it started with, and
 %% the screen's end answers a held present EIO. G6: a window's first present ends the
 %% splash and pushes the whole screen, a one-pixel present then pushes one rectangle of
-%% one pixel, and a change that shows nothing new pushes nothing.
+%% one pixel, and a change that shows nothing new pushes nothing. A key's down reaches a
+%% window only once the frame that shows it is answered: against a driver model that
+%% holds each frame until the test answers it, a key typed while the table has moved
+%% ahead of the screen reaches no window, and the first after the answer reaches the
+%% window the frame shows.
 
 -module(erx_winfs_tests).
 -include_lib("eunit/include/eunit.hrl").
@@ -53,7 +57,8 @@ export(_Grant, _Rights, _Peer) ->
     ok.
 
 %% A driver model registered as ?DRIVER over a screen image of its own: it tells the
-%% test each flush and answers it, or, as `never`, answers none.
+%% test each flush and answers it, or, as `never`, answers none, or, as `hold`, answers
+%% each when the test says so (answer_frame/0).
 driver(Mode) ->
     Test = self(),
     {ok, Screen} = erx_memdraw:alloc(?XRGB32, {0, 0, ?WIDTH, ?HEIGHT}, {0, 0, ?WIDTH, ?HEIGHT},
@@ -72,7 +77,8 @@ serve(Test, Info, Mode) ->
             Test ! {flushed, Rects},
             ok = case Mode of
                      answer -> gen_server:reply(From, ok);
-                     never -> ok
+                     never -> ok;
+                     hold -> receive answer -> gen_server:reply(From, ok), Test ! frame_answered, ok end
                  end
     end,
     serve(Test, Info, Mode).
@@ -178,6 +184,14 @@ flushed() ->
 no_flush() ->
     receive {flushed, Rects} -> error({flushed, Rects}) after ?QUIET -> ok end.
 
+%% Has the held driver model answer its frame, and returns once the screen has taken the
+%% answer, so erx_winfs has been told what that frame shows before the test's next record.
+answer_frame() ->
+    ?DRIVER ! answer,
+    receive frame_answered -> ok after ?WAIT -> error(no_frame_answered) end,
+    _ = sys:get_state(erx_screen),
+    ok.
+
 %% Flushes a test before this one left in the mailbox.
 forget_flushes() ->
     receive {flushed, _} -> forget_flushes() after 0 -> ok end.
@@ -192,6 +206,7 @@ the_single_policy_shows_the_sessions_oldest_window_test_() ->
 
 single_policy() ->
     World = start(answer),
+    _ = give_area(?SESSION),
     Session = mint(?SESSION, #{session => true, windows => 2}),
     Other = mint(?OTHER, #{windows => 2}),
     Holder = spawn(fun() -> receive stop -> ok end end),
@@ -211,7 +226,8 @@ single_policy() ->
     ?assertEqual(<<"hidden">>, state(Other, OtherWctl)),
     ?assertEqual({error, einval}, write(Session, Second, <<"unhide\n">>)),
     ?assertEqual({error, einval}, write(Other, OtherWctl, <<"unhide\n">>)),
-    %% Typing reaches the shown window alone.
+    %% Once the first window's frame is on the screen, typing reaches it alone.
+    {ok, _, _} = write(Session, open(Session, 9, <<"first">>, <<"ctl">>, ?O_RDWR), <<"present 0 8 4\n">>),
     FirstKbd = open(Session, 4, <<"first">>, <<"kbd">>, ?O_RDONLY),
     SecondKbd = open(Session, 5, <<"second">>, <<"kbd">>, ?O_RDONLY),
     HiddenRead = call_async(Session, {read, SecondKbd, 0, 64}),
@@ -278,6 +294,7 @@ a_waiting_kbd_read_holds_up_nothing_of_its_grant_test_() ->
 
 waiting_reads() ->
     World = start(answer),
+    _ = give_area(?SESSION),
     Session = mint(?SESSION, #{session => true, windows => 2}),
     {ok, _} = mkdir(Session, <<"shown">>),
     {ok, _} = mkdir(Session, <<"hidden">>),
@@ -296,7 +313,9 @@ waiting_reads() ->
     Flush = send(Session, {flush, Hidden}),
     ?assertEqual({error, eintr}, reply_within(Hidden, ?WAIT)),
     ?assertEqual(ok, reply_within(Flush, ?WAIT)),
-    %% A flushed read of the shown window takes no key: the next read has it.
+    %% A flushed read of the shown window, which is on the screen, takes no key: the next
+    %% read has it.
+    {ok, _, _} = write(Session, open(Session, 6, <<"shown">>, <<"ctl">>, ?O_RDWR), <<"present 0 8 4\n">>),
     Shown = send(Session, {read, ShownKbd, 0, 64}),
     ?assertEqual(ok, call(Session, {flush, Shown})),
     ?assertEqual({error, eintr}, reply_within(Shown, ?WAIT)),
@@ -317,6 +336,104 @@ send(Grant, Request) ->
 %% The reply to Alias within Timeout milliseconds, or none.
 reply_within(Alias, Timeout) ->
     receive {erx_9p, Alias, Reply} -> Reply after Timeout -> none end.
+
+%% Keys and the frame on the screen ------------------------------------------------
+
+the_first_key_after_the_frame_reaches_the_next_window_test_() ->
+    {timeout, 60, fun next_window/0}.
+
+%% The shown window ends and the table shows the session's next one, whose frame the
+%% driver model holds: a key typed then reaches no window, and the first after the
+%% frame's answer reaches the window it shows.
+next_window() ->
+    World = start(hold),
+    ok = held_and_answered(),
+    _ = give_area(?SESSION),
+    Session = mint(?SESSION, #{session => true, windows => 2}),
+    Holder = spawn(fun() -> receive stop -> ok end end),
+    {ok, _} = call(Session, Holder, {mkdir, 1, <<"first">>, 8#755, 0}),
+    {ok, _} = mkdir(Session, <<"second">>),
+    ok = present_held(Session, <<"first">>, 2),
+    FirstKbd = open(Session, 3, <<"first">>, <<"kbd">>, ?O_RDONLY),
+    ok = type_a(),
+    ?assertEqual({ok, <<"ka", 0>>}, read(Session, FirstKbd)),
+    Holder ! stop,
+    _ = flushed(),
+    Second = call_async(Session, {read, open(Session, 4, <<"second">>, <<"kbd">>, ?O_RDONLY), 0, 64}),
+    ok = type_a(),
+    ok = unanswered(Second),
+    ok = answer_frame(),
+    ok = type_a(),
+    ?assertEqual({ok, <<"ka", 0>>}, answered(Second)),
+    stop(World).
+
+the_first_key_after_the_frame_reaches_the_chosen_window_test_() ->
+    {timeout, 60, fun chosen_window/0}.
+
+%% The table chooses a window the screen does not show yet, as a newer session's window,
+%% while the driver model holds the frames: a key typed then reaches neither the window
+%% on the screen nor the chosen one, and the first after the frame that shows the chosen
+%% window reaches it alone.
+chosen_window() ->
+    World = start(hold),
+    ok = held_and_answered(),
+    _ = give_area(?SESSION),
+    Session = mint(?SESSION, #{session => true, windows => 1}),
+    {ok, _} = mkdir(Session, <<"a">>),
+    ok = present_held(Session, <<"a">>, 2),
+    A = call_async(Session, {read, open(Session, 3, <<"a">>, <<"kbd">>, ?O_RDONLY), 0, 64}),
+    _ = give_area(?OTHER),
+    Newer = mint(?OTHER, #{session => true, windows => 1}),
+    _ = flushed(),
+    {ok, _} = mkdir(Newer, <<"b">>),
+    B = call_async(Newer, {read, open(Newer, 2, <<"b">>, <<"kbd">>, ?O_RDONLY), 0, 64}),
+    ok = type_a(),
+    ok = unanswered(A),
+    ok = unanswered(B),
+    %% The held frame shows no window; the next, of the layout with b, shows b.
+    ok = answer_frame(),
+    ok = type_a(),
+    ok = unanswered(B),
+    ok = held_and_answered(),
+    ok = type_a(),
+    ?assertEqual({ok, <<"ka", 0>>}, answered(B)),
+    ok = unanswered(A),
+    stop(World).
+
+a_frame_lost_with_the_driver_shows_nothing_test_() ->
+    {timeout, 60, fun lost_frame/0}.
+
+%% The driver ends while it holds the frame that would show the session's next window:
+%% the device never took that frame, so a key typed then reaches no window.
+lost_frame() ->
+    World = #{driver := Driver} = start(hold),
+    ok = held_and_answered(),
+    _ = give_area(?SESSION),
+    Session = mint(?SESSION, #{session => true, windows => 2}),
+    Holder = spawn(fun() -> receive stop -> ok end end),
+    {ok, _} = call(Session, Holder, {mkdir, 1, <<"first">>, 8#755, 0}),
+    {ok, _} = mkdir(Session, <<"second">>),
+    ok = present_held(Session, <<"first">>, 2),
+    Holder ! stop,
+    _ = flushed(),
+    Second = call_async(Session, {read, open(Session, 3, <<"second">>, <<"kbd">>, ?O_RDONLY), 0, 64}),
+    ok = kill(Driver),
+    _ = sys:get_state(erx_screen),
+    ok = type_a(),
+    ok = unanswered(Second),
+    stop(World).
+
+%% The driver model's next frame, answered.
+held_and_answered() ->
+    _ = flushed(),
+    answer_frame().
+
+%% Window Name presents its whole buffer through ctl as Fid, and its frame is answered.
+present_held(Grant, Name, Fid) ->
+    Present = call_async(Grant, {write, open(Grant, Fid, Name, <<"ctl">>, ?O_RDWR), 0, <<"present 0 8 4\n">>}),
+    ok = held_and_answered(),
+    {ok, _, _} = answered(Present),
+    ok.
 
 %% The overlapping policy ------------------------------------------------------
 

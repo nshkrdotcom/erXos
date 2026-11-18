@@ -160,6 +160,8 @@ resized_test() ->
 kbd_label_resize_test() ->
     with(fun(_) ->
         {ok, Window} = erx_win:open(?SERVICE, #{}),
+        %% Keys reach the window once its frame is on the screen.
+        ok = erx_win:present(Window, []),
         %% A keyboard driver's record of KEY_A going down, evdev code 30.
         ok = erx_winfs:input(<<"kbd">>, {key, down, 30}),
         ?assertEqual({ok, {down, "a"}}, erx_win:kbd(Window)),
@@ -175,6 +177,7 @@ kbd_label_resize_test() ->
 a_short_kbd_read_leaves_its_record_test() ->
     with(fun(_) ->
         {ok, Window} = erx_win:open(?SERVICE, #{}),
+        ok = erx_win:present(Window, []),
         ok = erx_winfs:input(<<"kbd">>, {key, down, ?ERX_EVDEV_KEY_LEFTCTRL}),
         ok = erx_winfs:input(<<"kbd">>, {key, down, ?ERX_EVDEV_KEY_LEFTSHIFT}),
         held_runes(Window, 2),
@@ -202,6 +205,7 @@ relay_test() ->
         {ok, Window} = erx_win:open(?SERVICE, #{}),
         ?assertMatch({ok, 7, _}, erx_win:write_at(Window, label, 0, <<"a label">>)),
         ?assertEqual({ok, <<"label">>}, erx_win:read_at(Window, label, 2, 64)),
+        ok = erx_win:present(Window, []),
         ok = erx_winfs:input(<<"kbd">>, {key, down, 30}),
         ?assertMatch({ok, <<"k", _/binary>>}, erx_win:read_at(Window, kbd, 0, 64)),
         ?assertError(function_clause, erx_win:read_at(Window, ctl, 0, 144)),
@@ -215,6 +219,7 @@ relay_test() ->
 send_read_test() ->
     with(fun(_) ->
         {ok, Window} = erx_win:open(?SERVICE, #{}),
+        ok = erx_win:present(Window, []),
         ok = erx_winfs:input(<<"kbd">>, {key, down, 30}),
         {ok, Read} = erx_win:send_read(Window, kbd, 0, 64),
         ?assertMatch({ok, <<"k", _/binary>>}, answer(Read)),
