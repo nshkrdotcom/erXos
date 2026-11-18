@@ -37,8 +37,8 @@ module Erx
     # memo, which cannot see an .incbin file, keys the object by the WAD's content.
     WAD = File.join(ExampleFetch::WORKSPACE, NAME, 'build/third_party/freedoom/freedoom-0.13.0/freedoom1.wad')
     WAD_SHA256 = '7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d'
-    # Doom's archive, at one path the build alone writes, which PackProvenance admits as
-    # the one input registered example (PackProvenance#example_archive?).
+    # Doom's archive, at one path the build alone writes, which LicenseAdmission admits as
+    # the one input registered example (LicenseAdmission.example?).
     ARCHIVE = PackProvenance::EXAMPLE_ARCHIVE
     OBJECTS = 'build/doom/obj'
     # The pinned commit's files (snapshot), which the build compiles and whose LICENSE the

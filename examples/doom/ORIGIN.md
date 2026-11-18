@@ -27,8 +27,8 @@ checksum file lists for it; the archive's `freedoom1.wad` is the demo's WAD.
 
 `git clone` does not check the submodule out, and no gate, test build or check
 reads it; only the published build, `tools/erx pack --published`, does
-(`tools/lib/erx/doom_program.rb`), and it refuses a checkout that is missing,
-at another commit than the gitlink's, or changed.
+(`tools/lib/erx/doom_program.rb`), and it refuses a fork that is missing or does
+not hold that commit, then compiles that commit's own files.
 `tools/erx fetch --example doom` clones it at the recorded commit, with no
 history, and fetches its downloads against their SHA-256 into
 `build/examples/doom`; nothing of either runs. A checkout that is there is left as
