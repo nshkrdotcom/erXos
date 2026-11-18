@@ -2,7 +2,7 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% The display domain's side of the window system (docs/design-display.md,
-%% "What runs where"): the display driver behaviour erx_display, which the
+%% "Overview"): the display driver behaviour erx_display, which the
 %% display drivers of erx_fb implement; the screen, erx_screen over its pure
 %% core erx_screen_core, which decides what it fills, copies and
 %% pushes, and which erx_fb_sup starts behind the driver; the window policy

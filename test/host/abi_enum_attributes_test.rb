@@ -13,8 +13,8 @@ require_relative '../../tools/lib/erx/manifest'
 require_relative '../../tools/lib/erx/platform'
 require_relative '../fixtures/manifest_context'
 
-# Enum attributes (docs/design-abi.md, "Declarations"): an enum declares a closed set of
-# attribute names, each member line names the ones its member carries, and every
+# Enum attributes (docs/design-abi.md, "Source grammar"): an enum declares a closed set
+# of attribute names, each member line names the ones its member carries, and every
 # consumer reads that one fact, the Ruby host tools through Codec#attribute? and Erlang
 # through erx_abi_enums's predicates, beside the type and the guard macro every enum
 # gets in Erlang.

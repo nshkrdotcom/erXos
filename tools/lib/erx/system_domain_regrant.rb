@@ -54,17 +54,18 @@ module Erx
       SESSION_NODE = 'root_1@erxos'
 
       # The load the system domain is killed under (docs/design-system.md, "The root task
-      # and its end"): RgLoad calls, at node N, the echo facet F that N holds, over and
-      # over, by erpc from the system domain, and counts each echo answered in RgLc's
-      # counter I; LOADERS processes run it for each of the system domain's facet, peer's
-      # and root_1's, all of erts's next incarnation. LOAD_MS later the shell prints
-      # LOAD_ANSWER, every party's calls answered, and DRAIN_MS after that, so the console
-      # has written that line before the end path writes to it, the shell's process
-      # aborts the runtime, erlang:halt(abort). On erXos musl's abort ends in a store to
-      # address 0 (TODO.md, the liberx Fiasco backend's halt item), a fault of the system
-      # domain, which on Fiasco is the root task: the end path writes the crash
-      # record on the console and ends the machine. The Fiasco backend keeps no crash region, so
-      # the console log is where the record is read after the machine's end (judge).
+      # and its end, under QEMU with HVF"): RgLoad calls, at node N, the echo facet F
+      # that N holds, over and over, by erpc from the system domain, and counts each echo
+      # answered in RgLc's counter I; LOADERS processes run it for each of the system
+      # domain's facet, peer's and root_1's, all of erts's next incarnation. LOAD_MS
+      # later the shell prints LOAD_ANSWER, every party's calls answered, and DRAIN_MS
+      # after that, so the console has written that line before the end path writes to
+      # it, the shell's process aborts the runtime, erlang:halt(abort). On erXos musl's
+      # abort ends in a store to address 0 (TODO.md, the liberx Fiasco backend's halt
+      # item), a fault of the system domain, which on Fiasco is the root task: the end
+      # path writes the crash record on the console and ends the machine. The Fiasco
+      # backend keeps no crash region, so the console log is where the record is read
+      # after the machine's end (judge).
       LOADERS = 4
       LOAD_MS = 2000
       DRAIN_MS = 500

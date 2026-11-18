@@ -1833,8 +1833,8 @@ shell's own `cp`, `ls`, `cat` and `rm` in `/apps`, looks inside one with
 `mount` and `unmount`, enables, disables and purges them with `service`,
 and reads their state with `cat` under `/proc/packages`; there is no
 command of packaging's own. `/proc` is read-only, as all of it is
-([design.md](design.md#decisions), "System values are one read-only
-tree"): it shows what an app's state is, and takes no command.
+([design.md](design.md#decisions)): it shows what an app's state is, and
+takes no command.
 
 **`/apps`**, the `apps` tree ([`/apps`](#apps)), as the shell sees it:
 
@@ -1994,14 +1994,13 @@ answers as `eio`. Nothing in the system domain follows mounts.
 
 The package format, `app.txt`'s grammar and the `apps`, `package` and
 `signer` rows owe nothing to earlier forms
-([design.md](design.md#decisions), "No backward compatibility in
-development"). A package built for another `ERX_ABI_VERSION` or another
-architecture, after a system update or before it, is refused with `{abi,
-Have, Want}` or `{arch, Have, Want}` and shown so; it stays on the
-medium, counted among the directory's `max` installed packages, until
-the administrator removes it and copies in a rebuilt one.
-A package whose need an update's `apps` row no longer offers is refused
-with `{not_offered, S}`, and its data stays.
+([design.md](design.md#decisions)). A package built for another
+`ERX_ABI_VERSION` or another architecture, after a system update or
+before it, is refused with `{abi, Have, Want}` or `{arch, Have, Want}`
+and shown so; it stays on the medium, counted among the directory's
+`max` installed packages, until the administrator removes it and copies
+in a rebuilt one. A package whose need an update's `apps` row no longer
+offers is refused with `{not_offered, S}`, and its data stays.
 
 ## Failure handling, diagnostics and debuggability
 

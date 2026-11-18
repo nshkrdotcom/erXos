@@ -1374,7 +1374,7 @@ module Erx
 
       # Property 14: each session template, keyed by its principal, from which the
       # domain service makes every session of that principal on request
-      # (docs/design-system.md, "The system manifest"). A template is not a domain row,
+      # (docs/design-system.md, "The manifest"). A template is not a domain row,
       # so the boot order, the plans and every holder, server and introduction, which
       # resolve through the domain table, never reach one; a facet alone may name it as
       # its grantee (facet_grantee). A `session NAME`

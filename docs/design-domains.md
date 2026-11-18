@@ -2432,8 +2432,7 @@ the table holds. So a facet enters a domain's
 table only as a declared instance, by construction, and a need that
 has no interface of its own finds no way in: it is an inspection path,
 a file in its owner's tree, or a protocol with a design and an
-interface of its own ([design.md](design.md#decisions), "Every service entry point
-between domains starts at a declared facet").
+interface of its own ([design.md](design.md#decisions)).
 
 **The exempt name, a stopgap.** One facet name has no declared
 interface: `console`. The facet table check lets it appear only in the

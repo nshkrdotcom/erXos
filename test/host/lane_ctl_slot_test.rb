@@ -8,13 +8,14 @@ require 'open3'
 # ERX_LANE_CTL_SLOT (abi/erx_abi.txt) is the longest connection-control
 # record as one frame, rounded up to 16 (docs/design-domains.md, "The
 # control table"): the frame header, then the control term and the payload
-# as the domain pid encodes them with term_to_binary/1 (docs/design-
-# runtime.md, "Control records"). Stock OTP encodes that record here: a
-# connection_up whose pids and peer node name are of the longest node name,
-# whose integers are of their widest values, and whose pixel area is the
-# longer of its two forms, {Slot, Bytes, write}. The other record, a
-# connection_down, is shorter at its widest: its Reason is noconnection or
-# {domain_down, D, Info}, and every integer of Info is a 64-bit one.
+# as the domain pid encodes them with term_to_binary/1
+# (docs/design-runtime.md, "Control records"). Stock OTP encodes that
+# record here: a connection_up whose pids and peer node name are of the
+# longest node name, whose integers are of their widest values, and whose
+# pixel area is the longer of its two forms, {Slot, Bytes, write}. The
+# other record, a connection_down, is shorter at its widest: its Reason is
+# noconnection or {domain_down, D, Info}, and every integer of Info is a
+# 64-bit one.
 class LaneCtlSlotTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   ERL = ENV.fetch('ERX_ORACLE_ERL') { File.join(ROOT, 'build/oracle/jit/install/bin/erl') }

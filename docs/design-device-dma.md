@@ -444,10 +444,10 @@ that the hardware does what the tree says. A well-formed tree that
 states a wrong translation aims the device outside the object, and a
 wrong `dma-coherent` suppresses maintenance the device needs. The tree
 is the firmware's, and the firmware is trusted as the machine's own
-([design.md](design.md#residual-risks), "Closed firmware"), so these
-are the firmware's faults, not inputs the reader defends against; a tree
-the reader can see is wrong fails safe, one it cannot see is wrong is
-believed.
+([design.md](design.md#residual-risks), "Closed firmware, and verified
+boot only where secure boot is on"), so these are the firmware's
+faults, not inputs the reader defends against; a tree the reader can
+see is wrong fails safe, one it cannot see is wrong is believed.
 
 No build-time record carries either fact: the manifest says which device
 gets how much DMA memory, and the tree says how the device sees it, so

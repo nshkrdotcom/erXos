@@ -76,8 +76,8 @@
 -moduledoc """
 The UDP codec (RFC 768) over IPv4 and IPv6, translated from FreeBSD's `udp_input` in
 sys/netinet/udp_usrreq.c and `udp6_input` in sys/netinet6/udp6_usrreq.c at the commit
-NOTICE-freebsd records (docs/design-network-stack.md, "Packets become checked records once"
-and "UDP").
+NOTICE-freebsd records (docs/design-network-stack.md, "Packets become checked records once;
+sequence numbers are integers" and "UDP").
 
 `decode/3` is total over Bytes: it returns `{ok, #udp{}, Payload}` or `{error, Reason}` and
 never raises. It makes the checks the two input functions make before their lookup, with the

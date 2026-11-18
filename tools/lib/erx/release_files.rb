@@ -141,7 +141,7 @@ module Erx
     # * web: the web front end (docs/design-web.md, "Overview"), since the system domain
     #   decodes no web protocol message;
     # * display: the pixel primitives, the display side of the window system and the
-    #   drivers, which start the screen (docs/design-display.md, "What runs where"), so no
+    #   drivers, which start the screen (docs/design-display.md, "Overview"), so no
     #   system domain loads the driver of a device the manifest gives the display domain;
     # * client, a domain that holds a display's grant: the pixel primitives, the client
     #   side, erx_win, and the widget toolkit, erx_ui, which it starts, so its allocator of

@@ -1028,6 +1028,7 @@ on anything but a terminal fails with `ENOTTY`. The table belongs
 to the image, so a change to it costs no frame to the handler beyond the
 opens and closes it causes; an `exec` names its kept part in `{exec}`, from
 which the handler builds the next image's ([Exec](#exec)).
+
 **Open-file descriptions.** An `open` of a file or a directory
 makes an **open-file description**, as POSIX names it: a process of the
 session that holds two fids at the file's server, an **unopened fid** of

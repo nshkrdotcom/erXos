@@ -2,7 +2,7 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% A display client's side of the window system (docs/design-display.md,
-%% "What runs where"), which every release that holds a display's grant
+%% "Overview"), which every release that holds a display's grant
 %% starts and the display domain's release never holds: the client's
 %% allocator of its pixel areas, erx_pixels over its pure core
 %% erx_pixels_core, which erx_win_app starts under erx_win_sup; the draw

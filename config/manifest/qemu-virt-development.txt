@@ -8,7 +8,7 @@
 # The development manifest of QEMU virt: the system domain, four configured domains,
 # storage, network, web and display, as docs/design-fiasco.md's "The Phase 1 manifest check"
 # admits them, and the system principal's session template, from which the console starts root's
-# session at boot (docs/design-system.md, "Booting"). The storage domain is an
+# session at boot (docs/design-system.md, "Boot"). The storage domain is an
 # interpreter service domain that holds the block unit and its data, release and
 # read-only system windows and runs the block driver and littlefs at /data
 # (docs/design-stopgap.md, "littlefs in the storage domain"; design-fiasco.md, "The booted slot"); the

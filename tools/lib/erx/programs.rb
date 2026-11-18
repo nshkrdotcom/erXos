@@ -36,8 +36,8 @@ module Erx
   #   descriptor call EBADF, munmap's own checks EINVAL and PROT_EXEC in mmap and mprotect
   #   ENOTSUP (test/guest/programs/args.c),
   #   and a start naming a window buffer's lease the session does not hold answers
-  #   {error, einval}: the take's refusal (docs/design-display.md, "A program's window
-  #   buffer");
+  #   {error, einval}: the take's refusal (docs/design-display.md, "A buffer in a
+  #   program");
   # * spin runs until port_close/1, which stops its space and reports nothing, since the
   #   port is gone (erx_program_core.c, ERX_PROGRAM_CLOSE): the close answers true, the
   #   port goes down, and no message of it follows;

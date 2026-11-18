@@ -38,7 +38,7 @@ regression/pthread_cond_wait-cancel_ignored  failed    stopgap    at=pthread_con
 
 # The seam's futex has no priority inheritance: FUTEX_LOCK_PI reads ENOSYS
 # (design-fiasco.md, "musl over the backend", the futex row); erXos's umtx grows it
-# (design-kernel.md "The interface grows from FreeBSD's design").
+# (design-kernel.md "Umtx").
 functional/pthread_mutex_pi                  failed    stopgap    at=pthread_mutex_pi.c:108,pthread_mutex_pi.c:42,pthread_mutex_pi.c:87 PTHREAD_PRIO_INHERIT is refused with ENOSYS: design-fiasco.md futex row
 functional/pthread_robust                    failed    stopgap    at=pthread_robust.c:43 its priority-inheritance half is refused with ENOSYS; the robust half passes: design-fiasco.md futex row
 

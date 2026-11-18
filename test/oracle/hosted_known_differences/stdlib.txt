@@ -174,7 +174,7 @@ stdlib_bench_SUITE  gen_server_comparison *                                    f
 stdlib_bench_SUITE  gen_statem_comparison *                                    failed    statistics(runtime) raises notsup where CPU time is unsupported (design-runtime.md, edit 33)
 
 # crypto is outside the shipped set until the network service
-# (design-runtime.md, "crypto, ssl, ssh, inets and the rest").
+# (design-crypto.md, "Three runtime images, and OpenSSL in two of them").
 beam_lib_SUITE      -           encrypted_abstr                      failed    cannot run: needs crypto, which erXos does not ship (design-runtime.md)
 beam_lib_SUITE      -           encrypted_abstr_file                 failed    cannot run: needs crypto, which erXos does not ship (design-runtime.md)
 rand_SUITE          -           plugin                               user_skip cannot run: needs crypto, which erXos does not ship (design-runtime.md)

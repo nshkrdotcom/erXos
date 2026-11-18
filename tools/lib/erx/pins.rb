@@ -8,8 +8,9 @@ require_relative 'bounded_file'
 module Erx
   # A SoC's pin table, hw/pins/<soc>.txt: each bank-0 pin's power-on pull and alternate
   # functions, and the controllers that own those functions (docs/design-header-io.md,
-  # "The construction"). The file's own header states the format; this reader checks every
-  # row against it and refuses the whole table at its first bad row.
+  # "The construction: one map of the header"). The file's own header states the format;
+  # this reader checks every row against it and refuses the whole table at its first bad
+  # row.
   module Pins
     # A pin's row: its GPIO number, its power-on pull, and the function of each alternate,
     # ALT0 to ALT5, nil where the datasheet reserves it.

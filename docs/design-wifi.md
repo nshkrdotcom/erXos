@@ -236,7 +236,7 @@ break of the parsers cannot add a network that outlives it.
 What each behaviour rests on is in [Lineage](#lineage): the survey of
 other stations (`~/erxos-history/docs-archive/research-wifi-designs.md` at history commit `e38149b`,
 "the survey" below) and the facts record of iwd
-([research-wifi-iwd.md](research-wifi-iwd.md), "iwd fact N" below).
+([research-wifi-iwd.md](research-wifi-iwd.md), cited below as iwd fact N).
 
 Out of scope, each a later design with its own consumer: roaming
 between access points while joined ([The station](#the-station) says

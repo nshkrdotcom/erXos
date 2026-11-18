@@ -3,11 +3,12 @@
 # frozen_string_literal: true
 
 module Erx
-  # A slow wire for gate GW's measurement (docs/plan.md, "Gate GW"): relays a host link
-  # between the host's end and the target's at most bytes_per_second each way, as a
-  # serial line would, so a guest whose host link is QEMU's UNIX socket is measured as if
-  # its link were a UART. 11,520 bytes a second stands in for a 115,200-baud UART, whose
-  # 8N1 framing spends ten bits on each byte. Only `tools/erx bench web` uses it.
+  # A slow wire for gate GW's measurement (docs/plan.md, "Gate GW, with part 1"): relays
+  # a host link between the host's end and the target's at most bytes_per_second each
+  # way, as a serial line would, so a guest whose host link is QEMU's UNIX socket is
+  # measured as if its link were a UART. 11,520 bytes a second stands in for a
+  # 115,200-baud UART, whose 8N1 framing spends ten bits on each byte. Only
+  # `tools/erx bench web` uses it.
   #
   # Each direction is a FIFO drained at the rate: a slice reaches the other side once the
   # line has carried everything before it and the slice itself (line_free, a pure

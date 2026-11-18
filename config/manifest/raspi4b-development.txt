@@ -6,7 +6,7 @@
 # board takes, config/manifest/development.txt, followed by these (Platform#manifest_source).
 # Together they configure the system domain, three configured domains, storage, network and
 # display, and the system principal's session template, from which the console starts root's
-# session at boot (docs/design-system.md, "Booting"). This part holds the machine, the
+# session at boot (docs/design-system.md, "Boot"). This part holds the machine, the
 # system principal, the apps row, the display domain's limits, the units and windows of
 # the board's devices and the network domain's row, whose driver is the board's. The
 # common part holds the storage and display domains' rows, the shares, runtime limits and

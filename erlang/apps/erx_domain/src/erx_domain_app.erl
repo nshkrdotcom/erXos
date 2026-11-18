@@ -10,7 +10,7 @@ console's line in.
 
 -export([start/2, stop/1]).
 
-%% Boot step 4 follows the service's start (docs/design-system.md, "Booting"): the service
+%% Boot step 4 follows the service's start (docs/design-system.md, "Boot"): the service
 %% starts the configured domains before it takes a call, and the console then logs the
 %% line's principal in, which asks the service for that principal's session.
 %%

@@ -17,7 +17,7 @@ module Erx
   # through a facet, and every facet is declared in one place:
   #
   # * abi/services/*.txt declares each interface a facet can be of, and the first
-  #   design citation in a file's header comment, (docs/FILE.md, "Heading"), names the
+  #   design citation in a file's header comment, (docs/<file>.md, "<heading>"), names the
   #   section that justifies every interface the file declares;
   # * the system manifest, config/manifest/*.txt, instantiates them: a service row
   #   names its server and its interface, a facet row its grantee, its service and its
@@ -116,7 +116,7 @@ module Erx
     GRANT = /(?<![A-Za-z0-9_@])(?<name>#{NAME})\s*=>/
     # A key of a map pattern, Key := Value.
     KEY = /(?<![A-Za-z0-9_@])(?<name>#{NAME})\s*:=/
-    # A design citation in an interface file's comment: (docs/FILE.md, "Heading").
+    # A design citation in an interface file's comment: (docs/<file>.md, "<heading>").
     CITATION = /(?<doc>docs\/[A-Za-z0-9_.-]+\.md),\s*"(?<heading>[^"]+)"/
 
     Interface = Data.define(:name, :number, :path, :line, :design)
@@ -281,7 +281,7 @@ module Erx
         if doc.nil?
           Violation.new(path: interface.path, line: interface.line,
                         detail: "service #{interface.name}'s file cites no design section " \
-                                '(docs/FILE.md, "Heading") in its header comment')
+                                '(docs/<file>.md, "<heading>") in its header comment')
         elsif !headings(docs.fetch(doc, '')).include?(plain(heading))
           Violation.new(path: interface.path, line: interface.line,
                         detail: "service #{interface.name} cites #{doc}, \"#{heading}\", which has no such heading")

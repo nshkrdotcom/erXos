@@ -33,7 +33,8 @@
 -moduledoc """
 The ICMPv4 codec (RFC 792), translated from FreeBSD's `icmp_input` in
 sys/netinet/ip_icmp.c at the commit NOTICE-freebsd records
-(docs/design-network-stack.md, "Packets become checked records once" and "IPv4 and ARP").
+(docs/design-network-stack.md, "Packets become checked records once; sequence numbers are
+integers" and "IPv4 and ARP").
 
 `decode/1` is total: it returns `{ok, #icmp4{}, Rest}` or `{error, Reason}` and never
 raises. It makes the checks `icmp_input` makes before it acts on a message: the 8 bytes

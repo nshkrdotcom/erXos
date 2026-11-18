@@ -2845,8 +2845,8 @@ no test can drive the change:
 * **Eager FP switching.** The fork deletes Fiasco's lazy FP switching: its `LAZY_FPU` option and every
   section it guarded are gone from every architecture, so every switch saves the FP and SIMD state of
   the thread it leaves and restores that of the thread it enters, as erXos's kernel does
-  ([design-kernel.md](design-kernel.md), "No FP or SIMD in the kernel; FP saved eagerly for
-  threads"), and no thread's registers stay in the unit while a thread of another space runs. SVE
+  ([design-kernel.md](design-kernel.md), "No FP or SIMD in the kernel"), and no thread's registers
+  stay in the unit while a thread of another space runs. SVE
   stays trapped. `tools/lib/erx/fiasco_config.rb` forbids `CONFIG_LAZY_FPU` and `CONFIG_ARM_SVE`
   in every configuration; `test/integration/fiasco_config_test.rb` resolves the fork's Kconfig and
   its seeded case puts the option back with the `select` from `PERFORMANCE` that set it whatever the

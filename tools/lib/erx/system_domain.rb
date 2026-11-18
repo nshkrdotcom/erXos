@@ -461,27 +461,27 @@ module Erx
                         'SdL1=SdLeft(600),' \
                         'SdV1=receive {sd_watched,SdW1,SdV1w}->SdV1w after 60000->timeout end'
     # SERVICE_KILL_LATER, a later domain of the ended name (docs/design-domains.md, "Domain
-    # identity"): the shell creates peer again from SdSpec, which service_kill_checkpoints
-    # binds (later_spec), and introduces it to erts. It has the next id, its node's
-    # creation, and erts saw nodedown and then nodeup for peer@erxos. SdNw's message to the
-    # ended peer's process is dropped: a frame to a pid of another creation of the connected
-    # node is one to a process that does not exist (the funnel's target rule,
-    # liberx/erx_funnel.c). Its monitor and links are answered by erts itself, as stock
-    # ERTS answers a pid of an earlier run of its own node: DOWN with noproc, link/1 raising
-    # noproc, and an exit of noproc once SdNw traps exits, a replaced link's too; no frame
-    # goes, since the later peer's answer would name the dead pid, which erts's funnel
-    # refuses by the sender rule (edit 66 of docs/design-runtime.md), and the unlink and the
-    # demonitor send none either. No nodedown follows. Then the same for a pid the later
-    # peer's lookup would find: SdLq runs in the later peer, exports itself to erts and
-    # reports to the shell the first message it gets; SdLqo is SdLq's pid with the ended peer's id for its
-    # creation (the last word of its NEW_PID_EXT encoding), and a process of erts sends
-    # sd_old to SdLqo and then sd_new to SdLq, so SdLq gets sd_new first: the export table's
-    # lookup goes by number and serial alone, but the funnel finds SdLqo dead before it
-    # asks, and ERTS behind it takes a pid of its own node name with another creation for
-    # one of an earlier run, as stock ERTS does, so neither hands sd_old on; the probe
-    # checks both together, and erx_funnel_check_test the funnel's rule alone. Since both
-    # messages come from one process over one lane, a frame that ended the connection leaves
-    # SdLq without sd_new, whatever the three seconds of SdNw saw.
+    # ids, pids and references"): the shell creates peer again from SdSpec, which
+    # service_kill_checkpoints binds (later_spec), and introduces it to erts. It has the
+    # next id, its node's creation, and erts saw nodedown and then nodeup for peer@erxos.
+    # SdNw's message to the ended peer's process is dropped: a frame to a pid of another
+    # creation of the connected node is one to a process that does not exist (the funnel's
+    # target rule, liberx/erx_funnel.c). Its monitor and links are answered by erts itself,
+    # as stock ERTS answers a pid of an earlier run of its own node: DOWN with noproc,
+    # link/1 raising noproc, and an exit of noproc once SdNw traps exits, a replaced link's
+    # too; no frame goes, since the later peer's answer would name the dead pid, which
+    # erts's funnel refuses by the sender rule (edit 66 of docs/design-runtime.md), and the
+    # unlink and the demonitor send none either. No nodedown follows. Then the same for a
+    # pid the later peer's lookup would find: SdLq runs in the later peer, exports itself to
+    # erts and reports to the shell the first message it gets; SdLqo is SdLq's pid with the
+    # ended peer's id for its creation (the last word of its NEW_PID_EXT encoding), and a
+    # process of erts sends sd_old to SdLqo and then sd_new to SdLq, so SdLq gets sd_new
+    # first: the export table's lookup goes by number and serial alone, but the funnel finds
+    # SdLqo dead before it asks, and ERTS behind it takes a pid of its own node name with
+    # another creation for one of an earlier run, as stock ERTS does, so neither hands
+    # sd_old on; the probe checks both together, and erx_funnel_check_test the funnel's rule
+    # alone. Since both messages come from one process over one lane, a frame that ended the
+    # connection leaves SdLq without sd_new, whatever the three seconds of SdNw saw.
     SERVICE_KILL_LATER = 'SdLc=erx_domain:create(SdSpec),SdLi=case SdLc of {ok,SdLd}->' \
                          '{erx_domain:id(SdLd),erx_domain:introduce(SdDom(SdTid),SdLd)};SdLe->SdLe end,SdNw!sd_nwgo,' \
                          'SdLv=receive {erx_origin,_,{sd_nw,SdNw,SdLv0}}->SdLv0 after 60000->timeout end,' \

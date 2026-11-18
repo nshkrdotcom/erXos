@@ -13,8 +13,8 @@ directory the table names: a test's own, or directory/0, `/data/etc`.
 the domain service mounts at /data where the manifest grants it (with no
 grant the path is the root's and the file absent). The grant reaches it
 because every `data` grant covers the whole volume (docs/design-apps.md,
-"Phase 1"); the path gives way to `/etc/rc.conf` on the `etc` grant
-(TODO.md, "/etc/rc.conf").
+"An app"); the path gives way to `/etc/rc.conf` on the `etc`
+grant (TODO.md, "/etc/rc.conf").
 
 The table asks with read/1 and write/2, which return at once, and takes
 each answer as the reply to its request (gen_server:check_response/2),

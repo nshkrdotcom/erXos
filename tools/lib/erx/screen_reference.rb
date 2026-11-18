@@ -8,10 +8,11 @@ require_relative 'ppm'
 
 module Erx
   # A reference picture of a guest's display: the checked-in digest a screendump must equal
-  # (docs/design-display.md, "equals the reference" means equal decoded pixels, Ppm::Image#digest),
-  # and, beside it, the same picture as a gzip-compressed PPM so that a person can look at what
-  # a failing run should have shown (`gunzip -c NAME.ppm.gz > NAME.ppm`; compressed to keep the
-  # checked-in file small). For a reference called NAME in a directory:
+  # (equal decoded pixels, Ppm::Image#digest, as docs/design-display.md, "Verification and
+  # testing", defines a screenshot that equals its reference), and, beside it, the same picture as
+  # a gzip-compressed PPM so that a person can look at what a failing run should have shown
+  # (`gunzip -c NAME.ppm.gz > NAME.ppm`; compressed to keep the checked-in file small). For a
+  # reference called NAME in a directory:
   #
   #   NAME.sha256    one line: the 64 lowercase hex digits, a space, WIDTHxHEIGHT
   #   NAME.ppm.gz    the picture

@@ -7,8 +7,9 @@ require 'minitest/autorun'
 require_relative '../../tools/lib/erx/platform'
 
 # The platform record's header map (Erx::HeaderMap, docs/design-header-io.md, "The
-# construction"): the Raspberry Pi 4's map is accepted and gives its derived facts, and
-# for each refusal of the reader one map that breaks only that rule is refused with it.
+# construction: one map of the header"): the Raspberry Pi 4's map is accepted and gives
+# its derived facts, and for each refusal of the reader one map that breaks only that
+# rule is refused with it.
 class HeaderMapTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   PI = Erx::Platform.load(root: ROOT, name: 'raspi4b')

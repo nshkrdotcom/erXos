@@ -360,8 +360,8 @@ One presentation is added for launching: the inspection schema's
 `apps *name` path is marked `present app`, over a segment type of its
 own, `app_name`, since a presentation over the shared `name` type would
 make every attribute of that type an app
-([design-display.md](design-display.md#presentations), "the generator
-refuses two such presentations over one type").
+([Presentations](design-display.md#presentations): the generator
+refuses two such presentations over one type).
 
 ### Rules
 
@@ -767,7 +767,7 @@ is used, as design-desktop-programs checked its names.
 
 Each mechanism, the consumer that needs it, and the home design.md's
 rule gives it
-([design.md](design.md#decisions), "a new need has one of three homes").
+([design.md](design.md#decisions)).
 That rule governs entry points between domains; inside one domain
 processes call each other freely, so a mechanism that never leaves the
 session needs no home, and none is added.
@@ -875,9 +875,8 @@ windows are untouched.
 ## Security
 
 The threat model is the system's: development builds run trusted code
-only ([design.md](design.md#decisions), "Development builds run
-trusted code only"), and what a hostile peer could do here is stated,
-not engineered against.
+only ([design.md](design.md#decisions)), and what a hostile peer
+could do here is stated, not engineered against.
 
 * **No authority is added.** Every act is a line run by the session's
   own evaluator with the session's capabilities; find and act holds no
@@ -1091,18 +1090,19 @@ The reasons: the keyboard still moves only on the person's act and only
 out of the window that has it, so no writer gains a key it did not
 already have. The authority is the source window's own control file. A
 program confined to its own window's files
-([design-programs.md](design-programs.md#the-handler), "The spec's
-`window => Display`") can give away only a keyboard it already has, never
-take it from a sibling window of the same grant, since the display tells
-clients apart by grantee domain and not by program
-(`erlang/apps/erx_display/src/erx_winfs.erl:269`). The 500 ms interval
-alone proves recency, not authority or intent; with the source window's
-control file as the authority it proves the person just acted in the
-source. The condition on the target keeps the keyboard from being handed
-to an older window, such as the session's shell, so the person's typing
-cannot be steered into it; it is one window id kept with the pick, since
-window ids only grow. This changes the display's accepted focus rule, which
-[design-display.md](design-display.md#risks-and-decisions), decision 21, states. The alternatives:
+([design-programs.md](design-programs.md#the-handler)) can give away only
+a keyboard it already has, never take it from a sibling window of the
+same grant, since the display tells clients apart by grantee domain and
+not by program (`erlang/apps/erx_display/src/erx_winfs.erl:269`). The
+500 ms interval alone proves recency, not authority or intent; with the
+source window's control file as the authority it proves the person just
+acted in the source. The condition on the target keeps the keyboard from
+being handed to an older window, such as the session's shell, so the
+person's typing cannot be steered into it; it is one window id kept with
+the pick, since window ids only grow. This changes the display's accepted
+focus rule, which
+[design-display.md](design-display.md#risks-and-decisions), decision 21,
+states. The alternatives:
 
 * **No change: the person clicks the palette before using it.** Rejected:
   the palette and the context menu each cost an extra click on every use,

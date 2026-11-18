@@ -61,14 +61,14 @@
 
 -module(erx_ip4_wire).
 -moduledoc """
-The IPv4 codec (docs/design-network-stack.md, "Packets become checked records once" and
-"IPv4 and ARP"). `decode/1` takes the payload of an Ethernet frame of type IP, or a
-reassembled datagram, and makes the checks `ip_input` makes before it reads a packet:
-version, header length, header checksum and total length, cutting the trailing bytes at the
-total length; then it walks the options as `ip_dooptions` does, checking each one's length.
-`encode/1` writes a header to send. Translated from FreeBSD's
-`sys/netinet/ip_input.c` and `sys/netinet/ip_options.c` at commit 975e3605
-(erlang/apps/erx_net/NOTICE-freebsd).
+The IPv4 codec (docs/design-network-stack.md, "Packets become checked records once;
+sequence numbers are integers" and "IPv4 and ARP"). `decode/1` takes the payload of an
+Ethernet frame of type IP, or a reassembled datagram, and makes the checks `ip_input`
+makes before it reads a packet: version, header length, header checksum and total
+length, cutting the trailing bytes at the total length; then it walks the options as
+`ip_dooptions` does, checking each one's length. `encode/1` writes a header to send.
+Translated from FreeBSD's `sys/netinet/ip_input.c` and `sys/netinet/ip_options.c` at
+commit 975e3605 (erlang/apps/erx_net/NOTICE-freebsd).
 
 Two departures. The first changes only which counter a refused packet lands in, with
 nothing on the wire changed: The header checksum is checked before any field but the version and header length

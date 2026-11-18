@@ -117,9 +117,9 @@ device_kind(const erx_manifest_view_t *view, const erx_mf_device_t *device, uint
 
 /*
  * A unit's device span is a file offset to its first record and a count, as every span is
- * (docs/design-abi.md, "slice"); *first is that record's index in the device table. False
- * for a span off a record boundary or past the table, which erx_manifest_open refuses, so
- * this is a second check, not the first.
+ * (docs/design-abi.md, "Structural readers"); *first is that record's index in the device
+ * table. False for a span off a record boundary or past the table, which
+ * erx_manifest_open refuses, so this is a second check, not the first.
  */
 static bool
 unit_first_device(const erx_manifest_view_t *view, const erx_mf_unit_t *unit, uint32_t *first)

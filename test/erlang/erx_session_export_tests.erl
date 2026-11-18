@@ -198,10 +198,11 @@ a_refused_generator_read_answers_eio_test() ->
     Fs = fs(fun(_Size) -> error({entropy, ebusy}) end),
     ?assertEqual({error, eio}, read([<<"dev">>, <<"urandom">>], 16, Fs)).
 
-%% tty is a name alone (docs/design-files.md, "Native clients"): a walk and a getattr
-%% reach it, and the handler that opens it makes a terminal's description instead, an
-%% open of the terminal relay under the program's job, so no open of it, in any mode,
-%% nor a create that would open it, reaches a handle of this tree.
+%% tty is a name alone (docs/design-files.md, "Native clients: `liberx`'s file
+%% client"): a walk and a getattr reach it, and the handler that opens it makes a
+%% terminal's description instead, an open of the terminal relay under the program's
+%% job, so no open of it, in any mode, nor a create that would open it, reaches a
+%% handle of this tree.
 tty_is_a_name_that_never_opens_test() ->
     Fs = fs(),
     {ok, tty, Qid} = walk([<<"dev">>, <<"tty">>], Fs),

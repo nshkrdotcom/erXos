@@ -1435,8 +1435,8 @@ handle: the root checks the caller's `WRITE` right on that handle and
 answers `ERX_ERIGHTS` without it, so only the system domain sets the
 clock, as on erXos's kernel, and the chokepoint and the facet stand
 behind that check rather than in its place
-([design-fiasco.md](design-fiasco.md#the-releases-cases), "the wall
-clock"). The `erx_facet` module has no generated admission path, so the
+([The release's cases](design-fiasco.md#the-releases-cases)). The
+`erx_facet` module has no generated admission path, so the
 operations a grant lists are checked through its callback: a callback
 that maps a request to its operation (`erx_clock_facet:operation/1`)
 gets every request checked against the grant's `operations`, an empty

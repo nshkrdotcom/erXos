@@ -27,10 +27,10 @@ program reaches of them.
   from the kernel's generator (erx_bytes:entropy/1) and takes no write; and
   `tty` is a name alone: a walk and a getattr reach it, and an open of it,
   or a create that would open it, answers `enxio` (docs/design-files.md,
-  "Native clients"). The handler that opens the name makes a terminal's
-  description instead, an open of the terminal relay under the program's
-  job (docs/design-programs.md, "The terminal"), so no terminal read or
-  write reaches this tree.
+  "Native clients: `liberx`'s file client"). The handler that opens the
+  name makes a terminal's description instead, an open of the terminal
+  relay under the program's job (docs/design-programs.md, "The terminal"),
+  so no terminal read or write reaches this tree.
 * **`/etc`** holds `passwd` and `group`, read-only: the session's principal,
   with its number as uid and gid, and `nobody` (65534).
 * **A create** of an existing device opens it (erx_fs_node:open_by_create/4),

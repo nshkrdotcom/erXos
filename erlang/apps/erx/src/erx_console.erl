@@ -366,7 +366,7 @@ add_session(Domain, Spec = #{name := Name, principal := Principal, domain_pid :=
     gen_server:call(?MODULE, {add_session, Domain, maps:with([name, principal, domain_pid], Spec)}).
 
 -doc """
-Boot step 4 (docs/design-system.md, "Booting"), once the domain service runs: the
+Boot step 4 (docs/design-system.md, "Boot"), once the domain service runs: the
 console logs the line's principal in at the line, root at the UART in a development
 build, which starts that principal's session (erx_domain:start_session/2). The session
 takes the line once its tty names itself, and is started again whenever it ends; if it
@@ -1278,7 +1278,7 @@ start_failed(Why, Reason, State0) ->
     end.
 
 %% The console's login (login/0): root's session started at this line, the line's
-%% principal's in general (docs/design-system.md, "Booting", step 4).
+%% principal's in general (docs/design-system.md, "Boot", step 4).
 start_login(State) ->
     ok = start_session(login, State),
     State#state{login = starting}.

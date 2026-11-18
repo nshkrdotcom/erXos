@@ -24,18 +24,18 @@ require_relative 'web_build'
 require_relative 'web_guest'
 
 module Erx
-  # Gate GW (docs/plan.md, "Gate GW"): a record view's round trip over the host tool's
-  # front end, tools/erx web, for the machine's record and for root's session's
-  # processes, a listing of WebGuest::IDLE_PROCESSES children. One 1-CPU HVF boot of the
-  # production image does it: the console logs root in, root's session's Erlang shell
-  # starts the idle processes, as the session_domain suite's last session does, and the
-  # host then serves the front end twice, once straight on the guest's host link socket
-  # and once through a HostlinkPacer at a 115,200-baud UART's 11,520 bytes a second each
-  # way. A scripted browser, WebGuest's, opens each view OPENS times, each a view number
-  # of its own that it closes once answered, and times the open's binary frame until the
-  # update's whole frame arrives. The client goes through the front end, not straight to
-  # the host link, because the front end's relaying is part of what a browser waits for.
-  # The report is build/bench/web-hvf-*/result.json.
+  # Gate GW (docs/plan.md, "Gate GW, with part 1"): a record view's round trip over the
+  # host tool's front end, tools/erx web, for the machine's record and for root's
+  # session's processes, a listing of WebGuest::IDLE_PROCESSES children. One 1-CPU HVF
+  # boot of the production image does it: the console logs root in, root's session's
+  # Erlang shell starts the idle processes, as the session_domain suite's last session
+  # does, and the host then serves the front end twice, once straight on the guest's
+  # host link socket and once through a HostlinkPacer at a 115,200-baud UART's 11,520
+  # bytes a second each way. A scripted browser, WebGuest's, opens each view OPENS
+  # times, each a view number of its own that it closes once answered, and times the
+  # open's binary frame until the update's whole frame arrives. The client goes through
+  # the front end, not straight to the host link, because the front end's relaying is
+  # part of what a browser waits for. The report is build/bench/web-hvf-*/result.json.
   class BenchWeb
     OPENS = 21
     # 115,200 baud with 8N1 framing: ten bits on the line for each byte.

@@ -305,7 +305,7 @@ bool		erx_dom_lib_record(erx_dom_lib_t *, uint64_t label,
 
 /*
  * The system domain's one library, which the root's start builds before ERTS
- * runs (docs/design-system.md, "Starting the system domain", step 3) and
+ * runs (docs/design-system.md, "The root task", step 3) and
  * names with erx_dom_lib_system_set; NULL until then. The domain service's
  * NIF module, erx_domain_lib, reaches the library only through it.
  */

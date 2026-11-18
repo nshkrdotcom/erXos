@@ -26,8 +26,9 @@ module Erx
     # configure and ERTS ask for these libraries by name, and musl keeps them all in libc.a.
     EMPTY_LIBRARIES = %w[m pthread rt dl util].freeze
     # What a domain's image links beyond the system image's (docs/design-crypto.md, "Three
-    # runtime images"): its static NIF table, driver_tab_crypto.o, which names the NIFs of
-    # DomainImageApps, those NIFs' archives, and OpenSSL's libcrypto.a.
+    # runtime images, and OpenSSL in two of them"): its static NIF table,
+    # driver_tab_crypto.o, which names the NIFs of DomainImageApps, those NIFs' archives,
+    # and OpenSSL's libcrypto.a.
     Crypto = Data.define(:table, :nifs, :libcrypto) do
       def archives = [table, *nifs, libcrypto]
     end

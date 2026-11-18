@@ -1394,6 +1394,7 @@ name and the lesser of the rights they ask and `Rights` (below).
 options, whose provider names the facet and holds
 no pid (below, "A facet's mount"); it is the only way a grant
 of another domain is mounted.
+
 **Rights beneath an entry.** An entry's rights never exceed the rights
 of the grant beneath it. Every kind of entry holds this by
 construction rather than by a check at each use:

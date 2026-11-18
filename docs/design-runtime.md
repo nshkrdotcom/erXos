@@ -4872,7 +4872,7 @@ Open questions, each with its recommended answer:
   (which calls go through `erpc`'s `spawn_request` and which to the
   registered `rex` and `net_kernel`, and `ping/1`'s disconnect after a
   failure), and
-  `erts/doc/guides/alt_dist.md`, "How to Implement an Alternative Carrier
+  `erts/doc/guides/alt_dist.md`, titled "How to Implement an Alternative Carrier
   for the Erlang Distribution"; read 2026-10-29, 2026-10-30 and
   2026-11-01.
 * NIST, [FIPS 197, Advanced Encryption Standard](https://doi.org/10.6028/NIST.FIPS.197-upd1),

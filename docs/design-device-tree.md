@@ -411,12 +411,12 @@ does what the tree says. A well-formed tree that states a wrong
 translation aims the device outside its memory, and a wrong
 `dma-coherent` suppresses maintenance the device needs. The tree is the
 firmware's, which every machine trusts as its own
-([design.md](design.md#residual-risks), "Closed firmware"), so such a
-tree is the firmware's fault, as a wrong memory node would be, and is
-believed. What the reader promises is narrower: no tree, however
-malformed, makes it read outside the bytes, loop without bound, or
-produce a fact it did not check, and a tree it can see is wrong
-withholds the facts made from it.
+([design.md](design.md#residual-risks), "Closed firmware, and verified
+boot only where secure boot is on"), so such a tree is the firmware's
+fault, as a wrong memory node would be, and is believed. What the
+reader promises is narrower: no tree, however malformed, makes it read
+outside the bytes, loop without bound, or produce a fact it did not
+check, and a tree it can see is wrong withholds the facts made from it.
 
 **The hardware address.** In the same call, the first of `mac-address`,
 `local-mac-address` and `address`, in FreeBSD's order, that holds exactly
@@ -553,8 +553,8 @@ firmware's edits from them.
 ## Concurrency and failure
 
 The reader runs once, on the root's first thread, before any other
-thread exists ([Boot handoff](design-fiasco.md#boot-handoff), "Only the
-first thread exists until step 7"). The entries it fills are not written
+thread exists ([Boot handoff](design-fiasco.md#boot-handoff), "The
+root's first steps, in order"). The entries it fills are not written
 again, and the copy's pages are read-only and never unmapped, so later
 readers on other threads read values that no longer change.
 

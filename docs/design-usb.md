@@ -674,8 +674,7 @@ Both controllers are PCIe functions, so the first USB needs the PCIe
 domain of [design-system.md](design-system.md#devices): an Erlang
 enumerator in the domain `pcie`, which holds the bridge's configuration
 window and nothing else, walks the bus, assigns BARs
-([design-kernel.md](design-kernel.md), "PCIe configuration space,
-enumeration and BAR assignment: the PCIe enumerator owns them"), reports
+([design-kernel.md](design-kernel.md), "Requirements"), reports
 each function to the device service, and moves each function to the
 setting its holder's requests choose. The domain library's give carves
 the function's BARs inside the bridge's windows and writes its
@@ -2066,7 +2065,8 @@ one. What is particular to it otherwise is on the PCIe side:
   ([design-system.md](design-system.md#devices)). The VL805 runs firmware
   the VideoCore loaded, which erXos neither chooses nor checks, as it
   trusts the firmware that boots the board
-  ([design.md](design.md#residual-risks), "Closed firmware").
+  ([design.md](design.md#residual-risks), "Closed firmware, and verified
+  boot only where secure boot is on").
 * **Its topology.** Every USB 2 device is behind the VL805's internal
   high-speed hub, so the Pi 4's keyboards and mice need the hub function
   and the transaction translator fields of

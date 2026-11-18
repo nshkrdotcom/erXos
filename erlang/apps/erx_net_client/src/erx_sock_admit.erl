@@ -122,8 +122,8 @@ or `eof` after `eof`.
                     | ehostunreach | enetunreach | enoprotoopt | epipe | timeout.
 
 %% The error reasons each operation may answer: the stack's refusals of that request
-%% (the error table of docs/design-network-stack.md, "Errors"), and `badarg`, the grant's
-%% refusal of a request it does not take.
+%% (the error table of docs/design-network-stack.md, "Refusals and error results"), and
+%% `badarg`, the grant's refusal of a request it does not take.
 -define(OPEN_REASONS, [eacces, emfile, enobufs, eaddrinuse, eaddrnotavail, einval, enotsup, badarg]).
 -define(CONNECT_REASONS, [econnrefused, etimedout, enetunreach, ehostunreach, enoprotoopt, econnreset, closed, timeout
                           | ?OPEN_REASONS]).

@@ -13,8 +13,9 @@ class PinsTest < Minitest::Test
     @table = Erx::Pins.read(root: REPOSITORY, soc: 'bcm2711')
   end
 
-  # The Raspberry Pi 4's header map (docs/design-header-io.md, "The construction") asks
-  # for these functions; their alternates are Table 94's columns.
+  # The Raspberry Pi 4's header map (docs/design-header-io.md, "The construction: one
+  # map of the header") asks for these functions; their alternates are Table 94's
+  # columns.
   def test_the_header_maps_functions_are_where_table_94_puts_them
     expected = { [2, 'SDA1'] => 0, [3, 'SCL1'] => 0, [4, 'TXD3'] => 4, [5, 'RXD3'] => 4, [7, 'SPI0_CE1_N'] => 0,
                  [11, 'SPI0_SCLK'] => 0, [14, 'TXD1'] => 5, [15, 'RXD1'] => 5, [22, 'ARM_TRST'] => 4,

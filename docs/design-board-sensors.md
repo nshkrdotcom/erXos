@@ -651,16 +651,17 @@ already show.
 ## Security
 
 The firmware is the board's own closed binary, resident with access to
-all memory ([design.md](design.md#residual-risks), "Closed firmware"), so
-nothing here defends against a hostile firmware. What the design defends
-is the boundary PL2 draws: no driver and no domain reaches the
-interface's other powers, the key read, the VideoCore's memory and its
-code execution. That holds because what is sent is a row of the checked
-record, the rows' tags are a closed set without those powers, the gencmd
-text is a closed set of one command, and the caller chooses only a row
-index. The replies are read as device-written memory: by fixed offsets,
-each field once, into a bounded window, and decoded in Erlang through a
-fuzzed decoder that echoes nothing of their text.
+all memory ([design.md](design.md#residual-risks), "Closed firmware, and
+verified boot only where secure boot is on"), so nothing here defends
+against a hostile firmware. What the design defends is the boundary PL2
+draws: no driver and no domain reaches the interface's other powers, the
+key read, the VideoCore's memory and its code execution. That holds
+because what is sent is a row of the checked record, the rows' tags are a
+closed set without those powers, the gencmd text is a closed set of one
+command, and the caller chooses only a row index. The replies are read as
+device-written memory: by fixed offsets, each field once, into a bounded
+window, and decoded in Erlang through a fuzzed decoder that echoes
+nothing of their text.
 
 `design.md`'s chokepoint row for the mailbox records this use: every
 request after boot sends one row's fixed tag and arguments and reads back

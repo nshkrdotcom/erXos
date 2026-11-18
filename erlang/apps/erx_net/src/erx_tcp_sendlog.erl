@@ -21,16 +21,17 @@ one range. Sequence numbers are unwrapped integers.
 
 Invariants:
 * The ranges tile `[snd_una, snd_max)` exactly, without gaps or overlaps.
-* A range holds one or more segments of the size it was sent with (docs/design-network-
-  fastpath.md, "The send log keeps runs"). Range boundaries fall only on the segment
-  boundaries the sender made: a transmission (`sent/5`, `rescued/5`) and an
-  acknowledgement cut a range at their edge and, when that lies inside a segment, at the
-  segment's end too (split/2), so every range starts on a boundary of its own segments.
-  A SACK block marks the whole segments it covers and leaves a segment it covers in part
-  unmarked, so a peer cannot split the log below the segments that were sent, and no byte
-  is marked SACKed that a block does not cover. Merging SACKed neighbours whose segments
-  line up only removes boundaries; neighbours that do not line up (a short last segment, a
-  segment size changed) stay apart, so a SACKed stretch can be several ranges.
+* A range holds one or more segments of the size it was sent with
+  (docs/design-network-stack.md, "The send log keeps runs"). Range boundaries fall
+  only on the segment boundaries the sender made: a transmission (`sent/5`, `rescued/5`)
+  and an acknowledgement cut a range at their edge and, when that lies inside a segment,
+  at the segment's end too (split/2), so every range starts on a boundary of its own
+  segments. A SACK block marks the whole segments it covers and leaves a segment it
+  covers in part unmarked, so a peer cannot split the log below the segments that were
+  sent, and no byte is marked SACKed that a block does not cover. Merging SACKed
+  neighbours whose segments line up only removes boundaries; neighbours that do not line
+  up (a short last segment, a segment size changed) stay apart, so a SACKed stretch can
+  be several ranges.
 * New data extends the highest range when that range is unmarked, sent once, at the same
   time, with the same segment size, and ends on a full segment (extend/5), so the log of
   k segments sent in one step equals the log of one run of k.

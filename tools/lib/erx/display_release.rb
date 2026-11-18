@@ -31,7 +31,7 @@ module Erx
     # The client's module families: the draw protocol, its picture decoders erx_png and
     # erx_inflate, the widget trees and their format, the terminal and its emulator, the
     # pixel allocator, fonts and the client's window library (docs/design-display.md,
-    # "What runs where"). A name, not an application, is what still marks a client module
+    # "Overview"). A name, not an application, is what still marks a client module
     # once it has left the client side, which no list of applications can.
     CLIENT_FAMILIES = /\Aerx_(?:draw|ui|vt|term|font|png|inflate|pixels|win)(?:_|\z)/
     DISPLAY = ReleaseFiles::RELEASE_SCRIPTS.fetch('display')

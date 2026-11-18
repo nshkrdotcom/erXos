@@ -56,12 +56,13 @@ use, requests and flushes together, so what the bridge has at its grants
 never exceeds 64. A request beyond 32 fails with `emfile`; a message that
 would take a 65th tag, one whose tag is in use, one that fails the codec
 and one that is not a request are discarded and counted, never answered
-(docs/design-live.md, "Failure handling"). A read's or readdir's `Count`
-is cut to what an `Rread` of the negotiated `msize` holds, and `lopen`'s and `lcreate`'s `Iounit` is
-answered as `msize` less 24, Linux's and QEMU's `P9_IOHDRSZ`, so every
-reply fits the stream. A reply is held to its request with the grammar's
-reply check before it is used; one that fails it, or does not encode within
-`msize`, reaches the host as `eio`.
+(docs/design-live.md, "Failure handling, diagnostics and debuggability").
+A read's or readdir's `Count` is cut to what an `Rread` of the negotiated
+`msize` holds, and `lopen`'s and `lcreate`'s `Iounit` is answered as
+`msize` less 24, Linux's and QEMU's `P9_IOHDRSZ`, so every reply fits the
+stream. A reply is held to its request with the grammar's reply check
+before it is used; one that fails it, or does not encode within `msize`,
+reaches the host as `eio`.
 
 **Version and ends.** A `version` opens the session and is served only
 while none is open: one whose `msize` is below 4,096 is refused, one that

@@ -2,11 +2,11 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% erx_kernel_records' pure core over constructed reports (docs/design-live.md,
-%% "Inspection tests"): one case per row of the collector's table, a partial
-%% bit on an attribute with no stopgap, an attribute the layout has no field
-%% for, a derived attribute over a partial input, and each kind of refusal,
-%% ERX_ERANGE ending a listing among them. Each case is paired with a seed that
-%% flips one bit or the status and must change the attribute.
+%% "Verification and testing"): one case per row of the collector's table, a
+%% partial bit on an attribute with no stopgap, an attribute the layout has no
+%% field for, a derived attribute over a partial input, and each kind of
+%% refusal, ERX_ERANGE ending a listing among them. Each case is paired with a
+%% seed that flips one bit or the status and must change the attribute.
 -module(erx_kernel_records_tests).
 
 -include_lib("eunit/include/eunit.hrl").

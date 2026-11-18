@@ -130,7 +130,7 @@ enum irq_kind u32
   value msi 2
 
 # An executor's class and state, and what a group's status page mirrors for its
-# runtime (docs/design-scheduler.md, "The status area").
+# runtime (docs/design-scheduler.md, "The shared areas").
 
 enum thread_class u32
   value worker 0

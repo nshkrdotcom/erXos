@@ -10,7 +10,7 @@ require_relative '../fixtures/erlang_build'
 # Runs test/erlang/erx_ramfs_core_tests.erl, the EUnit cases of the pure tree behind
 # /tmp, against erx_ramfs_core compiled from source on stock's emulator (ERX_ERL and
 # ERX_ERLC, which make check supplies). Then each seeded fault of docs/design-tmp.md's
-# "Core" item, applied to a copy of the module, must fail the case named for it, which
+# "Core, on the host" item, applied to a copy of the module, must fail the case named for it, which
 # shows that case runs the code the fault breaks.
 class ErxRamfsCoreTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)

@@ -77,7 +77,8 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 -define(MIN_FRAME, 60).
 %% negotiate/2 answers ebusy until both directions' DMA shows the stop. The one published
 %% bound on a stop is 5,000 reads 1 us apart, about 5 ms (docs/design-device-dma.md,
-%% "Stopping"); erx_genet retries every millisecond for four times that, then fails.
+%% "The descriptor forms"); erx_genet retries every millisecond for four times that, then
+%% fails.
 -define(NEGOTIATE_RETRY_MS, 1).
 -define(NEGOTIATE_TRIES, 20).
 

@@ -98,8 +98,9 @@ class PipeCoreTest < Minitest::Test
        "\tif (true) {\n\t\tlane->ring = ERX_PIPE_RING_DRAINED;"],
     'EPIPE while a read end remains' =>
       ['flow', 'PI3', '(w->lost || w->readers == 0) && !w->poll', '(w->lost || w->readers <= 1) && !w->poll'],
-    # A poll answers without copying (docs/design-pipes.md, "Readiness"): writable only with room
-    # for a whole chunk, and when nothing is ready, only after publishing what rings it.
+    # A poll answers without copying (docs/design-pipes.md, "Readiness, `poll` and `select`"):
+    # writable only with room for a whole chunk, and when nothing is ready, only after publishing
+    # what rings it.
     'a poll reports room for less than a chunk' =>
       ['wpoll', 'POLL', 'if (room >= erx_ring_span(chunk))', 'if (room >= erx_ring_span(chunk) / 2)'],
     'a write poll waits without publishing its need' =>

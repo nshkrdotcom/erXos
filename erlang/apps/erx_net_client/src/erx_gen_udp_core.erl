@@ -50,7 +50,8 @@ answers as a closed socket. The owner's exit closes the socket.
 -export_type([core/0, kind/0, event/0, action/0]).
 
 -define(MAX_IN_FLIGHT, 64).
-%% The target: twice the largest UDP payload (docs/design-network-stack.md, "Credit").
+%% The target: twice the largest UDP payload (docs/design-network-stack.md,
+%% "Receive credit").
 -define(TARGET, 131072).
 %% The largest payload an IPv4 datagram carries: 65535 less the IPv4 and UDP or echo
 %% headers. The socket's own bound (erx_net_admit) is IPv6's 65,527.

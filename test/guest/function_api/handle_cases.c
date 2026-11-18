@@ -5,11 +5,11 @@
 
 /*
  * Handles to memory objects (docs/design-fiasco.md, "Capabilities in Fiasco's object
- * space", and the "A stale handle" and "Generations" rows of its tests), which only
- * native has calls for: hosted gets them with the rest of the handle rows. A stale
- * handle is told from a live one by a map two pages long, which the stale handle's own
- * object of one page refuses and the two-page object made after it would take, so a
- * handle that named its successor shows.
+ * space", and its tests' table, docs/design-fiasco.md, "The backend's cases"), which
+ * only native has calls for: hosted gets them with the rest of the handle rows. A
+ * stale handle is told from a live one by a map two pages long, which the stale
+ * handle's own object of one page refuses and the two-page object made after it
+ * would take, so a handle that named its successor shows.
  *
  * generations must run before any other case destroys an object: every record is then
  * either live or never used, so its first object takes a record at generation 0, the

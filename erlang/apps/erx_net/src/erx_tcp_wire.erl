@@ -109,7 +109,7 @@ The TCP codec (RFC 9293) with its options, translated from FreeBSD at the commit
 records: the header checks of `tcp_input_with_port` in sys/netinet/tcp_input.c, its option
 parser `tcp_dooptions`, and the option writer `tcp_addoptions` in sys/netinet/tcp_output.c,
 with the header layout and constants of sys/netinet/tcp.h (docs/design-network-stack.md,
-"Packets become checked records once").
+"Packets become checked records once; sequence numbers are integers").
 
 `decode/2` is total over its segment: it returns `{ok, #tcp{}, Payload}` or `{error,
 Reason}` and never raises. It makes the checks `tcp_input_with_port` makes on the segment

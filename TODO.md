@@ -232,7 +232,7 @@ it; git history is the record of completed work.
   object: it checks neither, the Fiasco backend maps a pool object read-execute, and the relocations are read
   again from the view, so a writer of an unsealed object could move them [Medium, security residual]; the
   exec record names only an object the command server sealed. `load.c` runs only in its host test, over memory calls
-  of the test's own (`test/fixtures/exec_load_effects.c`), which checks its outcomes and releases but not the bytes it maps, and whose stand-in space checks neither page alignment nor that a map lies in a reservation, nor makes an object shorter than the rounded length [Low]; nothing yet states who guarantees the code object's zeros past the file's last byte, which a read-only or executable segment ending in the last page maps into the program [Medium, security residual]: the programs suite gets the bootstrap's cases (design-programs.md, "Loading an executable") when the
+  of the test's own (`test/fixtures/exec_load_effects.c`), which checks its outcomes and releases but not the bytes it maps, and whose stand-in space checks neither page alignment nor that a map lies in a reservation, nor makes an object shorter than the rounded length [Low]; nothing yet states who guarantees the code object's zeros past the file's last byte, which a read-only or executable segment ending in the last page maps into the program [Medium, security residual]: the programs suite gets the bootstrap's cases (design-programs.md, "The loader's bootstrap") when the
   program lands.
   So a native app's start of `/app/bin/NAME` is refused
   `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this
@@ -651,7 +651,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   Fiasco makes a wall of nothing. Carve none at boot; the domain service carves the principal's wall from
   `apps` at each session's start, at the declared memory plus the session's outer budget, and destroys it
   once that session has retired, with the tests of
-  [design-packaging.md](docs/design-packaging.md#verification-and-testing) ("the principal's wall"). The
+  [design-packaging.md](docs/design-packaging.md#verification-and-testing) of the principal's wall. The
   same file creates the `apps` budget and every manifest principal's budget with kind `ERX_BUDGET_ELASTIC` and
   the guarantee equal to the cap, where the design makes each a wall, `ERX_BUDGET_WALL`.
 * [Medium] 0.2 on Fiasco, the space topics `handles` and `mappings` (`abi/erx_abi.txt`, `abi/inspection.txt`,
@@ -819,7 +819,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   destroyed has no reader until the inspector reads it at SV4.
 * [Low] Fiasco backend, `liberx/backend/fiasco/service.c` (`service_main`), fault gates: a fault posted to a space's
   gate is left unanswered in the service thread's one implicit reply capability, as `docs/design-fiasco.md`
-  ("Faults") asks, so the service's next receive of a call overwrites it and Fiasco logs
+  ("Faults, and the fault of the root task") asks, so the service's next receive of a call overwrites it and Fiasco logs
   `Application bug: reply capability overwritten!` (`fiasco/kernel/src/kern/receiver.cpp`, `set_reply_cap`) at
   every fault posted to a gate: each end of the storage domain on a dead disk, the native_domain suite's fault
   cases. Nothing misbehaves: Fiasco empties the slot, and the faulting thread stays blocked until its space's
@@ -1363,7 +1363,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   * **The display domain**: the display side gains `erx_winfs`, `erx_window`, the
     policies and `erx_wm_menu`, and the client side `erx_win`'s library, `erx_draw`'s `string/5`, `erx_font`,
     `erx_draw_conn`'s crash report scrubbing (its state is hidden, its stack trace and queued writes are not),
-    `erx_term` and `erx_ui` with its servers and renderers (docs/design-display.md, "What runs where"). The G9 build
+    `erx_term` and `erx_ui` with its servers and renderers (docs/design-display.md, "Overview"). The G9 build
     check (`tools/lib/erx/display_release.rb`) reads module names in the display script's sources; the design's xref
     check over the display release's beams, with its refusal of calls that start a port or a sub-space, is not built.
     `erx_screen_core` knows no buffer's size: a layout entry carries only the window's rectangle, so the plan
@@ -2087,9 +2087,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   medium is chosen by membership of one of them, so a board added to the others but not to
   `BoardTree::BOARDS` gets QEMU's release medium. Declare the medium, the load address and the board's tree in the
   platform record, checked when it loads, so a board without a medium is refused.
-* [Medium] tooling, plan.md 1b-I (e), with the I2C driver (docs/design-header-io.md, "Placement"): the devices domain on
-  the Pi's development manifest, holding `i2c` and `spi`, its memory from a footprint measured with `erx_i2c`
-  loaded, with the raspi4b suite's line for it.
+* [Medium] tooling, plan.md 1b-I (e), with the I2C driver (docs/design-header-io.md, "Placement: units and domains"):
+  the devices domain on the Pi's development manifest, holding `i2c` and `spi`, its memory from a footprint measured
+  with `erx_i2c` loaded, with the raspi4b suite's line for it.
 * [Low] tooling, the header map reader (`tools/lib/erx/header_map.rb`): `controller?` matches a device to a pin
   table controller by its path's unit address alone, parsing it apart from `unit_address`, so a driven device whose
   path's address is unreadable (`@07e804000`, upper case) skips the rows rule, and the parent bus is ignored. Let
@@ -2716,7 +2716,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, and the trees named below): the
   grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
   which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
-  aliases, and a grant whose client has ended drains, as design-files.md ("Serving", "Waiting requests", rules 1, 2
+  aliases, and a grant whose client has ended drains, as design-files.md ("Serving: the `erx_fs` behaviour", "Waiting requests", rules 1, 2
   and 4 to 6, "Bounds") has it; a program's `/dev/kbd` and `/dev/mouse` reads wait at its draw connection, their
   keeper, which shares one life with the handler. What is left is the one tree that still waits for an event inside
   a callback, the Bluetooth line service's `pair` file (`erx_line`, design-bluetooth.md, "The controller's line"),
@@ -2774,7 +2774,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   (`display/lvgl/erx_lvgl.c`) reaches main's map of descriptor 3 and ends with status 1: the suite can hand a
   program only a pipe write end (`hand_off`), not the read end its standard input needs, and the session holds no
   window buffer lease for `{mem, Lease, Pages}` without the display server
-  ([design-display.md](docs/design-display.md), "A program's window buffer"). The case moves to the display
+  ([design-display.md](docs/design-display.md), "A buffer in a program"). The case moves to the display
   suite with `erx_ui_lvgl`'s `open` on erXos (the `erx_ui_lvgl` item above), where the display server hands out
   the window buffer's lease and the read-end pipe, and sees `erx-lvgl` wait in `poll` for the screen record.
 * [Medium] programs, `PROT_EXEC` in a program's `mmap` or `mprotect` (`musl/src/internal/erxos/syscall.c`, `mmap_call`
@@ -3817,13 +3817,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the terminal.
 * [Medium] programs, a program's `/dev/tty` (`erlang/apps/erx/src/erx_prog_handler.erl`,
   `erlang/apps/erx_session/src/erx_session_export.erl`): the export serves `tty` as a name alone and answers
-  every open of it `enxio` (design-files.md, "Native clients"), but no program's handler yet makes the
-  terminal's description that design-programs.md ("The terminal", "`/dev/tty`") has it make instead: an open
-  of its tty's relay through `erx_session_relay:open_writer/2` under the program's job, through which its
-  reads, writes, watches and controls go to the relay, never through the file protocol. Until it does, a
-  program's open of `/dev/tty` (musl's `getpass`, a `ctermid` user) fails with `ENXIO`, and its standard
-  streams reach the terminal only through its starter's pumps (the item under shell, `erx_shell_program`,
-  below).
+  every open of it `enxio` (design-files.md, "Native clients: `liberx`'s file client"), but no program's
+  handler yet makes the terminal's description that design-programs.md ("The terminal", "`/dev/tty`") has it
+  make instead: an open of its tty's relay through `erx_session_relay:open_writer/2` under the program's
+  job, through which its reads, writes, watches and controls go to the relay, never through the file
+  protocol. Until it does, a program's open of `/dev/tty` (musl's `getpass`, a `ctermid` user) fails with
+  `ENXIO`, and its standard streams reach the terminal only through its starter's pumps (the item under
+  shell, `erx_shell_program`, below).
 * [Low] session, `erx_session_export`: its statfs answers devfs's type for a tree that also holds
   `/bin` and `/etc` (`abi/protocols/9p.txt`, `p9_magic`, one type per kind of tree), its files show
   uid 0 where the design's owner of a file its server records none for is `nobody`
@@ -3849,16 +3849,17 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [High] session, `erx_prog_handler` (file requests): the handler serves `lopen`, `lcreate`, `read`,
   `write` and `clunk` over the program's narrowed namespace through `erx_file_description`, and moves
   their bytes through the data area (`erx_program:data_read/3` and `data_write/3`), but no program
-  sends a file request yet: `liberx` has no file client (docs/design-files.md, "Native clients"), so
-  the programs QEMU suite has no C test program that opens, reads, writes and closes a file. The
-  driver's two data copies (`erx_program_drv.c` `data_slot`, `DATA_READ`, `DATA_WRITE`) run on no
-  target test either, though one needs no file client: a test that owns a program's port can write
-  and read back a slot, and be refused a slot equal to `slots`, a caller other than the owner and a
-  copy after the program ended. The handler's stand-in `erx_program:data_read/3` answers `enosys`, so
-  its effect suite never runs a write that succeeds. `prim_file:erx_open_at/5` and `erx_file_remote:open_flags/4` have no
-  host test against a stand-in file server; the handler's effect suite stands in `erx_file_description`.
-  The other operations of the `{file, ...}` row wait too. No QEMU case runs a program's `pwrite` end to
-  end yet (the programs suite's `fileio` runs `lseek`, `pread` and `fstat`).
+  sends a file request yet: `liberx` has no file client (docs/design-files.md, "Native clients:
+  `liberx`'s file client"), so the programs QEMU suite has no C test program that opens, reads, writes
+  and closes a file. The driver's two data copies (`erx_program_drv.c` `data_slot`, `DATA_READ`,
+  `DATA_WRITE`) run on no target test either, though one needs no file client: a test that owns a
+  program's port can write and read back a slot, and be refused a slot equal to `slots`, a caller other
+  than the owner and a copy after the program ended. The handler's stand-in `erx_program:data_read/3`
+  answers `enosys`, so its effect suite never runs a write that succeeds. `prim_file:erx_open_at/5` and
+  `erx_file_remote:open_flags/4` have no host test against a stand-in file server; the handler's effect
+  suite stands in `erx_file_description`. The other operations of the `{file, ...}` row wait too. No
+  QEMU case runs a program's `pwrite` end to end yet (the programs suite's `fileio` runs `lseek`,
+  `pread` and `fstat`).
 * [Low] programs, `fstat` of a file (`liberx/program/file.c` `erx_prog_file_getattr`; abi/protocols/prog.txt
   `stat`): `st_ino`, `st_dev` and `st_rdev` are not carried and read 0. `ino` and `rdev` need an unsigned
   64-bit kind the frame profile does not have (`integer ... u64` is refused in a frame protocol, which keeps
@@ -4020,7 +4021,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   with their terms. The build check `tools/lib/erx/chokepoint_rules/pipe.rb` keeps the tree's own modules from calling
   them; restrict them to `erx_pipe_srv`'s and the handlers' processes when `erx_policy` sets the quota.
 * [Low] session, `erx_pipe_nif.c` (`end_broken`): the broken-lane line goes to stderr, not to the
-  debug log as one escaped line (docs/design-pipes.md, "Failure handling"); it carries integers only.
+  debug log as one escaped line (docs/design-pipes.md, "Failure handling, diagnostics and
+  debuggability"); it carries integers only.
 * [Low] session, `erx_pipe_nif.c` (`get_obj`, `obj_keep`): for a session process's end, `closed` is
   read without `obj_mutex`, and a keep does not refuse a closed object; reachable only if the server
   passed an object after its own close. Check and count under `obj_mutex`, as `obj_keep_held` does
@@ -5194,7 +5196,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   (`lfs_file_t` in its slot), a write changes only the file it was made through
   (`otp/erts/emulator/nifs/erxos/erx_littlefs_nif.c:707`), and a read through another open of the same file stops at
   that open's own recorded size and block chain (`littlefs/lfs.c:3505`), so running the volume's calls one at a time
-  in its worker does not show one open's write to another. design-files.md ("Serving", "Each tree makes its own
+  in its worker does not show one open's write to another. design-files.md ("Serving: the `erx_fs` behaviour", "Each tree makes its own
   requests atomic") requires every open to see the file as it is, with only its access mode and position its own, and
   OTP's `file_SUITE` checks it through a reader opened before the writes
   (`otp/lib/kernel/test/file_SUITE.erl:3393-3397, 3516-3520`). Make the file's state shared across its opens in the
@@ -5422,7 +5424,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   every exported step must drain, and an owner's monitor is `pending` until the shell hands its reference back with
   `monitored/3`. Thread the effects through the step's return instead, so a step that both makes and ends one
   owner's fid can never emit `{demonitor, pending}`.
-* [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl`, the pure core: design-files.md ("Serving") has the core take
+* [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl`, the pure core: design-files.md ("Serving: the `erx_fs` behaviour") has the core take
   each callback result and return the callbacks to run as effects, but `call/3`, `unlinked/2`, `forget_loose/1` and
   `close_fid/3` run callbacks themselves, as the module's own doc says ("The core calls the tree's callback module
   itself"), so replaying a transition repeats an unlink or a clunk instead of reproducing an effect list, and
@@ -6151,9 +6153,9 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   (RT6a) uses for `ERX_FUNNEL_DELIVER_IF_LINKED`.
 * [Low] Lane layouts, `abi/erx_abi.txt` `erx_lane_hdr.need` and
   `erx_lane_rpage.wake`: the ABI loads them with acquire order, where
-  design-domains.md "Publishing is a release" says relaxed; the litmus tests
-  model the design's relaxed loads. Make the ABI relaxed, or the design
-  acquire with the litmus twins' comments saying so.
+  design-domains.md "Publishing is a release, reading an acquire" says
+  relaxed; the litmus tests model the design's relaxed loads. Make the ABI
+  relaxed, or the design acquire with the litmus twins' comments saying so.
 * [Low] Lane tests, `test/fixtures/lane_driver.c`: the armed take and the
   producer's publication are each one step of the exploration, and the TSan
   race polls instead of parking, so the handshakes' orderings rest on the
@@ -7290,7 +7292,7 @@ to the corpus and follow rc
   strftime scan, not before it as `date.c`'s `strftime_ns` does, so formats such as `%E%N` and `%5%N` differ
   from FreeBSD; make it a format-to-format step first. Add a FreeBSD oracle case for `date -j -u` over the
   operand and format corpus, which settles the `mktime(3)` normalization design-time.md marks unverified.
-* [Medium] time, the wall-clock keeper (`docs/design-header-io.md`, "An I2C real-time clock"): the header design
+* [Medium] time, the wall-clock keeper (`docs/design-header-io.md`, "An I2C real-time clock, for the wall clock without a network"): the header design
   says "the system domain's wall-clock keeper, designed with network time, reads `/dev/rtc/time` at boot and writes
   it after each correction", and [design-time.md](docs/design-time.md#the-real-time-clock-at-boot) designs the keeper
   for QEMU `virt`'s PL031 (`erx_rtc_pl031`, a reading at boot sent as `{rtc, Source, Wall}`), but not its `/dev/rtc`

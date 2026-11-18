@@ -6,7 +6,8 @@
 %% child keyed with the parent's next two blocks while the parent goes on after them. The
 %% split property is a function of the split it judges, so the same check that passes
 %% erx_net_rand:split/1 must refuse a split that hands the child the parent's own key and
-%% counter (docs/design-network-stack.md, "Checksums and random values", seeded failures).
+%% counter (docs/design-network-stack.md, "Checksums and random values: the interface's
+%% gate and the generators", seeded failures).
 -module(erx_net_rand_tests).
 
 -include_lib("eunit/include/eunit.hrl").
