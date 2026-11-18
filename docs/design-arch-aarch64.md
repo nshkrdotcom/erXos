@@ -167,7 +167,9 @@ layout pte_page native 8 8     # stage 1 page descriptor, 4 KiB granule, level 3
 
 The generator emits a get and set function for every bit range, so no code
 packs descriptor bits by hand. The file shares `abi/erx_abi.txt`'s
-`ERX_ABI_VERSION`: a change to either is a new version.
+`ERX_ABI_VERSION`: a change to either is a new version that replaces the old
+form outright, and the manifest check refuses an image built against another
+version of either, with a diagnostic.
 
 ## Algorithms and behavior
 
@@ -967,15 +969,6 @@ rewriting. Its `Registers.json` declares itself "licensed under the BSD
 acknowledges an interrupt, an example of a read with a side effect that
 the file records.
 
-## Compatibility and migration
-
-Until a release promises compatibility, a change to the binding's call
-registers, frames or in-memory layouts replaces the old form outright and
-is a new ABI version, with no path kept for an earlier one. An image is
-built for one architecture, and `abi/arch/aarch64.txt` shares the ABI
-version of `abi/erx_abi.txt`, so the manifest check refuses an image
-built against another version of either, with a diagnostic.
-
 ## Failure handling, diagnostics and debuggability
 
 | Failure | Detection | What remains | User-visible result |
@@ -1106,8 +1099,6 @@ GIC has no ITS, so the GICv2m frame serves both accelerators by one path
 | --- | --- | --- | --- |
 | GICv2m behaviour differs between TCG and HVF | low | MSI drivers | one path for both, tested under HVF |
 | A new core needs a speculation mitigation Linux adds later | medium | a side channel on that core | mitigations are chosen from the ID registers as Linux chooses them, and each board's port checks Linux's list |
-
-No open question remains for the user.
 
 ## References
 

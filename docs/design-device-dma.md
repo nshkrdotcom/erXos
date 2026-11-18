@@ -174,9 +174,9 @@ layer, and with the record's coherence mark, which the root takes from
 the firmware's device tree ([design-device-tree.md](design-device-tree.md)):
 on QEMU `virt` every given device with DMA memory is marked coherent, so
 no maintenance is issued there. Its one lock serialises opens, binding changes and every
-queue call, and is held across service calls (`erx_device_nif.c:12-15`);
+queue call, and is held across service calls (`erx_device_nif.c`);
 register writes, which are BIFs, take no lock (`erx_device_bif.c`,
-`erx_device.c:372-420`). The manifest's device record has a DMA mode
+`erx_device.c`). The manifest's device record has a DMA mode
 and an amount of DMA memory but no coherence mark and no DMA address
 range; its only flag is `hostile` (`abi/manifest.txt`, `erx_mf_device` and
 `mf_device_flags`). On Fiasco, every device's DMA
@@ -188,7 +188,7 @@ less the range's CPU address plus its bus address
 (`vm.c`, `erx_fiasco_vm_contiguous_create` and `erx_fiasco_vm_object_dma_addr`),
 and the range's `cpu` and `last` are read as physical addresses. Fiasco lets user mode clean and invalidate by address
 and read the cache type register
-(`fiasco/kernel/src/kern/arm/64/cpu-arm-64.cpp:34-48`).
+(`fiasco/kernel/src/kern/arm/64/cpu-arm-64.cpp`).
 
 ## The construction: handoffs of granules
 
@@ -764,7 +764,7 @@ buffer goes back to its pool only through a completion or through it, as
 
 | Form | Reset the NIF writes | Idle report it reads | Install |
 | --- | --- | --- | --- |
-| split ring | status 0 | status reads 0 | virtio's initialisation, as now |
+| split ring | status 0 | status reads 0 | virtio's initialisation |
 | register ring | each direction's DMA control with the engine (bit 0) and every ring's enable (bits 1 to 17) cleared in one write, transmit first (`if_genetreg.h:209-218`; FreeBSD's `gen_dma_disable`, `if_genet.c:593-607`; [GENET facts record](research-genet-bcm2711.md#stopping-the-dma-and-confirming-it-stopped)) | each direction's DMA status, block offset `0x1048`, reads bit 0 set, the block disabled, and bit *n* + 1 set for the ring *n* the form uses, bit 17 for FreeBSD's ring 16 ([The DMA status register](research-genet-bcm2711.md#the-dma-status-register)); the ring bit's meaning is inferred, and the board pass settles it | every descriptor's address; for the one ring the form uses, indexes zero, ring and buffer size, start, end and the four pointers, high halves 0; every receive buffer zeroed and handed; ring configuration and DMA control with the ring's enable; then each direction's engine bit, receive first ([Reinstalling the rings](research-genet-bcm2711.md#reinstalling-the-rings)) |
 | ADMA2 table | the software reset for the data lines (FreeBSD's `sdhci.h:200-203`) | the reset bit reads clear | host control 2's owned fields checked clear, the DMA select written to ADMA2 with 32-bit descriptors; `adma_address` is written by each post |
 
@@ -816,24 +816,24 @@ completes every outstanding access
 which completes the maintenance before the thread runs elsewhere. Fiasco
 does not: its exception entry has no such barrier
 (`fiasco/kernel/src/kern/arm/64/ivt.S`), and its switch path orders with
-`DMB ISH` at most (`fiasco/kernel/src/lib/libk/arm/mem-arm.cpp:209-231`).
+`DMB ISH` at most (`fiasco/kernel/src/lib/libk/arm/mem-arm.cpp`).
 On Fiasco the condition that makes this safe is instead that no
 thread is moved while it makes a device call, and it holds by
 construction:
 
 * Fiasco moves a thread only when user mode asks it to, through
-  `l4_scheduler_run_thread` (`fiasco/kernel/src/kern/scheduler.cpp:94-114`),
+  `l4_scheduler_run_thread` (`fiasco/kernel/src/kern/scheduler.cpp`),
   and the backend asks for a started thread only in
-  `erx_thread_set_affinity` (`liberx/backend/fiasco/service.c:780-806`);
+  `erx_thread_set_affinity` (`liberx/backend/fiasco/service.c`);
 * device calls run only on normal schedulers: the NIF's functions are not
-  dirty (`erx_device_nif.c:521-532`), and the register calls are BIFs;
+  dirty (`erx_device_nif.c`), and the register calls are BIFs;
 * each normal scheduler is pinned to one CPU
   ([design-runtime.md](design-runtime.md#scheduling)), and is moved only
   by its own binding, which ERTS makes from that scheduler's own loop,
-  between process runs (`erl_process.c:9762`;
-  `erl_cpu_topology.c:500-510`), through `sched_setaffinity(0, ...)`
-  (`erl_misc_utils.c:87-88`), which names the calling thread
-  (`musl/src/internal/erxos/syscall.c:262-264`).
+  between process runs (`erl_process.c`;
+  `erl_cpu_topology.c`), through `sched_setaffinity(0, ...)`
+  (`erl_misc_utils.c`), which names the calling thread
+  (`musl/src/internal/erxos/syscall.c`).
 
 The one way to break it would be a call that moves a normal scheduler
 from another thread, which no code in the runtime makes. Non-coherent
@@ -843,7 +843,7 @@ that enables GENET's DMA confirms the reset reads of
 
 ## Failure behaviour and refusals
 
-Nothing after a decision's check can fail, as today. The answers each call
+Nothing after a decision's check can fail. The answers each call
 adds:
 
 | Call | Answer | When |
@@ -914,21 +914,20 @@ ran.
   does not allow and an address past the width; it accepts the address of
   a region of the record. Seed: the granule test removed, and a core
   planted to emit an unaligned region passes it.
-* **Ownership and the lock.** Over the stand-in: `write/3` of a GENET
-  descriptor address and of `control0` with another DMA select is
-  `badarg`; of `control0` with another bus width, `ok`; of `control0`
-  setting the stop at block gap request or the continue request,
-  `badarg` in every state; of `interrupt` clearing transfer complete or
-  an error, of `irpt_mask` clearing a required enable, or of
-  `blksizecnt`, while an ADMA2 transfer is in flight, `badarg`, and once
-  it completes, `ok`; of `irpt_mask` clearing the tuning error's enable
-  in flight, `ok`. A
-  host test runs a driver thread writing the reset of all to a stand-in
-  SDHCI, which returns every register to zero, against
-  `command/2` on another thread: `command/2` either issues with every
-  field as installed or refuses, and the stand-in never sees a DMA
-  command with the DMA select or the ADMA address cleared. Seeds: the DMA
-  select's mark set to not owned in the SVD source, and the field check
+* **Ownership and the lock.** Over the stand-in, `write/3` of a GENET
+  descriptor address, of `control0` with another DMA select, of `control0`
+  setting the stop at block gap request or the continue request, and, while
+  an ADMA2 transfer is in flight, of `interrupt` clearing transfer complete
+  or an error, of `irpt_mask` clearing a required enable, or of
+  `blksizecnt`, is `badarg`, the stop and continue requests in every state;
+  the owned fields' neighbours (another bus width, the tuning error's
+  enable in flight, and the in-flight writes once the transfer completes)
+  are `ok`. A host test runs a driver thread writing
+  the reset of all to a stand-in SDHCI, which returns every register to
+  zero, against `command/2` on another thread: `command/2` either issues
+  with every field as installed or refuses, and the stand-in never sees a
+  DMA command with the DMA select or the ADMA address cleared. Seeds: the
+  DMA select's mark set to not owned in the SVD source, and the field check
   removed, each lets the DMA select write succeed; the lock removed from
   `write/3`, or the read-back of the DMA select removed from `command/2`,
   and the stand-in records a DMA transfer through address 0.
@@ -937,23 +936,23 @@ ran.
   transfer complete, the block gap event and an error status each set
   and clear, against the answers above. Over the stand-in, whose device
   writes the buffer some steps after the command and advances
-  `adma_address` by 8 at every entry it fetches: `complete/2` straight
-  after `command/2` is `{ok, []}`, and the buffer is not reused; a
-  transfer that reports an error with transfer complete, or the block
-  gap event with it, breaks the queue and returns no bytes; a
-  `blksizecnt` that differs from the extent makes `command/2` `badarg`;
-  two transfers in a row, each posted, commanded and completed, both
-  move their bytes, and the stand-in reads each table from its start.
-  Seeds: the transfer complete test removed from `complete/2`, and the
-  stand-in's late write lands in the next transfer's buffer, which a byte
-  comparison catches; the error test placed after the transfer complete
-  test, and the erroneous transfer's bytes are returned; the block gap
-  event left out of the end statuses, and a stand-in that stops at a
-  block gap halfway has half a transfer returned as whole; the post's
-  write of `adma_address` removed, and the second `command/2` is
-  `badarg`; the required enables taken as bits 15 to 31, and on a
-  stand-in whose `irpt_mask` bit 15 reads 0, as the specification fixes
-  it, every `command/2` is `badarg`.
+  `adma_address` by 8 at every entry it fetches, `complete/2` straight
+  after `command/2` is `{ok, []}` and the buffer is not reused; a transfer
+  that reports an error with transfer complete, or the block gap event with
+  it, breaks the queue and returns no bytes; a `blksizecnt`
+  that differs from the extent makes `command/2` `badarg`; and two
+  transfers in a row both move their bytes, each read from the table's
+  start. Seeds: the transfer complete test removed from `complete/2`, so
+  the stand-in's late write lands in the next transfer's buffer, which a
+  byte comparison catches; the error
+  test placed after the transfer complete test, so the erroneous
+  transfer's bytes are returned; the block gap event left out of the end
+  statuses, so that a stand-in that stops at a block gap halfway has half a transfer
+  returned as whole; the post's write of
+  `adma_address` removed, so the second `command/2` is `badarg`; the
+  required enables taken as bits 15 to 31, so that on a stand-in whose
+  `irpt_mask` bit 15 reads 0, as the specification fixes it, every
+  `command/2` is `badarg`.
 * **GENET's receive flags.** Over the stand-in, a frame whose status
   carries a CRC error, and one without end of packet: the completion's
   tag carries the flag, the consumer index advances past both, and the
