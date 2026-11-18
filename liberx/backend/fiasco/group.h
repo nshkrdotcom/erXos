@@ -42,7 +42,7 @@ int	erx_fiasco_group_create_body(uint32_t task, uint64_t budget, uint64_t *group
 /*
  * erx_group_configure on a group the root did not take as its own: a handle that names
  * no group of task's is the lookup's refusal, an empty CPU set ERX_EINVAL; the grant is
- * otherwise accepted and not kept, since nothing in the stopgap reads it.
+ * otherwise accepted and not kept, since nothing in the Fiasco backend reads it.
  */
 int	erx_fiasco_group_configure_body(uint32_t task, const erx_fiasco_group_configure_request_t *request);
 /*

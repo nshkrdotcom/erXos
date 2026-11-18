@@ -413,7 +413,7 @@ child_running(void)
  * Starts the ringer (MODE_RINGER), a second program of the session: a space below this
  * task's own, charged to this task's budget, reporting to gate, that runs index 0 of the
  * slice. The one handle it gets is a copy of the child's doorbell, passed with TRIGGER
- * alone, as the pass reports. The stopgap records no rights per handle, so what refuses
+ * alone, as the pass reports. The Fiasco backend records no rights per handle, so what refuses
  * the ringer's other calls on the doorbell is each call's group check, not the mask.
  */
 static int64_t

@@ -12,7 +12,7 @@ require_relative 'runner'
 
 module Erx
   # Threads and timed waits end to end on QEMU (docs/design-fiasco.md,
-  # "Verification", "Thread start", "Failed start", "Umtx"): test/guest/native_threads runs as the
+  # "Verification", "Thread start and failed start", "Umtx"): test/guest/native_threads runs as the
   # root and reports each case on one line, then ends the machine through the
   # service, so a run that reaches its last line and exits has served every call.
   module NativeThreads

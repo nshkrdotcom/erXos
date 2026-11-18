@@ -657,8 +657,8 @@ an ordinary domain, BeamAsm's speedup over the interpreter on OTP's
 benchmarks and on the oracle's suites, the footprint of a domain in each
 flavour and the time to translate a release when the domain starts. It
 decides provisionally: the default table sizes of the runtimes and the
-domain service, a domain's `cap_limit` among them, and not the
-stopgap's own fixed limits; the defaults of `lane` and
+domain service, a domain's `cap_limit` among them, and not
+Fiasco's own fixed limits; the defaults of `lane` and
 the manifest's `system_lane`, the producer's wait rule and whether ERTS
 encodes straight into the lane; the funnel's allowance per step; the busy
 limit and the facets' `max_request` and heap limits
@@ -671,7 +671,7 @@ At GK3, on erXos's kernel, it measures E-D3 and E-D4, with
 `tools/erx bench xdomain-stall` and `domain-lifecycle`, and the full form
 of E-S2 with ERTS processes in one domain and in two domains over a
 connection against kernel threads in one and two spaces, repeats the
-stopgap's measurements, and decides the death path's batching and the
+measurements on Fiasco, and decides the death path's batching and the
 manifest's `system_queue`, confirms or revises every provisional decision,
 and confirms or overturns the absence of any kernel object per
 lightweight process.

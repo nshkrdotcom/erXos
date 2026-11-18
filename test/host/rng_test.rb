@@ -249,7 +249,7 @@ class RngTest < Minitest::Test
     end
   end
 
-  # erx_rng_seed_add, as the stopgap's root mixes the board's RNG200 words after a boot
+  # erx_rng_seed_add, as the root on Fiasco mixes the board's RNG200 words after a boot
   # seed that found no /chosen seed: a source of up to one digest's input mixes in as a
   # seed does, and a longer one is refused and leaves the key the counter gave.
   def test_a_source_added_after_the_boot_seed_mixes_in_as_a_seed_does

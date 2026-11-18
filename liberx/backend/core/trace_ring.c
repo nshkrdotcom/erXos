@@ -4,7 +4,7 @@
  */
 
 /*
- * The stopgap's trace ring and its lock-free reader (docs/design-fiasco.md, "The trace
+ * The Fiasco backend's trace ring and its lock-free reader (docs/design-fiasco.md, "The trace
  * ring"). Every field of a record is reached through its generated accessor, which
  * performs one atomic access with the order abi/kernel.txt declares.
  *

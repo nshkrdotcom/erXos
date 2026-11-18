@@ -1279,8 +1279,8 @@ been made, which the readback catches. That is a stopgap residual
 ## On Fiasco
 
 The PCIe domain, the enumerator, both bridge drivers, the device
-service's PCIe process and the three facets are the same code on the
-stopgap and on erXos's kernel. Fiasco adds `ERX_IRQ_MSI` over the
+service's PCIe process and the three facets are the same code on
+Fiasco and on erXos's kernel. Fiasco adds `ERX_IRQ_MSI` over the
 frame's lines ([The MSI frame on Fiasco](#the-msi-frame-on-fiasco))
 and the give of a `pci` device in the root, as for any device another
 domain holds ([design-fiasco.md](design-fiasco.md#device-records)): its

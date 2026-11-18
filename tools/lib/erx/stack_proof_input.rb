@@ -11,7 +11,7 @@ module Erx
 
   # Readers of the two declaration files the stack proof takes besides the
   # call graph (docs/design-kernel.md#stack-proof,
-  # docs/design-fiasco.md, "Interfaces"):
+  # docs/design-fiasco.md, FD24):
   #
   # * kernel/stack_fiasco.txt, the C17 cores' share of Fiasco's thread
   #   block: the block's size, one allowance per entry role, the entries the
@@ -31,8 +31,8 @@ module Erx
     IDENTIFIER = /\A[A-Za-z_][A-Za-z0-9_]{0,1023}\z/
     BYTES = /\A(?:0|[1-9][0-9]{0,6})\z/
     # The only functions outside the cores a core may call: the undefined
-    # symbols the cores' archive is allowed to keep (docs/design-fiasco.md,
-    # "Interfaces"). A leaf of any other name would make a Fiasco call free.
+    # symbols the cores' archive is allowed to keep (tools/lib/erx/core_archive.rb,
+    # UNDEFINED). A leaf of any other name would make a Fiasco call free.
     LEAF_NAME = CoreArchive::UNDEFINED
     # The roles an entry can play, each with its own allowance, and the
     # name the report gives the entries of each: an entry called on a

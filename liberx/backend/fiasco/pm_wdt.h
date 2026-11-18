@@ -13,7 +13,7 @@
 #include "erx/watchdog.h"
 
 /*
- * The board's hardware watchdog on the stopgap (docs/design-platforms.md, "The
+ * The board's hardware watchdog on Fiasco (docs/design-platforms.md, "The
  * watchdog"; docs/design-fiasco.md, "The Raspberry Pi 4"), which the root's watchdog
  * thread drives in the kernel platform layer's place: the device shim around
  * kernel/core/pm_wdt.c, and the only code of the root that touches the watchdog's

@@ -127,7 +127,7 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   the card were built from, by default this tree's `HEAD`. Since the
   records name a commit, a tag is refused; the workflow resolves
   its tag to the commit before it builds. The image
-  carries the stopgap kernel's GPL-2.0 files and the card those and the
+  carries Fiasco's GPL-2.0 files and the card those and the
   board's GPL-2.0 device tree, so the page links that source on github.com
   beside each download, and `boot.json` records it. These
   are the images CLAUDE.md lets leave the project, each with its source

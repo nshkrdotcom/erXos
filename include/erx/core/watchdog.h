@@ -7,7 +7,7 @@
 #define ERX_CORE_WATCHDOG_H
 
 /*
- * The watchdog core's configuration, as the stopgap's C++ glue sees it
+ * The watchdog core's configuration, as the C++ glue in Fiasco sees it
  * (docs/design-fiasco.md, "Interfaces"). A header of include/erx/core/
  * is the seam between the C17 cores and Fiasco: it compiles as C17 and
  * as C++, and includes nothing but the freestanding standard headers and

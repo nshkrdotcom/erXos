@@ -11,7 +11,7 @@
 # session at boot (docs/design-system.md, "Booting"). The storage domain is an
 # interpreter service domain that holds the block unit and its data, release and
 # read-only system windows and runs the block driver and littlefs at /data
-# (docs/design-stopgap.md, "littlefs in the storage domain" and "The booted slot"); the
+# (docs/design-stopgap.md, "littlefs in the storage domain"; design-fiasco.md, "The booted slot"); the
 # slot writer's six windows, both slots' boot and system partitions and the two records,
 # stay the system domain's (property 8). It serves storage_ctl, its driver-control facet,
 # to the system domain alone (property 8; docs/design-system.md, "The holder's

@@ -283,7 +283,7 @@ size_t	erx_program_end_next(erx_program_end_t *end, erx_program_input_t input,
  * object: install index 5 is the data area while register 5 is hwcap, so an array indexed
  * by install never takes a feature word's index. The
  * session keeps the only DESTROY, and no copy carries DUP or GIVE, so on erXos's kernel the
- * program cannot end, copy or hand on what the session made; on the stopgap the rights are
+ * program cannot end, copy or hand on what the session made; on Fiasco the rights are
  * the session's discipline only (docs/design-programs.md, "A program is a port" and "The
  * channel"; docs/design-fiasco.md).
  */

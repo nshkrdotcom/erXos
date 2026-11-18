@@ -29,7 +29,7 @@ class CpuFeaturesTest < Minitest::Test
     'CONFIG_LAZY_FPU' => [],
     'CONFIG_CPU_VIRT' => []
   }.freeze
-  # Never claimed on the stopgap, whatever its configuration: cpu_features.c's table has no row for them.
+  # Never claimed on Fiasco, whatever its configuration: cpu_features.c's table has no row for them.
   NEVER = %w[PACA PACG BTI MTE CPUID].freeze
 
   # Every feature field at or past each threshold FreeBSD maps: unsigned fields 2,
@@ -131,14 +131,14 @@ class CpuFeaturesTest < Minitest::Test
     assert_empty refused(%w[ffffffffffffffff ffffffffffffffff ffffffffffffffff 7777777777777777 ffffffffffffffff])
   end
 
-  # The table above names every option the stopgap's configuration forbids, so a new one
+  # The table above names every option Fiasco's configuration forbids, so a new one
   # fails here until the features it touches are listed and refused.
   def test_the_forbidden_table_follows_the_fiasco_configuration
     assert_equal Erx::FiascoConfig::FORBIDDEN.sort, FORBIDDEN_FEATURES.keys.sort
   end
 
   # CPUID would have a program read MIDR_EL1 from user mode (OpenSSL's armcap.c does), which
-  # the stopgap does not emulate: no field gives it, and it is never claimed.
+  # Fiasco does not emulate: no field gives it, and it is never claimed.
   def test_cpuid_is_never_claimed
     [ALL, %w[0 0 0 0 0], %w[ffffffffffffffff ffffffffffffffff ffffffffffffffff 7777777777777777 ffffffffffffffff]].each do |words|
       refute_includes features(words).first, 'CPUID', words.inspect

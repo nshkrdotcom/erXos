@@ -77,7 +77,7 @@ erx_dom_boot_up(erx_dom_lib_t *lib, const erx_boot_info_t *system_page, uint64_t
 	lib->view.system_space = system_space;
 	lib->held.system_group = system_page->group.raw;
 	lib->held.time_page = system_page->time_page.raw;
-	/* On the stopgap the root names its one boot archive as image 0. */
+	/* On Fiasco the root names its one boot archive as image 0. */
 	lib->held.image = 0;
 	lib->pack_flags = system_page->pack_flags;
 	lib->hwcap = system_page->hwcap;

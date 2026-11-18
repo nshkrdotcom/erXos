@@ -61,7 +61,7 @@ receiver, and the shell's printer of its stream, one escaped line per entry.
 %% Nanoseconds in a second: erx_clock_ns, the entries' time, printed as seconds.
 -define(NS_PER_S, 1000000000).
 %% The most records one read asks for, and the most reads of one ring in one round:
-%% eight full reads cover the stopgap's whole ring of 4,096 records.
+%% eight full reads cover the Fiasco backend's whole ring of 4,096 records.
 -define(READ_MAX, 512).
 -define(READS_PER_ROUND, 8).
 %% The most session messages one round's batch holds; the rest are dropped and counted.

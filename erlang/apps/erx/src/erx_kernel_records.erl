@@ -63,9 +63,9 @@ cpus() ->
 -doc """
 Domain's group: the system domain's on ERX_CAP_SELF, and another
 domain's as the domain library reads it on its own handle
-(erx_domain_lib:info/2). The stopgap's backend refuses any group but the
+(erx_domain_lib:info/2). The Fiasco backend refuses any group but the
 root's, unlike erXos's kernel, which reports any group the caller holds,
-so every attribute is unsupported there (TODO.md, the stopgap's group reports).
+so every attribute is unsupported there (TODO.md, the Fiasco backend's group reports).
 """.
 -spec group(non_neg_integer()) -> erx_schema:record().
 group(Domain) ->
@@ -74,7 +74,7 @@ group(Domain) ->
 -doc """
 Domain's budget: the system domain's on ERX_CAP_SELF, the root's one
 budget, and another domain's own budget through the domain library, as
-for group/1, which the stopgap refuses as it does any other budget handle
+for group/1, which the Fiasco backend refuses as it does any other budget handle
 (docs/design-fiasco.md, "Reporting kernel objects").
 """.
 -spec budget(non_neg_integer()) -> erx_schema:record().

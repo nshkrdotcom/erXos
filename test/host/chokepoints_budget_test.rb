@@ -30,7 +30,7 @@ class ChokepointsBudgetTest < Minitest::Test
     # tag ends the line.
     found = evaluate(budget, { 'fiasco/kernel/src/kern/split.h' => "struct erx_reserve\n{\n\tlong charged;\n};\n" })
     assert_equal [1], found.map(&:line)
-    # The inherited tree outside the stopgap kernel is not read.
+    # The inherited tree outside Fiasco's kernel is not read.
     assert_empty evaluate(budget, { 'fiasco/l4re-core/x.c' => "#include \"budget_impl.h\"\n" },
                           imported: ['fiasco/l4re-core/x.c'])
     refute_empty evaluate(budget, { 'fiasco/kernel/src/kern/x.cpp' => "#include \"budget_impl.h\"\n" },

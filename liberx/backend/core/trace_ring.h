@@ -7,7 +7,7 @@
 #define ERX_BACKEND_TRACE_RING_H
 
 /*
- * The stopgap's trace ring (docs/design-fiasco.md, "The trace ring"): one ring of
+ * The Fiasco backend's trace ring (docs/design-fiasco.md, "The trace ring"): one ring of
  * erx_trace_record records, the layout and events of the kernel's rings. Writers are
  * serialised by their backend's trace lock; the reader takes no lock and keeps a record
  * only if its sequence count, read before and after its fields, is the even count of the

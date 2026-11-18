@@ -18,7 +18,7 @@
  * N-th call named CALL ("reserve", "map", "child" or "commit") fail with
  * ERX_ENOMEM.
  *
- * Beside the arena, the stand-in keeps the stopgap's placement: the
+ * Beside the arena, the stand-in keeps the Fiasco backend's placement: the
  * program's own image, the loader's, is LOADER_BYTES from exec_window_base
  * (abi/protocols/prog.txt) and the session mapped the record's page, and a
  * reservation without an address takes the lowest place from ROOM below
@@ -51,7 +51,7 @@
 #define	BUDGET		UINT64_C(0x300)
 #define	CHILD_FIRST	UINT64_C(0x200)
 #define	CHILDREN_MAX	16
-/* The loader's image, and the stopgap's room below the window: from the end of its task area (time.h). */
+/* The loader's image, and the backend's room below the window: from the end of its task area (time.h). */
 #define	LOADER_BYTES	(UINT64_C(64) << 10)
 #define	ROOM		(UINT64_C(760) << 10)
 #define	TAKEN_MAX	8

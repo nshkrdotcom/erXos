@@ -506,7 +506,7 @@ static void
 record_case(const char *name, uint64_t label, uint32_t kind, uint64_t space,
     int64_t status)
 {
-	/* The stopper's thread is 0, as the stopgap reports it. */
+	/* The stopper's thread is 0, as the Fiasco backend reports it. */
 	erx_fault_t record = { .kind = kind, .space = space,
 	    .status = status };
 	erx_dom_action_t action;

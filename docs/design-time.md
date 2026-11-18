@@ -274,8 +274,8 @@ W     = ((t2 - m1) + (t3 - m4)) div 2
 exactly the time page's `wall_offset_ns`. The clock service sets the
 clock by storing `W` in the page: `erx_time_set_offset(time_page,
 offset_ns)` writes `offset_ns` as the page's offset, unchanged, so no
-time between measuring and storing, a descheduled caller or the
-stopgap's crossing to its service included, changes what is stored.
+time between measuring and storing, a descheduled caller or,
+on Fiasco, the crossing to its service included, changes what is stored.
 
 **Every offset lies in one range.** The setter refuses with `ERX_EINVAL`
 an offset outside `0..time_offset_max`, `2^62 - 1` ns (146 years, to

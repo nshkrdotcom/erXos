@@ -44,7 +44,7 @@ stalling(D) ->
 %% Worker options over View, whose entries are {D, Agent} or the domain
 %% service's own {D, Agent, Service}; {D, Agent} stands for a living domain
 %% of principal 7 (living/2), and {D, ended} for one that ended.
-%% The kernel collector answers as the stopgap's domain library does for
+%% The kernel collector answers as the domain library on Fiasco does for
 %% another domain's group and budget, ERX_ENOTSUP.
 options(View) ->
     #{view => fun(_Scope) -> {ok, [entry(Entry) || Entry <- View]} end,

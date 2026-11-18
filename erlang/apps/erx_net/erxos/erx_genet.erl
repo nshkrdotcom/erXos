@@ -44,7 +44,7 @@ reset included, comes through `event/2`.
   driver: its restart resets the controller.
 
 Every register goes by its name in hw/svd/genet/genet.svd. The design places the device
-in the network domain; on the stopgap, whichever domain the manifest gives the record
+in the network domain; on Fiasco, whichever domain the manifest gives the record
 drives it.
 """.
 

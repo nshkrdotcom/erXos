@@ -102,7 +102,7 @@ class Blake3Test < Minitest::Test
     end
   end
 
-  # Bootstrap and the stopgap kernel's glue are C++, so the interface
+  # Bootstrap and the glue in Fiasco are C++, so the interface
   # header compiles as C++ too, hosted and for the kernel's target.
   def test_the_header_compiles_as_cxx
     source = File.join(@directory, 'header.cpp')

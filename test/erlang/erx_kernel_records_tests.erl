@@ -128,7 +128,7 @@ every_record_validates_test() ->
                                            {ok, <<5:64/little, 0:64, 0:32, 1:32/little, 2:32/little,
                                                   25:32/little>>}, 0)).
 
-%% The machine's memory figures are the root's pool's on the stopgap:
+%% The machine's memory figures are the root's pool's on Fiasco:
 %% liberx's partial mask names them, so each is the root pool's partial
 %% value, while uptime, which the kernel's clock gives whole, is ok.
 machine_memory_is_the_pools_partial_test() ->

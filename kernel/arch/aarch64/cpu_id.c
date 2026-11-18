@@ -6,7 +6,7 @@
 /*
  * The boot CPU's identification registers, read in kernel mode by bootstrap,
  * which links this file (tools/lib/erx/core_archive.rb, BOOT_SOURCES): user
- * mode cannot read them, and the stopgap kernel publishes no copy. Only the
+ * mode cannot read them, and Fiasco publishes no copy. Only the
  * boot CPU is read (TODO.md). The reads are the generated accessors of
  * hw/sysreg/aarch64.json, and this is the one file that calls them (the
  * sysreg-read chokepoint).

@@ -212,7 +212,7 @@ static JitAllocator *pick_allocator() {
      * `blockSize` is analogous to "carrier size." Upstream picks 32 MiB
      * because dual mapping costs a file descriptor per block on most
      * platforms. On erXos a block costs one JIT object and its two
-     * mappings, no descriptor, and on the stopgap a JIT object's pages are
+     * mappings, no descriptor, and on Fiasco a JIT object's pages are
      * committed when it is made, so a large block is memory the domain
      * spends before it loads a module. JitAllocator makes its first block
      * twice this size and each later block twice the last, up to 64 MiB,

@@ -13,7 +13,7 @@
 
 /*
  * The total of every device's dma_memory in the manifest's device table into *total:
- * the memory the root makes for devices, once each, which sizes the stopgap's
+ * the memory the root makes for devices, once each, which sizes the Fiasco backend's
  * contiguous pool. The packer counts the same total (the admission report's
  * dma_memory). Returns false when a device cannot be read or the total overflows.
  * boot_manifest.c defines it; this header stands alone because the root reads it

@@ -5,7 +5,7 @@
 require 'minitest/autorun'
 require_relative '../../tools/lib/erx/glue_imports'
 
-# The check that keeps the stopgap's glue from reaching a Fiasco internal not
+# The check that keeps erXos's glue from reaching a Fiasco internal not
 # on its allowlist, fed the seeded violations the design names.
 class GlueImportsTest < Minitest::Test
   M = Erx::GlueImports

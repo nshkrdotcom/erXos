@@ -255,7 +255,7 @@ typedef struct erx_dom_range {
  * device in the creation of the configured row its unit is placed on, and
  * where the manifest places it. The boot view builds one per row of the
  * manifest's device table, in its order, so an entry's index is its
- * manifest device row; on the stopgap the give's window and line objects
+ * manifest device row; on Fiasco the give's window and line objects
  * come from the entry at that index. Its ranges are the pages its
  * register window touches, and the view admits only a placement that
  * gives each unit whole to one holder (erx_dom_view_build).
@@ -514,7 +514,7 @@ typedef struct erx_dom_parameter {
  * in its ready answer (property 14). Its operations are declarations of
  * the service's interface, in ascending number order, each once; only a
  * service the system domain serves has any, since only its erx_facet
- * checks them on the stopgap (docs/design-time.md, "Phase 1").
+ * checks them on Fiasco (docs/design-time.md, "Phase 1").
  */
 typedef struct erx_dom_facet {
 	uint32_t	grantee_kind;	/* ERX_MF_GRANTEE_SYSTEM, _DOMAIN or _SESSION */

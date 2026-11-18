@@ -35,7 +35,7 @@ right trace 30 "read authorized trace and log records"
 right entropy 31 "credit entropy from an authorized source"
 
 # The longest packed copy of the firmware's device tree bootstrap hands the
-# root (docs/design-device-tree.md, "On the stopgap").
+# root (docs/design-device-tree.md, "On Fiasco").
 limit boot_tree_max u32 1048576
 
 # erx.watchdog=P,D,B, in seconds: P from 1 to 60, D from 2P to 600, B from D

@@ -6,7 +6,7 @@ require_relative 'bounded_file'
 require_relative 'error'
 
 module Erx
-  # The allowlist of what the stopgap's glue may call in Fiasco
+  # The allowlist of what erXos's glue may call in Fiasco
   # (docs/design-fiasco.md, "Interfaces"). fiasco/erx_glue_imports.txt has
   # one `SYMBOL EFFECT FILE` per line: the symbol, what the glue uses it for,
   # and the glue file that may reference it. A glue object with an undefined

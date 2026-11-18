@@ -28,7 +28,7 @@
  * gate_lock covers the table and the start's handshake. The worker holds it across each
  * deposit and the trigger that follows, so once erx_gate_worker_unregister has taken it
  * and freed the sink, no trigger of the sink's object is still to come and its port may
- * close the object. On the stopgap a trigger is a request to the system domain's service,
+ * close the object. On Fiasco a trigger is a request to the system domain's service,
  * which a scheduler taking the lock meanwhile waits behind (docs/todo-performance.md); no
  * other lock is taken under gate_lock.
  */

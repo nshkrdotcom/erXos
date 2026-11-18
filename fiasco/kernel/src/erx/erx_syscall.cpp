@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 // SPDX-License-Identifier: BSD-2-Clause
 //
-// The kernel side of erXos's kernel call on the stopgap (docs/design-fiasco.md,
+// The kernel side of erXos's kernel call on Fiasco (docs/design-fiasco.md,
 // "Transport"): the fork's system-call trap hands a call made with erXos's trap
 // immediate here. This file copies the registers out of the frame into a
 // private snapshot, names the caller, and lets the cores decide; it decides

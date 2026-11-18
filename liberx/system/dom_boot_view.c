@@ -394,7 +394,7 @@ boot_units(const erx_manifest_view_t *manifest, erx_dom_device_entry_t *entries)
  * whose pages meet or that name one line are one unit, so the manifest
  * must have them in one unit row, which has one holder. A unit split
  * across two rows, two holders on one page or one line included, refuses
- * the view. So does a device marked confined: the stopgap's catalogue
+ * the view. So does a device marked confined: the Fiasco backend's catalogue
  * lists no IOMMU stream, and a confined device is given only on one; and
  * DMA memory that is not whole pages, or of a device-tree row of no kind,
  * which no give makes. Devices of one unit may share pages and lines on
@@ -1045,7 +1045,7 @@ boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *par
  * packer writes them, so one walk over the declarations, with a cursor on
  * the first row not yet matched, matches each row to its declaration and
  * leaves over only a row that is undeclared, repeated or out of order. On
- * the stopgap only the system domain's erx_facet checks a grant's
+ * Fiasco only the system domain's erx_facet checks a grant's
  * operations (docs/design-time.md, "Phase 1"), so a facet of a service a
  * configured domain serves names none; a tree's interface declares none
  * (abi_contracts.rb).

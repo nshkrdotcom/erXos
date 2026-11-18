@@ -679,9 +679,9 @@ case_entropy(void)
 
 /*
  * The auxiliary vector holds AT_HWCAP, which on every CPU erXos runs on has FP and Advanced
- * SIMD and never a feature whose state the stopgap kernel does not save or enable (SVE,
+ * SIMD and never a feature whose state Fiasco does not save or enable (SVE,
  * pointer authentication) or CPUID, which it does not emulate; AT_HWCAP2, which claims
- * nothing on the stopgap; and AT_RANDOM, which names 16 bytes from the generator, not all
+ * nothing on Fiasco; and AT_RANDOM, which names 16 bytes from the generator, not all
  * zero. getauxval sets errno to ENOENT for a key the vector lacks.
  */
 static int

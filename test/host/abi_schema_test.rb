@@ -570,7 +570,7 @@ class AbiSchemaTest < Minitest::Test
 
   # The table the boot view checks a facet's operation rows against (erx_service_operations):
   # a declaration's rows in number order, and an interface served as a tree that declares
-  # operations, which no tree grant checks on the stopgap, refused.
+  # operations, which no tree grant checks on Fiasco, refused.
   def test_service_operations_are_tabled_and_a_tree_s_are_refused
     declared = "service shown 3\n  served_as message\n  operation take 2\n  operation give 1\n"
     header = Erx::ABI::CEmitter.header(schema(FACET_ROW + declared))

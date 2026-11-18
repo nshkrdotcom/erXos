@@ -127,7 +127,7 @@
 _Static_assert(ERX_PROGRAM_INSTALLS <= ERX_PROGRAM_CAP_LIMIT, "the install fits the anchor's table");
 _Static_assert(ERX_PROGRAM_INSTALLS <= PROGRAM_IMAGE_CAP_LIMIT, "the install fits the image's table");
 /*
- * The session's pool for programs, which a spec's cap must not exceed. The stopgap keeps
+ * The session's pool for programs, which a spec's cap must not exceed. The Fiasco backend keeps
  * budgets as records and reports no budget's cap, so the session has no pool to read yet;
  * until it does, the carve of the program's budget is the only bound (TODO.md).
  */

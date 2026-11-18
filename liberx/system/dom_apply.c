@@ -293,7 +293,7 @@ apply_step(apply_t *apply, const erx_dom_step_t *step)
 	return (status);
 }
 
-/* A group with the specification's grant, which the stopgap checks and does not keep. */
+/* A group with the specification's grant, which the Fiasco backend checks and does not keep. */
 static int
 apply_group(apply_t *apply, const erx_dom_step_t *step)
 {
@@ -393,10 +393,10 @@ give_entry(const apply_t *apply, const erx_dom_unit_plan_t *give, const erx_dom_
  * One step of give `at`. A window is made over the page run the step
  * names; a line's, DMA window's or memory's object from the catalogue
  * entry of the device whose resource the step names, the manifest's
- * device row, from the lines and facts that row gives: the stopgap has no
+ * device row, from the lines and facts that row gives: the Fiasco backend has no
  * resource object, and each create ignores its resource argument
  * (liberx/backend/api.h), so the resource step makes nothing. A DMA window
- * needs an IOMMU stream, which the stopgap's view refuses, so no give
+ * needs an IOMMU stream, which the Fiasco backend's view refuses, so no give
  * holds one.
  */
 static int
@@ -425,7 +425,7 @@ apply_give_step(apply_t *apply, uint32_t at, const erx_dom_step_t *step)
 	case ERX_DOM_STEP_CONTIGUOUS:
 		if ((entry = give_entry(apply, give, step)) == NULL)
 			return (ERX_EINVAL);
-		/* The device's DMA translation, which the stopgap takes in place of the resource. */
+		/* The device's DMA translation, which the Fiasco backend takes in place of the resource. */
 		range = erx_boot_dma_range(&entry->facts);
 		status = erx_mem_create_contiguous_in(budget, step->size, &range, &handle);
 		break;
@@ -665,7 +665,7 @@ apply_bootinfo(apply_t *apply)
 	/*
 	 * No install names a space to itself: a domain names its own as every
 	 * space does, by ERX_CAP_SELF. group_ctl and group_stat stay
-	 * ERX_CAP_NULL on the stopgap, whose group status page is the home
+	 * ERX_CAP_NULL on Fiasco, whose group status page is the home
 	 * task's own (docs/design-fiasco.md, "Boot information").
 	 */
 	inputs.space = (erx_cap_t){ .raw = ERX_CAP_SELF };

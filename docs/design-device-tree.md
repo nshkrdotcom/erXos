@@ -114,7 +114,7 @@ strings end at byte 7,847, marks 35 nodes `dma-coherent`, each of its 32
 virtio-mmio transports among them, and puts 32 bytes of `rng-seed` in
 `/chosen`.
 
-**How the stopgap hands over the tree.** `bootstrap` holds the tree
+**How Fiasco's boot hands over the tree.** `bootstrap` holds the tree
 (`fiasco/bootstrap/server/src/erx_image.cc:375-376`, refusing a boot
 without one) and copies `/chosen`'s `bootargs`, the node `stdout-path`
 names and the boot pair into the boot handoff record (`:426-429`;
@@ -684,7 +684,7 @@ claimed for either.
    page fields, against extending the root resource's entries.
    Recommendation: the object, for the reason under Alternatives.
 3. **The host link's `erx.hostlink=1`.** The word exists because the
-   stopgap's root cannot see whether the machine has the host link's UART
+   root on Fiasco cannot see whether the machine has the host link's UART
    ([design-fiasco.md](design-fiasco.md#the-command-line)); with the tree
    in hand it can, as erXos's kernel does. Recommendation: give the host
    link's record exactly when the tree has an enabled node at the

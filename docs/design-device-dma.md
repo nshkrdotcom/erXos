@@ -168,7 +168,7 @@ length it reports, and notes that a driver that does not know how much
 was written must zero the buffer beforehand to avoid leaking data
 (Virtio 1.2, sections 2.7.8 and 2.7.8.2).
 
-**The stopgap's NIF and pool.** The device NIF runs virtio's split ring
+**The NIF and the pool on Fiasco.** The device NIF runs virtio's split ring
 through the sequencer below, with `G` and `L` from the architecture
 layer, and with the record's coherence mark, which the root takes from
 the firmware's device tree ([design-device-tree.md](design-device-tree.md)):

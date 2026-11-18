@@ -245,7 +245,7 @@ and never fetch them implicitly.
 
 The import plan names the pinned archive and the selected files, retaining
 their relative paths and license texts. OTP enters `otp/`, musl enters
-`musl/`, and the frozen stopgap set enters `fiasco/`. Each imported part's
+`musl/`, and the frozen Fiasco set enters `fiasco/`. Each imported part's
 `ORIGIN.md` contains its repository, release or full commit, archive digest,
 import selection and a machine-readable inventory of the imported payload.
 Each file entry records its original hash, SPDX expression and attribution

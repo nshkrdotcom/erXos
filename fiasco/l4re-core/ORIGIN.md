@@ -32612,31 +32612,31 @@ Third-party notices remain in their original files.
     },
     {
       "path": "libgcc",
-      "reason": "the stopgap's user programs link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
+      "reason": "the user programs built from this tree link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
     },
     {
       "path": "libgcc-crt",
-      "reason": "the stopgap's user programs link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
+      "reason": "the user programs built from this tree link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
     },
     {
       "path": "libgcc-headers",
-      "reason": "the stopgap's user programs link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
+      "reason": "the user programs built from this tree link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
     },
     {
       "path": "libgcc-pure",
-      "reason": "the stopgap's user programs link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
+      "reason": "the user programs built from this tree link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
     },
     {
       "path": "libgcc_eh",
-      "reason": "the stopgap's user programs link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
+      "reason": "the user programs built from this tree link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
     },
     {
       "path": "libgcc_eh-headers",
-      "reason": "the stopgap's user programs link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
+      "reason": "the user programs built from this tree link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
     },
     {
       "path": "libgcc_eh-pure",
-      "reason": "the stopgap's user programs link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
+      "reason": "the user programs built from this tree link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
     }
   ],
   "removed": [],

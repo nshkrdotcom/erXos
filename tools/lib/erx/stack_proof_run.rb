@@ -13,7 +13,7 @@ require_relative 'stack_proof'
 require_relative 'syntax_tree'
 
 module Erx
-  # The stack proof as the build runs it on the stopgap
+  # The stack proof as the build runs it on Fiasco
   # (docs/design-fiasco.md, "Interfaces"): it proves the C17 cores'
   # call graph at -O0 and at the level of the cores' archive, -O2, and
   # writes the report. The cores and their flags are the archive's

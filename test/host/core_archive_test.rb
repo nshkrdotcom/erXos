@@ -7,7 +7,7 @@ require 'tmpdir'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/core_archive'
 
-# The C17 cores' archive as the stopgap kernel links it: its members, its
+# The C17 cores' archive as Fiasco links it: its members, its
 # build records, its seam copy, its undefined-symbol allowlist, and its
 # reuse of an unchanged build.
 class CoreArchiveTest < Minitest::Test

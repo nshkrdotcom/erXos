@@ -29,8 +29,8 @@ module Erx
     # counter, which Timer::system_clock() reads only with it, a tick
     # count in the information page without it (design-fiasco.md, "Boot handoff").
     REQUIRED = %w[CONFIG_FPU CONFIG_PERFORMANCE CONFIG_PERF_CNT_USER CONFIG_SYNC_CLOCK].freeze
-    # The fork switches FP state eagerly and leaves SVE trapped ("FP and SIMD
-    # state"); the thread region is a constant of the non-hypervisor layout.
+    # The fork switches FP state eagerly and leaves SVE trapped ("Eager FP
+    # switching"); the thread region is a constant of the non-hypervisor layout.
     FORBIDDEN = %w[CONFIG_LAZY_FPU CONFIG_ARM_SVE CONFIG_CPU_VIRT].freeze
     # What a release kernel leaves out (design-fiasco.md, the kernel): the kernel debugger and
     # the kernel's own console input. With either built in, a panic waits on

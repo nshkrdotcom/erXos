@@ -9,7 +9,7 @@
 /*
  * The kernel's entropy generator: one ChaCha20 key (RFC 8439), used with
  * the zero nonce. A header of include/erx/core/ is the seam between the
- * C17 cores and the stopgap's C++ glue: it compiles as C17 and as C++ and
+ * C17 cores and the C++ glue in Fiasco: it compiles as C17 and as C++ and
  * includes only the freestanding standard headers.
  *
  * Every read and every mix spends the current key exactly once and

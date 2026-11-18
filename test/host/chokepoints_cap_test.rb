@@ -86,7 +86,7 @@ class ChokepointsCapTest < Minitest::Test
     found = evaluate(clear, { Rules::CAP_SLOT_IMPL => call, 'include/erx/abi.h' => call })
     assert_equal ['include/erx/abi.h:1', "#{Rules::CAP_SLOT_IMPL}:1"],
                  found.map { |violation| "#{violation.path}:#{violation.line}" }.sort
-    # The inherited tree outside the stopgap kernel is not read.
+    # The inherited tree outside Fiasco's kernel is not read.
     assert_empty evaluate(clear, { 'fiasco/l4re-core/x.c' => "erx_cap_slot_clear(0, 0, 0);\n" },
                           imported: ['fiasco/l4re-core/x.c'])
   end

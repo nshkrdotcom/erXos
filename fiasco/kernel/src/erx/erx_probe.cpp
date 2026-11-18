@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //
 // The link probe of erXos's C17 cores (docs/design-fiasco.md,
-// "Interfaces", Build): one call from the kernel's C++ into the cores'
+// "Interfaces"): one call from the kernel's C++ into the cores'
 // archive, which erXos's LLVM build compiles and the kernel link takes
 // from ERX_CORE_ARCHIVE. The boot prints the result, and the boot
 // transcript (tools/lib/erx/qemu.rb) requires the line, so a kernel whose

@@ -7,7 +7,7 @@ The collector of `[kernel, log]` (docs/design-live.md, "Inspection
 records"): the kernel log's lines from a sequence number on, read with
 erx_log:read/1 from a cursor of the inspector's own, so nothing the
 console or another reader sees moves. It runs in the system domain,
-which alone reads the log on the stopgap kernel; another domain reaches
+which alone reads the log on Fiasco; another domain reaches
 the record through its inspect facet (erx_inspector:route/4).
 
 The record's entries are `{Sequence, Line}`, each line as the log core

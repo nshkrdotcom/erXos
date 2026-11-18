@@ -90,7 +90,7 @@ erx_fiasco_time_page_map(uint32_t task)
 	return (erx_fiasco_vm_object_map(task, time_record, ERX_FIASCO_TIME_PAGE_ADDR, ERX_PAGE_SIZE, 0, ERX_PROT_R));
 }
 
-/* The stopgap checks no right, so time_page_cap names nothing here (docs/design-time.md, "Phase 1"). */
+/* This backend checks no right, so time_page_cap names nothing here (docs/design-time.md, "Phase 1"). */
 int
 erx_time_set_offset(erx_cap_t time_page_cap, uint64_t offset_ns)
 {

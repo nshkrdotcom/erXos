@@ -57,7 +57,7 @@ erx_prog_sig_check(int signo, const struct sigaction *act)
 	/* SIGKILL and SIGSTOP keep SIG_DFL, which sigaction may still set, as FreeBSD's kern_sig.c allows. */
 	if ((signo == ERX_SIGKILL || signo == ERX_SIGSTOP) && act->sa_handler != SIG_DFL)
 		return (-EINVAL);
-	/* Only SIG_DFL and SIG_IGN: a handler needs the upcalls the stopgap does not carry. */
+	/* Only SIG_DFL and SIG_IGN: a handler needs the upcalls the Fiasco backend does not carry. */
 	if (act->sa_handler != SIG_DFL && act->sa_handler != SIG_IGN)
 		return (-EINVAL);
 	return (0);

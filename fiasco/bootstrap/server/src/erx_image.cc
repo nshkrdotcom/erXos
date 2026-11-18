@@ -329,7 +329,7 @@ drop_initrd(void *tree)
 }
 
 // The root's read-only copy of the firmware's device tree
-// (docs/design-device-tree.md, "On the stopgap"): opened into the room the plan
+// (docs/design-device-tree.md, "On Fiasco"): opened into the room the plan
 // chose, of the tree's declared size, without the initrd's properties, packed so
 // it holds no free space, and its whole pages reserved for the root to read and
 // never write. The root, not bootstrap, checks the copy's contents with

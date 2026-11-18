@@ -376,7 +376,7 @@ class LogTest < Minitest::Test
                  '-o', File.join(@directory, 'log.o')], name: 'compile-target', deadline: 60)
   end
 
-  # ERX_LOG_FORMAT holds on any compiler flags, the stopgap kernel's included:
+  # ERX_LOG_FORMAT holds on any compiler flags, Fiasco's included:
   # the check is the language's, with warnings off.
   def test_the_format_macro_compiles_a_literal_and_nothing_else
     call = ->(format) { "#include \"erx/log.h\"\nvoid f(erx_log_t *log, const char *name);\n" \

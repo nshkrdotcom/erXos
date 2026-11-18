@@ -13,8 +13,8 @@ require_relative 'output_directory'
 require_relative 'pack_provenance'
 
 module Erx
-  # The C17 cores as the stopgap kernel links them (docs/design-fiasco.md,
-  # "Interfaces", Build): one recipe compiles every core of the kernel with
+  # The C17 cores as Fiasco links them (docs/design-fiasco.md,
+  # "Interfaces"): one recipe compiles every core of the kernel with
   # clang for AArch64, and one archive collects them. The same recipe
   # serves the stack proof, so the objects the proof reads at the archive's
   # level are the objects the kernel links.

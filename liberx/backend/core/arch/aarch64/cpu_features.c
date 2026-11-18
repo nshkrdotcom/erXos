@@ -6,7 +6,7 @@
 /*
  * AT_HWCAP and AT_HWCAP2 from the boot CPU's identification registers
  * (docs/design-arch-aarch64.md, "CPU feature words"). The table in
- * erx_cpu_features has one row for each feature the stopgap kernel lets user
+ * erx_cpu_features has one row for each feature Fiasco lets user
  * mode use, and a feature's bit is set when its field is at least the least
  * value that has it. Fields are read through the accessors generated from
  * hw/sysreg/aarch64.json; the least values are FreeBSD 15.1.0's
@@ -14,7 +14,7 @@
  * sys/arm64/include/armreg.h); the bits are musl's own, from its
  * arch/aarch64/bits/hwcap.h.
  *
- * A feature gets a row only once the stopgap is shown to enable it for user
+ * A feature gets a row only once Fiasco is shown to enable it for user
  * mode and to save its state on a switch, and the row's comment cites where,
  * in Fiasco's sources under fiasco/kernel/src/kern/arm: a bit for state the
  * kernel does not save would let one thread see another's registers. Without

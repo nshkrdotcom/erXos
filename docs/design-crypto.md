@@ -697,7 +697,7 @@ for the resolver.
 
 | Failure | Seen as | Result |
 | --- | --- | --- |
-| the kernel's generator does not answer (the stopgap's generator service down) | `getrandom` fails with `EIO` | OpenSSL's generator stays unseeded, or fails its next reseed; `crypto:strong_rand_bytes/1` raises; the caller's operation fails and is retried by its own supervisor |
+| the kernel's generator does not answer (on Fiasco, the root's generator service down) | `getrandom` fails with `EIO` | OpenSSL's generator stays unseeded, or fails its next reseed; `crypto:strong_rand_bytes/1` raises; the caller's operation fails and is retried by its own supervisor |
 | a weak seed on a development build | the banner's `entropy_quality` | keys work and are as weak as the seed; a release build never boots so |
 | a domain's environment sets `OPENSSL_armcap` | slower or software code paths, or a fault at the first use of an instruction the CPU lacks | that domain's own cryptography only; a fault ends that domain |
 | a `crypto` beam in the system release | `on_load` fails: no static NIF `crypto` | the system release does not boot; the build's release check refuses it first |

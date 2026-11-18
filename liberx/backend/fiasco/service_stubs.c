@@ -256,7 +256,7 @@ erx_mem_dma_addr(uint64_t mem, uint64_t offset, uint64_t *addr)
  * A reply holds two words, so a read asks for them until it has its bytes. The reply on the
  * stack is erased once its words are in mr, and a failed read zeroes mr's first len bytes,
  * so a failure leaves no entropy behind in mr. The generator service's copies, in
- * its own and this thread's Fiasco UTCB, are the stopgap's (TODO.md, security residuals).
+ * its own and this thread's Fiasco UTCB, are the Fiasco backend's (TODO.md, security residuals).
  */
 int
 erx_entropy_read(uint32_t len)

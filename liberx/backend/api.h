@@ -163,10 +163,10 @@ int	erx_boot_tree(const void **bytes, size_t *size) ERX_WARN_UNUSED_RESULT;
  * handle naming no object is ERX_EINVAL, as every handle is hosted, another kind of object
  * ERX_ETYPE, and an offset past the end ERX_ERANGE.
  *
- * erx_mem_create_contiguous_in is the stopgap's create of a device's memory, which only the
+ * erx_mem_create_contiguous_in is the Fiasco backend's create of a device's memory, which only the
  * root calls, and which erXos's kernel does not have (docs/design-fiasco.md, "The pool"):
  * the kernel finds the device's DMA
- * window from the resource, and the stopgap, which has no resource objects, takes it as a
+ * window from the resource, and the Fiasco backend, which has no resource objects, takes it as a
  * value from the device's tree facts. The run lies wholly inside the CPU addresses the range
  * covers, and the object records bus - cpu, so erx_mem_dma_addr gives the bus address. A
  * range whose last is below its cpu, or whose last bus address would pass 2^64 - 1, is
@@ -292,7 +292,7 @@ int	erx_backend_trace_read(uint64_t cursor, erx_trace_record_t *records, uint32_
 
 /*
  * The kernel's per-CPU trace rings (docs/design-kernel.md, "Trace ring"), with the same
- * cursor and records as erx_backend_trace_read. The stopgap has no kernel ring: ERX_ENOTSUP
+ * cursor and records as erx_backend_trace_read. Fiasco has no kernel ring: ERX_ENOTSUP
  * on both backends, so the trace's kernel row is unsupported.
  */
 int	erx_trace_read(uint64_t res, uint32_t cpu, uint64_t cursor, erx_trace_record_t *records,
@@ -329,7 +329,7 @@ int	erx_cap_close(erx_cap_t cap) ERX_WARN_UNUSED_RESULT;
 /*
  * A private copy of size bytes of an immutable parent, a slice or a sealed paged object, from
  * offset, charged to budget: it maps read and write and never runs. erx_exec maps each writable
- * segment of an executable so (liberx/exec/load.c); fiasco/service.h gives the stopgap's answers.
+ * segment of an executable so (liberx/exec/load.c); fiasco/service.h gives the answers on Fiasco.
  */
 int	erx_mem_child(uint64_t parent, uint64_t budget, uint64_t offset, uint64_t size, uint64_t *child)
 	    ERX_WARN_UNUSED_RESULT;

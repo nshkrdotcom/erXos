@@ -154,7 +154,7 @@ ed25519_verify(_Signature, _Key, _Message) ->
 `N` bytes from the kernel's generator, read by one `erx_entropy_take` (docs/design-runtime.md,
 "Per-byte primitives", the entropy entry). Keys, secrets and identifiers an attacker must not
 guess come from here, directly or through a generator keyed from here, never from `rand`. It
-is a synchronous kernel call, on the stopgap a request to the root's generator service. Fails
+is a synchronous kernel call, on Fiasco a request to the root's generator service. Fails
 with `badarg` unless `N` is an integer from 1 to 256, and with `{entropy, Status}`, `Status`
 the ABI file's name of the status the read returned (its integer for a value no status
 names), when the read fails: it never returns fewer bytes, or bytes from any other source.

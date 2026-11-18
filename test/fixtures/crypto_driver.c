@@ -36,7 +36,7 @@
  *   rng-seed-add COUNTER HEX
  *               seeds a generator with erx_rng_seed from COUNTER and no
  *               seed set, then mixes HEX in with erx_rng_seed_add, as the
- *               stopgap's root mixes the board's random generator
+ *               root on Fiasco mixes the board's random generator
  *     -> rng-seed-add KEY:READY ADDED   (1 when HEX went in, else 0)
  *   rng-residue KIND HEX HEX   KIND "hash", of two messages of one length,
  *               or "read" or "mix", under two 32-byte keys

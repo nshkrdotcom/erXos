@@ -6,8 +6,8 @@
 /*
  * Object records and handle tables: see handles.h. Both are grow tables, so a record
  * or an entry never moves and every reference is an index. Both searches are linear,
- * lowest first, which keeps reuse predictable for the tests and costs a stopgap
- * nothing that matters.
+ * lowest first, which keeps reuse predictable for the tests and costs the
+ * Fiasco and hosted backends nothing that matters.
  */
 
 #include <stdbool.h>

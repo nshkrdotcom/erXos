@@ -6232,7 +6232,7 @@ encoding, posting, the lane crossing and the socket process's hop to the
 owner. The measurements on erXos's kernel decide and those on the
 Raspberry Pi 4 confirm or reopen the decision; the same measurements on
 QEMU on Fiasco are a baseline that decides nothing, since every interrupt
-and doorbell there passes the stopgap's one service thread (plan.md's
+and doorbell there passes the root's one service thread (plan.md's
 gates GN-QEMU, GK3 and GN-board). If the established path misses line
 rate and the breakdown names a pure function of the core as the cost,
 that one function gets a NIF with the same signature, and the Erlang

@@ -8,7 +8,7 @@
 
 /*
  * A program's signal dispositions (docs/design-programs.md, "Signals in
- * liberx", on the stopgap): with no vCPU upcalls a program takes default
+ * liberx", on Fiasco): with no vCPU upcalls a program takes default
  * actions only, so sigaction records SIG_DFL and SIG_IGN for every signal
  * of the ABI file's signal table and refuses a handler with EINVAL, the
  * error POSIX gives for a signal that cannot be caught.  A signal raised

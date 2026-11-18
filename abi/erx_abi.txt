@@ -254,7 +254,7 @@ enum exit_kind i64
 # it loaded, which then releases the loader's window
 # (docs/design-programs.md, "The loader's bootstrap").
 # The values fill every start register an architecture file gives
-# (arch_start_args), which the stopgap's trampoline loads
+# (arch_start_args), which the Fiasco backend's trampoline loads
 # (docs/design-fiasco.md, "The trampoline").
 enum program_arg u32
   value budget 0
@@ -675,7 +675,7 @@ enum end u32
   value off 1
   value reset 2
 
-# The stopgap's contiguous pool, from which every device's memory is made
+# The Fiasco backend's contiguous pool, from which every device's memory is made
 # (docs/design-fiasco.md, "The pool"): one run of the smallest power of two
 # that holds the manifest's devices' memory, at least 2 ** fiasco_contig_order_min
 # bytes and at most 2 ** fiasco_contig_order_max. The root sizes it with these and

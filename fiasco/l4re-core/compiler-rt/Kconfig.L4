@@ -1,2 +1,2 @@
-# Modified by erXos: the stopgap's user programs link no compiler runtime
+# Modified by erXos: the user programs built from this tree link no compiler runtime
 # library (neither libgcc nor LLVM's), so there is nothing to choose.

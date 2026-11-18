@@ -85,8 +85,8 @@ mmap_call(const long args[6], long *result)
 }
 
 /*
- * ppoll, its arguments in the call's order. No signal is ever caught in a program on the
- * stopgap (liberx/program/signal.h), so the mask a ppoll would hold during the wait
+ * ppoll, its arguments in the call's order. No signal is ever caught in a program on
+ * Fiasco (liberx/program/signal.h), so the mask a ppoll would hold during the wait
  * changes nothing; its size is still checked, as Linux checks it, so a caller that
  * passes one learns of a wrong size.
  */

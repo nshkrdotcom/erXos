@@ -2575,7 +2575,7 @@ recorded here as the design's and in `TODO.md` when the code lands:
   ([design-shared-devices.md](design-shared-devices.md)), so a device
   that can write the frame can raise another domain's MSI.
 * **Firmware.** The VL805 runs firmware the VideoCore loads, and the
-  stopgap's root, not a kernel operation, reaches the mailbox for the
+  root on Fiasco, not a kernel operation, reaches the mailbox for the
   notification.
 * **A wedged VL805.** A VL805 that no host controller reset brings back
   stays unusable until the next boot on both kernels, since only a

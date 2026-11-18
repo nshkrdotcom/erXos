@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# The Raspberry Pi 4 Model B's part of its development manifest on the stopgap
+# The Raspberry Pi 4 Model B's part of its development manifest on Fiasco
 # (config/platforms/raspi4b.json; docs/plan.md, 1b-I). The manifest is the records every
 # board takes, config/manifest/development.txt, followed by these (Platform#manifest_source).
 # Together they configure the system domain, three configured domains, storage, network and

@@ -12,7 +12,7 @@
  * the device tree's /chosen carries is mixed in on its own, in
  * erx_dt_seed_t's order. Mixing never weakens the key (erx/core/rng.h), so
  * a firmware's poor seed costs nothing. A board whose /chosen carries no
- * seed adds its random generator's bytes after (erx_rng_seed_add). The stopgap's root and erXos's
+ * seed adds its random generator's bytes after (erx_rng_seed_add). The root on Fiasco and erXos's
  * kernel both seed through it.
  */
 

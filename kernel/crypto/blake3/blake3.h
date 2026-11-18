@@ -7,7 +7,7 @@
  * version string and the TBB entry point removed); final takes the
  * context mutably, since it erases it, and the digest as a plain array
  * parameter, so the header compiles as C++ as well (bootstrap and the
- * stopgap kernel's glue are C++); the visibility macros removed; the
+ * glue in Fiasco are C++); the visibility macros removed; the
  * context's size stated; ERX_BLAKE3_CHUNK_LEN and erx_blake3_hash_chunk
  * added.
  *

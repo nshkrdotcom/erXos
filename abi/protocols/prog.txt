@@ -122,7 +122,7 @@ limit prog_report_max u32 512
 # window's buffer leased to a program is mapped from prog_mem_base, for at
 # most prog_mem_bytes, the largest buffer, 16,384 pixels square at 4 bytes
 # a pixel. The place's first page number is below 2^32, as the startup
-# message needs, and the place lies inside the stopgap's task range, 2^38 to
+# message needs, and the place lies inside the Fiasco backend's task range, 2^38 to
 # 2^39, above the address a program is linked at.
 limit prog_mem_base u64 0x7f00000000
 limit prog_mem_bytes u64 1073741824
@@ -135,7 +135,7 @@ limit prog_mem_bytes u64 1073741824
 # releases the whole window at once. The generator checks that the window
 # is whole pages and lies apart from the program memory place; the task
 # script checks that a task's image ends below the record's page, and
-# liberx/backend/fiasco/time.h that the stopgap's fixed task area ends
+# liberx/backend/fiasco/time.h that the Fiasco backend's fixed task area ends
 # below the window.
 limit exec_window_base u64 0x4000100000
 limit exec_window_bytes u64 0x10000000

@@ -12,7 +12,7 @@
 
 /*
  * The root's read of the board's RNG200 (docs/design-fiasco.md, "The Raspberry Pi
- * 4"), on the stopgap in place of the kernel's platform layer: the device shim around
+ * 4"), on Fiasco in place of the kernel's platform layer: the device shim around
  * kernel/core/rng200.c, and the only code of the root that touches the generator's
  * registers. window and path are the generator's row in the platform record, as the
  * manifest carries it; the root maps the window only when the tree's enabled node at path
