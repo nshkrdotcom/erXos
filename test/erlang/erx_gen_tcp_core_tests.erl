@@ -61,7 +61,23 @@ core_test_() ->
      {"a waiting recv is answered einval when the socket turns active", fun recv_then_active/0},
      {"a recv timeout past the longest timer is einval", fun recv_timeout_bound/0},
      {"a delivery within one piece shares it, not a copy", fun one_piece_shared/0},
-     {"a delivery across pieces joins them in order", fun pieces_joined/0}].
+     {"a delivery across pieces joins them in order", fun pieces_joined/0},
+     {"getstat counts pushes and sends and leaves out what it does not measure", fun getstat_counts/0}].
+
+%% Each push of data is one delivery received and each send one sent, as each read and
+%% each send is on stock's driver; a send counts when taken, before the connection
+%% answers it. `recv_dvi` and `send_pend` are not measured, so not answered.
+getstat_counts() ->
+    Stats = fun(Core) -> {_, [{reply, f, {ok, S}}]} = call(f, {getstat, inet:stats()}, Core), S end,
+    C0 = new(#{}),
+    ?assertEqual([{recv_oct, 0}, {recv_cnt, 0}, {recv_max, 0}, {recv_avg, 0},
+                  {send_oct, 0}, {send_cnt, 0}, {send_max, 0}, {send_avg, 0}], Stats(C0)),
+    {C1, _} = data(10, C0),
+    {C2, _} = data(5, C1),
+    {C3, _} = call(f1, {send, <<"one">>}, C2),
+    {C4, _} = call(f2, {send, <<"three">>}, C3),
+    ?assertEqual([{recv_oct, 15}, {recv_cnt, 2}, {recv_max, 10}, {recv_avg, 7},
+                  {send_oct, 8}, {send_cnt, 2}, {send_max, 5}, {send_avg, 4}], Stats(C4)).
 
 send_in_pieces() ->
     C0 = new(#{}),

@@ -4861,7 +4861,7 @@ an owner's `receive {tcp, S, Data}` matches as on stock, in any domain.
 
 Each call on an open socket is a local call to the socket process. The
 socket process answers what is its own (presentation, `recv`,
-`controlling_process`, `close`) by itself, and sends the rest as one
+`controlling_process`, `close`, statistics) by itself, and sends the rest as one
 request to its socket. An open is the socket process's own call to the
 grant, and the grant takes its caller as the socket process, so no open
 request names one (**Opening**, in
@@ -4881,7 +4881,8 @@ request names one (**Opening**, in
 | `gen_udp:send/2,3,4,5`, `gen_udp:connect/3` | forwarded; a datagram larger than IP allows is refused here with `{error, emsgsize}` | `{send_to, ...}`, `{connect, ...}` | datagram socket |
 | `gen_udp:recv/2,3` | from the datagrams it holds, waiting until the deadline, behind any earlier `recv` | none | none |
 | `inet:setopts/2`, `inet:getopts/2` | its own options locally, the rest forwarded ([Options](#options)) | `{setopts, Opts}`, `{getopts, Names}` for the socket's options | socket |
-| `inet:peername/1`, `inet:sockname/1`, `inet:port/1`, `inet:getstat/2` | forwarded | `peername`, `sockname`, `{getstat, Names}` | socket |
+| `inet:peername/1`, `inet:sockname/1`, `inet:port/1` | forwarded | `peername`, `sockname` | socket |
+| `inet:getstat/1,2` of a TCP socket | from the counts it keeps ([Options](#options), **Statistics**) | none | none |
 | `inet:getifaddrs/0`, `inet:gethostname/0`, `ifconfig` | no socket process: the caller calls the grant through `erx_inet:call/1`, which admits the answer ([Untrusted input](#untrusted-input)); `inet:getifaddrs/0` builds its answer from the interfaces' records | `interfaces`, `hostname` | grant |
 | `erx_gen_icmp:open/0`, which `ping` uses | started by the stub, owned by the caller, which calls the grant | `{icmp_open, Family}` | grant |
 
@@ -5769,8 +5770,8 @@ constant bounds the bytes it carries: the **piece**, 64 KiB.
   are 65,527 bytes for a datagram, what the UDP length field allows
   under any IP version, and 65,507 for an echo's data.
 * Every other request and reply is bounded by the operation schema,
-  `abi/services/net.txt`: the length of an option list, the names
-  `getstat` takes, the shape of each operation's reply. The socket
+  `abi/services/net.txt`: the length of an option list and the shape
+  of each operation's reply. The socket
   process checks each request with the validators generated from the
   same schema before it sends it, and answers one the network domain
   would refuse as the network domain would, so no request a correct
@@ -5920,6 +5921,28 @@ options are the listener's, which pass to the connections it accepts
 from then on ([The listener](#the-listener), **Its entry**), and the
 socket process's own pass to the socket processes it starts for later
 `accept` calls.
+
+**Statistics.** `inet:getstat/1,2` is answered by the socket process
+from what it counts, as stock's inet driver counts at its port
+(`inet_drv.c`, `inet_input_count` and `inet_output_count`): the socket
+process stands where the driver stands, between the owner and the
+stream, so the counts are the client half's and need no request. Each
+push of data from the connection is one delivery received, as each
+read is on stock, and each `send` one delivery sent, counted with its
+packet header when the socket process takes it, before the connection
+has it, as stock's driver counts a send it queues. From these it
+answers `recv_oct`, `recv_cnt`, `recv_max`, `recv_avg`, `send_oct`,
+`send_cnt`, `send_max` and `send_avg`, the averages truncated as the
+driver reports them, and refuses any name that is no statistic with
+`{error, einval}`, as the driver does, on a listening socket as on a connection, and
+on a closed socket until its owner closes it. It does not measure
+`recv_dvi`, the deviation of the delivery size, or `send_pend`, the
+bytes not yet sent, which lie partly in the network domain, and
+leaves them out of the answer, as stock's socket backend leaves out
+the statistics it does not count (`gen_tcp_socket.erl`,
+`getstat_what/2`): a caller that asks for them gets the rest, never a
+made-up value. ssh asks for `send_oct` to decide when to rekey
+(`ssh_connection_handler.erl`, `check_data_rekeying/2`).
 
 ### The `socket` and `net` modules
 
@@ -7345,7 +7368,7 @@ acknowledging a byte, the peer closing and opening its window, `eof`,
 with `N` of -1, 1 and 2, and of `show_econnreset` and
 `send_timeout_close`, `recv` of 0 and of 1 to 5 bytes, `send` of one to
 three bytes from each of two callers, the deadline of each waiting send
-passing, `shutdown` of the write side, `close`, a `getstat` from each of
+passing, `shutdown` of the write side, `close`, a `peername` from each of
 two more callers, so that a call must wait for a place, the two calls
 of `controlling_process`, the owner's exit, and replies in and out of
 order; and, from the start in `opening`, the hand-over, and a push, a

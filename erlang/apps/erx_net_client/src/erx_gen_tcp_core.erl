@@ -60,15 +60,15 @@ recv after it `{error, enotconn}`; or the owner turns the socket active and is s
 what is held and the end as above. After `eof`
 sends go on until then. After an error the connection is gone, so the core closes at
 once and keeps what is held and the end for the owner. A closed core answers `recv`
-from what is still held, takes `setopts` while the end waits for the owner, and answers
-every other call but `close` with `{error, closed}`.
+from what is still held, takes `setopts` while the end waits for the owner, answers
+`getstat` as before, and answers every other call but `close` with `{error, closed}`.
 
 **Listening.** A listener's core, listener/3, holds its socket process's calls of the
 listening socket: `accept`, numbered as every request is and sent to the listener with the
 socket process started for its caller, at most 64 in flight as every request; `setopts`,
 whose presentation options the core keeps for the sockets it hands out and whose
 `nodelay` it keeps too, since the listener answers no `getopts`, and forwards; `getopts`,
-answered from what it keeps; `sockname`, forwarded; and `close`. `send`, `recv`,
+answered from what it keeps; `getstat`; `sockname`, forwarded; and `close`. `send`, `recv`,
 `shutdown` and `peername` are `{error, enotconn}`, as stock's listening socket answers
 them. The listener's `{ok, Conn}`, checked against the listener's node, becomes
 `{hand_over, From, SockProc, Conn, Own}`: the shell hands the new socket process its
@@ -76,6 +76,13 @@ connection and the listening socket's options, and answers the caller. Every oth
 answer to an `accept`, the listener's error, the socket's end or a closed core's refusal,
 answers the caller and ends that socket process, `{discard, SockProc}`. The listener's
 exit, or a push that breaks the protocol, closes the core as a connection's error does.
+
+**Statistics.** The core counts what crosses it as stock's inet driver counts at its
+port: each push of data it holds is one delivery received, and each `send` one delivery
+sent, counted with its packet header when the core takes it. A `getstat` is answered
+from those counts in every state, without a request: the eight statistics they give,
+averages truncated as the driver reports them; `recv_dvi` and `send_pend`, which the
+core does not measure, left out; and `{error, einval}` for any other name, as stock.
 
 **Holding.** While controlling_process/2 moves the socket to a new owner, hold/1 makes
 the core present nothing: what arrives is held and the end waits, as in passive mode,
@@ -150,6 +157,11 @@ socket process.
              | {getopts, from(), [{atom(), term()}]} | {sockname, from()} | {peername, from()}
              | {accept, from(), pid()}.
 
+%% A direction's statistics as stock's inet driver keeps them (inet_drv.c,
+%% inet_input_count/2 and inet_output_count/2): its bytes, the deliveries that carried
+%% them, and the largest delivery.
+-record(count, {oct = 0 :: non_neg_integer(), cnt = 0 :: non_neg_integer(), max = 0 :: non_neg_integer()}).
+
 -record(core, {sock :: erx_gen_tcp:socket(),
                state = open :: open | listening | closed,
                mode :: binary | list,
@@ -174,7 +186,9 @@ socket process.
                recv_met_end = false :: boolean(),            % a recv was answered the end
                holding = false :: boolean(),                 % a transfer: nothing presented
                nodelay = false :: boolean(),                 % a listener's, for getopts
-               listener_node = none :: node() | none}).      % a listener's, for accepted pids
+               listener_node = none :: node() | none,       % a listener's, for accepted pids
+               received = #count{} :: #count{},             % the pushes of data, for getstat
+               sent = #count{} :: #count{}}).               % the sends, framed, for getstat
 
 -opaque core() :: #core{}.
 
@@ -314,6 +328,8 @@ step({call, From, close}, #core{state = closed} = C) ->
 step({call, From, close}, C) ->
     {N, C1} = number(C),
     {C1, [{request, N, close}, {reply, From, ok}, {stop, normal}]};
+step({call, From, {getstat, Names}}, C) when is_list(Names) ->
+    {C, [{reply, From, stats(Names, C)}]};
 step({call, From, Call}, #core{state = open} = C) ->
     call(Call, From, C);
 step({call, From, Call}, #core{state = listening} = C) ->
@@ -346,10 +362,10 @@ step(owner_down, C) ->
 
 %% --- Calls of an open socket ------------------------------------------------------------
 
-call({send, Data}, From, #core{sending = none} = C) when is_binary(Data) ->
-    start_send(From, framed(Data, C), C, []);
-call({send, Data}, From, #core{sends = Q} = C) when is_binary(Data) ->
-    {C#core{sends = queue:in({From, framed(Data, C)}, Q)}, []};
+call({send, Data}, From, #core{sent = Sent} = C) when is_binary(Data) ->
+    %% Counted when taken, its header included, as stock's driver counts a send.
+    Framed = framed(Data, C),
+    send(From, Framed, C#core{sent = counted(byte_size(Framed), Sent)});
 call({recv, _, _}, From, #core{active = Active} = C) when Active =/= false ->
     {C, [{reply, From, {error, einval}}]};
 call({recv, Length, _}, From, #core{packet = Packet} = C) when Packet =/= raw, Length =/= 0 ->
@@ -388,6 +404,11 @@ call(peername, From, C) ->
     issue(peername, {peername, From}, C, []);
 call(_Call, From, C) ->
     {C, [{reply, From, {error, einval}}]}.
+
+send(From, Framed, #core{sending = none} = C) ->
+    start_send(From, Framed, C, []);
+send(From, Framed, #core{sends = Q} = C) ->
+    {C#core{sends = queue:in({From, Framed}, Q)}, []}.
 
 own(#core{mode = Mode, active = Active, packet = Packet, packet_size = Size, buffer = Buffer}) ->
     #{mode => Mode, active => Active, packet => Packet, packet_size => Size, buffer => Buffer}.
@@ -572,11 +593,12 @@ push({reply, N, Result}, C) ->
     replied(N, Result, C);
 push({data, _}, #core{ended = Ended} = C) when Ended =/= none ->
     abort(order, C);
-push({data, Pieces}, #core{outstanding = Out, held = Held, held_bytes = Bytes, wait = Wait} = C) ->
+push({data, Pieces}, #core{outstanding = Out, held = Held, held_bytes = Bytes, wait = Wait,
+                           received = Received} = C) ->
     case iolist_size(Pieces) of
         Size when Size =< Out ->
             settle(C#core{outstanding = Out - Size, held = [Pieces | Held], held_bytes = Bytes + Size,
-                          wait = arrived(Wait, Pieces)}, []);
+                          wait = arrived(Wait, Pieces), received = counted(Size, Received)}, []);
         _ ->
             abort(credit, C)
     end;
@@ -586,6 +608,33 @@ push(eof, C) ->
     abort(order, C);
 push({error, Reason}, C) ->
     ended({error, Reason}, C, []).
+
+%% --- Statistics -----------------------------------------------------------------------
+
+counted(Size, #count{oct = Oct, cnt = Cnt, max = Max}) ->
+    #count{oct = Oct + Size, cnt = Cnt + 1, max = max(Max, Size)}.
+
+%% The named statistics in the order asked: a name not measured here is left out, and
+%% one that is no statistic refuses the call, as stock's driver refuses it.
+stats(Names, #core{received = Received, sent = Sent}) ->
+    case lists:all(fun(Name) -> lists:member(Name, inet:stats()) end, Names) of
+        true -> {ok, [{Name, Value} || Name <- Names, Value <- stat(Name, Received, Sent)]};
+        false -> {error, einval}
+    end.
+
+stat(recv_oct, #count{oct = Oct}, _) -> [Oct];
+stat(recv_cnt, #count{cnt = Cnt}, _) -> [Cnt];
+stat(recv_max, #count{max = Max}, _) -> [Max];
+stat(recv_avg, Received, _) -> [average(Received)];
+stat(send_oct, _, #count{oct = Oct}) -> [Oct];
+stat(send_cnt, _, #count{cnt = Cnt}) -> [Cnt];
+stat(send_max, _, #count{max = Max}) -> [Max];
+stat(send_avg, _, Sent) -> [average(Sent)];
+stat(_Name, _, _) -> [].
+
+%% The mean delivery, truncated, as stock's inet driver reports it.
+average(#count{cnt = 0}) -> 0;
+average(#count{oct = Oct, cnt = Cnt}) -> Oct div Cnt.
 
 %% A push that breaks the protocol: counted, and the socket aborted.
 abort(Check, C) ->

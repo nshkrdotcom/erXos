@@ -3490,8 +3490,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   (`erx_net_grant_core` holds only the sockets and their buffer reservations); receive-buffer autosizing (`tcp_do_autorcvbuf`, a
   `reserve_buffer` for the receive side like the send side's); `exit_on_close` (a socket whose peer closed
   stays open until its owner closes it), the packet modes,
-  `getstat` and every option but `binary`, `list`, `mode`, `active` and `nodelay`; the
+  every option but `binary`, `list`, `mode`, `active` and `nodelay`; the
   connection's credit limit and buffer sizes are fixed defines, not application keys.
+* [Low] network, `erx_gen_udp`: `inet:getstat/1,2` of a datagram socket raises `undef`, since
+  `erx_gen_udp` exports no `getstat/2`; the socket process would count each datagram as one
+  delivery, as `erx_gen_tcp_core` counts pushes and sends
+  ([design-network-stack.md](docs/design-network-stack.md#options), **Statistics**).
 * [Medium] network, `erx_tcp_conn` (`guarded/2`): a raising step must end the connection
   ([design-network-stack.md](docs/design-network-stack.md#decisions), 15): from its
   state before the event, with a RST, `{error, econnaborted}` to its socket process and an exit with

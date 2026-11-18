@@ -6,8 +6,8 @@
 The TCP socket backend and its socket process (docs/design-network-stack.md, "The
 backend", "The socket process"). A socket is `{'$inet', erx_gen_tcp, Pid}`, `Pid` its
 socket process, a `gen_statem` in the owner's own domain, so `gen_tcp:send/2`,
-`recv/2,3`, `shutdown/2`, `close/1` and `inet:setopts/2`, `getopts/2`, `sockname/1` and
-`peername/1` reach this module through the dispatch they already have. On stock OTP,
+`recv/2,3`, `shutdown/2`, `close/1` and `inet:setopts/2`, `getopts/2`, `getstat/1,2`,
+`sockname/1` and `peername/1` reach this module through the dispatch they already have. On stock OTP,
 whose `inet` knows no `erx` backend, a caller opens the socket with `connect/4` or
 `listen/2` here.
 
@@ -79,7 +79,7 @@ map.
 
 -export([connect/3, connect/4, listen/2, accept/2, fdopen/2, send/2, recv/2, recv/3, shutdown/2, close/1,
          controlling_process/2,
-         setopts/2, getopts/2, sockname/1, peername/1]).
+         setopts/2, getopts/2, getstat/2, sockname/1, peername/1]).
 -export([init/1, callback_mode/0, handle_event/4, format_status/1]).
 
 -export_type([socket/0]).
@@ -243,6 +243,16 @@ setopts({'$inet', ?MODULE, Pid}, Opts) ->
 -spec getopts(socket(), [atom()]) -> {ok, [{atom(), term()}]} | {error, term()}.
 getopts({'$inet', ?MODULE, Pid}, Names) ->
     call(Pid, {getopts, Names}).
+
+-doc """
+The named statistics of the stream, as `inet:getstat/2` answers them, from the counts
+the socket process keeps. A name it does not measure, `recv_dvi` or `send_pend`, is
+left out of the answer, as stock's socket backend leaves them out; another name is
+`{error, einval}`. An improper list fails here, in the caller, as on stock.
+""".
+-spec getstat(socket(), [inet:stat_option()]) -> {ok, [{inet:stat_option(), non_neg_integer()}]} | {error, term()}.
+getstat({'$inet', ?MODULE, Pid}, Names) when length(Names) >= 0 ->
+    call(Pid, {getstat, Names}).
 
 -doc "The local address and port.".
 -spec sockname(socket()) -> {ok, {inet:ip4_address(), inet:port_number()}} | {error, term()}.
