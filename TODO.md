@@ -8646,6 +8646,15 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] crypto, the system trust store for 0.2
+  ([design-crypto.md](docs/design-crypto.md#the-trust-store)): ship Mozilla NSS's root list as the
+  system's trust store, as FreeBSD's base does (`secure/caroot`: roots split from NSS's
+  `certdata.txt` into `trusted/`, removed ones moved to `untrusted/`, refreshed when Mozilla's list
+  changes; `certctl(8)` builds `/etc/ssl/certs` and `/etc/ssl/cert.pem` and takes an administrator's
+  additions and blocks). Needs a short design first: where the store lives and how an app's
+  session sees it, the import with its source record, and the `certctl` equivalent. The store's
+  "a root only with a consumer" rule gives way to this for the system store; a kiosk or app may
+  still pin its own roots.
 * [High] 0.1, Doom's demo loop on the Pi ([plan.md](docs/plan.md#01-the-preview)): no card can hold Doom, since
   Doom reaches an image only through `tools/erx pack --app --local` and the card build refuses `--local` and every
   package of its builder's ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image),
