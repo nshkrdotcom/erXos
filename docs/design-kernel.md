@@ -8257,7 +8257,7 @@ changes, so no generated file is checked in or can be stale.
 **Device registers** are described in CMSIS-SVD files under `hw/svd/`, one
 per device that erXos code touches, written by erXos from the devices'
 specifications, except the PL011's, which is carved from the Raspberry Pi
-Pico SDK's RP2040 description ([hardware generation](design-hardware-generation.md#register-inputs)):
+Pico SDK's RP2040 description ([hardware generation](design-generation.md#register-inputs)):
 each platform's UARTs, interrupt controllers, MSI frames,
 real-time clock and IOMMU, which the bindings list with the specification
 each follows
@@ -8285,7 +8285,7 @@ on the development host on 2026-10-29), and emits one C header per device:
 
 It also emits one Erlang header per device, each field's shift, width, mask
 and enumerated values for the device's Erlang driver
-([hardware generation](design-hardware-generation.md#register-inputs)).
+([hardware generation](design-generation.md#register-inputs)).
 
 The generator refuses a register outside its address block, overlapping
 fields, a field beyond its register's width, an enumerated value wider than

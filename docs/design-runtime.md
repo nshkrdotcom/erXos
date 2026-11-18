@@ -726,7 +726,8 @@ own manifest text or compile-time defaults.
 `erx_runtime_limits_t` is the ABI's fixed 64-byte startup projection:
 `max_frame`, `max_message_heap`, `funnel_depth`, `exports`, `tmp`,
 `overlay`, `atoms`, `foreign_atoms`, `processes`, `peer_held` and
-`peer_held_total`, with widths and offsets defined in
+`peer_held_total`, with widths and offsets declared in
+`abi/erx_abi.txt` and its projection in
 [Runtime-limit projection](design-abi.md#runtime-limit-projection).
 It carries values only for this runtime, with no principal table, facet
 scope or reference into the system manifest. The domain library copies
@@ -2754,7 +2755,7 @@ bits. A virtio device's configuration space is registers of its kind's
 peripheral, each declared at its field's width and access, read and written by
 name like every other register: the kind's peripheral copies the transport's
 registers and adds the configuration fields its driver uses
-([design-hardware-generation.md](design-hardware-generation.md#register-inputs)),
+([design-generation.md](design-generation.md#register-inputs)),
 and the device kinds table names that peripheral for the kind's records, which the NIF opens as that peripheral and no other. A field
 the peripheral does not declare cannot be reached, and a read-only one cannot be
 written, so the input driver can write only `select` and `subsel`, each one
@@ -3071,7 +3072,7 @@ decides batching per device class
 
 **Chokepoints.** Only `erx_device` calls `erx_mem_create_physical`, `erx_vm_map`, `erx_dma_map`, `erx_mem_dma_addr`
 and the user-mode cache maintenance in a runtime, but for the lane port driver's `erx_vm_map` of a connection's two lane sides, so nothing else in a runtime has a mapping of device memory; only its generated
-accessors, called only by its BIFs and its NIF, touch a register window, and no runtime source includes a peripheral header that `tools/gen_hw.rb` generates or names one of its accessors, which the kernel platform layer alone uses ([design-hardware-generation.md](design-hardware-generation.md)); a record's window is private to the source that holds them; only `erx_device.c` stores to a register the NIF owns, and within it only its one address function writes a ring's address
+accessors, called only by its BIFs and its NIF, touch a register window, and no runtime source includes a peripheral header that `tools/gen_hw.rb` generates or names one of its accessors, which the kernel platform layer alone uses ([design-generation.md](design-generation.md#hardware-and-terminal-sources)); a record's window is private to the source that holds them; only `erx_device.c` stores to a register the NIF owns, and within it only its one address function writes a ring's address
 or a descriptor's address fields and addressing flags;
 and the NIF holds no parser: a source check fails the build on a loop
 over device-written bytes in the NIF, whose copy at completion is one

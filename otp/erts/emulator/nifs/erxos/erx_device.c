@@ -871,7 +871,7 @@ status_bit(const erx_device_peripheral_t *virtio, const erx_device_register_t *s
  * The registers of a virtio-mmio device: those the NIF only reads by name, and those it owns
  * by their generated index in virtio_mmio's table. The device's peripheral is virtio_mmio or
  * a kind whose table begins with virtio_mmio's registers at the same indices
- * (docs/design-hardware-generation.md, "Register inputs"). False for any other peripheral.
+ * (docs/design-generation.md, "Register inputs"). False for any other peripheral.
  */
 static bool
 virtio_registers(const erx_device_t *device, virtio_registers_t *regs)
