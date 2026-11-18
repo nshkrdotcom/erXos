@@ -174,7 +174,9 @@ To publish: in the repository settings, set Pages to deploy from GitHub
 Actions. Attach to a release an `image.boot` built with
 `tools/erx boot --without-web` from a commit with no changes, its
 `image.boot.receipt.json`, and, from the same commit, the card that
-`make pack PLATFORM=raspi4b` builds, compressed, and its record:
+`make pack PLATFORM=raspi4b` builds, compressed, and its record. The card
+carries Doom, so run `tools/erx fetch --example doom` first, with the
+`examples/doom/doom` submodule checked out at its gitlink:
 
 ```
 xz --keep --check=crc64 -9 --threads=1 build/production-image/raspi4b/sdcard.img
