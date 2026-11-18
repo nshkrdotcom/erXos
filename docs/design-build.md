@@ -508,9 +508,12 @@ partial boot has none, but initial-root feasibility still requires its
 production bootstrap plan and backend/ABI-bound charge evidence. A
 source-declared baseline is not that evidence. Unavailable required
 planning fails as unsupported; structural fixtures cannot mint an
-admission token or enter the production publisher. The roadmap defines the
-[M0 acceptance image and M1 planner gate](plan.md#m0-the-tree-the-toolchain-and-the-oracle)
-without changing the complete target manifest or its admission rules.
+admission token or enter the production publisher. Until
+[track K](plan.md#track-k-erxoss-kernel) brings `erx_root_plan` with its
+charge evidence, the Phase 1 manifest check's root startup rule stands in
+for the initial root's feasibility and charge plan; child planning is
+unchanged, and neither changes the complete target manifest or its
+admission rules.
 
 `tools/erx pack` (`make pack`) is the entry point for a platform's
 production image and its medium: it builds Fiasco and packs the production image of a platform's
