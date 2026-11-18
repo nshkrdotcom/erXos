@@ -221,13 +221,13 @@ class FiascoProvenanceTest < Minitest::Test
                { 'path' => 'kip.cpp', 'license' => 'MIT' },
                { 'path' => 'fdt.c', 'license' => '(GPL-2.0-or-later OR BSD-2-Clause)' },
                { 'path' => 'stddef.h', 'license' => 'Apache-2.0 WITH LLVM-exception' },
-               { 'path' => gcc, 'license' => Erx::FiascoProvenance::GCC_LICENSE },
+               { 'path' => gcc, 'license' => Erx::PackProvenance::GCC_LICENSE },
                { 'path' => 'build/fiasco/kernel-release/auto/main.cc', 'generated_from' => [{ 'path' => 'kip.cpp' }] },
                { 'path' => 'build/fiasco/kernel-release/globalconfig.h', 'role' => 'configuration', 'code' => [] },
                { 'path' => 'build/fiasco/kernel-release/tcboffset.h', 'role' => 'code', 'code' => [],
                  'objects' => [{ 'object' => { 'path' => 'tcboffset.o' }, 'sources' => [{ 'path' => 'fdt.c' }] }] }]
     assert_equal [[jdb, 'GPL-2.0-only']], Erx::FiascoProvenance.non_permissive(sources, toolchain: [gcc])
-    assert_equal [[gcc, Erx::FiascoProvenance::GCC_LICENSE]], Erx::FiascoProvenance.non_permissive(sources.drop(1), toolchain: [])
+    assert_equal [[gcc, Erx::PackProvenance::GCC_LICENSE]], Erx::FiascoProvenance.non_permissive(sources.drop(1), toolchain: [])
     orphan = { 'path' => 'orphan.h', 'role' => 'code', 'code' => [], 'objects' => [] }
     unrecorded = { 'path' => 'unrecorded.h', 'generated_from' => [{ 'path' => 'elsewhere.cpp' }] }
     unresolved = { 'path' => 'unresolved.c', 'state' => 'unresolved' }

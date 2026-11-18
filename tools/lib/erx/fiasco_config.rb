@@ -7,7 +7,7 @@ require_relative 'bounded_file'
 require_relative 'build_kind'
 
 module Erx
-  # The configuration check of the stopgap kernel (docs/design-stopgap.md,
+  # The configuration check of the stopgap kernel (docs/design-fiasco.md,
   # "Boot handoff", the kernel), and the one statement of how a release
   # kernel's configuration differs from a development one's. It reads the
   # resolved configuration, globalconfig.out, which Fiasco's Kconfig writes
@@ -32,11 +32,11 @@ module Erx
     # The fork switches FP state eagerly and leaves SVE trapped ("FP and SIMD
     # state"); the thread region is a constant of the non-hypervisor layout.
     FORBIDDEN = %w[CONFIG_LAZY_FPU CONFIG_ARM_SVE CONFIG_CPU_VIRT].freeze
-    # What a release kernel leaves out (design-stopgap.md, the kernel): the kernel debugger and
+    # What a release kernel leaves out (design-fiasco.md, the kernel): the kernel debugger and
     # the kernel's own console input. With either built in, a panic waits on
     # the console with interrupts off (JDB, which selects INPUT, and
     # terminate.cpp's Exit_question::ask with INPUT); with neither, it
-    # resets once PSCI is known (design-stopgap.md, the kernel). These are the release defconfig's only differences
+    # resets once PSCI is known (design-fiasco.md, the kernel). These are the release defconfig's only differences
     # (release_defconfig), and the check refuses them in the resolved file,
     # where a select can set them again.
     RELEASE_UNSET = %w[CONFIG_JDB CONFIG_INPUT].freeze

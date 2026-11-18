@@ -20,11 +20,55 @@ module Erx
     MAX_METADATA = 64 * 1024 * 1024
     # The statuses a dependency is registered under, as the dependency table names them,
     # and those of a package of an image: permanent, or package-local for a package of a
-    # local test image (ImageApps::Plan#status). Each status but permanent is one under
-    # which a development build admits a license that is not permissive.
+    # local test image (ImageApps::Plan#status), which a development build admits under
+    # any license, since no published image takes a builder's package.
     PERMANENT = 'permanent'
     PACKAGE_LOCAL = 'package-local'
-    DEPENDENCY_STATUSES = [PERMANENT, 'stopgap'].freeze
+    # The one example an image carries (docs/design.md's dependency table, status example):
+    # Doom's archive, attributed whole under this label by the image build, with the WAD
+    # it links. It is the only input that may be registered example (example_archive?).
+    EXAMPLE = 'example'
+    EXAMPLE_LABEL = 'doomgeneric libdoom.a'
+    EXAMPLE_LICENSES = ['GPL-2.0-or-later', 'GPL-2.0-or-later AND BSD-3-Clause'].freeze
+    STOPGAP = 'stopgap'
+    DEPENDENCY_STATUSES = [PERMANENT, STOPGAP, EXAMPLE].freeze
+    # The cross compiler's freestanding headers that Fiasco's C and C++ include, which
+    # FiascoProvenance.gcc_registry registers under labels toolchain/gcc-RELEASE/NAME.
+    GCC_LICENSE = 'GPL-3.0-or-later WITH GCC-exception-3.1'
+    GCC_HEADERS = %w[stdarg.h stdbool.h stddef.h].freeze
+    # One input a development build admits under a license that is not permissive: the
+    # status it is registered under, its label as its record names it (a String, or a
+    # Regexp the whole label must match), and the license expressions it may carry,
+    # exactly as recorded.
+    Restricted = Data.define(:status, :label, :licenses) do
+      # Whether this row names the input registered under input_status with input_label
+      # and license.
+      def admits?(input_status, input_label, license)
+        named = label.is_a?(Regexp) ? label.match?(input_label) : label == input_label
+        status == input_status && licenses.include?(license) && named
+      end
+    end
+    # The closed table of such inputs (docs/design.md, "Licenses and notices"). Every
+    # other input of every build, a stopgap's included, must be permissive, so a copyleft
+    # file that comes back into a closure, such as another of Fiasco's GPL sources, fails
+    # the build however it is registered.
+    RESTRICTED = [
+      # Doom, the example, in 0.1's images with its source offered.
+      Restricted.new(status: EXAMPLE, label: EXAMPLE_LABEL, licenses: EXAMPLE_LICENSES),
+      # GCC's headers: macros and types only, and the GCC Runtime Library Exception 3.1
+      # lets code compiled with them be distributed under any terms, so they are
+      # permissive in effect for what includes them.
+      Restricted.new(status: STOPGAP, label: %r{\Atoolchain/gcc-[0-9][0-9.]{0,31}/(?:#{GCC_HEADERS.map { |name| Regexp.escape(name) }.join('|')})\z},
+                     licenses: [GCC_LICENSE]),
+      # A linker script of l4re-core under the FSF All Permissive License, which permits
+      # copying and distribution with or without modification if the notice is kept: a
+      # permissive license the table names for this file alone.
+      Restricted.new(status: STOPGAP, label: 'fiasco/l4re-core/ldscripts/kip_addr.S', licenses: ['FSFAP']),
+      # Fiasco's kernel debugger, carried in development builds by decision, distributed
+      # under the website exception with its source offered (CLAUDE.md, Dependencies,
+      # stopgaps and release components); the release kernel leaves it out.
+      Restricted.new(status: STOPGAP, label: 'fiasco/kernel/src/kern/jdb_object.cpp', licenses: ['GPL-2.0-only'])
+    ].freeze
     PACKAGE_STATUSES = [PERMANENT, PACKAGE_LOCAL].freeze
     # compiler is the clang that built Fiasco's C17 cores, which Fiasco's audit records.
     def initialize(root:, catalog:, external: [], imports: {}, runner: nil, archive_program: 'llvm-ar', compiler: nil)
@@ -316,7 +360,8 @@ module Erx
       fresh.fetch('sources').each do |source|
         next unless source.key?('license')
         path = source.fetch('source', source.fetch('path'))
-        selected = LicenseExpression.select(source.fetch('license'), allow_restricted: BuildKind.development?(build_kind))
+        # Only the grants matter here, for the notices; attribute decides admission.
+        selected = LicenseExpression.select(source.fetch('license'), allow_restricted: true)
         notices = source.fetch('notices', []) + selected.fetch('grants').flat_map do |grant|
           fresh.fetch('license_notices', {}).fetch(grant, [])
         end
@@ -490,8 +535,6 @@ module Erx
       Attribution.validate_expression(license)
       raise Error, 'invalid font data statement' unless [true, false].include?(font_data)
       raise Error, 'invalid dependency provenance status' unless statuses.include?(status)
-      selected = LicenseExpression.select(license, allow_restricted: BuildKind.development?(build_kind) && status != PERMANENT,
-                                                   font_data: font_data)
       if public_path
         unless public_path.is_a?(String) && !public_path.start_with?('/') &&
                public_path.split('/', -1).none? { |part| ['', '.', '..'].include?(part) }
@@ -500,6 +543,13 @@ module Erx
         label = public_path
       end
       raise Error, 'invalid public provenance label' unless public_label?(label)
+      if status == EXAMPLE && !example_archive?(path, label: label, license: license)
+        raise Error, "#{label} (#{license}) cannot be registered as example: only #{EXAMPLE_LABEL} under " \
+                     "#{EXAMPLE_LICENSES.join(' or ')} is"
+      end
+      selected = LicenseExpression.select(license, allow_restricted: BuildKind.development?(build_kind) &&
+                                                                     restricted_admitted?(status, label, license),
+                                                   font_data: font_data)
       if item
         profile_path = File.join(@root, ImportNotices::PROFILE)
         references = if @catalog.include_path?(profile_path)
@@ -676,6 +726,20 @@ module Erx
           raise Error, 'external source differs from its registration'
         end
       end
+    end
+
+    # Whether path is the example's archive: an external registration, never an import's
+    # file, under EXAMPLE_LABEL and one of EXAMPLE_LICENSES exactly.
+    def example_archive?(path, label:, license:)
+      @external.key?(path) && label == EXAMPLE_LABEL && EXAMPLE_LICENSES.include?(license)
+    end
+
+    # Whether a development build may admit the input registered under status with label
+    # and license although the license is not permissive: a package of a local test image,
+    # or a row of RESTRICTED.
+    def restricted_admitted?(status, label, license)
+      status == PACKAGE_LOCAL ||
+        RESTRICTED.any? { |row| row.admits?(status, label, license) }
     end
 
     def leading_notice(bytes)

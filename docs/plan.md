@@ -163,8 +163,8 @@ numbers are names; the table's order is the order.
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([M13](#m13-erxoss-f2fs)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on Fiasco | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
-| 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, built by the user, plays on QEMU with the virtio keyboard and runs its demo loop on the Pi | the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
-| 0.2 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and four Fiasco patches (the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, writable or executable, eager FP switching), five if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
+| 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, built by the user, plays on QEMU with the virtio keyboard and runs its demo loop on the Pi | the clean-room interface header (its images keep the kernel debugger by decision, with its source offered; leaving it out is 0.2's release kernel's), the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
+| 0.2 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and four Fiasco patches (the clean-room interface header, the release kernel's build without `jdb_object.cpp`, writable or executable, eager FP switching), five if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
 | Fiasco's scheduler stages | status words, deferred preemption, group park and group quotas, in that order, each measured before and after and kept only when its numbers pay; urgency within a band waits for a consumer | 2,000 to 4,050 lines of C++ in the fork, the policy in erXos's C17 cores (unverified estimates, [design-fiasco.md](design-fiasco.md#stages-beyond-bands)) | 0.2 | each stage, after 0.2, by its before-and-after numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9); G8 itself is M8's, on erXos's kernel |
 | **Phase 2** | | | | |
 | Track K erXos's kernel | the pilot, then the kernel, booting 0.2's boot image and passing the conformance suite | 25,000 to 40,000 lines of C17, of which the capability core and the budget core exist; the pilot calibrates the figure | the pilot: M0, starting before Phase 1 is complete; the kernel in full: 1b-A | GK1, GK2, GK3 |
@@ -221,8 +221,9 @@ The order reaches a usable system first:
 * 0.1, the preview, comes first among Phase 1b's results: the items
   of its [dependencies](#01-the-preview) come before every other item,
   which fills the workers they cannot use. It ships a development
-  build whose closure is distributable, with the clean-room header and
-  the kernel's GPL files out, brought forward from 0.2.
+  build whose closure is distributable, with the clean-room header
+  brought forward from 0.2 and the kernel debugger kept, its source
+  offered.
 * 0.2 ships that system as erXos's first full release on Fiasco: the backend
   moves onto Fiasco's own capabilities, factories, interrupts and DMA
   spaces, the release build drops the debugger and the GPL files, and
@@ -381,12 +382,14 @@ generated into the build tree from its checked-in inputs.
 set, which name the GPL-headed files Fiasco keeps
 ([design.md](design.md#dependencies)); since `kobject_rpc.h`, which every
 build includes, is one of them, any distribution outside the project, in
-source or binary form, waits for the clean-room header and a shipped kernel
-built without `jdb_object.cpp`, which `Modules.generic` lists for every
-kernel whatever the debugger's setting; 0.1 brings both forward from
-0.2's release build
+source or binary form, rests on the clean-room header that replaces it
+in every build, brought forward from 0.2's release build
 ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)), as
-CLAUDE.md's rule for stopgaps requires. `lld` installed.
+CLAUDE.md's rule for stopgaps requires. The kernel debugger's
+`jdb_object.cpp`, which a kernel with the debugger compiles, goes out
+only in 0.1's images, under CLAUDE.md's exception for the website's
+images with its source offered; the release kernel leaves it out.
+`lld` installed.
 
 ## M1: The system boots on Fiasco
 
@@ -1578,45 +1581,27 @@ its code, and the item's work waits on it.
   requested power-off halts the board in the firmware and the watchdog
   resets it about 4 s later. Updates are by reflashing the card, which takes `/data`
   with it; no update service and no trial boot.
-* **The preview's kernel.** **No design**:
-  [design-fiasco.md](design-fiasco.md#the-releases-fiasco-build) has
-  development builds keep the debugger, and 0.1's published images are
-  development builds, so design-fiasco.md first names 0.1's kernel
-  configuration. Its starting point is the development configuration
-  with `CONFIG_JDB` and `CONFIG_INPUT` off, so the kernel has no
-  debugger and no console input of its own and a panic reboots instead
-  of waiting on the console (`fiasco/kernel/src/kern/terminate.cpp`),
-  with the configuration check refusing either option in that kernel,
-  a build step that builds it, and the image build packing it. Two gaps
-  stay open there. A panic before `Psci::init` and `Dt::init` in
-  `Startup::stage2` (`kern/arm/startup-arm.cpp`), the handoff checks of
-  `erx/erx_handoff.cpp` among them, finds no reset method and loops
-  (`kern/arm/bsp/gen/reset-arm-gen.cpp`), as `TODO.md` records. And
-  whether 0.1's kernel keeps `CONFIG_RT_DBG`, which adds object naming
-  and the kernel memory statistics to the debugger's kernel object, and
-  `CONFIG_PERF_CNT_USER`, user-mode access to the performance counters,
-  is open.
+* **The preview's kernel.** 0.1's images are development builds and
+  carry the development kernel, with the kernel debugger and the
+  kernel's own console input, by decision
+  ([design-fiasco.md](design-fiasco.md#boot-handoff)): a panic enters
+  the debugger on the console, and on the Pi 4 the hardware watchdog,
+  once the root has armed it, resets the board within its timeout; QEMU `virt` has no hardware
+  watchdog, so there a kernel panic stops in the debugger until the
+  run's deadline or the user ends it. The debugger's `jdb_object.cpp`
+  (GPL-2.0-only) goes out with its source offered, under CLAUDE.md's
+  exception for the website's images. Leaving the debugger out is the
+  release kernel's, in 0.2.
 * **A distributable closure.** The shipped images' link closure is
   distributable: the license allowlist check of
   [design.md](design.md#licenses-and-notices) holds over each published
-  image's whole closure, with no entry for Fiasco's GPL-headed files.
-  The kernel takes the license items of 0.2's release Fiasco build
+  image's whole closure, which admits Fiasco's one GPL-headed file the
+  images carry, `jdb_object.cpp`, only through its row of the closed
+  table, in development builds alone. The kernel takes the clean-room
+  header of 0.2's release Fiasco build
   ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)):
   `kobject_rpc.h`, which the kernel cannot build without, rewritten
-  clean-room under MIT, and `jdb_object.cpp` dropped from the shipped
-  kernel's build. Turning the debugger off does not drop it, since
-  `Modules.generic` lists it for every kernel
-  (`fiasco/kernel/src/Modules.generic:58`); taking it out of that list
-  for the shipped kernel is the whole change, because no MIT file of the
-  kernel refers to it and the capability slot it fills, 10, is then
-  empty, which `std_workload.cpp` already allows. sigma0's calls that
-  name its objects then fail; that sigma0 ignores the failure is
-  unverified, and a boot of the shipped kernel checks it. These facts
-  come from the clean-room facts record of the file (erxos-history
-  `cleanroom/fiasco-gpl-facts.md`, commit `2a1e35e`). The
-  release-licenses check of design-fiasco.md holds on both published
-  kernels with its seeds, one listing `jdb_object.cpp` again in
-  `Modules.generic` and one restoring the original `kobject_rpc.h`. Every other component under a license that
+  clean-room under MIT. Every other component under a license that
   is not permissive is rewritten, along CLAUDE.md's clean-room rule, or
   dropped. The dependency table names none other in an image beyond the
   accepted ones: the Pi 4's device tree under GPL-2.0, shipped with its
@@ -1690,14 +1675,10 @@ its code, and the item's work waits on it.
   seeded fault, and its fuzz target runs its budget clean; the
   published images carry no login key, and the login-key chokepoint
   check catches its seeded violation.
-* The release-licenses check of
-  [design-fiasco.md](design-fiasco.md#verification) passes on both
-  published images' kernels and fails on its two seeds, `jdb_object.cpp`
-  listed again in `Modules.generic` and the original `kobject_rpc.h`
-  restored. The license
-  allowlist check of [design.md](design.md#licenses-and-notices) passes
-  over each published image's whole closure and fails on its seed, a
-  file recorded under GPL-2.0 added to the QEMU medium.
+* The license allowlist check of
+  [design.md](design.md#licenses-and-notices) passes over each published
+  image's whole closure and fails on its seed, a file recorded under
+  GPL-2.0 added to the QEMU medium.
 * `make check-reproducible` passes on the QEMU medium and the Pi's
   card, and their build records name 0.1's commit with no changes in
   the tree, which the website's build checks.
@@ -1780,7 +1761,7 @@ neighbour answering. The release notes carry the downsides table.
   device of 0.2's platforms is behind an IOMMU, so a DMA-capable
   device's domain is in the trusted base (FD12); the release's
   Fiasco build (the debugger off and its configuration check, the
-  clean-room header that replaces `kobject_rpc.h`, the shipped kernel's
+  clean-room header that replaces `kobject_rpc.h`, the release kernel's
   build without `jdb_object.cpp`, the writable-or-executable patch, and the check that the image's link
   closure is all permissive, and the eager FP switch); the system-call
   fuzz campaign; and the upstream security watch. The build also
@@ -3345,7 +3326,7 @@ Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm besid
                  (e) the header after 1b-E (its GPIO package also on where the pin controller lives)
 
 0.1:       its dependencies (see 0.1)
-             --> the clean-room header and the kernel without jdb_object, the end path's reset, the hardware watchdog,
+             --> the clean-room header, the end path's reset, the hardware watchdog,
                  the set-time command, the login key on the record partition
              --> the preview's images, the Pi's manual passes and soak
 

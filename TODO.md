@@ -26,13 +26,12 @@ it; git history is the record of completed work.
   ([plan.md](docs/plan.md)). It blocks no release: 0.2 ships on Fiasco, and
   what Fiasco lacks is published with it as the downsides of
   [design-fiasco.md](docs/design-fiasco.md#downsides-against-erxoss-kernel).
-  Every build carries GPL-2.0 code, Fiasco's `kobject_rpc.h`, without which
-  the kernel does not build, and the kernel debugger's `jdb_object.cpp`, so
-  any distribution outside the project, in source or binary form, waits for
-  the clean-room header that replaces `kobject_rpc.h` and a shipped kernel
-  built without `jdb_object.cpp`, which `Modules.generic` lists for every kernel
-  whatever the debugger's setting (0.1's and 0.2's items below,
-  [design.md](docs/design.md#dependencies)). The import also records the
+  An erXos-authored clean-room header replaces Fiasco's GPL-2.0
+  `kobject_rpc.h` in every build; the one GPL-2.0 file a build carries is
+  the kernel debugger's `jdb_object.cpp`, which goes out only in 0.1's
+  images, which keep the debugger, with its source offered, and which the
+  release kernel's build leaves out (0.1's and
+  0.2's items below, [design.md](docs/design.md#dependencies)). The import also records the
   link closure of L4Re's `bootstrap` and `sigma0`, their `drivers-frst`
   UART support, and the license of each library in it.
 * [Medium] apps, an app's own tree ([design-app-trees.md](docs/design-app-trees.md)): build `/svc/NAME`:
@@ -523,13 +522,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device, and
   MSIs through Fiasco's interrupt manager; whether QEMU's SMMUv3 works with Fiasco's binding under HVF is
   unverified ([design-fiasco.md](docs/design-fiasco.md#devices)).
-* [High] 0.1 and 0.2 on Fiasco, `fiasco/kernel/src/Modules.generic`: `jdb_object.cpp` listed only for a kernel
-  built with the debugger, so the shipped kernel's build leaves the GPL-2.0 file out; a boot of that kernel
+* [High] 0.2 on Fiasco, the release kernel: `Modules.generic` lists `jdb_object.cpp` only for a kernel built
+  with the debugger, so the release kernel's build leaves the GPL-2.0 file out; a boot of that kernel
   checks that `sigma0` ignores its object-naming calls failing
-  ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
-* [High] 0.1 and 0.2 on Fiasco, `fiasco/kernel`: an erXos-authored BSD-2-Clause header that replaces the GPL-2.0
-  `kobject_rpc.h` in every build, written clean-room from what the MIT files that include it call and from
-  `l4sys`'s IPC layouts, by an agent that has never read the GPL header
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
 * [Medium] 0.2 on Fiasco, `fiasco/kernel`: Fiasco's map refuses a user mapping writable and executable at
   once, with a test whose seeded failure removes the check; an estimate of tens of lines, unverified
@@ -547,7 +542,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] 0.2 on Fiasco, `fiasco/kernel/ORIGIN.md`: the monthly upstream security watch, a review of
   Kernkonzept's `fiasco` commits since the last one recorded, backporting each fix reachable in erXos's
   configuration ([design-fiasco.md](docs/design-fiasco.md#upstream-security-fixes)).
-* [Medium] 0.1 and 0.2 on Fiasco, the release build: a check that fails when any file of the release image's link
+* [Medium] 0.2 on Fiasco, the release build: a check that fails when any file of the release image's link
   closure (kernel, `bootstrap`, `sigma0`) is recorded with a license that is not permissive, headers
   included, with two seeded failures: a build with `jdb_object.cpp` listed again in `Modules.generic`, and one with the original
   `kobject_rpc.h` restored in place of the clean-room header, made without anyone opening it; the check also
@@ -2962,8 +2957,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `kern/arm/startup-arm.cpp`): a panic before `Psci::init` and `Dt::init` in `Startup::stage2`, the handoff
   checks of `erx/erx_handoff.cpp` among them, finds no reset method, since `platform_reset` tries PSCI only once
   it is detected and the device tree's reset only once it is read, and loops forever, so a kernel built without
-  the debugger, as 0.1's is ([plan.md](docs/plan.md), 0.1, "The preview's kernel"), hangs instead of
-  rebooting. Probe PSCI from the device tree in `platform_reset` when it is not yet initialized; the test boots
+  the debugger, as the release kernel is, hangs instead of rebooting. Probe PSCI from the device tree in `platform_reset` when it is not yet initialized; the test boots
   under QEMU with `-no-reboot` a kernel whose handoff check fails and expects QEMU to exit after the panic line,
   and its seeded failure leaves the probe out.
 * [Medium] Fiasco build on a FreeBSD host, `tools/lib/erx/fiasco.rb`: the Kconfig step now builds with `cc`
@@ -8752,7 +8746,18 @@ document's "residual risks accepted" paragraph.
   design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
   takes the same shape.
 
-* [Medium] stopgap kernel, release builds (design-stopgap.md, "Boot handoff", the kernel): a
+* [Medium] image license check, release builds (`tools/lib/erx/pack_provenance.rb`,
+  `PackProvenance::RESTRICTED`; `tools/lib/erx/fiasco_provenance.rb`,
+  `FiascoProvenance.non_permissive`): which non-permissive inputs a build may carry is
+  stated twice. The image check's closed table admits its rows in development builds
+  only, while the release kernel's link audit has its own exception for GCC's three
+  headers and none for l4re-core's `ldscripts/kip_addr.S` (FSFAP), which `sigma0` links.
+  A release image would be refused for the GCC headers and `kip_addr.S`, which fails
+  safe. Fix: give each row the build kinds it applies to (Doom and `jdb_object.cpp`
+  development only, the GCC headers and `kip_addr.S` every kind) and have the release audit read the same
+  table, matching the audit's paths to the table's labels.
+
+* [Medium] stopgap kernel, release builds (design-fiasco.md, "Boot handoff", the kernel): a
   release kernel is configured without JDB and the kernel's console input, so a panic reboots
   instead of waiting on the console (`tools/erx build release-kernel`, `FiascoConfig::RELEASE_UNSET`),
   but no image packs it: every image is a development build (`ProductionImage::BUILD_KIND`);
@@ -8774,8 +8779,17 @@ document's "residual risks accepted" paragraph.
   whose handoff fails, once the early reset is fixed. Still in a release kernel and each a
   question for the release: `CONFIG_RT_DBG`, which adds object naming and the kernel memory
   statistics dump to the console (`jdb_kobject`, `CONFIG_JDB_KMEM_STATS`) to the debugger
-  kernel object `jdb_object` that every kernel has; and `CONFIG_PERF_CNT_USER`, user-mode
-  access to the performance counters, which Fiasco's Kconfig marks for debugging only.
+  kernel object `jdb_object`, which only a kernel with the debugger compiles; and
+  `CONFIG_PERF_CNT_USER`, user-mode access to the performance counters, which Fiasco's Kconfig
+  marks for debugging only.
+* [Low] stopgap kernel, published images (`config/fiasco/kernel.defconfig`, `tools/lib/erx/fiasco_config.rb`,
+  `PackProvenance::RESTRICTED`): 0.1's published images carry the development kernel, with JDB, the kernel's
+  console input and `jdb_object.cpp` (GPL-2.0-only), by decision. Once published images should drop it, a
+  developer-only debugger kernel: a switch that builds a kernel with the debugger for a developer's own image,
+  which the published build refuses, the published kernel built without it, and the closed table's
+  `jdb_object.cpp` row deleted. Until then anyone at the console of a published image's panicked machine
+  reaches the debugger, which reads and writes kernel memory: on the Pi 4 until the watchdog resets the
+  board, on QEMU and the browser demo without limit.
 * [Medium] WiFi, the vault purpose for network keys
   ([design-wifi.md](docs/design-wifi.md#credentials)): design-system.md
   does not yet list the vault purpose `{wpa, Service}`, with facet
