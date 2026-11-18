@@ -47,8 +47,9 @@ module Erx
   # holds the domain through the echo.
   #
   # The reboot cell boots the same image again to the lease, starts the daemon the same
-  # way, and root, logged in over ssh, ends the machine (check_ssh_reboot): the login's
-  # rc runs on a tty of root_1's session, which holds the machine grant, and its reboot
+  # way, and root, logged in over ssh, pings slirp's gateway past the daemon's first
+  # rekeying check (REKEY_CHECK_PINGS) and then ends the machine (check_ssh_reboot): the
+  # login's rc runs on a tty of root_1's session, which holds the machine grant, and its reboot
   # writes the reset line to the /machine/ctl the session mounts (docs/design-system.md,
   # "A session's request"). QEMU's exit under -no-reboot shows the reset, after
   # `rebooted by root` on the console and with no crash frame.
@@ -105,8 +106,14 @@ module Erx
     # the tty's echo of the typed line holds no such header.
     SSH_INPUT = "ps\rexit\r"
     SSH_ANSWER = /PID +TT +STAT +TIME +COMMAND/n
-    # What root types to end the machine: rc's reboot (erx_cmd_reboot).
-    SSH_REBOOT = "reboot\r"
+    # ssh's server checks the bytes a connection has sent, to decide on rekeying, 60 s
+    # after the login (REKEY_DATA_TIMOUT, otp/lib/ssh/src/ssh.hrl), by asking its socket
+    # (inet:getstat/2, which erx_gen_tcp answers). One ping a second, so the reboot login's
+    # ping runs past that check, which must leave the login up for the reboot after it.
+    REKEY_CHECK_PINGS = 70
+    # What root types to end the machine once the check has passed: rc's reboot
+    # (erx_cmd_reboot), after the ping.
+    SSH_REBOOT = "ping -c #{REKEY_CHECK_PINGS} 10.0.2.2\rreboot\r"
     # The host ssh's line when the daemon turns down every key it offered.
     SSH_REFUSED = 'Permission denied (publickey)'
     SSH_DEADLINE = 60
@@ -158,7 +165,7 @@ module Erx
        ssh_daemon(login).freeze,
        # Its seconds also pay for the login within the run's deadline, the sum of the
        # checkpoints' seconds; its own clock starts once the login returned.
-       SessionDomain.machine_end_point('reboot').merge(seconds: SSH_DEADLINE + 120).freeze]
+       SessionDomain.machine_end_point('reboot').merge(seconds: SSH_DEADLINE + REKEY_CHECK_PINGS + 120).freeze]
     end
 
     # The production checkpoints to the system's command shell; then, from the system's
@@ -212,12 +219,12 @@ module Erx
     end
 
     # Root with pair's key logs in through the host forward at port and types SSH_REBOOT
-    # at rc. The guest's end closes the connection, or leaves ssh to its deadline, so a
-    # failed ssh is no failure of the cell unless the daemon refused the login: the end's
-    # console line and log line decide.
+    # at rc, the ping's seconds added to the login's deadline. The guest's end closes the
+    # connection, or leaves ssh to its deadline, so a failed ssh is no failure of the cell
+    # unless the daemon refused the login: the end's console line and log line decide.
     def check_ssh_reboot(pair:, port:, runner:)
       Dir.mktmpdir('erx-ssh-cell') do |work|
-        runner.run(ssh_argv(pair, port: port, work: work), name: 'ssh-reboot', deadline: SSH_DEADLINE,
+        runner.run(ssh_argv(pair, port: port, work: work), name: 'ssh-reboot', deadline: SSH_DEADLINE + REKEY_CHECK_PINGS,
                                                            stdin: input_file(work, SSH_REBOOT), stdout: File.join(work, 'answer'))
       end
     rescue CommandError => error

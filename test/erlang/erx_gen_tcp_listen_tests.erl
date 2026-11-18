@@ -21,7 +21,9 @@ waiting when its listening socket closes, and the calls after the close; and the
 listen-time answers of a port another listener holds, a local address, a bad port and the
 defaults; what `listen` and `connect` raise for an option stock does not know and for
 a value it does not take; and an acceptor that is not the listening socket's owner
-echoing a passive connection until the peer's FIN, then closing.
+echoing a passive connection until the peer's FIN, then closing; and the statistics `inet:getstat/2` answers for a listener, for
+the sender of two framed sends and for their receiver once it has read them, among them
+the one ssh's rekeying check asks for, `send_oct`.
 
 A port held only by a loopback connection in TIME-WAIT is a case of its own, against
 FreeBSD's rule: free 20 ms after the close, where macOS holds it for the full 2MSL, so
@@ -123,8 +125,24 @@ scenario(#{listen := Listen, connect := Connect}) ->
     HalfClosed =
         [{echo_after_the_peers_fin, read_to_end(C5, <<>>)},
          {acceptor_after_the_peers_fin, receive {echoed, Echoed} -> Echoed after ?WAIT -> none end}],
-    _ = [gen_tcp:close(S) || S <- [C, L, L4, C5, L5]],
-    lists:append([Listening, Accepted, Moved, MovedListener, Closed, ListenTime, HalfClosed]).
+    %% Two sends of 3 and 1000 bytes in `{packet, 2}`, counted with their headers: 1007
+    %% bytes, and a mean of 503.5 that stock reports truncated.
+    {ok, L6} = Listen(0, [binary, {active, false}]),
+    {ok, {_, Port6}} = inet:sockname(L6),
+    {ok, C6} = Connect(Port6, [binary, {active, false}, {packet, 2}]),
+    {ok, A6} = gen_tcp:accept(L6, ?WAIT),
+    ok = gen_tcp:send(C6, <<"abc">>),
+    ok = gen_tcp:send(C6, binary:copy(<<"z">>, 1000)),
+    {ok, _} = gen_tcp:recv(A6, 1007, ?WAIT),
+    Stats =
+        [{listener_stats, inet:getstat(L6, [recv_oct, send_oct, send_cnt, send_max])},
+         {rekey_check, inet:getstat(C6, [send_oct])},
+         {sender_stats, inet:getstat(C6, [send_cnt, send_max, send_avg, recv_oct, recv_cnt])},
+         {receiver_stats, inet:getstat(A6, [recv_oct, send_oct, send_cnt])},
+         {no_names, inet:getstat(C6, [])},
+         {unknown_name, inet:getstat(C6, [send_oct, no_such_stat])}],
+    _ = [gen_tcp:close(S) || S <- [C, L, L4, C5, L5, C6, A6, L6]],
+    lists:append([Listening, Accepted, Moved, MovedListener, Closed, ListenTime, HalfClosed, Stats]).
 
 %% Accepts one connection on L and sends back what each recv takes until the peer's end;
 %% answers the bytes echoed and the close's answer, or the first call that failed.
