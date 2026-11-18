@@ -164,7 +164,7 @@ numbers are names; the table's order is the order.
 | 1b-F Track D, parts 6 to 8 | a QEMU `virt` desktop whose terminal windows run the shell, the same user interface term as on the web, and erXos's own `stats`, `clock`, `month` and `files` in one theme | estimated per part before it starts | 1b-C's part 3 | |
 | 1b-G Networking on QEMU | the network domain carries UDP echo and a TCP bulk transfer to a Linux peer through the packet-path prototype, on QEMU under HVF | estimated in the network service's design document | Phase 1: the network driver and stack run in the system domain, as M6's block driver does, until 1b-E moves them into the network domain | GN-QEMU's baseline, deciding nothing |
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
-| 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
+| 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([M13](#m13-erxoss-f2fs)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on Fiasco | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
 | 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, built by the user, plays on QEMU with the virtio keyboard and runs its demo loop on the Pi | the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
 | 0.2 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and four Fiasco patches (the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, writable or executable, eager FP switching), five if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
@@ -4034,6 +4034,26 @@ distribution guest, Linux's F2FS and f2fs-tools at scale
 ([design-f2fs.md](design-f2fs.md#testing-on-the-host));
 the power-cut harness; the fuzz target; legal review of the clean room
 before a product ships it.
+
+**Stages, on QEMU.** Each ends in tests of its own
+([design-f2fs.md](design-f2fs.md#verification)): (1) the format's
+facts and the reader, `abi/formats/f2fs.txt` with the layout
+language's packed storage, the codec with its fuzz targets, the
+corpora's fetch, the listing, and the oracle guest making Linux
+images; (2) read-only mounts, with the walk and replay in memory, of
+every Linux image and corpus image, clean and with chains, each
+read-only feature with chains included, erXos's
+trees equal to Linux's; (3) the format and read-write mounts with
+checkpoints, every namespace and data operation, the room rule, the
+mount checkpoint with its copies, orphans, the test window, the model and the
+generator over every geometry, and the distribution guest, every
+image passing `fsck.f2fs` and listing equal in Linux; (4) `fsync`
+records and the power-cut harness, every crash state checked in erXos
+and in the guests, and the probes; (5) the cleaner, under churn to
+high utilisation at every format size; (6) parity and the switch, the
+file-semantics corpus and pjdfstest against littlefs and Linux, gate
+G13, then the seam's change and littlefs's deletion. The estimate is
+about 8,000 lines of Erlang, 2,000 of Ruby and 5,000 of tests.
 
 **Scope, with M12, after 0.2.** The installation that brings erXos's
 F2FS to the boards, which creates the data partition and the vault's
