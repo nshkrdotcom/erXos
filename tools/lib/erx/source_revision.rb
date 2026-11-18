@@ -4,6 +4,7 @@
 
 require_relative 'error'
 require_relative 'git_environment'
+require_relative 'submodules'
 
 module Erx
   # Which source a build is of, as git records it, for what `uname -v` shows
@@ -13,8 +14,9 @@ module Erx
   # differs when a tracked file does or when an untracked file that git's own
   # ignore rules do not exclude exists, because the image and the card are
   # built from directories the build globs, so an untracked source file is
-  # built in although no commit holds it. This one flag marks the guest's
-  # `uname` and the Pi card's build record alike.
+  # built in although no commit holds it. An example's checkout, which the
+  # build never reads as files, is no part of the tree here (EXAMPLES). This
+  # one flag marks the guest's `uname` and the Pi card's build record alike.
   # Each is a fact of the source alone, the same for every build of one tree
   # in one state on any branch, so it keeps the boot image reproducible and
   # one commit gives one image wherever it is checked out; no branch, no
@@ -45,6 +47,13 @@ module Erx
     # those the checkout's ignore files leave (its .git/info/exclude is read).
     GIT = %w[git --no-optional-locks --no-pager -c core.fsmonitor=false -c core.checkStat=minimal
              -c core.fileMode=off -c core.quotePath=true -c core.excludesFile=/dev/null].freeze
+    # The pathspecs that leave the examples (Submodules) out of the status, so
+    # git never enters their checkouts, each its own repository under its own
+    # configuration and attributes, and no filter of theirs runs here. The
+    # build compiles an example only from the commit HEAD's gitlink names
+    # (DoomProgram.snapshot), which the revision's commit fixes, so neither the
+    # checkout nor a change to the gitlink in the index is a difference.
+    EXAMPLES = Submodules::TREE.examples.paths.map { ":(exclude,literal,top)#{it}" }.freeze
     # Where a query names the commit, which read resolves once, first, so every
     # answer is of the one commit even if HEAD moves during the build.
     COMMIT = :commit
@@ -56,8 +65,9 @@ module Erx
       committed: [[*%w[show -s --no-show-signature --format=%ct], COMMIT], /\A[0-9]{1,12}\z/],
       # Porcelain lines alone, `XY path` (`??` for an untracked file; ignored
       # files are not listed), so a warning git writes to the same log is
-      # refused rather than read as a change.
-      changes: [%w[status --porcelain --untracked-files=normal --ignore-submodules=none],
+      # refused rather than read as a change. A built-in submodule counts,
+      # whatever configuration says to ignore it, as the build compiles it.
+      changes: [[*%w[status --porcelain --untracked-files=normal --ignore-submodules=none --], *EXAMPLES],
                 /\A(?:(?:[ MTADRCU]{2}|\?\?) .+\n)*\z/]
     }.freeze
     DEADLINE = 60

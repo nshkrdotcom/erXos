@@ -8,6 +8,7 @@ require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/source_revision'
+require_relative '../../tools/lib/erx/submodules'
 
 # The source revision a build records (Erx::SourceRevision): read from a
 # scratch git checkout with a fixed commit date, so each case knows the
@@ -115,6 +116,55 @@ class SourceRevisionTest < Minitest::Test
 
   def test_a_tree_that_is_not_a_checkout_has_no_revision
     assert_nil read
+  end
+
+  # A repository at path below the tree with two commits, the tree's gitlink pinning the
+  # first and the checkout left at it; answers both commits.
+  def submodule_at(path)
+    directory = File.join(@tree, path)
+    FileUtils.mkdir_p(directory)
+    git('-C', directory, 'init', '--quiet', '--initial-branch=main')
+    commits = %w[pinned later].map do |text|
+      File.write(File.join(directory, 'file'), text)
+      git('-C', directory, 'add', 'file')
+      git('-C', directory, 'commit', '--quiet', '-m', text)
+      git('-C', directory, 'rev-parse', 'HEAD')
+    end
+    git('-C', directory, 'checkout', '--quiet', commits.first)
+    git('update-index', '--add', '--cacheinfo', "160000,#{commits.first},#{path}")
+    git('commit', '--quiet', '-m', "pin #{path}")
+    commits
+  end
+
+  # An example's checkout is the example's own repository, under its own configuration
+  # and attributes, so git never enters it for the tree's status: a clean filter they
+  # name does not run, and the checkout away from its gitlink leaves the tree clean.
+  def test_an_example_submodule_is_not_entered
+    checkout_of_two_commits
+    path = Erx::Submodules::TREE.examples.paths.first
+    _, later = submodule_at(path)
+    example = File.join(@tree, path)
+    marker = File.join(@scratch, 'filter-ran')
+    File.write(File.join(example, '.git/info/attributes'), "* filter=mark\n")
+    File.open(File.join(example, '.git/config'), 'a') { it.write("[filter \"mark\"]\n\tclean = \"touch #{marker}; cat\"\n") }
+    # The same bytes at another time, which git can tell apart from the index's only by
+    # running the file through its clean filter.
+    File.utime(Time.at(COMMITTED), Time.at(COMMITTED), File.join(example, 'file'))
+    refute read.dirty, 'an example checkout at its gitlink'
+    refute File.exist?(marker), "git ran the example's clean filter"
+    git('-C', example, 'checkout', '--quiet', later)
+    refute read.dirty, 'an example checkout away from its gitlink'
+  end
+
+  # A built-in submodule is part of what the build compiles, so one checked out away
+  # from its gitlink marks the tree dirty.
+  def test_a_built_in_submodule_away_from_its_gitlink_marks_the_revision_dirty
+    checkout_of_two_commits
+    path = Erx::Submodules::TREE.built_in.paths.first
+    _, later = submodule_at(path)
+    refute read.dirty, 'a built-in submodule at its gitlink'
+    git('-C', File.join(@tree, path), 'checkout', '--quiet', later)
+    assert read.dirty, 'a built-in submodule away from its gitlink'
   end
 
   def answers(**changed)

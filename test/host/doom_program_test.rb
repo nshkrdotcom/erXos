@@ -74,21 +74,21 @@ class DoomProgramTest < Minitest::Test
     assert_match(/not fetched: run `tools\/erx fetch --example doom`/, error.message)
   end
 
-  # The source offer names the gitlink's commit, so a checkout of any other commit, or
-  # one git status shows changed, is refused before anything is built.
-  def test_the_build_takes_only_the_pinned_commit_unchanged
-    first, second = superproject
-    error = assert_raises(Erx::Error) { check }
-    assert_match(/at \S*#{second[0, 12]}, not the commit #{first} the tree's gitlink records/, error.message)
-
-    git(File.join(@root, FORK), 'checkout', '-q', first)
+  # The build compiles the gitlink's commit from the fork's objects, so the checkout may
+  # stand anywhere, changed or not, while a fork that does not hold that commit, or a WAD
+  # other than Freedoom 0.13.0's, is refused before anything is built.
+  def test_the_build_takes_a_fork_that_holds_the_pinned_commit
+    superproject
+    File.write(File.join(@root, FORK, 'LICENSE'), 'changed')
     check
-    # Any other file at the WAD's path than Freedoom 0.13.0's is refused.
     error = assert_raises(Erx::Error) { Erx::DoomProgram.check_fetched(root: @root, runner: @runner) }
     assert_match(/freedoom1\.wad has SHA-256 \h{64}, not Freedoom 0\.13\.0's #{Erx::DoomProgram::WAD_SHA256}/, error.message)
-    File.write(File.join(@root, FORK, 'LICENSE'), 'changed')
+
+    absent = '0123456789abcdef0123456789abcdef01234567'
+    git(@root, 'update-index', '--cacheinfo', "160000,#{absent},#{FORK}")
+    git(@root, 'commit', '-q', '-m', 'repin')
     error = assert_raises(Erx::Error) { check }
-    assert_match(/-dirty, not the commit/, error.message)
+    assert_match(/#{FORK} does not hold the commit #{absent} the tree's gitlink records/, error.message)
   end
 
   # What the build compiles is the pinned commit's blobs, whatever the checkout holds,

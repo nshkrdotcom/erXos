@@ -7757,6 +7757,13 @@ to the corpus and follow rc
   its gitlink marks the tree dirty although the build compiles only the gitlink's commit
   (`DoomProgram.snapshot`); `DoomProgram.check_fetched` refuses that checkout first. Leaving the
   examples out of the status would make both hold by construction and let the refusal go.
+* [Low] build, git started by host tooling (`tools/lib/erx/fiasco.rb`, `submodule.rb`, `source_revision.rb`):
+  each site builds its own argv, so "git runs no program a repository names" holds only where someone
+  remembered it. `Fiasco#import_git`'s `git archive` runs plain `git` in the Fiasco clone, applying the
+  filters its attributes and configuration name (the archive's SHA-256 catches altered output, not the
+  filter program running). One argv constructor in `GitEnvironment` (fsmonitor off, no pager, no lazy
+  fetch, the isolated environment) with a build check that no other `'git'` argv exists would make it hold
+  for every site.
 * [Medium] apps, an app's directory ([design-packaging.md](docs/design-packaging.md#invariants), PK4): until
   the storage service roots an app's `data` grant at `apps/NAME/SIGNER/` (`tree apps`), apps hold no `data`
   grant (the files-service item under Major initiatives) and the directory half of PK4's QEMU test waits; and

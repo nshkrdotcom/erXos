@@ -14,6 +14,8 @@ require_relative 'error'
 require_relative 'generated'
 require_relative 'line_escape'
 require_relative 'net_bench'
+require_relative 'runner'
+require_relative 'source_revision'
 
 module Erx
   # The network benchmarks on the FreeBSD test host: erx_net on stock OTP and lwIP,
@@ -299,10 +301,11 @@ module Erx
         remote_line([erl, '-noshell', '-eval', 'io:format("~s (erts ~s)~n", [erlang:system_info(otp_release), erlang:system_info(version)]), halt().'])
       end
 
+      # The tree's source revision as `uname -v` shows it (SourceRevision), git's logs
+      # beside the run's.
       def tree_state
-        head, = Open3.capture2e('git', '-C', @root, 'rev-parse', '--short=12', 'HEAD', stdin_data: '')
-        dirty, = Open3.capture2e('git', '-C', @root, 'status', '--porcelain', '--untracked-files=no', stdin_data: '')
-        "erXos #{head.strip}#{dirty.strip.empty? ? '' : ' (uncommitted changes)'}"
+        git = Erx::Runner.new(owner_root: @output, log_dir: File.join(@output, 'logs'))
+        "erXos #{SourceRevision.read(root: @root, runner: git) || 'unknown'}"
       end
 
       def make_variable(path, name)

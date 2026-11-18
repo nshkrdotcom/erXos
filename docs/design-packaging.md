@@ -1804,11 +1804,13 @@ only as a third party would build it, through the SDK.
   release, not as a package: the published build, `tools/erx pack
   --medium`, compiles the fork's sources with Freedoom's WAD linked in
   (`tools/lib/erx/doom_program.rb`). The media offer the gitlink's
-  commit as their source, so the build refuses a checkout that is
-  missing, at another commit than the gitlink's, or changed, and
-  compiles a snapshot of the commit written from its blobs under
-  `build/`, never the checkout's working files, which can differ from
-  the commit where `git status` does not show it. Its row in the
+  commit as their source, so the build refuses a fork that is missing
+  or does not hold that commit, and compiles a snapshot of the commit
+  written from its blobs under `build/`, never the checkout's working
+  files, which can differ from the commit where `git status` does not
+  show it. Where the checkout stands is no part of the build, and the
+  tree's source revision (`uname -v`, the image record) leaves the fork
+  out, so git never runs a status in it under its own configuration. Its row in the
   dependency table has the status `example`, which the image build admits
   for its archive alone ([design.md](design.md#dependencies)); every
   other package that is not permissive stays out of every image but a

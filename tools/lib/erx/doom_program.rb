@@ -23,10 +23,10 @@ module Erx
   # reads the fork and a tree without it builds every other image.
   #
   # The image's source offer names the fork at the commit the tree's gitlink records, so
-  # the build refuses a checkout at any other commit, or one with changes (check_fetched),
-  # and compiles that commit's own files, written from git's objects into a snapshot in
-  # the build tree (snapshot), never the checkout's working files, which can differ from
-  # the commit where git status does not show it. No file of the fork enters the tree.
+  # the build compiles that commit's own files, written from git's objects into a snapshot
+  # in the build tree (snapshot), never the checkout's working files, which can differ
+  # from the commit where git status does not show it; it refuses a fork whose objects do
+  # not hold that commit (check_fetched). No file of the fork enters the tree.
   module DoomProgram
     NAME = 'doom'
     EXAMPLE = Submodules::TREE.examples.fetch(NAME)
@@ -82,16 +82,14 @@ module Erx
     # Where the build reads Doom's sources: their directory in the snapshot.
     def source_directory(root) = File.join(root, SNAPSHOT, 'doomgeneric')
 
-    # Refuses a published build in a tree whose fork is not fetched, is checked out at a
-    # commit other than the gitlink's, or holds changes, or whose WAD is not WAD_SHA256's,
-    # before anything is built. The bytes compiled are the gitlink's commit whatever the
-    # checkout holds (snapshot); this refusal is the published build's diagnostic for a
-    # checkout that does not match it, which the image's record would otherwise mark as a
-    # tree that differs from its commit (SourceRevision) and refuse to publish without
-    # naming the fork. wad_sha256 is a test's stand-in for WAD_SHA256.
+    # Refuses a published build in a tree whose fork is not fetched or does not hold the
+    # commit the gitlink records, or whose WAD is not WAD_SHA256's, before anything is
+    # built, each with a diagnostic that names what to fetch. Where the fork's checkout
+    # stands does not matter: the bytes compiled are the gitlink's commit (snapshot), and
+    # the tree's source revision leaves the fork out (SourceRevision). wad_sha256 is a
+    # test's stand-in for WAD_SHA256.
     def check_fetched(root:, runner:, wad_sha256: WAD_SHA256)
-      fork = File.join(root, EXAMPLE.path)
-      unless File.exist?(File.join(fork, '.git')) && File.file?(File.join(root, WAD))
+      unless File.exist?(File.join(root, EXAMPLE.path, '.git')) && File.file?(File.join(root, WAD))
         raise Error, "the published medium carries Doom, which is not fetched: run `tools/erx fetch --example #{NAME}` " \
                      "(#{EXAMPLE.path} and #{WAD})"
       end
@@ -99,11 +97,19 @@ module Erx
       raise Error, "#{WAD} has SHA-256 #{wad}, not Freedoom 0.13.0's #{wad_sha256}: fetch it again" unless wad == wad_sha256
 
       pinned = pinned_commit(root: root, runner: runner)
-      revision = SourceRevision.read(root: fork, runner: runner)
-      return if revision.commit == pinned && !revision.dirty
+      # rev-list names the commit when the fork's objects hold it and nothing when they do
+      # not (--ignore-missing), so git's own failure stays a failure; its standard output
+      # alone is read, so a warning is no answer.
+      held = Dir.mktmpdir('erx-doom-pinned-') do |work|
+        answer = File.join(work, 'answer')
+        fork_git(['rev-list', '--no-walk', '--ignore-missing', pinned], root: root, runner: runner, name: 'doom-pinned',
+                                                                         stdout: answer)
+        File.binread(answer)
+      end
+      return if held == "#{pinned}\n"
 
-      raise Error, "#{EXAMPLE.path} is at #{revision}, not the commit #{pinned} the tree's gitlink records, which the " \
-                   'published medium offers as its source: check that commit out, with no changes'
+      raise Error, "#{EXAMPLE.path} does not hold the commit #{pinned} the tree's gitlink records, which the published " \
+                   "medium offers as its source: fetch that commit into #{EXAMPLE.path}"
     end
 
     # Writes the pinned commit's files into SNAPSHOT under root, made afresh, each with the
@@ -142,9 +148,12 @@ module Erx
     end
     private_class_method :pinned_commit
 
+    # git in the fork, which never fetches an object it lacks (a partial clone's lazy
+    # fetch would reach the network mid-build; a git without the variable ignores it).
     def fork_git(arguments, root:, runner:, name:, stdin: nil, stdout: nil)
       runner.run([*GIT, *arguments], name: name, deadline: SourceRevision::DEADLINE, chdir: File.join(root, EXAMPLE.path),
-                                     env: GitEnvironment.isolated, stdin: stdin, stdout: stdout)
+                                     env: GitEnvironment.isolated.merge('GIT_NO_LAZY_FETCH' => '1'), stdin: stdin,
+                                     stdout: stdout)
     end
     private_class_method :fork_git
 
