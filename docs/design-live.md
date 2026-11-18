@@ -1354,12 +1354,31 @@ reporter it names.
 
 The inspector is reached from another domain through one interface,
 `inspect`, which `abi/services/inspect.txt` declares and which cites
-this section. Its two operations are the inspector's two queries:
+this section. Its three operations are the inspector's three queries:
 
 | Operation | Request | Answer |
 | --- | --- | --- |
 | `inspect` | `Path`, `Options` | `{ok, Record}`, or `{error, Reason}` with `Reason` one of `scope`, `unsupported`, `invalid`, `failed` and `badarg` |
 | `entries` | `Path` | `{ok, Records}` or `{partial, Records}`, the records of a listing's entries, or `{error, Reason}` with `Reason` one of `scope`, `unsupported`, `failed` and `badarg` |
+| `literals` | `Path` | `{ok, Literals}`, the literal segments the schema declares below `Path` that name something to the caller, in the schema's order, or `{error, Reason}` with `Reason` one of `scope`, `failed` and `badarg` |
+
+`literals` answers which of a path's declared children exist for the
+caller without collecting any record: from the schema, the scope check
+of `inspect` and the facts the query worker holds before it collects,
+whether a domain is living in the domain service's view and whether
+this runtime collects a domain's records. A literal path names something
+exactly where the scope reaches it and those facts admit it, since no
+collector of a literal path answers `{error, scope}`: a collector that
+cannot answer says `unsupported` or `failed`, which a `status` file
+shows. So `Literals` holds exactly the children whose `inspect` would
+not answer `{error, scope}`, and it never names a path outside the
+scope; a path the scope does not reach answers `{error, scope}`, as
+`inspect` does, and one whose children are entries rather than literals,
+or one within the scope that names nothing, such as a domain that ended,
+answers `{ok, []}`. Below `[domains, D]` the facts differ by child: a
+domain's `group` and `budget` exist while the domain lives, and its
+`threads`, `modules` and `processes` only where the system domain's
+runtime collects them, for the system domain itself.
 
 A path is data, so a value someone needs to read is a path of
 `abi/inspection.txt` and never an operation, a facet or a validator of
@@ -1410,8 +1429,8 @@ its configuration (below). A command
 domain gets the facet attenuated in front of its starter's, as any
 facet ([design-domains.md](design-domains.md#facets)).
 
-**How a query travels.** `erx_inspector:inspect/1,2` and `entries/1`
-take no scope. In any runtime but the system domain's they call the
+**How a query travels.** `erx_inspector:inspect/1,2`, `entries/1` and
+`literals/1` take no scope. In any runtime but the system domain's they call the
 domain's `inspect` facet and return its answer, or `{error, no_facet}`
 when the domain holds none; `erx:i/1`, `erx:inspect/2`, the shell's
 commands that query the inspector (`top`'s header, `dmesg`), `/proc` and
@@ -1764,6 +1783,13 @@ memory and work, charged to it.
   domain's memory, within the grant process's heap limit, and a 257th
   open fails with `emfile`
   ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)). A
+  directory whose children the schema names, `/proc` itself and
+  `/proc/domains/7` among them, is listed by one `literals` query, which
+  collects no record, and a walk to such a child asks the same query of
+  its parent, so neither costs a listing's records; any other answer
+  than `{ok, Literals}` or one that names nothing (`{error, scope}`,
+  `{error, no_facet}`) shows every declared child, whose `status` then
+  says why the query failed. A
   directory lists at most 1,000 entries, the inspector's page; a longer
   listing ends with an entry named `.partial`, whose file says how many
   entries were left out, and a directory whose listing the inspector

@@ -47,7 +47,7 @@ walk_answers_status_without_asking_test() ->
 walk_reads_scope_as_no_entry_test() ->
     Scope = fun({exists, _}) -> {error, scope} end,
     ?assertEqual({error, enoent}, erx_procfs_core:walk([processes], <<"4.85.0">>, Scope)),
-    Unsupported = fun({exists, _}) -> {error, unsupported} end,
+    Unsupported = fun(_Question) -> {error, unsupported} end,
     ?assertEqual({ok, {dir, [groups]}}, erx_procfs_core:walk([], <<"groups">>, Unsupported)),
     ?assertEqual({error, enoent}, erx_procfs_core:walk([], <<"nothing">>, Unsupported)).
 
@@ -71,6 +71,23 @@ markers_exist_only_where_the_listing_says_test() ->
     ?assertEqual({error, enoent}, erx_procfs_core:walk([], <<".partial">>, Partial)).
 
 %%% Listings
+
+%% A directory whose children the schema names is listed, and its literal
+%% children walked, by one question, which of them the scope reaches: no
+%% record is gathered, so the root's listing never asks for `[processes]`,
+%% whose answer collects every domain's processes.
+a_literal_listing_asks_one_question_test() ->
+    Lookup = fun({literals, []}) -> {ok, [cpus, processes]};
+                (Question) -> error({asked, Question})
+             end,
+    ?assertEqual([<<"status">>, <<"cpus">>, <<"processes">>], names(erx_procfs_core:listing([], none, Lookup))),
+    ?assertEqual({ok, {dir, [processes]}}, erx_procfs_core:walk([], <<"processes">>, Lookup)),
+    ?assertEqual({error, enoent}, erx_procfs_core:walk([], <<"kernel">>, Lookup)),
+    %% Only declared literals, in the schema's order, whatever the answer holds;
+    %% a directory that declares no literal asks nothing.
+    Unordered = fun({literals, []}) -> {ok, [log, bogus, processes, cpus]} end,
+    ?assertEqual([<<"status">>, <<"cpus">>, <<"processes">>], names(erx_procfs_core:listing([], none, Unordered))),
+    ?assertEqual([<<"status">>], names(erx_procfs_core:listing([domains, 4, budget], none, Lookup))).
 
 root_lists_what_the_scope_reaches_test() ->
     ?assertEqual([<<"status">>, <<"cpus">>, <<"groups">>, <<"budgets">>, <<"domains">>, <<"processes">>,
@@ -151,7 +168,9 @@ a_record_over_64_kib_is_cut_at_a_line_test() ->
 %% /proc/kernel is a directory and its log a file, which a walk reaches
 %% without collecting it.
 the_kernel_log_is_a_file_test() ->
-    Exists = fun({exists, _}) -> {ok, listing} end,
+    Exists = fun({literals, []}) -> {ok, [kernel]};
+                ({literals, [kernel]}) -> {ok, [log]}
+             end,
     ?assertEqual({ok, {dir, [kernel]}}, erx_procfs_core:walk([], <<"kernel">>, Exists)),
     ?assertEqual({ok, {lines, [kernel, log]}}, erx_procfs_core:walk([kernel], <<"log">>, Exists)),
     ?assertEqual([{<<"status">>, {status, [kernel]}}, {<<"log">>, {lines, [kernel, log]}}],
@@ -201,14 +220,14 @@ log_lines_never_fabricate_test() ->
 a_scoped_tree_has_no_kernel_log_test() ->
     {ok, Fs} = erx_procfs:init(scoped([4])),
     ?assertEqual({error, enoent}, erx_procfs:walk(erx_procfs_core:root(), <<"kernel">>, Fs)),
-    {ok, All} = erx_procfs:init(fun erx_inspector:inspect/2),
+    {ok, All} = erx_procfs:init(fun erx_procfs:inspector/1),
     {ok, Kernel, _} = erx_procfs:walk(erx_procfs_core:root(), <<"kernel">>, All),
     ?assertMatch({ok, {lines, [kernel, log]}, _}, erx_procfs:walk(Kernel, <<"log">>, All)).
 
 %%% The tree over the real inspector
 
 the_processes_directory_lists_this_process_test() ->
-    {ok, Fs} = erx_procfs:init(fun erx_inspector:inspect/2),
+    {ok, Fs} = erx_procfs:init(fun erx_procfs:inspector/1),
     {ok, Processes, _} = erx_procfs:walk(erx_procfs_core:root(), <<"processes">>, Fs),
     {ok, Handle} = erx_procfs:open(Processes, 0, Fs),
     {ok, Entries} = erx_procfs:readdir(Handle, 0, 256, Fs),
@@ -247,7 +266,7 @@ a_crashing_query_answers_eio_and_keeps_its_snapshot_test() ->
 %% `enoent`: no name below the root, no status file and no log, and a
 %% listing of the root names nothing but its status.
 a_domain_without_the_facet_has_an_empty_tree_test() ->
-    {ok, Fs} = erx_procfs:init(fun(_Path, _Options) -> {error, no_facet} end),
+    {ok, Fs} = erx_procfs:init(fun(_Query) -> {error, no_facet} end),
     Root = erx_procfs_core:root(),
     ?assertEqual({error, enoent}, erx_procfs:walk(Root, <<"processes">>, Fs)),
     ?assertEqual({error, enoent}, erx_procfs:open({status, []}, 0, Fs)),
@@ -265,11 +284,11 @@ an_ended_facet_empties_the_tree_and_a_busy_one_does_not_test() ->
     Gone = monitor(process, Dead),
     receive {'DOWN', Gone, process, Dead, _} -> ok end,
     Root = erx_procfs_core:root(),
-    {ok, Revoked} = erx_procfs:init(fun(Path, Options) -> through(Dead, Path, Options) end),
+    {ok, Revoked} = erx_procfs:init(fun(Query) -> through(Dead, Query) end),
     ?assertEqual({error, enoent}, erx_procfs:walk(Root, <<"processes">>, Revoked)),
     ?assertEqual({error, enoent}, erx_procfs:open({status, []}, 0, Revoked)),
     Busy = spawn_link(fun Facet() -> receive {'$gen_call', From, _} -> gen:reply(From, {error, busy}), Facet() end end),
-    {ok, Full} = erx_procfs:init(fun(Path, Options) -> through(Busy, Path, Options) end),
+    {ok, Full} = erx_procfs:init(fun(Query) -> through(Busy, Query) end),
     ?assertMatch({ok, {dir, [processes]}, _}, erx_procfs:walk(Root, <<"processes">>, Full)),
     {ok, Status} = erx_procfs:open({status, []}, 0, Full),
     ?assertEqual({ok, <<"[error]\n">>}, erx_procfs:read(Status, 0, 4096, Full)),
@@ -277,17 +296,100 @@ an_ended_facet_empties_the_tree_and_a_busy_one_does_not_test() ->
     exit(Busy, kill).
 
 %% A query as a domain other than the system domain makes it, through Facet.
-through(Facet, Path, Options) ->
-    erx_inspector:route(false, Facet, {inspect, Path, Options}, 1000).
+through(Facet, Query) ->
+    erx_inspector:route(false, Facet, Query, 1000).
 
 %% The tree asks its inspector with no scope of its own: every question is
 %% a path and the query's options, never a scope.
 the_tree_asks_paths_alone_test() ->
     Me = self(),
-    Inspect = fun(Path, Options) -> Me ! {asked, Path, Options}, {error, scope} end,
-    {ok, Fs} = erx_procfs:init(Inspect),
+    Ask = fun(Query) -> Me ! {asked, Query}, {error, scope} end,
+    {ok, Fs} = erx_procfs:init(Ask),
     ?assertEqual({error, enoent}, erx_procfs:walk(erx_procfs_core:root(), <<"kernel">>, Fs)),
-    ?assertEqual([{asked, [kernel], #{}}], flush()).
+    ?assertEqual([{asked, {literals, []}}], flush()),
+    ?assertEqual({error, enoent}, erx_procfs:open({status, [processes]}, 0, Fs)),
+    ?assertEqual([{asked, {inspect, [processes], #{}}}], flush()).
+
+%% Listing the root over the real inspector, at scope `all` as the system
+%% domain's tree asks, gathers no record: no listing is enumerated and the
+%% query worker never collects the processes.
+the_root_listing_gathers_no_record_test() ->
+    {ok, Fs} = erx_procfs:init(fun erx_procfs:inspector/1),
+    Gatherers = [{erx_inspector, enumerate, 2}, {erx_inspect_worker, processes, 1}],
+    [{module, Module} = code:ensure_loaded(Module) || {Module, _, _} <- Gatherers],
+    [1 = erlang:trace_pattern(Gatherer, true, [local]) || Gatherer <- Gatherers],
+    erlang:trace(self(), true, [call, set_on_spawn]),
+    {Handle, Walked} =
+        try
+            {ok, Opened} = erx_procfs:open(erx_procfs_core:root(), 0, Fs),
+            {Opened, erx_procfs:walk(erx_procfs_core:root(), <<"processes">>, Fs)}
+        after
+            erlang:trace(self(), false, [call, set_on_spawn]),
+            [erlang:trace_pattern(Gatherer, false, [local]) || Gatherer <- Gatherers]
+        end,
+    ?assertMatch({ok, {dir, [processes]}, _}, Walked),
+    {ok, Entries} = erx_procfs:readdir(Handle, 0, 256, Fs),
+    ?assertEqual([<<"status">>, <<"cpus">>, <<"groups">>, <<"budgets">>, <<"domains">>, <<"processes">>,
+                  <<"apps">>, <<"time">>, <<"ntp">>, <<"kernel">>],
+                 [Name || {_, _, _, Name} <- Entries]),
+    ?assertEqual([], [Call || {trace, _Pid, call, _} = Call <- flush()]).
+
+%% The literals query answers exactly the declared children whose own
+%% query names something, as the tree asked one query per child before,
+%% at scope `all` and at a principal's: below the root, the kernel, the
+%% system domain, a living domain of the principal's, one that ended and
+%% one the view does not hold. Below a domain the answer depends on what
+%% exists, not on the schema alone: a living domain's group and budget,
+%% and the threads, modules and processes of the system domain alone.
+literals_name_what_each_child_s_query_names_test() ->
+    View = fun(_Scope) -> {ok, [{10, none, #{name => <<"web">>, principal => 7, state => running}},
+                                {11, ended, #{name => <<"old">>, principal => 7, state => ended}}]} end,
+    Kernel = fun(Object, Domain) -> kernel_record(Object, Domain) end,
+    Options = #{view => View, kernel => Kernel},
+    Ask = fun(Query, Scope) -> erx_inspect_worker:call(Query, Scope, Options) end,
+    System = erx_kernel_records:system_domain(),
+    %% Every declared path with literal children, each domain id as the
+    %% system domain, a living domain, an ended one and one the view does
+    %% not hold; a literal parent below another variable needs its values here.
+    Values = fun({variable, {type, domain_id}}) -> [System, 10, 11, 12];
+                (Literal) when is_atom(Literal) -> [Literal]
+             end,
+    Paths = lists:usort([Path || #{pattern := Pattern} = Declaration <- erx_schema:declarations(),
+                                 has_literals(Declaration),
+                                 Path <- expand([Values(Segment) || Segment <- Pattern])]),
+    ?assert(length(Paths) >= 6),
+    [?assertEqual({Path, Scope, by_child(Path, Scope, Ask)}, {Path, Scope, shown(Ask({literals, Path}, Scope))})
+     || Scope <- [all, {principal, 7}], Path <- Paths],
+    ?assertEqual({ok, [cpus, domains, processes, time]}, Ask({literals, []}, {principal, 7})),
+    ?assertEqual({ok, [budget, group]}, Ask({literals, [domains, 10]}, {principal, 7})),
+    ?assertEqual({ok, []}, Ask({literals, [domains, 11]}, {principal, 7})),
+    ?assertEqual({error, scope}, Ask({literals, [domains, System]}, {principal, 7})),
+    ?assertEqual({ok, [budget, group, threads, modules, processes]}, Ask({literals, [domains, System]}, all)).
+
+%% The literal children the tree showed below Path when it asked one query
+%% per child: each declared child whose own query does not name nothing.
+by_child(Path, Scope, Ask) ->
+    {ok, #{children := {literals, Declared}}} = erx_schema:resolve(Path),
+    [Literal || Literal <- Declared, erx_procfs_core:named(Ask({inspect, Path ++ [Literal], #{}}, Scope))].
+
+has_literals(#{children := {literals, [_ | _]}}) -> true;
+has_literals(_Declaration) -> false.
+
+%% Every path whose segments are one of each list of choices, in order.
+expand([]) -> [[]];
+expand([Choices | Rest]) -> [[Choice | Tail] || Choice <- Choices, Tail <- expand(Rest)].
+
+%% The literal children the tree shows from a literals answer: none for a
+%% path that names nothing, whether outside the scope or gone.
+shown({ok, Literals}) -> Literals;
+shown({error, scope}) -> [].
+
+kernel_record(budget, Domain) -> budget_record([domains, Domain, budget]);
+kernel_record(group, Domain) -> #{schema => 1, path => [domains, Domain, group], kind => group, id => group,
+                                  attrs => #{}, children => []}.
+
+budget_record(Path) ->
+    (budget(#{}))#{path := Path}.
 
 %%% Helpers
 
@@ -297,11 +399,15 @@ every({_Question, _Path}) -> {error, unsupported}.
 
 %% A lookup that answers only `[processes]` among the machine's paths, as a
 %% facet of a principal's scope does.
+processes_only({literals, []}) -> {ok, [processes]};
 processes_only({_Question, [processes]}) -> {error, unsupported};
 processes_only({_Question, _Path}) -> {error, scope}.
 
 %% The inspector as a facet of Scope answers it, the core at that scope.
-scoped(Scope) -> fun(Path, Options) -> erx_inspector:inspect(Path, Scope, Options) end.
+scoped(Scope) ->
+    fun({inspect, Path, Options}) -> erx_inspector:inspect(Path, Scope, Options);
+       ({literals, Path}) -> erx_inspector:literals(Path, Scope)
+    end.
 
 flush() ->
     receive Message -> [Message | flush()]

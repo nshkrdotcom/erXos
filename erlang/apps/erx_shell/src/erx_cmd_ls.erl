@@ -63,7 +63,9 @@ list(Operands, Options, Ctx) ->
     Files = lists:sort([{Name, Info} || {Name, {ok, #file_info{type = Type} = Info}} <- Infos,
                                         Type =/= directory]),
     Dirs = lists:sort([Name || {Name, {ok, #file_info{type = directory}}} <- Infos]),
-    Files =/= [] andalso print(Files, false, Options, Ctx),
+    FileInfo = maps:from_list(Files),
+    Files =/= [] andalso print([Name || {Name, _} <- Files], fun(Name) -> map_get(Name, FileInfo) end,
+                               false, Options, Ctx),
     Headed = length(Operands) > 1,
     Unread = [Dir || {Index, Dir} <- lists:enumerate(Dirs),
                      directory(Dir, Headed, Index =:= 1 andalso Files =:= [], Options, Ctx) =:= error],
@@ -85,8 +87,7 @@ directory(Dir, Headed, First, Options, Ctx) ->
             Headed andalso erx_cmd:write(Ctx, [[$\n || not First], shown(Dir, Options), <<":\n">>]),
             Names = lists:sort([Name || Name <- lists:map(fun binary_name/1, Raw),
                                         maps:get(all, Options) orelse binary:first(Name) =/= $.]),
-            Entries = [{Name, info(erx_cmd:path(Path, Name))} || Name <- Names],
-            print(Entries, true, Options, Ctx),
+            print(Names, fun(Name) -> info(erx_cmd:path(Path, Name)) end, true, Options, Ctx),
             ok;
         {error, Reason} ->
             report(Ctx, Dir, Reason),
@@ -99,13 +100,19 @@ info(Path) ->
         {error, _} -> unknown
     end.
 
-print(Entries, InDirectory, #{long := true} = Options, Ctx) ->
+%% Names in the format Options choose. Only the long format shows a name's
+%% attributes, so only it asks InfoOf for them: the short formats list
+%% names alone, as FreeBSD's ls asks fts for names alone without -l
+%% (FTS_NAMEONLY, bin/ls/ls.c:539-550 and 663-668), and a directory's
+%% listing reads nothing of its entries, each of which under /proc would
+%% be an inspector query.
+print(Names, InfoOf, InDirectory, #{long := true} = Options, Ctx) ->
     erx_cmd:write(Ctx, [[<<"total -\n">> || InDirectory],
-                        long([{shown(Name, Options), Info} || {Name, Info} <- Entries], Options)]);
-print(Entries, _InDirectory, #{across := true, width := Width} = Options, Ctx) ->
-    erx_cmd:write(Ctx, columns([shown(Name, Options) || {Name, _} <- Entries], Width));
-print(Entries, _InDirectory, Options, Ctx) ->
-    erx_cmd:write(Ctx, [[shown(Name, Options), $\n] || {Name, _} <- Entries]).
+                        long([{shown(Name, Options), InfoOf(Name)} || Name <- Names], Options)]);
+print(Names, _InfoOf, _InDirectory, #{across := true, width := Width} = Options, Ctx) ->
+    erx_cmd:write(Ctx, columns([shown(Name, Options) || Name <- Names], Width));
+print(Names, _InfoOf, _InDirectory, Options, Ctx) ->
+    erx_cmd:write(Ctx, [[shown(Name, Options), $\n] || Name <- Names]).
 
 %% A name as it is written: escaped at a terminal, its bytes elsewhere.
 shown(Name, #{tty := true}) -> erx_text:escape_line(Name);

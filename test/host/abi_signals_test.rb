@@ -18,8 +18,6 @@ require_relative '../fixtures/generated_tree'
 # run over every number around the table's range.
 class AbiSignalsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  # The one alias erXos adds to FreeBSD's names: SIGPOLL, Linux's name of SIGIO.
-  OWN_ALIASES = { 'POLL' => 23 }.freeze
   SIGNAL_DEFINE = /^#define\s+SIG([A-Z0-9]+)\s+(\d+|SIG[A-Z0-9]+)\b/
   GENERATED_DEFINE = /^#define ERX_SIG([A-Z0-9]+) INT32_C\((\d+)\)$/
   # One entry of siglist.c's arrays: [SIGHUP] =\t"Hangup",
@@ -201,6 +199,19 @@ class AbiSignalsTest < Minitest::Test
     assert_equal constants.except(*kept).sort.to_h, musl_signal_macros('-D_POSIX_C_SOURCE=200809L')
   end
 
+  # FreeBSD defines no SIGPOLL, so no name of the table, no generated name
+  # and no macro of musl's <signal.h> is POLL, and `kill -l` and the program
+  # protocol, which read the table, have none. Linux's SIGPWR and SIGSTKFLT
+  # are absent the same way.
+  def test_no_linux_only_signal_name
+    table = schema_of(ROOT).signals
+    names = table.signals.filter_map(&:name) + table.aliases.keys
+    linux_only = %w[poll pwr stkflt]
+    assert_empty names & linux_only
+    assert_empty generated(ROOT).keys & linux_only.map(&:upcase)
+    assert_empty musl_signal_macros('-D_GNU_SOURCE').keys & linux_only.map(&:upcase)
+  end
+
   # Seeded fault: two signals that share an alias fail generation.
   def test_shared_alias_fails_generation
     seed = ->(text) { text.sub(/^signal thr 32 reserved alias lwp$/, 'signal thr 32 reserved alias iot') }
@@ -305,8 +316,7 @@ class AbiSignalsTest < Minitest::Test
 
   # The table's names and aliases without SIG, as the generated header numbers them.
   def generated(root)
-    header_of(root).scan(GENERATED_DEFINE).to_h { |name, number| [name, Integer(number)] }
-          .reject { |name, number| OWN_ALIASES[name] == number }.sort.to_h
+    header_of(root).scan(GENERATED_DEFINE).to_h { |name, number| [name, Integer(number)] }.sort.to_h
   end
 
   # The generated erx/abi.h of the ABI files beneath root, from the model and

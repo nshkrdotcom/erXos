@@ -2494,15 +2494,14 @@ none is a name of the program protocol. `<signal.h>` defines `SIGTHR`,
 its other BSD names and FreeBSD defines them under `__BSD_VISIBLE`, so code that names them builds; `sigaction` of one fails
 with `EINVAL`, as FreeBSD's thread library refuses `SIGTHR`.
 
-**Linux's own names.** `SIGPOLL` is an alias of `SIGIO` in the signal
-table ([`abi/signals.txt`](../abi/signals.txt)), which adds no number
-and no line to `kill -l`; whether it stays is open
-([Risks and open questions](#risks-and-open-questions)). `SIGIO` keeps
-FreeBSD's default action, to ignore, where Linux's terminates. `SIGPWR`, `SIGSTKFLT` and `SIGUNUSED`
-go. FreeBSD has none of them and erXos sends none. An alias would run a
-power-failure handler on another signal, as `SIGPWR` sharing a number with
-`SIGINFO` would run it at every `Ctrl-T`, and a number of its own would be
-a signal nothing sends. Code that names them under `#ifdef`, as code that
+**Linux's own names.** `SIGPOLL`, `SIGPWR`, `SIGSTKFLT` and `SIGUNUSED`
+go. FreeBSD's `sys/sys/signal.h` defines `SIGIO` as 23 and no `SIGPOLL`,
+naming it only in comments, and has none of the others; erXos sends none.
+`SIGIO` keeps FreeBSD's default action, to ignore, where Linux's terminates.
+`SIGPOLL` goes because erXos follows FreeBSD where UNIX systems differ. An
+alias would give a Linux-only name another signal's meaning, as `SIGPWR`
+sharing a number with `SIGINFO` would run a power-failure handler at every
+`Ctrl-T`, and a number of its own would be a signal nothing sends. Code that names them under `#ifdef`, as code that
 builds on the BSDs and macOS does, builds without them; code that names
 them unconditionally fails to compile, which shows the gap at build time
 rather than at run time.
@@ -2564,8 +2563,8 @@ against these numbers. A case that fails only because it assumes Linux's
 is a documented difference, recorded with the kind `difference` in
 `test/conformance/libc-test-verdicts.txt` and pinned by the tests of this
 section. The kinds expected are a case that hard-codes a Linux number or
-names `SIGPWR` or `SIGSTKFLT`; a case that assumes the real-time signals
-begin below 65 or that `_NSIG` is 65, such as one that walks a set as 64
+names `SIGPOLL`, `SIGPWR` or `SIGSTKFLT`; a case that assumes the real-time
+signals begin below 65 or that `_NSIG` is 65, such as one that walks a set as 64
 bits; and a case that compares `strsignal`'s text with musl's. libc-test's
 `regression/sigprocmask-internal`, which checks that no number from 32 to
 `SIGRTMIN - 1` can be added to a set or blocked, passes as written, since
@@ -4538,7 +4537,7 @@ long-running service starts under a supervisor, never by detaching, so
 nothing is orphaned; and erXos's musl uses FreeBSD's signal numbers, the
 numbers the command shell's `kill` takes.
 
-Two engineering questions, with the answers the design follows:
+One engineering question, with the answer the design follows:
 
 * **Does forwarding carry enough of toybox's tests?** The forwarding command
   mirrors a working directory's names and contents, not every UNIX
@@ -4546,13 +4545,6 @@ Two engineering questions, with the answers the design follows:
   tests recorded as unsupported; if they leave an applet's behaviour
   unchecked, write rc tests for that applet in the shell's corpus. The count
   from the first applets settles it.
-* **Does musl keep `SIGPOLL`?** FreeBSD defines no `SIGPOLL` and names it
-  only in comments (`sys/sys/signal.h:234,338`, FreeBSD 95719d8a); Linux makes
-  it an alias of `SIGIO`, and POSIX's XSI option names it. Recommended:
-  keep it as an alias of `SIGIO` ([Signal numbers](#signal-numbers)): it
-  adds no number and no line to `kill -l`, and code written for Linux that
-  names it builds. Dropping it instead matches FreeBSD's headers exactly
-  and costs only such code a build failure. Undecided.
 
 ## References
 

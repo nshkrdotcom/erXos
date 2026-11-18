@@ -3475,8 +3475,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   (`erx_net_grant_core` holds only the sockets and their buffer reservations); receive-buffer autosizing (`tcp_do_autorcvbuf`, a
   `reserve_buffer` for the receive side like the send side's); `exit_on_close` (a socket whose peer closed
   stays open until its owner closes it), the packet modes,
-  `getstat` and every option but `binary`, `list`, `mode`, `active` and `nodelay`; the
+  every option but `binary`, `list`, `mode`, `active` and `nodelay`; the
   connection's credit limit and buffer sizes are fixed defines, not application keys.
+* [Low] network, `erx_gen_udp`: `inet:getstat/1,2` of a datagram socket raises `undef`, since
+  `erx_gen_udp` exports no `getstat/2`; the socket process would count each datagram as one
+  delivery, as `erx_gen_tcp_core` counts pushes and sends
+  ([design-network-stack.md](docs/design-network-stack.md#options), **Statistics**).
 * [Medium] network, `erx_tcp_conn` (`guarded/2`): a raising step must end the connection
   ([design-network-stack.md](docs/design-network-stack.md#decisions), 15): from its
   state before the event, with a RST, `{error, econnaborted}` to its socket process and an exit with
@@ -8641,6 +8645,7 @@ document's "residual risks accepted" paragraph.
   `display` variable name none, open on the one display the session holds where it holds exactly
   one, as a program's handler does at its first open of `/dev/draw`, instead of answering
   `{error, no_display}`. A separate change with its own design edit and tests.
+* [Medium] Fiasco, one-shot timer and tickless idle, after 0.1 (`config/fiasco/kernel.defconfig`, [design-fiasco.md](docs/design-fiasco.md)): the kernel is built `CONFIG_PERIODIC` with a 1 ms tick (`SCHED_GRANULARITY` 1000) and no tickless idle, so every CPU takes 1000 timer interrupts a second even when idle, and CPU time is charged by whole ticks (the backend reports no idle time for that reason). Fiasco offers one-shot mode on ARM when `SYNC_CLOCK` is on (`kern/arm/Kconfig:14-15`), which selects fine-grained CPU time, and tickless idle. Build with `CONFIG_ONE_SHOT_PARAM` so `-oneshot-timer` picks the mode at boot; measure idle host CPU of a QEMU guest and the QEMU suites in both modes, run it on the Pi 4, then make one-shot with tickless idle the default and report idle time from the fine-grained counts.
 * [Medium] storage, a card image that holds only what is written, after 0.1
   ([design-storage.md](docs/design-storage.md), `abi/medium.txt`, the image packer): order the
   partitions with the populated ones first (record, system A, boot A), end the image after boot
