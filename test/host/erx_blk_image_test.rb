@@ -15,7 +15,7 @@ require_relative '../fixtures/erlang_build'
 # slot's EROFS images and an image window's refusal of writes, against erx_blk_image,
 # erx_blk_window and the generated manifest reader compiled
 # from source on stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies). The
-# manifests its cases read are the development manifest as the packer admits it, with the
+# manifests its cases read are the development manifest as the packer accepts it, with the
 # release image where the fixture puts it, in two extents, and with no window on it.
 class ErxBlkImageTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)

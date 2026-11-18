@@ -134,7 +134,7 @@ and it takes no other system's assets, names or icons.
   ellipses, arcs and polygons are not anti-aliased.
 * **Fonts.** LVGL compiles in no font of its own: `liblvgl.a` holds each
   role's LVGL font from the glyph step, Inter's glyphs under OFL-1.1,
-  which the release check admits as font data only
+  which the release check accepts as font data only
   (`tools/lib/erx/license_expression.rb`, `FONT_DATA_ONLY`), with
   Inter's `LICENSE.txt` as the archive's notice. The terminal keeps
   plan9port's `fixed` bitmap fonts

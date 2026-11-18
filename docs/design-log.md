@@ -584,8 +584,8 @@ does not pass through it:
 * **The kernel** writes its own records on the early console until the
   first take, and at a panic or the machine's end writes its report
   there after stopping the other CPUs
-  ([design-kernel.md](design-kernel.md#console-log-and-panic)); on the
-  stopgap its end path also writes the records nobody has taken
+  ([design-kernel.md](design-kernel.md#console-log-and-panic)); on
+  Fiasco its end path also writes the records nobody has taken
   ([design-fiasco.md](design-fiasco.md#the-end-path)).
 * **The system domain's** `erlang:display/1`, `erlang:display_string/2`
   and `standard_error` go to its `erx_tty_owner`, `erx_console`, which

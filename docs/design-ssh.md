@@ -321,7 +321,7 @@ The machine has one SSH host key, Ed25519, and offers only it.
 
 Either way the key persists across reboots and updates and changes only
 at a fresh installation (S7). A key made on a boot whose seed is weak,
-as a stopgap boot's is when its device tree carries no seed, is as
+as a boot's on Fiasco is when its device tree carries no seed, is as
 guessable as that seed; the daemon logs `host key made on a weak seed`
 once at each start while it uses such a key, a residual recorded in
 `TODO.md`.
@@ -360,7 +360,7 @@ machine's host key. Each requirement follows:
   the principal made at another server nor a login the SSH domain watched
   here earlier, in this boot or a past one, opens a session. Across boots
   the facet's cookies, 128 bits from the kernel's generator, do not repeat
-  while that generator is well seeded; on a weak seed, as on a stopgap
+  while that generator is well seeded; on a weak seed, as on a Fiasco
   boot whose device tree carries none, they are as guessable as the seed,
   a residual recorded in `TODO.md`.
 * **Binding to this machine.** An exchange whose host key is another
@@ -714,7 +714,7 @@ can name another, the SSH domain among them, as their source.
 The holder learns that it holds the window from the manifest alone. On
 erXos's kernel the device service names the window for the holder its
 manifest row names ([design-storage.md](design-storage.md#invariants),
-PW1). On the Phase 1 stopgap, whose block service reads no manifest, the
+PW1). On Fiasco, whose block service reads no manifest, the
 domain library marks it in the one record it already writes for that
 holder alone: `-erx_record system_image` gains a sixth word,
 `record_volume`, exactly when the manifest holds the window

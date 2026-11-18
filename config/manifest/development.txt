@@ -10,7 +10,7 @@
 # limits, which follow from the board's screen and its apps row's pixel areas, the units
 # and windows of its own devices and the domains whose rows name them
 # (Platform#manifest_source). Neither part
-# is a manifest alone; the packer admits the two together, and only that text boots.
+# is a manifest alone; the manifest check takes the two together, and only that text boots.
 # QEMU virt's part gives the measurements behind these figures.
 manifest 1
 share system

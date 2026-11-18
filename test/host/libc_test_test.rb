@@ -211,7 +211,7 @@ class LibcTestTest < Minitest::Test
 
   VERDICTS = <<~TABLE
     # a comment
-    a/cancel  timed_out stopgap    blocked calls are not interrupted
+    a/cancel  timed_out fiasco     blocked calls are not interrupted
     a/regex   failed    upstream   at=regex.c:14,regex.c:9 musl's matcher
     a/files   not_run   cannot-run needs files
   TABLE
@@ -288,7 +288,7 @@ class LibcTestTest < Minitest::Test
     ['a/x passed upstream why', 'a/x failed guess why', 'a/x not_run upstream needs files',
      'a/x failed cannot-run needs files', 'a/x not_run cannot-run the shell', 'A x failed upstream why', 'a/x failed',
      "a/x failed upstream one\na/x failed upstream two", 'a/x failed upstream why', 'a/x failed upstream at=x.c:9,x.c:10 why',
-     'a/x failed upstream at=x.c why', 'a/x timed_out stopgap at=x.c:1 why'].each do |text|
+     'a/x failed upstream at=x.c why', 'a/x timed_out fiasco at=x.c:1 why'].each do |text|
       assert_raises(Erx::Error, text) { Erx::LibcTest.parse_verdicts(text) }
     end
   end

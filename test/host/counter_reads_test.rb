@@ -15,7 +15,7 @@ class CounterReadsTest < Minitest::Test
 
   HEADER = <<~TEXT
 
-    stopgap-root:\tfile format elf64-littleaarch64
+    fiasco-root:\tfile format elf64-littleaarch64
 
     Disassembly of section .text:
 
@@ -85,7 +85,7 @@ class CounterReadsTest < Minitest::Test
   end
 
   def test_a_listing_without_a_section_is_refused
-    assert_equal ['the listing disassembles no section'], M.violations(["stopgap-root:\tfile format elf64-littleaarch64\n"])
+    assert_equal ['the listing disassembles no section'], M.violations(["fiasco-root:\tfile format elf64-littleaarch64\n"])
   end
 
   def test_bytes_that_are_not_utf8_are_read_not_raised_on
@@ -105,7 +105,7 @@ class CounterReadsTest < Minitest::Test
 
   def checked(text)
     Dir.mktmpdir do |directory|
-      program = File.join(directory, 'stopgap-root')
+      program = File.join(directory, 'fiasco-root')
       error = begin
         M.check(program: program, objdump: 'llvm-objdump', runner: Runner.new(text))
         nil

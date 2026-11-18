@@ -767,7 +767,7 @@ atom and cell counts, and its exclusions with their reasons, read from
 the image; and its `file_hash` from the boot index. For each domain:
 whether it was granted the image and the reason when not, the number of
 bound modules, the privatised modules, and its cell bytes. A value the
-stopgap cannot measure, such as a domain's resident shared pages, is
+Fiasco backend cannot measure, such as a domain's resident shared pages, is
 shown as unsupported with its reporter named.
 
 ## Concurrency
@@ -842,8 +842,8 @@ run in.
 
 **After start.** A BIF that must privatise and cannot get the pages fails
 with no breakpoint set and no stub written: `system_limit` from the three
-breakpoint BIFs, `{error, {load_failed, Text}}` from `load_nif/2`. On the
-stopgap only, a refusal after the image's pages are released and before
+breakpoint BIFs, `{error, {load_failed, Text}}` from `load_nif/2`. On
+Fiasco only, a refusal after the image's pages are released and before
 the copy is in place, or a read of the module's code by a thread that
 blocking thread progress does not stop, ends the domain with a diagnostic
 ([Phase 1](#phase-1-on-fiasco)). The purge of an image instance
@@ -1251,8 +1251,8 @@ differences.
 * **`liberx`**: the placement start that space creation takes; with the
   build mark, the runtime entry running ERTS on a thread it creates; the
   swap of one module's pages for a prepared private copy, as one fixed
-  mapping on erXos's kernel and as release, reserve and map on the
-  stopgap.
+  mapping on erXos's kernel and as release, reserve and map on
+  Fiasco.
 * **erXos's kernel**: space creation takes the space's placement base
   from its creator when given, in place of the random choice that
   [design-kernel.md](design-kernel.md#virtual-memory)'s placement rule

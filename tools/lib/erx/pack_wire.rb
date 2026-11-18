@@ -39,8 +39,8 @@ module Erx
     end
   end
 
-  # Canonical wire serialization has no admission or publication authority.
-  # Pack.build owns production admission and atomic publication. Test tooling
+  # Canonical wire serialization has no check or publication authority.
+  # Pack.build owns the production manifest check and atomic publication. Test tooling
   # can serialize a structural fixture without manufacturing an Admitted value.
   #
   # The archive (ERXPACK version 2, design-kernel.md, The boot image) is its

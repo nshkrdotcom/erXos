@@ -137,7 +137,7 @@ class BootPlaceTest < Minitest::Test
   end
 
   def test_an_image_without_a_dynamic_section_runs_where_it_is_linked
-    output = plan(archive(standard.merge('boot/stopgap-root' => fixed_root)))
+    output = plan(archive(standard.merge('boot/fiasco-root' => fixed_root)))
     assert_match(/^root 44000000 2000 44000000$/, output)
     assert_equal 3, output.scan(/^copy /).size
     # Clear of the root, the archive stays where it was loaded.
@@ -146,7 +146,7 @@ class BootPlaceTest < Minitest::Test
 
   # A filler that carries the archive past the fixed root's place at 64 MiB into RAM.
   def large_archive(**files)
-    archive(standard.merge('boot/stopgap-root' => fixed_root, 'system/filler' => "\0".b * (64 << 20), **files))
+    archive(standard.merge('boot/fiasco-root' => fixed_root, 'system/filler' => "\0".b * (64 << 20), **files))
   end
 
   def ranges(output, name) = output[/^#{name} (\h+) (\h+)$/] && [$1.to_i(16), $2.to_i(16)]
@@ -166,7 +166,7 @@ class BootPlaceTest < Minitest::Test
     floor = (start + size + MIB2 - 1) / MIB2 * MIB2
     assert_match(/^kernel #{(floor + 0x1000).to_s(16)} 3000 /, output)
     sources = ->(text) { text.scan(/^copy (\h+) /).flatten }
-    unmoved = plan(archive(standard.merge('boot/stopgap-root' => fixed_root(address: 0x5000_0000),
+    unmoved = plan(archive(standard.merge('boot/fiasco-root' => fixed_root(address: 0x5000_0000),
                                           'system/filler' => "\0".b * (64 << 20))))
     assert_equal ranges(unmoved, 'archive'), ranges(unmoved, 'loaded')
     assert_equal sources.call(unmoved), sources.call(output)
@@ -234,7 +234,7 @@ class BootPlaceTest < Minitest::Test
     high = 0xf000_0000
     sigma0 = elf(entry: 0xffff_b000, headers: [Header.new(PT_LOAD, 0x1000, 0xffff_b000, 0x1000, 0x2000, 0x1000)])
     bytes = archive('boot/kernel' => marked_kernel, 'boot/sigma0' => sigma0,
-                    'boot/stopgap-root' => fixed_root(address: high + 0x20_6000))
+                    'boot/fiasco-root' => fixed_root(address: high + 0x20_6000))
     output = plan(bytes, memory: high, load: high + 0x20_0000, command: 'apply')
     start, size = ranges(output, 'archive')
     assert_equal 0xffff_d000, start, output
@@ -255,7 +255,7 @@ class BootPlaceTest < Minitest::Test
   # No room behind the root for the whole archive: the boot stops naming the image that
   # forced the move, and nothing has moved.
   def test_a_move_that_cannot_fit_is_refused
-    assert_equal 'refused boot/stopgap-root archive_no_room', refused(large_archive, memory_size: 0x0500_0000)
+    assert_equal 'refused boot/fiasco-root archive_no_room', refused(large_archive, memory_size: 0x0500_0000)
   end
 
   # A program linked as a machine's system root is, through root.ld and the root's link
@@ -276,7 +276,7 @@ class BootPlaceTest < Minitest::Test
 
   def test_the_oracle_machines_root_clears_a_176_mib_archive_on_256_mib
     filler = "\0".b * ARCHIVE_ROOM
-    output = plan(archive(standard.merge('boot/stopgap-root' => linked_root(machine: Erx::OracleQemu.machine(PLATFORM)),
+    output = plan(archive(standard.merge('boot/fiasco-root' => linked_root(machine: Erx::OracleQemu.machine(PLATFORM)),
                                          'system/filler' => filler)),
                   memory_size: 0x1000_0000)
     assert_match(/^root \h+ \h+ \h+$/, output)
@@ -287,13 +287,13 @@ class BootPlaceTest < Minitest::Test
   # machine, 192 MiB into RAM, is refused on a machine of 192 MiB: it lies past what that RAM holds.
   def test_the_development_machines_root_loads_on_the_development_machine
     machine = Erx::ProductionImage::Machine.development(PLATFORM)
-    output = plan(archive(standard.merge('boot/stopgap-root' => linked_root(machine: machine))),
+    output = plan(archive(standard.merge('boot/fiasco-root' => linked_root(machine: machine))),
                   memory_size: machine.memory_mib << 20)
     placed = output[/^root (\h+) \h+ \h+$/, 1]
     refute_nil placed, output
     assert_includes machine.root_address...(machine.root_address + MIB2), placed.to_i(16)
-    assert_equal 'refused boot/stopgap-root place_outside_memory',
-                 refused(archive(standard.merge('boot/stopgap-root' => linked_root(machine: Erx::OracleQemu.machine(PLATFORM)))),
+    assert_equal 'refused boot/fiasco-root place_outside_memory',
+                 refused(archive(standard.merge('boot/fiasco-root' => linked_root(machine: Erx::OracleQemu.machine(PLATFORM)))),
                          memory_size: 192 << 20)
   end
 
@@ -304,8 +304,8 @@ class BootPlaceTest < Minitest::Test
   end
 
   def test_a_fixed_image_on_a_reservation_is_refused
-    assert_equal 'refused boot/stopgap-root place_overlap',
-                 refused(archive(standard.merge('boot/stopgap-root' => fixed_root)), reserved: [0x4400_0000, 0x1000])
+    assert_equal 'refused boot/fiasco-root place_overlap',
+                 refused(archive(standard.merge('boot/fiasco-root' => fixed_root)), reserved: [0x4400_0000, 0x1000])
   end
 
   def test_a_kernel_that_cannot_move_is_refused
@@ -382,10 +382,10 @@ class BootPlaceTest < Minitest::Test
   def test_placement_refusals
     assert_equal 'refused boot/kernel place_no_room', refused(archive(standard), memory_size: 0x0040_0000)
     # On the archive, then outside memory.
-    assert_equal 'refused boot/stopgap-root place_overlap',
-                 refused(archive(standard.merge('boot/stopgap-root' => fixed_root(address: LOAD))))
-    assert_equal 'refused boot/stopgap-root place_outside_memory',
-                 refused(archive(standard.merge('boot/stopgap-root' => fixed_root(address: 0x1000_0000))))
+    assert_equal 'refused boot/fiasco-root place_overlap',
+                 refused(archive(standard.merge('boot/fiasco-root' => fixed_root(address: LOAD))))
+    assert_equal 'refused boot/fiasco-root place_outside_memory',
+                 refused(archive(standard.merge('boot/fiasco-root' => fixed_root(address: 0x1000_0000))))
   end
 
   def test_the_validator_runs_first

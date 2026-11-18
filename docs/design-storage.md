@@ -1706,8 +1706,8 @@ storage domain that serves `system` reads it when the tree that serves
 its keys is first read, which root's session does only while it has no
 home copy of them, through the read-only `record_volume` window, which its block service starts
 exactly when the manifest gives the domain that window: on erXos's
-kernel from the device service's derivation (PW1), and on the Phase 1
-stopgap from the sixth word, `record_volume`, of the domain's
+kernel from the device service's derivation (PW1), and on
+Fiasco from the sixth word, `record_volume`, of the domain's
 `-erx_record system_image`, which the domain library writes only for
 the holder of the manifest's window
 ([design-fiasco.md](design-fiasco.md#the-booted-slot)). It reads the

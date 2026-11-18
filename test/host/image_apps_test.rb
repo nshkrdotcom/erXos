@@ -136,7 +136,7 @@ class ImageAppsTest < Minitest::Test
   end
 
   # A package whose license is not permissive is registered package-local only in a local
-  # test image's plan (tools/erx pack --local), which a development build admits; without
+  # test image's plan (tools/erx pack --local), which a development build accepts; without
   # --local it is permanent and refused, and a permissive package or one that names no
   # license is permanent either way.
   def test_only_a_local_image_takes_a_package_that_is_not_permissive

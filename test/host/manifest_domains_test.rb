@@ -115,7 +115,7 @@ class ManifestDomainsTest < Minitest::Test
 
   def test_the_report_counts_the_planned_domains
     report = admit.report
-    assert_equal 'stopgap', report.fetch('mode')
+    assert_equal 'check', report.fetch('mode')
     assert_equal 2, report.fetch('child_plan_instances')
   end
 
@@ -151,7 +151,7 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   # Property 1: a unit's holder is the system domain or a configured domain.
-  def test_a_unit_held_by_a_configured_domain_is_admitted
+  def test_a_unit_held_by_a_configured_domain_is_accepted
     source = @source.sub("placement \"block\"\n  holder system", "placement \"block\"\n  holder @domain.beta")
     view = @codec.open('manifest', admit(source).bytes)
     assert_includes rows(view, 'units').map { |row| row.fetch('holder') }, 1
@@ -163,7 +163,7 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   # Property 2: services, facets and introductions name what the manifest contains.
-  def test_a_service_of_a_configured_domain_is_admitted
+  def test_a_service_of_a_configured_domain_is_accepted
     view = @codec.open('manifest', admit(@source + service('probe', '@domain.alpha')).bytes)
     assert_equal [0], rows(view, 'services').map { |row| row.fetch('server') }
   end
@@ -278,7 +278,7 @@ class ManifestDomainsTest < Minitest::Test
   # Only the system domain's erx_facet checks a grant's operations (docs/design-time.md,
   # "Phase 1"), so a row naming operations of a service a configured domain serves is
   # refused, as is one of a tree, whose interfaces declare none.
-  def test_operations_only_the_stopgap_checks_are_admitted
+  def test_operations_only_the_system_domain_checks_are_accepted
     web = "service w\n  server @domain.beta\n  interface web\n"
     named = facet('w', '@domain.alpha', '@service.w').sub('operations none', 'operations data')
     refused(Erx::Manifest::Unsupported, 'unsupported', 'facet.operations', @source + web + named,
@@ -327,7 +327,7 @@ class ManifestDomainsTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 5, 'domain.name', @source.sub('domain alpha', 'domain system'))
   end
 
-  def test_one_name_on_two_servers_is_admitted
+  def test_one_name_on_two_servers_is_accepted
     source = @source + service('probe_a', '@domain.alpha').sub('service probe_a', "service probe_a\n  name \"probe\"") +
              service('probe_b', '@domain.beta').sub('service probe_b', "service probe_b\n  name \"probe\"")
     view = @codec.open('manifest', admit(source).bytes)
@@ -395,7 +395,7 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   # A window's holder is the system domain or a configured domain.
-  def test_a_window_held_by_a_configured_domain_is_admitted
+  def test_a_window_held_by_a_configured_domain_is_accepted
     source = @source.sub("window data\n  holder system", "window data\n  holder @domain.alpha")
     view = @codec.open('manifest', admit(source).bytes)
     assert_includes rows(view, 'windows').map { |row| row.fetch('holder') }, 0
@@ -416,7 +416,7 @@ class ManifestDomainsTest < Minitest::Test
   # The order places every server before its clients and breaks ties by name order.
   def test_the_boot_order_puts_servers_first_and_names_break_ties
     parsed = Erx::Manifest::Frontend.parse(@source, version: @codec.constant('manifest_version'))
-    check = Erx::Manifest::Stopgap.new(parsed, codec: @codec, context: @context, planner: nil, consumers: {})
+    check = Erx::Manifest::Check.new(parsed, codec: @codec, context: @context, planner: nil, consumers: {})
     none = @codec.constant('mf_none')
     order = check.send(:boot_order, [{}, {}, {}, {}], [[0, 2], [2, 1], [3, none]])
     assert_equal [1, 2, 0, 3], order.map { |row| row.fetch('domain') }
@@ -548,7 +548,7 @@ class ManifestDomainsTest < Minitest::Test
   # Properties 2 and 14: a session template may hold a facet of a service the system
   # domain serves, which the domain service starts for each session made from it, as
   # it may one of a configured domain's; no server takes a facet of its own service.
-  def test_a_session_granted_a_system_domain_service_is_admitted
+  def test_a_session_granted_a_system_domain_service_is_accepted
     admit(with_session(self.class.session) + service('s', 'system') + facet('f', '@session.system', '@service.s'))
     refused(Erx::Manifest::Invalid, 2, 'facet.grantee',
             with_session(self.class.session) + service('s', 'system') + facet('f', 'system', '@service.s'))
@@ -741,8 +741,8 @@ class ManifestDomainsTest < Minitest::Test
   # its server, the system domain, each run with max_frame, max_message_heap and
   # funnel_depth at least the interface's floors, as the development manifest's
   # runtime limits do. The seeds are the design's: a check
-  # that reads only the grantee's limits admits the server's; one of max_frame alone
-  # admits the template's max_message_heap.
+  # that reads only the grantee's limits accepts the server's; one of max_frame alone
+  # accepts the template's max_message_heap.
   def test_an_inspect_receiver_below_a_floor_is_refused
     floors = { 'max_frame' => @codec.constant('inspect_max_frame_min'),
                'max_message_heap' => @codec.constant('inspect_message_heap_min'),
@@ -905,7 +905,7 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   # A policy is a member of mf_display_policy, which has one for each window manager the
-  # display domain has, so rio, erx_wm_rio's, is admitted and tiled, which names none, is
+  # display domain has, so rio, erx_wm_rio's, is accepted and tiled, which names none, is
   # refused.
   def test_a_display_record_s_policy_and_idle_times_are_checked
     admit(with_windows(record: DISPLAY.sub('single', 'rio')))
@@ -926,7 +926,7 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   # Seed: a domain serving two displays would pay for both displays' grants out of one
-  # outer budget, which each display's sum alone admits.
+  # outer budget, which each display's sum alone accepts.
   def test_one_domain_serves_one_display
     second = "service c\n  server @domain.beta\n  interface windows\n#{DISPLAY.sub('display b', 'display c')}" +
              window_facet('sc', '@session.system', '@service.c') + "  parameter pixels 4096\n"
@@ -955,7 +955,7 @@ class ManifestDomainsTest < Minitest::Test
   # Property 18's front clause: only the row granting the display to the system
   # principal's template, root's, sets front, and only in a development build, since the
   # newest window of a front grant takes a single display's screen. Seeds: a configured
-  # domain's row; another principal's template's row, which a check admitting any session
+  # domain's row; another principal's template's row, which a check accepting any session
   # template misses; and root's row in a release build.
   def test_only_root_s_development_grant_sets_front
     front = "  parameter pixels 4096\n  parameter front yes\n"
@@ -963,7 +963,7 @@ class ManifestDomainsTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 18, 'facet.parameter', with_windows(ob: front), message: /sets front/)
     domain = with_windows + window_facet('ab', '@domain.alpha', '@service.b') + front
     refused(Erx::Manifest::Invalid, 18, 'facet.parameter', domain, message: /sets front/)
-    release = Class.new(Erx::Manifest::Stopgap) { private def check_mode(development:, partial:) = nil }
+    release = Class.new(Erx::Manifest::Check) { private def check_mode(development:, partial:) = nil }
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @platform),
                                          build_kind: 'release')
     check = lambda do |sb|
@@ -979,7 +979,7 @@ class ManifestDomainsTest < Minitest::Test
   # Seed: a template's grant costs its pixel area and the display's side once for each
   # session its principal's domains quota allows, 2 for the system principal and 0 for
   # other. 127 pages and the side's page, twice, fill beta's 1 MiB outer budget; one
-  # page more each passes it, which counting the template once would admit.
+  # page more each passes it, which counting the template once would accept.
   def test_a_template_s_pixel_areas_count_once_for_each_session_it_can_have
     admit(with_windows(sb: "  parameter pixels #{127 * 4096}\n", ob: "  parameter pixels #{1 << 30}\n"))
     refused(Erx::Manifest::Invalid, 18, 'facet.parameter', with_windows(sb: "  parameter pixels #{128 * 4096}\n"),
@@ -1064,7 +1064,7 @@ class ManifestDomainsTest < Minitest::Test
             message: /not the name of one service/)
     refused(Erx::Manifest::Invalid, 19, 'apps.services', for_apps(@source + self.class.apps(services: 'data data'), 8),
             message: /twice/)
-    # Seed: a files service admitted, whose grant no tree apps roots at the app's directory.
+    # Seed: a files service accepted, whose grant no tree apps roots at the app's directory.
     refused(Erx::Manifest::Unsupported, 'unsupported', 'apps.services',
             for_apps(with_display(grants: [], served: "service b\n  server @domain.beta\n  interface files\n") +
                       self.class.apps(services: 'b'), 8), message: /files interface/)
@@ -1099,7 +1099,7 @@ class ManifestDomainsTest < Minitest::Test
 
   # Seed: the app template counted once in property 18. Beta's outer budget holds sb's
   # two grants of a page and its side and one app's default pixel area and side, so one
-  # app is admitted and two pass the budget.
+  # app is accepted and two pass the budget.
   def test_every_app_counts_against_a_display_its_row_names
     outer = 2 * (4096 + 4096) + @codec.constant('windows_pixels_default') + 4096
     roomy = ->(source) { source.sub("  memory 4194304\n  outer 1048576\n", "  memory 16777216\n  outer #{outer}\n") }
@@ -1206,7 +1206,7 @@ class ManifestDomainsTest < Minitest::Test
     domain = window_facet('data_alpha', '@domain.alpha', '@service.data')
     refused(Erx::Manifest::Invalid, 19, 'facet.grantee', with_display(served: data, grants: [system, domain]),
             message: /whole volume/)
-    release = Class.new(Erx::Manifest::Stopgap) { private def check_mode(development:, partial:) = nil }
+    release = Class.new(Erx::Manifest::Check) { private def check_mode(development:, partial:) = nil }
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @platform),
                                          build_kind: 'release')
     check = lambda do |grants|
@@ -1296,7 +1296,7 @@ class ManifestDomainsTest < Minitest::Test
   # The published package key, whose private half the tree holds, is never a trust root
   # (docs/design-packaging.md, "The `apps` row"): a signer row of any source holding it,
   # under any name, is refused, and so is a build that hands it over as the development
-  # key; a row beside it holding another key is admitted.
+  # key; a row beside it holding another key is accepted.
   def test_the_published_package_key_is_never_a_trust_root
     published = Erx::PackageKey.published.public_key
     admit(@source + "signer deployer\n  key hex:#{'ab' * 32}\n")
@@ -1310,7 +1310,7 @@ class ManifestDomainsTest < Minitest::Test
 
   # The manifest packs the apps row, its services, the package and signer rows and the
   # development key as records the machine reads (abi/manifest.txt), each as the check
-  # admitted it; a manifest with none of them packs empty tables.
+  # accepted it; a manifest with none of them packs empty tables.
   def test_the_apps_package_and_signer_rows_are_packed
     with_packages('clock' => 4096, 'quotes' => 4096)
     arguments = ManifestContextFixture.arguments(@codec)
@@ -1466,7 +1466,7 @@ class ManifestDomainsTest < Minitest::Test
 
   # Seed: a service of another interface whose parameters name line_grant. Its facet is
   # the line checker's, which refuses its uart, the console's; a checker choosing its
-  # facets by interface would admit it unchecked.
+  # facets by interface would accept it unchecked.
   def test_a_facet_goes_to_the_checker_its_service_names_whatever_its_interface
     codec = codec_with("service spare 98\n  served_as tree\n  parameter uart 1 device one target devices checked_by line_grant\n" \
                        "  parameter rate 2 u64 one range 115200 115200 checked_by line_grant\n" \

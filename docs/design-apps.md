@@ -444,7 +444,7 @@ from the manifest's `start` grants, as it derives the `apps` rows
 may command the start table, through a writable `start` grant, may edit
 its settings, whoever may only read the table reads them, and no one
 else writes them.
-The manifest check holds the build to that: property 17 admits a
+The manifest check holds the build to that: property 17 accepts a
 writable grant of `etc`, whichever row gave it, to two kinds of
 grantee alone, the system domain, whose start service is the file's
 writer for `enable` and `disable`, and a session template that holds

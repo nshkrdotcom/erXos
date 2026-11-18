@@ -64,7 +64,7 @@ it; git history is the record of completed work.
   session's start and destroyed at that session's retire, as design-kernel.md and design-system.md record.
 * [High] apps, the manifest check's property 19
   ([design-packaging.md](docs/design-packaging.md#the-builds-check)), `tools/lib/erx/manifest.rb`: the
-  stopgap check reads the `apps`, `package` and `signer` rows, derives the app template
+  manifest check reads the `apps`, `package` and `signer` rows, derives the app template
   (`DomainStartup::APP_TEMPLATE`, of the `limits session` record), the `packages` rows and the template's row
   of each service of the row, packs the template and its rows as indices that the boot view checks, and
   checks clauses 1, 3, 6 and 7's `tree apps`. QEMU virt's development manifest carries an `apps` row and the
@@ -1085,7 +1085,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   platform record's register windows and RAM, not against the board tree's every `reg` and `ranges` (the GIC, the
   local peripherals, PCIe windows), which the record does not list; checking it against the board's own tree
   (`board_tree.rb`) would make the window's isolation hold by construction.
-* [Medium] `tools/lib/erx/manifest.rb`, `EmptyNative#check_mode` and `Stopgap#check_mode`'s partial path: each
+* [Medium] `tools/lib/erx/manifest.rb`, `EmptyNative#check_mode` and `Check#check_mode`'s partial path: each
   lists the record kinds it refuses, so a record kind the grammar gains is admitted in an empty-native or
   partial boot until someone adds it to the list (and in an empty-native boot left out of the packed manifest,
   whose `check_and_place` packs nothing). Make each mode an allowlist of the kinds it takes, every other
@@ -1111,7 +1111,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] `tools/lib/erx/manifest_frontend.rb`, `Record#decimal`, `string` and `reference`: a field's value
   is decoded in three places with different rules: these, the manifest checker's `number`, `text` and
   `reference` (`manifest.rb`, which take `0x` numbers and `hex:` bytes), and `FacetNames.field`. A harness
-  edit or reader refuses a manifest the packer admits (`cpuset 0x3`). Move the checker's decoders onto
+  edit or reader refuses a manifest the packer accepts (`cpuset 0x3`). Move the checker's decoders onto
   `Record` and have the checker, `Manifest::Edit` and `FacetNames` call them. `Edit.repoint` also writes
   its `to` unchecked, and the printer writes an unquoted token verbatim, so a value with a space or newline
   would not read back as one word; refuse such a token where the printer writes it.
@@ -1876,7 +1876,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] `otp/erts/emulator/nifs/erxos/erx_device.c`, `erx_device_complete`: the rule that a queue not ready
   answers `ERX_ECORRUPT` has two owners, the forms' posts and `erx_device_complete` before the completion's
   round. Give it one.
-* [Low] build checks, `contiguous-create-callers` (`tools/lib/erx/chokepoint_rules/stopgap_seam.rb`): the rule
+* [Low] build checks, `contiguous-create-callers` (`tools/lib/erx/chokepoint_rules/fiasco_seam.rb`): the rule
   limits which files call `erx_mem_create_contiguous`, not where the range comes from, so a hand-built
   `erx_mem_dma_range_t` in `runtime_entry.c` or `dom_apply.c` would pass, and `erx_boot_dma_range` is the one
   builder by convention. Forbid the type's initialisers outside `boot_manifest.c`, the backends and the guests.
@@ -1887,7 +1887,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] Fiasco backend, `liberx/backend/fiasco/thread.c`: a join can return before the index and executor slot are
   free, since the clear comes before the recycle and the marker later still, so a `pthread_create` right after
   a join on a nearly full table gets a transient `ERX_ENOMEM`. musl's port would report `EAGAIN`. A recorded
-  stopgap residual, not fixed.
+  residual of the Fiasco backend, not fixed.
 * [Low] Fiasco backend, `liberx/backend/fiasco/service.c`, `service_thread_reap`: only the reaper should send this
   request, and nothing checks the caller; `watchdog_thread.c` and `service.c` also share the convention of fixed
   helper slots in the kernel-given UTCB page, which one small enum could own.
@@ -2487,7 +2487,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   opener on the first present, or a first `tree/2` answer that waits for it. Measure the Pi's time
   from `shown` to the first frame first; fix only if the gap is visible.
 * [Low] tests, the manifest edits of the domain tests (`test/fixtures/manifest_context.rb`, `DOMAIN_ROWS`
-  and `SESSION_FACETS`; `test/host/manifest_stopgap_test.rb`, `dom_planner_test.rb` and
+  and `SESSION_FACETS`; `test/host/manifest_check_test.rb`, `dom_planner_test.rb` and
   `boot_manifest_test.rb`, their login_keys rows): each test removes the development manifest's
   configured domains and session grants through its own hand-written list of record patterns, so a new
   service or grant must be added to every list, and a list that files a row under the wrong kind fails
@@ -3456,7 +3456,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   in the guest. No build check that only `erxos/` names erXos's own modules (`erx_device`,
   `erx_device_record`, `erx_log`, design-network-stack.md, "Two places, four seams"), with its
   seeded violation.
-* [Low] network, virtio-net transport, small points: the manifest admits a network device held
+* [Low] network, virtio-net transport, small points: the manifest check accepts a network device held
   by any domain, not only the system domain or the network domain; `VIRTIO_NET_F_MTU` is
   negotiated even when the device's MTU is above 1,500, the most the receive buffers hold: the
   transport clamps the MTU and drops longer frames as `too_long`, but should not take the feature; a multicast or zero device MAC is
@@ -4488,7 +4488,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` and `erx_domain_srv.erl`
   (`grant_facets/3`, `facets/2`): the facet behaviour checks the origin, the reply target, the
   encoded size against `max_request` and the limit in flight, and nothing else of
-  design-domains.md "Facets". Stopgap residuals, of fairness and memory rather than
+  design-domains.md "Facets". Residuals of fairness and memory rather than
   authority: no admission by the grantee's measured share of reductions, no queue quota and
   no heap limit, so a grantee can fill its facet's mailbox and the facet's heap as fast as its
   lane delivers; `max_request` is checked by the facet once the message is decoded and
@@ -4723,7 +4723,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   image's `domains:` is checked against no manifest row, since the test manifest is the
   development one grown. Build test images' domain boot scripts from their manifest's
   rows, as the production image does.
-* [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Stopgap#check_facets_supported`):
+* [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Check#check_facets_supported`):
   a facet that names operations of a service a configured domain serves, or of a tree,
   is refused (`unsupported`), as the boot view refuses it, since only the system
   domain's `erx_facet` checks a grant's operations (design-time.md, "Phase 1"); a mint
@@ -4758,7 +4758,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `in_flight` times `inspect_worker_heap`, 32 MiB per holder at `in_flight` 2 (design-live.md, "The query worker");
   nothing reserves it, and the enforced bounds are the worker's `max_heap_size`, `in_flight` 2 and
   `inspect_query_max`.
-* [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Stopgap#normalize_domains`): a
+* [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Check#normalize_domains`): a
   configured domain's limits record (memory, outer, lane, connections, crash, flags,
   peer-held bounds) is not held to its principal's `ceiling_limits`, which design-abi.md
   ("Domain identity and placement") asks; only the runtime limits are, by the planner.
@@ -4776,7 +4776,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   Whether an entry starts with an image manifest is `row['image']` in `plan_file` and
   `row.key?('plan')` in `PackWire#write_image`; one helper should give an entry's head
   for both.
-* [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Stopgap#check_plans`),
+* [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Check#check_plans`),
   `tools/lib/erx/pack.rb`: a manifest with no configured domains is planned, and the
   domain library's boot view built, only when the caller passes a planner, so a pack
   built without one admits a principal `erx_dom_principal_check` refuses, or two units
@@ -5065,6 +5065,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   runtime builds on `Runtime.source_digest`, musl, the sysroot's inputs, the host OTP and the compiler; cache file
   digests by (path, size, mtime, inode) with a racy-time check; run independent steps (the two runtime flavours,
   compiles) in parallel.
+* [Low] Fiasco build, `fiasco/bootstrap/server/src/Make.rules:1` and `fiasco/kernel/src/Makeconf:395`: their
+  comments cite `docs/design-stopgap.md`'s "Boot handoff" and "Interfaces", sections that live in
+  `docs/design-fiasco.md`. Both files are recipes pinned by hash in `config/provenance/fiasco-generation.json`, so
+  correct the citations when the recipes are next re-pinned.
 * [Medium] Fiasco build, `tools/lib/erx/fiasco_inputs.rb`: every file under `liberx/` is an input of the user
   build, so an edit to any native-root source (`liberx/backend/fiasco/console.c`, which the user build does not
   compile) discards `build/fiasco/users` and rebuilds it from scratch, about 75 s of a 300 s `medium_boot` run on a
@@ -5553,8 +5557,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   below its own `foreign_atoms`; once `foreign_atoms` is enforced the lowering should be bounded by it.
 * [Medium] runtime, `tools/fuzz/boot_manifest_fuzz.c`: the target compares the page with the reader's own result, so a swapped limit or a wrong host byte in `erx_boot_manifest_read` passes. Compare with `erx_manifest_open` and `erx_manifest_runtime_limits_at` called directly, field by field.
 * [Low] runtime, `liberx/backend/fiasco/runtime_entry.c`: an `erx.arg` word of the kernel command line reaches ERTS's flag diagnostics unchecked, where the reader in `boot_manifest.c` holds `system_args` to printable ASCII. The command line is the operator's own.
-* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl`: `erx.arg` words of the kernel command line can spell `-erx_record device ...` or `-erx_record given ...` and add a device record the manifest never assigned, which a driver opens like the root's own, or `-erx_record system_image ...` and so start the read-only `system` window in the system domain, against `check_system_window`; on the stopgap the command line is the operator's, but the manifest should stay the one source of which domain holds a device. Carry the records in a boot-information field only the root writes, or have the system domain's Erlang select them from the manifest through `erx_manifest`.
-* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl`: `erx.arg` words of the kernel command line can spell `-erx_record device ...` or `-erx_record given ...` and add a device record the manifest never assigned, which a driver opens like the root's own; on Fiasco the command line is the operator's, but the manifest should stay the one source of which domain holds a device. Carry the records in a boot-information field only the root writes, or have the system domain's Erlang select them from the manifest through `erx_manifest`.
+* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl`: `erx.arg` words of the kernel command line can spell `-erx_record device ...` or `-erx_record given ...` and add a device record the manifest never assigned, which a driver opens like the root's own, or `-erx_record system_image ...` and so start the read-only `system` window in the system domain, against `check_system_window`; on Fiasco the command line is the operator's, but the manifest should stay the one source of which domain holds a device. Carry the records in a boot-information field only the root writes, or have the system domain's Erlang select them from the manifest through `erx_manifest`.
 * [Medium] runtime, `erx_prim_file.c`: that a release file's bytes reach a read only after `erx_release_check` rests on `erx_copy_out` being ERTS's one user of `erx_release_addr`, with no build check. One call, `erx_release_open`, returning the bytes after the verdict with the cache inside `liberx`, removes the import and ERTS's flag, and Phase 2 then changes only what is behind it.
 * [Low] runtime, `erx_prim_file.c`: a refused file is hashed and reported again at each open; `docs/design-kernel.md` has later uses fail at once.
 * [Low] runtime, `liberx/backend/core/boot_manifest.c`: the printable rule for `system_args` lives in the reader, so `Manifest.admit` packs a manifest that then fails at boot, and `domains[].args`, the same string class, is not covered. The rule belongs in the `args` class of the ABI generator.
@@ -7406,7 +7409,7 @@ to the corpus and follow rc
   refused. `tools/erx pack` stays refused until the M1 root startup, so
   `--two-file` and the slot refusal wait for it.
 * [Medium] boot image, `kernel/core/boot_place.c`: Phase 1 keeps the two
-  roles `boot/sigma0` and `boot/stopgap-root`, since Fiasco starts sigma0
+  roles `boot/sigma0` and `boot/fiasco-root`, since Fiasco starts sigma0
   and a root task from its information page, and sigma0 pages that root
   with read, write and execute over its whole range, gaps between segments
   included, which nothing zeroes; Phase 1 accepts this
@@ -7415,7 +7418,7 @@ to the corpus and follow rc
   whether the image keeps the two entries, which that kernel would ignore,
   or drops them with their ABI paths and the recipe in
   `tools/lib/erx/boot_image.rb`. `tools/lib/erx/boot_image.rb` builds on
-  the structural fixture's unadmitted manifest until production packing
+  the structural fixture's unchecked manifest until production packing
   lands.
 * [Medium] kernel boot, `kernel/core/boot_place.c`: the handoff record's
   `pool_usable`, `pool_heap` and `pool_regions` are zero in Phase 1, which
@@ -7425,14 +7428,14 @@ to the corpus and follow rc
   reader in erXos's kernel, and settles where `kip_size` and the kernel's
   alignment live; they are limits of `abi/erx_abi.txt` today.
 * [Medium] Fiasco boot, `kernel/core/boot_place.c`: `bootstrap` places two
-  entries the target design does not have, `boot/sigma0` and `boot/stopgap-root`,
+  entries the target design does not have, `boot/sigma0` and `boot/fiasco-root`,
   because the kernel still starts sigma0 and a root task from its information
   page; sigma0 pages that root with read, write and execute over its
   whole range, since one range cannot tell its segments apart, gaps between
   segments included, which nothing zeroes. Delete both roles, their ABI paths and the record of the recipe in
   `tools/lib/erx/boot_image.rb` when the kernel maps the root task from the
   startup plan. `tools/lib/erx/boot_image.rb` builds on the structural fixture's
-  unadmitted manifest until production packing lands.
+  unchecked manifest until production packing lands.
 * [Medium] Fiasco boot, `kernel/core/boot_place.c`: the handoff record's
   `pool_usable`, `pool_heap` and `pool_regions` are zero and `kmemsize` keeps
   Fiasco's default until `erx_pool_plan` and `abi/backend/fiasco.txt` land; the
@@ -7505,7 +7508,7 @@ to the corpus and follow rc
   enjoy.", X.Org's `misc-fixed` `COPYING`), is not on the permissive list,
   so the first release that packs `display/font/fixed/6x13.*` (the session
   release of `erx_term`) fails with "license expression has no permitted
-  grant". Admitting it, with a case in `test/host/license_expression_test.rb`
+  grant". Accepting it, with a case in `test/host/license_expression_test.rb`
   and a notice row if `import_notices.rb` wants one, is a license decision
   to make with that release.
 * [Low] build, license selection (`tools/lib/erx/license_expression.rb`,
@@ -7869,9 +7872,9 @@ to the corpus and follow rc
   SSH domain reads it.
 * [Medium] SSH, release builds and the record volume ([design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium),
   the test row "release builds refuse the development key"): the manifest check does not yet refuse a
-  release-kind manifest that holds a `record_volume` window, since `Stopgap#check_mode`
+  release-kind manifest that holds a `record_volume` window, since `Check#check_mode`
   (`tools/lib/erx/manifest.rb`) refuses every manifest that is not of the development kind. When
-  `check_mode` admits release manifests, the release check refuses the window, with its seeded test
+  `check_mode` accepts release manifests, the release check refuses the window, with its seeded test
   (the release check skipping the `record_volume` row: the manifest with the window passes).
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
   system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
@@ -8749,7 +8752,7 @@ document's "residual risks accepted" paragraph.
   runs the line tree over a UART and the controller group still runs only over a model line. Also missing: the
   power line's steps 2 and 4 of a reset, which `erx_line` does not run, as on a platform with no power line.
   Property 8 and design-bluetooth.md give the line service one tree for each grant of `line`, but the manifest
-  check (`check_line_grants` in `tools/lib/erx/manifest.rb`) admits at most one `line` facet in a manifest, since
+  check (`check_line_grants` in `tools/lib/erx/manifest.rb`) accepts at most one `line` facet in a manifest, since
   the design leaves open how the one process `erx_facet:serve/2` names reaches the tree of each grant when several
   grants name different UARTs; settle that and lift the limit.
 * [Low] domain service, `served_kind/2` (`erlang/apps/erx_domain/src/erx_domain_srv.erl`, `init`): `Trees` lists the
@@ -8852,7 +8855,7 @@ document's "residual risks accepted" paragraph.
   `CONFIG_PERF_CNT_USER`, user-mode access to the performance counters, which Fiasco's Kconfig
   marks for debugging only.
 * [Low] Fiasco, published images (`config/fiasco/kernel.defconfig`, `tools/lib/erx/fiasco_config.rb`,
-  `LicenseAdmission::TABLE`): 0.1's published images carry the development kernel, with JDB, the kernel's
+  `LicenseCheck::TABLE`): 0.1's published images carry the development kernel, with JDB, the kernel's
   console input and `jdb_object.cpp` (GPL-2.0-only), by decision. Once published images should drop it, a
   developer-only debugger kernel: a switch that builds a kernel with the debugger for a developer's own image,
   which the published build refuses, the published kernel built without it, and the closed table's
@@ -10003,7 +10006,7 @@ document's "residual risks accepted" paragraph.
   `tools/lib/erx/manifest.rb`, `WELL_KNOWN`'s `login_keys_service` row;
   [design-ssh.md](docs/design-ssh.md#invariants) H8): stage 1's daemon
   reads the card's keys through a read-only grant to root's session
-  template, which the check admits beside the system domain's. When the
+  template, which the check accepts beside the system domain's. When the
   SSH domain lands, remove the grant and narrow the check back to the
   system domain alone, as 0.1's known limitations say.
 * [Medium] SSH stage 2, port 22 ([design-ssh.md](docs/design-ssh.md#stages),

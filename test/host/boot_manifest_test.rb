@@ -92,7 +92,7 @@ class BootManifestTest < Minitest::Test
   end
 
   # The root sizes its contiguous pool by the devices' memory of the whole device table,
-  # whichever domain holds each: the total the packer's admission reports and counts.
+  # whichever domain holds each: the total the manifest check reports and counts.
   def test_the_devices_memory_is_the_total_the_packer_reports
     platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform, build_kind: 'development'))
@@ -167,7 +167,7 @@ class BootManifestTest < Minitest::Test
 
   # A record's PATH is its device's device-tree path, which reaches its driver and may be
   # printed, so the root refuses a manifest whose recorded device has a path that is not a
-  # node path: the manifest check admits none, and these bytes are the admitted ones with the
+  # node path: the manifest check accepts none, and these bytes are the accepted ones with the
   # host link's path given a byte no node name holds.
   def test_a_recorded_device_s_path_must_be_a_node_path
     bytes = admitted

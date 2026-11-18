@@ -9,7 +9,7 @@ require_relative 'app_pack'
 require_relative 'bounded_file'
 require_relative 'dependency_status'
 require_relative 'error'
-require_relative 'license_admission'
+require_relative 'license_check'
 require_relative 'license_expression'
 require_relative 'manifest_frontend'
 require_relative 'oracle'
@@ -81,12 +81,12 @@ module Erx
     Plan = Data.define(:packages, :rows, :local) do
       # The status package is registered under: package-local for a package of a local
       # image that names a license that is not permissive, which only a development
-      # build admits, and permanent for every other, whose license is judged as a
+      # build accepts, and permanent for every other, whose license is judged as a
       # permanent dependency's, so such a package enters no image built without --local.
       # A package that names no license is permanent, and enters no image.
       def status(package)
         restricted = local && !package.license.empty? && !LicenseExpression.permissive?(package.license)
-        restricted ? LicenseAdmission::PACKAGE_LOCAL : DependencyStatus::PERMANENT
+        restricted ? LicenseCheck::PACKAGE_LOCAL : DependencyStatus::PERMANENT
       end
 
       # Whether the image takes no package, no signer and is no local test image.

@@ -72,7 +72,7 @@ dropped, each counted, before the callback's admit/3 or message/2 sees it. A cal
 without operation/1 admits what its admit/3 admits, and start/3 refuses a grant that
 lists operations to it, since nothing would check them.
 
-Stopgap residuals of the behaviour, each in TODO.md: the
+Residuals of the behaviour, each in TODO.md: the
 generated admission path from the service's operation schema; admission by
 the grantee's share of reductions; the funnel's check of max_request
 before a message is queued, and the facet's queue quota and heap limit.

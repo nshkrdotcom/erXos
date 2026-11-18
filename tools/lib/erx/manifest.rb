@@ -75,7 +75,7 @@ module Erx
     # device_kinds are the rows of erx/device_kinds.h's two tables, each a hash of role,
     # compatible, role_word, peripheral and clocked (DeviceKinds.context_rows). Its
     # development_key is the public half of the builder's development package key, or
-    # nil: never a manifest row, so no board source can name it, and the check admits it
+    # nil: never a manifest row, so no board source can name it, and the check accepts it
     # only in a development build (docs/design-packaging.md, "The SDK").
     class Context
       attr_reader :build_kind, :platform, :catalog, :root_entry, :artifacts,
@@ -181,7 +181,7 @@ module Erx
 
 
     # Structural fixtures exercise canonical bytes without claiming that an
-    # initial-root startup or a machine configuration has been admitted.
+    # initial-root startup or a machine configuration has passed the check.
     class StructuralFixture
       attr_reader :bytes, :report
 
@@ -209,7 +209,7 @@ module Erx
       end
     end
 
-    # The root startup rule: a declared sanity check, not a proof. It compares
+    # The root startup rule on Fiasco: a declared sanity check, not a proof. It compares
     # the manifest's numbers with the platform record's, so a wrong
     # fiasco_reserve shows at boot, when the root's pool falls short. A report
     # therefore says root_startup: declared, never validated.
@@ -217,7 +217,7 @@ module Erx
       module_function
 
       # The platform's declared memory. Without it no rule can be stated, so
-      # nothing is admitted.
+      # nothing passes.
       def declared(platform)
         ram, reserve = platform.values_at('ram_bytes', 'fiasco_reserve')
         unless ram.is_a?(Integer) && reserve.is_a?(Integer) && reserve.positive? && reserve < ram
@@ -248,7 +248,7 @@ module Erx
       #   archive + root_memory <= RAM - fiasco_reserve - boot_kept,
       #
       # with boot_kept estimated from the platform record, the archive and the devices'
-      # memory the manifest declares (dma_memory, the admission report's). The estimate
+      # memory the manifest declares (dma_memory in the check's report). The estimate
       # errs high by a few hundred KiB (docs/design-fiasco.md, "The root startup
       # rule"), so an image this refuses fails at boot or comes within that margin of
       # failing. Every figure is in bytes; the platform's come from archive_machine.
@@ -280,8 +280,8 @@ module Erx
 
       # The line the image build prints for a pack's report: the archive; the room
       # root_memory leaves it on the machine (the report's ArchiveRoom); root_memory and
-      # how much of it the manifest's budgets promise (the admission report's
-      # promised_memory); and what the boot keeps.
+      # how much of it the manifest's budgets promise (promised_memory in the check's
+      # report); and what the boot keeps.
       def room_line(report)
         room = report.fetch('archive_room')
         promised = report.fetch('manifest').fetch('promised_memory')
@@ -376,7 +376,7 @@ module Erx
       def mib(bytes) = format('%.2f MiB', bytes / 1_048_576.0)
     end
 
-    # Phase 1's admission: Stopgap over a manifest with the system domain and
+    # Phase 1's manifest check: Check over a manifest with the system domain and
     # its configured domains, and the declared root startup rule. This factory alone mints the
     # private publication token, so a structural fixture cannot pass for it.
     class Admitted
@@ -386,8 +386,8 @@ module Erx
         raise Invalid.new('checked context required', property: 'context', field: 'input') unless context.is_a?(Context)
         RootStartup.declared(context.platform)
         parsed = Frontend.parse(source, version: codec.constant('manifest_version'))
-        checker = Stopgap.new(parsed, codec: codec, context: context,
-                              planner: planner, consumers: consumers)
+        checker = Check.new(parsed, codec: codec, context: context,
+                            planner: planner, consumers: consumers)
         normalized, report = checker.check
         bytes = Encoder.new(codec).encode(normalized)
         codec.open('manifest', bytes)
@@ -416,8 +416,8 @@ module Erx
     # The artifact names the source's domain rows and session templates give as
     # releases, and the app template's (DomainStartup::APP_TEMPLATE) when the source has
     # an apps row, from which the check derives it, sorted and once each, read before any check so a build can make what
-    # they name. A reference of another form names nothing here; admission refuses it
-    # (Stopgap#artifact).
+    # they name. A reference of another form names nothing here; the check refuses it
+    # (Check#artifact).
     def self.release_names(source:, codec:)
       records = Frontend.parse(source, version: codec.constant('manifest_version')).records
       records.values_at('domain', 'session').compact.flatten.filter_map { |record| release_reference(record) }
@@ -604,7 +604,7 @@ module Erx
 
       # The manifest's apps row, or NO_APPS. Its memory is a whole number of pages, as
       # root_memory is; its max is 1 to apps_max_limit; its services are distinct
-      # identifiers, which the stopgap's check_apps resolves against the services.
+      # identifiers, which Check#check_apps resolves against the services.
       def apps_row
         record = records('apps').first
         return NO_APPS unless record
@@ -950,7 +950,7 @@ module Erx
 
       # A device-tree row's path, which its device record carries as PATH, the device's name
       # to its driver (docs/design-fiasco.md, "Device records"): a node path of at most the
-      # ABI's device_path_max bytes, as erx_boot_device_path_valid admits it.
+      # ABI's device_path_max bytes, as erx_boot_device_path_valid accepts it.
       def device_path?(path) = path.is_a?(String) && path.match?(NODE_PATH) && path.bytesize <= @codec.constant('device_path_max')
 
       # The frequency in hertz of the clock a device's driver divides rates from, the first
@@ -1046,7 +1046,7 @@ module Erx
       # abi/services, which declares them once run-time GPIO is built.
       PIN_CONTROLLER_INTERFACES = %w[gpio].freeze
 
-      # Whether a row naming the pin controller's holder is one the clause admits: a unit
+      # Whether a row naming the pin controller's holder is one the clause accepts: a unit
       # on the controller's page, a service of an interface those units back, or the boot
       # order, which names every domain. Facets of those services name the service, not
       # the holder, so grants to other domains pass without a row here.
@@ -1068,7 +1068,7 @@ module Erx
       # Every row that names the domain at index, as [table, row] pairs. The manifest
       # reader's index rules into the domains table (abi/manifest.txt) list each field that
       # holds a domain, with the tag that makes it one, so a field the ABI adds is scanned
-      # without an edit here, and a clause that admits only some rows refuses a new one.
+      # without an edit here, and a clause that accepts only some rows refuses a new one.
       def domain_references(rows, index)
         @reader.rules.select { |rule| rule.fetch(:kind) == 'index' && rule.fetch(:table) == 'domains' }.flat_map do |rule|
           path = rule.fetch(:path)
@@ -1202,14 +1202,14 @@ module Erx
       def claims = { 'mode' => 'empty_native', 'root_startup' => 'unsupported' }
     end
 
-    # Phase 1's check (docs/design-fiasco.md, "The Phase 1 manifest check"): a
+    # The manifest check (docs/design-fiasco.md, "The Phase 1 manifest check"): a
     # development manifest, full or partial boot, with the system domain and its
     # configured domains. A holder or server is the system domain or a configured
     # domain, and a grantee one of those or a session template; a domain row's runtime and release name artifacts of this
     # pack; the configured domains are ordered (10), checked against the rescue
     # configuration (11), planned by the domain library's host build (12) and held to
     # the headroom in system (13). What Phase 1 does not bring is refused here.
-    class Stopgap < SystemDomainCheck
+    class Check < SystemDomainCheck
       REFUSED = {
         'partial_boot' => 'child domains of a partial boot arrive at M5',
         'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings'
@@ -1389,7 +1389,7 @@ module Erx
       end
 
       def claims
-        { 'mode' => 'stopgap', 'root_startup' => 'declared', 'child_plan_instances' => records('domain').size,
+        { 'mode' => 'check', 'root_startup' => 'declared', 'child_plan_instances' => records('domain').size,
           'root_image_loadable_bytes' => root_loadable_bytes,
           'packages' => @packages.map { |package| package.to_h.except(:memory).transform_keys(&:to_s) },
           'signers' => records('signer').map(&:name).sort,
@@ -1590,7 +1590,7 @@ module Erx
       end
 
       # A service's interface number: the name of an interface abi/services declares, as
-      # design-abi.md writes it, or a number, which the stopgap also takes for an
+      # design-abi.md writes it, or a number, which the check also takes for an
       # interface no fragment declares yet. The row holds the number either way, so a
       # check that reasons from a declared interface (property 8's driver control) sees
       # both spellings.
@@ -1737,7 +1737,7 @@ module Erx
       # One granted row of the well-known service known, with its resolved parameter
       # values: refused for a service whose rows only the build derives, and for one with
       # SourceGrants unless its grantee is the system domain or a template its root
-      # setting admits and, for a read_only one, it states ro.
+      # setting accepts and, for a read_only one, it states ro.
       def check_granted_row(known, row, stated, tables)
         name = name_of(known)
         case known.source
@@ -1864,7 +1864,7 @@ module Erx
       end
 
       # The build's development package key, packed as its own record, which only a
-      # development manifest holds (docs/design-packaging.md, "The SDK"; Context admits
+      # development manifest holds (docs/design-packaging.md, "The SDK"; Context accepts
       # it only in a development build): none when the build context carries none or the
       # manifest has no apps row, whose machine takes no packages and so trusts no key, and
       # refused when it is not an Ed25519 public key of signer_key_bytes or is the published
@@ -1919,7 +1919,7 @@ module Erx
       end
 
       # Property 19's fifth clause on the package rows the image builder adds
-      # (Erx::ImageApps), as far as the host can judge it without admission: each row's
+      # (Erx::ImageApps), as far as the host can judge it without the manifest check: each row's
       # input is a package artifact of this pack, which the build's file check decoded
       # under the row's own name; the rows number at most the apps row's max, so none
       # without an apps row; and the declared memory of the enabled ones sums within the
@@ -2119,7 +2119,7 @@ module Erx
       # A facet record's operations, `none` or a comma-separated list of the names its
       # service's interface declares, each once (property 2), as their numbers in ascending
       # order, the facet_operations rows its span takes (docs/design-abi.md, "Services,
-      # facets and their parameter schemas"). Which rows the stopgap can honour is
+      # facets and their parameter schemas"). Which rows the check can honour on Fiasco is
       # check_facets_supported's.
       def facet_operations(record, row, service_rows)
         token = one(record, 'operations')
@@ -2147,7 +2147,7 @@ module Erx
       # facet's rights and tree, whose member kinds alone bound them to their members, and
       # which the grant applies at run time; property 19 lets only a derived row state a
       # tree. A service declaring a parameter that no checker here consumes is unusable: no
-      # facet of it is admitted, since nothing would check what it grants. Each checker
+      # facet of it is accepted, since nothing would check what it grants. Each checker
       # takes the facets of the services that name it (grant_checker), whatever their
       # interface.
       GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session front].freeze,
@@ -2658,7 +2658,7 @@ module Erx
           'queue' => queue }.merge(ABI::Contracts::FACET_QUANTITIES.to_h { |key| [key, number(record, key)] })
       end
 
-      # What the stopgap cannot honour, refused once properties 2, 10 and 11 hold
+      # What the check cannot honour on Fiasco, refused once properties 2, 10 and 11 hold
       # (docs/design-time.md, "Phase 1"): a facet that names operations of a service a
       # configured domain serves, since only the system domain's erx_facet checks a
       # grant's operations, so the row would grant every operation. A tree's interface
@@ -2670,7 +2670,7 @@ module Erx
 
           service = rows.fetch('services').fetch(facet.fetch('service'))
           unsupported("facet #{facet.fetch('name')} names operations of a service a configured domain serves, " \
-                      'which nothing on the stopgap checks', 'facet.operations') unless service.fetch('server') == none
+                      'which nothing checks on Fiasco', 'facet.operations') unless service.fetch('server') == none
         end
       end
 

@@ -489,7 +489,7 @@ column names.
 | **A kiosk is an app on a display with the single policy**, started by the start row that names the display. | Who holds a screen follows from what starts, not from who opens a window first. | [design-display.md](design-display.md#kiosks-and-glasses), [design-apps.md](design-apps.md#the-start-table) |
 | **One width table**, generated from `abi/terminal.txt` and OTP's Unicode data, for `erx_vt`, musl's `wcwidth` and `prim_tty`. | A program, the line editor and the terminal must agree on the cursor after a wide character. | [design-display.md](design-display.md#cells-and-the-grid-state), [design-runtime.md](design-runtime.md#the-c-library-seam) |
 | **Text is UTF-8; system identifiers are ASCII; a terminal is a tty.** A program's output reaches its tty unchanged; text labelled with its source is escaped by whatever displays it; `/proc` writes such text already escaped. | Output functions do not touch the data, as on UNIX and QNX, while a label is a claim about a source that a display keeps to one honest line. | [design-live.md](design-live.md#the-tty), [design-live.md](design-live.md#attributed-text), [design-system.md](design-system.md#identifiers) |
-| **A boot image is admitted, and the root task started, from one startup plan** that the packer and the kernel both compute with `erx_root_plan`. | The host's admission is a prediction the kernel checks, so no root task runs that its image did not pay for. | [design-kernel.md](design-kernel.md#the-startup-plan-and-its-charge-evidence), [design-abi.md](design-abi.md#canonical-source-packing-and-checking) |
+| **A boot image is accepted, and the root task started, from one startup plan** that the packer and the kernel both compute with `erx_root_plan`. | The host's check is a prediction the kernel checks, so no root task runs that its image did not pay for. | [design-kernel.md](design-kernel.md#the-startup-plan-and-its-charge-evidence), [design-abi.md](design-abi.md#canonical-source-packing-and-checking) |
 
 ## Correct by construction in code
 
@@ -1865,8 +1865,8 @@ in [plan.md](plan.md) and what it lacks against that replacement
 published with the release. `example`: a demo shipped in the published
 images of a preview release only, never part of the system, its source
 offered with the image; Doom for 0.1 is the one, and the image build
-admits the `example` status for its archive alone, under GPL-2.0-or-later
-(`LicenseAdmission::EXAMPLE`). Tools and test data never enter a shipped image; test images carry test tools under an allowlist of their own ([Licenses and notices](#licenses-and-notices)).
+accepts the `example` status for its archive alone, under GPL-2.0-or-later
+(`LicenseCheck::EXAMPLE`). Tools and test data never enter a shipped image; test images carry test tools under an allowlist of their own ([Licenses and notices](#licenses-and-notices)).
 
 The table gives each dependency's purpose, license and status. Code
 erXos changes enters the tree as erXos's code with an `ORIGIN.md` beside
@@ -2012,8 +2012,8 @@ hold by construction:
 copyleft license only for a file
   that the packer places on its own, outside every executable and every
   EROFS image: the Pi 4's device tree, which ships with its source beside
-  it; it admits the Raspberry Pi firmware's binary license for the
-  files of a board's boot partition; it admits Cypress's binary license
+  it; it accepts the Raspberry Pi firmware's binary license for the
+  files of a board's boot partition; it accepts Cypress's binary license
   for the CYW43455's firmware, NVRAM and CLM files in the WiFi
   application's `priv/firmware` of a Raspberry Pi image
   ([design-wifi.md](design-wifi.md#the-chip)), and Cypress's driver
@@ -2029,13 +2029,13 @@ replacement of Fiasco's GPL-2.0 original, and the kernel debugger's `jdb_object.
 into a kernel with the debugger: development kernels, the published
 images' included, carry it by decision, and the release kernel leaves it
 out ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)).
-One rule, `LicenseAdmission`, decides which licenses a build takes, and
+One rule, `LicenseCheck`, decides which licenses a build takes, and
 both the image check and the release kernel's link audit
 ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)) apply
 it. An input under a permissive license, such as the FSF All
 Permissive License of l4re-core's `ldscripts/kip_addr.S`, enters every
 build. A license that is not permissive enters only from one closed
-table, `LicenseAdmission::TABLE`, whose every row names one input by
+table, `LicenseCheck::TABLE`, whose every row names one input by
 its status, its label, its exact license and where the build reads
 it, and the build kinds that take it: the cross compiler's three
 freestanding headers that Fiasco includes, `stdarg.h`, `stdbool.h` and
@@ -2049,7 +2049,7 @@ archive, the `example`, under GPL-2.0-or-later at
 staged copy of Fiasco's inputs in `build/fiasco/inputs/`,
 `jdb_object.cpp`, under GPL-2.0-only, in development builds only,
 which goes out only in the website's images with its source offered.
-Beyond the table a development build admits only a local test image's
+Beyond the table a development build accepts only a local test image's
 own packages (`package-local`), which no published image takes, so a
 copyleft file that comes back into any other closure, a stopgap's or a
 release component's included, fails the build, as does a file under

@@ -863,7 +863,7 @@ the frame's lines, which Fiasco binds as wired lines:
   checks the record by raising the first and the last line. Which range
   QEMU's frame serves is unverified (probe 4 of the USB design).
 * **The call.** `erx_irq_create(budget, resource, ERX_IRQ_MSI, 0)`
-  ignores the resource, as every stopgap device call does, takes the
+  ignores the resource, as every device call of the Fiasco backend does, takes the
   lowest free line of the range, sets it edge-triggered through Fiasco's
   `l4_icu_set_mode` with `L4_IRQ_F_POS_EDGE`
   (`fiasco/l4re-core/l4sys/include/icu.h:82`, `:266`), as FreeBSD sets
@@ -1242,7 +1242,7 @@ domain whatever the reads say. On Fiasco the bus error is ignored,
 so such an answer is taken: a read across it may give a wrong value,
 which the walk's identity check and the plan's readback catch only where
 it differs from what they expect, and a write across it may not have
-been made, which the readback catches. That is a stopgap residual
+been made, which the readback catches. That is a residual of Fiasco
 ([On Fiasco](#on-fiasco)).
 
 ## Refusals and error results
@@ -1289,8 +1289,8 @@ contiguous memory with `erx_mem_create_contiguous_in` inside its DMA
 facts. The VL805's notification runs in the root task, where the device
 service runs. Its residuals:
 
-* **No confinement.** The harness starts QEMU `virt` with no IOMMU on the
-  stopgap and the Pi 4 has none, so every PCIe function is unconfined
+* **No confinement.** The harness starts QEMU `virt` with no IOMMU on
+  Fiasco and the Pi 4 has none, so every PCIe function is unconfined
   and its holder, with the PCIe domain, is in the trusted base.
 * **No isolation between tasks.** The PCIe domain and the holders are
   apart by convention ([design-fiasco.md](design-fiasco.md#what-phase-1-code-must-not-assume)).

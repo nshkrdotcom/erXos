@@ -2564,8 +2564,8 @@ recorded here as the design's and in `TODO.md` when the code lands:
   deadline fails the controller. A synchronous external abort takes
   Fiasco's user fault path, unverified for this kind. Probe B8 says which
   the BCM2711 raises.
-* **DMA without an IOMMU.** `qemu-xhci` has no IOMMU window on the
-  stopgap, since its harness starts none, and the VL805 reaches all
+* **DMA without an IOMMU.** `qemu-xhci` has no IOMMU window on
+  Fiasco, since its harness starts none, and the VL805 reaches all
   memory on both kernels; on Fiasco the USB domain is in the trusted
   base on both targets, and the PCIe domain is in it everywhere. Whether
   the Pi 4 bridge's inbound window could confine the VL805 to its own
@@ -2879,8 +2879,8 @@ then settles three rules this design records:
 
 ## Alternatives considered
 
-* **DWC2 first**, by programmed I/O on QEMU `raspi4b`, the one USB the
-  stopgap could reach without PCIe: it covers QEMU alone, while the Pi 4,
+* **DWC2 first**, by programmed I/O on QEMU `raspi4b`, the one USB erXos on
+  Fiasco could reach without PCIe: it covers QEMU alone, while the Pi 4,
   the board erXos targets, needs the PCIe domain and xHCI anyway; one
   xHCI driver behind one PCIe domain covers both targets.
 * **A file per HID device and an arrival stream**, as 9front's `usbd`

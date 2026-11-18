@@ -26,19 +26,19 @@ kernel = boot_place_elf(0x1000, [[1, 0x1000, 0x1000, 0x2000, 0x3000, 0x1000], [2
                                  [0x10, 0x1000, 0x1000, 0x1000, 0x1000, 8], [0x11, 0x2000, 0x2000, 0x100, 0x100, 8]])
 sigma0 = boot_place_elf(0x1800, [[1, 0x1000, 0x1000, 0x1000, 0x2000, 0x10000], [2, 0x1000, 0x1000, 16, 16, 8]])
 root = boot_place_elf(0x4400_1000, [[1, 0x1000, 0x4400_1000, 0x1000, 0x2000, 0x1000]])
-archive = PackFixture.valid(paths: %w[boot/kernel boot/sigma0 boot/stopgap-root system/root],
-                            files: { 'boot/kernel'.b => kernel, 'boot/sigma0'.b => sigma0, 'boot/stopgap-root'.b => root })
+archive = PackFixture.valid(paths: %w[boot/fiasco-root boot/kernel boot/sigma0 system/root],
+                            files: { 'boot/kernel'.b => kernel, 'boot/sigma0'.b => sigma0, 'boot/fiasco-root'.b => root })
 # A root linked where the loader leaves the archive, so the plan moves the archive behind it.
 landing = boot_place_elf(0x4020_6000, [[1, 0x1000, 0x4020_6000, 0x1000, 0x2000, 0x1000]])
-moved = PackFixture.valid(paths: %w[boot/kernel boot/sigma0 boot/stopgap-root system/root],
-                          files: { 'boot/kernel'.b => kernel, 'boot/sigma0'.b => sigma0, 'boot/stopgap-root'.b => landing })
+moved = PackFixture.valid(paths: %w[boot/fiasco-root boot/kernel boot/sigma0 system/root],
+                          files: { 'boot/kernel'.b => kernel, 'boot/sigma0'.b => sigma0, 'boot/fiasco-root'.b => landing })
 # Memory from 0xf0000000: the root lands on the archive and sigma0 stays just below 4 GiB, so the
 # archive moves across it.
 high_root = boot_place_elf(0xf020_6000, [[1, 0x1000, 0xf020_6000, 0x1000, 0x2000, 0x1000]])
 high_sigma0 = boot_place_elf(0xffff_b000, [[1, 0x1000, 0xffff_b000, 0x1000, 0x2000, 0x1000]])
-high = PackFixture.valid(paths: %w[boot/kernel boot/sigma0 boot/stopgap-root system/root],
+high = PackFixture.valid(paths: %w[boot/fiasco-root boot/kernel boot/sigma0 system/root],
                          files: { 'boot/kernel'.b => kernel, 'boot/sigma0'.b => high_sigma0,
-                                  'boot/stopgap-root'.b => high_root })
+                                  'boot/fiasco-root'.b => high_root })
 # No root of its own to run at a link address, so it boots on memory from 0.
 plain = PackFixture.valid(paths: %w[boot/kernel boot/sigma0 system/root],
                           files: { 'boot/kernel'.b => kernel, 'boot/sigma0'.b => sigma0 })

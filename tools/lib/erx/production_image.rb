@@ -53,7 +53,7 @@ require_relative 'source_revision'
 
 module Erx
   # The image the system boots from: bootstrap as the first stage, and an archive that
-  # Pack's one funnel builds and Phase 1's manifest check admits (docs/design-fiasco.md,
+  # Pack's one funnel builds and Phase 1's manifest check accepts (docs/design-fiasco.md,
   # "The Phase 1 manifest check"). Test images come from BootImage instead, whose
   # structural recipe lives under test/fixtures; nothing here reaches that recipe.
   class ProductionImage
@@ -553,7 +553,7 @@ module Erx
     end
 
     # Refuses a published medium of platform, the card or QEMU's medium the website offers,
-    # whose admitted manifest (its report, manifest) trusts a key for packages installed
+    # whose checked manifest (its report, manifest) trusts a key for packages installed
     # later, a signer row or the builder's development package key: the medium trusts its
     # kiosk by its row's hash alone, so no downloaded medium trusts its builder's key,
     # whatever a build hands the manifest check (docs/design-packaging.md, "The shipped
@@ -1889,7 +1889,7 @@ module Erx
 
     # The domain boot scripts a manifest's domain rows and session templates name. Only
     # their release references are read here, so the image can carry what they name; the
-    # manifest check proves the rows, each reference included, when Pack#build admits
+    # manifest check proves the rows, each reference included, when Pack#build accepts
     # the manifest. Scripts given (a test image's own) stand in for the table's script of
     # the same name; two given of one name are refused. The hosted archive's domain
     # release (Release) takes its scripts from here too.

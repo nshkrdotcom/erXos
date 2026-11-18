@@ -200,21 +200,21 @@ module Erx
       @fiasco = fiasco
     end
 
-    # The system's root task, as the archive's boot/stopgap-root entry: SYSTEM over the
+    # The system's root task, as the archive's boot/fiasco-root entry: SYSTEM over the
     # archives that hold ERTS and musl, with the objects' debug information left out. It is
     # the system image, which this one link of it checks for JIT and C++ before anything
     # packs it; archives name the system image's static NIF table, which names neither
     # crypto nor asn1rt_nif (NativeRuntime::Built#system_archives).
     def build_system(directory:, archives:, place:)
-      program = build(name: 'stopgap-root', sources: SYSTEM, directory: directory, archives: archives, strip_debug: true,
+      program = build(name: 'fiasco-root', sources: SYSTEM, directory: directory, archives: archives, strip_debug: true,
                       place: place)
       InterpreterImage.check(program: program, nm: nm, runner: @runner)
       program
     end
 
-    # A root with nothing to run, as the archive's boot/stopgap-root entry.
+    # A root with nothing to run, as the archive's boot/fiasco-root entry.
     def build_no_program(directory:)
-      build(name: 'stopgap-root', sources: NO_PROGRAM, directory: directory)
+      build(name: 'fiasco-root', sources: NO_PROGRAM, directory: directory)
     end
 
     # The system's root task with the receipt that binds it to what the link took: its

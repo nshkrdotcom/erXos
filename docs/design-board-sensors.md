@@ -583,8 +583,8 @@ already show.
   pays for them as for every other system service
   ([design-scheduler.md](design-scheduler.md#service-work), S6).
   The charge, the in-flight limit and the share are the target design,
-  runtime and manifest code that is the same in both phases. On the
-  stopgap the facet behaviour checks the limit in flight but admits by
+  runtime and manifest code that is the same in both phases. On
+  Fiasco the facet behaviour checks the limit in flight but admits by
   no measured share (`TODO.md`, the facets item), so the one request in
   flight holds there and the share does not: a PCIe domain that asks
   without pause keeps the worker and a system CPU busy, the sensor

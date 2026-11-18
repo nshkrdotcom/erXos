@@ -46,9 +46,9 @@ class LicenseExpressionTest < Minitest::Test
     assert_equal ['MIT', 'FSFAP'], select('MIT AND FSFAP').fetch('grants')
   end
 
-  # erx-lvgl's liblvgl.a: MIT code and OFL-1.1 font data. OFL-1.1 is admitted for an input that
+  # erx-lvgl's liblvgl.a: MIT code and OFL-1.1 font data. OFL-1.1 is accepted for an input that
   # states its OFL content is font data, and for no other input.
-  def test_ofl_is_admitted_only_for_an_input_that_states_font_data
+  def test_ofl_is_accepted_only_for_an_input_that_states_font_data
     lvgl = 'MIT AND OFL-1.1'
     assert_equal ['MIT', 'OFL-1.1'], select(lvgl, font_data: true).fetch('grants')
     assert_raises(Erx::Error) { select(lvgl) }
@@ -58,7 +58,7 @@ class LicenseExpressionTest < Minitest::Test
     assert_equal ['MIT', 'OFL-1.1'], select(lvgl, restricted: true).fetch('grants')
   end
 
-  def test_the_font_data_statement_admits_no_other_restricted_license
+  def test_the_font_data_statement_accepts_no_other_restricted_license
     ['MIT AND OFL-1.1 AND GPL-2.0-only', 'GPL-3.0-or-later', 'OFL-1.1 AND MPL-2.0', 'LGPL-2.1-only AND OFL-1.1',
      'GPL-2.0-only WITH Classpath-exception-2.0'].each do |expression|
       assert_raises(Erx::Error, expression) { select(expression, font_data: true) }

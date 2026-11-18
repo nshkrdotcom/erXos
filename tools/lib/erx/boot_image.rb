@@ -17,7 +17,7 @@ module Erx
   # A bootable file for Fiasco from what the build holds: bootstrap as the
   # first stage and an archive of the kernel, sigma0 and, for a guest test, a
   # root task that bootstrap places. The archive is the structural recipe's,
-  # never admitted: production packing waits for the root startup, so its
+  # never checked: production packing waits for the root startup, so its
   # manifest and its own root entry say nothing about what runs.
   class BootImage
     Built = Data.define(:single, :archive, :first_stage, :index_hash, :build_id, :flags) do

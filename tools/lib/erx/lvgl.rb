@@ -163,7 +163,7 @@ module Erx
       # changes this expression too (TODO.md).
       LICENSE = 'MIT AND OFL-1.1'
       # The expression's OFL-1.1 covers font data alone (the role fonts above), which the
-      # release check admits for this archive only (LicenseExpression::FONT_DATA_ONLY).
+      # release check accepts for this archive only (LicenseExpression::FONT_DATA_ONLY).
       # OFL-1.1 on any other member makes this false.
       FONT_DATA = true
       NOTICES = [*%w[LICENCE.txt src/misc/lv_math.c].map { |notice| File.join(SUBMODULE, notice) },

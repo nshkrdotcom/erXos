@@ -48,9 +48,9 @@ class ToolchainProvenanceTest < Minitest::Test
     assert_raises(Erx::Error) { registry }
   end
 
-  # A header is admitted by the license it declares itself, from whatever
+  # A header is accepted by the license it declares itself, from whatever
   # release is installed, and its record carries the bytes it has.
-  def test_header_is_admitted_by_its_own_license_line
+  def test_header_is_accepted_by_its_own_license_line
     bytes = "/*===---- header.h ---===\n * SPDX-License-Identifier: MIT\n */\nint x;\n"
     File.binwrite(File.join(@installation, 'header.h'), bytes)
     records = registry

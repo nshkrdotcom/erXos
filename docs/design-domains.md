@@ -295,8 +295,8 @@ charged to budgets that are records, so D12's assertions about budgets
 report `unsupported`. D16 holds in part: each side has one writer because
 the reader's `liberx` maps it read-only, and only the system domain
 deletes a connection's objects, since only an object's creator may destroy
-it; its charging to child budgets is recorded, not enforced. Nothing on the
-stopgap holds a domain that bypasses `liberx` and calls Fiasco itself, or
+it; its charging to child budgets is recorded, not enforced. Nothing on
+Fiasco holds a domain that bypasses `liberx` and calls Fiasco itself, or
 maps a side writable it should only read; development builds run trusted
 code only.
 

@@ -788,7 +788,7 @@ every IOMMU stream before allocator handoff, and the PCIe domain's start
 rule lowers every function that does not read as its setting. No
 platform record lists bus masters, no
 research record carries a proof for the build to bind, and development
-and release builds are admitted alike: the manifest check has no
+and release builds pass alike: the manifest check has no
 handover clause.
 
 A native shim, a row of

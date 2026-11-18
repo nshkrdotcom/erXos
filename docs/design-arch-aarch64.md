@@ -192,7 +192,7 @@ code starts at offset 96. In the single file the packer writes the
 locator's archive offset and size and sets `image_size` to the whole
 file's length, archive included, so the file is the Image and
 `image_size` its exact length; as built, the locator is zero and
-`image_size` covers `.bss`. Stopgap `bootstrap`'s flat image takes the
+`image_size` covers `.bss`. Fiasco's `bootstrap` gives its flat image the
 same header and locator. The loader passes the device tree's physical
 address in `x0` and, in the two-file form alone, the boot image as the
 initrd; the platform binding records where each loader puts them

@@ -1285,7 +1285,7 @@ each package the build:
 --local` builds an image that takes a package whose license is not
 permissive, for its builder's own tests, such as the Doom demo on QEMU.
 Such a package is registered as `package-local` in place of `permanent`,
-and only a development build admits a `package-local` license, so a
+and only a development build accepts a `package-local` license, so a
 release build refuses it whatever asked for it. The image is marked
 local in its build facts, whose configuration reads
 `qemu-virt/development-local` and which `uname -i` shows; the kernel's
@@ -1835,7 +1835,7 @@ tree.
   show it. Where the checkout stands is no part of the build, and the
   tree's source revision (`uname -v`, the image record) leaves the fork
   out, so git never runs a status in it under its own configuration. Its row in the
-  dependency table has the status `example`, which the image build admits
+  dependency table has the status `example`, which the image build accepts
   for its archive alone ([design.md](design.md#dependencies)); every
   other package that is not permissive stays out of every image but a
   local one (step 4 of [Adding an app to an

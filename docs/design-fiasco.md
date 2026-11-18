@@ -894,11 +894,11 @@ leaves unset: every kernel needs `CONFIG_FPU`, `CONFIG_PERFORMANCE`, `CONFIG_PER
 A release kernel links only sources a release build may carry: its build runs the link audit
 (`FiascoProvenance`) over the kernel and fails naming each linked source whose license, as its
 import record or toolchain registration gives it, the one rule of
-[design.md](design.md#licenses-and-notices) (`LicenseAdmission`) does not admit in a release
-build, the rule the image check applies. It admits a permissive license anywhere, and beyond that
+[design.md](design.md#licenses-and-notices) (`LicenseCheck`) does not accept in a release
+build, the rule the image check applies. It accepts a permissive license anywhere, and beyond that
 only the cross compiler's three GCC headers, each from a GCC include directory
 ([License](#the-releases-fiasco-build)), so `jdb_object.cpp` (GPL-2.0-only), whose row of the
-closed table admits it in development builds only, is built only with `CONFIG_JDB`, into
+closed table accepts it in development builds only, is built only with `CONFIG_JDB`, into
 development kernels, the published images' included; a source the audit cannot attribute fails
 the build too, and a file without a license passes only as configuration or as one made from
 attributed sources. The audit rests on the
@@ -1100,7 +1100,7 @@ Two things stop a production image without it: `Admitted.admit` refuses every
 manifest for `root_startup` (`manifest.rb`, and `Pack#build` requires the
 admitted bytes), and before that `EmptyNative#check` refuses a full boot and
 every `domain`, `partial_boot`, `window`, `service`, `facet`, `introduce`
-and `liveness` record. **`Stopgap`** sits beside `EmptyNative` and
+and `liveness` record. **`Check`** sits beside `EmptyNative` and
 shares its readers: a development manifest, full or partial boot, with the
 system domain and its configured domains. It accepts the records the system
 release's services and the configured domains need, `domain`, `window`,
@@ -1124,13 +1124,13 @@ development manifest is the records every board takes,
 [config/manifest/development.txt](../config/manifest/development.txt),
 followed by its own part,
 [config/manifest/qemu-virt-development.txt](../config/manifest/qemu-virt-development.txt)
-(`Platform#manifest_source`), and the packer admits the two as one text;
+(`Platform#manifest_source`), and the manifest check takes the two as one text;
 the website's image has a manifest of its own, made from the development one
 whenever it is needed and never checked in (`Platform#site_manifest_source`): the
 development manifest without the configured domains the platform record's
 `site_leaves_out` names and without its `apps` row
 ([design-packaging.md](design-packaging.md#the-apps-row)), each taken out with
-the room it took, which the same check admits. On QEMU `virt` those domains are
+the room it took, which the same check accepts. On QEMU `virt` those domains are
 the web domain, since the website's page has no host link and the web facet is
 all that domain serves, and the display domain, since the page has no gpu for it
 to drive; each would only cost boot time on the emulator's one core.
@@ -1190,7 +1190,7 @@ each image. A manifest's `root_memory` is what its
 budgets promise and a margin no one is promised, never a figure lowered to make room for
 the archive: an archive that outgrows root_memory's room asks for a larger machine. If it
 is wrong, the pool fails at boot with a
-diagnostic. A platform record without these numbers is not admitted.
+diagnostic. A platform record without these numbers does not pass.
 
 The packer then holds the archive to that room (`RootStartup.check_archive`, once the archive is
 written). The root refuses the boot unless the pool's free pages and its own image hold `root_memory`
@@ -1201,8 +1201,8 @@ the archive and what the boot keeps besides. The packer checks the same inequali
 It estimates what the boot keeps as the platform record's `root_withheld`, plus the contiguous pool the
 manifest's devices' memory takes ([The pool](#the-pool)), plus the pool's page index. `root_withheld` counts
 Fiasco's and `sigma0`'s images, the device tree, the handoff page, and the pool's object table, the root's
-range table and its thread table. The packer sizes the contiguous pool from the admission report's
-`dma_memory` by `RootStartup.contiguous_pool_bytes`, the rule `erx_fiasco_contig_order` applies at boot to
+range table and its thread table. The packer sizes the contiguous pool from the
+`dma_memory` of the manifest check's report by `RootStartup.contiguous_pool_bytes`, the rule `erx_fiasco_contig_order` applies at boot to
 the same total, which `liberx/backend/core/boot_manifest.c` reads from the manifest;
 `test/host/fiasco_vm_test.rb` holds the two rules to each other and `test/host/boot_manifest_test.rb` the
 two totals. The page index
@@ -1213,7 +1213,7 @@ Boots of the development image at 112, 256 and 768 MiB (the Apple M3 Max host, H
 2,600 of them at 256 MiB, on 1 and 4 guest CPUs, each kept 4,321,280 bytes besides the index, counted as
 RAM less the reserve, the archive, the pool's pages and the root's image. Each took a 2 MiB contiguous pool,
 for the development manifest's 1.25 MiB of devices' memory, so each kept 2,224,128 bytes besides the index
-and the contiguous pool; `test/host/manifest_stopgap_test.rb` pins those boots. QEMU `virt`'s
+and the contiguous pool; `test/host/manifest_check_test.rb` pins those boots. QEMU `virt`'s
 `root_withheld`, 2.5 MiB, errs high by 388 KiB, so the packer refuses an
 archive that would boot with less than that to spare, and never passes one that fails while the boot keeps
 no more than measured and `fiasco_reserve` is at least the kernel memory Fiasco takes. The Raspberry Pi 4's record states the same for its smallest board, 948 MiB: one boot of the development image on QEMU's `raspi4b` (TCG, 4 guest CPUs, an Apple M3 Max host, QEMU 11.1.3) reserved 58 MiB as kernel memory, its `fiasco_reserve`, and kept 3,837,952 bytes besides the index, 2 MiB of them its contiguous pool, so its `root_withheld` is 2 MiB, 348 KiB high. Neither follows
@@ -1234,7 +1234,7 @@ A test task's program is a boot-image entry named by the boot argument
 `Erx::ProductionImage` (`tools/lib/erx/production_image.rb`) builds the image the
 system boots from, and `tools/erx pack` and `make check-reproducible` run it. Its archive
 comes through `Pack#build`, the one funnel that takes `Manifest::Admitted`, so nothing
-reaches it unadmitted. Test images keep `BootImage` and the structural recipe
+reaches it unchecked. Test images keep `BootImage` and the structural recipe
 under `test/fixtures`, which `Manifest::StructuralFixture` feeds; the production path loads
 nothing from `test/fixtures`, and `production_image_test.rb` checks the loaded files.
 
@@ -2297,7 +2297,7 @@ a clean-room facts record of the power-management watchdog, as the RNG200's do.
 
 Its numbers and mode come from [the command line](#the-command-line), with the design's defaults of 1, 5 and 60 seconds. **The pet is the design's
 own**: `erx_watchdog`, a process at priority `max` of the release's `kernel`, started among `kernel`'s first children, right after `on_load` lets a module with a NIF load, calling the watchdog NIF from a
-normal scheduler every half second, shorter than any `P` or `D` the command line can set, since those count in seconds. It pets unconditionally and reads no `liveness` record, which `Stopgap` refuses until it does, so a pet says only
+normal scheduler every half second, shorter than any `P` or `D` the command line can set, since those count in seconds. It pets unconditionally and reads no `liveness` record, which `Manifest::Check` refuses until it does, so a pet says only
 that schedulers run and timers fire, and a release with no services is no special case: the first pet follows the first period. Until then the boot races `B` alone, from the watchdog thread's start, which covers ERTS's start,
 `init` and `kernel`'s start up to that process. A hang in any of them ends the machine with a crash record at `B`, as it should.
 

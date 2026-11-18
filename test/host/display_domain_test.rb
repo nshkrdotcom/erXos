@@ -103,9 +103,9 @@ class DisplayDomainTest < Minitest::Test
     assert_raises(Erx::Error) { Suite.check_run_lines("#{started}#{passed}#{damage}", run: 'damage') }
   end
 
-  # The manifest check admits the suite's manifest, properties 4 and 18 among its own,
+  # The manifest check accepts the suite's manifest, properties 4 and 18 among its own,
   # over the fixture's archive with a planner that places nothing.
-  def test_the_manifest_check_admits_the_suite_s_manifest
+  def test_the_manifest_check_accepts_the_suite_s_manifest
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
     arguments = ManifestContextFixture.archive_arguments(codec, boots: %w[display network pattern session storage web])

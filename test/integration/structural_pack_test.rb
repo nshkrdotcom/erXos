@@ -63,7 +63,7 @@ class StructuralPackTest < Minitest::Test
     assert_operator first.fetch('provenance').size, :>, 11
   end
 
-  def test_a_platform_without_the_reserve_is_not_admitted_and_preserves_existing_output
+  def test_a_platform_without_the_reserve_is_not_accepted_and_preserves_existing_output
     structural = fixture('structural')
     native = structural.fetch('native')
     output = File.join(@directory, 'production.erxpack')
@@ -107,7 +107,7 @@ class StructuralPackTest < Minitest::Test
                               artifacts: { 'root' => { 'kind' => 'executable', 'entry' => 2 } }.merge(ManifestContextFixture.images),
                               manifest_source: ManifestContextFixture.domainless(Erx::ProductionImage.sessionless_manifest(@root, platform: Erx::Platform.development(@root))),
                               output: output)
-    assert_equal 'stopgap', result.fetch('manifest').fetch('mode')
+    assert_equal 'check', result.fetch('manifest').fetch('mode')
     assert_equal 'declared', result.fetch('manifest').fetch('root_startup')
     bytes = File.binread(output)
     assert_equal "ERXPACK\0".b, bytes.byteslice(0, 8)

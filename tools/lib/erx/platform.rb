@@ -100,7 +100,7 @@ module Erx
     # other boards (its machine record, its system principal's memory, its own devices'
     # units and windows and the domains whose rows name them), which is no manifest alone.
     def manifest_path = "config/manifest/#{name}-development.txt"
-    # The board's development manifest, the one text the packer admits and the board
+    # The board's development manifest, the one text the packer accepts and the board
     # boots: the common part, then the board's (docs/design-fiasco.md, "The Phase 1
     # manifest check"). The encoder sorts every table, so the order of the two parts
     # does not reach the image.

@@ -6266,7 +6266,7 @@ in-node and 41.3 to 44.6 MiB/s across the lane (medians 39.6 and 42.8
 MiB/s). The sends show no cost of the lane at this rate, which slirp and
 Fiasco's device path bound; the echo is too short, timed to the
 millisecond, to separate a few milliseconds from noise. These are
-stopgap numbers and decide nothing: the Fiasco kernel (modified Fiasco),
+numbers on Fiasco and decide nothing: the Fiasco kernel (modified Fiasco),
 an Apple M3 Max host at load averages of 7 to 10, HVF, QEMU 11.1.3,
 Homebrew clang 23.1.3 with the tree's default flags, BeamAsm, one guest
 CPU, a 224 MiB machine (raw logs and the script in erxos-history,

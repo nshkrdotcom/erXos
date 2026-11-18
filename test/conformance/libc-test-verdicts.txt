@@ -19,7 +19,7 @@
 #
 # KIND says why:
 #   bug         a bug in erXos's code, with its TODO.md item in REASON
-#   stopgap     a documented difference of the Phase 1 stopgap, which
+#   fiasco      a documented difference of Fiasco and its backend, which
 #               erXos's kernel removes; REASON names where it is documented
 #   upstream    musl's or libc-test's own code; REASON cites the source
 #               that behaves so
@@ -33,14 +33,14 @@
 # Cancellation acts at the next cancellation point: no signal interrupts a
 # call the target is blocked in (design-fiasco.md, "musl over the backend"; the
 # kernel's form is design-runtime.md "Thread cancellation").
-functional/pthread_cancel                    timed_out stopgap    a thread blocked in a call is not interrupted by pthread_cancel: design-fiasco.md
-regression/pthread_cond_wait-cancel_ignored  failed    stopgap    at=pthread_cond_wait-cancel_ignored.c:52 a thread blocked in pthread_cond_wait is not interrupted by pthread_cancel: design-fiasco.md
+functional/pthread_cancel                    timed_out fiasco     a thread blocked in a call is not interrupted by pthread_cancel: design-fiasco.md
+regression/pthread_cond_wait-cancel_ignored  failed    fiasco     at=pthread_cond_wait-cancel_ignored.c:52 a thread blocked in pthread_cond_wait is not interrupted by pthread_cancel: design-fiasco.md
 
 # The seam's futex has no priority inheritance: FUTEX_LOCK_PI reads ENOSYS
 # (design-fiasco.md, "musl over the backend", the futex row); erXos's umtx grows it
 # (design-kernel.md "Umtx").
-functional/pthread_mutex_pi                  failed    stopgap    at=pthread_mutex_pi.c:108,pthread_mutex_pi.c:42,pthread_mutex_pi.c:87 PTHREAD_PRIO_INHERIT is refused with ENOSYS: design-fiasco.md futex row
-functional/pthread_robust                    failed    stopgap    at=pthread_robust.c:43 its priority-inheritance half is refused with ENOSYS; the robust half passes: design-fiasco.md futex row
+functional/pthread_mutex_pi                  failed    fiasco     at=pthread_mutex_pi.c:108,pthread_mutex_pi.c:42,pthread_mutex_pi.c:87 PTHREAD_PRIO_INHERIT is refused with ENOSYS: design-fiasco.md futex row
+functional/pthread_robust                    failed    fiasco     at=pthread_robust.c:43 its priority-inheritance half is refused with ENOSYS; the robust half passes: design-fiasco.md futex row
 
 # musl's own behaviour.
 functional/strptime                          failed    upstream   at=strptime.c:36,strptime.c:47 musl fced99e makes %s parse-only and %z take only +hhmm (src/time/strptime.c, case 's' and 'z'); libc-test wants more

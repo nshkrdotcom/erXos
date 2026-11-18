@@ -722,9 +722,9 @@ decision or the next state and the actions to perform. The effect layer
 reads the clock and the shared areas, calls the core, and performs what
 it returns: queue operations, timer programming, context switches,
 cross-CPU requests and stores to the status area. The core lives in
-`kernel/sched/` and builds for the host and for erXos's kernel. The
-stopgap does not run it: Fiasco schedules itself, and a group on the
-stopgap is a backend record that gives readiness only
+`kernel/sched/` and builds for the host and for erXos's kernel.
+Fiasco does not run it: it schedules itself, and a group on
+Fiasco is a backend record that gives readiness only
 ([design-fiasco.md](design-fiasco.md#the-call-table)).
 
 **What each section binds.** A configuration names the rung of the ladder
@@ -1104,8 +1104,8 @@ lifetime](#ownership-and-lifetime)). A thread that ends itself with
 `erx_thread_exit` and a thread the reaper's put kills from the kernel's
 own context are charged the same way. A stopped thread's remaining kernel work
 cannot start another user request, since it never returns to user mode
-([design-kernel.md](design-kernel.md#threads-and-faults)). On the
-stopgap the finishing share is unsupported, per the backend's table
+([design-kernel.md](design-kernel.md#threads-and-faults)). On
+Fiasco the finishing share is unsupported, per the backend's table
 ([design-fiasco.md](design-fiasco.md#deletion)).
 
 **Reclamation.** Emptying and destroying a stopped space run in the
@@ -1565,8 +1565,8 @@ scheduling decision, where the donation lapses
 (`Thread::activate_ipc_partner` in `thread-ipc.cpp` switches the
 execution context alone; `Context::schedule_switch_to_locked` switches
 both). erXos's own kernel charges every interval to the running thread's
-group, so a server never runs on its caller's time at all. On the
-stopgap IPC calls are refused, per the backend's table
+group, so a server never runs on its caller's time at all. On
+Fiasco IPC calls are refused, per the backend's table
 ([design-fiasco.md](design-fiasco.md#ipc-gates-and-where-transfer-fits)),
 and there is no direct switch to take. Neither kernel carries a
 donation across a preemption or down a chain of calls, and neither

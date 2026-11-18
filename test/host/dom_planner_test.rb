@@ -421,7 +421,7 @@ class DomPlannerTest < Minitest::Test
     end
   end
 
-  # A facet the check admits reaches the root's view; one granted to its service's own
+  # A facet the check accepts reaches the root's view; one granted to its service's own
   # server, which property 10 rules out and the check never writes, the view refuses.
   def test_a_facet_granted_to_its_own_server_is_refused_by_the_view
     facet = "service b\n  server @domain.beta\n  interface 1\nfacet ab\n  grantee @domain.alpha\n  service @service.b\n" \
@@ -538,7 +538,7 @@ class DomPlannerTest < Minitest::Test
     assert_equal 12, assert_raises(Erx::Manifest::Invalid) { admit(@source) }.property
   end
 
-  # The seed the shared builder exists for: a principal the Ruby check admits but
+  # The seed the shared builder exists for: a principal the Ruby check accepts but
   # erx_dom_principal_check refuses (memory not a whole number of pages), which ended
   # the machine at boot while the check planned from a view of its own. Without
   # configured domains too, since a build always plans.
@@ -753,7 +753,7 @@ class DomPlannerTest < Minitest::Test
 
   # A driven device's path is the PATH of the record its holder's creation writes, so the
   # view refuses one that is not a node path the record holds, and no creation fails for
-  # it. The manifest check admits no such path, so the bytes are the development
+  # it. The manifest check accepts no such path, so the bytes are the development
   # manifest's with the block device's path given a byte no node name holds.
   def test_a_driven_device_s_path_that_is_no_node_path_is_refused
     bytes = development_manifest

@@ -1473,8 +1473,8 @@ baseline remains the manifest's; runtime changes do not edit it.
    own handles, before the holder's budget goes. A device's contiguous
    memory is never undone: it is charged to the system domain and is the
    device's for the boot from the give that makes it, no driver has been
-   told its address yet, and contiguous runs are not returned on the
-   stopgap, so a fresh memory goes into the device's record and the
+   told its address yet, and contiguous runs are not returned on
+   Fiasco, so a fresh memory goes into the device's record and the
    row's next creation gives it again, as it does the memory an earlier
    holder kept.
 
@@ -1547,8 +1547,8 @@ bypasses `liberx` is still held to step 6's rights: it gets no delete
 right on its connection's objects, and the root refuses it a write
 mapping of the system domain's side. What Fiasco lacks against erXos's
 kernel is in
-[Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel); what the
-stopgap means for connections and for the domains' invariants, D7 and D17
+[Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel); what
+Fiasco means for connections and for the domains' invariants, D7 and D17
 included, is in [design-domains.md](design-domains.md#on-fiasco).
 
 Domain ids come from a counter in the domain service that only grows and
@@ -3215,7 +3215,7 @@ the block device to the storage domain, which runs the block driver and
 the file systems (littlefs as a NIF behind the `erx_fs` seam), the
 network device to the network domain, and virtio-gpu and virtio-input to
 a display domain where it configures one; the system domain holds only
-the console's and the host link's UARTs. The manifest check admits these
+the console's and the host link's UARTs. The manifest check accepts these
 unconfined devices in a development build, and property 9 refuses them
 in a release manifest. In the storage domain a driver's end ends the
 domain, whose restart gives the device back; other drivers restart under
@@ -3564,10 +3564,10 @@ an interrupt reaches its driver through a dispatcher thread, and its
 acknowledgement, like most kernel calls, is a request to the root
 service, which serves the whole machine on one thread
 ([design-fiasco.md](design-fiasco.md#interrupts-and-readiness)), so an
-Erlang driver that misses a device's timing there may be missing the
-stopgap's, and a shim admitted on that number would work around the
-stopgap rather than the device. Such a measurement is recorded with the
-stopgap named, and the row's decision waits for the same measurement on
+Erlang driver that misses a device's timing there may be missing
+Fiasco's, and a shim admitted on that number would work around
+Fiasco rather than the device. Such a measurement is recorded with
+the kernel named, and the row's decision waits for the same measurement on
 erXos's kernel.
 
 | Device | Board | Measurement | Shim | Tracked by |

@@ -831,8 +831,8 @@ serves both kernels and no image of the boot image meets it.
 `erx_area_lease_map` reserves the lent range there with
 `ERX_VM_FIXED | ERX_VM_NOREPLACE` and maps the lease over it. Because
 the buffer is mapped before the image, an image that meets it fails the
-start with the loader's refusal of a range already mapped; on the
-stopgap, whose loader takes only fixed images and places them one load
+start with the loader's refusal of a range already mapped; on
+Fiasco, whose loader takes only fixed images and places them one load
 segment at a time (`service_task.c`), a segment that meets the buffer
 fails the start with `enomem`, and an image whose segments lie on both
 sides of the buffer runs with the buffer between them.
@@ -4120,7 +4120,7 @@ on a display edits nothing of the board's:
   `kbdcontrol.c`, lines 1066-1070); the domain's own manifest row sets
   none of them. It names no session, no application and no renderer.
   The policy is a member of `mf_display_policy`, which has one for each
-  window manager the display domain has, so the manifest check admits
+  window manager the display domain has, so the manifest check accepts
   `single`, `erx_wm_single`'s, and `rio` only beside `erx_wm_rio`.
 * **Facet rows say who may draw there, and how much.** A facet row of
   the display's service grants its tree to a configured domain or to a
@@ -5699,7 +5699,7 @@ except the fuzz budgets, which are the milestone gate's.
 | **Placement** | `erx-lvgl` is a program of the application's own session, in a sub-space, with a namespace narrowed to nothing, holding a mapping of its window's buffer's pages and no other page of the pixel area, no capability to the area, and no handle beyond those its start gives every program ([The widget server](#the-widget-server), "The **LVGL renderer**"; "A buffer in a program") | a store one page past the buffer faults in the program; a session that maps the whole area into it fails. The program's space, read through `/proc` at the program's `capabilities` and `mappings` on a development build of either kernel ([design-fiasco.md](design-fiasco.md#reporting-kernel-objects)), slots and mappings apart, holds no slot beyond those of a program started with no files, none naming the pixel area, and no mapping of the area beyond its buffer's pages; a session that also hands it its own namespace grant fails, and so does one that passes it the area's handle |
 | **Input** | the program reads only the binary form of `abi/formats/ui.txt` through the generated bounded C reader, and an `image` node's PNG through LVGL's lodepng, never an application's term; `erx_ui_lvgl` reads the program's records through the generated Erlang reader | `tools/fuzz/ui_wire_fuzz.c` (the C reader) and `test/erlang/erx_ui_wire_fuzz.erl` (the Erlang reader), and a lodepng target over the PNGs an `image` node carries, within `ui_picture_bytes`, at their full `check-fuzz` budgets with no open finding before the release; a reader without the `damage` report's count check fails its target |
 | **Failure** | a malformed `damage` report, a second report before the first is answered, or a program that leaves its standard input full stops the program, and the application receives `{ui_down, Window, renderer_down}`; the worst a hostile or broken `erx-lvgl` does is confined to its own application's session | each of the first two stops the program and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that presents them fails. A program that stops reading its standard input until the pipe is full is stopped and the application receives `{ui_down, Window, renderer_down}`; an `erx_ui_lvgl` that waits on the full pipe instead fails |
-| **Notices** | the image's notices carry LVGL's MIT license and Inter's OFL-1.1 `LICENSE.txt` for the role fonts its archive holds, which the release check admits as font data only ([design.md](design.md#dependencies), LVGL's row) | `test_ofl_is_admitted_only_for_an_input_that_states_font_data` (`test/host/license_expression_test.rb`): OFL-1.1 refused for an input that does not state font data; and `test/host/production_image_test.rb`, which reads the LVGL archive as `MIT AND OFL-1.1` with font data |
+| **Notices** | the image's notices carry LVGL's MIT license and Inter's OFL-1.1 `LICENSE.txt` for the role fonts its archive holds, which the release check accepts as font data only ([design.md](design.md#dependencies), LVGL's row) | `test_ofl_is_accepted_only_for_an_input_that_states_font_data` (`test/host/license_expression_test.rb`): OFL-1.1 refused for an input that does not state font data; and `test/host/production_image_test.rb`, which reads the LVGL archive as `MIT AND OFL-1.1` with font data |
 | **Retirement** | gate GD decides whether the Erlang renderer replaces LVGL on panels ([plan.md](plan.md#decision-gates)); GD is not among 0.2's gates, and a release after a GD that retires LVGL ships no LVGL | none: a plan gate |
 
 **Published downsides.** A defect in LVGL's C code can crash or hang its application's interface,

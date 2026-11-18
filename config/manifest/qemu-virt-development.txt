@@ -116,7 +116,7 @@
 # machine, interpreter ERTS domains with 1,024 processes, 16,384 atoms and tmp 0, at
 # rest; one run, the system domain's /tmp cap 4 MiB). A domain's cost is the root's
 # pool pages in use with the domain up minus the pages once it has stopped; the pool is
-# a stopgap's partial figure.
+# the Fiasco backend's partial figure.
 #
 #   release (applications)                      pool pages    MiB
 #   bare (kernel stdlib erx erx_files)          4,568         17.8

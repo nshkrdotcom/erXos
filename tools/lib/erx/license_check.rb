@@ -10,7 +10,7 @@ require_relative 'license_expression'
 
 module Erx
   # The one rule for which licenses the image check (PackProvenance) and the release
-  # kernel's check (FiascoProvenance) admit for the files of a closure (docs/design.md,
+  # kernel's check (FiascoProvenance) accept for the files of a closure (docs/design.md,
   # "Licenses and notices"). An input with a permissive grant
   # (LicenseExpression::PERMISSIVE) enters every build. An input under a license that is
   # not permissive enters only where exempt? says: as the input of a row of TABLE, in the
@@ -18,9 +18,9 @@ module Erx
   # a development build. Every other input, a stopgap's or a release component's included,
   # must be permissive, so a copyleft file that comes back into a closure, such as another
   # of Fiasco's GPL sources, fails its check however it is registered.
-  module LicenseAdmission
+  module LicenseCheck
     # The status of a package of a local test image whose license is not permissive
-    # (ImageApps::Plan#status), which a development build admits under that license, since
+    # (ImageApps::Plan#status), which a development build accepts under that license, since
     # no published image takes a builder's package.
     PACKAGE_LOCAL = 'package-local'
 
@@ -45,12 +45,12 @@ module Erx
 
     DEVELOPMENT_ONLY = [BuildKind::DEVELOPMENT].freeze
 
-    # One input a build admits under a license that is not permissive: the status it is
+    # One input a build accepts under a license that is not permissive: the status it is
     # registered under, its label as its record names it, the license expressions it may
-    # carry, exactly as recorded, where the build reads it, and the build kinds that admit
+    # carry, exactly as recorded, where the build reads it, and the build kinds that accept
     # it. The path is relative to the tree, with the label a literal, or, for a toolchain's
     # files outside it, a Regexp the whole absolute path must match, with the label a format
-    # template its named captures fill, so the label always names the file the row admits.
+    # template its named captures fill, so the label always names the file the row accepts.
     Row = Data.define(:status, :label, :licenses, :path, :build_kinds) do
       # Whether this row names the input registered under input_status with input_label and
       # license, read from input_path: relative to the tree within it, absolute outside.
@@ -61,7 +61,7 @@ module Erx
       private
 
       # The label of the input this row reads from input_path, nil if it reads none there.
-      # A Regexp row admits only a whole match, however its pattern is anchored.
+      # A Regexp row accepts only a whole match, however its pattern is anchored.
       def label_at(input_path)
         case path
         in String
@@ -107,7 +107,7 @@ module Erx
       format(GCC_LABEL, **match.named_captures(symbolize_names: true))
     end
 
-    # Whether a build of build_kind admits an input under license although license is not
+    # Whether a build of build_kind accepts an input under license although license is not
     # permissive: the input registered under status with label, read from path (relative
     # to the tree within it, absolute outside it).
     def exempt?(status:, label:, license:, path:, build_kind:)
@@ -129,7 +129,7 @@ module Erx
 
     # Whether select takes a grant for an input that holds no font data, as the release
     # kernel's check asks of each source it links.
-    def admitted?(license, status:, label:, path:, build_kind:)
+    def passes?(license, status:, label:, path:, build_kind:)
       LicenseExpression.permissive?(license) || exempt?(status:, label:, license:, path:, build_kind:)
     end
 

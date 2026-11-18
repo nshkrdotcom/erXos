@@ -11,7 +11,7 @@ require_relative '../lib/erx/manifest'
 
 module Erx
   # The seeds of the targets that read a system manifest: the bytes the packer writes.
-  # QEMU virt's development manifest, as Phase 1's check admits it for a production image,
+  # QEMU virt's development manifest, as the manifest check accepts it for a production image,
   # the same with configured domains (ManifestContextFixture.domain_source), the empty
   # native manifest of the structural test images, with prefixes of the first, the
   # configured domains' with its first row's boot_timeout_s 0, which the reader refuses,

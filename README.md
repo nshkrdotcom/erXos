@@ -241,8 +241,8 @@ Eshell V17.1.1 (type help(). for help)
   while the image is younger than its peers' certificates.
   The domains listing at `/proc` shows each domain a caller's scope
   covers, with a record of its name, principal, state and
-  run queue; another domain's group and budget read as unsupported on the
-  stopgap, which answers for the system domain's own only.
+  run queue; another domain's group and budget read as unsupported on
+  Fiasco, which answers for the system domain's own only.
 * A host link lets `tools/erx load`, `watch` and `files` replace modules in
   the running system and read its files; `tools/erx web` shows the
   machine's records in a browser.

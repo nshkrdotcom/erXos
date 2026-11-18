@@ -76,7 +76,7 @@ module Erx
     # Result#at gives them.
     Verdict = Data.define(:name, :state, :kind, :at, :reason)
     VERDICT_STATES = %i[failed timed_out not_run].freeze
-    VERDICT_KINDS = %w[bug stopgap upstream cannot-run].freeze
+    VERDICT_KINDS = %w[bug fiasco upstream cannot-run].freeze
     VERDICT_LINE = /\A(?<name>\S+)\s+(?<state>\S+)\s+(?<kind>\S+)\s+(?:at=(?<at>\S+)\s+)?(?<reason>\S.*)\z/
     # A place in libc-test's source, FILE:LINE.
     PLACE = /[A-Za-z0-9_+.-]+\.[ch]:[0-9]+/

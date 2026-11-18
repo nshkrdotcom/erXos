@@ -12,7 +12,7 @@ require_relative '../fixtures/manifest_context'
 # design-system.md has a seeded violation here and each refusal a seeded record.
 # Every seed edits the real development manifest or the real platform record,
 # so a seed fails for its own reason and not for an unrelated difference.
-class ManifestStopgapTest < Minitest::Test
+class ManifestCheckTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   BLOCK = '/virtio_mmio@a003e00'
   SERVICE = "service probe\n  server system\n  interface 1\n"
@@ -132,7 +132,7 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 'context', 'platform.devices', source, against, message: /PCIe function carries/)
   end
 
-  def test_the_real_development_manifest_is_admitted
+  def test_the_real_development_manifest_is_accepted
     result = admit
     assert_instance_of Erx::Manifest::Admitted, result
     assert result.matches?(@context)
@@ -147,7 +147,7 @@ class ManifestStopgapTest < Minitest::Test
   # The website's manifest passes the same check: its storage and network domains, without
   # the web and display domains, hold the same windows and image and every device but the
   # display unit's, which lists every transport on the gpu's register page.
-  def test_the_real_site_manifest_is_admitted
+  def test_the_real_site_manifest_is_accepted
     result = admit(site_manifest)
     assert result.matches?(@context)
     view = @codec.open('manifest', result.bytes)
@@ -175,7 +175,7 @@ class ManifestStopgapTest < Minitest::Test
 
   def test_the_report_claims_only_what_was_checked
     report = admit.report
-    assert_equal 'stopgap', report.fetch('mode')
+    assert_equal 'check', report.fetch('mode')
     assert_equal 'declared', report.fetch('root_startup')
     assert_equal 'supplied_catalog', report.fetch('executable')
     assert_equal 'supplied_context', report.fetch('provenance')
@@ -197,9 +197,9 @@ class ManifestStopgapTest < Minitest::Test
     ))
   end
 
-  def test_a_partial_boot_flag_without_partial_boot_records_is_admitted
+  def test_a_partial_boot_flag_without_partial_boot_records_is_accepted
     source = partial_boot
-    assert_equal 'stopgap', admit(source).report.fetch('mode')
+    assert_equal 'check', admit(source).report.fetch('mode')
   end
 
   def test_a_partial_boot_has_no_system_image
@@ -211,7 +211,7 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 2, 'service', source)
   end
 
-  def test_admitted_services_reach_the_encoded_manifest
+  def test_accepted_services_reach_the_encoded_manifest
     view = @codec.open('manifest', admit(@source + SERVICE).bytes)
     # The development manifest's own, clock, code_objects, data, display, home, inspect, log,
     # login_keys, machine, net, network_ctl, packages, start, storage_ctl, system and web,
@@ -300,7 +300,7 @@ class ManifestStopgapTest < Minitest::Test
   end
 
   # A grant is a cap and promises no minimum, so principals whose caps together exceed
-  # `users` are admitted; one principal's cap above `users` is not.
+  # `users` are accepted; one principal's cap above `users` is not.
   def test_principal_grants_may_oversubscribe_users
     assert admit(changed(@source.sub("principal system\n", "#{principal_row('guest', 'users')}principal system\n")))
   end
@@ -332,12 +332,12 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 4, 'root_startup', @source, against, message: /loadable/)
   end
 
-  def test_a_platform_without_the_reserve_is_not_admitted
+  def test_a_platform_without_the_reserve_is_not_accepted
     against = context(platform: platform_with { |value| value.delete('fiasco_reserve') })
     refused(Erx::Manifest::Unsupported, 4, 'root_startup', @source, against)
   end
 
-  def test_a_reserve_that_leaves_no_ram_is_not_admitted
+  def test_a_reserve_that_leaves_no_ram_is_not_accepted
     against = context(platform: platform_with { |value| value['fiasco_reserve'] = value.fetch('ram_bytes') })
     refused(Erx::Manifest::Unsupported, 4, 'root_startup', @source, against)
   end
@@ -570,7 +570,7 @@ class ManifestStopgapTest < Minitest::Test
 
   # The clock rule (docs/design-header-io.md, "Clocks"): BSC1 and SPI0 divide the core
   # clock, which their rows carry as the PL011s carry theirs, so a manifest placing the
-  # i2c and spi units is admitted.
+  # i2c and spi units is accepted.
   def test_the_pi_bus_units_carry_the_core_clock
     admit(pi_source + pi_unit('i2c', 'system') + pi_unit('spi', 'system'), pi_context)
   end
@@ -700,14 +700,14 @@ class ManifestStopgapTest < Minitest::Test
 
   # The network stack runs in the system domain in Phase 1, over the device its unit
   # places there (docs/design-fiasco.md, "Device records").
-  def test_a_network_device_is_admitted
+  def test_a_network_device_is_accepted
     source, against = with_extra_device(role: 'network')
     admit(source, against)
   end
 
   # The display's device on QEMU virt, a virtio-mmio transport of the gpu role, is held as
   # any unconfined DMA device is in a development build (docs/design-fiasco.md, "Device records").
-  def test_a_gpu_device_is_admitted
+  def test_a_gpu_device_is_accepted
     admit(*with_extra_device(role: 'gpu', dma: 'unconfined', flags: 1, dma_memory: 1_048_576))
   end
 
@@ -717,7 +717,7 @@ class ManifestStopgapTest < Minitest::Test
   FRAMEBUFFER = { role: 'framebuffer', path: '/chosen', compatible: 'simple-framebuffer', line: 0, flags: 0,
                   base: 0x7e00_0000, size: 0x40_0000 }.freeze
 
-  def test_a_framebuffer_window_clear_of_every_register_window_is_admitted
+  def test_a_framebuffer_window_clear_of_every_register_window_is_accepted
     admit(*with_extra_device(**FRAMEBUFFER))
   end
 
@@ -1112,7 +1112,7 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 5, 'service.name', @source + "service other\n  name \"Bad Name\"\n  server system\n  interface 2\n")
   end
 
-  def test_root_memory_up_to_ram_less_the_reserve_is_admitted
+  def test_root_memory_up_to_ram_less_the_reserve_is_accepted
     assert_instance_of Erx::Manifest::Admitted, admit(with_root_memory(ram_less_the_reserve))
   end
 

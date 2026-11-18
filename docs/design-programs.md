@@ -2578,7 +2578,7 @@ and write through the generated table; every message carries names.
 
 **The oracles.** musl's `libc-test` and the Open POSIX Test Suite run
 against these numbers. A case that fails only because it assumes Linux's
-is a documented difference, recorded with the kind `difference` in
+is a documented difference, recorded with the kind `upstream` in
 `test/conformance/libc-test-verdicts.txt` and pinned by the tests of this
 section. The kinds expected are a case that hard-codes a Linux number or
 names `SIGPOLL`, `SIGPWR` or `SIGSTKFLT`; a case that assumes the real-time

@@ -5,6 +5,6 @@
 module Erx
   module ChokepointRules
     declare_group(none: 'its records are the seam bootstrap shares in include/erx/core/boot_place.h, and its ' \
-                        'workspace layout is private to its file; pack.rb and stopgap_seam.rb hold the rules on what it calls')
+                        'workspace layout is private to its file; pack.rb and fiasco_seam.rb hold the rules on what it calls')
   end
 end

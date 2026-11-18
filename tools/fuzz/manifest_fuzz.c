@@ -89,7 +89,7 @@ declares(const erx_service_parameter_t *declared, size_t ndeclared, const erx_se
  * row's number, so none is mapped to another; each a declaration of the
  * service's interface, matched by its fields as declares does, in strictly
  * ascending number order, so none is named twice; and none for a service a
- * configured domain serves, whose server checks none on the stopgap.
+ * configured domain serves, whose server checks none on Fiasco.
  */
 static bool
 operations_admitted(const erx_manifest_view_t *view, const erx_dom_view_t *dom, const erx_dom_facet_t *facet,

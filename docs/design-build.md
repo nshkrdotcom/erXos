@@ -390,7 +390,7 @@ archive that erXos's packer appends
 Fiasco modules. Starting `liberx`'s root-task entry is the root startup's;
 for a guest test, `tools/lib/erx/boot_image.rb` packs the kernel and
 `sigma0`, and the test's root task, as files bootstrap places, over the
-structural fixture's unadmitted manifest. The banner image has no root to place, so
+structural fixture's unchecked manifest. The banner image has no root to place, so
 Fiasco starts `sigma0` and returns without creating a root task when its root
 entry is zero, and the harness ends this guest at its named banner checkpoint.
 
@@ -788,7 +788,7 @@ exit, a bootstrap memory summary that disagrees with the guest's RAM, wrong
 properties and incomplete searches.
 
 Acceptance also uses the real tools: both stock OTP flavours and their
-required suites, the frozen stopgap banner under HVF, clean
+required suites, the frozen Fiasco banner under HVF, clean
 rebuilds with identical bytes for the archive, the single bootable file
 and the two-file form, the single file's archive equal to the two-file
 archive, both forms booting under the harness, and the boot validator's configured sanitizer and fuzz budgets. `make check` is offline and runs

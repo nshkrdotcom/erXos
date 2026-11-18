@@ -334,7 +334,7 @@ class PackProvenanceTest < Minitest::Test
 
   # A package an image takes (ImageApps) is attributed whole under the license its header
   # declares, judged as an archive's but always as permanent, so a development build that
-  # admits a release component's restricted license still refuses a package's, and a package that
+  # accepts a release component's restricted license still refuses a package's, and a package that
   # names no license.
   def resolve_package(license, status: 'permanent', build_kind: 'development')
     package = write('clock.app', 'package bytes')
@@ -359,7 +359,7 @@ class PackProvenanceTest < Minitest::Test
   end
 
   # A local test image registers a package that is not permissive as package-local, which a
-  # development build admits under its license and a release build refuses.
+  # development build accepts under its license and a release build refuses.
   def test_a_package_local_enters_only_a_development_build
     record = resolve_package('GPL-2.0-only', status: 'package-local').first
     assert_equal %w[apps/clock.app GPL-2.0-only package-local], record.values_at('path', 'license', 'status')
@@ -551,14 +551,14 @@ class PackProvenanceTest < Minitest::Test
     end
   end
 
-  # Where the build reads each row's input of the closed table (LicenseAdmission::TABLE)
+  # Where the build reads each row's input of the closed table (LicenseCheck::TABLE)
   # that the fixture places, and the build kinds that row names: GCC's three headers in a
   # cross gcc's include directory under outside, a directory outside the tree, in every
   # build, and Fiasco's debugger in the staged copy of its inputs that FiascoProvenance
   # audits, in development builds only.
   def table_rows(outside)
-    gcc = Erx::LicenseAdmission::GCC_HEADERS.map do |name|
-      { label: "toolchain/gcc-16.2.0/#{name}", license: Erx::LicenseAdmission::GCC_LICENSE,
+    gcc = Erx::LicenseCheck::GCC_HEADERS.map do |name|
+      { label: "toolchain/gcc-16.2.0/#{name}", license: Erx::LicenseCheck::GCC_LICENSE,
         at: gcc_header(outside, name), kinds: %w[development release] }
     end
     gcc + [{ label: 'fiasco/kernel/src/kern/jdb_object.cpp', license: 'GPL-2.0-only',
@@ -567,8 +567,8 @@ class PackProvenanceTest < Minitest::Test
 
   def gcc_header(outside, name) = File.join(outside, 'lib/gcc/aarch64-elf/16.2.0/include', name)
 
-  # Seeded fault: a build admits a license that is not permissive only from
-  # LicenseAdmission::TABLE, so a GPL input that the table does not name is refused in
+  # Seeded fault: a build accepts a license that is not permissive only from
+  # LicenseCheck::TABLE, so a GPL input that the table does not name is refused in
   # every build kind, as is one of the table's labels under another license or another
   # status (Fiasco's debugger registered as a stopgap or as permanent, not as release),
   # each at the place its row reads it from, a fourth header of GCC's include directory,
@@ -577,7 +577,7 @@ class PackProvenanceTest < Minitest::Test
   def test_a_gpl_input_outside_the_closed_table_is_refused
     Dir.mktmpdir('outside-toolchain-') do |outside|
       jdb = 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp'
-      gcc = Erx::LicenseAdmission::GCC_LICENSE
+      gcc = Erx::LicenseCheck::GCC_LICENSE
       refusals = [{ license: 'GPL-2.0-only', label: 'third_party/fixture/root.c', at: 'root.c' },
                   { license: 'GPL-2.0-only', label: 'fiasco/kernel/src/kern/fixture.cpp',
                     at: 'build/fiasco/inputs/fiasco/kernel/src/kern/fixture.cpp' },
@@ -625,7 +625,7 @@ class PackProvenanceTest < Minitest::Test
     end
   end
 
-  # Each row of the table admits its input under its exact license and the status of what
+  # Each row of the table accepts its input under its exact license and the status of what
   # it is a part of, release for Fiasco and its build's GCC headers (docs/design.md's
   # dependency table), at the place the build reads it, in the build kinds it names, and
   # no other build kind admits it: each of GCC's three headers enters a release build, and
@@ -779,7 +779,7 @@ class PackProvenanceTest < Minitest::Test
     assert_raises(Erx::Error) { resolve }
   end
 
-  def test_root_license_and_accumulated_notices_obey_admission_budget
+  def test_root_license_and_accumulated_notices_obey_the_check_budget
     receipt = write('receipt.json', JSON.generate(@receipt))
     @resolver.instance_variable_set(:@catalog, build_catalog)
     assert_raises(Erx::Error) do

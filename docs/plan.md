@@ -73,8 +73,8 @@ Ground rules:
   ordinary threads) comes first; each cooperation feature lands behind its
   group flag with before-and-after numbers from `tools/erx bench`
   ([design-scheduler.md](design-scheduler.md#performance)).
-* **Stopgaps sit behind seams and leave on parity.** A stopgap never leaks
-  its formats. [Stopgaps](#stopgaps) names the milestone that replaces each;
+* **Stopgaps and Fiasco sit behind seams and leave on parity.** Neither leaks
+  its formats. [Stopgaps and Fiasco](#stopgaps-and-fiasco) names the milestone that replaces each;
   a third-party stopgap also has its `TODO.md` item, while a stopgap
   mechanism of erXos's own is tracked here alone. The replacement runs
   differentially against Fiasco over the test corpus, which for the
@@ -204,8 +204,8 @@ The order reaches a usable system first:
   part of the POSIX personality (1b-D) follow, and on its first slice the
   kiosk on QEMU `virt` drawn by LVGL (1b-C's part 4), whose LVGL program
   is a program of the kiosk's session; toybox's applets, the
-  rest of 1b-B, come after 1b-D; gate G6's baseline records the result on the
-  stopgap and decides nothing. The desktop with terminal windows (1b-F)
+  rest of 1b-B, come after 1b-D; gate G6's baseline records the result on
+  Fiasco and decides nothing. The desktop with terminal windows (1b-F)
   comes after all of these, and last the boards' panels and the network
   front end. The backend grows the rows these need behind the unchanged
   interface, and the guarantees they would rest on are recorded as
@@ -386,7 +386,7 @@ outside the project, in source or binary form, rests on the MIT
 clean-room header that takes its place in the tree, brought forward
 from 0.2's release build
 ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)), as
-CLAUDE.md's rule for stopgaps requires. The kernel debugger's
+CLAUDE.md's rule for release components requires. The kernel debugger's
 `jdb_object.cpp`, which a kernel with the debugger compiles, goes out
 only in 0.1's images, under CLAUDE.md's exception for the website's
 images with its source offered; the release kernel leaves it out.
@@ -1615,7 +1615,7 @@ its code, and the item's work waits on it.
   packer refuses a package that is not permissive in every image but a
   local one ([design-packaging.md](design-packaging.md#adding-an-app-to-an-image));
   Doom, an example, enters as `/bin/doom` under GPL-2.0-or-later, the
-  one input the image build admits under the status `example`
+  one input the image build accepts under the status `example`
   ([design.md](design.md#dependencies)).
 * **Images.** One SD card image for the Pi 4 and one QEMU medium, from
   one build of one commit, each with its build record and SHA-256, and
@@ -1853,7 +1853,7 @@ runs on Fiasco, the upstream watch continues.
 ## Track K: erXos's kernel
 
 **Goal.** erXos's own C17 kernel, implementing first the interface the
-stopgap implements and then the rest of the interface, from
+Fiasco backend implements and then the rest of the interface, from
 [design-kernel.md](design-kernel.md).
 
 * **The pilot**, from gate GK1, starting before Phase 1 is complete and
@@ -1986,14 +1986,14 @@ Fiasco.
 
 **Exit criteria.** Every conformance, transcript and oracle difference
 between the two kernels, the transcripts compared from erXos's banner on,
-is a bug fixed, a documented improvement with a test, or a bug in the
-stopgap recorded as such, K26's "at once" among the improvements; the
+is a bug fixed, a documented improvement with a test, or a bug in
+Fiasco recorded as such, K26's "at once" among the improvements; the
 scheduler and messaging benchmarks meet or beat Fiasco's; a page-table
 walk after every test finds no writable and executable mapping.
 
 **Gate GK3.** Decides the replacement, from the conformance suite and
 0.2's workloads: parity over 0.2's system, which is all Fiasco carries, as
-every stopgap's replacement needs. The fork leaves the tree with its
+replacing Fiasco or a stopgap needs. The fork leaves the tree with its
 `TODO.md` item, and with it what
 [design-fiasco.md](design-fiasco.md#what-erxoss-kernel-keeps-and-drops)
 drops; the dependency table drops it.
@@ -2051,8 +2051,8 @@ services, and whether a service needs a child group per client class
 **Goal.** Drivers as supervised Erlang processes over the device NIF, in
 domains that hold their devices, restarted by their supervisors; the
 PCIe domain with the PCIe enumerator, and the devices domain for the slow
-devices; DMA confined behind the IOMMU. M9 lands in two parts: on the
-stopgap as 1b-E, after 1b-A, and its kernel part on erXos's kernel, after
+devices; DMA confined behind the IOMMU. M9 lands in two parts: on
+Fiasco as 1b-E, after 1b-A, and its kernel part on erXos's kernel, after
 M7.
 
 **Demo.** A block transfer and a network ping run while the block driver
@@ -2328,8 +2328,8 @@ by side; (f) needs (b) and (c).
   ([design-ssh.md](design-ssh.md#stages)), comes with this part.
 * **(d) Display on the firmware's framebuffer.** The display domain over
   the `simple-framebuffer` the firmware sets up, with the firmware
-  framebuffer driver of track D's part 4 brought forward onto the
-  stopgap, and 1b-C's kiosk drawing on it. The framebuffer is a
+  framebuffer driver of track D's part 4 brought forward onto
+  Fiasco, and 1b-C's kiosk drawing on it. The framebuffer is a
   long-lived region the device scans out, filled by rectangle with
   `erx_device:fill/3`. Panels, touch, keypads and encoders stay with
   part 4.
@@ -2586,11 +2586,11 @@ the VL805's internal hub types into the kiosk.
   the SCSI builders, the TRB ring form's core and a register model of
   the BCM2711 bridge, with their fuzz targets and explored tests
   ([design-usb.md](design-usb.md#verification)).
-* **(b) The PCIe domain and `qemu-xhci` on QEMU `virt`, on the
-  stopgap.** The PCIe enumerator with BAR assignment in a `pcie` domain;
+* **(b) The PCIe domain and `qemu-xhci` on QEMU `virt`, on
+  Fiasco.** The PCIe enumerator with BAR assignment in a `pcie` domain;
   in the backend, `ERX_IRQ_MSI` over the lines of QEMU `virt`'s MSI
   frame and the give of a PCIe function on a configured row; the Phase 1
-  manifest check admitting one `pcie` domain
+  manifest check accepting one `pcie` domain
   ([design-usb.md](design-usb.md#the-phase-1-part)); then the TRB ring
   form, the controller, the bus, hubs, HID into a display domain and
   mass storage into drives. It needs [1b-E](#m9-a-driver-is-an-erlang-process)
@@ -3284,9 +3284,9 @@ baselines with OTP 29.1.2), its G4 and G5 to G3 and G5 (the measurements
 on erXos), and its G6 to G6 (the restricted decoder's cost under the
 interpreter, within a frame's cost across a connection).
 
-## Stopgaps
+## Stopgaps and Fiasco
 
-| Stopgap | Seam | Replaced at |
+| Component | Seam | Replaced at |
 | --- | --- | --- |
 | Fiasco near-stock, with `bootstrap` and `sigma0` | the kernel interface: `abi/erx_abi.txt` and `liberx`'s backends; in Phase 1 the Fiasco backend over Fiasco's own calls, the system domain's `liberx` owning every kernel object; in Phase 1b also lanes, sub-spaces, doorbells and device holders as rows of its root service | M7 |
 | Fiasco's fixed priorities with no quota, grant or group enforcement | the scheduler core, `erx_group_configure` recording its grant | M7 (the scheduler), M2 (groups and quotas) |

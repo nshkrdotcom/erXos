@@ -13,7 +13,7 @@ require_relative 'pack_wire'
 
 module Erx
   # Owns the full build transaction. Input snapshots, source attribution and
-  # whole-manifest admission precede publication; an invalid result never
+  # the whole-manifest check precede publication; an invalid result never
   # replaces a previously published image. ELF parsing stays in erx_elf_plan.
   # domain_planner is the manifest check's DomainPlanner, which a manifest with
   # configured domains needs; without one such a manifest fails closed.
@@ -85,11 +85,11 @@ module Erx
                                         catalog: catalog, root_entry: root_entry,
                                         artifacts: artifacts, provenance: records,
                                         device_kinds: DeviceKinds.context_rows(@root))
-        admitted = Manifest.admit(source: manifest_source, codec: @codec, context: context, planner: @domain_planner)
-        unless admitted.is_a?(Manifest::Admitted) && admitted.matches?(context)
-          raise Error, 'system manifest is not admitted for this pack'
+        checked = Manifest.admit(source: manifest_source, codec: @codec, context: context, planner: @domain_planner)
+        unless checked.is_a?(Manifest::Admitted) && checked.matches?(context)
+          raise Error, 'system manifest has not passed the manifest check for this pack'
         end
-        generated = { generated_path => admitted.bytes, notices_path => @provenance.notices(records, budget: budget) }
+        generated = { generated_path => checked.bytes, notices_path => @provenance.notices(records, budget: budget) }
         rows.each do |row|
           next unless row.fetch('source').fetch('kind') == 'generated'
           path = File.join(workspace, row.fetch('source').fetch('producer'))
@@ -102,15 +102,15 @@ module Erx
               path: temporary, budget: budget, test_code: test_code)
         # Bootstrap reserves the archive in whole pages, which sigma0 then never offers.
         room = Manifest::RootStartup.check_archive(archive_bytes: round_page(File.size(temporary)),
-                                                   root_memory: admitted.report.fetch('root_memory'),
-                                                   dma_memory: admitted.report.fetch('dma_memory'),
+                                                   root_memory: checked.report.fetch('root_memory'),
+                                                   dma_memory: checked.report.fetch('dma_memory'),
                                                    **Manifest::RootStartup.archive_machine(platform))
         @checker.run([temporary], runner: @runner, name: 'pack-check', deadline: 300)
         hash = Digest::SHA256.file(temporary).hexdigest
         size = File.size(temporary)
         File.rename(temporary, destination)
         return { 'path' => destination, 'sha256' => hash, 'size' => size,
-                 'entries' => rows.size, 'manifest' => admitted.report, 'archive_room' => room.to_h,
+                 'entries' => rows.size, 'manifest' => checked.report, 'archive_room' => room.to_h,
                  'provenance' => context.provenance }.freeze
       end
     rescue Errno::ENOENT, Errno::EACCES, Errno::ENOSPC, Errno::EISDIR => error

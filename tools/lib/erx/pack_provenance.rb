@@ -7,7 +7,7 @@ require 'pathname'
 require_relative 'origin'
 require_relative 'archive_member'
 require_relative 'license_expression'
-require_relative 'license_admission'
+require_relative 'license_check'
 require_relative 'build_inputs'
 require_relative 'build_kind'
 require_relative 'import_notices'
@@ -22,14 +22,14 @@ module Erx
   class PackProvenance
     MAX_METADATA = 64 * 1024 * 1024
     # The statuses of a package of an image: permanent, or package-local for a package of
-    # a local test image (LicenseAdmission::PACKAGE_LOCAL). A dependency is registered
+    # a local test image (LicenseCheck::PACKAGE_LOCAL). A dependency is registered
     # under one of DependencyStatus::ALL.
-    PACKAGE_STATUSES = [DependencyStatus::PERMANENT, LicenseAdmission::PACKAGE_LOCAL].freeze
+    PACKAGE_STATUSES = [DependencyStatus::PERMANENT, LicenseCheck::PACKAGE_LOCAL].freeze
     # The example's archive as the image build names it (DoomProgram, ProductionImage);
-    # LicenseAdmission owns them.
-    EXAMPLE_LABEL = LicenseAdmission::EXAMPLE_LABEL
-    EXAMPLE_ARCHIVE = LicenseAdmission::EXAMPLE_ARCHIVE
-    EXAMPLE_LICENSES = LicenseAdmission::EXAMPLE_LICENSES
+    # LicenseCheck owns them.
+    EXAMPLE_LABEL = LicenseCheck::EXAMPLE_LABEL
+    EXAMPLE_ARCHIVE = LicenseCheck::EXAMPLE_ARCHIVE
+    EXAMPLE_LICENSES = LicenseCheck::EXAMPLE_LICENSES
     # compiler is the clang that built Fiasco's C17 cores, which Fiasco's audit records.
     def initialize(root:, catalog:, external: [], imports: {}, runner: nil, archive_program: 'llvm-ar', compiler: nil)
       @root = File.realpath(root)
@@ -54,7 +54,7 @@ module Erx
     end
 
     # Returns only stable, public names. The caller may include these facts in
-    # manifest admission and render NOTICES from the same checked closure.
+    # the manifest check and render NOTICES from the same checked closure.
     def resolve(receipt:, artifact:, build_kind:, notice_budget: MAX_METADATA)
       build_kind = BuildKind.fetch(build_kind)
       unless notice_budget.is_a?(Integer) && notice_budget.positive?
@@ -267,7 +267,7 @@ module Erx
         # Its external registration states it as permanent, so a package whose license is
         # absent or not permissive enters no image, or as package-local, which only a
         # local test image's build registers (ImageApps::Plan#status) and only a
-        # development build admits under a license that is not permissive.
+        # development build accepts under a license that is not permissive.
         exact_keys(receipt, %w[version kind artifact])
         package = output.fetch('path')
         registered = @external[package]
@@ -309,7 +309,7 @@ module Erx
       image = fresh.fetch('image').fetch('artifact')
       unless File.expand_path(image.fetch('path'), @root) == File.expand_path(receipt.fetch('artifact').fetch('path'), @root) &&
              image.fetch('sha256') == receipt.fetch('artifact').fetch('sha256')
-        raise Error, 'Fiasco audit does not bind the admitted final image'
+        raise Error, 'Fiasco audit does not bind the checked final image'
       end
       register_external(external)
       FiascoParts::STATUSES.each do |part, status|
@@ -320,7 +320,7 @@ module Erx
       fresh.fetch('sources').each do |source|
         next unless source.key?('license')
         path = source.fetch('source', source.fetch('path'))
-        # Only the grants matter here, for the notices; attribute decides admission.
+        # Only the grants matter here, for the notices; attribute runs the license check.
         selected = LicenseExpression.select(source.fetch('license'), allow_restricted: true)
         notices = source.fetch('notices', []) + selected.fetch('grants').flat_map do |grant|
           fresh.fetch('license_notices', {}).fetch(grant, [])
@@ -432,7 +432,7 @@ module Erx
     end
 
     # statuses are those path's registration may state: a dependency's, or a package's
-    # for the package receipt alone, so no other input is ever admitted as package-local.
+    # for the package receipt alone, so no other input is ever accepted as package-local.
     def attribute(path, records, build_kind, additional_notices: [], public_path: nil, audited: nil,
                   statuses: DependencyStatus::ALL)
       path = authorized_path(path)
@@ -449,7 +449,7 @@ module Erx
       bytes = snapshot_bytes(path, expected: @verified[path])
       hash = Digest::SHA256.hexdigest(bytes)
       if @verified.key?(path) && @verified.fetch(path) != hash
-        raise Error, "provenance source changed during admission: #{path}"
+        raise Error, "provenance source changed while its provenance was checked: #{path}"
       end
       font_data = false
       if @external.key?(path)
@@ -506,12 +506,12 @@ module Erx
       read_from = path.delete_prefix(@root + '/')
       # The example's archive is an external registration, never an import's file, so no
       # other input can take the example status.
-      example_archive = @external.key?(path) && LicenseAdmission.example?(label:, license:, path: read_from)
+      example_archive = @external.key?(path) && LicenseCheck.example?(label:, license:, path: read_from)
       if status == DependencyStatus::EXAMPLE && !example_archive
         raise Error, "#{label} (#{license}) cannot be registered as example: only #{EXAMPLE_LABEL} under " \
                      "#{EXAMPLE_LICENSES.join(' or ')}, at #{EXAMPLE_ARCHIVE}, is"
       end
-      selected = LicenseAdmission.select(license, status:, label:, path: read_from, build_kind:, font_data:)
+      selected = LicenseCheck.select(license, status:, label:, path: read_from, build_kind:, font_data:)
       if item
         profile_path = File.join(@root, ImportNotices::PROFILE)
         references = if @catalog.include_path?(profile_path)

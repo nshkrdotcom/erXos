@@ -231,7 +231,7 @@ class FiascoProvenanceTest < Minitest::Test
   # records, is refused by name; permissive terms, the FSF All Permissive
   # License, a choice with a permissive branch, an exception to a permissive
   # license and each of GCC's three headers, from a GCC include directory under
-  # the label its registration gives it, pass, as LicenseAdmission passes them
+  # the label its registration gives it, pass, as LicenseCheck passes them
   # for the image check. A record without a license passes only as configuration
   # or as a file made from other records of the closure (a module's sources, a
   # generator's code and the sources of the objects it reads); one made from
@@ -242,7 +242,7 @@ class FiascoProvenanceTest < Minitest::Test
     # The report names the kernel build's copy; the build read the staged input.
     jdb = 'build/fiasco/kernel-release/src/jdb_object.cpp'
     staged = 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp'
-    gcc = Erx::LicenseAdmission::GCC_HEADERS.map { |name| "/opt/cross/lib/gcc/aarch64-elf/16.2.0/include/#{name}" }
+    gcc = Erx::LicenseCheck::GCC_HEADERS.map { |name| "/opt/cross/lib/gcc/aarch64-elf/16.2.0/include/#{name}" }
     registered = gcc.to_h { |path| [path, "toolchain/gcc-16.2.0/#{File.basename(path)}"] }
     sources = [{ 'path' => jdb, 'license' => license, 'status' => 'release',
                  'source' => staged, 'original_source' => 'fiasco/kernel/src/kern/jdb_object.cpp' },
@@ -250,7 +250,7 @@ class FiascoProvenanceTest < Minitest::Test
                { 'path' => 'kip_addr.S', 'license' => 'FSFAP' },
                { 'path' => 'fdt.c', 'license' => '(GPL-2.0-or-later OR BSD-2-Clause)' },
                { 'path' => 'stddef.h', 'license' => 'Apache-2.0 WITH LLVM-exception' },
-               *gcc.map { |path| { 'path' => path, 'license' => Erx::LicenseAdmission::GCC_LICENSE, 'status' => 'release' } },
+               *gcc.map { |path| { 'path' => path, 'license' => Erx::LicenseCheck::GCC_LICENSE, 'status' => 'release' } },
                { 'path' => 'build/fiasco/kernel-release/auto/main.cc', 'generated_from' => [{ 'path' => 'kip.cpp' }] },
                { 'path' => 'build/fiasco/kernel-release/globalconfig.h', 'role' => 'configuration', 'code' => [] },
                { 'path' => 'build/fiasco/kernel-release/tcboffset.h', 'role' => 'code', 'code' => [],
@@ -283,7 +283,7 @@ class FiascoProvenanceTest < Minitest::Test
       FileUtils.mkdir_p(File.dirname(header))
       File.write(header, "/* fixture */\n")
       header = File.realpath(header)
-      source = { 'path' => header, 'license' => Erx::LicenseAdmission::GCC_LICENSE, 'status' => 'release' }
+      source = { 'path' => header, 'license' => Erx::LicenseCheck::GCC_LICENSE, 'status' => 'release' }
       report = { 'state' => 'complete', 'unresolved' => [], 'sources' => [source] }
       registration = { 'path' => header, 'label' => 'toolchain/gcc-16.2.0/stdarg.h' }
       auditor = Erx::FiascoProvenance.new(root: repository, runner: nil, kind: Erx::BuildKind::RELEASE, external: [registration])
@@ -299,9 +299,9 @@ class FiascoProvenanceTest < Minitest::Test
   # or a fourth header there, has none.
   def test_a_gcc_headers_label_comes_from_its_include_directory
     include = '/opt/cross/lib/gcc/aarch64-elf/16.2.0/include'
-    assert_equal 'toolchain/gcc-16.2.0/stdbool.h', Erx::LicenseAdmission.gcc_label("#{include}/stdbool.h")
+    assert_equal 'toolchain/gcc-16.2.0/stdbool.h', Erx::LicenseCheck.gcc_label("#{include}/stdbool.h")
     ["#{include}/limits.h", '/opt/llvm/lib/clang/21/include/stdarg.h', 'lib/gcc/aarch64-elf/16.2.0/include/stdarg.h'].each do |path|
-      assert_raises(Erx::Error, path) { Erx::LicenseAdmission.gcc_label(path) }
+      assert_raises(Erx::Error, path) { Erx::LicenseCheck.gcc_label(path) }
     end
   end
 
@@ -313,7 +313,7 @@ class FiascoProvenanceTest < Minitest::Test
   # registration, and on a GCC runtime file of l4re-core, is refused in every
   # build kind.
   def test_the_release_check_takes_gccs_exception_only_from_its_include_directory
-    gcc = Erx::LicenseAdmission::GCC_LICENSE
+    gcc = Erx::LicenseCheck::GCC_LICENSE
     include = '/opt/cross/lib/gcc/aarch64-elf/16.2.0/include'
     crtstuff = 'build/fiasco/inputs/fiasco/l4re-core/libgcc/contrib/gcc-16/libgcc/crtstuff.c'
     refused = [[{ 'path' => '/opt/llvm/lib/clang/21/include/stdarg.h' }, 'toolchain/llvm/include/stdarg.h'],
