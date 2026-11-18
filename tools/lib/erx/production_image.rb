@@ -19,6 +19,7 @@ require_relative 'dev_key'
 require_relative 'device_kinds'
 require_relative 'domain_startup'
 require_relative 'dom_planner'
+require_relative 'doom_program'
 require_relative 'error'
 require_relative 'fiasco'
 require_relative 'fiasco_provenance'
@@ -68,6 +69,8 @@ module Erx
     NOTICES_PATH = 'system/NOTICES'
     # What a machine keeps for the root's image past its place: the image is about 5 MiB.
     ROOT_ROOM_MIB = 8
+    # The RAM of the published QEMU medium's machine (Machine.published).
+    PUBLISHED_QEMU_MIB = 640
     LICENSE = 'LICENSE'
     # The trees imported into the source tree that the image builds from: BLAKE3 for the
     # root's reader of the archive and the entropy generator's mixing, ChaCha20 for that
@@ -100,8 +103,9 @@ module Erx
     # each with its receipt, the files those receipts name, and the imported trees their
     # sources come from, each with its status, and the archives their links take members
     # of that no receipt describes, each attributed whole (Archive). A production image
-    # adds nothing. The domain release's own parts (domain_parts) take the same shape,
-    # LVGL's liblvgl.a for erx-lvgl among their archives (toolkit_parts).
+    # adds nothing of this kind. The domain release's own parts (domain_parts) take the same shape,
+    # LVGL's liblvgl.a for erx-lvgl among their archives (toolkit_parts), and in a published
+    # medium Doom's libdoom.a for /bin/doom (example_parts).
     Added = Data.define(:entries, :inputs, :imports, :archives) do
       def initialize(entries:, inputs:, imports:, archives: [].freeze) = super
     end
@@ -164,6 +168,17 @@ module Erx
         'id' => "program-#{name}", 'artifact' => program.fetch(:program), 'receipt' => program.fetch(:receipt) }.freeze
     end
 
+    # What a published medium's domain release adds for the Doom example (DoomProgram;
+    # docs/design.md's dependency table, status example): /bin/doom's entry, the files its
+    # receipt names, and libdoom.a attributed whole under the example's label, license and
+    # notices, from doom, the program DoomProgram::Program#call built.
+    def self.example_parts(doom, codec:)
+      library = Archive.new(path: doom.fetch(:archive), label: PackProvenance::EXAMPLE_LABEL, license: DoomProgram::LICENSE,
+                            status: PackProvenance::EXAMPLE, notices: DoomProgram::NOTICES)
+      Added.new(entries: [program_entry(DoomProgram::NAME, doom, codec: codec)].freeze, inputs: doom.fetch(:inputs),
+                imports: {}.freeze, archives: [library].freeze)
+    end
+
     # What a domain release adds for the toolkit: nothing unless it holds
     # TOOLKIT_APPLICATION; otherwise erx-lvgl's entry, the files its receipt names, and
     # liblvgl.a attributed whole under LVGL's license, notices and font-data statement
@@ -205,7 +220,8 @@ module Erx
     # (kernel/core/boot_place.c, erx_boot_place_archive).
     # What the system growth leaves of the added RAM widens the room bootstrap keeps
     # for the archive. The production image boots on the development machine
-    # (Machine.development), the platform record's own; a test image whose suites need more memory or carry a
+    # (Machine.development), the platform record's own, and a published QEMU medium on
+    # Machine.published; a test image whose suites need more memory or carry a
     # larger archive (OracleQemu) names a larger one, and Pack's manifest check proves
     # the grown manifest against the platform record of that machine as it proves the
     # development one.
@@ -221,6 +237,17 @@ module Erx
       # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), and the root
       # at the development place.
       def self.site(platform) = development(platform).with(memory_mib: 256)
+
+      # The machine a published medium (build_medium's published) is packed for and boots
+      # on. A card's is its board's own. The QEMU medium carries the kiosk and the Doom
+      # example, whose archive leaves the root too little room in the record's 512 MiB, so
+      # its machine has PUBLISHED_QEMU_MIB, which `tools/erx boot --medium` gives QEMU, while
+      # the QEMU suites keep the record's.
+      def self.published(platform)
+        return development(platform) if BootPartition.boot_partition_medium?(platform)
+
+        development(platform).with(memory_mib: PUBLISHED_QEMU_MIB)
+      end
 
       def initialize(platform:, **numbers)
         raise Error, 'a machine is on a Platform' unless platform.is_a?(Platform)
@@ -393,22 +420,27 @@ module Erx
     PUBLISHED_APPS_DIRECTORY = 'build/published-apps'
 
     # `tools/erx pack`'s one build: Fiasco for platform (Fiasco#build_for), then the
-    # production image of platform's development machine, with its medium when medium
+    # production image of platform's development machine (the published medium's, with
+    # doom), with its medium when medium
     # is set, into packed_directory, cleared first, with the packages of apps
     # (ImageApps::Plan, `tools/erx pack --app`). A medium packed with no app of its
     # builder's is the published one, the kind the website offers (build_medium); nothing
-    # on disk tells it from a builder's medium yet (TODO.md, "site, the QEMU virt download"). Returns
+    # on disk tells it from a builder's medium yet (TODO.md, "site, the QEMU virt download"). With
+    # doom, the published medium carries the Doom example (build_medium), which must be
+    # fetched (DoomProgram.check_fetched, which build_medium runs first), and is packed
+    # for the published medium's machine (Machine.published). Returns
     # build's or build_medium's result. The raspi4b suite boots what this leaves.
-    def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4, apps: ImageApps.none)
+    def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4, apps: ImageApps.none, doom: false)
+      raise Error, 'only a published medium carries the Doom example' if doom && !medium
       check_card_apps(platform, apps) if medium
       fiasco = Fiasco.new(root: root, runner: runner, compiler: compiler)
       fiasco.build_for(platform, jobs: jobs)
       directory = clear_directory(root: root, path: File.join(root, packed_directory(platform)))
-      image = new(root: root, runner: runner, compiler: compiler, linker: linker, machine: Machine.development(platform),
-                  fiasco: fiasco)
+      machine = doom ? Machine.published(platform) : Machine.development(platform)
+      image = new(root: root, runner: runner, compiler: compiler, linker: linker, machine: machine, fiasco: fiasco)
       return image.build(directory: directory, apps: apps) unless medium
 
-      image.build_medium(directory: directory, apps: apps, published: apps.empty?)
+      image.build_medium(directory: directory, apps: apps, published: apps.empty?, doom: doom)
     end
 
     # The image and the medium that holds it, both in directory, which must be clean: by
@@ -419,7 +451,10 @@ module Erx
     # row names the release and runtime image the image then carries. When published, the
     # medium is the one the website offers, as a card always is: it carries its own apps
     # (published_apps) and trusts no key (check_published_trust). A card takes no apps of
-    # its builder's (check_card_apps).
+    # its builder's (check_card_apps). doom adds the Doom example, /bin/doom of the domain
+    # release (example_parts), to a published medium alone: `tools/erx pack --medium` asks
+    # for it, and no harness does, so no test build needs the example fetched. The website's
+    # image (InteractiveBoot) goes through build, which takes no doom, so it never carries Doom.
     #
     # test_roots (TrustStore::TestRoot) are root files the trust store takes after the
     # tree's (TrustStore.store;
@@ -429,16 +464,18 @@ module Erx
     # boots it; the source check lets only the test harnesses name them
     # (Checks::TEST_ROOTS_ENTRY), and every other image's store is the tree's alone.
     def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none,
-                     published: false, test_roots: [])
+                     published: false, test_roots: [], doom: false)
       on_own_board(machine)
       self.class.check_card_apps(machine.platform, apps)
 
       card = BootPartition.boot_partition_medium?(machine.platform)
       publish = published || card
+      raise Error, 'only a published medium carries the Doom example' if doom && !publish
+      DoomProgram.check_fetched(root: @root, runner: @runner) if doom
       apps = published_apps if publish
       built = assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: !test_roots.empty?,
                        machine: machine, domains: domain_boots(manifest_source), apps: apps, record: false,
-                       test_roots: test_roots)
+                       test_roots: test_roots, doom: doom)
       self.class.check_published_trust(machine.platform, built.report.fetch('manifest')) if publish
       if card
         return [built, BootPartition.lay_out(root: @root, runner: @runner, platform: machine.platform, build_kind: BUILD_KIND,
@@ -524,7 +561,8 @@ module Erx
     # "Where a package lies"), never in the archive, and their rows are appended to the
     # image's copy of the manifest source, which the board's file never holds.
     # With record, the image's build record is written beside the checked image.boot.
-    def assemble(directory:, manifest_source:, added:, test_code:, machine:, domains:, apps:, record:, test_roots: [])
+    # doom adds the Doom example to the domain release (domain_parts).
+    def assemble(directory:, manifest_source:, added:, test_code:, machine:, domains:, apps:, record:, test_roots: [], doom: false)
       raise Error, 'a test image gets no build record' if record && test_code
       self.class.check_test_scripts(domains, test_code: test_code)
       self.class.check_test_roots(test_roots, test_code: test_code)
@@ -559,7 +597,7 @@ module Erx
         # the pack judges their receipts as it judges its entries'.
         erofs, images = ReleaseMedium.image(entries: release, apps: apps, directory: directory, runner: @runner)
         domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, made: made, directory: directory,
-                              test_roots: test_roots)
+                              test_roots: test_roots, doom: doom)
         packages = self.class.package_entries(apps, directory: directory, root: @root)
         report = pack(entries: [*entries(root_task, kernel, sigma0), *release, *system_release.directories, *domain.entries,
                                 *added.entries],
@@ -1800,14 +1838,17 @@ module Erx
     # system mark, with a boot script for each of boots, and the two runtime images', the
     # interpreter's and the BeamAsm one (jit, NativeJitRuntime's build), with the files
     # their receipts name, and the toolkit's program when the release holds the toolkit
-    # (toolkit_parts); nothing when there are no boot scripts. ReleaseFiles.domain
+    # (toolkit_parts), with doom the Doom example's (example_parts); nothing when there are
+    # no boot scripts, where doom is refused. ReleaseFiles.domain
     # refuses a script it did not make, whose name could leave the work directory, and
     # two scripts of one name.
-    def domain_parts(boots, erts:, jit:, archives:, made:, directory:, test_roots:)
+    def domain_parts(boots, erts:, jit:, archives:, made:, directory:, test_roots:, doom:)
+      raise Error, 'the Doom example is a program of the domain release, which this image does not carry' if doom && boots.empty?
       return NOTHING_ADDED if boots.empty?
 
       release = ReleaseFiles.domain(boots)
       toolkit = self.class.toolkit_parts(release, codec: @codec) { lvgl_program(erts, directory: directory) }
+      example = doom ? self.class.example_parts(doom_program(erts, directory: directory), codec: @codec) : NOTHING_ADDED
       runtime = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @machine.platform,
                                fiasco: @fiasco)
                           .build_domain_runtime_receipted(directory: File.join(directory, 'domain-runtime'), archives: archives)
@@ -1822,10 +1863,10 @@ module Erx
                 'id' => 'domain-runtime', 'artifact' => runtime.fetch(:program), 'receipt' => runtime.fetch(:receipt) }
       jit_image = { 'path' => JIT_RUNTIME_PATH, 'kind' => @codec.member('entry_kind', 'image'), 'flags' => 0, 'jit' => true,
                     'id' => 'jit-runtime', 'artifact' => beamasm.fetch(:program), 'receipt' => beamasm.fetch(:receipt) }
-      Added.new(entries: [image, jit_image, *releases, *toolkit.entries, *domain_release.directories].freeze,
+      Added.new(entries: [image, jit_image, *releases, *toolkit.entries, *example.entries, *domain_release.directories].freeze,
                 inputs: [*runtime.fetch(:inputs), *beamasm.fetch(:inputs), *ReleaseFiles.inputs_of(releases, root: @root, otp: erts.otp, applications: release.applications),
-                         *toolkit.inputs].freeze,
-                imports: {}.freeze, archives: toolkit.archives)
+                         *toolkit.inputs, *example.inputs].freeze,
+                imports: {}.freeze, archives: [*toolkit.archives, *example.archives])
     end
 
     # erx-lvgl (Lvgl::Program) linked over erts's musl libc.a and compiler-rt builtins,
@@ -1835,6 +1876,15 @@ module Erx
                               fiasco: @fiasco)
       Lvgl::Program.new(root: @root, runner: @runner, native: native, compiler: @compiler, archives: [erts.libc, erts.builtins],
                         directory: File.join(directory, Lvgl::Program::NAME)).call
+    end
+
+    # /bin/doom (DoomProgram::Program) linked over erts's musl libc.a and compiler-rt
+    # builtins, as erx-lvgl is, built in directory's doom/.
+    def doom_program(erts, directory:)
+      native = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @machine.platform,
+                              fiasco: @fiasco)
+      DoomProgram::Program.new(root: @root, runner: @runner, native: native, compiler: @compiler,
+                               archives: [erts.libc, erts.builtins], directory: File.join(directory, DoomProgram::NAME)).call
     end
 
     # What a manifest's references name in an archive of these sorted paths: the root

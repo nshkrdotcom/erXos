@@ -175,7 +175,7 @@ domains of their own. The next milestone is
 [0.1, the preview](docs/plan.md#01-the-preview),
 erXos's first public preview: a development build for the Raspberry
 Pi 4 and QEMU `virt` with the kiosk and its live quotes on the screen, SSH to `rc`, and Doom
-on QEMU for whoever builds it. Every build is a development build and prints
+in both images. Every build is a development build and prints
 `development build: trusted code only`. `tools/erx boot` builds an image
 and boots it in QEMU to the command shell:
 
@@ -487,7 +487,8 @@ tools/erx boot --medium build/production-image/qemu-virt/medium.img
 ```
 
 builds the QEMU release medium, the card's system packed for QEMU `virt`
-with the kiosk, and boots it as a person uses it: the display in QEMU's window
+with the kiosk and Doom, and boots it as a person uses it, on a 640 MiB
+machine (the suites keep 512 MiB): the display in QEMU's window
 with the virtio keyboard and tablet, user networking that reaches your
 network, your host's port 2222 forwarded to the guest's SSH port, and the
 serial console on your terminal; quit with Ctrl-A then X. QEMU boots an
@@ -514,15 +515,18 @@ the next `--medium`, and its disk is the copy. To log in over SSH, the medium ne
   users. Files under `/data` and in the home directories survive a power
   cut once they are synced.
 
-**Doom.** Doom is not in the published images, because its license keeps
-it out. On QEMU you build it from your clone: `tools/erx fetch --example
-doom` fetches its source and Freedoom's data file, and `tools/erx pack
---app examples/doom/doom --local` builds a local image that holds it
-([Adding an app to an image](docs/design-packaging.md#adding-an-app-to-an-image)).
-Keys come from QEMU's virtio keyboard. The Pi has no keyboard in 0.1;
-Doom's demo loop on a card you build is planned for 0.1, and no card
-build takes Doom yet.
-<!-- unverified: the exact pack command line for Doom (the plan names `tools/erx pack --app --local`; the tree has no examples/doom checkout to read its README or run.rb), and how a card takes Doom: the card build refuses --local and every builder's package (TODO.md, "0.1, Doom's demo loop on the Pi"). -->
+**Doom.** The QEMU release medium and the Pi 4 card carry Doom as
+`/bin/doom`: type `doom` in `rc`. The website's image, which the browser
+demo boots, does not. It is an example, not part of erXos: doomgeneric under
+GPL-2.0-or-later with Freedoom's data file under BSD-3-Clause, both
+licenses in the image's `NOTICES`, and its source is erXos's fork,
+[https://github.com/stass/erxos-doom](https://github.com/stass/erxos-doom), at the commit the tree's gitlink for
+`examples/doom/doom` records. Keys come from QEMU's virtio keyboard; the
+Pi has no keyboard in 0.1. To build the published images yourself, run
+`tools/erx fetch --example doom` first, which fetches the fork and
+Freedoom's WAD; `tools/erx pack --medium` refuses without them, or with
+the fork at another commit or changed.
+<!-- unverified: that `doom` typed in rc plays: a program rc starts gets no window yet, and Doom exits without one; the demo loop on the Pi. -->
 
 ## Correctness and testing
 

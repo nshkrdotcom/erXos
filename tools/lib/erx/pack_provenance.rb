@@ -24,7 +24,16 @@ module Erx
     # which a development build admits a license that is not permissive.
     PERMANENT = 'permanent'
     PACKAGE_LOCAL = 'package-local'
-    DEPENDENCY_STATUSES = [PERMANENT, 'stopgap'].freeze
+    # The one example an image carries (docs/design.md's dependency table, status example):
+    # Doom's archive, attributed whole under this label by the image build, with the WAD
+    # it links. It is the only input that may be registered example (example_archive?);
+    # stopgaps keep the development build's admission above.
+    EXAMPLE = 'example'
+    EXAMPLE_LABEL = 'doomgeneric libdoom.a'
+    # Where the image build writes that archive (DoomProgram), relative to the tree.
+    EXAMPLE_ARCHIVE = 'build/doom/libdoom.a'
+    EXAMPLE_LICENSES = ['GPL-2.0-or-later', 'GPL-2.0-or-later AND BSD-3-Clause'].freeze
+    DEPENDENCY_STATUSES = [PERMANENT, 'stopgap', EXAMPLE].freeze
     PACKAGE_STATUSES = [PERMANENT, PACKAGE_LOCAL].freeze
     # compiler is the clang that built Fiasco's C17 cores, which Fiasco's audit records.
     def initialize(root:, catalog:, external: [], imports: {}, runner: nil, archive_program: 'llvm-ar', compiler: nil)
@@ -490,6 +499,10 @@ module Erx
       Attribution.validate_expression(license)
       raise Error, 'invalid font data statement' unless [true, false].include?(font_data)
       raise Error, 'invalid dependency provenance status' unless statuses.include?(status)
+      if status == EXAMPLE && !example_archive?(path, label: label, license: license)
+        raise Error, "#{label} (#{license}) cannot be registered as example: only #{EXAMPLE_LABEL} under " \
+                     "#{EXAMPLE_LICENSES.join(' or ')}, at #{EXAMPLE_ARCHIVE}, is"
+      end
       selected = LicenseExpression.select(license, allow_restricted: BuildKind.development?(build_kind) && status != PERMANENT,
                                                    font_data: font_data)
       if public_path
@@ -676,6 +689,14 @@ module Erx
           raise Error, 'external source differs from its registration'
         end
       end
+    end
+
+    # Whether path is the example's archive: an external registration, never an import's
+    # file, of the file at EXAMPLE_ARCHIVE, under EXAMPLE_LABEL and one of EXAMPLE_LICENSES
+    # exactly, so no other input can take the example status by its label.
+    def example_archive?(path, label:, license:)
+      @external.key?(path) && path == File.join(@root, EXAMPLE_ARCHIVE) && label == EXAMPLE_LABEL &&
+        EXAMPLE_LICENSES.include?(license)
     end
 
     def leading_notice(bytes)

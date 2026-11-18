@@ -7665,6 +7665,15 @@ to the corpus and follow rc
   and `make check-reproducible` builds the kernel once and packs that one
   build twice. Give it a gate, or make `check-reproducible` rebuild the
   kernel.
+* [Medium] build gates, the published media and the Doom example
+  (`ProductionImage.pack_platform`'s `doom`): only `tools/erx pack --medium`
+  with no `--app` builds the published QEMU medium and the Pi 4 card with
+  `/bin/doom` and on their published machines
+  (`ProductionImage::Machine.published`, 640 MiB for QEMU); the
+  raspi4b suite and `make check-reproducible` build those media without
+  Doom, so no gate proves that the media as published still pack, fit their
+  machine and build reproducibly. Give one gate cell a fetched Doom fork
+  and have it pack both published media with Doom.
 
 * [Low] tests, `test/host/erx_starter_test.rb`: the suite takes about 4.5 minutes, most of it seeded fault 0 (the keeper not linking), under which nearly every case waits out EUnit's 5 s timeout. Fail the fault's cases fast instead of by timeout.
 * [Low] tests, `liberx/system/dom_apply.c` (`apply_given_words`): no host test checks the record words written for a framebuffer handed to a domain other than the system domain; placement, the apply steps and `erx_boot_framebuffer_words` itself (`boot_manifest_test.rb`) are tested, and the raspi4b suite's tcg-4cpu cell, one QEMU boot under TCG, checks the display domain's record through its driver's framebuffer line and, for the base and offset, only through its picture.
@@ -8675,12 +8684,12 @@ document's "residual risks accepted" paragraph.
   session sees it, the import with its source record, and the `certctl` equivalent. The store's
   "a root only with a consumer" rule gives way to this for the system store; a kiosk or app may
   still pin its own roots.
-* [High] 0.1, Doom's demo loop on the Pi ([plan.md](docs/plan.md#01-the-preview)): no card can hold Doom, since
-  Doom reaches an image only through `tools/erx pack --app --local` and the card build refuses `--local` and every
-  package of its builder's ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image),
-  `ProductionImage.check_card_apps`). A user-built local card (its configuration, how the card build takes Doom
-  without the published card ever doing so, and which app the firmware framebuffer shows) needs a design section
-  first, with the plan's exit criterion for it.
+* [High] 0.1, Doom from `rc` ([plan.md](docs/plan.md#01-the-preview)): both published media carry `/bin/doom`
+  (`ProductionImage.pack_platform`'s `doom`), but `rc` gives a program no window yet, so `doom` typed at the QEMU
+  medium's console prints nothing and ends with status 10, its `EXIT_OPEN` (a file of `/dev` did not open,
+  `examples/doom/doom/doomgeneric/doomgeneric_erxos.c`). Neither the QEMU play with the virtio keyboard nor the
+  Pi's demo loop runs until `rc` starts a program with a window of its own whose `/dev` holds `draw`, `ctl` and
+  `kbd`.
 * [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the line tree,
   `erx_line_fs`, and its keeper, `erx_line`, run in their UART's line group under `erx_uart_sup`, which starts the
   keeper on the root's `line` record with the rate and flow of the grant of the system domain's service named
@@ -9662,7 +9671,12 @@ document's "residual risks accepted" paragraph.
   guest has booted, which holds the guest's SSH host key and `/data` (`tools/erx boot --medium` boots a copy, but
   QEMU run by hand on the medium writes it). Plain QEMU has no firmware
   to pick the slot, so the published command needs the device tree naming it (`MediumBoot.firmware_tree`) published
-  beside the medium, or a loader on the medium.
+  beside the medium, or a loader on the medium; without it the boot value is `unknown` and no `system` tree, so no
+  kiosk and no `/bin/doom`, is served. A published tree is QEMU's own dump for one machine (its RAM, CPU count and,
+  unverified, the accelerator and QEMU version it was dumped under), so the command must pin those, and the pack
+  would run QEMU, which it does not yet. The published medium carries Doom and is packed for 640 MiB
+  (`ProductionImage::Machine.published`), so its command takes `-m 640`, a display and the virtio keyboard,
+  as `tools/erx boot --medium --print` gives them.
 * [Medium] `tools/lib/erx/raspi4b_shell.rb` (`located_inputs`): the raspi4b suite boots the card it packed in
   `build/production-image/raspi4b/` in place, so a card taken from there after the suite ran may hold what its guest
   wrote, an SSH host key or `/data` among it (unverified whether that guest writes the card). Boot an owner-only copy,

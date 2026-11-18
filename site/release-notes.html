@@ -74,10 +74,12 @@
       board, which boots back to the kiosk. On the Pi 4 the hardware
       watchdog resets a hang of the kernel or the root within about 4
       seconds.</li>
-      <li><strong>Doom, built by you.</strong> On QEMU, from a clone of the
-      repository, with the virtio keyboard; on the Pi, on a card you build, as
-      its demo loop with no keyboard. Doom is never in the published
-      images. <!-- unverified: no card build takes Doom yet (TODO.md, "0.1, Doom's demo loop on the Pi"). --></li>
+      <li><strong>Doom.</strong> The Pi 4 card and the QEMU release medium
+      carry Doom: type <code>doom</code> in <code>rc</code>; the browser demo
+      does not. On QEMU it takes keys from the virtio keyboard; on the Pi,
+      which has no keyboard in 0.1, it runs its demo loop. It is an example,
+      not part of erXos.
+      <!-- unverified: that doom typed in rc plays: a program rc starts gets no window yet. --></li>
     </ul>
     <p>The soak: <!-- unverified: the soak's result; the sentence is the request's wording and no soak record is in the tree (docs/design-platforms.md, The soak, only specifies it). Fill in from the run's record. -->
     the published card soaked a day on the Pi 4 and four hours on QEMU under
@@ -201,7 +203,10 @@
     Broadcom's license. The browser demo's notices are in
     <a href="v64/NOTICES.txt">v64/NOTICES.txt</a>. Imported source trees
     in the repository each keep their notices and an <code>ORIGIN.md</code>
-    with where they came from. Doom, which is GPL-2.0, is never in an image.
+    with where they came from. Doom is GPL-2.0-or-later and its Freedoom data
+    BSD-3-Clause; its source is <a href="https://github.com/stass/erxos-doom">erXos's fork of
+    doomgeneric</a> at commit <code>5d58740fb0022a43d6bb9066d535768c220f43aa</code>,
+    the one the images are built from.
     <!-- unverified: that NOTICES is published beside each download and that the card's source offer is on the page; design.md says so for the boot image and the GPL-2.0 files, but this page's download links are not built yet. --></p>
   </div>
 </section>

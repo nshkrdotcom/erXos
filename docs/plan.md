@@ -120,7 +120,7 @@ kiosk, and its third, installing packages at run time.
 0.1, the preview, is erXos's first public preview and the target the
 work is ordered towards: a development build of part of that system on
 the Raspberry Pi 4 and QEMU `virt`, with the kiosk, SSH to `rc` and
-Doom for whoever builds it
+Doom in its images
 ([0.1](#01-the-preview)).
 0.2, the first full release, ships that system on Fiasco with every user
 feature, the backend on Fiasco's own mechanisms and the security
@@ -163,7 +163,7 @@ numbers are names; the table's order is the order.
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([M13](#m13-erxoss-f2fs)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on Fiasco | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
-| 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, built by the user, plays on QEMU with the virtio keyboard and runs its demo loop on the Pi | the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
+| 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, in both images, plays on QEMU with the virtio keyboard and runs its demo loop on the Pi | the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, the end path's reset, the hardware watchdog on every boot, the set-time command, the login key's reader and the soak, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
 | 0.2 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and four Fiasco patches (the clean-room interface header, the shipped kernel's build without `jdb_object.cpp`, writable or executable, eager FP switching), five if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
 | Fiasco's scheduler stages | status words, deferred preemption, group park and group quotas, in that order, each measured before and after and kept only when its numbers pay; urgency within a band waits for a consumer | 2,000 to 4,050 lines of C++ in the fork, the policy in erXos's C17 cores (unverified estimates, [design-fiasco.md](design-fiasco.md#stages-beyond-bands)) | 0.2 | each stage, after 0.2, by its before-and-after numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9); G8 itself is M8's, on erXos's kernel |
 | **Phase 2** | | | | |
@@ -1455,7 +1455,7 @@ as the baseline G6 compares against.
 **Goal.** 0.1, erXos's first public preview: a development build that a
 person can download or build and use on a Raspberry Pi 4 or on QEMU
 `virt`, with the kiosk and its live quotes on the screen, `rc` over SSH,
-files that survive a power cut, and Doom for whoever builds it, played
+files that survive a power cut, and Doom in both images, played
 on QEMU and running its demo loop on the Pi. Its banner says `development build: trusted code only`, and it runs
 trusted code only. It is the target the work is ordered towards: its
 items come first, and every worker they cannot use takes the next item
@@ -1480,9 +1480,9 @@ and a fault of the system domain resets the board, which boots back to
 the kiosk; so does a hang of the root, through the board's hardware
 watchdog. The QEMU image of the same build boots on QEMU `virt` with
 the same kiosk on its display and SSH through a host port forward. On
-QEMU, Doom, built with the repository's own steps from the user's
-clone, plays with keys from QEMU's virtio keyboard, and on the Pi a card
-the user builds with Doom runs its demo loop with no keyboard. The website's
+QEMU, Doom, `/bin/doom` of both images, started from `rc`, plays with
+keys from QEMU's virtio keyboard, and on the Pi it runs its demo loop
+with no keyboard. The website's
 browser demo runs 0.1's image.
 
 **Scope.** Each item names the design that owns it. An item marked
@@ -1522,17 +1522,19 @@ its code, and the item's work waits on it.
   1b-I's part (e).
 * **Doom on QEMU `virt`**, with keys from QEMU's virtio keyboard, and
   **on the Pi as its demo loop** with no keyboard, since the Pi has no
-  keyboard before [track U](#track-u-usb): Doom's
-  full milestone of [track A](#track-a-apps), a package built from
-  `examples/doom` on request, on 1b-D's first slice (`erx_exec` and
-  the program protocol's 64-bit file calls) and on the program's own
-  `/dev` with `draw` and `kbd`, which track A's part 2 checks
-  ([design-packaging.md](design-packaging.md#examples)). It is not
-  distributed: `tools/erx fetch --example doom` fetches the fork and
-  Freedoom's WAD on the user's own clone, and `tools/erx pack --app
-  --local` builds the local image that holds it
-  ([design-packaging.md](design-packaging.md#adding-an-app-to-an-image)).
-  The project shows screenshots and a video of it.
+  keyboard before [track U](#track-u-usb). It is `/bin/doom`, a program
+  of the domain release in both published images, under the dependency
+  status `example` ([design.md](design.md#dependencies)), started from
+  `rc` with a window of its own, whose `/dev` holds `draw` and `kbd`. Its
+  source is offered with the images: erXos's fork at the commit the
+  tree's gitlink records. `tools/erx fetch --example doom` fetches the
+  fork and Freedoom's WAD, and the published build, `tools/erx pack
+  --medium`, links both into `/bin/doom` and refuses without them. Doom
+  as a package built from `examples/doom`, on 1b-D's first slice
+  (`erx_exec` and the program protocol's 64-bit file calls), stays
+  track A's full milestone
+  ([design-packaging.md](design-packaging.md#examples)). The project
+  shows screenshots and a video of it.
 * **Building from source.** erXos's repository and its Doom fork's
   repository are public, so a user clones erXos, builds both images
   with the repository's own steps, and fetches the Doom fork into that
@@ -1624,8 +1626,10 @@ its code, and the item's work waits on it.
   ([design.md](design.md#dependencies)). The cross compiler's three
   headers are inputs of the kernel's build, not files of an image. The
   packer refuses a package that is not permissive in every image but a
-  local one, so Doom stays out
-  ([design-packaging.md](design-packaging.md#adding-an-app-to-an-image)).
+  local one ([design-packaging.md](design-packaging.md#adding-an-app-to-an-image));
+  Doom, an example, enters as `/bin/doom` under GPL-2.0-or-later, the
+  one input the image build admits under the status `example`
+  ([design.md](design.md#dependencies)).
 * **Images.** One SD card image for the Pi 4 and one QEMU medium, from
   one build of one commit, each with its build record and SHA-256, and
   each reproducible ([design-build.md](design-build.md)), published on
@@ -1717,10 +1721,9 @@ its code, and the item's work waits on it.
   4 s and boots back to the kiosk; seeded: the arming skipped, the board
   stays hung. After a requested off, the board restarts within about
   5 s.
-* By hand on QEMU, from a clean clone, Doom's getting-started steps
-  build Doom's local image, which boots to Doom's title, and a key from
-  the virtio keyboard moves its menu. No gate builds Doom
-  ([design-packaging.md](design-packaging.md#examples)).
+* By hand on QEMU, with the published image, `doom` typed in `rc` shows
+  Doom's title, and a key from the virtio keyboard moves its menu. No
+  gate builds Doom ([design-packaging.md](design-packaging.md#examples)).
 * By hand, the getting-started steps for QEMU and for the Pi, run as
   written on a clean clone and with the published images, reach the
   shell, the kiosk and `rc` over SSH.

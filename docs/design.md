@@ -1627,7 +1627,8 @@ docs/             design, plan, research records, style
 sdk/              the SDK's own sources: erx_ui_host and sdk.mk; tools/erx
                   sdk export writes the SDK from a built tree
 examples/         example apps that no list of the build names, each built
-                  only through the SDK; the Doom demo as a git submodule,
+                  only through the SDK, but for the Doom demo, which the
+                  published build compiles (DoomProgram), a git submodule,
                   only its gitlink in the tree, with an ORIGIN.md beside it
 ```
 
@@ -1855,13 +1856,17 @@ patch release `release/15.1.0-p6` (`95719d8a`). The network stack is
 pinned apart, at the FreeBSD 16.0-CURRENT commit its design names.
 Research records keep the release they were checked against.
 
-A row's status is one of three. `permanent`: kept for good. `stopgap`:
+A row's status is one of four. `permanent`: kept for good. `stopgap`:
 used to reach a working system and replaced later; a release ships only
 the stopgaps its milestone names, each under the release contract its
 design states (littlefs and LVGL for 0.2), and no other. `release`: in a
 release's trusted base and replaced later, with its replacement planned
 in [plan.md](plan.md) and what it lacks against that replacement
-published with the release. Tools and test data never enter a shipped image; test images carry test tools under an allowlist of their own ([Licenses and notices](#licenses-and-notices)).
+published with the release. `example`: a demo shipped in the published
+images of a preview release only, never part of the system, its source
+offered with the image; Doom for 0.1 is the one, and the image build
+admits the `example` status for its archive alone, under GPL-2.0-or-later
+(`PackProvenance::EXAMPLE`). Tools and test data never enter a shipped image; test images carry test tools under an allowlist of their own ([Licenses and notices](#licenses-and-notices)).
 
 The table gives each dependency's purpose, license and status. Code
 erXos changes enters the tree as erXos's code with an `ORIGIN.md` beside
@@ -1933,6 +1938,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | plan9port's rc; the Open POSIX Test Suite; swtpm with libtpms | the shell's oracle, the POSIX-lite personality's oracle, the vault's test TPM | MIT; BSD-2-Clause and GPL-2.0-or-later; BSD-3-Clause | test tools, the suite only in test images | rc: [test/shell/rc/plan9port/ORIGIN.md](../test/shell/rc/plan9port/ORIGIN.md); the rest `deps.lock` or Homebrew |
 | Bumble with its Python dependencies | the Bluetooth test peer ([design-bluetooth.md](design-bluetooth.md#verification)) | Apache-2.0 | test tools | `deps.lock` and a checked-in lock, in a virtual environment outside the tree |
 | v64, built with Closure Compiler | the website's in-browser console ([site/README.md](../site/README.md)) | BSD-2-Clause and MIT; Apache-2.0 | website only | `deps.lock`; built by `tools/build_site.rb` |
+| doomgeneric (Doom), with Freedoom 0.13.0's `freedoom1.wad` | the Doom demo, `/bin/doom` of the published QEMU virt and Raspberry Pi 4 images | GPL-2.0-or-later; the WAD BSD-3-Clause; both texts in the image's NOTICES, the GPL-2.0 text from the fork | example, in 0.1's images | the submodule `examples/doom/doom` of erXos's fork, fetched by `tools/erx fetch --example doom` with the WAD's pinned SHA-256 ([examples/doom/ORIGIN.md](../examples/doom/ORIGIN.md)); no file of it enters the tree |
 | xterm.js | the website console's terminal | MIT | website only | loaded from jsDelivr with Subresource Integrity |
 
 ### Licenses and notices

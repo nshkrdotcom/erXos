@@ -816,6 +816,16 @@ class ProductionImageTest < Minitest::Test
     assert_operator site.memory_mib, :<, DEVELOPMENT.memory_mib
   end
 
+  # The published QEMU medium, which carries Doom, is packed for 640 MiB; the card keeps
+  # its board's RAM, and the QEMU record, which the suites boot on, keeps its own.
+  def test_the_published_qemu_medium_has_640_mib_and_the_card_its_boards_ram
+    published = Erx::ProductionImage::Machine.published(PLATFORM)
+    assert_equal [640, DEVELOPMENT.root_mib], [published.memory_mib, published.root_mib]
+    assert_equal 512, PLATFORM.memory_mib
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    assert_equal Erx::ProductionImage::Machine.development(pi), Erx::ProductionImage::Machine.published(pi)
+  end
+
   # The room line prints the room root_memory leaves the archive.
   def test_the_room_line_prints_root_memorys_room
     report = { 'archive_room' => { 'archive_bytes' => 50 << 20, 'archive_max_bytes' => 280 << 20,

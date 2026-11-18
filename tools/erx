@@ -625,7 +625,9 @@ module Erx
     # boot and --signer FILE trusts a deployer's key for packages installed later.
     # --local makes it a local test image, which takes a package whose license is not
     # permissive and never leaves this host (ImageApps::Plan); a board's card, the one the
-    # website offers, takes neither (ProductionImage#build_medium).
+    # website offers, takes neither (ProductionImage#build_medium). A medium packed with no
+    # --app is the published one, which carries the Doom example as /bin/doom and so needs
+    # `tools/erx fetch --example doom` first (ProductionImage.pack_platform's doom).
     def self.pack(arguments)
       pack_options(arguments) => { platform:, medium:, probe:, sources:, enable:, signers:, local: }
       require_relative 'lib/erx/production_image'
@@ -636,7 +638,7 @@ module Erx
                         compiler: environment.fetch('ERX_CLANG'), linker: environment.fetch('ERX_LLD'))
       result = ProductionImage.pack_platform(root: ROOT, runner: runner, compiler: environment.fetch('ERX_CLANG'),
                                              linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium,
-                                             apps: apps)
+                                             apps: apps, doom: medium && apps.empty?)
       built, written = medium ? result : [result, nil]
       Terminal.puts("production image: #{built.single}; root_startup: #{built.report.fetch('manifest').fetch('root_startup')}")
       case written
@@ -1136,13 +1138,15 @@ module Erx
     end
 
     # `tools/erx boot --medium PATH`: the release medium at PATH in QEMU as a person boots
-    # it (InteractiveBoot.medium_argv), on the development machine's RAM, which the medium
-    # was packed for; with --print, the plain qemu-system-aarch64 command instead, whose
+    # it (InteractiveBoot.medium_argv), on the published medium's machine
+    # (ProductionImage::Machine.published), whose RAM is at least what any medium
+    # `tools/erx pack --medium` writes was packed for; with --print, the plain
+    # qemu-system-aarch64 command instead, whose
     # kernel, device tree and disk lie in the tree until the next --medium. The guest
     # boots a copy of the medium (InteractiveBoot.medium_copy), where it keeps its /data
     # and SSH host key from boot to boot, so the medium at PATH stays as written.
     def self.boot_medium(request, platform:, accel:, runner:)
-      machine = ProductionImage::Machine.development(platform)
+      machine = ProductionImage::Machine.published(platform)
       files = InteractiveBoot.medium_boot(root: ROOT, runner: runner, medium: request.medium, machine: machine,
                                           cpus: request.cpus)
       argv = InteractiveBoot.medium_argv(platform: platform, accel: accel, cpus: request.cpus, kernel: files.kernel,
