@@ -623,8 +623,7 @@ A session has at most one palette on each display: a new one replaces
 the one open there. The palette ends on Escape, after an act that
 needs nothing shown, when its window ends, and, while it runs no act,
 when another window becomes current, which it learns from its window's
-`wctl` read once design-display reports the current window there
-([`TODO.md`](../TODO.md), "Planned features"). A palette that
+`wctl` record ([design-display.md](design-display.md#the-window-tree)). A palette that
 runs an act or shows a result stays until the person ends it, so
 clicking elsewhere while a line runs does not end the line.
 
@@ -1102,8 +1101,8 @@ control file as the authority it proves the person just acted in the
 source. The condition on the target keeps the keyboard from being handed
 to an older window, such as the session's shell, so the person's typing
 cannot be steered into it; it is one window id kept with the pick, since
-window ids only grow. This changes the display's accepted focus rule, so
-it is recorded for design-display in [`TODO.md`](../TODO.md), "Planned features". The alternatives:
+window ids only grow. This changes the display's accepted focus rule, which
+[design-display.md](design-display.md#risks-and-decisions), decision 21, states. The alternatives:
 
 * **No change: the person clicks the palette before using it.** Rejected:
   the palette and the context menu each cost an extra click on every use,
