@@ -329,7 +329,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   taken at a load average of 44 to 55, and find why stock OTP on the host
   is slower than the guest at the same four operations under HVF.
 * [High] network, the fast path
-  ([docs/design-network-fastpath.md](docs/design-network-fastpath.md)): one connection over
+  ([docs/design-network-stack.md](docs/design-network-stack.md#the-fast-path)): one connection over
   the FreeBSD test host's tap sends at 890 Mbit/s and receives at 1,143, against lwIP's 6,537 and 6,809 on the
   same tap, held there by the connection's per-segment step. The targets are two thirds of
   lwIP's bulk throughput each way over the same medium, and for request-reply a third of
@@ -355,7 +355,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
        The packages that add `runs`, `run_frames`, `units`, `unit_segments` and
        `frames_dropped` must make `admin(counters)` return every counter they keep, zeros
        included; the fast-path check is `--require-fast-path` until then and becomes the
-       default (`docs/design-network-fastpath.md`, "Benchmarks and targets") once they exist.
+       default (`docs/design-network-stack.md`, "Benchmarks and targets") once they exist.
      * [Medium] `net_bench_freebsd.rb`'s remote lock: a stale lock's takeover is check then
        act (two runners can both take it); an interrupted run releases it while its remote
        peer and client live on to their own deadlines; `run_deadline` leaves out the ssh kill

@@ -17,7 +17,7 @@
 %%   * SipHash-2-4 from the paper, with 64-bit arithmetic masked: badarg unless Key is a 16-byte
 %%     binary and Data iodata of at most 65536 bytes in lists of at most 131072 cells in all.
 %%   * The merge of received TCP segments is erx_tcp_merge_model (beside this file), written
-%%     from docs/design-network-fastpath.md, "The merge": badarg past its limit.
+%%     from docs/design-network-stack.md, "The merge": badarg past its limit.
 %%   * SHA-256 is stock's crypto:hash/2: badarg unless Data is a binary. Its stream calls
 %%     are crypto's hash_init/1, hash_update/2 and hash_final/1, whose state is a value as
 %%     the BIFs' is: badarg unless State is a state of sha256_init/0 and Data a binary.

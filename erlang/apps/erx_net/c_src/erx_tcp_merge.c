@@ -2,7 +2,7 @@
  * Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * The merge of received TCP segments (erx_tcp_merge.h; docs/design-network-fastpath.md, "The
+ * The merge of received TCP segments (erx_tcp_merge.h; docs/design-network-stack.md, "The
  * merge"), after FreeBSD's tcp_lro_rx_common and tcp_lro_condense (tcp_lro.c). Each frame is
  * first read into a segment_t: a frame that is not TCP over IPv4 or IPv6 directly behind an
  * Ethernet II header is FRAME_OTHER; one whose connection can be read, its addresses and ports,

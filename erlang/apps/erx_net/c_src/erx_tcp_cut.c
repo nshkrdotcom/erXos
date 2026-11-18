@@ -2,7 +2,7 @@
  * Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * The cut of a run into its frames (erx_tcp_cut.h; docs/design-network-fastpath.md, "The cut,
+ * The cut of a run into its frames (erx_tcp_cut.h; docs/design-network-stack.md, "The cut,
  * in the copy"). erx_tcp_cut_plan is the only function that reads a run's untrusted shape:
  * every length, count and field width is checked there, once, before anything is written.
  * The others index only what a plan it accepted has bounded. Each frame is written in one

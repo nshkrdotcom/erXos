@@ -409,7 +409,7 @@ other_protocols_draw_an_error_only_when_they_may_be_answered_test() ->
     ?assertEqual({drop, no_next_header}, classify(ip6_frame(None), view())).
 
 %% --- Units of the merge ------------------------------------------------------------
-%% (docs/design-network-fastpath.md, "The merge, before classification", "What the stack
+%% (docs/design-network-stack.md, "The merge, before classification", "What the stack
 %% believes"): a unit is classified by its first frame, takes N units of credit, has its
 %% first and last frames verified and becomes one segment; a unit whose own claims fail is
 %% dropped as malformed.

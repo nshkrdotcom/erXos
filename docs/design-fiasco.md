@@ -643,7 +643,7 @@ No Phase 1b consumer needs a grant enforced to work. Those that name one get, on
 * [design-domains.md](design-domains.md): the hostile runtimes' bounds on CPU grants and on an innocent
   peer's latency report `unsupported` (FD15), and the band test of
   [Verification](#verification) checks what bands give.
-* [design-network-fastpath.md](design-network-fastpath.md): the network domain runs as many
+* [design-network-stack.md](design-network-stack.md#the-fast-path): the network domain runs as many
   schedulers as its CPU set has CPUs, at most 32.
 * [design-programs.md](design-programs.md) and [design-display.md](design-display.md): a program's
   copy and an application's drawing run on their own domain's threads, in its band.

@@ -1561,7 +1561,7 @@ module Erx
       0
     end
 
-    # The network benchmarks (docs/design-network-fastpath.md, "Benchmarks and targets"):
+    # The network benchmarks (docs/design-network-stack.md, "Benchmarks and targets"):
     # net-freebsd runs erx_net and lwIP on the FreeBSD test host and prints one table. The exit
     # status is nonzero if any run failed.
     def self.bench_net(name, arguments)

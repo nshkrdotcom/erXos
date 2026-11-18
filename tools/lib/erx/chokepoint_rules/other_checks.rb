@@ -58,9 +58,9 @@ module Erx
           test: 'test/host/net_checks_test.rb'
         ),
         Chokepoints::Elsewhere.new(
-          name: 'net-payload-copy', rule: 'the modules a TCP payload passes through copy one only at the sites the fast ' \
-                                          "path's design lists",
-          design: 'docs/design-network-fastpath.md#copies', check: 'NetChecks, in Checks',
+          name: 'net-payload-copy', rule: 'the modules a TCP payload passes through copy one only at the sites ' \
+                                          "COPY_SITES lists, for the reasons the design's Copies gives",
+          design: 'docs/design-network-stack.md#copies', check: 'NetChecks, in Checks',
           test: 'test/host/net_checks_test.rb'
         ),
         Chokepoints::Elsewhere.new(

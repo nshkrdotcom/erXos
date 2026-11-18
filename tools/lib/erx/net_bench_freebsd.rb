@@ -18,7 +18,7 @@ require_relative 'net_bench'
 module Erx
   # The network benchmarks on the FreeBSD test host: erx_net on stock OTP and lwIP,
   # each as a client of a peer in a jail on the same tap's bridge, bulk each way and
-  # request-reply, as docs/design-network-fastpath.md's "Benchmarks and targets" states.
+  # request-reply, as docs/design-network-stack.md's "Benchmarks and targets" states.
   # `tools/erx bench net-freebsd` stages erx_net's modules (built here, with the host's
   # erlc), its C sources and the lwIP client on the FreeBSD test host, builds the C there, runs every
   # workload of NetBench::WORKLOADS on both stacks `runs` times, and prints the table

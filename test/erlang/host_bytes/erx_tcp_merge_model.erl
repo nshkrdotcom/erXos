@@ -3,7 +3,7 @@
 
 -module(erx_tcp_merge_model).
 -moduledoc """
-A model of `erx_bytes:tcp_merge/1`, written from the rule of docs/design-network-fastpath.md
+A model of `erx_bytes:tcp_merge/1`, written from the rule of docs/design-network-stack.md
 ("The merge") and sharing nothing with the C core (`c_src/erx_tcp_merge.c`): it reads frames
 with binary patterns and judges checksums by one's-complement equivalence, a sum being zero
 when it is a multiple of 16#FFFF, where the C folds sums. The host stand-in's `tcp_merge/1`

@@ -533,7 +533,7 @@ far_end_end_restarts_the_link() ->
 
 %% Batches of frames that wait at the interface while it is busy are classified in one
 %% pass, so a holder gets one `{items, ...}` message for all of them
-%% (docs/design-network-fastpath.md, "Processes and batching"). The test claims a
+%% (docs/design-network-stack.md, "Processes and batching"). The test claims a
 %% four-tuple as its holder, and three segments the far end sends, each its own batch at
 %% the driver, reach it as one message of three items, in order.
 queued_batches_reach_a_holder_as_one_message() ->
@@ -564,7 +564,7 @@ queued_batches_reach_a_holder_as_one_message() ->
     end.
 
 %% A burst of in-order segments the far end hands up as one batch is merged by the
-%% interface (docs/design-network-fastpath.md, "The merge, before classification"): the
+%% interface (docs/design-network-stack.md, "The merge, before classification"): the
 %% holder gets one segment, the first frame's sequence number with the last's
 %% acknowledgement, holding every payload in order, and its eight units.
 a_burst_reaches_its_connection_as_one_segment() ->

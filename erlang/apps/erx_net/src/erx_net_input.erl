@@ -428,7 +428,7 @@ classify({merged, N, {sum, FirstSum, First}, {sum, LastSum, Last}, Payload}, #{l
         false -> {drop, malformed}
     end.
 
-%% A unit of the merge (docs/design-network-fastpath.md, "The merge, before
+%% A unit of the merge (docs/design-network-stack.md, "The merge, before
 %% classification") is classified by its first frame, its count checked against the pieces
 %% Erlang sees before anyone is charged for it. A unit for a connection is owned when its
 %% last frame classifies as a segment of a connection with the same holders; verify/1 then
@@ -735,7 +735,7 @@ verify({merged, N, {above, FirstFrom, {conn, FirstHead, FirstUpper} = FirstAbove
 -doc """
 The units of a holder's credit a pending frame takes: N for a unit of the merge, so that a
 merged segment costs its connection what its N frames would have
-(docs/design-network-fastpath.md, "Credit counts segments"), and one for anything else.
+(docs/design-network-stack.md, "Credit counts segments"), and one for anything else.
 The connection takes back as many for the segment `verify/1` makes of it.
 """.
 -spec units(pending()) -> 1..256.
