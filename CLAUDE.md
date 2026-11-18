@@ -1063,6 +1063,8 @@ within about 20 percent of the length, write plain code.
     decision gates.
   * [docs/style.md](docs/style.md) is the code style guide.
   * [TODO.md](TODO.md) is the index of open work outside the roadmap.
+  * [docs/guide/](docs/guide/README.md) is the user guide: how to build,
+    write, boot and use erXos.
   * Research records (`docs/research-*.md`, measurement and conformance
     reports) are point-in-time reports.
 * **For every major feature, write `docs/design-<feature>.md` first** and
