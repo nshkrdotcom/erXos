@@ -8704,17 +8704,6 @@ document's "residual risks accepted" paragraph.
   the UART, and the heap bound's slack (`start_link/1`) is a round number, not derived from the grant's largest write.
 * [Medium] find and act, changes its design needs in other designs ([design-find-act.md](docs/design-find-act.md)),
   not yet made in them:
-  * design-display: G4 names a third action: the terminal and the widget server hand a presentation to the
-    session's act service, which only opens the palette; the chokepoint row "`erx_term` and `erx_ui_server` call
-    no facet" adds "and no evaluator". The terminal's button 3 on a link offers it. The renderer behaviour gains
-    the `{act, NodeId}` report, which the Erlang renderer makes on button 3 and the widget server forwards, naming
-    its type with `atom_to_binary/1`. `erx_win:kbd/1` consults the bindings table and answers
-    `{ok, Key, Window}`, its handle carrying the trigger held and the names of the display and the window. A
-    `wctl` read's `current` field reports the policy's current window, and a change of the current window gives
-    each window it touches a new `wctl` record (the [Low] display item on `wctl`'s `current` field). Decision 2's
-    `give` command for `wctl`, whose source window must be current and have had a key or button down within
-    500 ms: the one exception to the rule that a new window is current only once the person clicks it, the
-    display's to judge and implement.
   * The inspection schema: a segment type `app_name` for `apps *app_name`, marked `present app`.
   * design-shell: `service` declares `-erx_args([app])`; commands that take a pid, a domain or another
     presentation first declare it, so the Services offers find them. The variables a session's shell starts
