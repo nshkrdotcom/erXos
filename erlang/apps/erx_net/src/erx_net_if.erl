@@ -12,7 +12,7 @@ performs the actions in order, and decides nothing a pure function could decide.
    the core's steps `{config, Gen, Snapshot}` from `erx_net_tables:configuration/0`.
 2. A batch `{frames, Driver, Frames}` is taken with every further batch from the driver
    already in the mailbox, up to a link notice, which is stepped after them
-   (docs/design-network-fastpath.md, "Processes and batching"). On an Ethernet interface
+   (docs/design-network-stack.md, "Processes and batching"). On an Ethernet interface
    each batch is merged (erx_bytes:tcp_merge/1), and each frame or unit of the merge in
    turn is classified against the core's view with the demultiplexing lookup added. An
    `owned` frame reserves a unit of each holder's credit, a unit of the merge N of them,
@@ -186,7 +186,7 @@ batch(Link, Frames, {S0, ByHolder0}) ->
                 {count_units(Units, S0), ByHolder0}, Units).
 
 %% An Ethernet interface merges each batch before it classifies anything
-%% (docs/design-network-fastpath.md, "The merge, before classification"), in one call over
+%% (docs/design-network-stack.md, "The merge, before classification"), in one call over
 %% the batch, which the driver cut to the merge's limit. The merge answers every frame with
 %% its network sum, alone or in a unit. A looped packet carries its zone, which no merge
 %% reads, so the loopback interface's batches go on as they came. A batch the merge refuses,

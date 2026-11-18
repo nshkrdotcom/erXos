@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 %%
-%% A merged segment in TCP (docs/design-network-fastpath.md, "A merged segment in TCP", and
+%% A merged segment in TCP (docs/design-network-stack.md, "A merged segment in TCP", and
 %% its test 5): the same bytes stepped through erx_tcp:step/3 as one merged segment and as
 %% its members one by one leave the connection where FreeBSD's LRO leaves it against
 %% per-segment input. The units are made as erx_bytes:tcp_merge/1 makes them: in order,

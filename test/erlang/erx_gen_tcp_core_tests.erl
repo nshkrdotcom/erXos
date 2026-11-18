@@ -317,7 +317,7 @@ recv(From, Length, Core) ->
     {Core1, [{reply, From, {ok, Data}} | _]} = call(From, {recv, Length, infinity}, Core),
     {Data, Core1}.
 
-%% A merged segment's payload is a sub-binary of its frame (docs/design-network-fastpath.md,
+%% A merged segment's payload is a sub-binary of its frame (docs/design-network-stack.md,
 %% "Copies"). A delivery that lies within one piece is a sub-binary of that piece, still
 %% sharing the frame, not a copy; a copy would reference only its own bytes.
 one_piece_shared() ->

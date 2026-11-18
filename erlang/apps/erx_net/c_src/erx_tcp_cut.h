@@ -11,7 +11,7 @@
 #include <stdint.h>
 
 /*
- * The cut of a run into its frames (docs/design-network-fastpath.md, "The cut, in the copy"):
+ * The cut of a run into its frames (docs/design-network-stack.md, "The cut, in the copy"):
  * the C twin of erx_net_frame:cut/1, which judges it. A run is consecutive TCP segments of one
  * connection over one template, the IP and TCP headers its frames share. Frame i of a run of
  * k frames whose payload holds P bytes carries the payload bytes from i * seg to

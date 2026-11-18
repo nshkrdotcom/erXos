@@ -452,7 +452,7 @@ looped_icmpv6_error_finds_the_socket_its_quote_names_test() ->
     %% The same bytes in another zone are an error to no address of the stack.
     ?assertMatch({drop, _}, erx_net_input:classify({looped, eth1, iolist_to_binary(Packet)}, View)).
 
-%% A run (docs/design-network-fastpath.md, "A run") gives the bytes of its segments encoded
+%% A run (docs/design-network-stack.md, "A run") gives the bytes of its segments encoded
 %% one by one, as erx_tcp_output:segments/1 cuts it: over IPv4 and IPv6, with and without
 %% timestamps, PSH and FIN, payloads in random pieces and the last frame short, as one
 %% #run{} that cut/1 cuts when the interface has a finisher and as cut/1's packets when it

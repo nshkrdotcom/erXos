@@ -28,7 +28,7 @@ class ErxTcpOutputTest < Minitest::Test
     # tcp_output.c:1635-1641: only a segment that left clears the D-SACK block.
     dsack_cleared_without_a_route: [LOST, "sent({error, _}, _, RcvSack, Tcb) ->\n    Tcb#tcb{rcv_sack = RcvSack}.",
                                     'no_route_keeps_the_dsack_block'],
-    # Runs (docs/design-network-fastpath.md, "Output makes runs"): each fault makes a run's
+    # Runs (docs/design-network-stack.md, "Output makes runs"): each fault makes a run's
     # frames differ from per-segment output's, which the differential case compares.
     run_drops_its_last_byte: ['Len = N * Size,', 'Len = N * Size - 1,',
                               'runs_equal_per_segment_output'],

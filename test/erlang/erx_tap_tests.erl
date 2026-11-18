@@ -2,7 +2,7 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% EUnit cases of the tap transport and its NIF (docs/design-network-stack.md, "The tap
-%% transport"; docs/design-network-fastpath.md, "Verification", test 10) on a host without a
+%% transport"; docs/design-network-stack.md, "Tests", "The tap NIF") on a host without a
 %% tap device, run by test/host/erx_tap_test.rb, which builds the NIF into erx_net's priv/.
 %% Two stand-ins take the device's place:
 %%

@@ -316,7 +316,7 @@ timeout_rewinds_through_the_loss_module_test() ->
     {T1, _} = erx_tcp_timer:expired(T, ctx(64)),
     ?assertEqual({1001, [{timeout, 1}]}, {T1#tcb.snd_nxt, erx_tcp_loss_spy:causes(T1#tcb.loss_state)}).
 
-%% --- Runs (docs/design-network-fastpath.md, "Output makes runs") --------------
+%% --- Runs (docs/design-network-stack.md, "Output makes runs") --------------
 
 %% Output with runs and output without them over the same state: the frames the runs are cut
 %% into, header and payload, are per-segment output's, and the control block after the pass
@@ -476,7 +476,7 @@ segment_of_more_than_64_binaries_is_no_run_test() ->
 
 %% A segment whose header is a run's goes as a run of one: a pure ACK, a short segment and a
 %% retransmission each carry the segment size; a SYN and an ACK reporting a D-SACK block do not
-%% (docs/design-network-fastpath.md, "Output makes runs").
+%% (docs/design-network-stack.md, "Output makes runs").
 runs_of_one_test() ->
     {_, [{_, #{seg := 1000}, []}]} = out((est(0))#tcb{ack_now = true}),
     {_, [{_, #{seg := 1000}, Short}]} = out(est(300)),

@@ -107,7 +107,7 @@ segment. The pass goes round again while a segment was cut short (`sendalot`), a
 the context's credit of frames leave it.
 
 A segment of new data whose header every frame could share is sent as a run
-(docs/design-network-fastpath.md, "Output makes runs"): the whole segments the windows,
+(docs/design-network-stack.md, "Output makes runs"): the whole segments the windows,
 the credit, IP_MAXPACKET and 64 binaries of the send buffer allow, in one pass, as
 FreeBSD's TSO sends a burst. Any other segment whose header is a run's, a retransmission or
 a pure ACK among them, is a run of one, so the frame layer encodes no steady segment field
@@ -614,7 +614,7 @@ commit(Seg, Payload, Opts, RcvSack, Df, Tcb0, #tcp_ctx{route = Route} = Ctx) ->
             end,
     {sent(Route, RecWin, RcvSack, Tcb), {Header, Marks, Payload}, More, Frames}.
 
-%% Output's run rule (docs/design-network-fastpath.md, "Output makes runs"): the segment as
+%% Output's run rule (docs/design-network-stack.md, "Output makes runs"): the segment as
 %% it goes and its payload, from Seg, already cut to one full segment of `size` bytes. A
 %% segment whose header is a run's (runs/4) goes as a run, so the frame layer encodes no
 %% steady segment:

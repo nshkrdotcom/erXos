@@ -6,7 +6,7 @@ require_relative 'error'
 require_relative 'line_escape'
 
 module Erx
-  # The pure half of the network benchmarks (docs/design-network-fastpath.md, "Benchmarks
+  # The pure half of the network benchmarks (docs/design-network-stack.md, "Benchmarks
   # and targets"): what a run's output says, and the report that sets the stacks side by
   # side. The effects, starting the peers and the clients, belong to NetBenchFreebsd.
   #
