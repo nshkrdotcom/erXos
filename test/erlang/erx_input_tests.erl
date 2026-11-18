@@ -16,12 +16,15 @@
 %%   * pointer: a hidden window receives only the events of the records that let a
 %%     button or touch go, and once every source has ended every window's last event
 %%     holds no button (pointer_while_hidden, pointer_held_at_end).
-%% Every key's down that reaches a window reaches one the screen shows: the `frame`
+%% Every key's down or repeat that reaches a window reaches one the screen shows: the `frame`
 %% action answers the frame of the table's layout, `{shown, D}`, so `focus` moves the
 %% table ahead of the screen until a frame follows (key_not_displayed).
 %% A random run checks that every pointer event lies inside the screen of its step
 %% (pointer_outside_screen), with records before the first screen and screen changes.
 -module(erx_input_tests).
+
+%% A stub policy, input/5 of erx_wm, for the cases that need one.
+-export([input/5]).
 
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
@@ -69,7 +72,7 @@ step(In, #{state := State, got := Got, wake := Wake, displayed := Displayed} = W
                       end, {Got, Wake}, Outs),
     World#{state := Next, got := Got1, wake := Wake1}.
 
-on_screen(Id, {key, down, _, _, _, _} = Event, Displayed) ->
+on_screen(Id, {key, Edge, _, _, _, _} = Event, Displayed) when Edge =/= up ->
     case lists:member(Id, Displayed) of
         true -> ok;
         false -> error({key_not_displayed, Id, Event})
@@ -253,6 +256,30 @@ no_key_before_the_first_frame_test() ->
     {S, Got} = run([{key(down, ?A), View}, {key(up, ?A), View}], S0),
     ?assertEqual([], Got),
     ?assertEqual(1, erx_input:dropped(S)).
+
+%% A key held in the kiosk while a front window opens and ends: the front window's end
+%% returns the kiosk to the table while the screen still shows the front window, and
+%% the kiosk's repeats resume only once {shown, D} shows it again.
+a_repeat_reaches_no_window_until_it_is_shown_again_test() ->
+    Kiosk = single([{1, <<"a">>, shown}], <<"a">>),
+    Front = single([{1, <<"a">>, hidden}, {2, <<"a">>, shown}], <<"a">>),
+    {_S, Got} = run([{key(down, ?A), Kiosk},
+                     {shown(2), Front},
+                     {{tick, 600}, Kiosk},
+                     {shown(1), Kiosk},
+                     {{tick, 700}, Kiosk},
+                     {key(up, ?A), Kiosk}], shown_first(Kiosk)),
+    ?assertEqual([{1, down, ?A}, {1, repeat, ?A}, {1, up, ?A}], Got).
+
+%% A policy that answers a window the screen shows but the table hides: its down is
+%% dropped and counted, whatever the policy answers.
+a_key_reaches_no_window_the_table_hides_test() ->
+    View = (single([{1, <<"a">>, hidden}, {2, <<"a">>, shown}], <<"a">>))#{policy := ?MODULE},
+    {S, Got} = run([{key(down, ?A), View}, {key(up, ?A), View}], shown_first(View)),
+    ?assertEqual([], Got),
+    ?assertEqual(1, erx_input:dropped(S)).
+
+input(Event, _Windows, _Screen, _Session, State) -> {{to, 1, Event}, State}.
 
 %% A view of the single policy over Windows, {Id, Dir, State}, with Session the display's.
 single(Windows, Session) ->

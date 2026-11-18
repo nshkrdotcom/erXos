@@ -2318,9 +2318,10 @@ The step's rules, by input:
   the down makes the keys held, over every source, include every key of
   the reserved chord, the answer is `{wm, chord}`; otherwise the
   policy's `input/5` routes it, and a `{to, W, _}` answer passes only
-  when the displayed windows hold `W`, the same windows seen before
-  pressed reads: otherwise the down is dropped and counted and goes
-  nowhere. So while the table and the screen disagree, when a front
+  while `W` is **on the screen**: the table shows `W`, and so do the
+  displayed windows, which seen before pressed reads too.
+  Otherwise the down is dropped and counted and goes nowhere, whichever
+  window a policy answers. So while the table and the screen disagree, when a front
   window has opened or ended and the frame that shows the change has
   not been answered, a key reaches neither the window leaving the
   screen nor the one the table has chosen, and the next key after
@@ -2338,9 +2339,12 @@ The step's rules, by input:
   evdev stops its device's at every up (the same lines).
 * **A tick** sends, to every window whose repeating key's time is at or
   before the tick's, that key's repeat with the runes and the modifiers
-  of its down while the window is shown, and moves its time one period
-  on; a window whose time is later gets nothing, so a tick from a timer
-  the step has since moved does nothing.
+  of its down while the window is on the screen, as a down is, and moves
+  its time one period on; a window whose time is later gets nothing, so
+  a tick from a timer the step has since moved does nothing. So a key
+  held in a window while a front window opens and ends repeats there
+  again only from the `{shown, D}` that shows that window once more,
+  not from the table's change.
 * **`release`, and the source's end**, send an up for every key the
   source holds to the window its down went to, each stopping that
   window's repeat as an up does, and let go of the source's buttons and
@@ -2385,7 +2389,7 @@ each guarantee holds by construction:
 * **A window's repeat is its own**: its repeating key is set, stopped
   and timed only by keys whose downs went to it, so typing in another
   window, or a key withheld for the chord, neither starts, stops nor
-  delays it, and it repeats only while the window is shown.
+  delays it, and it repeats only while the window is on the screen.
 * **The reserved chord reaches no window**: it is decided before the
   policy is asked, so no policy can deliver it, and its key's repeats
   and up follow a down that went to no window.
@@ -5064,11 +5068,12 @@ the window and the reason.
   gained pixels, so no client takes a click by putting its window under
   the pointer, and no layout the device has not yet shown takes one
   ([The input router](#the-input-router), "Seen before pressed"). A
-  key's down reaches a window only while the screen shows it, so no key
-  typed while one window is on screen reaches another that the table
-  has chosen but the device has not yet shown, in either direction of
-  a front window's coming and going ([The input router](#the-input-router),
-  "A key's down"). A window the policy no longer shows still receives
+  key's down or repeat reaches a window only while both the screen and
+  the table show it, so no key typed or held while one window is on
+  screen reaches another that the table has chosen but the device has
+  not yet shown, in either direction of a front window's coming and
+  going, whichever window a policy answers ([The input router](#the-input-router),
+  "A key's down" and "A tick"). A window the policy no longer shows still receives
   the ups of keys, buttons and touches it saw go down, and so learns
   which of its modifiers are released, and nothing pressed after.
 * **The clipboard** is shared, per display, by every grant on it whose
@@ -5367,9 +5372,14 @@ change nothing; pointer gestures start with
   session's window, and a key's down then reaches no window until
   `{shown, D}` shows the session's, after which the next one reaches
   it; a front window opens, and a key's down reaches neither it nor the
-  session's window until its frame is answered. Seeded: a router that
-  routes a key's down by the table alone, which delivers the first key
-  to the window not yet on screen.
+  session's window until its frame is answered; a key held in the
+  session's window while a front window opens and ends repeats there
+  only from the `{shown, D}` that shows it again; a policy that answers
+  a window the screen shows and the table hides delivers no down.
+  Seeded: a router that passes a key's down by the policy's answer
+  alone, or sends a repeat by the table alone, which delivers to a
+  window not on screen; a router whose on-screen test reads the
+  displayed windows alone.
 * **The keymap.** `gen_keymap.rb` refuses each malformed layout its
   section names; the US layout's every key and layer is checked against
   the generated `erx_keymap`; through a terminal, arrows and function

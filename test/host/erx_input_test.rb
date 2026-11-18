@@ -45,9 +45,21 @@ class ErxInputTest < Minitest::Test
       test: KEYS_RUN, property: /key_order/
     ),
     key_by_the_table: Mutant.new(
-      text: 'false -> on_screen(ask(Event, Step, S), S)',
+      text: 'false -> pass_on_screen(ask(Event, Step, S), S)',
       broken: 'false -> ask(Event, Step, S)',
       test: KEYS_RUN, property: /key_not_displayed/
+    ),
+    repeat_by_the_table: Mutant.new(
+      text: 'case on_screen(Window, Windows, SAcc) of',
+      broken: 'case maps:get(state, element(2, erx_wm:fetch(Window, Windows))) =:= shown of',
+      test: "{#{TEST}, a_repeat_reaches_no_window_until_it_is_shown_again_test}",
+      property: /a_repeat_reaches_no_window_until_it_is_shown_again_test\.\.\..*failed/
+    ),
+    key_by_the_screen: Mutant.new(
+      text: '{ok, #{state := shown}} -> lists:keymember(Window, 1, Displayed);',
+      broken: '{ok, _} -> lists:keymember(Window, 1, Displayed);',
+      test: "{#{TEST}, a_key_reaches_no_window_the_table_hides_test}",
+      property: /a_key_reaches_no_window_the_table_hides_test\.\.\..*failed/
     ),
     clamp_to_the_edge: Mutant.new(
       text: 'place({X0, Y0, X1, Y1}, {X, Y}) -> {clamp(X, X0, X1 - 1), clamp(Y, Y0, Y1 - 1)}.',
@@ -71,6 +83,10 @@ class ErxInputTest < Minitest::Test
   def test_an_up_the_policy_routes_fails_the_keys_run = assert_mutant_fails(:up_asks_the_policy)
 
   def test_a_key_routed_by_the_table_alone_fails_the_keys_run = assert_mutant_fails(:key_by_the_table)
+
+  def test_a_repeat_by_the_table_alone_fails_the_keys_run = assert_mutant_fails(:repeat_by_the_table)
+
+  def test_a_key_by_the_screen_alone_fails_its_case = assert_mutant_fails(:key_by_the_screen)
 
   def test_a_clamp_to_the_edge_fails_the_screen_property = assert_mutant_fails(:clamp_to_the_edge)
 

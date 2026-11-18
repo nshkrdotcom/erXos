@@ -27,14 +27,15 @@ event, and a pointer event or wheel step while nothing is held. What
 follows goes where the start went, by the record of the start, not by
 asking again:
 
-* a key's down the policy sends to a window passes only while the
-  displayed windows hold it, and is otherwise dropped and counted, so
-  while the table has moved ahead of the screen a key reaches neither
-  the window leaving the screen nor the one the table has chosen;
+* a key's down the policy sends to a window passes only while that
+  window is **on the screen**: the displayed windows hold it and the
+  table shows it. Otherwise it is dropped and counted, so while the
+  table and the screen disagree a key reaches neither the window
+  leaving the screen nor the one the table has chosen;
 * a key's up goes to the window its down went to, whatever that
   window's state, and stops that window's repeat;
-* a key's repeat goes to the window its down went to, and only while it
-  is shown;
+* a key's repeat goes to the window its down went to, and only while
+  that window is on the screen;
 * every event of a gesture goes to its destination, the window, the
   policy or nowhere, fixed by the policy's answer to its first event; a
   hidden window receives only the events that let a button or touch go;
@@ -342,7 +343,7 @@ key_down(Code, Row, #source{keys = Keys} = Src, Source, At, Step, S) ->
     Event = event(Source, At, {key, down, Code, Typed, Unshifted, Mods}, S),
     {Route, Asked} = case chord(Code, S) of
                          true -> {{wm, chord}, Step};
-                         false -> on_screen(ask(Event, Step, S), S)
+                         false -> pass_on_screen(ask(Event, Step, S), S)
                      end,
     Dest = case Route of {to, Window, _} -> Window; _ -> none end,
     Held = #{dest => Dest, typed => Typed, unshifted => Unshifted, modifier => Modifier,
@@ -351,15 +352,25 @@ key_down(Code, Row, #source{keys = Keys} = Src, Source, At, Step, S) ->
                          S#input{locks = toggle(Row, S#input.locks)}),
     {answer(Route, Asked), repeat_from(Dest, Typed, Source, Code, At, Pressed)}.
 
-%% The policy's answer to a key's down, passed only to a window the displayed windows
-%% hold; to any other it is dropped and counted, and the down goes nowhere.
-on_screen({{to, Window, _}, #step{drops = Drops} = Asked} = Routed, #input{displayed = Displayed}) ->
-    case lists:keymember(Window, 1, Displayed) of
+%% The policy's answer to a key's down, passed only to a window on the screen; to any
+%% other it is dropped and counted, and the down goes nowhere.
+pass_on_screen({{to, Window, _}, #step{view = #{windows := Windows}, drops = Drops} = Asked}
+               = Routed, S) ->
+    case on_screen(Window, Windows, S) of
         true -> Routed;
         false -> {drop, Asked#step{drops = Drops + 1}}
     end;
-on_screen(Routed, _S) ->
+pass_on_screen(Routed, _S) ->
     Routed.
+
+%% Whether a window is on the screen: the table shows it, and so does the frame the screen
+%% last answered. Only such a window receives a key's down or repeat, so neither reaches a
+%% window while the table and the screen disagree about it, in either direction.
+on_screen(Window, Windows, #input{displayed = Displayed}) ->
+    case erx_wm:fetch(Window, Windows) of
+        {ok, #{state := shown}} -> lists:keymember(Window, 1, Displayed);
+        _HiddenOrGone -> false
+    end.
 
 %% A key's up goes to its down's window, whatever that window's state, and stops that
 %% window's repeat; a down that went nowhere has no up to send.
@@ -421,8 +432,8 @@ rune(Rune) -> Rune.
 
 %% Repeat ---------------------------------------------------------------------
 
-%% Every window whose repeating key is due repeats it, while shown, with the runes and
-%% modifiers of its down, and its time moves one period on; a window that has left the
+%% Every window whose repeating key is due repeats it, while on the screen, with the runes
+%% and modifiers of its down, and its time moves one period on; a window that has left the
 %% table, or whose key its source no longer holds, loses its repeat.
 tick(At, Step, #input{repeats = Repeats, config = #{repeat_period := Period}} = S) ->
     #step{view = #{windows := Windows}} = Step,
@@ -435,17 +446,17 @@ tick(At, Step, #input{repeats = Repeats, config = #{repeat_period := Period}} = 
                       {StepAcc, SAcc#input{repeats = maps:remove(Window, R)}};
                   {_, none} ->
                       {StepAcc, SAcc#input{repeats = maps:remove(Window, R)}};
-                  {{ok, #{state := WindowState}}, Down} ->
+                  {{ok, _}, Down} ->
                       Next = SAcc#input{repeats = R#{Window := {Source, Code, Time + Period}}},
-                      {repeat(WindowState, Window, Source, Code, Down, At, StepAcc, SAcc), Next}
+                      case on_screen(Window, Windows, SAcc) of
+                          true -> {repeat(Window, Source, Code, Down, At, StepAcc, SAcc), Next};
+                          false -> {StepAcc, Next}
+                      end
               end
       end, {Step, S}, Due).
 
-repeat(shown, Window, Source, Code, #{typed := Typed, unshifted := Unshifted, mods := Mods}, At,
-       Step, S) ->
-    out({to, Window, event(Source, At, {key, repeat, Code, Typed, Unshifted, Mods}, S)}, Step);
-repeat(hidden, _Window, _Source, _Code, _Down, _At, Step, _S) ->
-    Step.
+repeat(Window, Source, Code, #{typed := Typed, unshifted := Unshifted, mods := Mods}, At, Step, S) ->
+    out({to, Window, event(Source, At, {key, repeat, Code, Typed, Unshifted, Mods}, S)}, Step).
 
 %% The held key a source's down of Code left, or none.
 down(Source, Code, #input{sources = Sources}) ->
