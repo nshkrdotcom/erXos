@@ -85,7 +85,8 @@ in the record.
 | 8 | `/data`, a littlefs volume | 128 MiB or more |
 
 The layout is defined in `abi/medium.txt`. To log in over SSH, put your
-public key in `authorized_keys` on partition 1 before you first boot.
+public key in `authorized_keys` on partition 1, the volume named `ERXOS`,
+before you first boot.
 
 ## Write the card
 

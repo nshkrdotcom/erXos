@@ -263,41 +263,29 @@ its `LICENSE.txt`. It is changed (below), so it enters the tree rather than
 being fetched and built unchanged
 ([design.md](design.md#dependencies)). The import keeps whole every
 directory and file that `Configure` reads under the configuration below,
-but one module, so OpenSSL's build machinery runs unedited but for one list:
-`Configure`, the
-top-level `build.info`, `VERSION.dat`, `configdata.pm.in`, `Configurations/`,
-`apps/`, `crypto/`, `doc/`, `exporters/`, `external/`, `fuzz/`,
-`include/`, `providers/`, `ssl/`, `tools/` and `util/`. It leaves out only
-what that configuration never reads: `test/` (`no-tests`), `demos/` (off
-by default), `engines/` (`no-engine`), `os-dep/`, `VMS/` and `ms/`, which
-other systems' configurations name, the seven empty directories the
-release carries (`cloudflare-quiche/`, `oqs-provider/`,
-`pkcs11-provider/`, `python-ecdsa/`, `tlsfuzzer/`, `tlslite-ng/` and
-`wycheproof/`), and the Perl module `Text::Template` that the release
-bundles under `external/perl/`. That module is a build tool OpenSSL
-uses as released: `Configure` and make's generators (`util/dofile.pl`) load
-it on the build host. It is fetched, not imported: `deps.lock` pins
-Text-Template 1.56's CPAN tarball (`text-template`) by SHA-256, the fetch
-step verifies it and unpacks it out of tree, and the build sets `PERL5LIB`
-to its `lib/` for `Configure` and make, which see none of the caller's
-`PERL5LIB` or `PERL5OPT`. `external/perl/MODULES.txt`, the list of
-directories that `OpenSSL::fallback` appends to Perl's search path, is
-empty, since that module refuses a listed directory that is absent.
-`make check-openssl`'s integration test
-(`test/integration/libcrypto_build_test.rb`) proves the set: it runs
-`Configure` with erXos's options on the imported tree and builds
-`libcrypto.a`, and on a copy without `ssl/build.info` sees `Configure`
-fail on the `build.info` it cannot open. OpenSSL's `Configure` and its
-Perl assembler generators are inherited build machinery, invoked through
-one entry point of erXos's top-level build, as OTP's `configure` is
+so OpenSSL's build machinery runs unedited but for one list, and leaves
+out only what that configuration never reads (`test/`, `demos/`,
+`engines/`, other systems' directories and the release's empty ones; the
+`ORIGIN.md` lists them). The one exception is the Perl module
+`Text::Template` that the release bundles under `external/perl/`: a
+build tool `Configure` and make's generators load on the build host, it
+is fetched, not imported, pinned by SHA-256 in `deps.lock`, unpacked out
+of tree and given to `Configure` and make through `PERL5LIB`, which see
+none of the caller's `PERL5LIB` or `PERL5OPT`; `external/perl/MODULES.txt`
+is empty, since `OpenSSL::fallback` refuses a listed directory that is
+absent. `make check-openssl` proves the set: it builds `libcrypto.a` from
+the imported tree, and sees `Configure` fail on a copy missing a
+`build.info` it reads. OpenSSL's `Configure` and its Perl assembler
+generators are inherited build machinery, invoked through one entry point
+of erXos's top-level build, as OTP's `configure` is
 ([design.md](design.md#build-and-toolchain)), and the build makes the
 `libcrypto.a` target alone.
 
-The build (`tools/lib/erx/libcrypto.rb`, run by `tools/erx build openssl`
-and by each runtime build against that build's own musl) configures one
-target of erXos's own, `erxos-aarch64`, in a file the build passes with
-`--config`, `config/openssl/erxos-aarch64.conf`: `linux-aarch64`'s settings with
-erXos's compiler, sysroot and flags, and `-D__erxos__`. The configuration:
+The build, run by `tools/erx build openssl` and by each runtime build
+against that build's own musl, configures one target of erXos's own,
+`erxos-aarch64` (`config/openssl/erxos-aarch64.conf`): `linux-aarch64`'s
+settings with erXos's compiler, sysroot and flags, and `-D__erxos__`.
+The configuration:
 
 ```
 ./Configure erxos-aarch64 --config=<erXos's target file>
@@ -428,20 +416,14 @@ words, so the choice follows the kernel's report:
 `lib/crypto`, `lib/asn1`, `lib/public_key`, `lib/ssh`, `lib/ssl` and
 `lib/inets` are imported into `otp/` from the same OTP 29.1.2 archive as
 the rest, as erXos's code, with the test suites of `crypto`,
-`public_key`, `ssh`, `ssl` and `inets` as fixtures. The import leaves out what the build neither reads nor
-ships, each part with its reason in `config/imports/otp.json` and
-`otp/ORIGIN.md`: their documentation and examples, which go by one rule
-for the whole of OTP's tree (every `doc`, `examples` and `internal_doc`
-entry, but the files the build reads from beneath one: the Markdown
-that `-moduledoc` and `-doc` attributes take by `{file, ...}` and
-`stdlib`'s `erl_id_trans`), their prebuilt beams, the
-Erlang the ASN.1 compiler generated from `public_key`'s specifications,
-and all of `asn1` but its run-time module `asn1rt_nif`, its NIF and the
-files its make reads to build them, so the ASN.1 compiler, its test
-suites and its examples stay out. The ASN.1 compiler that generates
-`public_key`'s modules on the host is the stock oracle's, a build tool
-as its `erlc` is, so a copy in the tree would be one nothing builds or
-runs. Each ships its beams, `.app` and headers, as the other shipped
+`public_key`, `ssh`, `ssl` and `inets` as fixtures. The import leaves
+out what the build neither reads nor ships, each part with its reason in
+`config/imports/otp.json` and `otp/ORIGIN.md`: documentation and
+examples (but the files the build reads from beneath them), prebuilt beams, the Erlang generated from `public_key`'s ASN.1
+specifications, and all of `asn1` but its run-time module `asn1rt_nif`
+and its NIF. The ASN.1 compiler that generates `public_key`'s modules on
+the host is the stock oracle's, a build tool as its `erlc` is, so a copy
+in the tree would be one nothing builds or runs. Each ships its beams, `.app` and headers, as the other shipped
 applications do
 ([design-runtime.md](design-runtime.md#everything-else)), in releases that
 ask for them; the system release never does.
@@ -456,9 +438,8 @@ ask for them; the system release never does.
   Its NIF is built as `crypto.a` against
   `openssl/`'s `libcrypto.a` and linked into the interpreter and BeamAsm
   images. Its `on_load` finds the NIF in the static table.
-* **`asn1`** ships its run-time module `asn1rt_nif`, which
-  `public_key`'s generated decoders call, and none of the ASN.1 compiler,
-  which runs at build time on the host to generate `public_key`'s modules.
+* **`asn1`** ships only `asn1rt_nif`, which `public_key`'s generated
+  decoders call.
 * **`public_key`** takes one edit: `pubkey_os_cacerts:load/0` gains a
   row for `{unix, erxos}`, which loads `cacerts.pem` of `public_key`'s
   `priv` directory, the image's trust store
@@ -473,8 +454,7 @@ ask for them; the system release never does.
   application and nothing starts it. It takes one edit: **every byte of
   a response is counted where it enters the handler**, so the two limits
   hold for every path the parsers take (CR8):
-  * `httpc_handler`'s receive of socket data (`httpc_handler.erl:499`)
-    passes each segment's size to `httpc_bound`, a pure module added to
+  * `httpc_handler`'s receive of socket data passes each segment's size to `httpc_bound`, a pure module added to
     the application, before any parser sees it. `httpc_bound:take(Count,
     Bytes, Limits)` answers the new count or the error the request ends
     with. The count starts at zero with each response.
@@ -486,8 +466,7 @@ ask for them; the system release never does.
     rule covers the status line, the reason phrase, every header branch
     and every continuation, so none of the parsers' own counts has to be
     complete; a head can hold at most `max_header_size` and one segment.
-  * When the head ends (`handle_http_msg`, `httpc_handler.erl:927-947`),
-    the count restarts at the bytes after it in that segment, the body's
+  * When the head ends, the count restarts at the bytes after it in that segment, the body's
     first fragment, and every later segment adds to it. Once it passes
     `max_body_size`, before the bytes are kept, decoded or delivered, the
     request ends with `{error, body_too_big}`. The count is of bytes as
@@ -802,7 +781,7 @@ Each test names the seeded failure that proves it ran.
 | Test | Passes when | Seeded failure |
 | --- | --- | --- |
 | `crypto_SUITE`, `public_key_SUITE` and `pubkey_*_SUITE`, whose decoders call `asn1rt_nif`, through `make check-oracle` | every case agrees with stock OTP 29.1.2 built against the same OpenSSL | erXos's OpenSSL configured with `no-chacha`: the ChaCha20 cases differ from the oracle and the comparison fails |
-| the system image's link list, a host test (`test/host/native_runtime_link_test.rb`) | the system image's link list (`NativeRuntime::Built#system_archives`) names its own static NIF table once and no `libcrypto.a`, `crypto.a`, `asn1rt_nif.a` or `crypto`'s table; each domain image's names `crypto`'s table and not the system image's | stand-ins of `libbeam.a` and the two tables, linked from the list as an image is: with `crypto`'s table added the link fails on a duplicate symbol, and with the system table taken out on an undefined one; a list that takes `crypto`'s archives fails the test |
+| the system image's link list, a host test | the system image's link list names its own static NIF table once and no `libcrypto.a`, `crypto.a`, `asn1rt_nif.a` or `crypto`'s table; each domain image's names `crypto`'s table and not the system image's | stand-ins of `libbeam.a` and the two tables, linked from the list as an image is: with `crypto`'s table added the link fails on a duplicate symbol, and with the system table taken out on an undefined one; a list that takes `crypto`'s archives fails the test |
 | the import's configure check, `make check-openssl` | `Configure` with erXos's options succeeds on the imported tree and the build makes `libcrypto.a` | `ssl/build.info` left out of the import: `Configure` fails |
 | the seam's `getrandom` row, a host unit test of the seam | 1, 256, 257 and 4,096 bytes come back whole, from 1, 1, 2 and 16 reads of a stub generator; a stub failure on the second piece returns `-EIO` | the row returns the bytes read so far on a failure: the test fails on the short count |
 | first seeding on QEMU | `crypto:strong_rand_bytes(32)` returns 32 bytes in a fresh domain of the interpreter image and in one of the BeamAsm image; in a domain of each started with the backend's generator made to fail by the test image's hook, so that its first seed fails, the first call raises, and in the SSH domain so made a key exchange fails | the seam falls back to zeros on failure: the call returns and the test fails |
