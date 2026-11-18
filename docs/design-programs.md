@@ -719,8 +719,10 @@ pending request behind it and is then served on the new tree. What the
 handler decides before it opens anything fails the open and keeps
 nothing, so the program runs on and a later open tries again: `ENODEV`
 for a session with no `windows` grant on the display or with no
-`display` and no only display, and `EACCES` for a table whose entry at
-exactly `/dev` cannot write. Once the handler has begun opening the
+`display` and no only display, and the table's refusals of a window
+start: `EINVAL` for a table with no room for the window's `/dev` entry,
+and `EACCES` for one whose entry at exactly `/dev` cannot write. Once
+the handler has begun opening the
 window, any failure ends the handler, and the program with it, as a
 failed window start ends what the start reserved: the window, its
 buffer, the connection and the tree are reclaimed by their owner's end
@@ -749,9 +751,13 @@ Once its program has ended, the handler exits with `{shutdown,
 {program_exit, Status}}`, `Status` the end as a parent's wait reads it
 (`{exited, N}` or `{signaled, Signal}`); a `shutdown` reason keeps that
 ordinary end out of OTP's crash reports
-(`lib/stdlib/src/proc_lib.erl:951`). Any other reason is the handler's
-own end, a crash or a port the driver closed with no status to read, and
-the program ended with it, since a port closes with its owner. So a
+(`lib/stdlib/src/proc_lib.erl:951`). A window that failed once its
+opening began, at the program's first open of `/dev/draw`, ends the
+handler with `{shutdown, {window, Errno}}`, `Errno` the window's,
+the connection's or the tree's refusal, and the program with it. Any
+other reason is the handler's own end, a crash or a port the driver
+closed with no status to read, and the program ended with it, since a
+port closes with its owner. So a
 starter handles one message for every end, none ordered against
 another, and names the buffer's offset in no present after it.
 

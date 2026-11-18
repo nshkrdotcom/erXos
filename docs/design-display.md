@@ -2495,13 +2495,16 @@ takes. When the driver answers, `erx_screen` takes what is pending:
    background, and hands the driver one list of rectangles, or the whole
    screen for a driver whose `info/1` reported `partial` false, read
    once at start;
-4. when the driver answers that frame, `erx_screen` answers every
-   present of it with the frame's report ([The window
-   tree](#the-window-tree), `ctl`), tells `erx_winfs` what the screen
-   now shows, and starts the next frame if anything is pending.
+4. when the driver answers that frame, `erx_screen` tells `erx_winfs`
+   what the screen now shows, then answers every present of it with the
+   frame's report ([The window tree](#the-window-tree), `ctl`), so a
+   client holding its present's answer is already among the windows
+   the router holds shown, and starts the next frame if anything is
+   pending.
 
 **What the screen shows** is the layout of the last frame the driver
-answered, and `erx_screen` alone knows it. With each answer it sends
+answered, and `erx_screen` alone knows it. With each answer, before it
+answers the frame's presents, it sends
 `erx_winfs` `{shown, D}`, the shown windows of that frame's layout,
 topmost first, with each one's rectangle and the time of the last frame
 in which the window gained pixels: a frame whose plan copied any of the
