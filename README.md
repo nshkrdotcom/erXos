@@ -537,7 +537,7 @@ Pi has no keyboard in 0.1. To build the published images yourself, run
 `tools/erx fetch --example doom` first, which fetches the fork and
 Freedoom's WAD; `tools/erx pack --medium` refuses without them, or with
 the fork at another commit or changed.
-<!-- unverified: that `doom` typed in rc plays: a program rc starts gets no window yet, and Doom exits without one; the demo loop on the Pi. -->
+<!-- unverified: the demo loop on the Pi 4 card (shown on QEMU's published medium only). -->
 
 ## Correctness and testing
 
