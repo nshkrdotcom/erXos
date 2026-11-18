@@ -3,8 +3,8 @@
 
 -module(erx_quotes_core_tests).
 -moduledoc """
-EUnit cases of the live quotes' core and view (docs/design-quotes.md,
-"Verification and testing"): rounds, held-back sources, backoff,
+EUnit cases of the live quotes' core and view (examples/dashboard/README.md,
+"Testing"): rounds, held-back sources, backoff,
 staleness and ages, and the no-fabrication property over generated
 event sequences. Each case names the seeded failure it catches.
 """.
@@ -390,7 +390,7 @@ history_held_back_test() ->
     ?assertEqual({H1, []}, erx_quotes_core:history_failed(H1, h, timeout, none, ?T0)).
 
 %% The request asks for the day before the clock from the start of its
-%% bucket, as docs/design-quotes.md, "Asking for a history", writes it.
+%% bucket, as examples/dashboard/README.md, "How the quotes behave", says.
 history_url_test() ->
     #{sources := #{kraken_btc := Btc}} = erx_quotes_table:table(),
     ?assertEqual(<<"https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=15&since=1794792600">>,

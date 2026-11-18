@@ -1783,7 +1783,7 @@ only as a third party would build it, through the SDK.
   names; the live quotes' host tests, run through
   `test/host/erx_quotes_test.rb`, and their fuzz target, which the landing
   gate runs at a small budget and `make check-fuzz` at its configured one
-  ([design-quotes.md](design-quotes.md)).
+  ([its README](../examples/dashboard/README.md)).
 * **`examples/doom/`**, the Doom demo, structured as a separate app:
   `ORIGIN.md` beside `doom/`, a git submodule pinned by its gitlink, as
   `display/lvgl/lvgl` is ([design.md](design.md#dependencies)). The

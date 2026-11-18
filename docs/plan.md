@@ -1470,7 +1470,7 @@ land after M11 repeat M11's closure over what they add.
    pipes and its buffer's pages and nothing else
    ([design-display.md](design-display.md#kiosks-and-glasses)).
    The kiosk is one package, `examples/dashboard`, whose quotes are
-   fetched over HTTPS ([design-quotes.md](design-quotes.md)). Part 4a's
+   fetched over HTTPS ([its README](../examples/dashboard/README.md)). Part 4a's
    host check and part 4b's package and boot bring it up on QEMU `virt`
    with no network device, each quote showing `no data`; its live quotes
    wait for 1b-G's network.
@@ -2245,7 +2245,7 @@ its code, and the item's work waits on it.
   0.1's.
 * **The kiosk with live quotes**: track D's parts 3, 4a and 4b in 1b-C
   on track A's parts 1 and 2, and the kiosk's live quotes over HTTPS of
-  track D's part 4 ([design-quotes.md](design-quotes.md)), on 1b-G's network on
+  track D's part 4 ([its README](../examples/dashboard/README.md)), on 1b-G's network on
   QEMU and on the Pi's Ethernet, 1b-I's part (c). It draws on QEMU
   `virt`'s virtio-gpu and on the Pi's firmware framebuffer, 1b-I's part
   (d) ([design-display.md](design-display.md#kiosks-and-glasses)). The
@@ -2255,7 +2255,7 @@ its code, and the item's work waits on it.
   The clock starts at the build's date, so the quotes are live from
   boot, and root's `date` sets it exactly; a build without a date
   leaves it unset, and then every quote reads `no data: clock not set`
-  ([design-quotes.md](design-quotes.md#refusals-and-error-results)).
+  ([its README](../examples/dashboard/README.md#the-clock)).
 * **The clock, set by hand.** With no time source the clock service
   starts the wall clock at the build's date, approximate, which the live
   quotes' TLS checks accept
@@ -2430,7 +2430,7 @@ its code, and the item's work waits on it.
   display's and the kiosk's domains, as each one's
   `/proc/domains/N/status` does; a second boot on the same medium offers the same host key.
 * On QEMU, the kiosk's live-quotes cell `kiosk/hvf-1cpu-quotes` of
-  [design-quotes.md](design-quotes.md#verification-and-testing) passes
+  [its README](../examples/dashboard/README.md#the-qemu-cell) passes
   and fails on its seeds, and the set-time command's tests of its
   design pass, each failing on its seeded fault, with its fuzz target
   running its budget clean.

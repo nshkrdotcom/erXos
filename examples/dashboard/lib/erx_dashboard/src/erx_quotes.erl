@@ -3,7 +3,7 @@
 
 -module(erx_quotes).
 -moduledoc """
-The dashboard's live quotes source (docs/design-quotes.md): the one
+The dashboard's live quotes source (examples/dashboard/README.md): the one
 effect process around the pure core. The dashboard starts it linked to
 itself and shows the boards it sends as `{erx_dashboard_board, Board}`.
 
@@ -15,8 +15,8 @@ that cannot be read, stops it with the reason, which ends the dashboard,
 linked to it. Once a second it ticks
 the core, carries out the actions the core returns and, on `render`,
 sends the dashboard the board of erx_quotes_view when it differs from the
-last one sent. A `fetch` is one httpc request, made exactly as
-docs/design-quotes.md, "One request", states; its answer is classified
+last one sent. A `fetch` is one httpc request, made as
+request/2 below makes it; its answer is classified
 (erx_quotes_http), a redirect within its origin followed within the same
 round, and a body read (erx_quotes_extract), and the outcome goes back
 to the core with the wall-clock second it was read at. A `history` is
@@ -162,9 +162,9 @@ log_changes(Lines, Logged) ->
                         end
                 end, Logged, Lines).
 
-%% One request, as docs/design-quotes.md, "One request", states, to the
-%% address of the request's source: no name is resolved. httpc connects
-%% to the URL with its host replaced by that address; the `host` header
+%% One request, to the address of the request's source: no name is
+%% resolved. httpc connects to the URL with its host replaced by that
+%% address; the `host` header
 %% and the TLS server name are the URL's host, so the server sees the
 %% request it would by name, and the certificate is verified against the
 %% system's roots and checked against the host name (ssl_handshake.erl:

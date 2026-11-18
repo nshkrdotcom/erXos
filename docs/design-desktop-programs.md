@@ -118,71 +118,47 @@ bitmap font on a flat grey field. It must also look like erXos and like
 nothing else: its palette, its icons and its proportions are its own,
 and it takes no other system's assets, names or icons.
 
-### What the tree holds
+### What it builds on
 
-* **The widget toolkit** is `erlang/apps/erx_ui/src`: `erx_ui` exports
-  `open/1`, `tree/2` and `close/1` (`erx_ui.erl:27`); `erx_ui_server`,
-  `erx_ui_model`, the renderer behaviour and the LVGL renderer
-  `erx_ui_lvgl` with its core exist. The Erlang renderer
-  `erx_ui_erlang` and the browser renderer are not in the tree; the
-  Erlang renderer is part 7 of track D
-  ([plan.md](plan.md#track-d-windows-widgets-and-the-web)).
-* **The widget format** `abi/formats/ui.txt` declares fourteen kinds,
-  `column`, `row`, `grid`, `scroll`, `stack`, `label`, `button`,
-  `checkbox`, `slider`, `input`, `list`, `image`, `spacer` and `graph`, and
-  four enumerations, `ui_align`, `ui_role`, `ui_area` and `ui_icon`. It
-  carries a text's role, a container's area, icons, a button's `current`,
-  a node's `name` and a list's `on_submit`, as [Widget format
+* **The widget toolkit**, `erlang/apps/erx_ui`: `erx_ui:open/1`,
+  `tree/2` and `close/1`, the widget server, and the renderers of
+  [design-display.md](design-display.md), LVGL's, the Erlang renderer
+  and the browser's. The widget format `abi/formats/ui.txt` carries a
+  text's role, a container's area, icons, a button's `current`, a node's
+  `name` and a list's `on_submit`, as [Widget format
   additions](#widget-format-additions) describes.
 * **Drawing.** `display/libmemdraw` is 9front's `libmemdraw`. Its draw
   reads a mask without an alpha channel as grey and uses the grey as
   coverage (`draw.c:488-494`, `greymaskread` at `draw.c:1065`), so a
   fill through an 8-bit mask is an anti-aliased fill. Its lines,
-  ellipses, arcs and polygons are not anti-aliased. `erx_memdraw`
-  exports `alloc/5`, `draw/8`, `load/3` and the shapes
-  (`erlang/apps/erx_memdraw/src/erx_memdraw.erl:19`). `erx_draw`,
-  `erx_font`, `erx_draw_conn`, the overlapping policy `erx_wm_rio`, its
-  menu and `erx_term` are part 6's and not in the tree.
-* **Fonts.** The tree holds no font. design-display's dependency rows
-  name plan9port's `fixed` bitmap fonts for the terminal and the first
-  widgets, and the anti-aliased fonts these programs bring
-  ([design-display.md](design-display.md#dependencies)). LVGL compiles in
-  no font of its own: `liblvgl.a` holds each role's LVGL font from the
-  glyph step, Inter's glyphs under OFL-1.1, which the release check
-  admits as font data only (`tools/lib/erx/license_expression.rb`,
-  `FONT_DATA_ONLY`), with Inter's `LICENSE.txt` as the archive's notice
-  (`Erx::Lvgl::Program`).
-* **LVGL** 9.6.0 (`display/lvgl/ORIGIN.md`, commit `80ca777e`) draws
-  rounded corners, shadows and anti-aliased arcs in software: its
-  configuration sets `LV_DRAW_SW_COMPLEX` to `LV_USE_DRAW_SW` when
-  `lv_conf.h` leaves it unset
-  (`include/lvgl/config/lv_conf_internal.h:674-684`; the template says
-  it "adds rounded corners, shadows, skewed lines and arcs",
-  `lv_conf_template.h:281-284`), and it has a chart widget, on by
-  default (`lv_conf_internal.h:2670-2680`), which skips a point whose
-  value is `LV_CHART_POINT_NONE` (`src/widgets/chart/lv_chart.c:424`).
-  erXos's `display/lvgl/lv_conf.h` sets no option that turns these off,
-  and sets theme transitions to zero time (`lv_conf.h:41`).
-* **The inspector.** The schema `abi/inspection.txt` declares, among
-  others, a group's `used_ns` and `capacity_mcpu`, a budget's `used`,
-  `guarantee` and `cap`, a domain's `name`, `state`, `processes` and
-  `run_queue`, and a CPU's `idle_time` and `ready_threads`, with the
-  paths `domains *domain_id group` and `domains *domain_id budget`. It
-  does not declare the `[domains, Id, connections]` records with
-  their frame counts, which design-live lists
-  ([design-live.md](design-live.md#paths)), nor the `time` path with its
-  `state`, which design-time adds
-  ([design-time.md](design-time.md#what-proc-shows)). design-live's
-  Erlang interface is `erx:inspect(Path, Options)`
-  ([design-live.md](design-live.md#erlang-in-every-domain)); the tree's
-  `erx` module does not export it, and the query is
-  `erx_inspector:inspect/1,2` (`erlang/apps/erx/src/erx_inspector.erl:57`).
+  ellipses, arcs and polygons are not anti-aliased.
+* **Fonts.** LVGL compiles in no font of its own: `liblvgl.a` holds each
+  role's LVGL font from the glyph step, Inter's glyphs under OFL-1.1,
+  which the release check admits as font data only
+  (`tools/lib/erx/license_expression.rb`, `FONT_DATA_ONLY`), with
+  Inter's `LICENSE.txt` as the archive's notice. The terminal keeps
+  plan9port's `fixed` bitmap fonts
+  ([design-display.md](design-display.md#dependencies)).
+* **LVGL** draws rounded corners, shadows and anti-aliased arcs in
+  software: its configuration sets `LV_DRAW_SW_COMPLEX` to
+  `LV_USE_DRAW_SW` when `lv_conf.h` leaves it unset
+  (`include/lvgl/config/lv_conf_internal.h:674-684`), and its chart
+  widget skips a point whose value is `LV_CHART_POINT_NONE`
+  (`src/widgets/chart/lv_chart.c:424`). erXos's `display/lvgl/lv_conf.h`
+  turns none of these off, and sets LVGL's theme transitions to zero
+  time (`lv_conf.h:41`).
+* **The inspector**: the schema `abi/inspection.txt` and design-live's
+  query, `erx:inspect(Path, Options)`
+  ([design-live.md](design-live.md#erlang-in-every-domain)), give a
+  group's `used_ns` and `capacity_mcpu`, a budget's `used`, `guarantee`
+  and `cap`, a domain's `name`, `state`, `processes` and `run_queue`, a
+  CPU's `idle_time` and `ready_threads`, a domain's connections with
+  their frame counts ([design-live.md](design-live.md#paths)) and the
+  clock's `state` ([design-time.md](design-time.md#what-proc-shows)).
 * **Stock OTP** gives what the cores compute with: `file:list_dir_all/1`
-  and `file:read_link_info/1` (`otp/lib/kernel/src/file.erl:1066`,
-  `:821`), and `calendar:day_of_the_week/1`,
+  and `file:read_link_info/1`, and `calendar:day_of_the_week/1`,
   `calendar:last_day_of_the_month/2`, `calendar:iso_week_number/1` and
-  `calendar:system_time_to_universal_time/2`
-  (`otp/lib/stdlib/src/calendar.erl:297`, `:410`, `:378`, `:727`).
+  `calendar:system_time_to_universal_time/2`.
 * **Names.** FreeBSD builds `ncal`, which installs `cal`, and
   `calendar`, its reminder service (`usr.bin/Makefile`, lines 95 and
   189, at FreeBSD commit `95719d8a895b`). It has no `stats`, `clock`,
@@ -376,65 +352,30 @@ which validates every row and writes:
   of the glyph step (below): which font files, at which sizes and
   weights, and which icons at which sizes.
 
-Its grammar, in outline (the full grammar is
-[design-abi.md](design-abi.md#theme)'s):
-
-```text
-theme 1
-  unit 4
-  font ui display/fonts/inter regular Inter-Regular.ttf medium Inter-Medium.ttf semibold Inter-SemiBold.ttf
-  range ui 0020-007E 00A0-017F 2000-206F 2190-21FF 2713-2713
-  role display  font ui size 48 line 64 weight semibold figures tabular
-  role headline font ui size 26 line 36 weight semibold
-  role figure   font ui size 22 line 28 weight semibold figures tabular
-  role title    font ui size 20 line 28 weight semibold
-  role heading  font ui size 15 line 20 weight semibold
-  role body     font ui size 13 line 20 weight regular
-  role numeric  font ui size 13 line 20 weight medium figures tabular
-  role caption  font ui size 11 line 16 weight regular color secondary
-  space xs 1  s 2  m 3  l 4  xl 6  xxl 8          # in units of 4 px
-  radius control 6  section 10  menu 8  window 0
-  hairline 1
-  shadow section 0 2 12 10                       # x y blur percent
-  color window     F6F5F2 0D0F2A
-  color surface    FFFFFF 23253D
-  color sunken     EEEDE9 090B22
-  color line       DDDCD7 2A2C44
-  color text       1B1C1E FFFFFF
-  color secondary  5D6066 9E9FAA
-  color tertiary   8A8E94 6E6F7F
-  color accent     0E7A6B 7FE7F2
-  color on_accent  FFFFFF 0D0F2A
-  color ok         2F7D4F 8BE8B0
-  color warn       9A6A12 FFC46B
-  color critical   B3362C FF9B8A
-  color series_cpu 0E7A6B 7FE7F2
-  color series_mem 5B53C6 A79CFF
-  color series_msg B8620B FFB547
-  color desktop    D9DAD5 0D0F2A
-  contrast text      on window surface sunken 7.0
-  contrast secondary on window surface sunken 4.5
-  contrast on_accent on accent 4.5
-  icons display/icons/icons.txt sizes 16 32
-  transition press  120 ease_out                 # ms; a button's down and up
-  transition state  160 ease_out                 # checked, selected, current, value
-  transition reveal 200 ease_out                 # visible from false to true
-```
-
-A `color` row gives the colour's value in each palette: light, then
-dark. The colour values are the starting palettes, tuned with the first
-screenshots; the rules are what the generator enforces. Each is a
-checked constraint, as the spec discipline asks:
+The theme holds the spacing unit and scale, the hairline, the fonts with
+their weights and the code-point ranges the glyph step rasterises, the
+type roles (each a font, size, line height, weight, figure style and,
+for `caption`, a colour), the corner radii, the section shadow, the
+colours, each with a light and a dark value, the contrast each
+foreground must meet on the backgrounds it is drawn on, the icons and
+their sizes, and one transition for each member of `ui_transition`
+([Motion](#motion)): `press` 120 ms, `state` 160 ms and `reveal`
+200 ms, each `ease_out`. Its rows are in
+[`abi/theme.txt`](../abi/theme.txt) and its grammar in
+[design-abi.md](design-abi.md#theme). The colour values are starting
+palettes, tuned with the first screenshots; the rules are what the
+generator enforces, each a checked constraint, as the spec discipline
+asks:
 
 * every colour a `role` or a `contrast` row names is declared, once;
-* every `contrast` row holds, by WCAG 2's contrast ratio of relative
-  luminances, whose definition the generator cites from the
-  specification it implements, in each palette: body text at 7:1
-  against every surface
-  it names, secondary text at 4.5:1, text on the accent at 4.5:1; a
-  seeded `secondary` of `B0B0B0` fails the build;
-* every `role` names a declared font and weight, and a size and line
-  height on the 4-pixel grid where the line height is concerned;
+* every `contrast` row holds in each palette, by WCAG 2's contrast ratio
+  of relative luminances, whose definition the generator cites from the
+  specification it implements: body text at 7:1 against every surface
+  it names (window, surface and sunken), secondary text at 4.5:1, and
+  text on the accent at 4.5:1; a seeded `secondary` of `B0B0B0` fails
+  the build;
+* every `role` names a declared font and weight, and its line height
+  lies on the 4-pixel grid;
 * every `space` and `radius` value is a whole number of units or
   pixels, and `radius window` is 0 (see Windows, below);
 * every member of `ui_transition` has one `transition` row, with a
@@ -901,8 +842,8 @@ translucent panel would only show the window's own ground. Shadows fall
 only inside a window, under its sections.
 
 LVGL draws the same elements with its own software renderer, which
-already anti-aliases, rounds and shadows ([What the tree
-holds](#what-the-tree-holds)); `erx-lvgl` sets the radii, shadow and
+already anti-aliases, rounds and shadows ([What it builds
+on](#what-it-builds-on)); `erx-lvgl` sets the radii, shadow and
 colours of each role's style from `erx/theme.h`. The browser draws them
 with CSS from `theme.ts`.
 
@@ -1301,7 +1242,9 @@ session's namespace, a `list` of the current folder with an icon per
 item, and an info `section` for the selected item with, for text, a
 preview. A `toolbar` holds back and forward, the path as a row of
 buttons, one per folder from the root, the current folder's carrying
-`current`, and refresh and copy path. A path deeper than 16 folders
+`current`, refresh, copy path, and "Open with", enabled while an item
+is selected, which opens the session's palette on the item's exact path
+([design-find-act.md](design-find-act.md#gestures-on-a-value)). A path deeper than 16 folders
 shows the root's button, an ellipsis and the last 16, so the toolbar's
 children stay within the schema's bound.
 
@@ -1544,194 +1487,143 @@ the menu's labels, reads them as data.
 ## Verification and testing
 
 Host tests run with `make check`, as every core's do; the QEMU cell runs
-in the `display_domain` suite when this part lands and at the milestone
-gate. Each test names the fault that must make it fail.
+in the `display_domain` suite and at the milestone gate. Each test names
+the fault that must make it fail.
 
-**The cores, on the host.**
+**The cores, on the host,** over recorded readings and inspector and
+file models, with these seeded faults:
 
-| Test | Passes when | Seeded fault that fails it |
-| --- | --- | --- |
-| stats: derivation | every pair of reading statuses gives the status D2's table says; shares and rates match hand-computed values over recorded readings | `partial` kept as `ok`; a share divided by the period without the grant |
-| stats: gaps and resets | a counter that goes down, a domain that leaves and returns, and a timed-out query each give a gap, and no value is negative | the reset check removed |
-| stats: pacing | with an inspector model that answers slowly, at most one sample is in flight | a tick that samples while the last sample waits |
-| stats: answers out of order | an answer of an earlier sample, arriving after a later one, changes nothing | the tag check removed |
-| stats: partial history and zero denominators | a partial sample followed by `ok` samples leaves a gap at the partial point; a group of `capacity_mcpu` 0, a budget of `cap` 0 and a machine of `memory_total` 0, all legal records of the schema, each give a gap and the number's fact | a ring that stores partial values; a division by zero answered as 0 |
-| stats: a scoped facet | with an inspector model that answers as design-live's scoped facet does, for two ordinary principals, `[]` and `[cpus, N]` with only their `visible any` attributes and a listing of only each principal's own domains, the four machine panels show the same values for both principals, each window's rows are its own principal's domains, and no count of other domains appears anywhere | a CPU panel that reads `running_thread`, which the scoped record leaves out, and shows a gap |
-| clock: states | each `state` and each non-`ok` status gives its row of the table | the state ignored (D3) |
-| clock: ticks | over recorded readings, including a wall step back and forward and an early tick, each tick shows the minute its reading gives and asks for a `tick_after` of the delay from its reading to the next minute's start; a step is shown by the first tick after it | the next tick set 60 s after the last instead of from the reading |
-| clock: reading order | a clock set between a tick's own reading and its `[time]` answer shows the wall reading taken after the answer, never the time since boot as a `set` date; the window's inspection worker reads the wall clock after the inspector answers | the tick's reading shown instead of the answer's (D3); the worker reading the wall clock before the inspector |
-| month: every month | for every month from 1600 to 2400, the grid's first weekday, length and week numbers equal `calendar`'s | February given 29 days in 1900 |
-| month: arguments | every form of `cal` and every refusal | a `MONTH` of 13 accepted |
-| files: kinds and sorting | the kind table over a corpus of names and modes; byte order of names | a link to a folder listed as a folder without its link mark |
-| files: by index | D4 | lookup by shown text |
-| files: paging | a 1,204-item folder pages by 256, activation on page 3 opens item 513 + index, and each page asks information for its own names only, at most 256 | an off-by-one in the page offset; a `stat` effect over every name |
-| files: bounds | a listing worker given a host folder of 500,000 names is killed by its heap cap, and the window shows "too large" and still takes input | the worker spawned without `max_heap_size`, so it answers the whole listing and the test, which expects the refusal, fails |
-| files: text test and preview | a file with a NUL, with invalid UTF-8 at byte 10,000, and with valid text, each classified; a text file longer than 16 KiB whose 16,384th byte begins a three-byte character is text and its preview ends before that character; a file of 100 bytes ending in the first byte of a two-byte character is not text; a 1 MiB file reads at most 16 KiB | the read bound removed, caught by the read size; a classifier that checks only the first 4 KiB, caught by the byte 10,000 case |
-| window: lifetime | with a file model that never answers, navigating away cancels the read and no input follows from it; closing a window with two workers in flight leaves neither alive, and the grant model holds no fid of theirs; a worker that crashes gives its request's error | the window ending `normal` on close, which leaves the workers alive; a kill without the unlink, which sends the window a `failed` input |
-| every core: valid trees | D5 | the cut skipped |
+* stats: `partial` kept as `ok`, and a share divided by the period
+  without the grant (D2's derivation); the reset check removed (a counter
+  that goes down, a domain that leaves and returns and a timed-out query
+  each give a gap, never a negative value); a tick that samples while the
+  last sample waits (pacing); the tag check removed (an earlier sample's
+  late answer changes nothing); a ring that stores partial values, and a
+  division by zero answered as 0 (a `capacity_mcpu`, `cap` or
+  `memory_total` of 0, all legal, gives a gap); and, under a scoped facet
+  answering as design-live's does for two ordinary principals, a CPU
+  panel that reads `running_thread`, which the scoped record leaves out
+  (both principals see the same machine panels and only their own
+  domains, and no count of other domains appears);
+* clock: the state ignored (D3); the next tick set 60 s after the last
+  instead of from the reading, over wall steps back and forward and an
+  early tick; the tick's reading shown instead of the answer's, and the
+  window's worker reading the wall clock before the inspector answers;
+* month: February given 29 days in 1900, over every month from 1600 to
+  2400 against stock OTP's `calendar`; a `MONTH` of 13 accepted, over
+  every form of `cal` and every refusal;
+* files: a link to a folder listed as a folder without its link mark;
+  lookup by shown text (D4); an off-by-one in the page offset, and a
+  `stat` effect over every name, on a 1,204-item folder; a listing
+  worker spawned without `max_heap_size`, given 500,000 names; the read
+  bound removed, and a text classifier that checks only the first 4 KiB,
+  over a NUL, invalid UTF-8 at byte 10,000 and a character cut at the
+  16 KiB preview bound;
+* the window: ending `normal` on close, which leaves its workers alive,
+  and a kill without the unlink, which sends the window a `failed` input;
+* every core: the cut skipped (D5).
 
 **Rendering, on the host,** through `erx_ui_host`
 ([design-packaging.md](design-packaging.md#the-sdk)), which runs the
-widget server, the schema and the renderer the session runs:
+widget server, the schema and the renderer the session runs: each
+program's tree, from recorded inputs and a fixed time, equals its
+reference frame under `test/display/reference/desk/`, which a section's
+radius changed by one pixel fails; design-live's attributed-text corpus,
+as file names and a domain name, draws as tokens, which a renderer
+without the line escape fails; and track D's parity test finds the same
+events, values and nodes through the Erlang, LVGL and browser renderers,
+which an LVGL reader that drops `none` samples fails.
 
-* each program's tree, from recorded inputs and a fixed time, drawn by
-  the Erlang renderer equals its reference frame
-  under `test/display/reference/desk/`; a section's radius changed by
-  one pixel fails it;
-* the attributed-text corpus of design-live, as file names in files and
-  as a domain name in stats, draws its tokens; a seeded renderer without
-  the line escape fails it;
-* the parity test of track D runs the four programs' trees and inputs
-  through the Erlang, LVGL and browser renderers and finds the same
-  events, values and nodes, the new kinds and properties among them;
-  a seeded LVGL reader that drops `none` samples fails it.
+**The raster and glyph steps, on the host.** `erx_mask`'s quarter discs
+of radius 1 to 32 sum to the disc's area within one part in a thousand
+(or half a coverage step), and its strokes cover each column by their
+width; a half-pixel offset fails both. The glyph step's output is
+byte-identical over two runs, pair sections included, and a role whose
+tabular figures it cannot find is refused; a glyph shifted by one pixel
+fails the reference frames. An icon without paths fails the generator.
 
-**The raster and glyph steps, on the host.** `erx_mask`'s quarter
-disc of radius 1 to 32 sums, row by row, to the disc's area within one
-part in a thousand, or within half of one coverage step where that is
-larger (radius 1, whose one byte cannot come closer), and its stroke
-of a straight line covers each column by the stroke's width at the
-rows the line crosses; a seeded half-pixel offset fails both.
-The glyph step's coverage of a square glyph is exact, its output is
-byte-identical over two runs, and a role whose tabular figures it cannot
-find is refused; a seeded glyph shifted by one pixel fails the
-reference frames above. Every icon the `icon` enumeration names has
-paths in `icons.txt`, a straight stroke of an icon covers each column
-by the stroke's width, and the menu's glyph module loads with
-`erx_memdraw:load/3`; a seeded icon without paths fails the generator.
+**Kerning, on the host.** The test checks the step's values for Inter
+Regular in the `body` role against fixed units read for this design:
+`AV`, `To`, `Ty` and `",` are -140, -160, -128 and -168, `",` the sum
+of the first lookup's 0 and the second's -168. The design's external
+review confirmed these four once with HarfBuzz 15.0.0; no shaper checks
+the rest ([Open decisions](#open-decisions), 2). Seeded faults:
 
-**Kerning, on the host.** Each test is paired with the seeded fault it
-must catch:
-
-* `Erx::Gpos` over a `GPOS` table the test builds, whose expected
-  values follow from its construction: a `kern` feature of two lookups,
-  the first an extension lookup wrapping a format 1 subtable and a
-  format 2 subtable, the second a format 2 subtable; one pair is given
-  by both lookups and must read as their sum, one is covered by the
-  first lookup's format 1 subtable without its second glyph and must
-  read as the format 2 subtable's class value, and one has a second
-  glyph that no class definition lists and must read as class 0's
-  value. A seeded reader that stops at the first lookup that matches,
-  FreeType's rule, fails the sum, and one that stops at a format 1
-  subtable whose coverage holds the first glyph fails the second case.
-* The same table cut short, with a value format of placement, with a
-  lookup of type 1 under `kern`, with a lookup flag of ignore ligatures,
-  with a `latn` script without a default language system, with a
-  drawn glyph that `GDEF` classes a mark, and a font with a legacy
-  `kern` table, are each refused with the step's typed error; a seeded
-  reader without its bound on offsets fails the first with another
-  error, and one that leaves the flags unread accepts the third. The
-  table with its `kern` feature naming each lookup twice reads as the
-  table that names it once, where a seeded reader that applies a lookup
-  each time it is named doubles the sum.
+* `Erx::Gpos`, over a `GPOS` table the test builds whose expected values
+  follow from its construction: a reader that stops at the first lookup
+  that matches, FreeType's rule, fails a pair two lookups give; one that
+  stops at a format 1 subtable whose coverage holds the first glyph
+  fails a pair only a format 2 subtable gives; one without its bound on
+  offsets fails a cut table with the wrong error; one that leaves the
+  lookup flags unread accepts ignore-ligatures; one that applies a lookup
+  each time `kern` names it doubles the sum. A placement value format, a
+  type 1 lookup, a `latn` script without a default language system, a
+  glyph `GDEF` classes a mark and a legacy `kern` table are each refused
+  with a typed error.
 * `Erx::Gpos`'s fuzz target, `tools/fuzz/gpos_fuzz.rb`, run by
-  `make check-fuzz`, starts from the `GPOS` and `GDEF` tables of the
-  three Inter fonts, as `erx-raster` reports them, and from the tables
-  the test above builds, and changes, inserts and removes bytes, cuts
-  the tables short and writes offsets and counts near and past their
-  ends; each round passes a random set of up to 64 glyph indices, some
-  past the font's glyph count, so a round stays short. Every input must
-  end in pairs or in an `Erx::Error`: any other exception fails the run
-  with the input, as does a call that outlasts ten times the slowest
-  unmutated seed's time, measured when the target starts. Pairs it
-  returns name only the glyphs given, in order pairs of two, each with
-  a value that is not 0. A seeded reader without its bound on offsets
-  fails it with an exception other than `Erx::Error`, and one that
-  follows an extension wrapping another extension fails it on a table
-  whose extension points at itself.
-* Inter Regular in the `body` role, against the font's kerning: the
-  step's values for `AV`, `To`, `Ty` and `",` are -140, -160, -128 and
-  -168 units, each the one lookup's value or, for `",`, the sum of the
-  first lookup's 0 and the second's -168, as read for this design and
-  confirmed with HarfBuzz 15.0.0 by the design's external review; the
-  width that `erx_font:width/2` gives each two-character string, from
-  `body.subfont` as `erx_font` parses it, equals the one computed from
-  `erx-raster`'s advances and those units by the rounding rule in exact
-  arithmetic, 17, 15, 15 and 9 pixels, so `Ty`'s pair is absent; the
-  same at the `title` role's 20 pixels gives `Ty` a pair. A seeded step
-  that writes the adjustment with the wrong sign, or rounds k on its own
-  rather than the kerned advance, fails these widths.
-* `erx_font` refuses each fault of the pair section with `kern`, an
-  index at the glyph count, a count of -1 with no entries and a count
-  field that is not a number among them, and accepts a section whose
-  last index is one below it; a seeded reader with the bound off by one
-  does not refuse the first with `kern`, and one that reads the count with the header's
-  number reader answers `header` for the third. Its fuzz target
-  (`test/erlang/erx_font_fuzz.erl`) adds `kern` to its closed set of
-  reasons, writes pair sections in one round in four, and checks that
-  every accepted file's pairs ascend, name drawn glyphs and keep every
-  kerned advance in 0 to 255. Its two properties of an accepted file's
-  neighbours follow the section: a byte appended to a file
-  with pairs is refused with `kern`, and to one without them with
-  `trailing`; every prefix of the file is refused, except that a file
-  with pairs cut exactly at the end of its glyph table parses to the same
-  subfont without pairs.
-* The line-length check, over the `caption`, `body`, `heading` and
-  `title` subfonts: ten `i` measure 30 pixels by `erx_font:width/2` in
-  both `caption` and `body`, where the review measured the font's at
-  26.72 and 31.56; and over the tree's `README.md`, its lines chosen as
-  [Whole pixels and the pen](#kerning) chooses them, every line's width
-  by `erx_font:width/2` equals the
-  sum of the rule's rounded kerned advances computed in exact arithmetic
-  from `erx-raster`'s advances and the pairs' units. The test prints,
-  per role, the mean and the largest difference between each line's
-  width and its exact width, and the share of neighbour distances more
-  than half a pixel from the font's under each of the three pens of
-  [Open decisions](#open-decisions), 3, for the session that judges
-  them. A seeded width that adds exact advances and rounds the line once
-  gives the ten `i` 27 and 32 pixels and fails.
-* `erx_pen` places `AV` with V at A's advance plus the pair's
-  adjustment; `erx_font:runs/2` cuts a line with one pair into two runs,
-  and their `s` messages stepped through `erx_draw_core` draw every
-  glyph at the offset `erx_pen` gives it, where a seeded `runs/2` that
-  cuts but does not move the second run fails; a line without pairs is
-  one message.
-* Every tabular role's subfont holds no pair naming a digit, and
-  the menu module's `kern/2` equals `body.subfont`'s pairs taken to
-  their characters, where a seeded module keyed by glyph index fails.
-* Through LVGL's own font code on the host, the `body` font's `A`
-  before `V` advances by A's width plus the pair's adjustment, where a
-  seeded kern scale of 16 fails.
-* Two runs of the glyph step write byte-identical files, pair sections
-  included.
+  `make check-fuzz`, mutates the three Inter fonts' `GPOS` and `GDEF`
+  tables and the built ones, with up to 64 glyph indices a round; every
+  input ends in pairs of the given glyphs, each nonzero, or in an
+  `Erx::Error`, within ten times the slowest seed's time. A reader
+  without its offset bound raises another exception, and one that
+  follows an extension wrapping another extension fails on a
+  self-referencing table.
+* Widths: `erx_font:width/2` of each pair at `body` gives 17, 15, 15 and
+  9 pixels, so `Ty`'s pair is absent there and present at `title`'s 20
+  pixels; a step that writes the adjustment with the wrong sign, or
+  rounds k on its own rather than the kerned advance, fails them. Ten
+  `i` measure 30 pixels in both `caption` and `body` (the font's are
+  26.72 and 31.56), and every line of the tree's `README.md` measures the
+  sum of the rule's rounded kerned advances; a width that adds exact
+  advances and rounds the line once gives 27 and 32 and fails. The test
+  prints, per role, how far each of the three pens of
+  [Open decisions](#open-decisions), 3, lands from the font's distances.
+* `erx_font` refuses each fault of the pair section; a bound off by one
+  misses an index at the glyph count, and a count read with the header's
+  number reader answers `header`. Its fuzz target
+  (`test/erlang/erx_font_fuzz.erl`) writes pair sections in one round in
+  four and checks that accepted pairs ascend, name drawn glyphs and keep
+  every kerned advance in 0 to 255, that a byte appended is refused
+  (`kern` or `trailing`), and that every prefix is refused except one cut
+  at the end of the glyph table.
+* A `runs/2` that cuts a line at a pair but does not move the second run;
+  a menu module whose `kern/2` is keyed by glyph index; a kern scale of
+  16 in LVGL's own font code. Every tabular role's subfont holds no pair
+  naming a digit.
 
 **The widget format additions.** The validator refuses a `role` on a
 kind that does not take it, `icons` of another length than `items`, a
-sample outside `min` and `max`, and a 241st sample, each with its reason
-and path; the generator refuses a `none` list whose integer type holds
--2^31; the readers' fuzz targets cover the new records with seeds the
-generator writes from the declaration; a seeded validator without the
-`parallel` check fails its test.
+sample outside `min` and `max`, a 241st sample and a `name` of 256
+bytes, each with its reason and path; a validator without the
+`parallel` check, and a `name` bound of 256, fail. The generator refuses
+a `none` list whose integer type holds -2^31, and the readers' fuzz
+targets cover the new records with seeds the generator writes from the
+declaration.
 
-**The escape at the wire.** Names of 128 bytes made entirely of
-controls and bidirectional overrides, preview lines of 4,096 such
-bytes and a domain name of 255, each through the Erlang, LVGL and
-browser renderers, are drawn as their tokens, cut at a whole token in
-LVGL, and every record `erx_ui_lvgl` writes is accepted by the C
-reader; a seeded `erx_ui_lvgl` that escapes without cutting fails it.
+**The escape at the wire.** Names of 128 bytes, preview lines of 4,096
+and a domain name of 255, made entirely of controls and bidirectional overrides draw as tokens in every
+renderer, cut at a whole token in LVGL, and every record `erx_ui_lvgl`
+writes is accepted by the C reader; an `erx_ui_lvgl` that escapes
+without cutting fails it.
 
-**The theme.** D7, and a `contrast` row naming an undeclared colour, refused.
+**The theme.** D7, and a `contrast` row naming an undeclared colour,
+refused.
 
-**`name`, the query and the reload.** The validator takes `name` on
-every kind and refuses one of 256 bytes, with its reason and path, where
-a seeded bound of 256 accepts it. Each program's core tests find files'
-back button by its `name` alone, so a seeded files core whose back
-button carries none fails them at the query. On the host, a files window
-with two folders of history, its core reloaded with a version whose
-`view/1` adds a label, presents the label with the same folder and
-history, where a seeded `reload` that starts the window again from
-`init` loses the history and fails it.
+**The query and the reload.** Each program's core tests find files'
+back button by its `name` alone, which a back button without one fails.
+A files window whose core is reloaded with a version that adds a label
+shows the label with the same folder and history; a `reload` that
+starts again from `init` loses the history.
 
-**On QEMU, the `display_domain` suite.** One test, in the suite's one
-cell, HVF at one CPU: the desktop's session runs `files` on a folder
-of the suite's image and `month 11 2026`, and a screenshot through
-QEMU's monitor equals the reference image; a seeded theme colour fails
-it. stats and clock show live values, so the cell checks them through
-the inspector instead of pixels: each window is listed under the display
-domain's `[domains, Id]` record with its label, and over three seconds
-stats' window's present count grows by at least two and clock's by at
-most one, where a seeded stats that never samples fails the first and a
-seeded once-a-second clock the second.
+**On QEMU, the `display_domain` suite**, one cell at one CPU under HVF:
+`files` on a folder of the image and `month 11 2026` equal the reference
+screenshot, which a seeded theme colour fails. stats and clock show live
+values, so the cell checks them through the inspector, where each
+window is listed under the display domain's `[domains, Id]` record with
+its label: over three
+seconds stats' window presents at least two more times and clock's at
+most one more, which a stats that never samples and a once-a-second
+clock fail.
 
 ## Performance
 

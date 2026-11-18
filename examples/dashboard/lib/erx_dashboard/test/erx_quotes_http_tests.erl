@@ -3,8 +3,8 @@
 
 -module(erx_quotes_http_tests).
 -moduledoc """
-EUnit cases of the classifier (docs/design-quotes.md, "Verification and
-testing", the classify test): each status, redirect and error shape of
+EUnit cases of the classifier (examples/dashboard/README.md,
+"Testing"): each status, redirect and error shape of
 the reasons table, built as httpc and ssl answer, maps to its reason;
 redirects that leave the origin are refused, a relative one followed and
 a fourth hop refused; `retry-after` values give their delays; an expired

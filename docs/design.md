@@ -83,7 +83,6 @@ evidence, not design contracts.
 | [design-apps.md](design-apps.md) | apps as principals, the start table and `service` |
 | [design-packaging.md](design-packaging.md) | packages: one file per app, admission, install and update at run time, the SDK |
 | [design-app-trees.md](design-app-trees.md) | an app's own tree at `/svc/NAME` |
-| [design-quotes.md](design-quotes.md) | the kiosk's live quotes example |
 | [design-web.md](design-web.md) | the web client and its two front ends |
 | [design-log.md](design-log.md) | the system log |
 | [design-time.md](design-time.md) | network time and the clock service |

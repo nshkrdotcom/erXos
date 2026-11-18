@@ -34,7 +34,7 @@ module Erx
   # (AppPack.describe) never sees it; the session's /app mount then refuses the image
   # (UNVERIFIED), no /app is mounted and the dashboard shows nothing.
   #
-  # The quotes cell (docs/design-quotes.md, "The QEMU cell") boots the same package on a
+  # The quotes cell (examples/dashboard/README.md, "The QEMU cell") boots the same package on a
   # test image whose trust store adds the root of an offline HTTPS fixture
   # (QuotesFixture, ProductionImage#build_medium's test roots), with a network device on
   # restricted user networking whose one guest forward, for erx_quotes_table's address

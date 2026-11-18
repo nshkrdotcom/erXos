@@ -155,7 +155,7 @@ module Erx
     # port port starts `nc 127.0.0.1 relay_port`, with the connection as its standard
     # input and output and its arguments split without a shell (src/misc.c:212-248), so
     # the connection reaches the harness's server at that loopback port. Nothing else the
-    # guest sends leaves the host (docs/design-quotes.md, "The QEMU cell").
+    # guest sends leaves the host (examples/dashboard/README.md, "The QEMU cell").
     Relay = Data.define(:network, :address, :port, :relay_port) do
       def initialize(network:, address:, port:, relay_port:)
         range = IPAddr.new(network)
