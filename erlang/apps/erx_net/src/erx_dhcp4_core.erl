@@ -32,7 +32,7 @@ across a restart:
   sent again.
 * `requesting`: an acceptable ACK for the offered address from the offering server
   configures the lease, then `bound`; a NAK from the
-  selected server returns to `init`, which starts again after a retransmission delay;
+  selected server returns to `init`, which starts again after an exchange's first wait;
   after five REQUESTs without an answer the client starts again with a DISCOVER.
 * `bound`: at T1, a REQUEST unicast to the server with a fresh transaction id, then
   `renewing`.
@@ -43,10 +43,22 @@ across a restart:
   left (section 4.4.5); at T2 the REQUEST is broadcast instead, and at the lease's end the
   lease is unconfigured and a DISCOVER starts again.
 
-Retransmissions in `selecting` and `requesting` wait 4 seconds, doubling to 64, each moved
-by a uniform delay of -1 to +1 second (section 4.1). The transaction ids and these delays
-come from the `erx_net_rand` generator in the state. RFC 4.4.1's random wait of one to
-ten seconds before the first DISCOVER is not made, as `dhclient` does not make it. Nor is
+Retransmissions in `selecting` and `requesting` follow `dhclient`'s timing rather than
+section 4.1's 4 seconds doubling to 64: whole seconds, from an interval of 3 seconds
+(`initial_interval`) that each send grows by a uniform 0 to twice itself less a second,
+on average doubling it, and that is drawn again from 7 to 21 seconds once it passes 15
+(`backoff_cutoff`; `send_discover`, sbin/dhclient/dhclient.c:1381-1396). Every exchange
+starts from 3 seconds, so its first wait is 3 to 8 seconds. `dhclient`'s `send_request`
+redraws a REQUEST's interval past the cutoff over the grown interval rather than the
+cutoff (dhclient.c:1602-1606); here both messages use `send_discover`'s rule, which
+keeps every wait within 21 seconds. While no server answers, DISCOVERs go on at those
+waits, where `dhclient` gives up after its 60-second `timeout` (dhclient.c:1341-1345)
+and starts again after its 300-second `retry_interval` (`state_panic`, dhclient.c:1521).
+After a NAK the DISCOVER waits an exchange's first wait, where `dhclient` starts again at
+once (`dhcpnak`), so a server that refuses every REQUEST cannot hold the client in a
+loop of messages. The transaction ids and these delays come from the `erx_net_rand`
+generator in the state. RFC 4.4.1's random wait of one to ten seconds before the first
+DISCOVER is not made, as `dhclient` does not make it. Nor is
 the offered address probed with ARP before it is used (RFC 2131 4.4.1, RFC 5227):
 `dhclient`'s `ARPCHECK` step does nothing in its stock script. The interface announces the
 address with a gratuitous ARP when it configures it, and erx_arp reports another host
@@ -94,13 +106,13 @@ never renewed.
 
 -include("erx_dhcp4_wire.hrl").
 
--export([new/4, step/3, next_deadline/1, xid/1]).
+-export([new/4, step/3, next_deadline/1, xid/1, next_interval/3]).
 
 -export_type([core/0, event/0, action/0, lease/0, route/0]).
 
--define(RETRANSMIT_FIRST_MS, 4000).
--define(RETRANSMIT_MAX_MS, 64000).
--define(JITTER_MS, 1000).
+%% dhclient's initial_interval and backoff_cutoff, in seconds (sbin/dhclient/clparse.c:82-83).
+-define(INITIAL_INTERVAL_S, 3).
+-define(BACKOFF_CUTOFF_S, 15).
 -define(REQUEST_SENDS, 5).
 -define(RENEW_MIN_MS, 60000).
 -define(LEASE_MIN_S, 60).
@@ -153,6 +165,7 @@ when the server names no domain, and `mtu` the device's MTU when the server give
                began = 0 :: integer(),     % when the exchange began, for `secs`
                asked = 0 :: integer(),     % the exchange's first REQUEST, the lease's base
                sends = 0 :: non_neg_integer(),
+               interval = ?INITIAL_INTERVAL_S :: pos_integer(), % the last wait (s), once sends > 0
                offer = none :: none | #dhcp4{},
                lease = none :: none | lease(),
                times = none :: none | #times{}}).
@@ -249,11 +262,37 @@ renew(#core{phase = Phase, lease = #{addr := Addr, server := Server}, times = Ti
 renew_wait(Left) -> max(Left div 2, min(Left, ?RENEW_MIN_MS)).
 
 %% Sends one message of selecting or requesting and waits the next backoff for an answer.
-retransmit(Send, #core{sends = Sends, gen = Gen} = Core, Now) ->
-    Base = min(?RETRANSMIT_FIRST_MS bsl min(Sends, 4), ?RETRANSMIT_MAX_MS),
-    {Jitter, Gen1} = erx_net_rand:uniform(2 * ?JITTER_MS + 1, Gen),
-    {Core#core{sends = Sends + 1, gen = Gen1, deadline = Now + Base + Jitter - ?JITTER_MS},
+%% An exchange's first send (no sends yet) takes its first wait; `interval` is read only
+%% after that.
+retransmit(Send, #core{sends = Sends, interval = Last, gen = Gen} = Core, Now) ->
+    {Wait, Gen1} = case Sends of
+                       0 -> first_wait(Gen);
+                       _ -> backoff(Last, Gen)
+                   end,
+    {Core#core{sends = Sends + 1, interval = Wait, gen = Gen1, deadline = Now + Wait * 1000},
      [Send]}.
+
+%% An exchange's first wait: the initial interval grown once, 3 to 8 seconds, as
+%% `dhclient` sets the interval to it when an exchange starts (`state_init`,
+%% `state_selecting`) and grows it before the first send.
+first_wait(Gen) -> backoff(?INITIAL_INTERVAL_S, Gen).
+
+%% `dhclient`'s backoff (`send_discover`, sbin/dhclient/dhclient.c:1381-1396), in whole
+%% seconds, from a growth drawn from 0 to twice the interval less one and a redraw drawn
+%% from 0 to the cutoff less one.
+backoff(Interval, Gen) ->
+    {Growth, Gen1} = erx_net_rand:uniform(2 * Interval, Gen),
+    {Redraw, Gen2} = erx_net_rand:uniform(?BACKOFF_CUTOFF_S, Gen1),
+    {next_interval(Interval, Growth, Redraw), Gen2}.
+
+%% The interval after one send: grown by Growth, or, once that passes the cutoff, 7 + Redraw
+%% (7 to 21 seconds). Exported for EUnit, which checks it over every draw.
+-doc false.
+-spec next_interval(pos_integer(), non_neg_integer(), non_neg_integer()) -> pos_integer().
+next_interval(Interval, Growth, _Redraw) when Interval + Growth =< ?BACKOFF_CUTOFF_S ->
+    Interval + Growth;
+next_interval(_Interval, _Growth, Redraw) ->
+    ?BACKOFF_CUTOFF_S div 2 + Redraw.
 
 %% A client message (op request: a DISCOVER or a REQUEST) of the current exchange.
 client_message(#core{mac = Mac, xid = Xid, began = Began}, Now, Options) ->
@@ -292,11 +331,11 @@ reply(nak, #dhcp4{options = #{server_id := _}}, #core{phase = Phase} = Core, Now
 reply(_, _, Core, _Now) ->
     {Core, []}.
 
-%% Back to init, which sends a DISCOVER after one retransmission delay.
+%% Back to init, which sends a DISCOVER after an exchange's first wait.
 restart(#core{gen = Gen} = Core, Now, Actions) ->
-    {Jitter, Gen1} = erx_net_rand:uniform(2 * ?JITTER_MS + 1, Gen),
+    {Wait, Gen1} = first_wait(Gen),
     {Core#core{phase = init, xid = none, sends = 0, offer = none, gen = Gen1,
-               deadline = Now + ?RETRANSMIT_FIRST_MS + Jitter - ?JITTER_MS},
+               deadline = Now + Wait * 1000},
      Actions}.
 
 %% Whether an ACK answers the REQUEST outstanding: in requesting, for the offered address
