@@ -416,6 +416,51 @@ window_test_() ->
      ?_assertMatch({ok, _, [holder]}, Narrowed([{<<"/data">>, rw}])),
      ?_assertMatch({ok, _, [holder]}, Narrowed([{<<"/dev">>, rw}]))].
 
+%% A window at the first open of /dev/draw (docs/design-programs.md, "The handler").
+first_window_test_() ->
+    Draw = ?ASK(7, {file, lopen, <<"/dev/draw">>, 2}),
+    {C1, Asked} = erx_prog_handler_core:step(running(), Draw),
+    Dev = #{point => [<<"dev">>], provider => {grant, self(), <<"export">>}, root => [<<"dev">>], rights => rw},
+    {C2, Opened} = erx_prog_handler_core:step(C1, {first_window, {ok, self()}}),
+    {C3, Refused} = erx_prog_handler_core:step(C1, {first_window, {error, enodev}}),
+    Failed = run(C1, [{first_window, {failed, enomem}}]),
+    Relayed = fun(C, Path) -> element(2, erx_prog_handler_core:step(sent(C), ?ASK(8, {file, lopen, Path, 0}))) end,
+    Buffered = run(element(2, new(?PID, [{3, {buffer, 1, 4096}}])),
+                   [{holder, ok}, {reserved, {mem, 1, 1, 0}}, started]),
+    {ok, Named, _} = erx_prog_handler_core:new(?PID, [], (files())#{display => <<"hdmi">>}),
+    ReadOnlyDev = #{point => [<<"dev">>], provider => release, root => [<<"dev">>], rights => ro},
+    {ok, NoWrite, _} = erx_prog_handler_core:new(?PID, [], (files())#{table => ?TABLE ++ [ReadOnlyDev]}),
+    [?_assertEqual([{first_window, none}], Asked),
+     %% The window's /dev stands at /dev, and the open goes there.
+     ?_assertEqual([{open, 7, <<"/dev/draw">>, 2, none, ?TABLE ++ [Dev], [<<"data">>]}], Opened),
+     %% One window: a later open of /dev/draw meets the program's own tree.
+     ?_assertEqual([{open, 8, <<"/dev/draw">>, 0, none, ?TABLE ++ [Dev], [<<"data">>]}],
+                   Relayed(run(C2, [{file_opened, 7, {ok, d}}]), <<"/dev/draw">>)),
+     %% A display refused before anything opened fails the open; a later open tries again.
+     ?_assertEqual([?ANSWER(7, {error, enodev})], Refused),
+     ?_assertEqual(running, erx_prog_handler_core:phase(C3)),
+     ?_assertEqual([{first_window, none}], Relayed(C3, <<"/dev/draw">>)),
+     %% A failure once the opening began ends the handler, and answers nothing.
+     ?_assertEqual({ended, {shutdown, {window, enomem}}}, erx_prog_handler_core:phase(Failed)),
+     %% Other window names, a relative path, a path with .., go to the shared /dev.
+     ?_assertEqual([{open, 8, <<"/dev/ctl">>, 0, none, ?TABLE, [<<"data">>]}], Relayed(running(), <<"/dev/ctl">>)),
+     ?_assertEqual([{open, 8, <<"/dev/kbd">>, 0, none, ?TABLE, [<<"data">>]}], Relayed(running(), <<"/dev/kbd">>)),
+     ?_assertEqual([{first_window, none}], Relayed(running(), <<"//dev/./draw">>)),
+     ?_assertMatch([{open, 8, <<"../dev/draw">>, _, _, _, _}], Relayed(running(), <<"../dev/draw">>)),
+     ?_assertMatch([{open, 8, <<"dev/draw">>, _, _, _, _}], Relayed(running(), <<"dev/draw">>)),
+     %% A program with a buffer gets no window.
+     ?_assertMatch([{open, 8, <<"/dev/draw">>, _, _, _, _}], Relayed(Buffered, <<"/dev/draw">>)),
+     %% The display variable is handed on; an entry at /dev that cannot write is eacces.
+     ?_assertEqual([{first_window, <<"hdmi">>}], Relayed(run(Named, [{holder, ok}, started]), <<"/dev/draw">>)),
+     ?_assertEqual([?ANSWER(8, {error, eacces})], Relayed(run(NoWrite, [{holder, ok}, started]), <<"/dev/draw">>))].
+
+display_test_() ->
+    [?_assertEqual({ok, display}, erx_prog_handler_core:display(none, [display])),
+     ?_assertEqual({error, enodev}, erx_prog_handler_core:display(none, [])),
+     ?_assertEqual({error, enodev}, erx_prog_handler_core:display(none, [display, hdmi])),
+     ?_assertEqual({ok, hdmi}, erx_prog_handler_core:display(<<"hdmi">>, [display, hdmi])),
+     ?_assertEqual({error, enodev}, erx_prog_handler_core:display(<<"nosuch_display_name">>, [display]))].
+
 probe_test_() ->
     [?_assertMatch({_, [?ANSWER(5, ok)]}, erx_prog_handler_core:step(running(), ?ASK(5, {probe, ?PID}))),
      ?_assertMatch({_, [?ANSWER(5, {error, esrch})]},

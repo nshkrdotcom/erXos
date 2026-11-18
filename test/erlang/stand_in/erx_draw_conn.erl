@@ -5,7 +5,8 @@
 -moduledoc """
 A stand-in for the draw connection in the tests of a program's window. start/1
 makes a connection process that ends when its starter does, or refuses with
-`enomem`, as for an image 0 that cannot be made, on the display `noimage`.
+`enomem`, as for an image 0 that cannot be made, on the display `noimage` or
+while persistent_term holds `true` under this module.
 ctl/1 answers 144 bytes, write/2 answers `{incomplete, eio}` for the bytes
 `bad` and `ok` for any other, and every call to a connection that has ended
 answers `ebadf`. Each start and write is told as erx_win's stand-in tells its
@@ -15,8 +16,8 @@ events.
 -export([start/1, write/2, read/2, ctl/1]).
 
 start(#{window := Window}) ->
-    case maps:get(display, Window) of
-        noimage ->
+    case {maps:get(display, Window), persistent_term:get(?MODULE, false)} of
+        {Display, Refuse} when Display =:= noimage; Refuse ->
             {error, enomem};
         _ ->
             Starter = self(),
