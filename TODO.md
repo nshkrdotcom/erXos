@@ -8646,6 +8646,16 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] storage, a card image that holds only what is written, after 0.1
+  ([design-storage.md](docs/design-storage.md), `abi/medium.txt`, the image packer): order the
+  partitions with the populated ones first (record, system A, boot A), end the image after boot
+  A's last used cluster, and let the partition table describe boot B, system B, the vault and
+  data beyond the image's end; first boot formats the vault and data (data taking the rest of the
+  card), and the B slots stay empty until an update writes one. A reused card holds old bytes
+  there, so the record carries a first-boot mark and no such partition is read before it is
+  formatted. About 100 MiB to write instead of 718 MiB. Needs a short design first, and a QEMU
+  test that boots a truncated image on a card full of old bytes. Covers growing the data partition
+  at first boot.
 * [Medium] crypto, the system trust store for 0.2
   ([design-crypto.md](docs/design-crypto.md#the-trust-store)): ship Mozilla NSS's root list as the
   system's trust store, as FreeBSD's base does (`secure/caroot`: roots split from NSS's
