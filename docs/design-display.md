@@ -377,6 +377,7 @@ that one module that one name and refuses it in any other.
 -type window() :: #{id := window_id(),
                     dir := {Client :: binary(), Name :: binary()}, % its directory in the tree
                     holder := pid(),           % the mkdir's Owner; the window ends with it
+                    front := boolean(),        % its grant's front, fixed when it is made
                     rect := rect(),            % on the screen; the policy's to set
                     state := shown | hidden,
                     label := binary(),         % attributed text, escaped when drawn
@@ -2316,7 +2317,14 @@ The step's rules, by input:
   records with no `c`, and it never repeats. When
   the down makes the keys held, over every source, include every key of
   the reserved chord, the answer is `{wm, chord}`; otherwise the
-  policy's `input/5` routes it. Either way the step records where the
+  policy's `input/5` routes it, and a `{to, W, _}` answer passes only
+  when the displayed windows hold `W`, the same windows seen before
+  pressed reads: otherwise the down is dropped and counted and goes
+  nowhere. So while the table and the screen disagree, when a front
+  window has opened or ended and the frame that shows the change has
+  not been answered, a key reaches neither the window leaving the
+  screen nor the one the table has chosen, and the next key after
+  `{shown, D}` reaches the window `D` shows. Either way the step records where the
   down went, `{to, W, _}` as the window `W` and anything else as none.
   A down that went to a window and types a rune becomes that window's
   repeating key, in place of the one before, at its time plus the delay;
@@ -4296,17 +4304,21 @@ kiosk is:
   supervisor in the session restarts it, with its window, as any Erlang
   application is restarted.
 * **It is an ordinary window.** The single policy shows the display's
-  session's oldest window over the whole screen with no decoration
+  session's oldest window over the whole screen with no decoration,
+  unless a front window lives, which on a development board root's
+  program may open over it
   ([Windows and the window system](#windows-and-the-window-system)), so
   the display's work for a frame is the copy of the rectangles the
   renderer changed, and on a device that reads the client's memory, no
   copy at all ([The screen and its one path to the
   device](#the-screen-and-its-one-path-to-the-device)).
 * **Nothing else shows.** A window of any other domain and a second
-  window of the app stay hidden and receive no input (G1), also while
-  the app's session or the display domain restarts, so the guarantee
-  that a kiosk shows its one app is the policy's and the start table's,
-  checked where each is checked.
+  window of the app stay hidden and receive no new input (G1), also
+  while the app's session or the display domain restarts, so the
+  guarantee that a kiosk shows its one app is the policy's, the start
+  table's and, for the one exception, a front window, the manifest
+  check's, each checked where it is checked. A release has no front
+  grant (property 18 of [The manifest](design-system.md#the-manifest)).
 
 **Putting an app on a kiosk** therefore touches the app's own rows
 and one start row. A thermostat with a panel of 800 by 480 pixels shows
@@ -5034,9 +5046,12 @@ the window and the reason.
   is a facet row's parameter, which no request, start row or
   `start.conf` sets, and property 18 of the manifest check refuses it on
   every row but one granting a display to the system principal's
-  session template, and on that row too in a release build, so the one
-  client that can take a development board's screen is root, who holds
-  the machine already, and none can in a release. Under the overlapping policy no
+  session template, and on that row too in a release build, so the
+  only clients that can take a development board's screen are sessions
+  of root's template, whoever holds the machine already: root's
+  console session with the SSH logins it serves, and any session a
+  manifest start row makes from that template, login or not. None can
+  in a release. Under the overlapping policy no
   client takes the keyboard by asking, by making a window or by
   outlasting another: keys go only to the window the user last picked
   with a click or the menu, while it is shown. Under either policy a
@@ -5045,7 +5060,14 @@ the window and the reason.
   pointer having moved there since or a finger 200 ms after it last
   gained pixels, so no client takes a click by putting its window under
   the pointer, and no layout the device has not yet shown takes one
-  ([The input router](#the-input-router), "Seen before pressed").
+  ([The input router](#the-input-router), "Seen before pressed"). A
+  key's down reaches a window only while the screen shows it, so no key
+  typed while one window is on screen reaches another that the table
+  has chosen but the device has not yet shown, in either direction of
+  a front window's coming and going ([The input router](#the-input-router),
+  "A key's down"). A window the policy no longer shows still receives
+  the ups of keys, buttons and touches it saw go down, and so learns
+  which of its modifiers are released, and nothing pressed after.
 * **The clipboard** is shared, per display, by every grant on it whose
   facet row turns `clipboard` on, whatever its principal: the sessions of
   those rows' templates, their terminals and every program they give
@@ -5337,7 +5359,14 @@ change nothing; pointer gestures start with
   hands the router the table in place of the displayed windows; a touch
   rule timed from the `move`; a router that asks the policy about the
   rest of a refused gesture; an `erx_screen` that stamps every copied
-  window.
+  window. Keys under the single policy with the driver model holding
+  the frame back: a front window ends and the table chooses the
+  session's window, and a key's down then reaches no window until
+  `{shown, D}` shows the session's, after which the next one reaches
+  it; a front window opens, and a key's down reaches neither it nor the
+  session's window until its frame is answered. Seeded: a router that
+  routes a key's down by the table alone, which delivers the first key
+  to the window not yet on screen.
 * **The keymap.** `gen_keymap.rb` refuses each malformed layout its
   section names; the US layout's every key and layer is checked against
   the generated `erx_keymap`; through a terminal, arrows and function

@@ -715,12 +715,28 @@ still take a screen whose grant is front
 ([design-display.md](design-display.md#windows-and-the-window-system)).
 The handler opens at most one window for a program: an open of a
 `/dev` name that arrives while the window is being opened waits as a
-pending request behind it and is then served on the new tree. A
-refused window fails the open with the errno a refused `window =>
-Display` start gives, `ENODEV` for a session with no `windows` grant on
-the display or with no `display` and no only display, `EACCES` for a
-table whose entry at exactly `/dev` cannot write, `EDQUOT` and `ENOMEM`
-as the display answers; nothing is kept, so a later open tries again.
+pending request behind it and is then served on the new tree. What the
+handler decides before it opens anything fails the open and keeps
+nothing, so the program runs on and a later open tries again: `ENODEV`
+for a session with no `windows` grant on the display or with no
+`display` and no only display, and `EACCES` for a table whose entry at
+exactly `/dev` cannot write. Once the handler has begun opening the
+window, any failure ends the handler, and the program with it, as a
+failed window start ends what the start reserved: the window, its
+buffer, the connection and the tree are reclaimed by their owner's end
+([design-files.md](design-files.md#a-programs-window), "Starting"), the
+open never returns, and the program's parent sees it end as any program
+whose handler ended. So a failure never leaves a window or a buffer
+held by a program that runs on, and a front window that failed half
+way never keeps a kiosk's window hidden; a second windowed program at
+the grant's one-window quota ends, its handler's exit reason naming
+`EDQUOT`, rather than seeing it from `open`. Tested on the host with a stand-in display:
+an open on a session with no grant answers `ENODEV` and the program
+runs on; a display that grants the window and then refuses the draw
+connection ends the program, after which the window table holds no
+window of it, its buffer's range is free and the session's window is
+shown. Seeded: a handler that answers the open with the connection's
+errno and stays alive, which leaves the window in the table.
 A program holding a buffer gets no window, as a spec naming both is
 refused, and its open of `/dev/draw` answers `ENOENT`.
 

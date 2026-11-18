@@ -8629,6 +8629,11 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Low] display, `erx_ui:open/1` falls back to the session's only display
+  ([design-display.md](docs/design-display.md#choosing-a-display)): when `Options` and the
+  `display` variable name none, open on the one display the session holds where it holds exactly
+  one, as a program's handler does at its first open of `/dev/draw`, instead of answering
+  `{error, no_display}`. A separate change with its own design edit and tests.
 * [Medium] storage, a card image that holds only what is written, after 0.1
   ([design-storage.md](docs/design-storage.md), `abi/medium.txt`, the image packer): order the
   partitions with the populated ones first (record, system A, boot A), end the image after boot
