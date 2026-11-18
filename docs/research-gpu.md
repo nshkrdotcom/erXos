@@ -1,7 +1,6 @@
 # Research: GPU acceleration for erXos (OpenGL ES, Vulkan)
 
-Point-in-time research record, 2026-11-15. Draft, not yet placed in the
-tree.
+Point-in-time research record, 2026-11-15.
 
 * **Host:** Apple Silicon macOS (Darwin 27.0.0). QEMU 11.1.3 from Homebrew.
 * **Sources:** Mesa 26.3.0 (commit `0a6fa60abb737d26ac8a316a4aad7c9ddf64f9e4`,
@@ -31,7 +30,7 @@ for the kiosk. `docs/design-display.md` ("Graphics hardware") already names
 three places hardware can attach: a **buffer source**, a **composition path**
 and a **render service**. It already has rows for virtio-gpu with
 virgl/venus and for the Pi's V3D. The UI survey
-(`research-ui-rendering.md`) concluded that GPU work "does not fit erXos
+(`~/erxos-history/docs-archive/research-ui-rendering.md`, history commit `e38149b`) concluded that GPU work "does not fit erXos
 today" because the Pi's GPU is reached only "through Mesa and a Linux kernel
 driver". This record looks for the realistic path past that verdict.
 
@@ -513,7 +512,7 @@ adds the following.
    sends `present`, so the display never reads a buffer the GPU is writing.
    It costs one GPU-to-client wakeup per frame. An *acquire fence* carried
    in `present` (Wayland's explicit sync, recorded in
-   `research-ui-compositors.md`) is a later optimization that needs its own
+   `~/erxos-history/docs-archive/research-ui-compositors.md`, history commit `e38149b`) is a later optimization that needs its own
    design.
 3. **Release.** The display's answer to `present` already releases the
    buffer. Nothing new is needed for GPU-filled buffers. Double buffering
@@ -598,7 +597,10 @@ a plan.
 * **Power and clock (low to medium).** V3D's power-up through the firmware
   is undocumented in the mailbox wiki.
 
-## Open questions for the owner
+## Questions put for decision
+
+All seven are answered; the decisions are recorded in
+[design-display.md](design-display.md#graphics-hardware).
 
 1. **Mesa's build:** may Mesa keep Meson, Python 3 and Mako as inherited
    build machinery behind erXos's top-level build (as OTP keeps Perl and

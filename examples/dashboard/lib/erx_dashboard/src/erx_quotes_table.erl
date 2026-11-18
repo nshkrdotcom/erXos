@@ -3,8 +3,8 @@
 
 -module(erx_quotes_table).
 -moduledoc """
-The live quotes' source table (docs/design-quotes.md, "The source
-table"), fixed in the code: three quotes, each asked of one source,
+The live quotes' source table (examples/dashboard/README.md, "How it
+is configured"), fixed in the code: three quotes, each asked of one source,
 Kraken's public Ticker API. table/0 answers it in the form
 erx_quotes_core:new/2 takes, every period in milliseconds.
 

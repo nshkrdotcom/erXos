@@ -13,7 +13,7 @@ takes every further one already queued with it: segments and ICMP reports from a
 interface, `{items, Interface, Items}`; the owner's requests; the clock's hint, `{expired,
 Now}`. The loop steps the segments of all the `{items, ...}` it took together, in arrival
 order, and only then takes their units from the connection's credit
-(docs/design-network-fastpath.md, "One step per mailbox"). Until then the interface can
+(docs/design-network-stack.md, "One step per mailbox"). Until then the interface can
 hand no more than the credit's room, so the batch never exceeds the credit's limit. An
 idle connection steps each message as it arrives, and under load one step and its one
 output pass answer many segments with one ACK. The step's context is
@@ -494,7 +494,7 @@ queued_items(Taken) ->
     end.
 
 %% The credit an item took at the interface (erx_net_input:units/1): a merged segment one unit
-%% for each of the segments it holds (docs/design-network-fastpath.md, "Credit counts
+%% for each of the segments it holds (docs/design-network-stack.md, "Credit counts
 %% segments"), anything else one.
 units({_Tcp, {merged, N, _Pieces}, _IpEcn, _LinkCast}) -> N;
 units(_Item) -> 1.

@@ -17,28 +17,15 @@ around the shell, its console, inspector and `/proc`, in
 [design-live.md](design-live.md); namespaces in
 [design-files.md](design-files.md).
 
-Decisions every reader of this document needs:
-
-* **rc's language, written in Erlang.** One quoting rule, list variables
-  and no rescanning, with emacs-style editing and job control added; a
-  shell compatible with tcsh is a possible addition in the roadmap.
-* **One command namespace.** A name is a function or builtin, an Erlang
-  command, or a program command, in that order; programs see the Erlang
-  and program commands that `/bin` lists, never a builtin or a function.
-* **Text in every pipe.** A stage reads and writes bytes whatever is at
-  the other end, and a command named like a FreeBSD utility behaves like
-  it, with FreeBSD 15.1 as its test oracle. A value a command cannot
-  measure prints as FreeBSD prints a missing one, `-` or nothing, never as
-  a number. Live values with their statuses are the Erlang shell's and the
-  inspector's ([design-live.md](design-live.md#inspection)).
-* **Capabilities, not command kinds.** A command acts only through the
-  capabilities it was handed: the session's by default, fewer under
-  `within`, and a program's own when a program starts it. A command with
-  fewer than the session's runs in a domain of its own, so its
-  confinement rests on the kernel (SH1).
-* **Job control by pauses.** Stopping a job pauses its programs, a hold
-  the kernel keeps on each program's space, and suspends its Erlang
-  processes; the terminal relay never waits on a program.
+The decisions that shape it: rc's language, with one quoting rule, list
+variables and no rescanning, and emacs-style editing and job control
+added ([The language](#the-language)); one command namespace
+([Commands](#commands)); text in every pipe, each command behaving like
+FreeBSD 15.1's of the same name and printing a value it cannot measure as
+FreeBSD prints a missing one ([Pipelines](#pipelines), SH3); capabilities,
+not command kinds, with a command handed fewer than the session's run in
+a domain of its own (SH1); and job control by pauses, so the terminal
+relay never waits on a program ([Job control](#job-control)).
 
 ## Context
 
@@ -129,7 +116,7 @@ processes.
 | --- | --- | --- | --- |
 | **SH1.** A command acts only through the capabilities it was handed, and one handed fewer than the session's runs in a domain of its own | an Erlang command receives its grants and facets in its context and reaches services only through them; the shell's own lines run in the session's domain with the session's capabilities, since that is what the user typed them with; a command that `within` narrows, and every Erlang command a program starts, runs in a command domain built from exactly the capabilities its starter named, which its starter held, and named from its principal's pool of reusable names ([design-system.md](design-system.md#identifiers)), each facet among them made by the system domain for that domain alone and with no wider scope, and a program runs in a sub-space whose handler acts only on the program's own table ([design-programs.md](design-programs.md#what-a-program-can-start), [design-programs.md](design-programs.md#facets)); a handler never runs a builtin or a function for a program | a command that reaches a service by a registered name of the system domain; a narrowed or program-started command run in the session's domain; a domain given a capability its starter did not hold | a test that every command run in a session without an inspect facet gets `no_facet`, which `top` prints as `[no inspect facet]` beside each figure; a test that a command domain's capabilities are exactly the grants and facets named before its startup message; `xargs ps` from a program with and without the `inspect` right, and a command domain that asks for the session's own facet instead of its own, which is refused; a narrowed program that asks its handler for every name of the command namespace in turn starts only what `/bin` lists and reaches nothing outside its grants; the command-needs build check, which refuses a command that names a module of a service of the system domain, or a path under the point where `erx_ns` mounts the service's tree, without declaring its facet, and a module of the command shell that names one and is no command |
 | **SH2.** A failing line, stage or command never ends the session | each stage, substitution and background block is an Erlang process of its own with `max_heap_size` set, counting the binaries it references; every input that reaches a stage is bounded in bytes, a line a command reads at 64 KiB and the bytes in flight between two Erlang stages at 64 KiB, so no input makes a stage grow without bound; every evaluator's Erlang stages are admitted whole within the session's stage allowance, an eighth of its budget, within the half the session keeps for its own services and from which no program's budget is carved ([design-system.md](design-system.md#resource-policy)), and only a foreground line waits for it, so stages together stay within memory the session keeps for them and no evaluator waits for an allowance its own parent holds; the parser, in a child process of the evaluator with a fixed heap, refuses a unit over its bounds before it runs; a program is a sub-space with a budget of its own, carved from the other half, so what it spends never counts against a stage | a stage evaluated in the shell's own process; an unbounded parse; an input path without a byte bound; stages admitted beyond the allowance; a nested evaluator that waits for the allowance; a program's budget carved from the services' half | the overflow, deep-nesting and runaway-recursion tests; a native program that writes a 1 GiB line without a newline into an Erlang stage, which fails that stage alone; as many stages as the allowance admits, each near its limit, and one more pipeline, which waits; a substitution inside a fully admitted pipeline, and a background job beyond the allowance, each of which fails with `too many stages` at once; a loop of programs that spends the programs' half, during which the shell still parses, prompts and runs builtins; the parser's fuzz target |
-| **SH3.** No command prints a value it does not have | a command formats a value only when its reader returned it with the status `ok`; any other value prints as FreeBSD prints a missing one, `-` in a column and nothing for a field labelled by its own letter ([Pipelines](#pipelines)); the one exception is `top`'s header, where a partial figure prints its number with its reporter named, in the line's label or after the figure, and a missing one prints `-` with why in brackets ([design-live.md](design-live.md#the-command-shell)) | a formatter that prints 0, an old value or a guess for a missing one; a partial figure of `top`'s header without its reporter named | `ps`'s and the `Ctrl-T` line's tests with each value in turn `unknown`, `partial`, `timeout` and `unsupported`, where a formatter that prints 0 fails; `top`'s header tests with each figure in turn `ok`, `partial` under one and several reporters, `unknown`, `timeout`, `unsupported` and `error`, where a partial figure printed without its reporter named fails ([design-live.md](design-live.md#invariants) V2) |
+| **SH3.** No command prints a value it does not have | a command formats a value only when its reader returned it with the status `ok`; any other value prints as FreeBSD prints a missing one, `-` in a column and nothing for a field labelled by its own letter ([Pipelines](#pipelines)); the one exception is `top`'s header, where a partial figure prints its number with its reporter named, in the line's label or after the figure, and a missing one prints `-` with why in brackets ([Text commands](#text-commands)) | a formatter that prints 0, an old value or a guess for a missing one; a partial figure of `top`'s header without its reporter named | `ps`'s and the `Ctrl-T` line's tests with each value in turn `unknown`, `partial`, `timeout` and `unsupported`, where a formatter that prints 0 fails; `top`'s header tests with each figure in turn `ok`, `partial` under one and several reporters, `unknown`, `timeout`, `unsupported` and `error`, where a partial figure printed without its reporter named fails ([design-live.md](design-live.md#invariants) V2) |
 
 ## Data model
 
@@ -494,7 +481,7 @@ commands with no FreeBSD counterpart, `i`, `domains`, `source` and
 what their `erx:` functions print, status tokens included. `top`'s
 header is the one exception: its figures are rounded for a person to
 read, not fields a stage parses, so a partial figure there prints its
-number with its reporter named, `Mem (root pool): 118M Total, 74M Free` ([design-live.md](design-live.md#the-command-shell)).
+number with its reporter named, `Mem (root pool): 118M Total, 74M Free` ([Text commands](#text-commands)).
 
 **Names a source chose.** A command that prints text a source chose, a
 file's name or a process's, escapes it where FreeBSD's command of the
@@ -567,8 +554,8 @@ diagnostics on standard error, as `NAME: ...`, and FreeBSD's exit
 statuses (S-R4). An option a command does not offer is a usage error;
 more options are later additions, each with its oracle test. Text
 compares as bytes, as FreeBSD's tools compare it under `LC_ALL=C`, the
-locale the oracle runs in. `ps`, `top` and `ls` are specified with the live
-machine ([design-live.md](design-live.md#the-command-shell)); `cat`,
+locale the oracle runs in. `ps`, `top` and `ls`, below, show the session's
+processes and files; `cat`,
 `echo` and the file utilities copy, print or change files as FreeBSD's
 do. The text filters:
 
@@ -602,6 +589,181 @@ do. The text filters:
 * **`wc [-clmw] [file ...]`** counts lines, words and bytes, or characters
   under `-m`, in FreeBSD's layout, with a total line when more than one
   file is named.
+
+**`ps`** lists the session's own process table: its Erlang processes and
+its programs, the latter from the command server's process table and
+each program's handler
+([design-programs.md](design-programs.md#the-command-server)), so a session sees
+its programs without an inspect facet, as a UNIX user sees their own
+processes. It prints FreeBSD's default columns, `PID`, `TT`, `STAT`,
+`TIME` and `COMMAND` (`bin/ps/ps.c:156`), under FreeBSD's header line,
+and cuts the last column at the terminal's width when its output is a
+terminal, as FreeBSD's does (`bin/ps/ps.c:748-755`). `-o` takes a
+comma-separated list of FreeBSD's keywords in place of the default
+columns: `pid`, `tt`, `state` (or `stat`), `time`, `pcpu` (or `%cpu`),
+`rss`, `comm` and `command` (or `args`). An unknown keyword is reported
+as `ps: KEY: keyword not found` and left out, and `ps` ends with status 1,
+as FreeBSD's does (`bin/ps/keyword.c:440-444`). Each column, for the two
+kinds of process:
+
+| Keyword (header) | An Erlang process | A program |
+| --- | --- | --- |
+| `pid` (`PID`) | its pid, `<D.N.S>` | its process id |
+| `tt` (`TT`) | the terminal of the session's tty whose group is its group leader, else `-` | its controlling terminal: the terminal of the session's tty its job was started on, while it holds an open of that tty, else `-` |
+| `state` (`STAT`) | `R` when running, runnable or collecting garbage; `S` when waiting in `receive`; `T` when its job is stopped; `RE` when exiting; then `+` when it belongs to the foreground job | `R` when a thread runs or is runnable, `S` when every thread waits, `T` when paused; then `+` when it belongs to the foreground job |
+| `time` (`TIME`) | `-`: the runtime keeps no CPU time per process | its group's CPU time as `getrusage` reports it, as `M:SS.hh` (`bin/ps/print.c:500-520`) |
+| `pcpu` (`%CPU`) | `-`, for the same reason | its CPU time over the time since it started, as a percentage to one decimal |
+| `rss` (`RSS`) | its memory as `process_info/2` reports it, in KiB, rounded up | its sub-space's charges, in KiB |
+| `comm` (`COMMAND`) | its registered name, else its `proc_lib` label, else the function it started in, as the `Ctrl-T` line names it | its name |
+| `command` (`COMMAND`) | as `comm` | its arguments, joined by spaces |
+
+The terminal's name is abbreviated as FreeBSD abbreviates it
+(`bin/ps/print.c:345-364`). A value the session's table does not have,
+because the reporter could not answer, answered late or the process ended
+while it was read, prints `-` in its column, as FreeBSD's `ps` prints a
+column with no value (`bin/ps/ps.c:757-759`); so does a value erXos does
+not measure at all, such as an Erlang process's CPU time. No column ever
+shows a number for a value it does not have, and every row keeps its
+columns, so `ps -o pid,pcpu,comm | sort -rn -k2 | head` works as on
+FreeBSD: the header and the rows without a value sort among the zeros. A
+process's name and arguments are written through the field escape, as
+FreeBSD writes them through `strvis(3)`
+([Pipelines](#pipelines)).
+
+Rows come in FreeBSD's default order: processes without a terminal
+first, then by `PID`, programs by their process ids and then Erlang
+processes by the numbers of their pids. `-r` orders by `pcpu` and `-m` by
+`rss`, largest first, as FreeBSD's `-r` and `-m` do
+(`bin/ps/ps.c:1394-1419`); rows with equal values keep the default order.
+A row with no value for the key comes after every row that has one, still
+in the default order, which is where FreeBSD's `ps`, which counts a
+`%CPU` it cannot read as zero (`bin/ps/print.c:622-634`), puts it. So `ps -r` lists a session's
+busiest programs first and its Erlang processes after them; the busiest
+Erlang processes, by reductions, are `erx:ps()`'s to show. FreeBSD's `-m`
+orders by text, data and stack size, which erXos does not split, so its
+`-m` orders by the memory `rss` shows.
+
+**`top [-bn] [-d count] [-s time] [number]`** shows the table `ps` reads
+as FreeBSD's `top` (`usr.bin/top`) shows a machine's, display after
+display. A display is a header and a process table. The header has
+FreeBSD's lines where they map, each figure read through the
+session's inspect facet, at its scope
+([System values](design-live.md#system-values-one-tree-many-views)):
+
+* `run queue: 0;  up 0+00:05:12    10:15:37`: the run queue of the
+  domain `top` runs in (its domain record's `run_queue`, the processes
+  and ports its runtime has ready and waiting for a scheduler), where FreeBSD's first line
+  has the last pid and the load averages; then the machine's `uptime` as
+  FreeBSD's `i_uptime()` writes it, `D+HH:MM:SS`, and the time of day,
+  last, so a terminal narrower than the line cuts it, where FreeBSD's
+  screen keeps it at the right edge. The
+  run queue is an instant's count of one runtime and is labelled as
+  such, never as a load average, which erXos does not keep.
+* A count of the processes and of those running, sleeping and stopped,
+  `57 processes:  2 running, 55 sleeping`, from the `STAT` `ps` shows
+  (`R`, `S`, `T`).
+* `Mem: 1906M Total, 1500M Free`: the machine's `memory_total` and
+  `memory_free`, as FreeBSD's `format_k()` writes a size.
+* `Domain 4 budget: 812K Used, 1024M Guarantee, 2048M Cap`: the `used`,
+  `guarantee` and `cap` of the budget of the domain `top` runs in,
+  labelled as that domain's, so a figure of one domain never reads as
+  the machine's. The domain is the one the inspector names for `top`'s
+  own process.
+
+A figure the inspector answers `ok` prints its number. A partial
+figure prints its number with its reporter named by the inspection
+schema's label, through the line escape: when every number of a line
+is partial under one reporter, the line's label names it once, and
+otherwise each partial figure names its own after it, so an `ok`
+number beside it never reads as partial. On the Fiasco kernel the
+memory figures and `used` are the `liberx` pool's partial counts, so
+the header reads `Mem (root pool): 118M Total, 74M Free` and `Domain
+4 budget (root pool): 44M Used, - Guarantee [unsupported], - Cap
+[unsupported]`; on erXos's
+kernel, which reports them whole, it reads `Mem: 118M Total, 74M
+Free`. A line with partial figures of two reporters reads `Mem: 118M
+Total (kernel), 74M Free (root pool)`. Any other figure prints `-`
+and says why in brackets: its status as `erx_render` writes it
+(`[unknown]`, `[unsupported]`, `[timeout 500]`, `[error]`), `[not
+reported]` for a figure its record does not hold, or the inspector's
+refusal of its path, `[not in scope]`, `[no inspect facet]`,
+`[inspector busy]` or `[failed]`. When every figure of a line is
+missing for one reason, the line's label says it once, `Domain 8
+budget [not in scope]: - Used, - Guarantee, - Cap`. So the header
+never shows as exact a number nobody reported whole, and no `-` hides
+why it is there. Naming a reporter and a reason is the
+header's alone, the one exception to the command shell's rule for
+values it does not have
+(SH3): the header's
+figures are rounded for a person to read, while a column of the
+table, like `ps`'s, keeps `-`, since a stage of a pipeline reads a
+column's number with nothing to say it is partial. The table has the
+columns of FreeBSD's that
+the table has values for: `PID`, `RES` (`rss`, as FreeBSD's
+`format_k()` writes a size, at most four digits and a unit), `STATE`
+(`RUN`, `SLEEP` or `STOP`), `TIME` (`time`, as FreeBSD's
+`format_time()` writes it, `M:SS`), `WCPU` and `COMMAND` (`comm`,
+through the field escape as `ps` writes it). FreeBSD's
+`USERNAME`, `THR`, `PRI`, `NICE`, `SIZE` and `C` are left out: every row
+is the session's own, and the rest have no value for an Erlang process.
+A row's `WCPU` is its share of a CPU over the last interval: the growth
+of its CPU time from the previous display's sample to this one, over the
+time between them, as a percentage to two decimals. For a process the
+previous display did not have, and on the first display, it is `pcpu`,
+its share since it started. FreeBSD's kernel keeps a decaying average
+for `WCPU`; erXos keeps none, and two samples give a recent share without
+one. A value the table lacks prints `-`, so an Erlang process's `TIME`
+and `WCPU` do. Rows are ordered by `WCPU`, largest first, and the rows
+without one follow in `ps`'s order, as under `ps -r`.
+
+At a terminal, without `-b` or `-n`, `top` starts each display with the
+terminal's home and clear sequences, written as its own output, and
+shows one every `time` seconds (`-s`, 2 by default) until it has shown
+`count` (`-d`, no limit by default) or `Ctrl-C` ends it, as it ends any
+command. `time` is a decimal number with an optional fraction, as
+`strtod(3)` reads one without an exponent, taken to the whole
+millisecond and at least 1 ms. It changes no terminal state, no mode,
+scrolling region or alternate screen, so an interrupt at any point
+leaves nothing to restore. The table has as many rows as fit the
+terminal's height under the header, with the last line left for the
+cursor so that nothing scrolls on a terminal of five lines or more:
+`LINES` when it is a positive number, as FreeBSD's termcap takes it,
+else the height the terminal reports, else 24. Each line is cut one column short of the terminal's width, as
+FreeBSD's screen is (`usr.bin/top/screen.c`), and never inside a UTF-8
+sequence. `top` takes no keys, so `Ctrl-C` ends it as it ends any
+command. FreeBSD's interactive commands, `q` among them, read the keyboard
+in the line discipline's non-canonical mode, which an Erlang command sets
+through `erx_cmd:tty/2` as `vi` does
+([design-vi.md](design-vi.md)); `top` does not offer them.
+
+With `-b` or `-n`, or when its output is not a terminal, `top` writes
+`count` displays, one by default, each after the first following a blank
+line, with no control sequence and nothing cut, and each shows at most
+18 processes, FreeBSD's `Nominal_TOPN` for output it cannot draw on.
+`number` caps the processes a display shows; `all`, `infinity`,
+`maximum` or a prefix of one shows them all, as FreeBSD's `atoiwi()`
+reads it. A `count` of 0 or none, a `time` that is not a positive number
+and a negative `number` are each reported with FreeBSD's warning, such as
+`top: warning: display count should be positive -- option ignored`, and
+ignored, and `top` runs on; any other option is a usage error. A display
+costs one read of the table, as `ps` does, and `top` sleeps between
+displays, so it loads the session as one `ps` per `time` does.
+
+**`ls [-1al] [file ...]`** lists a file by the name given and a directory
+by the names it holds, sorted byte by byte, without those that start with
+`.` unless `-a` is given, as FreeBSD's `ls` does. At a terminal it writes
+the names in columns across the terminal's width, sorted down the
+columns; elsewhere, or under `-1`, one name a line (`bin/ls/ls.c:247-256`).
+With more than one operand, files come first, and each directory's names
+follow an empty line and a line with its name and `:`. `-l`
+writes FreeBSD's long format: a `total` line for each directory, then for
+each name its mode, link count, owner, group, size, modification time
+and name, the time as FreeBSD formats it, with the hour and minute for
+a time within six months of now and the year otherwise. A value the file server does not report, such
+as an owner on a file system that keeps none, prints `-` in its column,
+so every line keeps its columns. A name is written through the line
+escape at a terminal and as its bytes elsewhere
+([Pipelines](#pipelines)).
 
 **`dmesg [-a]`** writes the kernel's message buffer, as FreeBSD's
 `dmesg` writes `kern.msgbuf`: erXos's buffer is the kernel log, and
@@ -712,6 +874,16 @@ from ntpd's last sample, and says which; **`ntpctl -s status|peers`**
 writes ntpd's own words from `/svc/ntpd/status`. Its sources, exchange, checks and
 lines are
 [design-time.md](design-time.md#setting-the-clock-from-a-server-once)'s.
+
+**`ifconfig [-a] [interface]`** writes an interface in FreeBSD's layout,
+flags, netmask in hex and broadcast included, selects one by name and
+refuses an unknown one; a configuring argument or a bad flag is a usage
+error. **`ping`** takes FreeBSD's options with their diagnostics and
+writes FreeBSD's reply lines and statistics. Its pure core counts a reply
+only for a sequence number it sent and remembers, marks and counts a
+duplicate, and takes each round-trip time from its own send record, never
+from the reply's data, since a reply is data any host on the path can
+forge.
 
 **`host name [server]`** looks a name or an address up in the DNS, as
 FreeBSD's `host` does, through `inet_res` and the domain's name servers
@@ -1161,7 +1333,7 @@ space before it, and the line shows only what erXos measured. `NAME` and
 number, and the line holds no status token: which reporter could not
 answer is the inspector's to show. The
 values come from the session's own process table, which is also the
-source of its `ps` ([design-live.md](design-live.md#the-command-shell)), so no
+source of its `ps` ([Text commands](#text-commands)), so no
 inspect facet is needed:
 
 | Field | An Erlang process | A program |
@@ -1171,7 +1343,7 @@ inspect facet is needed:
 | `STATE` | `running` (status `running` or `garbage_collecting`), `runnable`, `suspended` or `exiting`; while it waits in `receive`, the function it waits in, `M:F/A`, which stands where FreeBSD shows the wait channel | the chosen thread's state as the kernel reports it: `running`, `runnable` or its wait kind; `suspended` when the program is paused |
 | `R` | time since the shell started it, for the line's process and a stage's first process; left out for any other, since the runtime keeps no start time | time since it started, from the command server's table |
 | `U`, `S` | unsupported, so left out: the runtime keeps no CPU time per process | `U` is its group's CPU time, as `getrusage` reports it ([design-programs.md](design-programs.md#the-posix-lite-personality)); `S` is unsupported and left out, since the kernel does not split the two |
-| `P` | unsupported, so left out: the runtime keeps no CPU time per process | its `pcpu` as `ps` prints it, its CPU time over the time since it started ([design-live.md](design-live.md#the-command-shell)) |
+| `P` | unsupported, so left out: the runtime keeps no CPU time per process | its `pcpu` as `ps` prints it, its CPU time over the time since it started ([Text commands](#text-commands)) |
 | `K` | its memory as `process_info/2` reports it, in KiB, rounded up | its sub-space's charges, in KiB |
 
 `NAME` and `STATE` are text the member's domain or program reported. Each
@@ -2483,6 +2655,10 @@ never mix metadata and entry-code versions. An independently written command fix
 the generated lookup and help; the shell's parser and semantic oracle
 remain independent of catalog generation.
 
+The tests below name each area's oracle and harness once, and list with
+each area the seeded faults that must make its tests fail; areas with no
+seeded fault list none.
+
 * **The command shell against rc.** The oracle is Plan 9's rc as
   plan9port carries it (MIT), built from source at a pinned commit as a
   host test tool, since Homebrew offers no package for it
@@ -2509,627 +2685,193 @@ remain independent of catalog generation.
   tokenizer and parser have a fuzz target that checks the 4 KiB bound on
   a unit both ways and the depth-256 bound, and a sweep parses each costly
   shape at the unit bound within half the parse process's heap.
-* **Interaction:** line editing, history and completion through a scripted
-  terminal; `Ctrl-Z`, `fg`, `bg`, `Ctrl-C` and `kill %N` on a job of
-  Erlang commands, of programs, of both, and of programs three generations
-  deep; on Fiasco, `Ctrl-Z` on a job of both, after which the job
-  table shows its Erlang commands stopped and its programs running; an
-  Erlang command whose helper process the job's stop holds; a stage that
-  spawns helpers in a loop while `Ctrl-Z` and then `kill %N` arrive, none
-  of which runs after the stop or survives the end; `Ctrl-D` answering
-  one read of a program with the end of file while its next read goes
-  on; a program whose output and error streams both go to the terminal,
-  which arrive in the order it wrote them; a background job that reads
-  the terminal; a program that floods its output while `Ctrl-C` is typed,
-  which stops within a second at 115,200 baud; a program that stops
-  draining its channel while the relay has its handler send `Ctrl-C`,
-  which leaves the relay responsive, so a `Ctrl-Z` that follows stops
-  the job and gives the prompt back; a program that catches `SIGINT`,
-  which `Ctrl-C` leaves running in the foreground with no prompt until
-  it exits, after which the prompt returns, where a seeded shell that
-  reads on when the evaluator ends prints the prompt while the program
-  still runs; that program piped into an Erlang command whose helper,
-  spawned unlinked, appends a line to a file each 10 ms, where `Ctrl-C`
-  stops the file growing at once while the program runs on, and a seeded
-  `Ctrl-C` that ends only the stages' evaluators by exit signal lets it
-  grow; `kill %1` of a
-  stopped job; a program that catches `SIGCONT` and sees it after `fg`;
-  and a `SIGCONT` that another program of the POSIX session sends to a
-  member of a stopped job, after which `jobs` shows the job running and
-  `fg` brings back its other members.
-* **`Ctrl-T`** ([`Ctrl-T`](#ctrl-t-status-and-the-info-request)). Each case
-  is paired with a seeded fault that makes it fail:
-  * `erx_tty`'s exploration: `VSTATUS` with `ISIG`, `ICANON` and `IEXTEN`
-    set gives `info`, echoes nothing and keeps the partial line; with any
-    of the three clear, it is an ordinary byte. The same cases run
-    differentially against a host pseudo-terminal with `NOKERNINFO` set,
-    since macOS's tty takes `VSTATUS` as FreeBSD's does. Dropping the
-    `IEXTEN` condition, or echoing the key, fails the test.
-  * `status/3`: a leading newline at a column other than 0, and nothing
-    when there is less than 256 bytes of room. Removing either rule fails
-    the test.
-  * `erx_tty_info`: the choice of member, checked exhaustively over small
-    sets of members against a model of the five rules; swapping rules 1
-    and 2 fails. Golden lines in which every value is known, and lines in
-    which each field in turn is `unknown`, `partial`, `timeout` and
-    `unsupported`: a lettered field is left out, and `NAME` and `STATE`
-    print `-` and `[-]`. A formatter that prints a missing value as 0,
-    or prints a status token, fails. A name
-    and a state that hold `ESC ] 8 ;`, a newline and a bidirectional
-    override reach the master only as tokens; bypassing the line escape
-    fails.
-  * The job table: `info/1` gives the tag of the job the event names
-    while that job has members, during `fg` the job `fg` brought back,
-    and `[]` once it is over. A table that answers with its current
-    foreground fails the case of an event for a job that has ended.
-  * Erlang commands: `cp` of a large file from a test server that delays
-    each piece. `Ctrl-T` shows the line naming `cp`, then `cp`'s
-    `from -> to  N%`, in that order. A helper process that did not opt in
-    keeps an empty queue. A `cp` that does not call `catch_events`, and a
-    report that sends the requests before it writes the line, each fail.
-  * Programs: FreeBSD's `sleep`, built as a test program, shows the line
-    naming `sleep` and its process id, then its own report. A program that
-    does not catch `SIGINFO` runs on. With `NOKERNINFO` set, only `sleep`'s
-    report appears. Making `SIGINFO`'s default action end the program
-    fails the second case.
-  * The prompt and `erl`: `Ctrl-T` transposes two characters and prints no
-    line. A console that maps the key to `info` while the shell's own line
-    is being read fails.
-  * `kill -INFO %1` delivers the request and prints no line.
+* **Interaction**, through a scripted terminal: line editing, history,
+  completion and job control (`Ctrl-Z`, `fg`, `bg`, `Ctrl-C`, `kill %N`)
+  on jobs of Erlang commands, of programs, of both and of programs three
+  generations deep, including on Fiasco a stopped mixed job whose
+  programs run on; helpers that a stop holds and that none survives the
+  end; output and error streams kept in order; a flood stopped by
+  `Ctrl-C` within a second at 115,200 baud; a program that stops draining
+  its channel without making the relay unresponsive; and `SIGCONT` from
+  another program of the POSIX session. Seeded: a shell that reads on
+  when the evaluator ends, which prints the prompt while a program that
+  catches `SIGINT` still runs; and a `Ctrl-C` that ends only the stages'
+  evaluators by exit signal, which lets an unlinked helper's file grow.
+* **`Ctrl-T`** ([`Ctrl-T`](#ctrl-t-status-and-the-info-request)):
+  * `erx_tty`'s exploration, run differentially against a host
+    pseudo-terminal with `NOKERNINFO` set, since macOS's tty takes
+    `VSTATUS` as FreeBSD's does. Seeded: dropping the `IEXTEN` condition,
+    or echoing the key.
+  * `status/3`'s leading newline and its 256-byte room rule. Seeded:
+    removing either rule.
+  * `erx_tty_info`'s choice of member, checked exhaustively over small
+    sets against a model of the five rules, and golden lines with each
+    field in turn `unknown`, `partial`, `timeout` and `unsupported`.
+    Seeded: swapping rules 1 and 2; a formatter that prints a missing
+    value as 0 or prints a status token; bypassing the line escape for a
+    name holding `ESC ] 8 ;`, a newline and a bidirectional override.
+  * The job table's `info/1` for an event whose job has ended. Seeded: a
+    table that answers with its current foreground.
+  * Erlang commands (`cp` from a test server that delays each piece).
+    Seeded: a `cp` that does not call `catch_events`; a report that sends
+    the requests before it writes the line.
+  * Programs (FreeBSD's `sleep` as a test program). Seeded: making
+    `SIGINFO`'s default action end the program.
+  * The prompt and `erl`, where `Ctrl-T` transposes. Seeded: a console
+    that maps the key to `info` while the shell's own line is read.
   * FreeBSD as the oracle: the FreeBSD 15.1 oracle guest
     ([design-network-stack.md](design-network-stack.md)) runs `sleep 30`,
-    `cp` of a large file and `cat | cat` on a pseudo-terminal driven by the
-    harness, sends `^T` mid-line and at column 0, and records each line.
-    The same commands on erXos give lines of the same shape, compared with
-    every number masked: the same fields, the
-    two spaces before `cmd:`, the leading newline, and the same no-job
-    texts. `cp`'s and `sleep`'s own reports match byte for byte once the
-    numbers are masked. A one-space separator fails the comparison.
+    `cp` of a large file and `cat | cat` on a pseudo-terminal, sends `^T`
+    mid-line and at column 0, and the lines erXos gives are compared with
+    every number masked: fields, the two spaces before `cmd:`, the
+    leading newline and the no-job texts, and `cp`'s and `sleep`'s own
+    reports byte for byte. Seeded: a one-space separator.
 * **The terminal relay's protocol**
-  ([The terminal relay's protocol](#the-terminal-relays-protocol)). These
-  are EUnit cases of `erx_session_relay` against a fake master and a fake
-  console, a test process that makes the console's open, run by
-  `test/host/erx_session_relay_test.rb`. Each passing case has a seeded
-  fault that makes it fail. The test process acts as one shell, whose
-  group `G` is a process the test starts. Outside the cases that name
-  `Signals`, every `foreground` carries `{G, Seen}`, `Seen` the number of
-  signal events the test process has taken, and is written here without
-  it:
-  * Order: a watch of `in` made while a byte waits receives `ok` as its
-    first message and the report as its second. Seeded: a relay that
-    sends the report before the answer.
-  * Background: an open of job B watches `{read, 4096}` while `A` holds
-    the terminal. A typed line gives B no report, and B's `read` answers
-    `eagain`. After `{foreground, B, cooked}` the report comes, and the
-    read returns the line. Seeded: a relay that arms every wait whatever
-    its holder, so B is reported before the change.
-  * The console during a job: with `A` holding the cooked terminal, A's
-    open watching `{read, 4096}` and the console's `{read, 1}`, a typed
-    line reaches A's read, and the console gets no report. After `{foreground,
-    console}` the console's report comes at the next key, and its read
-    returns that key, unechoed. Seeded: a console open that is never
-    parked, which takes A's line.
-  * Input on demand: with the console holding and its open not watching,
-    typed bytes send the fake console nothing; its watch is then reported
-    at once. With `cat\nsecret\n` typed in one input, the console's reads
-    of one byte return `c`, `a`, `t` and `\n`; after `{foreground, A,
-    cooked}`, A's watch is reported at once, its read returns `secret\n`,
-    and `secret` is never echoed. Seeded: a relay that sends the console
-    input as it arrives, which fails the first case; and a read that
-    ignores its `Max`, which returns `cat\nsecret\n` to the console's
-    first read, so A's read finds nothing.
-  * `Ctrl-C` at the prompt: with the console holding and having named
-    `{console_group, G}`, `abc` and `Ctrl-C` typed give the fake console
-    `{erx_tty_event, G, interrupt}`, and
-    its next watch is not reported until a key is typed. Seeded: an
-    editing setting with `ISIG` clear, whose read returns `abc` and the
-    `Ctrl-C` byte with no event.
-  * The swap, by libedit's rule: a job holding the cooked terminal sets
-    `ECHO` clear and `VSTATUS` to `^X` with `ICANON` set; `{foreground,
-    console}` answers `Left` with `ECHO` clear, and `tcgetattr` shows the
-    editing setting, `ISIG` and `ICRNL` set, `VMIN` 1 and `VTIME` 0. The
-    next `{foreground, B, cooked}` gives B `ECHO` set and `VSTATUS` `^X`.
-    A job that then leaves `ICANON` clear and `VSTATUS` `^Y` leaves the
-    next job `^X`. A job that sets `VMIN` 4 with `ICANON` set leaves the
-    editing setting at `VMIN` 1, so one typed key reports the console's
-    watch. A `foreground` whose `termios` `erx_tty:set/2` refuses changes
-    neither the holder nor the mode, which a parked wait that gets no
-    report shows. Seeded, each failing one case: a `Left` that is the new
-    `termios`; a holder changed before the check; an `adopt/2` without
-    its masks, which leaves `ECHO` clear; one that ignores `ICANON`,
-    which takes `^Y`; an editing setting that keeps the cooked `VMIN`,
-    whose watch waits for four keys; and one that clears `ICRNL`.
-  * `tcsetattr` in the background: `{tcsetattr, T}` from job B while `A`
-    holds the terminal answers `{background, false}`, and `tcgetattr`
-    shows the `termios` unchanged; `{tcsetattr, T, sigttou_ignored}` from
-    B is made. Seeded: a relay that does not check the open's holder fails
-    the first; one that refuses the marked request fails the second.
-  * A short raw read: with `VMIN` 10 and `VTIME` 0, a watch of
-    `{read, 1}` is reported at the first typed byte, and the read of one
-    byte returns it. Seeded: a read wait that ignores the count, which
-    waits for ten bytes.
-  * Opens: a request with a reference the relay did not make answers
-    `{error, ebadf}`. An open whose maker has exited answers
-    `{error, ebadf}` to another process that names it. Seeded: a relay
-    that does not monitor the maker answers that request.
-  * Events: with `A` holding the terminal, each of the five
-    line-discipline actions reaches the process that sent the
-    `foreground` as `{erx_tty_event, A, Event}`, with `Event` from the
-    table, in the table's order, and after `{foreground, A, current, {G,
-    3}}` a typed key reports A's watch; after `{foreground, B, cooked}`
-    from the same process, `Ctrl-C` gives `{erx_tty_event, B, interrupt}`;
-    with the console holding, `Ctrl-Z` reaches the fake console as
-    `{erx_tty_event, none, suspend}` before it names a group, as
-    `{erx_tty_event, G1, suspend}` after `{console_group, G1}` and as
-    `{erx_tty_event, G2, suspend}` after `{console_group, G2}`, and
-    nothing reaches the shell; a size change reaches the fake console as
-    `erx_console_size`. Seeded: `sigtstp` mapped to `interrupt`, the
-    console's events sent to the shell, a relay that keeps the first group
-    the console named, and one that counts `info` as a signal, which makes
-    `Sent` 4 so A's watch gets no report, each fail one case.
-  * A signal suspends the job's reads: with `A` holding the cooked
-    terminal, given with `{G, 0}`, and A's open watching `{read, 4096}`,
-    `Ctrl-C` and `ls\n` typed in one input give the shell
-    `{erx_tty_event, A, interrupt}` and A no report, and A's read answers
-    `eagain`; A's `write` and its `tcsetattr` of a raw `termios` go
-    through. After `{foreground, A, current, {G, 1}}` A's watch is
-    reported, its read returns `ls\n`, and `tcgetattr` shows the raw
-    `termios` A set. With A's watch reported, as `{ready, Open, [{read,
-    4096}], 0}`, and not yet read when `Ctrl-C` and `y\n` are typed, A's
-    read with 0 answers `eagain`, and still answers `eagain` after
-    `{foreground, A, current, {G, 1}}`, while A's new report carries 1 and
-    its read with 1 returns `y\n`. Seeded, each failing one case: a
-    suspension that also refuses `tcsetattr`, which answers it
-    `{background, false}`; a `current` that sets the cooked `termios`;
-    a suspension that only parks waits, whose read after the delivered
-    report returns `ls\n`; and a relay that ignores the read's number,
-    whose read with 0 after the `current` returns `y\n`.
-  * Signal numbers: with `A` holding, `Ctrl-C`, `Ctrl-Z` and `bg\n`
-    typed in one input give the shell `{erx_tty_event, A, interrupt}` and
-    `{erx_tty_event, A, suspend}`; after `{foreground, A, current, {G,
-    1}}` A's watch gets no report and its read answers `eagain`, and
-    after `{foreground, console, {G, 2}}` the console's reads return `b`,
-    `g` and `\n`. With `B` given the terminal by `{foreground, B, cooked,
-    {G, 1}}` after the same two events, B's read answers `eagain` until
-    `{foreground, B, current, {G, 2}}`. Seeded: a relay that keeps one
-    suspension flag, which any `foreground` naming the holder clears, so
-    A's read returns `bg\n` after the first `current`.
-  * Signals the console takes: with the console holding and having named
-    `{console_group, G}`, `Ctrl-C` gives the fake console `{erx_tty_event,
-    G, interrupt}`; after `{foreground, A, cooked, {G, 0}}` and `y\n`
-    typed, A's watch gets no report and its read answers `eagain`, and
-    after `{foreground, A, current, {G, 1}}` the read returns `y\n`. The
-    same holds with `Ctrl-Z`. In a fresh relay, after `{console_group,
-    G}` and then `Ctrl-\` with the console holding, `{foreground, A,
-    cooked, {G, 0}}` lets A read at once. Seeded: a relay that counts no
-    signal it sends the console, whose A read returns `y\n` before the
-    `current`; and one that counts the console's `quit`, after which A's
-    watch gets no report.
-  * A console signal for another group: the shell, holding the
-    terminal for its line `L` under `G` with `Seen` `n`, starts `erl`
-    and sends `{foreground, console, {G, n}}`, and the console names
-    `{console_group, E}`. `Ctrl-C` at the Erlang prompt gives the fake
-    console `{erx_tty_event, E, interrupt}`. The console then names
-    `{console_group, G}` again, as after `q()`, and `{foreground, L,
-    cooked, {G, n}}` lets `L` read a typed line at once. Seeded: a relay
-    that counts a console signal for the group of the last `foreground`,
-    under which `G`'s count is `n` + 1 and `L`'s read answers `eagain`.
-  * Refusals: with `A` holding and no signal made, `{foreground, A,
-    current, {G, 1}}` and `{foreground, B, cooked, {G, 1}}` each answer
-    `{error, einval}`, and a typed key reports A's watch; with the
-    console holding, `{foreground, A, current, {G, 0}}` answers `{error,
-    einval}`, and a typed key still reports the console's watch. Seeded:
-    a relay that keeps any `Seen`, which after the refused `current` and
-    then one `Ctrl-C` lets A read the key typed after it; and one that
-    takes `current` from any job as a `foreground`, which gives A the
-    terminal, so the console's watch gets no report.
-  * `Sent` in the answer: with `A` holding, after `Ctrl-C` and then
-    `Ctrl-\`, `{foreground, A, current, {G, 1}}` answers `{ok, Left, 2}`.
-    Seeded: an answer that carries the `Seen` it was sent, 1.
-  * The end of file: in cooked mode `Ctrl-D` at the start of a line
-    answers A's read `eof`; with `VMIN` 0 and `VTIME` 1 and nothing typed,
-    the report at the timer's end is followed by a read answered `{ok,
-    <<>>}`; after a hangup a read answers `eof`. Seeded: a relay that
-    answers the end of file `{ok, <<>>}`, which fails the first case.
-  * The hangup told at once: with `A` holding and no read waiting, the
-    master's hangup sends the console `erx_console_eof`, and A's read
-    after it answers `eof` though a line was typed before it.
-  * Two shells: a second test process acts as another shell, with group
-    `G2`. The first gives `A` the terminal under `G1`, takes the event of
-    a `Ctrl-C` and sends `{foreground, console, {G1, 1}}`; the console
-    names `G2`, and the second's `{foreground, B, cooked, {G2, 0}}`
-    answers `ok`, after which B's read returns a typed line. A `Ctrl-C`
-    while B holds gives the second process its event and the first
-    nothing; the second sends `{foreground, console, {G2, 1}}`, the
-    console names `G1`, and the first's `{foreground, C, cooked, {G1,
-    1}}` lets C read. Seeded: one count for the whole relay, under which
-    the second's `{foreground, B, cooked, {G2, 0}}` leaves B's reads
-    suspended, 0 not being 1, so B's read answers `eagain`.
-  * A shell that ends while its job holds: after the second test process
-    gives `B` the terminal under `G2`, the test ends `G2`; `tcgetattr`
-    through the console's open shows the editing setting, a typed key
-    reports the console's watch, and `Ctrl-C` reaches the fake console.
-    Seeded: a relay that does not monitor the group, under which the
-    console's watch gets no report and the fake console gets no event for
-    the `Ctrl-C`.
-  * The name: the relay of the domain's line starts registered as
-    `erx_tty_owner`, and the relay of another tty, started beside it,
-    holds no name and keeps none at its drain; an open made by the other
-    relay reaches it through `tty/2`, and the first answers it
-    `{error, ebadf}`. Seeded: a relay that also registers a second
-    name, which fails to start.
-  * A tty a master of the session's domain opens: `erx_session_tty:open/1`
-    starts a console driven by a relay of its own, unregistered, on which
-    `echo` and `erl` return and a hangup ends the tty; two such ttys run
-    beside the domain's line, whose relay keeps `erx_tty_owner`
-    (`test/host/erx_session_tty_test.rb`).
-  * The mode: with `A` holding the terminal and `ls\n` typed, a
-    write-only open of A's gets `{error, ebadf}` for a watch of
-    `{read, 4096}` and for `tty_read` with the relay's current signal
-    number, while its watch of `in` is reported and its `write` and
-    `tcsetattr` go through; an open of A's made for reading then reads
-    `ls\n`. Seeded: a relay that ignores the mode, whose write-only open
-    reads `ls\n`.
-  * The readers: the chokepoint checks that only `erx_cmd` and
-    `erx_console` call `open_reader`, that `erx_tty_owner` appears
-    only in `erx_session_relay`, `erx_output`, `erx_console` and
-    `erx_log_h`, and that only `erx_session_relay` builds
-    `{open, Holder, read}`, pass on the tree (`test/host/relay_chokepoints_test.rb`).
-    Seeded, in `test/host/chokepoints_test.rb` as every rule's seed is,
-    each a module under `erlang/apps`: one that calls
-    `open_reader/2`, one that sends `{open, Job, read}` with
-    `gen_server:call(erx_tty_owner, _, infinity)`, and one that sends it
-    to a relay's pid, each of which the check reports.
-  * The runtime's writers: with output stopped by `VSTOP`, a
-    `tty_write` is answered once its bytes are held and none reaches the
-    fake master; one past the room is answered after `VSTART`, once the
-    master has taken enough. A `tty_drain` is answered only when the fake master
-    has answered every byte, at once after a hangup, and
-    `erx_tty_owner` is free after it. Seeded: a `tty_write` answered when
-    it arrives, which fails the stopped case; a drain answered when the
-    queue empties, before the master's answer.
-* **The console on demand.** EUnit cases of `erx_console` of the session
-  role, with its group and its relay, against a fake master and a test
-  shell that reads lines from the group `G` and counts the signals that
-  reach it; each `foreground` the test sends carries `{G, Seen}`, `Seen`
-  that count, and is written without it where the case does not depend
-  on it:
-  * The `rm -i` trace: the master types `rm -i f\n` while the shell
-    reads, and the shell gets the line. Before the shell sends anything,
-    the master types `Ctrl-C` and then `y\n`, and the fake master's
-    process calls `sys:get_state/1` on the relay, which answers only once
-    the relay has taken both. The shell then sends `{foreground, Line,
-    cooked, {G, 0}}`; an open of `Line` that watches `{read, 4096}` gets no
-    report, and its read answers `eagain`. The shell then takes its
-    group's exit signal `interrupt`, counts it and sends `{foreground,
-    console, {G, 1}}`, and its next line is `y\n`. With `Ctrl-Z` in place
-    of `Ctrl-C` the shell takes `{G, suspend}` and the rest is the same.
-    Seeded: a relay that counts no signal it sends the console, whose
-    `Line` read returns `y\n` in both cases, as `rm` would read it and
-    remove the file.
-  * Each console signal counted once: with the shell's job table core
-    in place of the test shell's count, `Ctrl-C`, `Ctrl-Z`, `Ctrl-\` and
-    a size change are made at the prompt while the shell reads, and
-    `Ctrl-C` and `Ctrl-Z` after its group has returned a line and before
-    the shell has sent anything; after each, the next line the shell
-    runs, given the terminal with the table's `foreground`, reads a
-    typed line at once, no `foreground` is refused, and the shell prints
-    no line about lost signals. Seeded, each failing one case: a relay
-    that counts the console's `quit`, under which the next line's read
-    answers `eagain` and, with the job table's check period set to 100 ms
-    for the test, the shell prints the line about one signal not
-    received; a table that does not count `{G, suspend}`, likewise; a
-    relay that counts the size change made while the console holds,
-    likewise; and a table that counts `{error, interrupted}` twice, whose
-    next `foreground` is refused, which ends the shell.
-  * `ls\npwd\n` typed in one input while the shell reads: the shell gets
-    `ls\n`; the test then sends `{foreground, Line, cooked}`, and an open
-    of `Line` reads `pwd\n`. Seeded: a group without edit 72, which never
-    asks, so no line comes before the test's deadline; and a console
-    that reads 4,096 bytes for an ask, which takes `pwd\n` into the group,
-    so `Line`'s read finds nothing.
-  * Another key that ends a line: with `shell_keymap` binding `^X` to
-    `new_line_finish`, `cat^Xsecret\n` typed in one input gives the shell
-    `cat`, and after `{foreground, Line, cooked}` an open of `Line` reads
-    `secret\n`. Seeded: a console that reads up to the first CR or NL,
-    which takes `secret\n` into the group.
-  * The guard: while the shell reads, a background job's process calls
-    `io:get_line/1` and `io:setopts([{echo, false}])`, and a process that
-    made the group its leader with `group_leader/2` calls
-    `io:get_line/1`; each gets `{error, enotsup}`, and `cat\nsecret\n`
-    typed in one input gives the shell `cat\n`, echoed, and an open of
-    `Line` reads `secret\n` after `{foreground, Line, cooked}`. In an
-    Erlang shell's group, an evaluation's `io:get_line/1` returns the
-    line typed. A job's process that sends the group
-    `{requests, [{get_line, unicode, ""}]}`, and one that sends
-    `{requests, [{put_chars, unicode, "x"}, {setopts, [{echo, false}]}]}`,
-    each with `io:request/2`, get `{error, request}`, and the shell's next
-    line is read and echoed. Seeded: a group without edit 74, on which the
-    job's request pushes the shell's and takes `cat\n`; the shell-only
-    refusal applied to every group, on which the Erlang shell's evaluation
-    gets `{error, enotsup}`; and stock's fallback for an unknown entry of
-    `requests` (`group.erl:671-672`), on which the group exits with
-    `case_clause` and the test shell with it.
-  * One answer for one ask: with a test process as the console's group,
-    an ask `R` with `ab` typed gets `{Console, {read, R, "a"}}` and
-    nothing more until a second ask; `é` typed as two writes of the
-    master, under one ask, gets one answer carrying `é`. With `C3` held
-    for the group, `Ctrl-C` and then `A` typed give the answer `A`; with
-    `C3` held for group `G1` and `G2` made current, `A` typed under
-    `G2`'s ask gives `G2` the answer `A`. Seeded: a console that keeps
-    reading after it answers, which sends `b` without an ask; one that
-    ends the ask at every read, which never reads `é`'s second byte, so
-    no answer comes before the deadline; one that keeps what it holds at
-    a signal, which answers `ÃA` in the `Ctrl-C` case; and one that holds
-    one set of bytes for every group, which answers `G2` `ÃA`.
-  * A byte that ends one character and starts another: `C3 E2 82 AC`
-    typed as four writes of the master, each under an ask, gives the
-    answer `Ã` at `E2` and the answer `€` at `AC`, and nothing between.
-    Seeded: a console that drops what it holds with each answer, which
-    answers U+0082 at `82` and `¬` at `AC` in place of `€`.
-  * An interrupt queued before a read: the shell reads with `ls` typed
-    and the console's watch armed; the test suspends the console with
-    `erlang:suspend_process/1`, the master types `x`, which makes the
-    relay's report, then `Ctrl-C`, which flushes `x` and makes
-    `{erx_tty_event, G, interrupt}`, then a newline. The fake master's
-    process then calls `sys:get_state/1` on the relay, which answers only
-    after taking the three inputs that process sent before it, and the
-    test resumes the console after that answer, so the report and the
-    event are in the console's queue. The console's read on the report,
-    which carries 0, answers `eagain`; the shell's request returns
-    `{error, interrupted}`, its next request returns the empty line, and
-    the shell never gets `ls`. Seeded: a relay that ignores the read's
-    number, so the console's call takes the newline past the queued
-    event and the shell gets `ls\n`.
-  * One ask for a group: a group against a test driver that records
-    asks and answers none, after `(1)` typed as three answers: the group
-    asks once at the blink, and not again when the blink's timer ends; an
-    interrupt then ends the request, the shell's next request makes no
-    ask, and the answer to the outstanding ask, `l`, starts its line.
-    Seeded: a group that asks at every `more_chars` and `blink`, which
-    asks again at the timer's end; and one that forgets its ask at the
-    interrupt, which asks again with the first unanswered.
-  * Keys of several bytes, a property test of `edlin:edit_line/2` in each
-    of its modes, `normal`, `search`, `tab_expand` and `help`: a string
-    drawn from the default keymap's sequences, their prefixes, a
-    character that continues none of them, CR, NL, `ESC`, `~` and text
-    beyond ASCII, given whole, a character per call and cut at random
-    points, gives the same line and the same actions in the same order,
-    the expansion and history answers included; only a blink, which waits
-    for input that does not come at once, may differ. A `shell_keymap`
-    binding `ESC [ H ~` to `new_line_finish` is refused with stock's
-    diagnostic. Seeded, each restoring one of stock's answers that edit
-    72 removes: the key ended at `ESC [ 3`, which inserts Delete's `~`;
-    no clause for a character that cannot continue `ESC [ 3`, which
-    crashes on `ESC [ 3` and NL; a `~` taken after a complete key, which
-    makes `ESC [ A ~` whole one unbound key and accepts the `ESC [ H ~`
-    binding; `tab_expand` left at an escape prefix, which makes a split
-    `ESC [ A` in the expansion list `history_up`; and a key that
-    `tab_expand` hands to `normal` read again from the start of the last
-    input, which for a left arrow typed a character per call in the
-    expansion list reads `D` alone and inserts it; and stock's reversal
-    at `new_line` (`edlin.erl:375-377`), which for `ab`, `ESC` and NL
-    given whole asks for the redraw before the inserts.
-  * A character that cannot continue a sequence is read again: NL after
-    each of `ESC ESC`, `ESC O`, `ESC ESC [`, `ESC [`, `ESC [ 1 ;` and
-    `ESC [ 3`, given whole and a character per call, ends the line, and
-    `é` after `ESC` is inserted. The property test cannot see this, since
-    a clause that takes the character gives the same wrong answer for
-    every cut. Seeded: stock's clause after `ESC O`
-    (`edlin_key.erl:82`) kept beside the rest of edit 73, which takes the
-    NL into an invalid key whole and split, so the line does not end.
-  * A sequence that never ends: `ESC [` and then 100,000 digits, given a
-    character per call, leave the editor's continuation no larger, by
-    `erts_debug:flat_size/1`, than after `ESC [` and 13 digits, and the
-    digits past the thirteenth are in the line as text; `ESC [ 1 ; 5 C`
-    still moves a word right. Seeded: edit 73 without its bound, whose
-    continuation grows with the digits.
-  * A line that never ends: 1,000,000 characters of text and no newline,
-    given to the command shell's group through the fake console a
-    character per answer, leave the group, by `process_info(G, memory)`
-    after `erlang:garbage_collect(G)`, within 64 KiB of its size after
-    70,000 such characters; the line then holds the first 65,536
-    codepoints, a bell was asked for each character after them, Return
-    gives the shell's `line too long`, and the group's reductions, by
-    `process_info(G, reductions)`, per character over the last 100,000
-    characters are within four times those per character over the first
-    1,000, typed into a short line. The measure is the
-    whole group, not the editor's continuation alone, so it also catches
-    a copy of the line kept anywhere else in the group. Seeded: edit 73
-    without its seventh part, under which the group grows with the
-    characters; and a seventh part that takes the count from the line at
-    each key, whose reductions for the last characters grow with the
-    line.
-  * A cluster that never ends: `a` and then 100,000 U+0301 COMBINING
-    ACUTE ACCENT, given a character per answer, leave the line holding
-    `a` and 31 marks, one cluster of 32 codepoints, with a bell for
-    each mark after them; a following `b` is inserted, and Return gives
-    the line `a`, the 31 marks and `b`. Seeded: a seventh part that
-    counts `edlin`'s elements, under which the line holds all 100,001
-    codepoints in one element and the group grows with the marks; and
-    one without the cluster bound, under which the cluster grows to the
-    line's 65,536 codepoints.
-  * A late event: with the command shell's group `P` current again after
-    an Erlang shell's group `E` has ended, `{erx_tty_event, E,
-    interrupt}` reaches no group, and the command shell's line goes on;
-    `{erx_tty_event, P, interrupt}` then interrupts it. Across `erl` and
-    `q().` the relay is named `P`, `E` and `P` again, in that order.
-    Seeded: a console that carries an event out on its current group,
-    which interrupts `P`'s line; and one that names its group only at its
-    start, after which the relay's events carry `P` while `E` reads.
-  * The Erlang shell evaluating `timer:sleep(infinity)`: `Ctrl-C` typed
-    interrupts the evaluation and the prompt returns. Seeded: an editing
-    setting with `ISIG` clear, where the byte waits unread and the
-    evaluation goes on.
-  * A hangup with no read outstanding, while a job holds the terminal
-    and the shell waits on it, as the Erlang shell does while it
-    evaluates: every shell on the line and the console end at once.
-    Seeded: a relay that sends the console no `erx_console_eof`, whose
-    shells live on.
-  * An end of file on a read: a background program sets `ICANON` with
-    `SIGTTOU` ignored, `Ctrl-D` is typed at a line's start while the
-    shell reads, and then `x\n`; the shell gets `x\n`, and no shell nor
-    the console ends. Seeded: a console that takes a read's `eof` as
-    the hangup, which ends them.
-* **The job table and the terminal.** EUnit cases of the job table's core,
-  which returns the `foreground` requests and job effects it decides, in
-  the order it decides them; the table counts each signal it takes, and
-  every `foreground` it gives carries the shell's group and that count,
-  written here only where a case depends on it:
-  * An `interrupt` that names job A, taken after A has ended and B holds
-    the terminal, gives no effect on a job and only `{foreground, B,
-    current, {G, 1}}`; one that names A while A runs ends A alone. An
-    `info` that names A after A has ended writes `empty foreground process
-    group` and sends no request. Seeded: a table that acts on its current
-    foreground, which ends B and reports on B; and one that gives
-    `current` only for the job the event named, which gives none, so B's
-    reads would stay suspended.
-  * Giving the reads back: an `interrupt` and a `quit` for A while A
-    holds the terminal and has a program left each give A's effects and
-    then `{foreground, A, current, {G, 1}}`; when A is over after the
-    effects, the table gives the `foreground` of A's end and no `current`;
-    a `suspend` gives the stop's `foreground` alone. The events `suspend`
-    and then `interrupt` for A, the line, give the stop's `{foreground,
-    console, {G, 1}}` and then A's effects and no `foreground`. Seeded,
-    each failing one case: a table that gives `{foreground, A, cooked}`,
-    which resets the modes a program set; one that gives no `foreground`
-    after the effects, which would leave A's reads suspended; one that
-    gives `current` for a job that is over; and one that gives `current`
-    for the job the event named whether or not it is the table's
-    foreground, which gives `{foreground, A, current, {G, 2}}` for the
-    stopped A.
-  * Signals from the group: the group's exit signal `interrupt` taken
-    while the line `L` holds the terminal ends `L` and gives
-    `{foreground, console, {G, 1}}`; its `{G, suspend}` does the same with
-    a stop; an `{error, interrupted}` answer to the line request, taken at
-    the prompt, gives no request, and the next line's `{foreground, L2,
-    cooked, {G, 1}}` carries it. Seeded: a table that counts only the
-    relay's events, which gives `{G, 0}` in each, so the relay would keep
-    the reads of the next job suspended for ever.
-  * A refused `foreground`: against a fake relay that answers one
-    `foreground` `{error, einval}`, the shell ends, and its exit reason
-    carries the request and the answer. Seeded: a shell that ignores
-    the answer, which lives on.
-  * Window size: while a delivery for A runs, a `winch` for B and then
-    one for C arrive, and B ends; C gets one delivery after A's, and B
-    none. While a delivery for A runs, nine more `winch` for A give one
-    more delivery for A when it ends, and none after. Seeded: one waiting
-    delivery for every job, which merges C's into B's and drops it; and a
-    table that delivers every `winch`, which gives nine.
-  * `stop/1`: a stop asked by a command's process `P` of job A gives the
-    stop's effects and the `foreground` of A's stop, and no answer to
-    `P`. Each of `fg` of A, `bg` of A and `kill -s CONT %N` of A then
-    gives the whole job's resume, the mark cleared and the `job` cause
-    lifted from each of A's two programs, and only after it the answer
-    to `P`, one case each. A handler's report that a `SIGCONT`
-    continued program `Q` of A gives the lifting of `Q`'s `job` cause
-    alone: the mark stays, A's other program stays held, `jobs` shows A
-    running, and `P`'s call returns only after a later `bg` of A, which
-    clears the mark and lifts the other program's cause. A handler's
-    `{stop, sigtstp}` for a program of A is answered in the same step as
-    `P`. `kill %N` of the stopped A gives A's end and then the resume
-    and the answer; and a shell that ends while A is stopped gives no
-    answer. Seeded, each failing its cases: a table that answers `P`
-    when it marks the tag, which fails the first case; one that answers
-    only at `fg` and `bg`, which fails the `CONT` case, where `P` runs
-    on with its call never returning, and the `SIGCONT` case, where the
-    answer is dropped with the stopped state and `P`'s call does not
-    return after the `bg`; one whose `SIGCONT` report continues the
-    whole job, which fails the `SIGCONT` case; and one whose `bg` acts
-    only on a stopped entry, which leaves the other program held after
-    the `bg`.
-  * `fg`'s `termios`: `fg` of a job that `Ctrl-Z` stopped after setting
-    `ECHO` clear sends `{foreground, A, Kept, Signals}` with `ECHO`
-    clear, both straight from stopped and after `bg` of it; `fg` of a
-    job started with `&` that never stopped sends `{foreground, B,
-    cooked, Signals}`. Seeded: a table that drops the `termios` when the
-    entry leaves stopped, which sends `cooked` after the `bg`.
-  * `kill` of a job, by default action, against a fake port driver and
-    fake handlers: `kill %N` and `kill -s HUP %N` of a stopped job end
-    it, its programs signalled and then resumed; `kill -s CONT %N`
-    continues it whole, as the `stop/1` case above checks;
-    `kill -s TSTP %N` of a running background job stops it, the terminal
-    staying with the line, and of a stopped job changes nothing;
-    `kill -s INFO %N` of a stopped job leaves it stopped, its programs'
-    handlers sending `SIGINFO` and no member ended. Seeded: a builtin
-    that ends the job for every named signal, which ends the job at
-    `INFO` and `TSTP`; and one that resumes a stopped job after every
-    signal, which runs it at `INFO`.
-  * Signals not received: a `foreground` answer `{ok, Left, 2}` taken
-    while the shell has counted 1 gives one check; a second such answer
-    before the check comes gives none; the check with the count still 1
-    gives the line about one signal not received, and with the count
-    at 2 gives nothing. Seeded: a table that ignores `Sent`, which gives
-    no check; and one that prints at the answer, which prints for a
-    signal still on its way.
-  * `fg %1; cat`: when `%1` ends, the table gives `{foreground, Line,
-    cooked}` and `fg` returns `%1`'s status; when `%1` stops, the same,
-    with `fg` returning `sigtstp`; when `Ctrl-C` ended `%1`, the table
-    gives the line's interrupt and then, the line being over,
-    `{foreground, console}` and no `{foreground, Line, cooked}`, and `cat`
-    never starts. Seeded: a table that gives the terminal to the console
-    when the job `fg` waits for ends, which fails the first case; one
-    that does not interrupt the line, which fails the third; and one that
-    gives `{foreground, Line, cooked}` before the line's interrupt, which
-    also fails the third.
-* **A command at the terminal:**
-  * `tty/2`: a test command sets the tty raw, reads three keys typed with
-    no Return one by one, and ends; the prompt then echoes and edits. With
-    the editing setting not set at `{foreground, console, Signals}`, the prompt
-    test fails. The same command with standard input from a file, from a pipe
-    and from `/dev/null`, under `within`, and in the system shell gets
-    `enotty` and the tty's `termios` is unchanged; a `tty/2` that falls
-    back to the session's tty for a redirected stream fails the file case.
-  * `read/1`: with `VMIN` 0 and `VTIME` 1 and no input, a read returns
-    `<<>>` after about 100 ms and the command reads on; returning `eof`
-    fails it. In cooked mode, a typed line, then `Ctrl-D` at the start of
-    a line, gives the line and then `eof`. A command that calls `watch/1`
-    and then sleeps gets `{ready, Open, [{read, 4096}], N}` once for typed
-    input, `Open` the reference `watch/1` returned, and `read/2` on it
-    returns at once; when a second reader of the job takes the bytes
-    between the report and the read, that `read/2` returns `<<>>` at
-    once. A `read/2` that waits for the next report there fails it.
-  * A reader the signal ends: a test command's process, holding the
-    report for `y\n` typed, marks its own job's tag `{ending, interrupt}`
-    with `erx_job:mark/2`, as the shell's `Ctrl-C` does while a member
-    runs, and calls `read/2` on the report. It exits at the yield, the
-    job ends, and the console reads `y` and `\n` into the next line,
-    whichever scheduler each process runs on. Seeded: a `read/2` without
-    the yield, which sends the read and takes `y\n` before it exits at
-    the pick after the answer, so the next line is empty. A test command under
-    `within` whose standard input is the terminal calls `read/1` and ends
-    with status `ebadf`, and a line typed before it is read by the next
-    prompt. Seeded, each failing the case: an `erx_cmd` that sends the
-    read of a stream named `write` to the stream relay as for one named
-    `read`, which waits past the test's deadline; and a stream relay that opens
-    the terminal for reading, names the stream `read_write` and copies
-    the terminal's input, which takes the line.
-  * A `tcsetattr` in the background: a test command started with `&`
-    that sets the tty raw is reported stopped and the `termios` is
-    unchanged; after `fg` the setting is made; after `^Z` and `bg` its
-    next `tcsetattr` stops it again. A `tcsetattr` that goes through in
-    the background fails it.
-  * Window size: with a command in the foreground that opted in to
-    `winch`, ten size reports from the master in a burst give it at least
-    one `{erx_cmd, winch}` message that arrives after the last report,
-    and `winsize` then answers the last size; the same size reported
-    again gives none. A command that opted in and does not receive while
-    a hundred reports arrive, ten at a time, holds no more messages than
-    the shell made deliveries, which the test counts. How many
-    deliveries a burst merges into depends on when each delivery ends, so
-    this test bounds the messages by the deliveries, and the job table's
-    case above checks the merging. A command that did not opt in gets
-    nothing; a C test program in the foreground gets `SIGWINCH` once per
-    delivery; with nothing in the foreground nothing is sent. Seeded:
-    `size/3` that returns `winch` for an unchanged size, which fails the
-    repeat case; and a shell that makes a delivery but sends the
-    subscriber two messages for it, which fails the bound.
-  * `stop/1`: a test command clears `ISIG`, calls `stop/1` on `Ctrl-Z`
-    and records when the call returns. `jobs` shows it stopped, the
-    prompt works with the tty cooked, and the call returns only after
-    `fg`, with the command's raw `termios` back. A `stop/1` that returns
-    before `fg` fails it, and the job table's case above checks the
-    answer's order without depending on the schedulers.
+  ([The terminal relay's protocol](#the-terminal-relays-protocol)):
+  EUnit cases of `erx_session_relay` against a fake master and a fake
+  console, with the test process acting as one shell. Seeded, each
+  failing its case:
+  * a relay that sends a watch's report before its answer;
+  * one that arms every wait whatever its holder, so a background job is
+    reported before `foreground`;
+  * a console open that is never parked, which takes a job's line;
+  * one that sends the console input as it arrives, and a read that
+    ignores its `Max`, which hands `cat\nsecret\n` to the console's first
+    one-byte read;
+  * an editing setting with `ISIG` clear, which returns `Ctrl-C` as a
+    byte with no event;
+  * for libedit's rule on `foreground, console`: a `Left` that is the new
+    `termios`; a holder changed before the check; an `adopt/2` without its
+    masks; one that ignores `ICANON`; an editing setting that keeps the
+    cooked `VMIN`; one that clears `ICRNL`;
+  * a relay that does not check the open's holder on `tcsetattr`, and one
+    that refuses `sigttou_ignored`;
+  * a read wait that ignores its count under `VMIN` 10;
+  * a relay that does not monitor an open's maker;
+  * for the events: `sigtstp` mapped to `interrupt`; the console's events
+    sent to the shell; a relay that keeps the first group the console
+    named; one that counts `info` as a signal;
+  * for a signal's suspension of a job's reads: a suspension that also
+    refuses `tcsetattr`; a `current` that sets the cooked `termios`; a
+    suspension that only parks waits, so a delivered report still reads;
+    a relay that ignores the read's number;
+  * a single suspension flag that any `foreground` naming the holder
+    clears, which lets a job read `bg\n` typed after `Ctrl-Z`;
+  * a relay that counts no signal it sends the console, and one that
+    counts the console's `quit`;
+  * one that counts a console signal for the group of the last
+    `foreground`, which breaks the return from `erl`;
+  * one that keeps any `Seen`, and one that takes `current` from any job;
+  * an answer that carries the `Seen` it was sent in place of `Sent`;
+  * a relay that answers the end of file `{ok, <<>>}`;
+  * one count for the whole relay, which leaves a second shell's job
+    suspended;
+  * a relay that does not monitor the shell's group, which leaves the
+    console without the terminal when the shell ends;
+  * a relay that also registers a second name;
+  * a relay that ignores an open's mode, whose write-only open reads;
+  * modules that call `open_reader/2`, or send `{open, Job, read}` by
+    name or to a relay's pid, each reported by the reader chokepoint
+    checks (seeded in `test/host/chokepoints_test.rb`);
+  * a `tty_write` answered when it arrives while output is stopped, and a
+    drain answered when the queue empties, before the master's answer.
+
+  `erx_session_tty:open/1`'s extra ttys run beside the domain's line,
+  whose relay alone keeps `erx_tty_owner`.
+* **The console on demand**: EUnit cases of `erx_console` of the session
+  role, with its group and relay, against a fake master and a test shell
+  that counts the signals reaching it. The cases trace `rm -i` with
+  `Ctrl-C` and `y\n` typed before the shell acts, typed-ahead lines, the
+  guard, UTF-8 held across asks, an interrupt queued before a read, keys
+  of several bytes, unbounded input, late events and hangups. Seeded,
+  each failing its case:
+  * a relay that counts no signal it sends the console, whose job reads
+    `y\n` as `rm` would and removes the file;
+  * with the job table's core counting: a relay that counts the console's
+    `quit`; a table that does not count `{G, suspend}`; a relay that
+    counts a size change made while the console holds; a table that
+    counts `{error, interrupted}` twice, which ends the shell;
+  * a group without edit 72, which never asks; a console that reads
+    4,096 bytes for an ask; one that reads up to the first CR or NL,
+    which defeats a `shell_keymap` binding `^X` to `new_line_finish`;
+  * a group without edit 74, on which a job's request takes the shell's
+    line; the shell-only refusal applied to every group, which breaks the
+    Erlang shell's evaluations; stock's fallback for an unknown entry of
+    `requests` (`group.erl:671-672`), which crashes the group;
+  * a console that keeps reading after it answers; one that ends the ask
+    at every read; one that keeps what it holds at a signal; one that
+    holds one set of bytes for every group; one that drops what it holds
+    with each answer, which splits `C3 E2 82 AC`;
+  * a relay that ignores the read's number, so a queued interrupt is
+    passed over and the shell gets `ls\n`;
+  * a group that asks at every `more_chars` and `blink`, and one that
+    forgets its ask at an interrupt;
+  * a property test of `edlin:edit_line/2` in each mode, over keymap
+    sequences, prefixes and text given whole, a character per call and
+    cut at random, which must give the same line and actions. Seeded,
+    each restoring one of stock's answers that edit 72 removes: the key
+    ended at `ESC [ 3`; no clause for a character that cannot continue
+    `ESC [ 3`; a `~` taken after a complete key; `tab_expand` left at an
+    escape prefix; a key `tab_expand` hands to `normal` read again from
+    the start of the last input; stock's reversal at `new_line`
+    (`edlin.erl:375-377`);
+  * NL after each escape prefix, which the property test cannot see.
+    Seeded: stock's clause after `ESC O` (`edlin_key.erl:82`) kept beside
+    edit 73;
+  * the bounds on unbounded input, measured on the whole group: edit 73
+    without its bound on a sequence's digits; edit 73 without its
+    seventh part, under which the group grows with a line that never
+    ends; a seventh part that takes the count from the line at each key,
+    whose reductions grow with the line; one that counts `edlin`'s
+    elements, and one without the 32-codepoint cluster bound;
+  * a console that carries an event out on its current group, and one
+    that names its group only at its start;
+  * an editing setting with `ISIG` clear, under which `Ctrl-C` does not
+    interrupt `timer:sleep(infinity)` in `erl`;
+  * a relay that sends the console no `erx_console_eof`, whose shells
+    outlive a hangup; a console that takes a read's `eof` as the hangup.
+* **The job table and the terminal**: EUnit cases of the job table's
+  core, which returns the `foreground` requests and job effects it
+  decides, in order. Seeded, each failing its case:
+  * a table that acts on its current foreground for an event naming an
+    ended job, and one that gives `current` only for the job the event
+    named;
+  * a table that gives `{foreground, A, cooked}` after a signal's
+    effects, resetting the program's modes; one that gives no
+    `foreground` after them; one that gives `current` for a job that is
+    over; one that gives `current` for the named job whether or not it is
+    the foreground;
+  * a table that counts only the relay's events, so the next job's reads
+    stay suspended for ever;
+  * a shell that ignores a refused `foreground` and lives on;
+  * one waiting window-size delivery for every job, and a table that
+    delivers every `winch`;
+  * for `stop/1`: a table that answers the caller when it marks the tag;
+  * one that answers only at `fg` and `bg`; one whose `SIGCONT` report
+    continues the whole job; one whose `bg` acts only on a stopped entry;
+  * a table that drops the kept `termios` when the entry leaves stopped;
+  * a `kill` builtin that ends the job for every named signal, and one
+    that resumes a stopped job after every signal;
+  * a table that ignores `Sent`, and one that prints the lost-signal line
+    at the answer;
+  * for `fg %1; cat`: a table that gives the terminal to the console when
+    `fg`'s job ends; one that does not interrupt the line; one that gives
+    `{foreground, Line, cooked}` before the line's interrupt.
+* **A command at the terminal**, through `erx_cmd`. Seeded, each failing
+  its case:
+  * the editing setting not set at `{foreground, console, Signals}`, after
+    a raw `tty/2`; a `tty/2` that falls back to the session's tty for a
+    redirected stream;
+  * a raw read under `VMIN` 0 and `VTIME` 1 that returns `eof`; a
+    `read/2` that waits for the next report when another reader took the
+    bytes;
+  * a `read/2` without the yield before its read, which takes `y\n` from
+    an ending job; an `erx_cmd` that reads a stream named `write`; a
+    stream relay that opens the terminal for reading;
+  * a background `tcsetattr` that goes through;
+  * `size/3` that returns `winch` for an unchanged size; a shell that
+    sends two messages for one delivery;
+  * a `stop/1` that returns before `fg`.
 * **`rc` as a program:** `system` and `popen` from a C program, with
   `$status` mapped to wait statuses for an empty status, a number, a
   signal's name and an error's text, and for pipelines of one, two and
@@ -3140,104 +2882,44 @@ remain independent of catalog generation.
   starts nothing; each line of the porting table run under `rc` with the
   result its sh form gives under the host's `/bin/sh`.
 * **Text commands against FreeBSD** ([Text commands](#text-commands),
-  S-R4). Each case is paired with a seeded fault that makes it fail:
-  * The oracle: the FreeBSD 15.1 oracle guest
-    ([design-network-stack.md](design-network-stack.md)) runs each case
-    of the commands' corpus with `LC_ALL=C` over the same input files,
-    and erXos's output, standard error and exit status must match it
-    byte for byte. The corpus covers each option each command offers,
-    alone and combined: `grep` with basic, extended and fixed patterns,
-    `-r` over a tree, a match and no match for the status, and a pattern
-    `regcomp(3)` refuses; `sort` with keys, `-n` over numbers, words, a
-    header line and `-`, `-r`, `-u` and a last line without a newline;
-    `wc` of one file and several; `ls` and `ls -l` of a file, a
-    directory and several of each. Seeded: a `sort -n` that orders a
-    non-number apart from zero, a `grep` that exits 0 on no match, and
-    an `ls` that heads a single directory, each fail.
-  * `ps` and `ls` at a terminal and in a pipe: `ps` and `ls` through
-    `cat` write the pipe's layout and `ls` at a terminal its columns,
-    checked against the guest on a pseudo-terminal and in a pipe; an
-    `ls` that ignores `erx_cmd:isatty/2` fails. `ps` lines compare with
-    every number masked, and `-r`, `-m` and `-o` with a fixed process
-    table of the host test build, so the order is exact.
-  * Missing values (SH3): `ps -o pid,state,time,pcpu,rss,comm` over a
-    process table in which each value in turn is `unknown`, `partial`,
-    `timeout` and `unsupported` prints `-` in that column and keeps every
-    row's column count; `ps -r` puts the rows without `pcpu` last, in the
-    default order. A formatter that prints 0, or that drops the column,
-    fails.
-  * Names: a file name and a process name holding `ESC ] 8 ;`, a tab, a
-    newline and a bidirectional override; `ls` at a terminal shows tokens
-    and through `cat` the bytes, `ps` shows the field escape both ways.
-    Bypassing either escape fails.
-  * Names from a command domain: a program at the session's terminal
-    starts `ls` as an Erlang command in a command domain, over a
-    directory holding a file name with `ESC ] 8 ;` and `ESC [ 2 J`; the
-    fake master receives the tokens `ls` shows at a terminal and no
-    byte 0x1b, and `ls` writes its columns at the width `COLUMNS` gives.
-    A `cat` started there with the terminal as its standard input still
-    ends with `ebadf` at its first read. Seeded: a stream relay that names the terminal `{relayed,
-    write}`, without `tty`, under which the fake master receives the
-    raw escape bytes.
-  * Between Erlang stages: `cat` of a 1 GiB file into `grep -q .` ends
-    `cat` with `sigpipe` once `grep` has stopped; a
-    writer of 1 MiB to a reader that never reads holds at most 64 KiB in
-    flight; a 1 GiB line without a newline into `grep` fails that stage
-    with `line too long`. A writer that sends without waiting fails the
-    second case.
-  * `uname`: each flag alone, and the nine field flags in every order,
-    write their fields in FreeBSD's order, `-a` writes five, the version
-    is its four words and the date macOS's layout, a field the running
-    system cannot tell writes `unknown`, a runtime given a node name but
-    no distribution finds its host, a build fact passes the field escape,
-    and `-U`, an unknown flag and an argument are usage errors; the build
-    facts' reader refuses every malformed file whole, and the build
-    refuses to write a fact of the wrong shape; the production image's
-    boot runs `uname -a`, `uname -i` and `uname -K` at the command shell
-    and matches the name, the manifest's host, the revision, the date,
-    `qemu-virt/development`, the kernel and the machine type. A selection
-    in the order of the flags fails.
-  * `ifconfig` and `ping`: ifconfig writes an interface in FreeBSD's
-    layout, flags, netmask in hex and broadcast included, selects one by
-    name, refuses an unknown one, and takes a configuring argument or a
-    bad flag as a usage error; ping's options and their diagnostics are
-    FreeBSD's, and its pure core counts a reply only for a sequence
-    number it sent and remembers, marks and counts a duplicate, takes
-    each round-trip time from its own send record, never from the
-    reply's data, and writes FreeBSD's reply lines and statistics; the
-    network device suite runs `ifconfig` and
-    `ping -c 3 10.0.2.2` in root's session on QEMU and matches vtnet0
-    with slirp's lease, three replies and no loss. Matching a reply of
-    any sequence number fails.
-  * `host`: the names it tries follow the search list as `res_search(3)`
-    tries them, an address becomes its pointer name, each answer and
-    failure is FreeBSD's line, and a name from a reply passes the field
-    escape; the network device suite runs `host` at the command shell
-    on QEMU against a name server the harness plays on the link, and
-    matches an address and an IPv6 address found through the lease's
-    domain, NXDOMAIN and a pointer. A reply line written unescaped
-    fails the escape case.
-  * `grep`'s translator: every construct of POSIX basic and extended
-    expressions against a table of `regcomp(3)` results taken from the
-    guest; a pattern built to backtrack ends with status 2 within the
-    match limit; the translator's fuzz target, with its 4 KiB bound
-    checked both ways. A translator that passes `\d` through to `re`
-    fails the table.
+  S-R4). The oracle is the FreeBSD 15.1 oracle guest
+  ([design-network-stack.md](design-network-stack.md)): each case of the
+  commands' corpus runs there with `LC_ALL=C` over the same input files,
+  and erXos's output, standard error and exit status must match byte for
+  byte. The corpus covers each option each command offers, alone and
+  combined; `ps` lines compare with every number masked, and `ps -r`,
+  `-m` and `-o` run over a fixed process table so the order is exact.
+  Missing values (SH3) print `-` and keep the column count; names pass
+  the terminal and field escapes. Seeded, each failing its case:
+  * a `sort -n` that orders a non-number apart from zero, a `grep` that
+    exits 0 on no match, an `ls` that heads a single directory;
+  * an `ls` that ignores `erx_cmd:isatty/2`, where `ps` and `ls` are
+    checked against the guest on a pseudo-terminal and in a pipe;
+  * a `ps` formatter that prints 0 for a missing value or drops the
+    column;
+  * bypassing the terminal escape in `ls` or the field escape in `ps`;
+  * a stream relay that names the terminal `{relayed, write}` without
+    `tty`, under which a command domain's `ls` sends raw escape bytes to
+    the master;
+  * a writer between Erlang stages that sends without waiting, which
+    exceeds 64 KiB in flight;
+  * a `uname` selection in the order of the flags;
+  * a `ping` that matches a reply of any sequence number;
+  * a `host` reply line written unescaped;
+  * a `grep` translator that passes `\d` through to `re`, against a
+    table of `regcomp(3)` results taken from the guest. The translator
+    has a fuzz target with its 4 KiB bound checked both ways.
+
+  The network device suite runs `ifconfig`, `ping -c 3 10.0.2.2` and
+  `host` on QEMU, and the production image's boot runs `uname -a`,
+  `uname -i` and `uname -K` at the command shell.
 * **Programs from the shell:** pipelines of toybox applets and Erlang
-  commands in every order, redirections to and from files of the session's
-  export and of `/data`, `within` with a path outside the narrowed
-  namespace (`enoent`), a narrowed program that tries every command name;
-  `xargs ps` from a program with the `inspect` right, which lists
-  processes through the facet the system domain makes for the command
-  domain that runs `ps`, and without it, which fails with `no_facet`; the
-  session's own `inspect` facet, asked by that command domain directly,
-  which answers `badarg`; `watch ps` likewise;
-  `within -f signal /bin /tmp -- xargs kill`, which ends a sibling that
-  the right reaches and gets `ESRCH` for one it does not; `within -- ps`
-  with no facet, which fails with `no_facet` from a command domain the
-  inspector shows; an executable started by its path through an `rx`
-  grant, and by a path that only an `rw` grant reaches, which gives
-  `permission denied`; and a `make`-shaped line, a program that starts
+  commands in every order, redirections, `within` and narrowed
+  namespaces; `ps`, `watch ps` and `xargs kill` through the facet the
+  system domain makes for a command domain, with and without the right
+  (`no_facet`, `ESRCH`), and the session's own `inspect` facet refused to
+  that command domain (`badarg`); an executable reached only through an
+  `rw` grant, which gives `permission denied`; and a program that starts
   200 children writing to one pipe whose reader is paused, every one of
   which starts.
 
@@ -3247,10 +2929,6 @@ The command shell adds little to what it runs: parsing a line is
 microseconds, a write between two Erlang stages is one message, and
 a program's start, budgeted at 1 ms under HVF, dominates a line that
 runs programs ([design-programs.md](design-programs.md#performance)).
-
-## Portability
-
-The shell is Erlang and depends on nothing of the architecture.
 
 ## Dependencies
 

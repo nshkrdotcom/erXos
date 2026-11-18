@@ -263,7 +263,7 @@ step({admin, Request, From}, Core, _Ctx) ->
 step({drop, Reason}, Core, _Ctx) when is_atom(Reason) ->
     {count(Reason, Core), []};
 %% The units of the merge a batch held and the segments in them, the totals the benchmarks
-%% read as segments per merged unit (docs/design-network-fastpath.md, "Verification").
+%% read as segments per merged unit (docs/design-network-stack.md, "Benchmarks and targets").
 step({merged, Units, Segments}, Core, _Ctx) ->
     {add(units, Units, add(unit_segments, Segments, Core)), []};
 %% A handshake whose listener had no accept credit left: tcp_sc_rst_sock_fail's RST

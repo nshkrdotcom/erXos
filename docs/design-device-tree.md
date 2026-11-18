@@ -220,8 +220,8 @@ A failure of any step, or a packed tree longer than
 does. `ERX_BOOT_TREE_MAX` is 1 MiB, a limit of `abi/kernel.txt`, many
 times the packed tree of either platform.
 
-The handoff record gains two fields after its last, `tree_start` and
-`tree_size`, each a `u64`;
+The handoff record carries the copy as two fields, `tree_start` and
+`tree_size`, each a `u64` ([`abi/kernel.txt`](../abi/kernel.txt));
 `erx_boot_handoff_accept` refuses, with the reason `tree_range`, a start
 that is not page-aligned, a length of 0 or above `ERX_BOOT_TREE_MAX`, or a
 range whose end overflows. The view it returns carries the range. In its
@@ -377,6 +377,10 @@ host bridge's own `dma-ranges`, as
   and `2^64 - 1`. The range is present only when exactly one window
   remains. Which RAM inside it holds DMA memory is decided where the
   memory is made ([Facts into records](#facts-into-records)), not here.
+  For a PCIe function the range is then cut at its row's `dma_limit`, a
+  device address, exclusive: `last` becomes the highest CPU address whose
+  device address lies below it, so a bridge that translates keeps its
+  offset ([design-pcie.md](design-pcie.md#dma)).
 
 Its status is `ok`, `no_node`, `coherence` (as above), `cells` (a cell
 count other than 1 or 2), `malformed` (an entry not a whole number of
@@ -387,6 +391,19 @@ that RAM backs). A row naming the root as a device's node has no bus and
 is `malformed`; a path that is not absolute, or names no node, is
 `no_node`. Any status but `ok` makes both DMA facts absent, so a
 device never has a range without its coherence.
+
+**A PCI host bridge.** For a host bridge's row the reader also takes the
+bridge's `ranges`, whose child addresses take the same three cells as
+its `dma-ranges`, an entry of I/O space skipped; its `bus-range`; and its
+`interrupt-map`, each entry matched under its `interrupt-map-mask`, which
+for the BCM2711 keeps only the pin, so a closed bus's place
+takes the line the map routes for its position's pin. They are the
+windows, bus span and lines of the bridge's record that the device
+service hands the PCIe domain ([design-pcie.md](design-pcie.md#records),
+[design-pcie.md](design-pcie.md#the-closed-bus)), and the image suites
+check the line a closed bridge's platform record gives each place
+against the map in the platform's tree
+([design-abi.md](design-abi.md#devices-and-partition-windows)).
 
 **What the reader cannot check.** The reader checks the tree's encoding
 and that what it reads fits together; it cannot check that the hardware
@@ -558,110 +575,63 @@ Each test is paired with the seeded fault that shows the code under test
 ran.
 
 * **The platforms' trees.** Host tests of the reader over the tree QEMU
-  `virt` writes for each suite machine, dumped as
-  `ProductionImage#check_device_paths` dumps it, and over the Pi 4's card
-  tree and the model's tree that `tools/lib/erx/board_tree.rb` builds,
-  with each device's expected facts pinned in the test: every virtio-mmio
-  transport coherent with the range `0`, `0`, `2^64 - 1` of a walk with
-  no non-empty level; GENET not coherent, the same range, no address;
-  EMMC2 not coherent, range `0`, `0xC0000000`, `0x3FFFFFFF`. Those are
-  the model's tree's facts: the card's tree leaves the memory node as
-  zeros, so no window has RAM behind it and every DMA device there is
-  `ranges` until the firmware fills the node.
-  A test fails on any manifest DMA device whose facts are absent in its
-  platform's tree, so a board tree the reader refuses fails at build
-  time. Fixtures: `dma-coherent` on the parent bus, and both marks on a
-  node, each give `coherence`; `dma-coherent = <0>` gives `malformed`; a
-  bus without `dma-ranges` between the device and a non-empty level
-  gives `malformed`; a device with no non-empty level over two separate
-  memory ranges gives the one window `0`, `0`, `2^64 - 1`; a PCI host
-  bridge whose three-cell `dma-ranges` hold a memory entry and an I/O
-  entry translates its function by the memory entry alone; a three-cell
-  child count on a level that is not the function's host bridge gives
-  `cells`; a PCIe function under a host bridge with two-cell
-  `dma-ranges` is translated by them; 1,024 child entries onto one parent range under a
-  level that splits it 1,024 ways gives `ranges`. Seeds: the reader
-  takes the nearest marked ancestor's coherence, and the parent-bus
-  fixture reads as coherent; the marks tested for presence only, and
-  `dma-coherent = <0>` reads as coherent; the translation through the
-  level above the first non-empty one dropped, which a fixture with two
-  nested `dma-ranges` catches; the windows cut to RAM, and the two-range
-  fixture gives `ranges`; a PCIe function's walk started above its host
-  bridge, and its fixture is not translated; the windows' bound removed,
-  and the splitting fixture overruns the walk's array under ASan.
-* **The firmware's edits.** Fixture trees made from the card's tree: one
-  whose `emmc2bus` range differs, one with `local-mac-address`, one with a
-  zero placeholder and a valid `mac-address`, and framebuffer nodes in
-  each state the reader names. Seeds: the RAM filter removed, so a
-  fixture window over no RAM is present; the group-bit test removed, so a
-  multicast address is accepted; the stride test removed, so a stride
-  shorter than a row passes; each fails its test.
-* **The `/chosen` seeds.** Fixtures: QEMU `virt`'s 32 bytes of `rng-seed` and a
-  64-bit `kaslr-seed` give both; an `rng-seed` longer than 1024 bytes
-  gives its first 1024; seeds of zeros give neither; an `rng-seed` of
-  1024 zero bytes and then one non-zero byte gives none, since only the
-  bytes the reader gives count; a tree without them gives neither. Seeds:
-  the all-zero test turned round, and the zero fixture gives its seeds;
-  the zero test run over the whole property, and the zero-prefix
-  fixture gives 1024 zero bytes as a seed.
+  `virt` writes for each suite machine and over the Pi 4's card tree and
+  the model's tree (`tools/lib/erx/board_tree.rb`), with each device's
+  expected coherence, range and address pinned in the test, and
+  fixtures for every status the reader names (coherence marks on a bus
+  or both on a node, `dma-coherent = <0>`, a missing `dma-ranges` level,
+  two memory ranges with no non-empty level, a PCI host bridge's
+  three-cell `dma-ranges`, a level split 1,024 ways, a host bridge's
+  three-cell `ranges` with a memory and an I/O entry, an `interrupt-map`
+  with and without an entry for a place's pin, a PCIe function's range
+  cut at its `dma_limit`). The card's tree
+  leaves the memory node as zeros, so every DMA device there reads
+  `ranges` until the firmware fills it. A test fails on any manifest DMA
+  device whose facts are absent in its platform's tree, so a board tree
+  the reader refuses fails at build time. Seeds: coherence taken from the
+  nearest marked ancestor; the marks tested for presence only; the
+  translation through the level above the first non-empty one dropped;
+  the windows cut to RAM; a PCIe function's walk started above its host
+  bridge; the map's pin match dropped, so a closed place takes the first
+  entry's line; the windows' bound removed, which overruns the walk's array
+  under ASan.
+* **The firmware's edits**, over fixtures made from the card's tree (a
+  different `emmc2bus` range, `local-mac-address`, a zero placeholder
+  beside a valid `mac-address`, framebuffer nodes in each state). Seeds:
+  the RAM filter removed; the group-bit test removed; the stride test
+  removed.
+* **The `/chosen` seeds**, over fixtures of present, oversized, zero and
+  zero-prefixed seeds. Seeds: the all-zero test turned round; the zero
+  test run over the whole property instead of the bytes given.
 * **The fuzz target**, `tools/fuzz/dt_fuzz.c`, landing with the reader:
   arbitrary bytes into `erx_dt_accept`, and an accepted view into
-  `erx_dt_device` for fixed paths, `erx_dt_framebuffer`, `erx_dt_registers` and `erx_dt_seeds`, under ASan and
-  UBSan, with the platforms' trees, the fixtures and a truncated and a
-  nested tree as its corpus, each handed over in a buffer of exactly its
-  length. Seeds: acceptance that calls `fdt_check_header` before
-  `fdt_check_full`, and a corpus entry shorter than a header reads past
-  the buffer; acceptance that passes the header's `totalsize` to
-  `fdt_check_full` instead of `size`, and the truncated entry reads past
-  it; the reader built with the Fiasco kernel copy's assumption mask,
-  and the truncated entry crashes it.
-* **The handoff.** `boot_handoff_fuzz.c` covers the two new fields; a host
-  test refuses an unaligned start, a zero length and an overflowing end
-  with `tree_range`. Seed: the alignment test removed, and the unaligned
-  case is accepted.
-* **The chokepoint.** The build check of `libfdt.h`'s includers fails on a
-  seeded third includer in `liberx`.
-* **The records' decision.** Host tests of the root's pure device step:
-  a range present with the pool inside makes the object and records
-  `bus - cpu`; a range absent, and a pool outside the range, make no
-  object and give the record `MEM_SIZE` 0 with the line; an absent
-  address gives `MAC` 0. Seed: the inside test removed, and the object
-  is made over a pool outside the range.
-* **The framebuffer's authority.** Reader tests over fixture nodes: a
-  framebuffer inside its row's window is `ok`; one whose `reg` ends
-  inside the window but whose last page crosses its end, one over a
-  register window outside it, one inside RAM the tree reports, and any
-  framebuffer with an empty window are `outside`, with the base and
-  length for the line. Seeds: the window test made over the unrounded
-  `reg` range, and the crossing fixture is `ok`; the window test removed,
-  and the register-window fixture is `ok`.
-* **The register row's authority.** Reader tests over fixture nodes: the
-  RNG200's node at its row's path naming another device's page is
-  `other`, and a node of the same compatible string at another path is
-  `none`; a row whose base or size differs from the node's is `other`; the
-  card's tree confirms the Pi 4's row and the model's tree, which
-  disables the node, gives `none`. Seed: the base comparison removed, and
-  the other-page fixture is `ok`.
-* **The live tree on QEMU.** The `net_device` suite
-  (`tools/lib/erx/net_device.rb`) boots twice. Its stock cell takes the
-  tree QEMU writes and expects the network device's line to say
-  `coherent 1 range 0x0 0x0 0xffffffffffffffff`, the network domain's
-  record for it to carry `coherent => true`, and its traffic to pass.
-  The paired boot, its `-noncoherent` cell, takes a seeded tree, QEMU's own
-  dumped through `ProductionImage.seeded_tree` with `dma-coherent`
-  removed from the network transport's node and from the root, whose
-  mark would otherwise stand above a node without its own and give that
-  node the status `coherence`; every other device keeps its own mark,
-  which the root's only repeated. That device's line says
-  `coherent 0`, the network domain's record for it carries
-  `coherent => false`, read there with `erx_device_record:find/2`, so
-  its queues issue the cache maintenance in user mode, and its traffic
-  still passes, since maintenance changes nothing on QEMU's coherent
-  DMA. The line prints the tree's
-  facts while the record carries `erx_boot_coherent`'s value, so the
-  suite checks both. Seed: a root that takes coherence from the
-  manifest row, after which the seeded boot's record still carries
-  `coherent => true` and the test fails.
+  `erx_dt_device`, the host bridge's `ranges`, `bus-range` and
+  `interrupt-map` reads, `erx_dt_framebuffer`, `erx_dt_registers` and
+  `erx_dt_seeds`, under ASan and UBSan, with the platforms' trees, the
+  fixtures and a truncated and a nested tree as its corpus, each in a
+  buffer of exactly its length. Seeds: `fdt_check_header` called before
+  `fdt_check_full`; the header's `totalsize` passed to `fdt_check_full`
+  instead of `size`; the reader built with the Fiasco kernel copy's
+  assumption mask.
+* **The handoff.** `boot_handoff_fuzz.c` covers `tree_start` and `tree_size`; a
+  host test refuses an unaligned start, a zero length and an overflowing
+  end with `tree_range`. Seed: the alignment test removed.
+* **The chokepoint.** The build check of `libfdt.h`'s includers. Seed: a
+  third includer in `liberx`.
+* **The records' decision**, host tests of the root's pure device step
+  over a pool inside and outside its range and an absent address. Seed:
+  the inside test removed.
+* **The framebuffer's and the register row's authority**, reader tests
+  over nodes inside, crossing and outside their row's window, over RAM,
+  at another path or naming another page. Seeds: the window test made
+  over the unrounded `reg` range; the window test removed; the base
+  comparison removed.
+* **The live tree on QEMU.** The `net_device` suite boots the stock tree,
+  where the network device's line and record say coherent, and a seeded
+  tree with `dma-coherent` removed from the network transport and the
+  root, where both say not coherent, so its queues do cache maintenance
+  in user mode, and traffic passes in both. Seed: a root that takes
+  coherence from the manifest row.
 * **On the board.** Every Pi 4 board pass records the lines, which settle
   what this design leaves unverified: EMMC2's range on the board's
   revision, whether the firmware supplies GENET's address, and whether it

@@ -22,53 +22,35 @@ namespaces and the file protocol in [design-files.md](design-files.md);
 pipes in [design-pipes.md](design-pipes.md); the command shell that starts
 most programs in [design-shell.md](design-shell.md).
 
-Decisions every reader of this document needs:
+Decisions every reader of this document needs, each argued where it is
+linked:
 
-* **A program is a port of its session.** Each program runs in a
-  sub-space its session creates, within the session's budget and group;
-  it is not a node: it has no domain id, no node name, no export table,
-  no facet and no connection to any other domain, and it appears in
-  Erlang as a port owned by its handler
+* **A program is a port of its session**, in a sub-space within the
+  session's budget and group, not a node: no domain id, node name, export
+  table, facet or connection to any other domain
   ([A program is a port](#a-program-is-a-port)).
-* **Capabilities carry authority**. Starting
-  anything, a program or an Erlang command, needs the right to start
-  commands; what a started command can do comes only from the
-  capabilities its starter hands it. An Erlang command a program starts
-  runs in a command domain holding exactly those, so `xargs ps` and
-  `xargs kill` work when the program holds the rights to list and to
-  signal processes, and fail when it does not.
-* **The channel is the program's only way out.** Two lanes and two
-  doorbells between the sub-space and the session carry every request,
-  reply, report and signal; file bytes move through the program's data
-  area, which its handler fills, never through the channel
-  ([The channel](#the-channel)).
-* **The handler is the program's one correspondent.** It takes the
-  program's requests in order, acts with the session's authority after
-  checking the program's own table, and is the only process that sends to
-  the program; it never waits on it ([The handler](#the-handler)).
-* **One startup message**, the first frame on the channel, carries what a
-  sub-space needs: its identity, arguments, environment, working
-  directory, signal state and descriptors.
-* **Signals are `liberx`'s.** The kernel only delivers a doorbell to a
-  thread, as a vCPU upcall, Fiasco's interface for events; `liberx` keeps
-  POSIX's rules for every signal and runs a handler only outside its own
-  critical sections, and no signal is lost between a check and a sleep.
-* **`system` and `popen` run `rc`**.
-* **Two tiers.** The first tier runs static programs, with `posix_spawn`
-  and without `fork`, whose absence fails at link time. The second adds `fork` by eager copy, `exec`, shared
-  libraries, mappings of files and terminals, on the kernel's sealed
-  objects, copy-on-write children and copies of spaces; code a program
-  runs is never writable by it, in either tier.
-* **A session serves its programs' shared mappings**. Every shared mapping of one file in the session's programs
-  maps one memory object of the session's, which the session fills and
-  writes back with ordinary reads and writes of the file protocol and
-  from which it serves its programs' descriptor reads and writes of the
-  file; a fault on it is the faulting program's alone and the kernel
-  resolves it from the object
-  ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)).
-* **A program never outlives the program or session that started it**: its tree ends with it, like a job tree, and a
-  long-running service starts under a supervisor, never by detaching, so
-  nothing is orphaned.
+* **Capabilities carry authority**: starting anything, a program or an
+  Erlang command, needs the right to start commands, and a started command
+  can do only what the capabilities its starter hands it allow, so
+  `xargs kill` works exactly when the program holds the right to signal
+  ([What a program can start](#what-a-program-can-start)).
+* **The channel is the program's only way out**, and file bytes move
+  through its data area, never the channel ([The channel](#the-channel)).
+* **The handler is the program's one correspondent**: it checks every
+  request against the program's own table, is the only process that sends
+  to the program, and never waits on it ([The handler](#the-handler)).
+* **Signals are `liberx`'s**: the kernel only delivers a doorbell to a
+  thread, and `liberx` keeps POSIX's rules, runs a handler only outside
+  its own critical sections, and loses no signal between a check and a
+  sleep ([Signals in liberx](#signals-in-liberx)).
+* **Two tiers.** The first runs static programs with `posix_spawn` and
+  without `fork`, whose absence fails at link time; the second adds `fork`
+  by eager copy, `exec`, shared libraries, mappings of files and terminals
+  ([The second tier](#the-second-tier)). Code a program runs is never
+  writable by it, in either tier.
+* **A program never outlives the program or session that started it**, so
+  nothing is orphaned; a long-running service starts under a supervisor,
+  never by detaching ([A program's end](#a-programs-end)).
 
 ## Context
 
@@ -406,69 +388,42 @@ ended ([Exec](#exec)).
 The startup message is the first frame the handler writes into a new
 image's inbound lane, before the image's first thread starts, so the
 program finds it there whenever it first looks and waits for nothing. It
-carries what a sub-space needs:
+carries what a sub-space needs.
 
-```erlang
-{erx_start, 1, #{pid := 2..16#7fffffff,       % this program's process id
-                 ppid := 1..16#7fffffff,      % its parent's; 1 is the command server
-                 pgid := 2..16#7fffffff,      % its job's first program's pid
-                 uid := 1..16#7fffffff,       % the session principal's number
-                 argv := [binary()],
-                 env := [binary()],           % each NAME=value
-                 cwd := binary(),             % absolute and normalised
-                 spawn := boolean(),          % the right to start commands
-                 sigmask := [signal()],       % blocked when main starts
-                 sigignore := [signal()],     % ignored; the rest take the default
-                 umask := 0..8#777,           % the file mode creation mask
-                 data_area := {Cap, Slots},   % the data area, in the program's table
-                 fds := [{0..1023, Descriptor}],
-                 sigpending => [signal()],    % exec only: still pending
-                 children => [Child],         % exec only: from the handler's record
-                 handover => Handover,        % exec only: from the old image
-                 cloexec => [0..1023],        % fork only: descriptors with FD_CLOEXEC
-                 mapped => [{Cap, Open}]}}    % fork only: shared mappings of files
-%% signal() = a signal's name from the ABI file's signal table, such as sigint
-%% Descriptor = {pipe, read | write, PipeEnd, EndValues}
-%%            | {socketpair, PipeEnd, EndValues, PipeEnd, EndValues}
-%%                                  % its read end, then its write end
-%%            | {file, Open, read | write | read_write}
-%%            | {tty, Open, read | write | read_write}
-%%            | {dir, Open}
-%%            | {socket, Open}
-%%            | {dup, Fd :: 0..1023}
-%%            | {mem, Page :: 1..16#ffffffff, Pages :: 1..16#ffffffff}
-%%                                  % memory the session mapped into the
-%%                                  % program while building it
-%%            | {relayed, read | write | read_write}
-%%            | {relayed, write, tty}
-%%                                  % only in a run's Start: a stream the
-%%                                  % stream relay copies, by the mode its
-%%                                  % end or open allows; tty: the terminal
-%%            | null
-%% Open = 0..16#ffff           % an entry of the program's open table in its handler
-%% PipeEnd, EndValues = a pipe end's numbers and the values in the program's
-%%            own table of what it holds, as design-pipes.md defines them
-%% Cap = a capability value in the program's own table; Size a byte count
-%% Child = {Pid :: 2..16#7fffffff, ChildState}  % a child not waited for
-%% ChildState = running | {ended, Status, N}
-%%            | {stopped, signal(), N, pending | taken}
-%%            | {continued, N, pending | taken}
-%%                                  % Status as in an exit report; N the
-%%                                  % child's count of state changes at
-%%                                  % that state; taken once waitpid
-%%                                  % returned it
-%% Handover = #{nonblock := [0..1023],     % kept descriptors whose object
-%%                                         % has O_NONBLOCK
-%%              wpos := [{0..1023, non_neg_integer()}],
-%%                                  % each kept write end's private write
-%%                                  % position
-%%              thread_pending := [signal()],      % the calling thread's own
-%%              alarm := none | {Deadline :: non_neg_integer(),
-%%                               Interval :: non_neg_integer()}}
-%%                                  % the next SIGALRM on the monotonic clock,
-%%                                  % and its interval, in ns; an interval of
-%%                                  % 0 for an alarm that does not repeat
-```
+The message is `{erx_start, 1, Start}`. Its frame profile,
+[`abi/protocols/prog.txt`](../abi/protocols/prog.txt), declares the fields
+`liberx`'s decoder checks, with their bounds; the map carries:
+
+* `pid`, this program's process id; `ppid`, its parent's, 1 being the
+  command server; `pgid`, its job's first program's pid; `uid`, the
+  session principal's number, 1 to 2^31 - 1;
+* `argv`, `env` (each `NAME=value`), `cwd` (absolute and normalised) and
+  `umask`;
+* `spawn`, the right to start commands;
+* `sigmask` and `sigignore`, the signals blocked and ignored when `main`
+  starts, every other signal taking its default action;
+* `data_area`, the data area's capability in the program's table and its
+  count of 64 KiB slots;
+* `fds`, each descriptor number from 0 to 1023 with its descriptor, or
+  `null` for a closed one;
+* after an `exec` only: `sigpending`, the signals still pending;
+  `children`, the children not yet waited for, each running, ended,
+  stopped or continued, with its count of state changes and whether
+  `waitpid` took that state; and `handover`, what the old image froze: the
+  kept descriptors whose object has `O_NONBLOCK`, each kept write end's
+  private write position, the calling thread's own pending signals, and
+  the next `SIGALRM`'s deadline on the monotonic clock and its interval,
+  each in ns, an interval of 0 for an alarm that does not repeat
+  ([Exec](#exec));
+* after a `fork` only: `cloexec`, the descriptors from 0 to 1023 with
+  `FD_CLOEXEC`, and
+  `mapped`, the shared mappings of files ([Fork](#fork)).
+
+A signal is named by its protocol name, `sig` and its name in the signal
+table, such as `sigint` ([Signal numbers](#signal-numbers)), and an open is an entry, from 0 to
+65535, of the program's open table in its handler. A descriptor is one of
+`pipe`, `socketpair`, `file`, `tty`, `dir`, `socket`, `dup`, `mem`,
+`relayed` or `null`.
 
 A `pipe` descriptor names an end, by its pipe's and its own number, and
 the values in the program's own table of the lanes, the lock page and the
@@ -821,62 +776,68 @@ request the handler either refuses or answers from the session's policy.
 ### The program protocol
 
 A program and its handler exchange frames of one grammar on the program's
-channel, a frame profile of the ABI file with version 1
-([design-abi.md](design-abi.md#program-protocol)), which both sides
-decode with generated decoders that have fuzz targets. A request has the
-form `{erx_prog, 1, Slot, Request}`, where `Slot`, from 0 to 15, is the
-reply slot the requesting thread waits in, each slot holding one request
-at a time; the reply is `{erx_prog, 1, Slot, Reply}`. The channel is
-reliable and in order, so a request is sent once and answered once, and
-nothing is numbered, kept or sent again. A request on a slot that already
-holds one ends the program (Credit, below).
+channel, version 1. Its frame profile,
+[`abi/protocols/prog.txt`](../abi/protocols/prog.txt), declares the frames
+both sides check with decoders generated from it, which have fuzz targets
+([design-abi.md](design-abi.md#program-protocol)): the startup message,
+`pipe`, `kill`, `probe`, the file operations that open, read, write,
+stat and clunk, `seek`, the notices and the pipe reports, with their
+bounds. This section gives what every frame means, and the shapes of
+those the profile does not declare. A request has the form `{erx_prog, 1, Slot, Request}`,
+where `Slot`, from 0 to 15, is the reply slot the requesting thread waits
+in, each slot holding one request at a time; the reply is
+`{erx_prog, 1, Slot, Reply}`. The channel is reliable and in order, so a
+request is sent once and answered once, and nothing is numbered, kept or
+sent again. A request on a slot that already holds one ends the program
+(Credit, below).
 
 | Request | Meaning | Reply |
 | --- | --- | --- |
-| `{spawn, Path, Start}` | start a command: `Path` is resolved through the program's namespace to an executable with `rx` ([What a program can start](#what-a-program-can-start)); `Start` is the startup message's map without `pid`, `ppid`, `pgid`, `uid`, `data_area` and `image`, each descriptor written `{pipe, End}`, `{socketpair, End, End}`, `{open, Open}`, `{dup, Fd}` or `null`, naming ends and opens the starter holds | `{ok, Pid}`; `{error, eperm}` without the right to start commands; `{error, Errno}` |
-| `{kill, Target, Signal}` | signal one of the requester's own children, the requester itself, or a process its `signal` right reaches, `Target` being a process id; in the second tier, also a process group of the requester's own POSIX session, `{group, Pgid}` ([The terminal](#the-terminal)); `Signal` is a signal's name, never 0. When the requester is among the targets, its own report precedes the reply, so it takes the signal before `kill` returns, as POSIX requires | `ok`; `{error, esrch}` for any other target; `{error, eperm}` in the first tier for `sigstop`, `sigttin`, `sigttou` and `sigcont`, and for `sigtstp` to any target but the requester, which belong to the session's job control ([The terminal](#the-terminal)) |
-| `{probe, Target}` | `kill` with signal 0: check that `Target`, as `kill` names it, exists and that `kill` would reach it, sending nothing | `ok` where `kill` would signal a target; `{error, Errno}` otherwise, `esrch` wherever `kill` answers `esrch`, so a process beyond the requester's reach reads as absent |
-| `{waited, Pid, N}` | the program's `wait`, `waitpid` or `waitid` returned the state of its child `Pid` whose count of state changes is `N`, and a `waitid` with `WNOWAIT` sends none ([A program's end](#a-programs-end)); the event executor sends it too for an exit that `liberx` reaps itself (Automatic reaping, below). When `N` is the record's latest for `Pid`, the handler marks that state taken, and for an exit the child leaves the record and the `children` quota, after which a `kill` of it fails with `esrch`; so a program cannot lift its quota by naming a child that runs | `ok`, also when `N` is not the latest, which changes nothing |
-| `{stop, Signal}` | in the second tier, pause the program for a stop signal under its default action; in the first tier, only `SIGTTOU` from a background `tcsetattr` and `SIGTSTP` that the program raises for itself, each of which stops the program's whole job, as `Ctrl-Z` does ([The terminal](#the-terminal)) | `ok` once the program, or in the first tier its job, has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
-| `{file, Op, ...}` | an operation of 9P2000.L for the program, its name `Op` after `file` and its fields after the name, so each operation is a case of the request union with a reply of its own ([design-files.md](design-files.md#the-file-protocol)), with a path to resolve through the program's namespace, or the program's `Open`, in place of a fid: `walk`, `lopen`, `lcreate`, `read`, `write`, `clunk`, `close`, the program's own operation for a descriptor close that leaves its open other references, which releases the program's locks on the file and keeps the open ([Descriptors and files](#descriptors-and-files)), `remove`, `getattr`, `setattr`, `readdir`, `fsync`, `lock`, `getlock`, `link`, `symlink`, `mknod`, `renameat`, `unlinkat`, `readlink`, `mkdir`, `statfs` and the xattr operations; a read or a write names a count and a slot of the data area, and for `pread` and `pwrite` an offset, and its open's description supplies the offset otherwise; for `lock` and `getlock` the handler sets `ProcId` to the program's own, one per program, so its programs' locks conflict as UNIX processes' do ([Descriptors and files](#descriptors-and-files), [design-files.md](design-files.md#locks)) | the operation's reply, `{ok, Open}` for an `lopen` or an `lcreate`, `{ok, Count}` for a read or a write, `{ok, Stat}` for a `getattr` of an open, mapped to `Errno` on failure. `Stat` is a map of the attributes the file's server gave, each key present only when it gave that field: `mode` (`mode_t`'s 16 bits), `nlink`, `uid` and `gid` (each a `u32`), `size` (an `off_t`), and `atime`, `mtime` and `ctime` (each a `time_t` of whole seconds) with `atime_nsec`, `mtime_nsec` and `ctime_nsec` beside them. `liberx`'s `fstat` reports `tv_nsec` 0 for a time whose nanoseconds are not given and 0 for every field not given, as `struct stat` marks none unknown. A server's value past its field is `eoverflow`, as FreeBSD's `freebsd11_stat` answers an `nlink` past its old `nlink_t` |
-| `{local, Op, ...}` | an operation the session answers from its own tables, which reaches no server but by a `walk` or a `getattr`, its name `Op` after `local` and its fields after the name, as a file request's: `{local, seek, Open, Offset, Whence}` on the open's description, `Whence` one of `bof`, `cur` and `eof` for `SEEK_SET`, `SEEK_CUR` and `SEEK_END`, `{local, setfl, Open, Flags}` of the description's status flags, `{local, chdir, Path}`, and `{local, access, Path, Mode}`, answered from the rights of the grant the path resolves through ([Descriptors and files](#descriptors-and-files)) | `{ok, Value}`; `{error, Errno}` |
-| `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `{tcsetattr, Termios, sigttou_ignored}` from a thread that ignores or blocks `SIGTTOU`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer, `{background, Orphaned}` among them, from which `liberx` decides as [The terminal](#the-terminal) says; `{error, enotty}` for any other open |
-| `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`, a terminal's read naming its count as `{read, Count}`: the session's terminal relay answers for a terminal, `{error, ebadf}` for the watch of a read while the handler's open of it is write-only, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later; `{error, ebadf}` at once, and no report, for the watch of a read on a terminal while the handler's open of it is write-only |
-| `{map, What, Use}` | give the requester an object of a file: for `Use` of `code` or `data`, the file's sealed file object, `What` a path the handler opens with `lopen` for reading, and for code only through a grant of the program's that carries `rx` ([File objects](#file-objects)); for `{shared, End}`, the session's object for the file, covering at least `End` bytes, `What` the program's `Open` of a file ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)) | `{ok, Cap}`, the object's capability value in the requester's table, for `code` `{ok, Cap, Bytes}`, with the file's exact length in bytes, the most of the object a plan of it reads, and for a shared mapping `{ok, Cap, Open}`, with the mapping open that holds the requester's share; `{error, Errno}` |
-| `{fork, Start}` | the second tier's `fork`: `Start` names what the child receives, planned as for a spawn: every descriptor without a `dup`, each as `{pipe, End}`, `{socketpair, End, End}` or `{open, Open}`, and the flags of `cloexec` ([Fork](#fork)) | `{ok, Pid}`; `{error, Errno}` |
-| `{exec, Image, Start}` | the second tier's `exec`, first step, sent once the program's other threads are parked: build the requester's next image from `Image`, `{object, Cap}` for a file object of code that `liberx` obtained with `{map, Path, code}` and checked, or `{command, Path}` for a command of `/bin`; `Start` holds what the next image keeps that the parking froze ([Exec](#exec)) | `ok` once the next image is built, past which `exec` never returns; `{error, e2big}` past the message's bound; `{error, Errno}`; each error with the old image whole |
-| `{exec_commit, Captured}` | the second tier's `exec`, last step, sent only after `ok` to `{exec}`: `Captured` holds what the old image captured in one step ([Exec](#exec)); the handler makes the reaps it names, as `{waited}` makes one, and builds the next image's startup message from the rest, `{exec}`'s `Start` and its record | none: the old image ends, and the new one finds its startup message in its lane |
-| `{pipe, Flags}`, `{deposit, Descriptor, Stream}`, `{redeem, Stream, Ticket}`, `{discard, Stream, Ticket}`, `{withdraw, Stream, Ticket}` | make a pipe; and the second tier's passing of a descriptor over a stream, and letting go of a deposit that a `read` skipped or that a `sendmsg` could not publish ([design-pipes.md](design-pipes.md#the-program-protocol)) | as there |
+| `spawn` | `{spawn, Path, Start}`: start a command: `Path` is resolved through the program's namespace to an executable with `rx` ([What a program can start](#what-a-program-can-start)); `Start` is the startup message's map without what the session fills in (`pid`, `ppid`, `pgid`, `uid`, `data_area`, `image`), each descriptor written `{pipe, End}`, `{socketpair, End, End}`, `{open, Open}`, `{dup, Fd}` or `null`, naming ends and opens the starter holds | `{ok, Pid}`; `{error, eperm}` without the right to start commands; `{error, Errno}` |
+| `kill` | signal one of the requester's own children, the requester itself, or a process its `signal` right reaches, the target a process id; in the second tier, also a process group of the requester's own POSIX session, `{group, Pgid}` ([The terminal](#the-terminal)); never signal 0. When the requester is among the targets, its own report precedes the reply, so it takes the signal before `kill` returns, as POSIX requires | `ok`; `{error, esrch}` for any other target; `{error, eperm}` in the first tier for `sigstop`, `sigttin`, `sigttou` and `sigcont`, and for `sigtstp` to any target but the requester, which belong to the session's job control ([The terminal](#the-terminal)) |
+| `probe` | `kill` with signal 0: check that the target exists and that `kill` would reach it, sending nothing | `ok` where `kill` would signal a target; `esrch` wherever `kill` answers `esrch`, so a process beyond the requester's reach reads as absent |
+| `waited` | the program's `wait`, `waitpid` or `waitid` returned the state of child `Pid` whose count of state changes is `N` (a `waitid` with `WNOWAIT` sends none, [A program's end](#a-programs-end)); the event executor sends it for an exit `liberx` reaps itself (Automatic reaping, below). When `N` is the record's latest for `Pid`, the handler marks that state taken, and for an exit the child leaves the record and the `children` quota, after which a `kill` of it fails with `esrch`; so a program cannot lift its quota by naming a child that runs | `ok`, also when `N` is not the latest, which changes nothing |
+| `stop` | in the second tier, pause the program for a stop signal under its default action; in the first tier, only `SIGTTOU` from a background `tcsetattr` and `SIGTSTP` the program raises for itself, each of which stops its whole job, as `Ctrl-Z` does ([The terminal](#the-terminal)) | `ok` once the program, or in the first tier its job, has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
+| `file` | an operation of 9P2000.L for the program ([design-files.md](design-files.md#the-file-protocol)), each `{file, Op, ...}` with its own reply: `walk`, `lopen`, `lcreate`, `read`, `write`, `pread`, `pwrite`, `clunk`, `remove`, `getattr`, `setattr`, `readdir`, `fsync`, `lock`, `getlock`, `link`, `symlink`, `mknod`, `renameat`, `unlinkat`, `readlink`, `mkdir`, `statfs` and the xattr operations, naming a path to resolve through the program's namespace, or the program's `Open`, in place of a fid. Besides 9P2000.L's operations it has `close`, a descriptor close that leaves the open other references, which releases the program's locks on the file and keeps the open ([Descriptors and files](#descriptors-and-files)). A read or a write names a count and a slot of the data area, and the open's description supplies the offset unless the call is `pread` or `pwrite`. For `lock` and `getlock` the handler sets `ProcId` to the program's own, so its programs' locks conflict as UNIX processes' do ([design-files.md](design-files.md#locks)) | the operation's reply, mapped to `Errno` on failure. A `getattr` gives the attributes the file's server gave; `liberx`'s `fstat` reports 0 for every field and nanosecond not given, as `struct stat` marks none unknown, and a server's value past its field is `eoverflow`, as FreeBSD's `freebsd11_stat` answers an `nlink` past its old `nlink_t` |
+| `local` | an operation the session answers from its own tables, which reaches no server but by a `walk` or a `getattr`: `{local, seek, Open, Offset, Whence}` and `{local, setfl, Open, Flags}` on an open's description, `{local, chdir, Path}`, and `{local, access, Path, Mode}`, answered from the rights of the grant the path resolves through ([Descriptors and files](#descriptors-and-files)) | `{ok, Value}`; `{error, Errno}` |
+| `tty` | a terminal's `ioctl` for a `tty` open (`tcgetattr`, `tcsetattr`, `tcgetpgrp`, `tcsetpgrp`, the window size), which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol; a `tcsetattr` from a thread that ignores or blocks `SIGTTOU` is marked so ([The terminal](#the-terminal)) | the relay's answer, `{background, Orphaned}` among them, from which `liberx` decides as [The terminal](#the-terminal) says; `{error, enotty}` for any other open |
+| `watch` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`, a terminal's read naming its count: the session's terminal relay answers for a terminal, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later; `{error, ebadf}` at once, and no report, for the watch of a read on a terminal while the handler's open of it is write-only |
+| `map` | give the requester an object of a file: for code or data, the file's sealed file object, opened for reading by path, and for code only through a grant of the program's that carries `rx` ([File objects](#file-objects)); for a shared mapping, the session's object for the program's `Open` of a file, covering at least the bytes asked ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)) | the object's capability in the requester's table; for code also the file's exact length, the most of the object a plan of it reads; for a shared mapping also the mapping open that holds the requester's share; `{error, Errno}` |
+| `fork` | the second tier's `fork`: names what the child receives, planned as for a spawn, every descriptor without a `dup`, and the flags of `cloexec` ([Fork](#fork)) | `{ok, Pid}`; `{error, Errno}` |
+| `exec` | the second tier's `exec`, first step, sent once the program's other threads are parked: build the requester's next image from a file object of code that `liberx` obtained with `map` and checked, or from a command of `/bin`, with what the next image keeps that the parking froze ([Exec](#exec)) | `ok` once the next image is built, past which `exec` never returns; `{error, e2big}` past the message's bound; `{error, Errno}`; each error with the old image whole |
+| `exec_commit` | the second tier's `exec`, last step, sent only after `ok` to `exec`: what the old image captured in one step ([Exec](#exec)); the handler makes the reaps it names, as `waited` makes one, and builds the next image's startup message from the rest, `exec`'s start and its record | none: the old image ends, and the new one finds its startup message in its lane |
+| `pipe`, `deposit`, `redeem`, `discard`, `withdraw` | make a pipe; and the second tier's passing of a descriptor over a stream, and letting go of a deposit that a `read` skipped or that a `sendmsg` could not publish ([design-pipes.md](design-pipes.md#the-program-protocol)) | as there |
 
 `Errno` is one of the lower-case names of the ABI file's `errno` table,
-which gives each errno FreeBSD's number, `etoomanyrefs` and `enobufs` among them, and from which
-musl's `bits/errno.h` is generated, and `Signal` one of its signal table's names; a name
-outside them fails the grammar.
+which gives each errno FreeBSD's number and from which musl's
+`bits/errno.h` is generated, and a signal the protocol name of one of the
+signal table's signals ([Signal numbers](#signal-numbers)); a name outside them fails the
+grammar.
 
 **Automatic reaping.** When `SIGCHLD` is ignored or its action has
 `SA_NOCLDWAIT`, `liberx` reaps an ended child itself, as POSIX requires,
-through the same `{waited, Pid, N}` that a `wait` sends, so the record and
+through the same `waited` that a `wait` sends, so the record and
 the `children` quota let go of a reaped child as they do of a child waited
 for. The event executor, which never waits, sends it from a reply slot of
 its own, slot 15, the other 15 being the workers', one request at a time,
 and takes the reply as an event. An `exec` captures the reaps still
-unanswered, and the handler makes them at its `{exec_commit}`
+unanswered, and the handler makes them at its `exec_commit`
 ([Exec](#exec)), so an image's end loses no reap, and an image that starts
 with `SIGCHLD` ignored reaps in the same way each ended child its startup
 message names.
 
-A program also sends **notices**, as `{erx_prog, 1, Notice}` without a
-slot, frames its handler takes without an answer; the thread that makes a change sends its notice in the same step,
-under the outbound lane's lock, so a thread that stops between the change
-and its send never takes the notice with it:
+A program also sends **notices**, frames without a slot that its handler
+takes without an answer; the thread that makes a change sends its notice
+in the same step, under the outbound lane's lock, so a thread that stops
+between the change and its send never takes the notice with it:
 
-* `{closed, Pipe, End}`: the program's last reference to its pipe end went
+* `closed`: the program's last reference to one of its pipe ends went
   ([design-pipes.md](design-pipes.md#ends-and-their-holders));
-* `{drained, Pipe, End, Writer}`: a read end drained the lane of a write
-  end that is gone and let it go.
+* `drained`: a read end drained the lane of a write end that is gone and
+  let it go.
 
 A read end finds a lane drained while it holds the end's lock, where it
-may not wait for room in the outbound lane, so the `{drained}` it owes is
+may not wait for room in the outbound lane, so the `drained` it owes is
 recorded in the end object. The call sends it once it has let go of the
 end's lock; a thread that stops before that leaves it to the end's next
 call or to its release, whichever comes first. So a stopped thread loses
@@ -887,45 +848,44 @@ only within the program's credit, which it keeps from the frames it
 writes and reads and spends as it parses
 ([design-runtime.md](design-runtime.md#programs-as-ports)): a slot is
 busy from the request the driver delivers on it until the driver takes
-the reply on it; a `{closed, Pipe, End}` is due once for each pipe end
-that a frame it wrote gave the program, in a startup message, a `pipe`
-reply or a redemption's reply; and a `{drained, Pipe, End, Writer}` is
-due once for each frame it wrote that names `Writer` gone to the read
-end `End`, a `{pipe_writer_gone}` report, a join marked gone, or a
-descriptor of a startup message or a reply. The driver never parses the
-frames it writes: `send/2` encodes the term into the frame's bytes and, from
-the same term, names the pipe ends the frame grants and the gone writers it
-names; the driver counts those, and the one encoder cannot let them diverge
-from the bytes. A descriptor gives at most two pipe ends, a socketpair's, so
-the `{closed}` notices one frame makes due and those outstanding are each at
-most two for each descriptor, twice `prog_fds_max` in all, which every
-startup message fits; the `{drained}` ones outstanding are bounded by the gone
-writers of the read ends the program holds, which the session's `pipes` quota
-and the read-end bound limit; the driver keeps room for `pipes_quota`
-(`abi/erx_abi.txt`), which no session's quota passes. A send that would pass either bound is the
-session's bug, refused whole with `einval`. A request on a busy slot,
-and a notice that is not due, a repeated one included, are frames
-outside the grammar and end the program with `SIGSYS`, as a malformed
-record does. So the handler and the pipe server hold at most one message
-of a program for each of its credits, 16 requests and one notice for
-each end it was given and each gone writer it was told of, however fast
-it writes.
+the reply on it; a `closed` is due once for each pipe end that a frame it
+wrote gave the program, in a startup message, a `pipe` reply or a
+redemption's reply; and a `drained` is due once for each frame it wrote
+that names a writer gone to a read end: a `pipe_writer_gone` report, a
+join marked gone, or a descriptor of a startup message or a reply. The
+driver never parses the frames it writes: `send/2` encodes the term into
+the frame's bytes and, from the same term, names the pipe ends the frame
+grants and the gone writers it names; the driver counts those, and the one
+encoder cannot let them diverge from the bytes. A descriptor gives at most
+two pipe ends, a socketpair's, so the `closed` notices one frame makes due
+and those outstanding are each at most two for each descriptor, twice
+`prog_fds_max` in all, which every startup message fits; the `drained`
+ones outstanding are bounded by the gone writers of the read ends the
+program holds, which the session's `pipes` quota and the read-end bound
+limit; the driver keeps room for `pipes_quota` (`abi/erx_abi.txt`), which
+no session's quota passes. A send that would pass either bound is the
+session's bug, refused whole with `einval`. A request on a busy slot, and
+a notice that is not due, a repeated one included, are frames outside the
+grammar and end the program with `SIGSYS`, as a malformed record does. So
+the handler and the pipe server hold at most one message of a program for
+each of its credits, 16 requests and one notice for each end it was given
+and each gone writer it was told of, however fast it writes.
 
-The handler sends its program **reports**, as `{erx_prog, 1, Report}`,
-which the program does not answer:
+The handler sends its program **reports**, which the program does not
+answer:
 
 | Report | Meaning |
 | --- | --- |
-| `{exit, N, Pid, Status}` | a child ended: `Status` is `{exited, 0..255}` or `{signaled, Signal}`, and `N` the child's count of state changes ([A program's end](#a-programs-end)) |
-| `{signal, Signal, Sender}` | a signal for the program, any but `sigkill` and `sigstop`; `Sender` is the process id of the program that sent it, or 1 for the session |
-| `{stopped, N, Pid, Signal}`, `{continued, N, Pid}` | in the second tier, a child stopped by a stop signal or continued by `SIGCONT` ([The terminal](#the-terminal)); kept in the child table for `waitpid`'s `WUNTRACED` and `WCONTINUED` |
-| `{ready, Open, Events}` | a terminal or a socket the program watches is ready for the events named; for a terminal, the relay's report with the program's open in place of the relay's and without the relay's signal number, which the handler keeps ([The terminal](#the-terminal)) |
-| `{server_gone, Open}` | the server of an open ended: the open's requests fail with `EIO` from then on |
-| `{pipe_writer, ...}`, `{pipe_writer_gone, ...}`, `{pipe_reader, ...}`, `{pipe_reader_gone, ...}`, `{pipe_lost, ...}`, `pipe_server_lost` | the pipe reports of [design-pipes.md](design-pipes.md#the-program-protocol) |
+| `exit` | a child ended, by an exit status of 0 to 255 or by a signal, with the child's count of state changes ([A program's end](#a-programs-end)) |
+| `signal` | a signal for the program, any but `sigkill` and `sigstop`, with the process id of the program that sent it, or 1 for the session |
+| `stopped`, `continued` | in the second tier, a child stopped by a stop signal or continued by `SIGCONT` ([The terminal](#the-terminal)); kept in the child table for `waitpid`'s `WUNTRACED` and `WCONTINUED` |
+| `ready` | a terminal or a socket the program watches is ready for the events named; for a terminal, the relay's report with the program's open in place of the relay's and without the relay's signal number, which the handler keeps ([The terminal](#the-terminal)) |
+| `server_gone` | the server of an open ended: the open's requests fail with `EIO` from then on |
+| `pipe_writer`, `pipe_writer_gone`, `pipe_reader`, `pipe_reader_gone`, `pipe_lost`, `pipe_server_lost` | the pipe reports of [design-pipes.md](design-pipes.md#the-program-protocol) |
 
 A report of a child's state carries that child's count of state changes,
-`N`, from 1, so a `{waited, Pid, N}` names one state; a signal report
-carries no number, since the channel delivers each once (P13).
+`N`, from 1, so a `waited` names one state; a signal report carries no
+number, since the channel delivers each once (P13).
 
 A program has at most its principal's `children` quota of children alive
 or not yet waited for, and at most 15 requests of its workers in flight to
@@ -935,27 +895,23 @@ is kept for programs a shell starts
 ([design-system.md](design-system.md#resource-policy)).
 
 A program reaches its own children, itself and the processes of its
-`signal` right with one request, `{kill, Target, Signal}`, and `liberx`
-raises no `kill`-sent signal locally, so a signal has one path: for
-`sigkill` the handler of the target stops the target's anchor; for any
-other signal it sends the target the report `{signal, Signal, Sender}`,
-with the requester's process id as `Sender`.
-`raise` and `pthread_kill` are thread-directed and local to the program.
-A `kill` of a child that has ended but not been waited for succeeds and
-does nothing, as POSIX says of a process that has not been waited for.
+`signal` right with one request, `kill`, and `liberx` raises no
+`kill`-sent signal locally, so a signal has one path: for `sigkill` the
+handler of the target stops the target's anchor; for any other signal it
+sends the target a `signal` report naming the requester. `raise` and
+`pthread_kill` are thread-directed and local to the program. A `kill` of a
+child that has ended but not been waited for succeeds and does nothing, as
+POSIX says of a process that has not been waited for.
 
 `kill` with signal 0 only asks whether its targets exist, and it is a
-request of its own, `{probe, Target}`, rather than a `kill` whose signal
-may be 0. So a signal in the protocol is always one of the signal table's
-names, and the path that sends a report never has to tell a check from a
-signal: the handler answers a probe from its child record and, for a
-target that is not its program or one of its children, from the command
-server's `{probe, Scope, Target}`, and neither sends anything to a target.
-A probe reaches exactly what a `kill` of the same target would, through
-the same scope, so a probe never tells a program more than a `kill` would.
-`abi/protocols/prog.txt` declares it beside `kill`, as
-`case probe process_id` with `reply probe_reply`, where
-`probe_reply` is `ok | {error, errno}`.
+request of its own, `probe`, rather than a `kill` whose signal may be 0.
+So a signal in the protocol is always one of the signal table's names,
+and the path that sends a report never has to tell a check from a signal:
+the handler answers a probe from its child record and, for a target that
+is not its program or one of its children, from the command server's
+`{probe, Scope, Target}`, and neither sends anything to a target. A probe
+reaches exactly what a `kill` of the same target would, through the same
+scope, so a probe never tells a program more than a `kill` would.
 
 ### Descriptors and files
 
@@ -1477,7 +1433,7 @@ meanwhile, or does not answer in time, has each value `missing`, which
 `ps` prints as `-`. `ps`, `top` and the `Ctrl-T` line read the session's
 programs so, in its own runtime and with no facet, with
 `inspect_agent_wait`, 500 ms, as the wait
-([design-live.md](design-live.md#the-command-shell)). The session's
+([design-shell.md](design-shell.md#text-commands)). The session's
 inspection agent answers `[domains, Self, programs]` and `[domains,
 Self, programs, N]`, `N` a process id, the same way, with the record's
 other attributes among the keys and half that deadline, so its own
@@ -1541,7 +1497,7 @@ for a program that goes through `liberx`; the parts of P2, P9, P10 and
 P11 that rest on the kernel, and any hold on a program that bypasses
 `liberx`, are erXos's kernel's
 ([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)). Pauses and
-signals have stopgap forms of their own ([Job control](#job-control),
+signals have Fiasco forms of their own ([Job control](#job-control),
 [Signals in liberx](#signals-in-liberx)).
 
 ### What a program can start
@@ -1692,32 +1648,20 @@ the path into one of four images:
   link**, below), so a file without it, with an empty one or with its
   section in another segment is refused by the planner rather than
   left to fault in musl's start; and a dynamic section carrying
-  only the tags `abi/formats/elf64.txt` lists for it, the tags a
-  static position-independent link may carry. LLD writes a subset of
-  them: the probe link on LLD 23.1.3 with
-  `-pie --no-dynamic-linker -static` and the task script wrote every
-  one but `DT_FLAGS`, and no other. The list:
-  `DT_NULL`, `DT_RELA`, `DT_RELASZ`, `DT_RELAENT`, `DT_RELACOUNT`,
-  `DT_FLAGS` without `DF_TEXTREL`, `DT_FLAGS_1`, `DT_DEBUG`;
-  `DT_SYMTAB`, `DT_SYMENT`, `DT_STRTAB`, `DT_STRSZ`, `DT_HASH` and
-  `DT_GNU_HASH` of the dynamic symbol table, which nothing reads since
-  no relocation names a symbol; and `DT_INIT`, `DT_FINI`,
-  `DT_INIT_ARRAY`, `DT_INIT_ARRAYSZ`, `DT_FINI_ARRAY` and
-  `DT_FINI_ARRAYSZ`, which the linker writes for musl's weak `_init`
-  and `_fini` and the task script's `.init_array` and `.fini_array`,
-  and which nothing reads either: a program's constructors and
-  destructors are run by musl, as in any static program, through the
-  link's own symbols, `_init` and `__init_array_start` to
-  `__init_array_end` in `__libc_start_main`'s `__libc_start_init`
-  (`musl/src/env/__libc_start_main.c:59-67`, called at `:92`) and the fini array and
-  `_fini` in `exit` (`musl/src/exit/exit.c:16-25`). The arrays lie in
-  the writable load, so their words are ordinary relative relocations
-  that `erx_exec` writes, and the planner checks no address these six
-  tags hold, since no loader follows one. A tag outside the list, another
+  only the tags [`abi/formats/elf64.txt`](../abi/formats/elf64.txt)
+  lists for it, the tags a static position-independent link may carry
+  (`DF_TEXTREL` never among its flags). Of those the planner follows only
+  the one `DT_RELA` table: the dynamic symbol table's tags name nothing a
+  relocation uses, and the constructor and destructor tags are never
+  followed, since musl runs a program's constructors and destructors
+  through the link's own symbols, as in any static program
+  (`musl/src/env/__libc_start_main.c:59-67`, `musl/src/exit/exit.c:16-25`);
+  the arrays lie in the writable load, so their words are ordinary
+  relative relocations that `erx_exec` writes. A tag outside the list, another
   relocation table's among them, a linker's own packed form or a
   dependency, is refused, so no table the planner does not read can
   leave a file unrelocated. The planner also plans fixed executables
-  (`ET_EXEC`), the boot image's on the stopgap, whose task script is
+  (`ET_EXEC`), the boot image's on Fiasco, whose task script is
   the SDK's and so gives a fixed link a dynamic header too, empty since
   a fixed link writes no dynamic section; the planner requires a fixed
   file's dynamic header, when there is one, to hold no bytes and reads
@@ -1727,13 +1671,8 @@ the path into one of four images:
   address could meet the loader's own, and `erx-app pack` refuses a
   fixed file with it. The SDK's program link script makes exactly the
   one shape. The ABI version is carried by exactly
-  one erXos ELF ABI note in a `PT_NOTE` segment. The note's owner is the six
-  bytes `erXos` and NUL, its type is 1, and its descriptor is one
-  little-endian `u32` ABI version; name and descriptor use ELF's four-byte
-  alignment, so the complete note is 24 bytes. Its layouts and constants
-  are generated from the ABI sources and checked against the pinned musl
-  ELF definitions. Startup emits the note once through the generated C17
-  declaration; the linker retains it and includes it in `PT_NOTE`.
+  one erXos ELF ABI note in a `PT_NOTE` segment, whose layout the ABI
+  file declares (`erx_abi_note`) and startup emits once.
   Missing, duplicate, truncated or unsupported notes fail with a diagnostic,
   even when duplicate versions agree. Unknown owners and note types are
   bounded metadata, not alternative ABI declarations. The note asserts
@@ -1780,255 +1719,143 @@ the path into one of four images:
   the program's channel is the executable's alone, from its first byte.
 
   * **The loader's window** is a fixed place of the program's space,
-    given by two facts of the program protocol
-    (`abi/protocols/prog.txt`): `exec_window_base`, where the task
-    script links every program of the boot image, the loader among
-    them, and `exec_window_bytes`. While `erx_exec` runs, the window
-    holds three things and nothing else: the loader's own image, from
-    the window's base; the rest of the window, which `erx_exec_load`
-    reserves as its first step; and the exec record, on the window's
-    last page, `exec_record_page`, which the generator derives. So the
-    executable removes the loader with one release of the window, and
-    that release can take no memory of its own. The window is the
-    ABI's, not the loader's build's: an executable installed at run
-    time is linked once, by the SDK, and must run under whatever loader
-    the system ships later, so it knows the window from the ABI it was
-    built against and reads nothing of the loader's link or of the
-    record. The generator fails a window that is not whole pages or
-    that meets the program memory place, `prog_mem_base`; the task
-    script asserts that a program's image ends below the record's page,
-    and the stopgap's backend that its fixed task area ends below the
-    window.
-  * **The exec record** is an object of one page that the port
-    driver creates from the program's budget, writes through a mapping
-    of its own that it releases as soon as the fields are written, and
-    maps read-write into the image at `exec_record_page` before the
-    first thread starts, so the session holds no view of the record
-    while the program runs, and a build plan that fails after the write
-    releases that view in its undo. Its layout, `erx_exec_record`, is
-    the ABI file's: the driver writes `object`, the code object's value
-    in the image's table, and `file_bytes`, the file's exact length,
-    and nothing writes the record afterwards. `erx_exec` reads both
-    fields at the record's fixed page, copying each once into its own
-    locals before acting on it, and nothing else reads the record. The
-    first thread's argument register 7, `program_arg`'s `exec`, is 0 in
-    every start a session gives, the loader's included. The
-    driver closes its capability to the record once the first thread
-    has started, or with the program's other values when it never
-    starts; from then on the image's mapping is the record's only
-    hold, and the page, charged to the program's budget, goes with that
-    budget. That is no exception to step 6's rule that the channel and
-    the data area come from the session's budget because the session
-    maps them: the session maps those for the program's whole life and
-    past its budget's end, while it maps the record only to write it,
-    before the first thread starts, and holds nothing of it once the
-    thread runs. The startup message carries no image: the record
-    is the one place that names the object, and the loader never reads
-    the channel.
-
-    The record is the session's word to its own program, not input from
-    another domain: the session built the space, chose its image and
-    could have put any code there, so the loader trusts the record as
-    it trusts its argument registers. A record missing from its page
-    faults the loader, a fault of the session's; a length the object
+    given by the program protocol's `exec_window_base` and
+    `exec_window_bytes` (`abi/protocols/prog.txt`). While `erx_exec`
+    runs, the window holds the loader's own image, from its base; the
+    rest of the window, which the loader reserves as its first step; and
+    the exec record, on its last page. So the executable removes the
+    loader with one release of the window, and that release can take no
+    memory of its own. The window is the ABI's, not the loader's build's:
+    an executable installed at run time is linked once, by the SDK, and
+    must run under whatever loader the system ships later, so it knows
+    the window from the ABI it was built against and reads nothing of the
+    loader's link or of the record. The generator fails a window that is
+    not whole pages or that meets `prog_mem_base`, and the link asserts
+    that a program's image ends below the record's page.
+  * **The exec record** (`erx_exec_record` of the ABI file) is a page the
+    port driver creates from the program's budget and writes through a
+    mapping of its own, released as soon as the code object's value and
+    the file's exact length are written; it maps the page into the image
+    before the first thread starts and closes its capability once the
+    thread has started. So the session holds no view of the record while
+    the program runs, nothing writes the record afterwards, and the page
+    goes with the program's budget. That is no exception to step 6's rule
+    that the channel and the data area come from the session's budget:
+    the session maps those for the program's whole life and past its
+    budget's end, and the record only before the first thread starts. The
+    startup message carries no image: the record is the one place that
+    names the object, and the loader never reads the channel. The record
+    is the session's word to its own program, not input from another
+    domain: the session built the space, chose its image and could have
+    put any code there, so the loader trusts the record as it trusts its
+    argument registers, reading each field once. When the first thread
+    never starts, the driver closes the record's capability with the
+    program's other values. A record missing from its
+    page faults the loader, a fault of the session's; a length the object
     cannot cover fails the load as any failed call does (below).
-  * **Loading** runs on the first thread with only that thread's
-    synchronous memory calls (`erx_vm_reserve`, `erx_vm_map`,
-    `erx_mem_child`, `erx_vm_commit`, `erx_vm_release`), through the
-    pure planner and layout of `liberx/exec/load_plan.c` and the effects
-    of `liberx/exec/load.c`. Its first call reserves the window's rest,
-    from the end of the loader's own image, `erx_prog_image()`, to the
-    record's page, fixed and replacing nothing (`ERX_VM_FIXED` with
-    `ERX_VM_NOREPLACE`), before the view and the executable's
-    reservation, so that from then on every page of the window is taken
-    and the space places nothing else there: not the view, not the
-    executable, not the stacks the executable's start-up takes before
-    its release. The load never releases that reservation; the
-    executable's release of the window does. It uses no thread-local storage, calls no
-    musl function that does and uses no heap: what it holds is on its
-    first stack. The page rounding of `file_bytes` is checked
-    arithmetic; a length that overflows, or an object shorter than the
-    rounded length, fails the view's map, as any failed call does.
-  * **The transfer.** `erx_exec` gives the same first thread, the
-    space's only one, the start a session gives a program's first
-    thread: argument registers 0 to 6 as the session wrote them, the
-    `program_arg` values; register 7 the record's page,
-    `exec_record_page`, the one start that gives it a value other than
-    0; the stack and thread pointer of a first
-    start; and the executable's entry, its base plus the file's entry
-    address. The backend's **exec entry**, a few instructions in its
-    architecture layer, sets that state and jumps; it is no C call,
-    since nothing returns to `erx_exec` and the executable's own entry
-    expects exactly a first start's state, whatever the backend makes
-    of it ([design-stopgap.md](design-stopgap.md#thread-creation)).
-    From then on no instruction of `erx_exec` runs: its stack, data and
-    code are abandoned with the thread on the executable's stack.
-  * **Release.** The executable's start-up is that of every program:
-    its first instructions take a stack of its own, its backend starts
-    the helper threads, and its program entry hands the first thread's
-    argument registers to `erx_prog_enter`, `liberx`'s backend-neutral
-    entry to the program layer, before musl's `__libc_start_main` runs.
-    `erx_prog_enter` calls `erx_exec_release` when register 7 is not 0,
-    so the one routine that ends a loader's tenure is reached from the
-    one call every backend's entry already makes, and no backend names
-    it. Register 7 is tested only against 0: its value names nothing
-    the release uses. So nothing
-    of the executable but `liberx`'s start-up runs while the window is
-    mapped: no constructor, which musl's start runs, no
-    `main` and no part of musl, and `erx_exec_release`, like the
-    loader, uses no thread-local storage and no musl function that
-    does. It reads no record. It refuses, releasing nothing, when the
-    window meets the executable's own image, whose span the executable
-    knows from its own link's symbols, as the image of a program of the
-    boot image does, since the task script links those at the window's
-    base and no loader enters them. Otherwise it makes one
-    `erx_vm_release` over the whole window; the space skips the
-    window's holes and removes every mapping and reservation within it:
-    the loader's code, its data and the first stack it ran on, the
-    reserved rest and the record's page. A loaded program so keeps
-    nothing of `erx_exec` but the object's own mappings. A window it
-    refuses, or a release the space
-    refuses, stops the program with the program layer's start-up status
-    for a refused release, `ERX_PROG_STATUS_RELEASE`, a negative status
-    beside `ERX_PROG_STATUS_REFUSED` that no `main` can return: it is a
-    fault of the loader or the session, never of the file.
-  * **The channel waits.** While the loader runs, nothing reads the
-    inbound lane: the startup message, and any report or signal the
-    handler writes after it, stay where the handler wrote them, the
-    handler waiting for room as for any slow reader, and the program's
-    doorbell is pending until the executable's dispatcher runs, as it
-    is for any program between its first instruction and its
-    dispatcher's start. The executable's `liberx` then reads the lane
-    from its first frame, the startup message first, as every program
-    does. A second reader could only move the lane's read position
-    backwards, which the lane refuses as a fault of its reader, so the
-    loader never maps the channel at all.
-  * **A load that fails** leaves nothing of the executable:
-    `erx_exec_load`'s one failure route releases the executable's
-    reservation and the view, whether the plan refused the file or a
-    call failed part way. A window's rest the space refuses to reserve
+  * **Loading** runs on the first thread with only its synchronous memory
+    calls, through a pure planner and layout and a thin layer of effects.
+    Its first call reserves the window's rest, fixed and replacing
+    nothing, so from then on the space places nothing else there: not the
+    view, not the executable, not the stacks the executable's start-up
+    takes before its release. A window's rest the space refuses to reserve
     fails the load with the call `window`, before anything is reserved.
-    `erx_exec` copies the reason `erx_exec_load` gave, the planner's
-    refusal or the failed call's name and status, by value into one
-    static of its own image, the only thing its `main` reads, and then
-    calls the ordinary start-up of its own image as a C function, with
-    the argument registers as it received them, register 7 among them
-    0. The window stays as it is, and nothing on this path releases it:
-    the program ends at once, and the window goes with the space, so
-    the window's one release is `erx_exec_release`'s on a successful
-    hand-off. With register 7 at 0 that start-up sees an image with no
-    loader behind it, and `erx_exec_release` never runs in the loader.
-    It runs the helpers, the channel and the startup
-    message, whose `main` writes the static's diagnostic to its standard
-    error and returns 127, after the spawn has answered, as a malformed
-    startup message ends a program; no other route reaches the loader's
-    `main`. That runtime is still the space's only one, since no
-    executable ran.
+    The load never releases that reservation; the executable's release of
+    the window does. It uses no thread-local storage, no musl
+    function that does and no heap; the page rounding of the file's length
+    is checked arithmetic.
+  * **The transfer.** `erx_exec` gives the same first thread the start a
+    session gives a program's first thread, with one difference: the
+    eighth argument register holds the record's page, where every other
+    start gives 0; and the executable's entry, its base plus the file's
+    entry address. The backend's **exec entry**, a few instructions in its
+    architecture layer, sets that state and jumps, since nothing returns
+    to `erx_exec` and the executable's entry expects exactly a first
+    start's state ([design-fiasco.md](design-fiasco.md#thread-creation)).
+    From then on no instruction of `erx_exec` runs.
+  * **Release.** The executable's start-up is that of every program, and
+    `liberx`'s backend-neutral entry to the program layer calls
+    `erx_exec_release` when that register is not 0, so the one routine that
+    ends a loader's tenure is reached from the one call every backend's
+    entry already makes, and the register's value names nothing the
+    release uses. So nothing of the executable but `liberx`'s start-up
+    runs while the window is mapped: no constructor, no `main` and no part
+    of musl. The release, like the loader, uses no thread-local storage
+    and no musl function that does, reads no record, refuses when the window meets
+    the executable's own image (a program of the boot image, linked at the
+    window's base), and otherwise makes one release of the whole window,
+    which removes the loader's code, data and first stack, the reserved
+    rest and the record's page. A refused window or release stops the
+    program with the start-up status `ERX_PROG_STATUS_RELEASE`, which no
+    `main` can return: it is a fault of the loader or the session, never
+    of the file.
+  * **The channel waits.** While the loader runs, nothing reads the
+    inbound lane: the startup message and anything the handler writes
+    after it wait, as for any program before its dispatcher starts, and
+    the executable's `liberx` reads the lane from its first frame. A
+    second reader could only move the lane's read position backwards,
+    which the lane refuses as a fault of its reader, so the loader never
+    maps the channel at all.
+  * **A load that fails** leaves nothing of the executable: the load's one
+    failure route releases the executable's reservation and the view,
+    whether the plan refused the file or a call failed part way.
+    `erx_exec` keeps the reason by value and runs its own image's ordinary
+    start-up, with no loader behind it, whose `main` writes the
+    diagnostic to its standard error and returns 127 after the spawn has
+    answered, as a malformed startup message ends a program. The window
+    goes with the space.
   * **A release that fails.** Every release in the hand-off is its
-    cleanup, and each must succeed: `erx_exec_load` therefore has three
-    outcomes, loaded with the view released, failed with the view and
-    the reservation released, and refused cleanup, when the space
-    refuses either release. The window's rest is not among them: the
-    load never releases it. Refused cleanup is terminal: the thread is
-    never transferred, no diagnostic is attempted, and `erx_exec`
-    stops the program with `ERX_PROG_STATUS_RELEASE`, the status
-    `erx_exec_release` uses, so one status names every cleanup failure
-    of the hand-off, the loader's and the executable's. Whatever the
-    refused release left mapped goes with the space.
+    cleanup, and each must succeed: a load is loaded with the view
+    released, failed with the view and the reservation released, or
+    refused cleanup, which is terminal: the thread is never transferred,
+    no diagnostic is attempted, and the program stops with
+    `ERX_PROG_STATUS_RELEASE`, so one status names every cleanup failure
+    of the hand-off. Whatever the refused release left mapped goes with
+    the space.
 
   The record and the entry are the whole of the hand-off: no startup
   bytes are replayed, no lane position, descriptor or thread passes from
   one runtime to another, and no reaper or dispatcher changes hands,
   since the loader starts none.
 
-  **Removing the loader is the executable's start-up's work.** The
-  loader leaves its pages to be released by the start-up it enters, so
-  their removal rests on the executable running `liberx`'s start-up. An
-  executable whose entry skips that start-up keeps the window, the
-  loader and the record in it, mapped. It gains nothing by it: the loader's code is the
-  release's and makes no call the program could not make itself, its
+  **Removing the loader is the executable's start-up's work.** An
+  executable whose entry skips `liberx`'s start-up keeps the window, the
+  loader and the record in it, mapped. It gains nothing by it: the
+  loader's code makes no call the program could not make itself, its
   data and stack hold only what the record and the file gave it, the
   record names only the code object already installed in the program's
-  table, and the space holds no capability the program was not given. So removal is a
-  property of every executable the SDK links, which the verification
-  below checks, and not a guarantee against a hostile file.
+  table, and the space holds no capability the program was not given. So
+  removal is a property of every executable the SDK links, which the
+  loader's seeded tests check ([Verification and testing](#verification-and-testing)), and not a guarantee against a hostile file.
 
-  **The executable's link.** The SDK builds every native program of a
-  package so: its libraries and programs are compiled position-independent
-  and linked as static position-independent executables
+  **The executable's link.** The SDK links every native program of a
+  package as a static position-independent executable
   ([design-packaging.md](design-packaging.md#the-sdk)), and `erx-app
   pack` refuses a program `erx_exec` would refuse. The programs of the
   boot image, the loader among them, are `erx_image_map`'s, never
-  `erx_exec`'s; on the stopgap they are linked at fixed addresses, since
-  its `erx_image_map` loads only a fixed image
-  ([design-stopgap.md](design-stopgap.md#the-call-table)). Both links
-  are one link script, the task script, with its base as a symbol,
-  `erx_base`, that the link line sets with `--defsym`: the loader's
-  window's base, `exec_window_base`, taken from the generated ABI, for
-  the boot image's programs, and 0 for the SDK's. The link line also
-  sets `erx_exec_record_page` from the generated ABI, and the script
-  asserts that the image ends below it, so the loader, linked as every
-  program of the boot image is, never reaches the record's page. So
-  the segments, their order and the sections each holds have one
-  source:
-
-  * No musl start file enters either link, neither `crt1` nor `rcrt1`:
-    the entry is `liberx`'s own, which builds musl's start block itself
-    and calls `__libc_start_main`. `rcrt1` would relocate the program a
-    second time, and an executable never relocates itself.
-  * The script keeps every segment it names, with the dynamic section,
-    `.dynamic`, in the writable load and its own `PT_DYNAMIC` header,
-    and the relocation table, `.rela.dyn`, the dynamic symbol table,
-    `.dynsym`, its strings, `.dynstr`, and its hash tables, `.hash` and
-    `.gnu.hash`, in the read-only load, since nothing writes them and
-    only the plan and the relocations read them, from the file's bytes.
-    It names each of the six, since `--orphan-handling=error` refuses a
-    section it does not place, and the writable load takes
-    `.data.rel.ro`, the constant tables of pointers that relocations
-    write, through its `.data.*` pattern. musl's
-    start finds the thread-local image of a static executable at the
-    load base that `PT_DYNAMIC` and `_DYNAMIC` give it
-    (`musl/src/env/__init_tls.c:87-106`); the task script names no
-    `PT_PHDR`, so without `PT_DYNAMIC` a program's thread-local image
-    would be read at its unrelocated address. A fixed link has no
-    dynamic section, so its `PT_DYNAMIC` header is empty, at address 0
-    with no bytes, and its weak `_DYNAMIC` stays undefined, so musl
-    takes its base as 0. The planner meets that empty header first in
-    the boot packer, which plans every boot-image program before it
-    writes the program's image manifest, and on the stopgap again in
-    `erx_image_map` for a file entry of the boot archive (an image
-    entry it reads with `erx_image_plan`); in both it takes the empty
-    header as no dynamic section, as above.
-  * The SDK's link line is `-pie --no-dynamic-linker -static -z norelro
-    -z max-page-size=4096 --orphan-handling=error`: the shape the
-    planner accepts, pages the size the planner checks, no `RELRO`
-    header the first tier does not apply, and no section the script
-    does not place. It never passes `-z pack-relative-relocs`, whose
-    `DT_RELR` table the planner refuses.
-  * Each archive, musl's `libc.a`, `liberx` and the compiler's
-    builtins, is built once, position-independent (`-fPIE`), and serves
-    both links: position-independent code links into a fixed executable
-    as well, and one build keeps one copy of each object. Code built
-    without it does not link as a static position-independent
-    executable: its constant tables of pointers, `liberx`'s generated
-    profile tables among them, land in the read-only load and need an
-    absolute relocation there, which the link refuses, and two members
-    of musl's `libc.a`, `vmlock.o` and `ofl.o`, fail the same way. A program linked so has only the architecture's relative
-    relocations in `.rela.dyn`.
-  * On the stopgap the backend under `liberx` brings three more
-    archives into every link: the boot cores, `erx_boot.a`, and
-    L4Re's `libsigma0.a` and `libl4sys.p.a` (the boot image's link,
-    `NativeRoot.archive_group` in `tools/lib/erx/native_root.rb`). The probe link took the
-    three as Fiasco's build makes them, and none of their members
-    needed a relocation the static position-independent link refuses.
-    The SDK ships them beside `liberx_program.a`, the archive the
-    SDK's build makes from `liberx`'s program layer and its backend,
-    which a package's link takes whole, as the boot image's link takes
-    those objects; the backend's archives are searched in one group
-    with `libc.a` and the builtins, as the boot image's link searches
-    them. A package's link names them only through `sdk.mk`'s
-    `ERX_LIBS`, so a change of backend changes what the SDK's `lib/`
-    holds and what `ERX_LIBS` names, never a package's link.
+  `erx_exec`'s; on Fiasco they are linked at fixed addresses, since its
+  `erx_image_map` loads only a fixed image
+  ([design-fiasco.md](design-fiasco.md#the-call-table)). Both links use
+  one link script, whose base is the window's base for the boot image's
+  programs and 0 for the SDK's, so the segments, their order and the
+  sections each holds have one source. No musl start file enters either
+  link: the entry is `liberx`'s own, since `rcrt1` would relocate the
+  program a second time and an executable never relocates itself. The
+  script gives the dynamic section its own `PT_DYNAMIC` header in the
+  writable load, since musl's start finds a static executable's
+  thread-local image at the load base that `PT_DYNAMIC` gives it
+  (`musl/src/env/__init_tls.c:87-106`); a fixed link's is empty, which the
+  planner takes as no dynamic section. The link has no `RELRO` and no
+  packed relative relocations, neither of which the first tier applies,
+  and places every section or fails. musl's `libc.a`, `liberx` and the
+  compiler's builtins are built once, position-independent, and serve
+  both links; code built otherwise needs absolute relocations in the
+  read-only load, which the link refuses. A package's link names the
+  backend's archives only through the SDK's `ERX_LIBS`, so a change of
+  backend changes what the SDK ships, never a package's link. On Fiasco
+  the SDK ships, beside `liberx_program.a`, the backend's archives every
+  link takes: the boot cores, `erx_boot.a`, and L4Re's `libsigma0.a` and
+  `libl4sys.p.a`, searched in one group with `libc.a` and the builtins.
 
 * **`rc`.** The `rc` command runs in the program's command domain with an
   `rc` script: it runs the script with the shell's interpreter, with rc's
@@ -2565,9 +2392,10 @@ FreeBSD's numbers from 1 to 31. Programs are ported at the source level, so
 no binary carries Linux's numbers, and code that names its signals, as
 POSIX expects of every signal beyond those seven, needs only a rebuild.
 
-**One table.** The signal table of `abi/erx_abi.txt` holds every signal:
-its name, its number, its default action and its description. Every
-consumer is generated from it
+**One table.** The signal table,
+[`abi/signals.txt`](../abi/signals.txt), which the ABI file includes,
+holds every signal: its name, its number, its default action, its
+aliases and its description. Every consumer is generated from it
 ([design-generation.md](design-generation.md#sources-and-outputs)): musl's
 signal numbers, the set of valid signals and `sigfillset`'s set, the names
 and descriptions behind `strsignal`, `psignal`, `sig2str` and `str2sig`,
@@ -2580,52 +2408,19 @@ literally, and the generator's mapping test compares it with FreeBSD
 fetched at a pinned URL and SHA-256 as a test input
 ([design-abi.md](design-abi.md#numeric-assignment-and-versions)).
 
-| Number | Name | Default action | Notes |
-| --- | --- | --- | --- |
-| 1 | `SIGHUP` | terminate | |
-| 2 | `SIGINT` | terminate | |
-| 3 | `SIGQUIT` | terminate | |
-| 4 | `SIGILL` | terminate | the fault table's undefined instruction |
-| 5 | `SIGTRAP` | terminate | the fault table's breakpoint |
-| 6 | `SIGABRT` | terminate | `SIGIOT` is its alias, as on FreeBSD |
-| 7 | `SIGEMT` | terminate | FreeBSD's emulator trap; no fault kind maps to it, so only `kill` and `raise` send it |
-| 8 | `SIGFPE` | terminate | |
-| 9 | `SIGKILL` | terminate | cannot be caught, blocked or ignored |
-| 10 | `SIGBUS` | terminate | |
-| 11 | `SIGSEGV` | terminate | |
-| 12 | `SIGSYS` | terminate | |
-| 13 | `SIGPIPE` | terminate | |
-| 14 | `SIGALRM` | terminate | |
-| 15 | `SIGTERM` | terminate | |
-| 16 | `SIGURG` | ignore | |
-| 17 | `SIGSTOP` | stop | cannot be caught, blocked or ignored |
-| 18 | `SIGTSTP` | stop | |
-| 19 | `SIGCONT` | continue | |
-| 20 | `SIGCHLD` | ignore | |
-| 21 | `SIGTTIN` | stop | |
-| 22 | `SIGTTOU` | stop | |
-| 23 | `SIGIO` | ignore | `SIGPOLL` is its alias, as on Linux; Linux's default action for it is to terminate, FreeBSD's to ignore |
-| 24 | `SIGXCPU` | terminate | |
-| 25 | `SIGXFSZ` | terminate | |
-| 26 | `SIGVTALRM` | terminate | |
-| 27 | `SIGPROF` | terminate | |
-| 28 | `SIGWINCH` | ignore | |
-| 29 | `SIGINFO` | ignore | the status request of `Ctrl-T` ([The terminal](#the-terminal)) |
-| 30 | `SIGUSR1` | terminate | |
-| 31 | `SIGUSR2` | terminate | |
-| 32 | `SIGTHR` | reserved | `SIGLWP` is its alias; musl's `SIGTIMER` |
-| 33 | `SIGLIBRT` | reserved | musl's `SIGCANCEL` |
-| 34 | none | reserved | musl's `SIGSYNCCALL` |
-| 35 to 64 | none | not a signal | |
-| 65 to 126 | `SIGRTMIN` to `SIGRTMAX` | terminate | real-time signals, named as `sig2str` names them: `RTMIN`, `RTMIN+1` to `RTMIN+30`, `RTMAX-30` to `RTMAX-1`, `RTMAX` |
-| 127, 128 | none | not a signal | |
-
-The default actions are FreeBSD's (`sys/kern/kern_sig.c`, `sigproptbl`),
-and a real-time signal ends the program, as on FreeBSD. erXos writes no
-core file, so the table has no core column and `WCOREDUMP` is never set.
-The descriptions are FreeBSD's `sys_siglist` text. The protocol's name for
-a signal is its name in lower case, `sigint` or `'sigrtmin+1'`, and its
-name for `kill -l` and `str2sig` drops the `SIG`, `INT` or `RTMIN+1`.
+The table follows FreeBSD everywhere a program can see it: 1 to 31 are
+FreeBSD's signals with FreeBSD's default actions (`sys/kern/kern_sig.c`,
+`sigproptbl`) and `sys_siglist` descriptions, `SIGINFO` at 29 among them
+(the status request of `Ctrl-T`, [The terminal](#the-terminal)), and
+`SIGIOT` an alias of `SIGABRT`. `SIGEMT`, FreeBSD's emulator trap, has no
+fault kind, so only `kill` and `raise` send it. 32 to 34 are reserved for
+the C library (below), 35 to 64 are no signal, 65 to 126 are the real-time
+signals, and 127 and 128 are no signal. A real-time signal ends the
+program, as on FreeBSD. `SIGKILL` and `SIGSTOP` cannot be caught, blocked
+or ignored. erXos writes no core file, so the table has no
+core column and `WCOREDUMP` is never set. The protocol's name for a
+signal is its name in lower case, `sigint` or `'sigrtmin+1'`, and its name
+for `kill -l` and `str2sig` drops the `SIG`, `INT` or `RTMIN+1`.
 
 **A number is a signal only if the table lists it.** One generated
 predicate, `erx_sig_valid`, decides whether a number is a signal a program
@@ -2655,8 +2450,11 @@ none is a name of the program protocol. `<signal.h>` defines `SIGTHR`,
 its other BSD names and FreeBSD defines them under `__BSD_VISIBLE`, so code that names them builds; `sigaction` of one fails
 with `EINVAL`, as FreeBSD's thread library refuses `SIGTHR`.
 
-**Linux's own names.** `SIGPOLL` stays, as an alias of `SIGIO`, which adds
-no number and no line to `kill -l`. `SIGPWR`, `SIGSTKFLT` and `SIGUNUSED`
+**Linux's own names.** `SIGPOLL` is an alias of `SIGIO` in the signal
+table ([`abi/signals.txt`](../abi/signals.txt)), which adds no number
+and no line to `kill -l`; whether it stays is open
+([Risks and open questions](#risks-and-open-questions)). `SIGIO` keeps
+FreeBSD's default action, to ignore, where Linux's terminates. `SIGPWR`, `SIGSTKFLT` and `SIGUNUSED`
 go. FreeBSD has none of them and erXos sends none. An alias would run a
 power-failure handler on another signal, as `SIGPWR` sharing a number with
 `SIGINFO` would run it at every `Ctrl-T`, and a number of its own would be
@@ -2940,39 +2738,30 @@ returns only once the job is continued: a full-screen program that calls
 `fg`. An Erlang command does the same with `erx_cmd:stop/1`
 ([design-shell.md](design-shell.md#job-control)).
 
-**Status: `VSTATUS` and `SIGINFO`.** `termios` has FreeBSD's `VSTATUS`
-character, `^T` by default, and its `NOKERNINFO` flag, clear by default.
-With `ISIG`, `ICANON` and `IEXTEN` set, the line discipline turns the
-character into a status request for the foreground job. The shell then
-writes a status line for the job, unless `NOKERNINFO` is set, and asks the
-handler of each of the job's programs to send it `SIGINFO`
-([design-shell.md](design-shell.md#ctrl-t-status-and-the-info-request)).
-`SIGINFO`'s default action is to ignore it, as on FreeBSD, so only a
-program that catches it notices: a ported `cp`, `dd`, `sleep` or `fetch`
-prints its own progress, as on FreeBSD. A `SIGINFO` from the terminal
-carries the origin that a `SIGINT` from `Ctrl-C` carries. Linux has no
-`SIGINFO`, `VSTATUS` or `NOKERNINFO`, so erXos's musl defines all three,
-and the ABI file's signal and `termios` tables list them. `SIGINFO` is
-29, its FreeBSD number, as every signal number is
-([Signal numbers](#signal-numbers)). musl defines no `TIOCSTAT`,
-so a ported program that uses it under `#ifdef` builds without it. `stty
-status` and `stty kerninfo` set the character and the flag, as FreeBSD's
-`stty` does.
+**Status: `VSTATUS` and `SIGINFO`.** The tty's `VSTATUS` character, `^T`
+by default, makes a status request for the foreground job
+([design-live.md](design-live.md#the-tty)); the shell writes the job's
+status line, unless `NOKERNINFO` is set, and asks the handler of each of
+the job's programs to send it `SIGINFO`
+([design-shell.md](design-shell.md#ctrl-t-status-and-the-info-request)),
+with the origin that a `SIGINT` from `Ctrl-C` carries. `SIGINFO`'s default
+action is to ignore it, as on FreeBSD, so only a program that catches it
+notices: a ported `cp`, `dd`, `sleep` or `fetch` prints its own progress.
+Linux has no `SIGINFO`, `VSTATUS` or `NOKERNINFO`, so erXos's musl defines
+all three, from the ABI file's signal and `termios` tables. musl defines
+no `TIOCSTAT`, so a ported program that uses it under `#ifdef` builds
+without it. `stty status` and `stty kerninfo` set the character and the
+flag, as FreeBSD's `stty` does.
 
 **Pseudo-terminals, in the second tier.** A session's own tty is a
 **pseudo-terminal** whose master is the console. In the second tier a program
 can make another: `posix_openpt` gives it the master side, and the slave side
 is a file `/dev/pts/N` of the session's export, which programs read and write
 as opens. The session's terminal relay owns it, and the same line discipline
-runs between the sides
-([design-live.md](design-live.md#the-tty)). With `ISIG`, the characters for
-interrupt, quit and suspend become `SIGINT`, `SIGQUIT` and `SIGTSTP` for
-the terminal's foreground process group, sent through the handlers as any
-signal is; with `ICANON` and `IEXTEN` also set, the status character makes
-the relay write the group's status line and send the group `SIGINFO`
-([design-shell.md](design-shell.md#ctrl-t-status-and-the-info-request)); a
-change of the window's size sends `SIGWINCH`; the master's close sends
-`SIGHUP`.
+runs between the sides, making the same signals for the terminal's
+foreground process group ([design-live.md](design-live.md#the-tty)), which
+reach it through the handlers as any signal does; a change of the window's
+size sends `SIGWINCH`, and the master's close sends `SIGHUP`.
 
 **Process groups and sessions, in the second tier.** A program may create
 a process group or a session within its job, with `setpgid` and `setsid`,
@@ -4078,93 +3867,36 @@ file anyway, since its own open allowed writing.
 
 ## Verification and testing
 
-Every property test and every domain test below is paired with a seeded
+Every property test and every domain test is paired with a seeded
 failure: a mutation of the code under test, a dropped undo step, a
 reversed lock order, a bound off by one, a frame applied before its read
 position moves, which the test must catch, so a passing test proves the
-code it names ran. The personality's oracles are musl's `libc-test`, which
-`make check-oracle` runs, and the Open POSIX Test Suite, fetched at a
-pinned version, built against erXos's musl and run in a test domain as an
-external test tool, never linked into erXos and never in the repository
-(BSD-2-Clause and GPL-2.0-or-later,
-[research](research-boards-storage.md#the-toolbox)); a case that needs a
-facility of a tier not yet built is recorded as unsupported, never as a
-pass, and the second tier runs the suites' `fork`, `exec`, `dlopen` and
-terminal cases.
+code it names ran. The personality's oracles
+are musl's `libc-test`, which `make check-oracle` runs, and the Open POSIX
+Test Suite, fetched at a pinned version, built against erXos's musl and
+run in a test domain as an external test tool, never linked into erXos and
+never in the repository (BSD-2-Clause and GPL-2.0-or-later,
+[research](research-boards-storage.md#the-toolbox)). Every failure of
+either is a bug, a documented difference with a test, or an upstream bug
+recorded as such; a case that needs the second tier is recorded as
+unsupported in a build without it, never as a pass, and the second tier
+runs the suites' `fork`, `exec`, `dlopen` and terminal cases.
 
-* **Pure cores on the host.** The spawn planner over random descriptor
-  tables and file actions, with the properties that a plan names only
-  descriptors that are open and each number once, and that a rejected plan
-  has no effect; `erx_prog:status/1` over every exit and fault record the
-  kernel can post, every fault kind of the ABI file's table included;
-  `erx_sig_step`, explored exhaustively as above; `erx_elf_plan` over
-  random and mutated executables and shared objects, with the properties
-  that a plan's segments lie inside the file and its range, none is
-  writable and executable, and no relocation writes a code segment; the
-  descriptor table's `dup`, `close` and `FD_CLOEXEC` rules against a
-  model; a mem range's memory rules, where a `munmap` inside the range
-  returns 0 and a pattern written before it reads back after it, a
-  `munmap` one page across either end of the range and an `mmap` with
-  `MAP_FIXED` inside it fail with `EINVAL`, as do a `munmap` inside the
-  range at an address one byte past a page boundary, one of length 0
-  and one whose end passes 2^64, and a `munmap` of the range
-  after the last descriptor of it closed releases it, with a seeded
-  table that passes the inside `munmap` on to the release failing the
-  read-back; the line discipline's state machine against a model of POSIX's
-  general terminal interface; the handler's owed frames against a model
-  of a program that reads its lane at random, never, or in bursts, with
-  the properties that the handler never blocks, never owes more than its
-  program's state bounds, and writes owed frames in order, and with a
-  seeded handler that writes a newer frame before an owed one, and that
-  an owed join and gone of one pipe end merge into the join marked gone;
-  the port driver's credit against a model of a hostile program that
-  sends requests on busy slots and notices that are not due, repeats
-  among them, with the properties that each such frame ends the program
-  with `SIGSYS` and that the handler and the pipe server never hold more
-  than one message per credit; the exploration of the pipe core and the
-  handler over an `exec` whose let-go overlaps pipe reports and installs,
-  with P11's property that no capability is installed into a table other
-  than the one its report names; and the exploration of the handler and
-  `liberx` over an `exec` racing signals, stops, continues and exits,
-  with P13's properties, and with a seeded executor that applies a frame
-  before its last byte is read and a seeded switch that drops the signal
-  reports the handler still owed.
-* **A session process's program**, `erx_prog_handler` over a fixture
-  display tree and a test program. With `window`, the program finds
-  `/dev/draw`, `/dev/ctl`, `/dev/kbd` and `/dev/mouse`, its draw messages
-  reach the window, a key the fixture sends reads back from `/dev/kbd`,
-  and the fixture tree ends the window once the handler has exited; a
-  spec naming a window and a buffer answers `EINVAL`, a display the
-  session holds no grant on `ENODEV`, a fixture tree with the session at
-  its `windows` quota `EDQUOT`, and one whose pixel area is full
-  `ENOMEM`, and the test awaits, within a deadline, the end of each
-  window, hand-off and lease the refused start made. A
-  program that exits 3 gives its starter one message, the `'DOWN'` of
-  the returned monitor with `{shutdown, {program_exit, {exited, 3}}}`;
-  `stop/1` of a running program gives `{shutdown, {program_exit,
-  {signaled, sigkill}}}`, and `stop/1` sent after the program exited 3,
-  before its handler has reported, still gives `{exited, 3}`; a killed
-  handler gives `killed`, with the program ended. Seeded: a window
-  opened with the starter as its holder, which leaves it open after the
-  handler's end; a handler that answers every refusal of the display
-  with one errno, which answers the full area `EDQUOT`; a handler that
-  reports `sigkill` for every stop, which loses the exit 3; a start
-  whose failure after the window's open skips closing it;
-  a handler that exits `normal`, which the test reads as a lost status.
-* **The command server.** `erx_command_core` on the host over random
+* **Pure cores on the host.** The spawn planner, `erx_prog:status/1` over
+  every exit and fault record the kernel can post, `erx_sig_step`
+  explored exhaustively ([Signals in liberx](#signals-in-liberx)),
+  `erx_elf_plan` over random and mutated executables and shared objects,
+  the descriptor table against a model, and a mem range's memory rules,
+  each with properties of the form the invariants state: a plan names only
+  open descriptors, each once, and a rejected plan has no effect; a plan's
+  segments lie inside the file, none is writable and executable, and no
+  relocation writes a code segment.
+* **The handler and the command server.** `erx_prog_handler` over fixture
+  trees and test programs, and `erx_command_core` on the host over random
   reservations and handler ends, with the properties that ids run from 2
   in order, no id is given twice, the reservation after 2^31 - 1 is
-  `eagain`, a row exists exactly while its handler lives, and a job's
-  rows share one group; seeded: a core that gives a dropped row's id
-  again, and one that gives each program a group of its own.
-  In a session, a program that exits at once still gives its starter
-  `{exited, 0}`, with a seeded `start/1` that sends the handler its
-  start before it monitors it, which loses the status under a scheduling
-  hook; `ps` and
-  `/proc/domains/D/programs/N/status` show a running program with the
-  same process id and command; and a handler held busy by a test hook
-  makes `ps` print `-` for that program's values and the others whole,
-  with a seeded `read/2` that drops a row that missed its deadline.
+  `eagain`, a row exists exactly while its handler lives, and a job's rows
+  share one group.
 * **Build checks.** The entry macro on every exported function of
   `liberx`'s program layer, with a seeded function without it; the event
   executor's call graph free of kept locks, with a seeded call to
@@ -4173,45 +3905,19 @@ terminal cases.
   from musl's `malloc` and stdio, with a seeded call; the program layer
   (`liberx/program/`) naming no symbol of a kernel backend, so it sits
   above the kernel interface and a new backend moves nothing in it, with a
-  seeded call of the Fiasco backend's; and the generator's
-  check that every fault kind has a signal and every status an `errno`,
-  with a seeded kind without one.
-* **Signal numbers** ([Signal numbers](#signal-numbers)). Each test has a
-  seeded run that must fail:
-  * the generator's mapping test compares the signal table with FreeBSD
-    15.1's `sys/sys/signal.h`, every name from 1 to 33, the aliases,
-    `SIGRTMIN` and `SIGRTMAX`, and with the names of its `sys_signame`;
-    seeded with a copy of the table that gives `SIGINFO` 30;
-  * a build check that no file of musl's tree but the generated header
-    defines a signal number, seeded with a literal `#define SIGPWR 30` in
-    `musl/arch/aarch64/bits/signal.h`;
-  * on the host, over every integer from -1 to 200, `sigaddset`,
-    `sigdelset`, `sigismember`, `sigaction` and `pthread_kill` accept
-    exactly 1 to 31 and 65 to 126, `kill` those and 0, and `sigfillset`
-    holds exactly them; seeded with the predicate generated from a table
-    that lists 64, which fails at 64;
-  * on the host, `erx_prog:status/1` over every status `ERX_EXIT_SIGNAL +
-    N` for `N` from 0 to 255: a number of the table gives `{signaled,
-    Signal}` with its name, any other exited 255; seeded with a table
-    without `SIGINFO`'s row, which turns 29 into exited 255;
-  * the protocol's grammar accepts every name of the table and refuses
-    `sigpwr`, `sigstkflt` and `sigthr`; seeded with a grammar that admits
-    `sigpwr`; it refuses a `kill` whose signal is 0 and accepts
-    `{probe, Pid}`; seeded with a grammar that admits 0 as a signal;
-  * in QEMU, FreeBSD 15.1's `bin/kill/kill.c`, built against erXos's musl
-    as a test program: its `kill -l` prints what the shell's builtin
-    prints, byte for byte, and for each `N` from 1 to 31 its `kill -l N`
-    names the signal the builtin's `kill -N` sends; seeded with a builtin
-    table that swaps `STOP` and `CONT`;
-  * in QEMU, a C program with a handler for every catchable signal records
-    the number each arrives with: the shell's `kill -29 %1`, `kill -30 %1`
-    and `kill -66 %1` reach it as 29, 30 and 66; `kill -17 %1` pauses it
-    and `kill -19 %1` continues it, and its `SIGCONT` handler records 19;
-    its child ended by `kill(child, 15)` and by `kill(child, 126)` gives
-    `waitpid` a `WTERMSIG` of 15 and 126, and the program itself ended by
-    the shell's `kill -15 %1` and `kill -126 %1` leaves rc's `$status`
-    `sigterm` and `sigrtmax`; seeded with the program built against a header whose
-    `SIGUSR1` is 10, whose handler then records nothing for `kill -30 %1`.
+  seeded call of the Fiasco backend's; the generator's check that every
+  fault kind has a signal and every status an `errno`, with a seeded kind
+  without one; and no file of musl's tree but the generated header
+  defining a signal number, seeded with a literal `#define SIGPWR 30`.
+* **Signal numbers.** The generator's mapping test compares the signal
+  table with FreeBSD 15.1's `sys/sys/signal.h` and `sys_signame`, seeded
+  with a table that gives `SIGINFO` 30; host tests over every integer from
+  -1 to 200 check that the set functions, `sigaction`, `pthread_kill` and
+  `kill` accept exactly the table's signals, seeded with a predicate from a
+  table that lists 64. FreeBSD 15.1's `bin/kill/kill.c`, built against
+  erXos's musl as a test program, is the oracle for the shell's `kill`:
+  its `kill -l` prints what the builtin prints, byte for byte, and its
+  `kill -l N` names the signal the builtin's `kill -N` sends.
 * **toybox's tests.** toybox's test scripts are shell scripts, and erXos has
   no POSIX shell in the first tier, so the harness runs them under the
   development host's shell with each applet replaced by a forwarding
@@ -4222,526 +3928,88 @@ terminal cases.
   standard error and exit status. A test that depends on what the mirror
   does not carry, such as owners, device files or hard links, is recorded
   as unsupported.
-* **Rights.** `xargs ps` and `watch ps` list processes when the program
-  holds the `inspect` right and fail with `no_facet` without it; the
-  `inspect` facet the system domain makes for the program's command domain
-  reaches that domain alone, and a test domain handed its pid gets
-  `badarg`; `xargs kill` ends a sibling with the `signal` right and gets
-  `ESRCH` without it, and a right scoped to one job reaches no other;
-  `within -f signal /bin /tmp -- xargs kill` holds the `signal` right and
-  two grants, `/bin` to reach `kill` and `/tmp`; a command domain's
-  capabilities are exactly the program's, and an Erlang command in it that
-  asks for a facet it was not handed gets `no_facet`; an Erlang command
-  narrowed with `within` runs in a domain of its own, which the inspector
-  shows; a program that names another program's `Open`, end or process id
-  in a request, which fails with `EBADF` or `ESRCH` and gains nothing; a
-  sub-space test that enumerates a program's capabilities and finds only
-  its channel, its data area, its pipe ends, its budget and its group;
-  and a program narrowed without `/bin` that sends a spawn request of its
-  own fails with `EPERM`.
-* **Native programs.** Each of these has a QEMU test: spawn and wait; a
-  startup message at each bound and one past it, and a malformed one; a
-  spawn refused by its handler, after which the starter's pipe has no
-  extra write end and its reader sees the end of the stream once the
-  starter closes its own; a pipe with a slow reader, with a reader that
-  closes, with write ends held by two programs, and with 200 write ends
-  while its reader is paused, each spawn succeeding; a pipe whose 65th
-  read end fails with `EMFILE`; a pipeline whose middle stage faults,
-  whose neighbours see the end of their pipes at once; a pipeline of 16
-  programs created in one request, and one whose ninth program cannot be
-  created, which creates none; `{date; uname} >f` and `>[2=1]`, whose
-  writes share one offset; a program whose parent ends while the child is
-  built but not started, which never runs; a program whose parent ends,
-  which ends too, with its own children; programs started in a loop by
-  one program until its principal's `programs` quota, which then fail
-  with `EAGAIN` while the shell still starts programs from the quarter
-  kept for it; a chain of programs each of which spawns the next, whose
-  spawn about 60 generations deep fails with `EAGAIN`; a program that
-  stops draining its channel while its children end and a pipe it reads
-  gains a writer, whose exit reports and pipe reports all arrive once it
-  drains again, while the relay, the shell and its siblings stay
-  responsive throughout; a program that floods its handler with requests,
-  whose siblings keep being served; a program that ignores `SIGCHLD`, and
-  one that sets `SA_NOCLDWAIT`, each starting short-lived children in a
-  loop past its `children` quota, which every automatic reap lets go of,
-  also across an `exec` that cuts a reap short; a child that ended
-  unwaited before its parent ignored `SIGCHLD` and called `exec`, which
-  the next image reaps; a spawn whose executable's file object is slow to
-  fill, while the starter's `SIGINT` still arrives; job control's pause
-  and resume across three generations of one job, a program started while
-  its job is paused, which starts paused, `Ctrl-Z` during a `fork`'s copy
-  and `fg` after it, which leave the job paused and then running, and
-  `kill %1` of a paused job, which ends it; `Ctrl-Z` of a job whose
-  program runs an Erlang command in its command domain, a command that
-  writes a line to standard output and appends one to a file of its
-  namespace each 10 ms, after which neither the output nor the file
-  grows until `fg`, where a seeded relay that only stops copying lets
-  the file grow, and `Ctrl-C` of such a job, after which the command's
-  run ends with status `sigint` and the program reads that status, where
-  a seeded relay that drops `{signal, sigint}` leaves the file growing;
-  `Ctrl-C` of such a job while the program has stopped reading the
-  command's output, after which the program reads every byte whose write
-  returned in the command, a count the command appends to its file,
-  where a seeded relay that stops copying at the ending signal gives
-  fewer; a program that runs two Erlang commands at once with `popen`,
-  the first of which spawns a helper appending to a file each 10 ms and
-  returns status 3 while the second goes on writing, and then runs a
-  third, all in one command domain, after which the program reads status
-  3, the helper's file stops growing, the second command's output keeps
-  growing and the third runs, where a seeded run server that halts after
-  a run fails the third, one that does not mark an ended run's tag lets
-  the helper's file grow, and one that marks every run's tag stops the
-  second command;
-  a `SIGCONT` from a second-tier
-  program of the same POSIX session to a program of a job that `Ctrl-Z`
-  stopped, which resumes that program alone, makes `jobs` show the job
-  running and leaves the job's other members stopped until `bg`, where a
-  seeded `start/1` that spawns the handler in its caller, so that the
-  handler carries the stage's job tag, leaves that `SIGCONT` unread in
-  the stopped handler's mailbox and `ps` printing `-` for the program,
-  and on Fiasco, which pauses no program, a program of a stopped job
-  keeps its file requests answered, which the same seed stalls; a program
-  stopped by `SIGTSTP` and then by `Ctrl-Z`, which one `SIGCONT`
-  continues; an outer job's `fg`, which leaves stopped a program of an
-  inner job that a stop signal paused; a `SIGCONT` and an `fg` during a
-  `fork`'s copy, which leave the parent held until the copy ends; an
-  executable compiled into an `rw` tree and spawned through an `rx` grant
-  of the same tree, one spawned through an `ro` grant, which fails with
-  `EACCES` even after the shell ran it through an `rx` grant, and a
-  malformed one, which ends with status 127; two programs running one
-  executable, whose code pages the inspector shows as one file object
-  mapped twice, and whose writes to their data pages stay their own; an
-  executable rewritten between two runs, whose second run maps a new
-  object, and one rewritten while its object is filled, which is filled
-  again, or fails with `ETXTBSY` when it is rewritten again; `system` and
-  `popen` of rc commands, whose wait statuses follow `$status`; a program
-  whose standard output and error both go to the terminal, interleaved
-  line by line in the order written; a `read` of `/dev/tty`, in the
-  foreground and in the background, which fails with `EBADF` while a
-  typed line stays in the tty for the next prompt, where a handler that
-  opens the terminal for reading fails the
-  case (the reads of "Reading a terminal" are tested with the handshake
-  that enables them); an Erlang command that `rc` as a program starts in
-  its command domain, whose standard input is the terminal, and whose
-  `erx_cmd:read/1` ends it with status `ebadf` while a typed line stays
-  in the tty for the next prompt, where a stream relay that opens the
-  terminal for reading, names the stream `read_write` and copies the
-  terminal's input fails the case; a background program's `tcsetattr` that stops
-  its job, which `jobs` shows stopped with the `termios` unchanged, and
-  is made after `fg`, where a `liberx` that fails the call with `EIO` as
-  for an orphaned group fails the case, and the same call with `SIGTTOU`
-  blocked, which is made at once, where a `liberx` that ignores the
-  signal state fails it; `cat` typed together with a line in one
-  write of the master, after which `cat` reads that line and the shell
-  never runs it, which a console that reads more than one byte for an ask
-  fails; a program whose frame is outside the
-  grammar, which ends with `SIGSYS`; and each row of the exit status
-  table.
-* **Loading an executable.** Host tests of `erx_elf_plan`, each with
-  its seed: a static position-independent executable whose relocations
-  the plan accepts, and a fixed one without a relocation table, which
-  it plans; beside them a `DT_RELR` table, an unlisted tag in the
-  operating system's range of tags, an entry naming a symbol, an entry
-  of another type, a target in a read-only segment, a first loadable
-  segment above address 0, a read-only segment longer in memory than
-  in the file and a fixed file naming a `DT_RELA` table, each refused,
-  where a plan without that one check accepts the file; the unlisted
-  tag's seed is a planner that refuses the named relocation tags
-  rather than every tag outside the list. Host tests of
-  `erx_command_core` over random sequences of fills, handovers,
-  reservations and their refusals, forks, switches and row ends, with
-  the property that an object is dropped exactly when no fill, start
-  or row holds it and the table does not keep it; seeded: a core
-  whose refused reservation keeps the start's hold, which never drops
-  the object, one that ends a row's holds at its old image's end
-  rather than at the switch, which drops an exec's object before its
-  install, and one that makes a forked child's row with no holds. A
-  QEMU test runs a package's program from `/app` whose
-  initialised table of string pointers it prints, which a loader that
-  skips the relocations fails with a fault, and a fixed executable,
-  which ends with status 127, where a loader that takes it fails the
-  case. The loader's bootstrap, each case with the seed that proves the
-  code it names ran:
-
-  * *The file's end.* A host test of `erx_exec_load` over a file whose
-    length is not a whole number of pages: one whose last segment ends
-    at the file's last byte loads, and one whose segment's file extent
-    reaches one byte into the page's padding is refused, where a load
-    that plans the page-rounded length accepts it.
-  * *The dynamic tags.* A host test of `erx_elf_plan` plans a
-    position-independent file whose dynamic section holds every listed
-    tag, the six of the constructors and destructors among them, and
-    refuses one that adds a single unlisted tag; a planner that passes
-    tags it does not name accepts that
-    file. It plans a fixed file whose dynamic header is empty and refuses
-    a fixed file whose dynamic header holds a `DT_RELA`; a planner that
-    reads the empty header as a dynamic section refuses the first for
-    its missing terminator, and one that checks it as metadata a load
-    must cover refuses it for its address. It refuses a
-    position-independent file linked by a task script without the
-    `PT_DYNAMIC` header, one whose header is empty and one whose
-    dynamic section lies in the read-only load; a planner without the
-    requirement of one non-empty header in the writable load accepts
-    the header-less file.
-  * *What the relocations reach.* The QEMU fixture prints, from `main`,
-    a flag its constructor set, its table of string pointers, and an
-    initialised thread-local value read on the first thread and on a
-    second one; a loader that skips the relocations faults in the
-    constructor.
-  * *Reports during loading.* A program started into a stopped job, so
-    its image is paused before its first instruction, is sent
-    `SIGUSR1`, which its spawn's mask blocks, and enough signals after
-    it to fill the inbound lane, and is then continued; its `main`
-    finds `SIGUSR1` pending and the handler's waits for room all end.
-    Seed: a loader that maps and reads the inbound lane before the
-    transfer, which the executable's lane check ends as a fault.
-  * *Cleanup after entry.* The fixture reads a word at the window's
-    base, `exec_window_base`, after `main` starts, and ends with
-    `SIGSEGV`; a start-up that skips `erx_exec_release` lets the read
-    succeed and fails the case. The same run checks that one release
-    removes the whole window on the stopgap. A second run reads instead
-    the first word of the record, at `exec_record_page`, and ends with
-    `SIGSEGV` too; a release that ends below the record's page lets
-    that read succeed.
-  * *Release before constructors.* A second fixture, whose constructor
-    reads the same word, ends with a fault before its `main` writes
-    anything; a start-up that calls `erx_exec_release` after musl's
-    start, where `liberx` maps the channel, lets the constructor's read
-    succeed and `main` print, which fails the case.
-  * *The window's release.* A host test of `erx_prog_enter`
-    (`test/host/exec_release_test.rb`) finds that a program with
-    register 7 at 0 releases nothing, and that any other value releases
-    the whole window in one call before a constructor runs; seed: an
-    `erx_prog_enter` that leaves the release to musl's start lets a
-    constructor run while the loader is mapped. It refuses, releasing
-    nothing, a window that meets the program's own image (at the
-    window's base, as a program of the boot image is linked, across
-    either end, inside or around it) and stops the program with
-    `ERX_PROG_STATUS_RELEASE`; seed: a release without that comparison
-    releases the image. A release the space refuses stops the program
-    with the same status.
-  * *The window's rest.* A host test of `erx_exec_load`
-    (`test/host/exec_load_test.rb`) finds the window's rest, from the
-    loader's image to the record's page, reserved by the load's first
-    call, and every later reservation outside the window; seed: without
-    that reserve, the view of an 800 KiB file lands inside the window,
-    where the executable's release would take it. A window's rest the
-    space refuses fails the load with the call `window` and nothing
-    reserved or released.
-  * *The window's place.* A host test of the ABI generator
-    (`test/host/abi_limits_test.rb`) finds the record's page derived as
-    the window's last, and generation failing for a window moved onto
-    the program memory place.
-  * *A release over holes.* The stopgap backend's memory test
-    (`test/host/fiasco_vm_test.rb`) has a mutant whose release refuses a
-    range with a hole in it, which the test kills: the one release of
-    the window relies on a release that skips the window's holes.
-  * *The driver's view.* A host test of the port driver's build plan
-    for an executable file finds the release of the session's view of
-    the record before the record's map into the image, and in the undo
-    of a plan that fails after the write; a plan without that release
-    fails the test's check that every range the plan reserves in the
-    session's space is released by the plan's end.
-  * *The entry.* A seeded exec entry that calls the executable's entry
-    as a C function on the loader's stack faults before `main`.
-  * *A load that fails part way.* A program whose budget cannot cover
-    one writable segment's child ends with status 127 and the call's
-    name and status on its standard error. Two seeds: a failure route
-    that stops the program without the ordinary start-up ends it with
-    no line on standard error; one that calls the start-up with
-    register 7 set to the record's page runs `erx_exec_release` in the
-    loader, which finds the window meeting the loader's own image,
-    refuses it and stops the program with `ERX_PROG_STATUS_RELEASE`, so
-    the case sees that status instead of 127 and no line on standard
-    error.
-    The release of what the load made is `erx_exec_load`'s host test's.
-  * *A release that fails.* `erx_exec_load`'s host test, over memory
-    calls whose release of the view is refused, gets refused cleanup and
-    no transfer; a load that discards the status of the view's release
-    reports the file loaded and transfers.
-
-  A package image holding `bin/x` as a link to `/bin/sh` fails
-  its start of `bin/x` with `enotsup`, where a package mount that
-  follows links starts the shell. With the table empty, a program that
-  forks a child which keeps running and then execs another executable
-  runs the new one and leaves the child running the first one's code,
-  where a command server that makes the child's row with no holds
-  faults the child, and one that ends the row's holds at the old
-  image's end ends the program at its switch; and a session that starts one executable 300 times
-  in turn, beyond `code_objects_max`, runs every start, where one that
-  never drops fails the 257th with `EAGAIN`. Through the `code_objects`
-  facet, a `drop` of a number the session's own `create` answered
-  succeeds and one of another session's answers `{error, einval}`,
-  where a library that ignores the grantee drops it. On the stopgap,
-  `function_api` makes a child of a sealed object, reads the parent's
-  bytes through it and writes it without changing the parent, where a
-  child that skips the copy reads zeros.
-* **The POSIX-lite personality.** musl's `libc-test` and the Open POSIX Test
-  Suite run in a test domain; every failure is a bug, a documented
-  difference with a test, an unsupported case of a tier not yet built, or
-  an upstream bug recorded as such. A signal sent while the main thread
-  computes, while it is inside `liberx`, while it waits on a umtx word,
-  while it waits for a reply and just before it sleeps is delivered in
-  each case; `sigsuspend` with the signal already pending returns at once;
-  a handler that calls `liberx`'s `write` while the thread was inside
-  `malloc`, and one that leaves a file request's wait by `siglongjmp`,
-  leave every structure intact and later signals deliverable; a handler's
-  return restores the interrupted frame and FP registers exactly; a
-  handler that leaves a pipe read's wait by `siglongjmp`, after which a
-  `close` of the pipe end gives its writer `EPIPE`; a `write` to a file
-  interrupted by a handler without `SA_RESTART` returns its full count,
-  never `EINTR`; `sigwait` in a second thread takes a signal the main
-  thread blocks; a program that blocks `SIGTERM` in every thread and waits
-  for it with `sigwait` receives it rather than ending, and one that
-  blocks it without waiting ends when it unblocks it; `sigwait` for a
-  blocked `SIGCHLD` under its default action receives it; a process signal
-  aimed at a thread that then blocks it or exits reaches another thread;
-  `SIGCHLD`'s handler finds its child with `WNOHANG`, and with `SIGCHLD`
-  ignored, `wait` fails with `ECHILD` once the children end; a child
-  spawned while its parent ignores `SIGHUP` ignores it too and inherits the
-  parent's mask and `umask`; `pthread_sigmask` with a full set and
-  `sigaction(SIGWINCH, SIG_IGN)` succeed; `kill(pid, 0)` of a running
-  child, of a child that has ended and not been reaped, and of the program
-  itself succeeds, and of a reaped child, pid 1 and a process outside the
-  program's `signal` right fails with `ESRCH`, while a child with a handler
-  for every catchable signal records none, seeded with a handler that
-  carries a probe out as a `kill` of `sigusr1`, which that child records;
-  `getpid` and `getppid` in a parent and its child agree with the pids
-  `posix_spawn` returned, and `getuid`, `geteuid`, `getgid` and `getegid`
-  return the number of the session's principal, in a session whose
-  principal's number is not 1, seeded with a `liberx` that answers
-  `getpid` with 1 and a handler that writes `uid` 1, each of which the
-  test catches; `kill` of a child that
-  has ended succeeds until `waitpid` reaps it and fails with `ESRCH`
-  after, when the child stops counting against `children`; `kill` of
-  `SIGSTOP`, `SIGTSTP` or `SIGCONT` to a child fails with `EPERM`, and
-  `raise(SIGTTIN)` under its default action returns with nothing done;
-  `kill(0, SIGTSTP)` and `raise(SIGTSTP)` under their default action, in
-  a foreground program with a running child, stop the whole job, which
-  `jobs` shows stopped with the child, and return only after `fg`,
-  seeded with a handler that answers `{stop, sigtstp}` at once, as for a
-  discarded signal, which the test catches when the call returns before
-  the job is continued;
-  `raise(SIGABRT)` ends the program with status `sigabrt`; a program whose
-  last worker calls `pthread_exit` ends with status 0; `xargs` with more
-  than 4,096 short arguments runs; a session whose process ids are spent,
-  through a test hook that starts its counter near the top, fails the next
-  spawn with `EAGAIN`; `poll` over 500 pipe ends reports exactly the ready
-  ones, and never `POLLIN` for an end the program has just drained;
-  `getpgrp` and `getsid` in each stage of a pipeline, and in a stage's
-  child, return the first stage's process id; `kill(0, SIGTERM)` in a
-  program with two children ends all three, and `waitpid` with a `pid` of 0
-  reaps either child; `access` with `W_OK` through an `ro` grant and with
-  `X_OK` through an `rw` grant fails, and each succeeds where `open` or
-  `posix_spawn` does; a `close` of a pipe end that another thread is reading
-  returns at once, the read goes on as on Linux, and the next `open` reuses
-  the number; two threads reading files at once through a data area of one
-  slot, which take turns; a hostile file server whose `Rread` names more
-  bytes than the read asked for, at which the program's `read` fails with
-  `EIO` and nothing past its slot is written, with a seeded handler
-  without the reply check, which the test catches by a guard pattern after
-  the slot, and a seeded `liberx` without the clamp, which the test
-  catches through a session stub that sends the same oversized count; a
-  file server stub that, between an `lcreate` and the handler's walk,
-  renames another file over the new name, after which the created file's
-  writes go on and its `fcntl` setting `O_APPEND` fails with `ESTALE`,
-  with a seeded handler that skips the qid comparison, whose re-open the
-  test catches naming the other file; a thread that calls `exit` while
-  others are inside `liberx` ends the program with its status; and a build
-  of `liberx` whose program layer calls `malloc` fails the symbol check.
-* **The second tier.** `fork` in a program with four threads, whose child
-  runs only the caller and the handlers `pthread_atfork` registered; a
-  child's writes to private memory that its parent never sees, and a
-  `MAP_SHARED` anonymous mapping both see; inherited pipes whose reader
-  sees the end of the stream only after parent and child close their write
-  ends; a `fork` in a session without budget for the copy, which fails
-  with `ENOMEM` and leaves the parent running; a child that returns
-  through stack frames whose pointers were signed in the parent; a fork of
-  a fork of a program that maps a file privately, whose copy-on-write
-  children stay one level deep; a child forked after `dlopen` that calls
-  into the library and writes its data, which the parent never sees, and
-  whose table, read through the inspector, holds no capability to its
-  parent's copy-on-write children; a child that runs `execvp` through
-  `PATH`, opens a file relative to an inherited directory descriptor and
-  closes a file it shares with its parent, which the parent still reads; a
-  child whose event executor waits on a pipe and wakes, reading its own
-  group's shared areas, which the inspector shows are not its parent's; a
-  `fork` while three other threads hold, or wait for, `malloc`'s lock, the
-  descriptor table's lock and a pipe end's lock, and while the event
-  executor applies a report, whose child allocates, opens, reads its pipes
-  and forks again; `pthread_atfork` handlers that run newest first before
-  the copy and oldest first after it, in parent and child, and the parent
-  handlers after a `fork` that failed; a `fork` during which a signal and
-  a child's end arrive, which the event executor records while the caller
-  holds the kept locks and the parent then sees; a `posix_spawn` in one
-  thread while another calls `execve`, whose child runs with working
-  grants and whose end the new image's `wait` returns. `exec` that keeps
-  the process id and every descriptor without `FD_CLOEXEC`, closes the
-  others and resets caught signals, and whose new image's table, read
-  through the inspector, holds only what its startup message names: none
-  of the old image's signal IRQ objects, file objects, stray capabilities
-  or sub-spaces; an `exec` while a child it forked runs, which leaves the
-  child running and its exit reported to the new image; an `exec` while a
-  sibling forks a writer of a pipe the program reads, whose new image
-  reads that writer's records (P11); an `exec` of a writer at a ring
-  position past zero, whose reader reads on without a gap or a repeat; an
-  `exec` that keeps a pipe end with `O_NONBLOCK`, whose new image's read
-  of the empty pipe fails with `EAGAIN`; an `exec` after opening
-  close-on-exec files in a loop a thousand times, after which the file
-  server holds none of their fids; an `exec` with a blocked signal
-  pending, and one with a signal reported while the old image lets go,
-  each of which the new image finds pending; one made while a child ends,
-  whose status the new image's `wait` returns; `alarm(5)` before an
-  `exec`, whose new image receives `SIGALRM` on time; an `exec` while
-  other workers are inside a redemption, a `sendmsg` deposit, a
-  `posix_spawn` and a `fork`, each of which completes before the old image
-  lets go; an `exec` while another worker waits in `recvmsg` on an empty
-  stream whose writer lives and writes nothing, which the quiesce parks at
-  once, and while another worker's `recvmsg` meets a control record during
-  the quiesce, which waits at its region's entry, redeems nothing, and
-  leaves the record to the next image's read of the kept end; an `exec`
-  while another worker's file write waits on a server the test holds
-  back, which the quiesce waits for because the channel's send recorded
-  it, so the new image's first read of the file finds the write's bytes,
-  with a seeded `liberx` whose send records no obligation, under which
-  the new image reads the file before the write lands and the test
-  catches it; an `exec`
-  whose `Start` names a pipe end the program does not hold, which the
-  handler refuses with `EBADF`; an `exec` whose startup message would pass
-  192 KiB, which the handler refuses with `E2BIG` before any image is
-  built, leaving every worker running; an `exec` while the pipe server's
-  report of a peer's new writer is on its way to the old image, whose new
-  image's startup message names the writer once and whose lane carries no
-  second report; an `exec` whose old image is sent `SIGUSR2` after its
-  capture while a sibling sends the new image `SIGUSR1`, whose new image
-  takes both, whatever order the reports arrive in, and none twice; a
-  child stopped by `SIGTSTP` and not yet returned by `waitpid` at the
-  `exec`, which the new image's `waitpid` with `WUNTRACED` returns once,
-  and one already returned, which it never returns; a `{waited}` that
-  names a running child's stop report, which lifts no quota; an `exec` of
-  a malformed file, which fails with `ENOEXEC`, of a file replaced by a
-  malformed one between its check and its `{exec}`, which runs the object
-  that was checked, and one the handler refuses, after each of which the
-  old image runs on with its descriptors and signal handlers intact.
-  `dlopen`, `dlsym` and `dlclose` of a library shared by two programs,
-  whose code pages are one object's and whose data pages are each
-  program's own; a library with text relocations, which is refused;
-  `RELRO` that is read-only after relocation; a `dlopen` through an `ro`
-  grant, which fails with `EACCES`. `MAP_SHARED` mappings of one file in
-  two unrelated programs of one session and in a program and its forked
-  child, which all see each other's stores at once (P14); one file mapped
-  through two mounts of its tree, which the session serves from one
-  object, with a seeded file table keyed by path, which the test catches
-  as two objects; two files of one server's domain in two trees whose qid
-  paths are equal, which the session maps as two objects, with a seeded
-  file table keyed without the tree, which the test catches as one; a
-  write through a descriptor, which those mappings show
-  at once, and a read through a descriptor, which returns what a mapping
-  stored, with a seeded handler that relays them to the server past the
-  mapper, which the test catches; `msync` with `MS_SYNC`, after which the
-  file's storage holds the stores, read back after the storage service
-  restarts, and with `MS_ASYNC`, after whose answer the write-back
-  completes without a further call; a program's last `munmap`, its
-  `exec`, its end and its kill with stores not yet written back, and the
-  `close` that leaves the session no open of the file, after each of
-  which the file at its server holds them, with a seeded mapper that skips
-  the write-back at a close; a write from outside the session to a page no
-  program of the session stored to, which a later write-back leaves intact
-  (P14); a mapping filled and never stored to, whose `msync` writes
-  nothing, with a seeded mapper that fills through its own mapping of the
-  object, which the test catches as writes of unstored pages; a mapping
-  kept after its descriptor's `close`, and one that a forked child keeps
-  after its parent's last `munmap`, whose capability the child holds
-  without `DUP` or `SUPPLY`; a second `mmap` whose end passes the
-  object's size, which grows it while the first mapping goes on reading
-  and storing; a second `mmap` whose fill fails at a read, followed by a
-  third of the same range, which reads the range from the server again
-  and shows the file's bytes, with a seeded mapper that moves its filled
-  extent before its reads complete, which the test catches as a page of
-  zeros; a descriptor write the server refuses and one it takes in part,
-  after which the mappings show the acknowledged prefix alone, with a
-  seeded mapper that copies a write into the object before the reply,
-  which the test catches; a write that starts past the end, whose
-  mapping shows zeros in the hole and the written bytes after it, with a
-  seeded mapper that zeroes up to the new size after the write, which the
-  test catches; a read-only shared mapping, whose `mprotect` to
-  read-write fails with `EACCES`, and a private anonymous mapping that
-  `mprotect` moves to no access and back, whose bytes survive; a
-  private anonymous `PROT_NONE` mapping larger than the program's cap,
-  which succeeds, whose `mprotect` to read-write of a part within the
-  cap succeeds and every page of which is then written, whose `mprotect`
-  of a further part beyond the cap fails with `ENOMEM` and leaves the
-  first part accessible, and whose `mprotect` back to `PROT_NONE` keeps
-  the bytes for the next `mprotect` to read, the same program on the
-  development host seeing the same but the `ENOMEM`, with a seeded
-  `liberx` that commits at `mmap` whatever the protection, under which
-  the large reservation fails, and a seeded `erx_space_protect` that
-  skips the charge, which the model of K6 catches; a program that
-  borrows from its session's pool until the pool is full, after which
-  a sibling at its guarantee still commits the whole of it and the shell
-  still starts a command, since the session's own half is untouched,
-  with a seeded chain that leaves `carved` out, under which the
-  sibling's commit fails; a
-  `PROT_WRITE` mapping of a descriptor open only for reading, which fails
-  with `EACCES`; a write-back that the medium refuses, whose
-  `msync` fails with `EIO` and whose pages a later `msync` writes; a store
-  made while its page is written back, which the next `msync` writes; a
-  page wholly past the file's end, which reads zeros and whose stores the
-  file never receives; a truncation by another program, after which the
-  mappings show zeros past the new end and the next write-back writes
-  nothing past it; a storage service killed while programs map its files,
-  whose mappings keep their bytes and whose `msync` fails with `EIO`; two
-  sessions that map one file shared, each of which sees a page the other
-  stored only after the other's write-back and its own next mapping of the
-  file, and a page neither stored to keeps the file's bytes; a mapping
-  beyond the session's mapping quota, which fails with `ENOMEM`; `mmap`
-  calls that fail in a loop at the server's refusal, at the install into a
-  full capability table and at `erx_vm_map`, after which the session holds
-  no more mapping opens than before and no more of its mapping quota than
-  the largest end asked for; a
-  mapper killed while two programs map its file, whose `msync` then fails
-  with `EIO`, and a mapping of the file and a descriptor read of it
-  meanwhile, each of which fails with `EIO` until both have let go; a file
-  server that answers each read slowly while a mapper fills, during which
-  the command server keeps serving spawns and the requester's `SIGINT`
-  arrives; a private mapping of a file that another program of the
-  session maps shared and stores into, which shows the shared object's
-  bytes at the private `mmap` and none of the stores after it, with a
-  seeded handler that fills the data object from the server, which the
-  test catches; and a `code` map of that file, which fails with `ETXTBSY`
-  while the writable shared mapping lasts. `SCM_RIGHTS`: a socketpair's end
-  passed over itself and closed, whose deposit the pipe server closes so
-  both peers see the end of the stream; a `read` that skips a control
-  record, whose deposit closes; two writers of one stream, one preempted between its
-  control record and its first data record while the other writes, whose
-  descriptors arrive with their own bytes; data whose bytes look like a
-  ticket, which reads as data; a `sendmsg` under `O_NONBLOCK` into a full
-  stream, which fails with `EAGAIN` and leaves no deposit; a `sendmsg` of
-  17 descriptors, which fails with `EINVAL`; a signal, and `alarm` with
-  `siglongjmp`, during a `sendmsg`'s deposits, whose message then arrives
-  whole with its descriptors; a sender that passes 1,000 files one after
-  another, each of which its receiver closes, which never runs out of
-  fids; a socket passed with `SCM_RIGHTS` whose sender then closes its
-  descriptor, which the receiver goes on reading and writing; a socket
-  descriptor without `FD_CLOEXEC` held across an `exec`, which the new
-  image goes on reading, and one with it, which the new image finds
-  closed; a file passed by a sender that then ends, which
-  the receiver reads on, as on UNIX; a received file that the
-  receiver passes on to a child and to a third program by `SCM_RIGHTS` and
-  then closes, which both read on until each lets it go; a sender that
-  passes a file and then execs, whose receiver reads on; and a receiver
-  that redeems with `MSG_CMSG_CLOEXEC` and then execs, after which, once
-  the sender has closed its own, the description's fid is clunked. A
-  pseudo-terminal in canonical and
-  raw modes; `kill(0, SIGTSTP)` and `raise(SIGTSTP)` in a program on a
-  pseudo-terminal, each of which returns only after the program is
-  continued; a background group's write with `TOSTOP` set, which stops with
-  `SIGTTOU`, goes through with it ignored and with it blocked, and fails with
-  `EIO` in an orphaned group; a `SIGSTOP` of a child, which the parent's `waitpid` with
-  `WUNTRACED` reports; `^C` that sends `SIGINT` to the foreground group
-  only; a background group's read that gets `SIGTTIN`; a resize that sends
-  `SIGWINCH`; a master's close that sends `SIGHUP`; and a recompiled `less`
-  that draws on a pseudo-terminal.
+* **Rights.** Programs that use the `inspect` and `signal` rights, run
+  with and without them, and a test domain handed a pid that reaches
+  nothing ([What a program can start](#what-a-program-can-start)).
+* **QEMU suites.** Native programs (spawn and wait, startup messages at
+  each bound and one past it, pipes with slow and vanishing peers,
+  signals in every state of a thread, ends and faults, the terminal),
+  executables and shared objects through `erx_elf_plan` and `erx_exec`,
+  the POSIX-lite personality under the oracles above, and the second
+  tier's `fork`, `exec`, shared mappings, descriptor passing and job
+  control in a pseudo-terminal, each against what FreeBSD does.
+* **Seeded faults**, each of which its test must catch:
+  * the handler's owed frames, against a model of a program that reads
+    its lane at random, never or in bursts (the handler never blocks,
+    never owes more than its program's state bounds, writes owed frames
+    in order, and merges an owed join and gone of one pipe end): a handler
+    that writes a newer frame before an owed one;
+  * the port driver's credit, against a model of a hostile program that
+    sends requests on busy slots and notices that are not due, repeats
+    among them: each such frame ends the program with `SIGSYS`, and the
+    handler and the pipe server never hold more than one message per
+    credit;
+  * an `exec` racing signals, stops, continues and exits (P13), and one
+    whose let-go overlaps pipe reports and installs (P11): an executor
+    that applies a frame before its last byte is read, and a switch that
+    drops the signal reports the handler still owed;
+  * the command server: a core that gives a dropped row's id again, and
+    one that gives each program a group of its own; a `start/1` that
+    sends the handler its start before it monitors it, which loses a
+    quick exit's status; a `ps` read that drops a row that missed its
+    deadline instead of printing `-`;
+  * a mem range: a table that passes a `munmap` inside the range on to
+    the release;
+  * the protocol and the signals: a grammar that admits `sigpwr`, and one
+    that admits 0 as a signal; a probe carried out as a `kill` of
+    `sigusr1`; `erx_prog:status/1` from a table without `SIGINFO`, which
+    turns 29 into exited 255; a builtin `kill` table that swaps `STOP`
+    and `CONT`; a program built against a header whose `SIGUSR1` is 10;
+    a `liberx` that answers `getpid` with 1, and a handler that writes
+    `uid` 1;
+  * job control: a handler that answers `{stop, sigtstp}` at once, as for
+    a discarded signal; a relay that only stops copying an Erlang
+    command's output at `Ctrl-Z`, or drops its `{signal, sigint}`, or stops
+    copying at the ending signal; a run server that halts after a run, or
+    marks the wrong runs' tags; a `start/1` that spawns the handler in
+    its caller, so the handler carries the stage's job tag;
+  * files: a handler without the check on a hostile server's oversized
+    `Rread`, and a `liberx` without the clamp, each caught by a guard
+    pattern after the slot; a handler that skips the qid comparison after
+    a create, whose re-open names another file instead of failing with
+    `ESTALE`; a `liberx` whose send records no obligation, so an `exec`
+    overtakes a waiting write;
+  * shared mappings: a file table keyed by path, or without the tree; a
+    handler that relays descriptor reads and writes past the mapper; a
+    mapper that skips the write-back at a close, fills through its own
+    mapping, moves its filled extent before its reads complete, copies a
+    write into the object before the reply, or zeroes up to a new size
+    after a write; a handler that fills a private mapping's data object
+    from the server;
+  * memory: a `liberx` that commits at `mmap` whatever the protection; an
+    `erx_space_protect` that skips the charge; a pool chain that leaves
+    `carved` out;
+  * code objects: a core whose refused reservation keeps the start's
+    hold, one that ends a row's holds at its old image's end rather than
+    at the switch, and one that makes a forked child's row with no holds;
+    a session that never drops an object, which fails the 257th start; a
+    `code_objects` library that ignores the grantee, so a `drop` of
+    another session's number succeeds instead of answering
+    `{error, einval}`;
+  * the planner: one seed for each refusal of `erx_elf_plan`, the
+    unlisted tag's being a planner that refuses only the named relocation
+    tags rather than every tag outside the list;
+  * the loader: a loader that maps and reads the inbound lane; a
+    start-up that skips `erx_exec_release`, or calls it after musl's
+    start, so a constructor reads the window; a release without the
+    comparison with the program's own image; a load without the reserve
+    of the window's rest, so the view of a large file lands inside the
+    window; a release that refuses a range with holes; a driver whose
+    build plan keeps its view of the record past an undo; an exec entry
+    that calls the executable's entry as a C function on the loader's
+    stack; a failure route that stops the program without the ordinary
+    start-up, so no diagnostic is written; and a load or release that
+    fails part way and leaves mappings behind.
 * **Fuzz targets.** The startup and fork messages' decoders, in `liberx`
   and in the command image; the program protocol's, in `liberx` and in the
   handler; and `erx_elf_plan`, built from the same sources for the host
@@ -4880,13 +4148,6 @@ the loader accept; and the bytes of the frame `fork`'s saved registers
 restore ([design-arch-aarch64.md](design-arch-aarch64.md)). In hosted
 mode, programs run as macOS processes on `liberx`'s hosted backend
 ([design-runtime.md](design-runtime.md#hosted-mode)).
-
-## Dependencies
-
-No new dependencies. musl, whose dynamic linker the loader adapts, and
-toybox with `wak` are in the dependency table of
-[design.md](design.md#dependencies), and the Open POSIX Test Suite is a
-test tool fetched at a pinned version and never linked into erXos.
 
 ## Alternatives considered
 
@@ -5241,12 +4502,13 @@ Two engineering questions, with the answers the design follows:
   tests recorded as unsupported; if they leave an applet's behaviour
   unchecked, write rc tests for that applet in the shell's corpus. The count
   from the first applets settles it.
-* **Does musl keep `SIGPOLL`?** FreeBSD defines no `SIGPOLL`; Linux makes
+* **Does musl keep `SIGPOLL`?** FreeBSD defines no `SIGPOLL` and names it
+  only in comments (`sys/sys/signal.h:234,338`, FreeBSD 95719d8a); Linux makes
   it an alias of `SIGIO`, and POSIX's XSI option names it. Recommended:
   keep it as an alias of `SIGIO` ([Signal numbers](#signal-numbers)): it
   adds no number and no line to `kill -l`, and code written for Linux that
   names it builds. Dropping it instead matches FreeBSD's headers exactly
-  and costs only such code a build failure. The user decides.
+  and costs only such code a build failure. Undecided.
 
 ## References
 

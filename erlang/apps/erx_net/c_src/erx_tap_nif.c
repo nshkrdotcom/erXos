@@ -41,7 +41,7 @@
  * is cut by erx_tcp_cut.c as send/2 hands it over: each frame's headers are
  * written to a buffer of the NIF's own with the payload slice summed where it
  * lies, and one writev(2) hands the kernel the headers and the slice
- * (docs/design-network-fastpath.md, "The cut, in the copy").
+ * (docs/design-network-stack.md, "The cut, in the copy").
  */
 
 #define _POSIX_C_SOURCE	200809L

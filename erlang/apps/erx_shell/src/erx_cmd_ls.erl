@@ -4,7 +4,7 @@
 -module(erx_cmd_ls).
 -moduledoc """
 `ls [-1al] [file ...]`: FreeBSD's ls (bin/ls) with a small core of its
-options (docs/design-live.md, "The command shell").
+options (docs/design-shell.md, "Text commands").
 
 It lists a file by the name given and a directory by the names it holds,
 the working directory's for no operand, sorted byte by byte, without

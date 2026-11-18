@@ -167,7 +167,9 @@ layout pte_page native 8 8     # stage 1 page descriptor, 4 KiB granule, level 3
 
 The generator emits a get and set function for every bit range, so no code
 packs descriptor bits by hand. The file shares `abi/erx_abi.txt`'s
-`ERX_ABI_VERSION`: a change to either is a new version.
+`ERX_ABI_VERSION`: a change to either is a new version that replaces the old
+form outright, and the manifest check refuses an image built against another
+version of either, with a diagnostic.
 
 ## Algorithms and behavior
 
@@ -921,7 +923,7 @@ The AArch64 forms of the generic chokepoint rules
 | the kernel never accesses memory through a user address | no `LDTR`, `LDTRB`, `LDTRH`, `LDTRSB`, `LDTRSH`, `LDTRSW`, `STTR`, `STTRB` or `STTRH` anywhere in the kernel image; `erx_uword_t` read only in `kernel/arch/aarch64/uword.c` |
 | system-register instructions only in their accessors | `mrs`, `msr`, `sys` and `sysl` only in generated accessors, the named barrier and maintenance helpers and the listed assembly files |
 | TLB and cache maintenance only in the helpers | `tlbi`, `dc` and `ic` only in `kernel/arch/aarch64/tlb.c` and `cache.S` |
-| exception returns and firmware calls only where listed | `eret` only in the vector and exit object and in the boot entry's drop from EL2; `hvc` and `smc` only in the SMCCC routine; the firmware mailbox's registers only in the trial request, the boot-time key read and the VL805's firmware notification in `kernel/platform/rpi_mbox.c`, the key read and its derivation in the boot-only section `.text.boot_only`, which the kernel unmaps before the system domain starts |
+| exception returns and firmware calls only where listed | `eret` only in the vector and exit object and in the boot entry's drop from EL2; `hvc` and `smc` only in the SMCCC routine; the firmware mailbox's registers only in the trial request, the boot-time key read and the one firmware request routine, which serves the VL805's notification and every other row of the checked record, in `kernel/platform/rpi_mbox.c`, the key read and its derivation in the boot-only section `.text.boot_only`, which the kernel unmaps before the system domain starts |
 | only the early-console writer writes a UART's registers in the kernel | the UART register accessors only in the early-console writers `kernel/platform/pl011.c` and `miniuart.c`, which only the boot path, the panic path and the machine's end call |
 | the board's watchdog only from its driver, reloaded only from the kernel's timer | its registers only in `kernel/platform/bcm2835_wdt.c`, whose reload function only the timer calls ([design-platforms.md](design-platforms.md#the-watchdog)) |
 | the kernel touches no PCIe configuration space | no accessor generated for `pci-host-ecam-generic` or `brcm,bcm2712-pcie` registers is linked into the kernel |
@@ -966,15 +968,6 @@ rewriting. Its `Registers.json` declares itself "licensed under the BSD
 `hw/sysreg/ORIGIN.md` records its origin. A read of `ICC_IAR1_EL1`
 acknowledges an interrupt, an example of a read with a side effect that
 the file records.
-
-## Compatibility and migration
-
-Until a release promises compatibility, a change to the binding's call
-registers, frames or in-memory layouts replaces the old form outright and
-is a new ABI version, with no path kept for an earlier one. An image is
-built for one architecture, and `abi/arch/aarch64.txt` shares the ABI
-version of `abi/erx_abi.txt`, so the manifest check refuses an image
-built against another version of either, with a diagnostic.
 
 ## Failure handling, diagnostics and debuggability
 
@@ -1078,11 +1071,6 @@ on the primary host: HVF enters at EL1 and reports no GIC in
 `ID_AA64PFR0_EL1`, and its in-kernel GIC has no ITS; neither has `RNDR`
 ([measured](research-baselines.md#accelerator-capabilities)).
 
-## Dependencies
-
-No new dependencies: Arm's machine-readable architecture specification is
-in the dependency table of [design.md](design.md#dependencies).
-
 ## Alternatives considered
 
 **Running the kernel at EL2.** With the Virtualization Host Extensions the
@@ -1111,8 +1099,6 @@ GIC has no ITS, so the GICv2m frame serves both accelerators by one path
 | --- | --- | --- | --- |
 | GICv2m behaviour differs between TCG and HVF | low | MSI drivers | one path for both, tested under HVF |
 | A new core needs a speculation mitigation Linux adds later | medium | a side channel on that core | mitigations are chosen from the ID registers as Linux chooses them, and each board's port checks Linux's list |
-
-No open question remains for the user.
 
 ## References
 

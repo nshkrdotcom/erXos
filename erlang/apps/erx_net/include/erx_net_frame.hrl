@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% A run, as the frame layer hands it to a driver (docs/design-network-fastpath.md, "A run"):
+%% A run, as the frame layer hands it to a driver (docs/design-network-stack.md, "A run"):
 %% consecutive TCP segments of one connection that differ only in the sequence number, the
 %% lengths, the checksums, and PSH and FIN, which only the last frame carries. Frame i of a
 %% run whose payload holds P bytes carries the payload bytes from i * seg to

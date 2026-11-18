@@ -25,8 +25,29 @@ Includes stay within `abi/`, have no cycles and resolve to a unique
 definition of every qualified name.
 Operations are qualified by service; generated names include that service,
 so two services can both declare `read` without sharing an operation id.
-The architecture file adds only architecture-specific declarations. Device
-registers and terminal character classes retain their existing sources.
+The architecture file adds only architecture-specific declarations.
+Device registers and terminal character classes keep sources of their
+own ([Hardware and terminal sources](#hardware-and-terminal-sources)).
+
+What each declaration file under `abi/` holds; the subsystem designs own
+the meaning of what it declares, and the declaration language is
+[design-abi.md](design-abi.md)'s:
+
+| File | Holds |
+| --- | --- |
+| `erx_abi.txt` | the root: the ABI version and includes, status codes, the fault table, the boot formats (pack, boot locator, image manifest), the calls declared so far and the other layouts shared across languages |
+| `kernel.txt` | rights, object types and creation kinds, root slots and reserved capability values, the crash record, and the kernel-visible layouts shared with runtimes and tooling |
+| `arch/<arch>.txt` | the architecture binding: trap, call registers and hardware layouts |
+| `inspection.txt` | the inspection schema: kinds, attributes, paths, units and backend reporters |
+| `services/*.txt` | one interface each: operations, liveness, how it is served and its manifest parameters |
+| `manifest.txt` | the system manifest's records and reader |
+| `medium.txt` | the boot medium's partition layout, in sectors |
+| `signals.txt`, `errno.txt`, `termios.txt` | the signal, errno and termios tables musl's headers and the protocols take their numbers from |
+| `terminal.txt` | the character classes of the line and field escapes |
+| `theme.txt` | the desktop's visual facts |
+| `keymaps/*.txt` | keyboard layouts over evdev's key codes |
+| `formats/*.txt` | binary formats: on-disk and on-wire records (EROFS, F2FS, MBR, ELF, virtio, USB, HID, IEEE 802.11 and others), the widget format, draw messages, input records, subfonts and packages |
+| `protocols/*.txt` | frame and codec profiles: 9P2000.L, the program protocol, the host link and the web protocol |
 
 | Source | Generated outputs | Contract owner |
 | --- | --- | --- |
@@ -39,7 +60,7 @@ registers and terminal character classes retain their existing sources.
 | Widget format (`abi/formats/ui.txt`) | the whole-tree validator `erx_ui_schema`; a reader and a writer of the binary operations and events in Erlang, C and TypeScript; the kind, property and image-type tables; fuzz entry points for the validator and every reader | [display](design-display.md#widget-trees), grammar in [ABI](design-abi.md#widget-format) |
 | Checked system manifest and platform placement records | packed boot-order and configured-domain/device/facet descriptors, watchdog liveness roster, and a host-readable configuration report | [system](design-system.md#the-manifest) |
 | Release command metadata and program list | command lookup/help/required-facet catalogs and callback checks | [shell](design-shell.md#interfaces) |
-| SVD and system-register specifications | typed accessors, device descriptor helpers and register-field decoding tables | [hardware sources](design.md#one-source-for-the-abi-and-the-hardware) |
+| SVD and system-register specifications | typed accessors, device descriptor helpers and register-field decoding tables | [hardware sources](#hardware-and-terminal-sources) |
 | Escape rules and OTP's pinned Unicode data | C/Erlang/Ruby/TypeScript escaping tables | [escape rules](design-live.md#escape-rules) |
 
 Existing declarations are extended for these outputs; a generator never
@@ -171,6 +192,148 @@ metadata; normal OTP code-purge semantics still apply. This provides no
 rollback of application state or external effects. User functions,
 jobs, executable bodies and the shell parser remain ordinary code/state.
 
+## Hardware and terminal sources
+
+The hardware sources and their consumers follow
+[the kernel contract](design-kernel.md#hardware-register-sources). As
+for the ABI, the generator reads complete inputs, validates a typed
+immutable model, and constructs the complete output plan before
+publishing. Unknown semantics fail; a source is never partially
+interpreted.
+
+### Register inputs
+
+CMSIS-SVD supplies peripheral register names, offsets, widths, access,
+fields and enumerated values. The input profile uses bounded XML with
+no document types, entities or external references. A register array is
+`NAME[%s]` with `dim` and `dimIncrement`. A field list is CMSIS-SVD's field
+`dim` (svd-spec v1.3.9, commit 4195b358, `doxygen/src/svd_schema.txt`, SHA-256
+`35d4179b3198faeaf9fe602970a70abb9ca4112521308bb8d8f8820e27f4950a`,
+dimElementGroup and the field element): one field description named `NAME%s`,
+repeated `dim` times, each element named by its `dimIndex` string (0 upwards by
+default, or a range `FIRST-LAST` or comma list naming exactly `dim` elements) and
+placed `dimIncrement` bits above the one before. Its elements are ordinary fields
+of the register, so the generated accessors are those the fields written out one
+by one would give. A field array, `NAME[%s]`, and `dimIndex`'s letter ranges have
+no consumer and are refused. An enumeration a peripheral repeats is written once,
+as an `enumeratedValues` with a `name`, and each other field copies it with an
+empty `enumeratedValues derivedFrom="NAME"`: CMSIS-SVD's derivation "makes a copy
+from a previously defined enumeratedValues section" and allows "no modifications"
+(same source, the enumeratedValues element). The profile resolves a bare name
+within its own peripheral, so a name defines one enumeration there and a
+derivation names one defined before it; every copied value is checked against
+the field that copies it. A defined enumeration holds 1 to 256 values, and
+since lists and copies multiply what a file spells out, a peripheral carries at
+most 16384 field and value names. Each register carries the profile's
+one extension, `ownedByNif`, saying whether the device NIF owns it and writes it
+only in sequences of its own (a ring's base address, a queue's setup, the
+device's status and features); `erx/hw/device_owned.h` names each owned register
+by its index in the table, for `erx_device.c` alone;
+a register without it is refused. A register is 8, 16, 32 or 64 bits wide, at an
+offset aligned to its width, and every access to it is one access of that width,
+as the virtio specification asks of a device's configuration fields (OASIS
+Virtio 1.2, sections 4.2.2.2 and 4.1.3.1).
+
+One file may describe several peripherals. A group of registers several
+peripherals share is written once, as a `cluster` leading one peripheral, and each
+other peripheral copies it with a cluster `derivedFrom="PERIPHERAL.CLUSTER"` as its
+own first element, at the same offset and adding nothing, then declares registers
+of its own. That is CMSIS-SVD's derivation (svd-spec v1.3.9,
+`doxygen/src/svd_schema.txt`, the cluster element): a derived section copies its
+source, and anything it restates overrides what it inherits; the specification
+defines no merge of a peripheral's register list, so derivation is of a cluster,
+never of a peripheral that then adds registers. The profile has one cluster level,
+no cluster arrays and no derivation from a derived peripheral, and a cluster's
+registers keep their own names. The copied registers lead both tables at the same
+indices, and the table records the peripheral a kind derives from, so the device NIF
+treats every kind as its transport. The virtio-mmio transport is such a cluster, and
+each device kind a peripheral that copies it and adds its configuration fields
+(`hw/svd/virtio_mmio/virtio_mmio.svd`). Other inheritance fails.
+A PCIe bridge's configuration space is a peripheral of its own, for the
+ECAM window and for the BCM2711 bridge's index and data registers alike,
+whose view takes 8-, 16- and 32-bit accesses at an offset computed from
+a function's place and the register, each access bounded by the window
+([design-pcie.md](design-pcie.md#the-bridge-seam)). A cluster whose base
+the controller reports, as xHCI's are, names in an extension the
+capability register and field its base comes from, and the generator
+checks that both exist
+([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)). An access
+sequence a device's specification prescribes and SVD cannot express is
+declared in the device's `vendorExtensions` in erXos's own namespace and
+emitted as one function per sequence, with its barriers
+([Hardware register sources](design-kernel.md#hardware-register-sources));
+each extension element, `ownedByNif` included, joins the profile with
+its first consumer, and the generator refuses every element of that
+namespace it does not implement, so an extension is never accepted
+without its semantics. Registers fit their address block and cannot
+overlap. Fields fit their register, cannot overlap, and every enumerated
+value fits its field. Names and generated symbols are unique.
+
+Read accessors perform one volatile access of the declared width. Write
+accessors refuse values outside writable bits. A read with side effects
+has no read-modify-write accessor; a one-to-clear field has a clear
+operation rather than a setter. Field extraction and insertion are pure
+unsigned operations, including full-width fields without undefined shifts.
+Whole-register read-modify-write is emitted only when every writable field
+uses ordinary replacement semantics; a side-effect field excludes that
+operation for all its siblings too.
+The supported SVD profile rejects a register mixing ordinary writable
+fields with one-to-clear fields: clearing one field cannot silently replace
+the ordinary siblings. Such a device needs an explicit access sequence.
+Hardware access remains an effect owned by the device shim or the
+kernel's early-console writer, as their separate chokepoints require.
+
+An SVD that a vendor publishes enters the tree as an import: `hw/svd/<device>/ORIGIN.md` records its
+repository, release and SHA-256, and lists each edit the profile needed, which
+a script under `tools/` makes again from the pinned upstream file. The file keeps the
+vendor's license notice and descriptions, and only the peripheral erXos drives
+enters the tree. The PL011's is the Raspberry Pi Pico SDK's UART0.
+
+The same model produces the table `erx_device` resolves Erlang's register
+names through ([design-runtime.md](design-runtime.md#the-device-nif)):
+`include/erx/hw/device_types.h` its shapes, `device_table.h` each peripheral's
+registers and fields, lower-cased, with window, offset, width, array shape,
+access, masks, the device-address mark, whether a field may be replaced by
+a read and a write, and the peripheral a kind derives from; `device_access.h` the one volatile load and store of each
+width. No peripheral may take one of those names. A bit the source does not declare
+is written as zero, by a field's update too, so a register's source declares every bit
+the hardware implements.
+
+An Erlang driver takes its peripheral's fields from the same model, so it never
+packs a register's bits by hand or copies a mask:
+`erlang/apps/erx/include/generated/erx_hw_<peripheral>.hrl`, which a module
+includes as `-include("generated/erx_hw_<peripheral>.hrl")`, defines for each
+field of each register, as `ERX_HW_<PERIPHERAL>_<REGISTER>_<FIELD>_*`, its shift,
+width and mask in place, a macro taking the field from a word, a guard that a
+value fits it, a macro placing a value in a word, which fails with `badfield`
+on a value that does not fit rather than spilling into the neighbouring
+fields, and each value the source names for it. These are arithmetic on a
+word only: a driver still reads and writes a register through `erx_device` by
+name, which refuses what the register does not allow. The macro names share
+one namespace, read from the headers themselves and checked like the C
+symbols, so a value named for a macro suffix or two paths meeting at one name
+are refused.
+
+The system-register extractor consumes the pinned Arm register package
+and a checked selection/attribute file. Encodings, widths and field ranges
+come only from that package. erXos declares allowed read/write operations,
+side effects and required synchronization beside those facts. The
+extractor rejects missing, ambiguous and unsupported selected records;
+it never picks the first alternative field layout. The derived JSON keeps
+Arm's notice and exact source identity. The generator uses that checked-in
+JSON offline; the extraction check recreates it from the pinned input.
+
+### Escape rules
+
+`abi/terminal.txt` declares the unsafe character classes. Pinned OTP Unicode
+data supplies category and default-ignorable ranges. The generator emits C,
+Erlang and Ruby tables from one normalized interval set. Input-derived names
+never become atoms. The table consumer escapes invalid UTF-8, controls and
+unsafe formatting characters in text labelled with its source before it is
+displayed on the host or the target. A conservative ASCII host sink can escape
+additional printable characters without admitting anything the generated
+policy refuses.
+
 ## Reference tables and tests
 
 Generation emits the factual parts of API documentation: signatures,
@@ -200,6 +363,47 @@ hostile tests exercise unauthorized origins, stale handles, restricted
 inspection fields and mismatched replies. TLA+/TLC properties remain
 independent specifications rather than outputs of these generators.
 
+## Output inventory and publication
+
+Each generator front end derives one immutable inventory of its
+resolved input paths and every output path with its bytes (for the ABI,
+`tools/lib/erx/abi.rb`). Paths are normalized relative paths, without
+traversal or symlinks; inputs lie below the repository root and outputs
+below the build's generated tree, `build/gen/`, which mirrors
+repository-relative paths. Output bytes depend only on source bytes and
+the generator, never wall-clock time, locale, filesystem enumeration
+order or absolute checkout path. Declarations keep their declared field
+order; unordered sets and reference tables use qualified-name byte
+order. Every artifact names its sources and generator and carries the
+project's BSD-2-Clause notice.
+
+The outputs are C headers and sources for the kernel, `liberx` and its
+backends, the device NIF and the display, and the seam headers of the
+C17 cores' C++ glue (`include/erx/core/`), which does not include
+`include/erx/abi.h` and gets each value it needs spelled as that header
+spells it;
+Erlang modules and headers for the `erx` applications and OTP's
+preloaded modules; Ruby host codecs and readers under `tools/generated/`;
+fuzz entry points that call the production readers; the web client's
+TypeScript under `web/src/generated/`; and the reference documents under
+`docs/generated/`. The inventory enumerates individual paths rather than
+accepting arbitrary files below those directories.
+
+All outputs are derived and validated before any publication, so a
+failed schema check never reaches the effect stage. The tree is staged
+beside `build/gen/` and moved into place by rename, so a process or
+filesystem failure leaves the earlier tree or none, and the command
+fails. The generated tree is regenerated whole, so an output the
+inventory no longer lists does not survive, and a file edited or added
+by hand fails the tree's stamp ([Generation](design-build.md#generation)).
+The determinism test and the ASCII refusal of `Erx::Generated` hold the
+byte-for-byte and ASCII properties.
+
+Independent raw-byte fixtures live in `test/fixtures/` and do not derive
+their expected bytes from the generator. Test builders use the generated
+host codec where their purpose is constructing inputs rather than
+serving as an independent oracle.
+
 ## Build contract
 
 Generators are Ruby tools with a pure parse/validate/derive core. They
@@ -213,12 +417,26 @@ and checked arithmetic rather than packed-structure casts or unchecked
 pointer arithmetic over input. Data tables contain no new function-pointer
 escape from the kernel's listed call targets.
 
+The hardware generators have checks of their own. Independent fixtures
+exercise register mask boundaries, side effects and malformed inputs,
+and fuzz targets call the production readers. Cross-compilation checks
+system-register instruction encodings against independent expected
+words. Architecture terms and hardware instructions stay in their
+binding layers: the vocabulary gate (`make check-arch-terms`) reads
+literal word, prefix and instruction declarations from `hw/arch_terms/`,
+each matching in any case unless marked case-sensitive, as a mnemonic
+that is also an ordinary lower-case name is, and an instruction only
+with an operand after it. It checks erXos's generic kernel, library and
+system sources and architecture-neutral design documents; architecture,
+platform and hardware binding directories and their binding documents
+own the concrete names. Underscores delimit terms too, so embedding a
+mode name inside a C identifier does not hide it from the gate.
+
 Generated artifacts are never checked in: the build generates them into
 `build/gen/`, regenerating the whole tree when an input or a generator
 changes ([Generation](design-build.md#generation)). A test generates the
 tree from the same inputs in different places and times and requires
-identical bytes. Every generated artifact identifies its source and
-generator. Schema parsers reject unknown declarations; targets refuse
+identical bytes. Schema parsers reject unknown declarations; targets refuse
 unsupported ABI/schema versions with a diagnostic. No generator emits
 migration code or readers for old erXos formats.
 

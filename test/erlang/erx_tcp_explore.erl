@@ -617,7 +617,7 @@ dimension(icmp) ->
     (dimension(base))#{events => Events, abstraction => Abs,
                        checks => [{icmp_outside_flight_changes_nothing,
                                    fun icmp_outside_flight_changes_nothing/1}]};
-%% A segment the merge could make (erx_bytes:tcp_merge/1, docs/design-network-fastpath.md, "A
+%% A segment the merge could make (erx_bytes:tcp_merge/1, docs/design-network-stack.md, "A
 %% merged segment in TCP"): ACK and no SYN, FIN, RST or URG, as a unit arriving whole, its
 %% data in two pieces, or a pure ACK standing for two segments. The checks are
 %% the base exploration's invariants, judged in every state a unit reaches; agreement with

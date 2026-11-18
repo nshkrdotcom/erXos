@@ -309,7 +309,7 @@ aligns it, an option that does not fit left out (its alignment kept, as FreeBSD 
 as many SACK blocks as fit, and end-of-options and zeros to a 4-byte boundary.
 
 The options of almost every segment of an established connection are one of the two
-layouts a run's frames share (docs/design-network-fastpath.md, "A run"): none, or the
+layouts a run's frames share (docs/design-network-stack.md, "A run"): none, or the
 timestamps alone, which the translation lays out as `NOP NOP TS` (`tcp_output.c:1794`).
 Output, the frame layer and `encode/4` each ask for a segment's options, so those two are
 written directly; `erx_tcp_wire_tests` checks them against the fold over random option

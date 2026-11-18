@@ -4,7 +4,7 @@
 -module(erx_quotes_fuzz).
 -moduledoc """
 The fuzz target of the live quotes' readers of untrusted input
-(docs/design-quotes.md, "The fuzz target"), run by tools/fuzz/erx_quotes.rb:
+(examples/dashboard/README.md, "The fuzz target"), run by tools/fuzz/erx_quotes.rb:
 
 * erx_quotes_extract:value/2 takes bodies of up to 64 KiB for each source
   of the table (erx_quotes_table): random bytes; generated answers of

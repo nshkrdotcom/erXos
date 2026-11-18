@@ -20,18 +20,6 @@ are not implementation tasks merely because a different design is possible.
   test is whether an operator can diagnose a failed operation without
   reconstructing its protocol. Owner: [inspection](design-live.md#inspection).
 
-* **[Medium] the plain scheduler configuration as the target.** Specify C1 with
-  park and wake and S1 to S4 as the target and keep C2's features as
-  proposals until G8; five grant fields instead of ten; a kernel-set
-  ready bitmap in place of the ready list; synchronous signal delivery at
-  library boundaries in place of vCPU upcalls. Owner:
-  [the scheduler](design-scheduler.md#performance),
-  [signals](design-programs.md#signals-in-liberx).
-  Also evaluate a runtime fallback to the plain configuration, freeing
-  executor slots at space stop, and machine-wide slice and grace values.
-  Synchronous signals lose delivery to a thread computing without library
-  calls; test that compatibility cost against the named application corpus.
-
 * **[Medium] request lifetimes: reuse a small pure protocol core.**
   Compare file flushes, program replies, host-link windows and code
   activation for common commit, retry and abandonment semantics. Reuse
@@ -55,6 +43,18 @@ are not implementation tasks merely because a different design is possible.
   must preserve each protocol's distinct ordering and holder semantics.
   Decide from conformance tests and matched workload measurements. Owner:
   [connections](design-domains.md#connections), [pipes](design-pipes.md).
+
+* **[Medium] scheduler: a plainer kernel interface.** Evaluate, for
+  erXos's own kernel, five grant fields instead of ten; a kernel-set ready
+  bitmap in place of the ready list; synchronous signal delivery at
+  library boundaries in place of vCPU upcalls; a runtime fallback to the
+  plain configuration; and freeing executor slots at space stop. Gate G8
+  ([plan.md](plan.md#decision-gates)) decides which cooperation features
+  stay on and the slice, grace and capacity values; these are not its
+  questions. Synchronous signals lose delivery to a thread computing
+  without library calls; test that compatibility cost against the named
+  application corpus. Owner: [the scheduler](design-scheduler.md#performance),
+  [signals](design-programs.md#signals-in-liberx).
 
 * **[Medium] C verification beyond the budget and capability pilot.**
   Evaluate the funnel's verdict over a bounded export table if the CBMC
@@ -84,21 +84,6 @@ are not implementation tasks merely because a different design is possible.
   cannot change the external term format's 32-bit creation. The cost is
   changes across identity, stale-reference checks and distribution. Owner:
   [domain identity](design-domains.md#domain-ids-pids-and-references).
-
-* **[Medium] fork maintenance: advisory comparison without upstream merges.**
-  Evaluate a reproducible source-to-origin map and an inventory of modified
-  subsystems for comparing security advisories with owned forks. This
-  preserves ordinary in-tree edits while reducing the chance of missing a
-  relevant upstream fix; it adds development tooling and recurring review.
-  Owner: [dependencies](design.md#dependencies).
-
-* **[Low] design scope: a smaller core and separate gated proposals.**
-  Evaluate whether mechanisms awaiting experimental gates should live here
-  as proposals instead of in the target design. The benefit is fewer
-  conditional contracts to keep consistent; the cost is less detail in
-  subsystem designs until a gate decides. This does not change the target
-  or move any mechanism without a decision. Owner:
-  [decision gates](plan.md#decision-gates).
 
 * **[Medium] secrets: a stronger placement and cache-sharing profile.**
   Evaluate optional placement restrictions for secret-bearing workloads

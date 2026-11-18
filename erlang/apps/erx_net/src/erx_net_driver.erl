@@ -13,7 +13,7 @@ receive and transmit credits, the transmit backlog and the link state.
   with the transport's `tx_limit`. While no interface is attached, received frames are
   dropped and counted as `detached`.
 * **Receiving.** Each batch the transport delivers is cut into batches within the merge's
-  limit, `erx_bytes:tcp_merge_limit/0` (docs/design-network-fastpath.md, "The merge, before
+  limit, `erx_bytes:tcp_merge_limit/0` (docs/design-network-stack.md, "The merge, before
   classification"), so the interface's merge never refuses one: a batch ends at its last
   allowed frame or at the frame that brings it to the limit's bytes, and a frame longer than
   those bytes, which no medium's MTU allows, is dropped and counted as `too_long`. Each batch
@@ -48,7 +48,7 @@ receive and transmit credits, the transmit backlog and the link state.
   together; a frame the transport cannot take now (`full`) waits in the backlog, with
   those after it, until the transport's `writable` event. Before it gives the transport
   anything, the driver joins the frames of every further `{transmit, ...}` already in its
-  mailbox to the backlog, in arrival order (docs/design-network-fastpath.md, "Processes and
+  mailbox to the backlog, in arrival order (docs/design-network-stack.md, "Processes and
   batching"), so the transport is handed all that waits at once.
 
 Frames are untrusted: the driver reads none of their bytes; a transport parses nothing

@@ -20,88 +20,20 @@ in [design.md](design.md); the kernel in
 [design-kernel.md](design-kernel.md); domains, connections, frames and
 exports in [design-domains.md](design-domains.md).
 
-Decisions every reader of this document needs:
-
-* **ERTS schedules Erlang processes; the kernel schedules ERTS's threads.**
-  ERTS's run queues, priorities, reductions, stealing, balancing and dirty
-  schedulers stay. Its normal and dirty CPU schedulers are executors of the
-  domain's group; its dirty I/O schedulers and helper threads are workers.
-* **The adapter is small and at the edges.** Scheduler sleep becomes
-  `erx_park`; waking a scheduler becomes `erx_executor_wake`; the poll set
-  becomes the group's ready list, taken at safe points and dispatched
-  through one event table; scheduler binding becomes pinning;
-  `schedulers_online` follows the group's capacity; executors publish
-  their urgency. Nothing else in ERTS's scheduler changes, and its process
-  state protocol is untouched ([Scheduling](#scheduling)).
-* **ERTS is a parts bin.** Ethread's pthread layer runs on musl's threads,
-  which run on `liberx`; the UNIX sys layer, the poll set, the forker, UNIX
-  signals and dynamic loading are deleted, not stubbed; ERTS's
-  address-space manager reserves and commits through the kernel. What
-  ERTS assumes never constrains the design ([The inventory](#the-inventory)).
-* **Every domain is a node; connections are distribution over lanes.**
-  A domain is the Erlang node `<id>@<host>`, its identifier at the
-  machine's host name, with its domain id as its creation: `node()`
-  returns that name and `nodes()` the domains it is connected to. Its
-  cross-domain path is ERTS's own distribution layer, unchanged: one
-  distribution entry per peer, keyed by the peer's node name as stock
-  ERTS keys it, with a port as its controller whose driver writes frames
-  into the connection's outbound lane; one executor at a time drains the
-  inbound one. A full lane leaves frames in the entry's queue, and the
-  entry is busy, suspending its senders, once that queue passes ERTS's
-  busy limit. A pid prints as `<D.N.S>` with its owner's domain id, the
-  one documented difference in a node's identity. Who may signal which
-  of the domain's processes is the export table, which lives in ERTS and
-  is written at exactly three sites
-  ([Connections in ERTS](#connections-in-erts)).
-* **A program is a port of its session.** The session's runtime creates
-  the program's spaces, a threadless anchor and an image below it, maps
-  its image, gives it a channel and pipe ends, and starts its thread; the
-  program's requests reach a handler process, signals reach it as reports
-  on its channel, and its end reaches the process that opened the port as
-  `{exit_status, N}`
-  ([Programs as ports](#programs-as-ports)).
-* **Drivers are Erlang processes** over the device NIF, which exposes
-  `liberx`'s DMA envelope: registers by name, buffers from a pool, posted
-  and completed descriptors, acknowledged interrupts, and nothing parsed
-  from what a device wrote ([The device NIF](#the-device-nif)).
-* **Three runtime images over two execution flavours.** The system
-  domain runs the system image, a link of the interpreter build that
-  holds no BeamAsm, no asmjit, no C++ and no OpenSSL and makes no JIT
-  object, so the trusted base holds no generated machine code, no
-  writable view of code and no code of OpenSSL. The interpreter image is
-  a second link of the same build with OTP's `crypto` and `asn1rt_nif`
-  NIFs and OpenSSL's `libcrypto`; the BeamAsm image is the BeamAsm
-  build's one link, with the same two NIFs
-  ([design-crypto.md](design-crypto.md#three-runtime-images-and-openssl-in-two-of-them)).
-  Every ERTS domain other than the system domain runs the BeamAsm image by
-  default, with its code in memory objects mapped writable at one address
-  and executable at another; a domain's specification may choose the
-  interpreter image, and command domains and every domain but the system
-  domain in deterministic mode run it. Each image is a file of the boot
-  image, mapped and shared by the domains that run it, and all three keep
-  ERTS's allocators as they are ([BeamAsm](#beamasm), [Memory](#memory)).
-* **No NIF blocks an executor.** A NIF or BIF that would wait in the kernel
-  on a normal scheduler fails instead of stalling it, and blocking work runs
-  on dirty I/O schedulers, which are workers
-  ([NIFs and blocking](#nifs-and-blocking)).
-* **`liberx` is the only way to the kernel.** It wraps every kernel call,
-  generated from `abi/erx_abi.txt`, with three backends: erXos's kernel, the
-  Fiasco, and a hosted implementation on macOS for development
-  under the sanitizers. Its call stubs hand the kernel values alone:
-  registers, fields of the calling thread's UTCB, or a memory window, a
-  memory object's capability with an offset and a length; no stub passes
-  the kernel an address to read or write. It holds the funnel, the lane
-  code, the DMA envelope, the loader,
-  the root-task entry and the domain library ([liberx](#liberx)).
-* **musl is the C library of every runtime and program**, reshaped as
-  erXos's code: `liberx` stands where its Linux system-call layer stood,
-  its Linux processes and signals are deleted, and its dynamic linker lives on
-  only as the loader of programs, which maps code from file objects
-  ([The C library seam](#the-c-library-seam)).
-* **ERTS's build machinery stays, behind one seam.** ERTS keeps its
-  `configure`, makefiles and Perl generators, edited for the target
-  `aarch64-unknown-erxos`; erXos's build invokes them through one entry
-  point ([The build](#the-build)).
+In short: ERTS keeps its scheduler of Erlang processes and the kernel
+schedules ERTS's threads, through a small adapter at the edges
+([Scheduling](#scheduling)); what ERTS assumes of a host never constrains
+the design ([The inventory](#the-inventory)); every domain is an Erlang
+node and each connection is a stock distribution entry over lanes, with
+authority in the export table ([Connections in ERTS](#connections-in-erts));
+a program is a port of its session ([Programs as ports](#programs-as-ports));
+drivers are Erlang processes over the device NIF
+([The device NIF](#the-device-nif)); no NIF blocks an executor
+([NIFs and blocking](#nifs-and-blocking)); `liberx` is the only way to the
+kernel and hands it values, never addresses ([liberx](#liberx)); musl is the
+C library of every runtime and program
+([The C library seam](#the-c-library-seam)); and ERTS's build machinery
+stays behind one entry point ([The build](#the-build)).
 
 ## Context
 
@@ -260,29 +192,11 @@ table, and hands each accepted frame to `erts_net_message`, which queues
 the still-encoded message to its receiver, where it is decoded when
 received ([design-domains.md](design-domains.md#the-peer)).
 
-**What changes in ERTS, in one list.** The adapter's edits are confined to
-these places, each a seam: scheduler sleep and wake in `erl_process.c`;
-the poll set's call sites (`erts_check_io`), which become the event
-table's drain; scheduler binding; the scheduler loop's safe point, which
-gains the checks of the contract; the reduction-free lock paths that raise
-`defer`; the pick of the next process, which reads its job tag; the
-channel-number macros, which print the node of a pid, port or reference as
-its creation, and the parsing BIFs' mapping back; the encoder, which
-writes the export table when it encodes one of the domain's own pids or
-aliases for a connection; process exit and alias deactivation, which clear
-the pid's or alias's export holders; the distribution entry's queue, which
-in the system domain drops a message rather than suspend its sender, and
-its count of what it holds for a peer; the distribution decoder, which
-decodes in safe mode in the system domain and whose undecoded frames count
-toward their receiver's queue quota and `max_heap_size`; the delivery of a
-message to its receiver, with its target's request limit and its origin;
-reference creation, comparison, hashing and encoding, which use the
-four-word identity below, and alias dispatch, which uses the local alias
-registry; the loader's installed-storage check; in the BeamAsm image,
-the JIT's memory backend and error paths; and the sys layer, which is
-`sys/erxos`.
-Everything else in ERTS, its node table and distribution entries included,
-is unchanged or deleted.
+**What changes in ERTS.** The adapter's edits to ERTS's own files are
+confined to seams, listed by purpose in
+[The edits outside `sys/erxos`](#the-edits-outside-syserxos); the sys
+layer is `sys/erxos`. Everything else in ERTS, its node table and
+distribution entries included, is unchanged or deleted.
 
 ## The inventory
 
@@ -421,188 +335,408 @@ fails until the list names it.
 ### The edits outside `sys/erxos`
 
 Everything the adapter adds lives in `sys/erxos`, the drivers and NIFs
-included. The edits to ERTS's own files, and those to seventeen files of
-`kernel`, ten of `stdlib` and the preloaded `erlang.erl` and `init.erl`, are these, each at a seam named above; an edit is one change
-of behaviour, however many lines it touches:
+included. The edits to ERTS's own files and to OTP's Erlang libraries are
+these, grouped by purpose. Each number names one change of behaviour, however
+many lines it touches, and is the name the code, the tests and other
+documents use for it; which files and lines it touches is in the code and its
+history.
 
-| File | Edit |
-| --- | --- |
-| `beam/erl_process.c` | 1. `scheduler_wait` parks with `erx_park` instead of the thread event or the poll set; 2. `wake_scheduler` and the enqueue paths wake with `erx_executor_wake`; 3. the safe point in `erts_schedule` runs the adapter's plan (ready list, capacity, urgency); 4. the pick of the next process reads its job tag; 5. schedulers are created as executors, pinned to the run, and `+S` is derived from the grant |
-| `beam/erl_process.h`, `beam/erl_process.c` | 6. `Process` carries a job tag, taken from its parent at `erl_create_process` or, under the BIF `erx_job:spawn/1`, made new; the BIFs `erx_job:tag/0`, which reads the calling process's tag, and `erx_job:mark/2`, which sets a tag's mark |
-| `beam/erl_lock_count.c` and the run-queue, process and carrier lock paths | 7. `defer` raised and lowered around the scheduler's and allocator's critical sections, under `ERX_GROUP_DEFER` |
-| `beam/external.c` | 8. encoding one of the domain's own pids or aliases for a connection, a control term's sender included, gives the peer `send` on it where it holds nothing yet, and past the table's bound writes nothing and counts the failure for `erx_dist:exports_refused/0`; 9. the distribution decoder takes a safe-mode flag, set in the system domain, which creates no atom and reports a refused atom apart from a malformed term |
-| `beam/dist.c` | 10. in the system domain, a message to a peer whose entry's queue, the frames of `async_dist` senders included, is past the manifest's `system_queue` is dropped and counted on the receiver instead of suspending the sender, and any other signal that does not fit ends the connection; 11. an entry counts toward `peer_held` each link and monitor a peer's process holds with a local one and each signal ERTS queues for the peer on behalf of no process, answers a new `LINK` or `MONITOR_P` past it with `system_limit`, and ends the connection when a signal does not fit; 12. `erts_net_message` drops and counts a message whose decoded size, as the funnel measured it, is past its target's `max_request`, the request limit a facet sets on itself |
-| `beam/erl_process.c` (exit) | 13. a process's exit clears its export holders, a field of its own record |
-| `beam/erl_monitor_link.c`, `beam/bif.c`, `sys/erxos/erx_alias.c` | 14. an alias's registry entry, which holds its export holders, exists exactly while its origin monitor is in a monitor tree with an alias state: the tree's insert adds it, the tree's delete and both of its foreach-delete walks, the exit path's among them, remove it with its holders, and so does `unalias/1`'s in-place clear |
-| `beam/erl_proc_sig_queue.c`, `beam/erl_gc.c`, `beam/erl_process.h` | 15. a process keeps the bytes of its queued undecoded frames from other domains, added when the drain queues a frame on it and released when `erts_proc_sig_decode_dist` decodes the frame or the process exits; the drain leaves in the lane an authorised frame whose target has reached its queue quota, and takes nothing more from that lane until the count falls below it, and the decode or exit that brings it below schedules that lane port's input task again; before a process waits in `receive` while its count is at its quota, it decodes every frame queued on it, its own messages, which from then on count toward its `max_heap_size` alone, so no waiting process holds a lane paused, a `gen_server:call` that skips older messages included; the same bytes count toward the size `max_heap_size` limits, as on-heap message data does |
-| `beam/erl_proc_sig_queue.c`, `beam/bif.tab` | 16. `erts_proc_sig_decode_dist` delivers every message from another domain, sent to a pid or to an alias, as `{erx_origin, D, Msg}`, with `D` the creation of the entry it arrived on, the peer's domain id; nothing turns it off and no signal is wrapped, though a spawn's argument list, which ERTS passes to the child as its first message, arrives wrapped and `erts_internal:dist_spawn_init/1` takes it out ([design-domains.md](design-domains.md#the-peer)); and the BIF `erx_dist:owner/1`, behind `erx:owner/1`, returns the creation a pid, reference or port carries, since `gen_server` and `gen_statem` (edit 59) cannot call the `erx` application |
-| `beam/erl_bif_unique.c`, `beam/erl_term.h`, `beam/external.c`, `beam/erl_hl_timer.c`, `beam/beam_debug.c`, `sys/erxos/erx_ref.c` | 17. a reference's identity is four words from `erx_ref_permute`, from one source per thread; creation, comparison, hashing, text and encoding keep all four, and an alias's owner pid and a resource's pointer are local metadata beside them; the decoder takes exactly four words for a reference of this node and resolves an alias through the registry, and a resource reference only outside a connection; the timer service finds a timer's scheduler by deciphering its reference |
-| `beam/erl_node_container_utils.h`, `beam/erl_node_tables.c` | 18. The two channel-number macros print the creation of the node a term carries, the domain id. `internal_channel_no(x)`, a constant 0 in stock ERTS, gives `erts_this_node->creation`. `external_channel_no(x)`, in stock ERTS the index of the node name's atom read through the term's distribution entry, gives `external_node(x)->creation`, read from the term's own `ErlNode`. The pid, port and reference variants that every printer calls (`internal_pid_channel_no`, `external_ref_channel_no` and their kin) are defined on these two, so pids, ports and references print their owner's domain id, and a pid of an ended domain still prints that domain's id after a later domain of its name has connected. `dist_entry_channel_no`, which only the crash dump's node lines and `erts_debug`'s `channel_number` read, stays stock. The parsing BIFs `list_to_pid`, `list_to_port` and `list_to_ref` in `bif.c` resolve the number through `erts_channel_no_to_dist_entry`, which maps the domain's own id to this node's entry, the creation of exactly one connected entry to that entry, and any other number, or one two connected entries share, to none, which the BIFs answer with `badarg`; each number of the text is read with checked arithmetic, so one past its field's width is `badarg` rather than wrapped onto another |
-| `sys/common/erl_mmap.c`, `sys/common/erl_mmap.h` | 19. reserve, commit, decommit and release are kernel calls; `erl_mseg.c` and the allocators sit above them unchanged |
-| `beam/erl_time_sup.c` | 20. the correction over operating-system clocks is deleted; the counter and the time page are the clock |
-| `beam/beam_load.c` | 21. `prepare_loading` accepts, in the system domain, only bytes in installed storage |
-| `beam/erl_nif.c` | 22. `enif_select` is removed; the device and pipe NIFs register events through the event table |
-| `beam/jit/`, asmjit's `VirtMem` | 23. executable memory is a JIT object mapped twice; 24. the translator's error paths fail a load instead of ignoring an error |
-| `beam/erl_init.c` | 25. the environment and the node name come from the boot information page, and the arguments arrive as the `argv` that `sys/erxos`'s `erx_runtime_main` builds from it for `erl_start`, the flags of the page's limits and grant first; once they are read, `erx_runtime_settings_check` refuses a process table, atom table or scheduler count above those flags |
-| `beam/io.c`, `beam/erl_port_task.c` | 26. `open_port` accepts only erXos's linked-in drivers; spawn, `fd` and forker paths are deleted |
-| `beam/dist.c`, `beam/bif.c` (registered names) | 27. on a connection to another domain, the sender drops every operation on the peer's registered names: a send to `{Name, Node}` (`REG_SEND`) is dropped in `erts_dsig_send_msg`, the one encoder of a send, and counted for `erx_dist:names_dropped/0`, a send toward a domain whose connection is not up yet included, and a monitor by name is answered by `monitor/2,3` with a `DOWN` of reason `noproc` locally and never sent, and `demonitor/1,2` sends no `DEMONITOR_P` for a monitor its connection never carried, so stock code writes no frame the receiving funnel refuses; a peer is another domain when its node name is at this node's host name, the rule of `erx_dist:select/1`, and a monitor by name toward a domain whose connection is not up yet, or that has none, gets `noconnection` at once, what stock answers when the attempt fails |
-| `beam/dist.c`, `beam/bif.c` (refused senders) | 67. `erlang:send/3` takes the option `notify` beside `nosuspend`: a send to another node that the busy check refuses records the entry's `connection_id` under the entry's lock, where the check reads the busy flag, and enlists the sender on that entry's notify list only while the entry still has that connection and, under the queue's lock, is busy again; otherwise it sends the sender `{erx_lane_ready, Node}` at once; `get_suspended_on_de`, which every site that resumes suspended senders calls under the same lock, also takes the notify list, and its callers send each enlisted process `{erx_lane_ready, Node}` once they have dropped the lock, so a refused sender is told exactly where a suspended one would resume ([Connections in ERTS](#connections-in-erts)) |
-| `beam/dist.c`, `beam/bif.c` (pids of another run) | 66. on a connection to another domain that is up, `link/1,2` and `monitor/2,3` of a pid of the peer's node name whose creation is not the connection's, a pid of an ended domain of that name (or, newer, of a later one the entry has not been replaced by yet, or a forgery), answer it themselves, as stock answers a pid of an earlier run of this node, and send no frame: the monitor gets `DOWN` with `noproc` at once, and the link raises `noproc` or, in a process that traps exits, is made and gets an exit of reason `noproc` (decided again as the link would be sent, so a connection replaced in between gives a process that does not trap exits that exit instead, as stock gives it for a dead remote pid); each is left with a dead connection, as stock leaves one toward a node it cannot reach, so `unlink/1` and `demonitor/1,2` send nothing for it. The peer could answer only in that pid's name, which the asker's funnel refuses by the sender rule (D6 of [design-domains.md](design-domains.md#the-funnel)); `erts_dist_other_run()` decides, under the entry's lock, from the entry's state and creation alone |
-| `lib/kernel/src/net_adm.erl` | 28. `ping/1` toward a node at the machine's host name answers `pong` when the node is `node()` or a member of `nodes()` and `pang` otherwise, and never calls `erlang:disconnect_node/1`, where stock OTP calls `net_kernel` by its registered name and disconnects the node after a failure: a connection between domains exists only by introduction, so a ping of an unconnected domain has nothing to try, and a ping of a connected one needs no call; a ping of another machine's node is stock's |
-| `lib_src/pthread/ethread.c`, `include/internal/ethread.h` | 29. `ethr_thr_opts` takes `executor`, and `ethr_thr_create` then calls `erx_pthread_create_executor`; 30. the monotonic clock is `erx_clock_ns`, without `init_get_monotonic_time`'s `uname` check, which reads its buffer whether or not the call succeeded |
-| `lib_src/pthread/ethr_event.c`, `include/internal/pthread/ethr_event.h` | 31. events are the futex variant in every build, with `ETHR_FUTEX__` over `erx_umtx_wait` and `erx_umtx_wake` |
-| `lib_src/common/erl_misc_utils.c` | 32. `erts_cpu_info_update` counts the boot information page's `cpuset`, in place of `sysconf` and `sched_getaffinity` |
-| `beam/erl_time_sup.c` (CPU time) | 33. `erts_runtime_elapsed_both` reads the group's usage from `erx_group_info`; where that is `unsupported`, `statistics(runtime)` fails with `notsup` |
-| `beam/erl_crash_dump.c` | 34. the dump goes to the sink of [Crash handling](#crash-handling), with no `open`, `fdopen` or thread suspension |
-| `beam/bif.c` | 35. `display_string/2`'s standard-input branch, which feeds a terminal through `TIOCSTI`, is compiled out; its write loop adds to the offset only what a write wrote, retrying an interrupted or blocked write at the same offset, where stock adds the -1 too (`bif.c:4275-4279`), which only a hosted descriptor can answer, and whose reader is outside the runtime; `display/1` formats into a temporary buffer in place of `erts_printf` and goes on as `display_string/2` does; and while another process holds `erx_tty_owner`, both trap to `erx_output:write/2` with the bytes |
-| `beam/sys.h`, `beam/erl_drv_thread.c`, `beam/erl_driver.h`, `sys/common/erl_sys_common_misc.c`, `nifs/common/zlib_nif.c`, `include/internal/erl_misc_utils.h`, and the two event files above | 36. `__erxos__`, which every erXos build defines, turns off each block keyed on `__APPLE__` or `__DARWIN__`, so a hosted build compiles what a native build compiles |
-| `beam/bif.c`, `lib_src/common/erl_printf.c` | 37. each `write` is `erx_output_write`, under the same signature, and the retry loops around it stay, since natively it never answers blocked ([The console](#the-console-and-standard-io), [What ERTS imports](#what-erts-imports)) |
-| `lib/kernel/src/prim_tty.erl` | 38. `isprint/1` is the ASCII printable test and `wcwidth/1` answers from `erx_width`, the system's one width table ([C library seam](#the-c-library-seam)), so terminal-less rendering reaches no NIF and counts the columns the terminal and musl count; `isatty/1` answers `false` and the terminfo calls answer that no capability exists, which is what `io_ansi` reads when a terminal has no terminfo ([The console](#the-console-and-standard-io)) |
-| `lib/kernel/src/standard_error.erl` | 39. `server/0` calls no `prim_tty`: its encoding is `unicode`, and it writes with `erlang:display_string(stderr, Bytes)`, which waits as any process's write does |
-| `lib_src/common/ethr_aux.c` | 40. the page size is `getpagesize()`, in place of `sysconf` |
-| `lib/kernel/src/kernel.erl` | 41. `kernel_sup` starts `erx_watchdog` right after `on_load`, when a module with a NIF can load, and `erx_syslog_sup` right after it, before `user` ([design-log.md](design-log.md#the-kernels-records)); `kernel_safe_sup`'s `init/1` makes the domain's file version counter (`erx_fs_version:init/0`) and adds `erx_ramfs_sup`, the domain's `/tmp`, as its last child ([design-tmp.md](design-tmp.md#starting-and-mounting)); `start_distribution false` leaves out only `net_sup` and `dist_ac`, so `rex`, `global_name_server` and `global_group` start as on a stock node that is not distributed ([Configuration](#configuration)) |
-| `beam/bif.c` | 42. while another process holds `erx_tty_owner`, `halt_2` with `{flush, true}` traps to `erx_output:halt/2`, which drains the tty before it halts ([The console](#the-console-and-standard-io)) |
-| `lib/kernel/src/logger_simple_h.erl` | 43. `log_internal/2` and `display_log/1` build each event's text on one line, and print `erx_text:escape_line/1` of it and a CR-LF in one `erlang:display_string/2` ([design-live.md](design-live.md#the-console)) |
-| `lib/stdlib/src/shell.erl` | 44. `prompt_width/1` asks no group when `erx_console` calls it, as when `user_drv` does |
-| `lib/kernel/src/user_sup.erl` | 45. `get_user/1` answers `{supervisor, erx_console_sup}` when the flags hold `-user erx_console`, whatever `-noshell`, `-noinput` and their kin say, since `erx_console` reads those itself and no flag reaches `user_drv`, whose NIF is gone; `init/1` starts that supervisor, which starts the console again whenever it ends, as the bridge's child in place of `user`, since each start of the console registers a new `user` |
-| `lib/kernel/src/user_drv.erl` | 46. `whereis_group/0` reads the group from `erx_console`'s process when `user_drv` is not running: the current group when it runs the Erlang shell, and `undefined` while a command shell has the input |
-| `beam/break.c` | 47. the break menu prints no clear-screen sequence, so it asks no terminal whether to |
-| `lib/stdlib/src/erl_parse.erl` | 48. the generated parser has no `-file` line naming the machine that generated it, since `stdlib` would not rebuild after a source edit with one |
-| `emulator/Makefile.in` | 49. `erl_compile_flags.h` holds `N/A` for the flags and `config.h` on erXos's targets, since they name host paths and `erlang:system_info(compile_info)` would serve them from the image |
-| `lib/stdlib/src/shell_default.erl` | 50. exports erXos's shortcuts (`ps/0`, `i/1`, `domains/0`, `source/1`, `trace/1`, `trace_stop/1` and `attach/1`), each a one-line call of its `erx` function, and lists them again in its `erx_shortcuts` attribute for edit 53 ([design-live.md](design-live.md#erlang-in-every-domain)) |
-| `beam/bif.tab`, `beam/atom.names`, `emulator/Makefile.in` | 51. `erx_trace_ring:read/3` and `clocks/0` are BIFs (`nifs/erxos/erx_trace_ring_bif.c`), with the atoms `backend`, `kernel`, `present` and `unknown` they match and return ([design-live.md](design-live.md#tracing)) |
-| `beam/erl_process.h`, `beam/erl_process.c`, `beam/erl_ptab.h`, `beam/erl_trace.c`, `beam/bif.c`, `beam/beam_bp.c`, `beam/emu/trace_instrs.tab`, `beam/jit/beam_jit_common.cpp`, `beam/atom.names`, `erts/preloaded/src/erlang.erl` | 52. the spawn option `{erx_untraced, true}` keeps a process out of every trace session for its whole life: the new process's trace flags hold `F_ERX_UNTRACED`, and it takes no session's flags at creation, neither new-process tracing nor its parent's `set_on_spawn`, which it does not use up; `erts_sum_all_trace_flags` keeps it as it keeps `sensitive`, so no session's flags take effect, whenever the session opened, and the call-trace breakpoint, meta-trace and return-to paths skip the process as they skip a sensitive one, through one macro, `ERTS_IS_P_TRACE_HIDDEN`; `process_flag(sensitive, _)` leaves it set. Unlike `sensitive` it hides nothing from `process_info` or crash dumps and leaves `save_calls` and `seq_trace`, which is no session, as they are. `erx_trace` spawns its own processes so ([design-live.md](design-live.md#tracing)) |
-| `lib/stdlib/src/shell.erl`, `lib/stdlib/src/edlin_expand.erl` | 53. a function defined at the prompt has each of its calls resolved, and is itself refused, by name and arity, through `edlin_expand:shell_default_or_bif/2`: a shortcut that `shell_default`'s `erx_shortcuts` attribute lists answers `shell_default` at its own arity only, and every other call gets stock's answer by name alone over OTP's exports, which `shell_default_or_bif/1`, and so argument completion, keeps. A call of a quoted name resolves by its atom: stock's shell resolves it by the name's unquoted text, which for `'Foo'(X)` scans to no atom, so its server dies of a `case_clause`, and for `'self%x'(X)` scans to another atom, `self`, so the call goes to `erlang` ([design-live.md](design-live.md#erlang-in-every-domain)) |
-| `lib/kernel/src/inet.erl`, `lib/kernel/src/inet_db.erl` | 54. `inet_backend` takes a third value, `erx`, and it is the default, which `kernel`'s `inet_backend` setting may also name: `gen_tcp_module/2` and `gen_udp_module/2` return `erx_gen_tcp` and `erx_gen_udp` for it, whose sockets are `{'$inet', Module, Pid}` terms that `gen_tcp`, `gen_udp` and `inet` already dispatch on, and `getifaddrs/0` and `gethostname/0` ask the domain's network grant ([design-network-stack.md](design-network-stack.md#the-backend)) |
-| `lib/kernel/src/group.erl` | 55. the driver's `suspend`, which `erx_console` sends for `Ctrl-Z`, reaches the group's shell as `{Group, suspend}`, as an interrupt reaches it as an exit signal, so the command shell can stop its foreground job ([design-shell.md](design-shell.md#job-control)); 72. the group has one ask for input outstanding at most: every point at which its line editor waits for more, in every state and with a shell or without (`more_chars`, `blink`, and the end of the blink's timer), calls one function, which sends the driver `{self(), read, Ref}`, `Ref` a new reference, only when no ask is outstanding, and keeps `Ref` in the group's state, outside the input state a nested request pushes and pops. The driver's answer, `{Drv, {read, Ref, Chars}}`, ends the ask and is taken as stock takes `{Drv, {data, Chars}}`; the driver never answers an end of file, since a read's end of file on a session's line is that read's alone and the line's end comes as `erx_console_eof` ([design-shell.md](design-shell.md#the-terminal-relays-protocol), "The console reads on demand"); an interrupt, an error and a nested request leave the ask outstanding, so the next request is served by it. Stock sends `{self(), read, N}` only in its raw `noshell` state (`group.erl:342`, `:346`), keeps no record of it, and asks again at each wait. A session's console reads its tty only for an outstanding ask, one byte at a time, so the group is never handed a byte past the key that ends its line, and a command shell's group serves its shell alone (edit 74), so once it has answered a line it makes no ask until the shell asks for the next ([design-shell.md](design-shell.md#the-terminal-relays-protocol)); the system console's driver sends input as it arrives, and the ask stays unanswered there. `ssh_cli` matches the ask with none of its clauses but the last, which ignores it (`ssh_cli.erl:280-338`), and `user_drv`, the one driver that reads stock's count (`user_drv.erl:501-505`), does not run where `erx_console` does; 74. a group started with the option `{readers, shell}` takes an input request and a `setopts` only from the process it started as its shell and answers any other process `{error, enotsup}`, changing nothing, at each place a request enters it: the request that finds no request in progress (`group.erl:249`), the nested request that would push the current one (`:311`, `:389`) and `setopts` (`:486`). `erx_console` starts every shell's group but the Erlang shell's with it; the default, `{readers, any}`, is stock's. In every group, the output dispatcher answers an entry of `requests` that is not output, an input request and a `setopts` among them, `{error, request}`, as the group answers any request it does not know (`:505-507`); stock's fallback there returns `{error, {error, request}}` (`:671-672`), which its caller does not match (`:608-614`), so the group crashes with `case_clause` and its shell ends with it, an upstream bug. So a job's process, or any process that made the command shell's group its leader, can neither take a key meant for the shell nor change its echo or encoding, and a command reads its standard input through `erx_cmd` ([design-shell.md](design-shell.md#the-terminal-relays-protocol)) |
-| `beam/dist.c`, `beam/erl_proc_sig_queue.c`, `beam/erl_monitor_link.c` | 56. A distribution entry that goes down with a reason `{domain_down, D, Info}`, `D` exactly the creation the entry had as it went down, fires every link, monitor and pending spawn it held with that reason, where stock fires `noconnection`; every other reason fires `noconnection` as stock, and the reason reaches `net_kernel:monitor_nodes/2`'s `nodedown_reason` from the cleanup's own copy, as stock passes it. `erts_do_net_exits` checks the reason and copies it once into the connection's record of links and monitors (`ErtsMonLnkDist`) before the record is marked dead. Every link, monitor and pending spawn of the connection holds that record, and the copy is freed with it, so the copy outlives the cleanup's yielding passes and every signal they send. Each exit `link_connection_down` fires carries the record's reason. `monitor_connection_down` still sends each monitor and pending spawn its `DOWN` with the immediate `noconnection`, because a `DOWN` with any other reason travels as a message the peer could have sent, which a pending spawn takes as a missing `spawn_reply`; the receiver, converting that `DOWN` into the `DOWN` message or into the `spawn_request` error reply, takes the record's reason in its place and copies it into the message. `Info` is small, a tag or a tag and a status (`{halt, Status}`, `crash`, `{fault, Kind}`, `stopped`), and only a process of this domain that can end the entry's port chooses it. A record made dead with no connection, as `link/1` and `monitor/2` make on a connection already down, has no reason and fires `noconnection` ([Connections in ERTS](#connections-in-erts)) |
-| `lib/kernel/src/logger.erl`, `lib/kernel/src/error_logger.erl` | 57. `init_default_config/2` makes `erx_log_h` the `default` handler where nothing configures one and the logger's type is a standard device, in place of `logger_std_h`, so every domain's events go to the log sink; `error_logger:tty/1` switches that handler on and off as it does `logger_std_h` on `standard_io`, and never adds a second handler on `standard_io` ([design-live.md](design-live.md#the-console)); `internal_init_logger/0` puts `erx_report:primary_filters/0` ahead of the primary filters the configuration names, so every domain but the system domain takes the report filter before any application starts a process ([design-log.md](design-log.md#reports-carry-no-term)) |
-| `lib/stdlib/src/proc_lib.erl`, `lib/stdlib/src/gen.erl`, `lib/stdlib/src/gen_server.erl`, `lib/stdlib/src/gen_statem.erl`, `lib/kernel/src/group.erl` | 75. a process keeps the terms it holds out of its reports ([design-log.md](design-log.md#reports-carry-no-term)) when the module that speaks for it exports `format_status/1`: its initial module, or the callback module `gen_statem` last changed to with `change_callback_module`, `push_callback_module` or `pop_callback_module`, which `gen` keeps in the process dictionary as `'$erx_status_module'` and `proc_lib` leaves out of a report's dictionary as it does `'$initial_call'`. `gen:hides_terms/1` decides it, for `proc_lib`'s crash report and the terminate reports of `gen_server` and `gen_statem`. The crash report passes the reason through that module's `format_status/1` as `#{reason => Reason}` (`gen`'s text for the failure in its place when the callback crashes), and shows the mailbox and dictionary empty, as stock OTP shows those of a `sensitive` process, and the queue's length; it and the terminate reports show each stack frame as `{M, F, Arity, []}` (`gen:report_stacktrace/2`, which takes any term), and `gen_server`'s text for an `undef` takes such a frame's arity. A process that does not hide its terms is reported as stock OTP reports it, except when its `format_status/2` crashes: then, as for any crash of `format_status`, `gen_statem`'s terminate report shows `gen`'s text for the state, the data and the reason and empty queue, postponed events, timeouts and log, and `gen_server`'s an empty sys log, where stock OTP shows them raw; `gen_server`'s keeps stock's raw reason and last message, which `gen_server_SUITE:crash_in_format_status` and `throw_in_format_status` require. `group`'s `format_status/1` hides the shell history, the line being typed (the request's input state and the keys read ahead of it), the driver's input waiting in the queue or postponed, and the sys log; stock's matches the state name and returns a record, so it crashes on every call. The `gen_statem` and `group` failures are upstream bugs that no case of OTP's suites pins |
-| `lib/stdlib/src/gen.erl` | 58. every receive of a call's reply, in `do_call` and in `send_request`'s `wait_response`, `receive_response` and `check_response` with their collection forms, also takes the reply as `{erx_origin, D, {Tag, Reply}}`, the envelope of edit 16; `Tag` holds the call's own alias, which only the callee's domain was handed, so the reply's domain needs no check ([design-domains.md](design-domains.md#the-peer)) |
-| `lib/stdlib/src/gen_server.erl`, `lib/stdlib/src/gen_statem.erl` | 59. the start option `{erx_serve, any}` or `{erx_serve, own}`, the default, is kept in the server's state at `init_it`; a server started with `any` takes `{erx_origin, D, {'$gen_call', {Pid, Tag}, Req}}` as a call when `erx_dist:owner/1` gives `D` for `Pid` and for the alias in `Tag` when it holds one, drops it otherwise, and takes `{erx_origin, D, {'$gen_cast', Msg}}` as a cast; every other message, and every one under `own`, reaches `handle_info` or the info event as it arrived, `{system, _, _}` in its envelope included |
-| `lib/stdlib/src/io.erl` | 60. `execute_request` also takes its reply as `{erx_origin, D, {io_reply, Mref, Reply}}` |
-| `lib/kernel/src/group.erl`, `lib/kernel/src/file_io_server.erl`, `lib/kernel/src/application_master.erl` | 61. each io server's receive takes `{erx_origin, D, {io_request, From, ReplyAs, Req}}` as the request inside it when `erx_dist:owner(From)` is `D`, and drops it otherwise; an application master relays the bare request to its own group leader, which answers `From` |
-| `lib/kernel/src/inet_dns.erl` | 62. `decode_data/3`'s last clause keeps the data of every record type it has no format for raw, the types OTP names without a format included: UINFO, UID, GID and UNSPEC (100 to 103), IXFR, AXFR, MAILB, MAILA and ANY (251 to 255), and A, AAAA and WKS of a class other than IN; stock's clause takes only an integer type, so a reply carrying one of those, which any host on the path can forge, fails the whole decode with `function_clause` out of `inet_res`'s call and crashes the resolver's caller, an upstream bug ([design-network-stack.md](design-network-stack.md#name-resolution)) |
-| `lib/kernel/src/inet_db.erl` | 63. `crypto_rand_range/1`, where `crypto` is not loaded, draws eight bytes from `erx_bytes:entropy/1` and takes them modulo the range, so `inet_res`'s query IDs and the inet backend's random ports come from the kernel's generator in a domain whose release has no `crypto`, as the network domain's has none, and are not inet_db's counter, one more per query, which an off-path host could guess (RFC 5452); where `erx_bytes` is not loaded (`error:undef`), as on stock OTP, it answers `undefined` and stock's counter stays, and a failed read raises in the resolver's caller, the process that called `inet_res`, rather than fall back to the counter, whose IDs an off-path host could guess ([design-network-stack.md](design-network-stack.md#name-resolution)) |
-| `erts/preloaded/src/erlang.erl`, `lib/stdlib/src/gen.erl`, `lib/kernel/src/erpc.erl` | 64. the library calls that stock gives a node-level result when a connection's `noconnection` reaches them give the same result for edit 56's `{domain_down, D, Info}`: `spawn/4`, `spawn_link/4`, `spawn_opt/5` and `spawn_monitor/4`, and the forms that route to them, whose spawn gets it as its error reply, return a pid that exits with `noconnection`, as stock's documentation promises; `gen:call`, and so `gen_server:call` and its kin, exits `{nodedown, Node}`; and `erpc`'s calls and requests raise `{erpc, noconnection}` for it as the `DOWN` of the request's process or as its spawn's error reply, so `rpc:call/4,5`, which maps that error, returns `{badrpc, nodedown}`, `rpc:block_call` through `gen_server:call` the same, and `rpc:multicall` counts the node among its bad nodes. Raw links, monitors and `spawn_request` replies keep the reason. Each matches the shape alone: a spawn's error reply of that shape comes only from this node's ERTS, but any process can make a monitored process exit with it, as it can with `noconnection`, so the result tells a caller no more than stock's does ([Connections in ERTS](#connections-in-erts)) |
-| `erts/preloaded/src/init.erl` | 65. once the boot script has started every application, and before any `-s`, `-run` or `-eval`, a domain's runtime sends `{erx_ready, #{connections => Agent, inspect => InspectAgent, provides => Provides}}` to the domain pid that `erx_dist:boot/0` names, `Agent` being its connection agent, `erx_connections`, and `InspectAgent` its inspection agent, `erx_inspect_agent` ([design-live.md](design-live.md#the-runtime-agent)), a key left out when no agent is registered, both of which edit 8 hands out to the system domain with `send` as the frame is encoded, and `Provides` the mints its services named with `erx_facet:provide/2` ([design-system.md](design-system.md#facets-a-configured-domain-serves)), whose persistent term init then leaves as `reported`, so `provide/2` refuses a later mint: init's ready report, on which `erx_domain:create/1` returns ([design-domains.md](design-domains.md#messages-between-the-domain-service-and-a-runtime)). Further agents join the map as they come to exist. Coming before `-eval`, it is sent by a domain whose `-eval` halts it too. Init then waits, at most five seconds, for the domain service's answer, the domain's facets by name, each a pid or, for a files service, `{Pid, Rights}` with the rights of its facet row (`erx:facet/0`), which the connection agent keeps as the persistent term `{erx, facets}`, whose pids `erx:cap/1` reads, and then hands it as `{erx_facets, Facets}`, so `-eval`, `-s` and `-run` find them. The agent is that term's one writer, for this answer and for every later installation, so no installation is lost to the answer; a domain whose answer does not come in time boots on without waiting for it. The system domain, whose boot page names no domain pid, and a runtime that is no node report nothing and wait for nothing; 68. once its shutdown is done, init ends `init:reboot/0` with `erx_domain_lib:end_commit(reset)` and `init:stop/0` with `erx_domain_lib:end_commit(off)`, which in the system domain end the machine and do not return ([design-system.md](design-system.md#shutting-down)) and elsewhere answer a refusal, after which the node halts as stock OTP's does; a reboot leaves its code loaded, as a stop does, so the module is still there to call |
-| `beam/jit/arm/ops.tab`, `beam/jit/x86/ops.tab` | 66. a `select_val` whose failure falls through to the next instruction, the small-integer half that `split_values` makes of a select that also matches bignums, takes a search and never a jump table, whose gaps need a failure label, as in the interpreter |
-| `lib/kernel/src/application_controller.erl` | 67. the controller keeps `init` as its group leader once `kernel` has started, rather than taking `user`'s pid, so every application master's group leader is `init` and finds `user` by name for each request (`application_master.erl:246-257`), and a restarted console's `user` serves every application |
-| `beam/beam_common.c`, `beam/erl_process.h` | 68. a dirty scheduler charges every call its elapsed time in reductions through `erts_time2reds`, on the dirty I/O pool as on the dirty CPU pool, which stock charges one reduction a call, and the conversion charges an interval the clock ran backwards its one-reduction minimum ([NIFs and blocking](#nifs-and-blocking)) |
-| `beam/beam_debug.c` | 69. the dirty test BIFs of `erts_debug` take `busy_wait`, the busy loop that `wait` runs only on a dirty CPU scheduler, on either pool, so a test can charge a busy dirty I/O call |
-| `beam/erl_process.h`, `beam/erl_process.c`, `beam/erl_wakeup_other.h` | 70. no reduction counter of a dirty run queue can wrap, though a dirty call is charged up to `INT_MAX` (edit 68): a charge on a dirty scheduler leaves alone the balance counters, `prio_info[].reds` and `check_balance_reds`, which only `check_balance` reads and resets and only on normal queues, and which stock lets grow there until they wrap; `wakeup_other_reds` is 64 bits wide, since the schedulers sharing a dirty queue may each add a charge before one of them looks; and the wakeup-other check, a pure function in `erl_wakeup_other.h`, clamps that sum to `INT_MAX`, computes in 64 bits and keeps its count within its limit on every queue kind, a dirty queue's count holding at the limit, so each later look with a backlog still wakes a waiting dirty scheduler, where stock's grows until it wraps and the backlog wake stops. A threshold's negative shift, `+swt low` and `very_low`, divides the decay by its power of two, as stock's mask suggests was meant; stock shifts left by a negative count, which is undefined (with the shift count taken mod 32, as AArch64 and x86-64 take it, the mask then clears the decay; inferred, not disassembled) |
-| `beam/erl_driver.h`, `beam/io.c` | 71. a driver may set `ERL_DRV_FLAG_ERX_NO_CONNECT`, and `set_port_connected` then refuses every connect to its ports, as it refuses one of the wrong form: `port_connect/2` raises `badarg`, and a `{Pid, {connect, NewPid}}` port message sends the owner `badsig`; the program driver sets it, so a program port's owner is always the process that opened it ([Programs as ports](#programs-as-ports)) |
-| `lib/stdlib/src/edlin_key.erl`, `lib/stdlib/src/edlin.erl` | 73. the editor's answer for a key depends on the key's characters alone, never on where its input was cut, and what it holds for one line is bounded however much is typed; its seven parts are listed after the table |
+**Scheduling** ([Scheduling](#scheduling), [NIFs and blocking](#nifs-and-blocking)).
+1\. `scheduler_wait` parks with `erx_park` instead of the thread event or the
+poll set. 2. `wake_scheduler` and the enqueue paths wake with
+`erx_executor_wake`. 3. The safe point in `erts_schedule` runs the adapter's
+plan: the ready list, capacity and urgency. 4. The pick of the next process
+reads its job tag. 5. Schedulers are created as executors, pinned to the run,
+and `+S` is derived from the grant. 6. A process carries a job tag, its
+parent's or, under `erx_job:spawn/1`, a new one; `erx_job:tag/0` reads it and
+`erx_job:mark/2` sets a tag's mark. 7. `defer` is raised and lowered around
+the scheduler's and the allocators' critical sections, under
+`ERX_GROUP_DEFER`. 68. A dirty scheduler charges every call its elapsed time
+in reductions, on the dirty I/O pool as on the dirty CPU pool, where stock
+charges one reduction a call; an interval the clock ran backwards is charged
+the one-reduction minimum. 69. `erts_debug`'s dirty test BIFs run
+`busy_wait` on either pool, so a test can charge a busy dirty I/O call.
+70. No reduction counter of a dirty run queue can wrap under those charges: a
+dirty charge leaves alone the balance counters, which only normal queues
+read and which stock lets grow until they wrap, and the wakeup-other check, a
+pure function, sums in 64 bits, since the schedulers sharing a dirty queue may each add
+a charge before one of them looks, clamps the sum to `INT_MAX`, and keeps
+its count within its limit on every queue kind, a dirty queue's holding at
+the limit, so a backlog keeps waking a waiting dirty scheduler. `+swt low`
+and `very_low` divide the decay by their power of two, as stock's mask
+means; stock shifts by a negative count, which is undefined.
 
-**Edit 73, in parts.** `get_valid_escape_key/2` in `edlin_key` follows
-the first three rules, and `edlin` the other four:
+**Threads, CPUs, memory and time** ([Threads and synchronisation](#threads-and-synchronisation),
+[Memory](#memory), [Time](#time), [What ERTS imports](#what-erts-imports)).
+19\. Reserve, commit, decommit and release are kernel calls; `erl_mseg.c` and
+the allocators sit above them unchanged. 20. The time supervisor's correction
+over operating-system clocks is deleted: the counter and the time page are
+the clock. 29. `ethr_thr_opts` takes `executor`, which creates the thread
+with `erx_pthread_create_executor`. 30. The monotonic clock is
+`erx_clock_ns`, without stock's `uname` check, which reads its buffer whether
+or not the call succeeded. 31. ethread's events are the futex variant in
+every build, over `erx_umtx_wait` and `erx_umtx_wake`. 32. The CPU count is
+the boot information page's `cpuset`, in place of `sysconf` and
+`sched_getaffinity`. 33. `statistics(runtime)` reads the group's usage from
+`erx_group_info`, and fails with `notsup` where that is `unsupported`.
+36. `__erxos__`, which every erXos build defines, turns off each block keyed
+on `__APPLE__` or `__DARWIN__`, so a hosted build compiles what a native
+build compiles. 40. The page size is `getpagesize()`, in place of `sysconf`.
 
-1. The end of its input only makes it wait: it answers
-   `{escape_prefix, State}` wherever one more character can still
-   continue a sequence, after `ESC O` and after the digits and semicolons
-   of a CSI sequence too. Stock ends the key after `ESC O` and after
-   `ESC [` and one digit (`edlin_key.erl:35-38`, `:53`), and after more
-   digits answers `{mode, {csi, Acc}}` (`:50`), for which `edlin:edit/5`
-   has no clause. A digit or semicolon continues a CSI sequence only
-   while the sequence holds fewer than 15 characters, `ESC [` included;
-   past that it cannot continue it, so rule 2 ends the sequence there as
-   an invalid key and reads the character again, as text. Stock
-   accumulates every digit and semicolon (`:97`, `:103-104`), so `ESC [`
-   and an endless run of digits would grow the group's state with no
-   line ever ending. With the bound the editor holds at most 15
-   characters of an unfinished key and a complete key has at most 16, a
-   `shell_keymap` entry longer than that is refused as rule 3 refuses any
-   entry that is not one key, and the longest keys of the default keymap,
-   such as `ESC [ 1 ; 5 C` (`:260-300`), have 6.
-2. A character that cannot continue a sequence ends it as an invalid key
-   and is read again: the clauses after `ESC` (`:71`), `ESC ESC` (`:77`),
-   `ESC O` (`:82`), `ESC ESC [` (`:87`), `ESC [` (`:93`), a CSI semicolon
-   (`:98`) and a CSI digit (`:100-106`) each answer
-   `{invalid, Acc, [C | Rest]}`, as stock does only for `m` (`:105`).
-   Stock takes the character into the invalid key, so `ESC O` and then NL
-   is one invalid key and the line does not end; after a CSI digit it has
-   no clause for a character outside `!` to `~`, so `ESC [ 3` and a NL
-   arriving together crash its parser. With the edit, `ESC` and then a
-   space or `é` likewise drops the `ESC` and inserts the character.
-3. A complete key ends at its last character, where stock takes one more
-   `~` into it (`:108-111`). With stock, `ESC [ A ~` arriving together is
-   one unbound key that loses the `~`, and a `shell_keymap` entry
-   `ESC [ H ~`, which characters arriving apart can never match, passes
-   the check of the keymap (`:124-133`); with the edit that check refuses
-   it, as it refuses any entry that is not one key.
-4. An escape prefix keeps the `tab_expand` mode, where stock leaves for
-   `normal` at once (`edlin.erl:314`).
-5. A key that `tab_expand_quit` or `{mode, _}` hands to another mode is
-   read there again from its first character, the key and what follows
-   it, where stock reads again from the start of the last input
-   (`:364-365`, `:403-406`), which holds only the key's last character
-   when its characters arrive apart.
-6. `new_line`, the default binding of `ESC` and then NL or CR
-   (`edlin_key.erl:204-205`), adds its redraw to the requests gathered
-   before it in their order, as `redraw_line` does (`edlin.erl:382-385`).
-   Stock reverses the gathered requests there (`:375-377`), so with `ab`,
-   `ESC` and NL arriving together it asks for the redraw and then the
-   inserts of `b` and `a`, and arriving apart for the inserts of `a` and
-   `b` and then the redraw.
-7. A line holds at most 65,536 codepoints, all its lines together, and
-   a grapheme cluster of it at most 32: an operation whose result would
-   hold more is answered as `beep` is (`edlin.erl:640-641`), leaving the
-   line as it was. The unit is the codepoint, not the element of
-   `edlin`'s line. An element is a grapheme cluster, into which an insert
-   merges a combining character with `string:to_graphemes([Bef, C])`
-   (`:428-439`), so a count of elements would take `a` followed by a
-   megabyte of U+0301 as one, and each merge costs time in the length of
-   the cluster it joins; the cluster bound keeps that merge within 32
-   codepoints. The count is kept in the editor's continuation beside the
-   line, not taken again from the line at each key: an insert, the
-   operation of each typed character, adds the one codepoint it inserts, so
-   it costs the same time however long the line is, and any other
-   operation counts the line it returns with `cp_len/1` (`:903-908`), in
-   time bounded by the line's own bound; a continuation made from a
-   whole line, at the start and from history, counts it once. Every
-   change to the line is an operation of `do_op/3` (`:426-643`), which
-   `edit/5` calls for each key (`:342`, `:413`), and both bounds are
-   checked around that call, so no operation is listed.
-   A character typed past the bound is dropped with a bell, as FreeBSD's
-   `ttydisc_rint` drops a byte that finds the input queue full and rings
-   the bell under `IMAXBEL` (`sys/kern/tty_ttydisc.c:1220-1236`), and
-   erXos's tty does for a cooked line
-   ([design-live.md](design-live.md#the-tty)). Stock grows the line with
-   every character, so a paste or a peer that sends megabytes with no
-   newline grows the group without end. The bound is above rc's 4 KiB
-   unit, since a codepoint takes at least a byte, so a line the editor
-   cut never runs as rc's: its parser refuses it as `line too long`
-   ([design-shell.md](design-shell.md#failure-handling-diagnostics-and-debuggability)).
-   It is the editor's own bound and is not tied to the 64 KiB in bytes
-   that `erx_cmd:read_line/1` puts on a line a command reads from its
-   standard input, which the editor's line never reaches.
-   A heap limit on the group would bound it too, but would end the
-   session's console, and every shell on it, at a paste, where a
-   terminal drops what does not fit and goes on.
+**Starting and stopping a runtime** ([Starting a runtime](#starting-a-runtime),
+[Configuration](#configuration)). 25. The environment and the node name come
+from the boot information page, and the arguments arrive as the `argv` that
+`erx_runtime_main` builds from it, the flags of the page's limits and grant
+first; `erx_runtime_settings_check` then refuses a process table, atom table
+or scheduler count above those flags. 41. `kernel_sup` starts `erx_watchdog`
+as soon as a module with a NIF can load and `erx_syslog_sup` right after it,
+before `user` ([design-log.md](design-log.md#the-kernels-records));
+`kernel_safe_sup` makes the domain's file version counter and starts
+`erx_ramfs_sup`, the domain's `/tmp`, as its last child
+([design-tmp.md](design-tmp.md#starting-and-mounting)); and
+`start_distribution false` leaves out only `net_sup` and `dist_ac`, so `rex`,
+`global_name_server` and `global_group` start as on a stock node that is not
+distributed. 65. Once the boot script has started every application, and
+before any `-s`, `-run` or `-eval`, `init` sends the domain pid that
+`erx_dist:boot/0` names its ready report,
+`{erx_ready, #{connections => Agent, inspect => InspectAgent, provides => Provides}}`,
+a key left out when no such agent is registered, on which
+`erx_domain:create/1` returns
+([design-domains.md](design-domains.md#messages-between-the-domain-service-and-a-runtime));
+edit 8 hands both agents to the system domain with `send` as the frame is
+encoded, and `erx_facet:provide/2` refuses a mint after the report
+([design-system.md](design-system.md#facets-a-configured-domain-serves)).
+`init` then waits at most five seconds for the domain's facets by name, which
+the connection agent, the one writer of the persistent term `{erx, facets}`,
+keeps there before `-eval`, `-s` and `-run` look for them; a domain whose
+answer is late boots on without it, and the system domain and a runtime that
+is no node report nothing and wait for nothing. 68. Once its shutdown is
+done, `init:reboot/0` ends with `erx_domain_lib:end_commit(reset)` and
+`init:stop/0` with `erx_domain_lib:end_commit(off)`, which in the system
+domain end the machine and elsewhere answer a refusal, after which the node
+halts as stock's does
+([design-system.md](design-system.md#shutting-down)); a reboot leaves its
+code loaded, as a stop does, so the module is still there to call. 67. The application
+controller keeps `init` as its group leader once `kernel` has started, so
+every application master's group leader is `init`, which finds `user` by
+name for each request, and a restarted console's `user` serves every
+application.
 
-`edlin` already keeps an escape prefix from one call to the next for
-`ESC`, `ESC ESC` and `ESC [` (`edlin_key.erl:52-56`), so with the edit
-`edlin` gives a key the same action in every mode whether its characters
-arrive in one call or one per call, as libedit's `read_getcmd` reads on
-while what it has read leads a bound sequence (`contrib/libedit/read.c:255-270`,
-at FreeBSD commit `95719d8a`). The edit leaves `group` alone, whose
-clauses for a history key and for the end of a search drop what follows
-the key in the same call; a session's console, which hands its group one
-character per answer, gives them nothing to drop unless a
-`shell_keymap` binds one of those keys to a character from U+0080 to
-U+00FF
-([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+**Connections and authority** ([Connections in ERTS](#connections-in-erts),
+[design-domains.md](design-domains.md#the-peer)). 8. Encoding one of the
+domain's own pids or aliases for a connection, a control term's sender
+included, gives the peer `send` on it where it holds nothing yet; past the
+table's bound it writes nothing and counts the failure for
+`erx_dist:exports_refused/0`. 9. The distribution decoder takes a safe mode,
+set in the system domain, which creates no atom and reports a refused atom
+apart from a malformed term. 10. In the system domain, a message to a peer
+whose entry's queue, the frames of `async_dist` senders included, is past the
+manifest's `system_queue` is dropped and counted on the receiver instead of
+suspending the sender, and any other signal that does not fit ends the
+connection. 11. An entry counts toward `peer_held` each link and monitor a
+peer's process holds with a local one and each signal ERTS queues for the
+peer on behalf of no process, answers a new `LINK` or `MONITOR_P` past it
+with `system_limit`, and ends the connection when a signal does not fit.
+12. `erts_net_message` drops and counts a message whose decoded size, as the
+funnel measured it, is past its target's `max_request`, the request limit a
+facet sets on itself. 13. A process's exit clears its export holders, a
+field of its own record. 14. An alias's registry entry, which holds its
+export holders, exists exactly while its origin monitor is in a monitor tree
+with an alias state: every insert of that monitor adds it, and every removal,
+the exit path's and `unalias/1`'s included, removes it with its holders.
+15. A process counts the bytes of its queued undecoded frames from other
+domains, from the drain's queueing of a frame until its decode or the
+process's exit, toward its queue quota and toward the size `max_heap_size`
+limits. The drain leaves in the lane an authorised frame whose target is at
+its quota and takes nothing more from that lane until the count falls below
+it, and the decode or exit that brings it below schedules the lane port's
+input again; a process about to wait in `receive` at its quota first decodes
+every frame queued on it, which from then on counts toward its
+`max_heap_size` alone, so no waiting process holds a lane paused, a
+`gen_server:call` that skips older messages included. 16. Every message from
+another domain, sent to a pid or to an alias, is delivered as
+`{erx_origin, D, Msg}`, `D` the creation of the entry it arrived on, the
+peer's domain id; nothing turns it off and no signal is wrapped. A spawn's
+argument list, which ERTS passes to the child as its first message, arrives
+wrapped and `erts_internal:dist_spawn_init/1` takes it out. The BIF
+`erx_dist:owner/1`, behind `erx:owner/1`, returns the creation a pid,
+reference or port carries, for the libraries of edit 59 that cannot call the
+`erx` application. 18. A node's identity costs one edit at two sites
+([Identity](#connections-in-erts)): the channel-number macros print the
+creation of the node a term itself carries, so pids, ports and references
+print their owner's domain id, and a pid of an ended domain still prints that
+domain's id after a later domain of its name has connected, while
+`dist_entry_channel_no`, which only the crash dump's node lines and
+`erts_debug`'s `channel_number` read, stays stock; and
+`list_to_pid`, `list_to_port` and `list_to_ref` map a number to this node's
+entry or to the one connected entry with that creation, and answer `badarg`
+for any other number, one two connected entries share, or one past its
+field's width. 27. On a connection to another domain, the sender keeps every
+operation on the peer's registered names to itself: a send to
+`{Name, Node}` is dropped in the one encoder of a send and counted for
+`erx_dist:names_dropped/0`, a send toward a domain whose connection is not
+up yet included; a monitor by name gets a local `DOWN` with
+`noproc`, or `noconnection` at once toward a domain not connected; and
+`demonitor` sends nothing for a monitor never carried, so stock code writes no
+frame the receiving funnel refuses
+([design-domains.md](design-domains.md#frames)). A peer is another domain
+when its node name is at this node's host name, the rule of
+`erx_dist:select/1`. 56. A distribution entry that goes down with a reason
+`{domain_down, D, Info}`, `D` exactly the creation the entry had, fires every
+link, monitor and pending spawn it held with that reason, where stock fires
+`noconnection`; every other reason fires `noconnection` as stock does. The
+reason is copied once into the connection's record of links and monitors,
+which every one of them holds, so it outlives the cleanup's yielding passes.
+A `DOWN` still travels with the immediate `noconnection`, since a `DOWN`
+with any other reason is a message the peer could have sent, and its receiver
+substitutes the record's reason. The reason reaches
+`net_kernel:monitor_nodes/2`'s `nodedown_reason` from the cleanup's own
+copy, as stock passes it, and a record made dead with no connection, as
+`link/1` and `monitor/2` make on a connection already down, fires
+`noconnection`. `Info` is small, a tag or a tag and a
+status, and only a process of this domain that can end the entry's port
+chooses it. 66. On an up connection to another domain, `link` and `monitor`
+of a pid of the peer's node name with a creation that is not the
+connection's, an ended domain's pid or a forgery, are answered locally as
+stock answers a pid of an earlier run of this node, and send no frame: the
+peer could answer only in that pid's name, which the asker's funnel refuses
+by the sender rule (D6 of [design-domains.md](design-domains.md#the-funnel)).
+`erts_dist_other_run()` decides, under the entry's lock, from the entry's
+state and creation alone, and the link is decided again as it would be
+sent, so a connection replaced in between gives a process that does not
+trap exits the exit stock gives it for a dead remote pid.
+67. `erlang:send/3` takes the option `notify` beside `nosuspend`: a sender
+the busy check refuses gets exactly one `{erx_lane_ready, Node}`, where a
+suspended sender would resume ([Connections in ERTS](#connections-in-erts)).
 
-Seventy-six edits outside `sys/erxos`, in seventy-six named files outside
-the JIT's directory, in the JIT's directory and in asmjit's `VirtMem`;
-the interpreter build, and so the system and interpreter images, is
-built without the last two. Nothing in `erl_ptab.c`: processes take their pids as stock
-ERTS allocates them. Nothing in the node table's keys, in the decoder's
-test for the own node, in channel creation or in `do_send`: every domain
-is a node of its own name, so a pid of another domain belongs to another
-node exactly as on a stock node, and those paths hold as stock ERTS has
-them. A node's identity costs one edit at two sites (18), the one that
-prints a node's number in a pid's text and the one that parses it back.
+**Libraries that take the envelope** ([design-domains.md](design-domains.md#the-peer)).
+58\. Every receive of a call's reply in `gen`, `do_call` and the
+`send_request` family, also takes `{erx_origin, D, {Tag, Reply}}`; `Tag`
+holds the call's own alias, which only the callee's domain was handed, so the
+reply's domain needs no check. 59. `gen_server` and `gen_statem` take the
+start option `{erx_serve, any}` or `{erx_serve, own}`, the default: under
+`any`, `{erx_origin, D, {'$gen_call', {Pid, Tag}, Req}}` is a call when
+`erx_dist:owner/1` gives `D` for `Pid` and for the alias in `Tag` when it
+holds one, and is dropped otherwise, and an enveloped `'$gen_cast'` is a
+cast; every other message, and every one under `own`, reaches `handle_info`
+or the info event as it arrived, `{system, _, _}` in its envelope included.
+60. `io` also takes its reply as `{erx_origin, D, {io_reply, Mref, Reply}}`.
+61. Each io server takes `{erx_origin, D, {io_request, From, ReplyAs, Req}}`
+as the request inside it when `erx_dist:owner(From)` is `D`, and drops it
+otherwise; an application master relays the bare request to its own group
+leader, which answers `From`. 64. The library calls that turn a connection's
+`noconnection` into a node-level result do the same for edit 56's
+`{domain_down, D, Info}`: the spawn calls whose spawn gets it as its error
+reply return a pid that exits with `noconnection`, `gen:call` exits
+`{nodedown, Node}`, and `erpc` raises `{erpc, noconnection}`, so `rpc`
+answers `{badrpc, nodedown}` and `rpc:multicall` counts a bad node. Raw
+links, monitors and `spawn_request` replies keep the reason. Each matches the
+shape alone, and any process can make a monitored process exit with it, as
+with `noconnection`, so the result tells a caller no more than stock's does.
+28. `net_adm:ping/1` toward a node at this machine's host name answers
+`pong` when the node is `node()` or a member of `nodes()` and `pang`
+otherwise, and never calls `net_kernel` or disconnects the node as stock
+does after a failure: a connection between domains exists only by
+introduction, so a ping of an unconnected domain has nothing to try. A ping
+of another machine's node is stock's.
+
+**References** ([Unguessable references](#unguessable-references)).
+17\. A reference's identity is four words from `erx_ref_permute`, from one
+source per thread; creation, comparison, hashing, text and encoding keep all
+four, and an alias's owner pid and a resource's pointer are local metadata
+beside them. The decoder takes exactly four words for a reference of this
+node, resolves an alias through the registry, and resolves a resource
+reference only outside a connection; the timer service finds a timer's
+scheduler by deciphering its reference.
+
+**Code loading and the JIT** ([BeamAsm](#beamasm),
+[Code in the system domain](#code-in-the-system-domain)). 21. In the system
+domain, `prepare_loading` accepts only bytes in installed storage.
+23\. Executable memory is a JIT object mapped twice. 24. The translator's
+error paths fail a load instead of ignoring an error. 66. A `select_val`
+whose failure falls through to the next instruction, the small-integer half
+that `split_values` makes of a select that also matches bignums, takes a
+search and never a jump table, whose gaps need a failure label, as in the
+interpreter. 48. The generated `erl_parse` has no `-file` line naming the
+machine that generated it, since `stdlib` would not rebuild after a source
+edit with one. 49. `erlang:system_info(compile_info)` answers `N/A` for the
+flags and `config.h`, which name host paths, on erXos's targets.
+
+**Ports, NIFs and drivers** ([Programs as ports](#programs-as-ports),
+[The event table](#the-event-table)). 22. `enif_select` is removed; the
+device and pipe NIFs register events through the event table. 26. `open_port`
+accepts only erXos's linked-in drivers; the spawn, `fd` and forker paths are
+deleted. 71. A driver may set `ERL_DRV_FLAG_ERX_NO_CONNECT`, and every
+connect to its ports is then refused as one of the wrong form is:
+`port_connect/2` raises `badarg`, and a `{Pid, {connect, NewPid}}` port
+message sends the owner `badsig`. The program driver sets it, so a program
+port's owner is always the process that opened it.
+
+**The console and the terminal** ([The console and standard I/O](#the-console-and-standard-io),
+[design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+34\. The crash dump goes to the sink of [Crash handling](#crash-handling),
+with no `open`, `fdopen` or thread suspension. 35. `display_string/2`'s
+standard-input branch, which feeds a terminal through `TIOCSTI`, is compiled
+out; its write loop adds to the offset only what a write wrote, retrying an
+interrupted or blocked write at the same offset, where stock adds the -1 too;
+`display/1` formats into a temporary buffer and goes on as `display_string/2`
+does; and while another process holds `erx_tty_owner`, both trap to
+`erx_output:write/2`. 37. Each `write` is `erx_output_write`, under the same
+signature, and the retry loops around it stay, since natively it never
+answers blocked. 38. `prim_tty`'s `isprint/1` is the ASCII printable test and
+`wcwidth/1` answers from `erx_width`, the system's one width table
+([The C library seam](#the-c-library-seam)), so terminal-less rendering
+reaches no NIF and counts the columns the terminal and musl count; `isatty/1`
+answers `false` and the terminfo calls answer that no capability exists, which is what
+`io_ansi` reads when a terminal has no terminfo.
+39\. `standard_error` calls no `prim_tty`: its encoding is `unicode`, and it
+writes with `erlang:display_string(stderr, Bytes)`, which waits as any
+process's write does. 42. While another process holds `erx_tty_owner`,
+`halt/2` with `{flush, true}` traps to `erx_output:halt/2`, which drains the
+tty before it halts. 43. `logger_simple_h` builds each event's text on one
+line and prints its `erx_text:escape_line/1` and a CR-LF in one
+`erlang:display_string/2` ([design-live.md](design-live.md#the-console)).
+44\. `shell:prompt_width/1` asks no group when `erx_console` calls it.
+45\. `user_sup` starts `erx_console_sup` in place of `user` when the flags
+hold `-user erx_console`, whatever `-noshell`, `-noinput` and their kin say,
+since `erx_console` reads those itself; that supervisor starts the console
+again whenever it ends, and each start registers a new `user`.
+46\. `user_drv:whereis_group/0` reads the group from `erx_console`'s process
+when `user_drv` is not running: the current group while the Erlang shell
+runs, and `undefined` while a command shell has the input. 47. The break menu
+prints no clear-screen sequence, so it asks no terminal whether to.
+55\. The driver's `suspend`, which `erx_console` sends for `Ctrl-Z`, reaches
+the group's shell as `{Group, suspend}`, as an interrupt reaches it as an exit
+signal, so the command shell can stop its foreground job
+([design-shell.md](design-shell.md#job-control)). 72. A group has at most one
+ask for input outstanding: every point at which its line editor waits for
+more sends the driver `{self(), read, Ref}` only when no ask is outstanding,
+and keeps `Ref` outside the input state a nested request pushes and pops. The
+answer `{Drv, {read, Ref, Chars}}` ends the ask and is taken as stock takes
+`{Drv, {data, Chars}}`; the driver never answers an end of file, since the
+line's end comes as `erx_console_eof`. A session's console reads its tty only
+for an outstanding ask, one byte at a time, so the group is never handed a
+byte past the key that ends its line; the system console's driver sends input
+as it arrives, and the ask stays unanswered there. No stock driver minds the ask's
+new shape: `ssh_cli` matches it with none of its clauses but the last,
+which ignores it (`ssh_cli.erl:280-338`), and `user_drv`, the one driver
+that reads stock's count (`user_drv.erl:501-505`), does not run where
+`erx_console` does. 74. A group started with
+`{readers, shell}` takes an input request and a `setopts` only from the
+process it started as its shell, and answers any other process
+`{error, enotsup}`, changing nothing; `erx_console` starts every shell's group
+but the Erlang shell's so, and the default, `{readers, any}`, is stock's. In
+every group, the output dispatcher answers a request that is not output
+`{error, request}`; stock's fallback there crashes the group and ends its
+shell, an upstream bug. So no job's process can take a key meant for the
+shell or change its echo or encoding. 73. The line editor's answer for a key
+depends on the key's characters alone, never on where its input was cut, and
+what it holds for one line is bounded however much is typed:
+
+* The end of its input only makes it wait, wherever one more character can
+  still continue a sequence. A digit or semicolon continues a CSI sequence
+  only while the sequence holds fewer than 15 characters, so the editor holds
+  at most 15 characters of an unfinished key and a complete key has at most
+  16; stock accumulates every digit, so `ESC [` and an endless run of digits
+  would grow the group with no line ever ending.
+* A character that cannot continue a sequence ends it as an invalid key and
+  is read again from scratch, so a NL ends the line; a digit past the CSI
+  bound is read again as text. Stock takes it into the invalid key, so `ESC O` and
+  then NL never ends the line, or has no clause for it, so `ESC [ 3` and a NL
+  arriving together crash its parser.
+* A complete key ends at its last character, where stock takes one more `~`
+  into it; a `shell_keymap` entry that is not exactly one key is refused.
+* An escape prefix keeps the `tab_expand` mode, and a key that a mode hands
+  to another is read there again from its first character.
+* `new_line` adds its redraw after the requests gathered before it, in their
+  order, where stock reverses them.
+* A line holds at most 65,536 codepoints, all its lines together, and a
+  grapheme cluster at most 32, which bounds the cost of merging a combining
+  character into its cluster. An operation whose result would hold more is
+  answered as `beep` is, leaving the line as it was, so a character typed
+  past the bound is dropped with a bell, as FreeBSD's `ttydisc_rint` drops a
+  byte that finds the input queue full and rings the bell under `IMAXBEL`
+  (`sys/kern/tty_ttydisc.c:1220-1236`), and erXos's tty does for a cooked
+  line ([design-live.md](design-live.md#the-tty)). The count is kept beside
+  the line, so an insert costs the same however long the line is, and both
+  bounds are checked around the one function that applies every operation,
+  so no operation is listed. A heap limit on the group would bound it too,
+  but would end the session's console, and every shell on it, at a paste. The
+  bound is above rc's 4 KiB line, so a line the editor cut never runs as rc's
+  ([design-shell.md](design-shell.md#failure-handling-diagnostics-and-debuggability)).
+
+So `edlin` gives a key the same action in every mode whether its characters
+arrive in one call or one per call, as libedit's `read_getcmd` reads on while
+what it has read leads a bound sequence (`contrib/libedit/read.c:255-270`, at
+FreeBSD commit `95719d8a`). `group`'s clauses for a history key and for the
+end of a search still drop what follows the key in the same call; a session's
+console hands its group one character per answer, so they have nothing to
+drop unless a `shell_keymap` binds one of those keys to a character from
+U+0080 to U+00FF.
+
+**Shell and tracing tools** ([design-live.md](design-live.md#erlang-in-every-domain),
+[design-live.md](design-live.md#tracing)). 50. `shell_default` exports
+erXos's shortcuts (`ps/0`, `i/1`, `domains/0`, `source/1`, `trace/1`,
+`trace_stop/1` and `attach/1`), each a one-line call of its `erx` function,
+and lists them in its `erx_shortcuts` attribute. 51. `erx_trace_ring:read/3`
+and `clocks/0` are BIFs. 52. The spawn option `{erx_untraced, true}` keeps a
+process out of every trace session for its whole life, whenever the session
+opened: it takes no session's flags at creation, its parent's `set_on_spawn`
+included, and the call-trace, meta-trace and return-to paths skip it as they
+skip a `sensitive` process. `process_flag(sensitive, _)` leaves it set. Unlike `sensitive`, it hides
+nothing from
+`process_info` or crash dumps and leaves `save_calls` and `seq_trace` alone.
+`erx_trace` spawns its own processes so. 53. A function defined at the prompt
+has each of its calls resolved, and is itself refused, by name and arity: a
+shortcut listed in `erx_shortcuts` answers `shell_default` at its own arity
+only, and every other call gets stock's answer by name; a call of a quoted
+name resolves by its atom, where stock's shell dies of a `case_clause` on
+`'Foo'(X)` and sends `'self%x'(X)` to `erlang`.
+
+**Network** ([design-network-stack.md](design-network-stack.md#the-backend),
+[name resolution](design-network-stack.md#name-resolution)). 54. `inet_backend`
+takes a third value, `erx`, the default, for which `gen_tcp` and `gen_udp`
+use `erx_gen_tcp` and `erx_gen_udp`, whose sockets are `{'$inet', Module, Pid}`
+terms that `gen_tcp`, `gen_udp` and `inet` already dispatch on; `getifaddrs/0`
+and `gethostname/0` ask the domain's network grant. 62. `inet_dns` keeps raw
+the data of every record type it has no format for, the types OTP names
+without one included, and A, AAAA and WKS of a class other than IN; stock fails the whole decode with `function_clause` on
+such a reply, which any host on the path can forge, and crashes the
+resolver's caller, an upstream bug. 63. Where `crypto` is not loaded,
+`inet_db` draws its random ranges from `erx_bytes:entropy/1`, so resolver
+query IDs and the backend's random ports come from the kernel's generator in
+a domain without `crypto`, as the network domain is, and not from a counter
+an off-path host could guess (RFC 5452). Where `erx_bytes` is not loaded, as
+on stock OTP, the counter stays; a failed read raises in the resolver's
+caller rather than fall back to it.
+
+**Logs and reports** ([design-log.md](design-log.md#reports-carry-no-term)).
+57\. `erx_log_h` is the `default` handler where nothing configures one and the
+logger's type is a standard device, so every domain's events go to the log
+sink; `error_logger:tty/1` switches it as it does `logger_std_h` and never adds
+a second handler on `standard_io`
+([design-live.md](design-live.md#the-console)); and outside the system
+domain the report filter `erx_report` runs ahead of the configured primary
+filters, before any application starts a process. 75. A process keeps the
+terms it holds out of its reports when the module that speaks for it, its
+initial module or the callback module `gen_statem` last changed to, exports
+`format_status/1`: its crash report passes the reason through that function,
+shows the mailbox and dictionary empty, as stock shows a `sensitive`
+process's, and the crash and terminate reports show each stack frame with its
+arity alone. A process that does not hide its terms is reported as stock
+reports it, except when its `format_status/2` crashes: then `gen_statem`'s
+terminate report shows `gen`'s text for its state, data and reason, and
+`gen_server`'s an empty sys log, where stock shows them raw. `group`'s
+`format_status/1` hides the shell history, the line being typed, the driver's
+waiting input and the sys log; stock's crashes on every call. The
+`gen_statem` and `group` failures are upstream bugs.
+
+Nothing changes in `erl_ptab.c`: processes take their pids as stock ERTS
+allocates them. Nothing changes in the node table's keys, the decoder's test
+for the own node, channel creation or `do_send`: every domain is a node of its
+own name, so a pid of another domain belongs to another node exactly as on a
+stock node. The interpreter build, and so the system and interpreter images,
+is built without the JIT's edits: 23, 24 and the `select_val` one.
 
 ### What ERTS needs and what the adapter adds
 
@@ -637,80 +771,30 @@ the work. ERTS's Erlang-visible behaviour is checked against stock OTP
 read-only page that the domain library writes when it creates the domain,
 and that the root-task entry writes for the system domain
 ([design-system.md](design-system.md#creating-a-domain),
-[The root-task entry](#the-root-task-entry)); its layout is in the ABI
-file:
+[The root-task entry](#the-root-task-entry)). Its layout,
+`erx_boot_info` in the ABI file, carries the page's version and the ABI
+version; the domain id, which is its node's creation and is never reused;
+the flags `ERX_BOOT_DET`, `ERX_BOOT_INSTALLED_ONLY` and `ERX_BOOT_ROOT`;
+the checked boot-image build flags, `pack_flags`; the capabilities of the
+domain's budget (`ALLOC`, and with `SPACES` also `SPACES`, `CARVE`, `DUP`
+and `GIVE`), its own space (`THREADS`, `SPACES`), its group (`ATTACH`,
+`SIGNAL`, and `CONFIGURE` on its children) and the group's shared areas,
+its sub-space group when the domain holds `SPACES` (`CONFIGURE`, `ATTACH`,
+`SIGNAL`, `DUP`, `GIVE`), the time page, the slice of its release's files
+with the read-only address it is mapped at, and the crash area, if it has
+one; the read-only address of the sealing page for the release the boot
+image marks with `ERX_ENTRY_SEAL`, zero otherwise or without a device
+secret; the system connection (the domain's own side with `READ`, `WRITE`
+and `MAP`, the system domain's side with `READ` and `MAP` and its bell with
+`TRIGGER`, its own bell's label, bound to its group, the system domain's id
+and node name, the data areas of the lanes it writes and reads, the slots
+of its control table, which are its connections quota, and the domain
+pid's number and serial as in `NEW_PID_EXT`), all zero in the system
+domain; the CPUs its group may use and its initial capacity; its node name,
+arguments and environment, at most `ERX_BOOT_STRINGS_MAX` (2,048) bytes of
+strings in all; the CPU feature words; and the runtime limits.
 
-```c
-typedef struct erx_boot_info {
-	uint32_t	version;		/* 1 */
-	uint32_t	abi_version;		/* ERX_ABI_VERSION */
-	uint32_t	domain_id;		/* its node's creation; never reused */
-	uint32_t	flags;			/* ERX_BOOT_DET, ERX_BOOT_INSTALLED_ONLY,
-						 * ERX_BOOT_ROOT */
-	uint32_t	pack_flags;		/* checked boot-image build flags */
-	uint32_t	reserved;		/* zero; keeps capability alignment */
-	erx_cap_t	budget;			/* the domain's budget: ALLOC, and with
-						 * SPACES also SPACES, CARVE, DUP, GIVE */
-	erx_cap_t	space;			/* its own space, ERX_CAP_SELF, as every
-						 * space names itself: THREADS, SPACES */
-	erx_cap_t	group;			/* the domain's group: ATTACH, SIGNAL, and
-						 * CONFIGURE on its children */
-	erx_cap_t	group_ctl, group_stat;	/* its shared areas */
-	erx_cap_t	spaces_group;		/* with SPACES, its sub-space group:
-						 * CONFIGURE, ATTACH, SIGNAL, DUP, GIVE;
-						 * otherwise ERX_CAP_NULL */
-	erx_cap_t	time_page;
-	erx_cap_t	release;		/* the slice of its release's files */
-	uint64_t	release_addr;		/* where the slice is mapped, read-only */
-	uint64_t	seal_addr;		/* the release the boot image marks
-						 * with ERX_ENTRY_SEAL: where the
-						 * sealing page is mapped, read-only;
-						 * otherwise, or with no device secret,
-						 * zero */
-	erx_cap_t	crash_area;		/* memory for a crash dump, or zero
-						 * for a domain without one */
-	struct {
-		erx_cap_t	side;			/* its own side: READ, WRITE,
-							 * MAP */
-		erx_cap_t	peer_side;		/* the system domain's side:
-							 * READ, MAP */
-		erx_cap_t	peer_bell;		/* the system domain's bell:
-							 * TRIGGER */
-		uint32_t	label;			/* its own bell's label,
-							 * bound to its group */
-		uint32_t	peer;			/* the system domain's id, 4 */
-		uint32_t	peer_node_off, peer_node_len;
-							/* the system domain's node
-							 * name, in the page */
-		uint32_t	out_size;		/* data area of the lane it
-							 * writes */
-		uint32_t	in_size;		/* data area of the lane it
-							 * reads */
-		uint32_t	ctl_slots;		/* slots of its control
-							 * table, after that data
-							 * area: its connections
-							 * quota */
-		uint32_t	domain_pid_number, domain_pid_serial;
-							/* its domain pid, a process
-							 * of the system domain's
-							 * node, as the ID and Serial
-							 * of NEW_PID_EXT */
-	} system_connection;			/* its connection to the system domain;
-						 * all zero in the system domain */
-	uint64_t	cpuset;			/* CPUs its group may use */
-	uint32_t	capacity_mcpu;		/* initial capacity */
-	uint32_t	node_off, node_len;	/* its node name, <id>@<host>, in the page */
-	uint32_t	args_off, args_len;	/* NUL-separated arguments, in the page */
-	uint32_t	env_off, env_len;	/* NUL-separated environment, in the page;
-						 * node_len + peer_node_len +
-						 * args_len + env_len <=
-						 * ERX_BOOT_STRINGS_MAX (2,048) */
-	uint64_t	hwcap, hwcap2;		/* CPU features, as Linux's AT_HWCAP words */
-	erx_runtime_limits_t limits;	/* complete validated startup limits */
-} erx_boot_info_t;
-```
-
-The fixed prefix is 288 bytes. The domain pid's two words name a pid
+The domain pid's two words name a pid
 with the system connection's peer node and id, so a domain knows one
 process of the system domain from its start, the one it reports to and
 the one its connection agent answers
@@ -726,7 +810,8 @@ own manifest text or compile-time defaults.
 `erx_runtime_limits_t` is the ABI's fixed 64-byte startup projection:
 `max_frame`, `max_message_heap`, `funnel_depth`, `exports`, `tmp`,
 `overlay`, `atoms`, `foreign_atoms`, `processes`, `peer_held` and
-`peer_held_total`, with widths and offsets defined in
+`peer_held_total`, with widths and offsets declared in
+`abi/erx_abi.txt` and its projection in
 [Runtime-limit projection](design-abi.md#runtime-limit-projection).
 It carries values only for this runtime, with no principal table, facet
 scope or reference into the system manifest. The domain library copies
@@ -753,11 +838,10 @@ system connection's peer by its node name and id as well, as
 pid, the system domain's process that admits the domain and that the
 domain reports to, which exported itself to the domain with `send` before
 the domain started ([Connections in ERTS](#connections-in-erts)).
-With `ERX_BOOT_ROOT`, the page continues at `ERX_BOOT_INFO_SIZE`, offset 296,
+With `ERX_BOOT_ROOT`, the page continues at `ERX_BOOT_INFO_SIZE`
 with the **root extension**, `erx_boot_root_extension_t`, which the ABI
 generator derives from the ABI file's `cap` lines, so that nothing is copied by
-hand: one capability value for each root slot, the value of slot N at offset
-8 x (N - 1), 88 bytes in all, and `ERX_CAP_NULL` in an optional slot the boot
+hand: one capability value for each root slot, in slot order, and `ERX_CAP_NULL` in an optional slot the boot
 left empty ([The root-task entry](#the-root-task-entry)). The strings the
 page's offsets name lie past it. The entry's close of the device-secret page
 leaves that field's value stale, so it names nothing from then on (K1).
@@ -766,20 +850,12 @@ every device and every grant reaches the runtime as a message from the
 system domain over the system connection, naming slots the domain library
 installed in the domain's table.
 
-**The adapter's per-executor record**, beside ERTS's per-scheduler data:
-
-```c
-struct erx_rt_exec {
-	uint8_t			slot;		/* executor slot in the group */
-	erx_exec_ctl_t		*ctl;		/* this slot's control line */
-	const erx_exec_stat_t	*stat;		/* this slot's status line */
-	erx_urgency_t		urgency;	/* the urgency last published */
-	uint32_t		defer;		/* mirror of ctl->defer, owned by this thread */
-};
-```
-
-An executor is the only writer of its control line, so the adapter stores
-into it without atomic read-modify-write, and only when a value changes.
+**The adapter's per-executor record**, `struct erx_rt_exec`, beside ERTS's per-scheduler data,
+holds the executor's slot in the group, its control and status lines, the
+urgency it last published and its own mirror of the control line's
+`defer`. An executor is the only writer of its control line, so the adapter
+stores into it without atomic read-modify-write, and only when a value
+changes.
 
 **The connection table** is `erx_connections`'s, an Erlang process of
 `erx` in every domain: for each peer domain, its node name and id, the
@@ -837,18 +913,10 @@ connection's child once both parties have let go of it, and the outer
 budget once no child remains and the crash record is read
 ([design-system.md](design-system.md#ending-a-domain)). So the area
 survives the domain's end, and the domain service reads it afterwards. It
-starts with a header whose layout is in the ABI file:
-
-```c
-typedef struct erx_dump_header {
-	uint32_t	magic;		/* ERX_DUMP_MAGIC once a dump is complete */
-	uint32_t	version;	/* 1 */
-	uint32_t	flags;		/* ERX_DUMP_TRUNCATED: the dump did not fit */
-	uint32_t	pad;		/* zero */
-	uint64_t	length;		/* bytes of dump text stored after the header */
-	char		slogan[232];	/* ERTS's one-line reason, NUL-terminated */
-} erx_dump_header_t;		/* 256 bytes */
-```
+starts with a header, `erx_dump_header` in the ABI file: a magic that marks
+a complete dump, a version, an `ERX_DUMP_TRUNCATED` flag for a dump that
+did not fit, a zero `pad`, the `length` of the text stored after it, and
+ERTS's one-line reason as a NUL-terminated slogan of 232 bytes.
 
 The domain writes the text first and the magic last, with a release store.
 `length` counts only the bytes stored, so a dump that fills the area
@@ -1240,29 +1308,20 @@ command 3, `erlang:port_control(Port, 3, [<<Slot:32>>, Ctl, Payload])`,
 `Ctl` being `term_to_binary({22, self(), Agent})`, the `SEND_SENDER`
 control term from the domain pid to the domain's connection agent, and
 `Payload` being `term_to_binary(Record)`. These are the bytes the entry's
-encoder would write for the same send: `term_to_binary/1` and the
-distribution encoder are the same `enc_term` (`beam/external.c`), the
-fixed flags use no atom cache and no distribution header, so each term is
-the version byte and the term, and what a record holds, tuples, small
-UTF-8 atoms, small integers and `NEW_PID_EXT` pids, is encoded alike under
-both, as the funnel's grammar admits. `term_to_binary/1` writes no
-export, as edit 8 does when the entry's encoder encodes an own pid, and
-none is needed: a record's payload names no process, and its control
-term names the domain pid, which exports itself to the domain before the
-domain starts, and the agent, which init's ready report exported to the
-system domain. The driver accepts the command only from the domain pid
-it was opened with, `driver_caller` naming the process of the call; it
-finds the end of the control term with the reader it uses
-for ERTS's own frames, checks the slot against the table's slots and the
-frame against `ERX_LANE_CTL_SLOT`, writes the frame header and the frame
-and then `len` into the slot through `erx_lane_ctl_put`, the table's one
-writer, beside the lane's in `erx_lane.c`, stores the slot's `seq` plus
-one from its own copy with release order, rings the domain's bell, and
-returns once the record is published. The call runs under the port's
-lock, as `outputv` does, so the table has one writer at a time, and it
-touches neither the ring nor the entry's queue: a full ring, a paused
-port, a busy entry and `system_queue` (edit 10) never apply to a record,
-which is why the port may pause its output for ordinary frames.
+encoder would write for the same send, since `term_to_binary/1` and the
+distribution encoder are the same `enc_term` and the fixed flags use no
+atom cache and no distribution header. `term_to_binary/1` writes no
+export, and none is needed: a record's payload names no process, and its
+control term names the domain pid, which exports itself to the domain
+before the domain starts, and the agent, which init's ready report
+exported to the system domain. The driver writes the frame and its length
+into the slot through `erx_lane_ctl_put`, the table's one writer, stores
+the slot's `seq` plus one with release order, rings the domain's bell,
+and returns once the record is published. The call runs under the port's
+lock, so the table has one writer at a time, and it touches neither the
+ring nor the entry's queue: a full ring, a paused port, a busy entry and
+`system_queue` (edit 10) never apply to a record, which is why the port
+may pause its output for ordinary frames.
 
 The driver refuses the command from any process but that domain pid, on
 any port that has no table to write, for a slot past the table's last,
@@ -1346,90 +1405,56 @@ suspend, the network stack's socket process for one
 ([design-network-stack.md](design-network-stack.md#the-socket-process)),
 sends with `erlang:send/3` and `[nosuspend, notify]`
 ([design-domains.md](design-domains.md#flow-control) gives the rule).
-The refusal is stock: `erts_dsig_prepare` reads the entry's busy flag
-for a `nosuspend` send and answers `ERTS_DSIG_PREP_WOULD_SUSPEND`
-without encoding anything (`dist.c:3417-3419`); `remote_send` answers
-`SEND_YIELD` for it, and `erlang:send/3` returns `nosuspend`
-(`bif.c:2489-2491`, `:2845-2849`). The check takes no lock, the send's
-last phase queues a `nosuspend` frame whole whatever the queue holds by
-then (`dist.c:3765-3771`, `:3786`), and the encoding between them may
-yield (`dist.c:3727-3728`), so the queue can pass the busy limit by one
-frame of each process caught between the two; a plain sender adds
-fragments only while the queue is under the limit and then suspends.
-Edit 67 adds the notification, in three places:
+The refusal is stock: a `nosuspend` send to a busy entry returns
+`nosuspend` without encoding anything (`dist.c:3417-3419`,
+`bif.c:2489-2491`). The busy check takes no lock and the send's last
+phase queues a `nosuspend` frame whole, so the queue can pass the busy
+limit by one frame of each process caught between the two; a plain sender
+adds fragments only while the queue is under the limit and then
+suspends. Edit 67 adds the notification:
 
-1. **Enlisting.** The refusal names its connection: `erts_dsig_prepare`
-   copies the entry's `connection_id` into the send's context before
-   it reads the busy flag, under the entry's read lock that it holds
-   for the check (`dist.c:3386`, `:3418`), where stock copies it only
-   after the check (`:3429`). On a refused send with `notify`,
-   `remote_send` then takes the entry's read lock and its `qlock`, in
-   the order the send's last phase takes them (`dist.c:3743`, `:3786`),
-   and enlists the process on the entry's `notify` list, an
-   `ErtsProcList` beside `suspended`, only when the entry is connected
-   or pending with the refusal's `connection_id` and the busy flag,
-   read again under `qlock`, is still set, as the suspend path reads it
-   again once it has suspended its caller (`dist.c:3836-3842`).
-   Otherwise it sends the notification at once: the queue drained, or
-   the connection that refused ended, and a connection that took the
-   entry's place since is not the one the sender waits on. Either way
-   the refusal is followed by exactly one notification, none is lost
-   between the check and the lock, and no sender joins the list of a
-   connection that did not refuse it.
-2. **Telling.** Every site that resumes suspended senders gets them
-   from `get_suspended_on_de` under `qlock`: the output path when the
-   queue falls under the limit (`dist.c:4306-4317`), the controller's
-   data path (`:4785-4798`), and a connection's end, up or pending
-   (`:1117-1146`, `:5731-5751`). `get_suspended_on_de` takes the
-   `notify` list with the `suspended` one, and returns neither while the
-   entry's exit is scheduled, as it already does for `suspended`
-   (`dist.c:293-311`), so the end's own call takes both. Its callers
-   send `{erx_lane_ready, Node}` to each enlisted process once they have
-   dropped the lock, beside `erts_resume_processes`. A refused sender is
-   therefore told exactly where a suspended one would resume, and no
-   site can be forgotten, since there is one function.
+1. **Enlisting.** The refusal records the entry's `connection_id` under
+   the lock the busy check holds. A refused send with `notify` then
+   enlists the process on the entry's `notify` list, beside `suspended`,
+   only while the entry still has that connection and, read again under
+   `qlock` as the suspend path reads it, is still busy; otherwise it sends
+   the notification at once, since the queue drained or the refusing
+   connection ended. So each refusal is followed by exactly one
+   notification, none is lost between the check and the lock, and no
+   sender joins the list of a connection that did not refuse it.
+2. **Telling.** Every site that resumes suspended senders, the output
+   path under the limit, the controller's data path and a connection's
+   end, gets them from the one function `get_suspended_on_de` under
+   `qlock`, which also takes the `notify` list and returns neither list
+   while the entry's exit is scheduled, so the end's own call takes both; its callers send
+   `{erx_lane_ready, Node}` to each enlisted process once they have
+   dropped the lock. A refused sender is told exactly where a suspended
+   one would resume, and no site can be forgotten.
 3. **The option.** `erlang:send/3` takes `notify` only with `nosuspend`
    and a destination on another node; elsewhere it is `badarg`.
 
-A process enlisted twice is told twice; the socket process sends
-nothing between a refusal and its notification, so it is enlisted at
-most once. The message is a local one, made by the runtime, which only
-a process of the domain itself could forge, and a forged one costs its
-receiver one refused attempt.
+A process enlisted twice is told twice; the socket process sends nothing
+between a refusal and its notification, so it is enlisted at most once.
+The message is a local one, made by the runtime, which only a process of
+the domain itself could forge, and a forged one costs its receiver one
+refused attempt. Its cost against a stock-ERTS bell process per
+destination is on the watch list
+([todo-performance.md](todo-performance.md)).
 
-**The bell, a prototype without the edit.** The notification can be
-had from stock ERTS, at a cost, and is measured that way before edit 67
-is made. One bell process per destination domain takes the refused
-processes' requests to be told; for each round it makes a plain,
-suspending send of a small no-op message to a process of that domain
-that drops it, the grant in the network stack's case, which counts it
-as an unknown message. ERTS suspends the bell while the entry is busy
-and resumes it at the same sites that edit 67 tells from, so when the
-send returns the bell tells every process that asked before the send
-began, and starts another round for those that asked since. It costs a
-process per destination, a frame on the lane per round and a local
-message each way per refusal. The bench
-of design-network-stack records the bell's numbers first, so the
-edit's gain is measured.
-
-ERTS's own `async_dist` flag keeps its stock meaning on erXos, with no
-edit: `erts_dsig_prepare` marks a flagged process's send `ignore_busy`
-(`dist.c:3412-3413`), its frames go onto the queue whatever its size
-and count toward the queue's total but not toward `qsize`, which alone
-decides **busy**, and the process is never suspended; a `nosuspend`
-send from it is never refused, since the busy check is skipped
-(`dist.c:3412-3419`). A runtime's default for new processes comes from
-the emulator flag `+pad` (`erl_init.c:1382`, `erl_process.c:12458`),
-which a domain's specification may set, so a process that relies on
-being refused clears the flag at its spawn, whatever the default: the
-socket process is spawned with `{async_dist, false}`
+ERTS's own `async_dist` flag keeps its stock meaning, with no edit: a
+flagged process's frames go onto the queue whatever its size and count
+toward the queue's total but not toward `qsize`, which alone decides
+**busy**, so the process is never suspended and a `nosuspend` send from
+it is never refused (`dist.c:3412-3419`). A runtime's default for new
+processes is the emulator flag `+pad`, which a domain's specification may
+set, so a process that relies on being refused clears the flag at its
+spawn: the socket process is spawned with `{async_dist, false}`
 ([design-network-stack.md](design-network-stack.md#the-socket-process)).
 A process that sets the flag grows only its own domain's memory. Two
-counts elsewhere must therefore not read the total as something else:
-edit 10, in the system domain, measures against `system_queue` the
-bytes every process queued, flagged or not; and the answers a
-connection holds are counted at their source, by change 11, never as
-the queue's total beyond `qsize`.
+counts must therefore not read the total as something else: edit 10, in
+the system domain, measures against `system_queue` the bytes every process
+queued, flagged or not; and the answers a connection holds are counted at
+their source, by edit 11, never as the queue's total beyond `qsize`.
 
 **Receiving.** A connection is a port sink like any other. Its bell
 schedules the lane port's input task; ERTS runs that task on a normal
@@ -1456,7 +1481,7 @@ hold each other's lanes. The funnel's answers, and ERTS's own to a
 queue as sends with no sending process, which ignore the busy limit and
 count only toward the queue's total (`total_qsize` beyond `qsize`).
 Only a frame that can produce such an answer is bounded: each answer
-counts toward the entry's `peer_held` (change 11 of `beam/dist.c` above),
+counts toward the entry's `peer_held` (edit 11),
 and a connection whose answers do not fit ends, since a peer that asks
 and never reads its answers has stopped working. The current
 implementation measures the answers the entry holds unsent, the queue's
@@ -2702,6 +2727,12 @@ the name its driver gives it and the NIF does not read
 ([design-fiasco.md](design-fiasco.md#device-records)), whether it is
 coherent, and which descriptor forms of the ABI file it uses
 ([design-device-dma.md](design-device-dma.md#device-addresses-and-reach)).
+A PCIe function's record carries a register window for each placed
+memory BAR, each with its BAR's hardware size, and, for an MSI-X route,
+its doorbell, data and the table's BAR, offset and size; at open the NIF
+writes every entry of the table from the record, entry 0 live and the
+rest masked, and reads entry 0 back
+([design-pcie.md](design-pcie.md#interrupts)).
 
 **What the NIF keeps.** The NIF keeps one record for each device the
 domain holds, a small integer its driver names it by, for the boot, since the manifest gives each device one
@@ -2754,11 +2785,18 @@ bits. A virtio device's configuration space is registers of its kind's
 peripheral, each declared at its field's width and access, read and written by
 name like every other register: the kind's peripheral copies the transport's
 registers and adds the configuration fields its driver uses
-([design-hardware-generation.md](design-hardware-generation.md#register-inputs)),
+([design-generation.md](design-generation.md#register-inputs)),
 and the device kinds table names that peripheral for the kind's records, which the NIF opens as that peripheral and no other. A field
 the peripheral does not declare cannot be reached, and a read-only one cannot be
 written, so the input driver can write only `select` and `subsel`, each one
-byte, as virtio 1.2 sections 4.2.2.2 and 5.8.5.1 require. Every
+byte, as virtio 1.2 sections 4.2.2.2 and 5.8.5.1 require. A cluster whose base
+the controller reports, as xHCI's operational, runtime and doorbell registers
+are, is marked in the SVD source with the register and field its base comes
+from; at open the NIF reads each base once, checks that the cluster lies wholly
+inside the window and refuses the record with `{error, einval}` otherwise, and
+follows the controller's extended-capability list once, at most 64 entries,
+each forward of the last, so every name then resolves to a fixed offset
+([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)). Every
 register of a peripheral the NIF drives carries a mark in the SVD source,
 `ownedByNif`, saying whether the NIF owns it, and the generator refuses a
 register without the mark. The NIF owns every register through which a
@@ -2922,7 +2960,7 @@ or a run of TCP segments, which the network's
 cut core, `erx_tcp_cut.c`, linked into the NIF, plans and checks whole
 first and then cuts into its frames as the NIF copies them, summing each
 frame's checksums in the same pass
-([design-network-fastpath.md](design-network-fastpath.md#each-transports-cut)).
+([design-network-stack.md](design-network-stack.md#each-transports-cut)).
 The answer is `{ok, Posted}`, the frames posted from the first, so a run
 that finds fewer free heads than it has frames is posted in part;
 `{error, full}` with nothing posted; and `{error, broken}` as `post/4`
@@ -2940,7 +2978,7 @@ ADMA2 queue is armed, the word matches what was posted and the
 controller's fields the transfer relies on read back as installed and
 posted, which it checks under the device lock, and while that queue is
 armed or in flight it issues no other word
-([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)),
+([design-device-dma.md](design-device-dma.md#the-descriptor-forms)),
 so no command starts a DMA transfer the NIF did not set up. Which
 module may call it is the block driver's write-path rule
 ([design-storage.md](design-storage.md#data-model), U4).
@@ -2972,14 +3010,18 @@ coherent, the NIF cleans and invalidates what the device wrote before it
 reads it: the used index first, then the entries and each buffer's bytes
 it copies, once the index says they are done; GENET's register ring and SDHCI's
 ADMA2 table complete in their own forms, with the same answers
-([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)).
+([design-device-dma.md](design-device-dma.md#the-descriptor-forms)).
+The xHCI controllers' TRB ring form takes requests of its own through
+`post/4`, a transfer on an endpoint's queue or a command to the
+controller, and `complete/2` answers each with its completion
+([design-usb.md](design-usb.md#the-trb-ring-form)).
 
 **The reset rule.** A posted buffer belongs to its queue until the
 device returns it: it goes back to its pool only through `complete/2` or
 when the NIF itself resets the device, in `erx_device:negotiate(Dev,
 Wanted)`, which for every descriptor form is the form's reset, the
 device's report that it holds no descriptor, then the install
-([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms));
+([design-device-dma.md](design-device-dma.md#the-descriptor-forms));
 virtio's is described here. That one call runs virtio's initialisation (section 3.1.1 of
 the specification) whole, so no driver orders its steps. It marks every
 queue of the device not ready, so from then on nothing is posted on it or
@@ -3071,7 +3113,7 @@ decides batching per device class
 
 **Chokepoints.** Only `erx_device` calls `erx_mem_create_physical`, `erx_vm_map`, `erx_dma_map`, `erx_mem_dma_addr`
 and the user-mode cache maintenance in a runtime, but for the lane port driver's `erx_vm_map` of a connection's two lane sides, so nothing else in a runtime has a mapping of device memory; only its generated
-accessors, called only by its BIFs and its NIF, touch a register window, and no runtime source includes a peripheral header that `tools/gen_hw.rb` generates or names one of its accessors, which the kernel platform layer alone uses ([design-hardware-generation.md](design-hardware-generation.md)); a record's window is private to the source that holds them; only `erx_device.c` stores to a register the NIF owns, and within it only its one address function writes a ring's address
+accessors, called only by its BIFs and its NIF, touch a register window, and no runtime source includes a peripheral header that `tools/gen_hw.rb` generates or names one of its accessors, which the kernel platform layer alone uses ([design-generation.md](design-generation.md#hardware-and-terminal-sources)); a record's window is private to the source that holds them; only `erx_device.c` stores to a register the NIF owns, and within it only its one address function writes a ring's address
 or a descriptor's address fields and addressing flags;
 and the NIF holds no parser: a source check fails the build on a loop
 over device-written bytes in the NIF, whose copy at completion is one
@@ -3236,42 +3278,24 @@ there to `load`, `store_width` and the stand-in's model, and the calls of
 `store_width` to `store` and that model, so no access escapes the record.
 Its seed is a raw store in `erx_device_command`.
 
-**Tests**, each with a seed that must fail it:
-
-* On the hosted stand-in, virtio and GENET, a known sequence of `read/2`,
-  `write/3`, `write_field/4`, `command/2` and a post's doorbell appears in
-  order with names, widths, values and `done`; 300 accesses keep the
-  newest 256, accesses 45 to 300 both included, and show the first 44 as
-  a gap; a refused write records nothing. Seeds: the record made in
-  `erx_device_write` instead of `store`, which loses the doorbell; the
-  record made before the refusal; the window's upper bound written
-  `seq < next`, which loses the newest access.
-* On the host, a test hook of the stand-in's model holds thread A's
-  store inside the access while thread B makes 300 reads; once A is let
-  go and both are done, every entry holds its own access's sequence
-  number, value and `done`. Seed: the lock let go after the entry is
-  written and taken again for the completion, so B wraps the ring and A
-  completes into B's entry.
-* `erx_device_trace_decode`, a fuzz target, gives `unknown` and gaps,
-  never a name, for a bad magic or version, an index or offset that names
-  nothing, a mismatched `seq` and a wrapped `next`; it shows an entry
-  without `done` as `completion unrecorded`, a read's value as `unknown`
-  with it, and names no access as a cause. Seeds: the offset bound
-  dropped; a read's value shown without `done`.
-* The host architecture layer counts one store wait per store, a plan's
-  register steps included, with or without the flag, each of them the
-  synchronous barrier under `ERX_BOOT_DEVSYNC`, and none per load; a
-  release build refuses `erx.devsync=1`, leaves the
-  section zero and shows `unsupported` for a section a test fills.
-  Seeds: the barrier in `erx_device_write`, which misses the plan's
-  steps; the refusal removed; the development flag ignored; the release
-  reader decoding the section.
-* Under QEMU with `erx.devsync=1`, the virtio network driver's domain
-  runs its device tests, `/proc/devices/Name/trace` ends in its doorbell,
-  and once the test stops the domain `[domains, Id, crash]` shows the
-  same entries and its end line in `/var/log/messages` names that path
-  and holds no entry. Seeds: the domain service drops the section from
-  the death record; the end line carries the newest entry.
+**Tests.** On the hosted stand-in, virtio and GENET, a known sequence of
+accesses appears in order, the ring keeps the newest 256 and shows the rest
+as a gap, and a refused write records nothing; a host test holds one
+thread's store inside its access while another wraps the ring; the
+decoder, `erx_device_trace_decode`, is a fuzz target that gives `unknown`
+and gaps, never a name, for anything malformed, and names no access as a
+cause; the host architecture layer counts one synchronous store wait per
+store under `erx.devsync=1`, plan steps included, and a release build
+refuses the flag and decodes no section; and under QEMU a driver domain's
+`/proc` trace and its death record show the same entries. Seeds: the record
+made outside `store`, which loses the doorbell; the record made before the
+refusal; the window's upper bound off by one; the lock released between
+the entry and its completion; the decoder's offset bound dropped, or a
+read's value shown without `done`; the barrier in `erx_device_write`,
+which misses a plan's steps; the release refusal removed, the development flag ignored, or the release
+reader decoding the section; the domain service dropping the section from
+the death record; and the domain's end line in the log carrying the newest
+entry.
 
 ### Per-byte primitives
 
@@ -3294,12 +3318,12 @@ around them.
 | `erx_bytes:crc32c/2` | CRC-32C, continuing from a given value | the EROFS reader's superblock check | RFC 3720's test values; a table-driven model in Erlang |
 | `erx_bytes:inet_csum/2` and `inet_csum_update/3` | the Internet checksum of RFC 1071 over iodata, as the folded 16-bit sum, continuing from the sum of bytes before it of even length; and RFC 1624's incremental update (its equation 3) of a checksum field when an even-aligned run of bytes changes | the network stack | RFC 1071's and RFC 1624's examples; a straightforward Erlang model |
 | `erx_bytes:siphash24/2` | SipHash-2-4 with a 16-byte key over iodata, as a 64-bit integer | the network stack: initial sequence numbers, timestamp offsets, SYN cookies and the stream of its random generator, `erx_net_rand` ([design-network-stack.md](design-network-stack.md#where-c-is-used-and-what-is-measured)) | the SipHash paper's test vectors; an Erlang model |
-| `erx_bytes:tcp_merge/1`, with `tcp_merge_limit/0` | the merge of a batch of received Ethernet frames, FreeBSD's large receive offload rule: in-order TCP segments of one flow with right checksums become one unit of their first and last frames and payloads, and every frame leaves with its network sum | the network stack's interface, before it classifies ([design-network-fastpath.md](design-network-fastpath.md#the-merge)) | an Erlang model, `erx_tcp_merge_model`, over random batches; its fuzz target's oracle |
+| `erx_bytes:tcp_merge/1`, with `tcp_merge_limit/0` | the merge of a batch of received Ethernet frames, FreeBSD's large receive offload rule: in-order TCP segments of one flow with right checksums become one unit of their first and last frames and payloads, and every frame leaves with its network sum | the network stack's interface, before it classifies ([design-network-stack.md](design-network-stack.md#the-merge)) | an Erlang model, `erx_tcp_merge_model`, over random batches; its fuzz target's oracle |
 | `erlang:crc32/2`, ERTS's own | CRC-32, through ERTS's bundled zlib | F2FS's checksums | the host's stock OTP |
 | `erx_device:post/4`'s copy | copies a request's `out` bytes into its pool buffer ([The device NIF](#the-device-nif)) | drivers | a byte-for-byte comparison |
 | `erx_device:complete/2`'s copy, and `complete/3`'s | copies a completed buffer's returned bytes into a fresh binary ([The device NIF](#the-device-nif)); `complete/3`, given an even offset, also returns the Internet checksum's one's-complement sum of each binary from that offset, computed over the bytes stored, each word loaded once, as `{ok, [{Tag, Bytes, Sum}]}` ([design-network-stack.md](design-network-stack.md#checksums-in-the-copy)) | drivers; `complete/3` the network's | a byte-for-byte comparison; for the sum, `erx_bytes:inet_csum/2` over the binary |
-| `erx_device:post_frame/5`'s copy | copies a frame's binaries into a pool buffer, finishing a delayed Internet checksum in the same pass through the network's `erx_inet_copy_sum` ([design-network-stack.md](design-network-stack.md#checksums-in-the-copy)), or cuts a run of TCP segments into frames as it copies them, summing each frame's checksums ([The device NIF](#the-device-nif)) | the network's virtio transport | the bytes of the same frame encoded with its checksum complete, and `erx_net_frame:cut/1`, byte for byte ([design-network-fastpath.md](design-network-fastpath.md#tests)) |
-| `erx_bytes:tcp_merge/1`, with `tcp_merge_limit/0` | groups a batch of received Ethernet frames, at most 256 frames with less than 64 KiB before the last, the limit `tcp_merge_limit/0` answers and the network driver cuts every batch to, into merged TCP segments by FreeBSD's LRO rule, returning sub-binaries of the frames, and sums each frame that came without its network sum | the network stack's interface process ([design-network-fastpath.md](design-network-fastpath.md#the-merge)) | `erx_tcp_merge_model`, an Erlang model of the rule |
+| `erx_device:post_frame/5`'s copy | copies a frame's binaries into a pool buffer, finishing a delayed Internet checksum in the same pass through the network's `erx_inet_copy_sum` ([design-network-stack.md](design-network-stack.md#checksums-in-the-copy)), or cuts a run of TCP segments into frames as it copies them, summing each frame's checksums ([The device NIF](#the-device-nif)) | the network's virtio transport | the bytes of the same frame encoded with its checksum complete, and `erx_net_frame:cut/1`, byte for byte ([design-network-stack.md](design-network-stack.md#tests)) |
+| `erx_bytes:tcp_merge/1`, with `tcp_merge_limit/0` | groups a batch of received Ethernet frames, at most 256 frames with less than 64 KiB before the last, the limit `tcp_merge_limit/0` answers and the network driver cuts every batch to, into merged TCP segments by FreeBSD's LRO rule, returning sub-binaries of the frames, and sums each frame that came without its network sum | the network stack's interface process ([design-network-stack.md](design-network-stack.md#the-merge)) | `erx_tcp_merge_model`, an Erlang model of the rule |
 | the pipe NIF's record copy | copies a record between a pipe's ring and a binary | the session's pipe ends | the pipe tests |
 
 * **Bounded.** A call works on at most 64 KiB of hashing or checksumming
@@ -4353,333 +4377,208 @@ own domain, so a runtime that lies harms only itself.
 
 ## Verification and testing
 
+Each check below names what it guards; where a seeded fault proves the check
+runs, it is named. The individual cases live with the tests.
+
 * **The oracle.** OTP's `emulator`, `kernel`, `stdlib` and `compiler`
-  suites run in a test domain under QEMU with HVF, on both
-  runtime images, and on the development host on stock OTP 29.1.2; a
-  Ruby tool compares them case by case (`make check-oracle`). Every difference
-  is a bug, a documented difference with a test (the table of
-  [Erlang-visible behaviour](#erlang-visible-behaviour)), or an upstream
-  bug recorded as such. Checked-in rules map each class of case that differs
-  to its explanation, such as the printing of local pids, or to the reason it
-  cannot run yet (a peer, a spawn port, a socket, a C helper, a load at run
-  time, a file system), which the run must show. The comparison fails on a
-  difference no rule explains and on a rule that matches no case. Suites run
-  in the system domain from a test release, which alone is allowed to load
-  code outside the install arena, since the suites compile and load modules.
-* **The C library.** musl's `libc-test` runs in a test domain, also
-  under `make check-oracle`.
+  suites run in a test domain under QEMU with HVF, on both runtime images,
+  and on the development host on stock OTP 29.1.2; a Ruby tool compares them
+  case by case (`make check-oracle`). Every difference is a bug, a documented
+  difference with a test (the table of
+  [Erlang-visible behaviour](#erlang-visible-behaviour)), or an upstream bug
+  recorded as such. Checked-in rules map each class of case that differs to
+  its explanation, or to the reason it cannot run yet, which the run must
+  show; the comparison fails on a difference no rule explains and on a rule
+  that matches no case. Suites run in the system domain from a test release,
+  which alone may load code outside the install arena, since the suites
+  compile and load modules.
+* **The C library.** musl's `libc-test` runs in a test domain, also under
+  `make check-oracle`.
 * **The per-byte primitives.** Each has a fuzz target and a differential
-  test against its reference on the host, the CPU-instruction path
-  against the portable one included
-  ([Per-byte primitives](#per-byte-primitives)); the EROFS reader runs
-  over images that fsimg writes, on the host's stock OTP and in a
-  domain, and fsimg verifies each image the packer writes.
+  test against its reference on the host, the CPU-instruction path against
+  the portable one included
+  ([Per-byte primitives](#per-byte-primitives)); the EROFS reader runs over
+  images that fsimg writes, on the host's stock OTP and in a domain.
 * **The adapter's core.** `erx_rt_decide` is tested exhaustively on the
   host over small ranges of every field, with properties: `online` is in
   `1 .. min(limit, total)`; a plan acts on the latest sequence; the ready
   list is taken whenever `ready` was not zero; nothing is published twice.
-* **Park and ERTS's sleep flags.** The park protocol's exhaustive host
-  model of [design-scheduler.md](design-scheduler.md#verification-and-testing)
+* **Park and ERTS's sleep flags.** The park protocol's exhaustive host model
+  of [design-scheduler.md](design-scheduler.md#verification-and-testing)
   gains ERTS's flag transitions for two schedulers, one external signaller
   and one internal waker; no interleaving leaves a scheduler parked with
   work on its queue (R2).
-* **Wake storms.** Four executors pass a million messages in rings across
-  run queues while a peer domain rings the connection's bell; a watchdog
-  fails the test if any executor stays parked for 10 ms while its run
-  queue or a lane holds work. Under HVF.
-* **Capacity.** A test policy moves a domain's capacity between one and
-  four CPUs every 10 ms while OTP's `emulator` suite runs; the suite
-  passes, and `schedulers_online` matches the capacity at every sample.
-* **Deferral.** In deterministic mode, a yield request raised while
-  `defer` is up produces `erx_yield` when it returns to zero, and an
-  overrun when a test lock is held past the grace.
-* **Node identity.** Two domains the system domain connects: each one's
-  `node()` is its `<id>@<host>` name and `erlang:system_info(creation)`
-  its id; `nodes()` lists exactly the domains connected to it before an
-  introduction, after it and after the connection ends, and
-  `monitor_node/2` and `net_kernel:monitor_nodes/1` deliver `nodeup` and
-  `nodedown` for each. A pid of the peer prints as `<D.N.S>` with the
-  peer's id and a local one with the domain's own, and `list_to_pid` of
-  each text returns the same pid, while the text of an id no connected
-  domain has is `badarg`; a local port prints as `#Port<D.N>` and a
-  reference as `#Ref<D.a.b.c.d>`, each with the domain's id. A pid of a
-  peer that ended still prints its own id once a later domain of the
-  peer's name has connected. A send to a pid of a domain that is not
-  connected is dropped and a spawn into it fails with `noconnection`, once
-  `erx_dist:setup/5` has refused. Seeded failures: a build with stock
-  `internal_channel_no` fails the local printing case, one whose
-  `external_channel_no` reads the creation of the distribution entry
-  instead of the term's node fails the ended peer's case, one with stock
-  `erts_channel_no_to_dist_entry` fails the parsing case, and an
-  `erx_dist:select/1` that refuses this host's names fails the connection
-  case. A name registered with `global` and a `pg` group joined in one
-  domain stay invisible in the other, and the connection survives `pg`'s
-  discovery; `{Name, Node} ! Msg` toward the peer writes no frame, and
-  `monitor(process, {Name, Node})` gets `DOWN` with `noproc` at once; a
-  cross-domain process monitor fires when its target exits, not only at
-  the connection's end. `erpc:call/4`, `rpc:call/4` and `rpc:cast/4`
-  succeed toward the domain that exported `spawn` to the caller, and
-  `erpc:call/4` fails with `noconnection` toward one that did not;
-  `rpc:block_call/4`, `rpc:abcast/2`, `rpc:sbcast/2`, `rpc:server_call/4`
-  and `rpc:multi_server_call/2` toward a peer return the documented
-  answers and write no frame. `net_adm:ping/1` returns `pong` for the peer
-  and for the system domain's node, `pang` for a domain it has no
-  connection with, writes no frame and leaves every connection up; seeded
-  failure: stock `ping/1`, under which the ping of the system domain's
-  node returns `pang` and ends the domain. A domain starved of CPU for
-  twice `net_ticktime`, with `net_ticktime` at its minimum in it and in
-  its peers, keeps every connection and runs on when it gets CPU again;
-  seeded failure: an `erx_dist` whose connection owner acts on
-  `net_kernel`'s ticks as `dist_util` does, under which the starved
-  domain's system connection ends and the domain stops. The release build
-  checks that every release sets `connect_all` to `false`, and a seeded
-  release that sets it `true` fails the build; a runtime without edit 27
-  fails the `pg` case, its discovery frame ending the connection, and the
-  registered-name tools' case, `block_call`'s request ending it; and a
-  flag set without `DIST_MONITOR_NAME` fails the monitor case.
-* **Connections.** Two domains run OTP's distribution-level tests of
-  send, link, monitor, exit, group leader, spawn and alias reply across a
-  connection and against stock OTP over TCP on the host, case by case. A
-  pid encoded for a peer is exported with `send` alone, a spawned child
-  with every right; narrowed with `erx:export/3` a name stays narrow
-  after a second encode (R7). A frame to an
-  exited process, to a deactivated alias and to a pid never exported get
-  the dead-process outcome, in order after the target's earlier frames
-  (D9), and the peer cannot tell the three apart by outcome or timing. A
-  peer that stops reading suspends exactly the senders to it, and a
-  `gen_server:call` to it times out while unrelated processes run. A
-  process that sends such a peer 4 MiB in numbered messages with
-  `[nosuspend, notify]`, sending the next only after an `ok` or, after
-  a refusal, after its `{erx_lane_ready, Node}`, never waits more than
-  a second for any call to return, receives one notification per
-  refusal, none before the peer reads again, and when the peer reads
-  again its messages all arrive once and in order; the sender's queue
-  stays within the busy limit and one frame; the same run with the
-  peer ended instead of reading again delivers the notification at the
-  connection's end. Eight such senders on eight schedulers, against a
-  peer that reads slowly, keep the queue within the busy limit and eight
-  frames, and none is left enlisted without a notification. A sender
-  held, by a test build's pause point, between its refusal and its
-  enlisting while the refusing connection ends and a new connection to
-  the same domain takes the entry and becomes busy is told at once.
-  Seeded failures: enlisting without the second look at the busy flag
-  under `qlock`, under which the run with a peer that drains between
-  the check and the lock leaves a sender enlisted with no notification;
-  enlisting without the comparison of `connection_id`, under which the
-  held sender joins the new connection's list and waits past the
-  deadline; and a `get_suspended_on_de` that leaves the notify list for
-  the end, under which a refused sender waits past the deadline after
-  the peer reads again. A message above the lane's limit raises `system_limit`. A malformed frame
-  closes the connection with `noconnection` on both sides and a report to the
-  system domain. The hostile-peer corpus of
-  [design-domains.md](design-domains.md#the-funnel) is replayed into a
-  lane, hosted under ASan and UBSan; a seeded skip of the funnel fails
-  the chokepoint check (R6).
-* **The system node and closing.** Before the domain service starts, the
-  system domain's `node()` is `system@<host>` and
-  `erlang:system_info(creation)` is 4; seeded failure: a system release
-  with `-kernel start_distribution false`, under which the system domain
-  is no node, so no agent runs to open the first system side and the
-  first creation fails. A
-  domain halts with `erlang:halt(3)` in the middle of a burst to a peer
-  whose process holds a link to and a monitor on one of its processes and
-  a pending `spawn_request` into it: the peer gets the whole burst, then
-  the exit, the `DOWN` and the spawn's error reply, each with
-  `{domain_down, D, {halt, 3}}`, and a system-domain process linked to the
-  same process gets the same; seeded failures: a build without edit 56,
-  under which the three carry `noconnection`, and an agent that ends the
-  port without the finish, under which the burst's tail is lost (D17).
-  `erlang:disconnect_node/1` of a live peer, and a port a process of the
-  domain ends with `{domain_down, D2, Info}` for an id `D2` that is not the
-  peer's, each fire `noconnection`; seeded failure: edit 56 without its
-  creation check. A peer that halts after publishing half of a long
-  record, and a finish whose outbound lane is full with the bound on
-  unsent answers reached, each still end with `{domain_down, D, Info}`,
-  the cut record counted as dropped; seeded failures: a finish that takes
-  the cut record as malformed, and one that keeps the answers bound, each
-  of which ends the port with the driver's reason and fires
-  `noconnection`. The port's decisions in its finish are one pure
-  function (`erx_lane_core.c`), tested on the host over every state,
-  event and fact it reads against a model of this section, with the
-  cut record, the full answers bound, a second finish, a malformed frame
-  during the finish and a finish with no entry walked as the driver
-  applies them; seeded failures: the two above, and a finish that acts
-  on an answer-only frame. A domain that a test hook in the system domain hands
-  `net_kernel`'s pid sends it a `gen_server` call of `{spawn, M, F, A,
-  Gleader}` and one of `{disconnect, Node}` for another domain's node:
-  nothing is spawned in the system domain, no connection ends, and
-  `net_kernel` runs on; seeded failure: an edit 16 that delivers raw,
-  under which the spawn runs. A domain whose
-  agent is killed halts with status 69; seeded failure: an agent that
-  `net_kernel` restarts without opening the system connection again (one
-  that opens it again fails that open and halts with status 69 for the
-  system connection), under which the domain runs on and a later
-  introduction never comes up, its `connection_up` sent to the dead
-  agent's pid.
-* **The export table.** A source check lists the callers of its insert
-  and fails on a fourth, with a seeded violation; a property test over
-  sequences of encode, export, exit and deactivate keeps every entry's
-  rights monotone and ends it with its name.
-* **Lazy decode and heap limits.** A grantee floods its facet with
-  messages it never reads: the facet is killed at its `max_heap_size`
-  with the queued frames counted, its lane fills, the grantee's senders
-  suspend, and the system domain's memory stays within the facet's limit
-  plus the lane. The same with messages of large binaries, counted by
-  `include_shared_binaries`.
+* **Scheduling under load.** A wake storm across run queues and a peer's
+  bell fails if an executor stays parked while its run queue or a lane holds
+  work; a policy that moves a domain's capacity every 10 ms while the
+  `emulator` suite runs keeps `schedulers_online` equal to the capacity; in
+  deterministic mode a yield request raised under `defer` yields when it
+  returns to zero, and a lock held past the grace is an overrun.
+* **Node identity and names.** Two connected domains check `node()`,
+  `creation`, `nodes()` and node monitors, the text of pids, ports and
+  references and its parsing back, an ended peer's pids, and that `global`
+  names, `pg` groups and operations on registered names stay inside their
+  domain; `rpc`, `erpc` and `net_adm:ping/1` give their documented answers
+  and write no frame where none is due; a domain starved of CPU for twice
+  `net_ticktime` keeps its connections. Seeded failures: stock
+  `internal_channel_no`, an `external_channel_no` that reads the
+  distribution entry's creation instead of the term's own node, stock
+  `erts_channel_no_to_dist_entry` (edit 18), an `erx_dist:select/1` that
+  refuses this host's names, a runtime without edit 27, a flag set without
+  `DIST_MONITOR_NAME`, stock `ping/1`, a connection owner that acts on ticks,
+  and a release that sets `connect_all` to `true`, which the release build
+  refuses.
+* **Connections.** Two domains run OTP's distribution-level tests of send,
+  link, monitor, exit, group leader, spawn and alias reply across a
+  connection and against stock OTP over TCP on the host, case by case. They
+  check the rights an encode and a spawn export (R7), that a frame to an
+  exited process, a deactivated alias and an unexported pid get the same
+  dead-process outcome in order (D9), that a peer that stops reading suspends
+  exactly its senders, and that `[nosuspend, notify]` senders are told once
+  per refusal and never wait past a deadline. Seeded failures for edit 67:
+  enlisting without the second look at the busy flag under `qlock`, without
+  the comparison of `connection_id`, and a `get_suspended_on_de` that leaves
+  the notify list for the end. The hostile-peer corpus of
+  [design-domains.md](design-domains.md#the-funnel) is replayed into a lane,
+  hosted under ASan and UBSan; a seeded skip of the funnel fails the
+  chokepoint check (R6).
+* **The system node and closing.** The system domain is the node
+  `system@<host>` with creation 4 before the domain service starts (seeded:
+  `start_distribution false`). A domain that halts in the middle of a burst
+  delivers the whole burst and then every link, monitor and pending spawn
+  with `{domain_down, D, Info}` (D17); seeded failures: a build without
+  edit 56, edit 56 without its creation check, an agent that ends the port
+  without the finish, and finishes that take a cut record as malformed or
+  keep the answers bound, and one that acts on an answer-only frame. The
+  port's finish is one pure function
+  (`erx_lane_core.c`), tested on the host over every state, event and fact
+  it reads against a model of [Connections in ERTS](#connections-in-erts).
+  A domain handed `net_kernel`'s pid cannot make the system domain spawn or
+  disconnect (seeded: an edit 16 that delivers raw), and a domain whose agent
+  is killed halts with status 69 (seeded: an agent restarted without opening
+  the system connection again).
+* **The export table.** A source check lists the callers of its insert and
+  fails on a fourth, with a seeded violation; a property test over sequences
+  of encode, export, exit and deactivate keeps every entry's rights monotone
+  and ends it with its name.
+* **Lazy decode and heap limits.** A grantee that floods its facet with
+  messages, small or of large binaries, gets the facet killed at its
+  `max_heap_size` with the queued frames counted, its own senders suspended,
+  and the system domain's memory within the facet's limit plus the lane.
 * **Programs as ports.** A session starts, pauses, forks, execs and ends
-  programs through `erx_program`; `{exit_status, N}` carries each halt
-  status, and for a fault `ERX_EXIT_SIGNAL` plus the signal the fault
-  table gives its kind; a signal sent as a report arrives after every
-  report sent before it; closing the port stops the anchor and with it
-  the program's tree; the owner's exit closes the port; a handler whose
-  program's inbound lane is full gets `busy` and is never suspended. A
-  program that writes a malformed channel record, a request on a busy
-  slot, or a notice that is not due, a repeated `{closed}` among them, is
-  ended and reported with `SIGSYS`, and one that writes as fast as it can
-  within its credit leaves at most one message per credit in its
-  handler's mailbox. The driver's decisions are a pure core
-  (`erx_program_core.c`), tested on the host: a start failing at each
-  step undoes exactly the steps before it, last first, and every input in
-  every state of a program's end agrees with a model of this section,
-  with each status reported at most once and the release made exactly
-  once; seeded failures: a skipped undo, two steps swapped, and a
-  fault's status lost to the image's exit record. The programs design's
-  own suites run over the driver
+  programs through `erx_program`; exit statuses, report order, the end of
+  the program's tree with its port, and the ending of a program that breaks
+  the channel protocol with `SIGSYS` are checked. The driver's decisions are
+  a pure core (`erx_program_core.c`), tested on the host against a model:
+  a start failing at each step undoes exactly the steps before it, last
+  first, and each status is reported at most once; seeded failures: a
+  skipped undo, two steps swapped, and a fault's status lost to the image's
+  exit record. The programs design's own suites run over the driver
   ([design-programs.md](design-programs.md#verification-and-testing)).
-* **The device NIF.** On the hosted backend a model device completes,
-  skips and misreports descriptors: every address the NIF gives it lies
-  in the buffer of the chain's head, and no two chains in flight share a
-  buffer; a refused post writes nothing to the rings or the doorbell;
-  `negotiate/2` accepts no bit that changes the ring or the transport,
-  fails with the device FAILED and the queue refused when the device
-  refuses FEATURES_OK, offers no VERSION_1 or keeps a queue after its
-  reset, refuses a queue the device still holds and installs nothing of it, and otherwise zeroes the rings before the ready bit;
-  after a driver's exit `post/4` fails until `negotiate/2`; an
-  out-of-range index or length breaks the queue until `negotiate/2`; a
-  buffer the device rewrites after its completion leaves the binary
-  `complete/2` returned unchanged (R9); a driver process killed with
-  buffers posted leaves its pools and queues in place, and nothing the
-  device may hold is reused before `negotiate/2` (R8); `write/3` and
-  `write_field/4` of every owned register fail with `badarg`; a restarted driver whose line its predecessor left
-  masked receives its next interrupt, and its predecessor's late exit
-  leaves its binding in place. A seeded return of a posted buffer on
-  collection, a seeded post before `negotiate/2`, a seeded raw-offset
-  accessor and a seeded register without its `ownedByNif` mark and a seeded
-  owned register named outside `erx_device.c` each fail. Under QEMU the virtio block and network drivers run their device
-  tests through the NIF with interrupts delivered through the event
-  table, under HVF.
-* **The event table.** Labels fire while their sinks close and exit and
-  are reused at once by new sinks: every delivery reaches a live sink or
-  is dropped, none reaches a dead one, and a stale delivery that reaches
-  the later sink of a reused label makes it look and act on nothing it
-  did not find; under TSan hosted. Seeded failure: a connection sink that
-  counts a delivery as a frame, under which the stale delivery produces
-  an action.
-* **The root-task entry.** The hosted backend starts the interpreter
-  image through `erx_root_main` with a model machine page: the entry runs
-  the bootstrap of [design-system.md](design-system.md#the-root-task),
-  whose own tests that document lists, and ERTS boots the system release
-  on a boot information page flagged `ERX_BOOT_ROOT`; a corrupted slot
-  ends the task with a diagnostic. The domain library's plans are tested
-  on the host over
-  specifications at every limit, with failure injection at every kernel
-  call, and leave nothing created on failure.
-* **The watchdog.** A test system release that stops petting ends the
-  machine within the deadline under QEMU; one whose domain service stops
-  answering sees it killed and restarted and the pets go on, and one
-  whose domain service never answers again ends at the deadline; a
-  partial boot that outlives `B` is not ended, since the root-task entry
-  pets, and the same boot with the entry's petting removed is ended;
-  deterministic mode never ends the machine.
-* **Reference identities.** Normal and dirty schedulers and helper threads
-  create all reference kinds concurrently, using a reduced-width host
-  model to reach every source and counter exhaustion; no identity repeats
-  and exhaustion refuses before wrap. Comparison, hashing, text conversion
-  and external term round trips preserve all four words, both locally and
-  when echoed by stock OTP 29.1.2. A reference received over a connection never
-  becomes a native resource. Alias tests cover repeated ordinary sends,
-  each reply-deactivation mode, unalias, monitor removal and process
-  death, each ending the alias's export. AES known-answer vectors and
-  differential portable/hardware tests use the exact primitive that
-  ships; key setup, entropy failure and counter exhaustion have failure
-  tests.
-* **Blocking.** A test NIF calls `erx_ipc_wait` with a 1 ms deadline from
-  a normal scheduler and gets `ERX_EWOULDBLOCK`; from a dirty I/O
-  scheduler it waits and returns `ERX_ETIMEDOUT`.
-  E-S10 counts refusals across OTP's suites.
-* **BeamAsm.** A module is reloaded in a loop on four CPUs while every
-  scheduler calls it (R4); a page-table walk after every test finds no
-  writable and executable mapping; a space created without `ERX_SPACE_JIT`
-  cannot map a JIT object.
-* **The three images.** The build check finds no symbol of BeamAsm, asmjit,
-  libc++ or libc++abi in the system and interpreter images and none of
-  `libcrypto` in the system image, and fails on a seeded asmjit object
-  linked into either and on `crypto` added to the system image's NIF
-  table; the packer refuses a root image marked
-  `ERX_IMAGE_JIT`, shown by a seeded manifest; in a booted system
-  `erlang:system_info(emu_flavor)` is `emu` in the system domain and in a
-  command domain and `jit` in an ordinary domain, and a JIT object asked
-  for from the system domain is refused by the kernel (R10).
-* **Call stubs.** The generator refuses a test ABI file that gives a call
-  a pointer argument (R11). Every call that takes a memory window is
-  called with ranges at and past the object's end, with an
-  offset and length whose sum overflows, and with an object the caller
-  holds without the right the call needs, on the `erx` backend and on
-  the hosted backend, and both return the same status for each; a hosted
-  backend with its range check removed fails the comparison. A call
-  whose request fills the UTCB is called with every field at its limit.
-* **Crash handling.** `erlang:halt("boom")` produces a dump, the exit
-  reason `{domain_down, D, crash}` and the slogan `"boom"` in the death
-  record; `erlang:halt(3)` produces `{domain_down, D, {halt, 3}}` and no
-  dump; a one-page crash area produces a truncated dump marked as such.
-  The reader takes a dump that fills the area exactly as complete, a dump
-  one byte longer as truncated, and refuses headers with a wrong magic or
-  version, an unknown flag, a non-zero `pad`, a `length` past the area or
-  a slogan without a NUL. A system domain that crashes ends the machine;
-  in a development build its slogan is in the crash record, and in a
-  release build the record holds no text.
-* **Fuzz targets.** `prim_file`'s path resolution (`erx_path`, in Erlang), the
-  file protocol's decoder, the crash header's reader, `liberx`'s
+* **The device NIF.** On the hosted backend a model device completes, skips
+  and misreports descriptors, and the NIF's guarantees are checked against
+  it: addresses within the chain's head buffer, no shared buffers in flight,
+  refused posts that write nothing, `negotiate/2`'s refusals, a returned
+  binary unchanged by a later device write (R9), nothing reused before
+  `negotiate/2` after a driver's death (R8), owned registers refused, and a
+  restarted driver's interrupt binding. Seeded failures: a posted buffer
+  returned on collection, a post before `negotiate/2`, a raw-offset accessor,
+  a register without its `ownedByNif` mark, and an owned register named
+  outside `erx_device.c`. Under QEMU the virtio block and network drivers run
+  their device tests through the NIF, under HVF.
+* **The event table.** Labels fire while their sinks close and are reused at
+  once: every delivery reaches a live sink or is dropped, and a stale one
+  makes the later sink act on nothing it did not find; under TSan hosted.
+  Seeded failure: a connection sink that counts a delivery as a frame.
+* **The root-task entry.** The hosted backend starts the interpreter image
+  through `erx_root_main` with a model machine page and boots the system
+  release; a corrupted slot ends the task with a diagnostic. The domain
+  library's plans are tested on the host at every limit with failure
+  injection at every kernel call, and leave nothing created on failure.
+* **The watchdog.** A system release that stops petting ends the machine
+  within the deadline; a domain service that stops answering is restarted
+  and the pets go on; a partial boot is kept alive by the root-task entry's
+  pets (seeded: the entry's petting removed); deterministic mode never ends
+  the machine.
+* **Reference identities.** All reference kinds are created concurrently
+  from every thread kind over a reduced-width host model that reaches every
+  source and counter exhaustion: no identity repeats and exhaustion refuses
+  before wrap. All four words survive comparison, hashing, text and the
+  external format, locally and through stock OTP; a reference received over
+  a connection never becomes a resource; every way an alias ends ends its
+  export. AES known-answer vectors and portable-against-hardware tests use
+  the primitive that ships; key setup, entropy failure and exhaustion have
+  failure tests.
+* **Blocking.** A test NIF's `erx_ipc_wait` gets `ERX_EWOULDBLOCK` on a
+  normal scheduler and waits on a dirty I/O one; E-S10 counts refusals
+  across OTP's suites.
+* **BeamAsm and the three images.** A module reloaded in a loop on four
+  CPUs while every scheduler calls it (R4); a page-table walk after every
+  test finds no writable and executable mapping; a space without
+  `ERX_SPACE_JIT` cannot map a JIT object. The build finds no symbol of
+  BeamAsm, asmjit or libc++ in the system and interpreter images and none of
+  `libcrypto` in the system image, seeded with an asmjit object and with
+  `crypto` in the system image's NIF table; the packer refuses a root image
+  marked `ERX_IMAGE_JIT`; and the kernel refuses a JIT object to the system
+  domain (R10).
+* **Call stubs.** The generator refuses a test ABI file that gives a call a
+  pointer argument (R11). Every call that takes a memory window is called at
+  and past the object's end, with an overflowing offset and length, and
+  without the right it needs, on the `erx` and hosted backends, which must
+  return the same status; a hosted backend with its range check removed fails
+  the comparison.
+* **Crash handling.** Halts with a slogan and with a status give the right
+  exit reason, death record and dump; a small crash area gives a truncated
+  dump marked as such; the reader's boundary and malformed-header cases; and
+  a crashing system domain ends the machine, with its slogan in the crash
+  record only in a development build.
+* **The port's seams.** Each seam has a passing case paired with the seeded
+  failure that shows it ran; hosted cases run under ASan once per batch, and
+  the native ones are listed in
+  [design-fiasco.md](design-fiasco.md#verification). `make check-runtime-seam`
+  is seeded with an `open` in `sys/erxos`, a `uname` in a native-only object,
+  a `HAVE_` answer changed in one target, `#ifdef __APPLE__` in `sys/erxos`,
+  and a `sysconf` or a `write` outside `erx_output.c`. The output path
+  ([The console and standard I/O](#the-console-and-standard-io)) is seeded
+  with stock's `written += res`, an escaping step, the tty owner's trap
+  removed, a tty's `output/3` added, an `erx_output_write` that answers
+  `EAGAIN` past the debug log's rate, and a `tty_drain` that waits on a
+  stopped tty. Further seeds: the output path's descriptor check removed, so bytes
+  arrive on descriptor 3; the tty owner's self-test or its monitor removed;
+  the startup vector's words not copied, and `--`, `-user erx_console` or
+  `-nocookie` removed from the boot's arguments; in the pty test of the
+  hosted image, the input NIF's `erx_irq_trigger` or the terminal-mode
+  restore removed, or `isprint/1` returned to its NIF stub; at end of input,
+  `erx_stdio` halting, `erx_console_eof` dropped, or `put_chars_sync`
+  answered before the write; `erx_pthread_create_executor` delegating to
+  plain `pthread_create`, or its slot cleanup removed; `ETHR_FUTEX__`'s wake
+  dropped or returning the woken count, or `ERX_ETIMEDOUT` passed through
+  untranslated; in the release file system compared against stock
+  `prim_file` over a corpus of paths, a binary search off by one, a listing
+  that yields a name twice, and a resolver that folds `.` and `..` on the
+  text; `close` answering `enotsup`, a handle never released, or
+  `read_handle_info` answering size 0; the name-list decoder's name-length
+  or count check removed, which its fuzz seeds of a 256-byte name and of 257
+  names catch; and `start.boot` removed from the archive, or an index byte
+  flipped, for the hosted boot from the archive alone.
+* **Fuzz targets.** `prim_file`'s path resolution (`erx_path`, in Erlang),
+  the file protocol's decoder, the crash header's reader, `liberx`'s
   validation of the boot information page, the funnel in both modes, the
-  lane's position checks, the device NIF's completion reader with a
-  hostile model device, and the exit and fault record reader, built from
-  the same sources for the host (`make check-fuzz`); the programs' own
-  targets are in
+  lane's position checks, the device NIF's completion reader with a hostile
+  model device, the exit and fault record reader, and the release file
+  system's decoder of name lists, built from the same sources for the host
+  (`make check-fuzz`); the programs' own targets are in
   [design-programs.md](design-programs.md#verification-and-testing).
 * **Code by hash.** A module whose bytes differ by one bit from its hash
   fails to load in every domain, the system domain included.
 * **Hosted mode.** The same suites run hosted under ASan and UBSan, and the
   storm, capacity, event-table and connection tests under TSan.
-* **Determinism.** The system and interpreter images in deterministic mode boot to
-  a shell and runs a scripted session with a byte-identical transcript.
-* **Floats.** A differential test of `float_to_list/1,2`,
-  `list_to_float/1` and the float term format over millions of random
-  doubles against the host.
-
-**The port's seams.** Each passing case is paired with the seeded failure that
-shows it ran. Hosted cases run under ASan once per batch, and the native ones are
-listed in [design-fiasco.md](design-fiasco.md#verification).
-
-| Case | Seeded failure, and what it shows |
-| --- | --- |
-| `make check-runtime-seam` passes on the hosted and the native image | a call to `open` in a `sys/erxos` file fails it, naming the object; a call to `uname` in a native-only object fails the number check; a `HAVE_` answer changed in one target's file fails the comparison; `#ifdef __APPLE__` in `sys/erxos` fails the source check; a `sysconf(_SC_NPROCESSORS_ONLN)`, and a `write` outside `erx_output.c`, fail the name check |
-| `erx_output_write` on descriptors 1 and 2 writes, and on an open descriptor 3 answers `EBADF` | the descriptor check removed: the bytes arrive on descriptor 3 |
-| `erlang:display_string/2` with all 256 byte values, to a full non-blocking pipe that is then drained, delivers exactly those bytes in order | stock's `written += res` restored: the bytes differ and AddressSanitizer reports the read; an escaping step added: the comparison fails |
-| In a session's domain with one executor and a stopped tty, `erlang:display_string/2` waits, another process goes on running, and once the tty is connected every byte arrives in order | the trap removed: the bytes reach the C path and the comparison fails |
-| In the system domain, while a session is connected at the UART and with the system shell's tty raw, `erlang:display_string/2` of a newline reaches the driver as that one byte, and the service goes on | a tty's `output/3` added on this path: the byte becomes CR-LF; the write sent to a tty that is not connected: the deadline fires |
-| With one executor, a flood of `erts_printf` and of `fprintf(stderr, ...)` past the debug log's rate returns, `ferror(stderr)` stays clear, the executor parks afterwards, and the log reports a count of lines dropped | `erx_output_write` answering `EAGAIN` past the rate: `erl_printf.c`'s loop spins and the deadline fires |
-| `erlang:display_string(stdout, <<"done\r\n">>), erlang:halt(0)` in a session's domain delivers those bytes; on a stopped tty it halts at once and on a tty whose master stops answering it halts within 5 s | the trap in `halt_2` removed: the bytes are lost; `tty_drain` that waits on a stopped tty: the halt misses its deadline |
-| Before any owner runs, and from the owner itself, `erlang:display_string/2` reaches `erx_output_write`; the same with the owner killed in mid-write | the owner test removed: the owner waits on itself and the deadline fires; the monitor removed: the writer waits past the deadline |
-| A host test of `erx_runtime_main`'s vector over a read-only page: `argv[0]`, every word in order, the node name's flag, a final null, and each word writable. The hosted boot of [Configuration](#configuration)'s arguments lists `kernel_sup`'s children as its table says, and `whereis(user)` is the group with no shell | the words not copied: the write faults; `--` removed from the arguments: the boot stops in `erts_usage`, naming the flag; `-user erx_console` removed: `user_drv` fails at its load and the boot ends with `init`'s diagnostic; in a release with a carrier, `-nocookie` removed: `auth` fails on the read-only release |
-| A pty test drives the hosted image: `1> 1+1.` answers `2`, an arrow key recalls history, `halt().` ends the process with status 0 and the terminal is restored | the NIF's `erx_irq_trigger` removed: input never arrives, the test's deadline fires, and an idle sample shows every executor parked; the mode restore removed: the test sees the terminal still raw; `isprint/1` returned to its NIF stub: the first prompt raises `undef` and the deadline fires |
-| The image with empty input ends with status 0. With `1+1.` and `2+2.` immediately followed by end of file, the output holds both results and the status is 0 | `erx_stdio` halting at end of file: the results are missing; `erx_console_eof` dropped: the deadline fires; `put_chars_sync` answered before the write: a test driver that holds back `erx_console_written` sees `io:format` return |
-| An executor made by `erx_pthread_create_executor`, hosted and in the `native_musl` suite: its slot is not `ERX_NO_EXECUTOR_SLOT`, `erx_park` with a deadline gives `ERX_ETIMEDOUT`, and a plain `pthread_create` thread gives `ERX_ETYPE` | the call delegating to plain `pthread_create`: the park gives `ERX_ETYPE` |
-| 64 executors succeed and the next gets `EAGAIN` in its creator; slots return after both a return and a `pthread_exit`, so 64 more succeed | the cleanup handler removed: the second round gets `EAGAIN` |
-| `ethr_event` timed waits and wakes in a storm, hosted and native, each with a deadline | `ETHR_FUTEX__`'s wake dropped: the storm's deadline fires; its wake returning the woken count: the first wake of a waiter ends the runtime; `ERX_ETIMEDOUT` passed through untranslated: the first timed wait ends it |
-| The release file system answers like stock `prim_file`: a corpus of paths (nested, `.`, `..`, missing, a file used as a directory, a directory opened, long names) gets the same results and bytes hosted over an archive as stock OTP over the unpacked tree, `f/.` and `f/` where `f` is a file and `missing/../x` included. A path over a limit is named in the comparison and pinned | a binary search off by one, and a listing that yields a name twice, each fail the comparison; a resolver that folds `.` and `..` on the text fails the `missing/../x` case |
-| 10,000 `read_file` calls and as many `open` and `close` pairs leave the NIF's resource count where it began, and `read_handle_info` on an open handle answers its entry's type and size | `close` answering `enotsup`: the pair's `close` fails; the release removed: the count grows; `read_handle_info` answering size 0: the comparison fails |
-| The pure core, exhaustive over all paths of a small tree on the host, and under `make check-fuzz` through the NIFs' decoder of name lists, which any process can call | the name-length check removed: the fuzz target's seed of a 256-byte name fails its property that no name is over the limit; the count check removed: AddressSanitizer reports the walk's overrun from the seed of 257 names |
-| A hosted boot reaches `init` through `erl_prim_loader` from the archive alone, with `HOME` and the working directory unset and no other file readable to it | `start.boot` removed from the archive: `init` ends with its own diagnostic, with no spin; a flipped index byte: the hosted entry refuses the archive, naming the check |
+* **Determinism.** The system and interpreter images in deterministic mode
+  boot to a shell and run a scripted session with a byte-identical
+  transcript.
+* **Floats.** A differential test of `float_to_list/1,2`, `list_to_float/1`
+  and the float term format over millions of random doubles against the
+  host.
 
 ## Performance
 

@@ -387,9 +387,9 @@ erXos's bootable file is `bootstrap` alone, built as a flat image, with the
 archive that erXos's packer appends
 ([design-fiasco.md](design-fiasco.md#boot-handoff)); `bootstrap` carries no
 Fiasco modules. Starting `liberx`'s root-task entry is the root startup's;
-until it lands, `tools/lib/erx/boot_image.rb` packs the kernel and `sigma0`,
-and a guest test's root task, as files bootstrap places, over the structural
-fixture's unadmitted manifest. The banner image has no root to place, so
+for a guest test, `tools/lib/erx/boot_image.rb` packs the kernel and
+`sigma0`, and the test's root task, as files bootstrap places, over the
+structural fixture's unadmitted manifest. The banner image has no root to place, so
 Fiasco starts `sigma0` and returns without creating a root task when its root
 entry is zero, and the harness ends this guest at its named banner checkpoint.
 
@@ -406,8 +406,8 @@ The source inventory includes the neutral ABI root, explicit fragments,
 the architecture binding, hardware register sources and escape rules.
 Each generator's plan declares its output paths. Generation stages all
 outputs before publication. An unknown declaration, output path collision
-or unsupported layout fails before an output changes. Later service schemas land with
-their consumers, under [Generated interfaces and representations](design-generation.md).
+or unsupported layout fails before an output changes. Service schemas follow
+[Generated interfaces and representations](design-generation.md).
 
 Generated files live in the build tree, not the repository.
 `Erx::Generated.ensure` (`tools/lib/erx/generated.rb`, exposed as
@@ -508,9 +508,12 @@ partial boot has none, but initial-root feasibility still requires its
 production bootstrap plan and backend/ABI-bound charge evidence. A
 source-declared baseline is not that evidence. Unavailable required
 planning fails as unsupported; structural fixtures cannot mint an
-admission token or enter the production publisher. The roadmap defines the
-[M0 acceptance image and M1 planner gate](plan.md#m0-the-tree-the-toolchain-and-the-oracle)
-without changing the complete target manifest or its admission rules.
+admission token or enter the production publisher. Until
+[track K](plan.md#track-k-erxoss-kernel) brings `erx_root_plan` with its
+charge evidence, the Phase 1 manifest check's root startup rule stands in
+for the initial root's feasibility and charge plan; child planning is
+unchanged, and neither changes the complete target manifest or its
+admission rules.
 
 `tools/erx pack` (`make pack`) is the entry point for a platform's
 production image and its medium: it builds Fiasco and packs the production image of a platform's
@@ -687,9 +690,8 @@ and modified hashes in its source record. The original archive remains
 unchanged. The guest checks those hashes before replacing that one file;
 runtime, library and testcase sources remain the archive's exact bytes.
 Observer failures cannot change a testcase's return or Common Test's result;
-missing observer evidence makes the report incomplete. Tests compare reporter
-enabled/disabled outcomes and actual peer-case logs, repeats, crashes,
-timetraps and pre-initialization skips.
+missing observer evidence makes the report incomplete. The reporter's tests
+compare outcomes with the reporter enabled and disabled.
 
 The reporter streams each event as it is recorded, as raw bytes on standard
 output, in one call that bypasses the io server so no device encoding can
@@ -771,7 +773,7 @@ deadline limits form part of the report and cache key. A deliberately
 broken configuration succeeds only as an exact expected counterexample,
 with the named property and pinned tool exit status. The runner's smoke
 fixtures test this classification; they claim no protocol property of
-erXos. The first update model lands at the roadmap's declared milestone.
+erXos.
 
 ## Verification
 
@@ -779,19 +781,16 @@ Host tests cover pure plan validation separately from effects. Seeded
 violations exercise duplicate and unknown lock entries, archive hash and
 path failures, missing provenance, changed imported files without notices,
 excluded licenses, stale/missing/orphaned generated outputs and unsupported
-tools. Oracle fixtures cover repeated and grouped cases, both skip kinds,
-fixture failures, interrupted runs and inconsistent totals. Harness
-fixtures cover split serial reads, checkpoint order, early guest exit,
-timeout and a bootstrap memory summary that disagrees with the guest's
-RAM. TLC fixtures cover wrong properties, parser errors, resource failure,
-incomplete searches, cache invalidation and empty filters.
+tools. Oracle, harness and TLC fixtures plant failures each parser and
+verdict must classify, among them interrupted runs, inconsistent totals, early guest
+exit, a bootstrap memory summary that disagrees with the guest's RAM, wrong
+properties and incomplete searches.
 
 Acceptance also uses the real tools: both stock OTP flavours and their
 required suites, the frozen stopgap banner under HVF, clean
 rebuilds with identical bytes for the archive, the single bootable file
 and the two-file form, the single file's archive equal to the two-file
-archive, both forms booting under the harness, and the boot validator's
-configured sanitizer and fuzz budgets. `make check` is offline and runs
+archive, both forms booting under the harness, and the boot validator's configured sanitizer and fuzz budgets. `make check` is offline and runs
 ordinary host checks, which include the generated-tree tests. `make check-tla` remains a
 separate gate; a missing requested tool is an error rather than a skip.
 

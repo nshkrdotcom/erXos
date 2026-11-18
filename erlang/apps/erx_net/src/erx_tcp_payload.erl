@@ -4,7 +4,7 @@
 -module(erx_tcp_payload).
 -moduledoc """
 A received segment's payload as TCP holds it: a flat list of binaries, in sequence order
-(docs/design-network-fastpath.md, "A merged segment in TCP"). A segment off the wire has one
+(docs/design-network-stack.md, "A merged segment in TCP"). A segment off the wire has one
 piece, a merged segment one per member that carried data, each a sub-binary of its frame.
 Trimming, reassembly and delivery take parts of a payload with `part/3`, which makes
 sub-binaries of the pieces and copies no byte, so nothing on the receive path joins the

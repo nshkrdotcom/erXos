@@ -511,7 +511,7 @@ type dma 9
   rights map,bind,inspect,dup,give,destroy
   pass none
 
-# Creation kinds: one per row of the design's two rights tables, with the
+# Creation kinds: one per way of making an object ("Rights"), with the
 # rights a creation of that kind returns. A carve is a shrink of a create
 # by the carving capability's rights and destroy, so a carved kind holds
 # nothing beyond its parent kind and destroy.

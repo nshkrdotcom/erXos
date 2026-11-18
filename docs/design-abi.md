@@ -5,8 +5,11 @@ the byte representations shared by the kernel, `liberx`, runtimes and host
 tools. [Generated interfaces](design-generation.md) owns the wider
 generation contract; the subsystem designs own the meaning of each call
 and record. `abi/erx_abi.txt`, its explicit fragments and the selected
-architecture file are the only machine-readable sources. Tables here
-describe that source and are generated once their declarations exist.
+architecture file are the only machine-readable sources; what each file
+holds is listed in [Sources and outputs](design-generation.md#sources-and-outputs).
+This document says how the language and its readers are shaped and why;
+the declarations themselves, every field, offset and value, are in
+those files and in the generated reference, never restated here.
 
 ## Contract and ownership
 
@@ -85,18 +88,18 @@ The declaration forms are:
 | --- | --- |
 | `limit NAME TYPE VALUE` | an integer type and a value within it |
 | `scalar NAME TYPE` | a fixed-width base integer; optional inclusive `range MIN MAX` and `align POWER_OF_TWO` constraints |
-| `enum NAME TYPE` | indented `value NAME INTEGER [ATTRIBUTE...]` members; every value explicit and distinct. Indented `attribute NAME` lines declare the closed set of attributes the member lines may name after their value, each a boolean fact of the members that carry it: a name no `attribute` line declares, a declaration repeated, an attribute named twice on one member, or one no member carries fails the run. The Ruby host codec answers `attribute?(ENUM, VALUE, NAME)`, `erx_abi_enums` gives each enum the type `ENUM()` of its member names and each attribute the predicate `ENUM_ATTRIBUTE/1`, and `erx_abi.hrl` gives each enum the guard `?ERX_IS_ENUM(Term)` beside `?ERX_ENUM_MEMBERS` |
+| `enum NAME TYPE` | indented `value NAME INTEGER [ATTRIBUTE...]` members; every value explicit and distinct. Indented `attribute NAME` lines declare the closed set of attributes the member lines may name after their value, each a boolean fact of the members that carry it: a name no `attribute` line declares, a declaration repeated, an attribute named twice on one member, or one no member carries fails the run. Each language gets the member set and a predicate per attribute |
 | `flags NAME TYPE` | indented `bit NAME POSITION` members; every position explicit and distinct |
 | `bytes NAME LENGTH` | a fixed byte count, with an optional `value HEX_BYTES` constraint |
 | `layout NAME STORAGE ALIGN SIZE` | ordered fields; `STORAGE` is `wire_le`, `shared`, `native`, `packed_le` or `packed_be` ([Packed layouts](#packed-layouts)); alignment and fixed prefix size are explicit |
 | `elements NAME STORAGE TAG_ENUM LENGTH_TYPE [end MEMBER]` | tag, length and body records repeated to the end of their bytes or an end marker, with indented `element MEMBER REPEAT BODY` members ([Element sequences](#element-sequences)) |
 | `variant NAME PREFIX TAG_FIELD TAG_ENUM MAX_BYTES` | a fixed prefix containing the tag and indented `case TAG BODY_LAYOUT` members; each body begins after the prefix |
 | `status NAME INTEGER DESCRIPTION` | a signed 32-bit result; zero is success and every error is negative |
-| `signal NAME NUMBER ACTION [alias NAME] "DESCRIPTION"` | a signal of the [signal table](design-programs.md#signal-numbers), in `signals.txt`: its name without `SIG` in lower case, a distinct number 1 through 128, its default action, `terminate`, `ignore`, `stop` or `continue`, or `reserved` for a number the C library keeps, and its description, FreeBSD's `sys_siglist` text, quoted and last, which a reserved one lacks; the generator gives each name and alias the constant `ERX_SIG` and its name in upper case, `erx/abi.h` the lookups `erx_sig_name`, `erx_sig_action`, `erx_sig_valid` and `erx_sig_description`, musl's generated `bits/signum.h` each name and alias as `SIG` and its name in upper case, a reserved one only under `_BSD_SOURCE` or `_GNU_SOURCE`, with `_NSIG` 128, and `erx_abi_signals` the protocol names of the signals a program may name |
+| `signal NAME NUMBER ACTION [alias NAME] "DESCRIPTION"` | a signal of the [signal table](design-programs.md#signal-numbers), in `signals.txt`: its name without `SIG` in lower case, a distinct number 1 through 128, its default action, `terminate`, `ignore`, `stop` or `continue`, or `reserved` for a number the C library keeps, and its description, FreeBSD's `sys_siglist` text, quoted and last, which a reserved one lacks. The table is the one source of the C lookups, musl's `bits/signum.h` (a reserved name only under `_BSD_SOURCE` or `_GNU_SOURCE`, with `_NSIG` 128) and the protocol names of the signals a program may name |
 | `reserved_signal NUMBER` | a distinct number the C library keeps that has no name, as `reserved` on a `signal` line marks one that has: no constant, `erx_sig_name` gives `NULL`, `erx_sig_action` `ERX_SIG_ACTION_RESERVED`, and `erx_sig_valid` refuses it |
 | `realtime FIRST LAST ACTION` | the real-time signals `FIRST` to `LAST`, named as `sig2str` names them: `rtmin`, `rtmin+1` up to the middle of the range, then `rtmax-N` down to `rtmax`; at most one |
-| `fault KIND SIGNAL` | a row of the fault table, in `erx_abi.txt` beside `exit_kind` ([A program's end](design-programs.md#a-programs-end)): the signal, by its name in `signals.txt`, a program may name, that ends a program whose thread faults with the `fault_kind` `KIND`; every kind but `exit`, which marks an exit record, has exactly one row, or generation fails; `erx/abi.h` gives `erx_fault_signal`, and `erx_prog:status/1`, generated beside `erx_prog_grammar`, reads a program's end through it, the signal table, and `exit_kind`'s `signal`, `ERX_EXIT_SIGNAL`, 256, so that a status 0 to 255 is a halt and `ERX_EXIT_SIGNAL` plus `N` an end by signal `N` |
-| `errno NAME NUMBER [alias NAME]` | an errno of the [errno table](design-programs.md#the-posix-lite-personality), in `errno.txt`: its C name in lower case, `einval`, which is its name in a reply of the program protocol, and its number, distinct and 1 through 4095, FreeBSD's in `sys/sys/errno.h`, with which `test/host/abi_errno_test.rb` compares the table; an alias is a second C name of the same number, `ewouldblock` of `eagain`, and never a protocol name, so one error has one name in a reply; no name or alias comes twice; musl's generated `bits/errno.h` defines each name and alias as its C name, so musl's errno values and the `strerror` table indexed by them are FreeBSD's, and `erx_abi_errno` maps each name, never an alias, to its number and back |
+| `fault KIND SIGNAL` | a row of the fault table, in `erx_abi.txt` beside `exit_kind` ([A program's end](design-programs.md#a-programs-end)): the signal, by its name in `signals.txt`, a program may name, that ends a program whose thread faults with the `fault_kind` `KIND`; every kind but `exit`, which marks an exit record, has exactly one row, or generation fails; C's `erx_fault_signal` and Erlang's `erx_prog:status/1` read a program's end through it, a status 0 to 255 being a halt and `ERX_EXIT_SIGNAL` (256) plus `N` an end by signal `N` |
+| `errno NAME NUMBER [alias NAME]` | an errno of the [errno table](design-programs.md#the-posix-lite-personality), in `errno.txt`: its C name in lower case, `einval`, which is its name in a reply of the program protocol, and its number, distinct and 1 through 4095, FreeBSD's in `sys/sys/errno.h`, against which a test compares the table; an alias is a second C name of the same number, `ewouldblock` of `eagain`, and never a protocol name, so one error has one name in a reply; no name or alias comes twice. musl's generated `bits/errno.h` defines each name and alias, so musl's errno values and its `strerror` table are FreeBSD's |
 | `right NAME POSITION DESCRIPTION` | a distinct position 0 through 31 within the kernel's 32-bit `erx_rights_t` word |
 | `type NAME INTEGER` | explicit `rights` and `pass` lists, including an explicit empty pass list |
 | `kind NAME INTEGER TYPE` | a creation kind of an object type: its `default` list, within the type's rights, and for a carved kind `carves KIND`, the kind it is carved from, whose default it does not exceed but by `destroy`; `reserved_space` and `reserved_thread` state what the reserved values `cap_self` and `cap_self_thread` carry, and no call creates them |
@@ -160,20 +163,15 @@ repository root (`private kernel/core/cap.c`). `include/erx/abi.h` then
 declares only the layout's tag (`typedef struct erx_NAME erx_NAME_t;`),
 its `_SIZE` and its `_ALIGN`, which a caller needs to allocate one, so
 everywhere else the layout is an incomplete type, and a member, an offset
-or an accessor of it does not compile. Its offsets, its record with the
-size, alignment and offset assertions, and its field, atomic and sequence
-operations go to its own header, `kernel/generated/NAME_impl.h`, NAME
-being the layout's name without its `erx_` prefix, which includes
-`include/erx/abi.h`. The model derives that path from the name in one
-place. From the same declaration the chokepoint rules build one rule per
-private layout, `NAME-private` with NAME's underscores as hyphens
-([Chokepoint checks](design-kernel.md#chokepoint-checks)): only OWNER
-and OWNER's host tests include the header, and no other file defines the
-record. OWNER's host tests are the files named after it in the two
-host-only trees, `test/fixtures/STEM_*.c` and `tools/fuzz/STEM_fuzz.c`,
-STEM being OWNER's base name without `.c`; neither tree is built into the
-kernel or an image, so the rule widens to a new test of the owner without
-an edit and never to kernel code. A wire layout is a byte format another
+or an accessor of it does not compile. Its record, assertions and
+operations go to its own header, `kernel/generated/NAME_impl.h`. From the
+same declaration the chokepoint rules build one rule per private layout,
+`NAME-private` ([Chokepoint checks](design-kernel.md#chokepoint-checks)):
+only OWNER and OWNER's host tests include the header, and no other file
+defines the record. OWNER's host tests are the files named after it in
+the two host-only trees, `test/fixtures/` and `tools/fuzz/`; neither tree
+is built into the kernel or an image, so the rule widens to a new test of
+the owner without an edit and never to kernel code. A wire layout is a byte format another
 party decodes, so it never has a single owner and cannot be private; a
 shared layout that user mode reads cannot be private either, and marking
 one so fails the build of the code that reads it. No other layout embeds
@@ -756,24 +754,6 @@ erx_object_info` declaration alone waits on the call grammar's
 capability argument of any type
 ([Kernel calls and bindings](#kernel-calls-and-bindings)).
 
-```text
-inspection 1
-  unit pages "pages"
-  integer page_count 0 0xffffffffffffffff unit pages
-  integer budget_id 1 0xffffffff
-  backend liberx_pool kernel "root pool" "pages of the root's pool: those handed out, carved budgets' included, and the pool's total and free; not the kernel's or sigma0's memory, page tables or mapping records"
-  backend liberx_trace kernel "liberx trace" "the root's parks, wakes, IRQ deliveries and task starts and ends; not test tasks' parks or the kernel's events"
-  trace backend liberx_trace
-  trace kernel kernel
-  kind budget
-    attr kind @budget_kind reporters kernel visible owner build all projections shell,host,proc,web
-    attr used page_count reporters kernel,liberx_pool visible owner build all projections shell,host,proc,web
-  path listing budgets
-    visible all
-  path budget budgets *budget_id
-    present budget
-```
-
 ### Widget format
 
 `formats/ui.txt` holds the one `ui VERSION` declaration of the display's
@@ -781,11 +761,11 @@ widget trees ([Widget trees](design-display.md#widget-trees)) and of
 their binary form. Its members, at two-space indentation, declare value
 types, image types, properties, kinds, the records of the binary form
 and an input record's forms; the properties a kind takes, and the fields
-of a record or an input form, are at four spaces beneath it. Value types and image types share one namespace, properties
-have one and kinds one, each apart from the root's, so the property
-`image` and the kind `image` are two names; a member refers to
-another by its bare name and to a root `limit` or `enum` by `@name`.
-Every wire number is literal in the source.
+of a record or an input form, are at four spaces beneath it. Value types
+and image types share one namespace, properties have one and kinds one,
+each apart from the root's, so the property `image` and the kind `image`
+are two names; a member refers to another by its bare name and to a root
+`limit` or `enum` by `@name`. Every wire number is literal in the source.
 
 | Member | Meaning |
 | --- | --- |
@@ -812,206 +792,109 @@ makes every kind take the property. `status` lets the value also be an
 `attr()` carrying one ([design-live.md](design-live.md#inspection-records)).
 `default` states what the property's absence means. `detail state`
 marks an event whose detail is the kind's state value; any other event
-has none. On a property's line beneath a kind, `state` marks the value the user changes,
-`fixed` a property that is part of the node's identity, `within LOW
-HIGH` an integer, or each value but `none` of a list of integers, that
-lies between two integer properties of the kind, `index LIST` an
-integer that indexes a list property of the kind, `hides PROP` a fixed
-boolean under which PROP is refused in a tree, never kept, and handed
-to the application as `{erx_secret, V}`, and `parallel LIST` a list
-exactly as long as the list property LIST, an absent LIST counting as
-empty; the validator refuses a value against any mark with `bad_value`.
+has none. On a property's line beneath a kind, `state` marks the value
+the user changes, `fixed` a property that is part of the node's
+identity, `within LOW HIGH` an integer, or each value but `none` of a
+list of integers, that lies between two integer properties of the kind,
+`index LIST` an integer that indexes a list property of the kind, `hides
+PROP` a fixed boolean under which PROP is refused in a tree, never kept,
+and handed to the application as `{erx_secret, V}`, and `parallel LIST`
+a list exactly as long as the list property LIST, an absent LIST
+counting as empty; the validator refuses a value against any mark with
+`bad_value`.
 
 A field's TYPE is `u8`, `u16` or `u32`, any unsigned value; `i8`, a
 signed byte; `node`, a `u32` other than 0; `kind`, a declared kind's
 number; `direction`, a key's down 1 or up 0; `rune`, a Unicode scalar
 value or 0xffffffff for none; `props`, a property list; `removals`, a
 set's removed property numbers; or `input`, an input form's number and
-its fields. An input form's fields are of the fixed types, those before
-`props`. Records and reports share one namespace of names and one of
-tags, and the input forms have their own; a field name has one type in
-every record and input form, since a native renderer's record keeps one
-member per name, and a record has at most one field each of `props`,
-`removals` and `input`. The readers and writers of the server's records
-in all three languages follow from these lines: a reader reads and
-checks each field in wire order, and the first that fails gives the
-reason, a fixed field cut short the record's short reason and a value
-outside its type the type's own. The reasons are one list in the
-generator (`UI::REFUSALS` in `tools/lib/erx/abi_ui.rb`), not in the
-declaration, since each is given by a check of the generator's code for a
-field type or for the framing, and a reason declared without such a check
-would mean nothing. A report's fields, the event's detail and the pixels'
-bytes framed by the length alone, are the generator's fixed code.
+its fields. A field name has one type in every record and input form,
+since a native renderer's record keeps one member per name, and a record
+has at most one field each of `props`, `removals` and `input`. The
+readers and writers in all three languages follow from these lines: a
+reader reads and checks each field in wire order, and the first that
+fails gives the reason. The reasons are one list in the generator
+(`UI::REFUSALS` in `tools/lib/erx/abi_ui.rb`), not in the declaration,
+since each is given by a check of the generator's code for a field type
+or for the framing, and a reason declared without such a check would
+mean nothing. A report's fields are the generator's fixed code.
 
-The generator refuses a number or a name used twice in its namespace; a
-kind that takes an event marked `detail state` without exactly one
-`state` property; a list element that is not a text type, an integer
-type or a root `@enum`, and `none` on any element but an integer type
-that does not hold -2^31, so -2^31, the value that stands for `none` on
-the wire, is never an element's own value; a `within`, `index`, `hides`
-or `parallel` naming a property the kind does not take or of the wrong
-type; a `within` bound without a
-`default`, so a tree that omits it still has a range; a content type other than an
-`image/` type, and `image/svg+xml`; and a record or a report whose tag another has; a field type outside the
-list, a `short` reason not among the readers', or an `input` field
-without input forms; kinds without an `insert` record carrying `props`;
-a kind whose largest `insert`,
-every property it takes at its bound, exceeds `web_ui_op_max`, the room
-one web update leaves for an operation
-([design-web.md](design-web.md#the-protocol)), a root limit of
-`web.txt` ([Web protocol](#web-protocol)); and beside it `ui.txt`'s own
-`ui_children`, the most children one
-node of a tree has, 1,024, which bounds the difference of two trees and
-keeps every `insert`'s and `move`'s index within its `u16`.
+Generation refuses a declaration whose marks cannot hold: a `within`,
+`index`, `hides` or `parallel` naming a property the kind does not take
+or of the wrong type, a `within` bound without a `default` (so a tree
+that omits it still has a range), a `detail state` event on a kind
+without exactly one `state` property, `none` on an element type that
+holds -2^31 (the value that stands for `none` on the wire), an image
+content type outside `image/` or `image/svg+xml`, and a kind whose
+largest `insert`, every property it takes at its bound, exceeds
+`web_ui_op_max`, the room one web update leaves for an operation
+([Web protocol](#web-protocol)). `ui_children`, the most children one
+node has, bounds the difference of two trees and keeps every `insert`'s
+and `move`'s index within its `u16`.
 
-```text
-ui 1
-  integer size 0 16384
-  integer bound -2147483648 2147483647
-  text caption 4096 utf8
-  image png 1 "image/png"
-  prop key 1 key common
-  prop width 2 size common
-  prop visible 7 boolean common default true
-  prop present 9 presentation common status
-  prop on_select 10 event common
-  prop text 11 caption status
-  prop secret 13 boolean default false
-  prop min 15 bound default 0
-  prop max 16 bound default 100
-  prop value 17 bound
-  prop on_change 26 event detail state
-  prop on_submit 27 event detail state
-  kind column 1 children
-  kind slider 9
-    prop min
-    prop max
-    prop value state within min max
-    prop on_change
-  kind input 10
-    prop text state
-    prop secret fixed hides text
-    prop on_change
-    prop on_submit
-  record insert 1 short bad_node
-    field node node
-    field parent u32
-    field index u16
-    field kind kind
-    field props props
-  record screen 7
-    field width u16
-    field height u16
-    field chan u32
-  input wheel 3
-    field steps i8
-  report event 6
-```
+**The binary form.** The binary form follows from the declaration, as
+9P2000.L's bytes follow from the protocol's kinds: little-endian
+integers, each message a `u32` length (its tag and fields, never 0, at
+most `web_ui_op_max`), a tag and the record's fields. The records that
+build and change a tree (`insert` to `commit`) and `event` travel on
+the web protocol too; `screen`, `input`, `repaint`, `presented` and
+`damage` travel only on a native renderer's pipes
+([The widget server](design-display.md#the-widget-server)), and the web
+readers refuse their tags. No message carries pixels: a native renderer
+draws into its window's buffer, which its session mapped into it
+([The pixel area](design-display.md#the-pixel-area)), reports what it
+drew in one `damage` message for each refresh, and draws again only
+after the `presented` that answers it. Whether a `damage` report's size
+is the window's is decided by the process that consumes the report,
+which knows the window.
 
-The binary form follows from the declaration, as 9P2000.L's bytes follow
-from the protocol's kinds. Integers are little-endian. Each message is a
-`u32` length, at most `web_ui_op_max`, and then:
-
-| Message | Fields |
-| --- | --- |
-| `insert`, tag 1 | node `u32`, parent `u32` (0 for the root), index `u16`, kind `u8`, properties |
-| `remove`, tag 2 | node `u32` |
-| `set`, tag 3 | node `u32`, properties, then a `u8` count and that many property numbers removed |
-| `move`, tag 4 | node `u32`, index `u16` |
-| `commit`, tag 5 | none |
-| `event`, tag 6 | node `u32`, the event property's number `u8`, and a detail: a `u8` tag, none 0, boolean 1, integer 2 and text 3, and its value |
-| `screen`, tag 7 | width `u16`, height `u16`, and the target's channel as Plan 9's `u32` channel descriptor |
-| `input`, tag 8 | a `u8` form and its fields: pointer 1, with x `u16`, y `u16` and buttons `u8`; key 2, with down 1 or up 0 as a `u8`, code `u16` and rune `u32`, 0xffffffff for none; wheel 3, with steps as a signed `u8` |
-| `repaint`, tag 9 | none |
-| `damage`, tag 10 | the width `u16` and height `u16` the frame was drawn at, a `u8` count, 1 to 16 (`ui_damage_rects`), and that many rectangles, each x `u16`, y `u16`, width `u16` and height `u16`, within that width and height: what the renderer drew in its window's buffer since its last report |
-| `presented`, tag 11 | none |
-
-`insert` to `commit`, `screen`, `input`, `repaint` and `presented` go
-from the server to a renderer; `event` and `damage` from a renderer to
-the server. Only a native renderer's pipes carry `screen`, `input`,
-`repaint`, `presented` and `damage`
-([The widget server](design-display.md#the-widget-server)); the web
-protocol carries none of them, and its readers refuse their tags. No
-message carries pixels: a native renderer draws into its window's
-buffer, which its session mapped into it
-([The pixel area](design-display.md#the-pixel-area)), reports the
-rectangles it drew in one `damage` message for each refresh, and draws
-again only after the `presented` that answers it. The reader refuses a
-count of 0 or above 16, a rectangle of no width or height and one that
-leaves the width and height the report names; whether that size is the
-window's is decided by the process that consumes the report, which
-knows the window.
-
-Properties are a `u8` count and, for each, its number and its value: a
-boolean as a `u8` of 0 or 1; an integer as a signed 32-bit value; an enum or an
-image type as its `u8` number; a text or bytes as a `u32` length and the
-bytes; a list as a `u16` count and each value as its element type's own
-field, a text, an enum's `u8` or an integer's signed 32-bit value, with
-`none` written as -2^31 (the C reader hands it over as `ERX_UI_NONE`, the
-TypeScript reader as `null`); an event as nothing, the
-number alone saying that the node takes it; a presentation as its name,
-a `u8` length and at most 63 bytes, and its canonical text, a text of at
-most 4,096 bytes. A `status` property begins with its status block: the
-status as a `u8` (`ok` 0, `partial` 1, `unknown` 2, `unsupported` 3,
-`timeout` 4, `error` 5), the reporter as a `u8` (the application's own
-value 0, `kernel` 1, `service` 2, `runtime` 3, a backend 4), the
-backend's name as a `u8` length and at most 63 bytes, empty unless the
-reporter is a backend, and the timeout in milliseconds as a `u32`, 0
-unless the status is `timeout`; the value follows only for `ok` and
-`partial`. A `key` property is never written. A reader refuses an
-unknown tag, kind, property, image type or enum value; a value outside
-its type; a property twice in one list; a backend name the inspection
-schema does not declare; and bytes left over in a message. It keeps no
-state between messages, and nothing it decodes depends on a node's kind,
+A property list is a `u8` count and, for each property, its number and
+its value: a boolean as a `u8` of 0 or 1, an integer as a signed 32-bit
+value, an enum or an image type as its `u8` number, a text or bytes as
+a `u32` length and the bytes, a list as a `u16` count and each element
+in its own encoding with `none` as -2^31, a presentation as its name
+(a `u8` length, at most 63 bytes) and its canonical text; an event
+property is its number alone, saying the node takes it, and a `key`
+property is never written. A `status` property begins with its status
+block, the generator's fixed code in `tools/lib/erx/abi_ui.rb`: the
+status and the reporter as `u8` numbers, a backend's name (empty unless
+the reporter is a backend) and a timeout in milliseconds (0 unless the
+status is `timeout`); the value follows only for `ok` and `partial`, and
+a status other than `ok` from the application's own reporter is
+refused, since the application's own value is a plain value. A reader refuses an unknown tag, kind, property,
+image type or enum value, a value outside its type, a property twice in
+one list, a backend name the inspection schema does not declare, node 0
+where a node is named, and bytes left over in a message. It keeps no
+state between messages and nothing it decodes depends on a node's kind,
 so whether a node exists, takes a property or an event, or fits its
 parent is decided by the renderer's `apply_ops` and by `hit/4`, never by
-the reader.
+the reader. A reader also refuses an event's text detail (a `u32`
+length and that many bytes, bounded by the message) or a presentation
+name or text that is not valid UTF-8, a timeout of 0 with `timeout` or
+a nonzero one with any other status, and a `damage` count of 0 or above
+`ui_damage_rects`, a rectangle of no width or height, or one outside
+the size the report names. The C writer writes a record into the
+caller's buffer and refuses it whole when it does not fit or breaks a
+rule a reader checks.
 
-A message's `u32` length counts its tag and fields, not itself, and is
-never 0. An event's text detail is a `u32` length and that many bytes of
-valid UTF-8, bounded by the message. A reader also refuses node 0 where a
-node is named; a status block from the application's own reporter whose
-status is not `ok`, since the application's own value is a plain value; a
-timeout of 0 with `timeout` or a non-zero one with any other status; a key
-`input` whose rune is neither a Unicode scalar value nor 0xffffffff; and a
-presentation name or a text that is not valid UTF-8.
-
-The generator emits `erx_ui_wire`, the Erlang encoder of every message,
-its reader of `event` and `damage` and its reader of the server's
-messages; `web/src/generated/ui_wire.ts`, the same readers and writers in
-TypeScript, whose reader of the server's messages hands every text out as
-a `MachineText` ([The client](design-web.md#the-client)); and `erx/ui_wire.h` with its
-freestanding C source, the reader of `insert` to `commit`, `screen`,
-`input`, `repaint` and `presented` and the writer of `event` and
-`damage` that a native renderer links. The C code allocates nothing:
-texts read point into the caller's buffer, and a list's values are read
-from its encoded bytes, its texts walked and its integers and enum
-members read by index; a record is written into the caller's buffer and
-refused whole when it does not fit or breaks a rule a reader checks. The
-encoder takes the canonical
-text of a `present` value as a function, `erx_present:text/2` in the
-widget server, so the generated module depends on no presentation table.
-Its `encode/2` writes every text a record carries, each item of a list
-and each canonical text through the line escape, `erx_text:escape_line/2`,
-since a native renderer shows the bytes it reads ([design-display.md,
+The generator emits `erx_ui_wire` (Erlang), `web/src/generated/ui_wire.ts`
+(TypeScript, whose reader hands every text out as a `MachineText`,
+[The client](design-web.md#the-client)) and `erx/ui_wire.h` with its
+freestanding C source, the reader of the server's records and writer of
+`event` and `damage` that a native renderer links. The C code allocates
+nothing: texts point into the caller's buffer and a list's values are
+read from its encoded bytes. The encoder takes the canonical text of a
+`present` value as a function, `erx_present:text/2`, so the generated
+module depends on no presentation table. Its `encode/2` writes every
+text through the line escape, `erx_text:escape_line/2`, since a native
+renderer shows the bytes it reads ([design-display.md,
 G5](design-display.md#invariants)), and cuts an escaped text longer than
-its type's bound at a whole escape token, ending it with an ellipsis;
-`encode_raw/2` writes texts as they are, for
-the browser, which escapes each text itself, and only the sites of the
-chokepoint `ui-raw-texts` call it.
-In Erlang, `screen` is `{screen, Width, Height, Chan}`, `input` is
-`{input, {pointer, X, Y, Buttons}}`, `{input, {key, down | up, Code,
-Rune | none}}` or `{input, {wheel, Steps}}`, `repaint` and `presented`
-are the atoms, an event is `{event, Node, Event, Detail}` with the detail
-`none`, a boolean, an integer or a binary, and a report is `{damage,
-ScreenWidth, ScreenHeight, [{X, Y, Width, Height}]}`. The Erlang reader of the server's messages returns them
-as the encoder takes them, with what the binary form carries of each
-value: an event property as `true`, a presentation as `{Name, Text}`, two
-binaries, since a name read from input makes no atom, and an `error`
-status as the atom `error`, without its reason. The readers of the
-server's messages in Erlang, C and TypeScript give the same reasons for
-the same refusals, so one parity test feeds a corpus and its mutants to
-all three.
+its bound at a whole escape token; `encode_raw/2` writes texts as they
+are, for the browser, which escapes each text itself, and only the sites
+of the chokepoint `ui-raw-texts` call it. A name read from input makes
+no atom. The readers of the server's records in Erlang, C and TypeScript
+give the same reasons for the same refusals, so one parity test feeds a
+corpus and its mutants to all three.
 
 ### Draw format
 
@@ -1068,17 +951,20 @@ counts two fields.
 ### Theme
 
 `theme.txt` holds the one `theme VERSION` declaration of the desktop's
-visual facts ([The theme](design-desktop-programs.md#the-theme-one-declaration)).
-Its members, all at two-space indentation, are rows of the families
-below; each family's names have one namespace, and a name is a lower-case
-letter followed by at most 62 lower-case letters, digits or underscores.
-No member takes a quoted token. `unit`, `hairline`,
-`space`, `radius` and `icons` appear exactly once, `font`, `role`,
-`color` and `shadow` at least once, and `transition` once for each
-member of `ui_transition`. Every length is in logical pixels, which a
-renderer multiplies by the window's scale
-([Sizes and the scale](design-desktop-programs.md#the-theme-one-declaration));
-`PIXELS` below means logical pixels.
+visual facts ([The theme](design-desktop-programs.md#the-theme-one-declaration)):
+the spacing unit and hairline, the fonts and the code points rasterised
+from each, the type roles, the spacing scale, corner radii, shadows, the
+colours of each palette (one value for each member of the manifest's
+`mf_display_palette`), contrast requirements, the icons and their sizes,
+and one transition for each member of `ui_transition`
+([Motion](design-desktop-programs.md#motion)). Its members, all at
+two-space indentation, are rows of these families; each family's names
+have one namespace, a name is a lower-case letter followed by at most 62
+lower-case letters, digits or underscores, and no member takes a quoted
+token. `unit`, `hairline`, `space`, `radius` and `icons` appear exactly
+once, `font`, `role`, `color` and `shadow` at least once. Every length
+(`PIXELS` below) is in logical pixels, which a renderer multiplies by
+the window's scale.
 
 | Member | Meaning |
 | --- | --- |
@@ -1087,60 +973,33 @@ renderer multiplies by the window's scale
 | `font NAME DIRECTORY WEIGHT FILE...` | a font: its directory beneath the root, and the TrueType file of each weight it has, `regular`, `medium` or `semibold`, each at most once |
 | `range FONT LOW-HIGH...` | the code points the glyph step rasterises from FONT, in upper-case hexadecimal, ascending and disjoint; each font has exactly one |
 | `role NAME KEY VALUE...` | a type role: `font`, a declared font; `size` and `line`, pixels; `weight`, one the font has; optionally `figures`, `tabular` or `proportional` (the default), and `color`, a declared colour (`text` by default) |
-| `space NAME UNITS...` | the spacing scale, in whole units |
+| `space NAME UNITS...` | the spacing scale, in whole units, none wider than 4,096 pixels |
 | `radius NAME PIXELS...` | corner radii; `window` is declared and 0 |
 | `shadow NAME X Y BLUR PERCENT` | a shadow: its offset and blur in pixels and the opacity of its black in percent |
-| `color NAME RRGGBB...` | an sRGB colour in each palette, each in six upper-case hexadecimal digits: one value for each member of the manifest's `mf_display_palette`, in value order, `light` then `dark` |
+| `color NAME RRGGBB...` | an sRGB colour in each palette, in six upper-case hexadecimal digits, in the value order of `mf_display_palette` |
 | `contrast FOREGROUND on BACKGROUND... RATIO` | the least contrast ratio, one decimal from 1.0 to 21.0, that FOREGROUND has on each BACKGROUND, in every palette |
 | `icons PATH sizes SIZE...` | the icons' definition file and the pixel sizes they are rasterised at, ascending |
-| `transition NAME MILLISECONDS CURVE` | a transition ([Motion](design-desktop-programs.md#motion)): NAME a member of `ui_transition`, the closed set `press`, `state` and `reveal`, each started by the change Motion names, which the renderers implement; MILLISECONDS its duration, 1 to 250; CURVE `linear` or `ease_out` |
+| `transition NAME MILLISECONDS CURVE` | a member of `ui_transition` (`press`, `state` and `reveal`, each started by the change Motion names), its duration, 1 to 250, and its curve, `linear` or `ease_out` |
 
-The generator computes each contrast row's ratios by WCAG 2.2's
-definitions of "contrast ratio" and "relative luminance" (W3C
+A `contrast FOREGROUND on BACKGROUND... RATIO` row is a check, not an
+output: the generator computes each pair's ratio in every palette by
+WCAG 2.2's definitions of "contrast ratio" and "relative luminance" (W3C
 Recommendation 12 December 2024,
-`https://www.w3.org/TR/2024/REC-WCAG22-20241212/`), and a pair below
-its ratio fails generation with both names and the ratio measured.
+`https://www.w3.org/TR/2024/REC-WCAG22-20241212/`), and a pair below its
+ratio fails generation with both names and the ratio measured. Fonts,
+ranges and icons are the glyph step's inputs; none of them is emitted.
 
-It emits three files of constants, each with every length in logical
-pixels, every duration in milliseconds and every colour in its target's
-own form: `erx_theme` in `erx_memdraw` (`color/2` of a palette and a
-name as opaque RGBA32, `palettes/0` the palettes' names, the default first,
-`role/1`, `space/1`, `radius/1`, `shadow/1`, `transition/1` as
-`{Milliseconds, Curve}`, `unit/0`, `hairline/0`, and `colors/0`,
-`roles/0` and `transitions/0`, the names); `erx/theme.h`, the
-`ERX_THEME_` macros, `erx_theme_palette_t`, a struct of every colour as
-`0xRRGGBB`, with `ERX_THEME_PALETTE_NAME` the initializer of each palette
-and `ERX_THEME_PALETTES(X)` over the palettes, a role's colour as the
-member it names, each transition as
-`ERX_THEME_TRANSITION_NAME_MS` and `ERX_THEME_TRANSITION_NAME_CURVE`,
-and `ERX_THEME_ROLES(X)` over the roles; and `theme.ts`,
-`THEME_PROPERTIES`, the CSS custom properties `--erx-...` but the
-colours, and `THEME_PALETTES`, each palette's colour properties, where a
-role's weight is its CSS numeric weight and a transition is its CSS
-duration and timing function, `ease_out` as `ease-out`. Each family is a set: every
-output lists it in name order, so the order of the rows changes no
-byte. Fonts, ranges and icons are the glyph step's inputs and contrast
-rows are checks; none is emitted.
-
-Generation fails for a second `theme` declaration or one outside
-`theme.txt`, a member other than those above or at four spaces, a
-quoted token, a missing or repeated `unit`, `hairline`, `space`,
-`radius` or `icons`, a `font`, `role`, `color` or `shadow` family with
-no row, a name of another form or declared twice in its family, a row
-with the wrong number of fields, a value out of range, a font weight
-outside the three or given twice, a font file that is not a `.ttf`
-name, a path that is not relative beneath the root, a font without its
-range row or a range row of an undeclared font, a range out of order, a
-role with an unknown, repeated or missing key, an undeclared font or
-colour, a weight its font lacks or `figures` other than the two, a line
-height off the unit's grid, a space wider than 4,096 logical pixels, a
-`radius window` other than 0, icon sizes that do not ascend, a
-`transition` row whose name is not a member of `ui_transition` or
-repeats one, a member with no row, a duration outside 1 to 250 or a
-curve other than the two, a ratio outside
-1.0 to 21.0 or not written with one decimal and no leading zero, a
-`contrast` row naming an undeclared colour, and a contrast ratio that
-does not hold.
+The generator emits the same constants for each renderer, in its own
+form: `erx_theme` in `erx_memdraw` for the Erlang renderer, `erx/theme.h`
+for the display and `erx-lvgl`, and `theme.ts`, CSS custom properties,
+for the web client. Each family is a set, listed in name order in every
+output, so the order of the rows changes no byte. Generation refuses
+anything outside the families' forms and bounds: a family missing or
+repeated against its declared count, a name declared twice, a reference
+to an undeclared font or colour, a line height off the unit's grid, a
+`radius window` other than 0, a transition for a name outside
+`ui_transition` or a member without one, and a contrast that does not
+hold.
 
 ### Input records
 
@@ -1163,45 +1022,25 @@ the largest kind, so a stream of records splits into records by length
 alone and a bad record of the right length never moves the next; a
 writer that loses or adds a byte shifts every record after it, which
 only the serving domain can do and which gives it no reach beyond the
-records it may send anyway. A record is its tag, its
-fields in order, little-endian, an enum field as its member's number,
-and zero bytes to the size. The fields' types live beside the
-declaration, in the same file, as scalars whose ranges name the
-`input_` limits and as the enums `input_touch_phase` and
-`input_key_edge`, so a bound has one home; a scalar's base type is its
-width on the wire, and a limit widened past it is refused by the
-generator. The term rules are those of the program protocol's `union`
-(a bare atom, or a tuple of the name, its literal atoms and its fields),
-and the tag those of the web protocol's; the form is a declaration of
-its own because neither grammar has a fixed-size encoding or fields
-typed by root scalars.
+records it may send anyway. A record is its tag, its fields in order,
+little-endian, an enum field as its member's number, and zero bytes to
+the size. The fields' types are scalars and enums in the same file
+whose ranges name the `input_` limits, so a bound has one home, and a
+limit widened past a scalar's wire width is refused. The term rules are
+those of the program protocol's `union` and the tag those of the web
+protocol's; the form is a declaration of its own because neither
+grammar has a fixed-size encoding or fields typed by root scalars.
 
-The generator emits from it `erx_input_codec`, in the `erx` application,
-so a driver of any domain writes the form and the display reads it:
-`record()`, the one type of a record, which `erx_input:record()` names;
-`valid/1`, whether a term is a record within the bounds, which the
-router holds every record to and `encode/1` refuses with `badarg`
-outside; `encode/1`, one record's bytes; `decode/1`, which reads a
-stream's bytes into its records in order, the number it dropped and the
-bytes after the last whole record, fewer than one record, which the
-reader keeps for its next read; `size/0`; and the clamps a driver
-applies to its device's values before it makes a record: `rel/1` and
-`wheel/1` hold a move and a wheel step to their fields' ranges, and
-`axis/3` clamps a position to a device axis's range, minimum below
-maximum, and spreads it across `input_axis`, which therefore starts at
-0; the module exports those three fields' types and checks
-(`is_input_rel/1` and the others), so no driver restates their bounds.
-A record whose tag no kind has, whose padding is not zero, or whose
-field is outside its type's range or members is dropped and counted,
-never decoded; the decoder makes no atom. Generation fails for a second `input` declaration or one
-outside `formats/input.txt`, an argument to it, a member other than
-`record`, a tag outside 1 to 255 or used twice, two kinds of one name
-with different numbers of words or the same words, a field name that is
-not an identifier without an underscore or is used twice in its kind,
-and a field type that is not a root scalar without an alignment or a
-root enum other than a flags type, and for an `input_rel`, `input_wheel`
-or `input_axis` that no field has or an `input_axis` that does not
-start at 0.
+The generator emits `erx_input_codec`, in the `erx` application, so a
+driver of any domain writes the form and the display reads it: the one
+type of a record, the bounds check every record is held to, the encoder
+and a stream decoder that keeps a trailing partial record for the next
+read, and the clamps a driver applies to its device's values before it
+makes a record (`rel/1`, `wheel/1`, and `axis/3`, which spreads a device
+axis's range across `input_axis`), so no driver restates the bounds. A
+record whose tag no kind has, whose padding is not zero, or whose field
+is outside its type's range or members is dropped and counted, never
+decoded; the decoder makes no atom.
 
 ### Web protocol
 
@@ -1266,21 +1105,26 @@ a change to any of them regenerates both codecs.
 
 ### Program protocol
 
+The program protocol itself, its frames, requests, replies, reports and
+notices and what each does, is
+[design-programs.md](design-programs.md#the-program-protocol)'s, with
+the startup message in
+[The startup message](design-programs.md#the-startup-message) and the
+pipe frames in [design-pipes.md](design-pipes.md#the-program-protocol).
+This section owns the declaration language its frame profile is written
+in and the two checks generated from it.
+
 `protocols/prog.txt` holds `protocol erx_prog`, the frame profile of a
-program's channel: the startup message and the requests, replies,
-reports and notices of the program protocol
-([design-programs.md](design-programs.md#the-startup-message),
-[design-programs.md](design-programs.md#the-program-protocol),
-[design-pipes.md](design-pipes.md#the-program-protocol)), and the root
-limits named `prog_*`, its bounds. It is written in the declaration
-language of `protocols/9p.txt`, the file protocol's profile, and
-`tools/lib/erx/abi_protocol.rb` reads both into one model. Two fixed
-checks read the one table: `liberx`'s C check, which a program runs on
-every frame from its handler, the startup message first, and the Erlang
-grammar `erx_prog_grammar`, which the handler runs on every frame from its
-program and the command image on its startup message. Each takes a whole
-frame and accepts it or names one refusal; no field of a frame is read
-before its check has accepted all of it.
+program's channel, and the root limits named `prog_*`, its bounds. It is
+written in the declaration language of `protocols/9p.txt`, the file
+protocol's profile, and `tools/lib/erx/abi_protocol.rb` reads both into
+one model. Two fixed checks read the one table: `liberx`'s C check,
+which a program runs on every frame from its handler, the startup
+message first, and the Erlang grammar `erx_prog_grammar`, which the
+handler runs on every frame from its program and the command image on
+its startup message. Each takes a whole frame and accepts it or names
+one refusal; no field of a frame is read before its check has accepted
+all of it.
 
 | Member | Meaning |
 | --- | --- |
@@ -1289,9 +1133,9 @@ before its check has accepted all of it.
 | `frame NAME to\|from TAG [slot] KIND` | a frame to the program or from it: `{TAG, Version, Value}`, or `{TAG, Version, Slot, Value}` with `slot`, `Slot` from 0 to 15 |
 | `frame NAME to TAG slot reply REQUEST` | the reply frame, `{TAG, Version, Slot, Value}`: `REQUEST` names the slotted frame from the program, and `Value` is of the reply kind of the request case `Slot` holds; a reply on an idle slot is refused as `range` of `slot`. Every slotted frame to the program is a reply frame |
 | `integer NAME BASE [in MIN MAX \| values N...] [except N] [unique] [refers LIST]` | an integer of `u8`, `u16`, `u32` or `u64` within the range or among the values given; `unique`: no two values of the kind in one frame are equal, for a kind that is never itself a list's element; `refers LIST`: the value is the first field of an element of the frame's `LIST` that holds no `refers` value itself |
-| `capability NAME` | a capability handle: a `u64` other than `cap_null`, unique as an integer marked `unique` is. The capability walk below, and every reader that must know a value is a capability, reads this declaration. A handle is 64 bits, so a frame protocol refuses every other `u64`, an `integer` kind or a bare field, and every protocol refuses an `integer` excepting `cap_null`: a handle has no other spelling to escape the walk. A protocol has at most one unique kind, so it declares one capability kind and uses it wherever a capability appears; a file protocol takes none |
-| `offset NAME [in MIN MAX]` | a file offset, FreeBSD's `off_t`: a signed 64-bit integer from 0 to 2^63 - 1, or within the range given when the call takes a negative one, as `lseek`'s relative offset does, never past -2^63 to 2^63 - 1. Its base is its own, which no `integer` kind spells, and its C value is `int64_t`, so the generator tells a frame protocol's every 64-bit kind apart by its declaration: a capability is `erx_cap_t` and never an offset, and an offset is never read as a handle. An offset keys no `ascending` list, whose keys the C check compares as `u64`; a file protocol takes none |
-| `time NAME` | a time in whole seconds since the epoch, FreeBSD's `time_t`: any signed 64-bit integer, checked as an offset is, and taking no option. Its C value is `erx_profile_time_t`, a struct holding its `seconds`, so a time converts to no integer and no integer to it: a time is never passed where an offset (`int64_t`) or a capability (`erx_cap_t`) is expected, nor either where a time is. It keys no `ascending` list, and a file protocol takes none |
+| `capability NAME` | a capability handle: a `u64` other than `cap_null`, unique as an integer marked `unique` is. A protocol declares at most one unique kind, so one capability kind, used wherever a capability appears, and refuses every other `u64` and an `integer` excepting `cap_null`: a handle has no other spelling to escape the capability walk. A file protocol takes none |
+| `offset NAME [in MIN MAX]` | a file offset, FreeBSD's `off_t`: 0 to 2^63 - 1, or within the signed range given when the call takes a negative one, as `lseek`'s relative offset does. Its C value is `int64_t`, never `erx_cap_t`, and it keys no `ascending` list; a file protocol takes none |
+| `time NAME` | a time in whole seconds since the epoch, FreeBSD's `time_t`: any signed 64-bit integer. Its C value is `erx_profile_time_t`, a struct that converts to and from no integer, so a time is never passed as an offset or a capability, nor either as a time. It keys no `ascending` list, and a file protocol takes none |
 | `text NAME max N [utf8] [refuse nul] [assign] [path] [sum TOTAL]` | a binary of at most N bytes; `utf8`, valid UTF-8 as RFC 3629 defines it; `refuse nul`, no zero byte; `assign`, at least one byte before its first `=`; `path`, absolute and normalised: a leading `/`, no empty, `.` or `..` component, and a trailing `/` only in `/` itself; `sum TOTAL`, its length plus one counts towards `TOTAL` |
 | `total NAME MAX` | at most MAX in one frame over the texts marked `sum NAME`: for `argv` and `env`, their bytes with the NUL that C adds to each, as FreeBSD counts `ARG_MAX` |
 | `tuple NAME KIND...` | a tuple of the kinds in order |
@@ -1299,18 +1143,33 @@ before its check has accepted all of it.
 | `map NAME`, with `field NAME KIND` and `optional NAME KIND` beneath | a map whose keys are the atoms named: each `field` present, each `optional` present or absent, no other key |
 | `union NAME`, with `case ATOM [=ATOM...] [KIND...]` beneath | a case without fields is its atom; one with fields is a tuple of its atom, its literal atoms (`=ATOM`) and its fields; a tuple's arity and leading atoms select its case, whose C name joins its atoms with `_` |
 | `reply KIND`, beneath a case after its `case` line | the union of the replies to that request case, which generation refuses unless it is a union, so the capability walk reads its cases. Each case of the union a reply frame's request carries has exactly one; no other union has one |
-| `boolean`, `signal`, `errno` | built in: `true` or `false`; and the named numbers, each an atom of an ABI table read as its number, an `int32_t` in C: a signal's protocol name ([design-programs.md](design-programs.md#signal-numbers)), the atom `sig` followed by its name in `abi/signals.txt`, as `sigint` or `'sigrtmin+1'`, for each signal a program may name and never an alias or a reserved number, the names `erx_abi_signals` lists; an error's, its name in `abi/errno.txt`, as `enotsup`, never an alias such as `eopnotsupp`, the names `erx_abi_errno` lists. The generator forms each table's protocol names (`Protocols::NAMED_NUMBERS`), and the C check reads them from the profile's `tables`, one per named number, which each named kind indexes |
+| `boolean`, `signal`, `errno` | built in: `true` or `false`; a signal's protocol name ([design-programs.md](design-programs.md#signal-numbers)), `sig` and its name in `abi/signals.txt`, for each signal a program may name, never an alias or a reserved number; an error's name in `abi/errno.txt`, never an alias. Each named number is an atom read as its number, an `int32_t` in C, and the C check reads the names from the profile's `tables` |
 
-A bound is a number or a limit's name. A descriptor number, a signal of a
-set, a read end's index and a write end's number appear at most once
-because each list that names them is `ascending`, a signal set in the
-order of its atoms' spelling, not of the signals' numbers: no uniqueness rule and
+A bound is a number or a limit's name. A descriptor number, a signal of
+a set, a read end's index and a write end's number appear at most once
+because each list that names them is `ascending`: no uniqueness rule and
 no table of seen keys is needed, and the generated builders, which sort
 those lists, keep the session from having to. Only a capability value,
-which appears in many places of one frame, needs `unique`, which its
-declaration implies, and only
+which appears in many places of one frame, needs `unique`, and only
 `{dup, Fd}` needs `refers`, which refuses a `dup` of a `dup` and a `dup`
-of a number the message lacks.
+of a number the message lacks. A request's reply is typed by the
+request on its slot, so two requests may reply with cases of the same
+atom and arity.
+
+Generation fails for a cycle among a protocol's kinds or a nesting
+deeper than 16, the C check's stack; two cases of one union that the
+same arity and leading atoms select, or whose C names collide; an
+`ascending` list whose elements have no integer or atom key; a `unique`
+kind that is a list's element; a `refers` to a list whose elements are
+not tuples, whose key ranges over more than 4,096 values, or which can
+occur twice in one frame; a range outside its base or with MIN above
+MAX; a repeated value of `values`; a `sum` that names no `total`; and
+two frames of one direction that the same tag and slot form select. A
+new member of the language, or a use of one that generation refuses,
+joins only with the first frame that needs it, with its C and Erlang
+checks, a boundary mutation and a seeded fault, as each member above
+has, and, when the scratch holds what it adds, the bound in input bytes
+that keeps `erx_prog_scratch_bytes` sufficient.
 
 **Encodings.** Both checks judge the value, not its encoding, within the
 channel's wire grammar: the tags of the funnel's grammar
@@ -1318,372 +1177,134 @@ channel's wire grammar: the tags of the funnel's grammar
 reads, so a frame has no compressed term and its atoms are in UTF-8
 only. Within that grammar the C check accepts every encoding that
 `binary_to_term/1` decodes to the same term, and the Erlang grammar sees
-only the decoded term: an integer in any of its encodings, a `u64` above
-2^63 - 1 as a big integer; a list as a list, `[]` or a string of bytes; a
-binary as a binary or a bitstring of whole bytes; an atom in either of
-its tags; a map's pairs in any order. A frame is at most
-`prog_frame_max` bytes, 192 KiB, a bound which the C check, the port
-driver's copy and the builders hold to the encoded bytes.
-
-Two list encodings do not follow the nesting of the term they decode
-to, and the C check and every iterator read them as ERTS's decoder
-does. A `LIST_EXT` of no element is its tail: wherever a term is read, the reader takes the
-tail in its place, in a loop and without a level of its stack, so any
-number of such wrappers around any term leaves the term and its depth
-unchanged. And one proper list may span segments: a `LIST_EXT`'s tail
-continues the list when it is another `LIST_EXT` or a `STRING_EXT`, whose
-bytes are integer elements, and ends it when it is `NIL_EXT`; any other
-tail is an improper list, refused as `shape`. A list's length, held to
-its maximum, and its `ascending` order count across all its segments.
-
-The startup message's profile, the part with the members above:
-
-```
-limit prog_frame_max u32 196608
-limit prog_args_max u32 131072
-limit prog_path_max u32 4096
-limit prog_fds_max u32 1024
-
-protocol erx_prog
-  version 1
-  reader c
-  integer fd u16 in 0 1023
-  integer dup_target u16 in 0 1023 refers fds
-  capability cap
-  integer open u16
-  integer lane_size u32 values 16384 65536
-  total args @prog_args_max
-  text arg max @prog_args_max utf8 refuse nul sum args
-  text env_var max @prog_args_max utf8 refuse nul assign sum args
-  text cwd max @prog_path_max utf8 refuse nul path
-  list signals signal max 128 ascending
-  union descriptor
-    case pipe =write pipe_end write_end
-    case pipe =read pipe_end read_end
-    case socketpair pipe_end read_end pipe_end write_end
-    case file open access
-    case tty open access
-    case dir open
-    case socket open
-    case dup dup_target
-    case null
-  tuple fd_entry fd descriptor
-  list fds fd_entry max @prog_fds_max ascending
-  # pid, access, pipe_end, write_end, read_end and image as the
-  # programs and pipes designs give them
-  map start
-    field pid pid
-    ...
-    field fds fds
-    optional image image
-  # pipe's Flags, and its reply: the program's two new ends, each a
-  # descriptor naming values in the program's table (docs/design-pipes.md,
-  # "Making a pipe").
-  union pipe_flag
-    case cloexec
-    case nonblock
-  list pipe_flags pipe_flag max 2 ascending
-  union pipe_reply
-    case ok descriptor descriptor
-    case error errno
-  union kill_reply
-    case ok
-    case error errno
-  union probe_reply
-    case ok
-    case error errno
-  union request
-    case pipe pipe_flags
-    reply pipe_reply
-    case kill process_id signal
-    reply kill_reply
-    case probe process_id
-    reply probe_reply
-  frame start to erx_start start
-  frame request from erx_prog slot request
-  frame reply to erx_prog slot reply request
-```
-
-A request's reply is typed by the request on its slot, so two requests
-may reply with cases of the same atom and arity. A pipe's number, an end's number and a write end's number,
-`pos_integer()` in the programs and pipes designs, are `u32` from 1, as
-the pipe server's C layouts hold them
-([design-pipes.md](design-pipes.md#the-pipe-servers-records)), and a read
-end's index is 0 to `pipe_rix_max`, one below `pipe_readers_max`; the file's header comment states these readings,
-as `9p.txt`'s does.
-
-Generation fails for a cycle among a protocol's kinds or a nesting
-deeper than 16, the C check's stack; two cases of one union that the
-same arity and leading atoms select, or whose C names collide; an
-`ascending` list whose elements have no integer or atom key; a `unique`
-kind that is a list's element; a `refers`
-to a list whose elements are not tuples, whose key ranges over more than
-4,096 values, or which can occur twice in one frame; a range outside its
-base or with MIN above MAX; a repeated value of `values`; a `sum` that
-names no `total`; and two frames of one direction that the same tag and
-slot form select.
+only the decoded term. A frame is at most `prog_frame_max` bytes, a
+bound which the C check, the port driver's copy and the builders hold to
+the encoded bytes. Two list encodings do not follow the nesting of the
+term they decode to, and the C check and every iterator read them as
+ERTS's decoder does: an empty `LIST_EXT` is its tail, taken in a loop
+without a level of the stack, so wrappers change neither the term nor
+its depth; and one proper list may span `LIST_EXT` and `STRING_EXT`
+segments, whose length and `ascending` order count across all of them.
 
 **The C check.** `liberx/erx_profile.c`, with `include/erx/profile.h`,
 is the one interpreter of the tables the generator emits for a protocol
-with `reader c`; from `prog.txt` it emits the table and the typed
-functions over it, `include/erx/prog_profile.h` and
-`liberx/generated/prog_profile.c`:
+with `reader c`. From `prog.txt` the generator emits the table and the
+typed functions over it (`include/erx/prog_profile.h`,
+`liberx/generated/prog_profile.c`): a check per frame from the handler,
+`erx_prog_check_start` for the startup message and
+`erx_prog_check_to_program` for every later frame, which takes the
+request case each slot holds (`busy[S]`), tells a report from a reply by
+its envelope and checks a reply against the reply union of its slot's
+request (the startup message has its own check alone, so a later
+startup message is refused); the scratch bound `erx_prog_scratch_bytes`; and a struct per
+frame with an iterator per list.
 
-```c
-size_t	erx_prog_scratch_bytes(size_t len);
-bool	erx_prog_check_start(const uint8_t *frame, size_t len,
-	    void *scratch, size_t scratch_len, erx_prog_start_t *start,
-	    erx_profile_refusal_t *refusal);
-bool	erx_prog_fds_next(erx_prog_fds_iter_t *it,
-	    erx_prog_fd_entry_t *entry);
-const char *erx_prog_kind_name(uint16_t kind);
-```
+The check walks the frame once with `erx_etf_next`, never recursing: its
+stack is a fixed array of the profile's depth, which the generator
+computes from the acyclic table. The scratch holds only the values of
+`unique` kinds, sorted once the walk ends, and two bitmaps over the key
+range of each `refers`. Its size grows with the frame, not with the
+worst case, and always suffices, because a `unique` kind is never a
+list's element, so each value is an item of at least two bytes.
+`erx_prog_scratch_bytes(len)` computes it with checked arithmetic and
+answers `SIZE_MAX` when it overflows, as `erx_etf_scratch_bytes` does;
+with less, the check refuses with `scratch` and writes nothing past it. The
+check is pure: it reads only its arguments and writes only the scratch
+and its outputs, so it builds and is tested on the host.
 
-A value of the kind declared `capability` is `erx_cap_t` in these
-structs and in the capability walk's array: the strong scalar wrapper
+On acceptance the check fills the frame's struct: each scalar in its C
+type, a union of atoms or a signal as its generated enumeration or
+number, a text as a pointer into the frame and a length, never
+NUL-terminated, an `optional` key with a `has_` flag. A list stays a
+view, read through an iterator whose type is its list's own, so one
+list's iterator handed to another list's `next` does not compile, and
+each `next` checks at run time that the view is its list's. The structs
+are small and fixed whatever the frame holds, and since every iterator
+comes from a struct the check filled, a read never meets a byte the
+check has not accepted. Each view borrows the frame, which `liberx`'s
+private copy keeps unchanged while it is used. The generated table holds
+static asserts that the check's fixed bounds in `erx/profile.h` hold it,
+so a table the check cannot walk does not build.
+
+A capability is `erx_cap_t` in these structs: the strong scalar wrapper
 `include/erx/abi.h` makes of `scalar cap`, a struct of one member that
 converts to and from no integer. liberx's capability calls take
 `erx_cap_t`, so a handle passes from a frame to a call unchanged, and a
-handle held as an integer of any width, or a field read into one, fails
-to build wherever it is used as a capability. An integer is made a
-handle by an explicit `(erx_cap_t){ .raw = value }`, written at a
-boundary where handles arrive as integers, such as the registers a
-program starts with; the struct refuses an accidental integer, not a
-deliberate one.
-
-For each union a frame to the program carries whose cases hold capabilities, values of
-the kind declared `capability`, it also emits the most
-capabilities one case holds and the walk that names them, for the
-report `ERX_PROG_REPORT_CAPS` and `erx_prog_report_caps`, so the executor
-closes what a report for an end it no longer holds installed without a
-hand-written switch that a new case could miss. A case holding a
-capability inside another kind fails generation, since the walk reads a
-case's own fields only. A report is at most `prog_report_max` bytes,
-the executor's copy of it.
-
-`erx_prog_check_FRAME` walks the frame once with `erx_etf_next`, never
-recursing: its stack is a fixed array of the profile's depth, which the
-generator computes from the acyclic table, one level per container of the
-profile and none for a wrapper of the wire, and each level keeps what its
-container needs, the map keys seen as a bit mask, a list's last key, a
-union's remaining candidates. The scratch holds only the values of
-`unique` kinds, which it sorts in place once the walk ends, and two
-bitmaps over the key range of each `refers`, one of the numbers referred
-to and one of the targets a reference may name, compared once the walk
-ends. `erx_prog_scratch_bytes(len)` is 7 bytes of alignment, 8 bytes for
-every two bytes of `len`, and the bitmaps, 2 x ceil(range / 8) bytes for
-each `refers`, computed with checked arithmetic and `SIZE_MAX` when it
-overflows, as `erx_etf_scratch_bytes` is. It always suffices because a
-`unique` kind is never a list's element: each of its values is then an
-item of its own, at least two bytes (`SMALL_INTEGER_EXT`), and never a
-byte of a `STRING_EXT`, so a frame of `len` bytes holds at most `len / 2`
-of them. The scratch grows with the frame, not with the worst case; the
-check aligns its arrays inside it, and with less than it needs refuses
-with `scratch` and writes nothing past `scratch_len`. The check
-is pure: it reads only its arguments and writes only the scratch and its
-two outputs, so it builds and is tested on the host. A frame to the
-program after its startup message, a frame tagged `erx_prog`, is checked
-by `erx_prog_check_to_program`, which takes the request each slot holds,
-as the file protocol's `decode_reply/2` takes its request, tells a
-report from a reply by its envelope, and fills which frame it is, its
-slot and its value:
-
-```c
-bool	erx_prog_check_reply(const uint8_t *frame, size_t len,
-	    void *scratch, size_t scratch_len,
-	    const uint16_t busy[ERX_PROFILE_SLOTS], uint8_t *slot,
-	    erx_prog_reply_t *reply, erx_profile_refusal_t *refusal);
-bool	erx_prog_check_to_program(const uint8_t *frame, size_t len,
-	    void *scratch, size_t scratch_len,
-	    const uint16_t busy[ERX_PROFILE_SLOTS],
-	    erx_prog_to_program_t *to_program, erx_profile_refusal_t *refusal);
-```
-
-`busy[S]` is the request case slot `S` holds, its generated enumeration
-(`ERX_PROG_REQUEST_KILL`), or `ERX_PROFILE_NONE`. The check validates the
-envelope and the slot, refuses a reply on an idle slot, or one whose
-entry names no case, as `range` of `slot`, then checks the value against
-the reply union of that slot's request; `reply->request` names the case.
-A send the handler cannot complete, which `erx_program:send/2` answers
-`busy`, leaves the slot's request in place. The startup message has its
-own check alone, so a later startup message is refused.
-
-On acceptance the check fills the frame's struct. Every scalar is read
-into it: an integer as the C type of its base, a `boolean`
-as `bool`, a union of atoms or a signal as its generated enumeration or
-number, a text as an `erx_profile_text_t`, a pointer into the frame and a
-length, never NUL-terminated, which `liberx` copies where C needs a
-string (`argv`, `environ`, the working directory). An `optional` key has
-a `has_` flag. A tuple, map or union nested in a struct is read into a
-struct of its own; a list alone stays a view, an iterator whose `next`
-reads one element into its struct. Each list's iterator is a type of
-its own, a struct around the view, so one list's iterator handed to
-another list's `next` does not compile, and each `next` checks that the
-view is of its own list and fails otherwise. So the structs are small and fixed,
-whatever the frame holds, and no worst case sizes any of them. Since
-every iterator comes from a struct the check filled, or from an element
-read through one, a read never meets a byte the check has not accepted,
-and `next` fails only at the list's end or on another list's view. Each view borrows the frame,
-which `liberx`'s private copy keeps unchanged while it is used. The
-generated table holds static asserts that the check's fixed bounds in
-`erx/profile.h` hold it: the generator's bounds on depth and totals are
-the header's, the table's depth and totals are within them, each map's
-keys and each union's cases fit the 64 bits of a level's mask, and each
-iterator is its view alone, so a table the check cannot walk does not
-build.
+handle held as an integer fails to build wherever it is used as a
+capability; an explicit `(erx_cap_t){ .raw = value }` is written only at
+a boundary where handles arrive as integers. For each union a frame to
+the program carries whose cases hold capabilities, the generator emits
+the most capabilities one case holds and the walk that names them, so
+the executor closes what a report names without a hand-written switch a
+new case could miss; a capability nested inside another kind of a case
+fails generation, since the walk reads a case's own fields.
 
 **The Erlang grammar.** `tools/lib/erx/abi_emit_protocol.rb` emits
-`erx_prog_grammar` as it emits `erx_9p_grammar`, preloaded, calling only
-BIFs: `check_start/1`, `check_from_program/1` and `check_to_program/2`
-over the channel's frames, those tagged `erx_prog`, and
-`check_reply/2`, whose second argument, `Busy`, is a map from each busy
-slot to the request case it holds (`#{3 => kill}`), each answering
-`ok` or `{error, {Reason, Kind}}`, total over any term, making no atom and
-walking no list past its maximum; and a builder per frame, which sorts
-each `ascending` list with `lists:sort/1`, keeping a repeated key so the
-check still refuses it, then checks the frame and its encoded size and
-returns it or the refusal. A spawn's planner answers with `E2BIG` every
-refusal of a startup message that the strings' size causes: `size`;
-`length` of an `arg`, an `env_var` or a list of them; and `total` of
-`args`. It builds the message with every capability value at its
-longest encoding, distinct values each as long as any value's, so its
-verdict depends on the spec alone, and the
-message built later with the values the install makes is never larger
-than the one it checked.
+`erx_prog_grammar` as it emits `erx_9p_grammar`, preloaded and calling
+only BIFs: a check per direction and frame, total over any term, making
+no atom and walking no list past its maximum, the reply check taking a
+map from each busy slot to the request case it holds; and a builder per
+frame, which sorts each `ascending` list, keeping a repeated key so the
+check still refuses it, then checks the frame and its encoded size. A
+spawn's planner answers `E2BIG` for every refusal of a startup message
+that the strings' size causes (`size`; `length` of an `arg`, an
+`env_var` or a list of them; `total` of `args`), and builds the startup message with every capability value
+at its longest encoding, so its verdict depends on the spec alone and
+the message built later is never larger than the one it checked.
 
-**Refusals.** Both checks name a refusal by the same `Reason` and `Kind`,
-the kind being the profile's name of the type being checked: `size`, a
-frame over its bound; `shape`, a term of another type or arity, or a
-tag other than the frame's; `version`; `range`; `length`, a text or list
-past its maximum; `utf8`; `text`, a zero byte, an `assign` or a `path`
-rule; `key`, a key missing or unknown; `no_case`; `order`;
-`unique`; `refers`; and `total`. The C check adds `malformed`, bytes that
-are no term of the wire grammar (a truncation, a trailing byte, a tag
-outside the grammar, a map key repeated, which ERTS's decoder refuses
-too), and `scratch`, and gives the byte offset of the item it stopped
-at. `size` and `malformed` name the frame, as the grammar names a
-decode failure, whatever kind the bytes held. A frame from the handler that `liberx` refuses ends the program with
-status 127. A refused startup message ends it before `main` and without
-a line, since a program's descriptors come only from a startup message
-`liberx` has accepted, and it never reads the refused one's `fds` to find
-an error stream. Any later frame refused ends it with one line on its
-standard error, `erx: FRAME frame refused: REASON in KIND at byte N`,
-made of the table's names and a number only, so no byte of the frame
-reaches a terminal. A frame from a program that the handler's grammar refuses
-ends the program as a fault ends it, with `SIGSYS`.
+**Refusals.** Both checks name a refusal by the same `Reason` and
+`Kind`, the kind being the profile's name of the type being checked:
+`size`, `shape`, `version`, `range`, `length`, `utf8`, `text`, `key`,
+`no_case`, `order`, `unique`, `refers` and `total`. The C check adds
+`malformed`, bytes that are no term of the wire grammar, and `scratch`,
+and gives the byte offset of the item it stopped at. What a refusal does
+to the program, a status 127 for a frame from the handler and `SIGSYS`
+for a frame from the program, is the program protocol's
+([design-programs.md](design-programs.md#the-program-protocol),
+[A program's end](design-programs.md#a-programs-end)); the one line a
+refused later frame writes to standard error,
+`erx: FRAME frame refused: REASON in KIND at byte N`, is made of the
+table's names and a number only, so no byte of the frame reaches a
+terminal, and a refused startup message writes none, since no
+descriptor of it was accepted.
 
 **Atoms.** A frame from a program becomes a term in one place: the port
 driver `erx_program`'s input task, after the funnel's channel mode, by
 ERTS's decoder `erts_decode_ext` with `ERTS_DIST_EXT_BTT_SAFE`, which
-refuses an atom the runtime does not hold instead of making it
+refuses an atom the runtime does not hold
 ([design-runtime.md](design-runtime.md#programs-as-ports)). Every atom
-the profile names, its keys, cases, literals and signal names, is a
-literal of the preloaded grammar module, so it exists in every runtime
-image before any program runs and a frame in the grammar always decodes.
-The safe decode is no list of the protocol's atoms: it refuses an atom
-the runtime does not hold, and the grammar refuses an atom the runtime
-holds but the profile does not name; either ends the program with
-`SIGSYS`. The grammar makes no atom of its own. The chokepoint is the safe decode, not a check
-of the bytes: `erx_etf_check` cannot know the runtime's atom table, and
-the C check does not run on this path. Its build check, a rule of
-`tools/lib/erx/chokepoint_rules/`, allows a call of `erts_decode_ext` in
-erXos's own ERTS sources only in the driver's one decode function and
-only with the safe flag named in the call; a fixture with a second call,
-and one with the flag left out, must each fail it. That no other code
-reads the channel's ring is the funnel's existing rule.
+the profile names is a literal of the preloaded grammar module, so it
+exists in every runtime image and a frame in the grammar always decodes;
+the grammar refuses an atom the runtime holds but the profile does not
+name. The chokepoint is the safe decode, since `erx_etf_check` cannot
+know the runtime's atom table: a rule of
+`tools/lib/erx/chokepoint_rules/` allows `erts_decode_ext` in erXos's
+ERTS sources only in the driver's one decode function and only with the
+safe flag named in the call.
 
-**Tests.** Each check's passing case has a seeded fault that proves the
-code under test ran:
-
-* **The differential test** runs both checks over one corpus: frames the
-  builders make from values drawn up to every bound; the mutations
-  `test/fixtures/prog_profile_mutations.rb` generates from the
-  protocol's model, one for each rule of each kind at the kind's last
-  value in each base value of a frame (the start message and one notice
-  or report of each case, a request of each case and each case of its
-  reply on a busy slot), each meeting that rule first in stream order,
-  with the frame-wide rules, a map key repeated in each map and each
-  frame truncated (a list maximum no frame within the bound reaches
-  first, and a kind no base value holds, are named as skipped); hand-written boundary mutations (one
-  past a maximum, a missing, unknown or repeated key, two keys out of
-  order, `erlang`, an atom every runtime holds, in place of a
-  descriptor's case, a repeated capability value, a `dup` of a `dup` or of a number
-  absent, invalid UTF-8, a zero byte, an `env` string without a name, a
-  relative or unnormalised `cwd`, `total` passed by one, a frame one
-  byte over its bound, a byte after the term); and the C fuzz target's
-  seeds. The Erlang side of bytes is the frame bound; then the wire
-  grammar, `erx_etf_next` reading the frame to its end, whose own
-  agreement with `binary_to_term/1` is the funnel's differential test;
-  then `{Term, Used} = binary_to_term(Bytes, [safe, used])` with `Used`
-  equal to the frame's size; then the grammar. A refusal before the
-  grammar, a decode failure or a `Used` short of the frame counts as
-  `malformed`. Verdicts agree on every input, and `Reason` and `Kind` on
-  every single-rule mutation. Seeded: the generated C table with `cwd`'s
-  maximum raised by one, the generated C table accepting a read end's
-  index of 64 and the grammar accepting a lane size other than 16 and
-  64 KiB, each in a report, the grammar with its `ascending` test removed,
-  and the Erlang side ignoring `Used`, must each fail the test; so must
-  the C check reading the reply kind of another slot's request, the grammar
-  taking a reply on an idle slot, the generated C table naming the alias
-  `eopnotsupp` and `erx_prog_check_to_program` choosing the first frame
-  whatever the envelope.
-* **The round trip.** A host tool reads each accepted frame through
-  every generated accessor and writes it again with `erx_etf`'s writer;
-  its decoding equals the Erlang term exactly. Seeded: each text view one
-  byte short must fail it.
-* **Fixtures.** Hand-encoded frames in `test/fixtures/` with their
-  expected fields written by hand: each encoding above, a capability
-  value above 2^63 - 1, map pairs out of order, a startup message at
-  exactly 192 KiB, a field behind more empty `LIST_EXT` wrappers than the
-  profile's depth, and a descriptor list in three `LIST_EXT` segments
-  whose last tail is an empty `STRING_EXT`, out of order across a segment boundary in one copy
-  and in order in another. Seeded: the check refusing a big integer must
-  fail the capability fixture, and an iterator that ends a list at its
-  first segment's end must fail the segmented one.
-* **Iterators and bounds.** A translation unit handing `fds`'s
-  iterator to `argv`'s `next` must fail to compile, and the generated
-  table must fail to compile against an `erx/profile.h` whose depth
-  bound is one less. Seeded: a `next` without its kind check must fail
-  the host driver's check that `argv`'s `next` refuses `fds`'s view,
-  handed over by a cast.
-* **Fuzz targets.** `tools/fuzz/erx_prog_fuzz.c` runs the C check under
-  ASan and UBSan, with all the scratch `erx_prog_scratch_bytes` promises
-  and with half of it, checks that the first never runs short and that
-  `scratch` is the only refusal the second adds, and reads every accepted
-  frame through every accessor. `erx_prog_grammar`'s target follows `erx_9p_grammar`'s:
-  terms near the grammar, no exception, the atom count unchanged, and a
-  copy whose `cwd` bound is one larger, which must fail.
-* **Startup.** A program given a startup message with a relative `cwd`
-  ends with status 127 before `main`, writing nothing. Seeded: `liberx`
-  with the check skipped must fail the test by reaching `main`.
-* **`E2BIG`.** A spawn with one argument of 131,072 bytes, within its
-  own maximum but past `total` by its NUL, fails with `E2BIG`. Seeded: a
-  planner that maps `size` alone must fail it.
-* **Atoms.** A program's frame with a fresh atom leaves the session's
-  atom count unchanged and ends the program with `SIGSYS`. Seeded: the
-  driver with the safe flag removed must fail it, and fails the build
-  check too. An atom the runtime holds but the profile does not name is
-  the grammar's to refuse, and the differential test's mutations hold
-  one.
-
-**Extension.** Each request with its reply, report and notice joins
-`prog.txt` with the package that first uses it: a request as a case of
-`request` with a `reply` line naming its reply union (when the replies
-differ by an inner case, the inner union's cases carry the `reply` lines,
-which join with the first request that needs them), a report and a
-notice as cases of `report` and `notice`, under `frame report to
-erx_prog report` and `frame notice from erx_prog notice`, both
-`{erx_prog, 1, Value}` without a slot; the `exec` and
-`fork` keys of the startup message join with `exec` and `fork`. Error
-names come from the ABI file's errno table, through the `errno` kind, as
-signal names come from its signal table. A new member
-of the declaration language, or a use of one that generation refuses,
-such as a `unique` list element, joins only with the first frame that
-needs it, with its C and Erlang checks, a boundary mutation and a seeded
-fault, as each member above has, and, when the scratch holds what it
-adds, the bound in input bytes that keeps `erx_prog_scratch_bytes`
-sufficient. The file protocol may use the new members; nothing obliges
-it to.
+**Verification.** A differential test runs both checks over one corpus:
+frames the builders make up to every bound, mutations generated from
+the protocol's model (one for each rule of each kind, each meeting its
+rule first in stream order) and hand-written boundary mutations; the
+Erlang side decodes with `binary_to_term(Bytes, [safe, used])` and
+requires `Used` to be the frame's size. Verdicts agree on every input,
+and `Reason` and `Kind` on every single-rule mutation. A host round trip
+reads each accepted frame through every generated accessor and writes it
+again; hand-encoded fixtures cover each encoding above, segmented lists
+and wrappers deeper than the profile's depth. Fuzz targets: the C check
+(`tools/fuzz/erx_prog_fuzz.c`, under ASan and UBSan, with the promised
+scratch and with half of it) and `erx_prog_grammar` (as
+`erx_9p_grammar`'s, checking that the atom count is unchanged). A
+translation unit handing one list's iterator to another's `next`, and
+the table against a header whose depth bound is one less, must fail to
+compile. Seeded faults, each of which must fail its test: a table bound
+raised or lowered by one in either check, the grammar without its
+`ascending` test, the Erlang side ignoring `Used`, the C check reading
+another slot's reply kind, the grammar taking a reply on an idle slot,
+the C table naming an errno alias, a check that refuses a big integer, an
+iterator that ends a list at its first segment, a `next` without its
+kind check, `liberx` skipping the startup check, a planner mapping only
+`size` to `E2BIG`, and the port driver without the safe flag.
 
 ## Numeric assignment and versions
 
@@ -1703,107 +1324,70 @@ values, including POSIX errno, signals, ELF and hardware values, come
 from their pinned authoritative source and are checked against it.
 
 Capability rights, default/pass sets and transfer masks use the kernel's
-existing 32-bit `erx_rights_t`; a bit position above 31 or a mask outside
-that width fails generation. A wider call register carries its
-zero-extended value, and decoding rejects nonzero upper bits instead of
-silently truncating them. This does not change the 64-bit capability
-value, which holds a slot and generation rather than a rights word.
+32-bit `erx_rights_t`; a bit position above 31 or a mask outside that
+width fails generation. A wider call register carries its zero-extended
+value, and decoding rejects nonzero upper bits instead of silently
+truncating them. This does not change the 64-bit capability value, which
+holds a slot and generation rather than a rights word.
 
-The boot formats use these assignments:
+The boot formats' magics, versions, flags and kinds are declared in
+`erx_abi.txt` beside their layouts, and the root slots and reserved
+capability values (`cap_self`, `cap_self_thread`,
+[Objects and capabilities](design-kernel.md#objects-and-capabilities))
+in `kernel.txt`. `pack_version` names the index and file hash, BLAKE3
+with a 32-byte output. A root slot number is not a capability value: the
+root extension of the boot information page, derived from the `cap`
+lines, supplies each value with its generation, and the optional
+previous-crash capability is null when no record exists. The machine
+page's layout is in [The root task](design-kernel.md#the-root-task), and
+the device-secret page's in
+[Device secrets](design-platforms.md#device-secrets); the public HMAC
+labels that derive the device and sealing secrets are `bytes`
+declarations of `kernel.txt`, without a terminating NUL.
 
-| Declaration | Value |
-| --- | --- |
-| ABI version; image and manifest versions; boot-locator version | `1` |
-| pack version | `2`, which names BLAKE3 with a 32-byte output as the index and file hash |
-| pack magic | bytes `45 52 58 50 41 43 4b 00` (`ERXPACK` and NUL) |
-| boot-locator magic | bytes `45 52 58 42 4f 4f 54 00` (`ERXBOOT` and NUL) |
-| image magic | `0x49585245`, bytes `ERXI` |
-| system-manifest magic | `0x4d585245`, bytes `ERXM` |
-| pack flags | development bit 0; unconfined-DMA bit 1 |
-| entry kinds | file 1; executable image 2 |
-| entry flags | system bit 0; seal bit 1 |
-| image flags | fixed bit 0; JIT bit 1 |
-| image-segment flags | guarded bit 0 |
-| image protections | read 1; read/write 3; read/execute 5 |
-| system-manifest flags | development bit 0; partial boot bit 1 |
-
-The image-protection values encode read, write and execute at bits 0, 1
-and 2, but the manifest field accepts only the three listed combinations.
-An unnamed bit is zero. A versioned record's version is one `limit`
-constant whose name ends in `_version`, such as `pack_version` or
-`crash_version`; its writer stores that constant in the record's
-`version` field. A `layout` line has no version of its own. Each
-versioned reader accepts its exact supported version, with a diagnostic
-on any other value. An ABI or format change
-replaces the declarations and all consumers together; it adds no migration
-path or reader for an earlier erXos encoding.
-
-The root slot assignments are root budget 1, root group 2, system group
-3, root resource 4, boot image 5, time page 6, own space 7, own thread
-8, device-secret page 9, machine page 10 and previous-crash record 11.
-These are slot numbers, not complete capability
-values: the root extension of the boot information page, derived from them,
-supplies each value with its generation, slot N at offset 8 x (N - 1). The
-optional previous-crash capability is null when no record exists.
-
-The reserved capability values are `cap_self`, `0xffffff`, and
-`cap_self_thread`, `0xfffffe`, generation 0 and slot bits above `caps_max`
-([Objects and capabilities](design-kernel.md#objects-and-capabilities)).
-
-The machine page's layout is in [The root
-task](design-kernel.md#the-root-task), and the device-secret page's in [Device
-secrets](design-platforms.md#device-secrets). The public HMAC messages are
-`device_secret_label`, the ASCII text `erXos device secret`, which HMAC-SHA-256
-keyed by the board's key turns into the device secret, and
-`sealing_secret_label`, the ASCII text `erXos sealing secret`, which it keyed by
-the device secret turns into the sealing secret, neither with a terminating NUL.
+A versioned record's version is one `limit` constant whose name ends in
+`_version`, such as `pack_version` or `crash_version`; its writer stores
+that constant in the record's `version` field. A `layout` line has no
+version of its own. Each versioned reader accepts its exact supported
+version, with a diagnostic on any other value. An ABI or format change
+replaces the declarations and all consumers together; it adds no
+migration path or reader for an earlier erXos encoding.
 
 ## Boot-image representations
 
-The pack header is 96 bytes, aligned to 8. Its field offsets are magic 0,
-version 8, flags 12, total size 16, entry count 24, entry size 28, entry
-offset 32, string offset 40, string size 48, root entry 52, build id 56
-and index hash 64, 32 bytes. An entry is 64 bytes, aligned to 8: path
-offset 0, path length 4, kind 6, flags 7, data offset 8, data size 16,
-image-manifest offset 24 and file hash 32, 32 bytes. The field widths and
-limits are those of
-[the boot-image contract](design-kernel.md#the-boot-image). A hash field
-is a byte array holding BLAKE3's output in its own byte order, never an
-integer.
+The pack header, its entries, the boot locator and the image manifest
+are `wire_le` layouts of `erx_abi.txt`; their widths and limits are
+those of [the boot-image contract](design-kernel.md#the-boot-image). A
+hash field is a byte array holding BLAKE3's output in its own byte
+order, never an integer.
 
-The canonical index is the header, the entry array starting at byte 96,
-then the string table starting immediately after that array. File data
+The canonical index is the header, the entry array immediately after
+it, then the string table immediately after that array. File data
 starts at the first 4,096-byte boundary after the strings, where the
 index run ends, which the index hash covers with its own field read as
 zeros. Each file run, which its entry's file hash covers, is the file's
-data followed by zeros to the next page boundary. The entry
-count determines the entry array's size; the offsets must equal these
-derived values. Thus no legal data offset can overlap either index
-table. The archive ends at the first page boundary at or after the last
-entry's data. Padding bytes are zero, and the writer orders paths by their
-unsigned bytes without locale or Unicode normalization.
+data followed by zeros to the next page boundary. The entry count
+determines the entry array's size, and the offsets must equal these
+derived values, so no legal data offset can overlap either index table.
+The archive ends at the first page boundary at or after the last
+entry's data. Padding bytes are zero, and the writer orders paths by
+their unsigned bytes without locale or Unicode normalization.
 
-The boot locator is 32 bytes, aligned to 8: magic 0, version 8, a zero
-word 12, archive offset 16 and archive size 24. Its place in the first
-stage is the architecture binding's
-([design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)), and its
-rules are those of
+The boot locator's place in the first stage is the architecture
+binding's ([design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)),
+and its rules are those of
 [the bootable file](design-kernel.md#the-bootable-file).
 
-An image-manifest fixed prefix is 56 bytes, aligned to 8: magic 0,
-version 4, segment count 6, ABI version 8, flags 12, span 16, fixed base
-24, entry offset 32, program-header offset 40, program-header count 48
-and base alignment 52. Base alignment is a power of two at least one
-page: a position-independent image uses the maximum of the page size
-and its ELF load-segment alignments, representable in `u32`; a fixed
-image uses the page size. The normalized origin of a position-independent
-image is its first load address rounded down to this alignment, so an
-equally aligned mapped base preserves every segment's load-bias
-constraint. A fixed image keeps its original addresses. Its segment
-array immediately follows the prefix. Each segment
-is 40 bytes, aligned to 8: file offset 0, memory offset 8, file size 16,
-memory size 24, protection 32 and flags 36. Counts, ranges, protections
-and mapping policy follow
+An image manifest's base alignment is a power of two at least one page:
+a position-independent image uses the maximum of the page size and its
+ELF load-segment alignments, representable in `u32`; a fixed image uses
+the page size. The normalized origin of a position-independent image is
+its first load address rounded down to this alignment, so an equally
+aligned mapped base preserves every segment's load-bias constraint. A
+fixed image keeps its original addresses. Its segment array immediately
+follows the prefix. An image protection encodes read, write and execute
+at bits 0, 1 and 2, but the field accepts only read, read/write and
+read/execute. Counts, ranges, protections and mapping policy follow
 [image manifests](design-kernel.md#image-manifests); generated structural
 readers do not replace that image validator.
 
@@ -1835,15 +1419,18 @@ validator allocates nothing and performs no recursion.
 ## System-manifest representation
 
 The system manifest's complete meaning is
-[the system configuration contract](design-system.md#the-manifest).
-Its byte representation consists of a fixed header, fixed-record arrays
-in declaration order and a final string table. It uses little-endian
-integers, file-relative array spans and string-table-relative string
-references. `erx_mf_span_t` is two `u32` fields, offset and count;
-`erx_mf_str_t` is two `u32` fields, offset and byte length. Each is 8
-bytes with alignment 4. Indices refer to the named top-level table, never
-to a native address. A nested span identifies complete records within
-its named top-level array, not an independently serialized duplicate.
+[the system configuration contract](design-system.md#the-manifest);
+`abi/manifest.txt` declares its byte representation, every record's
+fields, offsets and closed values, and the `manifest` reader over them.
+This section states the rules that representation keeps.
+
+The manifest is a fixed header, fixed-record arrays and a final string
+table, in little-endian integers. Arrays are named by file-relative
+spans (`erx_mf_span_t`, an offset and a count) and strings by
+string-table-relative references (`erx_mf_str_t`, an offset and a byte
+length). Indices refer to the named top-level table, never to a native
+address, and a nested span identifies complete records within its named
+top-level array, not an independently serialized duplicate.
 
 The source describes every record a reader can return, every array's
 maximum count, and every string's required class. A reader has no
@@ -1862,153 +1449,99 @@ produce a packed manifest merely because all record offsets fit.
 ### Types, limits and references
 
 `erx_share_t` is the wire representation of `erx_grant_t`, not a
-percentage, weight or second scheduling mechanism. It contains the exact
-quota in nanoseconds, period in nanoseconds and CPU set which the kernel
-enforces, with the scheduling hints and urgency bounds that the scheduler
-contract already defines. Its size is 48 bytes and alignment is 8:
+percentage, weight or second scheduling mechanism: the exact quota and
+period in nanoseconds and CPU set which the kernel enforces, with the
+scheduling hints and urgency bounds the scheduler contract defines.
+`ERX_QUOTA_NONE` is no quota and zero quota means no CPU time. Period,
+CPU-set, capacity, urgency and flag validation use the scheduler's
+declared limits. Resource comparisons use exact integer rationals; no
+floating-point calculation rounds an overcommit down. A disabled
+sub-space grant is all-zero bytes and is legal only when its enclosing
+limits record does not enable sub-spaces.
 
-| Offset | Field | Type |
-| --- | --- | --- |
-| 0, 8, 16 | `quota_ns`, `period_ns`, `cpuset` | three `u64` |
-| 24, 28, 32, 36 | `capacity_mcpu`, `capacity_first`, `slice_us`, `grace_us` | four `u32` |
-| 40, 41, 42 | `base`, `ceiling`, `flags` | two `erx_urgency_t`, each a `u8`, and `u16` |
-| 44 | zero padding | four bytes |
+The manifest's size, its string table's and each record table's counts
+have declared ceilings. These are decoding ceilings, not resource
+grants: the configuration's `max_domains`, quotas and byte-budget checks
+impose their own limits, and no decoder allocates from a count before
+checking both its table ceiling and the complete file extent. The file
+length equals the end of its string table; there are no hidden trailing
+records, and padding is zero. Strings have no implicit NUL. A domain's
+argument and environment strings together fit the boot-information
+page's string budget after its node and peer names. NUL-separated
+vectors end each element with NUL, contain no empty environment name,
+and use the empty byte string for an empty vector; environment names
+are unique. Argument bytes stay inert until the runtime consumes them,
+and are escaped where they are displayed under their source.
 
-`UINT64_MAX` encodes `ERX_QUOTA_NONE`; zero quota means no CPU time.
-The flag positions are hints 0, defer 1, status 2 and placement 3. Other
-bits are zero. Period, CPU-set, capacity, urgency and flag validation use
-the scheduler's declared limits. Resource comparisons use exact integer
-rationals; no floating-point calculation rounds an overcommit down. A
-disabled sub-space grant is represented by all-zero bytes and is legal
-only when its enclosing limits record does not enable sub-spaces.
-
-A manifest has at most 16 MiB, its string table at most 4 MiB, and each
-record table at most 65,536 elements. These are decoding ceilings, not
-resource grants. The configuration's `max_domains`, quotas and
-byte-budget checks impose their additional limits. No decoder allocates
-from a count before checking both its table ceiling and the complete
-file extent. The source declares these ceilings as `limit` values.
-
-All record tables use 8-byte alignment and explicit zero tail padding
-where their fields require it. An array of plain `u32` indices uses
-4-byte alignment. The file length equals the end of its string table;
-there are no hidden trailing records. Strings have no implicit NUL.
-System identifiers have their existing 63-byte maximum; paths are at
-most 4,096 bytes. A domain's argument and environment strings together
-fit the boot-information page's existing 2,048-byte string budget after
-its node and peer names. NUL-separated vectors end each element with
-NUL, contain no empty environment name, and use the empty byte string
-for an empty vector. Environment entries have one name before the first
-`=`, and names are unique. Arbitrary argument bytes remain inert bytes
-until the runtime consumes them, and are escaped where they are displayed
-under their source.
-
-The domain-reference value `0xffffffff` names the system domain; other
-values index the configured-domain table. This is a manifest reference,
-never a kernel capability or a live domain id. An absent optional index
-uses `0xffffffff` only in fields whose type permits absence. A field
-cannot use both meanings. Every other index is zero-based and must name
-a present record. Index values are assigned after canonical ordering.
-
-The record notation below lists `offset: name type`. `str` means
-`erx_mf_str_t`, `span` means `erx_mf_span_t`, and `share` means
-`erx_share_t`. A sequence of fields at successive offsets is written
-explicitly; reserved fields and padding are zero. The source contains
-these exact offsets and sizes.
+`mf_none`, `0xffffffff`, in a domain-reference field names the system
+domain; other values index the configured-domain table. This is a
+manifest reference, never a kernel capability or a live domain id. An
+absent optional index uses the same value only in fields whose type
+permits absence, and a field cannot use both meanings. Every other index
+is zero-based and names a present record. Index values are assigned
+after canonical ordering.
 
 ### Machine header
 
-The header is 424 bytes with alignment 8. Its fields are:
+The header holds the machine-wide values and a span for each table; the
+tables are packed in their declared order, each at its first alignment
+boundary after the one before, with `strings` last. `root_memory` is
+nonzero and page-aligned. Table capacities are 1 through 65,536, except
+that `max_domains` may be 0 when no domains are configured, and
+`system_reserve` is 1 through 1,000. The system grant has a positive rate and a
+nonempty CPU set, the lane is a power of two within the lane contract,
+and queue, peer-held and baseline limits are positive and satisfy their
+admission constraints. The selected platform must provide every CPU and
+unit the configuration requires. A root configuration that cannot
+create and run its own threads fails the complete plan, even if no
+configured domain is present.
 
-| Offset | Field | Type and meaning |
-| --- | --- | --- |
-| 0, 4, 6 | `magic`, `version`, `flags` | `u32`, `u16`, `u16`; magic/version above; development at flag bit 0, partial boot at bit 1, the UART console line secure at bit 2 and the host-link line secure at bit 3, all other bits zero |
-| 8, 12 | `length`, `header_size` | `u32`, `u32`; complete file length and exactly 424 |
-| 16, 24, 32, 40 | `host`, `console`, `hostlink`, `platform` | four string references; system identifier, absolute device-tree path, optional device-tree path and platform identifier |
-| 48, 56, 64 | `root_memory`, `system_baseline`, `system_reservation` | three `u64` byte counts; the root assumption, configured baseline and checked admission reservation |
-| 72, 120 | `system_share`, `users_share` | two shares, for `system` and `users` |
-| 168, 172, 176 | `system_principal`, `max_domains`, `max_connections` | three `u32`; principal index and domain-library table capacities |
-| 180, 184, 188 | `system_lane`, `system_queue`, `peer_held` | three `u32` byte limits with their system-contract meanings |
-| 192, 196 | `system_reserve`, `sealing` | two `u32`; unallocated system-rate headroom in thousandths, and none 0, device 1 or TPM 2 |
-| 200, 204 | `system_runtime_limits`, `native_limits` | two `u32` indices; the system runtime's limits and a partial boot's complete native-domain limits |
-| 208 through 344 | table spans | eighteen `span` values, in the order below |
-| 352 | `system_args` | string reference; the system runtime's arguments |
-| 360 | `sessions` | `span` of the session templates |
-| 368 | `starts` | `span` of the start rows ([design-apps.md](design-apps.md#the-start-table)), at most `start_rows_max` |
-| 376 | `displays` | `span` of the display records ([design-display.md](design-display.md#a-displays-session)) |
-| 384, 392 | `apps`, `app_services` | `span` of the `apps` row ([design-packaging.md](design-packaging.md#the-apps-row)), at most one, and of the service indices its `services` span partitions |
-| 400, 408 | `packages`, `signers` | `span` of the image's package rows, at most `apps_max_limit`, and of the `signer` rows ([design-packaging.md](design-packaging.md#where-a-package-lies)) |
-| 416 | `development_key` | `span` of the build's development package key ([design-packaging.md](design-packaging.md#the-sdk)), at most one; in a development manifest only |
-
-The spans at 208 through 344 are `principals`, `domains`, `limits`,
-`runtime_limits`, `lane_classes`, `units`, `devices`, `windows`,
-`services`, `facets`, `facet_operations`, `facet_parameters`,
-`introductions`, `boot_order`, `liveness`,
-`shell_principals`, `partial_boot` and `strings`, at offsets 208, 216
-and so on. The tables are packed in that order, with `sessions` after
-`domains`, `starts` after `partial_boot`, `displays` after `starts`, and `apps`,
-`app_services`, `packages`, `signers` and `development_key` after `displays`, each at its first required
-alignment boundary after the preceding table; `strings` comes last, and its span's count is bytes.
-
-`root_memory` is nonzero and page-aligned. Table capacities are 1 through
-65,536, except that `max_domains` may be 0 when no domains are configured, `system_reserve` is 1 through 1,000, and the system grant has a
-positive rate and nonempty allowed CPU set. The lane is a
-power of two within the lane contract. Queue, peer-held and baseline
-limits are positive and satisfy their existing admission constraints.
-The selected platform must provide every CPU and unit the configuration
-requires. A root configuration that cannot create and run its own
-threads fails the complete plan, even if no configured domain is present.
-
-The runtime group of every system-domain thread is `system`. The kernel
-creates it uncapped and starts the first root worker there; the root
-entry applies `system_share` before starting other threads and creates
-`users` from `users_share`. The root worker never changes group. Service
-domains have child groups under `system`; its direct runtime threads
-share the aggregate grant without an independent cap. `system_reserve`
-limits the normalized share assigned to those child groups; it is
-configuration headroom, not CPU supply promised within a time window.
+Every system-domain thread runs in the runtime group `system`. The
+kernel creates it uncapped and starts the first root worker there; the
+root entry applies `system_share` before starting other threads and
+creates `users` from `users_share`. The root worker never changes group.
+Service domains have child groups under `system`, whose direct runtime
+threads share the aggregate grant without an independent cap.
+`system_reserve` limits the normalized share assigned to those child
+groups; it is configuration headroom, not CPU supply promised within a
+time window.
 
 The baseline is the system runtime's own fixed memory requirement,
 including its queues shared across clients. The reservation is derived
 by the production admission planner from the capacities, the bounded
 per-domain state, connection-control state and configured facets; it is
 not trusted because source text names a number. Their sum, the root's
-objects and tables, principals' budgets and permanent device reservations
-must fit `root_memory`. Dynamic admissions and later facet grants still
-recompute their incremental charges before changing state. A system
-runtime's total peer-held limit is checked from `max_domains` and
-`peer_held`, within that reservation, rather than borrowed from a user's
-runtime defaults.
+objects and tables, principals' budgets and permanent device
+reservations must fit `root_memory`. Dynamic admissions and later facet
+grants still recompute their incremental charges before changing state.
+A system runtime's total peer-held limit is checked from `max_domains`
+and `peer_held`, within that reservation, rather than borrowed from a
+user's runtime defaults.
 
 ### Principal, domain and limit records
 
-| Record and size | Fields |
-| --- | --- |
-| principal, 80 | `0: name str`; `8: memory u64`; `16: grant share`; `64: domains u32`; `68: names u32`; `72: default_limits u32`; `76: ceiling_limits u32` |
-| configured domain, 64 | `0: name str`; `8: principal u32`; `12: kind u32`; `16: flags u32`; `20: runtime u32`; `24: release u32`; `28: release_files u32`; `32: limits u32`; `36: restarts u32`; `40: restart_period_s u32`; `44: boot_timeout_s u32`; `48: args str`; `56: env str` |
-| domain limits, 176 | `0: name str`; `8: memory u64`; `16: outer u64`; `24: grant share`; `72: spaces share`; `120: lane u32`; `124: connections u32`; `128: crash u32`; `132: flags u32`; `136: runtime_limits u32`; `140: threads u32`; `144: peer_held u64`; `152: peer_held_total u64`; `160: objects u32`; `164: mappings u32`; `168: band u32`; `172: reserved u32` |
-| runtime limits, 56 | `0: name str`; `8: max_frame u32`; `12: max_message_heap u32`; `16: funnel_depth u32`; `20: exports u32`; `24: tmp u64`; `32: overlay u64`; `40: atoms u32`; `44: foreign_atoms u32`; `48: processes u32`; `52: reserved u32` |
-| lane class, 16 | `0: name str`; `8: lane u32`; `12: reserved u32` |
-
 Every name is a system identifier. A principal's `default_limits` and
-`ceiling_limits`, and a domain's `limits`, index the domain-limits table, whose `runtime_limits`
-indexes the runtime-limits table. Named limit records let several domains
-share an explicit configuration without packing a second copy of its
-grant or retaining a hidden runtime default. A source override produces
-a complete named record; readers do not apply inheritance or merge maps.
-Lane-class records supply configured defaults when policy constructs a
-new specification; each packed domain-limits record already has its
-resolved lane size. They cannot change a configured domain at runtime.
+`ceiling_limits`, and a domain's `limits`, index the domain-limits
+table, whose `runtime_limits` indexes the runtime-limits table. Named
+limit records let several domains share an explicit configuration
+without packing a second copy of its grant or retaining a hidden runtime
+default. A source override produces a complete named record; readers do
+not apply inheritance or merge maps. Lane-class records supply
+configured defaults when policy constructs a new specification; each
+packed domain-limits record already has its resolved lane size. They
+cannot change a configured domain at runtime.
 
 `threads`, `objects`, `mappings` and `band` are Fiasco's
-([design-fiasco.md](design-fiasco.md#memory-and-budgets), FD14 and FD15). The domain library hands
-them to the backend, which bounds by them what the domain can make the root hold for it and
-starts the domain's threads at the band's priority within the grant's `cpuset`, so the CPU set
-has one source on both kernels. They live in the limits record, not the configured-domain row, so
-that a session takes them from its template's limits as it takes every other limit, an app's
-session from the manifest's `limits session` record. Nothing above the domain library reads
-them, and they leave the record with Fiasco, since erXos's kernel bounds a domain by its budget
-and its grant alone.
+([design-fiasco.md](design-fiasco.md#memory-and-budgets), FD14 and
+FD15). The domain library hands them to the backend, which bounds by
+them what the domain can make the root hold for it and starts the
+domain's threads at the band's priority within the grant's `cpuset`, so
+the CPU set has one source on both kernels. They live in the limits
+record, not the configured-domain row, so that a session takes them from
+its template's limits as it takes every other limit, an app's session
+from the manifest's `limits session` record. Nothing above the domain
+library reads them, and they leave the record with Fiasco, since erXos's
+kernel bounds a domain by its budget and its grant alone.
 
 Defaults and ceilings have different purposes. Omitted request fields
 take their default value; an explicit request may exceed a default but
@@ -2026,63 +1559,54 @@ checks apply in addition to every per-domain ceiling.
 
 ### Runtime-limit projection
 
-`erx_runtime_limits_t`, embedded by value in both `erx_dom_spec_t` and
-`erx_boot_info_t`, is a 64-byte record with alignment 8:
+`erx_runtime_limits_t` is embedded by value in both `erx_dom_spec_t` and
+`erx_boot_info_t`. For a requested or configured domain, normalization
+takes its values from its resolved runtime-limits record, and the
+peer-held and aggregate limits from its domain-limits record, dropping
+the manifest's profile name and indices. For the system domain it takes
+them from `system_runtime_limits`, `peer_held` from the header and the
+aggregate limit from the checked admission calculation. This is a
+generated projection from those declarations, not a second
+independently defined set of defaults. The planner verifies the entire
+resulting value and places it in the boot-page plan before the first
+thread is started.
 
-| Offset | Field | Type |
-| --- | --- | --- |
-| 0, 4, 8, 12 | `max_frame`, `max_message_heap`, `funnel_depth`, `exports` | four `u32` |
-| 16, 24 | `tmp`, `overlay` | two `u64` byte limits |
-| 32, 36, 40, 44 | `atoms`, `foreign_atoms`, `processes`, `reserved` | four `u32`; reserved is zero |
-| 48, 56 | `peer_held`, `peer_held_total` | two `u64` byte limits |
-
-For a requested or configured domain, normalization takes the first nine
-values from its resolved runtime-limits record and the final two from
-its domain-limits record. It removes the manifest's profile name and
-indices. For the system domain it takes the first nine values from
-`system_runtime_limits`, `peer_held` from the header and the aggregate
-limit from the checked admission calculation. This is a generated
-projection from those declarations, not a second independently defined
-set of defaults. The planner verifies the entire resulting value and
-places it in the boot-page plan before the first thread is started.
-Native runtimes receive the same record and validate its representation;
-they do not claim to run an Erlang funnel they do not implement.
-
-The boot-page reader checks this record together with every other page
-field. ERTS installs it as one immutable startup value before creating
-its bounded runtime structures or accepting peer input. A missing limit
-is an invalid page, not an unknown value interpreted as unlimited. The
-system manifest remains private to the system domain; another runtime
-learns only its own projected limits through its read-only boot page.
+Native runtimes receive the same record and validate its
+representation; they do not claim to run an Erlang funnel they do not
+implement. The boot-page reader checks this record together with every
+other page field. ERTS installs it as one immutable startup value before
+creating its bounded runtime structures or accepting peer input. A
+missing limit is an invalid page, not an unknown value interpreted as
+unlimited. The system manifest remains private to the system domain;
+another runtime learns only its own projected limits through its
+read-only boot page.
 
 ### Domain identity and placement
 
-Domain kind 1 is `service` and 2 is `secret`. A session template is no
-domain row: the `sessions` table, which the header's span at offset 360
-names and which follows the domain table, holds one 40-byte record per
-template, in principal order and at most one per principal: its principal
-and limits indices, its runtime, release and release-file count as a
-domain row has them, a reserved zero word, and its arguments and
-environment strings (property 14 of
+A domain is a `service` or the `secret` domain. A session template is no
+domain row: the `sessions` table holds one record per template, in
+principal order and at most one per principal, with its principal and
+limits, its runtime and release as a domain row has them, and its
+arguments and environment (property 14 of
 [design-system.md](design-system.md#the-manifest)). Nothing in the boot
 order, a unit, window, service, facet or introduction indexes it, and a
-partial boot has none. Domain flags have required
-at bit 0 and rescue at bit 1. Domain-limits flag bit 0 enables `SPACES`;
-the enabled record supplies the sub-space group's grant. The rights
-remain installed by the domain library's existing plan, not by a reader.
+partial boot has none. A domain-limits record that enables `SPACES`
+supplies the sub-space group's grant; the rights remain installed by the
+domain library's plan, not by a reader.
+
 `runtime` is an executable boot-image entry. `release` and
 `release_files` identify a nonempty contiguous run in that image. All
 indices and the sum defining the run are checked against the already
 validated boot image before policy checking. The secret domain has no
 crash area and is the unique domain whose run carries the seal mark.
 
-The principal grant describes its CPU cap within `users`. Configured service
-domains receive their CPU grants under `system`, while their memory
-budgets remain charged to their principal, as the system contract
-specifies. A principal record therefore does not move a service's group
-under `users`. The domain plan derives its typed CPU-parent selection
-from the authenticated creation origin: configured-manifest row,
-admitted principal request or native partial-boot row. The
+The principal grant describes its CPU cap within `users`. Configured
+service domains receive their CPU grants under `system`, while their
+memory budgets remain charged to their principal, as the system contract
+specifies; a principal record does not move a service's group under
+`users`. The domain plan derives its typed CPU-parent selection from the
+authenticated creation origin: configured-manifest row, admitted
+principal request or native partial-boot row. The
 [domain-specification contract](design-system.md#the-domain-library)
 binds that origin to the checked row, carries it into the domain record
 and makes application use the parent the plan selected. An external
@@ -2090,316 +1614,274 @@ creation request cannot supply origin or parent fields.
 
 ### Devices and partition windows
 
-| Record and size | Fields |
-| --- | --- |
-| unit, 24 | `0: name str`; `8: holder u32`; `12: devices span`; `20: reserved u32` |
-| device, 88 | `0: selector u32`; `4: role u32`; `8: path str`; `16: bridge str`; `24: compatible str`; `32: bus u16`; `34: device u8`; `35: function u8`; `36: dma u32`; `40: flags u32`; `44: line u32`; `48: dma_memory u64`; `56: placement_key str`; `64: base u64`; `72: size u64`; `80: clock u32`; `84: reserved u32` |
-| partition window, 32 | `0: holder u32`; `4: device u32`; `8: role u32`; `12: partition u32`; `16: rights u32`; `20: reserved u32`; `24: reserved u64` |
-
 A unit's `holder` is a domain reference. Its device span names a
-nonempty run in the device table. The unit spans cover that table once,
-in order, without a gap or shared record. Device ownership exists in the
-unit alone; a device record carries no second holder field. The checked
-platform placement record supplies the unit, selector, role, compatible
-string, confinement and hostile mark. The source configuration assigns
-the unit to a holder; it cannot override those platform facts.
+nonempty run in the device table, and the unit spans cover that table
+once, in order, without a gap or shared record: device ownership exists
+in the unit alone, and a device record carries no second holder field.
+The checked platform placement record supplies the unit, selector,
+role, compatible string, confinement and hostile mark. The source
+configuration assigns the unit to a holder; it cannot override those
+platform facts. Roles are platform-declared facts for manifest checks,
+not a kernel driver dispatch. `compatible` and `placement_key` are
+nonempty UTF-8 strings without NUL or control characters, the placement
+key resolving to the selected platform's immutable record.
 
-Selector 1 is a device-tree path: `path` is nonempty, `bridge` and the
-bus/function fields are zero, and `base`, `size` and `line` are the
-device's register window and interrupt from its node: `base` and `size`
-are the physical address and length of the node's first `reg` entry, and
-`line` is its first interrupt, numbered as the platform's interrupt
-controller numbers the lines a device raises. Line 0 is no line: a node
-that raises no interrupt, as the Raspberry Pi 4's RNG200 does, has `line`
-0 and shares no line with any device. The platform record carries
-all three for every device-tree device; the production image suite
-checks QEMU virt's against the device tree QEMU builds, and the board
-tree's test the Pi 4's against the board's tree. A framebuffer row is the
+A device-tree device's `base` and `size` are the physical address and
+length of its node's first `reg` entry, and `line` is its first
+interrupt, numbered as the platform's interrupt controller numbers the
+lines a device raises. Line 0 is no line: a node that raises no
+interrupt, as the Raspberry Pi 4's RNG200 does, has `line` 0 and shares
+no line with any device. The platform record carries all three for every
+device-tree device, and the image suites check them against the device
+tree QEMU builds and the board's tree. A framebuffer row is the
 exception: its path names the node under which the firmware adds its
 framebuffer, `/chosen`, its `line` is zero, and its page-aligned `base`
 and `size` are the window the framebuffer must lie in, which the
 manifest check refuses where it overlaps another row's register window;
-the device tree the firmware hands over supplies where in the window
-the framebuffer lies, and its geometry, at boot
-([design-device-tree.md](design-device-tree.md#facts-into-records)). `clock` is the frequency
-in hertz of the clock the device's driver divides rates from, the rate
-of the first entry of its node's `clocks` (a fixed clock's `clock-frequency`,
-or for a clock the firmware sets, the rate the board's firmware configuration
-fixes). Whether a device has one is a fact of its kind, the `clocked`
-column of `include/erx/device_kinds.h`, which marks the kinds whose
-driver divides rates from such a clock: a PL011 times its characters and
-divides its baud rate from it, for example, and an I2C or SPI controller
-of the BCM2711 divides its bus clock from the core clock
-([design-header-io.md](design-header-io.md#clocks)). Only
-the board knows the rate, so a row of a clocked kind carries a nonzero
-clock, every other row's clock is 0, and the manifest check refuses a
-row that disagrees. Selector 2 is a PCIe function: `bridge`
-names its host bridge by device-tree path, `path` is empty, bus is at
-most 255, device at most 31 and function at most 7; its `base` and
-`size` are zero, since configuration space gives them, and so is its
-`line`, except at a place a closed bridge's platform record lists,
-where it is the INTx line the bridge's `interrupt-map` routes for that
-place's pin ([design-pcie.md](design-pcie.md#the-closed-bus)). Role values are
-ordinary 1, UART 2, configuration space 3, network 4, block 5, TPM 6,
-GPU 7, framebuffer 8 and input 9 (`abi/manifest.txt`).
-These classification values are platform-declared facts for manifest
-checks, not a kernel driver dispatch. `compatible` and `placement_key`
-are nonempty UTF-8 strings without NUL or control characters, with the
-placement key resolving to the selected platform's immutable record.
+the firmware's device tree supplies where in the window the framebuffer
+lies, and its geometry, at boot
+([design-device-tree.md](design-device-tree.md#facts-into-records)).
 
-DMA values are none 0, confined 1 and unconfined 2. Flag bit 0 is
-hostile. Only an unconfined device has nonzero `dma_memory`; its size is
-page-aligned and is reserved for that device for the boot. All other
-flag bits are zero. A device's coherence and DMA range are not in its
-row: the root reads them at boot from the device tree the firmware hands
-over ([design-device-tree.md](design-device-tree.md),
-[design-device-dma.md](design-device-dma.md#device-addresses-and-reach)). The packed marks do not establish actual confinement:
-the device service still verifies the machine before assigning the unit.
+`clock` is the frequency in hertz of the clock the device's driver
+divides rates from, the rate of the first entry of its node's `clocks`
+(a fixed clock's `clock-frequency`, or for a clock the firmware sets,
+the rate the board's firmware configuration fixes). Whether a device has
+one is a fact of its kind, the `clocked` column of
+`include/erx/device_kinds.h`: a PL011 divides its baud rate from it, and
+an I2C or SPI controller of the BCM2711 its bus clock from the core
+clock ([design-header-io.md](design-header-io.md#clocks)). Only the board
+knows the rate, so a row of a clocked kind carries a nonzero clock,
+every other row's clock is 0, and the manifest check refuses a row that
+disagrees.
 
-Window roles are boot A 1, boot B 2, boot-selection record 3, reset
-count 4, vault 5, data 6, FAT 7, system 8, system A 9, system B 10 and
-verified image 11. `abi/manifest.txt` marks each role a configured domain
-may hold `configured` and each role whose window may grant write
-`writable`, and the manifest check and the block driver read those
-attributes. Both fail closed: a role that carries neither is the slot
-writer's and read-only.
-Fixed-medium roles have `partition = 0`; the ABI medium layout
-determines their sectors, and a `system` window's are those of the
-system partition of the slot that the boot value names, so an `unknown`
-boot gives none.
-FAT names a primary partition numbered 1 through 4 on the selected
-removable device. Rights are read bit 0 and write
-bit 1, at least read; a window of a role not marked `writable` grants
-read alone, and a manifest has at most one `system` window. No record
-contains a caller-selected sector range. Role/holder checks still
+A PCIe function, selector 2, names its host bridge by device-tree path
+and its bus, device and function. `base`, `size` and `line` belong to
+the selector's `dt` case and are inactive for a function, since
+configuration space gives them, except `line` at a place a closed
+bridge's platform record lists, where it is the INTx line the bridge's
+`interrupt-map` routes for that place's pin
+([design-pcie.md](design-pcie.md#the-closed-bus)). A host bridge's row
+carries the closed flag when its platform record lists every place on
+it, and then those places, each a bus, device, function and pin. A
+device's `dma_limit` is a device address, exclusive, 0 for none, which
+the packer copies from a bridge's unit into each `pci` row behind it, and
+the function's DMA facts are cut at it
+([design-pcie.md](design-pcie.md#dma)). On QEMU `virt` the manifest's
+platform part carries `msi_frame`, the MSI frame's base, the interrupt
+id of its first line and the count, for the backend that may not read
+the frame's own registers
+([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)).
+
+A platform's firmware requests reach the system domain in the manifest
+beside the device records, each as a record of its name, its belonging
+(a device row, or the machine), its tag and its argument, in the order of
+the platform record's `firmware_requests`, so a row's index is its
+position among those of its device or the machine; the generator derives
+a machine row's tag and argument from its reading and checks every
+device row against its tag's declaration in `abi/formats/vc_property.txt`
+([design-board-sensors.md](design-board-sensors.md#the-requests)).
+
+Only an unconfined DMA device has nonzero `dma_memory`; its size is
+page-aligned and is reserved for that device for the boot. A device's
+coherence and DMA range are not in its row: the root reads them at boot
+from the device tree the firmware hands over
+([design-device-tree.md](design-device-tree.md),
+[design-device-dma.md](design-device-dma.md#device-addresses-and-reach)).
+The packed marks do not establish actual confinement: the device service
+still verifies the machine before assigning the unit.
+
+A window grants its holder one partition of a medium. `abi/manifest.txt`
+marks each window role a configured domain may hold `configured` and
+each role whose window may grant write `writable`, and the manifest
+check and the block driver read those attributes. Both fail closed: a
+role that carries neither is the slot writer's and read-only. A
+fixed-medium role's sectors come from the medium layout (`medium.txt`),
+and a `system` window's are those of the system partition of the slot
+that the boot value names, so an `unknown` boot gives none. A FAT window
+names a primary partition 1 through 4 on the selected removable device.
+A window grants at least read, and a window of a role not marked
+`writable` read alone; a manifest has at most one `system` window. No
+record contains a caller-selected sector range. Role/holder checks
 restrict boot partitions, system A and B and the records to the slot
-writer, the `system` window to a storage domain, whose holder is the
-storage domain that serves `system` and the server of the service named
-`system_service`
+writer, the `system` window to the storage domain that serves `system`
+and the server of the service named `system_service`
 ([design-storage.md](design-storage.md#the-system-tree)), and data and
-FAT to their storage holders. These are private grants, not a global device
-namespace.
+FAT to their storage holders. These are private grants, not a global
+device namespace.
 
 ### Services, facets and their parameter schemas
 
-| Record and size | Fields |
-| --- | --- |
-| service, 24 | `0: name str`; `8: server u32`; `12: interface u32`; `16: reserved u64` |
-| facet, 80 | `0: name str`; `8: grantee u32`; `12: service u32`; `16: operations span`; `24: parameters span`; `32: max_request u32`; `36: in_flight u32`; `40: reductions u64`; `48: period_ns u64`; `56: max_heap_size u64`; `64: queue u64`; `72: grantee_kind u32`; `76: reserved u32` |
-| facet operation, 4 | `0: operation u32` |
-| facet parameter, 32 | `0: key u32`; `4: kind u32`; `8: scalar u64`; `16: bytes str`; `24: index u32`; `28: reserved u32` |
-| introduction, 8 | `0: from u32`; `4: to u32` |
-| liveness target, 4 | `0: service u32` |
-
 A service's `server` is a domain reference: a configured domain's
-index, or `mf_none` for the system domain. A facet's grantee is a
-choice on `grantee_kind` (`mf_grantee`): `system`, whose `grantee` is
-0; `domain`, a configured domain's index; or `session`, a session
-template's index, written `@session.PRINCIPAL` in the source. A service's interface number names
-a declaration in `abi/services/`; the packer checks the selected
-server's verified release catalog actually supplies that interface.
-The manifest cannot invent a service by giving it a plausible name.
-The service's public symbolic name is a system identifier scoped to its
-server. A facet's public identifier is scoped to its grantee. Source
-aliases are globally unique within their record kind and references use
-those aliases; an optional `name` property supplies the public name,
-defaulting to the alias. For example, `service storage_a` with
-`name "files"` on one server and `service storage_b` with `name "files"`
-on another are distinct, and `@service.storage_a` is unambiguous.
-Repeating an alias fails even when its public scopes differ. An introduction joins two
-different configured domains and is unique as an unordered pair; it
-creates the existing connection, with no additional capabilities or
-transitive authority.
+index, or `mf_none` for the system domain. A facet's grantee is a choice
+on `grantee_kind`: `system`; `domain`, a configured domain's index; or
+`session`, a session template's index, written `@session.PRINCIPAL` in
+the source. A service's interface number names a declaration in
+`abi/services/`; the packer checks the selected server's verified
+release catalog actually supplies that interface, so the manifest cannot
+invent a service by giving it a plausible name. A service's public name
+is scoped to its server and a facet's to its grantee. Source aliases are
+unique within their record kind and references use those aliases; an
+optional `name` property supplies the public name, defaulting to the
+alias, so two servers may each serve a `files` while `@service.ALIAS`
+stays unambiguous. An introduction joins two different configured
+domains and is unique as an unordered pair; it creates the existing
+connection, with no additional capabilities or transitive authority.
 
-The operations span contains explicit operation numbers of that
-interface, strictly ascending and without duplicates. A schema revision
-does not implicitly add newly declared operations to an existing grant.
-The parameters span contains typed scope and option values which the
-same service fragment declares with `parameter NAME NUMBER KIND
-CARDINALITY BOUND`. Cardinality is `one`, `optional` or `set MAX_COUNT`;
-a set is of `u64` and its `MAX_COUNT` at least 2, and its elements are
-packed one row each, in strictly ascending order of their values.
-Each declaration also identifies the checked scope/admission helper that
-consumes it. A missing required parameter, an unknown key or kind, a
-duplicate scalar key, an unsorted/duplicate set, an excessive bound, or a
-parameter without that checked consumer fails validation.
+Within `service NAME NUMBER`, the members are `operation NAME NUMBER`,
+`liveness OPERATION_NAME`, `served_as message|tree`, `quantity KEY
+VALUE` and `parameter NAME NUMBER KIND CARDINALITY BOUND checked_by
+HELPER`.
 
-Within `service NAME NUMBER`, the exact metadata members are
-`operation NAME NUMBER`, `liveness OPERATION_NAME`, `served_as message|tree`,
-`quantity KEY VALUE` and `parameter NAME NUMBER KIND CARDINALITY BOUND
-checked_by HELPER`. `served_as` is stated once by every
-interface, and its closed set of values is `message` and `tree`, so no
-interface is served one way by omission. `tree` marks an interface whose
-grants are `erx_fs` grants of one tree, which the grantee mounts and speaks
-9P2000.L to (`files`, `windows` and `line`); `message` marks one served as a
-message facet. It is the one source of that fact: the generator lists
-the numbers of the `tree` interfaces for Erlang as `?ERX_TREE_SERVICES`, from
-which the domain service serves the system domain's such services as
-`erx_fs` grants ([design-system.md](design-system.md#facets-a-configured-domain-serves),
-"Facets of the system domain's services"), and the manifest check holds
-every receiver of such a facet to `files_max_frame_min` (property 16 of
-design-system.md). For integer kinds, BOUND is `range MIN MAX`;
-for identifier, path or bytes it is `bytes MAX_BYTES`; boolean uses
-`boolean`; a member kind uses `member ENUM`, naming an enum the ABI
-declares, not a flag set, whose values run without a gap; a reference
-kind uses `target TABLE`, with `domains`,
-`principals` or `devices` as appropriate. A domain reference additionally
-spells `system yes|no`. The helper is a qualified symbol of the service's
-manifest-grant checker, resolved against its checked consumer inventory;
-naming it in untrusted configuration creates no helper or authority.
-The service is unusable by the packer unless that checker is available.
-All of one service's parameters name one helper, and the manifest check
-hands each facet to the checker its service names, never to one that
-picks facets by interface, so a service naming a checker is checked by
-it whatever its interface.
-These declarations supply manifest metadata and validation, not request
-execution or a future service's callback implementation.
-The closed KIND tokens are `u64`, `i64`, `boolean`, `identifier`,
-`namespace_path`, `domain`, `principal`, `device`, `bytes` and `member`. A liveness
-marker names one declared operation. Its request and response signature
-belongs to the service contract and is verified against that service's
-checked consumer descriptor before admission; an absent or incompatible
-descriptor fails. This metadata does not invent a callable signature or
-permit the watchdog to invoke an arbitrary operation by number.
-
-A `quantity KEY VALUE` line gives the value of one of a facet row's
-quantities, KEY one of `max_request`, `in_flight`, `reductions`,
-`period_ns` and `max_heap_size`, VALUE positive and within the field's
-width, at most once each. They are the quantities of the facet rows the
-build derives rather than a source states: an app's rows, which
-[design-packaging.md](design-packaging.md#the-apps-row) derives from
-the `apps` row, take each quantity from their service's declaration,
-and the manifest check refuses an `apps` row naming a service whose
-interface leaves one out. A source's own facet rows state every
-quantity themselves; no declared quantity fills a field a source row
-leaves out.
-
-Parameter kinds are unsigned integer 1, signed integer 2, boolean 3,
-identifier 4, namespace path 5, domain reference 6, principal index 7,
-device index 8, bounded bytes 9 and enum member 10. Integer, boolean and
-member values use `scalar`; signed values use the declared 64-bit signed
-representation, booleans are 0 or 1, and a member is its enum value,
-which a facet's source spells as the member's bare name and the domain
-service receives as the atom of that name. Text and bounded bytes use `bytes`; references
-use `index`. All inactive fields are zero. A parameter's maximum length,
-range and allowed reference category come from its declaration. Opaque
-bytes are legal only for a field whose service contract defines them as
-opaque; they cannot encode an unchecked scope or nested configuration.
-There is no term decoder, recursive value language or raw function name
-in the manifest.
-
-These records carry an operation set and the service's declared scope
-parameters; the handwritten scope checker still decides membership and
-the generated serving path still authenticates the lane and live grant.
-No generic interpretation of a path, pid or parameter mints authority.
-Service-specific declarations land with the service contract and are
-required before a manifest can name that service. This permits complete
-structural readers without implementing future service callbacks.
+* `served_as` is stated by every interface, so no interface is served
+  one way by omission. `tree` marks an interface whose grants are
+  `erx_fs` grants of one tree, which the grantee mounts and speaks
+  9P2000.L to (`files`, `windows` and `line`); `message` one served as a
+  message facet. It is the one source of that fact: the generator lists
+  the `tree` interfaces for Erlang as `?ERX_TREE_SERVICES`, from which
+  the domain service serves the system domain's such services as
+  `erx_fs` grants ([design-system.md](design-system.md#facets-a-configured-domain-serves)),
+  and the manifest check holds every receiver of such a facet to
+  `files_max_frame_min` (property 16 of design-system.md).
+* A facet row's operations are explicit operation numbers of its
+  interface, strictly ascending; a schema revision does not add newly
+  declared operations to an existing grant. A tree service's row names
+  no operations, since its protocol's messages are its operations, and
+  configures its grant by parameters instead.
+* A `parameter` declares a typed scope or option value: its KIND, one of
+  `u64`, `i64`, `boolean`, `identifier`, `namespace_path`, `domain`,
+  `principal`, `device`, `bytes` and `member`; its cardinality, `one`,
+  `optional` or `set MAX_COUNT` (a set of `u64`, at least 2, packed one
+  row per element in strictly ascending order); its BOUND, `range MIN
+  MAX` for an integer, `bytes MAX_BYTES` for text and bytes, `boolean`,
+  `member ENUM` naming a gapless enum the ABI declares, or `target
+  TABLE` for a reference, with `system yes|no` on a domain reference;
+  and the checked helper that consumes it. A member value is spelled as
+  the member's bare name in the source and reaches the domain service as
+  that atom. Inactive fields are zero. Opaque bytes are legal only where
+  the service contract defines them as opaque; they cannot encode an
+  unchecked scope or nested configuration. There is no term decoder,
+  recursive value language or raw function name in the manifest.
+* The helper is a qualified symbol of the service's manifest-grant
+  checker, resolved against its checked consumer inventory; naming it
+  in untrusted configuration creates no helper or authority, and the
+  service is unusable by the packer unless that checker is available.
+  All of one service's parameters name one helper, and the manifest
+  check hands each facet to the checker its service names, never to one
+  that picks facets by interface. A missing required parameter, an
+  unknown key or kind, a duplicate scalar key, an unsorted or duplicate
+  set, an excessive bound, or a parameter without its checked consumer
+  fails validation.
+* A `liveness` marker names one declared operation. Its request and
+  response signature belongs to the service contract and is verified
+  against the service's checked consumer descriptor before admission;
+  this metadata does not let the watchdog invoke an arbitrary operation
+  by number. Liveness records name services whose interface declares
+  its liveness operation; all use the kernel watchdog's period and
+  cannot extend its deadline.
+* A `quantity KEY VALUE` line gives one of a facet row's quantities
+  (`max_request`, `in_flight`, `reductions`, `period_ns`,
+  `max_heap_size`), positive and at most once each, for the facet rows
+  the build derives rather than a source states: an app's rows, which
+  [design-packaging.md](design-packaging.md#the-apps-row) derives from
+  the `apps` row, take each quantity from their service's declaration,
+  and the manifest check refuses an `apps` row naming a service whose
+  interface leaves one out. A source's own facet rows state every
+  quantity themselves; no declared quantity fills a field a source row
+  leaves out.
 
 `max_request` is a byte ceiling, `in_flight` a count, `reductions` a
 positive share per positive `period_ns`, `max_heap_size` the grant
 process's heap bound in words of the grantee's runtime, as OTP's
 `max_heap_size` process flag counts it, off-heap binaries included, and
-`queue` the resolved byte quota. The
-packer resolves an omitted queue to `system_queue`; no zero sentinel
-changes its meaning at runtime. The manifest checker includes each
-facet's charge in its grantee's admission reservation. Liveness records
-name services whose interface declares its liveness operation; all use
-the kernel watchdog's period and cannot extend its deadline.
+`queue` the resolved byte quota; the packer resolves an omitted queue to
+`system_queue`, and no zero sentinel changes its meaning at runtime. The
+manifest checker includes each facet's charge in its grantee's admission
+reservation.
+
+These declarations supply manifest metadata and validation, not request
+execution or a service's callback implementation. The records carry an
+operation set and the service's declared scope parameters; the
+handwritten scope checker still decides membership and the generated
+serving path still authenticates the lane and live grant. No generic
+interpretation of a path, pid or parameter mints authority.
+Service-specific declarations land with the service contract and are
+required before a manifest can name that service.
 
 ### Ordering and partial boots
-
-| Record and size | Fields |
-| --- | --- |
-| boot-order entry, 4 | `0: domain u32` |
-| system-shell principal, 4 | `0: principal u32` |
-| partial-boot program, 16 | `0: name str`; `8: image u32`; `12: reserved u32` |
-| start row, 24 | `0: principal u32`; `4: flags u32` (enabled at bit 0); `8: display u32` (a service index or `mf_none`); `12: restarts u32`; `16: restart_period_s u32` (from 1); `20: reserved u32` |
-| display, 16 | `0: service u32`; `4: policy u32`; `8: idle_dim_s u32`; `12: idle_off_s u32` |
-| apps row, 32 | `0: memory u64` (from 1); `8: max u32` (1 to `apps_max_limit`); `12: app_template u32` (a session index); `16: packages_facet u32` (a facet index); `20: system_facet u32` (a facet index); `24: services span` (of `app_services`) |
-| app service, 8 | `0: service u32` (a service index); `4: facet u32` (a facet index) |
-| package, 44 | `0: name str` (an identifier); `8: flags u32` (enabled at bit 0); `12: sha256 u8[32]`, its header's SHA-256 |
-| signer, 40 | `0: name str` (an identifier); `8: key u8[signer_key_bytes]`, an Ed25519 public key |
-| development key, 32 | `0: key u8[signer_key_bytes]`, an Ed25519 public key |
 
 Boot order is the complete permutation of the configured-domain
 indices, with servers before clients. The packer uses a topological
 order whose ready set is ordered by domain-name bytes. It rejects a
 cycle and never emits a partial order. The shell-principal list is a
-strictly increasing, duplicate-free list of principal indices. A
-liveness list likewise names each configured target at most once.
+strictly increasing, duplicate-free list of principal indices, and a
+liveness list names each configured target at most once.
 
-A console line's `secure` attribute has no table of its own. The two
-fixed lines carry it in the header's flags:
-`ERX_MANIFEST_CONSOLE_SECURE`, bit 2, for the UART that `console` names,
-and `ERX_MANIFEST_HOSTLINK_SECURE`, bit 3, for the host link, which is
-set only when `hostlink` names a path; the source names them as the
-`machine` flags `console_secure` and `hostlink_secure`, which a
-manifest's source sets by default and may clear. The console has no
-other line.
+A console line's `secure` attribute has no table of its own: the two
+fixed lines, the UART that `console` names and the host link, carry it
+in the header's flags (`ERX_MANIFEST_CONSOLE_SECURE`, bit 2, and
+`ERX_MANIFEST_HOSTLINK_SECURE`, bit 3; the source's `console_secure`
+and `hostlink_secure`), set by default and cleared by the source's
+`machine` flags; the host link's is set only when `hostlink` names a
+path. The console has no other line.
 
 A display record describes one service of the `windows` interface, by
 the service's index, so the display's name is the service's
-([design-display.md](design-display.md#a-displays-session)). The records
-are sorted by service, and every `windows` service has exactly one,
-whose server is a configured domain (property 18 of
-[design-system.md](design-system.md#the-manifest)). `policy` is
-`mf_display_policy`, which has a member only for a window manager the
-display domain has, so a manifest names no policy its display cannot
-start: `single` 1, and `rio` 2 only beside `erx_wm_rio`. `idle_dim_s` and
-`idle_off_s` are the idle times after which `erx_screen` dims the panel
-and turns it off, 0 meaning never, and `idle_off_s` is 0 or at least
-`idle_dim_s`. The record names no session, application or renderer. The
-reserved chord has no field here: the keys it names and their encoding
-belong to the login design, which decides what the chord brings up
-([design-display.md](design-display.md#risks-and-decisions), 14).
+([design-display.md](design-display.md#a-displays-session)). Every
+`windows` service has exactly one, whose server is a configured domain
+(property 18 of [design-system.md](design-system.md#the-manifest)). Its
+policy is a member of `mf_display_policy`, which has a member only for a
+window manager the display domain has, so a manifest names no policy its
+display cannot start. `idle_dim_s` and `idle_off_s` are the idle times
+after which `erx_screen` dims the panel and turns it off, 0 meaning
+never, and `idle_off_s` is 0 or at least `idle_dim_s`. The record names
+no session, application or renderer, and the reserved chord has no
+field here: it belongs to the login design
+([design-display.md](design-display.md#risks-and-decisions), 14). The
+packed table `windows` holds a medium's partition windows and is
+unrelated to the `windows` service interface.
 
-The packed table `windows` holds a medium's partition windows, as the
-source's `window` records declare them; it is unrelated to the
-`windows` service interface, whose services the `displays` table
-describes.
-
-Partial-boot programs have system-identifier names and executable image
-indices. All use the machine's declared default native limits and the
-system principal, and receive no connections. `ERX_MANIFEST_PARTIAL_BOOT`
-selects partial boot independently of the program-list length and
-requires `ERX_MANIFEST_DEVELOPMENT`. It is a development mode which
-replaces configured domains, as the system
-contract specifies: `domains`, services, facets, introductions,
-liveness and boot order are empty. The common header, principals,
-limits and system-owned console units remain checked. A release
-manifest refuses the partial-boot flag, even with an empty list. Without
-that flag, a nonempty partial-boot list is invalid. A partial boot may
-have zero programs; it follows the ordinary completion path with all
-programs already ended. A full boot runs the
-complete configuration check, including the unique vault requirement;
-the native-program mode does not pretend to start the absent services.
+Partial boot is a development mode which replaces configured domains, as
+the system contract specifies. Its programs have system-identifier names
+and executable image indices; all use the machine's default native
+limits and the system principal, and receive no connections. The
+partial-boot flag selects it independently of the program list's length
+and requires the development flag; `domains`, services, facets,
+introductions, liveness and boot order are empty, while the header,
+principals, limits and system-owned console units remain checked. A
+release manifest refuses the flag, even with an empty list, and without
+it a nonempty list is invalid. A partial boot may have zero programs; it
+follows the ordinary completion path with all programs already ended. A
+full boot runs the complete configuration check, including the unique
+vault requirement; the native-program mode does not pretend to start the
+absent services.
 
 ### Canonical source, packing and checking
 
 `config/<name>.txt` uses the same ASCII token, comment and quoted-string
-rules as ABI declarations. It begins `manifest 1`; declaration keywords
-are `machine`, `share`, `principal`, `domain`, `limits`, `runtime_limits`,
-`lane_class`, `unit`, `window`, `service`, `facet`, `introduce`,
-`liveness`, `shell_principal` and `partial_boot`. Named declarations
-have two-space-indented properties whose names and types are their
-record's fields. References use source identifiers, not numeric indices.
-String and byte values accept either a quoted ASCII literal or
-`hex:HEX_BYTES`; the latter carries UTF-8 or opaque argument bytes while
-the source stays ASCII. The field's validator still checks the decoded
-bytes against its declared text class and bound.
-Every required property occurs exactly once. Unknown properties,
-duplicates, unbounded values and references outside the selected
-configuration fail. An optional source property is optional only where
-the owning contract declares a default; normalization resolves that
-default before validation.
-
-The exact source forms are below. A named record starts `KIND NAME` at
-column zero and ends at the next declaration. Its two-space properties
-are unordered; list elements follow their declared type's ordering.
-References are `@KIND.NAME`, resolved within this configuration; literal
-`system` names the root domain. No packed offset, index, count, reserved
-field or computed charge is an accepted property.
+rules as ABI declarations. It begins `manifest 1`; each declaration
+starts at column zero with one of the forms below and ends at the next
+declaration. Its two-space-indented properties are unordered, and their
+names and types are their record's fields except where the table says
+otherwise. References are `@KIND.NAME`, resolved
+within this configuration, and `@artifact.NAME`, resolved only against
+the packer's verified build-input inventory; literal `system` names the
+root domain. String and byte values are a quoted ASCII literal or
+`hex:HEX_BYTES`, which carries UTF-8 or opaque bytes while the source
+stays ASCII, and the field's validator checks the decoded bytes against
+its declared text class and bound. A `share` is a source value expanded
+by value into the records that name it, not another packed table. A
+facet's `parameter KEY VALUE` resolves KEY against its service's
+parameter schema, and repetition is legal only for a declared set.
+Numeric operation, key and kind values are derived. Flag and operation
+lists are comma-separated declared names or `none`. `args VALUE...` and
+`env VALUE...` hold zero or more quoted or hex values without an
+embedded NUL; normalization appends a NUL per element and checks
+environment keys and the boot page's aggregate bound, and an empty
+property line is an empty vector. An executable reference names one
+executable entry, a release reference its verified contiguous run, and
+an image input a built EROFS artifact; an omitted image salt is empty,
+and the fixed EROFS, dm-verity and SHA-256 profile determines the
+image's format.
 
 | Source form | Accepted properties and value forms |
 | --- | --- |
@@ -2422,185 +1904,53 @@ field or computed charge is an accepted property.
 | `display NAME` | the display of the service whose source alias is NAME, a service of the `windows` interface; exactly `policy`, a member of `mf_display_policy`, and `idle_dim_s` and `idle_off_s` integers |
 
 A `share` is a source value expanded by value, not another packed table
-or runtime object. Every share field is required. Flag and operation
-lists are comma-separated declared names or `none`. A facet's
-`parameter KEY VALUE` resolves KEY against its service's parameter
-schema; VALUE has that key's declared scalar, string, byte or reference
-type. Repetition is legal only for a declared set, within its bound.
-Numeric operation, key and kind values are derived. For example:
 
-```text
-facet root_clock
-  name "clock"
-  grantee @session.system
-  service @service.clock
-  operations set
-  max_request 256
-  in_flight 1
-  reductions 100000
-  period_ns 1000000000
-  max_heap_size 8192
-```
 
-This block requires that the `clock` service, a message service,
-declares the operation `set`, and its facet admits that operation
-alone. An unknown operation or a repeated one fails normalization. A
-tree service's row names no operations, since its protocol's messages
-are its operations, and configures its grant by parameters instead: on
-a `windows` row, `parameter windows 16` resolves against
-`abi/services/windows.txt`, and `parameter windows 0` or a second
-`windows` line fails normalization; its grant checker still decides
-scope. This adds no service callback or execution schema.
-
-`args VALUE...` and `env VALUE...` contain zero or more quoted or hex
-byte values without embedded NUL. Normalization appends a NUL per
-element and checks environment keys and the aggregate boot-page bound.
-An empty property line means an empty vector. An artifact reference is
-`@artifact.NAME`, resolved only against the packer's verified build-input
-inventory: executable references name one executable entry, release
-references its verified contiguous run, and image inputs a built EROFS
-artifact. Wrong artifact kinds fail. References neither open arbitrary
-host paths nor execute commands. Omitted image salt is empty; the fixed
-EROFS/dm-verity/SHA-256 profile determines its format. The builder derives
-extents, lengths, counts and hashes. Source `root_hash`, `data_blocks`,
-`extent` or `system_reservation` properties fail even when their values
-match what would be derived.
-
-The following is a complete native partial-boot source for grammar and
-normalization. Its explicit input inventory supplies executable
-`@artifact.probe`; platform `fixture` supplies CPU 0 and UART unit
-`uart0` at `/uart@0`, without DMA. Those fixtures, root-image provenance
-and the production resource planner are independent prerequisites for
-accepting a boot image.
-
-```text
-manifest 1
-share system
-  quota_ns 2000000
-  period_ns 10000000
-  cpuset 1
-  capacity_mcpu 200
-  capacity_first 0
-  slice_us 1000
-  grace_us 5
-  base 24
-  ceiling 47
-  flags none
-share users
-  quota_ns 8000000
-  period_ns 10000000
-  cpuset 1
-  capacity_mcpu 800
-  capacity_first 0
-  slice_us 1000
-  grace_us 5
-  base 16
-  ceiling 31
-  flags none
-runtime_limits native
-  max_frame 4096
-  max_message_heap 8192
-  funnel_depth 64
-  exports 64
-  tmp 0
-  overlay 0
-  atoms 1024
-  foreign_atoms 64
-  processes 64
-limits native
-  memory 16777216
-  outer 1048576
-  grant @share.users
-  spaces none
-  lane 4096
-  connections 0
-  crash 0
-  flags none
-  runtime_limits @runtime_limits.native
-  peer_held 4096
-  peer_held_total 4096
-principal root
-  memory 268435456
-  grant @share.users
-  domains 4
-  names 4
-  default_limits @limits.native
-  ceiling_limits @limits.native
-machine
-  flags development,partial_boot
-  host "fixture"
-  console "/uart@0"
-  hostlink ""
-  platform "fixture"
-  root_memory 1073741824
-  system_baseline 67108864
-  system_share @share.system
-  users_share @share.users
-  system_principal @principal.root
-  max_domains 4
-  max_connections 4
-  system_lane 4096
-  system_queue 16384
-  peer_held 4096
-  system_reserve 250
-  sealing none
-  system_runtime_limits @runtime_limits.native
-  native_limits @limits.native
-unit console
-  placement "uart0"
-  holder system
-partial_boot probe
-  image @artifact.probe
-```
-
-Normalization assigns the sole principal and each sole limits record
-index 0; it produces one unit, one device and one partial-boot row, with
-zero configured domains, services and facets. Shares produce no table;
-their values fill the header, principal and limits records. A reference
-to `@share.missing` fails as undefined; `data_off 4096` in the program
-fails as an unknown property; an absent domain as the UART holder fails
-before policy checking. C, Erlang and Ruby readers of the packed fixture
-recover the same values and table counts.
-
-The source names image inputs and platform units. It cannot set derived
-fields: packed offsets and counts, boot-image indices, platform facts,
-boot order, hash-tree fields or admission charges. The packer resolves
-them from the validated boot-image plan, platform placement records,
-verified release metadata and its image builder. It forms one immutable
-normalized configuration before applying any rule or writing a byte.
+Every required property occurs exactly once. Unknown properties,
+duplicates, unbounded values and references outside the selected
+configuration fail. An optional source property is optional only where
+the owning contract declares a default; normalization resolves that
+default before validation. References neither open arbitrary host paths
+nor execute commands, and a wrong artifact kind fails. The source cannot
+set derived fields: packed offsets, indices and counts, boot-image
+indices, platform facts, boot order, hash-tree fields (`root_hash`,
+`data_blocks`, `extent`) or admission charges (`system_reservation`)
+fail as properties even when their values match what would be derived.
+The packer resolves them from the validated boot-image plan, platform
+placement records, verified release metadata and its image builder, and
+forms one immutable normalized configuration before applying any rule
+or writing a byte.
 
 Top-level named tables are sorted by name bytes; service names are
 qualified by their server and facet names by their grantee. Unit devices
 follow their units, in selector order. Facet operations and parameters
 follow their facets, with operation/key/value order inside each facet.
-Windows sort by holder, device,
-role and partition; introductions by their canonical endpoint pair.
-Auxiliary order lists follow their stated ordering. Strings are appended
-in header/table/record/field traversal order, without deduplication; equal
-source configurations therefore have equal byte representations without
-depending on a hash table's iteration order.
-An empty string encodes offset zero and length zero and appends no bytes;
-the same representation satisfies zeroed inactive string fields.
+Windows sort by holder, device, role and partition; introductions by
+their canonical endpoint pair. Auxiliary order lists follow their stated
+ordering. Strings are appended in header/table/record/field traversal
+order, without deduplication, so equal source configurations have equal
+bytes without depending on a hash table's iteration order. An empty
+string is offset zero and length zero and appends no bytes, the same
+representation as a zeroed inactive string field.
 
-The checker evaluates all fourteen system-manifest properties, with
-their property numbers in diagnostics. Resource sums include exact
-principal budgets, device reservations, table sizes and the system's
-baseline and worst admitted-domain reservation. The domain planner is
-the production `erx_dom_plan_configured` pure core built for the host; a
-different implementation or a placeholder success is not its oracle.
-Property 12 invokes it for each configured-domain or partial-boot child
+The checker evaluates every system-manifest property of
+[design-system.md](design-system.md#the-manifest), with its property
+number in diagnostics. Resource sums include exact principal budgets,
+device reservations, table sizes and the system's baseline and worst
+admitted-domain reservation. The domain planner is the production
+`erx_dom_plan_configured` pure core built for the host; a different
+implementation or a placeholder success is not its oracle. Property 12
+invokes it for each configured-domain or partial-boot child
 specification, in boot order, against a view in which every earlier plan
-is recorded, and `erx_dom_plan_connect` likewise for each introduction.
-With no child specifications it makes zero calls; that
-universal check holds over the empty set, without pretending a planner
-ran. Initial-root startup remains a separate required plan under the
-resource check, including its private image memory, stack, UTCB and boot
-objects. A declared positive baseline cannot replace that plan or its
-backend/ABI-bound charge evidence. If any specification requires planning and that planner is
-unavailable, packing fails as unsupported. A host report can show that
-unresolved result, but it cannot turn it into a
-bootable manifest. The same rule applies to an unavailable service scope
-checker or missing image provenance.
+is recorded, and `erx_dom_plan_connect` likewise for each introduction;
+with no child specifications it makes zero calls. Initial-root startup
+remains a separate required plan under the resource check, including its
+private image memory, stack, UTCB and boot objects; a declared baseline
+cannot replace that plan or its charge evidence. If a specification
+requires planning and that planner is unavailable, packing fails as
+unsupported; a host report can show that unresolved result, but it
+cannot turn it into a bootable manifest. The same rule applies to an
+unavailable service scope checker or missing image provenance.
 
 The root entry's non-JIT property, the system and seal release runs,
 device placement, grants, role restrictions, rescue closure and domain
@@ -2610,60 +1960,6 @@ structure and its relationship to the validated boot image before
 returning a view. Configuration authority still comes from the checked
 system-release file; a boot argument or a separately compiled descriptor
 array cannot supply missing data.
-
-## Output inventory and publication
-
-One immutable inventory lists the resolved input paths and all derived
-output paths. Paths are normalized relative paths, without traversal or
-symlinks, and name inputs below the repository root and outputs below the
-build's generated tree, `build/gen/`, which mirrors repository-relative
-paths. No output is checked in. Output bytes depend only on source
-bytes and the generator, never wall-clock time, locale, filesystem
-enumeration order or absolute checkout path. Declarations keep their
-declared field order; unordered sets and documentation tables use
-qualified-name byte order. Every artifact names its sources and generator
-and carries the project's BSD-2-Clause notice and copyright for
-Stanislav Sedov <stas@deglitch.com>.
-
-The output families have explicit locations, shown relative to `build/gen/`:
-
-| Location | Contents |
-| --- | --- |
-| `include/erx/abi.h` | constants, strong scalar wrappers, typed layouts, size/offset assertions and field operations |
-| `include/erx/abi_reader.h`, `liberx/generated/abi_reader.c` | bounded structural readers and diagnostic types |
-| `include/erx/core/abi_trap.h`, `include/erx/core/abi_crash.h`, `include/erx/core/abi_boot.h` | the seam headers of the C17 cores' C++ glue, which does not include `include/erx/abi.h`: the values it needs for the trap's registers, the crash record's writer and bootstrap's handoff record, each value `include/erx/abi.h` also defines spelled as that header spells it |
-| `kernel/generated/abi_calls.h`, `kernel/generated/abi_decode.c` | typed handler declarations, argument validation, closed dispatch/executor metadata and each call's admission plan |
-| `kernel/generated/NAME_impl.h` | a private layout's offsets, record and operations |
-| `liberx/generated/calls.h` | backend-independent call signatures |
-| `liberx/backend/<backend>/generated/` | the backend's declarations or native trap wrappers, with architecture-specific files inside its architecture directory |
-| `erlang/apps/erx/include/generated/erx_abi.hrl`, `erlang/apps/erx/src/generated/erx_manifest.erl` | constants, each enum's member list and guard, and the generated manifest reader |
-| `erlang/apps/erx/src/generated/erx_abi_enums.erl` | each enum's type and each enum attribute's predicate |
-| `tools/generated/abi.rb` | immutable values, source-driven packer encodings and host readers |
-| `fuzz/generated/` | entry points invoking production readers |
-| `web/src/generated/` | the web client's TypeScript: `web.txt`'s types, codec, limits and hash; `ui.txt`'s tables and the reader and writer of its binary form; the inspection schema's kinds, attribute names, units, backend reporters and `present` marks ([design-web.md](design-web.md#the-client)) |
-| `erlang/apps/erx_win/src/erx_draw_codec.erl`, `include/erx/draw_codec.h`, `display/generated/erx_draw_codec.c` | the draw protocol's codec and its C twin |
-| `erlang/apps/erx_memdraw/src/erx_theme.erl`, `include/erx/theme.h`, `web/src/generated/theme.ts` | the theme's constants for the Erlang renderer and the display, `erx-lvgl` and the web client |
-| `erlang/apps/erx/src/generated/erx_input_codec.erl` | the input records' type, bounds check, reader and writer |
-| `otp/erts/preloaded/src/erx_prog_grammar.erl`, `include/erx/prog_profile.h`, `liberx/generated/prog_profile.c` | the program protocol's Erlang grammar, and the table and typed accessors of its C check |
-| `docs/generated/abi-reference.md` | signatures, assignments, fields, bounds and mapping tables |
-
-Independent raw-byte fixtures live in `test/fixtures/` and do not derive
-their expected bytes from the generator. Test builders use the generated
-host codec where their purpose is constructing inputs rather than
-serving as an independent oracle. Direct boundary mutations exercise
-the production reader entrypoints in each generated language.
-
-The inventory enumerates individual paths rather than accepting arbitrary
-files below those directories. The generated tree is regenerated whole,
-so an output the inventory no longer lists does not survive, and a file
-edited or added by hand fails the tree's stamp. The determinism test
-and the ASCII refusal of `Erx::Generated` ([Generation](design-build.md#generation))
-hold the byte-for-byte and ASCII properties.
-
-All outputs are derived and validated before any publication. The tree is
-staged beside `build/gen/` and moved into place by rename, so a process or
-filesystem failure leaves the earlier tree or none, and the command fails.
-A failed schema check does not reach this effect stage.
 
 ## Verification
 
@@ -2700,8 +1996,8 @@ stack. Canonical-index tests deliberately move each table into the header,
 the other table and file data. Fuzz targets exercise those same production
 entry points.
 
-Drift tests change an artifact, delete one, add an orphan and change a
-document delimiter, each expecting failure. Reordering independent
+Drift tests edit a generated file, delete one and add an orphan, each of
+which must fail the generated tree's stamp. Reordering independent
 declarations does not change bytes; changing a numeric assignment changes
 all of its consumers. Generated C layouts compile for each supported host
 and target, and their `_Static_assert` checks bind the native representation
@@ -2778,10 +2074,3 @@ status, or showing a development-only value in the release projection
 each fails its specific schema rule. These examples exercise grammar
 and representation; they do not substitute for the independent snapshot
 protocol tests.
-
-The signed accessor accepts `-1` and the declared signed minimum without
-overflow; array access succeeds at indices 0 and 1 and refuses 2 before
-an atomic access. `atomic ready load acquire store release`, a signed
-sequence counter, an unbounded array and right position 32 are invalid
-declarations. An array's owner masks are checked in each element's
-unsigned width, never as a mask for the aggregate byte range.

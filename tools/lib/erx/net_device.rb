@@ -233,7 +233,7 @@ module Erx
     GRANT_LINE = "gen_server:call(erx:cap(net), no_operation, infinity).\r"
     # Typed at the system domain's Erlang shell: in the network domain, whether vtnet0's
     # interface merged any of the bursts the echo came back in, its count of merged units
-    # (docs/design-network-fastpath.md, "The merge, before classification"), and the counts
+    # (docs/design-network-stack.md, "The merge, before classification"), and the counts
     # summed over the domain's grants, root's session's and ntpd's; and the coherent value of each of the
     # domain's network records that has DMA memory, the value erx_virtio_net opens the
     # device with: {Merged, Refused, LeftOut, [Coherent]}.

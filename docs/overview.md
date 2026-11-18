@@ -144,13 +144,20 @@ ports behind the same kernel interface. Development starts on Apple Silicon macO
 with Linux also supported as a host.
 
 The build path uses established components to reach a usable system:
-Erlang/OTP, musl and a near-stock Fiasco kernel. Fiasco serves as a
-stopgap behind erXos's own kernel interface, and the first phase brings
-the system up on it without security or scheduling guarantees; erXos's
-C kernel replaces it after running the same system and passing the
-conformance tests.
-Development builds run trusted code only until the security closure
-milestone on erXos's own kernel.
+Erlang/OTP, musl and a near-stock Fiasco kernel, each behind one of
+erXos's own interfaces. The first release, 0.2, ships on Fiasco: each
+domain's memory and capabilities are isolated by Fiasco's address spaces
+and object spaces and by erXos's root service, and also, where no IOMMU
+confines a DMA-capable device, by the domain that drives it, and unless a
+kernel-entry patch is carried, by the CPU's branch predictors. What Fiasco
+lacks against erXos's own kernel is a list of downsides; those the release
+accepts are published with it, and one is still an open decision
+([the Fiasco design](design-fiasco.md#contract)). In the second
+phase erXos's own C kernel, with every guarantee the architecture
+states, replaces Fiasco after running the same system and passing the
+same conformance tests. Development builds run trusted code only until
+the security closure: 0.2's on Fiasco, and later the closure on
+erXos's own kernel.
 
 The roadmap grows through demonstrations: a booting shell, live
 inspection, protected domains, native programs, persistent files and

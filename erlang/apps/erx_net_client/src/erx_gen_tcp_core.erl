@@ -765,7 +765,7 @@ take(Length, #core{held = Held, held_bytes = Bytes} = C) ->
 %% The first Length bytes of Pieces, the held binaries oldest first, and the binaries
 %% after them; take/2 ensures 0 < Length =< the bytes held. A delivery within one piece
 %% is a sub-binary of it, not a copy. A delivery across pieces is the join of exactly
-%% its bytes, the socket process's one copy of them (docs/design-network-fastpath.md,
+%% its bytes, the socket process's one copy of them (docs/design-network-stack.md,
 %% "Copies"), so it references only its own bytes and no byte is joined twice. The
 %% binaries left stay the pieces or a sub-binary of one.
 split(Length, Pieces) ->

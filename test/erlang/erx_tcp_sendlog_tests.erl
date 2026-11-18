@@ -154,8 +154,8 @@ timeout_test() ->
                  erx_tcp_sendlog:next_seg(Gone, #{mss => 100, recover => 500, new_data => true,
                                                   rescue => false})).
 
-%% The send log's rules for runs (docs/design-network-fastpath.md, "The send log keeps runs",
-%% and its Verification, test 3), over random runs of new data, acknowledgements with SACK
+%% The send log's rules for runs (docs/design-network-stack.md, "The send log keeps runs",
+%% and "Tests", "The send log's rules"), over random runs of new data, acknowledgements with SACK
 %% blocks at any byte, and retransmissions, with t_maxseg lowered once, sometimes within one
 %% step, so that retransmissions are cut at another size than their ranges. Two logs take
 %% the same events, but one is sent each run whole and the other segment by segment; after

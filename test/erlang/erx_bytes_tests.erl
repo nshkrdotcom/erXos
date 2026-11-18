@@ -58,7 +58,7 @@ siphash_iodata_test() ->
 contract_test() ->
     ?assertMatch({net_bytes, [], []}, erx_net_bytes_probe:check(erx_net_bytes_probe:answers())).
 
-%% --- The merge of received TCP segments (docs/design-network-fastpath.md, "The merge") ---
+%% --- The merge of received TCP segments (docs/design-network-stack.md, "The merge") ---
 
 %% A segment of connection Port (its source port) from Seq on, acknowledging Ack, with
 %% Payload: IPv4, the timestamps option, ACK only; Changes override any field.

@@ -48,7 +48,7 @@ in_order/3), doing what the stages from `ack` on do for it, with fewer copies of
 block and without the stages that have nothing to do. FreeBSD's fast path does less than its
 general stages, which leaves different state behind (`snd_wl1` and `rcv_up` after a pure
 ACK, `t_dupacks`, the spurious-timeout rule); the finished cases do what the general stages
-do instead (docs/design-network-fastpath.md, "Header prediction finishes its cases"). So
+do instead (docs/design-network-stack.md, "Header prediction finishes its cases"). So
 each effect of the two cases has two implementations and one meaning: a property test
 requires the general stages' control block and actions for every segment the fast path
 takes, and the explorer checks the same in every state it reaches.

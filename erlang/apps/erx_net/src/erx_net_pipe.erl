@@ -18,7 +18,7 @@ take as `refused`.
   `init`, so that a restarted driver finds the far end registered since. Each frame is a
   message `{erx_net_pipe, Pid, Frame}` in either direction, and the far end may also send
   `{erx_net_pipe, Pid, {frames, Frames}}`, which reaches the driver as one batch, as a burst a
-  medium hands up at once (docs/design-network-fastpath.md, "Verification"); a `Frame`
+  medium hands up at once (docs/design-network-stack.md, "Fast-path verification"); a `Frame`
   that is not a binary is dropped as `malformed` (a type check, not a parse), and one from
   another pid as `stranger`. The pipe monitors the far end and stops when it ends, which ends the
   driver. A name that names no other process stops the pipe at its first message.
