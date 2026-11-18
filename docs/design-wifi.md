@@ -1,89 +1,62 @@
 # WiFi
 
-The Raspberry Pi 4's WiFi chip, a Cypress CYW43455, joins open, WPA2-PSK
-and WPA3-SAE networks as a station, and the network stack carries
-`wlan0` over it as it carries `genet0` over the board's Ethernet. The
-chip is a FullMAC chip on the SoC's legacy SD controller: its firmware
-runs the 802.11 MAC, and the host loads that firmware, speaks the chip's
-control protocol, runs the key handshakes and moves Ethernet frames. To
-its users the system behaves as FreeBSD does: `ifconfig wlan0 scan`,
-`wpa_supplicant.conf` and DHCP on `wlan0`.
+The Raspberry Pi 4's WiFi chip, a Cypress CYW43455, joins open,
+WPA2-PSK and WPA3-SAE networks as a station, and the network stack
+carries `wlan0` over it as it carries `genet0` over the board's
+Ethernet. The chip is a FullMAC chip on the SoC's legacy SD controller:
+its firmware runs the 802.11 MAC, and the host loads that firmware,
+speaks the chip's control protocol, runs the key handshakes and moves
+Ethernet frames. To its users the system behaves as FreeBSD does:
+`ifconfig wlan0 scan`, `wpa_supplicant.conf` and DHCP on `wlan0`.
 
 Decisions every reader needs:
 
 * **WiFi is a domain that turns an SDIO card into an Ethernet medium.**
-  The **WiFi domain**, `wifi`, holds the whole WiFi conversation: the
-  chip, its firmware, scanning, joining and the supplicant. It reaches
-  the card through a facet of the storage domain, which holds the legacy
-  controller, and it lends the network domain one thing, an Ethernet
-  medium with a link state. Everything below follows from that
-  placement.
+  The **WiFi domain**, `wifi`, holds the chip, its firmware, scanning,
+  joining and the supplicant. It reaches the card through a facet of the
+  storage domain and lends the network domain one thing, an Ethernet
+  medium with a link state
+  ([WiFi is a domain that makes a medium](#wifi-is-a-domain-that-makes-a-medium)).
 * **The storage domain drives the legacy controller and serves its
-  card.** The controller shares its interrupt line with EMMC2, so by the
-  unit rule it stays in the storage domain's unit
+  card**, since the controller shares its interrupt line with EMMC2
   ([design-shared-devices.md](design-shared-devices.md#the-unit-rule)).
-  A small SDIO host there brings the card up on each attach and runs
-  lists of SDIO transactions for one client through the `sdio`
-  interface; it understands nothing about the chip.
-* **The legacy controller never raises the shared line.** The SDIO host
-  holds the controller's signal enables at zero and polls it, the card
-  interrupt included, so line 126 stays EMMC2's alone: no WiFi transfer
-  delays a round of storage's line, and an SDIO host that ends leaves
-  nothing asserted on it.
-* **The WiFi domain lends the medium; the network domain runs the
-  link.** The WiFi domain offers its medium through the network
-  domain's `ether` interface, and the stack runs `wlan0` as a link over
-  `erx_net_ether` for as long as the offer lives. The link is up exactly
-  while the station's port is open, so the stack never sees an
-  unauthenticated network, and the network domain never calls `crypto`.
-* **The station is three pure parts.** A choice, which says which
-  network to join and why each other one is refused; a join machine,
-  which takes one network from the join request to an open port and
-  whose legal transitions are one table; and a failure memory, which
-  can only postpone a candidate the choice already admitted. A fourth
-  part for roaming has its place and is not built
-  ([The station](#the-station)).
-* **The host runs the handshakes, and installs each key once.** The
-  firmware's supplicant is off, as OpenBSD turns it off; the 4-way and
-  group handshakes and SAE's exchange run in Erlang in the WiFi domain.
-  The station keeps the keys the chip holds, slot by slot, and installs
-  only a key that differs from its slot's, so no retransmitted or
-  replayed message reinstalls a key or resets its counters.
+  A small SDIO host there brings the card up and runs lists of SDIO
+  transactions for one client through the `sdio` interface; it
+  understands nothing about the chip. It holds the controller's signal
+  enables at zero and polls it, so line 126 stays EMMC2's alone
+  ([The SDIO host](#the-sdio-host-in-the-storage-domain)).
+* **The link is up exactly while the station's port is open**, so the
+  stack never sees an unauthenticated network, and the network domain
+  never calls `crypto` ([The `ether` interface](#the-ether-interface-and-wlan0)).
+* **The station is three pure parts**: a choice, a join machine whose
+  legal transitions are one table, and a failure memory that can only
+  postpone a candidate the choice admitted ([The station](#the-station)).
+* **The host runs the handshakes and installs each key once.** The
+  firmware's supplicant is off, as OpenBSD turns it off; the station
+  installs only a key that differs from its slot's, so no retransmitted
+  or replayed message reinstalls a key ([The supplicant](#the-supplicant)).
 * **No password equivalent enters the domain that parses the air.** A
-  network's PMK and its SAE password element stay with a **key holder**,
-  which answers the secret steps of each join, SAE's commit and key and
-  each PTK, and never gives out the secret itself, as Plan 9's factotum
-  answers 9front's supplicant. The WiFi domain holds only the keys of
-  the association in progress. The key holder is a purpose of the vault
-  ([Credentials](#credentials); [Decisions](#decisions), 1); development
-  builds run it inside the WiFi domain over a file, a residual that
-  blocks release.
-* **Only the administrator enrolls a network, and no passphrase leaves
-  the session that typed it.** The key holder has two facets: the
-  WiFi domain's, which joins and can only narrow an entry, and the
-  administrator's session's, which gives and forgets a network's
-  secret. The session's `wlankey` command reads the passphrase at its
-  tty, derives the PMK and PT itself and hands only those to the
-  holder, so nothing the WiFi domain parses can add a network, and no
-  passphrase reaches the WiFi domain under any placement.
-* **Only a positive statement permits an open network.** A block of
-  `key_mgmt=NONE` or `ifconfig wlan0 ssid NAME authmode open` admits an
-  open access point; a missing secret, a forgotten one or a key holder
-  that does not answer never does.
-* **The chip process is the only thing that knows the chip.** The
-  station asks for scans, joins, keys and frames in 802.11's own
-  management requests, and the chip process turns them into the
-  firmware's commands; nothing above it names a firmware variable.
+  network's PMK and SAE password element stay with a **key holder**, a
+  purpose of the vault that answers the secret steps of each join and
+  never gives out the secret, as Plan 9's factotum does; only the
+  administrator's session enrolls a network, and its `wlankey` command
+  keeps the passphrase at its tty. Development builds run the holder
+  inside the WiFi domain over a file, a residual that blocks release
+  ([Credentials](#credentials); [Decisions](#decisions), 1).
+* **Only a positive statement permits an open network**: a missing,
+  forgotten or unanswered secret never does.
+* **The chip process is the only thing that knows the chip**: nothing
+  above it names a firmware variable
+  ([The seam to the station](#the-seam-to-the-station)).
 * **The firmware files ship unmodified** in the WiFi application's
   release on the Pi's image, under Cypress's license, fetched at a
   pinned commit.
-* **Power and wiring facts held only in GPL sources are unknowns.** The
-  design depends on none of them: a card that does not answer is
-  reported and the WiFi domain stops, and the board probe settles each.
-* **Nothing transmits before a country is configured.** The chip is
-  brought up and identified without one, but the WiFi domain sends no
-  command that makes it transmit until the configuration or `ctl` names
-  the country.
+* **Board facts held only in GPL sources are unknowns** the design
+  depends on as little as it can; a card that does not answer is
+  reported and the WiFi domain stops
+  ([Facts this design does not have](#facts-this-design-does-not-have)).
+* **Nothing transmits before a country is configured**
+  ([The country](#the-country)).
 
 ## Context
 
@@ -207,35 +180,22 @@ chip process reads it at bring-up ([The chip](#the-chip)).
 
 ### What erXos stands on
 
-* **The unit rule and its homes.** A unit goes whole to one domain; a
-  sub-device's function reaches another domain only through a file tree
-  its holder serves or a facet of a declared interface, "never the
-  registers or the line"
-  ([design-shared-devices.md](design-shared-devices.md#the-unit-rule)).
-* **One line, one owner.** Drivers on a shared line join its owner,
-  `erx_irq_line`, which tells every member of each firing
-  ([design-shared-devices.md](design-shared-devices.md#lines-inside-a-domain)).
-* **One issuer of controller commands (U4).** `erx_blk_write` is the one
-  module that hands a controller anything to do, and a build check
-  holds `erx_device:command/2` to it
-  ([design-storage.md](design-storage.md#the-sd-host-controller)).
-* **The network driver model.** An interface's driver is
-  `erx_net_driver` over a transport, in the network domain; credits
-  bound every queue; a driver lives a second at the least
-  ([design-network-stack.md](design-network-stack.md#the-driver)).
-* **No OpenSSL in the network domain.** No module of the stack calls
-  `crypto`, which a build check proves
-  ([design-crypto.md](design-crypto.md#domains-that-call-no-openssl)).
-* **Keys in the vault.** The vault holds principals' and the
-  machine's keys and secrets on a partition of its own, which no
-  principals' storage domain reaches, so that no key enters a domain
-  that uses it: a domain that must authenticate holds a key facet
-  for one purpose and asks it to compute
-  ([design-system.md](design-system.md#the-vault)).
-* **Three homes for a new need.** State someone reads is an inspection
-  path at `/proc`; bytes kept or one-shot commands are a file tree with a
-  `ctl` file; a live conversation is a declared protocol
-  ([design.md](design.md#decisions)).
+The design builds on rules other documents own: a unit goes whole to
+one domain, its sub-devices reaching others only through a file tree or
+a facet, and a shared line has one owner
+([design-shared-devices.md](design-shared-devices.md#the-unit-rule),
+[lines inside a domain](design-shared-devices.md#lines-inside-a-domain));
+`erx_blk_write` is the one issuer of controller commands, U4
+([design-storage.md](design-storage.md#the-sd-host-controller)); an
+interface's driver is `erx_net_driver` over a transport, with credits
+on every queue
+([design-network-stack.md](design-network-stack.md#the-driver)); no
+module of the network stack calls `crypto`
+([design-crypto.md](design-crypto.md#domains-that-call-no-openssl));
+no key enters a domain that uses it, which holds a key facet of the
+vault instead ([design-system.md](design-system.md#the-vault)); and a
+new need is an inspection path, a file tree with a `ctl` file or a
+declared protocol ([design.md](design.md#decisions)).
 
 ### What FreeBSD users expect
 
@@ -2479,10 +2439,11 @@ naming this list, when one is against it.
 | Fact | Where it lies | What the design does with it |
 | --- | --- | --- |
 | **F1.** Whether GPIO 34 to 39 are in ALT3 when the firmware starts the kernel | the board probe; the tree gives the slot GPIO 34 to 39 in ALT3, the clock on 34 with no pull and 35 to 39 pulled up, and says nothing of their state at handover (fact 33) | if not, the slot's `config.txt` sets them, pulls included, with `gpio=` lines, the mechanism UART3's pins use ([design-platforms.md](design-platforms.md#raspberry-pi-4-model-b)); that the firmware honours `gpio=` for these pins is *unverified* |
-| **F2.** `WL_REG_ON`: its line, polarity, power sequence and state at handover | the facts record for all but the state: line 1 of the firmware's GPIO expander, not a SoC pin (fact 1); active-low, so the chip runs while the line is high (fact 2); no delays of the tree's own, and Linux's host core waits about 10 ms before releasing the chip and 10 ms after starting the clock (facts 3 to 5). The state at handover is not in the tree (fact 7): the board probe | No domain reaches the expander (PL2), so nothing in erXos powers the chip: the design depends on the firmware leaving `WL_REG_ON` high at handover, an open board fact. If the probe finds it low, the chip answers no CMD5 and W0 fails with `no_card`. The design then adds no access to the firmware's mailbox or the expander, implicit or otherwise; how the chip gets power returns to the architecture as a decision of its own, taken before anything is built for it |
-| **F3.** A host-wake out-of-band interrupt line | settled by the facts record: the tree gives the WiFi node no interrupt, and with none brcmfmac uses the card's in-band interrupt (facts 9 and 10) | none is used: the SDIO host polls the card's in-band interrupt |
+| **F2.** `WL_REG_ON`: its line, polarity, power sequence and state at handover | the facts record for all but the state (facts 1 to 5): a line of the firmware's GPIO expander, not a SoC pin, and active-low,
+so the chip runs while the line is high. The state at handover is not in the tree (fact 7): the board probe | No domain reaches the expander (PL2), so nothing in erXos powers the chip: the design depends on the firmware leaving `WL_REG_ON` high at handover, an open board fact. If the probe finds it low, the chip answers no CMD5 and W0 fails with `no_card`. The design then adds no access to the firmware's mailbox or the expander, implicit or otherwise; how the chip gets power returns to the architecture as a decision of its own, taken before anything is built for it |
+| **F3.** A host-wake out-of-band interrupt line | settled by the facts record: there is none (facts 9 and 10) | none is used: the SDIO host polls the card's in-band interrupt |
 | **F4.** The legacy controller's base clock | the board probe, as for EMMC2 ([design-storage.md](design-storage.md#the-sd-host-controller), "The controller's clock"); the tree names the clock manager's EMMC clock with no rate, which the firmware sets, and Linux takes the rate from its clock framework (facts 21 and 34) | the platform record's `clock` for the unit's entry; with none, the SDIO host refuses to attach |
-| **F5.** The bus width and maximum clock the tree gives the slot | settled by the facts record: 4 bits, and no maximum-frequency property, so the limit is the controller's base clock (facts 12 and 13); Linux identifies at 400 kHz and runs a high-speed card at up to 50 MHz (facts 14 and 15) | 4 bits at 25 MHz, which every full-speed SDIO card supports, after identification at 400 kHz; 50 MHz waits for [Performance](#performance) |
+| **F5.** The bus width and maximum clock the tree gives the slot | settled by the facts record: 4 bits, limited by the controller's base clock (facts 12 to 15) | 4 bits at 25 MHz, which every full-speed SDIO card supports, after identification at 400 kHz; 50 MHz waits for [Performance](#performance) |
 | **F6.** Quirks of Linux's driver for this controller, beyond FreeBSD's and OpenBSD's | settled by the facts record: none beyond them (facts 16 to 23) | [The legacy controller's record](#the-legacy-controllers-record) carries them; the spacing stays 6 us after every non-data write |
 | **F7.** Byte-mode CMD53 limits and delays after function enable | settled by the facts record (facts 24 to 30) | byte mode within 512 bytes and the function's block size, as [The `sdio` interface](#the-sdio-interface) has it; the chip process's waits and their bounds ([The chip](#the-chip), "Waits") |
 | **F8.** Whether the Pi's firmware build offers `sae_ext` and the events 187 to 190, and `mfp`, and whether its external authentication and PMF work | the chip's `cap` and `mfp` answers at W1; the exchange and PMF at W5, on the board | without them SAE networks are not candidates and WPA3 is reported unsupported; another licensed Cypress build is looked for before anything else ([SAE](#sae-and-protected-management-frames)) |
@@ -2526,378 +2487,262 @@ data port, the SoC's DMA controller on DREQ 11 as FreeBSD uses it
 
 ## Verification
 
-Each test names its passing case and the seeded fault that proves the
+Every parser has its fuzz target ([Untrusted input](#untrusted-input)).
+Each test below names what it holds and the seeded fault that proves the
 code under test ran.
 
 **Host cores.**
 
 * **`erx_sdio:check/2`**, a property test over random lists: every
-  accepted list stays within the card's functions, addresses below 2^17,
-  CMD53 lengths that fit the wire's, the function's and the controller's
-  limits and the list's bounds, and writes no host-owned register.
-  Seeded: the check without `07h` in the host-owned set, which the
-  property fails with a write to the bus width; and byte mode bounded by
-  the function's block size alone, which it fails with a 768-byte CMD53
-  under a 1,024-byte block.
-* **The controller core's command wait**: a block-mode CMD53 of 3 blocks
-  completes after three buffer events and transfer complete, in either
-  order of command complete, and EMMC2's identification commands keep
-  their one-block tests. Seeded: a wait that ends its data track at the
-  first block, which the 3-block case fails.
-* **The SDIO host's core**: over generated sequences of attaches, lists,
-  polls and rearms, its register actions write `irpt_en` only as zero
-  (WF11), a poll that finds the card interrupt clears it from
-  `irpt_mask` and yields exactly one notice until the next `rearm`, and a
-  `run` with the previous attachment's `Ref` is refused (WF7). Against a
-  fake controller whose one-to-clear bits stay set until written back, a
-  3-block CMD53 polled many times per event completes with each event
-  taken once, and a snapshot that carries transfer complete and the card
-  interrupt together both completes the command and yields the notice.
-  Seeded: an attach that sets the card interrupt in `irpt_en`; a host
-  that ignores `Ref`; a poll that never writes back, which the many-poll
-  CMD53 fails as a second command complete; and a poll that writes back
-  after the wait's actions, against a fake that raises the next block's
-  buffer event as a block is moved, which the CMD53 fails at its
-  deadline; each fails its property.
-* **`erx_blk_write`'s SDIO table**: every command word it builds has the
-  fields of SDIO 5.1 and 5.3, checked against OpenBSD's argument
-  encoding (`sdmmc_ioreg.h:27-50`) for a table of steps; `sdio_issue/2`
-  refuses an SD record and `sd_issue/2` an SDIO one. Seeded: the block
-  mode bit cleared in block-mode builds, and a builder that encodes a
-  block count of 0, each failing the table.
-* **`erx_sdio_card`**: the bring-up from a recorded identification,
-  answer by answer, to the selected 4-bit card, and to `no_card` at a
-  silent CMD5. Seeded: S18R set in the second CMD5, which the step check
-  refuses.
-* **`erx_bwfm_sdpcm`**: headers, credit and glom against frames built
-  from the layouts and against recordings from the board, with the
-  credit's window across sequence wraparound; a 1,500-byte frame read
-  header first is accepted, and a read-ahead whose header declares more
-  than was read is refused; an Ethernet frame of ethertype `0x886c` with
-  Broadcom's OUI and a well-formed event message, on the data channel
-  and as a data subframe of a glom, comes back `{data, _}` (WF10).
-  Seeded: a credit that ignores the window's top bit
-  (`if_bwfm_sdio.c:1079-1080`), which sends past the firmware's maximum
-  after a wrap; a header check that compares the declared length with the
-  12 bytes of a header-first read, which the 1,500-byte frame fails; and
-  a core that takes a frame's kind from its ethertype, which the
-  event-shaped data frame fails.
-* **`erx_bwfm_nvram`**: the converter against the conversion of the
-  pinned NVRAM file computed by hand once and kept as a golden. Seeded:
-  a converter that keeps comment lines.
-* **`erx_bwfm_mlme`**, over sequences of requests and event records:
-  an event becomes an indication only for the current connection, by
-  the id its row names; each request yields at most one confirmation;
-  after a connection's `disconnected` nothing more of it passes; a late
-  link-down of an earlier connection to the same BSS, after the next
-  `connect`, becomes the new connection's one `disconnected` and
-  nothing more; every scan ends, by its end event or by `timeout` at
-  10 s of scripted time, and a result after that is dropped; the
-  repeatable indications pass only within the credit. Seeded: a
-  translator that passes a second confirmation for one request; one
-  that keeps a connection after its `disconnected`; and one without the
-  scan deadline; each fails its case.
-* **`erx_wpa_kdf`**: PRF-SHA1, the PSK from a passphrase, KDF-SHA256 and
-  the MICs against IEEE 802.11-2020 Annex J's vectors as wpa_supplicant's
-  tests carry them, and AES key unwrap against RFC 3394's vectors.
-  Seeded: the PTK's address order reversed, failing the vectors.
+  accepted list stays within the card's functions, addresses below 2^17
+  and the CMD53 limits of the wire, the function, the controller and the
+  list, and writes no host-owned register. Seeded: `07h` left out of the
+  host-owned set (a write to the bus width passes); byte mode bounded by
+  the block size alone (a 768-byte CMD53 under a 1,024-byte block
+  passes).
+* **The controller core's command wait**: a 3-block CMD53 completes
+  after three buffer events and transfer complete, in either order of
+  command complete, and EMMC2's identification commands keep their
+  one-block tests. Seeded: a wait that ends its data track at the first
+  block.
+* **The SDIO host's core**, over generated sequences of attaches, lists,
+  polls and rearms and against a fake controller whose one-to-clear bits
+  stay set until written back and that raises the next block's buffer
+  event as a block is moved: `irpt_en` is written only as zero (WF11);
+  a card interrupt yields exactly one notice until the next `rearm`; a
+  `run` with a previous attachment's `Ref` is refused (WF7); each event of
+  a many-times-polled CMD53 is taken once, and a snapshot with transfer
+  complete and the card interrupt together does both. Seeded: an attach
+  that sets the card interrupt in `irpt_en`; a host that ignores `Ref`; a
+  poll that never writes back (a second command complete); a poll that
+  writes back after the wait's actions (the CMD53 misses its deadline).
+* **`erx_blk_write`'s SDIO table**: every command word has the fields of
+  SDIO 5.1 and 5.3, checked against OpenBSD's encoding
+  (`sdmmc_ioreg.h:27-50`); `sdio_issue/2` refuses an SD record and
+  `sd_issue/2` an SDIO one. Seeded: the block-mode bit cleared; a block
+  count of 0 encoded.
+* **`erx_sdio_card`**: a recorded identification to the selected 4-bit
+  card, and `no_card` at a silent CMD5. Seeded: S18R set in the second
+  CMD5.
+* **`erx_bwfm_sdpcm`**: headers, credit and glom against built frames and
+  board recordings, the credit across sequence wraparound, a header-first
+  read of a 1,500-byte frame accepted and an over-declared read-ahead
+  refused, and an event-shaped Ethernet frame on the data channel or in a
+  glom read as `{data, _}` (WF10). Seeded: a credit that ignores the
+  window's top bit (`if_bwfm_sdio.c:1079-1080`); a length check against
+  the 12 bytes of a header-first read; a frame's kind taken from its
+  ethertype.
+* **`erx_bwfm_nvram`**: the pinned NVRAM file's conversion against a
+  golden computed by hand once. Seeded: comment lines kept.
+* **`erx_bwfm_mlme`**, over sequences of requests and events: an event
+  becomes an indication only for the current connection; one
+  confirmation per request; nothing of a connection after its
+  `disconnected`, a late link-down of an earlier connection to the same
+  BSS becoming the new one's single `disconnected`; every scan ends, by
+  its end event or by `timeout` at 10 s; repeatable indications pass only
+  within the credit. Seeded: a second confirmation; a connection kept
+  after `disconnected`; no scan deadline.
+* **`erx_wpa_kdf`**: PRF-SHA1, the PSK, KDF-SHA256 and the MICs against
+  IEEE 802.11-2020 Annex J's vectors as wpa_supplicant's tests carry
+  them, AES key unwrap against RFC 3394's.
+  Seeded: the PTK's address order reversed.
 * **`erx_sae` and the holder's SAE steps**: PT and PWE against Annex
-  J.10's vectors carried in `common_module_tests.c:254-259, 400-497`,
-  with the two hashed values computed by `erx_wpa_secret` and PT by the
-  holder; then a full exchange between two instances, each with a
-  holder core of its own, once without and once with a Rejected Groups
-  list in one party's commit; then a recorded hostapd exchange with the
-  holder's random values injected; with the arithmetic's entropy seam
-  giving a pair whose scalar is 1 and then a valid pair, the commit
-  answered is the valid pair's; a peer commit whose element is off the
-  curve is answered `bad_element`, dropped and counted, and the
-  exchange goes on to the peer's genuine commit; a peer commit whose
-  Rejected Groups list names group 19 ends the exchange as `bss`.
-  Seeded: the element not negated, failing the exchange's confirm; a
-  holder core that lets `sae_key/5`'s `badarg` escape, which the
-  off-curve case fails as the holder's end; a keyseed salted with zeros
-  whatever the list, which the exchange with a list fails at its
-  confirm; and a list check that ignores group 19, which the
-  downgrade case fails.
-* **`erx_wpa_holder`**, over `erx_wpa_arith`: a `set` with a PMK and
-  hashed values yields a name with both secrets, and its `ptk` for
-  AKM 2 equals `erx_wpa_kdf`'s vector; a PMK alone yields a PSK alone
-  and `sae_commit` answers `no_secret`; `mark` then `ptk` for AKM 2
-  answers `sae_only`, with the mark `pending` when the store refuses the
-  write and `kept` when it takes it, and `names` carries it either way;
-  a later `set` keeps the mark, and `forget` then `set` clears it
-  (WF14); a seventeenth SSID answers `full`; `sae_key` after another
-  SSID's `sae_commit` answers `no_commit`; a request of any wrong
-  length, an odd Rejected Groups list or a `set` with neither secret is
-  refused; and over every sequence of operations of both facets up to a
-  bound, no answer but `ptk`'s and `sae_key`'s carries a byte of a
-  marked PMK, PT or `rand` (WF5). A development file of 16 entries
-  round-trips, and a truncated file and an entry whose length runs past
-  the file make every operation answer `unavailable`. Seeded: a `set`
-  that clears the mark; a `ptk` that ignores it; a mark recorded only
-  once the write succeeds, which the refused-write case fails as a PSK
-  `ptk` answered; `names` returning the entry; and a file decoder that
-  trusts an entry's length; each fails its case.
+  J.10's vectors (`common_module_tests.c:254-259, 400-497`), the two
+  hashed values computed by `erx_wpa_secret` and PT by the holder; a full
+  exchange between two instances with holder cores of their own, with
+  and without a Rejected Groups list; a recorded hostapd exchange with
+  the holder's random values injected; a scalar of 1 from the entropy
+  seam replaced by a valid pair; an off-curve peer element answered
+  `bad_element`, dropped and counted while the exchange goes on; a
+  Rejected Groups list naming group 19 ends the exchange as `bss`.
+  Seeded: the element not negated; `sae_key/5`'s `badarg` escaping the
+  holder core; the keyseed salted with zeros whatever the list; a list
+  check that ignores group 19.
+* **`erx_wpa_holder`**, over `erx_wpa_arith`: `set`, `ptk`,
+  `sae_commit`, `sae_key`, `mark`, `names` and `forget` answer as
+  [Credentials](#credentials) states, the mark `pending` when the store
+  refuses the write and `kept` when it takes it, kept by a later `set`
+  and cleared by `forget` (WF14); a seventeenth SSID is `full`; a wrong
+  length, an odd Rejected Groups list or a `set` with no secret is
+  refused; over every sequence of both facets' operations up to a bound,
+  no answer but `ptk`'s and `sae_key`'s carries a byte of a marked PMK,
+  PT or `rand` (WF5); a development file of 16 entries round-trips, and a
+  truncated or overrunning one makes every operation `unavailable`.
+  Seeded: a `set` that clears the mark; a `ptk` that ignores it; a mark
+  recorded only once written; `names` returning the entry; a file decoder
+  that trusts an entry's length.
 * **`erx_wifi_join`, exhaustively.** The join is a protocol state
-  machine: every sequence of its events up to a bound is explored, the
-  key holder's answers among them, with forged, replayed and
-  retransmitted EAPOL and SAE messages (wrong MIC, stale replay counter,
-  different RSN element, wrong nonce, message 1 with a large counter,
-  message 3 again with a higher counter and the same nonces, a group
-  message again, a genuine group rekey, a genuine PTK rekey, a group
-  message replayed after a rekey replaced its GTK, a GTK of key id 0),
-  installs confirmed late, in any order and after a newer install,
-  events that do not apply (another join's reference, a confirmation in
-  the wrong state), the holder's `unavailable`, and an SAE peer that
-  goes silent after the station's confirm. The properties: every
-  transition taken is in `table/0`, and every edge of `table/0` is taken
-  by some sequence, so the table has no dead cell and the machine no
-  edge outside it (WF12); no `set_keys` after a failed check, and no
-  watermark raised by message 1 (WF8); no `set_keys` for a key equal to
-  its slot's, and no key a slot held before installed again (WF9); a
-  slot confirmed only by the confirmation of the install that last
-  filled it; after a handshake the pairwise slot holds the TK and GTK
-  slot `N` the GTK of key id `N`, 0 included; the port open only with
-  every negotiated key confirmed (WF4); no scan permitted and a deadline
-  pending in every state where a handshake waits; a `rekey` that its
-  deadline ends returns to `open` with the keys unchanged; no PTK or PMK
-  derived by the machine (WF5); message 2's RSN element and RSNXE equal
-  to `Sent`'s; the access point's genuine messages complete a handshake
-  whatever forged message 1s came before them, once it retransmits its
-  message 1; a genuine rekey installs its new key; the
-  `{transition_disable, SSID}` action is reported exactly for an
-  accepted message 3 of an SAE join with bit 0 set; an event that does
-  not apply changes nothing; every end carries the class of its table,
-  the silent SAE peer's `secret`; and every path back to `idle` within
-  its deadline. Seeded: message 3 accepted without the RSN element
-  comparison, which the exploration finds as an install after a
-  downgraded element; every accepted message 3 installing its keys,
-  which it finds as a reinstall after a retransmission; a slot filled
-  only at the chip's confirmation, which it finds as a reinstall when
-  message 3 is retransmitted before the confirmation; a confirmation
-  that confirms every unconfirmed slot, which it finds as a port opened
-  before a newer install was confirmed; the watermark raised at message
-  1, which it finds as a genuine handshake shut out; group messages
-  taken without the watermark, which it finds as the replayed GTK
-  installed again; the GTK slots indexed so that key id 0 is the
-  pairwise slot, which it finds as the TK overwritten; group message 1
-  checked by message 3's rule, which it finds as a genuine rekey
-  refused; the cell of `eapol` in `open` removed from the table, which
-  it finds as the same rekey dropped and as an edge never taken; the
-  `deadline` cell of `rekey` removed, which it finds as a forged message
-  1 that leaves the machine waiting for ever; message 2 built from the
-  elements the station asked for, which it finds against a `Sent`
-  without an RSNXE; a handler that opens the port at message 3, which
-  it finds as a transition outside the table; the indication reported
-  on a PSK join; and SAE silence classed `bss`, which it finds as an
-  end of the wrong class.
-* **The choice**, a property test over generated views: every
-  combination of a block's `key_mgmt` sets and `ieee80211w`, present or
-  left out, the BSS's AKMs, MFPC and MFPR and hash-to-element bit, open
-  BSSs among them, `sae_ext` and the `mfp` answer, the names
-  `unavailable` or listing any secrets and marks, the station's marks,
-  every `want`, and memories of holds past and present. The properties:
-  the AKM chosen is allowed by the block, offered by the BSS and has its
-  own secret; PMF that the block or the BSS requires is never `none`;
-  SAE is never chosen with PMF `none`; a block that allows SAE alone,
-  and an SSID the names or the marks make SAE-only, never yield PSK
-  (WF14); an open BSS is a candidate only under a block of `NONE` or
-  `want` `{open, SSID}` (WF16); with the names `unavailable` no
-  protected BSS is a candidate and no BSS reads `unknown`; the pick is
-  a candidate, never held, unknown or refused, and no candidate
-  outranks it; under `want` `none` there is no pick; and the verdicts
-  of a view with its memory emptied differ from the view's own only
-  where a candidate is held (WF13). Seeded: a block's `ieee80211w` 2
-  read as 1, which the property finds as a join with no PMF to a BSS
-  without MFPC; a candidate test by the SSID's having any secret
-  instead of the AKM's own, which it finds as SAE chosen with only a
-  PSK; an `admit` that drops SAE for a BSS the memory holds, which it
-  finds as a verdict changed by a failure; a pick taken before the
-  holds are applied; the names `unavailable` read as an empty list with
-  `{only, SSID}` admitting an unknown SSID as open, which it finds as an
-  open impostor picked; and the station's marks left out of the view,
-  which it finds as PSK chosen after an indication the holder has not
-  recorded.
+  machine: every sequence of its events up to a bound is explored, with
+  the holder's answers, forged, replayed and retransmitted EAPOL and SAE
+  messages (a wrong MIC, a stale replay counter, another RSN element, a
+  wrong nonce, message 1 with a large counter, message 3 again with a
+  higher counter, a group message replayed after a rekey replaced its
+  GTK, a GTK of key id 0), genuine rekeys, installs confirmed late or out of order, events that
+  do not apply, the holder's `unavailable` and an SAE peer silent after
+  the station's confirm. The properties: every transition taken is in
+  `table/0` and every edge of `table/0` is taken (WF12); no `set_keys`
+  after a failed check, no watermark raised by message 1 (WF8); no key
+  installed that equals its slot's or that a slot held before (WF9); a
+  slot confirmed only by its last install's confirmation; after a
+  handshake the pairwise slot holds the TK and GTK slot `N` key id `N`,
+  0 included; a genuine rekey installs its new key, and one its deadline
+  ends returns to `open` with the keys unchanged; the port open only with every key
+  confirmed (WF4); no scan and a pending deadline wherever a handshake
+  waits; no PTK or PMK derived by the machine (WF5); message 2's RSN
+  element and RSNXE equal `Sent`'s; genuine messages complete a handshake
+  whatever forged message 1s came first, once the access point
+  retransmits its message 1; `{transition_disable, SSID}`
+  exactly for an accepted message 3 of an SAE join with bit 0 set; every
+  end carries its table's class; every path returns to `idle` within its
+  deadline. Seeded, each found by the exploration: message 3 accepted
+  without the RSN element comparison; every accepted message 3
+  installing; a slot filled only at the chip's confirmation; a
+  confirmation that confirms every slot; the watermark raised at message
+  1; group messages taken without the watermark; GTK key id 0 indexed as
+  the pairwise slot; group message 1 checked by message 3's rule;
+  `eapol` in `open` removed from the table; `rekey`'s `deadline` cell
+  removed; message 2 built from the elements asked for, not `Sent`; the
+  port opened at message 3; the indication reported on a PSK join; SAE
+  silence classed `bss`.
+* **The choice**, a property test over generated views (every block's
+  `key_mgmt` and `ieee80211w`, the BSS's AKMs, MFPC, MFPR and
+  hash-to-element bit, `sae_ext` and `mfp`, the names `unavailable` or
+  listing secrets and marks, every `want`, memories of holds): the AKM
+  chosen is allowed by the block, offered by the BSS and has its own
+  secret; required PMF is never `none`, nor SAE's; an SAE-only block,
+  name or mark never yields PSK (WF14); an open BSS is a candidate only
+  under `NONE` or `{open, SSID}` (WF16); with the names `unavailable` no
+  protected BSS is a candidate; the pick is an unheld candidate that none
+  outranks; the memory changes a verdict only where a candidate is held
+  (WF13). Seeded: `ieee80211w` 2 read as 1; a candidate test by any
+  secret instead of the AKM's; an `admit` that drops SAE for a held BSS;
+  a pick before the holds; `unavailable` names read as an empty list (an
+  open impostor picked); the station's marks left out of the view.
 * **`erx_wifi_memory` and the lifecycle**, as scenarios over
-  `erx_wifi_sta` with a scripted time: two BSSs of one SSID, the
-  stronger failing every join, join the weaker at the second choice and
-  try the stronger again only after its hold; three ends of the `secret`
-  class hold the SSID's secret, its BSSs read `secret_failed`, a fourth
-  join comes only when the hold ends, and `names` after a new secret
-  joins at once; a port that closes after 3 s counts against its BSS and
-  one that closes after a minute does not; `leave` keeps the station
-  out until `ssid -`; a `scan` during a join or a rekey answers `ebusy`;
-  with the holder answering `unavailable`, an open network of a block
-  joins, a protected one reads `keys_unavailable` until the holder
-  answers, and under `ssid NAME` an open BSS of that name is refused; a
-  `forget` read at the next `names` leaves the joined network; a
-  Transition Disable indication with the holder answering `pending`,
-  then `unavailable`, then with the WiFi domain's restart against a
-  holder that kept the mark in memory, refuses a PSK impostor of the
-  SSID throughout, and the station asks `mark` again until the answer
-  is `kept`. Seeded: a memory that holds the SSID at the first `secret`
-  end, which the single lost frame case fails; a `names` that leaves
-  the hold in place; a lifecycle that joins a held BSS when nothing
-  else is in range; a lifecycle that adds the mark only on a `kept`
-  answer, which the `pending` case fails as the impostor joined; and a
-  lifecycle that never leaves a join the view no longer admits, which
-  the `forget` case fails.
-* **Diagnostics with marked secrets.** On the host, the station, the
-  chip process over the fake chip, `erx_wifi_fs`, the development
-  holder and `wlankey` run with `erx_report` installed and a logger
-  handler that keeps every formatted event. Every secret is chosen to
-  be found: a passphrase and an SAE password of a marker pattern, from
-  which the test computes the PMK, the hashed values and PT, and the
-  entropy seams' `rand`, `mask` and nonces, from which it computes the
-  PTK, GTK and IGTK it then searches for too. The test gives and
-  forgets a secret with `wlankey` and joins, sends each holder of a
-  secret a message it has no clause for that carries a marked value,
-  ends each with an exception whose reason and arguments carry the
-  marks, and halts the node with a crash dump. No marked value, as
-  bytes or as Erlang prints it, is in any kept event or in the dump; the
-  passphrase is in no message any WiFi domain process receives; and
-  none of the marked PMK, PT, `rand` or `mask` is in the station's or
-  the chip process's state at any step. Seeded: the filter left out,
-  which the termination report fails; the station without the
-  `sensitive` flag, which the dump fails; a `names` answer that carries
-  the PMK, which the station's state fails; and a `wlankey` that sends
-  the passphrase to the holder, which the message check fails.
-* **Inspection's readers.** Over the inspector with the WiFi paths
-  declared: a facet of scope `all` reads every attribute of `wifi`,
-  `wifi scan` and `wifi networks`; a facet scoped to a principal's
-  domains reads `wifi`'s and `wifi scan`'s public attributes, no
-  verdict and no end reason, and gets `{error, scope}` for `wifi
-  networks`. Seeded: the verdict declared `visible any`, which the
-  scoped read fails.
-* **`erx_wpa_conf`**: the subset parsed, a block's left-out keys read
-  as the default block's, every refusal with its line, a `psk` line
-  refused as `secret_in_file`, a block of `key_mgmt=SAE` with
-  `ieee80211w=0` refused, a block of `key_mgmt=NONE WPA-PSK` refused.
-  Seeded: an unknown network key ignored, `psk` taken, a left-out
-  `ieee80211w` read as 0, and `NONE` beside another AKM taken, each
-  failing its test.
-* **The build and manifest checks**: only `erx_bwfm` and its cores
-  include `bwfm.txt`'s generated headers, and no other module but the
-  supervisor calls one of them (WF15); only `erx_wpa_arith` calls
-  `erx_wpa_kdf`'s PTK derivation and `crypto`'s three SAE functions,
-  only `erx_wpa_holder` calls `erx_wpa_arith`, and only `erx_wpa_secret`
-  calls `crypto:pbkdf2_hmac/5` (WF5); the release manifest check
-  refuses `wpa_admin` granted to a configured domain and a `wifi` row
-  without `wpa_key` (WF17). Seeded: a `wsec_key` built in the join
-  machine and a PTK derived there, each failing the build; and a
-  manifest that grants `wpa_admin` to the `wifi` domain, failing the
+  `erx_wifi_sta` with a scripted time: the second choice joined while the
+  first is held; three `secret` ends hold the SSID's secret until the
+  hold ends or `names` shows a new secret; a port that closes after 3 s
+  counts against its BSS and one after a minute does not; `leave` holds
+  until `ssid -`; `scan` during a join or rekey answers `ebusy`; with the
+  holder `unavailable`, open networks of a block join and protected ones
+  read `keys_unavailable`; a `forget` leaves the joined network; a
+  Transition Disable mark refuses a PSK impostor through `pending`,
+  `unavailable` and a WiFi domain restart, asked again until `kept`.
+  Seeded: a hold at the first `secret` end; a `names` that keeps the
+  hold; a held BSS joined when nothing else is in range; the mark added
+  only on `kept`; a join kept that the view no longer admits.
+* **Diagnostics with marked secrets.** The station, the chip process over
+  the fake chip, `erx_wifi_fs`, the development holder and `wlankey` run
+  with `erx_report` and a logger handler that keeps every event, under a
+  marker passphrase and SAE password and marker entropy, from which the
+  test computes every derived secret it searches for. After giving and
+  forgetting a secret, joining, sending each holder an unhandled message
+  carrying a mark, ending each with an exception that carries the marks
+  and halting with a crash dump: no marked value, as bytes or as Erlang prints it, is in any
+  event or the dump, the passphrase in no message a WiFi domain process receives, and
+  no marked PMK, PT, `rand` or `mask` in the station's or chip process's
+  state. Seeded: the filter left out; the station without `sensitive`; a
+  `names` answer with the PMK; a `wlankey` that sends the passphrase.
+* **Inspection's readers**: a facet of scope `all` reads every attribute
+  of the three paths; a principal-scoped facet reads only public ones and
+  gets `{error, scope}` for `wifi networks`. Seeded: the verdict declared
+  `visible any`.
+* **`erx_wpa_conf`**: the subset parsed, left-out keys read from the
+  default block, every refusal with its line, `psk` refused as
+  `secret_in_file`, SAE with `ieee80211w=0` and `NONE` beside another AKM
+  refused. Seeded: an unknown key ignored; `psk` taken; a left-out
+  `ieee80211w` read as 0; `NONE` beside another AKM taken.
+* **The build and manifest checks** (WF5, WF15, WF17) as
+  [Invariants](#invariants) states them. Seeded: a `wsec_key` built in
+  the join machine and a PTK derived there, each failing the build; a
+  manifest granting `wpa_admin` to the `wifi` domain, failing the
   manifest check.
-* **The crypto edit**: `sae_pt/3` and `sae_commit/5` against Annex
-  J.10's PT and PWE; `sae_key/5` of two parties, each fed the other's
-  commit, gives both the same K; `sae_commit/5`'s scalar equals
-  `(Rand + Mask) mod r` computed independently in the test;
-  `sae_commit/5` answers `retry` for `Rand` 2 with `Mask` `r - 2`, whose
-  scalar is 0, and with `Mask` `r - 1`, whose scalar is 1, and for a
-  `Rand` of 1 or `r`, and returns a commit for `Rand` 2 with `Mask` 2;
-  off-curve points, out-of-range scalars and hashed values of the wrong
-  length raise `badarg`. Seeded: the oct2point check skipped, which the
-  off-curve case fails; the element not negated, which the two-party K
-  fails; and the scalar's check against 2 removed, which the zero and
-  one cases fail.
+* **The crypto edit**: `sae_pt/3` and `sae_commit/5` against Annex J.10;
+  two parties' `sae_key/5` agree on K; the scalar equals
+  `(Rand + Mask) mod r` computed independently; `retry` for a scalar of 0
+  or 1 and for `Rand` 1 or `r`; `badarg` for off-curve points,
+  out-of-range scalars and wrong-length hashed values. Seeded: the
+  oct2point check skipped; the element not negated; the scalar's check
+  against 2 removed.
 
 **Differential against independent implementations.** wpa_supplicant
 2.12 and hostapd 2.12, run unmodified, give recordings with a known
-passphrase: with the recorded supplicant nonce given as the step's
-random bytes and the recorded SAE scalars injected through the
-arithmetic's entropy seam, erXos's message 2 and message 4 are byte for
-byte wpa_supplicant's, its derived keys equal, and the same for SAE's
-commit and confirm. The recordings include a retransmitted message 3, a
-group rekey and a message 3 that carries the Transition Disable KDE,
-through which the station's `set_keys` requests are the recorded keys
-once each and its `{transition_disable, SSID}` is reported once. The
-WPA2 recordings come from the FreeBSD x86-64 test host over FreeBSD's
-simulated radio, `wtap(4)`; that `wtap` carries hostapd on FreeBSD 15.1
-is *unverified*. The SAE recordings cannot come from there: hostapd
-2.12's BSD driver, like wpa_supplicant's, has no operation that sends
-or receives a management frame such as SAE's authentication frames
-(`driver_bsd.c:1752-1790`), so they come from the Linux test access point
-([Decisions](#decisions), 4), as do the WPA2 ones if `wtap` does not
-serve. Seeded: a recording with one byte of the access
-point's nonce changed, which the comparison fails.
+passphrase: with the recorded nonce and SAE scalars injected through the
+entropy seams, erXos's message 2 and message 4 and SAE's commit and
+confirm are byte for byte the oracle's and the derived keys equal. The
+recordings include a retransmitted message 3, a group rekey and a
+Transition Disable KDE, through which each recorded key is installed
+once and the indication reported once. The WPA2 recordings come from
+the FreeBSD x86-64 test host over `wtap(4)` (that `wtap` carries hostapd
+on FreeBSD 15.1 is *unverified*); the SAE ones cannot, since hostapd's
+BSD driver sends and receives no management frame
+(`driver_bsd.c:1752-1790`), so they come from the Linux test access
+point ([Decisions](#decisions), 4), as do the WPA2 ones if `wtap` does
+not serve. Seeded: one byte of the access point's nonce changed.
 
 **The fake chip and its air.** An Erlang process that plays the card
 behind the `sdio` interface (CCCR, backplane, firmware read-back, SDPCM,
-BCDC answers, events and Ethernet frames) lets the whole WiFi domain run
-in hosted mode and on QEMU `virt`, whose storage domain offers the fake
-through the same interface. Through it the network stack's UDP and TCP
-suites run over `wlan0` unchanged, and the port test sends a frame both
-ways before and after the keys. Seeded: a chip process that forwards
-received data frames while the port is closed, which the port test
-fails.
+BCDC, events and frames) runs the whole WiFi domain in hosted mode and
+on QEMU `virt`, whose storage domain offers the fake through the same
+interface; the network stack's UDP and TCP suites run over `wlan0`
+unchanged, and the port test sends a frame both ways before and after
+the keys. Seeded: data frames forwarded while the port is closed.
 
-Behind the fake chip stands a scripted air, the form iwd's tests take
-with a simulated radio and rules that drop, delay and weaken frames
-(iwd fact 58): a scenario is data, a list of access points, each with
-its SSID, address, channel, signal, security and passphrase, and rules
-on its frames, and of the fake key holder's delays and answers. A small
-authenticator in the test plays each access point with the
-supplicant's own cores, so the scenarios test the station's behaviour
-as a whole, not the wire format, which the vectors, the recordings and
-the board hold to independent implementations. Each runs in hosted mode
-in well under a second:
+Behind it stands a scripted air, the form iwd's tests take (iwd fact
+58): a scenario is data, access points with SSID, address, channel,
+signal, security and passphrase, rules that drop, delay and weaken
+their frames, and the fake key holder's delays and answers. A small
+authenticator built from the supplicant's own cores plays each access
+point, so the scenarios test the station's behaviour, not the wire
+format, which the vectors, recordings and board hold to independent
+implementations. Each runs in hosted mode in well under a second:
 
 | Scenario | Passes when | Seeded fault it fails on |
 | --- | --- | --- |
-| WPA2, the first message 3 delivered and message 4 dropped, the access point's retransmitted message 3 arriving once before the chip confirms the install and once after | message 4 is sent again each time, each key is installed once, and the port opens | every accepted message 3 installing; a slot filled only at the confirmation |
-| WPA2, the access point's passphrase differs | `wifi scan` reads `secret_failed` after the third join; `wlankey set` with the right passphrase joins at once | the `secret` class never assigned |
-| WPA3, an impostor that answers the station's commit and is silent after its confirm, at a new address each time | `secret_failed` after the third exchange, whatever the addresses | SAE silence classed `bss` |
-| two access points of one SSID, the stronger refusing association | the weaker is joined at the second choice | a choice that ignores the memory |
-| transition network, then Transition Disable with the holder answering `pending`, then an impostor offering PSK alone, then the WiFi domain restarted | the join is SAE; `wifi networks` shows the mark `pending`; the impostor's verdict is `sae_only` before and after the restart | a mark that the choice does not read; a mark applied only once the holder keeps it |
-| an impostor that makes every SAE exchange fail | no join with PSK follows, on a block that allows both | a fallback to PSK after a failed SAE |
-| a saved network known only by its secret, the holder then answering `unavailable`, and an open impostor of its SSID under `ssid NAME` | the impostor is refused and no open join follows | unavailable names read as an empty list |
-| WPA3, deauthentication 3 s after each port opens | the BSS is held as a short link | a memory that counts only ends before the port |
-| the holder stalled to its 2 s deadline on every call while the chip floods EAPOL-Key frames, SAE frames, events and 1,000 BSSs a scan, then a scan whose end never comes | the station's mailbox never holds more than the credit and the requests in flight, the BSS table never more than 64, the drops are counted, the scan ends at its deadline, and the genuine handshake completes once the holder answers | a chip process that ignores the credit; a BSS table without its bound; the chip process's scan deadline removed |
-| the WiFi domain's parsers ended by an exception during a handshake | the domain restarts, joins again, and nothing marked is in a report | the report filter left out |
+| WPA2, message 4 dropped, the retransmitted message 3 arriving before and after the chip confirms the install | message 4 is sent again each time, each key installed once, the port opens | every accepted message 3 installing; a slot filled only at the confirmation |
+| WPA2, the access point's passphrase differs | `secret_failed` after the third join; `wlankey set` with the right one joins at once | the `secret` class never assigned |
+| WPA3, an impostor silent after the station's confirm, at a new address each time | `secret_failed` after the third exchange | SAE silence classed `bss` |
+| two access points of one SSID, the stronger refusing association | the weaker joined at the second choice | a choice that ignores the memory |
+| transition network, Transition Disable with the holder `pending`, a PSK-only impostor, a WiFi domain restart | an SAE join; the mark `pending`; the impostor `sae_only` before and after the restart | a mark the choice does not read; a mark applied only once kept |
+| an impostor that fails every SAE exchange | no PSK join follows on a block that allows both | a fallback to PSK after a failed SAE |
+| a saved network known only by its secret, the holder `unavailable`, an open impostor under `ssid NAME` | the impostor refused, no open join | unavailable names read as an empty list |
+| WPA3, deauthentication 3 s after each port opens | the BSS held as a short link | a memory that counts only ends before the port |
+| the holder stalled to its 2 s deadline while the chip floods EAPOL-Key and SAE frames, events and 1,000 BSSs a scan, then a scan that never ends | the mailbox within the credit and requests in flight, the BSS table within 64, drops counted, the scan ended at its deadline, the handshake completing once the holder answers | a chip process that ignores the credit; an unbounded BSS table; no scan deadline |
+| the parsers ended by an exception during a handshake | the domain restarts and joins again, nothing marked in a report | the report filter left out |
 
-**The test access point.** hostapd 2.12, unmodified, on a Linux host with
-a radio that can serve as an access point, started by the Ruby harness
-with one of a fixed set of profiles, each a generated configuration:
-`open`, `wpa2`, `wpa2-rekey` (a group rekey every 30 s), `wpa2-wrong`
-(another passphrase), `wpa3`, `transition`, `transition-td` (Transition
-Disable, bit 0) and `twin` (two BSSs of one SSID, one refusing the
-board's address). The authenticator's own fields for the rekey period
-and the indication are `wpa_group_rekey` and `transition_disable`
-(`ap/ap_config.h:392, 810`); the configuration keys that set them were
-not read and are *unverified* until the profiles are written. Under
-`wpa3`, where PMF is required, the harness also sends, from a second
-interface of the same host in monitor mode, an unprotected
-deauthentication and an unprotected disassociation with the access
-point's address, and replays a protected broadcast disassociation it
-recorded earlier; and asks hostapd to deauthenticate the board, which
-under PMF it does with a protected frame. The tool that injects the
-frames is chosen with the host, *unverified* until then. Fuchsia drives
-an access point from its tests in the same way
-(`wlan/tests/README.md`). The board's side stays a checklist run by
-hand, and each of its steps names the profile it needs, so a step is
-repeatable and its access point is the same every time. The Linux host
-serves every profile; the FreeBSD x86-64 test host, the data peer of
-[Performance](#performance), serves the `open` profile and the WPA2
-ones, which need no management frame of hostapd's driver
+**The test access point.** hostapd 2.12, unmodified, on a Linux host
+with an access-point radio, started by the Ruby harness with one of a
+fixed set of generated profiles: `open`, `wpa2`, `wpa2-rekey` (a group
+rekey every 30 s), `wpa2-wrong`, `wpa3`, `transition`, `transition-td`
+(Transition Disable, bit 0) and `twin` (two BSSs of one SSID, one
+refusing the board). The authenticator's fields for the rekey period and
+the indication are `wpa_group_rekey` and `transition_disable`
+(`ap/ap_config.h:392, 810`); their configuration keys are *unverified*
+until the profiles are written. Under `wpa3` the harness also injects,
+from a monitor interface, an unprotected deauthentication and
+disassociation with the access point's address and a replayed protected
+broadcast disassociation, and asks hostapd for a protected
+deauthentication; the injecting tool is *unverified* until the host is
+chosen. Fuchsia drives an access point from its tests the same way
+(`wlan/tests/README.md`). The FreeBSD x86-64 test host, the data peer of
+[Performance](#performance), serves `open` and the WPA2 profiles
 ([Decisions](#decisions), 4).
 
-**The board,** by hand, as the Pi's checklist runs: W0's and W1's log
-lines; no scan before a country is configured, with `no_country` at
-`/proc`; a scan listing the test access point with its verdict; DHCP,
-ping and a TCP transfer under `open`, under `wpa2-rekey` across a group
-rekey, and under `wpa3`; under `wpa2-wrong`, `secret_failed` at `/proc`
-after the third join, and a join once the right secret is given; under
-`transition-td`, an SAE join and then the mark at `wifi networks`; under
-`twin`, a join of the BSS that accepts; under `wpa3`, the link staying
-up through the unprotected deauthentication and disassociation and the
-replayed protected disassociation, and the join ending and starting
-again on the protected deauthentication, which also shows whether the
-firmware checks management frames as [SAE](#sae-and-protected-management-frames)
-assumes; the RSNXE the firmware sent, read from `Sent` (F14); the WiFi
-domain killed under load, restarting and joining again while `genet0`
-carries on; a multiblock write of 64 MiB to `/data` and a TCP transfer
-over `wlan0` at once, both completing, with no storage request near its
-deadline; the storage domain's power-cut checklist passing with WiFi
-under load. QEMU has no WiFi device for any machine.
+**The board,** by hand, as the Pi's checklist, each step naming its
+profile: W0's and W1's log lines; no scan before a country
+(`no_country` at `/proc`); a scan listing the test access point with
+  its verdict; DHCP, ping and TCP under `open`, across a
+rekey under `wpa2-rekey`, and under `wpa3`; `secret_failed` and recovery
+under `wpa2-wrong`; the mark under `transition-td`; the accepting BSS
+under `twin`; under `wpa3`, the link surviving the unprotected and
+replayed frames and rejoining after the protected deauthentication,
+which shows whether the firmware checks management frames as
+[SAE](#sae-and-protected-management-frames) assumes; the RSNXE sent
+(F14); the WiFi domain killed under load and rejoining while `genet0`
+carries on; a 64 MiB write to `/data` and a TCP transfer over `wlan0`
+together, no storage request near its deadline; the storage domain's
+power-cut checklist with WiFi under load. QEMU has no WiFi device for
+any machine.
 
 ## Interfaces
 
@@ -2941,62 +2786,6 @@ under load. QEMU has no WiFi device for any machine.
 * The dependency table: the Cypress CYW43455 firmware, NVRAM and CLM
   files; wpa_supplicant and hostapd 2.12, the differential oracle and
   the test access point.
-
-## Edits to other designs
-
-* **[design.md](design.md):** the index row for this document; a
-  dependency row for the Cypress files and one for wpa_supplicant and
-  hostapd; the license allowlist admits Cypress's license for those
-  three files in the WiFi application's release of a Raspberry Pi image.
-* **[design-system.md](design-system.md):** with
-  [Decisions](#decisions), 1: the vault's purposes gain
-  `{wpa, Service}`, with two facets, `wpa_key` for the WiFi domain and
-  `wpa_admin` for the administrator's session template, whose exact
-  inputs are the seven operations of [Credentials](#credentials) and
-  whose entries are a sealed section of the machine's file. The state
-  slots' text keeps Bluetooth's bonds as its example and stops naming
-  the WiFi chip's keys, since what the chip needs in clear is the
-  session's keys, not the networks'.
-* **[design-shared-devices.md](design-shared-devices.md):** the legacy
-  SD controller leaves the example of a device of no kind (the
-  auxiliary SPI controllers remain one); it is the example of a
-  sub-device's function crossing by a home.
-* **[design-platforms.md](design-platforms.md):** the legacy controller's
-  record is `sdio sdhci`, with no DMA memory and its clock from the unit
-  entry, driven by the SDIO host, which never signals the line.
-* **[design-storage.md](design-storage.md):** the SD controller's line
-  keeps one member, EMMC2's device process, since the SDIO host polls
-  with the legacy controller's signal enable at zero; the SDIO host's
-  supervisor is a `temporary` child of `erx_blk_sup`; `erx_blk_write`
-  holds the SDIO table, issued only on an `sdio` record, and the write
-  path's rule (U4) covers it; the command wait of the controller core
-  takes a count of blocks; the data partition's service serves the
-  `wifi_etc` tree.
-* **[design-network-stack.md](design-network-stack.md):** the transport
-  `erx_net_ether` in the seams table, the driver table and the process
-  tree; lent links are temporary and are no unit of `network_ctl`; "Who
-  holds the network device" names the lending path.
-* **[design-crypto.md](design-crypto.md):** `crypto` takes SAE's three
-  functions, which the host oracle does not have.
-* **[design-bluetooth.md](design-bluetooth.md):** Wi-Fi provisioning's
-  app derives a network's PMK and hashed values as `wlankey` does and
-  hands them to the vault's `{wpa, Service}` purpose through a
-  `wpa_admin` facet of its own session template, never to the WiFi
-  domain; no state slot of Bluetooth's holds them, and the Bluetooth
-  design's text on WiFi provisioning names that facet.
-* **[TODO.md](../TODO.md):** the security residuals of
-  [Security](#security): the development key holder and SAE's
-  arithmetic that is not constant-time throughout, each blocking
-  release; and the release front end's view of the verdicts
-  ([Control and inspection](#control-and-inspection)).
-* **[plan.md](plan.md):** 1b-I's demo, part (f) with W0 to W5, its
-  dependencies, its testing off the board and its exit criteria.
-* **[todo-performance.md](todo-performance.md):** the WiFi item, with
-  the time from a lost link to an open port.
-
-The unit rule, U4's build check, the manifest's property 8 (only the
-network domain holds a network device) and the crypto design's rule for
-the network domain stand as written.
 
 ## Alternatives considered
 
@@ -3085,15 +2874,6 @@ the air, and a break there would take every saved network's password
 equivalent, the office's with the cafe's; and the WiFi domain would
 decode the blob, track whether it had read it, and reason about a
 replacement that may or may not have been published.
-
-**A key domain of WiFi's own.** A small domain that holds the entries
-in a state slot and serves both facets gives the same containment and
-leaves the vault as it is. It costs a domain, two interfaces served from
-it and manifest rows for a second key agent beside the one the system
-has, and it keeps the secrets as Erlang terms where the vault keeps keys
-in resources. It would keep SAE's arithmetic and the values the air
-chooses out of the vault, which holds every principal's keys; the vault
-takes them instead ([Decisions](#decisions), 1).
 
 **Secrets given through the WiFi domain's `ctl`.** One command beside
 the others, and the station would learn of every change at once. But
@@ -3285,8 +3065,8 @@ it was chosen over:
      the vault, and entries that are Erlang terms in that domain; the
      vault, a larger trusted component, is taken instead because it
      adds no domain and no second agent.
-   * *Development builds only: the state slot, with the holder a
-     process of the WiFi domain.* It is not a release option: the WiFi
+   * *Development builds only: a file of the WiFi domain's own tree,
+     with the holder a process of the WiFi domain.* It is not a release option: the WiFi
      domain would hold every PMK and PT and write the store itself, so
      a break of its parsers could read the password equivalents and
      enroll a network. It is the development build's stopgap, a

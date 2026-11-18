@@ -12,8 +12,7 @@ Raspberry Pi 4's UARTs of
 [design-platforms.md](design-platforms.md#raspberry-pi-4-model-b), the
 facets and the manifest of [design-system.md](design-system.md#the-manifest),
 the vault of [design-system.md](design-system.md#the-vault) and the input
-records of [design-display.md](design-display.md#input-events), and says
-where each of them changes.
+records of [design-display.md](design-display.md#input-events).
 
 Decisions every reader needs:
 
@@ -130,32 +129,6 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
   integration tests run in [hosted mode](design-runtime.md#hosted-mode)
   against Google's Bumble, whose virtual controllers speak H4 over a TCP
   socket ([Verification](#verification)).
-
-### What the tree does today
-
-Nothing of Bluetooth exists. `erx_pl011`
-(`erlang/apps/erx_uart/src/erx_pl011.erl`) is an Erlang driver over the
-device NIF that programs its UART at 115200 baud, 8N1, without hardware
-flow control (`erx_pl011.erl:35-38`), and speaks the six console driver
-messages to the one process it serves
-([design-runtime.md](design-runtime.md#the-console-and-standard-io)). It
-keeps what the boot left in the UART: it clears neither FIFO, since the
-kernel's last lines and a person's typing are in them, and programs the
-divisors only of a UART the boot left unprogrammed
-(`erx_pl011.erl:170-181`, `:209-215`), so starting it again resets
-neither the bytes nor the rate. The
-PL011's register description already has the flow-control enables, `CR`'s
-`RTSEN` and `CTSEN` (`hw/svd/pl011/pl011.svd:113-114`). The line owner,
-`erx_irq_line` and its core, shares a line among drivers of one domain
-([design-shared-devices.md](design-shared-devices.md#lines-inside-a-domain)),
-and the system domain's services each start the owner of their own UART's
-line. The vault's machine file holds machine keys; no facet stores a
-grantee's state. The firmware notification, `erx_firmware_request`, is
-the USB design's narrow kernel call, which the device service makes
-through the domain library for the VL805 alone
-([design-usb.md](design-usb.md#the-vl805s-firmware),
-[design-pcie.md](design-pcie.md#facets)); none of it is built yet. The HID parser and fold, `erx_hid_desc` and
-`erx_hid_core`, are the USB design's ([design-usb.md](design-usb.md#hid)).
 
 ### Sources
 
@@ -364,17 +337,14 @@ round trip to a handler is one step out and one step back.
 
 ## Stages
 
-The stages are ordered by the first consumer, a phone app talking to an
-erXos device, and each ends in a demo against a phone and a test against
-Bumble.
-
-| Stage | Delivers | Needs | Bumble peers |
-| --- | --- | --- | --- |
-| 1. The controller and advertising | the line tree and its `reset`, H4, the bring-up with the patch, HCI's command and data credits, the identity address, advertising of the name and the declared UUIDs, `/proc/bt` | hosted mode with domains (track H); on the Pi 4, the system domain's line groups, `erx_pl011`'s fresh start, the firmware notification's index and the patch | `apps/controllers.py` joining two virtual controllers; `examples/run_scanner.py` and `apps/scan.py` as the scanner |
-| 2. The GATT server | L2CAP's fixed channels, the ATT server, `abi/gatt`, the table, the gate, the `ble` facet and its handlers | stage 1 | `examples/run_gatt_client.py` and `apps/gatt_dump.py` for discovery and reads; a peer script for writes, subscriptions, notifications and indications |
-| 3. The serial service | the `nus` declaration and `erx_gatt_serial` for apps | stage 2 | a peer script that writes and subscribes |
-| 4. Pairing and bonding | SMP as responder, the pairing window, the store, reconnection with bonds, Service Changed, persistent subscriptions; the phone console | stage 2; for release builds, the vault's state slots ([design-system.md](design-system.md#state-slots)) | `apps/pair.py` as the pairing central; `apps/gatt_dump.py --encrypt` and `examples/run_connect_and_encrypt.py` for reconnection |
-| 5. Later | Wi-Fi provisioning, then HID over GATT, then classic Bluetooth | stage 4; a Wi-Fi driver; the USB design's HID cores | per stage ([Later stages](#later-stages)) |
+The work is ordered by the first consumer, a phone app talking to an
+erXos device, in four stages whose sections follow: the controller and
+advertising, the GATT server, the serial service, and pairing and
+bonding. Each ends in a demo against a phone and a test against Bumble
+([Hosted mode against Bumble](#hosted-mode-against-bumble)); Wi-Fi
+provisioning, HID over GATT and classic Bluetooth come after them
+([Later stages](#later-stages)). [plan.md](plan.md#track-b-bluetooth)
+schedules the work.
 
 Stages 1 to 3 need no Security Manager: until stage 4 the link answers
 every SMP PDU with Pairing Failed, Pairing Not Supported (`0x05`), and the
@@ -571,8 +541,10 @@ last driver left. A platform with no power line runs steps 1 and 3 alone,
 and its bring-up relies on `HCI_Reset`.
 
 **Its driver is `erx_pl011`, started fresh.** For the console and the
-host link, `erx_pl011` keeps what the boot left (What the tree does
-today). A line's record carries `init => fresh`, its rate and its flow,
+host link, `erx_pl011` keeps what the boot left: it clears neither FIFO,
+since the kernel's last lines and a person's typing are in them, and
+programs the divisors only of a UART the boot left unprogrammed, so
+starting it again resets neither the bytes nor the rate. A line's record carries `init => fresh`, its rate and its flow,
 and `erx_pl011:program/1`, a pure function of the record, which carries
 the UART's clock, returns the register steps the driver performs, in
 order,
@@ -582,7 +554,7 @@ following the programming note of the PL011's manual (DDI 0183G, page
 1. `CR` written 0: the UART, the transmitter, the receiver and both flow
    enables off; then `IMSC` written 0, so the controller's bytes raise
    nothing on a line another driver shares until the start ends. The driver then waits one character time at the boot's
-   divisors, as it does today, for the character in flight, and does not
+   divisors, as `keep` does, for the character in flight, and does not
    wait for `FR`'s `BUSY`: with CTS flow control a controller holding CTS
    off keeps the transmitter busy indefinitely.
 2. `LCR_H`'s `FEN` cleared, which flushes the transmit FIFO (the note's
@@ -1525,13 +1497,14 @@ Service Changed, the link indicates Service Changed for `0x0001` to
 A phone gives the machine a network's name and passphrase over an
 `authenticated` characteristic, so credentials never cross the air in
 clear or to a peer who saw no passkey. The Bluetooth side is a
-declaration and an app, with nothing new below them. The other side is
-the larger part: erXos drives no Wi-Fi today (the CYW43455's Wi-Fi half
-is on the Pi 4's SDIO bus), so this stage waits for the Wi-Fi design,
-whose credentials live in a state slot of the vault as bonds do
-([design-system.md](design-system.md#state-slots)). Its
-`authenticated` characteristic needs a passkey shown through a trusted
-channel, so a machine with none waits for an out-of-band method
+declaration and an app, with nothing new below them. The app derives
+the network's PMK and hashed values as the session's `wlankey` does and
+hands them to the vault's `{wpa, Service}` purpose through a
+`wpa_admin` facet of its own session template, never to the WiFi
+domain, and no state slot of Bluetooth's holds them
+([design-wifi.md](design-wifi.md#credentials)). Its `authenticated`
+characteristic needs a passkey shown through a trusted channel, so a
+machine with none waits for an out-of-band method
 ([Decisions](#decisions), 3).
 
 ### HID over GATT
@@ -1779,30 +1752,29 @@ once per batch, under the manual checklist.
 
 ### Host tests of the cores
 
-Each passing case is paired with the seeded fault it must catch.
+Each core's test is paired with the seeded faults it must catch.
 
-| Core | Passes | Seeded fault that must fail it |
+| Core | Holds | Seeded fault that must fail it |
 | --- | --- | --- |
-| `erx_h4` | a stream cut at every byte offset splits into the same packets; an unknown indicator and an over-long ACL length are errors | the indicator check removed; the ACL length read as one byte |
-| `erx_bt_hci_core`, explored over every state reachable from `start`, for the inputs its exploration feeds, until none is left (the clock moves only to a deadline that passes, and only the patch's two waits pass without a stop, so it takes at most three values; the count of dropped events, a statistic, is explored to one), and case by case | explored: the writer is never given a second item before its acknowledgement; a wake-up before the deadline changes nothing, and the deadline's passing stops the core or changes it; every state before `ready` has a deadline, the line's reset included, so every bring-up path reaches `ready` or a stated reason, patching at most once; an opcode-0 event never moves the deadline; credits never go below zero, and connections never pass the limit in force; a disconnect is written only for a handle whose disconnect was asked for since it last connected; a request naming a link that has gone, its handle given a new peer or not, changes nothing, and the exploration reaches such a reused handle (a link's name is new with every connection, so a path makes at most three connections, enough for one handle to be given a new peer while the other is live; with the names set aside, the states reached are the same as with five connections); each live handle's count in Number Of Completed Packets, but a count of 0, reaches the handle's current link as `{completed, Count}`; advertising is never on at the limit, and with nothing written, sent or due it is on exactly while connections are below the limit; the controller process ends for exactly these reasons and no other: an answer naming another command, a deadline passed, a completion beyond the packets a handle has given the writer or for a dead handle, a connection past the limit, during the bring-up, on a live handle or on a handle whose disconnect is handed to the writer and unanswered, a failed disconnect, a patch for another controller, a hardware error, a line reset not answered, a malformed event and a failed step. Case by case: an answer to a command due and not yet written ends the controller process; a Disconnection Complete returns a handle's outstanding packets; a command the controller never allows ends at its deadline; a second disconnect for a handle is ignored, Unknown Connection Identifier is the handle gone, and another failure ends the controller process; a connection on a handle being disconnected ends the controller process; a disconnect waiting for the writer never reaches the handle's next peer; a gone link's packet and disconnect are refused once its handle has a new peer, whose own go through; a connection before the enable's answer leaves advertising off; fewer buffers than the connection limit lower the limit; Read Buffer Size takes any length from 1 | the command slot not cleared by Command Status; a handle kept live after its Disconnection Complete; a completion's count taken without the outstanding bound, so a forged report grows the credits; a completion's bound counting packets still waiting for the writer; advertising not re-enabled after a disconnection; the deadline armed only once the controller allows the command; the connection limit kept above the buffer count; LE's 27-octet minimum applied to Read Buffer Size; a handle's disconnect kept after its Disconnection Complete, a connection on a handle being disconnected accepted, a connection before the enable's answer leaving advertising on, and the completions not passed to their links, each caught by the exploration; any failed disconnect taken as the handle gone; the line's reset under no deadline; a deadline passed only after its instant, one passed a millisecond early, and a request's link name ignored but for its handle, each caught by the exploration. A second deadline armed, or one cancelled that was never armed, cannot be written: each deadline is a field of the slot state it guards. Credits not returned at disconnection cannot be written: the free credits are derived from the live handles' outstanding packets, so removing the handle returns them, and the handle kept live stands in its place |
-| `erx_h4` against `bt_acl_rx_max` | a 251-octet ACL packet splits; a 252-octet one is an error, before and after the bring-up | the bound one octet too long. The bound taken from LE Read Buffer Size once known cannot be written: `split/1` takes no bound, only the constant |
-| `erx_bt_patch` | the records of a synthetic patch replay in order; a file with a truncated last record or a foreign opcode is refused whole, before any record is sent | the record length not checked against the bytes left |
-| `erx_gatt_db` | a table built from the declarations matches a hand-written expected table; the hash changes when a characteristic changes and not when the manifest lists rows in another order | services laid out in manifest order |
-| `erx_gatt_gate` | GAP Table 10.2's rows for levels 1, 2 and 4, each answer as the table gives | Insufficient Encryption answered on a link with no key |
-| `erx_gatt_server` | each supported request against the table; long reads and prepared writes at every MTU from 23 to 247; the gate is asked for every value and descriptor access | the gate skipped for Read Blob; the descriptor's write level taken from `read` |
-| `erx_bt_link_core`, explored | reassembly at every fragment size; one outstanding request; commands past the queue discarded and counted; a first pairing encrypts with the pairing's key and reaches its level before the store answers, and a reconnection with the bond's key reaches the bond's; a Pairing Request on a resolved link fails; `encrypted` set only by a success report after a Reply; a resolved link sends one Security Request, never during encryption; a bonded configuration write is answered only after the store's `ok` | an Encryption Change accepted after a Negative Reply; encryption accepted only for kept bonds, so the first pairing never reaches its level; the configuration write answered before the store's answer |
-| `erx_smp_core`, explored over every message order | Passkey Entry and Just Works complete; every refusal of [Secure Connections only](#secure-connections-only) fires; a `display` window refuses Just Works; one pairing per window | the key-size check removed; the curve check removed (the `y + 1` point is accepted); the link-key bit kept |
-| `erx_bt_window`, the window and the wait | the wait is 2, 4, ... 64 s after successive failures, a disconnection mid-pairing counting as one, stays at 64, halves after 600 s without one; a Pairing Request during it answers Repeated Attempts and leaves the window open; windows opened back to back do not shorten it | the wait reset when a window opens; a disconnection not counted as a failure |
-| `erx_pl011:program/1` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes `IBRD` and `FBRD` before `LCR_H` and `CR` whole last with the flow enables; `keep` is today's sequence | `LCR_H` written before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
+| `erx_h4` | a stream cut at every byte offset splits into the same packets; an unknown indicator, an over-long ACL length and an ACL packet past `bt_acl_rx_max` (251 octets) are errors, before and after the bring-up | the indicator check removed; the ACL length read as one byte; the bound one octet too long. A bound taken from LE Read Buffer Size cannot be written: `split/1` takes only the constant |
+| `erx_bt_hci_core`, explored over every reachable state until none is left (the clock moves only to a deadline that passes, so it takes at most three values; the count of dropped events, a statistic, is explored to one; a path makes at most three connections, enough for one handle to be given a new peer while the other is live), and case by case | the writer never holds two items; a wake-up before the deadline changes nothing, and the deadline's passing stops the core or changes it; a command the controller never allows ends at its deadline; every state before `ready`, the line's reset included, has a deadline, so every bring-up reaches `ready` or a stated reason, patching at most once; an opcode-0 event never moves the deadline; credits never go below zero and connections never pass the limit; a disconnect is written only for a handle whose disconnect was asked since it last connected; a request naming a gone link changes nothing, even on a reused handle; Number Of Completed Packets reaches each live handle's link as `{completed, Count}`; advertising is never on at the limit, and with nothing written, sent or due it is on exactly while connections are below the limit; the controller process ends for exactly these reasons: an answer naming another command, a deadline passed, a completion beyond a handle's outstanding packets or for a dead handle, a connection past the limit, during the bring-up, on a live handle or on one whose disconnect is unanswered, a failed disconnect, a patch for another controller, a hardware error, an unanswered line reset, a malformed event and a failed step; fewer buffers than the connection limit lower the limit; Read Buffer Size takes any length from 1 | the command slot not cleared by Command Status; a handle kept live after Disconnection Complete; a completion count taken without the outstanding bound (a forged report grows the credits), or counting packets still waiting for the writer; advertising not re-enabled after a disconnection; the deadline armed only once the controller allows the command; the connection limit kept above the buffer count; LE's 27-octet minimum applied to Read Buffer Size; any failed disconnect taken as the handle gone; the line's reset under no deadline; and, each caught by the exploration, a disconnect kept after Disconnection Complete, a connection on a handle being disconnected accepted, a connection before the enable's answer leaving advertising on, completions not passed to their links, a deadline passed a millisecond early or only after its instant, and a request's link name ignored. A second deadline, or cancelling one never armed, cannot be written: each deadline is a field of the slot state it guards. Credits not returned at disconnection cannot be written: the free credits are derived from the live handles' outstanding packets |
+| `erx_bt_patch` | a synthetic patch replays in order; a truncated last record or a foreign opcode refuses the file whole, before any record is sent | the record length not checked against the bytes left |
+| `erx_gatt_db` | a built table matches a hand-written one; the hash changes with a characteristic and not with the manifest's row order | services laid out in manifest order |
+| `erx_gatt_gate` | GAP Table 10.2's rows for levels 1, 2 and 4 | Insufficient Encryption answered on a link with no key |
+| `erx_gatt_server` | each supported request; long reads and prepared writes at every MTU from 23 to 247; the gate asked for every value and descriptor access | the gate skipped for Read Blob; the descriptor's write level taken from `read` |
+| `erx_bt_link_core`, explored | reassembly at every fragment size; one outstanding request; commands past the queue discarded and counted; a first pairing reaches its level before the store answers, a reconnection the bond's; a Pairing Request on a resolved link fails; `encrypted` set only by a success report after a Reply; one Security Request, never during encryption; a bonded configuration write answered only after the store's `ok` | an Encryption Change accepted after a Negative Reply; encryption accepted only for kept bonds; the configuration write answered before the store |
+| `erx_smp_core`, explored over every message order | Passkey Entry and Just Works complete; every refusal of [Secure Connections only](#secure-connections-only) fires; a `display` window refuses Just Works; one pairing per window | the key-size check removed; the curve check removed (the `y + 1` point accepted); the link-key bit kept |
+| `erx_bt_window` | the wait doubles from 2 to 64 s after failures, a disconnection mid-pairing counting as one, and halves after 600 s without one; a Pairing Request during it answers Repeated Attempts and leaves the window open; back-to-back windows do not shorten it | the wait reset when a window opens; a disconnection not counted |
+| `erx_pl011:program/1` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes the divisors before `LCR_H` and `CR` whole last with the flow enables; `keep` clears no FIFO and programs the divisors only of an unprogrammed UART | `LCR_H` before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
 | `erx_smp_crypto` | SMP Appendix D's sample data for `f4`, `f5`, `f6` and `ah` | the AES-CMAC key byte order reversed |
-| `erx_bt_state` | a state round-trips; every other version, a truncation and an oversized count are refused; the largest state, `bt_bonds_max` bonds with the most subscriptions, encodes in at most 4 KiB | the bond count read without its bound |
-| the store's table, against a fake store that answers each call as a test scripts it, and the development file over a fake data tree that fails a chosen step | a start whose `get` answers `unavailable` runs with no bonds, refuses pairing, a configuration write and `forget ADDRESS`, and puts nothing; a start that reads a blob that does not decode does the same and `forget all` then replaces it, after which pairing works; a start reading `none` makes the identity address and the first pairing's `put` keeps it; a `put` whose rename reached the medium but whose answer is `unavailable` fails the pairing, and the next pairing reads first and keeps the bond the failed one added; after every confirmed change and every read the domain's bonds are what the store's `get` returns | `unavailable` at the start read as `none`, which the first case finds as a pairing that overwrites the stored bonds; a domain that keeps its pre-put state after an unconfirmed `put`, which the rename case finds as the failed pairing's bond gone after the next pairing |
-| the line's `ctl` grammar | `reset` with and without newline accepted; everything else `einval` | a prefix match accepting `resetx` |
-| the line service's reset, over a model driver and a model device service | the four steps run in order; the driver's input during the on time is discarded; a power `{error, _}` answers `eio` before the next step | the driver started before the off notification, so the old FIFO drains into the new controller |
-| the line service through a real `erx_fs` grant over a model driver, the reader and the writer opening one `data` file as the controller group does | a read sent on the empty line, then a command written: the write is answered within 1 s while the read waits, and the model driver's answer to the command reaches the read once; a `reset` during a waiting read answers it `eio`; the reader's clunk during a waiting read is answered within 1 s, and the next reader's read gets the next driver bytes whole | a line whose `read` waits inside its callback, which makes the write miss its deadline; a line that drops a flush of a waiting read, whose reader's clunk misses its deadline |
-| flushes of the line's begun and buffered requests, through the same grant, with a model device service that holds each power notification until the test releases it | a `reset` flushed at each of its four steps is answered only once its last step is done, with the reset's answer, then the flush; a write flushed after the model driver took its bytes is answered with its count; with bytes already in the receive buffer, a read and its flush sent in one batch answer the read with those bytes and then the flush, and a read flushed before bytes arrive answers `eintr`, after which the next read gets those bytes whole | a line that answers a flushed `reset` `eintr` while its steps run, which the first case finds answered before the power notification is released; a line that holds a read while bytes are buffered and answers it only at the driver's next input, which the third case finds answered `eintr` with the bytes still buffered |
-| the identity address | 10,000 addresses all have the static form and parse in Bumble's `Address` as static | the top bits cleared |
-| the controller group, over a model line (the I/O devices of its two files, which the group's reader and writer open through the open function the group's start takes in place of `file:open/2`, since on stock's emulator no namespace reaches a mounted tree: its `ctl` answers after a set delay, its `data` read waiting at a reset answers `eio`, and whose `data` plays a scripted controller), a model store and a model registry | the group reaches `ready` from its start and again after the controller process is killed; the first read of `data` comes after `ctl`'s answer; the identity address in the facts is the same before and after the restart; a link process killed while connected leads to one `HCI_Disconnect` of its handle with reason `0x13` on `data`; a `link_down` ends the link process, and a `to_link` for its name afterwards reaches no process; each live handle's Number Of Completed Packets count reaches its link as `{completed, Count}`; a `ctl` answering `eio` ends the group | the reader reading at its start, so its read meets the reset and the group restarts without reaching `ready`; the controller process making the address itself, so it changes across the restart; a link process's end ignored, so no Disconnect is written; the completion not passed to the link, so a link with a share of one never hands over its second notification |
+| `erx_bt_state` | a state round-trips; another version, a truncation and an oversized count are refused; the largest state encodes in at most 4 KiB | the bond count read without its bound |
+| the store's table, against a scripted fake store and a development file over a fake data tree that fails a chosen step | a start reading `unavailable` or an undecodable blob runs with no bonds and refuses pairing, configuration writes and `forget ADDRESS`, and `forget all` replaces the bad blob; a start reading `none` makes the identity address; a `put` that reached the medium but answered `unavailable` fails the pairing, and the next pairing reads first and keeps its bond; after every confirmed change and read the domain's bonds are the store's | `unavailable` read as `none` (a pairing overwrites the stored bonds); the pre-put state kept after an unconfirmed `put` (the failed pairing's bond lost) |
+| the line's `ctl` grammar | `reset`, with or without newline; everything else `einval` | a prefix match accepting `resetx` |
+| the line service's reset, over a model driver and device service | the four steps in order; the driver's input during the on time discarded; a power `{error, _}` answers `eio` before the next step | the driver started before the off notification, so the old FIFO drains into the new controller |
+| the line service through a real `erx_fs` grant, reader and writer on one `data` file | a write is answered within 1 s while a read waits, and the driver's answer reaches the read once; a `reset` answers a waiting read `eio`; a clunk during a waiting read is answered within 1 s and the next reader gets the next bytes whole | a `read` that waits inside its callback; a dropped flush of a waiting read |
+| flushes of begun and buffered requests, with power notifications held by the test | a `reset` flushed at any step is answered once its last step is done, then the flush; a write flushed after the driver took its bytes answers its count; a read flushed with bytes buffered answers with them, and before bytes arrive `eintr`, the next read getting them whole | a flushed `reset` answered `eintr` while its steps run; a read held while bytes are buffered |
+| the identity address | 10,000 addresses have the static form and parse in Bumble's `Address` as static | the top bits cleared |
+| the controller group, over a model line, store and registry (the group's start takes the open function, since on stock's emulator no namespace reaches a mounted tree; the model `ctl` answers after a set delay, and a `data` read waiting at a reset answers `eio`) | `ready` from start and again after the controller process is killed; the first `data` read after `ctl`'s answer; the identity address unchanged across the restart; a killed link process leads to one `HCI_Disconnect` with reason `0x13`; after `link_down` a `to_link` for the name reaches no process; completions reach their links; a `ctl` answering `eio` ends the group | the reader reading at its start, so the group never reaches `ready`; the controller process making the address itself; a link process's end ignored; completions not passed to the link |
 
 ### Fuzz targets
 
@@ -1822,9 +1794,7 @@ on the host.
 The harness, in Ruby, runs Bumble unmodified: `apps/controllers.py` with
 two TCP transports joined by its local link, one controller for erXos's
 line, whose socket the harness passes to the hosted runtime as the
-line's descriptor, and one for the peer. `controllers.py` takes exactly
-two transports (`len(sys.argv) != 3`, line 28), which is what a test
-needs. Bumble's stream transports carry H4 framing
+line's descriptor, and one for the peer. Bumble's stream transports carry H4 framing
 (`bumble/transport/common.py:41-46`, `:125-144`), and its controller
 implements every command stage 1 to 4 send (`bumble/controller.py:1996`,
 `:2344`, `:2874`, `:2953`, `:3004-3067`, `:3299-3310`). Python runs only
@@ -1845,7 +1815,10 @@ argument vector:
 | 4 | a bonded peer subscribes, the Bluetooth domain is killed at once after the Write Response, and the peer reconnects encrypting only on erXos's Security Request | the subscription is restored and a notification arrives | the configuration kept only at the link's end; no Security Request sent |
 
 Reconnection with a resolvable private address uses Bumble's
-`examples/device_with_rpa.json` as the peer's configuration.
+`examples/device_with_rpa.json` as the peer's configuration;
+`apps/scan.py` is stage 1's second scanner, and
+`examples/run_connect_and_encrypt.py` stage 4's second reconnecting
+peer.
 
 ### On the board
 
@@ -1878,55 +1851,6 @@ list ([todo-performance.md](todo-performance.md)):
 * `erx_pl011`'s wait of 1 ms at a time while its transmit FIFO is full
   (`erx_pl011.erl:45`, `:236-243`), which the patch download and bursts
   of notifications meet.
-
-## Changes to other designs
-
-* **[design.md](design.md)**: the document map's row; the dependency
-  table's rows for the Cypress patch and for Bumble on Python; the license
-  allowlist admitting Cypress's driver license for the patch file of the
-  Pi 4's image; the languages decision's Python for the test peer's
-  scripts; the threat model's rows for a radio peer and for the
-  controller or a compromised Bluetooth domain; the line service's `ctl`
-  among the funnels into the trusted base.
-* **[design-system.md](design-system.md)**: property 8 gives the unit of
-  each `line` grant's UART to the system domain beside the console's and
-  the host link's, keeps the console's UART off every other system-domain
-  UART's interrupt line, and refuses two `line` grants of one UART; the
-  line service in the services table; and the vault's **state slots**,
-  an opaque sealed blob per purpose `{state, Service}` in the machine's
-  file, which the vault bounds and never parses, the store of bonds here
-  and of the Wi-Fi design's network keys
-  ([design-system.md](design-system.md#state-slots)).
-* **[design-shared-devices.md](design-shared-devices.md)**: the system
-  domain's line groups, one `rest_for_one` supervisor per interrupt line
-  of the host link's and the line trees' UARTs, the line's owner first;
-  the console outside them, on a line of its own, as the refusal and the
-  open decision on a console and host link on one line already have it.
-* **[design-platforms.md](design-platforms.md)**: the Pi 4's UART0 is
-  driven, for the Bluetooth line, sharing line 153 with UART3; its device
-  entry lists the controller's two power notifications; the firmware's
-  power control is used for that one device, through the firmware
-  notification; the overview's Bluetooth row.
-* **[design-usb.md](design-usb.md)**: `erx_firmware_request` takes the
-  index of one of the notifications the platform record lists for the
-  resource's device, the VL805's one being index 0, and answers
-  `ERX_ENOTSUP` for an index past the list; the device service makes the
-  Bluetooth line's notifications too, from the same firmware worker, through
-  `erx_domain_lib:device_notify/2`
-  ([design-usb.md](design-usb.md#the-vl805s-firmware)); `erx_hid_desc`
-  and `erx_hid_core` in an application of their own, `erx_hid`, which the
-  USB and Bluetooth releases both ship; the input tree with its stream
-  processes as one module both domains use, in place of the input part
-  of `erx_usb_places_sup`.
-* **[design-runtime.md](design-runtime.md)**: `erx_pl011` takes
-  `init => fresh` or `keep` from its record and performs the steps
-  `erx_pl011:program/1` returns; the console's and the host link's
-  records name no `init` and so keep, which is today's sequence.
-* **[design-files.md](design-files.md)**: waiting requests
-  ([Serving](design-files.md#serving-the-erx_fs-behaviour)), which the
-  line's `data` and `ctl` and the control tree's `pair` serve their
-  waits through.
-* **[plan.md](plan.md)**: a proposed track for Bluetooth.
 
 ## Alternatives considered
 
@@ -1996,7 +1920,8 @@ list ([todo-performance.md](todo-performance.md)):
    parses nothing of the blob and learns no Bluetooth structure, and the
    Bluetooth domain's `erx_bt_state` decodes it as untrusted input
    ([design-system.md](design-system.md#state-slots)). The slot is
-   generic, and the Wi-Fi design keeps its network keys in one too. The
+   generic; the WiFi design keeps no network key in one, since a PMK
+   never has to leave the vault ([design-wifi.md](design-wifi.md#decisions), 1). The
    alternatives were a bond purpose with store, forget and list, which
    teaches the vault a bond's structure for no protection the slot
    lacks; a seal-and-open purpose, which leaves the domain a data grant
