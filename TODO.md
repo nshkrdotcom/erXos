@@ -2482,6 +2482,15 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] dashboard, its slow work can start before its first frame is drawn
+  (`examples/dashboard/lib/erx_dashboard/src/erx_dashboard.erl`, `erx_ui_lvgl_core`): the dashboard
+  starts the quotes, the ground picture and the dial once `erx_ui:tree/2` answers, but an idle
+  renderer core answers once its operations are written, before it draws, so a slow renderer can
+  receive both trees before its first frame, and `erx_dashboard: shown` is logged before the frame
+  is on screen. erx_ui tells an opener nothing when its window presents. The fix is a design
+  question for docs/design-display.md "The widget server": a `{ui_shown, Window}` message to the
+  opener on the first present, or a first `tree/2` answer that waits for it. Measure the Pi's time
+  from `shown` to the first frame first; fix only if the gap is visible.
 * [Low] tests, the manifest edits of the domain tests (`test/fixtures/manifest_context.rb`, `DOMAIN_ROWS`
   and `SESSION_FACETS`; `test/host/manifest_stopgap_test.rb`, `dom_planner_test.rb` and
   `boot_manifest_test.rb`, their login_keys rows): each test removes the development manifest's
