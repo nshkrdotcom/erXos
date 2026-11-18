@@ -25,64 +25,40 @@ widget server, choosing a display and presentations are
 [design-display.md](design-display.md); facets are
 [design-domains.md](design-domains.md#facets).
 
-Decisions every reader of this document needs:
+Decisions every reader of this document needs, each stated in full
+where it is linked:
 
-* **The machine sends data, the client draws.** Every message the machine
-  sends a browser is a message of `abi/protocols/web.txt`: a record, a
-  batch of log or trace entries, a batch of widget changes, a status. The
-  machine writes no HTML, no CSS and no script, and serves no HTTP over
-  the host link. Layout, styling and interaction are the client's.
-* **One source for the protocol.** `abi/protocols/web.txt` declares every
-  message; a Ruby generator emits the Erlang codec the web domain uses
-  and the TypeScript codec and types the client uses, and the generated
-  files are generated into the build tree like every other generated output. The
-  widget changes inside it are the binary form of `abi/formats/ui.txt`
-  that the display declares for renderers outside Erlang. The client's
-  `hello` carries one hash over every source generated into the client,
-  so a client of another build is refused before any view opens.
-* **Machine text is text.** The generated decoder gives the client every
-  text from the machine as an opaque `MachineText`, which React refuses
-  to render and whose bytes nothing reads but the line escape, generated
-  into TypeScript from the same Unicode tables as every other display's;
-  one component, `Text`, shows the escape's runs. A build check forbids every
-  HTML and code sink, and the content security policy forbids inline
-  script, `eval` and every origin but the front end's own.
+* **The machine sends data, the client draws.** Every message to a
+  browser is one of `abi/protocols/web.txt`, whose Erlang and TypeScript
+  codecs one generator emits, with the widget changes in the binary form
+  of `abi/formats/ui.txt`; the machine writes no HTML, CSS or script and
+  serves no HTTP over the host link, and `hello`'s protocol hash refuses
+  a client of another build ([The protocol](#the-protocol)).
+* **Machine text is text.** Every machine text reaches the client as an
+  opaque `MachineText` that only the line escape reads and only `Text`
+  renders; a build check forbids every HTML and code sink, and the
+  content security policy forbids inline script, `eval` and every other
+  origin (W2, W3, [Chokepoints](#chokepoints)).
 * **The view is the session's, the relay is the web domain's.** Records,
-  log lines and traces are fetched in the principal's **session domain**
-  through that session's own inspect and trace facets, so a browser sees
-  exactly what that principal's `erx:i/1` shows, by construction; the web
-  domain holds no inspect or trace facet and knows nothing of inspection.
-* **A browser is a display of its own medium.** A UI on the web is its
-  application's own widget server, `erx_ui_server` in the application's
-  session, with a renderer for browsers, as a UI in a window is the same
-  server with a renderer that draws: the same `tree()`, the same
-  `{ui, Window, Term, Detail}` events. The web domain runs no widget
-  server and serves no display interface; a UI is one more kind of view
-  that the session's line serves. The tree states what the widgets are,
-  their values and their events, and the browser renders each kind as a
-  web page renders it; nothing requires it to match the native display's
-  pixels or layout, and scroll position, focus and similar presentation
-  state stay in the browser.
-* **An application names its display.** `erx_ui:open/1` opens on the
-  display its options name, or on the session's default: `web` names
-  the session's line to the web domain, and any other name a display
-  whose window tree the session is granted. It fails at once with
-  `{error, no_display}` when the session has none of that name ([Choosing
-  a display](design-display.md#choosing-a-display)). The browser is a
-  second display, never a mirror of the first.
-* **Every view is pulled.** The machine sends a view's next update only
-  after the browser asks for it with `next`, which the client sends once
-  it has rendered the last; a record or a widget tree that changed
-  several times meanwhile is sent once, as its newest state. Live pages
-  are views that keep asking; nothing reloads, and nothing queues
-  without bound.
-* **Two front ends, one protocol.** `erx web` terminates HTTP and the
-  WebSocket on the host and relays each protocol message, as bytes, over
-  the host link's `web` facet, which exists in development builds alone;
-  cowboy terminates them in the web domain. Both hand whole messages to
-  the same pure connection core, `erx_web_conn`, and both serve the same
-  client files. The host tool serves them from the build tree, so the
-  developer's browser never runs code the machine supplied.
+  log lines and traces are fetched through the principal's own session
+  facets, so a browser sees exactly what `erx:i/1` shows there; the web
+  domain holds no inspect or trace facet (W1,
+  [Views on the line](#views-on-the-line)).
+* **A browser is a display of its own medium**, a second display and
+  never a mirror: a UI on the web is its application's own
+  `erx_ui_server` with a renderer for browsers, opened when
+  `erx_ui:open/1` names `web`, and rendered as a web page renders, with
+  scroll, focus and similar state left in the browser
+  ([UIs: the browser renderer](#uis-the-browser-renderer)).
+* **Every view is pulled**: the next update goes only after the
+  client's `next`, and a view that changed meanwhile is sent once, as its
+  newest state (W8).
+* **Two front ends, one protocol.** `erx web` relays each message as
+  bytes over the host link's `web` facet, which exists in development
+  builds alone, and serves the client from the build tree, so the
+  developer's browser never runs code the machine supplied; cowboy
+  terminates the same protocol in the web domain; both drive
+  `erx_web_conn` (W5).
 
 ## Context
 
@@ -965,15 +941,6 @@ service gives the web domain its network facet
 web's development paths in release builds
 ([The manifest](design-system.md#the-manifest)).
 
-## Compatibility and migration
-
-The host tool's front end and the network front end are both the target
-design. Adding the network front end adds cowboy, its handler and the
-login to the web domain and changes nothing in `erx_web_conn`, the line,
-the client or the host tool; W5's differential test is the check. The
-protocol, the routes and the client are erXos's own; a change replaces
-them, and the protocol hash in `hello` refuses a client of another build.
-
 ## Failure handling, diagnostics and debuggability
 
 | Failure | Detected by | Effect | Recovery |
@@ -1091,44 +1058,50 @@ own view; no counter or log line carries a message's contents.
 
 ## Verification and testing
 
-The client's tests run on the host with Node's test runner (`node
---test`, with TypeScript's erasable syntax only, so Node runs the sources
-without a build) for the pure modules, and Playwright for the browser
-tests, in Chromium, with the machine's side played by Playwright's
-WebSocket routing and the generated encoder; the end-to-end tests run
-`tools/erx web` against a QEMU guest.
+The client's pure modules are tested on the host with Node's test runner
+(`node --test`, TypeScript's erasable syntax only, so Node runs the
+sources without a build), and its browser tests run in Chromium under
+Playwright, with the machine's side played by Playwright's WebSocket
+routing and the generated encoder; the end-to-end tests run
+`tools/erx web` against a QEMU guest. The oracles are the other codec
+(Erlang against TypeScript), `erx_text:escape_line/1` and its Ruby twin
+for the escape, `erx_procfs` and `erx_present` for paths, the display's
+parity corpus for UIs, and the principal's own console session for
+every view.
+
+Each seeded failure makes its test fail.
 
 | Test | Passing case | Seeded failure |
 | --- | --- | --- |
-| protocol round trip, both languages | random messages of every kind encode in Erlang and decode in TypeScript, and the reverse, re-encoding to identical bytes; both codecs carry the same hash | a generator change that orders one union's tags differently in TypeScript fails; a hash computed over one source fewer fails |
-| `erx_web_proto` fuzz target (Erlang) | random and mutated messages; every accepted one is within the bounds | the decoder with the path-segment bound removed accepts a 17-segment `path` target and fails |
-| `datum()` depth | a term nested 9 deep projects with its ninth level printed and round-trips in both languages; hand-built bytes with a list at the eighth level are refused by both decoders | a generator that expands `datum` to nine levels makes both decoders accept those bytes and fails |
-| bounds bind both ends | each limit of `web.txt` at its bound is accepted by both codecs and one past it refused by both | a TypeScript codec generated with one limit raised accepts the message past it and fails |
-| TypeScript decoder fuzz target | a mutation fuzzer under Node over the generated corpus; no exception escapes but the decoder's typed refusal | the decoder without a list's count check fails on an `entries` list of 1,001 |
-| `ui.txt` readers: fuzz targets and parity | mutated event payloads into the generated Erlang event reader, which refuses or decodes within bounds; the C reader and the TypeScript reader accept the same inputs and decode the same operations | an Erlang reader without a detail length check fails; a reader with two property tags swapped fails parity |
-| escape differential and fuzz target | `escapeLine` agrees with `erx_text:escape_line/1` and the Ruby twin over the attributed-text corpus and random bytes; invalid bytes are tokens | a decoder using `TextDecoder` with replacement fails on `0xC0` |
-| encodings and presentation paths | the client's `/proc` and `erx:` encoders and its presentation path table agree with `erx_procfs`'s and `erx_present`'s over the generated corpus of names and values | a client encoder that keeps `.` in a `/proc` segment fails |
-| routes and links | each URL form names its route and is written back as itself; a path with an empty, dot or lower-case segment, or past a bound, names nothing; the router's fuzz target (Node) finds that `parseRoute` never throws, that every route it returns is written back as the same path, and that every link `hrefOf` writes, from a browser's path or from the machine's names, is one a browser's URL parser leaves unchanged and `parseRoute` reads back to the same route | a router without the dot-segment check fails on `/domain/..`; one that keeps a leading zero in a UI number fails on `/ui/00` |
-| W2 in the browser | the attributed-text corpus (`<script>`, `&`, U+202E, U+200B, a C1 control, an invalid byte) as attribute values, labels and log lines renders as text and tokens, with no element created | a `Text` that sets `innerHTML` fails; Trusted Types throws in Chromium |
-| W2 types | `tsc --noEmit` passes | a seeded component rendering a `MachineText` directly fails to type-check |
-| W3 policy | the headers on every file; the client works under them | a seeded inline script and a seeded `eval` are blocked and reported |
-| host tool HTTP and WebSocket fuzz target (Ruby) | random and mutated requests and frames; no exception escapes; every answer is a file, a refusal or a relay | a deframer without the length check before reading fails on a declared 2^40-byte frame |
-| cowboy front end HTTP and WebSocket fuzz target (Erlang) | random and mutated requests and frames into the front end's listener over an in-memory transport; every connection process answers, refuses or ends, and only whole messages within `web.txt`'s limits reach `erx_web_conn` | the front end with its request-size limit removed lets a request past the limit reach the handler |
-| W4 refusals | no cookie, wrong `Host`, foreign `Origin`, wrong token, a path outside the inventory: each refused or answered with `index.html`; the token in no response; a WebSocket open past 10 s | the server with that check removed upgrades or answers a host file; a server that sets the token as the cookie fails |
-| W5 parity | a scripted client through the host tool and through cowboy receives byte-identical messages | a front end that answers `hello` itself fails |
-| W1 over the host link | in a development build, every view `tools/erx web` opens through the host link's `web` facet (records, `/proc`, a trace, the kernel log, which both answer alike, and the machine's crash record, which both refuse) equals what `root`'s session reads through its own facets at the same moment, compared view by view against the same reads made from that session's console line; a view of a domain `root`'s session cannot see is `ended scope` in both | a `web` facet bound to the system domain's authority instead of `root`'s session shows a record the session cannot read and fails |
-| W1 scope | two principals through the network front end, each view equal to its principal's `/proc` snapshot, the other's domains `ended scope`; a scoped principal's kernel-events trace `ended scope`; a `logout` of another login's line refused | a cookie bound to the wrong line fails |
-| logins | two logins of one principal are two sessions, and a logout of one leaves the other's views and UIs running; an unenrolled name answers `no_match` | a logout that ends every session of the principal fails |
-| W6 | loading every URL form, and reconnecting with a trace page open, starts no trace and delivers no event | a route, or a reconnect, that opens `trace` fails |
-| W7 | records with `unknown`, `timeout` and `partial` values show their tokens; a stopped guest marks every view stale; a ring overrun shows a gap with its count | a client printing a `partial` value bare fails |
-| W8 bounds | the 17th view, the 65th line view, the 5th connection of a line, the 17th login, each refused; a client that never sends `next` receives one update per view and the web domain's memory for it stays under 1 MiB; a second `next` before its answer is `bye protocol`; a reused view number is `bye protocol` | a core that answers a view twice for one `next` fails |
-| pull sampling | a record changing 100 times while the client is paused is sent once, as its last state; a log of 5,000 new entries arrives over several updates with none lost | a view that queues every change fails |
-| UI attach | a UI attached, detached, changed and re-attached shows the newest tree; `apply_ops(delta(A, B), A) == {ok, B}` over random trees; a tree whose delta exceeds one update arrives over several and is applied at `commit` | a renderer that resends the backlog fails on the bound |
-| UI parity of meaning | the display's parity corpus of trees and input sequences, through the browser renderer in Playwright, delivers the same events and values to the application and holds the same set of nodes as the Erlang renderer; no pixel or layout is compared | a seeded swap of two event names in the client fails |
-| presentation state stays in the browser | scrolling a `scroll`, moving focus and selecting text in the browser sends no message to the machine and changes no server state | a client that reports scroll offsets fails |
-| choosing the web display | a session with a line opens a UI there with `display => web`; without a line `erx_ui:open/1` answers `{error, no_display}` at once; stopping the web domain ends no UI of `root`'s session, and a browser that attaches after the restart shows the newest tree; closing every browser ends no UI | an `erx_ui` that ignores the option opens on the wrong display; a widget server started in the web domain ends with it and fails the restart case |
-| secrets | a `secret` input's text reaches the application as `{erx_secret, _}`, appears in no counter, log, trace or crash report, and is empty after a re-attach | a renderer that folds the secret into its model fails |
-| build | `make web` from the packages the fetch installed, with the network disabled, twice gives byte-identical files and inventory | a seeded package missing from the lockfile fails the frozen-lockfile install; a seeded local package whose install script writes a file leaves no file; a Node.js of another version than `web/package.json` records is refused |
+| protocol round trip, both languages | random messages of every kind cross both ways and re-encode to identical bytes; both codecs carry the same hash | one union's tags ordered differently in TypeScript; a hash over one source fewer |
+| `erx_web_proto` fuzz target (Erlang) | every accepted message is within the bounds | the path-segment bound removed: a 17-segment `path` is accepted |
+| `datum()` depth | a term nested 9 deep projects with its ninth level printed; hand-built bytes with a list at the eighth level are refused by both decoders | `datum` expanded to nine levels: both accept those bytes |
+| bounds bind both ends | each limit of `web.txt` is accepted at its bound and refused past it by both codecs | a TypeScript codec generated with one limit raised |
+| TypeScript decoder fuzz target | under Node over the generated corpus, no exception escapes but the typed refusal | no list count check: an `entries` list of 1,001 |
+| `ui.txt` readers: fuzz targets and parity | the generated Erlang event reader refuses or decodes within bounds; the C and TypeScript readers accept the same inputs and decode the same operations | no detail length check; two property tags swapped |
+| escape differential and fuzz target | `escapeLine` agrees with its oracles over the attributed-text corpus and random bytes | a decoder using `TextDecoder` with replacement fails on `0xC0` |
+| encodings and presentation paths | the client's `/proc` and `erx:` encoders and its presentation table agree with their oracles | an encoder that keeps `.` in a `/proc` segment |
+| routes and links | each URL form round-trips; empty, dot, lower-case or oversized segments name nothing; the router's fuzz target finds `parseRoute` never throws, round-trips every route, and every link `hrefOf` writes is left unchanged by a browser's URL parser | no dot-segment check fails on `/domain/..`; a leading zero kept fails on `/ui/00` |
+| W2 in the browser | the attributed-text corpus (`<script>`, `&`, U+202E, U+200B, a C1 control, an invalid byte) renders as text and tokens, with no element created | a `Text` that sets `innerHTML` (Trusted Types throws) |
+| W2 types | `tsc --noEmit` passes | a component rendering a `MachineText` directly fails to type-check |
+| W3 policy | the client works under the headers on every file | an inline script and an `eval` are blocked and reported |
+| host tool HTTP and WebSocket fuzz target (Ruby) | no exception escapes; every answer is a file, a refusal or a relay | no length check before reading: a declared 2^40-byte frame |
+| cowboy front end fuzz target (Erlang) | over an in-memory transport every connection answers, refuses or ends, and only whole messages within `web.txt`'s limits reach `erx_web_conn` | the request-size limit removed: a request past it reaches the handler |
+| W4 refusals | no cookie, wrong `Host`, foreign `Origin`, wrong token, a path outside the inventory and a WebSocket open past 10 s are refused or answered with `index.html`; the token is in no response | a check removed: the server upgrades or answers a host file; the token set as the cookie |
+| W5 parity | one scripted client through both front ends receives byte-identical messages | a front end that answers `hello` itself |
+| W1 over the host link | in a development build every view through the `web` facet (records, `/proc`, a trace and the kernel log alike) equals the same read from `root`'s console line, view by view, the crash record refused by both; a domain the session cannot see is `ended scope` in both | the facet bound to the system domain's authority shows a record the session cannot read |
+| W1 scope | two principals through the network front end each see their own `/proc` snapshot and `ended scope` for the other's; a scoped principal's kernel-events trace is `ended scope`; a `logout` of another login's line is refused | a cookie bound to the wrong line |
+| logins | two logins of one principal are two sessions, and a logout leaves the other's views and UIs; an unenrolled name answers `no_match` | a logout that ends every session of the principal |
+| W6 | loading every URL form, and reconnecting with a trace page open, starts no trace | a route or a reconnect that opens `trace` |
+| W7 | `unknown`, `timeout` and `partial` values show their tokens; a stopped guest marks every view stale; a ring overrun shows a gap with its count | a `partial` value printed bare |
+| W8 bounds | the 17th view, the 65th line view, the 5th connection of a line and the 17th login are refused; a client that never sends `next` gets one update per view and costs under 1 MiB; a second `next` before its answer, or a reused view number, is `bye protocol` | a core that answers a view twice for one `next` |
+| pull sampling | a record changing 100 times while paused is sent once; 5,000 new log entries arrive over several updates, none lost | a view that queues every change |
+| UI attach | attach, detach, change and re-attach shows the newest tree; `apply_ops(delta(A, B), A) == {ok, B}` over random trees; a delta past one update arrives over several and applies at `commit` | a renderer that resends the backlog fails on the bound |
+| UI parity of meaning | the parity corpus through the browser renderer delivers the same events and values and holds the same nodes as the Erlang renderer; no pixel or layout is compared | two event names swapped in the client |
+| presentation state stays in the browser | scrolling, focus and text selection send no message | a client that reports scroll offsets |
+| choosing the web display | `display => web` opens on the line; without one `erx_ui:open/1` answers `{error, no_display}` at once; restarting the web domain or closing every browser ends no UI | an `erx_ui` that ignores the option; a widget server in the web domain fails the restart case |
+| secrets | a `secret` input reaches the application as `{erx_secret, _}`, in no counter, log, trace or crash report, and is empty after a re-attach | a renderer that folds the secret into its model |
+| build | `make web` offline, twice, gives byte-identical files and inventory | a package missing from the lockfile fails the frozen install; a local package's install script writes nothing; a Node.js older than `web/package.json` records is refused |
 
 ### Chokepoints
 
@@ -1201,15 +1174,14 @@ Numbers to measure, on the
 
 ## Dependencies
 
-| Component | Purpose | License | Status |
-| --- | --- | --- | --- |
-| React and React DOM 19, with their `scheduler` | the client's rendering | MIT | permanent, in the client's files; fetched by pnpm at pinned versions and integrity hashes |
-| TypeScript 7, its native compiler | the client's language and type check | Apache-2.0 | permanent host tool, a native binary pinned by the lockfile |
-| esbuild 0.28 | bundling the client | MIT | permanent host tool, a native binary pinned by the lockfile |
-| Playwright, with its Chromium build | the client's browser tests | Apache-2.0; Chromium BSD-3-Clause with its third-party notices | test tool, never in an image; Chromium fetched with a pinned SHA-256 |
-| Node.js and pnpm | running the client's tools and tests; fetching its packages | MIT | host tools, at least the versions `web/package.json` records |
-| cowboy 2, with cowlib and ranch | the network front end's HTTP, WebSocket and TLS acceptance, in the web domain | ISC | permanent; fetched at a pinned version and hash and built out of tree against erXos's OTP, or imported as erXos's code if changed |
-| Ruby standard library (`socket`, `digest`, `securerandom`) | the host tool's front end | Ruby's | no new dependency |
+React and React DOM for the client, TypeScript and esbuild as host
+tools, Playwright and its headless Chromium for the browser tests, and cowboy
+with cowlib and ranch in the web domain are rows of
+[design.md's dependency table](design.md#dependencies), with purpose,
+license and status; [Build and dependencies](#build-and-dependencies)
+says how each is pinned and fetched. Node.js and pnpm are host tools,
+at least the versions `web/package.json` records, and the host tool's
+front end uses only Ruby's standard library.
 
 ## Alternatives considered
 
