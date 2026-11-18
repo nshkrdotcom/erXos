@@ -44,6 +44,21 @@ module Erx
   # only httpc's erXos edit gives on the target, then every quote fresh at the
   # fixture's price. Seeded: a store that trusts another root than the fixture's
   # (Run#call's trusted false) must show every quote `no_data -- certificate`.
+  #
+  # The front cell (docs/design-display.md, Verification, "A front window") boots the same
+  # package on a test image that adds FRONT_PROGRAM, a stand-in for Doom
+  # (test/guest/programs/frontfill.c), to the domain release, under the development
+  # manifest, whose display_root row grants root's session the display with front. Once
+  # the dashboard is shown as in the first cell, the harness types FRONT_START at the
+  # console's rc: the program opens /dev/draw, so its handler opens it a window on root's
+  # front grant, which the single policy shows over the dashboard, and it fills the window
+  # with a new color every frame. Two screenshots FRONT_GAP_SECONDS apart must each differ
+  # from the dashboard's frame before the program and from its next minute's, and from
+  # each other. Then rc's `kill %1` ends the program, and the screen must again be the
+  # dashboard's frame from before it or, if the minute turned meanwhile, the next
+  # minute's: the offline dashboard draws the same frame throughout a minute. Seeded:
+  # root's row without front (Run#call's front false), under which the program's window
+  # is never shown, the screen stays the dashboard's and the cell fails.
   module Kiosk
     NAME = 'dashboard'
     SERVED = /erx_storage_system: serving the system tree/n
@@ -81,9 +96,29 @@ module Erx
     # for the altered package's refusal.
     SHOWN_SECONDS = 120
     REFUSED_SECONDS = 60
-    # The host's two drawings at the shell, each warm (Run#call draws once before the
+    # Each of the host's drawings at the shell, warm (Run#call draws once before the
     # boots, so the first boot's minute is not spent compiling the renderer).
-    DRAW_SECONDS = 2 * 60
+    DRAW_SECONDS = 60
+    FRONT = '-front'
+    # The front cell's program and its source, which rc at the console starts as job 1 and
+    # kills by that number; the program's line once it has drawn its first frame, and the
+    # console's echo of the kill, which rc runs as the line ends.
+    FRONT_PROGRAM = 'frontfill'
+    FRONT_SOURCE = 'test/guest/programs/frontfill.c'
+    FRONT_START = "#{FRONT_PROGRAM} &\r".freeze
+    FRONT_DRAWING = /frontfill: drawing\r?\n/n
+    FRONT_KILL = "kill %1\r"
+    FRONT_KILLED = /kill %1\r*\n/n
+    # The root row whose front parameter the seeded front cell takes out.
+    FRONT_GRANT = 'facet display_root'
+    # How far apart the program's two screenshots are; how long the harness waits for the
+    # program's line, for the screen to leave the dashboard, and after the kill for the
+    # dashboard again.
+    FRONT_GAP_SECONDS = 1
+    FRONT_LINE_SECONDS = 60
+    FRONT_WAIT_SECONDS = 30
+    # A medium's build given no test programs.
+    NO_TEST_PROGRAMS = ProductionImage::Added.new(entries: [].freeze, inputs: [].freeze, imports: {}.freeze)
 
     module_function
 
@@ -101,12 +136,16 @@ module Erx
                              sha256: Digest::SHA256.digest(bytes.byteslice(0, header_length)))
     end
 
-    # The wall-clock minute the dashboard's SHOWN line names, last in log, as the
-    # [[year, month, day], [hour, minute, 0]] DashboardScreen draws, and the minute after it.
-    def shown_minutes(log)
+    # The wall-clock minute the dashboard's SHOWN line names, last in log, and the count - 1
+    # minutes after it, each as the [[year, month, day], [hour, minute, 0]] DashboardScreen
+    # draws.
+    def shown_minutes(log, count: 2)
       first = shown_time(log)
-      [first, first + 60].map { |time| [[time.year, time.month, time.day], [time.hour, time.min, 0]] }
+      Array.new(count) { |index| first + (60 * index) }.map { |time| [[time.year, time.month, time.day], [time.hour, time.min, 0]] }
     end
+
+    # The name of the reference check_shown writes for the index-th minute shown_minutes names.
+    def minute_name(index) = "#{NAME}-#{index}"
 
     # The wall-clock minute the dashboard's SHOWN line names, last in log, as a UTC Time.
     def shown_time(log)
@@ -130,19 +169,79 @@ module Erx
 
     # The checks of the package's boot once the dashboard logged SHOWN, against the serial
     # log at serial: its lines and its minute against build_date, then the screen against
-    # the dashboard drawn at each minute shown_minutes names, written as references into
-    # directory.
-    def check_shown(serial:, socket:, directory:, draw:, build_date:)
+    # the dashboard drawn at the shown minute or the next, since a minute may turn before
+    # the screen is read, each written as a reference into directory with ahead more
+    # minutes drawn after them, so a caller has the matched minute's successors too.
+    # Answers the name of the reference the screen matched.
+    def check_shown(serial:, socket:, directory:, draw:, build_date:, ahead: 0)
       log = DisplayDomain.await_log(serial, wait_seconds: SHOWN_SECONDS) { |text| text.match?(SHOWN) }
       { SERVED => 'the storage domain served no system tree', ADMITTED => 'the system did not admit the package',
         MOUNTED => "the app's session mounted no /app" }.each do |line, failure|
         raise Error, failure unless log.match?(line)
       end
       check_build_date(log, build_date: build_date)
-      names = shown_minutes(log).each_with_index.map do |minute, index|
-        "#{NAME}-#{index}".tap { |name| ScreenReference.write(directory, name, draw.call(minute)) }
+      names = shown_minutes(log, count: 2 + ahead).each_with_index.map do |minute, index|
+        minute_name(index).tap { |name| ScreenReference.write(directory, name, draw.call(minute)) }
       end
-      DisplayDomain.await_screen(socket: socket, references: directory, names: names)
+      DisplayDomain.await_screen(socket: socket, references: directory, names: names.take(2))
+    end
+
+    # The points of a cell that checks its boot at the command shell alone: shell, the
+    # production checkpoints' last, verified by the block.
+    def at_shell(shell, &check) = [shell.merge(verify: ->(_text) { check.call }).freeze]
+
+    # The front cell's points from the command shell on, over the serial log at serial,
+    # the QMP socket and the cell's directory. At the shell: the dashboard as check_shown
+    # finds it, with the minute after the one it matched drawn, then FRONT_START typed. At
+    # the program's first frame: its two screenshots (check_front) against the reference
+    # the dashboard matched and its next minute's, then FRONT_KILL typed. At the kill's
+    # echo: the screen is one of those two again, within FRONT_WAIT_SECONDS. dashboard,
+    # those two references' names, is set by the first verify and read by the later two,
+    # which the checkpoints run after it.
+    def front_points(shell, serial:, socket:, directory:, draw:, build_date:)
+      dashboard = nil
+      shown = lambda do |_text|
+        before = check_shown(serial: serial, socket: socket, directory: directory, draw: draw, build_date: build_date,
+                             ahead: 1)
+        index = Array.new(2) { |each| minute_name(each) }.index(before)
+        dashboard = [before, minute_name(index + 1)]
+      end
+      drawing = ->(_text) { check_front(socket: socket, references: directory, dashboard: dashboard) }
+      killed = lambda do |_text|
+        DisplayDomain.await_screen(socket: socket, references: directory, names: dashboard, wait_seconds: FRONT_WAIT_SECONDS)
+      end
+      [shell.merge(verify: shown, type: FRONT_START).freeze,
+       { name: 'front-drawing', pattern: FRONT_DRAWING, verify: drawing, type: FRONT_KILL,
+         seconds: FRONT_LINE_SECONDS + FRONT_WAIT_SECONDS + FRONT_GAP_SECONDS }.freeze,
+       { name: 'front-killed', pattern: FRONT_KILLED, verify: killed, seconds: FRONT_LINE_SECONDS + FRONT_WAIT_SECONDS }.freeze]
+    end
+
+    # The checks of the front program's screen through the QMP socket: a screenshot that
+    # is none of the dashboard references in references, within FRONT_WAIT_SECONDS, and a
+    # second one FRONT_GAP_SECONDS later that is none of them either and differs from the
+    # first, so the program's window is shown and its frames reach the screen. Each
+    # screenshot is kept in the socket's directory as front-0.ppm and front-1.ppm.
+    def check_front(socket:, references:, dashboard:)
+      wanted = dashboard.map { |name| ScreenReference.load(references, name) }
+      shown = ->(image) { wanted.any? { |reference| ScreenReference.matches?(image, reference) } }
+      client = Qmp.connect(socket)
+      screen = ->(index) { client.screendump_image(File.join(File.dirname(socket), "front-#{index}.ppm")) }
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + FRONT_WAIT_SECONDS
+      first = screen.call(0)
+      while shown.call(first)
+        raise Error, "the program's window was not shown: the screen stayed the dashboard's for #{FRONT_WAIT_SECONDS} s" if
+          Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+        sleep DisplayDomain::POLL_SECONDS
+        first = screen.call(0)
+      end
+      sleep FRONT_GAP_SECONDS
+      second = screen.call(1)
+      raise Error, "the screen was the dashboard's again #{FRONT_GAP_SECONDS} s after the program's frame" if shown.call(second)
+      raise Error, "the program's screen did not change in #{FRONT_GAP_SECONDS} s (digest #{first.digest})" if
+        second.digest == first.digest
+    ensure
+      client&.close
     end
 
     # The checks of the quotes cell's boot once the command shell is up: the serial log at
@@ -190,10 +289,12 @@ module Erx
 
       # Packs the package once (ImageApps.packed_kiosk), then an image of it and one of its
       # altered copy, and boots each at one CPU, the altered cell whatever the first found,
-      # then the quotes cell. Returns { "hvf-1cpu" => 'passed', "hvf-1cpu-altered" =>
-      # 'passed', "hvf-1cpu-quotes" => 'passed' }, a cell that failed 'failed' with its
-      # reason in notes. trusted false seeds the quotes cell: its store trusts another root.
-      def call(jobs: 4, build: true, trusted: true)
+      # then the quotes cell and the front cell. Returns { "hvf-1cpu" => 'passed',
+      # "hvf-1cpu-altered" => 'passed', "hvf-1cpu-quotes" => 'passed', "hvf-1cpu-front" =>
+      # 'passed' }, a cell that failed 'failed' with its reason in notes. trusted false seeds
+      # the quotes cell: its store trusts another root; front false seeds the front cell:
+      # root's display grant has no front.
+      def call(jobs: 4, build: true, trusted: true, front: true)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
         fiasco.build(jobs: jobs) if build
         work = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/kiosk'))
@@ -204,8 +305,9 @@ module Erx
         draw.call(WARM_MINUTE)
         shown = { 'hvf-1cpu' => package, "hvf-1cpu#{ALTERED}" => Kiosk.altered(package, directory: altered_directory) }
                 .to_h { |cell, packed| [cell, status(cell) { shown_boot(cell, packed, fiasco, work, draw: draw) }] }
-        quotes = "hvf-1cpu#{QUOTES}"
-        shown.merge(quotes => status(quotes) { quotes_boot(quotes, package, fiasco, work, trusted: trusted) })
+        quotes, fronted = [QUOTES, FRONT].map { |suffix| "hvf-1cpu#{suffix}" }
+        shown.merge(quotes => status(quotes) { quotes_boot(quotes, package, fiasco, work, trusted: trusted) },
+                    fronted => status(fronted) { front_boot(fronted, package, fiasco, work, draw: draw, front: front) })
       end
 
       private
@@ -222,17 +324,51 @@ module Erx
       # The dashboard's boot: its screen and its minute against the build date, or for the
       # altered cell its refusal.
       def shown_boot(cell, package, fiasco, work, draw:)
+        build_date = self.build_date
+        boot(cell, package, fiasco, work) do |shell, serial, socket, directory|
+          Kiosk.at_shell(shell) do
+            if cell.end_with?(ALTERED)
+              Kiosk.check_altered(serial: serial)
+            else
+              Kiosk.check_shown(serial: serial, socket: socket, directory: directory, draw: draw, build_date: build_date)
+            end
+          end
+        end
+      end
+
+      # The image's commit time, which the dashboard's minute must not precede.
+      def build_date
         revision = SourceRevision.read(root: @root, runner: @runner)
         raise Error, 'the kiosk cell needs a git checkout: its clock check reads the build date' unless revision
 
-        boot(cell, package, fiasco, work) do |serial, socket, directory|
-          if cell.end_with?(ALTERED)
-            Kiosk.check_altered(serial: serial)
-          else
-            Kiosk.check_shown(serial: serial, socket: socket, directory: directory, draw: draw,
-                              build_date: revision.committed_at)
-          end
+        revision.committed_at
+      end
+
+      # The front cell's boot, its image adding FRONT_PROGRAM (front_program), its points
+      # Kiosk.front_points; front false boots it under root's display grant without front.
+      def front_boot(cell, package, fiasco, work, draw:, front:)
+        build_date = self.build_date
+        manifest = front ? @manifest : Manifest::Edit.without_parameter(@manifest, record: FRONT_GRANT, key: 'front')
+        boot(cell, package, fiasco, work, manifest: manifest, test_programs: front_program(fiasco)) do |shell, serial, socket, directory|
+          Kiosk.front_points(shell, serial: serial, socket: socket, directory: directory, draw: draw, build_date: build_date)
         end
+      end
+
+      # FRONT_PROGRAM linked over musl's libc.a, the one the runtime images link, as a
+      # release file of the session's, as the display domain suite adds its probe
+      # (DisplayDomain::Run#probe).
+      def front_program(fiasco)
+        Generated.ensure(root: @root)
+        libc = NativeRuntime.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, fiasco: fiasco,
+                                 platform: @machine.platform).build.libc
+        native = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @machine.platform,
+                                fiasco: fiasco)
+        program = native.build_task_receipted(name: FRONT_PROGRAM, sources: [*NativeRoot::PROGRAM, FRONT_SOURCE],
+                                              directory: File.join(@root, 'build/kiosk', FRONT_PROGRAM),
+                                              archives: [libc, CompilerRt.archive(root: @root, runner: @runner, compiler: @compiler)])
+        codec = ABI::Codec.new(ABI::Generator.plan(root: @root).schema)
+        ProductionImage::Added.new(entries: [ProductionImage.program_entry(FRONT_PROGRAM, program, codec: codec)].freeze,
+                                   inputs: program.fetch(:inputs), imports: {}.freeze)
       end
 
       # The quotes cell's boot against the fixture, its root in the image's store unless
@@ -247,8 +383,10 @@ module Erx
         begin
           relay = QemuPlan::Relay.new(network: QUOTES_NETWORK, address: QUOTES_ADDRESS, port: QUOTES_PORT, relay_port: server.start.port)
           boot(cell, package, fiasco, work, test_roots: [TrustStore::TestRoot.new(path: File.join(roots, trusted ? 'fixture.pem' : 'other.pem'), source: File.join(@root, FIXTURE))],
-                                            nic: relay) do |serial, _socket, _directory|
-            Kiosk.check_quotes(serial: serial, lines: trusted ? [QUOTES_TOO_BIG, *QuotesFixture.fresh_lines] : QuotesFixture.refused_lines)
+                                            nic: relay) do |shell, serial, _socket, _directory|
+            Kiosk.at_shell(shell) do
+              Kiosk.check_quotes(serial: serial, lines: trusted ? [QUOTES_TOO_BIG, *QuotesFixture.fresh_lines] : QuotesFixture.refused_lines)
+            end
           end
         rescue Error => e
           raise Error, "#{e.message} (fixture requests: #{server.requests})"
@@ -257,16 +395,18 @@ module Erx
         end
       end
 
-      # Boots package on the image's release medium at one CPU under HVF, with nic when
-      # given and a trust store adding test_roots, and runs the block's checks at the
-      # command shell with the serial log's path, the QMP socket and the cell's directory.
-      def boot(cell, package, fiasco, work, test_roots: [], nic: nil, &check)
+      # Boots package on the image's release medium at one CPU under HVF, built from
+      # manifest, with nic when given, a trust store adding test_roots and the domain
+      # release adding test_programs. The block is given the command shell's checkpoint,
+      # its wait raised for the longest cell's checks, with the serial log's path, the QMP
+      # socket and the cell's directory, and answers the points from the shell on.
+      def boot(cell, package, fiasco, work, manifest: @manifest, test_roots: [], test_programs: NO_TEST_PROGRAMS, nic: nil, &points)
         directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(work, cell))
-        built, written = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker,
-                                             machine: @machine, fiasco: fiasco)
-                                        .build_medium(directory: File.join(directory, 'image'),
-                                                      apps: ImageApps.plan([package], enable: [NAME], signers: [], local: false),
-                                                      test_roots: test_roots)
+        production = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
+                                         fiasco: fiasco)
+        apps = ImageApps.plan([package], enable: [NAME], signers: [], local: false)
+        built, written = production.build_medium(directory: File.join(directory, 'image'), manifest_source: manifest, apps: apps,
+                                                 test_roots: test_roots, test_programs: test_programs)
         medium = written.fresh(directory: directory)
         choice = BootRecord.read(medium)
         image = BootRecord.extract(medium, choice, output: File.join(directory, 'slot.boot'))
@@ -278,23 +418,26 @@ module Erx
         Qemu.new(root: @root, runner: @runner, program: @qemu)
             .run(platform: @machine.platform, accel: 'hvf', cpus: 1, image: image, memory_mib: @machine.memory_mib,
                  directory: File.join(directory, 'boot'), display: display, dtb: tree, disks: disks, nic: nic,
-                 checkpoints: checkpoints(built, choice, test_image: !test_roots.empty?) { check.call(File.join(directory, 'boot', 'serial.log'), socket, directory) })
+                 checkpoints: checkpoints(built, choice, manifest: manifest) { |shell| points.call(shell, File.join(directory, 'boot', 'serial.log'), socket, directory) })
       end
 
-      # The production checkpoints, a test image's when the cell asked for one, with the boot value's
-      # after the image's identity, and the block's checks at the command shell.
-      def checkpoints(built, choice, test_image:, &check)
+      # The production checkpoints of manifest, a test image's when built is one, with the
+      # boot value's after the image's identity, and from the command shell on the points
+      # the block answers for the shell's checkpoint, its wait raised for the longest cell's
+      # checks there.
+      def checkpoints(built, choice, manifest:)
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: 1,
-                                                  manifest_source: @manifest, memory_mib: @machine.memory_mib,
-                                                  test_image: test_image)
+                                                  manifest_source: manifest, memory_mib: @machine.memory_mib,
+                                                  test_image: built.test_code)
         at = points.index { |point| point.fetch(:name) == 'image-identity' }
         raise Error, 'the production checkpoints name no image-identity' unless at
         raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
         shell = points.last
-        waits = [SHOWN_SECONDS + DRAW_SECONDS + DisplayDomain::WAIT_SECONDS, REFUSED_SECONDS + SETTLE_SECONDS, QUOTES_SECONDS]
+        waits = [SHOWN_SECONDS + (DRAW_SECONDS * 3) + DisplayDomain::WAIT_SECONDS,
+                 REFUSED_SECONDS + SETTLE_SECONDS, QUOTES_SECONDS]
         [*points[0..at], MediumBoot.boot_value_checkpoint(choice), *points[(at + 1)...-1],
-         shell.merge(seconds: shell.fetch(:seconds) + waits.max, verify: ->(_text) { check.call }).freeze]
+         *yield(shell.merge(seconds: shell.fetch(:seconds) + waits.max).freeze)]
       end
 
       # The dashboard at app as a function from a minute to the picture the host's

@@ -123,6 +123,28 @@ class ProductionImageTest < Minitest::Test
     Erx::ProductionImage.check_card_apps(PLATFORM, Erx::ImageApps.plan([], enable: [], local: true))
   end
 
+  # Test programs make a medium a test image, so a published medium, the one the website
+  # offers, and the Pi 4's card, which always is one, take none; both are refused before
+  # anything is built, as are test programs that are not an Added.
+  def test_a_published_medium_takes_no_test_program
+    added = Erx::ProductionImage::Added.new(entries: [{ 'path' => 'bin/probe' }].freeze, inputs: [].freeze, imports: {}.freeze)
+    [[PLATFORM, { published: true }], [Erx::Platform.load(root: ROOT, name: 'raspi4b'), {}]].each do |platform, published|
+      error = assert_raises(Erx::Error) do
+        medium_builder(platform).build_medium(directory: '/nonexistent', test_programs: added, **published)
+      end
+      assert_equal 'a published medium carries no test programs', error.message
+    end
+    error = assert_raises(Erx::Error) { medium_builder(PLATFORM).build_medium(directory: '/nonexistent', test_programs: []) }
+    assert_equal 'test programs are an Added of entries', error.message
+  end
+
+  # An image builder for platform's development machine that refuses before it builds.
+  def medium_builder(platform)
+    Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '',
+                             machine: Erx::ProductionImage::Machine.development(platform), fiasco: Object.new,
+                             runtime: nil, jit_runtime: nil)
+  end
+
   # A published medium trusts no package key, whatever a build hands its manifest check:
   # a manifest admitted with a signer row or the builder's development key is refused (the
   # seeded faults), one admitted with neither passes.

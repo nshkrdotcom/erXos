@@ -463,17 +463,25 @@ module Erx
     # (build_test_image), so the kernel's banner says so and only a development build
     # boots it; the source check lets only the test harnesses name them
     # (Checks::TEST_ROOTS_ENTRY), and every other image's store is the tree's alone.
+    # test_programs (Added) are programs a QEMU cell adds to the domain release, as
+    # build_test_image's added are (Programs::Run#added), for a cell that starts one from
+    # rc on the medium; any makes the image a test image the same way, the source check
+    # lets only that cell name them (Checks::TEST_PROGRAMS_ENTRY), and a published medium
+    # takes none.
     def build_medium(directory:, machine: @machine, manifest_source: machine.platform.manifest_source(@root), apps: ImageApps.none,
-                     published: false, test_roots: [], doom: false)
+                     published: false, test_roots: [], test_programs: NOTHING_ADDED, doom: false)
       on_own_board(machine)
       self.class.check_card_apps(machine.platform, apps)
 
       card = BootPartition.boot_partition_medium?(machine.platform)
       publish = published || card
       raise Error, 'only a published medium carries the Doom example' if doom && !publish
+      raise Error, 'test programs are an Added of entries' unless test_programs.is_a?(Added)
+      raise Error, 'a published medium carries no test programs' if publish && !test_programs.entries.empty?
       DoomProgram.check_fetched(root: @root, runner: @runner) if doom
       apps = published_apps if publish
-      built = assemble(directory: directory, manifest_source: manifest_source, added: NOTHING_ADDED, test_code: !test_roots.empty?,
+      test_code = !test_roots.empty? || !test_programs.entries.empty?
+      built = assemble(directory: directory, manifest_source: manifest_source, added: test_programs, test_code: test_code,
                        machine: machine, domains: domain_boots(manifest_source), apps: apps, record: false,
                        test_roots: test_roots, doom: doom)
       self.class.check_published_trust(machine.platform, built.report.fetch('manifest')) if publish

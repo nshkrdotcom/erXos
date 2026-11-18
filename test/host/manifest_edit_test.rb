@@ -93,6 +93,21 @@ class ManifestEditTest < Minitest::Test
     assert_raises(Erx::Error) { Edit.without(SOURCE, ['machine']) }
   end
 
+  # A facet's parameter is taken out and nothing else changes: root's display grant without
+  # front, as the kiosk's seeded front cell boots it. A parameter the facet does not set
+  # is refused, so a second edit of the same row is not silently a no-op.
+  def test_without_parameter_takes_only_that_parameter
+    plain = Edit.without_parameter(SOURCE, record: 'facet display_root', key: 'front')
+    before, after = [SOURCE, plain].map { |text| records(text) }
+    root = %w[facet display_root]
+    assert_equal before.except(root), after.except(root)
+    properties, parameters = before.fetch(root)
+    assert_includes parameters, [['front', false], ['yes', false]]
+    assert_equal [properties, parameters.reject { |name, _| name.first == 'front' }], after.fetch(root)
+    error = assert_raises(Erx::Error) { Edit.without_parameter(plain, record: 'facet display_root', key: 'front') }
+    assert_equal "the manifest's facet display_root sets no parameter front", error.message
+  end
+
   # The session templates go with the facets granted to them, and nothing else does.
   def test_without_sessions_takes_the_templates_and_their_facets
     gone = Edit.without_sessions(SOURCE)
