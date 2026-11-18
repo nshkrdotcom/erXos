@@ -707,7 +707,16 @@ names or else on the session's only display
 opens `draw` on the program's new `/dev`, which stands in for the shared
 one in its table from then on. Nothing else changes: the window, the
 connection and the tree are those above, held by the handler and ending
-with it. Before that open the program's `/dev` is the shared one, so an
+with it. The shared `/dev` is the export's `dev`, which is no entry of
+the table: the open meets it when no entry stands at `/dev` or below it
+on the way to `draw`. An entry at `/dev`, whatever its provider, takes
+`draw` as it takes every name the export does not serve
+([design-files.md](design-files.md#narrowing-for-a-program)): a grant
+the session mounts there, or a windowed parent's own `/dev`, whose
+`draw` a child shares by path
+([design-files.md](design-files.md#a-programs-window), "A program's
+children"). The open goes to that entry and opens no window. Before
+the window opens, the program's `/dev` is the shared one, so an
 open of `/dev/ctl`, `/dev/kbd` or another window name answers `ENOENT`,
 as for any program without a window, and opens no window: only `draw`
 says the program will draw, and a window that is never drawn would
@@ -721,9 +730,10 @@ nothing, so the program runs on and a later open tries again: `ENODEV`
 for a session with no `windows` grant on the display or with no
 `display` and no only display, and the table's refusals of a window
 start: `EINVAL` for a table with no room for the window's `/dev` entry or
-with an entry at or below one of the window's `/dev` names,
-and `EACCES` for one whose entry at exactly `/dev` cannot write. Once
-the handler has begun opening the
+with an entry at or below one of the window's `/dev` names. A table
+whose entry at exactly `/dev` cannot write, which refuses a window start
+with `EACCES`, never meets this refusal, since that entry takes the open.
+Once the handler has begun opening the
 window, any failure ends the handler, and the program with it, as a
 failed window start ends what the start reserved: the window, its
 buffer, the connection and the tree are reclaimed by their owner's end

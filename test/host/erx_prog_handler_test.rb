@@ -173,6 +173,9 @@ class ErxProgHandlerTest < Minitest::Test
                  original: "on_window_tree(\#{provider := {Kind, _, ?ERX_WINDOWS_TREE_BYTES}})\n  when Kind =:= grant; Kind =:= facet ->",
                  replacement: 'on_window_tree(#{point := [<<"n">>, <<"display">>]}) ->',
                  caught_by: 'no_window_tree_test_'),
+    'a first draw that takes an entry at /dev for the shared /dev, which opens a window on its grant' =>
+      Mutant.new(file: CORE, original: '#{point := Point} -> Point =:= []',
+                 replacement: '#{point := Point} -> length(Point) =< 1', caught_by: 'first_window_test_'),
     'a check that refuses only an entry exactly at an export name' =>
       Mutant.new(file: CORE, original: 'lists:any(fun(Name) -> lists:prefix(Name, Point) end, Names)',
                  replacement: 'lists:member(Point, Names)', caught_by: 'export_names_test_')

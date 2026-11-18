@@ -122,11 +122,15 @@ driver's pass, which stops the program, so `emfile` comes only from
 a window when it opens `/dev/draw` and its table resolves that open to the
 shared `/dev`, which holds no `draw`: the open's path, read from the
 working directory, is `/dev/draw` with no `..`, and no entry of the table
-lies below `/dev` there. A table a window start would refuse (refusal/2:
-`EACCES` for an entry at `/dev` that cannot write) refuses the open and
-keeps nothing. Otherwise the action `{first_window, Named}`, `Named` the
-program's `display` variable or `none`, has the effect side choose the
-display (display/2) and open the window as for `window => Display`. Its
+stands at `/dev` or below it on the way to `draw`. An entry at `/dev`,
+whatever its provider (a grant the session mounts there, or a windowed
+parent's own `/dev`), takes the open, as it takes every name the export
+does not serve. A table a window start would refuse (refusal/2: `EINVAL`
+for an entry at or below one of the window's names, or no room for its
+`/dev` entry) refuses the open and keeps nothing. Otherwise the action
+`{first_window, Named}`, `Named` the program's `display` variable or
+`none`, has the effect side choose the display (display/2) and open the
+window as for `window => Display`. Its
 answer comes back within the same step, so every frame the program sent
 meanwhile waits in the handler's mailbox and then meets the new tree. A
 display the session does not hold answers the open `ENODEV` and keeps
@@ -797,10 +801,9 @@ relay_open(#core{table = Table, cwd = Cwd} = C, Slot, Case, Path, Flags, Mode) -
 %% Whether an open of Path opens the program's window first: no; {open, Named};
 %% or {refused, Errno} for a table a window start refuses (refusal/2). Path
 %% names /dev/draw from the working directory, with no `..`, which only the
-%% resolver takes, and the deepest entry of the table that holds that place
-%% lies at /dev or above it, so the open meets the shared /dev. Its last name
-%% is `draw` itself and it opens no directory, so the open the window's /dev
-%% then serves can be granted.
+%% resolver takes, and the table resolves that place to the shared /dev
+%% (shared_dev/1). Its last name is `draw` itself and it opens no directory,
+%% so the open the window's /dev then serves can be granted.
 first_draw(#core{first = {first, Named}, table = Table, cwd = Cwd}, Path, Flags) ->
     Draws = place(Path, Cwd) =:= [<<"dev">>, <<"draw">>]
         andalso lists:last(binary:split(Path, <<"/">>, [global])) =:= <<"draw">>
@@ -817,10 +820,19 @@ first_draw(#core{first = {first, Named}, table = Table, cwd = Cwd}, Path, Flags)
 first_draw(_C, _Path, _Flags) ->
     no.
 
+%% Whether the table resolves /dev/draw to the session's shared /dev, the
+%% export's `dev`, which holds no `draw`. The export's `dev` is no entry of the
+%% table: it answers its own names at /dev over whatever the table holds there
+%% (docs/design-files.md, "Where the export and a grant meet"), and an entry at
+%% /dev, whatever its provider, takes `draw` as it takes every name the export
+%% does not serve: a grant the session mounts there, or a windowed parent's own
+%% /dev, whose `draw` a child shares by path ("A program's children"). So the
+%% open meets the shared /dev exactly when no entry holds that place, or the
+%% one that does lies above /dev.
 shared_dev(Table) ->
     case deepest_entry(Table, [<<"dev">>, <<"draw">>]) of
-        #{point := Point} -> length(Point) =< 1;
-        none -> true
+        none -> true;
+        #{point := Point} -> Point =:= []
     end.
 
 %% The place Path names from Cwd, read lexically: each empty or `.` name

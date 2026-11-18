@@ -2471,11 +2471,13 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   disagreement with the checker passes silently. Make it a clause of property 18 in the
   checker (`check_display_grants`), with the checker's context recording which applications
   each release script starts (`applications - LOADED`), and delete the second resolution.
-* [Medium] programs, the first-open window (`erlang/apps/erx/src/erx_prog_handler_core.erl`, the
-  shared export test near line 820): the handler knows the display's export by its mount depth
-  alone, so a writable grant of another provider mounted at `/dev` gets a window, or ENODEV, when
-  its `draw` file is opened, instead of that file. No manifest declares such a grant. Identify
-  the resolved provider instead of inferring it from the mount point.
+* [Low] programs, a narrowing to `/dev` (`erlang/apps/erx/src/erx_prog_handler_core.erl`,
+  `narrowed_at/4`): where no entry of the starter's table stands at `/dev`, `within [/dev]` makes
+  an entry at `/dev` on the provider above it, such as the release slice's root, so the program
+  reaches that provider's own `dev` names, which an unnarrowed program does not, and its first
+  open of `/dev/draw` goes to that entry rather than opening a window. Nothing widens beyond what
+  the starter reaches. Decide in design-files.md ("Narrowing for a program") whether a narrowing
+  to a place the export serves, held only by an entry above it, makes an entry there at all.
 * [Low] display, a window opened where no connection agent runs answers `noproc`, which is no
   errno (`erx_win:own/4` passes `erx_area:open/1`'s `{error, noproc}` up through `erx_win:open/2`,
   and `erx_session_export:open_window/1` maps only `none` to `ENODEV`): a program's first open

@@ -428,8 +428,18 @@ first_window_test_() ->
     Buffered = run(element(2, new(?PID, [{3, {buffer, 1, 4096}}])),
                    [{holder, ok}, {reserved, {mem, 1, 1, 0}}, started]),
     {ok, Named, _} = erx_prog_handler_core:new(?PID, [], (files())#{display => <<"hdmi">>}),
-    ReadOnlyDev = #{point => [<<"dev">>], provider => release, root => [<<"dev">>], rights => ro},
-    {ok, NoWrite, _} = erx_prog_handler_core:new(?PID, [], (files())#{table => ?TABLE ++ [ReadOnlyDev]}),
+    OnDev = fun(Entry) ->
+                    {ok, C, _} = erx_prog_handler_core:new(?PID, [], (files())#{table => ?TABLE ++ [Entry]}),
+                    run(C, [{holder, ok}, started])
+            end,
+    %% A windowed parent's own /dev, as a child it forks holds it, read-only as a
+    %% spawn narrowed to /dev read-only holds it.
+    ParentDev = #{point => [<<"dev">>], provider => {grant, self(), <<"export">>}, root => [<<"dev">>], rights => rw},
+    %% The release slice narrowed to /dev read-only.
+    ReleaseDev = #{point => [<<"dev">>], provider => release, root => [<<"dev">>], rights => ro},
+    %% A grant of another provider mounted at /dev, the device service's tree as an
+    %% administrator's session mounts it, takes every name the export does not serve.
+    DeviceDev = #{point => [<<"dev">>], provider => {grant, self(), <<"dev">>}, root => [], rights => rw},
     [?_assertEqual([{first_window, none}], Asked),
      %% The window's /dev stands at /dev, and the open goes there.
      ?_assertEqual([{open, 7, <<"/dev/draw">>, 2, none, ?TABLE ++ [Dev], [<<"data">>]}], Opened),
@@ -456,9 +466,22 @@ first_window_test_() ->
      ?_assertMatch([{open, 8, <<"dev/draw">>, _, _, _, _}], Relayed(running(), <<"dev/draw">>)),
      %% A program with a buffer gets no window.
      ?_assertMatch([{open, 8, <<"/dev/draw">>, _, _, _, _}], Relayed(Buffered, <<"/dev/draw">>)),
-     %% The display variable is handed on; an entry at /dev that cannot write is eacces.
+     %% The display variable is handed on.
      ?_assertEqual([{first_window, <<"hdmi">>}], Relayed(run(Named, [{holder, ok}, started]), <<"/dev/draw">>)),
-     ?_assertEqual([?ANSWER(8, {error, eacces})], Relayed(run(NoWrite, [{holder, ok}, started]), <<"/dev/draw">>))].
+     %% An entry at /dev takes /dev/draw, whatever its provider and rights, so
+     %% the open goes to that entry's draw and opens no window.
+     ?_assertEqual([{open, 8, <<"/dev/draw">>, 0, none, ?TABLE ++ [DeviceDev], [<<"data">>]}],
+                   Relayed(OnDev(DeviceDev), <<"/dev/draw">>)),
+     ?_assertEqual([{open, 8, <<"/dev/draw">>, 0, none, ?TABLE ++ [ParentDev], [<<"data">>]}],
+                   Relayed(OnDev(ParentDev), <<"/dev/draw">>)),
+     ?_assertEqual([{open, 8, <<"/dev/draw">>, 0, none, ?TABLE ++ [ParentDev#{rights := ro}], [<<"data">>]}],
+                   Relayed(OnDev(ParentDev#{rights := ro}), <<"/dev/draw">>)),
+     ?_assertEqual([{open, 8, <<"/dev/draw">>, 0, none, ?TABLE ++ [ReleaseDev], [<<"data">>]}],
+                   Relayed(OnDev(ReleaseDev), <<"/dev/draw">>)),
+     %% A table the window start refuses, here with an entry at one of the
+     %% window's names, refuses the open.
+     ?_assertEqual([?ANSWER(8, {error, einval})],
+                   Relayed(OnDev(DeviceDev#{point := [<<"dev">>, <<"kbd">>]}), <<"/dev/draw">>))].
 
 display_test_() ->
     [?_assertEqual({ok, display}, erx_prog_handler_core:display(none, [display])),
