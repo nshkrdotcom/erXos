@@ -8,8 +8,8 @@ require_relative 'manifest'
 module Erx
   module Manifest
     # How a harness changes a manifest: a number of a named record read, grown or set, a
-    # reference pointed elsewhere, named records taken out (without), the session
-    # templates taken out (without_sessions), the apps row taken out with the room it took
+    # reference pointed elsewhere, named records taken out (without), a facet's parameter
+    # taken out (without_parameter), the session templates taken out (without_sessions), the apps row taken out with the room it took
     # (without_apps), or a configured domain taken out with the records only it uses
     # (without_domain). Each reads the text with the manifest's own
     # reader (Frontend.read), changes the records it read, and writes them with its one
@@ -50,6 +50,17 @@ module Erx
       def without(text, records)
         source = Frontend.read(text)
         Frontend.render(removed(source, records.map { |name| named(source, name) }))
+      end
+
+      # text with the parameter key of the facet named record taken out, which the facet
+      # must set, so an edit of a row that no longer sets it is refused rather than lost.
+      def without_parameter(text, record:, key:)
+        source = Frontend.read(text)
+        found = named(source, record)
+        kept = found.parameters.reject { |name, _value| name.value == key }
+        raise Error, "the manifest's #{record} sets no parameter #{key}" if kept.size == found.parameters.size
+
+        Frontend.render(replaced(source, found, Record.new(**found.to_h, parameters: kept.freeze).freeze))
       end
 
       # text with no session template: every session record, and every facet granted to
