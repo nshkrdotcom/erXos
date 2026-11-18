@@ -25,7 +25,7 @@ Decisions every reader needs:
   it stays shared.
 * **The image holds the preloaded modules and the applications every
   domain boots**: `kernel`, `stdlib`, `erx` and `erx_files`
-  (`ReleaseFiles::DOMAIN_BASE`, `tools/lib/erx/release_files.rb:75`).
+  (`ReleaseFiles::DOMAIN_BASE`, `tools/lib/erx/release_files.rb`).
   A module whose literals name an identity or hold a reference-counted
   binary, or that has an `on_load` function, is left out and loads
   privately.
@@ -77,25 +77,16 @@ embedded system.
 (85 processes, 213 modules; Apple M3 Max, HVF, QEMU 11.1.3, Homebrew clang
 23.1.3, 4 guest CPUs, interactive development image, one boot) reports
 from `erlang:memory()`: total 16,021,056 bytes, of which `code` 7,972,341
-and `atom` 343,161, and `literal_alloc` holds 2,050,008 bytes in use. These
-are the runs behind commit 932db011, after ERTS's tables were sized from
-the boot page's limits. So loaded code and its literals are about 10 MB of
+and `atom` 343,161, and `literal_alloc` holds 2,050,008 bytes in use. These are the figures after ERTS's tables were sized from the boot
+page's limits. So loaded code and its literals are about 10 MB of
 the 16 MB ERTS accounts for. The system domain is the one ERTS domain
 measured at a shell; a session, which runs the same applications' code
 under the domain interpreter image, has the same shape.
 
-A domain's whole page count is not part of this evidence. The run above
-also counted the system domain's `liberx` pool pages, 36.2 MiB, but that
-count includes the funnel's check scratch at 16 MiB per lane connection,
-which the funnel sizes by each frame's bytes instead
-(`erx_etf_scratch_bytes`, `liberx/erx_etf.c:1347`). A measurement of a session's pages at its
-prompt, with the funnel's scratch sized by frame, replaces the estimates of
-[Memory saved and what it costs](#memory-saved-and-what-it-costs).
-
 **What the image's contents cost in one domain.** `erlang:memory(code)` is
 the module table, the export table and entries, the fun table and entries,
 the code ranges and the loaded code itself
-(`otp/erts/emulator/beam/erl_alloc.c:2492-2499`). A stock OTP 29.1.2
+(`otp/erts/emulator/beam/erl_alloc.c`). A stock OTP 29.1.2
 interpreter (`build/oracle/emu`, Apple clang 21.0.0, `-O2`,
 `--disable-jit`, macOS on the Apple Silicon development host, measured
 2026-11-10) that starts with `erl -noshell` and then loads every module
@@ -105,17 +96,10 @@ fail on the host; 266 modules loaded in all, preloaded ones included)
 reports from `erlang:system_info(allocated_areas)` and the literal
 allocator's block sizes:
 
-| Part | Bytes | Count |
-| --- | --- | --- |
-| loaded code | 9,858,951 | 266 modules |
-| literal allocator blocks | 2,750,384 | |
-| export entries + export table | 1,189,440 + 270,780 | |
-| fun entries + fun table | 282,744 + 98,739 | |
-| module table | 165,768 | |
-| atom space + atom table | 244,544 + 278,665 | 18,364 atoms |
-
-Loaded code and literals are 12.6 MB of it; everything else together is
-2.5 MB. The research record of BeamAsm's first measurement agrees in
+Loaded code is 9.9 MB (266 modules) and the literal allocator's blocks
+2.8 MB; the export, fun and module tables and entries and the atom space
+together are 2.5 MB (18,364 atoms).
+The research record of BeamAsm's first measurement agrees in
 shape: a domain booting `kernel` and `stdlib` in embedded mode (244
 modules) reports `code` 11,938,778 bytes under the interpreter
 ([research-g5-beamasm.md](research-g5-beamasm.md#footprint)).
@@ -123,53 +107,50 @@ modules) reports `code` 11,938,778 bytes under the interpreter
 **Literal binaries.** Of the 275 beam files of the preloaded modules and
 those four applications, 14 hold literal binaries over 64 bytes, which
 ERTS makes reference-counted (`ERL_ONHEAP_BINARY_LIMIT`,
-`otp/erts/emulator/beam/erl_bits.h:167`): 49 binaries, 9,954 bytes in all
-(measured from the beam files' `LitT` chunks, the same day). The modules
-are `init`, `prim_tty`, `erl_erts_errors`, `erl_kernel_errors`,
-`erl_stdlib_errors`, `c`, `epp`, `erl_lint`, `erl_tar`, `man_docs`,
-`peer`, `shell`, `shell_docs` and `erx_schema`. The twelve other than
-`init` and `prim_tty` load 1,022,010 bytes of code on the same stock
-interpreter, `erl_lint` 316,899 of it; `init`'s and `prim_tty`'s beam
-files are 69,796 and 64,856 bytes.
+`otp/erts/emulator/beam/erl_bits.h`): 49 binaries, about 10 KB in all
+(from the beam files' `LitT` chunks). The modules are `init`, `prim_tty`, `erl_erts_errors`, `erl_kernel_errors`,
+`erl_stdlib_errors`, `c`, `epp`, `erl_lint`, `erl_tar`, `man_docs`, `peer`,
+`shell`, `shell_docs` and `erx_schema`. The twelve other than `init` and
+`prim_tty` load about 1 MB of code on the same stock interpreter.
 
 **How a domain loads code.** Each domain's loader prepares every module
-itself. `beam_load_finalize_code` (`otp/erts/emulator/beam/emu/emu_load.c:560`)
+itself. `beam_load_finalize_code` (`otp/erts/emulator/beam/emu/emu_load.c`)
 allocates the code with `ERTS_ALC_T_CODE` and the literal area with
-`ERTS_ALC_T_LITERAL` (`emu_load.c:70`, `:280`, `:324`), so both are the
+`ERTS_ALC_T_LITERAL` (`emu_load.c`), so both are the
 domain's memory. Every domain other than the system domain runs one of
 two runtime images of the boot archive, each linked at the same fixed
-address (`liberx/backend/fiasco/task.ld:24`): the interpreter's,
+address (`liberx/backend/fiasco/task.ld`): the interpreter's,
 `runtimes/emu`, which a domain row names as `runtime @artifact.emu`, and
-BeamAsm's, `runtimes/jit` (`tools/lib/erx/production_image.rb:107-116`,
-`tools/lib/erx/native_root.rb:152-171`). Sessions and command domains run
+BeamAsm's, `runtimes/jit` (`tools/lib/erx/production_image.rb`,
+`tools/lib/erx/native_root.rb`). Sessions and command domains run
 the interpreter's. The system domain runs an interpreter ERTS too, but
 linked with the root task's own code at the root's place
-(`liberx/backend/fiasco/root.ld:22`, `native_root.rb:76-80`), so its
+(`liberx/backend/fiasco/root.ld`, `native_root.rb`), so its
 handlers are at other addresses than any domain's. Releases come from
 slices of the boot image, whose index records for each file the BLAKE3
 hash of its file run, the file's bytes and the zeros after them to the
-next page boundary (`abi/erx_abi.txt:231-239`,
+next page boundary (`abi/erx_abi.txt`,
 [design-kernel.md](design-kernel.md#the-boot-image)).
 
 **What sharing must overcome.** Interpreted code is threaded code: each
 instruction word is the address of its handler in the emulator's text
-(`otp/erts/emulator/beam/erl_vm.h:289`), and the operands hold absolute
+(`otp/erts/emulator/beam/erl_vm.h`), and the operands hold absolute
 pointers. Finalizing a module writes, into the code, the address of the
-export entry of every function it imports (`emu_load.c:604-627`), of every
-fun entry it creates (`:671-680`), of every literal (`:329-336`), and the
-index of every catch label in the runtime's catch table (`:589-601`,
-`otp/erts/emulator/beam/beam_catches.c:107-145`). Literal funs hold
-pointers to fun entries (`emu_load.c:663`) and `fun M:F/A` literals are
+export entry of every function it imports (`emu_load.c`), of every
+fun entry it creates, of every literal, and the
+index of every catch label in the runtime's catch table
+(`otp/erts/emulator/beam/beam_catches.c`). Literal funs hold
+pointers to fun entries (`emu_load.c`) and `fun M:F/A` literals are
 the export entry's own external fun, a global literal
-(`otp/erts/emulator/beam/external.c:5037-5038`, `export.c:44-57`). The
+(`otp/erts/emulator/beam/external.c`, `export.c`). The
 loader keeps global literals such as the empty tuple as pointers instead
 of copying them into a module's literal area
-(`otp/erts/emulator/beam/beam_file.c:1449-1459`), and every line table's
-implicit file name ends in the global `".erl"` suffix (`beam_file.c:546`).
+(`otp/erts/emulator/beam/beam_file.c`), and every line table's
+implicit file name ends in the global `".erl"` suffix (`beam_file.c`).
 Atoms appear as tagged indices into the runtime's atom table. Export
 entries are written on every code load, because staging copies each
 entry's active address into the staging index
-(`otp/erts/emulator/beam/erl_code_staged.h:392-416`, `export.c:102-107`).
+(`otp/erts/emulator/beam/erl_code_staged.h`, `export.c`).
 Tracing and NIF loading write the code itself.
 
 ## Requirements
@@ -261,22 +242,22 @@ Every requirement follows from that:
 
 ### What loaded code points at
 
-`beam_load_finalize_code` (`emu_load.c:560-760`) and the emit step before
+`beam_load_finalize_code` (`emu_load.c`) and the emit step before
 it produce every word of a module's code. Each kind of pointer is
 same-in-every-domain for one reason in this table.
 
 | What the code embeds | Where it points | Same in every domain because |
 | --- | --- | --- |
-| instruction words | handlers in the emulator's text (`erl_vm.h:289`) | the executable is at one address |
-| BIF function pointers, read from `bif_table` entries (`emu_load.c:137`, `:1088`, `:711-713`) | the executable's text | the executable is at one address |
-| labels, strings, line table, function table (`emu_load.c:470-520`) | inside the module's code chunk | the chunk is at one address |
-| the NIF vector `are_nifs` of a module that declares `-nifs` (`emu_load.c:1437-1446`) | inside the module's code chunk | finalizing copies it into the chunk, in every module, imaged or not |
-| literals (`emu_load.c:329-336`) | the module's literal area | the literal area is in the image's literal part |
-| global literals: the empty tuple, the `".erl"` suffix, the other `ERTS_GLOBAL_LIT_*` singletons (`otp/erts/emulator/beam/erl_global_literals.h:34-38`), and every export's external fun | ERTS's global literal chunks | every literal allocation of the build is in the image's literal part, and an adopting domain takes the singletons' values from the image |
+| instruction words | handlers in the emulator's text (`erl_vm.h`) | the executable is at one address |
+| BIF function pointers, read from `bif_table` entries (`emu_load.c`) | the executable's text | the executable is at one address |
+| labels, strings, line table, function table (`emu_load.c`) | inside the module's code chunk | the chunk is at one address |
+| the NIF vector `are_nifs` of a module that declares `-nifs` (`emu_load.c`) | inside the module's code chunk | finalizing copies it into the chunk, in every module, imaged or not |
+| literals (`emu_load.c`) | the module's literal area | the literal area is in the image's literal part |
+| global literals: the empty tuple, the `".erl"` suffix, the other `ERTS_GLOBAL_LIT_*` singletons (`otp/erts/emulator/beam/erl_global_literals.h`), and every export's external fun | ERTS's global literal chunks | every literal allocation of the build is in the image's literal part, and an adopting domain takes the singletons' values from the image |
 | atoms | indices into the atom table | the image's atoms are a prefix of the table |
-| catch labels (`emu_load.c:589-601`) | indices into the catch table | the image's catches are a prefix of the table |
-| imports (`emu_load.c:604-627`) | export entries | export entries are cells |
-| fun creation (`emu_load.c:671-680`) and literal funs (`:663`) | fun entries | fun entries are cells |
+| catch labels (`emu_load.c`) | indices into the catch table | the image's catches are a prefix of the table |
+| imports (`emu_load.c`) | export entries | export entries are cells |
+| fun creation (`emu_load.c`) and literal funs | fun entries | fun entries are cells |
 
 Every executable address in the table is in the text. `bif_table` itself
 lies in the executable's writable segment, but the loader copies an
@@ -287,18 +268,18 @@ two runs cannot check; a loader change that embeds such an address must
 change this table.
 
 `are_nifs` is the one field of the interpreter's code header
-(`otp/erts/emulator/beam/beam_code.h:59-85`) allocated apart from the
+(`otp/erts/emulator/beam/beam_code.h`) allocated apart from the
 chunk: the loader allocates it from `ERTS_ALC_T_PREPARED_CODE` while it
 prepares `op_nif_start`, and the purge frees it
-(`beam_bif_load.c:2275-2278`). ERTS on erXos stores it at the end of the
+(`beam_bif_load.c`). ERTS on erXos stores it at the end of the
 code chunk instead, one byte per function, so it lives and dies with the
 code in every module and the purge frees nothing for it. It is never
 written after loading; `check_is_nifable` only reads it
-(`otp/erts/emulator/beam/erl_nif.c:4700-4704`).
+(`otp/erts/emulator/beam/erl_nif.c`).
 
-Record entries (`otp/erts/emulator/beam/erl_record.h:31-39`) are not on
+Record entries (`otp/erts/emulator/beam/erl_record.h`) are not on
 the list: the code looks them up by module and name, and binding a module
-registers its records as finalizing does (`emu_load.c:730-740`).
+registers its records as finalizing does (`emu_load.c`).
 
 ### Layout
 
@@ -316,12 +297,11 @@ the placement base, where fixed images and fixed mappings go
   a page per module, once for the machine.
 * **The literal range** is ERTS's literal range itself. ERTS recognises a
   literal by its address alone on erXos, since `liberx` reserves and
-  commits separately (`otp/erts/emulator/sys/common/erl_mmap.h:44`), which
-  selects the range check (`otp/erts/emulator/beam/erl_alloc.h:193-196`,
-  `:337-349`); literal pointers are tagged only in debug builds
-  (`otp/erts/emulator/beam/erl_term.h:57-63`). The range, 1 GiB
-  (`erl_mmap.h:65`), starts at the fixed base in every domain instead of
-  where the literal mmapper places it (`otp/erts/emulator/sys/common/erl_mmap.c:2237`).
+  commits separately (`otp/erts/emulator/sys/common/erl_mmap.h`), which
+  selects the range check (`otp/erts/emulator/beam/erl_alloc.h`); literal pointers are tagged only in debug builds
+  (`otp/erts/emulator/beam/erl_term.h`). The range, 1 GiB
+  (`erl_mmap.h`), starts at the fixed base in every domain instead of
+  where the literal mmapper places it (`otp/erts/emulator/sys/common/erl_mmap.c`).
   Its first part, the **literal part**, holds everything the build
   allocated as a literal: the modules' literal areas and ERTS's global
   literal chunks. The literal allocator manages the rest for the domain's
@@ -343,7 +323,7 @@ generated bounded reader ([design-abi.md](design-abi.md)).
 
 * **Header**: magic, format version, the BLAKE3 hash of the file run of
   the `runtimes/emu` entry the build ran, which is the `file_hash` the
-  boot index records for that entry (`abi/erx_abi.txt:239`); the lengths
+  boot index records for that entry (`abi/erx_abi.txt`); the lengths
   of the image's parts; the count and offset of every list; and the value
   of each `ERTS_GLOBAL_LIT_*` variable, a list generated from the
   declarations of `erl_global_literals.h`, so a singleton OTP adds is
@@ -359,7 +339,7 @@ generated bounded reader ([design-abi.md](design-abi.md)).
   part.
 * **Fun cells**, in index order: module, index, old unique number, old
   index, the module's MD5 and arity, which are `erts_fun_entry_put`'s
-  arguments (`otp/erts/emulator/beam/erl_fun.c:287`).
+  arguments (`otp/erts/emulator/beam/erl_fun.c`).
 * **Catches**, in index order: the code address of each.
 * **Modules**: module atom, code header address, code length, page range,
   head of its catch chain, its export cells with their code addresses, its
@@ -381,7 +361,7 @@ the file check at its first slice verify it
 and every domain loads its code privately. The image holds the preloaded
 modules and every module of `DOMAIN_BASE`, in a fixed order, minus the
 exclusions below. Every boot script of the domain release boots
-`DOMAIN_BASE` (`release_files.rb:75-94`), so there is no per-script choice
+`DOMAIN_BASE` (`release_files.rb`), so there is no per-script choice
 of what is shared.
 
 **The build run.** The build boots a build-only image under QEMU on the
@@ -443,30 +423,29 @@ that later boots it.
 1. With the build mark, `liberx`'s runtime entry runs ERTS on a thread it
    creates instead of the task's first thread. musl maps a created
    thread's stack and thread-local storage together, as placed memory
-   (`musl/src/thread/pthread_create.c:296-314`), while the first thread's
+   (`musl/src/thread/pthread_create.c`), while the first thread's
    stack is in the executable's `.bss`
    (`liberx/backend/fiasco/arch/aarch64/task_start.S`) and its
    thread-local storage in musl's static block when it is small, as
-   ERTS's is (`musl/src/env/__init_tls.c:133-145`): both at one fixed
+   ERTS's is (`musl/src/env/__init_tls.c`): both at one fixed
    address in every domain.
-2. From `init_global_literals` (`otp/erts/emulator/beam/erl_init.c:264`)
+2. From `init_global_literals` (`otp/erts/emulator/beam/erl_init.c`)
    until the report, every `ERTS_ALC_T_LITERAL` allocation comes from the
    literal part, which places ERTS's global literal chunks there,
    singletons and export funs included
-   (`otp/erts/emulator/beam/erl_global_literals.c:93-117`); export and fun
+   (`otp/erts/emulator/beam/erl_global_literals.c`); export and fun
    entries come from the cell areas in creation order; code chunks come
    from the code range one page-aligned module at a time. The code range
    allocator lets the module being loaded grow and shrink its last block,
-   as the loader's `erts_realloc` requires (`emu_load.c:41`, `:280`).
-3. At the point where ERTS loads its preloaded modules (`erl_init.c:511`,
-   called at `:2530`), the build loads every module of the image's list
+   as the loader's `erts_realloc` requires (`emu_load.c`).
+3. At the point where ERTS loads its preloaded modules (`erl_init.c`), the build loads every module of the image's list
    in order, through the same prepare and finish steps that preloading
    uses, reading each file from the builder's release slice. Decoding a
    module's literals with a build-only flag of `erts_decode_ext` refuses
    the external term format's identity encodings, `PID_EXT`,
    `NEW_PID_EXT`, `PORT_EXT`, `NEW_PORT_EXT`, `V4_PORT_EXT`,
    `REFERENCE_EXT`, `NEW_REFERENCE_EXT` and `NEWER_REFERENCE_EXT`
-   (`otp/erts/emulator/beam/external.h:41-64`), local and external
+   (`otp/erts/emulator/beam/external.h`), local and external
    alike. A module is excluded, and its prepared code and literals are
    given back so that none of its bytes reach the image, when it has an
    `on_load` function, when it fails to prepare, when its literals use an
@@ -478,19 +457,19 @@ that later boots it.
 **Why literal binaries are excluded, not kept on the heap.** A literal
 binary over `ERL_ONHEAP_BINARY_LIMIT` cannot be decoded as a heap binary
 instead, because ERTS relies on every heap bitstring being at most that
-size, beyond its assertion (`erl_bits.h:167-172`).
+size, beyond its assertion (`erl_bits.h`).
 `erts_build_sub_bitstring` makes any result over the limit a sub-bitstring
 of the `BinRef` it is given and reads that binary's flags
-(`otp/erts/emulator/beam/erl_bits.c:2635-2668`, `:2656`), and
+(`otp/erts/emulator/beam/erl_bits.c`), and
 `ERTS_GET_BITSTRING_REF` gives no `BinRef` for a heap bitstring
-(`erl_bits.h:402-408`), so `binary:part/3` of 65 bytes of such a literal
-(`otp/erts/emulator/beam/erl_bif_binary.c:1993-2007`) reads through a null
+(`erl_bits.h`), so `binary:part/3` of 65 bytes of such a literal
+(`otp/erts/emulator/beam/erl_bif_binary.c`) reads through a null
 pointer. The interpreter's `i_bs_get_fixed_binary` takes a match
 context's origin as a `BinRef` without checking
-(`otp/erts/emulator/beam/emu/bs_instrs.tab:1447-1459`), so a match of 65
+(`otp/erts/emulator/beam/emu/bs_instrs.tab`), so a match of 65
 bytes from such a literal reads the binary's first bytes as a pointer. A
 sub-bitstring accepts another origin only as a match context
-(`erl_bits.h:501-512`).
+(`erl_bits.h`).
 
 **The two runs.** Run B differs from run A in where its private memory
 lies and in every input a domain may vary.
@@ -498,7 +477,7 @@ lies and in every input a domain may vary.
 * **Placement.** `liberx` places a space's private mappings, those
   without a fixed address, from a **placement start** that space creation
   takes. On Fiasco it is where `liberx`'s lowest-free search begins
-  (`find_free_range`, `liberx/backend/core/vm_table.c:504-525`); on erXos's
+  (`find_free_range`, `liberx/backend/core/vm_table.c`); on erXos's
   kernel it is the space's placement base, below which the kernel places
   at the highest free range
   ([design-kernel.md](design-kernel.md#virtual-memory)). The domain
@@ -554,8 +533,8 @@ granted the image when the boot image holds one, its runtime entry's
 `file_hash` is the image header's runtime hash, its specification does not
 set `shared_code none`, and its emulator arguments, the words before
 `--`, set no loader option: no word begins with `-L`, which drops line
-tables (`erl_init.c:1465-1466`), or `-D`, which sets debugger
-instrumentation (`:1640-1665`). The image was built with ERTS's default
+tables (`erl_init.c`), or `-D`, which sets debugger
+instrumentation. The image was built with ERTS's default
 loader options, which such a domain would not have. The decision is a
 pure function of the specification, the runtime entry and the image's
 header. The atom floor is not a grant reason: a configured domain or
@@ -585,26 +564,26 @@ before anything of the runtime has changed.
 Past preflight, adoption only constructs; a stage that finds its
 postcondition broken ends the start.
 
-* **Globals**, at `init_global_literals` (`erl_init.c:264`): each
+* **Globals**, at `init_global_literals` (`erl_init.c`): each
   `ERTS_GLOBAL_LIT_*` variable takes the header's value instead of a new
   literal, and the literal allocator starts after the literal part.
-  `beamfile_init` (`beam_file.c:2065-2075`) and `erts_bif_info_init`'s
-  literals (`otp/erts/emulator/beam/erl_bif_info.c:6398-6417`) take theirs
+  `beamfile_init` (`beam_file.c`) and `erts_bif_info_init`'s
+  literals (`otp/erts/emulator/beam/erl_bif_info.c`) take theirs
   the same way. So `{}` is one term in a domain, whether it came from
   image code or from `list_to_tuple([])`, as on stock OTP, where
-  `is_zero_sized` compares it by address (`erl_term.h:192`).
+  `is_zero_sized` compares it by address (`erl_term.h`).
 * **Atoms**, right after the built-in atoms are created
-  (`erl_init.c:287`): the stage requires that the table hold exactly the
+  (`erl_init.c`): the stage requires that the table hold exactly the
   built-in atoms, then inserts the image's atoms in order with
-  `erts_atom_put_index` (`otp/erts/emulator/beam/atom.c:231`) and
+  `erts_atom_put_index` (`otp/erts/emulator/beam/atom.c`) and
   requires each to land at the built-in count plus its position. Atoms
   ERTS creates later, its own or the domain's, come after the prefix, or
   find their name already in it.
 * **Cells**, where the export and fun tables exist and are still empty:
   the stage requires both empty, then creates every export cell at its
-  address with the initialiser that creates any export (`export.c:73`),
+  address with the initialiser that creates any export (`export.c`),
   except that the external fun is the image's instead of a new one; every
-  fun cell with the fun table's initialiser (`erl_fun.c:87`); and the
+  fun cell with the fun table's initialiser (`erl_fun.c`); and the
   catch table's prefix, cons'ed in order so each lands at its index. Every
   cell starts as an unloaded function, as an import of a module not yet
   loaded does on stock OTP. When ERTS's own start then creates its BIF
@@ -613,7 +592,7 @@ postcondition broken ends the start.
 * **Binding**, at the point where ERTS loads its preloaded modules: for
   every module of the image, the stage creates the module table entry
   with the image's code header as the current instance, both its regions
-  set to that header as finalizing does (`emu_load.c:574-575`), its catch
+  set to that header as finalizing does (`emu_load.c`), its catch
   chain and the **read-only mark**, which says only that the instance's
   pages are still the image's; it points the module's export cells and
   fun cells at its code in every code index, registers its records and
@@ -623,10 +602,10 @@ postcondition broken ends the start.
 
 **The code server** learns the image's modules from `init`. A BIF returns
 the bound modules of applications with their paths; `init` adds them to
-the list `init:fetch_loaded/0` returns (`otp/erts/preloaded/src/init.erl:459-461`),
+the list `init:fetch_loaded/0` returns (`otp/erts/preloaded/src/init.erl`),
 which the code server reads at its start
-(`otp/lib/kernel/src/code_server.erl:96-101`), and `init`'s `primLoad`
-step skips a module that is already loaded (`init.erl:1387-1423`). So
+(`otp/lib/kernel/src/code_server.erl`), and `init`'s `primLoad`
+step skips a module that is already loaded (`init.erl`). So
 `code:which/1` names the file, sticky directories stay sticky, and an
 embedded boot loads nothing twice.
 
@@ -649,34 +628,33 @@ domain never re-binds an image module.
 **Purging** is stock in what it decides and reports: `erlang:purge_module/1`
 and `code:soft_purge/1` check processes against the old instance as they
 do for any module. What the release block of `erts_internal:purge_module/2`
-(`otp/erts/emulator/beam/beam_bif_load.c:2253-2296`) gives back follows
+(`otp/erts/emulator/beam/beam_bif_load.c`) gives back follows
 from addresses, by two rules:
 
 * **Code backing.** An instance whose code header lies in the image's code
   range is released by releasing the module's page range from the
   domain's space, whatever backs it, the image's pages or the private
-  copy a preparation made; it is never passed to `erts_free` (`:2283`).
+  copy a preparation made; it is never passed to `erts_free`.
   Any other instance is freed as on stock OTP.
 * **Literal ownership.** A literal area that lies in the image's literal
-  part is never queued for release (`:2322-2324`): it stays mapped until
+  part is never queued for release: it stays mapped until
   the domain ends, so terms that point into it stay valid and nothing has
   to copy them out. Any other literal area is released as on stock OTP.
 
 Neither rule reads the read-only mark, so a module that was traced, then
 hot-loaded over and purged, is released by the same rules as one never
 touched. Cells are never freed: export entries are never removed, fun
-entries stay in place after a purge (`erl_fun.c:224-241`), and staged
+entries stay in place after a purge (`erl_fun.c`), and staged
 entries are freed only when an aborted staging erases what it added
-(`erl_code_staged.h:312-330`), which never includes the oldest entries.
+(`erl_code_staged.h`), which never includes the oldest entries.
 
 **Writes to code.** OTP routes every write to loaded code through one
 funnel, because BeamAsm's executable mapping is read-only:
 `erts_unseal_module`, `erts_writable_code_ptr` and `erts_seal_module`
-(`otp/erts/emulator/beam/module.c:177-246`, declared at `module.h:59-76`).
+(`otp/erts/emulator/beam/module.c`, declared in `module.h`).
 Breakpoints of every kind, the breakpoint data a function's code info
 points at, NIF stubs and the end of an `on_load` are written through it
-(`beam_bp.c:404`, `:610`, `:699`, `:881`, `:1762`, `:1787`, `:2097`;
-`erl_nif.c:5058`, `:5141`, `:5213`; `beam_bif_load.c:904`).
+(`beam_bp.c`, `erl_nif.c`, `beam_bif_load.c`).
 
 ERTS on erXos puts **one preparation interface** in front of that funnel,
 `erx_code_prepare`, in the runtime's erXos layer. It takes a module
@@ -705,17 +683,17 @@ makes one. Behind both, the image is mapped read-only, so a write that
 bypasses them faults in the domain that made it.
 
 The callers are few because the matchers already collect what a write
-covers. `erts_bp_match_functions` (`beam_bp.c:185`) asks for `write` when
+covers. `erts_bp_match_functions` (`beam_bp.c`) asks for `write` when
 its caller sets breakpoints, from `erts_set_trace_pattern`
-(`otp/erts/emulator/beam/erl_bif_trace.c:2634`) and
-`erts_debug:breakpoint/2` (`otp/erts/emulator/beam/beam_debug.c:324`),
+(`otp/erts/emulator/beam/erl_bif_trace.c`) and
+`erts_debug:breakpoint/2` (`otp/erts/emulator/beam/beam_debug.c`),
 and `clear` when it clears them, as a trace session's end does for every
-function (`erl_bif_trace.c:1380`, `:2767`), whether the session ends by
+function (`erl_bif_trace.c`), whether the session ends by
 `trace:session_destroy/1` or because its owner is gone, and as global
-tracing's removal does (`:2898`); it keeps the handle with the functions
+tracing's removal does; it keeps the handle with the functions
 it matched and drops the functions of an instance it gets none for.
-`erl_debugger:breakpoint/3` (`otp/erts/emulator/beam/erl_debugger.c:292`)
-and `load_nif/2` (`erl_nif.c:4622`) ask for `write` on their one module.
+`erl_debugger:breakpoint/3` (`otp/erts/emulator/beam/erl_debugger.c`)
+and `load_nif/2` (`erl_nif.c`) ask for `write` on their one module.
 `erts_clear_module_break`, a NIF library's unload and upgrade, and the end
 of an `on_load` ask for `clear`, `write` and `write`: the first two reach
 only instances that already hold breakpoints or stubs, and a module with
@@ -731,13 +709,13 @@ private. `erlang:trace_pattern/3` may match many modules at once: tracing
 every local function of the image would privatise about 9 MB.
 
 Global call tracing that is set leaves loaded code alone: its breakpoints
-live in the export entry (`beam_bp.c:2181-2199`), which is a cell. A pure
+live in the export entry (`beam_bp.c`), which is a cell. A pure
 read of an image instance needs nothing: `module_info/0,1`,
 `erlang:fun_info/2`, `erts_debug:df/1` and stack traces read the code.
 
 **Garbage collection and copying** need nothing: shared literals are in
 the literal range, and the collector and the copier skip literals
-(`otp/erts/emulator/beam/copy.c:105-132`, `otp/erts/emulator/beam/erl_gc.c:2013`).
+(`otp/erts/emulator/beam/copy.c`, `otp/erts/emulator/beam/erl_gc.c`).
 No literal of the image is reference-counted, since a module with such a
 literal is excluded, so no copy of a literal into ETS, a port or a purge's
 literal collection writes a count in the image.
@@ -766,7 +744,7 @@ Documented differences, each with its own test:
   of `erlang:system_info(info)` are those of a node that has loaded them.
 * **`erlang:memory/0`** counts image code in `code` and `total`, as OTP's
   BeamAsm build counts code that lives outside ERTS's allocators
-  (`erl_alloc.c:2508-2513`), and image literals in `system` and `total`,
+  (`erl_alloc.c`), and image literals in `system` and `total`,
   so a domain's figures read as a stock node's with the same modules
   loaded. What is shared and what is private is the inspector's to say.
 
@@ -797,7 +775,7 @@ shown as unsupported with its reporter named.
 The build runs on one builder thread at a time on the build host, and
 nothing at boot writes the image. Adoption runs on a domain's one
 start-up thread, before ERTS creates a scheduler or any Erlang process
-(`erl_init.c:264-312`, `:2530`), so it meets no other thread of its
+(`erl_init.c`), so it meets no other thread of its
 runtime; the image was mapped by the domain library before that thread
 started.
 
@@ -805,14 +783,14 @@ After start, cells are export and fun entries, written under ERTS's
 existing staging lock and code permissions as any entry is. A `write`
 preparation runs in the requesting BIF, under code modification
 permission, with thread progress blocked for the swap, as loading over a
-traced module blocks it (`beam_bif_load.c:462-472`). Blocking thread
+traced module blocks it (`beam_bif_load.c`). Blocking thread
 progress stops the threads it manages, the normal schedulers, the
 auxiliary thread and the system message dispatcher
-(`otp/erts/emulator/beam/erl_process.c:3264`, `:8684`,
-`otp/erts/emulator/beam/erl_trace.c:2678`), so none of them runs or reads
+(`otp/erts/emulator/beam/erl_process.c`,
+`otp/erts/emulator/beam/erl_trace.c`), so none of them runs or reads
 code during the swap. It does not stop the dirty schedulers or the async
-threads (`erl_process.c:8753`, `:8804`,
-`otp/erts/emulator/beam/erl_async.c:395`). These never run threaded code
+threads (`erl_process.c`,
+`otp/erts/emulator/beam/erl_async.c`). These never run threaded code
 of a module that still has the read-only mark: dirty schedulers enter a
 module's code only through a NIF stub, and a NIF stub exists only once
 its module is prepared. They may read it: a dirty BIF or NIF can look up
@@ -1004,11 +982,11 @@ runs.
 
 The Fiasco backend has what the image needs. `erx_vm_map` of a slice
 maps the archive's own pages read-only with `l4_task_map` from the root
-(`docs/design-fiasco.md:519`), so every domain that maps the image shares
+(`docs/design-fiasco.md`), so every domain that maps the image shares
 its frames, and the physical saving is real on Fiasco.
 
 **One mapping per module is Fiasco's shape.** Fiasco cannot map
-over a mapping or cut one (`docs/design-fiasco.md:517`), so the domain
+over a mapping or cut one (`docs/design-fiasco.md`), so the domain
 library maps the header and lists with one mapping, each module's code
 chunk with one mapping of its own, and the literal part with one: about
 250 mapping records for the image, well under the 65,536 a space allows
@@ -1164,86 +1142,65 @@ check, the grant decision and the atom floor.
 ### QEMU tests
 
 Sessions under the development image, each test in its own domains so
-its seeds stay local.
+its seeds stay local. The tests check, through the inspector and the
+domains' own behaviour:
 
-* **The image is adopted and bound.** The inspector shows two sessions
-  granted the image, both bound to the image's module count, and the
-  image's pages in neither domain's budget. Seeded fault: the binding
-  stage skips the last module; the bound count then differs and the test
-  fails.
+* **Adoption and binding.** Two sessions are granted the image, bound to
+  its module count, with its pages in neither domain's budget. Seeded fault:
+  the binding stage skips the last module.
 * **A granted domain that cannot adopt ends its start.** A test hook
-  refuses one domain's commit of its cell range: that domain's start ends
-  with the `memory` diagnostic, the inspector shows the failed start, and
-  the other session reaches its prompt. Seeded fault: adoption falling
-  back to private loading on refusal; the domain then reaches its prompt
-  and the test fails.
-* **A domain not granted loads privately.** A domain with `shared_code
-  none`, and one whose emulator words hold `-L`, each reach their prompt
-  with no image mapped and the reason shown. Seeded fault: the grant
-  ignoring the specification; the first domain then adopts and the test
-  fails.
-* **The image is mapped read-only and never executable.** The inspector
-  shows every image mapping of a session with read permission only, and a
-  test hook's store to an image page ends that session with a fault while
-  the other keeps running. Seeded fault: the domain library maps the image
-  with read and execute; the inspector then shows execute and the test
-  fails. That a slice is never writable is the slice calls' own property
-  on both kernels (on Fiasco, a write right on a slice is
-  `ERX_ERIGHTS`, `docs/design-fiasco.md:519`), tested with them, not
-  here.
-* **Tracing is private and stock.** Domain A sets a local trace pattern on
-  a function of an imaged module that a looping process in A calls
-  locally; A receives the trace messages, the inspector lists the module
-  as privatised in A, and domain B, calling the same function, receives
-  none and still shows it read-only. Seeded fault: `write` returns its
-  handle without privatising; the breakpoint's store then faults on the
-  image page, A ends, and the test fails.
-* **Every writer prepares.** In A, `erts_debug:breakpoint/2`,
-  `erl_debugger:breakpoint/3` and `load_nif/2` from an imaged module that
-  declares `-nifs` each succeed, and the inspector lists the three modules
-  privatised in A and none in B. The same seeded fault as above fails each.
-* **Clearing writes nothing to read-only modules.** In A, with every
-  imaged module read-only: a trace session created and destroyed empty, a
-  session whose owner process exits, global call tracing set and removed
-  on an imaged export, and `erlang:trace_pattern({'_', '_', '_'}, false,
-  [local])`; A keeps running and the inspector lists no module
-  privatised. Seeded fault: `clear` returning a handle for a read-only
-  instance; the first cleanup's store then faults and the test fails.
-* **A refused preparation sets nothing.** A domain with little budget to
-  spare matches every local function: `trace_pattern` raises
-  `system_limit`, `erlang:trace_info/2` shows no breakpoint on any
-  function it matched, and the domain keeps running. Seeded fault: the
-  preparation run after staging instead of before; breakpoints on the
-  modules prepared before the refusal are then set and the test fails.
-* **A failed swap.** A test hook refuses the swap's mapping. On erXos's
-  kernel `trace_pattern` raises `system_limit` and the module stays
-  read-only and runs; on Fiasco the domain ends with the diagnostic
-  naming the module, and B runs on. Seeded fault: the runtime returning
-  `system_limit` and resuming on Fiasco; the next call into the
-  module then faults without the diagnostic and the test fails.
-* **Hot loading is private.** A probe module of `DOMAIN_BASE`'s test build
-  returns 1; A loads a version returning 2, B still gets 1. Seeded fault:
-  the cell range mapped from one shared object into both domains; B then
-  gets 2 and the test fails.
-* **Trace, hot load, purge.** In A, a process keeps a literal of the probe
-  module; A sets a local trace pattern on the probe, loads a new version
-  and purges the old one: `code:purge/1` returns `true`, the process still
-  reads its literal, A keeps loading and running, and the inspector shows
-  the probe's private copy released. Seeded faults: the purge deciding by
-  the read-only mark instead of the address, so the privatised instance
-  reaches `erts_free` and A crashes; and the image's literal area queued
-  for release, so the kept literal's area is freed. Each fails the test.
-* **Global literals are one term.** An imaged module returns `{}` and
-  `{{}}`: in A, `erts_debug:same/2` of the first and `list_to_tuple([])`,
-  and of the second's element and the same, is `true`, and
-  `erts_debug:size/1` of each is what it is on stock OTP; a stack trace
-  through the module names `"probe.erl"`. Seeded fault: the adopter making
-  its own empty tuple; `erts_debug:same/2` then returns `false` and the
-  test fails.
-* **The atom prefix holds.** An imaged module's function returns an atom
-  literal and `M:module_info(module)` is `M` in every domain. Seeded fault:
-  two image atoms inserted in swapped order; the stage's postcondition
-  then ends the start and the test fails.
+  refuses one domain's commit of its cell range; that start ends with the
+  `memory` diagnostic and the other session reaches its prompt. Seeded
+  fault: adoption falling back to private loading on refusal.
+* **A domain not granted loads privately.** `shared_code none` and a `-L`
+  emulator word each reach their prompt with no image mapped and the reason
+  shown. Seeded fault: the grant ignoring the specification.
+* **Read-only and never executable.** Every image mapping shows read
+  permission only, and a hook's store to an image page ends that session
+  with a fault while the other keeps running. Seeded fault: the domain
+  library maps the image with read and execute. That a slice is never
+  writable is the slice calls' own property on both kernels (on Fiasco, a
+  write right on a slice is `ERX_ERIGHTS`, `docs/design-fiasco.md`), tested
+  with them.
+* **Tracing, breakpoints and NIF loading are private and stock.** Domain A
+  sets a local trace pattern on an imaged module's function, and
+  `erts_debug:breakpoint/2`, `erl_debugger:breakpoint/3` and `load_nif/2`
+  succeed there; A receives its trace messages and the inspector lists the
+  modules privatised in A and none in B, whose calls of the same function
+  receive no trace message and still run the read-only image. Seeded fault: `write` returns its handle without
+  privatising; the breakpoint's store faults on the image page.
+* **Clearing writes nothing to read-only modules.** An empty trace session
+  created and destroyed, a session whose owner exits, global call tracing
+  set and removed, and `erlang:trace_pattern({'_', '_', '_'}, false,
+  [local])` leave A running with no module privatised. Seeded fault:
+  `clear` returning a handle for a read-only instance.
+* **A refused preparation sets nothing.** A domain with little budget
+  matches every local function: `trace_pattern` raises `system_limit` and
+  `erlang:trace_info/2` shows no breakpoint on any matched function. Seeded
+  fault: the preparation run after staging instead of before.
+* **A failed swap.** A hook refuses the swap's mapping. On erXos's kernel
+  `trace_pattern` raises `system_limit` and the module stays read-only and
+  runs; on Fiasco the domain ends with the diagnostic naming the module and
+  B runs on. Seeded fault: the runtime returning `system_limit` and
+  resuming on Fiasco.
+* **Hot loading is private.** A loads a new version of a probe module of
+  `DOMAIN_BASE`'s test build; B still gets the old one. Seeded fault: the
+  cell range mapped from one shared object into both domains.
+* **Trace, hot load, purge.** A process keeps a literal of the probe; A
+  traces the probe locally, loads a new version and purges the old one:
+  `code:purge/1` returns `true`, the literal stays readable, and the
+  inspector shows the private copy released. Seeded faults: the purge
+  deciding by the read-only mark instead of the address, so the privatised
+  instance reaches `erts_free`; and the image's literal area queued for
+  release.
+* **Global literals are one term.** `{}` and the element of `{{}}` from an
+  imaged module are the same term as A's `list_to_tuple([])` by
+  `erts_debug:same/2`, the `erts_debug:size/1` of each is stock's, and a
+  stack trace names `"probe.erl"`. Seeded fault: the adopter making its own empty tuple.
+* **The atom prefix holds.** An imaged module's atom literals and
+  `M:module_info(module)` are the same in every domain. Seeded fault: two
+  image atoms inserted in swapped order; the stage's postcondition ends the
+  start.
 * **The documented differences.** Each item of [Behaviour against stock
   OTP](#behaviour-against-stock-otp) has a case that shows it.
 

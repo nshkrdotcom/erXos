@@ -40,9 +40,10 @@ language is not required.
 The first worked model is the update protocol: committed and spare slots,
 healthy trials, persisted writes, torn records, resets and rescue. It is
 small enough to inspect and has concrete failure-injection tests. Host-link
-sessions and connection retirement use the same discipline. Small kernel
-cores retain exhaustive host exploration; additional TLC mechanism models
-address interleavings that their subsystem designs identify.
+sessions and connection retirement use the same discipline; `specs/tla/`
+holds the models of cross-domain connections, lane rings and links. Small kernel cores retain exhaustive host
+exploration; additional TLC mechanism models address interleavings that
+their subsystem designs identify.
 
 ## Model suite and runner
 
@@ -166,10 +167,10 @@ verification behind existing interfaces and do not change runtime authority.
 
 * **CBMC on the C core.** Check the actual budget arithmetic and capability
   retirement functions with nondeterministic inputs and explicit allocation
-  failure. The harness states input ranges, compiler layout assumptions,
-  scheduling assumptions and loop bounds; unwinding assertions detect
-  insufficient loop coverage. A bounded result is reported as bounded.
-  Unsupported C17 constructs or target differences are explicit gaps.
+  failure, as [CBMC harnesses and runner](#cbmc-harnesses-and-runner)
+  describes: each harness states its input ranges,
+  layout and scheduling assumptions and loop bounds. A bounded result is reported as bounded, and unsupported C17
+  constructs or target differences are explicit gaps.
 * **awklog on manifest relationships.** Ruby parses and validates the
   manifest and platform placement records, then emits typed facts with
   source-record identities. awklog checks device ownership, facet targets,

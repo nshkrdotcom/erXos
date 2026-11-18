@@ -222,34 +222,34 @@ with the profile, and preserves the skips the pinned suites make for that
 actual environment. Private reporting modules carry neither documentation
 nor debug chunks, so they do not enter OTP's application-documentation tests.
 
-Host tests first exercise planning and lifecycle with a fake engine: missing
-or mismatched image identities, remote endpoints, extra mounts or networking,
-partial creation of either container or the volume, cancellation, timeout,
-failed export and failed cleanup. Artifact fixtures cover path collisions,
-links, special files, private-fixture pruning, inaccessible entries,
-depth/count/byte limits, partial copies and missing required evidence.
-Actual-engine proofs use only owned fixtures and reserved documentation
-addresses. They
-check the inspected network mode, the absence of non-loopback interfaces and
-external routes, failed numeric external connections and native DNS lookup,
-successful loopback TCP/UDP and distributed Erlang exchanges, and the
-observed IPv6 result. Resolver failure alone is not isolation evidence;
-the absent interface and route are part of the proof. The native-filesystem
-regression copies the same `/usr/bin/true` into the execution workspace,
-changes its mode to 0111 and proves that it executes successfully as the
-non-root workload while ordinary reads fail. The actual stock
-`port_SUITE:port_program_with_path` case is also run there. Neither a test
-skip nor a mode change to the stock fixture satisfies this acceptance check.
+Host tests exercise planning and lifecycle against a fake engine that
+plants each failure the adapter must classify: a missing or mismatched
+image identity, a remote endpoint, extra mounts or networking, a partial
+creation of either container or the volume, cancellation, timeout, a
+failed export and a failed cleanup. Artifact fixtures plant path
+collisions, links, special files, private-fixture directories,
+inaccessible entries, exceeded bounds, partial copies and missing required
+evidence. Actual-engine proofs use only owned fixtures and reserved
+documentation addresses. They check the inspected network mode, the
+absence of non-loopback interfaces and external routes, failed numeric
+external connections and native DNS lookup, successful loopback TCP/UDP
+and distributed Erlang exchanges, and the observed IPv6 result. Resolver
+failure alone is not isolation evidence; the absent interface and route
+are part of the proof. The native-filesystem regression copies
+`/usr/bin/true` into the execution workspace, changes its mode to 0111 and
+proves that it executes as the non-root workload while ordinary reads
+fail; the actual stock `port_SUITE:port_program_with_path` case runs there
+too. Neither a test skip nor a mode change to the stock fixture satisfies
+this check.
 
 A cleanup fixture daemonizes with `setsid`, holds a fixed loopback port and
-continues after its original parent exits. Cancellation removes its whole
-container before the read-only export begins, the artifact fixture remains
-available for bounded copying, a second owned container can use the same
-port, and a separate operator-service fixture remains alive and unchanged.
-Additional fixtures
-poison parent proxy variables and both parent Erlang startup locations,
-then prove that none reaches the stock runtime. No probe captures unrelated
-host traffic or changes global network configuration.
+outlives its original parent. Cancellation removes its whole container
+before the read-only export begins, the artifact fixture stays available
+for bounded copying, a second owned container can use the same port, and a
+separate operator-service fixture stays alive and unchanged. Further
+fixtures poison parent proxy variables and both parent Erlang startup
+locations and prove that none reaches the stock runtime. No probe captures
+unrelated host traffic or changes global network configuration.
 
 One invocation owns the workload namespace, its native volume, and a finite
 export phase. Callers supply a validated build/suite plan and receive a
